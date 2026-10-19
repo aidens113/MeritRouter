@@ -7,9 +7,11 @@ import { loadConfig, DEFAULT_CONFIG_NAME } from "./config/load.js";
 import { PROFILE_NAMES, TIER_NAMES, type ProfileName, type TierName } from "./config/schema.js";
 import { Switchyard } from "./core/service.js";
 import { createCodingRunner } from "./runners/coding/index.js";
-import { brainAccessRequests, brainRead, brainSearch, brainTree, decideBrainAccess, jobDetail, jobsView, modelsView, routingPreview } from "./admin/insights.js";
+import { z } from "zod";
+import { brainAccessRequests, brainRead, brainSearch, brainTree, decideBrainAccess, jobDetail, jobsView, modelsView, routingPreview, sessionDetail, sessionsView, type SessionDetail, type SessionView } from "./admin/insights.js";
 import { blame } from "./attribution/index.js";
 import { SwitchyardError } from "./core/errors.js";
+import { SessionStatusSchema, type SessionEvent, type SessionEventData } from "./sessions/events.js";
 
 const HELP = `switchyard - delegate bounded tasks to approved free model pools
 
@@ -37,6 +39,11 @@ Tasks
   resume <id>                   requeue an interrupted task
   artifact <ref>                print an artifact
   usage [--hours n]             requests, tokens, and outcomes
+
+Agent sessions (every model call and tool call, in order)
+  sessions [--status s[,s]] [--task id] [--job id] [--limit n]   list sessions, newest first
+                                statuses: running, completed, failed, interrupted, cancelled
+  session <id> [--after seq] [--limit n]   timeline (--json prints the raw page)
 
 Paid keys (direct routes; secrets are encrypted at rest)
   keys [list]                   keys with billing class, spend, balance, cap
@@ -75,6 +82,129 @@ function table(rows: Array<Record<string, unknown>>): string {
   return [line(cols), line(width.map((w) => "-".repeat(w))), ...rows.map((r) => line(cols.map((c) => String(r[c] ?? ""))))].join("\n");
 }
 
+// ---------- agent sessions ----------
+
+const CountFlag = z.coerce.number().int().nonnegative();
+
+/** Parse a numeric flag with zod; a bad value is a usage error, not NaN. */
+function countFlag(name: string, value: string | undefined, min = 0): number | undefined {
+  if (value === undefined) return undefined;
+  const r = CountFlag.min(min).safeParse(value);
+  if (!r.success) throw new SwitchyardError("usage", `--${name} must be an integer >= ${min}, got ${JSON.stringify(value)}`);
+  return r.data;
+}
+
+/** `--status completed,failed` -> validated statuses. */
+function statusFlag(value: string | undefined) {
+  if (value === undefined) return undefined;
+  const r = z.array(SessionStatusSchema).min(1).safeParse(value.split(",").map((s) => s.trim()).filter(Boolean));
+  if (!r.success) throw new SwitchyardError("usage", `--status takes ${SessionStatusSchema.options.join(", ")} (comma-separated), got ${JSON.stringify(value)}`);
+  return r.data.length === 1 ? r.data[0]! : r.data;
+}
+
+const oneLine = (text: string, max = 120): string => {
+  const t = text.replace(/\s+/g, " ").trim();
+  return t.length > max ? `${t.slice(0, max - 3)}...` : t;
+};
+const clock = (ms: number) => new Date(ms).toISOString().slice(11, 23);
+const stamp = (ms: number) => `${new Date(ms).toISOString().slice(0, 19).replace("T", " ")}Z`;
+function duration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const s = Math.floor(ms / 1000);
+  return s < 3600 ? `${Math.floor(s / 60)}m${s % 60}s` : `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}m`;
+}
+const compact = (v: unknown): string => (typeof v === "string" ? v : (JSON.stringify(v) ?? ""));
+
+function messageText(m: SessionEventData<"message">["message"]): string {
+  if (m.role === "tool") return `(${m.tool_call_id}) ${m.content}`;
+  if (m.role === "assistant") return [m.content ?? "", m.tool_calls?.length ? `-> ${m.tool_calls.map((c) => c.function.name).join(", ")}` : ""].filter(Boolean).join(" ");
+  if (typeof m.content === "string") return m.content;
+  return m.content.map((p) => (p.type === "text" ? p.text : "[image]")).join(" ");
+}
+
+/** The name/ok column: what `session_events.name` and `ok` hold for the event. */
+function eventName(e: SessionEvent): { name: string; ok?: boolean } {
+  switch (e.type) {
+    case "started": return { name: e.data.role };
+    case "message": return { name: e.data.message.role };
+    case "model_request": return { name: e.data.purpose };
+    case "model_response": return { name: e.data.endpointId, ok: true };
+    case "model_error": return { name: e.data.code ?? "error", ok: false };
+    case "tool_intent": return { name: e.data.name };
+    case "tool_outcome": return { name: e.data.name, ok: e.data.ok };
+    case "ended": return { name: e.data.status };
+    default: return { name: "" };
+  }
+}
+
+/** Fit the name/ok cell to `width`, shortening the name but never the ok/FAIL marker. */
+function nameCell(e: SessionEvent, width: number): string {
+  const { name, ok } = eventName(e);
+  const mark = ok === undefined ? "" : ok ? " ok" : " FAIL";
+  const room = width - mark.length;
+  return `${name.length > room ? `${name.slice(0, room - 3)}...` : name}${mark}`.padEnd(width);
+}
+
+function eventSummary(e: SessionEvent): string {
+  switch (e.type) {
+    case "started": {
+      const d = e.data;
+      return [`agent ${d.agentLabel}`, d.profile && `profile ${d.profile}`, d.tier && `tier ${d.tier}`, d.taskId && `task ${d.taskId}`, d.parentSessionId && `parent ${d.parentSessionId}`, d.previousSessionId && `retries ${d.previousSessionId}`].filter(Boolean).join(", ");
+    }
+    case "message": return `#${e.data.index} ${messageText(e.data.message)}`;
+    case "model_request": {
+      const d = e.data;
+      return [`${d.messageCount} msgs`, `max ${d.maxTokens} tok`, d.tools.length ? `tools ${d.tools.join(",")}` : "", d.responseFormat ? `format ${d.responseFormat}` : ""].filter(Boolean).join(", ");
+    }
+    case "model_response": {
+      const d = e.data;
+      const head = [d.finishReason ?? "?", `in ${d.usage.inputTokens ?? "?"} / out ${d.usage.outputTokens ?? "?"} tok`, d.attempts.length > 1 ? `${d.attempts.length} attempts` : ""].filter(Boolean).join(", ");
+      const body = d.toolCalls.length ? `-> ${d.toolCalls.map((c) => c.function.name).join(", ")}` : (d.content ?? "");
+      return body ? `${head}: ${body}` : head;
+    }
+    case "model_error": return `${e.data.status !== null ? `HTTP ${e.data.status}: ` : ""}${e.data.message}`;
+    case "tool_intent": return `[${e.data.sideEffect}${e.data.idempotent ? ", idempotent" : ""}] ${compact(e.data.args)}`;
+    case "tool_outcome": return `intent #${e.data.intentSeq}${e.data.truncated ? " (truncated)" : ""}: ${e.data.output}`;
+    case "note": return e.data.data === undefined ? e.data.text : `${e.data.text} ${compact(e.data.data)}`;
+    case "workspace": return e.data.repos.map((r) => `${r.alias} ${r.branch ?? "-"} @ ${(r.head ?? r.baseCommit ?? "?").slice(0, 10)}`).join("; ") || "(no repositories)";
+    case "ended": return e.data.stopReason;
+    default: return "";
+  }
+}
+
+function sessionLine(s: SessionView): string {
+  return `${s.id} ${s.agentLabel} (${s.role}) ${s.status}${s.stopReason ? `: ${s.stopReason}` : ""}`;
+}
+
+/** A terminal timeline: header, one line per event (seq, time, type, name/ok, summary), paging hint. */
+function sessionTimeline(d: SessionDetail, after: number): string {
+  const s = d.session;
+  const header = [
+    sessionLine(s),
+    [s.taskId && `task ${s.taskId}${s.taskLabel ? ` "${s.taskLabel}"` : ""}`, s.jobId && `job ${s.jobId}`, s.profile && `profile ${s.profile}`, s.tier && `tier ${s.tier}`].filter(Boolean).join("  ") || "(no task)",
+    `started ${stamp(s.createdAt)}  ${s.endedAt ? `ended after ${duration(s.durationMs)}` : `running for ${duration(s.durationMs)}`}  model requests ${s.modelRequests}  tool calls ${s.toolCalls}  events ${s.lastSeq}`,
+    ...(s.parentSessionId ? [`parent ${s.parentSessionId}`] : []),
+    ...(s.previousSessionId ? [`retries ${s.previousSessionId}`] : []),
+    `log ${s.logPath}`,
+  ];
+  const seqWidth = Math.max(3, String(s.lastSeq).length);
+  const nameWidth = 32;
+  const rows = d.events.map((e) => [String(e.seq).padStart(seqWidth), clock(e.at), e.type.padEnd(14), nameCell(e, nameWidth), oneLine(eventSummary(e))].join("  "));
+  const cols = ["seq".padStart(seqWidth), "time".padEnd(12), "type".padEnd(14), "name/ok".padEnd(nameWidth), "summary"].join("  ");
+  const lastShown = d.events.at(-1)?.seq ?? after;
+  return [
+    ...header,
+    "",
+    cols,
+    ...(rows.length ? rows : [`(no events after seq ${after})`]),
+    ...d.corrupt.map((c) => `CORRUPT ${c.line ? `line ${c.line}` : "log"}: ${c.error}${c.excerpt ? ` [${oneLine(c.excerpt, 60)}]` : ""}`),
+    ...(d.hasMore ? [`more events: switchyard session ${s.id} --after ${lastShown}`] : []),
+    ...(d.children.length ? ["", "delegated sessions:", ...d.children.map((c) => `  ${sessionLine(c)}`)] : []),
+    ...(d.taskSessions.length > 1 ? ["", "sessions of this task:", ...d.taskSessions.map((t) => `  ${t.id === s.id ? "*" : " "} ${sessionLine(t)}`)] : []),
+  ].join("\n").trimEnd();
+}
+
 async function main(): Promise<number> {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
@@ -97,6 +227,11 @@ async function main(): Promise<number> {
       billing: { type: "string" },
       balance: { type: "string" },
       cap: { type: "string" },
+      status: { type: "string" },
+      task: { type: "string" },
+      job: { type: "string" },
+      after: { type: "string" },
+      limit: { type: "string" },
       help: { type: "boolean", short: "h", default: false },
     },
   });
@@ -373,6 +508,37 @@ ${table(rows)}`, json);
         const lines = await blame(repo.path, args[1], values.ref ?? "HEAD");
         const rows = lines.map((l) => ({ line: l.line, agent: l.agent ?? l.authorName, model: l.model ?? "", role: l.role ?? "", commit: l.commit.slice(0, 10), text: l.text.slice(0, 80) }));
         out(json ? lines : table(rows), json);
+        return 0;
+      }
+      case "sessions": {
+        const status = statusFlag(values.status);
+        const limit = countFlag("limit", values.limit, 1);
+        const list = sessionsView(sy, { ...(status ? { status } : {}), ...(values.task ? { taskId: values.task } : {}), ...(values.job ? { jobId: values.job } : {}), ...(limit ? { limit } : {}) });
+        const rows = list.map((s) => ({
+          session: s.id,
+          status: s.status,
+          role: s.role,
+          agent: s.agentLabel,
+          task: s.taskLabel ?? s.taskId ?? "",
+          job: s.jobId ?? "",
+          requests: s.modelRequests,
+          tools: s.toolCalls,
+          events: s.lastSeq,
+          started: stamp(s.createdAt),
+          duration: duration(s.durationMs),
+          reason: s.stopReason ?? "",
+        }));
+        out(json ? list : table(rows), json);
+        return 0;
+      }
+      case "session": {
+        const id = args[0];
+        if (!id) throw new SwitchyardError("usage", "usage: switchyard session <id> [--after <seq>] [--limit <n>] [--json]");
+        const after = countFlag("after", values.after) ?? 0;
+        const limit = countFlag("limit", values.limit, 1);
+        const d = sessionDetail(sy, id, { afterSeq: after, ...(limit ? { limit } : {}) });
+        if (!d) throw new SwitchyardError("not_found", `unknown session ${id}`);
+        out(json ? d : sessionTimeline(d, after), json);
         return 0;
       }
       case "usage":

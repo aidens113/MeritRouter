@@ -5,9 +5,10 @@ import { z } from "zod";
 import { loadConfig } from "./config/load.js";
 import { MODALITIES, PROFILE_NAMES, TIER_NAMES } from "./config/schema.js";
 import { Switchyard } from "./core/service.js";
-import { routingPreview, jobDetail } from "./admin/insights.js";
+import { routingPreview, jobDetail, sessionDetail, sessionsView } from "./admin/insights.js";
 import { blame } from "./attribution/index.js";
 import type { Principal } from "./brain/access.js";
+import { SessionStatusSchema } from "./sessions/events.js";
 
 /**
  * MCP stdio server for Claude Code. Runs the worker loop in-process; jobs continue only while
@@ -175,6 +176,53 @@ async function main(): Promise<void> {
       return fail(err);
     }
   });
+
+  // ---------- agent sessions (read-only; resume belongs to S2) ----------
+  server.registerTool(
+    "list_sessions",
+    {
+      title: "List agent sessions",
+      description:
+        "Agent sessions, newest first: one per model-driven run (each task run, retry, or escalation; each classification). " +
+        "Each row has the role, agent label, task and job, status and stop reason, model request and tool call counts, and the last event seq. " +
+        "Filter by status (one or several), taskId, jobId, or parentSessionId (the sessions a session delegated).",
+      inputSchema: {
+        status: z.union([SessionStatusSchema, z.array(SessionStatusSchema).min(1)]).optional(),
+        taskId: z.string().min(1).optional(),
+        jobId: z.string().min(1).optional(),
+        parentSessionId: z.string().min(1).optional(),
+        limit: z.number().int().positive().max(1000).optional(),
+      },
+    },
+    async ({ status, taskId, jobId, parentSessionId, limit }) => {
+      try {
+        return json(sessionsView(sy, { ...(status ? { status } : {}), ...(taskId ? { taskId } : {}), ...(jobId ? { jobId } : {}), ...(parentSessionId ? { parentSessionId } : {}), limit: limit ?? 50 }));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+  server.registerTool(
+    "get_session",
+    {
+      title: "Get an agent session's timeline",
+      description:
+        "One session with a page of its event log in order: started, message, model_request, model_response, model_error, tool_intent, tool_outcome, note, workspace, ended. " +
+        "Also returns its delegated child sessions and the other sessions of the same task. " +
+        "Pages hold at most `limit` events (default 200) after `afterSeq`; when hasMore is true, call again with afterSeq set to the last returned seq. " +
+        "`corrupt` lists log lines that failed validation and were skipped.",
+      inputSchema: { sessionId: z.string().min(1), afterSeq: z.number().int().nonnegative().optional(), limit: z.number().int().positive().max(1000).optional() },
+    },
+    async ({ sessionId, afterSeq, limit }) => {
+      try {
+        const d = sessionDetail(sy, sessionId, { afterSeq: afterSeq ?? 0, limit: limit ?? 200 });
+        if (!d) return fail(new Error(`unknown session ${sessionId}`));
+        return json(d);
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
 
   // ---------- brain: Claude Code acts as a supervisor (reads everything, writes its project) ----------
   const effort = "claude-code";
