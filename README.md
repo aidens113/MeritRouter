@@ -1,7 +1,8 @@
 # SwitchYard Router
 
-Delegate bounded work from a Claude Code session to free external models, without giving up
-control of which models run, how many requests they spend, or what counts as "done".
+A multi-agent router and harness: a supervisor (Claude Code, or SwitchYard's own on models you
+choose) delegates bounded work to free, and optionally paid, worker models, without giving up
+control of which models run, what they may touch, what they spend, or what counts as "done".
 
 - **Use it with Claude Code or on its own.** With Claude Code, Claude supervises through MCP
   tools. Standalone, SwitchYard runs its own supervisor on the models you choose (free or paid):
@@ -24,7 +25,7 @@ control of which models run, how many requests they spend, or what counts as "do
   itself, one single-model FreeLLMAPI chain per model.
 - **Hard limits in code.** Per-task request budgets (including every coding-agent call), package
   allocations, deadlines, cancellation, and served-model verification are enforced before
-  dispatch. Paid routing is off.
+  dispatch. Paid routing is off by default.
 - **Evidence, not claims.** Results carry cited evidence, patches with base commits, check logs,
   and separate execution and acceptance statuses.
 - **Qualification.** A private eval suite with hidden tests measures each model per task family
