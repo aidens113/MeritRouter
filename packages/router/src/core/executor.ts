@@ -11,13 +11,11 @@ import type { RoutePlan } from "../routing/select.js";
 import { effectiveBudget } from "../admission/admission.js";
 import { AdmissionDenied, GatewayError } from "./errors.js";
 import { criterionTexts, WorkerResultSchema, type TaskState, type WorkerResult } from "./task.js";
-import { restoreRunState, retryStarted, RETRY_STARTED, REVIEW_RECORDED, type VerificationState } from "./retry-state.js";
-import type { ProfileName } from "../config/schema.js";
+import { restoreRunState } from "./retry-state.js";
 import { baseResult, type RetryContext, type RunContext, type RunOutcome, type RunnerResult } from "../runners/types.js";
-import { repairCap, reviewReserveAdjustment, type ContractStore, type StoredContract } from "../verification/contract.js";
-import { reviewResult, type ReviewPhaseResult } from "../verification/review.js";
-import { repairRetryContext, runTargetedChecks, submittedRevisionStart, targetedCheckAllowed } from "../verification/followup.js";
-import { ensureContract, failureContext, nextTier, runCap, verifyOutcome, type VerifiedOutcome } from "./acceptance.js";
+import { repairCap, type ContractStore, type StoredContract } from "../verification/contract.js";
+import { continueRun, planRetry, repairPossible, requestsUsed, verifyWithReview, type ReviewRun, type VerifiedRun } from "../verification/phase.js";
+import { contractShortfall, ensureContract, runCap } from "./acceptance.js";
 import { runCompletion } from "../runners/completion.js";
 import { runReadOnly } from "../runners/readonly.js";
 import { runBatch } from "../runners/batch.js";
@@ -335,114 +333,30 @@ export class Executor {
       classification,
     );
     if (c.ok) return c.stored;
-    this.record(task, "failed", baseResult({
-      executionStatus: "failed",
-      stopReason: `verification_budget_insufficient: ${c.message}`,
-      summary: `Not run. ${c.message}.`,
-      unresolvedCriteria: criterionTexts(task.spec),
-    }));
+    this.record(task, "failed", contractShortfall(task.spec, c.message));
     return null;
   }
 
-  /** Verify one outcome against the contract; a level raised by the actual change (or tier) is recorded once. */
-  private verify(task: StoredTask, contract: StoredContract, mode: Parameters<typeof verifyOutcome>[2], outcome: RunOutcome, qualityRetriesUsed: number, opts: Parameters<typeof verifyOutcome>[5] = {}, announce = true) {
-    const v = verifyOutcome(this.d.cfg.verification, contract, mode, outcome, qualityRetriesUsed, opts);
-    const re = v.reevaluation;
-    if (re.raised && announce) {
-      // A raised level that needs more review than the contract reserved draws it from the room under the ceiling.
-      const reserve = reviewReserveAdjustment(this.d.cfg.verification, contract.contract.budget, re.level, re.review.required);
-      this.d.tasks.event(task.row.id, "verification_raised", { from: contract.contract.verification.level, to: re.level, importance: re.importance, importanceSource: re.importanceSource, newRules: re.newRules, checks: re.checks, ...(opts?.tier ? { tier: opts.tier } : {}), ...(reserve ? { reserveAdjustment: { review: reserve } } : {}) });
-    }
-    return v;
-  }
-
   /**
-   * Verify a result and, when its level requires it, review it: cheap deterministic checks
-   * first; an independent review only when they found no defect. A reviewer's request for a
-   * targeted check runs once (coding) and is followed by a re-review while the allowance lasts.
-   * Returns the (possibly extended) outcome, the verification, and `settle`: the same decision
-   * when no quality retry can run after all (a reviewer-only defect then goes to the supervisor).
+   * The verification phase's view of one run: its tier and session, and the executor's hooks
+   * (the reviewer's run context, and the watchdog following the reviewer while it works).
    */
-  private async verifyWithReview(
-    task: StoredTask,
-    contract: StoredContract,
-    mode: Parameters<typeof verifyOutcome>[2],
-    start: RunOutcome,
-    st: VerificationState,
-    run: { tier: TierName; signal: AbortSignal; routing: Routing; session: SessionRecorder | null; repairPossible: boolean },
-  ): Promise<{ outcome: RunOutcome; verified: VerifiedOutcome; settle: () => VerifiedOutcome }> {
-    let outcome = start;
-    let last: Parameters<typeof verifyOutcome>[5] = {};
-    const opts = (extra: Parameters<typeof verifyOutcome>[5] = {}) => (last = { tier: run.tier, reviews: st.reviews, ...extra });
-    const done = (verified: VerifiedOutcome) => ({ outcome, verified, settle: () => this.verify(task, contract, mode, outcome, Number.MAX_SAFE_INTEGER, last, false) });
-    let verified = this.verify(task, contract, mode, outcome, st.qualityRetriesUsed, opts());
-    const needsReview = (v: VerifiedOutcome) => v.reevaluation.review.required && outcome.result.executionStatus === "completed" && v.decision.acceptanceStatus !== "unmet";
-    if (!needsReview(verified)) return done(verified);
-    if ((task.row as typeof task.row & { purpose?: string }).purpose === "qualification") {
-      // Qualification runs are graded by the evaluation suite; a reviewer would measure another model.
-      return done(this.verify(task, contract, mode, outcome, st.qualityRetriesUsed, opts({ notes: ["qualification task: graded by the evaluation suite, not reviewed"] }), false));
-    }
-    const allowed = mode === "coding" ? targetedCheckAllowed(this.d.cfg, task.spec.constraints.checks ?? []) : null;
-    let phase: ReviewPhaseResult | null = null;
-    const notes: string[] = [];
-    for (let round = 0; round < 2; round++) {
-      const watch = this.watched.get(task.row.id);
-      try {
-        phase = await reviewResult(
-        { cfg: this.d.cfg, db: this.d.db, gate: this.d.gate, catalog: this.d.catalog, router: this.d.router, tasks: this.d.tasks, artifacts: this.d.artifacts, sessions: this.d.sessions },
-        {
-          task,
-          contract,
-          outcome,
-          reevaluation: verified.reevaluation,
-          deterministic: verified.result.verification?.checks.map((c) => ({ name: c.name, outcome: c.outcome, detail: c.detail })) ?? [],
-          tier: run.tier,
-          attempt: ++st.attempts,
-          // Keep half of the allowance for a re-review while a repair is still possible.
-          share: run.repairPossible && round === 0 ? 0.5 : 1,
-          parentSessionId: run.session?.id ?? null,
-          jobId: jobIdFor(task),
-          context: (plan, session, maxModelRequests, attempts, profile) => {
-            // The watchdog follows the reviewer while it works (the author's session is idle then).
-            if (watch) Object.assign(watch, { reviewer: session, phaseAt: this.d.now() });
-            return this.reviewerContext(task, run.signal, plan, run.routing, session, contract, maxModelRequests, attempts, profile);
-          },
-          targetedChecksAllowed: allowed,
-        },
-        );
-      } finally {
-        if (watch?.reviewer) Object.assign(watch, { reviewer: null, phaseAt: this.d.now() });
-      }
-      st.reviews.push(phase.record);
-      this.d.tasks.event(task.row.id, REVIEW_RECORDED, { record: phase.record });
-      notes.push(...phase.notes);
-      const v = phase.verdict;
-      if (!v || v.recommendedAction !== "run_targeted_check" || st.targetedRan || mode !== "coding") break;
-      // Missing evidence a check can supply: run it once on the submitted revision, then re-review.
-      st.targetedRan = true;
-      const ev = outcome.evidence ?? {};
-      const t = await runTargetedChecks({ cfg: this.d.cfg, db: this.d.db, artifacts: this.d.artifacts, signal: run.signal }, task, outcome.result, ev.revision ?? null, ev.artifactDigest ?? null, v.targetedChecks ?? []);
-      this.d.tasks.event(task.row.id, "targeted_check", { commands: v.targetedChecks ?? [], ran: t.records.map((c) => ({ command: c.command, exitCode: c.exitCode })), note: t.note });
-      notes.push(t.note);
-      if (!t.records.length) break;
-      outcome = { ...outcome, result: { ...outcome.result, checks: [...outcome.result.checks, ...t.records] } };
-      verified = this.verify(task, contract, mode, outcome, st.qualityRetriesUsed, opts({ notes }), false);
-      if (!needsReview(verified)) return done(verified);
-    }
-    verified = this.verify(task, contract, mode, outcome, st.qualityRetriesUsed, opts({ review: phase?.outcome ?? null, verificationBudgetExhausted: phase?.budgetExhausted ?? false, notes }), false);
-    return done(verified);
-  }
-
-  /** The reviewer's run context: the task's, routed to the reviewer, capped at its share, purpose verification. */
-  private reviewerContext(task: StoredTask, signal: AbortSignal, plan: RoutePlan, routing: Routing, session: SessionRecorder | null, contract: StoredContract, maxModelRequests: number, attempts: GateAttempt[], profile: ProfileName): RunContext {
-    const ctx = this.context(task, signal, plan, routing, session, { contract, retry: null });
-    return { ...ctx, profile: this.d.cfg.profiles[profile]!, budget: { ...ctx.budget, maxModelRequests }, attempts, purpose: "verification" };
-  }
-
-  /** Requests charged to the task so far: in total and per verification purpose. */
-  private used(taskId: string): { total: number; verification: number; repair: number } {
-    const p = this.d.gate.admission.taskTotalsByPurpose(taskId);
-    return { total: this.d.gate.admission.taskTotals(taskId).requests, verification: p.verification, repair: p.repair };
+  private reviewRun(task: StoredTask, signal: AbortSignal, routing: Routing, session: SessionRecorder | null, contract: StoredContract, tier: TierName, repairPossible: boolean): ReviewRun {
+    return {
+      tier,
+      signal,
+      session,
+      jobId: jobIdFor(task),
+      repairPossible,
+      reviewerContext: (plan, reviewer, maxModelRequests, attempts, profile) => {
+        const ctx = this.context(task, signal, plan, routing, reviewer, { contract, retry: null });
+        return { ...ctx, profile: this.d.cfg.profiles[profile]!, budget: { ...ctx.budget, maxModelRequests }, attempts, purpose: "verification" };
+      },
+      onReviewer: (reviewer) => {
+        const watch = this.watched.get(task.row.id);
+        if (watch && (reviewer || watch.reviewer)) Object.assign(watch, { reviewer, phaseAt: this.d.now() });
+      },
+    };
   }
 
   private tooDifficult(task: StoredTask, prepared: Prepared): void {
@@ -494,12 +408,6 @@ export class Executor {
         contract = c;
       }
       let previous: string | null | undefined;
-      // Verification and the one retry span the task's runs: a run after an interruption
-      // continues them (the same repair run, at its tier) instead of starting over.
-      const restored = restoreRunState(this.d.tasks, task.row.id);
-      const st = restored.st;
-      let retry: RetryContext | null = restored.retry?.retry ?? null;
-      let repairing = !!restored.retry;
       const forced = !!task.spec.routing?.endpointId;
       // Only the first attempt resumes; an escalation always starts fresh.
       let resume: ReturnType<Executor["resumeFor"]> = null;
@@ -509,26 +417,22 @@ export class Executor {
         // An unreadable or already-claimed session: run fresh (linked to it) rather than not at all.
         this.d.tasks.event(task.row.id, "session_resume_failed", { error: (err as Error).message });
       }
-      // An interruption never changes the tier (the router counts any earlier run as a failed
-      // one): a run after it continues at the tier of the run it continues, a started retry at
-      // the retry's tier. Verification then judges the work at the tier it was produced at.
-      const pinned = restored.retry?.toTier ?? this.interruptedTier(task, resume);
-      if (pinned && pinned !== plan.tier && mode !== "supervisor" && !forced && (task.row as typeof task.row & { purpose?: string }).purpose !== "qualification") {
-        const at = this.d.router.plan(task.spec.profile, pinned, prepared.inputModalities);
-        if (at.candidates.length) {
-          this.d.tasks.event(task.row.id, "tier_kept", { classified: plan.tier, tier: pinned, reason: restored.retry ? "retry_in_progress" : "after_interruption" });
-          plan = at;
-          this.d.db.prepare("UPDATE tasks SET tier = ? WHERE id = ?").run(plan.tier, task.row.id);
-        }
-      }
-      if (restored.retry && restored.retry.toTier !== restored.retry.fromTier && plan.tier === restored.retry.toTier) routing.escalatedFrom = restored.retry.fromTier;
+      // Verification and the one retry span the task's runs: a run after an interruption
+      // continues them (the same repair run, at its tier) instead of starting over.
+      const exempt = mode === "supervisor" || forced || (task.row as typeof task.row & { purpose?: string }).purpose === "qualification";
+      const continued = continueRun(this.d, task, plan, prepared.inputModalities, { interruptedTier: () => this.interruptedTier(task, resume), exempt });
+      const st = continued.st;
+      let retry: RetryContext | null = continued.retry;
+      let repairing = continued.repairing;
+      plan = continued.plan;
+      routing.escalatedFrom = continued.escalatedFrom;
       for (;;) {
         routing.tier = plan.tier;
         let outcome: RunOutcome;
         try {
           session = resume ? resume.session : this.openSession(task, plan, previous);
           // A repair run (also one resumed after an interruption) draws on the repair reserve.
-          const cap = repairing && contract ? repairCap(contract.contract.budget, this.used(task.row.id)) : null;
+          const cap = repairing && contract ? repairCap(contract.contract.budget, requestsUsed(this.d.gate, task.row.id)) : null;
           const ctx = this.context(task, controller.signal, plan, routing, session, { contract, retry, repairCap: cap }, resume ? { plan: resume.plan } : null);
           resume = null;
           outcome = await this.runMode(ctx);
@@ -548,18 +452,12 @@ export class Executor {
           this.settle(task, d, outcome.result);
           return;
         }
-        let verified: VerifiedOutcome | null = null;
-        let settle: (() => VerifiedOutcome) | null = null;
+        let verified: VerifiedRun["verified"] | null = null;
+        let settle: VerifiedRun["settle"] | null = null;
         if (contract) {
-          const repairsLeft = contract.contract.verification.maxQualityRetries - st.qualityRetriesUsed;
           try {
-            const v = await this.verifyWithReview(task, contract, mode, outcome, st, {
-              tier: plan.tier,
-              signal: controller.signal,
-              routing,
-              session,
-              repairPossible: repairsLeft > 0 && !forced && contract.contract.budget.repair > this.used(task.row.id).repair,
-            });
+            const run = this.reviewRun(task, controller.signal, routing, session, contract, plan.tier, repairPossible(this.d.gate, task, contract, st, forced));
+            const v = await verifyWithReview(this.d, task, contract, mode, outcome, st, run);
             outcome = v.outcome;
             verified = v.verified;
             settle = v.settle;
@@ -575,40 +473,20 @@ export class Executor {
           }
         }
         let result: RunnerResult = verified ? verified.result : { ...outcome.result, verificationStatus: "not_required" };
-        const next = nextTier(plan.tier);
-        const execFailure = outcome.state === "budget_exhausted" ? "budget_exhausted" : result.stopReason === "invalid_output" ? "invalid_output" : null;
-        // A concrete defect (a failed check, criterion, or review) gets one repair, in every mode.
-        const quality = !execFailure && verified?.decision.action === "repair";
-        const repairTier = execFailure ? next : quality ? (this.d.cfg.routing.escalate_on_failure && next ? next : plan.tier) : null;
-        const allowed = execFailure ? this.d.cfg.routing.escalate_on_failure && !routing.escalatedFrom : quality;
-        if (allowed && repairTier && !forced) {
-          const used = this.used(task.row.id);
-          const budgetLeft = contract ? repairCap(contract.contract.budget, used) - used.total : runCap(this.d.cfg, task.spec, repairTier, null) - used.total;
-          const nextPlan = repairTier === plan.tier ? plan : this.d.router.plan(task.spec.profile, repairTier, prepared.inputModalities);
-          if (budgetLeft > 0 && nextPlan.candidates.length) {
-            const reason = execFailure ?? "acceptance_unmet";
-            if (repairTier !== plan.tier) this.d.tasks.event(task.row.id, "escalated", { from: plan.tier, to: repairTier, reason });
-            const lastReview = st.reviews.at(-1) ?? null;
-            const startFrom = quality && mode === "coding" ? await submittedRevisionStart(this.d.db, task, outcome.evidence?.revision ?? null) : null;
-            const baseRetry = failureContext(this.d.artifacts, plan.tier, reason, result);
-            retry = quality ? repairRetryContext(baseRetry, lastReview, startFrom) : baseRetry;
-            // Durable before the retry runs: a run after an interruption continues it, never repeats it.
-            this.d.tasks.event(task.row.id, RETRY_STARTED, retryStarted(plan.tier, repairTier, reason, retry));
-            if (quality) this.d.tasks.event(task.row.id, "quality_repair", { fromTier: plan.tier, toTier: repairTier, startFrom: startFrom?.commit ?? null, review: lastReview?.verdict ?? null, reasons: result.verification?.reasons.slice(0, 5) ?? [] });
-            // The task's one bounded retry, whatever triggered it.
-            st.qualityRetriesUsed++;
-            repairing = true;
-            const e = sessionEnd(outcome.state, outcome.result.stopReason);
-            this.endSession(task, session, e.status, repairTier !== plan.tier ? `${e.stopReason}; escalated to ${repairTier}` : `${e.stopReason}; repair at ${repairTier}`);
-            previous = session?.id ?? null;
-            session = null;
-            if (repairTier !== plan.tier) {
-              routing.escalatedFrom = plan.tier;
-              this.d.db.prepare("UPDATE tasks SET tier = ? WHERE id = ?").run(repairTier, task.row.id);
-            }
-            plan = nextPlan;
-            continue;
+        const planned = await planRetry(this.d, task, st, { mode, plan, inputModalities: prepared.inputModalities, outcome, result, verified, contract, escalatedFrom: routing.escalatedFrom, forced });
+        if (planned) {
+          retry = planned.retry;
+          repairing = true;
+          const e = sessionEnd(outcome.state, outcome.result.stopReason);
+          this.endSession(task, session, e.status, planned.tier !== plan.tier ? `${e.stopReason}; escalated to ${planned.tier}` : `${e.stopReason}; repair at ${planned.tier}`);
+          previous = session?.id ?? null;
+          session = null;
+          if (planned.tier !== plan.tier) {
+            routing.escalatedFrom = plan.tier;
+            this.d.db.prepare("UPDATE tasks SET tier = ? WHERE id = ?").run(planned.tier, task.row.id);
           }
+          plan = planned.plan;
+          continue;
         }
         // A repair was called for but cannot run (forced endpoint, no budget or candidates): decide
         // as if no retry remained.
@@ -711,7 +589,8 @@ export class Executor {
           // Members are reviewed one by one when their level requires it (no repair inside a batch).
           const signal = this.controllers.get(t.row.id)?.signal ?? shared.signal;
           try {
-            const v = await this.verifyWithReview(t, contract, this.d.cfg.profiles[t.spec.profile]!.mode, o, restoreRunState(this.d.tasks, t.row.id).st, { tier, signal, routing: this.routing.get(t.row.id)!, session, repairPossible: false });
+            const run = this.reviewRun(t, signal, this.routing.get(t.row.id)!, session, contract, tier, false);
+            const v = await verifyWithReview(this.d, t, contract, this.d.cfg.profiles[t.spec.profile]!.mode, o, restoreRunState(this.d.tasks, t.row.id).st, run);
             this.record(t, o.state, v.verified.decision.action === "repair" ? v.settle().result : v.verified.result);
           } catch (err) {
             if (isSimulatedCrash(err)) {

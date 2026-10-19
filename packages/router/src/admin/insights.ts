@@ -5,6 +5,7 @@ import { ConfigSchema, MODALITIES, PROFILE_NAMES, TIER_NAMES, type Importance, t
 import { formatIssues, parseConfig } from "../config/load.js";
 import type { Switchyard } from "../core/service.js";
 import { criteria as taskCriteria, type Criterion, type SupervisorDecision, type TaskState, type VerificationRecord, type WorkerResult, type WorkerTask } from "../core/task.js";
+import { verificationTrail, type TaskVerificationTrail } from "../verification/trail.js";
 import { SwitchyardError } from "../core/errors.js";
 import type { AcceptanceDecisionOutcome } from "../runners/types.js";
 import type { StoredContract } from "../verification/contract.js";
@@ -357,6 +358,8 @@ export interface TaskDetail {
   verification: VerificationRecord | null;
   importance: TaskImportanceView | null;
   acceptance: TaskAcceptanceView;
+  /** Reviews, retries, targeted checks, raised levels, and requests by purpose. */
+  trail: TaskVerificationTrail;
 }
 
 /** Effective importance: from the result when it was raised there, else the contract, else the request. */
@@ -406,6 +409,7 @@ export function taskDetail(sy: Switchyard, id: string): TaskDetail | null {
     contractError,
     verification,
     importance: importanceView(t.spec, contract, verification),
+    trail: verificationTrail({ tasks: sy.tasks, catalog: sy.catalog, sessions: sy.sessions, admission: sy.gate.admission }, id, verification),
     acceptance: {
       awaitingDecision: t.row.state === "completed" && t.result?.acceptanceStatus === "needs_supervisor",
       supervisorAcceptance,
@@ -612,6 +616,7 @@ export function startQualification(sy: Switchyard, endpointId: string, opts: { e
 }
 
 export type { ModelEndpoint, EndpointOverride, RoutingOverride, CandidateExplanation, Classification, TaskState };
+export type { ReviewView, RetryView, TargetedCheckView, RaisedLevelView, TaskVerificationTrail } from "../verification/trail.js";
 
 // ---------- jobs (standalone supervisors) ----------
 

@@ -11,6 +11,7 @@ import { AcceptanceBadge, ImportanceBadge, OutcomeBadge, TaskStateBadge, TierBad
 import { Badge, Callout, Card, CardHeader, cx, EmptyState, HelpTip, KeyValue, Mono, PageHeader } from "@/components/ui";
 import { ActionButton, AutoRefresh } from "@/components/client/actions";
 import { ArtifactViewer } from "@/components/client/artifact-viewer";
+import { RequestsByPurpose, TrailHeading, VerificationTrail } from "@/components/verification-trail";
 import { AcceptanceActions } from "@/components/client/acceptance";
 import { dateTime, humanize, modelHref, num } from "@/lib/format";
 
@@ -298,7 +299,7 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
         </Card>
       ) : null}
 
-      <ContractAndVerification d={d} />
+      <ContractAndVerification d={d} names={names} />
 
       <Card>
         <CardHeader title="Artifacts"description="Files the task produced: patches (with their base commit), model responses, check logs, and context manifests." />
@@ -477,10 +478,12 @@ function importanceSource(source: string): string {
   return `${label[kind] ?? kind}${id ? ` ${id}` : ""}`;
 }
 
-function ContractAndVerification({ d }: { d: insights.TaskDetail }) {
+function ContractAndVerification({ d, names }: { d: insights.TaskDetail; names: Map<string, string> }) {
   const c = d.contract?.contract;
   const v = d.verification;
+  const t = d.trail;
   if (!c && !v && !d.importance && !d.contractError) return null;
+  const followUps = t.reviews.length + t.retries.length + t.targetedChecks.length + t.raised.length;
   return (
     <Card>
       <CardHeader
@@ -562,12 +565,22 @@ function ContractAndVerification({ d }: { d: insights.TaskDetail }) {
           ) : (
             <p className="text-ink-3">No contract yet. It is compiled after classification, before the first run{d.spec.profile === "supervise" ? "; jobs are verified by their job checks instead" : ""}.</p>
           )}
+          <div>
+            <h4 className="mb-1 text-xs font-semibold text-ink-3">Model requests by purpose</h4>
+            <RequestsByPurpose used={t.requestsByPurpose} budget={c?.budget ?? null} />
+          </div>
         </div>
         <div className="space-y-3 text-sm">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-3">Verification record</h3>
           {v ? <VerificationRecordView v={v} /> : <p className="text-ink-3">{d.result ? "This result has no verification record." : "Verification runs when the worker returns a result."}</p>}
         </div>
       </div>
+      {followUps ? (
+        <div className="space-y-3 border-t border-line p-4">
+          <TrailHeading />
+          <VerificationTrail trail={t} criteria={new Map(d.criteria.map((x) => [x.id, x.text]))} names={names} />
+        </div>
+      ) : null}
     </Card>
   );
 }

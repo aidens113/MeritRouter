@@ -9,9 +9,9 @@ import { evaluatePolicy, reevaluateOnResult, resolveLevel, type Reevaluation } f
 import { runNamedChecks, selfReportFromOutput } from "../verification/checks.js";
 import { applySupervisorDecision, decide, verificationRecord, type Decision, type ReviewOutcome } from "../verification/decide.js";
 import { declaredPaths } from "../verification/match.js";
-import type { AcceptanceDecisionInput, AcceptanceDecisionOutcome, RetryContext, RunOutcome, RunnerResult } from "../runners/types.js";
+import { baseResult, type AcceptanceDecisionInput, type AcceptanceDecisionOutcome, type RetryContext, type RunOutcome, type RunnerResult } from "../runners/types.js";
 import { SwitchyardError, TaskValidationError } from "./errors.js";
-import { criteria, isTerminal, type ReviewRecord, type WorkerResult, type WorkerTask } from "./task.js";
+import { criteria, criterionTexts, isTerminal, type ReviewRecord, type WorkerResult, type WorkerTask } from "./task.js";
 
 /**
  * The glue between the executor and the verification library: compiling and storing a task's
@@ -43,6 +43,16 @@ export interface ContractDeps {
 }
 
 export type EnsuredContract = { ok: true; stored: StoredContract; created: boolean } | { ok: false; message: string };
+
+/** The result of a task whose verification policy needs more requests than it allows: failed, not run. */
+export function contractShortfall(spec: WorkerTask, message: string): RunnerResult {
+  return baseResult({
+    executionStatus: "failed",
+    stopReason: `verification_budget_insufficient: ${message}`,
+    summary: `Not run. ${message}.`,
+    unresolvedCriteria: criterionTexts(spec),
+  });
+}
 
 /**
  * Compile the task's contract once, after classification and before its first run, and store
