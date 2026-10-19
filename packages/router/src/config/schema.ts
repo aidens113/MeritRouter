@@ -199,6 +199,12 @@ export const ConfigSchema = z
         runner: z.enum(["opencode", "command"]).default("opencode"),
         /** Executable for the opencode runner, or the full command for the generic runner. */
         command: z.string().min(1).default("opencode"),
+        /** Shell command patterns the coding agent may run (OpenCode permission syntax); everything else is denied. */
+        allowed_commands: z.array(z.string().min(1)).default([]),
+        /** Run even when the worktree contains its own agent config (opencode.json / .opencode). */
+        allow_repo_agent_config: z.boolean().default(false),
+        /** Stop the agent after this many consecutive denied model requests. */
+        max_denied_requests: z.number().int().positive().default(3),
         /** Files whose modification blocks a "met" acceptance status (tests, evaluators). */
         protected_paths: z.array(z.string()).default(["**/*.test.*", "**/*.spec.*", "**/test/**", "**/tests/**", "**/__tests__/**"]),
       })

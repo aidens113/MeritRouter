@@ -1,0 +1,111 @@
+# SwitchYard Router configuration. Relative paths resolve against this file's directory.
+# Every setting here can also be edited from the web panel (Settings).
+version: 1
+
+gateway:
+  adapter: freellmapi
+  base_url: http://localhost:3001/v1
+  api_key_env: FREELLMAPI_API_KEY          # unified FreeLLMAPI key (inference)
+  admin_token_env: FREELLMAPI_ADMIN_TOKEN  # dashboard session token (catalog, chains, keys)
+  require_verified_chains: true            # refuse dispatch unless the model's chain is verified
+  bypass_cache: true                       # FreeLLMAPI's cache is shared across clients
+
+storage:
+  directory: .switchyard
+
+models:
+  file: models.yaml            # manual models and per-model overrides (optional)
+  max_metadata_age_days: 30
+
+discovery:
+  interval_minutes: 60
+  # Platforms where every model is a free tier on YOUR accounts. Never inferred.
+  # OpenRouter models count as free only when their published price is 0.
+  free_platforms: []           # e.g. [groq, google, nvidia, kilo]
+  require_confirmation_for_heuristic_params: true
+
+tiers:
+  T1: { max_score: 3,  min_total_parameters_b: 30,  max_model_requests: 4,  prefer: smallest_sufficient }
+  T2: { max_score: 7,  min_total_parameters_b: 100, max_model_requests: 8,  prefer: smallest_sufficient }
+  T3: { max_score: 11, min_total_parameters_b: 100, max_model_requests: 12, prefer: most_capable }
+
+routing:
+  max_endpoint_fallbacks: 3
+  escalate_on_failure: true
+  respect_provider_cooldowns: true
+
+scoring:
+  # rulebook_file: rulebook.yaml   # omit to use the built-in rulebook
+  cache: true
+  batch_window_ms: 400
+  max_batch: 8
+
+qualification:
+  required: false              # turn on once models have been qualified
+  trials_per_task: 3
+  pass_threshold: 0.6
+  min_trials: 6
+  max_requests_per_day: 200
+
+repositories:
+  app:
+    path: ../my-app            # replace with a real path
+
+execution:
+  max_concurrent_tasks: 2
+  max_concurrent_writers_per_repository: 1
+  max_model_requests_per_task: 16
+  job_timeout_seconds: 1200
+  on_capacity_exhausted: queue
+  await_max_seconds: 240
+
+allocation:
+  max_model_requests_per_hour: 150
+  max_model_requests_per_day: 1500
+
+spend:
+  paid_fallback_enabled: false
+  max_paid_usd_per_week: 0
+
+coding:
+  runner: opencode
+  command: opencode
+  allowed_commands: []         # e.g. ["npm test*", "pnpm test*"]
+  allow_repo_agent_config: false
+
+panel:
+  port: 4477
+  token_env: SWITCHYARD_PANEL_TOKEN
+
+profiles:
+  summarize:
+    mode: completion
+    min_total_parameters_b: 30
+    max_model_requests: 4
+    max_output_tokens: 6000
+    classify: never
+    batching: { enabled: true, max_items: 8, per_item_output_tokens: 800 }
+  inspect:
+    mode: read_only
+    min_total_parameters_b: 30
+    max_model_requests: 6
+    tools: repository_read
+  analyze:
+    mode: read_only
+    min_total_parameters_b: 100
+    max_model_requests: 10
+    tools: repository_read_and_artifacts
+    min_tier: T2
+  implement:
+    mode: coding
+    min_total_parameters_b: 100
+    max_model_requests: 12
+    workspace: isolated_worktree
+    tools: scoped_edit_and_checks
+    min_tier: T2
+  review:
+    mode: read_only
+    min_total_parameters_b: 100
+    max_model_requests: 8
+    tools: repository_read_and_artifacts
+    min_tier: T2

@@ -61,6 +61,8 @@ export class Scheduler {
     try {
       do {
         this.again = false;
+        // Liveness marker for the panel ("a worker is running").
+        this.tasks.db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(`worker:${this.owner}`, String(Date.now()));
         this.tasks.recoverExpiredLeases();
         const leaseMs = this.cfg.execution.lease_seconds * 1000;
         const defaultTimeoutMs = this.cfg.execution.job_timeout_seconds * 1000;
@@ -113,6 +115,11 @@ export class Scheduler {
   /** Stop claiming; in-flight tasks are interrupted so a later run can recover them. */
   async stop(): Promise<void> {
     this.stopped = true;
+    try {
+      this.tasks.db.prepare("DELETE FROM meta WHERE key = ?").run(`worker:${this.owner}`);
+    } catch {
+      // database already closed
+    }
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     this.executor.abortAll("shutdown");

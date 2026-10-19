@@ -1,0 +1,422 @@
+import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import YAML from "yaml";
+import { ConfigSchema, MODALITIES, PROFILE_NAMES, TIER_NAMES, type Modality, type ProfileName, type TierName } from "../config/schema.js";
+import { formatIssues, parseConfig } from "../config/load.js";
+import type { Switchyard } from "../core/service.js";
+import type { TaskState, WorkerResult, WorkerTask } from "../core/task.js";
+import type { EndpointOverride, ModelEndpoint, RoutingOverride } from "../models/catalog.js";
+import type { ChainVerification } from "../models/chains.js";
+import { planRoute, type CandidateExplanation } from "../routing/select.js";
+import { qualificationLookup, qualificationStat, type QualificationStat } from "../qualification/stats.js";
+import { DEFAULT_RULEBOOK, RulebookSchema } from "../scoring/rulebook.js";
+import type { Classification } from "../scoring/score.js";
+import type { UsageSummary } from "../storage/usage.js";
+import type { ArtifactRow } from "../storage/artifacts.js";
+import type { ProviderStatus } from "../gateway/types.js";
+
+const DAY = 86_400_000;
+
+export interface WorkerInfo {
+  owner: string;
+  lastSeen: number;
+}
+
+export function workers(sy: Switchyard, withinMs = 15_000): WorkerInfo[] {
+  const rows = sy.db.prepare("SELECT key, value FROM meta WHERE key LIKE 'worker:%'").all() as { key: string; value: string }[];
+  const now = Date.now();
+  return rows
+    .map((r) => ({ owner: r.key.slice("worker:".length), lastSeen: Number(r.value) }))
+    .filter((w) => now - w.lastSeen <= withinMs);
+}
+
+export interface Overview {
+  generatedAt: number;
+  gatewayConfigured: boolean;
+  adminConfigured: boolean;
+  workers: WorkerInfo[];
+  usage24h: UsageSummary;
+  usage7d: UsageSummary;
+  tasksByState: Record<string, number>;
+  models: Record<"active" | "pending_confirmation" | "disabled" | "removed", number> & { routable: number };
+  providers: ProviderStatus[];
+  lastScan: ReturnType<Switchyard["scanner"]["lastScan"]>;
+  attention: string[];
+}
+
+export async function overview(sy: Switchyard): Promise<Overview> {
+  await sy.health.refresh().catch(() => undefined);
+  const now = Date.now();
+  const tasksByState = Object.fromEntries(
+    (sy.db.prepare("SELECT state, COUNT(*) AS n FROM tasks GROUP BY state").all() as { state: string; n: number }[]).map((r) => [r.state, r.n]),
+  );
+  const eps = sy.catalog.endpoints();
+  const models = { active: 0, pending_confirmation: 0, disabled: 0, removed: 0, routable: 0 };
+  for (const e of eps) models[e.status]++;
+  models.routable = eps.filter((e) => e.status === "active" && e.available && sy.chains.latest(e.chainName)?.ok !== false).length;
+  const attention: string[] = [];
+  const gatewayConfigured = sy.client.name !== "unconfigured";
+  if (!gatewayConfigured) attention.push(`Set ${sy.cfg.gateway.api_key_env} so tasks can reach FreeLLMAPI.`);
+  if (!sy.admin) attention.push(`Set ${sy.cfg.gateway.admin_token_env} to scan models, manage chains, and edit provider keys.`);
+  if (models.pending_confirmation) attention.push(`${models.pending_confirmation} model(s) need a confirmed parameter count before they can be used.`);
+  if (eps.length === 0) attention.push("No models in the catalog yet. Run a scan from the Models page.");
+  if (sy.cfg.discovery.free_platforms.length === 0) attention.push("No free platforms declared (discovery.free_platforms); only OpenRouter models priced at $0 count as free.");
+  const s = sy.usage(now - DAY);
+  if (s.policyViolations) attention.push(`${s.policyViolations} served-model policy violation(s) in the last 24h; affected models are quarantined.`);
+  return {
+    generatedAt: now,
+    gatewayConfigured,
+    adminConfigured: sy.admin !== null,
+    workers: workers(sy),
+    usage24h: s,
+    usage7d: sy.usage(now - 7 * DAY),
+    tasksByState,
+    models,
+    providers: sy.health.snapshot(),
+    lastScan: sy.scanner.lastScan(),
+    attention,
+  };
+}
+
+export interface EndpointStats {
+  requests: number;
+  succeeded: number;
+  failed: number;
+  uncertain: number;
+  policyViolations: number;
+  inputTokens: number;
+  outputTokens: number;
+  avgLatencyMs: number | null;
+  lastUsedAt: number | null;
+  /** Results of tasks this model served (supervisor-visible outcomes). */
+  tasksCompleted: number;
+  tasksFailed: number;
+}
+
+function endpointStats(sy: Switchyard, id: string, sinceMs: number): EndpointStats {
+  const r = sy.db
+    .prepare(
+      `SELECT COUNT(*) AS requests, SUM(status='succeeded') AS ok, SUM(status='failed') AS failed, SUM(status='uncertain') AS uncertain,
+              SUM(policy_violation IS NOT NULL) AS violations, COALESCE(SUM(input_tokens),0) AS inTok, COALESCE(SUM(output_tokens),0) AS outTok,
+              AVG(CASE WHEN finished_at IS NOT NULL THEN finished_at - reserved_at END) AS latency, MAX(reserved_at) AS last
+         FROM model_requests WHERE endpoint_id = ? AND reserved_at > ?`,
+    )
+    .get(id, sinceMs) as Record<string, number | null>;
+  const t = sy.db
+    .prepare(
+      `SELECT SUM(t.state = 'completed') AS done, SUM(t.state IN ('failed','budget_exhausted')) AS failed FROM tasks t
+        WHERE t.finished_at > ? AND t.id IN (SELECT c.task_id FROM request_charges c JOIN model_requests m ON m.id = c.request_id WHERE m.served_endpoint_id = ?)`,
+    )
+    .get(sinceMs, id) as { done: number | null; failed: number | null };
+  return {
+    requests: r.requests ?? 0,
+    succeeded: r.ok ?? 0,
+    failed: r.failed ?? 0,
+    uncertain: r.uncertain ?? 0,
+    policyViolations: r.violations ?? 0,
+    inputTokens: r.inTok ?? 0,
+    outputTokens: r.outTok ?? 0,
+    avgLatencyMs: r.latency === null ? null : Math.round(r.latency!),
+    lastUsedAt: r.last ?? null,
+    tasksCompleted: t.done ?? 0,
+    tasksFailed: t.failed ?? 0,
+  };
+}
+
+export interface EligibilityCell {
+  profile: ProfileName;
+  tier: TierName;
+  eligible: boolean;
+  rank: number | null;
+  reasons: string[];
+}
+
+export interface ModelView {
+  endpoint: ModelEndpoint;
+  override: EndpointOverride | null;
+  chain: ChainVerification | null;
+  quarantined: string | null;
+  firstSeenAt: number | null;
+  stats7d: EndpointStats;
+  eligibility: EligibilityCell[];
+  qualification: Array<{ family: string; tier: TierName; stat: QualificationStat | null }>;
+  /** Short plain-language status line. */
+  headline: string;
+}
+
+function matrix(sy: Switchyard): Map<string, EligibilityCell[]> {
+  const out = new Map<string, EligibilityCell[]>();
+  const qual = qualificationLookup(sy.db, sy.cfg);
+  const eps = sy.catalog.endpoints();
+  const overrides = sy.catalog.routingOverrides();
+  for (const profile of Object.keys(sy.cfg.profiles) as ProfileName[]) {
+    for (const tier of TIER_NAMES) {
+      const plan = planRoute(sy.cfg, eps, overrides, { profile, tier, inputModalities: ["text"], needsStructuredOutput: false }, { now: new Date(), qualification: qual, health: sy.health.lookup });
+      for (const ex of plan.explanations) {
+        const cells = out.get(ex.endpointId) ?? [];
+        cells.push({ profile, tier, eligible: ex.eligible, rank: ex.rank, reasons: ex.reasons });
+        out.set(ex.endpointId, cells);
+      }
+    }
+  }
+  return out;
+}
+
+function headline(ep: ModelEndpoint, cells: EligibilityCell[], quarantined: string | null): string {
+  if (quarantined) return "Quarantined after serving a request it should not have. Rescan to re-verify its chain.";
+  if (ep.status !== "active") return ep.statusReason ?? ep.status;
+  const usable = cells.filter((c) => c.eligible);
+  if (!usable.length) return `Not used for any task: ${cells[0]?.reasons[0] ?? "no eligible task type"}.`;
+  const byTier = TIER_NAMES.filter((t) => usable.some((c) => c.tier === t));
+  const types = [...new Set(usable.map((c) => c.profile))];
+  return `Eligible for ${types.join(", ")} at ${byTier.join("/")}.`;
+}
+
+export function modelsView(sy: Switchyard): ModelView[] {
+  const m = matrix(sy);
+  const since = Date.now() - 7 * DAY;
+  const families = [...new Set(Object.values(sy.cfg.profiles).map((p) => p.mode))];
+  return sy.catalog.endpoints().map((ep) => {
+    const cells = m.get(ep.id) ?? [];
+    const quarantined = sy.gate.quarantined(ep);
+    return {
+      endpoint: ep,
+      override: sy.catalog.override(ep.id),
+      chain: sy.chains.latest(ep.chainName),
+      quarantined,
+      firstSeenAt: sy.catalog.discoveredRow(ep.id)?.firstSeenAt ?? null,
+      stats7d: endpointStats(sy, ep.id, since),
+      eligibility: cells,
+      qualification: families.flatMap((family) => TIER_NAMES.map((tier) => ({ family, tier, stat: qualificationStat(sy.db, sy.cfg, ep.id, family, tier) }))),
+      headline: headline(ep, cells, quarantined),
+    };
+  });
+}
+
+export interface RequestRow {
+  id: string;
+  reservedAt: number;
+  finishedAt: number | null;
+  status: string;
+  purpose: string;
+  tier: string | null;
+  endpointId: string | null;
+  servedModel: string | null;
+  providerAttempts: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cachedInputTokens: number | null;
+  errorKind: string | null;
+  errorMessage: string | null;
+  policyViolation: string | null;
+  routeNote: string | null;
+  taskIds: string[];
+}
+
+export function requestLog(sy: Switchyard, opts: { limit?: number; endpointId?: string; taskId?: string; status?: string } = {}): RequestRow[] {
+  const where: string[] = [];
+  const args: unknown[] = [];
+  if (opts.endpointId) {
+    where.push("r.endpoint_id = ?");
+    args.push(opts.endpointId);
+  }
+  if (opts.status) {
+    where.push("r.status = ?");
+    args.push(opts.status);
+  }
+  if (opts.taskId) {
+    where.push("r.id IN (SELECT request_id FROM request_charges WHERE task_id = ?)");
+    args.push(opts.taskId);
+  }
+  const rows = sy.db
+    .prepare(
+      `SELECT r.*, (SELECT group_concat(task_id) FROM request_charges c WHERE c.request_id = r.id) AS task_ids
+         FROM model_requests r ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY r.reserved_at DESC LIMIT ?`,
+    )
+    .all(...args, opts.limit ?? 200) as Array<Record<string, unknown>>;
+  return rows.map((r) => ({
+    id: String(r.id),
+    reservedAt: Number(r.reserved_at),
+    finishedAt: (r.finished_at as number | null) ?? null,
+    status: String(r.status),
+    purpose: String(r.purpose),
+    tier: (r.tier as string | null) ?? null,
+    endpointId: (r.endpoint_id as string | null) ?? null,
+    servedModel: (r.served_model as string | null) ?? null,
+    providerAttempts: (r.provider_attempts as number | null) ?? null,
+    inputTokens: (r.input_tokens as number | null) ?? null,
+    outputTokens: (r.output_tokens as number | null) ?? null,
+    cachedInputTokens: (r.cached_input_tokens as number | null) ?? null,
+    errorKind: (r.error_kind as string | null) ?? null,
+    errorMessage: (r.error_message as string | null) ?? null,
+    policyViolation: (r.policy_violation as string | null) ?? null,
+    routeNote: (r.route_note as string | null) ?? null,
+    taskIds: r.task_ids ? String(r.task_ids).split(",") : [],
+  }));
+}
+
+export interface TimeseriesPoint {
+  bucketStart: number;
+  endpointId: string;
+  requests: number;
+  failed: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+/** Requests per time bucket per endpoint, for charts. */
+export function timeseries(sy: Switchyard, opts: { hours?: number; bucketMinutes?: number } = {}): TimeseriesPoint[] {
+  const hours = opts.hours ?? 24;
+  const bucket = (opts.bucketMinutes ?? 60) * 60_000;
+  const since = Date.now() - hours * 3_600_000;
+  return (
+    sy.db
+      .prepare(
+        `SELECT (reserved_at / ?) * ? AS bucket, COALESCE(endpoint_id, '(none)') AS ep, COUNT(*) AS n, SUM(status != 'succeeded') AS failed,
+                COALESCE(SUM(input_tokens),0) AS inTok, COALESCE(SUM(output_tokens),0) AS outTok
+           FROM model_requests WHERE reserved_at > ? GROUP BY bucket, ep ORDER BY bucket`,
+      )
+      .all(bucket, bucket, since) as Array<{ bucket: number; ep: string; n: number; failed: number; inTok: number; outTok: number }>
+  ).map((r) => ({ bucketStart: r.bucket, endpointId: r.ep, requests: r.n, failed: r.failed, inputTokens: r.inTok, outputTokens: r.outTok }));
+}
+
+export function tierDistribution(sy: Switchyard, sinceMs: number): Array<{ tier: string; tasks: number; completed: number }> {
+  return sy.db
+    .prepare(
+      `SELECT COALESCE(tier, 'unclassified') AS tier, COUNT(*) AS tasks, SUM(state = 'completed') AS completed FROM tasks WHERE created_at > ? GROUP BY tier ORDER BY tier`,
+    )
+    .all(sinceMs) as Array<{ tier: string; tasks: number; completed: number }>;
+}
+
+export function routingPreview(sy: Switchyard, profile: ProfileName, tier: TierName, modalities: Modality[] = ["text"]): { floorB: number; forced: boolean; explanations: CandidateExplanation[] } {
+  const plan = planRoute(
+    sy.cfg,
+    sy.catalog.endpoints(),
+    sy.catalog.routingOverrides(),
+    { profile, tier, inputModalities: modalities, needsStructuredOutput: false },
+    { now: new Date(), qualification: qualificationLookup(sy.db, sy.cfg), health: sy.health.lookup },
+  );
+  return { floorB: plan.floorB, forced: plan.forced, explanations: plan.explanations };
+}
+
+export interface TaskDetail {
+  status: ReturnType<Switchyard["getStatus"]>[number];
+  spec: WorkerTask;
+  result: WorkerResult | null;
+  classification: Classification | null;
+  events: Array<{ ts: number; type: string; data: unknown }>;
+  artifacts: ArtifactRow[];
+  requests: RequestRow[];
+}
+
+export function taskDetail(sy: Switchyard, id: string): TaskDetail | null {
+  const t = sy.tasks.get(id);
+  if (!t) return null;
+  const row = t.row as typeof t.row & { classification_json?: string | null };
+  return {
+    status: sy.getStatus([id])[0]!,
+    spec: t.spec,
+    result: t.result,
+    classification: row.classification_json ? (JSON.parse(row.classification_json) as Classification) : null,
+    events: sy.tasks.events(id, 200),
+    artifacts: sy.artifacts.listForTask(id),
+    requests: requestLog(sy, { taskId: id, limit: 100 }),
+  };
+}
+
+export function artifactText(sy: Switchyard, ref: string, maxBytes = 200_000): { row: ArtifactRow; text: string; truncated: boolean } | null {
+  const a = sy.artifacts.read(ref);
+  if (!a) return null;
+  const truncated = a.content.length > maxBytes;
+  return { row: a.row, text: a.content.subarray(0, maxBytes).toString("utf8"), truncated };
+}
+
+// ---------- configuration editing ----------
+
+export function readConfigText(sy: Switchyard): string {
+  return readFileSync(sy.cfg.configPath, "utf8");
+}
+
+export function validateConfigText(text: string, configPath: string): { ok: true } | { ok: false; errors: string[] } {
+  let raw: unknown;
+  try {
+    raw = YAML.parse(text);
+  } catch (err) {
+    return { ok: false, errors: [`YAML: ${(err as Error).message}`] };
+  }
+  const parsed = ConfigSchema.safeParse(raw);
+  if (!parsed.success) return { ok: false, errors: formatIssues(parsed.error.issues) };
+  try {
+    parseConfig(raw, configPath);
+  } catch (err) {
+    return { ok: false, errors: [(err as Error).message] };
+  }
+  return { ok: true };
+}
+
+/** Validate, back up the previous file, and write. Running workers reload it automatically. */
+export function writeConfigText(sy: Switchyard, text: string): { ok: true } | { ok: false; errors: string[] } {
+  const v = validateConfigText(text, sy.cfg.configPath);
+  if (!v.ok) return v;
+  copyFileSync(sy.cfg.configPath, `${sy.cfg.configPath}.bak`);
+  writeFileSync(sy.cfg.configPath, text);
+  sy.reloadIfChanged();
+  return { ok: true };
+}
+
+/** Apply a structured patch (e.g. from a settings form) to the YAML, preserving comments. */
+export function patchConfig(sy: Switchyard, patch: Array<{ path: Array<string | number>; value: unknown }>): { ok: true } | { ok: false; errors: string[] } {
+  const doc = YAML.parseDocument(readConfigText(sy));
+  for (const p of patch) {
+    if (p.value === undefined || p.value === null) doc.deleteIn(p.path);
+    else doc.setIn(p.path, p.value);
+  }
+  return writeConfigText(sy, doc.toString());
+}
+
+export function configSchemaInfo() {
+  return { profiles: PROFILE_NAMES, tiers: TIER_NAMES, modalities: MODALITIES };
+}
+
+export function rulebookText(sy: Switchyard): { path: string | null; text: string; isDefault: boolean } {
+  if (sy.cfg.rulebookPath && existsSync(sy.cfg.rulebookPath)) return { path: sy.cfg.rulebookPath, text: readFileSync(sy.cfg.rulebookPath, "utf8"), isDefault: false };
+  return { path: sy.cfg.rulebookPath, text: YAML.stringify(DEFAULT_RULEBOOK), isDefault: true };
+}
+
+/**
+ * Save a rulebook. When none is configured, it is written next to the config as rulebook.yaml
+ * and scoring.rulebook_file is set. Takes effect for newly classified tasks after a restart of
+ * workers (the rulebook version is recorded on every classification).
+ */
+export function writeRulebook(sy: Switchyard, text: string): { ok: true; path: string } | { ok: false; errors: string[] } {
+  let raw: unknown;
+  try {
+    raw = YAML.parse(text);
+  } catch (err) {
+    return { ok: false, errors: [`YAML: ${(err as Error).message}`] };
+  }
+  const parsed = RulebookSchema.safeParse(raw);
+  if (!parsed.success) return { ok: false, errors: formatIssues(parsed.error.issues) };
+  const target = sy.cfg.rulebookPath ?? path.join(path.dirname(sy.cfg.configPath), "rulebook.yaml");
+  if (existsSync(target)) copyFileSync(target, `${target}.bak`);
+  writeFileSync(target, text);
+  if (!sy.cfg.rulebookPath) {
+    const r = patchConfig(sy, [{ path: ["scoring", "rulebook_file"], value: path.basename(target) }]);
+    if (!r.ok) return r;
+  }
+  return { ok: true, path: target };
+}
+
+// ---------- overrides ----------
+
+export function setModelOverride(sy: Switchyard, id: string, override: EndpointOverride | null): void {
+  if (!sy.catalog.get(id)) throw new Error(`unknown model ${id}`);
+  sy.catalog.setOverride(id, override);
+}
+
+export function addRoutingOverride(sy: Switchyard, o: RoutingOverride): number {
+  if (!sy.catalog.get(o.endpointId)) throw new Error(`unknown model ${o.endpointId}`);
+  return sy.catalog.addRoutingOverride(o);
+}
+
+export type { ModelEndpoint, EndpointOverride, RoutingOverride, CandidateExplanation, Classification, TaskState };

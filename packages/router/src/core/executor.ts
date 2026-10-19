@@ -147,7 +147,8 @@ export class Executor {
         }
         const failure = outcome.state === "budget_exhausted" ? "budget_exhausted" : outcome.result.stopReason === "invalid_output" ? "invalid_output" : outcome.result.acceptanceStatus === "unmet" && this.d.cfg.profiles[task.spec.profile]!.mode === "coding" ? "acceptance_unmet" : null;
         const next = TIER_NAMES[TIER_NAMES.indexOf(plan.tier) + 1];
-        if (failure && ESCALATE_ON.has(failure) && this.d.cfg.routing.escalate_on_failure && !routing.escalatedFrom && next && !task.spec.routing?.endpointId) {
+        const budgetLeft = next ? effectiveBudget(this.d.cfg, task.spec, next).maxModelRequests - this.d.gate.admission.taskTotals(task.row.id).requests : 0;
+        if (failure && ESCALATE_ON.has(failure) && this.d.cfg.routing.escalate_on_failure && !routing.escalatedFrom && next && budgetLeft > 0 && !task.spec.routing?.endpointId) {
           const nextPlan = this.d.router.plan(task.spec.profile, next, prepared.inputModalities);
           if (nextPlan.candidates.length) {
             this.d.tasks.event(task.row.id, "escalated", { from: plan.tier, to: next, reason: failure });

@@ -1,0 +1,17 @@
+# Optional. Models are normally discovered by `switchyard models scan` (or the panel).
+# Use this file to correct discovered metadata or to add models by hand.
+version: 1
+
+# Per-model corrections, keyed by "<platform>/<model_id>" as shown in the panel.
+overrides: {}
+#  "groq/openai/gpt-oss-120b":
+#    confirmParams: true
+#    outputLimitTokens: 32768
+#  "openrouter/vendor/some-model:free":
+#    totalParametersB: 120
+#    activeParametersB: 12
+#    deniedProfiles: [implement]
+
+# Manual endpoints (rarely needed). A manual endpoint still needs its FreeLLMAPI chain
+# (named in the panel) to route.
+endpoints: []
