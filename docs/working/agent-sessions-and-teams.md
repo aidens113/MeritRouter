@@ -1,7 +1,7 @@
 # Agent sessions, failure resilience, and agent teams
 
 Status: Active
-Status detail: Phase S1 in progress (2026-10-19): session store, then runners, surfaces, panel.
+Status detail: Phase S1 (agent session recording) complete 2026-10-19; S2 (resume) next.
 Created: 2026-10-19
 Last updated: 2026-10-19
 Owner: Senior supervisor agent
@@ -33,9 +33,23 @@ Related: [harness, roles, brain](./harness-roles-brain.md), [decisions](../decis
   `supervisor.max_workers_per_job` (3). Supervisors cannot delegate to sub-supervisors.
 - One process host. SQLite on local disk. No daemon or service install.
 
-**Not done:** everything below.
+**Phase S1 done (2026-10-19):** every model-driven run records an agent session
+(`packages/router/src/sessions/`): fsync'd JSONL log under `<storage>/sessions/`, indexed in
+SQLite; transcript, model requests/responses/errors, a tool journal (intent before, outcome after,
+with side-effect class), workspace changes, end state. Executor runs, classifications, batch
+items, native and external coding, and supervisors all record; delegated tasks link to the
+delegating session. Read surfaces: `switchyard sessions` / `switchyard session <id>`, MCP
+`list_sessions` / `get_session`, panel `/sessions` and `/sessions/[id]`. Supervisor resume still
+uses `job_state`. Worker reports: `agent-sessions-and-teams/reports/s1-*.md`.
 
-**Next steps:** Phase S1 (agent sessions), then R1 (durability), T1 (teams).
+**Not done:** S2 onwards. Known S1 gaps for S2: no recorder reattach after restart; capacity
+deferrals end `interrupted` (S2 must not resume them as crashes, or change them to `failed`);
+side-effect classes to revisit (`cancel_tasks` = delegate, `ask_user` = external, brain
+access requests = brain, `run_check` not idempotent); external agents re-log changed message
+arrays; when the batch runner throws, already-finished members are not recorded on their task
+(pre-existing; sessions end `batch_aborted`).
+
+**Next steps:** Phase S2 (resume protocol on sessions), then R1 (durability), T1 (teams).
 
 **Blockers:** none. Live checks against real providers are still outstanding from the previous
 document.
@@ -223,6 +237,25 @@ Surface: `switchyard sessions [--running|--interrupted]`, `switchyard session <i
 - Validation: not validated (design only).
 - Outcome: Accepted
 - Follow-up: Phase S1.
+
+---
+
+### 2026-10-19 — Phase S1: agent sessions recorded for every run
+- Agent: supervisor; workers s1-store, s1-runners, s1-surface, s1-panel
+- Changed: `packages/router/src/sessions/**` (new), migration, `runners/types.ts` (`ask()` records),
+  executor, service, harness loop and tools (tool journal, `sideEffect`), batch, classifier,
+  coding and supervisor runners (`runners/session-workspace.ts`), CLI, MCP, insights, panel
+  Sessions pages and API, demo seed; `docs/operations.md`, `docs/decisions.md` (14).
+- Why: requirement 1 (every agent's session saved); S1 records, S2 resumes.
+- Validation: `pnpm -r typecheck` -> router and panel Done; `pnpm --filter switchyard-router build`
+  ok; `npx vitest run tests` -> 16 files, 122 tests passed (supervisor-run); demo seed recorded
+  ~25 real sessions across classifier, summarizer, batch, inspector, analyst, reviewer,
+  implementer, supervisor (child linked to parent; escalation linked to previous);
+  panel: production build, seed, server on :4512 -> `/sessions`, `/sessions?status=failed`,
+  `/sessions/<id>`, `/api/sessions`, `/api/sessions/<id>`, task and job pages 200; unknown id
+  404; bad query 400; screenshots of the list and a supervisor timeline inspected; server stopped.
+- Outcome: Accepted
+- Follow-up: Phase S2.
 
 ---
 

@@ -69,3 +69,7 @@ non-streaming chat completions only.
     branches (no squash); supervisors undo by task, model, agent, commit, or line as new commits.
 13. **Supervisors commit only to local `switchyard/job-<id>` branches and never push**; the brain
     repository pushes only when `brain.push` is set.
+14. **Every model-driven run is a durable agent session** (user requirement, 2026-10-19): an
+    append-only JSONL event log per session, fsynced per event, indexed in SQLite; a tool journal
+    writes each call's intent before it runs and its outcome after, so a resume (Phase S2) can tell
+    which side effects happened. Recording failures fail the run rather than continue unrecorded.

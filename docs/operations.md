@@ -54,11 +54,36 @@ they are not reverted in the worktree.
   run `switchyard models scan`.
 - Tasks waiting for capacity (`waiting_for_capacity`) retry automatically until their deadline.
 
+## Agent sessions
+
+Every model-driven run is an agent session: each run of a task (a recovery re-run or a tier
+escalation is a new session linked to the one before it), each classification, and each batch
+item. A delegated task's session names the supervisor session that delegated it as its parent.
+
+- The log is `.switchyard/sessions/<session id>.jsonl`, one event per line, fsynced as it is
+  written: the transcript (`message`), model requests, responses and errors, a tool journal
+  (`tool_intent` written before a tool runs, `tool_outcome` after, with the tool's side-effect
+  class), notes, workspace changes (worktree, branch, base commit, head), and the end state.
+  SQLite indexes it in `sessions` and `session_events` (no payloads). A failure to write the log
+  fails the run.
+- Statuses: `running`, `completed`, `failed` (budget exhaustion is `failed` with stop reason
+  `budget_exhausted`), `interrupted` (shutdown, lost lease, or deferral for capacity), and
+  `cancelled`.
+- Read them with `switchyard sessions [--status s] [--task id] [--job id]` and
+  `switchyard session <id> [--after seq] [--limit n] [--json]`, the MCP tools `list_sessions` and
+  `get_session`, or the panel's Sessions page (also linked from task and job pages).
+- External agents (OpenCode) run their tools inside their own process: their sessions record the
+  model traffic through the policy gateway, not individual tool calls.
+- Resuming a session from its log is Phase S2 of
+  [agent-sessions-and-teams](working/agent-sessions-and-teams.md); until then recovery works as
+  described above.
+
 ## Housekeeping
 
 - Worktrees and agent homes are not deleted automatically. Remove old ones with
   `git worktree remove` in the source repository, then delete the folder.
-- Backups: copy `.switchyard/` while no worker is running.
+- Backups: copy `.switchyard/` while no worker is running (it includes the session logs).
+- Session logs are not pruned automatically.
 
 ## The brain and attribution
 
