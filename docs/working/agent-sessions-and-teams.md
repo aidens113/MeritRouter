@@ -341,6 +341,32 @@ Surface: `switchyard sessions [--running|--interrupted]`, `switchyard session <i
   and the real kill-and-restart; typecheck and all tests pass.
 - Report to: docs/working/agent-sessions-and-teams/reports/r1b-resilience.md
 
+### Brief: t1-graph (after V1+V2 are on dev)
+- Repository: worktree `D:/sy-wt/t1` (branch `feat/t1-task-graph`).
+- Task: T1 per "R1b and T implementation decisions": the `plan_work` supervisor tool and
+  versioned `job_plans`; dispatch through the existing delegate path (importance and criteria
+  pass through to contracts); upstream results injected into dependents (context + evidence
+  universe; coding base commit rule); team-wide `file_leases` acquired at claim, released at
+  finish or lease expiry, enforced by the scheduler (overlap check becomes advisory);
+  `team.max_agents` (alias `supervisor.max_workers_per_job`); critical path computed from the
+  plan; supervisor charter updated to plan first for multi-part goals.
+- Owns: `src/harness/supervisor-tools.ts`, `src/runners/supervisor.ts`, `src/runners/prompts.ts`,
+  `src/context/**`, `src/core/scheduler.ts`, `src/core/executor.ts` (context injection only),
+  `src/storage/tasks.ts`, new `src/storage/plans.ts` and `src/storage/file-leases.ts`,
+  `src/storage/migrations.ts` (append), `src/config/schema.ts` (team section), `charters/**`,
+  `tests/team-graph.test.ts`.
+- Definition of done: a supervisor plan of N independent nodes runs them concurrently up to
+  `team.max_agents`; dependents see upstream results; overlapping write globs never run at the
+  same time across the job; re-planning keeps dispatched nodes; critical path correct on a
+  diamond graph; typecheck and all tests pass.
+- Report to: docs/working/agent-sessions-and-teams/reports/t1-graph.md
+
+### Brief: t1-surface (after t1-graph)
+- Task: plan view (nodes, states, dependencies, critical path, leases) in insights, CLI
+  `switchyard plan <job>`, MCP `get_plan`, and the panel job page.
+- Owns: `src/cli.ts`, `src/mcp.ts`, `src/admin/insights.ts`, `apps/panel/**`, related tests.
+- Report to: docs/working/agent-sessions-and-teams/reports/t1-surface.md
+
 ### Brief: s1-store
 - Repository: this repository.
 - Task: build the session store and recorder per "S1 implementation decisions". `SessionStore`:
