@@ -73,3 +73,8 @@ non-streaming chat completions only.
     append-only JSONL event log per session, fsynced per event, indexed in SQLite; a tool journal
     writes each call's intent before it runs and its outcome after, so a resume (Phase S2) can tell
     which side effects happened. Recording failures fail the run rather than continue unrecorded.
+15. **Interrupted sessions resume where they stopped** (user requirement, 2026-10-19): in-flight
+    tool calls are settled by side-effect class before the agent continues (edits committed as
+    recovered, delegations re-run idempotently, unknown outcomes reported to the agent); a stuck
+    run is interrupted by a watchdog and resumed the same way; failing providers are isolated by
+    per-provider circuit breakers rather than failing tasks.

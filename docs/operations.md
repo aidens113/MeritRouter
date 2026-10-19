@@ -62,6 +62,16 @@ they are not reverted in the worktree.
 - Manual resume: `switchyard resume <session-id>` continues that session; `switchyard resume
   <task-id>` restarts the task (a coding task in a fresh worktree; the old one stays as
   evidence). MCP `resume_session` / `resume_task` and the panel's Resume buttons do the same.
+- Stuck runs: a run whose session records nothing for `execution.watchdog_minutes` (default 10;
+  0 disables) is interrupted with stop reason `watchdog` and resumed like a crash (counts against
+  the 3 automatic runs). A pending model request, a running tool call, or final checks extend the
+  allowance to their own timeout plus 60 s; supervisors waiting in `await_tasks` or on a question
+  are exempt.
+- Failing providers: each provider has a circuit breaker for transport failures (5xx, timeouts,
+  connection errors, 429 without a reported cooldown; never invalid model output). After 5
+  consecutive failures it opens for 30 s, doubling to 15 minutes, then lets one probe through.
+  Routing ranks open providers last and the gate skips them; when every candidate is open the
+  task waits for capacity instead of failing. `insights.providerHealth` shows the state.
 - A model that served a request it should not have is quarantined until its chain is re-verified:
   run `switchyard models scan`.
 - Tasks waiting for capacity (`waiting_for_capacity`) retry automatically until their deadline.
