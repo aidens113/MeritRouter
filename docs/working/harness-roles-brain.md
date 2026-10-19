@@ -17,13 +17,14 @@ supervisor undo; local job branches, never pushed; everything configurable with 
 
 **Done** (on `dev`): A paid routes, B brain, C charters, D harness (read-only and native coding
 workers, standalone supervisor with delegation, integration, blame/undo, questions, resume),
-G attribution, E presets and `docs/roles.md`, CLI and MCP for jobs/brain/blame. Panel first
-pass merged; second pass (jobs, brain, paid, new settings) in progress.
+G attribution, E presets and `docs/roles.md`, CLI and MCP for jobs/brain/blame, F panel second
+pass (jobs, brain, paid, settings). A security review's eleven findings are fixed with tests.
 
-**Not done:** live checks against real FreeLLMAPI, paid providers, and OpenCode; panel second
-pass verification.
+**Not done:** live checks against real FreeLLMAPI, paid providers, and OpenCode. Allowed commands
+still run worker-editable scripts (needs an OS sandbox to fully contain).
 
-**Next steps:** verify and merge the panel second pass, then fast-forward `main`.
+**Next steps:** live validation once credentials exist; consider a container sandbox for
+allowed commands.
 
 **Blockers:** none.
 
@@ -180,6 +181,14 @@ preset configuration.
 - Validation: `npx vitest run` in packages/router -> 83 passed; `switchyard init --preset standalone-free` + `run` + `jobs` + `brain ls` smoke-tested by hand.
 - Outcome: Accepted
 - Follow-up: panel second pass; live provider checks.
+
+### 2026-10-19 — Panel second pass, security fixes, release
+- Agent: supervisor, with workers (panel second pass, security review)
+- Changed: `apps/panel/**`, harness/brain/attribution/paid fixes, supervisor interruption handling
+- Why: finish Phase F; fix review findings before release.
+- Validation: `npx vitest run` in packages/router -> 96 passed; `pnpm -r build` -> compiled; panel against the demo: every page 200, 0 secret fragments in responses, screenshots of jobs, job detail, and brain checked.
+- Outcome: Accepted
+- Follow-up: fast-forward main; live provider checks.
 
 ## Open Questions
 
