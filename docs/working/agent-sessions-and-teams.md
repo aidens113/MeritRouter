@@ -164,6 +164,61 @@ Surface: `switchyard sessions [--running|--interrupted]`, `switchyard session <i
 - `job_state` stays for supervisor resume until S2 moves resume onto sessions.
 - `resume_session` / `switchyard resume <session>` belong to S2; S1 ships read surfaces only.
 
+### R1b and T implementation decisions (2026-10-19)
+
+- **R1b (after S2):**
+  - Progress watchdog: a running session with no new event for
+    `execution.watchdog_minutes` (default 10; supervisors waiting in `await_tasks` or on a
+    question are exempt) is aborted as `interrupted` (`watchdog`) and resumes through S2.
+  - Per-provider circuit breaker in `ProviderHealth`: N consecutive failures (default 5) open it
+    for a backoff that doubles up to a cap; half-open admits one probe; routing skips open
+    platforms like cooling ones.
+  - Acceptance: a test kills a worker process mid-run (real child process), restarts it, and
+    the session resumes; backup/restore round trip.
+- **T1 (task graph):**
+  - A `plan_work` supervisor tool records the job's decomposition as a versioned plan
+    (`job_plans`: nodes with label, profile, goal, criteria, allowed paths, depends_on labels,
+    difficulty, importance; validated acyclic) and dispatches every node through the existing
+    delegate path. Re-planning appends a version; nodes already dispatched keep their tasks.
+  - Ready nodes run as soon as their dependencies are satisfied (the existing dependency
+    gate).
+  - Dependents receive their upstream results: summary, findings, artifact and patch refs,
+    and acceptance status, injected as context and listed in the evidence universe. For coding
+    dependents the base commit is the job branch after the upstream was integrated, or the
+    upstream's head when it is not integrated yet (recorded).
+  - Team-wide file leases (`file_leases`: job, task, repository, path globs, mode, acquired,
+    released) are acquired at claim and released at finish. The scheduler skips a coding task
+    whose write globs overlap a live lease in the same repository; this replaces the
+    per-call overlap check, which becomes advisory. Leases expire with the task lease.
+  - `team.max_agents` (default 8) caps concurrently running tasks per job (replacing
+    `supervisor.max_workers_per_job`, which stays as an alias). Global
+    `execution.max_concurrent_tasks` still bounds everything.
+  - Critical path: the longest chain by estimated cost (tier weight) is computed from the plan
+    and exposed in insights.
+- **T2 (team coordination):**
+  - Sub-supervisors: `delegate` accepts profile `supervise` for a sub-goal when `team.max_depth`
+    (default 2) allows. The child job works on its own branch `switchyard/job-<child>` forked
+    from the parent's job branch and gets its own working-document section; its request budget
+    is carved from the parent's (`team.child_budget_share`, default 0.5 of the remaining).
+  - Merge queue: `integrate_task` enqueues; one integration per job branch at a time; job checks
+    run after each; on conflict the item is rebased onto the branch head in its worktree when
+    clean, else re-delegated once with the conflict as context; every outcome is recorded.
+  - Team channel: an append-only per-job channel (`job_channel` table, mirrored to the brain
+    document section) with tools `post_channel` (kinds finding, blocker, interface_contract)
+    and `read_channel`; workers can read channel posts that reference their task.
+  - Redundant execution (opt-in per node, `redundancy: 2`) runs a small task on two cheap
+    models and takes the first result that passes verification; the other is cancelled.
+- **T3 (capacity and metrics):**
+  - AIMD concurrency per provider: start at `team.provider_concurrency_start` (2); +1 after N
+    successes, halve on 429 or cooldown; bounded by FreeLLMAPI-reported limits when known. The
+    scheduler admits a task only if a provider in its plan has a free slot.
+  - Cost-aware staffing: `plan_work` nodes without a tier get one from the rulebook. When
+    capacity is free, the planner prompt prefers more smaller nodes; strong models are kept for
+    the supervisor and for Deep/Strict review.
+  - Metrics, stored per job: wall-clock time, parallelism over time (sampled running count),
+    critical-path length, requests and cost per completed task. A qualification-suite
+    comparison runs the same goals as team vs single agent. Shown in a panel Teams view.
+
 ## Phases
 
 | Phase | Deliverable | Acceptance |
