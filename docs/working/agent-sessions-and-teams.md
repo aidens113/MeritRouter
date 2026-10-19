@@ -372,6 +372,42 @@ Surface: `switchyard sessions [--running|--interrupted]`, `switchyard session <i
 - Owns: `src/cli.ts`, `src/mcp.ts`, `src/admin/insights.ts`, `apps/panel/**`, related tests.
 - Report to: docs/working/agent-sessions-and-teams/reports/t1-surface.md
 
+### Brief: t2-team (after T1 is on dev)
+- Task: T2 per "R1b and T implementation decisions": sub-supervisors (`delegate` with profile
+  `supervise`, `team.max_depth` 2, child branch forked from the parent job branch, child budget
+  carved from the parent's by `team.child_budget_share`, own working-document section,
+  integrated upward by the parent through the merge queue; resume and verification apply to
+  child jobs like any task); the merge queue (`integrate_task` enqueues; one integration per job
+  branch at a time; job checks after each; clean rebase onto the branch head on conflict, else
+  one re-delegation with the conflict as context; every outcome recorded as task events); the
+  team channel (`job_channel` table mirrored to the brain section; `post_channel` with kinds
+  finding / blocker / interface_contract, `read_channel`; workers read posts referencing their
+  task); opt-in redundant execution (`redundancy: 2` on a plan node: two cheap models, first
+  result that passes verification wins, the other is cancelled and its session ended
+  `cancelled` / `superseded`).
+- Owns: `src/harness/supervisor-tools.ts`, `src/runners/supervisor.ts`, `src/core/**`,
+  `src/storage/**` (append a migration), `src/brain/**` (channel mirror only),
+  `src/config/schema.ts` (team keys), `charters/**`, `tests/team-coordination.test.ts`.
+- Definition of done: a nested job (parent -> child supervisor -> workers) completes with
+  correct attribution trailers and no lost integrations; two conflicting integrations are
+  serialised and the second rebased; channel posts visible to the referenced worker; redundant
+  node takes the first verified result; typecheck and all tests pass.
+- Report to: docs/working/agent-sessions-and-teams/reports/t2-team.md
+
+### Brief: t3-capacity (after T2 is on dev)
+- Task: T3 per "R1b and T implementation decisions": AIMD concurrency per provider (start
+  `team.provider_concurrency_start` 2, +1 after N successes, halve on 429/cooldown/breaker
+  open, bounded by FreeLLMAPI-reported limits when known; the scheduler admits a task only when
+  a provider in its plan has a free slot); cost-aware staffing (planner prompt and `plan_work`
+  tier defaults from the rulebook; strong models reserved for supervisors and Deep/Strict
+  review); job metrics (wall-clock, sampled parallelism, critical-path length, requests and
+  cost per completed task); a team-vs-single comparison runner over the qualification suite;
+  panel Teams view.
+- Owns: `src/gateway/**`, `src/admission/**`, `src/core/scheduler.ts`, new `src/core/metrics.ts`
+  or `src/admin/team-metrics.ts`, `src/qualification/**` (comparison), `src/admin/**`,
+  `apps/panel/**`, `charters/supervisor.md`, `tests/team-capacity.test.ts`.
+- Report to: docs/working/agent-sessions-and-teams/reports/t3-capacity.md
+
 ### Brief: s1-store
 - Repository: this repository.
 - Task: build the session store and recorder per "S1 implementation decisions". `SessionStore`:
