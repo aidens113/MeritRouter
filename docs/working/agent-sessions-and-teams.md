@@ -323,6 +323,24 @@ Surface: `switchyard sessions [--running|--interrupted]`, `switchyard session <i
   typecheck and tests pass.
 - Report to: docs/working/agent-sessions-and-teams/reports/r1-ops.md
 
+### Brief: r1b-resilience
+- Repository: worktree `D:/sy-wt/r1` (branch `feat/r1b-resilience`).
+- Task: per "R1b and T implementation decisions": (1) progress watchdog
+  (`execution.watchdog_minutes`, default 10; supervisors in `await_tasks` or waiting on a
+  question exempt) aborting a stuck run as `interrupted` (`watchdog`) so it resumes through S2;
+  (2) per-provider circuit breaker in `ProviderHealth` (open after N consecutive failures,
+  default 5; doubling backoff to a cap; half-open single probe; routing skips open platforms like
+  cooling ones; state visible in insights); (3) the R1 acceptance test: a real child-process
+  worker (`dist/cli.js worker`) killed mid-run (taskkill /F on Windows) and restarted on the same
+  storage finishes the task by resuming its session.
+- Owns: `src/gateway/**`, `src/routing/select.ts`, `src/core/scheduler.ts`, the watchdog hook in
+  `src/core/executor.ts` (small, self-contained), `src/config/schema.ts` (execution and routing
+  keys only), `src/admin/insights.ts` (provider health view only), `tests/resilience.test.ts`.
+- Must not touch: `src/verification/**`, `src/harness/**`, `src/runners/**`, panel.
+- Definition of done: tests for the watchdog (fake clock), breaker transitions, routing skip,
+  and the real kill-and-restart; typecheck and all tests pass.
+- Report to: docs/working/agent-sessions-and-teams/reports/r1b-resilience.md
+
 ### Brief: s1-store
 - Repository: this repository.
 - Task: build the session store and recorder per "S1 implementation decisions". `SessionStore`:
