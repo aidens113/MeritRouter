@@ -516,19 +516,67 @@ export interface JobView {
   pendingQuestions: number;
   workingDoc: string;
   result: WorkerResult | null;
+  /** The supervisor session the transcript and branches come from (its latest); null for jobs that predate sessions or have not started. */
+  sessionId: string | null;
+}
+
+export interface JobTurn {
+  role: string;
+  content: string;
+  tools?: string[];
+}
+
+type TranscriptMessage = { role: string; content: unknown; tool_calls?: Array<{ function: { name: string; arguments: string } }> };
+
+function jobTurns(messages: TranscriptMessage[]): JobTurn[] {
+  return messages
+    .filter((m) => m.role !== "system")
+    .map((m) => ({
+      role: m.role,
+      content: typeof m.content === "string" ? m.content.slice(0, 4000) : m.content === null || m.content === undefined ? "" : JSON.stringify(m.content).slice(0, 4000),
+      ...(m.tool_calls?.length ? { tools: m.tool_calls.map((c) => `${c.function.name}(${c.function.arguments.slice(0, 8000)})`) } : {}),
+    }));
+}
+
+/**
+ * A job's supervisor transcript and integration branches. They come from the job's latest
+ * supervisor session (its transcript, and the last workspace any of its supervisor sessions
+ * recorded). `job_state`, which supervisors no longer write, is read only as a fallback for jobs
+ * that predate sessions.
+ */
+function jobRecord(sy: Switchyard, taskId: string, withTranscript: boolean): { sessionId: string | null; branches: JobView["branches"]; transcript: JobTurn[] } {
+  const sessions = sy.sessions.forTask(taskId).filter((s) => s.role === "supervisor");
+  const latest = sessions.at(-1) ?? null;
+  const prefix = sy.cfg.supervisor.branch_prefix;
+  const workspace = [...sessions].reverse().find((s) => s.workspace?.repos.length)?.workspace ?? null;
+  let branches: JobView["branches"] = (workspace?.repos ?? []).flatMap((r) => (r.baseCommit ? [{ alias: r.alias, branch: r.branch ?? `${prefix}${taskId}`, baseSha: r.baseCommit, worktree: r.worktree }] : []));
+  // The transcript reads the whole session log, so list views skip it.
+  let transcript = latest && withTranscript ? jobTurns(sy.sessions.transcript(latest.id) ?? []) : [];
+  if (!branches.length || (withTranscript && !transcript.length)) {
+    const st = sy.db.prepare("SELECT messages_json, detail_json FROM job_state WHERE task_id = ?").get(taskId) as { messages_json: string; detail_json: string | null } | undefined;
+    if (st) {
+      if (!branches.length) branches = st.detail_json ? ((JSON.parse(st.detail_json) as { repos?: JobView["branches"] }).repos ?? []) : [];
+      if (withTranscript && !transcript.length) transcript = jobTurns(JSON.parse(st.messages_json) as TranscriptMessage[]);
+    }
+  }
+  return { sessionId: latest?.id ?? null, branches, transcript };
 }
 
 export function jobsView(sy: Switchyard, limit = 50): JobView[] {
   const rows = sy.db.prepare("SELECT id FROM tasks WHERE profile = 'supervise' ORDER BY created_at DESC LIMIT ?").all(limit) as { id: string }[];
-  return rows.map((r) => jobDetail(sy, r.id)!).filter(Boolean);
+  return rows.flatMap((r) => {
+    const j = jobDetail(sy, r.id, { transcript: false });
+    if (!j) return [];
+    const { transcript: _t, questions: _q, ...view } = j;
+    return [view];
+  });
 }
 
-export function jobDetail(sy: Switchyard, id: string): (JobView & { transcript: Array<{ role: string; content: string; tools?: string[] }>; questions: ReturnType<Switchyard["questions"]> }) | null {
+/** One job with its supervisor transcript (empty when `opts.transcript` is false) and every question it asked. */
+export function jobDetail(sy: Switchyard, id: string, opts: { transcript?: boolean } = {}): (JobView & { transcript: JobTurn[]; questions: ReturnType<Switchyard["questions"]> }) | null {
   const t = sy.tasks.get(id);
   if (!t || t.spec.profile !== "supervise") return null;
-  const st = sy.db.prepare("SELECT messages_json, detail_json FROM job_state WHERE task_id = ?").get(id) as { messages_json: string; detail_json: string | null } | undefined;
-  const detail = st?.detail_json ? (JSON.parse(st.detail_json) as { repos?: JobView["branches"] }) : {};
-  const messages = st ? (JSON.parse(st.messages_json) as Array<{ role: string; content: unknown; tool_calls?: Array<{ function: { name: string; arguments: string } }> }>) : [];
+  const rec = jobRecord(sy, id, opts.transcript !== false);
   const children = (sy.db.prepare("SELECT id FROM tasks WHERE json_extract(spec_json, '$.parentTaskId') = ? ORDER BY created_at").all(id) as { id: string }[]).map((c) => {
     const ct = sy.tasks.get(c.id)!;
     return { taskId: c.id, label: ct.spec.label ?? null, profile: ct.spec.profile, state: ct.row.state, acceptance: ct.result?.acceptanceStatus ?? null };
@@ -541,16 +589,13 @@ export function jobDetail(sy: Switchyard, id: string): (JobView & { transcript: 
     createdAt: t.row.created_at,
     finishedAt: t.row.finished_at,
     modelRequestsUsed: sy.admission.taskTotals(id).requests,
-    branches: detail.repos ?? [],
+    branches: rec.branches,
     children,
     pendingQuestions: sy.questions({ taskId: id }).length,
     workingDoc: sy.brain.workingDocPath(`job-${id}`),
     result: t.result,
-    transcript: messages.slice(1).map((m) => ({
-      role: m.role,
-      content: typeof m.content === "string" ? m.content.slice(0, 4000) : m.content === null ? "" : JSON.stringify(m.content).slice(0, 4000),
-      ...(m.tool_calls?.length ? { tools: m.tool_calls.map((c) => `${c.function.name}(${c.function.arguments.slice(0, 8000)})`) } : {}),
-    })),
+    sessionId: rec.sessionId,
+    transcript: rec.transcript,
     questions: sy.questions({ taskId: id, pendingOnly: false }),
   };
 }
@@ -562,6 +607,11 @@ export interface SessionView extends SessionRecord {
   taskLabel: string | null;
   /** Wall-clock duration so far (to `endedAt`, else the last event). */
   durationMs: number;
+  /**
+   * `Switchyard.resumeSession` would continue this session: it is `interrupted`, its task is
+   * `interrupted`, and it is the task's latest agent session (not a classifier call).
+   */
+  resumable: boolean;
 }
 
 export interface SessionDetail extends Omit<SessionEventsPage, "sessionId"> {
@@ -573,13 +623,25 @@ export interface SessionDetail extends Omit<SessionEventsPage, "sessionId"> {
 }
 
 function sessionViews(sy: Switchyard, records: SessionRecord[]): SessionView[] {
-  const labels = new Map<string, string | null>();
-  const label = (taskId: string | null) => {
-    if (!taskId) return null;
-    if (!labels.has(taskId)) labels.set(taskId, sy.tasks.get(taskId)?.spec.label ?? null);
-    return labels.get(taskId)!;
+  const tasks = new Map<string, { label: string | null; state: TaskState | null }>();
+  const task = (taskId: string) => {
+    if (!tasks.has(taskId)) {
+      const t = sy.tasks.get(taskId);
+      tasks.set(taskId, { label: t?.spec.label ?? null, state: t?.row.state ?? null });
+    }
+    return tasks.get(taskId)!;
   };
-  return records.map((r) => ({ ...r, taskLabel: label(r.taskId), durationMs: Math.max(0, (r.endedAt ?? r.updatedAt) - r.createdAt) }));
+  const latest = new Map<string, string | null>();
+  const latestAgentSession = (taskId: string) => {
+    if (!latest.has(taskId)) latest.set(taskId, sy.sessions.forTask(taskId).filter((s) => s.role !== "classifier").at(-1)?.id ?? null);
+    return latest.get(taskId)!;
+  };
+  return records.map((r) => ({
+    ...r,
+    taskLabel: r.taskId ? task(r.taskId).label : null,
+    durationMs: Math.max(0, (r.endedAt ?? r.updatedAt) - r.createdAt),
+    resumable: r.status === "interrupted" && r.taskId !== null && task(r.taskId).state === "interrupted" && latestAgentSession(r.taskId) === r.id,
+  }));
 }
 
 /** Sessions matching the filter, newest first. */

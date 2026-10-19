@@ -3,7 +3,8 @@ import { estimateTokens } from "../gateway/types.js";
 import { AdmissionDenied } from "../core/errors.js";
 import { ask } from "../runners/types.js";
 import type { HarnessEnv, HarnessTool } from "./tools.js";
-import type { SessionRecorder } from "../sessions/recorder.js";
+import { journaled, parseArgs } from "./journal.js";
+import { applyResume, type ResumeInput } from "./resume.js";
 
 export interface TerminalTool<T> {
   def: ChatTool;
@@ -29,8 +30,11 @@ export interface LoopOptions<T> {
   maxInvalidTerminal: number;
   /** Called after each response's tool calls ran (per-response commits). */
   onResponse?: (info: ResponseInfo) => Promise<void>;
-  /** Persist the transcript after each turn (resumable supervisors). */
-  persist?: (messages: ChatMessage[]) => void;
+  /**
+   * Continue an interrupted session: `messages` is the plan's transcript, `env.ctx.session` the
+   * reopened session. The plan is applied before the first request (see `applyResume`).
+   */
+  resume?: ResumeInput;
   purpose?: string;
 }
 
@@ -38,38 +42,6 @@ export type LoopResult<T> =
   | { kind: "terminal"; value: T; messages: ChatMessage[] }
   | { kind: "budget_exhausted"; messages: ChatMessage[] }
   | { kind: "invalid_terminal"; errors: string[]; messages: ChatMessage[] };
-
-/** Parse a tool call's arguments; undefined when they are not valid JSON. */
-function parseArgs(raw: string): unknown {
-  try {
-    return JSON.parse(raw || "{}");
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Run one tool call under the session's tool journal: the intent is durable before the tool
- * runs, the outcome after. Without a session the call just runs.
- */
-async function journaled(
-  session: SessionRecorder | null,
-  call: ChatToolCall,
-  args: unknown,
-  effect: { sideEffect: HarnessTool["sideEffect"]; idempotent?: boolean | undefined },
-  run: () => Promise<{ ok: boolean; output: string }>,
-): Promise<{ ok: boolean; output: string }> {
-  const intent = session?.toolIntent({
-    callId: call.id,
-    name: call.function.name,
-    args: args === undefined ? call.function.arguments : args,
-    sideEffect: effect.sideEffect,
-    ...(effect.idempotent !== undefined ? { idempotent: effect.idempotent } : {}),
-  });
-  const r = await run();
-  if (session && intent !== undefined) session.toolOutcome(intent, r);
-  return r;
-}
 
 /** Replace the oldest tool outputs with a stub until the conversation fits the budget. */
 export function compact(messages: ChatMessage[], maxInputTokens: number): void {
@@ -94,6 +66,14 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
   const terminalName = o.terminal.def.function.name;
   let invalid = 0;
   let lastErrors: string[] = [];
+
+  if (o.resume) {
+    const r = await applyResume({ env, messages, tools: o.tools, terminal: o.terminal }, o.resume);
+    if (r.kind === "finished") {
+      sync();
+      return { kind: "terminal", value: r.value, messages };
+    }
+  }
 
   for (;;) {
     // Shutdown, cancellation, or deadline: stop before spending another request.
@@ -138,7 +118,6 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
     if (calls.length === 0) {
       messages.push({ role: "user", content: `Use the tools, then call ${terminalName}. Plain text answers are not accepted.` });
       sync();
-      o.persist?.(messages);
       continue;
     }
 
@@ -173,7 +152,6 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
     }
     if (env.edits.size) await o.onResponse?.({ endpointId, requestId, edits: [...env.edits] });
     sync();
-    o.persist?.(messages);
     if (finished !== undefined) return { kind: "terminal", value: finished, messages };
     if (invalid > o.maxInvalidTerminal) return { kind: "invalid_terminal", errors: lastErrors, messages };
   }

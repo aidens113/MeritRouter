@@ -41,7 +41,9 @@ Tasks
   await <ids...> [--timeout s]  wait for results
   collect <ids...>              print finished results
   cancel <ids...>               cancel tasks
-  resume <id>                   requeue an interrupted task
+  resume <id>                   requeue interrupted work: a session id (s_...) continues
+                                that session; a task id continues its latest session
+                                (coding tasks start over in a fresh worktree)
   artifact <ref>                print an artifact
   usage [--hours n]             requests, tokens, and outcomes
 
@@ -149,6 +151,7 @@ function eventName(e: SessionEvent): { name: string; ok?: boolean } {
     case "tool_intent": return { name: e.data.name };
     case "tool_outcome": return { name: e.data.name, ok: e.data.ok };
     case "ended": return { name: e.data.status };
+    case "resumed": return { name: `${e.data.actions.length} action(s)` };
     default: return { name: "" };
   }
 }
@@ -184,6 +187,12 @@ function eventSummary(e: SessionEvent): string {
     case "note": return e.data.data === undefined ? e.data.text : `${e.data.text} ${compact(e.data.data)}`;
     case "workspace": return e.data.repos.map((r) => `${r.alias} ${r.branch ?? "-"} @ ${(r.head ?? r.baseCommit ?? "?").slice(0, 10)}`).join("; ") || "(no repositories)";
     case "ended": return e.data.stopReason;
+    case "resumed": {
+      const d = e.data;
+      const acts = d.actions.map((a) => (a.kind === "reconcile_edits" ? `reconcile edits (${a.policy})` : a.kind === "rerun_tool" ? `re-run ${a.name}` : `report ${a.name}`));
+      const counts = [d.resolvedIntentSeqs.length && `${d.resolvedIntentSeqs.length} interrupted call(s) settled`, d.droppedRequestSeqs.length && `${d.droppedRequestSeqs.length} request(s) dropped`].filter(Boolean);
+      return [acts.length ? acts.join(", ") : "", ...counts, d.summary].filter(Boolean).join("; ");
+    }
     default: return "";
   }
 }
@@ -511,9 +520,14 @@ async function main(): Promise<number> {
       case "cancel":
         out(sy.cancelTasks(args), true);
         return 0;
-      case "resume":
-        out({ taskId: args[0], state: sy.resumeTask(args[0]!) }, true);
+      case "resume": {
+        const id = args[0];
+        if (!id) throw new SwitchyardError("usage", "usage: switchyard resume <session-id|task-id>");
+        // A session id continues that session; anything else is a task id. Output is JSON, as before.
+        if (sy.sessions.get(id) || (id.startsWith("s_") && !sy.tasks.get(id))) out({ sessionId: id, ...sy.resumeSession(id) }, true);
+        else out({ taskId: id, state: sy.resumeTask(id) }, true);
         return 0;
+      }
       case "artifact": {
         const a = sy.artifacts.read(args[0]!);
         if (!a) throw new SwitchyardError("not_found", `unknown artifact ${args[0]}`);

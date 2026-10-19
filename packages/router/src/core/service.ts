@@ -164,10 +164,17 @@ export class Switchyard {
     });
     syncRepositoryRegistry(this.db, cfg);
     this.qualifier = new Qualifier(this);
-    this.scheduler = new Scheduler(cfg, this.tasks, this.executor, this.owner, () => {
-      syncRepositoryRegistry(this.db, this.cfg);
-      void this.qualifier.gradePending().catch(() => undefined);
-    });
+    this.scheduler = new Scheduler(
+      cfg,
+      this.tasks,
+      this.executor,
+      this.owner,
+      () => {
+        syncRepositoryRegistry(this.db, this.cfg);
+        void this.qualifier.gradePending().catch(() => undefined);
+      },
+      this.sessions,
+    );
     if (opts.worker) this.startWorker(opts.pollIntervalMs);
   }
 
@@ -382,10 +389,37 @@ export class Switchyard {
     if (r.changes === 0) throw new TaskValidationError(`question ${id} does not exist or was already answered`);
   }
 
+  /**
+   * Re-queue an interrupted task. Agent-loop roles continue their latest interrupted session;
+   * a coding task starts over in a fresh worktree (the old one stays as evidence).
+   */
   resumeTask(id: string): TaskState {
-    const s = this.tasks.resume(id);
+    const t = this.tasks.get(id);
+    const coding = t ? this.cfg.profiles[t.spec.profile]?.mode === "coding" : false;
+    const s = this.tasks.resume(id, coding ? { freshWorkspace: true } : {});
     this.scheduler.kick();
     return s;
+  }
+
+  /**
+   * Re-queue the task of an interrupted session so its next run continues that session (a
+   * coding task in the same worktree). Completion and batch work re-runs fresh, linked to it.
+   */
+  resumeSession(sessionId: string): { taskId: string; state: TaskState } {
+    let s = this.sessions.get(sessionId);
+    if (!s) throw new TaskValidationError(`unknown session ${sessionId}`);
+    if (!s.taskId) throw new TaskValidationError(`session ${sessionId} belongs to no task`);
+    if (s.status === "running" && !this.tasks.leaseLive(s.taskId)) {
+      // Left running by a process that died: settle the task and the session first.
+      this.tasks.recoverExpiredLeases();
+      this.sessions.markDeadRunning((x) => x.id !== sessionId);
+      s = this.sessions.get(sessionId)!;
+    }
+    if (s.status !== "interrupted") throw new TaskValidationError(`session ${sessionId} is ${s.status}; only interrupted sessions can be resumed`);
+    const taskId = s.taskId!;
+    const state = this.tasks.resume(taskId, { sessionId });
+    this.scheduler.kick();
+    return { taskId, state };
   }
 
   usage(sinceMs: number, untilMs?: number): UsageSummary {

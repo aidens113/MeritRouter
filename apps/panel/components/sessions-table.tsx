@@ -89,6 +89,7 @@ export function SessionsTable({ rows, now = Date.now(), hideTask = false, empty 
                       {humanize(s.stopReason)}
                     </div>
                   ) : null}
+                  {s.resumable ? <div className="mt-0.5 text-[11px] font-medium text-accent-ink">can be resumed</div> : null}
                 </td>
                 {hideTask ? null : (
                   <td className="whitespace-nowrap">

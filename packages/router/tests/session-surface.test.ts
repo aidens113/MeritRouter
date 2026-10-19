@@ -8,7 +8,9 @@ import type { GateResponse } from "../src/gateway/gate.js";
 import type { ChatMessage, ChatResponse } from "../src/gateway/types.js";
 import type { ModelEndpoint } from "../src/models/catalog.js";
 import { GatewayError } from "../src/core/errors.js";
-import { makeEnv, open, reply, ScriptedClient, type Env } from "./helpers.js";
+import { WorkerTaskSchema } from "../src/core/task.js";
+import { jobDetail, jobsView, sessionsView } from "../src/admin/insights.js";
+import { baseConfig, makeEnv, open, reply, ScriptedClient, summarizeTask, type Env } from "./helpers.js";
 
 // Both surfaces run from dist/ (build first: pnpm --filter switchyard-router build).
 const dist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "dist");
@@ -191,5 +193,186 @@ describe("session MCP tools", () => {
     const missing = await client.callTool({ name: "get_session", arguments: { sessionId: "s_missing" } });
     expect(missing.isError).toBe(true);
     expect((missing.content as Array<{ text: string }>)[0]!.text).toContain("unknown session s_missing");
+  }, 60_000);
+});
+
+/**
+ * Submit a task straight into the store and mark it interrupted, as after a crash. Its run count
+ * is at the auto-resume cap (3), so a starting worker (the MCP server) leaves it to the operator.
+ */
+function interruptedTask(sy: ReturnType<typeof open>, label: string): string {
+  const [t] = sy.tasks.submit([WorkerTaskSchema.parse(summarizeTask({ label }))]);
+  sy.db.prepare("UPDATE tasks SET state = 'interrupted', state_reason = 'worker lease expired', run_count = 3 WHERE id = ?").run(t!.taskId);
+  return t!.taskId;
+}
+
+/**
+ * Interrupted work for the resume surfaces:
+ * - `resumed`: a session that crashed with a read in flight, was resumed once (a `resumed` event),
+ *   then interrupted again; its task is interrupted, so it can be resumed;
+ * - `stale`: an older interrupted session of the same task (superseded by `resumed`);
+ * - `other`: the latest session of a second interrupted task, resumed by task id;
+ * - `done`: a completed session of a completed task.
+ */
+async function seedInterrupted(e: Env): Promise<{ resumed: string; stale: string; other: string; done: string; taskId: string; otherTask: string }> {
+  const sy = open(e, new ScriptedClient(() => reply("unused")));
+  try {
+    const taskId = interruptedTask(sy, "resume-me");
+    const stale = sy.sessions.create({ taskId, role: "summarizer", agentLabel: "summarizer:old", profile: "summarize", tier: "T1" });
+    stale.end("interrupted", "shutdown");
+    const rec = sy.sessions.create({ taskId, role: "inspector", agentLabel: "inspector:resume-me", profile: "summarize", tier: "T1" });
+    const messages: ChatMessage[] = [
+      { role: "system", content: "charter" },
+      { role: "user", content: "Read src/app.ts" },
+    ];
+    const read = { id: "c1", type: "function" as const, function: { name: "read_file", arguments: '{"path":"src/app.ts"}' } };
+    rec.syncMessages(messages);
+    rec.modelRequest({ executionId: "exec_r", purpose: "tool_loop", chat: { messages, max_tokens: 500 } });
+    rec.modelResponse(gateResponse(null, [read]));
+    rec.syncMessages([...messages, { role: "assistant", content: null, tool_calls: [read] }]);
+    rec.toolIntent({ callId: "c1", name: "read_file", args: { path: "src/app.ts" }, sideEffect: "read" });
+    rec.end("interrupted", "process_died");
+    // A worker resumed it once, then stopped again before the next request.
+    const again = sy.sessions.reopen(rec.id);
+    const plan = sy.sessions.planResume(rec.id)!;
+    again.resumed(plan.summary, plan.actions, plan);
+    again.syncMessages([...plan.messages, { role: "user", content: plan.summary }]);
+    again.end("interrupted", "shutdown");
+
+    const otherTask = interruptedTask(sy, "by-task-id");
+    const other = sy.sessions.create({ taskId: otherTask, role: "summarizer", agentLabel: "summarizer:by-task-id", profile: "summarize", tier: "T1" });
+    other.end("interrupted", "shutdown");
+
+    const [doneTask] = sy.tasks.submit([WorkerTaskSchema.parse(summarizeTask({ label: "finished" }))]);
+    sy.db.prepare("UPDATE tasks SET state = 'completed' WHERE id = ?").run(doneTask!.taskId);
+    const done = sy.sessions.create({ taskId: doneTask!.taskId, role: "summarizer", agentLabel: "summarizer:finished", profile: "summarize", tier: "T1" });
+    done.end("completed", "submitted");
+    return { resumed: rec.id, stale: stale.id, other: other.id, done: done.id, taskId, otherTask };
+  } finally {
+    await sy.close();
+  }
+}
+
+describe("session resume surfaces", () => {
+  it("marks resumable sessions and resumes by session id or task id from the CLI", async () => {
+    env = makeEnv();
+    const ids = await seedInterrupted(env);
+
+    const rows = JSON.parse(cli(env, "sessions", "--json").stdout) as Array<{ id: string; resumable: boolean }>;
+    expect(Object.fromEntries(rows.map((r) => [r.id, r.resumable]))).toEqual({ [ids.resumed]: true, [ids.stale]: false, [ids.other]: true, [ids.done]: false });
+
+    // The resumed event reads as one timeline row: what was settled, then the notice the model got.
+    const t = cli(env, "session", ids.resumed);
+    expect(t.code, t.stderr).toBe(0);
+    const resumedRow = t.stdout.split(/\r?\n/).find((l) => /\sresumed\s/.test(l)) ?? "";
+    expect(resumedRow).toMatch(/resumed\s+0 action\(s\)\s+1 interrupted call\(s\) settled; \S/);
+
+    const r = cli(env, "resume", ids.resumed);
+    expect(r.code, r.stderr).toBe(0);
+    expect(JSON.parse(r.stdout)).toEqual({ sessionId: ids.resumed, taskId: ids.taskId, state: "queued" });
+    // A second resume is refused: the task is already queued.
+    const twice = cli(env, "resume", ids.resumed);
+    expect(twice.code).toBe(1);
+    expect(twice.stderr).toContain(`task ${ids.taskId} is queued, not interrupted`);
+
+    const byTask = cli(env, "resume", ids.otherTask);
+    expect(byTask.code, byTask.stderr).toBe(0);
+    expect(JSON.parse(byTask.stdout)).toEqual({ taskId: ids.otherTask, state: "queued" });
+
+    const done = cli(env, "resume", ids.done);
+    expect(done.code).toBe(1);
+    expect(done.stderr).toContain(`session ${ids.done} is completed; only interrupted sessions can be resumed`);
+    expect(cli(env, "resume", "s_missing").stderr).toContain("unknown session s_missing");
+    expect(cli(env, "resume", "t_missing").stderr).toContain("unknown task t_missing");
+    expect(cli(env, "resume").stderr).toContain("usage: switchyard resume <session-id|task-id>");
+
+    // The directive names the session, so the worker continues that session.
+    const sy = open(env, new ScriptedClient(() => reply("unused")));
+    try {
+      const ev = sy.tasks.events(ids.taskId, 50).filter((x) => x.type === "resumed");
+      expect(ev.at(-1)!.data).toEqual({ sessionId: ids.resumed });
+    } finally {
+      await sy.close();
+    }
+  }, 60_000);
+
+  it("resumes a session over MCP", async () => {
+    env = makeEnv();
+    const ids = await seedInterrupted(env);
+    client = new Client({ name: "test", version: "1" });
+    await client.connect(new StdioClientTransport({ command: process.execPath, args: [mcpJs, "--config", env.cfg.configPath], env: { PATH: process.env.PATH ?? "" } }));
+    const text = (r: Awaited<ReturnType<Client["callTool"]>>) => (r.content as Array<{ text: string }>)[0]!.text;
+
+    const ok = await client.callTool({ name: "resume_session", arguments: { sessionId: ids.resumed } });
+    expect(ok.isError, text(ok)).toBeFalsy();
+    expect(JSON.parse(text(ok))).toEqual({ sessionId: ids.resumed, taskId: ids.taskId, state: "queued" });
+
+    const done = await client.callTool({ name: "resume_session", arguments: { sessionId: ids.done } });
+    expect(done.isError).toBe(true);
+    expect(text(done)).toContain("only interrupted sessions can be resumed");
+    const missing = await client.callTool({ name: "resume_session", arguments: { sessionId: "s_missing" } });
+    expect(missing.isError).toBe(true);
+    expect(text(missing)).toContain("unknown session s_missing");
+  }, 60_000);
+});
+
+describe("job detail from sessions", () => {
+  it("reads the transcript and branches from the latest supervisor session, with job_state as a fallback", async () => {
+    const cfg = baseConfig();
+    (cfg.profiles as Record<string, unknown>).supervise = { mode: "supervisor", tools: "supervisor", min_total_parameters_b: 100, max_model_requests: 30, max_output_tokens: 4000, classify: "never", min_tier: "T3" };
+    env = makeEnv({ config: cfg });
+    const sy = open(env, new ScriptedClient(() => reply("unused")));
+    try {
+      const job = (await sy.startJob({ goal: "Add subtract()", repositories: ["core"], label: "sub" })).taskId;
+      expect(jobDetail(sy, job)).toMatchObject({ sessionId: null, branches: [], transcript: [] });
+
+      const first = sy.sessions.create({ taskId: job, jobId: job, role: "supervisor", agentLabel: "supervisor:sub", profile: "supervise", tier: "T3" });
+      const delegate = { id: "d1", type: "function" as const, function: { name: "delegate", arguments: '{"tasks":[]}' } };
+      first.syncMessages([
+        { role: "system", content: "# Supervisor charter" },
+        { role: "user", content: "Goal: Add subtract()" },
+        { role: "assistant", content: "Delegating.", tool_calls: [delegate] },
+        { role: "tool", tool_call_id: "d1", content: "nothing delegated" },
+      ]);
+      first.setWorkspace({ repos: [{ alias: "core", worktree: "/wt/job", branch: `switchyard/job-${job}`, baseCommit: "a".repeat(40), head: "b".repeat(40) }] });
+      first.end("interrupted", "process_died");
+
+      const d = jobDetail(sy, job)!;
+      expect(d.sessionId).toBe(first.id);
+      expect(d.branches).toEqual([{ alias: "core", branch: `switchyard/job-${job}`, baseSha: "a".repeat(40), worktree: "/wt/job" }]);
+      expect(d.transcript).toEqual([
+        { role: "user", content: "Goal: Add subtract()" },
+        { role: "assistant", content: "Delegating.", tools: ['delegate({"tasks":[]})'] },
+        { role: "tool", content: "nothing delegated" },
+      ]);
+
+      // A fresh supervisor session (an escalation) has its own transcript; the branches stay those last recorded.
+      sy.db.prepare("UPDATE tasks SET state = 'interrupted' WHERE id = ?").run(job);
+      const second = sy.sessions.create({ taskId: job, jobId: job, previousSessionId: first.id, role: "supervisor", agentLabel: "supervisor:sub", profile: "supervise", tier: "T3" });
+      second.syncMessages([
+        { role: "system", content: "# Supervisor charter" },
+        { role: "user", content: "Goal again" },
+      ]);
+      second.end("interrupted", "shutdown");
+      const d2 = jobDetail(sy, job)!;
+      expect(d2.sessionId).toBe(second.id);
+      expect(d2.transcript).toEqual([{ role: "user", content: "Goal again" }]);
+      expect(d2.branches.map((b) => b.worktree)).toEqual(["/wt/job"]);
+      expect(Object.fromEntries(sessionsView(sy, { jobId: job }).map((s) => [s.id, s.resumable]))).toEqual({ [first.id]: false, [second.id]: true });
+
+      // A job from before sessions: job_state is still read.
+      const legacy = (await sy.startJob({ goal: "Old job", repositories: ["core"], label: "old" })).taskId;
+      sy.db
+        .prepare("INSERT INTO job_state (task_id, messages_json, detail_json, updated_at) VALUES (?, ?, ?, ?)")
+        .run(legacy, JSON.stringify([{ role: "system", content: "charter" }, { role: "user", content: "Old goal" }]), JSON.stringify({ repos: [{ alias: "core", branch: "switchyard/job-old", baseSha: "c".repeat(40), worktree: "/wt/old" }] }), Date.now());
+      expect(jobDetail(sy, legacy)).toMatchObject({ sessionId: null, transcript: [{ role: "user", content: "Old goal" }], branches: [{ branch: "switchyard/job-old", worktree: "/wt/old" }] });
+
+      // The list view carries the branches and session but not the transcript.
+      const list = jobsView(sy);
+      expect(list.find((j) => j.taskId === job)).toMatchObject({ sessionId: second.id, branches: [{ worktree: "/wt/job" }] });
+      expect(list.every((j) => !("transcript" in j))).toBe(true);
+    } finally {
+      await sy.close();
+    }
   }, 60_000);
 });

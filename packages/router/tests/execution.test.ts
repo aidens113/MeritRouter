@@ -201,7 +201,7 @@ describe("dependencies, cancellation, restart", () => {
     expect(sy.getStatus([sub!.taskId])[0]).toMatchObject({ state: "cancelled" });
   });
 
-  it("expired leases become interrupted; read-only work resumes, coding work does not", async () => {
+  it("expired leases become interrupted; read-only and coding work both resume", async () => {
     env = makeEnv();
     let t = Date.now();
     const db = openDatabase(env.cfg.storageDir);
@@ -213,7 +213,8 @@ describe("dependencies, cancellation, restart", () => {
     db.close();
     sy = open(env, new ScriptedClient(() => reply("{}")), { now: () => t });
     sy.recover();
-    expect(sy.getStatus(["ro", "code"]).map((s) => s.state)).toEqual(["queued", "interrupted"]);
+    // Coding work resumes too (S2): its next run continues its session in the same worktree.
+    expect(sy.getStatus(["ro", "code"]).map((s) => s.state)).toEqual(["queued", "queued"]);
   });
 });
 

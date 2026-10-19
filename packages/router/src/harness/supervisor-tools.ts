@@ -131,9 +131,12 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
         const items = Array.isArray(a.tasks) ? (a.tasks as Array<Record<string, unknown>>) : [];
         if (!items.length) throw new Error("tasks is empty");
         const limit = s.ctx.cfg.supervisor.max_workers_per_job;
-        if (activeChildren().length + items.length > limit) throw new Error(`at most ${limit} workers may run for one job; await some first`);
+        // Labels already dispatched are deduplicated (a resumed job re-runs its delegation): they add no worker.
+        const slug = (l: unknown) => String(l ?? "").toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 40);
+        const added = items.filter((it) => !s.children.has(slug(it.label))).length;
+        if (activeChildren().length + added > limit) throw new Error(`at most ${limit} workers may run for one job; await some first`);
         // Partition by file: concurrent coding briefs in one repository must not overlap.
-        const active = activeChildren().map((id) => svc.getTask(id)!.spec).filter((t) => t.writableRepository);
+        const active = activeChildren().map((id) => svc.getTask(id)!.spec).filter((t) => t.writableRepository && !items.some((it) => slug(it.label) === t.label));
         const pending: Array<{ label: string | undefined; repo: string; paths: string[] }> = active.map((t) => ({ label: t.label, repo: t.writableRepository!, paths: t.constraints.allowedPaths ?? [] }));
         for (const it of items) {
           if (it.profile !== "implement") continue;
@@ -148,7 +151,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
         }
         const doc = env.brain?.workingDoc ?? null;
         const specs = items.map((it) => {
-          const label = str(it.label, "label").toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 40);
+          const label = slug(str(it.label, "label"));
           const repos = (it.repositories as string[] | undefined) ?? [...new Set([...s.repos.keys(), ...s.ctx.spec.repositoryAliases])];
           const writable = it.profile === "implement" ? String(it.writable_repository ?? [...s.repos.keys()][0] ?? "") : undefined;
           const baseCommits: Record<string, string> = {};
@@ -189,7 +192,8 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
           const bc = (sp.spec.context as { baseCommits: Record<string, string> }).baseCommits;
           for (const alias of Object.keys(bc)) bc[alias] = (await git(s.repos.get(alias)!.worktree, ["rev-parse", "HEAD"])).trim();
         }
-        if (doc && env.brain) for (const sp of specs) await env.brain.brain.addBrief(env.brain.principal(), env.brain.actor, doc, sp.brief);
+        // A label already dispatched has its brief recorded; a repeated delegation is deduplicated below.
+        if (doc && env.brain) for (const sp of specs) if (!s.children.has(sp.label)) await env.brain.brain.addBrief(env.brain.principal(), env.brain.actor, doc, sp.brief);
         // The delegating session becomes each new task's parent session.
         const out = await svc.submitTasks(specs.map((sp) => sp.spec), { purpose: "work", ...(s.ctx.session ? { parentSessionId: s.ctx.session.id } : {}) });
         out.forEach((o, i) => s.children.set(specs[i]!.label, o.taskId));
