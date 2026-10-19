@@ -54,7 +54,7 @@ export async function measureFeatures(
   cfg: ResolvedConfig,
   spec: WorkerTask,
   sources: ContextSource[],
-  opts: { runCount: number; attachmentModalities: Modality[] },
+  opts: { failedRuns: number; attachmentModalities: Modality[] },
 ): Promise<TaskFeatures> {
   const profile = cfg.profiles[spec.profile]!;
   let lines = sources.reduce((s, src) => s + (src.totalLines ?? src.text.split("\n").length), 0);
@@ -94,7 +94,8 @@ export async function measureFeatures(
     acceptanceCriteria: spec.constraints.acceptanceCriteria.length,
     checksRequired: Boolean(spec.constraints.checks?.length),
     outputSchema: Boolean(spec.constraints.outputSchema),
-    retryAfterFailure: opts.runCount > 1,
+    // Only a failed attempt counts: an interrupted run (crash, shutdown, deferral) is not a failure.
+    retryAfterFailure: opts.failedRuns > 0,
     inputModalities: [...new Set<Modality>(["text", ...opts.attachmentModalities])],
     scopeSample,
   };

@@ -118,6 +118,14 @@ export class TaskRouter {
     return [...out];
   }
 
+  /** Earlier runs of this task by its author that failed (escalations included); interruptions do not count. */
+  private failedRuns(taskId: string): number {
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS n FROM sessions WHERE task_id = ? AND status = 'failed' AND role NOT IN ('classifier', 'reviewer')")
+      .get(taskId) as { n: number };
+    return row.n;
+  }
+
   async prepare(task: StoredTask, leaseOwner: string): Promise<Prepared> {
     await this.gate.health.refresh();
     const spec = task.spec;
@@ -125,7 +133,7 @@ export class TaskRouter {
     const inputModalities = this.inputModalities(task);
     const sources = await loadSources(this.cfg, spec, this.artifacts);
     const features = await measureFeatures(this.cfg, spec, sources, {
-      runCount: task.row.run_count,
+      failedRuns: this.failedRuns(task.row.id),
       attachmentModalities: inputModalities.filter((m) => m !== "text"),
     });
     const detScore = featureScore(this.rulebook, features).reduce((s, l) => s + l.points, 0);
