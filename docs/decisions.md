@@ -43,10 +43,13 @@ non-streaming chat completions only.
    (`discovery.free_platforms`) or published as $0 by OpenRouter. (User decision.)
 4. **Qualification** gates tiers once `qualification.required` is enabled (off by default so new
    installs can route before any model has been evaluated).
-5. **Paid routing is not implemented.** The config rejects `paid_fallback_enabled: true`. A design
-   for direct, cost-bounded paid routes is proposed and awaiting a decision (see below).
-6. **Read-only workers use an in-package tool loop** (list/read/search confined to configured
-   repositories through git), not OpenCode, for exact request counting and path containment.
+5. **Paid routes are direct** (user decision, 2026-10-19): Anthropic Messages API or any
+   OpenAI-compatible endpoint, never through FreeLLMAPI, one attempt per request, worst-case cost
+   reserved before dispatch and settled to billed cost, keys in an encrypted vault with billing
+   classes.
+6. **SwitchYard has its own agent harness** for every role: read-only workers, the native coding
+   worker (default), and the standalone supervisor. Tools enforce scope in code; OpenCode remains
+   an optional runner.
 7. **`await_results` waits up to `execution.await_max_seconds` (240 s)** and returns a bounded
    "still waiting" response; the installed Claude Code version's MCP backgrounding behaviour was
    not verified here.
@@ -54,11 +57,15 @@ non-streaming chat completions only.
 9. **better-sqlite3 pinned to 12.x**: 13.0.3's N-API prebuild segfaults on Node 22.11 (Windows).
    **Vitest 3.2 + Vite 6**: Vitest 4/5 need Node >= 22.12.
 
-## Open decision: paid credits
-
-Proposed: paid keys live in SwitchYard (not FreeLLMAPI, which rotates every key on a platform
-and retries invisibly), one attempt per request, worst-case cost reserved before dispatch
-(input estimate x price + max_tokens x price), reconciled to billed usage; billing classes
-`free_tier | paid_credits | paid_postpaid | trial`; budgets global/per key/per tier/per task;
-per-tier policy `never | on_free_exhaustion | preferred | premium_tier` (default `never`).
-Not built until confirmed.
+10. **Standalone operation** (user decision): Claude Code is one preset. SwitchYard runs its own
+    supervisor on models chosen per role; presets `claude-code`, `standalone-free`,
+    `standalone-hybrid`, `standalone-paid`.
+11. **The brain is markdown working documents in git**, not a database (user decision): FluxIQ's
+    protocol, enforced on write; a disposable SQLite FTS index for search; shared across projects
+    with mounts for existing `docs/working/` folders. Access requests are decided by the
+    supervisor by default, with human override.
+12. **Per-agent, per-line attribution via git** (user request): commits under the agent's identity
+    with Agent/Model/Task trailers, one commit per editing model response, cherry-picked onto job
+    branches (no squash); supervisors undo by task, model, agent, commit, or line as new commits.
+13. **Supervisors commit only to local `switchyard/job-<id>` branches and never push**; the brain
+    repository pushes only when `brain.push` is set.

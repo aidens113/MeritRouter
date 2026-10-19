@@ -11,21 +11,21 @@ Related: [decisions](../decisions.md), [operations](../operations.md)
 
 ## Current State
 
-**Decided** (user, 2026-10-19): paid routes go directly through SwitchYard, never through
-FreeLLMAPI. Everything else uses the defaults recommended below. Everything must be
-configurable, with presets including one for Claude Code.
+**Decided** (user, 2026-10-19): direct paid routes; brain as markdown working docs in git (shared,
+mounts, supervisor approves access with human override); per-agent line attribution with
+supervisor undo; local job branches, never pushed; everything configurable with presets.
 
-**Done:** routing core, tiers, scanning, qualification, coding runner, CLI, MCP (see
-`decisions.md`). Phase A (direct paid routes, vault, budgets) on `dev`. Panel first pass in
-progress.
+**Done** (on `dev`): A paid routes, B brain, C charters, D harness (read-only and native coding
+workers, standalone supervisor with delegation, integration, blame/undo, questions, resume),
+G attribution, E presets and `docs/roles.md`, CLI and MCP for jobs/brain/blame. Panel first
+pass merged; second pass (jobs, brain, paid, new settings) in progress.
 
-**Not done:** Phases B-F.
+**Not done:** live checks against real FreeLLMAPI, paid providers, and OpenCode; panel second
+pass verification.
 
-**Next steps:** the user asked to review the knowledge-base and harness plan before
-implementation (2026-10-19). Open decisions: brain location (dedicated shared brain repo +
-mounts), access-request approver, commit granularity, brain repo push policy. Then B, C, D, E, F.
+**Next steps:** verify and merge the panel second pass, then fast-forward `main`.
 
-**Blockers:** none. Live checks still need FreeLLMAPI, provider keys, and paid credentials.
+**Blockers:** none.
 
 ## Concepts
 
@@ -173,7 +173,14 @@ preset configuration.
 - Outcome: Accepted
 - Follow-up: live check against a real paid provider once a key is available.
 
+### 2026-10-19 — Phases B, C, D, E, G
+- Agent: supervisor
+- Changed: `packages/router/src/{brain,attribution,harness,roles}/`, runners, charters, presets, CLI, MCP, docs
+- Why: user asked for a standalone harness with roles, a shared brain, and line attribution.
+- Validation: `npx vitest run` in packages/router -> 83 passed; `switchyard init --preset standalone-free` + `run` + `jobs` + `brain ls` smoke-tested by hand.
+- Outcome: Accepted
+- Follow-up: panel second pass; live provider checks.
+
 ## Open Questions
 
-- Brain location, approver default, commit granularity, brain push policy: awaiting the user
-  (recommendations in the 2026-10-19 conversation). Owner: user.
+- None open; all four decisions took the recommended options (2026-10-19).

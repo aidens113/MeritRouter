@@ -3,8 +3,18 @@
 Delegate bounded work from a Claude Code session to free external models, without giving up
 control of which models run, how many requests they spend, or what counts as "done".
 
-- **Supervisor stays native.** Claude Code keeps its own login and model; SwitchYard adds MCP
-  tools (`submit_tasks`, `await_results`, ...) and a CLI.
+- **Use it with Claude Code or on its own.** With Claude Code, Claude supervises through MCP
+  tools. Standalone, SwitchYard runs its own supervisor on the models you choose (free or paid):
+  it plans, delegates to workers, verifies, and integrates onto a job branch.
+- **Supervisor and worker roles with rules.** Charters (built out from FluxIQ's agent protocol)
+  define each role; the harness enforces what code can: edit scope, commands, budgets, brain
+  access. See [docs/roles.md](docs/roles.md).
+- **A shared brain.** Markdown working documents in git, shared by every agent and by you, with
+  scoped access and an access-request workflow.
+- **Every line attributed.** Commits carry the agent and model that wrote them; supervisors can
+  undo any task, model, commit, or individual lines.
+- **Paid credits, safely.** Optional direct routes to Anthropic, Gemini, DeepSeek, OpenRouter, ...
+  with an encrypted key vault, billing classes, and hard budgets; off by default.
 - **Every model is scanned and assigned.** Models in your FreeLLMAPI catalog are scanned for
   parameter counts (Hugging Face weights, provider descriptions, names), modalities, limits, and
   verified-free pricing. Uncertain counts wait for your confirmation.
@@ -28,7 +38,8 @@ control of which models run, how many requests they spend, or what counts as "do
 | --- | --- |
 | `packages/router` | Library, `switchyard` CLI, MCP server, eval suite |
 | `apps/panel` | Next.js web panel |
-| `docs/setup.md` | Install, configure, register with Claude Code |
+| `docs/setup.md` | Install, presets, configure, register with Claude Code, standalone jobs |
+| `docs/roles.md` | Supervisors, workers, choosing models per role, the brain, attribution |
 | `docs/operations.md` | Limits, results, recovery, known limitations |
 | `docs/decisions.md` | Verified FreeLLMAPI behaviour and design decisions |
 
@@ -36,7 +47,7 @@ control of which models run, how many requests they spend, or what counts as "do
 
 ```bash
 pnpm install && pnpm -r build
-node packages/router/dist/cli.js init .
+node packages/router/dist/cli.js init . --preset claude-code   # or standalone-free, standalone-hybrid, standalone-paid
 node packages/router/dist/cli.js doctor
 ```
 

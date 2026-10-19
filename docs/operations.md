@@ -8,7 +8,11 @@
 | Package allocation per hour/day | Hard | Same reservation |
 | Only verified-free, eligible models; one model per request; served model must match | Hard | Route plan, chain verification, gate |
 | Size floors, modalities, tool support, metadata age | Hard | Route plan |
-| Paid spend | Hard (zero) | Config rejects paid routing |
+| Paid spend | Hard | Worst-case cost reserved per request against global, per-key, prepaid-balance, and per-task budgets before dispatch; settled to billed cost |
+| Paid policy | Hard | Paid models only where `paid.tiers` / `supervisor.paid_policy` allow; direct routes only, never via FreeLLMAPI |
+| Worker file edits | Hard (native runner) | Edit tools refuse paths outside `allowedPaths` |
+| Brain access | Hard | Every brain read and write checked against role grants; workers write only their report |
+| Ledger integrity | Hard | Ledger entries are append-only and need a real validation record |
 | Deadlines, cancellation, lease ownership | Hard | Checked before every dispatch; late responses cannot complete a cancelled task |
 | One writer per repository | Hard | Claim transaction |
 | Input/output token budgets | Estimated | ~3 chars/token at admission; reconciled when the provider reports usage |
@@ -51,13 +55,26 @@ they are not reverted in the worktree.
   `git worktree remove` in the source repository, then delete the folder.
 - Backups: copy `.switchyard/` while no worker is running.
 
+## The brain and attribution
+
+- The brain is a git repository (`brain.path`). `switchyard brain ls|read|search` or the panel's
+  Brain page browse it; every change is a commit under the writing agent, so `git log` and
+  `git blame` inside it show who (and which model) wrote what.
+- Job branches live in your repositories as `switchyard/job-<id>`; integration worktrees under
+  `.switchyard/worktrees/job-<id>-<alias>`. Review, then `git merge --no-ff` (not squash).
+- `switchyard blame <repo> <path> --ref <branch>` attributes lines to agents and models.
+
 ## Known limitations
 
 - Live behaviour against a real FreeLLMAPI instance, real providers, and OpenCode has not been
   exercised yet (no gateway or credentials were available during development). Every policy path
   is covered by tests with an in-process gateway double and a scripted coding agent.
 - OpenCode's JSON event format is undocumented; its output is stored as evidence, not parsed.
-- Paid routing is not implemented (see `decisions.md`).
+- Paid routes have not been exercised against real providers yet; prices are yours to keep
+  current (OpenRouter prices are fetched when `pricing_url` is set).
 - Audio/video inputs are routed only to models that accept them; there is no transcription or
   frame-extraction preprocessing yet.
-- Jobs stop when no worker process is running (the MCP server stops with the Claude session).
+- Tasks and jobs run only while a worker process is running (the MCP server stops with the
+  Claude session; run `switchyard worker` for unattended work). Interrupted supervisors resume
+  from their saved transcript.
+- Line attribution for external agents (OpenCode) is per model request, not per tool call.
