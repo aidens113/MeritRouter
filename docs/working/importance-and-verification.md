@@ -303,11 +303,58 @@ budgets that teams build on, and S2's resume protocol must also resume a task th
 
 ## Worker Briefs
 
-None yet. V1 split when it starts (by file):
-- `src/verification/**` and the migration;
-- executor, runners, and supervisor tools;
-- config schema, MCP, CLI, and insights;
-- panel.
+Branch/worktree: `feat/v1-verification` at `D:/sy-wt/v1`. Workers never commit.
+
+### Brief: v1-core
+- Task: the V1 library per Design.
+  - `core/task.ts`: `importance`, `importanceReason`, criteria as strings or
+    `{id,text,verify,checks}` normalised to ids by a `criteria(spec)` helper,
+    `verification.atLeast/addChecks`; `WorkerResult` gains `verificationStatus`, a
+    `verification` record, structured `scopeViolation` / `protectedPathsChanged`, check
+    `revision` / `artifactDigest`; `acceptanceStatus` gains `needs_supervisor`.
+  - `config/schema.ts`: the `verification` section, defaults equal to the Design YAML, with
+    `strict_acceptor: supervisor | human` (default supervisor).
+  - `src/verification/`: `importance.ts` (floors, effective importance with its source),
+    `policy.ts` (bundles, `extends`, merge, matrix, rules matched on the spec and on a result's
+    changed paths / protected-path flag, fingerprint), `contract.ts` (compile from spec +
+    classification + budget, including the budget allocation; `ContractStore` save/get with
+    sha256; appended migration `task_contracts`), `checks.ts` (named deterministic checks
+    over a result: output_contract, evidence_provenance, scope, protected_paths,
+    declared_checks, criterion_evidence), `decide.ts` (V1 deterministic decision ->
+    verificationStatus + acceptanceStatus).
+- Required reads: this Current State and Design; `core/task.ts`, `core/worker-output.ts`,
+  `runners/coding/finish.ts`, `scoring/rulebook.ts`, `admission/admission.ts`,
+  `config/schema.ts`, `storage/migrations.ts` (tail).
+- Owns: `src/verification/**`, `src/core/task.ts`, `src/config/schema.ts` (verification
+  section; R1 adds a storage key on another branch), `src/storage/migrations.ts` (append),
+  `tests/verification.test.ts`, minimal compile fixes elsewhere (list them in the report).
+- Definition of done: tests for the matrix, floors, rules raising on a result, a worker unable
+  to lower the level, merge semantics, contract immutability and digest, budget allocation
+  and `verification_budget_insufficient`; typecheck and all tests pass.
+- Report to: docs/working/importance-and-verification/reports/v1-core.md
+
+### Brief: v1-exec (after v1-core)
+- Task: the executor compiles and stores the contract after classification and reserves the
+  allocation (the loop's remaining count excludes review/repair reserves), runs
+  checks/decide after the runner, and re-evaluates on the result. Coding `finish.ts` binds
+  checks to the revision and sets the structured flags and per-criterion status. The
+  escalation retry gets the failure context (findings, unresolved criteria, failing check
+  logs). Dependency gate per Design. `integrate_task` gate. Supervisor tools `accept_task` /
+  `reject_task`; strict acceptance is judged against the job's goal and the specifications
+  given to the supervisor (charter and tool description). `delegate` takes importance.
+  `Switchyard.acceptTask(id, {by, reason})` / `rejectTask` in `service.ts`. The classifier
+  runs at a measured T3 when tags could still reach T4 or reject (`score.ts`).
+- Owns: `src/core/**` except task.ts, `src/runners/**`, `src/harness/**`, `src/scoring/**`,
+  `src/admission/**`, `src/storage/tasks.ts`, `charters/**`, `tests/verification-flow.test.ts`.
+- Report to: docs/working/importance-and-verification/reports/v1-exec.md
+
+### Brief: v1-surface (after v1-exec)
+- Task: MCP `submit_tasks` importance/criteria fields, `accept_result` / `reject_result`; CLI
+  `accept` / `reject` and importance flags on submit; insights `taskDetail` gains the contract
+  and verification; the panel task detail shows importance, contract, verification record,
+  and accept/reject actions.
+- Owns: `src/cli.ts`, `src/mcp.ts`, `src/admin/insights.ts`, `apps/panel/**`, related tests.
+- Report to: docs/working/importance-and-verification/reports/v1-surface.md
 
 ---
 

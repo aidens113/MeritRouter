@@ -178,6 +178,87 @@ Surface: `switchyard sessions [--running|--interrupted]`, `switchyard session <i
 
 ## Worker Briefs
 
+### S2 and R1 decisions (2026-10-19)
+- Branches/worktrees: S2 on `feat/s2-resume` (`D:/sy-wt/s2`), R1 operations on `feat/r1-ops`
+  (`D:/sy-wt/r1`); V1 runs in parallel on `feat/v1-verification`. Workers never commit.
+- Resume rule: a task's next run resumes its latest session when that session is `interrupted`
+  (crash, shutdown, lost lease, capacity deferral) and its role is resumable (agent-loop roles:
+  read-only workers, native coding, supervisors; external coding relaunches in the same
+  worktree with a transcript summary). Completion, batch, and classifier runs re-run fresh with
+  a linked session (one request; cheap). Escalations always start fresh.
+- At recovery, sessions still `running` whose task lease expired become `interrupted`
+  (`process_died`).
+- Pending intents (intent without outcome) are resolved before the loop continues, and every
+  tool call of the last assistant message gets a tool message (synthetic when needed):
+  `none`/`read` -> "interrupted; call again"; `edit` -> worktree diffed against the last
+  committed head, the difference committed as "recovered" under the session's identity
+  (`sessions.recover_edits: commit | reset`, default commit) and the model told which files;
+  `delegate` -> re-run automatically (idempotent by label); `command` -> re-run when
+  `idempotent`, else "outcome unknown"; `brain` -> "outcome unknown; check before repeating";
+  `external` (ask_user) -> the stored question/answer state is reported. A `model_request`
+  without a response is dropped (its reservation already counts).
+- Coding tasks now auto-resume in the same worktree (within the 3-run cap); `switchyard resume
+  <task>` keeps its fresh-worktree behaviour.
+- Supervisors resume from the session transcript; `job_state` is read only as a fallback for
+  jobs that have no session, and is no longer written.
+- A `resumed` event records what was reconciled.
+
+### Brief: s2-core
+- Repository: this repository, worktree `D:/sy-wt/s2` (branch `feat/s2-resume`).
+- Task: in `src/sessions/`, add `SessionStore.reopen(id) -> SessionRecorder` (continues seq,
+  status back to `running`), `transcript(id) -> ChatMessage[]` (rebuilt from `message` events;
+  a later event for the same index replaces the earlier), `pendingIntents(id)`, a pure
+  `planResume(events, opts) -> { messages, actions[], summary }` implementing the rules above
+  (actions are what the caller must do: re-run delegate X, reconcile edits in repo Y, ...),
+  `markDeadRunning(isLeaseLive)`, and `recorder.resumed(summary, actions)`.
+- Required reads: this Current State, "S2 and R1 decisions", `src/sessions/**`,
+  `reports/s1-store.md`, `reports/s1-runners.md`.
+- Owns: `packages/router/src/sessions/**`, `tests/session-resume.test.ts`, an appended
+  migration only if needed.
+- Must not touch: anything else.
+- Definition of done: unit tests cover each side-effect class, an orphaned tool call, a lost
+  model request, and reopen counters; `pnpm -r typecheck` and `npx vitest run tests` pass in
+  the worktree.
+- Report to: docs/working/agent-sessions-and-teams/reports/s2-core.md
+
+### Brief: s2-exec (after s2-core)
+- Task: the executor, scheduler, harness loop, and runners apply the resume rule; supervisors
+  move off `job_state`; coding auto-resumes in the same worktree with edit reconciliation;
+  `Switchyard.resumeSession(id)` in `service.ts` re-queues a task to resume that session.
+  Fault injection: a test-only hook (`SWITCHYARD_FAULT_AT=<point>[:<n>]`; points after
+  tool_intent, after tool run, after model_request, after model_response) simulates process
+  death (throws past cleanup, leaving session and lease as a crash would). A fresh
+  `Switchyard` on the same storage must finish each role's task with no duplicated edits,
+  delegations, or paid charges.
+- Owns: `src/core/**`, `src/harness/**`, `src/runners/**`, `src/storage/tasks.ts`,
+  `tests/session-faults.test.ts`, existing tests that assert the old recovery behaviour.
+- Report to: docs/working/agent-sessions-and-teams/reports/s2-exec.md
+
+### Brief: s2-surface (after s2-exec)
+- Task: `switchyard resume <session-id>` (task ids keep working), MCP `resume_session`, panel
+  Resume action on interrupted sessions.
+- Owns: `src/cli.ts`, `src/mcp.ts`, `src/admin/insights.ts`, `apps/panel/**`, related tests.
+- Report to: docs/working/agent-sessions-and-teams/reports/s2-surface.md
+
+### Brief: r1-ops
+- Repository: worktree `D:/sy-wt/r1` (branch `feat/r1-ops`).
+- Task: (1) `storage.durability: normal | full` (SQLite `synchronous`; session logs stay
+  fsynced per event either way); (2) `switchyard backup <dir>` (SQLite online backup plus
+  sessions and artifacts, never worktrees) and `switchyard restore <dir>` (refuses while a
+  worker holds live leases); (3) `switchyard daemon` (runs the worker under a restart policy:
+  exponential backoff, max restarts per window, logs under `<storage>/logs/`); (4)
+  `switchyard service install | uninstall | status` for a systemd user unit, a launchd plist,
+  and a Windows Task Scheduler task (at logon, restart on failure) via `schtasks`; `--dry-run`
+  prints the definition. New area `src/operations/` (daemon, service, backup).
+- Owns: `src/operations/**`, `src/storage/db.ts`, `src/config/schema.ts` (storage section
+  only), `src/cli.ts` (new commands only), `tests/operations.test.ts`.
+- Must not touch: executor, scheduler, runners, sessions, panel.
+- Definition of done: tests for a backup/restore round trip (tasks and session logs readable
+  after restore), the durability pragma, unit definitions for all three platforms (dry run),
+  and the daemon restart policy with a fake child; never install a real service in tests;
+  typecheck and tests pass.
+- Report to: docs/working/agent-sessions-and-teams/reports/r1-ops.md
+
 ### Brief: s1-store
 - Repository: this repository.
 - Task: build the session store and recorder per "S1 implementation decisions". `SessionStore`:
