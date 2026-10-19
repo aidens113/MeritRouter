@@ -3,7 +3,7 @@ import type { Modality, PaidPolicy, ProfileName, TierName } from "../config/sche
 import type { Db } from "../storage/db.js";
 import type { ArtifactStore } from "../storage/artifacts.js";
 import type { StoredTask } from "../storage/tasks.js";
-import type { Catalog } from "../models/catalog.js";
+import type { Catalog, RoutingOverride } from "../models/catalog.js";
 import type { Gate } from "../gateway/gate.js";
 import { effectiveBudget } from "../admission/admission.js";
 import { loadSources } from "../context/sources.js";
@@ -46,17 +46,18 @@ export class TaskRouter {
     this.classifier = new Classifier(cfg, db, gate, this.fingerprint, () => this.classificationPlan(), now);
   }
 
-  plan(profile: ProfileName, tier: TierName, inputModalities: Modality[], forcedEndpointId?: string, skipQualification = false, paidPolicy?: PaidPolicy): RoutePlan {
+  plan(profile: ProfileName, tier: TierName, inputModalities: Modality[], forcedEndpointId?: string, skipQualification = false, paidPolicy?: PaidPolicy, extraOverrides: RoutingOverride[] = []): RoutePlan {
     return planRoute(
       this.cfg,
       this.catalog.endpoints(),
       // Qualification runs measure one model in isolation: routing overrides do not apply.
-      skipQualification ? [] : this.catalog.routingOverrides(),
+      skipQualification ? [] : [...this.catalog.routingOverrides(), ...extraOverrides],
       { profile, tier, inputModalities, needsStructuredOutput: false, skipQualification, ...(forcedEndpointId ? { forcedEndpointId } : {}), ...(paidPolicy ? { paidPolicy } : {}) },
       {
         now: new Date(this.now()),
         qualification: qualificationLookup(this.db, this.cfg),
         health: this.gate.health.lookup,
+        quarantined: (ep) => this.gate.quarantined(ep),
         ...(this.gate.paid ? { paidPlatforms: this.gate.paid.spend.paidFreeLlmApiPlatforms() } : {}),
       },
     );
@@ -91,6 +92,15 @@ export class TaskRouter {
     const base = { rulebookVersion: this.fingerprint, confidence: null, rationale: null, suggestedTier: null };
 
     let classification: Classification;
+    if (profile.mode === "supervisor") {
+      // Supervisors are not scored: they run at T3 on the models you chose for the role.
+      classification = decide(this.cfg, this.rulebook, spec, features, { ...base, basis: "forced", tags: null });
+      classification.tier = "T3";
+      classification.rejectReason = null;
+      this.db.prepare("UPDATE tasks SET tier = ?, classification_json = ? WHERE id = ?").run("T3", JSON.stringify(classification), task.row.id);
+      const chosen: RoutingOverride[] = this.cfg.supervisor.endpoints.map((endpointId) => ({ profile: spec.profile, tier: null, kind: "force", endpointId, allowBelowFloor: true, enabled: true }));
+      return { classification, plan: this.plan(spec.profile, "T3", inputModalities, spec.routing?.endpointId, false, this.cfg.supervisor.paid_policy, chosen), inputModalities };
+    }
     if (spec.routing?.tier || spec.routing?.endpointId) {
       classification = decide(this.cfg, this.rulebook, spec, features, { ...base, basis: "forced", tags: spec.hints?.tags ?? null });
     } else if (spec.hints?.difficulty || spec.hints?.tags) {

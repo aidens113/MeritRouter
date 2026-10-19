@@ -310,4 +310,26 @@ export const MIGRATIONS: string[] = [
   CREATE TABLE brain_files (path TEXT PRIMARY KEY, mtime REAL NOT NULL, size INTEGER NOT NULL, title TEXT, kind TEXT, status TEXT, lines INTEGER);
   CREATE VIRTUAL TABLE brain_fts USING fts5(path UNINDEXED, title, body);
   `,
+  `
+  -- Supervisor transcripts, so an interrupted job resumes where it stopped.
+  CREATE TABLE job_state (
+    task_id TEXT PRIMARY KEY REFERENCES tasks(id),
+    messages_json TEXT NOT NULL,
+    detail_json TEXT,
+    updated_at INTEGER NOT NULL
+  );
+
+  -- Questions a supervisor asks the user (answered from the panel, CLI, or MCP).
+  CREATE TABLE job_questions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL REFERENCES tasks(id),
+    question TEXT NOT NULL,
+    options_json TEXT,
+    answer TEXT,
+    answered_by TEXT,
+    asked_at INTEGER NOT NULL,
+    answered_at INTEGER
+  );
+  CREATE INDEX job_questions_task ON job_questions(task_id);
+  `,
 ];

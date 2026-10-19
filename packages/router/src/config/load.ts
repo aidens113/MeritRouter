@@ -44,7 +44,8 @@ export function parseConfig(raw: unknown, configPath: string): ResolvedConfig {
     repositoryPaths[alias] = { path: path.resolve(baseDir, repo.path), writable: repo.writable };
   }
   for (const [name, profile] of Object.entries(cfg.profiles) as [ProfileName, ProfileConfig][]) {
-    if (profile.max_model_requests > cfg.execution.max_model_requests_per_task) {
+    // Supervisors have their own (larger) request budget; the per-task cap applies to workers.
+    if (profile.mode !== "supervisor" && profile.max_model_requests > cfg.execution.max_model_requests_per_task) {
       throw new ConfigError(
         `profile ${name}: max_model_requests (${profile.max_model_requests}) exceeds execution.max_model_requests_per_task (${cfg.execution.max_model_requests_per_task})`,
       );

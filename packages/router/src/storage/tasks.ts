@@ -47,6 +47,10 @@ export interface ClaimLimits {
   /** Deadline applied when a task sets no budget.timeoutSeconds. */
   defaultTimeoutMs: number;
   limit?: number;
+  /** Supervisor task types run under their own concurrency limit and deadline. */
+  supervisorProfiles?: string[];
+  maxSupervisors?: number;
+  supervisorTimeoutMs?: number;
 }
 
 /** Canonical JSON (sorted keys) so equivalent specs hash identically. */
@@ -204,11 +208,14 @@ export class TaskStore {
       const now = this.now();
       this.resolveDependencyGates(now);
 
-      const running = this.db
-        .prepare("SELECT COUNT(*) AS n FROM tasks WHERE state IN ('running','cancel_requested') AND lease_expires_at > ?")
-        .get(now) as { n: number };
-      let slots = Math.min(limits.maxConcurrent - running.n, limits.limit ?? Number.MAX_SAFE_INTEGER);
-      if (slots <= 0) return [];
+      const sup = new Set(limits.supervisorProfiles ?? []);
+      const runningRows = this.db
+        .prepare("SELECT profile FROM tasks WHERE state IN ('running','cancel_requested') AND lease_expires_at > ?")
+        .all(now) as { profile: string }[];
+      const runningSup = runningRows.filter((r) => sup.has(r.profile)).length;
+      let slots = Math.min(limits.maxConcurrent - (runningRows.length - runningSup), limits.limit ?? Number.MAX_SAFE_INTEGER);
+      let supSlots = (limits.maxSupervisors ?? 0) - runningSup;
+      if (slots <= 0 && supSlots <= 0) return [];
 
       const candidates = this.db
         .prepare(
@@ -236,18 +243,21 @@ export class TaskStore {
          WHERE id = ?`,
       );
       for (const row of candidates) {
-        if (slots <= 0) break;
-        if (row.writable_repo) {
+        const isSup = sup.has(row.profile);
+        if (isSup ? supSlots <= 0 : slots <= 0) continue;
+        if (row.writable_repo && !isSup) {
           const n = writers.get(row.writable_repo) ?? 0;
           if (n >= limits.maxWritersPerRepo) continue;
           writers.set(row.writable_repo, n + 1);
         }
         const spec = JSON.parse(row.spec_json) as WorkerTask;
-        const timeoutMs = spec.budget?.timeoutSeconds ? spec.budget.timeoutSeconds * 1000 : limits.defaultTimeoutMs;
+        const fallback = isSup ? (limits.supervisorTimeoutMs ?? limits.defaultTimeoutMs) : limits.defaultTimeoutMs;
+        const timeoutMs = spec.budget?.timeoutSeconds ? spec.budget.timeoutSeconds * 1000 : fallback;
         update.run(owner, now + limits.leaseMs, now, now + timeoutMs, now, row.id);
         this.event(row.id, "claimed", { owner, run: row.run_count + 1 });
         claimed.push(this.get(row.id)!);
-        slots--;
+        if (isSup) supSlots--;
+        else slots--;
       }
       return claimed;
     });

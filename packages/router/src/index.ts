@@ -13,3 +13,4 @@ export type { InferenceClient, ChatRequest, ChatResponse, ProviderStatus } from 
 export type { UsageSummary } from "./storage/usage.js";
 export type { ScanSummary } from "./models/scanner.js";
 export * as insights from "./admin/insights.js";
+export { createCodingRunner } from "./runners/coding/index.js";

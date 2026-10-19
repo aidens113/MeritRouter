@@ -19,7 +19,8 @@ export interface EffectiveBudget {
 
 export function effectiveBudget(cfg: ResolvedConfig, spec: WorkerTask, tier: TierName | null = null): EffectiveBudget {
   const profile = cfg.profiles[spec.profile]!;
-  const tierCap = tier ? cfg.tiers[tier].max_model_requests : Number.MAX_SAFE_INTEGER;
+  const supervisor = profile.mode === "supervisor";
+  const tierCap = tier && !supervisor ? cfg.tiers[tier].max_model_requests : Number.MAX_SAFE_INTEGER;
   const narrow = (configured: number | undefined, requested: number | undefined): number | null => {
     if (configured === undefined) return requested ?? null;
     return requested === undefined ? configured : Math.min(configured, requested);
@@ -28,7 +29,7 @@ export function effectiveBudget(cfg: ResolvedConfig, spec: WorkerTask, tier: Tie
     maxModelRequests: Math.min(
       profile.max_model_requests,
       tierCap,
-      cfg.execution.max_model_requests_per_task,
+      supervisor ? Number.MAX_SAFE_INTEGER : cfg.execution.max_model_requests_per_task,
       spec.budget?.maxModelRequests ?? Number.MAX_SAFE_INTEGER,
     ),
     maxInputTokens: narrow(profile.max_input_tokens, spec.budget?.maxInputTokens),

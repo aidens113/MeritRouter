@@ -151,7 +151,7 @@ function matrix(sy: Switchyard): Map<string, EligibilityCell[]> {
   const overrides = sy.catalog.routingOverrides();
   for (const profile of Object.keys(sy.cfg.profiles) as ProfileName[]) {
     for (const tier of TIER_NAMES) {
-      const plan = planRoute(sy.cfg, eps, overrides, { profile, tier, inputModalities: ["text"], needsStructuredOutput: false }, { now: new Date(), qualification: qual, health: sy.health.lookup });
+      const plan = planRoute(sy.cfg, eps, overrides, { profile, tier, inputModalities: ["text"], needsStructuredOutput: false }, { now: new Date(), qualification: qual, health: sy.health.lookup, quarantined: (ep) => sy.gate.quarantined(ep) });
       for (const ex of plan.explanations) {
         const cells = out.get(ex.endpointId) ?? [];
         cells.push({ profile, tier, eligible: ex.eligible, rank: ex.rank, reasons: ex.reasons });
@@ -272,11 +272,11 @@ export function timeseries(sy: Switchyard, opts: { hours?: number; bucketMinutes
   return (
     sy.db
       .prepare(
-        `SELECT (reserved_at / ?) * ? AS bucket, COALESCE(endpoint_id, '(none)') AS ep, COUNT(*) AS n, SUM(status != 'succeeded') AS failed,
+        `SELECT reserved_at - (reserved_at % CAST(? AS INTEGER)) AS bucket, COALESCE(endpoint_id, '(none)') AS ep, COUNT(*) AS n, SUM(status != 'succeeded') AS failed,
                 COALESCE(SUM(input_tokens),0) AS inTok, COALESCE(SUM(output_tokens),0) AS outTok
            FROM model_requests WHERE reserved_at > ? GROUP BY bucket, ep ORDER BY bucket`,
       )
-      .all(bucket, bucket, since) as Array<{ bucket: number; ep: string; n: number; failed: number; inTok: number; outTok: number }>
+      .all(bucket, since) as Array<{ bucket: number; ep: string; n: number; failed: number; inTok: number; outTok: number }>
   ).map((r) => ({ bucketStart: r.bucket, endpointId: r.ep, requests: r.n, failed: r.failed, inputTokens: r.inTok, outputTokens: r.outTok }));
 }
 
@@ -294,7 +294,7 @@ export function routingPreview(sy: Switchyard, profile: ProfileName, tier: TierN
     sy.catalog.endpoints(),
     sy.catalog.routingOverrides(),
     { profile, tier, inputModalities: modalities, needsStructuredOutput: false },
-    { now: new Date(), qualification: qualificationLookup(sy.db, sy.cfg), health: sy.health.lookup },
+    { now: new Date(), qualification: qualificationLookup(sy.db, sy.cfg), health: sy.health.lookup, quarantined: (ep) => sy.gate.quarantined(ep) },
   );
   return { floorB: plan.floorB, forced: plan.forced, explanations: plan.explanations };
 }

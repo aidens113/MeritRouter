@@ -1,0 +1,120 @@
+import Link from "next/link";
+import { ShieldAlert } from "lucide-react";
+import type { insights } from "switchyard-router";
+import { RequestStatusBadge, TierBadge } from "./task-badges";
+import { Badge, EmptyState } from "./ui";
+import { dateTime, duration, humanize, modelHref, num, shortDateTime, shortId } from "@/lib/format";
+
+export type RequestRow = ReturnType<typeof insights.requestLog>[number];
+
+const PURPOSE: Record<string, string> = {
+  completion: "Answer",
+  completion_repair: "Answer (repair)",
+  batch: "Batched answers",
+  tool_loop: "Repository investigation",
+  classification: "Difficulty classifier",
+  runner: "Coding agent",
+};
+
+export function purposeLabel(p: string): string {
+  return PURPOSE[p] ?? humanize(p);
+}
+
+export function RequestsTable({ rows, names, hideModel = false, empty }: { rows: RequestRow[]; names: Map<string, string>; hideModel?: boolean; empty?: string }) {
+  if (!rows.length) return <EmptyState title={empty ?? "No requests recorded"}>Requests appear here as workers call models through the gate.</EmptyState>;
+  return (
+    <div className="overflow-x-auto">
+      <table className="data-table tabular">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Purpose</th>
+            <th>Tier</th>
+            {hideModel ? null : <th>Model</th>}
+            <th>Status</th>
+            <th className="text-right" title="Upstream provider attempts reported by the gateway (never exact)">
+              Attempts
+            </th>
+            <th className="text-right">Tokens in</th>
+            <th className="text-right">Out</th>
+            <th className="text-right">Cached</th>
+            <th>Error / policy</th>
+            <th>Tasks</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.id}>
+              <td className="whitespace-nowrap">
+                <div title={dateTime(r.reservedAt)}>{shortDateTime(r.reservedAt)}</div>
+                <div className="text-[11px] text-ink-3">{r.finishedAt ? duration(r.finishedAt - r.reservedAt) : "in flight"}</div>
+              </td>
+              <td className="whitespace-nowrap">{purposeLabel(r.purpose)}</td>
+              <td>
+                <TierBadge tier={r.tier} />
+              </td>
+              {hideModel ? null : (
+                <td className="min-w-[9rem] max-w-[16rem]">
+                  {r.endpointId ? (
+                    <Link href={modelHref(r.endpointId)} className="text-ink hover:text-accent-ink hover:underline">
+                      {names.get(r.endpointId) ?? r.endpointId}
+                    </Link>
+                  ) : (
+                    <span className="text-ink-3">none</span>
+                  )}
+                  {r.servedModel && r.endpointId && !r.endpointId.endsWith(`/${r.servedModel}`) ? <div className="text-[11px] text-bad-ink">served by {r.servedModel}</div> : null}
+                  {r.routeNote ? <div className="text-[11px] text-ink-3">{r.routeNote}</div> : null}
+                </td>
+              )}
+              <td>
+                <RequestStatusBadge status={r.status} />
+              </td>
+              <td className="text-right">{num(r.providerAttempts)}</td>
+              <td className="text-right">{num(r.inputTokens)}</td>
+              <td className="text-right">{num(r.outputTokens)}</td>
+              <td className="text-right">{num(r.cachedInputTokens)}</td>
+              <td className="min-w-[8rem] max-w-[18rem]">
+                {r.policyViolation ? (
+                  <Badge tone="bad" icon={<ShieldAlert size={11} aria-hidden />} title={r.policyViolation}>
+                    Policy violation
+                  </Badge>
+                ) : null}
+                {r.errorKind ? (
+                  <div className="text-xs">
+                    <span className="font-medium text-bad-ink">{humanize(r.errorKind)}</span>
+                    {r.errorMessage ? <span className="text-ink-3"> · {r.errorMessage.slice(0, 160)}</span> : null}
+                  </div>
+                ) : null}
+                {r.policyViolation ? <div className="mt-0.5 text-[11px] text-ink-3">{r.policyViolation.slice(0, 200)}</div> : null}
+                {!r.errorKind && !r.policyViolation ? <span className="text-ink-3">–</span> : null}
+              </td>
+              <td className="whitespace-nowrap">
+                {r.taskIds.length > 2 ? (
+                  <span title={r.taskIds.join(", ")}>
+                    <Badge tone="accent">batch of {r.taskIds.length}</Badge>
+                  </span>
+                ) : null}
+                <div className="flex flex-col">
+                  {r.taskIds.slice(0, r.taskIds.length > 2 ? 0 : 2).map((t) => (
+                    <Link key={t} href={`/tasks/${t}`} className="font-mono text-xs text-accent-ink hover:underline">
+                      {shortId(t, 14)}
+                    </Link>
+                  ))}
+                  {r.taskIds.length > 2 ? (
+                    <span className="mt-0.5 flex flex-wrap gap-1">
+                      {r.taskIds.map((t) => (
+                        <Link key={t} href={`/tasks/${t}`} className="font-mono text-[11px] text-accent-ink hover:underline">
+                          {shortId(t, 8)}
+                        </Link>
+                      ))}
+                    </span>
+                  ) : null}
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}

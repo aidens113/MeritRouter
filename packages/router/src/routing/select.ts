@@ -120,7 +120,7 @@ export function planRoute(
   endpoints: ModelEndpoint[],
   overrides: RoutingOverride[],
   req: RouteRequirements,
-  deps: { now: Date; qualification: QualificationLookup; health?: ProviderHealthLookup; paidPlatforms?: Set<string> },
+  deps: { now: Date; qualification: QualificationLookup; health?: ProviderHealthLookup; paidPlatforms?: Set<string>; quarantined?: (ep: ModelEndpoint) => string | null },
 ): RoutePlan {
   const applicable = overrides.filter((o) => overrideApplies(o, req.profile, req.tier));
   const forceIds = new Set<string>(applicable.filter((o) => o.kind === "force").map((o) => o.endpointId));
@@ -148,6 +148,8 @@ export function planRoute(
       ...(deps.paidPlatforms ? { paidPlatforms: deps.paidPlatforms } : {}),
     });
     if (blockIds.has(ep.id)) reasons.push(`blocked by routing override for ${req.profile}/${req.tier}`);
+    const q = deps.quarantined?.(ep);
+    if (q) reasons.push(q);
     if (forced && !forceIds.has(ep.id)) reasons.push("another model is forced for this task type/tier");
     if (policy === "premium" && !isPaid(ep) && !forced) reasons.push("premium routing uses paid models only");
     const h = deps.health?.(ep.providerId);

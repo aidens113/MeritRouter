@@ -187,6 +187,7 @@ export function decide(
   if (spec.hints?.difficulty) tier = maxTier(tier, spec.hints.difficulty);
   if (spec.routing?.tier) tier = maxTier(tier, spec.routing.tier);
   if (rejectReason) tier = "T4";
+  else if (tier === "T4" && spec.hints?.difficulty === "T4") rejectReason = "the supervisor marked this task T4: keep it rather than delegating";
   else if (tier === "T4") rejectReason = `difficulty score ${score} exceeds the T3 limit of ${cfg.tiers.T3.max_score}; split the task into smaller pieces`;
   return {
     rulebookVersion: input.rulebookVersion,

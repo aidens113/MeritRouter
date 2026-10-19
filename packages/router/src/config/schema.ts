@@ -304,6 +304,10 @@ export const ConfigSchema = z
         paid_policy: PaidPolicySchema.default("never"),
         max_concurrent_jobs: z.number().int().positive().default(1),
         max_workers_per_job: z.number().int().positive().default(3),
+        /** Wall-clock limit for one job. */
+        job_timeout_seconds: z.number().int().positive().default(14_400),
+        /** Commands the supervisor may run in its integration worktree (plus its briefs' checks). */
+        allowed_commands: z.array(z.string().min(1)).default([]),
         /** Supervisors commit to switchyard/job-<id>; pushing is never automatic. */
         branch_prefix: z.string().regex(/^[A-Za-z0-9._/-]+$/).default("switchyard/job-"),
         /** How long ask_user waits for an answer before the job pauses as interrupted. */

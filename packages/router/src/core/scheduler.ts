@@ -49,7 +49,9 @@ export class Scheduler {
     return interrupted;
   }
 
+  /** Wake the loop. A no-op unless start() was called (non-worker processes never run tasks). */
   kick(): void {
+    if (!this.timer) return;
     void this.tick();
   }
 
@@ -74,6 +76,9 @@ export class Scheduler {
           maxWritersPerRepo: this.cfg.execution.max_concurrent_writers_per_repository,
           leaseMs,
           defaultTimeoutMs,
+          supervisorProfiles: Object.entries(this.cfg.profiles).filter(([, p]) => p?.mode === "supervisor").map(([n]) => n),
+          maxSupervisors: this.cfg.supervisor.max_concurrent_jobs,
+          supervisorTimeoutMs: this.cfg.supervisor.job_timeout_seconds * 1000,
         });
         const taken = new Set<string>();
         for (const task of claimed) {

@@ -1,0 +1,239 @@
+@import "tailwindcss";
+
+/* Theme: system by default; data-theme="light" | "dark" on <html> overrides it. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+:root {
+  color-scheme: light;
+  --page: #f6f6f3;
+  --surface: #fcfcfb;
+  --surface-2: #f1f0ec;
+  --surface-3: #e7e6e0;
+  --line: rgba(11, 11, 11, 0.1);
+  --line-strong: rgba(11, 11, 11, 0.18);
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --ink-3: #75736d;
+  --accent: #2a78d6;
+  --accent-ink: #1c5cab;
+  --accent-soft: rgba(42, 120, 214, 0.1);
+
+  /* Status (fixed meaning: good / warning / serious / critical). Text steps are darker for contrast. */
+  --good: #0ca30c;
+  --good-ink: #006300;
+  --good-soft: rgba(12, 163, 12, 0.11);
+  --warn: #fab219;
+  --warn-ink: #7a5100;
+  --warn-soft: rgba(250, 178, 25, 0.16);
+  --serious: #ec835a;
+  --serious-ink: #9a3d17;
+  --serious-soft: rgba(236, 131, 90, 0.16);
+  --bad: #d03b3b;
+  --bad-ink: #a72424;
+  --bad-soft: rgba(208, 59, 59, 0.1);
+
+  /* Chart chrome + categorical series (validated: dataviz reference palette, light). */
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-other: #b4b2aa;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0f0f0e;
+    --surface: #1a1a19;
+    --surface-2: #232321;
+    --surface-3: #2e2e2b;
+    --line: rgba(255, 255, 255, 0.1);
+    --line-strong: rgba(255, 255, 255, 0.18);
+    --ink: #f4f4f1;
+    --ink-2: #c3c2b7;
+    --ink-3: #96948c;
+    --accent: #3987e5;
+    --accent-ink: #86b6ef;
+    --accent-soft: rgba(57, 135, 229, 0.16);
+    --good-ink: #4cc94c;
+    --good-soft: rgba(12, 163, 12, 0.18);
+    --warn-ink: #fac552;
+    --warn-soft: rgba(250, 178, 25, 0.15);
+    --serious-ink: #f2a283;
+    --serious-soft: rgba(236, 131, 90, 0.16);
+    --bad-ink: #ee7b7b;
+    --bad-soft: rgba(208, 59, 59, 0.18);
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-other: #5f5e59;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0f0f0e;
+  --surface: #1a1a19;
+  --surface-2: #232321;
+  --surface-3: #2e2e2b;
+  --line: rgba(255, 255, 255, 0.1);
+  --line-strong: rgba(255, 255, 255, 0.18);
+  --ink: #f4f4f1;
+  --ink-2: #c3c2b7;
+  --ink-3: #96948c;
+  --accent: #3987e5;
+  --accent-ink: #86b6ef;
+  --accent-soft: rgba(57, 135, 229, 0.16);
+  --good-ink: #4cc94c;
+  --good-soft: rgba(12, 163, 12, 0.18);
+  --warn-ink: #fac552;
+  --warn-soft: rgba(250, 178, 25, 0.15);
+  --serious-ink: #f2a283;
+  --serious-soft: rgba(236, 131, 90, 0.16);
+  --bad-ink: #ee7b7b;
+  --bad-soft: rgba(208, 59, 59, 0.18);
+  --grid: #2c2c2a;
+  --axis: #383835;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --series-other: #5f5e59;
+}
+
+@theme inline {
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-good: var(--good);
+  --color-good-ink: var(--good-ink);
+  --color-good-soft: var(--good-soft);
+  --color-warn: var(--warn);
+  --color-warn-ink: var(--warn-ink);
+  --color-warn-soft: var(--warn-soft);
+  --color-serious: var(--serious);
+  --color-serious-ink: var(--serious-ink);
+  --color-serious-soft: var(--serious-soft);
+  --color-bad: var(--bad);
+  --color-bad-ink: var(--bad-ink);
+  --color-bad-soft: var(--bad-soft);
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+html,
+body {
+  background: var(--page);
+  color: var(--ink);
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Component classes live in the components layer so utilities (pl-8, w-auto, …) can override them. */
+@layer components {
+/* Inputs share one look. */
+.field {
+  width: 100%;
+  border-radius: 0.5rem;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--ink);
+  padding: 0.4rem 0.6rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+.field:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.field[aria-invalid="true"] {
+  border-color: var(--bad);
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.8125rem;
+}
+.data-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-weight: 600;
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.data-table td {
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.data-table tbody tr:hover td {
+  background: var(--surface-2);
+}
+.data-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/* Unified diff rendering. */
+.diff-line {
+  white-space: pre;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.15rem;
+  padding: 0 0.75rem;
+}
+.diff-add {
+  background: var(--good-soft);
+}
+.diff-del {
+  background: var(--bad-soft);
+}
+.diff-hunk {
+  background: var(--accent-soft);
+  color: var(--ink-2);
+}
+.diff-meta {
+  color: var(--ink-3);
+}
+
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
