@@ -89,6 +89,17 @@ describe("routing fallback and policy", () => {
     expect(r.servedEndpoints).toEqual(["openrouter/second"]);
   });
 
+  it("skips a model whose context cannot hold the request and uses one that can", async () => {
+    env = makeEnv({ endpoints: [endpoint({ gatewayModelId: "tiny-ctx", totalParametersB: 40, contextLimitTokens: 1500 }), endpoint({ gatewayModelId: "wide", totalParametersB: 70, contextLimitTokens: 64000 })] });
+    const client = asServed(() => sy!, () => JSON.stringify(goodOutput()));
+    sy = open(env, client, { worker: true });
+    const [sub] = await sy.submitTasks([summarizeTask({ context: { inlineText: "x".repeat(6000) } })]);
+    const r = (await sy.awaitResults([sub!.taskId], { timeoutSeconds: 10 })).completed[0]!;
+    expect(r.servedEndpoints).toEqual(["openrouter/wide"]);
+    expect(r.routing!.attempts[0]!.outcome).toMatch(/skipped \(too large\)/);
+    expect(r.usage.modelRequests).toBe(1);
+  });
+
   it("exhausting every approved model queues the task and never routes elsewhere", async () => {
     env = makeEnv({ endpoints: [endpoint({ gatewayModelId: "only" }), endpoint({ gatewayModelId: "small", totalParametersB: 7 })] });
     const client = new ScriptedClient(() => {

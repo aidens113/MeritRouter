@@ -66,6 +66,16 @@ describe("size floors and eligibility", () => {
     db.close();
   });
 
+  it("platforms FreeLLMAPI reports as cooling down move to the end of the order", () => {
+    env = makeEnv({ endpoints: [endpoint({ providerId: "groq", gatewayModelId: "small", totalParametersB: 120 }), endpoint({ providerId: "kilo", gatewayModelId: "big", totalParametersB: 550 })] });
+    const { db, catalog } = catalogFor(env);
+    const health = (p: string) => (p === "groq" ? { status: "rate_limited", resumeAt: Date.now() + 60_000 } : undefined);
+    const plan = planRoute(env.cfg, catalog.endpoints(), [], { profile: "analyze", tier: "T2", inputModalities: ["text"], needsStructuredOutput: false }, { now: new Date(), qualification: noQual, health });
+    expect(plan.candidates.map((c) => c.id)).toEqual(["kilo/big", "groq/small"]);
+    expect(plan.explanations.find((e) => e.endpointId === "groq/small")!.coolingDownUntil).not.toBeNull();
+    db.close();
+  });
+
   it("manual overrides: force, prefer, block, and below-floor forcing", () => {
     env = makeEnv({ endpoints: [endpoint({ gatewayModelId: "a", totalParametersB: 120 }), endpoint({ gatewayModelId: "b", totalParametersB: 200 }), endpoint({ gatewayModelId: "tiny", totalParametersB: 30 })] });
     const { db, catalog } = catalogFor(env);
