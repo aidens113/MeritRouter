@@ -1,7 +1,7 @@
 # Agent sessions, failure resilience, and agent teams
 
 Status: Active
-Status detail: Phase S1 (agent session recording) complete 2026-10-19; S2 (resume) next.
+Status detail: S1, S2, and R1 operations complete 2026-10-19; R1b and T1 next.
 Created: 2026-10-19
 Last updated: 2026-10-19
 Owner: Senior supervisor agent
@@ -35,24 +35,33 @@ Related: [importance and verification](./importance-and-verification.md), [harne
 
 **Phase S1 done (2026-10-19):** every model-driven run records an agent session
 (`packages/router/src/sessions/`): fsync'd JSONL log under `<storage>/sessions/`, indexed in
-SQLite; transcript, model requests/responses/errors, a tool journal (intent before, outcome after,
-with side-effect class), workspace changes, end state. Executor runs, classifications, batch
-items, native and external coding, and supervisors all record; delegated tasks link to the
-delegating session. Read surfaces: `switchyard sessions` / `switchyard session <id>`, MCP
-`list_sessions` / `get_session`, panel `/sessions` and `/sessions/[id]`. Supervisor resume still
-uses `job_state`. Worker reports: `agent-sessions-and-teams/reports/s1-*.md`.
+SQLite; transcript, model traffic, a tool journal (intent before, outcome after, side-effect
+class), workspace changes, end state. Read surfaces in CLI, MCP, and panel.
 
-**Not done:** S2 onwards. Known S1 gaps for S2: no recorder reattach after restart; capacity
-deferrals end `interrupted` (S2 must not resume them as crashes, or change them to `failed`);
-side-effect classes to revisit (`cancel_tasks` = delegate, `ask_user` = external, brain
-access requests = brain, `run_check` not idempotent); external agents re-log changed message
-arrays; when the batch runner throws, already-finished members are not recorded on their task
-(pre-existing; sessions end `batch_aborted`).
+**Phase S2 done (2026-10-19):** interrupted sessions resume. Read-only, native coding, and
+supervisor tasks reopen their latest interrupted session (`SessionStore.reopen`), rebuild the
+transcript, settle in-flight tool calls by side-effect class (`planResume`,
+`src/harness/resume.ts`), and continue; coding resumes in the same worktree; supervisors no longer
+write `job_state` (fallback read only); a submission accepted before the crash finishes without
+another request; completion/batch/classifier runs re-run fresh, linked. Recovery marks dead
+`running` sessions `interrupted`. Fault hook `SWITCHYARD_FAULT_AT` (`src/core/faults.ts`) drives
+crash/restart tests. Surfaces: `switchyard resume <session|task>`, MCP `resume_session`, panel
+Resume. Capacity deferrals end `interrupted` and resume like crashes (accepted: continuing is
+correct).
 
-**Next steps:** Phase S2 (resume protocol on sessions), then V1-V2 of
-[importance-and-verification](./importance-and-verification.md) (pending user confirmation of the
-order), then R1 (durability), T1 (teams). S2 must cover resuming a task in its verification phase
-once V2 lands.
+**Phase R1 operations done (2026-10-19):** `storage.durability`, `switchyard backup` / `restore`,
+`switchyard daemon` (restart policy), `switchyard service install|uninstall|status` (systemd,
+launchd, Windows Task Scheduler). Fixed: `switchyard worker` exited after ~0.4 s. Not run: a real
+service install on any platform; Linux/macOS.
+
+**Not done:** R1b (watchdog, circuit breakers, real kill-and-restart acceptance test), T1-T3.
+Open gaps: external-runner resume and crash-during-batch are untested; `recover_edits: reset`
+untested against git; two processes racing to resume untested; a session left `running` by a dead
+process shows no panel Resume until recovery runs; already-finished batch members are not
+recorded when the batch runner throws (sessions end `batch_aborted`).
+
+**Next steps:** V1+V2 merge ([importance-and-verification](./importance-and-verification.md),
+in progress on `feat/v1-verification`), then R1b and T1 in parallel, then T2, T3.
 
 **Blockers:** none. Live checks against real providers are still outstanding from the previous
 document.
@@ -396,6 +405,24 @@ Surface: `switchyard sessions [--running|--interrupted]`, `switchyard session <i
   404; bad query 400; screenshots of the list and a supervisor timeline inspected; server stopped.
 - Outcome: Accepted
 - Follow-up: Phase S2.
+
+---
+
+### 2026-10-19 — Phase S2 (resume) and R1 operations
+- Agent: supervisor; workers s2-core, s2-exec, s2-surface (`feat/s2-resume`), r1-ops (`feat/r1-ops`)
+- Changed: `src/sessions/resume.ts`, store/recorder reopen; `src/harness/{resume,journal}.ts`,
+  executor, scheduler, service, runners, supervisor tools, `src/core/faults.ts`; CLI, MCP,
+  insights, panel; `src/operations/{backup,daemon,service}.ts`, `storage/db.ts`, config; docs
+  `operations.md`, `setup.md`.
+- Why: requirement 1 (resume where it stopped) and 2 (survive failures).
+- Validation: s2 branch: typecheck router+panel Done, 147 tests passed, panel on :4521 pages 200
+  and API 400/401/404/409/200 as expected, screenshots inspected (worker); supervisor re-ran
+  typecheck + 147 tests and inspected the resume screenshot. r1 branch: 145 tests passed; the
+  supervisor reproduced the worker exiting, fixed it, and saw it stay alive (exit 124 at
+  timeout). Merged dev: router build ok, `pnpm -r typecheck` Done, `npx vitest run tests` -> 19
+  files, 170 passed.
+- Outcome: Accepted
+- Follow-up: R1b, T1.
 
 ---
 

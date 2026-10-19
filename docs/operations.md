@@ -47,9 +47,21 @@ they are not reverted in the worktree.
 - State lives in `.switchyard/switchyard.db` (SQLite, WAL). It is written before every
   acknowledgement and at every state change.
 - When a worker dies, its leases expire (`execution.lease_seconds`). The next worker marks those
-  tasks `interrupted`. Completion and read-only tasks are resumed automatically (up to 3 runs);
-  coding tasks are not. Their worktree is kept under `.switchyard/worktrees/`; inspect it, then
-  `switchyard resume <id>` (starts a fresh worktree; the old one stays as evidence) or cancel.
+  tasks `interrupted` and their still-running sessions `interrupted` (`process_died`), then
+  resumes them automatically (up to 3 runs per task):
+  - read-only workers, native coding workers, and supervisors continue their session from its
+    log: the transcript is restored, and any tool call that was in flight is settled first
+    (reads are retried; delegations and idempotent commands re-run under their original call id;
+    edits made but not committed are committed as "recovered edits after interruption" under the
+    agent's identity, or discarded with `sessions.recover_edits: reset`; a pending `ask_user`
+    is answered from the stored question). A submission accepted before the crash finishes
+    without another model request. Coding work continues in the same worktree.
+  - external coding agents (OpenCode) are relaunched in the same worktree with a summary of the
+    interrupted session.
+  - completion, batch, and classification runs re-run fresh in a new linked session.
+- Manual resume: `switchyard resume <session-id>` continues that session; `switchyard resume
+  <task-id>` restarts the task (a coding task in a fresh worktree; the old one stays as
+  evidence). MCP `resume_session` / `resume_task` and the panel's Resume buttons do the same.
 - A model that served a request it should not have is quarantined until its chain is re-verified:
   run `switchyard models scan`.
 - Tasks waiting for capacity (`waiting_for_capacity`) retry automatically until their deadline.
@@ -74,9 +86,7 @@ item. A delegated task's session names the supervisor session that delegated it 
   `get_session`, or the panel's Sessions page (also linked from task and job pages).
 - External agents (OpenCode) run their tools inside their own process: their sessions record the
   model traffic through the policy gateway, not individual tool calls.
-- Resuming a session from its log is Phase S2 of
-  [agent-sessions-and-teams](working/agent-sessions-and-teams.md); until then recovery works as
-  described above.
+- A resume appends a `resumed` event recording what was settled and the notice the agent got.
 
 ## Housekeeping
 
@@ -114,7 +124,6 @@ item. A delegated task's session names the supervisor session that delegated it 
   frame-extraction preprocessing yet.
 - Tasks and jobs run only while a worker process is running (the MCP server stops with the
   Claude session; run `switchyard worker`, `switchyard daemon`, or `switchyard service install`
-  for unattended work). Interrupted supervisors resume
-  from their saved transcript.
+  for unattended work).
 - Line attribution for external agents (OpenCode) is per model request, not per tool call, and can
   blur when the agent sends several requests at once.

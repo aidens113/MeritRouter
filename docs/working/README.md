@@ -6,7 +6,7 @@ lines, worker briefs, append-only ledger with real validation, open questions).
 
 | Document | Status | Scope |
 | --- | --- | --- |
-| [agent-sessions-and-teams.md](agent-sessions-and-teams.md) | Active | Durable resumable agent sessions, failure resilience, coordinated agent teams. S1 (session recording) done; S2 (resume) next. |
+| [agent-sessions-and-teams.md](agent-sessions-and-teams.md) | Active | Durable resumable agent sessions, failure resilience, coordinated agent teams. S1, S2, R1 operations done; R1b and T1 next. |
 | [agent-working-doc-protocol.md](agent-working-doc-protocol.md) | Active | The protocol every working document follows (adopted from FluxIQ). |
 | [importance-and-verification.md](importance-and-verification.md) | Active | Task importance and verification policy: acceptance contracts, deterministic checks, independent reviewers, reserved verification budget. Planned; V1 after S2. |
 | [harness-roles-brain.md](harness-roles-brain.md) | Active | Harness, roles, brain, attribution, paid routes, presets, panel. Implemented; live provider checks outstanding. |
