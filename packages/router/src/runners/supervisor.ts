@@ -19,6 +19,7 @@ import { minimalEnv, runProcess } from "./coding/process.js";
 import { baseResult, type RunContext, type RunOutcome } from "./types.js";
 import { WorkspacePointer } from "./session-workspace.js";
 import { criterionTexts } from "../core/task.js";
+import { maxAgentsPerJob } from "../config/schema.js";
 
 interface Finish {
   status: "completed" | "blocked";
@@ -240,7 +241,7 @@ export class SupervisorRunner implements CodingRunner {
       messages = [
         {
           role: "system",
-          content: `${charterFor(ctx.cfg, "supervisor")}\n\n## This job\n- Job id: ${ctx.taskId}\n- Working document: brain:${brain?.workingDoc ?? "(brain disabled)"}\n- Repositories:\n${repoNotes || "- none writable (read-only job)"}\n- Model request budget: ${ctx.budget.maxModelRequests} (await_tasks costs none)\n- Workers per job at once: ${ctx.cfg.supervisor.max_workers_per_job}\n\nEnd with finish_job.`,
+          content: `${charterFor(ctx.cfg, "supervisor")}\n\n## This job\n- Job id: ${ctx.taskId}\n- Working document: brain:${brain?.workingDoc ?? "(brain disabled)"}\n- Repositories:\n${repoNotes || "- none writable (read-only job)"}\n- Model request budget: ${ctx.budget.maxModelRequests} (await_tasks costs none)\n- Tasks of this job running at once (team.max_agents): ${maxAgentsPerJob(ctx.cfg)}; more wait queued\n\nEnd with finish_job.`,
         },
         {
           role: "user",

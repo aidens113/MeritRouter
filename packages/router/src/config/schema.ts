@@ -556,7 +556,8 @@ export const ConfigSchema = z
         endpoints: z.array(z.string().min(1)).default([]),
         paid_policy: PaidPolicySchema.default("never"),
         max_concurrent_jobs: z.number().int().positive().default(1),
-        max_workers_per_job: z.number().int().positive().default(3),
+        /** Alias of `team.max_agents` (which wins when both are set); see `maxAgentsPerJob`. */
+        max_workers_per_job: z.number().int().positive().optional(),
         /** Wall-clock limit for one job. */
         job_timeout_seconds: z.number().int().positive().default(14_400),
         /** Commands the supervisor may run in its integration worktree (plus its briefs' checks). */
@@ -565,6 +566,18 @@ export const ConfigSchema = z
         branch_prefix: z.string().regex(/^[A-Za-z0-9._/-]+$/).default("switchyard/job-"),
         /** How long ask_user waits for an answer before the job pauses as interrupted. */
         question_timeout_seconds: z.number().int().positive().default(86_400),
+      })
+      .strict()
+      .prefault({}),
+    /** Agent teams: how one job's task graph runs. */
+    team: z
+      .object({
+        /**
+         * Most tasks of one job running at once (default 8; `supervisor.max_workers_per_job` is an
+         * alias). Enforced by the scheduler; `execution.max_concurrent_tasks` still bounds
+         * everything, and tasks over the cap wait queued.
+         */
+        max_agents: z.number().int().positive().optional(),
       })
       .strict()
       .prefault({}),
@@ -614,3 +627,11 @@ export const ConfigSchema = z
   });
 
 export type RawConfig = z.infer<typeof ConfigSchema>;
+
+/** Default of `team.max_agents`. */
+export const DEFAULT_MAX_AGENTS = 8;
+
+/** Tasks of one job that may run at once: `team.max_agents`, else its alias `supervisor.max_workers_per_job`, else 8. */
+export function maxAgentsPerJob(cfg: { team: { max_agents?: number | undefined }; supervisor: { max_workers_per_job?: number | undefined } }): number {
+  return cfg.team.max_agents ?? cfg.supervisor.max_workers_per_job ?? DEFAULT_MAX_AGENTS;
+}

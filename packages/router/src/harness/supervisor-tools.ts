@@ -1,7 +1,11 @@
-import picomatch from "picomatch";
 import type { Db } from "../storage/db.js";
+import { newId } from "../storage/db.js";
+import { globsOverlap } from "../storage/file-leases.js";
+import { MAX_PLAN_NODES, PlanStore, criticalPath, defaultRequiresAcceptedInputs, nodeWeight, type PlanDifficulty, type PlanNodeInput } from "../storage/plans.js";
+import { AWAITING_ACCEPTANCE, TaskStore } from "../storage/tasks.js";
+import { INTEGRATED_EVENT } from "../context/upstream.js";
 import type { RunContext } from "../runners/types.js";
-import { IMPORTANCE_LEVELS, PROFILE_NAMES } from "../config/schema.js";
+import { IMPORTANCE_LEVELS, PROFILE_NAMES, maxAgentsPerJob, type Importance } from "../config/schema.js";
 import { resolveLevel } from "../verification/policy.js";
 import { git } from "../workspaces/git.js";
 import { blame, commitsMatching, revertCommits, undoLines, type Actor } from "../attribution/index.js";
@@ -62,23 +66,148 @@ function repoFor(s: SupervisorState, alias: unknown): IntegrationRepo {
   return r;
 }
 
-/** The literal directory part of a glob, before its first wildcard. */
-function staticPrefix(glob: string): string {
-  const cut = glob.search(/[*?{[!]/);
-  const head = cut < 0 ? glob : glob.slice(0, cut);
-  return cut < 0 ? head : head.slice(0, head.lastIndexOf("/") + 1);
+/** Conservative path-set overlap test (the file leases' rule). */
+export const overlaps = globsOverlap;
+
+const slug = (l: unknown) => String(l ?? "").toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 40);
+
+/** One brief's properties, shared by `delegate` tasks and `plan_work` nodes. */
+const BRIEF_PROPERTIES: Record<string, unknown> = {
+  label: { type: "string", description: "short unique id, e.g. fix-parser" },
+  profile: { type: "string", enum: PROFILE_NAMES.filter((p) => p !== "supervise") },
+  goal: { type: "string" },
+  acceptance_criteria: { type: "array", items: { type: "string" } },
+  file_refs: { type: "array", items: { type: "string" }, description: "<alias>:<path>[#Lx-Ly]" },
+  repositories: { type: "array", items: { type: "string" } },
+  writable_repository: { type: "string" },
+  allowed_paths: { type: "array", items: { type: "string" } },
+  must_not_touch: { type: "array", items: { type: "string" } },
+  checks: { type: "array", items: { type: "string" } },
+  difficulty: { type: "string", enum: ["T1", "T2", "T3", "T4"] },
+  importance: { type: "string", enum: [...IMPORTANCE_LEVELS], description: "how much the result matters (default normal); raises verification, never difficulty" },
+  importance_reason: { type: "string", description: "why; required for high and critical" },
+  depends_on: { type: "array", items: { type: "string" }, description: "labels of tasks this one needs first (in this call, or dispatched earlier); it starts once they finish and sees their results" },
+  brain_grants: { type: "array", items: { type: "object", properties: { pattern: { type: "string" }, mode: { type: "string", enum: ["read", "append"] } } } },
+};
+
+/**
+ * Nothing open in this job can move without the supervisor: no task of the job is queued or
+ * running, and at least one awaited task waits for an upstream result to be accepted.
+ */
+function blockedOnAcceptance(s: SupervisorState, pending: Array<{ taskId: string; state: string }>): boolean {
+  const svc = s.ctx.services!;
+  const moving = [...s.children.values()].some((id) => ["queued", "running", "waiting_for_capacity", "cancel_requested"].includes(svc.getTask(id)?.state ?? ""));
+  return !moving && pending.some((p) => p.state === "waiting_for_dependencies" && (stateReason(s, p.taskId) ?? "").startsWith(AWAITING_ACCEPTANCE));
+}
+
+/** The state reason of a task (why it is waiting), when the store has one. */
+function stateReason(s: SupervisorState, id: string): string | null {
+  try {
+    return (s.db.prepare("SELECT state_reason FROM tasks WHERE id = ?").get(id) as { state_reason: string | null } | undefined)?.state_reason ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**
- * Conservative overlap test: two path sets may overlap when one's literal prefix contains the
- * other's (may report overlap where none exists; never misses one).
+ * Dispatch briefs through the delegate path: each new label's brief is recorded in the working
+ * document, then all new tasks are submitted at once (dependencies by label, also within the
+ * call). Labels already dispatched are not submitted again. Path overlap is advisory: the
+ * scheduler's file leases keep overlapping writers apart, and the job's agent cap is applied by
+ * the scheduler, so tasks over it wait queued.
  */
-export function overlaps(a: string[], b: string[]): boolean {
-  return a.some((x) => b.some((y) => {
-    const px = staticPrefix(x);
-    const py = staticPrefix(y);
-    return px.startsWith(py) || py.startsWith(px);
-  }));
+async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, unknown>>, env: HarnessEnv): Promise<string> {
+  const svc = s.ctx.services!;
+  const jobId = s.ctx.taskId;
+  const labels = items.map((it) => slug(str(it.label, "label")));
+  const dup = labels.find((l, i) => labels.indexOf(l) !== i);
+  if (dup) throw new Error(`label ${dup} is used more than once`);
+  const fresh = items.map((it, i) => ({ it, label: labels[i]! })).filter((x) => !s.children.has(x.label));
+  const ids = new Map(fresh.map((x) => [x.label, newId("t")]));
+  for (const { it, label } of fresh) if (it.profile === "implement" && !((it.allowed_paths as string[] | undefined) ?? []).length) throw new Error(`${label}: implement briefs need allowed_paths`);
+  const depIds = (it: Record<string, unknown>) =>
+    ((it.depends_on as string[] | undefined) ?? []).map((l) => s.children.get(slug(l)) ?? ids.get(slug(l)) ?? (s.children.has(l) ? s.children.get(l)! : l));
+
+  // Advisory: overlapping coding briefs in one repository run one after the other (file leases).
+  const notes: string[] = [];
+  const active = [...s.children.entries()].flatMap(([label, id]) => {
+    const t = svc.getTask(id);
+    return t && t.spec.writableRepository && !["completed", "failed", "cancelled", "budget_exhausted"].includes(t.state) ? [{ label, repo: t.spec.writableRepository, paths: t.spec.constraints.allowedPaths ?? ["**"] }] : [];
+  });
+  for (const { it, label } of fresh) {
+    if (it.profile !== "implement") continue;
+    const repo = String(it.writable_repository ?? [...s.repos.keys()][0] ?? "");
+    const paths = (it.allowed_paths as string[] | undefined) ?? [];
+    const deps = new Set(((it.depends_on as string[] | undefined) ?? []).map(slug));
+    const clash = active.find((t) => t.repo === repo && !deps.has(t.label) && globsOverlap(t.paths, paths));
+    if (clash) notes.push(`note: ${label} overlaps ${clash.label} in ${repo}; it waits until ${clash.label}'s file lease is released (add depends_on to order them, or narrow allowed_paths to run them in parallel)`);
+    active.push({ label, repo, paths });
+  }
+
+  const doc = env.brain?.workingDoc ?? null;
+  const specs = fresh.map(({ it, label }) => {
+    const repos = (it.repositories as string[] | undefined) ?? [...new Set([...s.repos.keys(), ...s.ctx.spec.repositoryAliases])];
+    const writable = it.profile === "implement" ? String(it.writable_repository ?? [...s.repos.keys()][0] ?? "") : undefined;
+    const baseCommits: Record<string, string> = {};
+    if (writable && s.repos.get(writable)) baseCommits[writable] = "HEAD_OF_JOB";
+    const checks = (it.checks as string[] | undefined) ?? [];
+    for (const c of checks) s.briefChecks.add(c);
+    const deps = depIds(it);
+    return {
+      label,
+      brief: formatBrief({
+        label,
+        repository: writable ?? repos.join(", "),
+        task: `${String(it.profile)}: ${String(it.goal)}`,
+        requiredReads: ((it.file_refs as string[] | undefined) ?? []).join(", ") || "as needed",
+        owns: ((it.allowed_paths as string[] | undefined) ?? []).join(", ") || "nothing (read-only)",
+        mustNotTouch: ((it.must_not_touch as string[] | undefined) ?? []).join(", ") || "everything else",
+        done: `${((it.acceptance_criteria as string[] | undefined) ?? []).join("; ")}${checks.length ? `; checks: ${checks.join(", ")}` : ""}`,
+        reportTo: `projects/${s.ctx.brain?.project ?? "default"}/working/${s.ctx.effort}/reports/${label}.md`,
+      }),
+      spec: {
+        id: ids.get(label),
+        profile: it.profile,
+        label,
+        goal: String(it.goal),
+        parentTaskId: jobId,
+        idempotencyKey: `${jobId}:${label}`,
+        repositoryAliases: repos,
+        ...(writable ? { writableRepository: writable } : {}),
+        context: { ...(it.file_refs ? { fileRefs: it.file_refs } : {}), baseCommits },
+        constraints: { acceptanceCriteria: it.acceptance_criteria, ...(it.allowed_paths ? { allowedPaths: it.allowed_paths } : {}), ...(checks.length ? { checks } : {}) },
+        ...(it.difficulty ? { hints: { difficulty: it.difficulty } } : {}),
+        ...(it.importance ? { importance: it.importance } : {}),
+        ...(it.importance_reason ? { importanceReason: it.importance_reason } : {}),
+        ...(deps.length ? { dependsOn: deps } : {}),
+        brain: { effort: s.ctx.effort, ...(it.brain_grants ? { grants: it.brain_grants } : {}) },
+      } as Record<string, unknown>,
+    };
+  });
+  // Workers start from the job branch as integrated so far (a dependent's base is chosen again
+  // when it starts: see context/upstream.ts).
+  for (const sp of specs) {
+    const bc = (sp.spec.context as { baseCommits: Record<string, string> }).baseCommits;
+    for (const alias of Object.keys(bc)) bc[alias] = (await git(s.repos.get(alias)!.worktree, ["rev-parse", "HEAD"])).trim();
+  }
+  if (doc && env.brain) for (const sp of specs) await env.brain.brain.addBrief(env.brain.principal(), env.brain.actor, doc, sp.brief);
+  // The delegating session becomes each new task's parent session.
+  const out = specs.length ? await svc.submitTasks(specs.map((sp) => sp.spec), { purpose: "work", ...(s.ctx.session ? { parentSessionId: s.ctx.session.id } : {}) }) : [];
+  out.forEach((o, i) => s.children.set(specs[i]!.label, o.taskId));
+  const submitted = new Map(out.map((o, i) => [specs[i]!.label, o]));
+  const lines = labels.map((label) => {
+    const o = submitted.get(label);
+    if (o) return `${label} -> ${o.taskId} (${o.state}${o.deduplicated ? ", already submitted" : ""})`;
+    const id = s.children.get(label)!;
+    return `${label} -> ${id} (${svc.getTask(id)?.state ?? "unknown"}, already submitted)`;
+  });
+  const max = maxAgentsPerJob(s.ctx.cfg);
+  const live = [...s.children.values()].filter((id) => {
+    const st = svc.getTask(id)?.state;
+    return st && !["completed", "failed", "cancelled", "budget_exhausted", "interrupted"].includes(st);
+  }).length;
+  if (out.length && live > max) notes.push(`note: ${live} tasks are open and at most ${max} run at once for this job (team.max_agents); the rest start as running ones finish`);
+  return [...lines, ...notes].join("\n");
 }
 
 function summarizeResult(id: string, s: SupervisorState): string {
@@ -104,125 +233,103 @@ function summarizeResult(id: string, s: SupervisorState): string {
 export function supervisorTools(s: SupervisorState): HarnessTool[] {
   const svc = s.ctx.services!;
   const jobId = s.ctx.taskId;
-  const activeChildren = () =>
-    [...s.children.values()].filter((id) => {
-      const t = svc.getTask(id);
-      return t && !["completed", "failed", "cancelled", "budget_exhausted", "interrupted"].includes(t.state);
-    });
 
   return [
     tool(
       "delegate",
       "delegate",
-      "Dispatch worker tasks. Each brief is recorded in the job's working document first. Coding briefs must name allowedPaths and should name checks; concurrent coding briefs may not overlap paths in the same repository.",
-      {
-        tasks: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              label: { type: "string", description: "short unique id, e.g. fix-parser" },
-              profile: { type: "string", enum: PROFILE_NAMES.filter((p) => p !== "supervise") },
-              goal: { type: "string" },
-              acceptance_criteria: { type: "array", items: { type: "string" } },
-              file_refs: { type: "array", items: { type: "string" }, description: "<alias>:<path>[#Lx-Ly]" },
-              repositories: { type: "array", items: { type: "string" } },
-              writable_repository: { type: "string" },
-              allowed_paths: { type: "array", items: { type: "string" } },
-              must_not_touch: { type: "array", items: { type: "string" } },
-              checks: { type: "array", items: { type: "string" } },
-              difficulty: { type: "string", enum: ["T1", "T2", "T3", "T4"] },
-              importance: { type: "string", enum: [...IMPORTANCE_LEVELS], description: "how much the result matters (default normal); raises verification, never difficulty" },
-              importance_reason: { type: "string", description: "why; required for high and critical" },
-              depends_on: { type: "array", items: { type: "string" }, description: "labels of earlier tasks" },
-              brain_grants: { type: "array", items: { type: "object", properties: { pattern: { type: "string" }, mode: { type: "string", enum: ["read", "append"] } } } },
-            },
-            required: ["label", "profile", "goal", "acceptance_criteria"],
-          },
-        },
-      },
+      "Dispatch worker tasks. Each brief is recorded in the job's working document first. Coding briefs must name allowed_paths and should name checks. depends_on may name labels in the same call; a dependent starts when they finish and is given their results. Overlapping coding briefs in one repository are allowed but run one after the other (team-wide file leases); tasks beyond the job's agent cap wait queued. For a goal with several parts, prefer plan_work.",
+      { tasks: { type: "array", items: { type: "object", properties: BRIEF_PROPERTIES, required: ["label", "profile", "goal", "acceptance_criteria"] } } },
       ["tasks"],
       async (a, env) => {
         const items = Array.isArray(a.tasks) ? (a.tasks as Array<Record<string, unknown>>) : [];
         if (!items.length) throw new Error("tasks is empty");
-        const limit = s.ctx.cfg.supervisor.max_workers_per_job;
-        // Labels already dispatched are deduplicated (a resumed job re-runs its delegation): they add no worker.
-        const slug = (l: unknown) => String(l ?? "").toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 40);
-        const added = items.filter((it) => !s.children.has(slug(it.label))).length;
-        if (activeChildren().length + added > limit) throw new Error(`at most ${limit} workers may run for one job; await some first`);
-        // Partition by file: concurrent coding briefs in one repository must not overlap.
-        const active = activeChildren().map((id) => svc.getTask(id)!.spec).filter((t) => t.writableRepository && !items.some((it) => slug(it.label) === t.label));
-        const pending: Array<{ label: string | undefined; repo: string; paths: string[] }> = active.map((t) => ({ label: t.label, repo: t.writableRepository!, paths: t.constraints.allowedPaths ?? [] }));
-        for (const it of items) {
-          if (it.profile !== "implement") continue;
-          const repo = String(it.writable_repository ?? [...s.repos.keys()][0] ?? "");
-          const paths = (it.allowed_paths as string[] | undefined) ?? [];
-          if (!paths.length) throw new Error(`${String(it.label)}: implement briefs need allowed_paths`);
-          // A task that depends on another runs after it, so their paths may overlap.
-          const deps = new Set((it.depends_on as string[] | undefined) ?? []);
-          const clash = pending.find((t) => t.repo === repo && !deps.has(t.label ?? "") && overlaps(t.paths, paths));
-          if (clash) throw new Error(`${String(it.label)} overlaps ${clash.label ?? "an active task"} in ${repo}; add it to depends_on or narrow allowed_paths`);
-          pending.push({ label: String(it.label), repo, paths });
-        }
-        const doc = env.brain?.workingDoc ?? null;
-        const specs = items.map((it) => {
-          const label = slug(str(it.label, "label"));
-          const repos = (it.repositories as string[] | undefined) ?? [...new Set([...s.repos.keys(), ...s.ctx.spec.repositoryAliases])];
-          const writable = it.profile === "implement" ? String(it.writable_repository ?? [...s.repos.keys()][0] ?? "") : undefined;
-          const baseCommits: Record<string, string> = {};
-          if (writable && s.repos.get(writable)) baseCommits[writable] = "HEAD_OF_JOB";
-          const checks = (it.checks as string[] | undefined) ?? [];
-          for (const c of checks) s.briefChecks.add(c);
-          const deps = ((it.depends_on as string[] | undefined) ?? []).map((l) => s.children.get(l) ?? l);
-          return {
-            label,
-            brief: formatBrief({
-              label,
-              repository: writable ?? repos.join(", "),
-              task: `${it.profile}: ${String(it.goal)}`,
-              requiredReads: ((it.file_refs as string[] | undefined) ?? []).join(", ") || "as needed",
-              owns: ((it.allowed_paths as string[] | undefined) ?? []).join(", ") || "nothing (read-only)",
-              mustNotTouch: ((it.must_not_touch as string[] | undefined) ?? []).join(", ") || "everything else",
-              done: `${(it.acceptance_criteria as string[]).join("; ")}${checks.length ? `; checks: ${checks.join(", ")}` : ""}`,
-              reportTo: `projects/${s.ctx.brain?.project ?? "default"}/working/${s.ctx.effort}/reports/${label}.md`,
-            }),
-            spec: {
-              profile: it.profile,
-              label,
-              goal: String(it.goal),
-              parentTaskId: jobId,
-              idempotencyKey: `${jobId}:${label}`,
-              repositoryAliases: repos,
-              ...(writable ? { writableRepository: writable } : {}),
-              context: { ...(it.file_refs ? { fileRefs: it.file_refs } : {}), baseCommits },
-              constraints: { acceptanceCriteria: it.acceptance_criteria, ...(it.allowed_paths ? { allowedPaths: it.allowed_paths } : {}), ...(checks.length ? { checks } : {}) },
-              ...(it.difficulty ? { hints: { difficulty: it.difficulty } } : {}),
-              ...(it.importance ? { importance: it.importance } : {}),
-              ...(it.importance_reason ? { importanceReason: it.importance_reason } : {}),
-              ...(deps.length ? { dependsOn: deps } : {}),
-              brain: { effort: s.ctx.effort, ...(it.brain_grants ? { grants: it.brain_grants } : {}) },
-            } as Record<string, unknown>,
-          };
-        });
-        // Workers start from the job branch as integrated so far.
-        for (const sp of specs) {
-          const bc = (sp.spec.context as { baseCommits: Record<string, string> }).baseCommits;
-          for (const alias of Object.keys(bc)) bc[alias] = (await git(s.repos.get(alias)!.worktree, ["rev-parse", "HEAD"])).trim();
-        }
-        // A label already dispatched has its brief recorded; a repeated delegation is deduplicated below.
-        if (doc && env.brain) for (const sp of specs) if (!s.children.has(sp.label)) await env.brain.brain.addBrief(env.brain.principal(), env.brain.actor, doc, sp.brief);
-        // The delegating session becomes each new task's parent session.
-        const out = await svc.submitTasks(specs.map((sp) => sp.spec), { purpose: "work", ...(s.ctx.session ? { parentSessionId: s.ctx.session.id } : {}) });
-        out.forEach((o, i) => s.children.set(specs[i]!.label, o.taskId));
-        return out.map((o, i) => `${specs[i]!.label} -> ${o.taskId} (${o.state}${o.deduplicated ? ", already submitted" : ""})`).join("\n");
+        return dispatchBriefs(s, items, env);
       },
     ),
 
-    tool("await_tasks", "none", "Wait (without model requests) until the given tasks, or all of this job's active tasks, finish or the timeout passes. Returns compact results.", { task_ids: { type: "array", items: { type: "string" } }, timeout_seconds: { type: "integer" } }, [], async (a) => {
+    tool(
+      "plan_work",
+      "delegate",
+      "Record the job's decomposition as a task graph (a new plan version) and dispatch every node through delegate at once. Nodes with no unfinished dependencies run in parallel, up to the job's agent cap; a node starts when its depends_on nodes finish and is given their results (summary, findings, artifacts, patches, acceptance). requires_accepted_inputs (default true for high and critical importance) makes a node wait until its upstream results are accepted (met, or accepted by you with accept_task) instead of starting on unverified work. Re-planning: call again with the full plan; nodes already dispatched keep their tasks (changes to them are ignored; cancel and use a new label instead), dispatched nodes you leave out are carried over. Returns the critical path (longest chain by estimated cost).",
+      {
+        nodes: { type: "array", items: { type: "object", properties: { ...BRIEF_PROPERTIES, requires_accepted_inputs: { type: "boolean", description: "start only on accepted upstream results (default: true for high/critical importance)" } }, required: ["label", "profile", "goal", "acceptance_criteria"] } },
+        note: { type: "string", description: "what this version changes and why" },
+      },
+      ["nodes"],
+      async (a, env) => {
+        const items = Array.isArray(a.nodes) ? (a.nodes as Array<Record<string, unknown>>) : [];
+        if (!items.length) throw new Error("nodes is empty");
+        if (items.length > MAX_PLAN_NODES) throw new Error(`a plan holds at most ${MAX_PLAN_NODES} nodes`);
+        const store = new PlanStore(s.db);
+        const previous = store.latest(jobId);
+        const nodes: PlanNodeInput[] = items.map((it) => {
+          const label = slug(str(it.label, "label"));
+          const profile = String(it.profile ?? "");
+          const importance = (it.importance as Importance | undefined) ?? null;
+          const difficulty = (it.difficulty as PlanDifficulty | undefined) ?? null;
+          return {
+            label,
+            profile: profile as PlanNodeInput["profile"],
+            goal: String(it.goal ?? ""),
+            acceptanceCriteria: Array.isArray(it.acceptance_criteria) ? (it.acceptance_criteria as unknown[]).map(String) : [],
+            dependsOn: ((it.depends_on as string[] | undefined) ?? []).map(slug),
+            writableRepository: profile === "implement" ? String(it.writable_repository ?? [...s.repos.keys()][0] ?? "") || null : null,
+            allowedPaths: (it.allowed_paths as string[] | undefined) ?? null,
+            checks: (it.checks as string[] | undefined) ?? [],
+            difficulty,
+            importance,
+            requiresAcceptedInputs: typeof it.requires_accepted_inputs === "boolean" ? it.requires_accepted_inputs : defaultRequiresAcceptedInputs(importance),
+            weight: nodeWeight(difficulty, s.ctx.cfg.profiles[profile as keyof typeof s.ctx.cfg.profiles]?.min_tier ?? null),
+          };
+        });
+        // Dispatched nodes keep their tasks: their recorded definition stays the one dispatched,
+        // and dispatched nodes the new version leaves out are carried over.
+        const named = new Set(nodes.map((n) => n.label));
+        const kept: string[] = [];
+        const recorded = nodes.map((n) => {
+          if (!s.children.has(n.label)) return n;
+          kept.push(n.label);
+          return previous?.nodes.find((p) => p.label === n.label) ?? n;
+        });
+        const carried = (previous?.nodes ?? []).filter((p) => !named.has(p.label) && s.children.has(p.label));
+        const all = [...recorded, ...carried];
+        const external = new Set([...s.children.keys()].filter((l) => !all.some((n) => n.label === l)));
+        const plan = store.record(jobId, all, { note: typeof a.note === "string" ? a.note : null, createdBy: s.actor.agent, external });
+        let dispatched: string;
+        try {
+          const freshItems = items.filter((it) => !s.children.has(slug(it.label)));
+          dispatched = freshItems.length ? await dispatchBriefs(s, freshItems, env) : "";
+        } catch (err) {
+          // Nothing was submitted: the version is withdrawn so the plan matches the tasks.
+          if (!nodes.some((n) => !kept.includes(n.label) && s.children.has(n.label))) store.discard(jobId, plan.version);
+          throw err;
+        }
+        const cp = criticalPath(plan.nodes);
+        const fresh = nodes.length - kept.length;
+        return [
+          `plan v${plan.version} recorded: ${plan.nodes.length} node(s); ${fresh} dispatched now, ${kept.length} already dispatched (kept)${carried.length ? `, ${carried.length} carried over (${carried.map((c) => c.label).join(", ")})` : ""}`,
+          `critical path: ${cp.labels.join(" -> ")} (estimated cost ${cp.cost}); at most ${maxAgentsPerJob(s.ctx.cfg)} task(s) of this job run at once`,
+          ...(dispatched ? [dispatched] : []),
+        ].join("\n");
+      },
+    ),
+
+    tool("await_tasks", "none", "Wait (without model requests) until the given tasks, or all of this job's active tasks, finish or the timeout passes. Returns early when everything still open waits for you to accept or reject an upstream result. Returns compact results.", { task_ids: { type: "array", items: { type: "string" } }, timeout_seconds: { type: "integer" } }, [], async (a) => {
       const ids = Array.isArray(a.task_ids) && a.task_ids.length ? (a.task_ids as string[]).map((x) => ownTask(s, x)) : [...s.children.values()];
       if (!ids.length) return "no tasks dispatched yet";
-      const r = await svc.awaitResults(ids, { timeoutSeconds: Math.min(Number(a.timeout_seconds) || 1800, 3600), signal: s.ctx.signal, uncapped: true });
-      return cap([...r.completed.map((c) => summarizeResult(c.taskId, s)), ...r.pending.map((p) => `${p.taskId}: still ${p.state}`)].join("\n"));
+      const until = Date.now() + Math.min(Number(a.timeout_seconds) || 1800, 3600) * 1000;
+      // Wait in slices: a dependent waiting on this supervisor's acceptance would otherwise hold
+      // the wait until the timeout while nothing else can happen.
+      let r: Awaited<ReturnType<typeof svc.awaitResults>>;
+      for (;;) {
+        r = await svc.awaitResults(ids, { timeoutSeconds: Math.max(1, Math.min(3, Math.ceil((until - Date.now()) / 1000))), signal: s.ctx.signal, uncapped: true });
+        if (!r.pending.length || Date.now() >= until || s.ctx.signal.aborted || blockedOnAcceptance(s, r.pending)) break;
+      }
+      return cap([...r.completed.map((c) => summarizeResult(c.taskId, s)), ...r.pending.map((p) => {
+        const why = stateReason(s, p.taskId);
+        return `${p.taskId}: still ${p.state}${why && why !== "resumed" ? ` (${why}${why.startsWith(AWAITING_ACCEPTANCE) ? "; accept_task or reject_task the upstream result" : ""})` : ""}`;
+      })].join("\n"));
     }),
 
     tool("task_result", "read", "Full result of one task (findings, evidence, checks, patch references).", { task_id: { type: "string" } }, ["task_id"], async (a) => {
@@ -322,6 +429,9 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
             throw new Error(`refused: ${(err as Error).message}; the integration of ${id} was rolled back`);
           }
         }
+        // Dependents that start later base their worktree on the job branch (context/upstream.ts).
+        const head = (await git(repo.worktree, ["rev-parse", "HEAD"])).trim();
+        new TaskStore(s.db).event(id, INTEGRATED_EVENT, { repository: repo.alias, branch: repo.branch, head });
         return `integrated ${commits.length} commit(s) from ${id} onto ${repo.branch}; head is now ${(await git(repo.worktree, ["rev-parse", "--short", "HEAD"])).trim()}${needsAcceptance ? "; your acceptance is recorded" : ""}`;
       },
     ),

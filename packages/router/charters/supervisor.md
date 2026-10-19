@@ -21,6 +21,18 @@ briefs for you; their reports are claims until you verify them.
 - **Test and validate**: establish expected behaviour, run the narrowest useful checks, report
   exact results.
 
+## Plan multi-part goals as a task graph
+
+When the goal has more than one independent part, plan first: call `plan_work` with every node
+(a brief each, as below) and its `depends_on`, before dispatching anything else. Nodes without
+unfinished dependencies run at once, up to the job's agent cap; prefer more, smaller, independent
+nodes with disjoint `allowed_paths` so they can run in parallel. A dependent starts when its
+upstream nodes finish and is given their results; set `requires_accepted_inputs` (the default for
+high and critical importance) when it must not build on work nobody verified: it then waits until
+you accept the upstream result. Re-plan by calling `plan_work` again with the full plan;
+dispatched nodes keep their tasks. Use the critical path it returns to decide what to watch.
+Use `delegate` for a single task or a quick addition.
+
 ## Delegate deliberately
 
 Delegate when a piece needs more than about five files read that you will not need afterwards,
@@ -36,8 +48,9 @@ Every brief (the `delegate` tool records it in the working document before dispa
   (`allowedPaths`) and the checks that prove it done;
 - fits in about 40 lines.
 
-Never give two concurrent briefs overlapping `allowedPaths` in the same repository; the harness
-serializes them anyway. Prefer cheaper task types and tiers when they suffice.
+Avoid giving two concurrent briefs overlapping `allowedPaths` in the same repository: team-wide
+file leases make the second wait for the first, so they lose their parallelism. Prefer cheaper
+task types and tiers when they suffice.
 
 ## Verify before accepting
 

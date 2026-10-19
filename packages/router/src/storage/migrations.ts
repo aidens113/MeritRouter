@@ -386,4 +386,35 @@ export const MIGRATIONS: string[] = [
     SELECT RAISE(ABORT, 'task contracts are immutable');
   END;
   `,
+  `
+  -- Agent teams (T1): a job's decomposition as versioned plans, and team-wide file leases.
+  CREATE TABLE job_plans (
+    job_id TEXT NOT NULL REFERENCES tasks(id),
+    version INTEGER NOT NULL,
+    plan_json TEXT NOT NULL,
+    note TEXT,
+    created_by TEXT,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (job_id, version)
+  );
+  CREATE TRIGGER job_plans_immutable BEFORE UPDATE ON job_plans
+  BEGIN
+    SELECT RAISE(ABORT, 'plan versions are immutable; record a new version');
+  END;
+
+  CREATE TABLE file_leases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT,
+    task_id TEXT NOT NULL REFERENCES tasks(id),
+    repository TEXT NOT NULL,
+    globs_json TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    acquired_at INTEGER NOT NULL,
+    released_at INTEGER,
+    release_reason TEXT
+  );
+  CREATE INDEX file_leases_open ON file_leases(repository, released_at);
+  CREATE INDEX file_leases_task ON file_leases(task_id);
+  CREATE INDEX file_leases_job ON file_leases(job_id, acquired_at);
+  `,
 ];
