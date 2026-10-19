@@ -52,6 +52,9 @@ export function SessionTimeline({ events, startedAt, running, laterOutcomes, pag
   for (const e of events) if (e.type === "tool_outcome") outcomes.set(e.data.intentSeq, e);
   const intents = new Map<number, Ev<"tool_intent">>();
   for (const e of events) if (e.type === "tool_intent") intents.set(e.seq, e);
+  // Intents with no outcome that a later resume settled, by intent seq -> the resumed event's seq.
+  const settled = new Map<number, number>();
+  for (const e of events) if (e.type === "resumed") for (const seq of e.data.resolvedIntentSeqs) settled.set(seq, e.seq);
 
   return (
     <ol className="relative space-y-3 pl-6">
@@ -71,7 +74,7 @@ export function SessionTimeline({ events, startedAt, running, laterOutcomes, pag
             </span>
           </div>
           <div className="mt-1 min-w-0">
-            <EventBody e={e} outcomes={outcomes} intents={intents} onPage={onPage} running={running} pageHref={pageHref} />
+            <EventBody e={e} outcomes={outcomes} intents={intents} settled={settled} onPage={onPage} running={running} pageHref={pageHref} />
           </div>
           <details className="group mt-1">
             <summary className="cursor-pointer list-none text-[11px] text-ink-3 hover:text-ink">
@@ -90,6 +93,7 @@ function EventBody({
   e,
   outcomes,
   intents,
+  settled,
   onPage,
   running,
   pageHref,
@@ -97,6 +101,7 @@ function EventBody({
   e: SessionEvent;
   outcomes: Map<number, Outcome>;
   intents: Map<number, Ev<"tool_intent">>;
+  settled: Map<number, number>;
   onPage: Set<number>;
   running: boolean;
   pageHref: (seq: number) => string;
@@ -179,6 +184,7 @@ function EventBody({
     case "tool_intent": {
       const d = e.data;
       const out = outcomes.get(e.seq);
+      const settledAt = out ? undefined : settled.get(e.seq);
       const se = SIDE_EFFECT[d.sideEffect] ?? { label: d.sideEffect, tone: "neutral" as Tone, title: d.sideEffect };
       return (
         <div className="rounded-lg border border-line">
@@ -196,6 +202,8 @@ function EventBody({
               ) : (
                 <Badge tone="bad">error</Badge>
               )
+            ) : settledAt !== undefined ? (
+              <Badge tone="warn" title="The session stopped before this call's outcome was written; the resume settled it">settled on resume</Badge>
             ) : running ? (
               <Badge tone="accent">no result yet</Badge>
             ) : (
@@ -219,6 +227,14 @@ function EventBody({
               </div>
               {out ? (
                 <Pre>{out.data.output || "(empty)"}</Pre>
+              ) : settledAt !== undefined ? (
+                <p className="text-xs text-ink-3">
+                  The session stopped before this call&apos;s outcome was written. The{" "}
+                  <a href={`#e-${settledAt}`} className="text-accent-ink hover:underline">
+                    resume at #{settledAt}
+                  </a>{" "}
+                  settled it: the agent was told what happened in the tool output that follows.
+                </p>
               ) : (
                 <p className="text-xs text-ink-3">
                   {running
@@ -250,7 +266,7 @@ function EventBody({
       );
     }
     case "note":
-      return <p className="whitespace-pre-wrap text-sm text-ink-2">{e.data.text}</p>;
+      return <NoteView text={e.data.text} data={e.data.data} />;
     case "workspace":
       return e.data.repos.length ? (
         <ul className="space-y-1 text-xs text-ink-2">
@@ -280,19 +296,34 @@ function EventBody({
   }
 }
 
-/** What a resume reconciled: the notice the model got, and each action with its result. */
+/** What a resume reconciled: what was settled, each action with its result, and the notice the agent got. */
 function ResumedView({ data }: { data: Ev<"resumed">["data"] }) {
   const label = (a: Ev<"resumed">["data"]["actions"][number]): string =>
     a.kind === "rerun_tool"
-      ? `Re-ran ${a.name} (${a.sideEffect === "delegate" ? "delegation, idempotent by label" : "idempotent command"})`
+      ? `Re-ran ${a.name} (${a.sideEffect === "delegate" ? "a delegation, safe to repeat: delegations are matched by label" : "an idempotent command"})`
       : a.kind === "reconcile_edits"
-        ? `Reconciled interrupted edits: ${a.policy === "commit" ? "committed as recovered" : "reset to the last commit"} (${a.repos.map((r) => r.alias).join(", ") || "no repositories"})`
-        : `Reported the stored state of ${a.name}`;
+        ? `Reconciled interrupted edits in ${a.repos.map((r) => r.alias).join(", ") || "no repository"}: ${a.policy === "commit" ? "uncommitted changes committed as recovered" : "worktree reset to the last commit"}`
+        : `Reported the stored state of ${a.name} to the agent`;
+  const settled = data.resolvedIntentSeqs.length;
+  const dropped = data.droppedRequestSeqs.length;
   return (
-    <div className="space-y-1.5 text-sm">
-      <LongText text={data.summary} />
+    <div className="space-y-2 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-ink">Continued from its log after an interruption.</span>
+        {settled ? (
+          <Badge tone="warn" title="Tool calls with an intent but no outcome; each was settled before the agent continued">
+            {settled} interrupted tool call{settled === 1 ? "" : "s"} settled
+          </Badge>
+        ) : null}
+        {dropped ? (
+          <Badge tone="warn" title="Model requests that got no response before the interruption; they were not retried as-is">
+            {dropped} unanswered request{dropped === 1 ? "" : "s"} dropped
+          </Badge>
+        ) : null}
+        {!settled && !dropped && !data.actions.length ? <Badge tone="good">nothing was in flight</Badge> : null}
+      </div>
       {data.actions.length ? (
-        <ul className="space-y-1 text-xs text-ink-2">
+        <ul className="space-y-1.5 text-xs text-ink-2">
           {data.actions.map((a, i) => (
             <li key={i} className="space-y-0.5">
               <span className="font-medium text-ink">{label(a)}</span>
@@ -301,11 +332,26 @@ function ResumedView({ data }: { data: Ev<"resumed">["data"] }) {
           ))}
         </ul>
       ) : null}
-      <p className="text-[11px] text-ink-3">
-        {num(data.resolvedIntentSeqs.length)} interrupted tool call(s) settled · {num(data.droppedRequestSeqs.length)} unanswered model request(s) dropped
-      </p>
+      <div className="rounded-lg border border-line">
+        <div className="border-b border-line px-3 py-1.5 text-[11px] font-medium text-ink-3">Notice given to the agent</div>
+        <p className="whitespace-pre-wrap break-words px-3 py-2 text-xs text-ink-2">{data.summary}</p>
+      </div>
     </div>
   );
+}
+
+/** A note; the "reopened" note a resume writes says what state the session was reopened from. */
+function NoteView({ text, data }: { text: string; data: unknown }) {
+  const d = data && typeof data === "object" ? (data as { previousStatus?: unknown; previousStopReason?: unknown }) : null;
+  if (text === "reopened" && d && typeof d.previousStatus === "string") {
+    return (
+      <p className="flex flex-wrap items-center gap-2 text-sm text-ink-2">
+        Reopened to resume. It had stopped as <SessionStatusBadge status={d.previousStatus} />
+        {typeof d.previousStopReason === "string" && d.previousStopReason ? <span>({humanize(d.previousStopReason)})</span> : null}
+      </p>
+    );
+  }
+  return <p className="whitespace-pre-wrap text-sm text-ink-2">{text}</p>;
 }
 
 function MessageView({ index, message }: { index: number; message: Ev<"message">["data"]["message"] }) {

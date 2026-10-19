@@ -95,7 +95,9 @@ async function main(): Promise<void> {
     "resume_task",
     {
       title: "Resume an interrupted task",
-      description: "Requeue an interrupted task. Coding tasks keep their previous worktree as evidence and start fresh.",
+      description:
+        "Requeue an interrupted task. Agent-loop tasks (read-only workers, supervisors) continue their latest interrupted session; completion tasks re-run; " +
+        "coding tasks start over in a fresh worktree and keep the previous one as evidence. To continue a coding session in its own worktree, use resume_session.",
       inputSchema: { taskId: z.string() },
     },
     async ({ taskId }) => {
@@ -177,7 +179,7 @@ async function main(): Promise<void> {
     }
   });
 
-  // ---------- agent sessions (read-only; resume belongs to S2) ----------
+  // ---------- agent sessions ----------
   server.registerTool(
     "list_sessions",
     {
@@ -207,7 +209,7 @@ async function main(): Promise<void> {
     {
       title: "Get an agent session's timeline",
       description:
-        "One session with a page of its event log in order: started, message, model_request, model_response, model_error, tool_intent, tool_outcome, note, workspace, ended. " +
+        "One session with a page of its event log in order: started, message, model_request, model_response, model_error, tool_intent, tool_outcome, note, workspace, resumed, ended. " +
         "Also returns its delegated child sessions and the other sessions of the same task. " +
         "Pages hold at most `limit` events (default 200) after `afterSeq`; when hasMore is true, call again with afterSeq set to the last returned seq. " +
         "`corrupt` lists log lines that failed validation and were skipped.",
@@ -218,6 +220,26 @@ async function main(): Promise<void> {
         const d = sessionDetail(sy, sessionId, { afterSeq: afterSeq ?? 0, limit: limit ?? 200 });
         if (!d) return fail(new Error(`unknown session ${sessionId}`));
         return json(d);
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "resume_session",
+    {
+      title: "Resume an interrupted agent session",
+      description:
+        "Requeue the task of an interrupted session so a worker continues that session where it stopped: the transcript is restored, tool calls that were in flight are settled " +
+        "(interrupted edits committed as recovered or reset per sessions.recover_edits, delegations re-run idempotently, unknown outcomes reported to the model), and a 'resumed' event is logged. " +
+        "Coding sessions continue in their own worktree. Completion and batch sessions re-run fresh, linked to this one. " +
+        "The session must be interrupted (a session left running by a dead process is settled first) and its task interrupted. Returns the task id and its new state.",
+      inputSchema: { sessionId: z.string().min(1) },
+    },
+    async ({ sessionId }) => {
+      try {
+        return json({ sessionId, ...sy.resumeSession(sessionId) });
       } catch (err) {
         return fail(err);
       }
