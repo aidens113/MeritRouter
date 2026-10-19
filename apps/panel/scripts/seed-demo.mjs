@@ -2,6 +2,9 @@
 // Builds a self-contained demo workspace for the panel in apps/panel/.demo/ (gitignored):
 // a config, a git fixture repository, manual models, and real task/request history produced by
 // running tasks through Switchyard with a scripted in-process gateway (no network, no quota).
+// It also runs two standalone jobs (one finished, one paused on a question for you), fills the
+// brain (in .demo/brain, never your home folder), and records a little paid spend through a fake
+// direct paid client, so the Jobs, Brain, and Paid routes pages have content.
 //
 //   pnpm --filter switchyard-router build
 //   pnpm --filter switchyard-panel seed:demo
@@ -9,7 +12,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 import { GatewayError, Switchyard, WorkerTaskSchema, insights, parseConfig } from "switchyard-router";
 
@@ -174,7 +177,6 @@ writeFileSync(
   `# Demo catalog written by scripts/seed-demo.mjs\n${YAML.stringify({ version: 1, overrides: {}, endpoints })}`,
 );
 
-const agent = path.join(here, "demo-agent.mjs");
 const raw = {
   version: 1,
   gateway: { adapter: "freellmapi", base_url: "http://127.0.0.1:9/v1", require_verified_chains: false },
@@ -184,13 +186,27 @@ const raw = {
   repositories: { core: { path: "repo" } },
   execution: { max_concurrent_tasks: 4, lease_seconds: 30 },
   scoring: { batch_window_ms: 50 },
-  coding: { runner: "command", command: `node "${agent}"` },
+  coding: { runner: "native" },
+  // The brain lives inside the demo folder so seeding never touches ~/.switchyard/brain.
+  brain: { path: "brain", project: "demo", access_approver: "supervisor" },
+  supervisor: { max_workers_per_job: 2, question_timeout_seconds: 86400 },
+  // Paid routes are on with small budgets; the demo key is fake and only a fake client ever sees it.
+  paid: {
+    enabled: true,
+    budgets: { per_day_usd: 1, per_week_usd: 5, per_month_usd: 15 },
+    tiers: { T1: "on_free_exhaustion", T2: "on_free_exhaustion", T3: "on_free_exhaustion", T4: "never" },
+    providers: { anthropic: { kind: "anthropic", base_url: "https://api.anthropic.com" } },
+    models: [
+      { provider: "anthropic", model: "claude-sonnet-4-5", display_name: "Claude Sonnet 4.5 (paid)", input_usd_per_million: 3, output_usd_per_million: 15, context_limit_tokens: 200000, output_limit_tokens: 16000, input_modalities: ["text", "image"], supports_tools: true, supports_structured_output: false, ignore_size_floor: true },
+    ],
+  },
   profiles: {
     summarize: { mode: "completion", min_total_parameters_b: 30, max_model_requests: 4, max_output_tokens: 2000, classify: "never", batching: { enabled: true, max_items: 4, per_item_output_tokens: 500 } },
     inspect: { mode: "read_only", min_total_parameters_b: 30, max_model_requests: 4, tools: "repository_read", classify: "never" },
     analyze: { mode: "read_only", min_total_parameters_b: 100, max_model_requests: 6, tools: "repository_read_and_artifacts", classify: "auto", min_tier: "T2" },
     implement: { mode: "coding", min_total_parameters_b: 100, max_model_requests: 8, tools: "scoped_edit_and_checks", workspace: "isolated_worktree" },
     review: { mode: "read_only", min_total_parameters_b: 100, max_model_requests: 4, tools: "repository_read_and_artifacts" },
+    supervise: { mode: "supervisor", tools: "supervisor", min_total_parameters_b: 100, max_model_requests: 30, max_output_tokens: 4000, classify: "never", min_tier: "T3" },
   },
 };
 const configPath = path.join(demo, "switchyard.config.yaml");
@@ -236,6 +252,7 @@ const client = {
     const user = textOf(req.messages[1]);
     await new Promise((r) => setTimeout(r, 15 + Math.random() * 40));
 
+    if (scenario === "free_exhausted") throw new GatewayError("pool_exhausted", "all free keys are cooling down (demo)", 429, 60_000, false);
     if (scenario === "rate_limit_first" && s.id === "nvidia/meta/llama-3.3-70b-instruct") {
       throw new GatewayError("rate_limited", "429 Too Many Requests from nvidia (all keys cooling down)", 429, 30_000, false);
     }
@@ -265,6 +282,11 @@ const client = {
 
     if (scenario === "garbage") return reply("Sure! Here is a summary of the log: it failed.", s);
 
+    // Standalone job supervisors (scripted per job, keyed on the goal in the brief).
+    if (sys.startsWith("# Supervisor charter")) return supervisorTurn(req, s);
+    // SwitchYard's native coding worker: edit, then submit.
+    if (req.tools?.some((t) => t.function.name === "replace_in_file")) return codingTurn(req, s, user);
+
     // Read-only investigations: read a file first, then submit_result citing it.
     if (req.tools?.length) {
       const toolTurns = req.messages.filter((m) => m.role === "tool").length;
@@ -289,15 +311,71 @@ const client = {
   },
 };
 
-let coding = null;
-try {
-  const mod = await import(pathToFileURL(path.resolve(here, "../../../packages/router/dist/runners/coding/index.js")).href);
-  coding = mod.createCodingRunner(cfg);
-} catch (err) {
-  console.warn(`coding runner unavailable (${err.message}); the implement task will fail instead`);
+const call = (name, args) => ({ id: `call_${++callNo}`, type: "function", function: { name, arguments: JSON.stringify(args) } });
+const assistantTurns = (req) => req.messages.filter((m) => m.role === "assistant").length;
+const hasCheck = (fn) => `node -e "process.exit(require('fs').readFileSync('src/app.ts','utf8').includes('${fn}')?0:1)"`;
+const multiplyCheck = hasCheck("multiply");
+
+function codingTurn(req, s, user) {
+  const fn = /multiply/i.test(user) ? "multiply" : "subtract";
+  const op = fn === "multiply" ? "*" : "-";
+  if (assistantTurns(req) === 0) {
+    const calls = [call("replace_in_file", { path: "src/app.ts", old_text: "export function add", new_text: `export function ${fn}(a: number, b: number) {\n  return a ${op} b;\n}\n\nexport function add` })];
+    // In the job, the worker also asks for brain access it does not have (left pending for you).
+    if (fn === "multiply") calls.push(call("brain_request_access", { pattern: "projects/demo/decisions/**", mode: "write", reason: "Record that arithmetic helpers live in src/app.ts so later briefs reuse them." }));
+    return reply(`Adding ${fn}() next to add().`, s, { toolCalls: calls, out: 120 });
+  }
+  return reply(null, s, { toolCalls: [call("submit_result", { summary: `Added ${fn}(a, b) to src/app.ts.`, findings: [{ description: `${fn}() is exported from src/app.ts`, evidenceRefs: ["core:src/app.ts#L1-L3"] }], criteria: [{ index: 0, status: "met", evidenceRefs: ["core:src/app.ts#L1-L3"] }] })] });
 }
 
-sy = new Switchyard(cfg, { client, admin: null, coding, now: clock, pollIntervalMs: 40 });
+const JOB_A = [
+  () => ({ text: "I'll keep the plan in the working document, then delegate one bounded implement task.", calls: [call("brain_set_current_state", { body: "**Goal:** add multiply(a, b) to the calculator and integrate it.\n\n**Plan:**\n1. Implementer adds multiply() in src/app.ts (allowed: src/**).\n2. Integrate onto the job branch and run the check.\n\n**Status:** delegated, waiting on the implementer." }), call("delegate", { tasks: [{ label: "multiply", profile: "implement", goal: "Add multiply(a, b) to src/app.ts next to add().", acceptance_criteria: ["multiply is exported from src/app.ts"], allowed_paths: ["src/**"], checks: [multiplyCheck], difficulty: "T2" }] })] }),
+  () => ({ text: "Waiting for the implementer.", calls: [call("await_tasks", { timeout_seconds: 60 })] }),
+  () => ({ text: "The implementer finished with its check passing. Integrating its commit onto the job branch.", calls: [call("integrate_task", { task_id: "multiply" })] }),
+  () => ({ text: "Verifying on the job branch myself rather than trusting the report.", calls: [call("run_check", { command: multiplyCheck })] }),
+  () => ({
+    text: "Check passed. Recording the decision and a reusable lesson.",
+    calls: [
+      call("brain_write", { path: "projects/demo/decisions/arithmetic-helpers.md", content: "# Decision: arithmetic helpers live in src/app.ts\n\nStatus: accepted\n\n## Context\n\nThe calculator service needs add, subtract, and multiply. `handle()` in src/server.ts only parses input.\n\n## Decision\n\n- Pure arithmetic helpers are exported from `src/app.ts`.\n- `src/server.ts` validates input and calls them; it holds no arithmetic itself.\n\n## Consequences\n\n- New operations are one small implement brief with `allowed_paths: src/app.ts`.\n" }),
+      call("brain_promote_lesson", { title: "Verify integrated work on the job branch", body: "A worker's passing check proves its own worktree, not the integrated branch. After `integrate_task`, run the same check with `run_check` before recording the ledger entry.\n\n- Cheap: one command, no model request.\n- Catches cherry-pick conflicts resolved the wrong way.", sources: ["projects/demo/working/job-" + "JOBID" + ".md"] }),
+    ],
+  }),
+  () => ({ text: "Recording the validated outcome in the ledger.", calls: [call("brain_append_ledger", { title: "Integrated multiply", changed: "src/app.ts on the job branch", why: "job goal", validation: "`" + multiplyCheck + "` -> exit 0", outcome: "Accepted", follow_up: "none" })] }),
+  () => ({ text: "Done.", calls: [call("finish_job", { status: "completed", summary: "multiply(a, b) added to src/app.ts by the implementer and integrated onto the job branch.", verified: [{ claim: "multiply is exported on the job branch", evidence: "run_check exit 0" }], not_verified: ["handle() does not expose multiply yet (out of scope)"] })] }),
+];
+const JOB_B = [
+  () => ({ text: "Before changing error handling I need a decision that belongs to the user.", calls: [call("brain_set_current_state", { body: "**Goal:** make handle() reject missing parameters.\n\n**Open decision:** status code for missing parameters (asked the user).\n\n**Plan once answered:** one implement brief for src/server.ts plus a review." }), call("ask_user", { question: "Should a missing a or b parameter return HTTP 400 with a JSON error body, or keep throwing so the framework returns 500?", options: ["Return 400 with a JSON error", "Keep throwing (500)"] })] }),
+];
+let jobAId = "";
+
+function supervisorTurn(req, s) {
+  const brief = textOf(req.messages[1]);
+  const script = /multiply/.test(brief) ? JOB_A : JOB_B;
+  // Job B only gets past its question when the seeder shuts the worker down: end the run there.
+  if (script === JOB_B && assistantTurns(req) >= JOB_B.length) throw new GatewayError("aborted", "worker shut down while waiting for an answer (demo)", undefined, undefined, false);
+  const step = script[Math.min(assistantTurns(req), script.length - 1)]();
+  const calls = step.calls.map((c) => ({ ...c, function: { ...c.function, arguments: c.function.arguments.replace("JOBID", jobAId) } }));
+  return reply(step.text, s, { toolCalls: calls.length ? calls : undefined, in: 3000 + Math.round(Math.random() * 3000), out: 250 });
+}
+
+/** Fake direct paid client: never makes a network call; bills 1,200 input and 400 output tokens. */
+const directCalls = [];
+const directClient = {
+  async complete(r) {
+    directCalls.push(r.model);
+    const items = [...textOf(r.chat.messages[1]).matchAll(/<item id="(i\d+)">/g)].map((m) => m[1]);
+    const body = items.length ? { items: items.map((id) => ({ id, result: result(1, "inline", "The log shows the payment webhook timing out after three retries.") })) } : result(1, "inline", "The log shows the payment webhook timing out after three retries.");
+    return {
+      message: { content: JSON.stringify(body) },
+      finishReason: "stop",
+      usage: { inputTokens: 1200, outputTokens: 400, cachedInputTokens: null, reasoningTokens: null, reportedCostUsd: null, basis: "provider_reported" },
+      telemetry: { servedModel: r.model, servedProvider: `paid:${r.providerName}`, providerAttempts: 1, providerAttemptsExact: true, cacheHit: false, headers: {} },
+      httpStatus: 200,
+    };
+  },
+};
+
+sy = new Switchyard(cfg, { client, admin: null, directClient, now: clock, pollIntervalMs: 40 });
 const started = { v: false };
 const startWorker = () => {
   if (!started.v) sy.startWorker(40);
@@ -373,6 +451,50 @@ await phase(3, "too large: returned to the supervisor (T4)", [
 ]);
 await phase(1.5, "served-model mismatch (quarantine)", [summarize("Summarise the auth service log", { routing: { endpointId: "nvidia/meta/llama-3.3-70b-instruct" } })], { scenario: "policy" });
 await phase(0.5, "recent summaries", [summarize("Summarise the latest canary log"), inspect("Is add() covered by any validation?")]);
+
+// Paid route: every free model is "cooling down", so the paid model serves (fake direct client).
+sy.vault.add({ provider: "anthropic", label: "demo card (fake key)", secret: "sk-ant-demo-NOT-A-REAL-KEY-7f3a", billingClass: "paid_postpaid", monthlyCapUsd: 10, expiresAt: Date.now() + 90 * 24 * HOUR });
+sy.vault.add({ provider: "anthropic", label: "prepaid credits (fake key)", secret: "sk-ant-demo-PREPAID-FAKE-91c2", billingClass: "paid_credits", prepaidBalanceUsd: 4 });
+await phase(2.5, "paid fallback: free exhausted -> paid model", [summarize("Summarise the payment webhook log (free capacity exhausted)")], { scenario: "free_exhausted" });
+if (!directCalls.length) console.warn("  warning: the paid model was not used");
+
+// Standalone job: supervisor delegates, integrates, verifies, and records memory.
+offset = Math.round(2 * HOUR);
+scenario = "ok";
+const jobA = await sy.startJob({ goal: "Add multiply(a, b) to the calculator and integrate it onto a job branch.", repositories: ["core"], acceptanceCriteria: ["multiply is exported from src/app.ts on the job branch"], checks: [multiplyCheck], label: "add-multiply" });
+jobAId = jobA.taskId;
+startWorker();
+const jobAOut = await sy.awaitResults([jobA.taskId], { timeoutSeconds: 180 });
+const ra = jobAOut.completed[0];
+console.log(`  ${"job: add multiply (finished)".padEnd(44)} ${ra ? `${ra.executionStatus}/${ra.acceptanceStatus}` : "did not finish"}`);
+
+// A person's notes in the brain, committed as "human".
+offset = Math.round(1.8 * HOUR);
+await insights.brainWrite(sy, "projects/demo/facts/runtime.md", "# Runtime facts\n\n- The calculator service runs on Node 22 behind the API gateway.\n- `GET /sum?a=&b=` is the only public route today.\n- Requests time out after 5 seconds at the gateway.\n");
+await insights.brainWrite(sy, "projects/demo/repos/core.md", "# core (calculator service)\n\n| Path | What it holds |\n| --- | --- |\n| `src/app.ts` | Pure arithmetic helpers |\n| `src/server.ts` | Input parsing and validation for `handle()` |\n\nTests: none yet. Add checks as `node -e` one-liners until a test runner exists.\n");
+const decision = "projects/demo/decisions/arithmetic-helpers.md";
+if (sy.brain.exists(decision)) {
+  const text = insights.brainRead(sy, decision).content;
+  await insights.brainWrite(sy, decision, `${text.trimEnd()}\n- Reviewed by a person: keep helpers free of I/O so they stay trivially testable.\n`);
+}
+
+// A second job that pauses on a question for you. The worker is shut down while the supervisor
+// waits, so the job is left interrupted with the question unanswered.
+offset = 0;
+const jobB = await sy.startJob({ goal: "Make handle() reject requests with a missing a or b parameter.", repositories: ["core"], acceptanceCriteria: ["a missing parameter is rejected", "existing sums still work"], label: "reject-missing-params" });
+let asked = [];
+for (let i = 0; i < 300 && !asked.length; i++) {
+  await new Promise((r) => setTimeout(r, 100));
+  asked = sy.questions({ taskId: jobB.taskId });
+}
+console.log(`  ${"job: reject missing params (asks you)".padEnd(44)} ${asked.length ? `question ${asked[0].id} pending` : "no question was asked"}`);
+
+// A second pending access request, from an analyst on an earlier task.
+const analyst = sy.listTasks(["completed"], 300).find((t) => t.profile === "analyze");
+if (analyst) {
+  const principal = sy.brainAccess.principalFor("analyst", { project: "demo", effort: "adhoc", task: analyst.taskId, repos: ["core"], jobId: null, tier: "T2" });
+  sy.brainAccess.request(principal, "projects/demo/facts/**", "read", "The root cause depends on how the gateway times out requests; the runtime facts note has that.");
+}
 
 // Qualification history (illustrative rows so the leaderboard has content).
 const qual = sy.db;

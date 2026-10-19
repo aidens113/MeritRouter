@@ -1,12 +1,14 @@
 import Link from "next/link";
 import YAML from "yaml";
-import { Lock } from "lucide-react";
-import { insights, RulebookSchema, type Rulebook } from "switchyard-router";
+import { Network } from "lucide-react";
+import { insights, MODALITIES, ROLE_NAMES, RulebookSchema, type Rulebook } from "switchyard-router";
 import { getSy } from "@/lib/sy";
-import { getIn, PROFILE_FIELDS, PROFILE_HELP, SECTIONS, type Section } from "@/lib/settings-schema";
+import { BRAIN_SECTION, getIn, PAID_SECTION, PROFILE_FIELDS, PROFILE_HELP, ROLE_HELP, SECTIONS, SUPERVISE_PROFILE_DEFAULT, SUPERVISOR_SECTION, type Section } from "@/lib/settings-schema";
 import { SetupScreen } from "@/components/setup";
-import { Badge, Callout, Card, CardHeader, cx, Mono, PageHeader } from "@/components/ui";
+import { Callout, Card, CardHeader, cx, Mono, PageHeader } from "@/components/ui";
 import { RepositoriesForm, SectionForm } from "@/components/client/settings-form";
+import { RolesForm, RowsForm, type Column, type RoleValue } from "@/components/client/settings-rows";
+import { ActionButton } from "@/components/client/actions";
 import { YamlEditor } from "@/components/client/yaml-editor";
 import { RulebookEditor } from "@/components/client/rulebook-editor";
 
@@ -56,7 +58,19 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         <div className="grid gap-6 xl:grid-cols-[12rem_1fr]">
           <aside className="hidden xl:block">
             <ul className="sticky top-6 space-y-0.5 text-sm">
-              {[...SECTIONS.map((s) => [s.id, s.title]), ["repositories", "Repositories"], ...profileSections.map((s) => [s.id, s.title.replace("Task type: ", "Type: ")]), ["paid", "Paid routing"]].map(([id, title]) => (
+              {[
+                ...SECTIONS.map((s) => [s.id, s.title]),
+                ["repositories", "Repositories"],
+                ...profileSections.map((s) => [s.id, s.title.replace("Task type: ", "Type: ")]),
+                ["supervisor", "Supervisor (jobs)"],
+                ["paid", "Paid routing"],
+                ["paid-providers", "Paid providers"],
+                ["paid-models", "Paid models"],
+                ["brain", "Brain"],
+                ["brain-mounts", "Brain mounts"],
+                ["brain-auto-approve", "Auto-approve rules"],
+                ["roles", "Roles"],
+              ].map(([id, title]) => (
                 <li key={id}>
                   <a href={`#${id}`} className="block rounded-md px-2 py-1 text-ink-2 hover:bg-surface-2 hover:text-ink">
                     {title}
@@ -73,7 +87,67 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             {profileSections.map((s) => (
               <SectionForm key={s.id} section={s} values={valuesFor(s)} badge={sy.cfg.profiles[s.id.slice("profile-".length) as keyof typeof sy.cfg.profiles]?.mode} />
             ))}
-            <PaidCard cfg={cfg} />
+            {!sy.cfg.profiles.supervise ? (
+              <Callout tone="accent" icon={<Network size={16} />} title="Standalone jobs are off">
+                <p>
+                  Jobs need the <Mono>supervise</Mono> task type. Adding it writes <Mono>profiles.supervise</Mono> with the standalone preset (supervisor mode, T3 and up, models of 100B+ parameters, 30 requests); you can tune it afterwards.
+                </p>
+                <div className="mt-2">
+                  <ActionButton url="/api/config" payload={{ patch: [{ path: ["profiles", "supervise"], value: SUPERVISE_PROFILE_DEFAULT }] }} variant="primary" small success="Added. Jobs can be started from the Jobs page.">
+                    Add the supervise task type
+                  </ActionButton>
+                </div>
+              </Callout>
+            ) : null}
+            <SectionForm section={SUPERVISOR_SECTION} values={valuesFor(SUPERVISOR_SECTION)} />
+            <SectionForm section={PAID_SECTION} values={valuesFor(PAID_SECTION)} badge={sy.cfg.paid.enabled ? "on" : "off"} />
+            <RowsForm
+              id="paid-providers"
+              title="Paid providers"
+              description="Providers paid models are reached through directly. Keys for them are added on the Paid routes page, never here."
+              path={["paid", "providers"]}
+              keyField="name"
+              columns={PROVIDER_COLUMNS}
+              rows={Object.entries(sy.cfg.paid.providers).map(([name, p]) => ({ name, ...p }))}
+              newRow={{ name: "", kind: "openai_compatible", base_url: "", balance_api: "none" }}
+              addLabel="Add provider"
+              empty="No paid providers. Add one to configure paid models."
+            />
+            <RowsForm
+              id="paid-models"
+              title="Paid models"
+              description="Models served by the providers above. A model needs a price (set here or fetched from the provider's pricing URL) and an enabled key before it can be used."
+              path={["paid", "models"]}
+              columns={modelColumns(Object.keys(sy.cfg.paid.providers))}
+              rows={sy.cfg.paid.models as unknown as Array<Record<string, unknown>>}
+              newRow={{ provider: Object.keys(sy.cfg.paid.providers)[0] ?? "", model: "", context_limit_tokens: 128000, output_limit_tokens: 8192, input_modalities: ["text"], supports_tools: true, supports_structured_output: false, ignore_size_floor: false }}
+              addLabel="Add model"
+              empty="No paid models."
+            />
+            <SectionForm section={BRAIN_SECTION} values={valuesFor(BRAIN_SECTION)} />
+            <RowsForm
+              id="brain-mounts"
+              title="Brain mounts"
+              description="Map a brain path prefix to an existing folder, for example a repository's docs/working, so agents read and write it as part of the brain."
+              path={["brain", "mounts"]}
+              columns={MOUNT_COLUMNS}
+              rows={sy.cfg.brain.mounts as unknown as Array<Record<string, unknown>>}
+              newRow={{ prefix: "", path: "", commit: false }}
+              addLabel="Add mount"
+              empty="No mounts: everything lives in the brain repository."
+            />
+            <RowsForm
+              id="brain-auto-approve"
+              title="Auto-approve rules"
+              description="Access requests matching a rule are approved without asking. The rule's access level must cover what is asked, and the worker's tier must be at least the minimum."
+              path={["brain", "auto_approve"]}
+              columns={AUTO_APPROVE_COLUMNS}
+              rows={sy.cfg.brain.auto_approve as unknown as Array<Record<string, unknown>>}
+              newRow={{ pattern: "", mode: "read", min_tier: "T1" }}
+              addLabel="Add rule"
+              empty="No auto-approve rules."
+            />
+            <RolesForm roles={[...ROLE_NAMES]} values={sy.cfg.roles as Record<string, RoleValue | undefined>} help={ROLE_HELP} />
           </div>
         </div>
       ) : tab === "yaml" ? (
@@ -128,26 +202,39 @@ function RulebookTab({ sy }: { sy: import("switchyard-router").Switchyard }) {
   );
 }
 
-function PaidCard({ cfg }: { cfg: Record<string, unknown> }) {
-  const paid = (cfg.paid ?? cfg.spend ?? null) as Record<string, unknown> | null;
-  const enabled = Boolean(paid?.enabled ?? paid?.paid_fallback_enabled);
-  return (
-    <Card id="paid" className="opacity-90">
-      <CardHeader
-        title={
-          <span className="flex items-center gap-2">
-            <Lock size={14} aria-hidden /> Paid routing
-            <Badge>{enabled ? "on in config" : "off"}</Badge>
-          </span>
-        }
-        description="Paid routing is not available yet. SwitchYard only routes to models verified free; these settings are locked in the panel."
-      />
-      <div className="p-4 text-sm text-ink-2">
-        <p>
-          Spending limits and paid models cannot be edited here. {paid ? "Current values (read only):" : "No paid settings are present in the config."}
-        </p>
-        {paid ? <pre className="mt-2 max-h-48 overflow-auto rounded-lg bg-surface-2 p-3 font-mono text-xs text-ink-3">{YAML.stringify(paid)}</pre> : null}
-      </div>
-    </Card>
-  );
+const PROVIDER_COLUMNS: Column[] = [
+  { key: "name", label: "Name", kind: "text", placeholder: "openrouter", help: "Lowercase letters, digits, dashes. Used in model entries." },
+  { key: "kind", label: "API style", kind: "select", options: ["openai_compatible", "anthropic"] },
+  { key: "base_url", label: "Base URL", kind: "text", wide: true, placeholder: "https://openrouter.ai/api/v1" },
+  { key: "pricing_url", label: "Pricing URL (optional)", kind: "optText", wide: true, placeholder: "none (prices set per model)", help: "An OpenRouter-style /models list to fetch prices from." },
+  { key: "balance_api", label: "Balance API", kind: "select", options: ["none", "openrouter", "deepseek"] },
+];
+
+function modelColumns(providers: string[]): Column[] {
+  return [
+    { key: "provider", label: "Provider", kind: "select", options: providers },
+    { key: "model", label: "Model id", kind: "text", placeholder: "anthropic/claude-sonnet-4.5" },
+    { key: "display_name", label: "Display name", kind: "optText" },
+    { key: "input_usd_per_million", label: "Input $ / M tokens", kind: "optNumber", placeholder: "fetch or unknown" },
+    { key: "output_usd_per_million", label: "Output $ / M tokens", kind: "optNumber", placeholder: "fetch or unknown" },
+    { key: "context_limit_tokens", label: "Context limit", kind: "int" },
+    { key: "output_limit_tokens", label: "Output limit", kind: "int" },
+    { key: "declared_parameters_b", label: "Declared size (B)", kind: "optNumber", placeholder: "not published", help: "Closed models do not publish sizes; declare one to apply size floors." },
+    { key: "input_modalities", label: "Input types", kind: "multi", options: [...MODALITIES], wide: true },
+    { key: "supports_tools", label: "Supports tools", kind: "bool" },
+    { key: "supports_structured_output", label: "Structured output", kind: "bool" },
+    { key: "ignore_size_floor", label: "Exempt from size floors", kind: "bool", help: "Lets an unsized model serve where a floor applies." },
+  ];
 }
+
+const MOUNT_COLUMNS: Column[] = [
+  { key: "prefix", label: "Brain prefix", kind: "text", placeholder: "projects/demo/working" },
+  { key: "path", label: "Folder", kind: "text", wide: true, placeholder: "../my-repo/docs/working", help: "Relative to the config file." },
+  { key: "commit", label: "SwitchYard commits there", kind: "bool", help: "Off: you commit changes in that repository yourself." },
+];
+
+const AUTO_APPROVE_COLUMNS: Column[] = [
+  { key: "pattern", label: "Path pattern", kind: "text", wide: true, placeholder: "projects/demo/facts/**" },
+  { key: "mode", label: "Up to access", kind: "select", options: ["read", "append", "write", "admin"] },
+  { key: "min_tier", label: "Minimum tier", kind: "select", options: ["T1", "T2", "T3"] },
+];

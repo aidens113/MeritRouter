@@ -6,6 +6,7 @@ import type { SafeKey } from "@/lib/keys";
 import { ActionStatus, useAction } from "./actions";
 import { Badge, buttonClass, cx, HelpTip, type Tone } from "../ui";
 import { dateTime } from "@/lib/format";
+import { FreeKeyBilling } from "./paid";
 
 function statusTone(s: string): Tone {
   const v = s.toLowerCase();
@@ -15,7 +16,7 @@ function statusTone(s: string): Tone {
   return "neutral";
 }
 
-export function KeyRow({ k }: { k: SafeKey }) {
+export function KeyRow({ k, billing }: { k: SafeKey; billing: string }) {
   const { run, busy, error, message } = useAction();
   const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState(k.label);
@@ -66,7 +67,10 @@ export function KeyRow({ k }: { k: SafeKey }) {
           </div>
         )}
         {!editing ? (
-          <div className="flex items-center gap-1">
+          <div className="flex flex-wrap items-center gap-1">
+            <span className="mr-3">
+              <FreeKeyBilling id={k.id} platform={k.platform} current={billing} />
+            </span>
             <label className="mr-2 inline-flex cursor-pointer items-center gap-2 text-xs text-ink-2">
               <input type="checkbox" role="switch" className="sr-only" checked={k.enabled} disabled={busy} onChange={(e) => run(`/api/keys/${k.id}`, "PATCH", { enabled: e.target.checked })} />
               <span className={cx("relative h-5 w-9 rounded-full transition-colors", k.enabled ? "bg-accent" : "bg-surface-3")} aria-hidden>

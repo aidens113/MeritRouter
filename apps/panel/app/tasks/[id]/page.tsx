@@ -88,6 +88,16 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
         }
       />
 
+      {st.profile === "supervise" || d.spec.parentTaskId ? (
+        <Callout tone="accent" title={st.profile === "supervise" ? "This task is a job" : "Part of a job"}>
+          {st.profile === "supervise" ? "Its questions, branches, worker tasks, and supervisor transcript are on the " : "It was delegated by a job's supervisor. See the "}
+          <Link href={`/jobs/${st.profile === "supervise" ? st.taskId : d.spec.parentTaskId}`} className="font-medium text-accent-ink hover:underline">
+            job page
+          </Link>
+          .
+        </Callout>
+      ) : null}
+
       {st.stateReason && st.state !== "completed" ? (
         <Callout tone={st.state === "failed" || st.state === "budget_exhausted" ? "bad" : st.state === "interrupted" ? "serious" : "warn"} title={stateTitle(st.state)}>
           {humanize(st.stateReason)}

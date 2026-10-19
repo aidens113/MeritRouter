@@ -31,7 +31,7 @@ function parse(f: Field, d: Draft): { value?: unknown; error?: string } {
       return { error: "Enter a full URL, e.g. http://localhost:3001/v1" };
     }
   }
-  if (f.kind === "optInt" && !s) return { value: null };
+  if ((f.kind === "optInt" || f.kind === "optNumber") && !s) return { value: null };
   if (!s) return { error: "Required" };
   const n = Number(s);
   if (!Number.isFinite(n)) return { error: "Enter a number" };
@@ -191,7 +191,7 @@ function FieldInput({ field: f, value, error, onChange }: { field: Field; value:
             value={String(value)}
             readOnly={f.readOnly}
             disabled={f.readOnly}
-            inputMode={["int", "number", "optInt"].includes(f.kind) ? "decimal" : undefined}
+            inputMode={["int", "number", "optInt", "optNumber"].includes(f.kind) ? "decimal" : undefined}
             onChange={(e) => onChange(e.target.value)}
             placeholder={f.placeholder}
             className={cx("field", f.kind === "url" || f.kind === "text" || f.kind === "optText" ? "font-mono text-[13px]" : "tabular")}
@@ -203,6 +203,7 @@ function FieldInput({ field: f, value, error, onChange }: { field: Field; value:
       </div>
       {err}
       {help}
+      {f.optionHelp?.[String(value)] ? <span className="mt-1 block rounded-md bg-surface-2 px-2 py-1 text-xs leading-relaxed text-ink-2">{f.optionHelp[String(value)]}</span> : null}
     </div>
   );
 }

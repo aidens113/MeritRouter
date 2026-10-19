@@ -3,7 +3,7 @@
  * packages/router/src/config/schema.ts. Shared by the settings page (server) and form (client).
  */
 
-export type FieldKind = "text" | "url" | "int" | "number" | "bool" | "enum" | "list" | "optInt" | "optText";
+export type FieldKind = "text" | "url" | "int" | "number" | "bool" | "enum" | "list" | "optInt" | "optNumber" | "optText";
 
 export interface Field {
   path: Array<string>;
@@ -17,6 +17,8 @@ export interface Field {
   unit?: string;
   readOnly?: boolean;
   placeholder?: string;
+  /** Plain-language explanation of each enum option, shown under the select for the chosen one. */
+  optionHelp?: Record<string, string>;
 }
 
 export interface Section {
@@ -140,8 +142,15 @@ export const SECTIONS: Section[] = [
     title: "Coding workers",
     description: "The agent that performs implement tasks inside an isolated git worktree.",
     fields: [
-      f("coding.runner", "Runner", "enum", "opencode runs the OpenCode agent; command runs any agent command you give below.", { options: ["opencode", "command"] }),
-      f("coding.command", "Command", "text", "Executable for the opencode runner, or the full command line for the command runner."),
+      f("coding.runner", "Runner", "enum", "Which agent performs implement tasks.", {
+        options: ["native", "opencode", "command"],
+        optionHelp: {
+          native: "SwitchYard's own coding loop: edits are contained to allowed paths in code and every edit is committed with the agent and model that made it.",
+          opencode: "Runs the OpenCode agent in the worktree, talking to models only through SwitchYard's per-task gateway.",
+          command: "Runs any agent command you give below, with the same per-task gateway and worktree.",
+        },
+      }),
+      f("coding.command", "Command", "text", "Executable for the opencode runner, or the full command line for the command runner (unused by native)."),
       f("coding.allowed_commands", "Allowed shell commands", "list", "Command patterns the coding agent may run (OpenCode permission syntax). Everything else is denied.", { placeholder: "pnpm test*" }),
       f("coding.allow_repo_agent_config", "Allow repository agent config", "bool", "Run even when the worktree contains its own agent config (opencode.json or .opencode)."),
       f("coding.max_denied_requests", "Stop after denied requests", "int", "Stop the agent after this many model requests in a row were refused.", { min: 1 }),
@@ -158,6 +167,93 @@ export const SECTIONS: Section[] = [
     ],
   },
 ];
+
+
+const POLICY_HELP: Record<string, string> = {
+  never: "Never: free models only at this tier.",
+  on_free_exhaustion: "On free exhaustion: paid models serve only after every free model failed or was busy.",
+  preferred: "Preferred: paid models are tried before free ones (spends money on routine work).",
+  premium: "Premium: work too hard for free workers goes to a paid model instead of back to the supervisor.",
+};
+
+/** Sections for the paid, brain, and supervisor settings (their list editors are separate forms). */
+export const PAID_SECTION: Section = {
+  id: "paid",
+  title: "Paid routing",
+  description: "Direct paid-provider routes (never through FreeLLMAPI). Off by default; keys are added on the Paid routes page and stored encrypted, never here.",
+  fields: [
+    f("paid.enabled", "Paid routing on", "bool", "Master switch. Off means no paid request is ever made, whatever the tier policies say. Needs a weekly budget above $0."),
+    f("paid.budgets.per_day_usd", "Daily budget", "optNumber", "Most paid spend in any 24 hours. Empty: no daily limit.", { min: 0, unit: "USD", placeholder: "no limit" }),
+    f("paid.budgets.per_week_usd", "Weekly budget", "number", "Most paid spend in any 7 days. Required (above $0) to turn paid routing on.", { min: 0, unit: "USD" }),
+    f("paid.budgets.per_month_usd", "Monthly budget", "optNumber", "Most paid spend in any 30 days. Empty: no monthly limit.", { min: 0, unit: "USD", placeholder: "no limit" }),
+    ...(["T1", "T2", "T3"] as const).map((t) =>
+      f(`paid.tiers.${t}`, `${t} paid policy`, "enum", `When paid models may serve ${t} tasks.`, { options: ["never", "on_free_exhaustion", "preferred"], optionHelp: POLICY_HELP }),
+    ),
+    f("paid.tiers.T4", "T4 paid policy", "enum", "What happens to work too hard for free workers.", { options: ["never", "premium"], optionHelp: { never: "Never: T4 work goes back to the supervisor.", premium: POLICY_HELP.premium! } }),
+    f("paid.max_paid_attempts", "Paid models tried per request", "int", "Paid endpoints tried per request after free ones; they never count toward free fallbacks.", { min: 1, max: 5 }),
+  ],
+};
+
+export const BRAIN_SECTION: Section = {
+  id: "brain",
+  title: "Brain (shared knowledge)",
+  description: "The git repository of markdown working documents shared by supervisors and workers.",
+  fields: [
+    f("brain.path", "Brain repository", "text", "Directory of the brain repository (created and git-initialised when missing). Relative to the config file; ~ means your home folder."),
+    f("brain.project", "Project", "text", "Project scope this config works in: documents live under projects/<project>/. Lowercase letters, digits, dots, dashes."),
+    f("brain.commit", "Commit every write", "bool", "Commit each write under the writing agent's identity and model, so history and blame show who wrote what."),
+    f("brain.push", "Push after commits", "bool", "Push the brain repository after each commit (needs a configured remote)."),
+    f("brain.worker_reports", "Worker reports", "bool", "Write each worker's report into its working document's reports/ folder."),
+    f("brain.current_state_max_lines", "Current State line limit", "int", "Longest a working document's Current State may be; longer saves are rejected.", { min: 1, unit: "lines" }),
+    f("brain.compact_at_lines", "Compact at document length", "int", "Suggest moving ledger history to the archive once a working document is this long.", { min: 1, unit: "lines" }),
+    f("brain.compact_at_ledger_entries", "Compact at ledger entries", "int", "Suggest compaction once the Work Ledger has this many entries.", { min: 1, unit: "entries" }),
+    f("brain.access_approver", "Access requests decided by", "enum", "Who decides workers' requests for more brain access.", {
+      options: ["supervisor", "human", "auto"],
+      optionHelp: {
+        supervisor: "Supervisor: the job's supervisor approves or denies (you can still decide on the Brain page).",
+        human: "You: requests wait on the Brain page until you decide.",
+        auto: "Auto: every request is approved at once.",
+      },
+    }),
+  ],
+};
+
+export const SUPERVISOR_SECTION: Section = {
+  id: "supervisor",
+  title: "Supervisor (jobs)",
+  description: "How standalone jobs are supervised. Used by the supervise task type.",
+  fields: [
+    f("supervisor.endpoints", "Supervisor models", "list", "Model ids to supervise with, in order. Empty: route like any T3 task (most capable first).", { placeholder: "cerebras/qwen-3-235b-a22b-instruct-2507" }),
+    f("supervisor.paid_policy", "Paid policy for supervisors", "enum", "Whether a job's supervisor may use paid models.", { options: ["never", "on_free_exhaustion", "preferred", "premium"], optionHelp: POLICY_HELP }),
+    f("supervisor.max_concurrent_jobs", "Jobs at once", "int", "Most jobs running at the same time.", { min: 1 }),
+    f("supervisor.max_workers_per_job", "Workers per job", "int", "Most worker tasks one job runs at the same time.", { min: 1 }),
+    f("supervisor.job_timeout_seconds", "Job time limit", "int", "Wall-clock limit for one job.", { min: 1, unit: "seconds" }),
+    f("supervisor.question_timeout_seconds", "Wait for an answer", "int", "How long a supervisor waits for your answer to a question before deciding with a sensible default.", { min: 1, unit: "seconds" }),
+    f("supervisor.branch_prefix", "Branch prefix", "text", "Jobs commit to <prefix><job id>. Pushing is never automatic."),
+    f("supervisor.allowed_commands", "Allowed commands", "list", "Commands the supervisor may run in its integration worktree, besides its briefs' checks.", { placeholder: "pnpm test*" }),
+  ],
+};
+
+/** Defaults for adding the supervise task type from the panel (mirrors the standalone preset). */
+export const SUPERVISE_PROFILE_DEFAULT = {
+  mode: "supervisor",
+  tools: "supervisor",
+  min_total_parameters_b: 100,
+  max_model_requests: 30,
+  max_output_tokens: 4000,
+  classify: "never",
+  min_tier: "T3",
+};
+
+export const ROLE_HELP: Record<string, string> = {
+  supervisor: "Plans, delegates, verifies, and integrates jobs.",
+  summarizer: "Runs summarize tasks.",
+  inspector: "Runs inspect tasks (simple repository lookups).",
+  analyst: "Runs analyze tasks (cross-file reasoning).",
+  implementer: "Runs implement tasks (code edits in a worktree).",
+  reviewer: "Runs review tasks.",
+  classifier: "The difficulty classifier.",
+};
 
 export const PROFILE_FIELDS = (name: string): Field[] => [
   f(`profiles.${name}.mode`, "Mode", "enum", "Completion answers from supplied text; read-only investigates repositories with tools; coding edits files in a worktree.", { options: ["completion", "read_only", "coding", "supervisor"] }),

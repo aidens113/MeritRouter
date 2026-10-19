@@ -1,0 +1,425 @@
+import Link from "next/link";
+import { BookOpenText, FileText, Inbox, Search, ShieldQuestion } from "lucide-react";
+import { insights, type Switchyard } from "switchyard-router";
+import { getSy } from "@/lib/sy";
+import { SetupScreen } from "@/components/setup";
+import { Badge, Callout, Card, CardHeader, cx, EmptyState, HelpTip, Mono, PageHeader, type Tone } from "@/components/ui";
+import { Markdown } from "@/components/markdown";
+import { AccessDecision, BrainEditor } from "@/components/client/brain";
+import { Legend } from "@/components/client/charts";
+import { ago, dateTime, shortId } from "@/lib/format";
+
+export const dynamic = "force-dynamic";
+export const metadata = { title: "Brain" };
+
+type Entry = Awaited<ReturnType<typeof insights.brainTree>>[number];
+type BlameLine = Awaited<ReturnType<typeof insights.brainBlame>>[number];
+
+const KIND_LABEL: Record<string, string> = {
+  working_doc: "working doc",
+  report: "report",
+  archive: "archive",
+  lesson: "lesson",
+  glossary: "glossary",
+  decision: "decision",
+  fact: "fact",
+  repo_notes: "repo notes",
+  index: "index",
+  note: "note",
+};
+
+const STATUS_TONE: Record<string, Tone> = { Active: "accent", Paused: "warn", Blocked: "bad", Complete: "good", Superseded: "neutral", Archived: "neutral", Unclassified: "neutral" };
+
+const TABS = [
+  { id: "view", label: "View" },
+  { id: "history", label: "History" },
+  { id: "blame", label: "Blame" },
+  { id: "edit", label: "Edit" },
+] as const;
+
+const SLOTS = ["var(--series-1)", "var(--series-2)", "var(--series-3)", "var(--series-4)", "var(--series-5)", "var(--series-6)"];
+
+export default async function BrainPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const r = getSy();
+  if (!r.sy) return <SetupScreen error={r.error} configPath={r.configPath} />;
+  const sy = r.sy;
+  const sp = await searchParams;
+  const str = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : "");
+  const view = str("view") === "requests" ? "requests" : "docs";
+  const q = str("q").trim();
+
+  let entries: Entry[] = [];
+  let brainError: string | null = null;
+  try {
+    entries = await insights.brainTree(sy, "");
+  } catch (err) {
+    brainError = (err as Error).message;
+  }
+  const requests = insights.brainAccessRequests(sy);
+  const pending = requests.filter((x) => x.status === "pending");
+  const path = str("path") || (entries.some((e) => e.path === "README.md") ? "README.md" : (entries[0]?.path ?? ""));
+  const tab = TABS.some((t) => t.id === str("tab")) ? (str("tab") as (typeof TABS)[number]["id"]) : "view";
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Brain"
+        description={
+          <>
+            Shared knowledge for supervisors and workers: markdown documents in a git repository, each edit committed with the agent and model that made it. <HelpTip term="brain" />
+          </>
+        }
+        actions={
+          <form action="/brain" className="flex items-center gap-1.5" role="search">
+            <label className="relative">
+              <span className="sr-only">Search the brain</span>
+              <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-3" aria-hidden />
+              <input name="q" defaultValue={q} className="field w-64 pl-8" placeholder="Search documents" />
+            </label>
+          </form>
+        }
+      />
+
+      <nav aria-label="Brain sections" className="flex flex-wrap gap-1 border-b border-line">
+        <Link href="/brain" aria-current={view === "docs" ? "page" : undefined} className={cx("-mb-px border-b-2 px-3 py-2 text-sm", view === "docs" ? "border-accent font-medium text-accent-ink" : "border-transparent text-ink-2 hover:text-ink")}>
+          Documents
+        </Link>
+        <Link href="/brain?view=requests" aria-current={view === "requests" ? "page" : undefined} className={cx("-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm", view === "requests" ? "border-accent font-medium text-accent-ink" : "border-transparent text-ink-2 hover:text-ink")}>
+          Access requests {pending.length ? <Badge tone="warn">{pending.length} pending</Badge> : null}
+        </Link>
+      </nav>
+
+      {brainError ? (
+        <Callout tone="bad" title="The brain repository could not be opened">
+          {brainError}. Check <Mono>brain.path</Mono> in Settings ({sy.brain.root}).
+        </Callout>
+      ) : null}
+
+      {view === "requests" ? (
+        <AccessRequests requests={requests} approver={sy.cfg.brain.access_approver} />
+      ) : (
+        <div className="grid gap-6 lg:grid-cols-[19rem_1fr]">
+          <Card className="self-start lg:sticky lg:top-6">
+            <CardHeader title="Documents" description={<span className="break-all">{sy.brain.root}</span>} />
+            <div className="max-h-[calc(100vh-12rem)] overflow-y-auto p-2">{entries.length ? <Tree entries={entries} current={q ? "" : path} project={sy.brain.project} /> : <p className="p-2 text-sm text-ink-3">No documents yet.</p>}</div>
+          </Card>
+          <div className="min-w-0 space-y-6">
+            {pending.length ? (
+              <Callout tone="warn" icon={<ShieldQuestion size={16} />} title={`${pending.length} access request${pending.length === 1 ? "" : "s"} waiting`}>
+                Workers asked for more brain access. <Link href="/brain?view=requests" className="font-medium text-accent-ink hover:underline">Review them →</Link>
+              </Callout>
+            ) : null}
+            {q ? <SearchResults sy={sy} q={q} /> : path ? <DocPanel sy={sy} path={path} tab={tab} entries={entries} /> : (
+              <Card>
+                <EmptyState icon={<BookOpenText size={22} />} title="The brain is empty">
+                  Working documents appear when a supervisor starts a job; workers add reports, and supervisors record decisions and lessons. You can also edit any document here.
+                </EmptyState>
+              </Card>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function group(e: Entry, project: string): string {
+  if (e.kind === "index") return "Index";
+  if (e.path.startsWith("global/lessons/")) return "Global · lessons";
+  if (e.path.startsWith("global/")) return "Global";
+  const m = /^projects\/([^/]+)\//.exec(e.path);
+  const p = m ? (m[1] === project ? m[1] : `${m[1]}`) : null;
+  const label: Record<string, string> = { working_doc: "working documents", report: "reports", archive: "archive", decision: "decisions", fact: "facts", repo_notes: "repository notes" };
+  if (p) return `projects/${p} · ${label[e.kind] ?? "other notes"}`;
+  return "Other";
+}
+
+const GROUP_ORDER = (g: string) => (g === "Index" ? 0 : g.startsWith("Global") ? 1 : g.includes("working documents") ? 2 : g.includes("reports") ? 3 : g.includes("decisions") ? 4 : g.includes("facts") ? 5 : g.includes("repository") ? 6 : g.includes("archive") ? 8 : 7);
+
+function Tree({ entries, current, project }: { entries: Entry[]; current: string; project: string }) {
+  const groups = new Map<string, Entry[]>();
+  for (const e of entries) {
+    const g = group(e, project);
+    groups.set(g, [...(groups.get(g) ?? []), e]);
+  }
+  const names = [...groups.keys()].sort((a, b) => GROUP_ORDER(a) - GROUP_ORDER(b) || a.localeCompare(b));
+  return (
+    <div className="space-y-3">
+      {names.map((g) => {
+        const list = groups.get(g)!;
+        // Long groups (worker reports pile up) start folded unless the open document is inside.
+        const folded = list.length > 6 && !list.some((e) => e.path === current);
+        return (
+        <details key={g} open={!folded} className="group/tree">
+          <summary className="flex cursor-pointer list-none items-center justify-between px-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-ink-3 hover:text-ink">
+            <span>{g}</span>
+            <span className="font-normal normal-case">{list.length}</span>
+          </summary>
+          <ul className="space-y-0.5">
+            {list.map((e) => {
+              const short = e.path.replace(/^projects\/[^/]+\/(working\/)?/, "").replace(/^global\/(lessons\/)?/, "");
+              return (
+                <li key={e.path}>
+                  <Link
+                    href={`/brain?path=${encodeURIComponent(e.path)}`}
+                    aria-current={e.path === current ? "page" : undefined}
+                    className={cx("block rounded-md px-2 py-1 text-sm", e.path === current ? "bg-accent-soft text-accent-ink" : "text-ink-2 hover:bg-surface-2 hover:text-ink")}
+                    title={e.path}
+                  >
+                    <span className="block truncate">{e.title ?? short}</span>
+                    <span className="mt-0.5 flex flex-wrap items-center gap-1">
+                      <span className="truncate font-mono text-[10px] text-ink-3">{short}</span>
+                      {e.status ? <Badge tone={STATUS_TONE[e.status] ?? "neutral"} className="!px-1.5 !py-0 !text-[10px]">{e.status}</Badge> : null}
+                    </span>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </details>
+        );
+      })}
+    </div>
+  );
+}
+
+async function SearchResults({ sy, q }: { sy: Switchyard; q: string }) {
+  let hits: Awaited<ReturnType<typeof insights.brainSearch>> = [];
+  let error: string | null = null;
+  try {
+    hits = await insights.brainSearch(sy, q);
+  } catch (err) {
+    error = (err as Error).message;
+  }
+  return (
+    <Card>
+      <CardHeader title={`Search: ${q}`} description={error ? undefined : `${hits.length} match${hits.length === 1 ? "" : "es"}, best first.`} actions={<Link href="/brain" className="text-xs text-accent-ink hover:underline">Clear search</Link>} />
+      {error ? (
+        <div className="p-4 text-sm text-bad-ink">{error}</div>
+      ) : hits.length ? (
+        <ul className="divide-y divide-line">
+          {hits.map((h) => (
+            <li key={h.path} className="px-4 py-3">
+              <Link href={`/brain?path=${encodeURIComponent(h.path)}`} className="font-medium text-accent-ink hover:underline">
+                {h.title ?? h.path}
+              </Link>
+              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-ink-3">
+                <span className="font-mono">{h.path}</span>
+                <Badge>{KIND_LABEL[h.kind] ?? h.kind}</Badge>
+              </div>
+              <p className="mt-1 text-sm text-ink-2">{snippet(h.snippet)}</p>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <EmptyState icon={<Search size={20} />} title="Nothing matched">
+          Search matches whole words in titles and text. Try fewer or different words.
+        </EmptyState>
+      )}
+    </Card>
+  );
+}
+
+/** Snippets mark matches with [brackets]; show them highlighted, everything else as text. */
+function snippet(s: string) {
+  return s.split(/(\[[^\]]*\])/g).map((p, i) =>
+    /^\[[^\]]*\]$/.test(p) ? (
+      <mark key={i} className="rounded bg-warn-soft px-0.5 text-ink">
+        {p.slice(1, -1)}
+      </mark>
+    ) : (
+      <span key={i}>{p}</span>
+    ),
+  );
+}
+
+async function DocPanel({ sy, path, tab, entries }: { sy: Switchyard; path: string; tab: string; entries: Entry[] }) {
+  let doc: ReturnType<typeof insights.brainRead> | null = null;
+  let error: string | null = null;
+  try {
+    doc = insights.brainRead(sy, path);
+  } catch (err) {
+    error = (err as Error).message;
+  }
+  const entry = entries.find((e) => e.path === path);
+  const href = (t: string) => `/brain?path=${encodeURIComponent(path)}${t === "view" ? "" : `&tab=${t}`}`;
+  return (
+    <Card>
+      <div className="border-b border-line px-4 pt-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <FileText size={15} className="text-ink-3" aria-hidden />
+          <h2 className="text-sm font-semibold text-ink">{entry?.title ?? path}</h2>
+          {doc ? <Badge>{KIND_LABEL[doc.kind] ?? doc.kind}</Badge> : null}
+          {entry?.status ? <Badge tone={STATUS_TONE[entry.status] ?? "neutral"}>{entry.status}</Badge> : null}
+          {doc?.kind === "working_doc" ? <HelpTip term="workingDoc" /> : null}
+        </div>
+        <div className="mt-0.5 flex flex-wrap gap-x-3 text-xs text-ink-3">
+          <span className="font-mono">{path}</span>
+          {doc ? <span>{doc.lines} lines</span> : null}
+          {entry ? <span>changed {ago(entry.mtime)}</span> : null}
+        </div>
+        <nav aria-label="Document views" className="mt-2 flex gap-1">
+          {TABS.map((t) => (
+            <Link key={t.id} href={href(t.id)} aria-current={tab === t.id ? "page" : undefined} className={cx("-mb-px border-b-2 px-3 py-1.5 text-sm", tab === t.id ? "border-accent font-medium text-accent-ink" : "border-transparent text-ink-2 hover:text-ink")}>
+              {t.label}
+            </Link>
+          ))}
+        </nav>
+      </div>
+      <div className="p-4">
+        {error || !doc ? (
+          <p className="text-sm text-bad-ink">{error ?? "Not found"}</p>
+        ) : tab === "history" ? (
+          <History sy={sy} path={path} />
+        ) : tab === "blame" ? (
+          <Blame sy={sy} path={path} />
+        ) : tab === "edit" ? (
+          <BrainEditor path={path} initial={doc.content} kind={doc.kind} maxCurrentState={sy.cfg.brain.current_state_max_lines} />
+        ) : (
+          <>
+            {doc.kind === "working_doc" ? (
+              <p className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-3">
+                <span className="inline-flex items-center gap-1">
+                  Current State <HelpTip term="currentState" />
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  Work Ledger <HelpTip term="ledger" />
+                </span>
+              </p>
+            ) : null}
+            <Markdown text={doc.content} basePath={path} />
+          </>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+async function History({ sy, path }: { sy: Switchyard; path: string }) {
+  const rows = await insights.brainHistory(sy, path);
+  if (!rows.length) return <p className="text-sm text-ink-3">No commits recorded for this file. Files in mounted folders without <Mono>commit: true</Mono> are committed by you, not SwitchYard.</p>;
+  return (
+    <div className="overflow-x-auto">
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th>Commit</th>
+            <th>Date</th>
+            <th>Agent</th>
+            <th>Model</th>
+            <th>Change</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((h) => (
+            <tr key={h.commit}>
+              <td className="font-mono text-xs text-ink-2">{h.commit.slice(0, 10)}</td>
+              <td className="whitespace-nowrap text-xs">{dateTime(h.date)}</td>
+              <td className="text-xs">{h.agent ?? <span className="text-ink-3">unknown</span>}</td>
+              <td className="font-mono text-[11px] text-ink-2">{h.model ?? <span className="font-sans text-ink-3">–</span>}</td>
+              <td className="text-ink">{h.subject}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+async function Blame({ sy, path }: { sy: Switchyard; path: string }) {
+  let lines: BlameLine[] = [];
+  try {
+    lines = await insights.brainBlame(sy, path);
+  } catch (err) {
+    return <p className="text-sm text-ink-3">{(err as Error).message}</p>;
+  }
+  if (!lines.length) return <p className="text-sm text-ink-3">This file is empty.</p>;
+  // One colour per author (agent + model), in order of first appearance; beyond six, "Other".
+  const keyOf = (l: BlameLine) => (l.uncommitted ? "uncommitted" : `${l.agent ?? l.authorName}${l.model ? ` · ${l.model}` : ""}`);
+  const counts = new Map<string, number>();
+  for (const l of lines) counts.set(keyOf(l), (counts.get(keyOf(l)) ?? 0) + 1);
+  const authors = [...counts.keys()];
+  const color = new Map(authors.map((a, i) => [a, a === "uncommitted" ? "var(--series-other)" : (SLOTS[i] ?? "var(--series-other)")]));
+  const legend = authors.slice(0, 6).map((a) => ({ key: a, label: `${a} (${counts.get(a)} line${counts.get(a) === 1 ? "" : "s"})`, color: color.get(a)! }));
+  if (authors.length > 6) legend.push({ key: "__other", label: `Other (${authors.length - 6} authors)`, color: "var(--series-other)" });
+  return (
+    <div className="space-y-3">
+      <Legend series={legend} />
+      <div className="overflow-x-auto rounded-lg border border-line">
+        <table className="w-full border-collapse font-mono text-xs">
+          <tbody>
+            {lines.map((l, i) => {
+              const k = keyOf(l);
+              const prev = i > 0 ? keyOf(lines[i - 1]!) + lines[i - 1]!.commit : null;
+              const first = prev !== k + l.commit;
+              const tip = l.uncommitted ? "Not committed yet" : `${l.agent ?? l.authorName} · role ${l.role ?? "?"} · model ${l.model ?? "?"} · commit ${l.commit.slice(0, 10)} · ${dateTime(l.date)}${l.task ? ` · task ${l.task}` : ""}`;
+              return (
+                <tr key={i} title={tip} className="group hover:bg-surface-2">
+                  <td className="w-44 max-w-44 truncate border-r border-line px-2 py-0.5 font-sans text-[11px] text-ink-3" style={{ borderLeft: `4px solid ${color.get(k)}` }}>{first ? `${(l.agent ?? l.authorName).slice(0, 28)} · ${l.commit.slice(0, 7)}` : ""}</td>
+                  <td className="w-10 select-none px-2 py-0.5 text-right text-ink-3">{l.line}</td>
+                  <td className="whitespace-pre-wrap px-2 py-0.5 text-ink [overflow-wrap:anywhere]">{l.text || " "}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-ink-3">Hover a line for its commit, agent, role, and model. Colours follow the author, not the order of edits.</p>
+    </div>
+  );
+}
+
+function AccessRequests({ requests, approver }: { requests: ReturnType<typeof insights.brainAccessRequests>; approver: string }) {
+  const sorted = [...requests].sort((a, b) => (a.status === "pending" ? 0 : 1) - (b.status === "pending" ? 0 : 1) || b.createdAt - a.createdAt);
+  return (
+    <Card>
+      <CardHeader
+        title="Access requests"
+        help="accessRequest"
+        description={`Pending first. The configured approver is ${approver === "human" ? "you" : approver === "auto" ? "automatic (every request is approved)" : "the job's supervisor"}; you can decide any pending request here.`}
+      />
+      {sorted.length === 0 ? (
+        <EmptyState icon={<Inbox size={22} />} title="No access requests">
+          Workers ask here when their role&apos;s default brain access is not enough (for example, to write a decision).
+        </EmptyState>
+      ) : (
+        <ul className="divide-y divide-line">
+          {sorted.map((x) => (
+            <li key={x.id} className={cx("space-y-2 px-4 py-3", x.status !== "pending" && "opacity-80")}>
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <Badge tone={x.status === "pending" ? "warn" : x.status === "approved" ? "good" : "bad"}>{x.status}</Badge>
+                <span className="font-medium text-ink">{x.role}</span>
+                <span className="text-ink-2">wants</span>
+                <Badge tone="accent">{x.mode}</Badge>
+                <span className="text-ink-2">on</span>
+                <Mono>{x.pattern}</Mono>
+              </div>
+              <p className="text-sm text-ink-2">&ldquo;{x.reason}&rdquo;</p>
+              <div className="flex flex-wrap gap-x-3 text-xs text-ink-3">
+                <span>asked {dateTime(x.createdAt)}</span>
+                {x.taskId ? (
+                  <Link href={`/tasks/${x.taskId}`} className="text-accent-ink hover:underline">
+                    task {shortId(x.taskId, 16)}
+                  </Link>
+                ) : null}
+                {x.jobId ? (
+                  <Link href={`/jobs/${x.jobId}`} className="text-accent-ink hover:underline">
+                    job {shortId(x.jobId, 16)}
+                  </Link>
+                ) : null}
+              </div>
+              {x.status === "pending" ? (
+                <AccessDecision id={x.id} />
+              ) : (
+                <p className="text-xs text-ink-3">
+                  {x.status === "approved" ? "Approved" : "Denied"} by {x.decidedBy ?? "?"} {x.decidedAt ? dateTime(x.decidedAt) : ""}
+                  {x.decisionReason ? `: ${x.decisionReason}` : ""}
+                </p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}

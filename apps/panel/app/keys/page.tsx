@@ -16,6 +16,8 @@ export default async function KeysPage() {
   const modelsPer = new Map<string, number>();
   for (const e of eps) if (e.status !== "removed") modelsPer.set(e.providerId, (modelsPer.get(e.providerId) ?? 0) + 1);
   const free = new Set(sy.cfg.discovery.free_platforms);
+  const billing = new Map(sy.spend.freeLlmApiKeyBilling().map((b) => [b.flKeyId, b.billingClass]));
+  const paidPlatforms = new Set([...sy.spend.freeLlmApiKeyBilling()].filter((b) => b.billingClass !== "free_tier").map((b) => b.platform));
 
   const header = (
     <PageHeader
@@ -70,6 +72,9 @@ export default async function KeysPage() {
         </Callout>
       ) : null}
       {quotaNote}
+      <Callout tone="warn" title="Mark keys that cost money">
+        Each key has a billing class. SwitchYard treats FreeLLMAPI keys as free tier unless you say otherwise; a key marked paid credits, billed to card, or trial blocks its whole platform from free routing, so free work never lands on a billed account. Direct paid routes are managed on the <a href="/paid" className="font-medium text-accent-ink hover:underline">Paid routes</a> page.
+      </Callout>
 
       <Card>
         <CardHeader title="Add a key" description="Pick the service, paste the key, and optionally say which account it belongs to." />
@@ -100,13 +105,14 @@ export default async function KeysPage() {
                     {providers.find((x) => x.id === p)?.name ?? p}
                     <Badge>{list.length} key{list.length === 1 ? "" : "s"}</Badge>
                     {free.has(p) ? <Badge tone="good">listed as free platform</Badge> : null}
+                    {paidPlatforms.has(p) ? <Badge tone="warn">blocked from free routing: a key is marked paid</Badge> : null}
                   </span>
                 }
                 description={`${enabled} enabled · ${groupsHere.size} separate quota${groupsHere.size === 1 ? "" : "s"} · ${modelsPer.get(p) ?? 0} model${(modelsPer.get(p) ?? 0) === 1 ? "" : "s"} in the catalog`}
               />
               <ul className="divide-y divide-line">
                 {list.map((k) => (
-                  <KeyRow key={k.id} k={k} />
+                  <KeyRow key={k.id} k={k} billing={billing.get(k.id) ?? "free_tier"} />
                 ))}
               </ul>
             </Card>

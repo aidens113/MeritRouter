@@ -61,19 +61,48 @@ export default async function OverviewPage() {
     .filter((x): x is { tier: string; tasks: number; completed: number } => x !== null);
   const tierHint: Record<string, string> = { T1: "easy", T2: "moderate", T3: "hard", T4: "to supervisor", unclassified: "not scored yet" };
   const states = Object.entries(ov.tasksByState).sort((a, b) => b[1] - a[1]);
+  // Items that need a decision from you, computed here so each can link to where you act.
+  const questions = sy.questions({ pendingOnly: true });
+  const jobsAsking = [...new Set(questions.map((q) => q.taskId))];
+  const accessPending = insights.brainAccessRequests(sy, "pending");
+  const actions: Array<{ key: string; text: string; href: string; cta: string }> = [];
+  if (questions.length)
+    actions.push({
+      key: "questions",
+      text: `${questions.length} question${questions.length === 1 ? "" : "s"} waiting for you from ${jobsAsking.length} job${jobsAsking.length === 1 ? "" : "s"}: "${questions[0]!.question.slice(0, 120)}"`,
+      href: jobsAsking.length === 1 ? `/jobs/${jobsAsking[0]}#questions` : "/jobs",
+      cta: "Answer",
+    });
+  if (accessPending.length)
+    actions.push({
+      key: "access",
+      text: `${accessPending.length} brain access request${accessPending.length === 1 ? "" : "s"} pending (${accessPending[0]!.role} wants ${accessPending[0]!.mode} on ${accessPending[0]!.pattern})`,
+      href: "/brain?view=requests",
+      cta: "Review",
+    });
+  const attentionCount = ov.attention.length + actions.length;
   const totalModels = ov.models.active + ov.models.pending_confirmation + ov.models.disabled + ov.models.removed;
 
   return (
     <div className="space-y-6">
       <PageHeader title="Overview" description="What SwitchYard is doing right now, what it used in the last 24 hours, and anything that needs your attention." actions={<AutoRefresh seconds={8} />} />
 
-      {ov.attention.length ? (
+      {attentionCount ? (
         <Card className="border-warn/40">
           <div className="flex items-center gap-2 border-b border-line px-4 py-3 text-sm font-semibold text-ink">
             <TriangleAlert size={16} className="text-warn-ink" aria-hidden /> Needs your attention
-            <Badge tone="warn">{ov.attention.length}</Badge>
+            <Badge tone="warn">{attentionCount}</Badge>
           </div>
           <ul className="divide-y divide-line">
+            {actions.map((a) => (
+              <li key={a.key} className="flex items-start gap-2 px-4 py-2.5 text-sm text-ink">
+                <CircleAlert size={15} className="mt-0.5 shrink-0 text-warn-ink" aria-hidden />
+                <span className="min-w-0 flex-1">{a.text}</span>
+                <Link href={a.href} className="shrink-0 text-xs font-medium text-accent-ink hover:underline">
+                  {a.cta} →
+                </Link>
+              </li>
+            ))}
             {ov.attention.map((a) => (
               <li key={a} className="flex items-start gap-2 px-4 py-2.5 text-sm text-ink">
                 <CircleAlert size={15} className="mt-0.5 shrink-0 text-warn-ink" aria-hidden />
