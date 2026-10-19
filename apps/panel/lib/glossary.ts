@@ -59,6 +59,10 @@ export const GLOSSARY = {
     "When paid models may serve a tier. Never: free models only. On free exhaustion: only after every free model failed or was busy. Preferred: paid models are tried before free ones.",
   branch:
     "Each job commits to its own branch (by default switchyard/job-<id>) in an integration worktree. Nothing is merged or pushed for you: review the branch, then merge it yourself.",
+  session:
+    "One agent's run, whatever its role: a classifier call, a worker attempt at a task, or a supervisor. Everything it does is appended to a durable event log: each transcript message, model request and response, and every tool call as an intent written before it runs and an outcome written after. A retry or escalation is a new session linked to the previous one.",
+  toolJournal:
+    "Before a tool runs, its intent (name, arguments, and what it touches) is written to the session log; after it runs, its outcome. An intent with no outcome means the tool was still running, or the process stopped before it finished.",
 } as const;
 
 export type GlossaryKey = keyof typeof GLOSSARY;

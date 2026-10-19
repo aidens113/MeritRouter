@@ -4,7 +4,9 @@
 // running tasks through Switchyard with a scripted in-process gateway (no network, no quota).
 // It also runs two standalone jobs (one finished, one paused on a question for you), fills the
 // brain (in .demo/brain, never your home folder), and records a little paid spend through a fake
-// direct paid client, so the Jobs, Brain, and Paid routes pages have content.
+// direct paid client, so the Jobs, Brain, and Paid routes pages have content. Agent sessions (and
+// their event logs) come from those runs themselves; only the interrupted task's session, which
+// never ran, is recorded by hand.
 //
 //   pnpm --filter switchyard-router build
 //   pnpm --filter switchyard-panel seed:demo
@@ -530,13 +532,34 @@ await sy.close();
 // Tasks left in non-terminal states for the Tasks page. They go straight into the store:
 // submitTasks() would kick the scheduler and run them in this process.
 offset = 0;
-const idle = new Switchyard(cfg, { client, admin: null, worker: false });
+const idle = new Switchyard(cfg, { client, admin: null, worker: false, now: clock });
 const store = (specs) => idle.tasks.submit(specs.map((x) => WorkerTaskSchema.parse(x)));
 const [queued] = store([summarize("Summarise the payments log (queued: no worker running)")]);
 store([summarize("Summarise the follow-up incident report", { id: "followup_after_payments", dependsOn: [queued.taskId] })]);
 const [interrupted] = store([inspect("List every exported function (interrupted when the worker stopped)")]);
 idle.db.prepare("UPDATE tasks SET state = 'interrupted', state_reason = 'worker lease expired', started_at = ?, run_count = 1, updated_at = ? WHERE id = ?").run(Date.now() - 20 * 60_000, Date.now(), interrupted.taskId);
 idle.tasks.event(interrupted.taskId, "interrupted", { previousOwner: "demo-worker" });
+// The task never ran (it went straight into the store), so its session is recorded by hand: the
+// first request went out, then the worker stopped before an answer was recorded.
+if (!idle.sessions.forTask(interrupted.taskId).length) {
+  const t0 = Date.now() - 20 * 60_000;
+  const at = (ms) => {
+    offset = Date.now() - (t0 + ms);
+  };
+  const messages = [
+    { role: "system", content: "You are a bounded read-only worker (inspector) for SwitchYard. Use the repository tools, cite exact lines, and finish with submit_result." },
+    { role: "user", content: ["Goal:", "List every exported function (interrupted when the worker stopped)", "", "Acceptance criteria (assess each by index):", "  [0] cites the exact lines", "", "Files: core:src/server.ts"].join("\n") },
+  ];
+  const tools = ["read_file", "list_files", "search", "submit_result"].map((name) => ({ type: "function", function: { name, description: name, parameters: { type: "object" } } }));
+  at(300);
+  const rec = idle.sessions.create({ taskId: interrupted.taskId, role: "inspector", agentLabel: `inspector:${interrupted.taskId}`, profile: "inspect", tier: "T1" });
+  at(700);
+  rec.syncMessages(messages);
+  rec.modelRequest({ executionId: "x_demo_interrupted", purpose: "tool_loop", chat: { messages, max_tokens: 4096, tools } });
+  at(31_000);
+  rec.end("interrupted", "worker lease expired");
+}
+offset = 0;
 await idle.close();
 
 console.log(

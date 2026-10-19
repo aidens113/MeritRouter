@@ -6,6 +6,7 @@ import { insights, isTerminal } from "switchyard-router";
 import { getSy } from "@/lib/sy";
 import { SetupScreen } from "@/components/setup";
 import { AcceptanceBadge, TaskStateBadge } from "@/components/task-badges";
+import { SessionsTable } from "@/components/sessions-table";
 import { Badge, Callout, Card, CardHeader, cx, EmptyState, HelpTip, KeyValue, Mono, PageHeader } from "@/components/ui";
 import { ActionButton, AutoRefresh } from "@/components/client/actions";
 import { ArtifactViewer } from "@/components/client/artifact-viewer";
@@ -31,6 +32,7 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
   const answered = job.questions.filter((q) => q.answer !== null);
   const docExists = sy.brain.exists(job.workingDoc);
   const res = job.result;
+  const sessions = insights.sessionsView(sy, { jobId: id, limit: 200 });
 
   return (
     <div className="space-y-6">
@@ -278,6 +280,22 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
           </div>
         </Card>
       ) : null}
+
+      <Card>
+        <CardHeader
+          title="Agent sessions"
+          help="session"
+          description="The supervisor and every agent working for this job, each with its full event log. Newest first."
+          actions={
+            sessions.length ? (
+              <Link href={`/sessions?job=${encodeURIComponent(job.taskId)}`} className="text-xs text-accent-ink hover:underline">
+                Open in Sessions
+              </Link>
+            ) : null
+          }
+        />
+        <SessionsTable rows={sessions} empty="No sessions recorded for this job" />
+      </Card>
 
       <Card>
         <CardHeader title="Supervisor transcript" help="supervisor" description="What the supervisor said and did, turn by turn. Tool calls are collapsed; open one to see its arguments and result." />

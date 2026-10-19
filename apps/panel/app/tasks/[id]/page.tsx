@@ -6,6 +6,7 @@ import { insights, isTerminal, type Classification, type Switchyard } from "swit
 import { getSy } from "@/lib/sy";
 import { SetupScreen } from "@/components/setup";
 import { RequestsTable } from "@/components/requests-table";
+import { SessionsTable } from "@/components/sessions-table";
 import { AcceptanceBadge, TaskStateBadge, TierBadge } from "@/components/task-badges";
 import { Badge, Callout, Card, CardHeader, cx, EmptyState, HelpTip, KeyValue, Mono, PageHeader } from "@/components/ui";
 import { ActionButton, AutoRefresh } from "@/components/client/actions";
@@ -55,6 +56,7 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
   const names = new Map(sy.catalog.endpoints().map((e) => [e.id, e.displayName ?? e.gatewayModelId]));
   const unresolved = new Set(res?.unresolvedCriteria ?? []);
   const live = !isTerminal(st.state);
+  const sessions = insights.sessionsView(sy, { taskId: st.taskId });
 
   return (
     <div className="space-y-6">
@@ -274,6 +276,22 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
       <Card>
         <CardHeader title="Model requests for this task" />
         <RequestsTable rows={d.requests} names={names} empty="No model requests were made for this task" />
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Agent sessions"
+          help="session"
+          description="Each run of this task (and each classifier call for it) as a session with its full event log: messages, model requests, and tool calls. Newest first."
+          actions={
+            sessions.length ? (
+              <Link href={`/sessions?task=${encodeURIComponent(st.taskId)}`} className="text-xs text-accent-ink hover:underline">
+                Open in Sessions
+              </Link>
+            ) : null
+          }
+        />
+        <SessionsTable rows={sessions} hideTask empty="No sessions recorded for this task" />
       </Card>
 
       <Card>

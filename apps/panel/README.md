@@ -1,7 +1,8 @@
 # SwitchYard panel
 
 Local web panel for SwitchYard Router: overview, models (and why each is or isn't used), routing
-previews and overrides, jobs (standalone supervisors), tasks, requests, the brain (shared working
+previews and overrides, jobs (standalone supervisors), tasks, agent sessions (each run's event log of
+messages, model requests, and tool calls), requests, the brain (shared working
 documents with history and per-line attribution), provider keys, paid routes, qualification, and
 every setting.
 
@@ -32,4 +33,7 @@ The seeder builds `.demo/` with a fixture repository, manual models, and task hi
 through the real router with a scripted gateway. It also runs a finished standalone job and a job
 paused on a question for you, fills a demo brain (`.demo/brain`: working documents, reports, a
 decision, a lesson, facts) with two pending access requests, and records a small paid spend through
-a fake direct client (the demo paid keys are fake). Qualification rows in the demo are illustrative.
+a fake direct client (the demo paid keys are fake). Every run records its agent session (event log
+of messages, model requests, and tool calls); the interrupted demo task never ran, so its session is
+recorded by hand.
+Qualification rows in the demo are illustrative.
