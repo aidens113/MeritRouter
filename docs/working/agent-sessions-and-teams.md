@@ -7,7 +7,7 @@ Last updated: 2026-10-19
 Owner: Senior supervisor agent
 Scope: Make every unit of work a durable, resumable agent session; make the system survive process, machine, and model failures; turn SwitchYard into a framework for coordinated agent teams that decompose work and run as many agents in parallel as capacity allows.
 Paired document: none
-Related: [harness, roles, brain](./harness-roles-brain.md), [decisions](../decisions.md), [roles](../roles.md), [operations](../operations.md)
+Related: [importance and verification](./importance-and-verification.md), [harness, roles, brain](./harness-roles-brain.md), [decisions](../decisions.md), [roles](../roles.md), [operations](../operations.md)
 
 ## Current State
 
@@ -49,7 +49,10 @@ access requests = brain, `run_check` not idempotent); external agents re-log cha
 arrays; when the batch runner throws, already-finished members are not recorded on their task
 (pre-existing; sessions end `batch_aborted`).
 
-**Next steps:** Phase S2 (resume protocol on sessions), then R1 (durability), T1 (teams).
+**Next steps:** Phase S2 (resume protocol on sessions), then V1-V2 of
+[importance-and-verification](./importance-and-verification.md) (pending user confirmation of the
+order), then R1 (durability), T1 (teams). S2 must cover resuming a task in its verification phase
+once V2 lands.
 
 **Blockers:** none. Live checks against real providers are still outstanding from the previous
 document.
@@ -129,7 +132,8 @@ Surface: `switchyard sessions [--running|--interrupted]`, `switchyard session <i
     re-delegates on conflict;
   - a team channel per job (agents post findings, blockers, and interface contracts; supervisors
     read it; stored in the brain);
-  - automatic review agents for implementation tasks (config), and optional redundant execution
+  - automatic review is planned in [importance-and-verification](./importance-and-verification.md)
+    (V2: reviewer phase inside the task); optional redundant execution
     of small tasks on two cheap models, taking the first validated result.
 - **Cost-aware staffing:** cheap free models for leaf work, strong models for planning and review;
   the planner picks tiers per node and prefers more small tasks when capacity is free.
@@ -168,7 +172,7 @@ Surface: `switchyard sessions [--running|--interrupted]`, `switchyard session <i
 | S2 | Resume protocol for every role | Fault-injection tests: kill at each step, resumed sessions finish without duplicated edits, delegations, or paid charges |
 | R1 | Durability settings, daemon with service install, watchdog, backup | Process kill and restart resumes all sessions; `switchyard backup` restores |
 | T1 | Task-graph planning, ready-node parallel dispatch, team-wide file leases | A goal splits into N independent tasks that run concurrently up to capacity |
-| T2 | Sub-supervisors, merge queue, team channel, auto-review | Nested job completes with correct attribution and no lost integrations |
+| T2 | Sub-supervisors, merge queue, team channel (auto-review moved to V2 of importance-and-verification) | Nested job completes with correct attribution and no lost integrations |
 | T3 | Adaptive concurrency per provider, cost-aware staffing, metrics | Panel shows parallelism and critical path; throughput beats single-agent on the eval suite |
 | R2 (later) | Postgres store, multiple worker hosts | Two hosts share one queue without double execution |
 
