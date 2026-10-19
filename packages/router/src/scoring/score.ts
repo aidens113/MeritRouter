@@ -85,7 +85,8 @@ export async function measureFeatures(
   }
 
   return {
-    mode: profile.mode,
+    // Supervisors are not difficulty-scored; treat them like the hardest worker mode if asked.
+    mode: profile.mode === "supervisor" ? "coding" : profile.mode,
     linesInScope: lines,
     linesApproximate: approximate,
     contextTokens: estimateTokens([{ role: "user", content: sources.map((s) => s.text).join("\n") + spec.goal }]),

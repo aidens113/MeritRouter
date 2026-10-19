@@ -14,13 +14,13 @@ export class GitError extends Error {
 }
 
 /** Run git without a shell. Output is capped; callers truncate further as needed. */
-export async function git(cwd: string, args: string[], opts: { maxBuffer?: number; allowExit?: number[] } = {}): Promise<string> {
+export async function git(cwd: string, args: string[], opts: { maxBuffer?: number; allowExit?: number[]; env?: Record<string, string> } = {}): Promise<string> {
   try {
     const { stdout } = await execFileAsync("git", args, {
       cwd,
       maxBuffer: opts.maxBuffer ?? 32 * 1024 * 1024,
       windowsHide: true,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" },
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", ...opts.env },
     });
     return stdout;
   } catch (err) {

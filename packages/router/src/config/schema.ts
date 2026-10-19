@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const PROFILE_NAMES = ["summarize", "inspect", "analyze", "implement", "review"] as const;
+export const PROFILE_NAMES = ["summarize", "inspect", "analyze", "implement", "review", "supervise"] as const;
 export const ProfileNameSchema = z.enum(PROFILE_NAMES);
 /** Task type chosen by the supervisor: decides tools, sandbox, and output handling. */
 export type ProfileName = z.infer<typeof ProfileNameSchema>;
@@ -15,10 +15,10 @@ export const MODALITIES = ["text", "image", "audio", "video", "file"] as const;
 export const ModalitySchema = z.enum(MODALITIES);
 export type Modality = z.infer<typeof ModalitySchema>;
 
-export const ProfileModeSchema = z.enum(["completion", "read_only", "coding"]);
+export const ProfileModeSchema = z.enum(["completion", "read_only", "coding", "supervisor"]);
 export type ProfileMode = z.infer<typeof ProfileModeSchema>;
 
-export const ToolPolicySchema = z.enum(["none", "repository_read", "repository_read_and_artifacts", "scoped_edit_and_checks"]);
+export const ToolPolicySchema = z.enum(["none", "repository_read", "repository_read_and_artifacts", "scoped_edit_and_checks", "supervisor"]);
 export type ToolPolicy = z.infer<typeof ToolPolicySchema>;
 
 const ProfileSchema = z
@@ -56,6 +56,9 @@ const ProfileSchema = z
     if (p.mode === "completion" && p.tools !== "none") {
       ctx.addIssue({ code: "custom", message: "completion task types cannot use tools" });
     }
+    if ((p.mode === "supervisor") !== (p.tools === "supervisor")) {
+      ctx.addIssue({ code: "custom", message: "supervisor mode and the supervisor tool policy go together" });
+    }
   });
 export type ProfileConfig = z.infer<typeof ProfileSchema>;
 
@@ -78,6 +81,26 @@ const DEFAULT_TIERS = {
 } as const;
 
 const RepositorySchema = z.object({ path: z.string().min(1), writable: z.boolean().default(true) }).strict();
+
+export const ROLE_NAMES = ["supervisor", "summarizer", "inspector", "analyst", "implementer", "reviewer", "classifier"] as const;
+export const RoleNameSchema = z.enum(ROLE_NAMES);
+export type RoleName = z.infer<typeof RoleNameSchema>;
+export const BrainModeSchema = z.enum(["read", "append", "write", "admin"]);
+export type BrainMode = z.infer<typeof BrainModeSchema>;
+
+const BrainGrantSchema = z.object({ pattern: z.string().min(1), mode: BrainModeSchema }).strict();
+export type BrainGrantConfig = z.infer<typeof BrainGrantSchema>;
+
+const RoleSchema = z
+  .object({
+    /** Charter markdown file overriding the built-in one (relative to the config file). */
+    charter_file: z.string().min(1).optional(),
+    /** Extra rules appended to the charter. */
+    extra_rules: z.array(z.string()).default([]),
+    /** Default brain access patterns; {project}, {effort}, {task}, {repo} are substituted. */
+    brain_grants: z.array(BrainGrantSchema).optional(),
+  })
+  .strict();
 
 /** When paid models may serve: never; only after every free model failed; before free ones; or for T4 work. */
 export const PaidPolicySchema = z.enum(["never", "on_free_exhaustion", "preferred", "premium"]);
@@ -246,9 +269,48 @@ export const ConfigSchema = z
       })
       .strict()
       .prefault({}),
+    /** Shared knowledge: a git repository of markdown working documents. */
+    brain: z
+      .object({
+        /** Brain repository directory (created and git-initialised when missing). `~` expands to home. */
+        path: z.string().min(1).default("~/.switchyard/brain"),
+        /** Project scope this config works in: brain/projects/<project>/. */
+        project: z.string().regex(/^[a-z0-9][a-z0-9._-]*$/).default("default"),
+        /** Map brain path prefixes to existing folders (e.g. a repository's docs/working). */
+        mounts: z.array(z.object({ prefix: z.string().min(1), path: z.string().min(1) }).strict()).default([]),
+        commit: z.boolean().default(true),
+        /** Push the brain repository after commits (needs a configured remote). */
+        push: z.boolean().default(false),
+        current_state_max_lines: z.number().int().positive().default(150),
+        compact_at_lines: z.number().int().positive().default(800),
+        compact_at_ledger_entries: z.number().int().positive().default(20),
+        /** Who decides workers' requests for more brain access. */
+        access_approver: z.enum(["supervisor", "human", "auto"]).default("supervisor"),
+        /** Requests matching these rules are approved without asking. */
+        auto_approve: z.array(z.object({ pattern: z.string().min(1), mode: BrainModeSchema, min_tier: TierNameSchema.default("T1") }).strict()).default([]),
+      })
+      .strict()
+      .prefault({}),
+    /** Per-role charters and brain access. */
+    roles: z.partialRecord(RoleNameSchema, RoleSchema).default({}),
+    /** Standalone supervisor settings (used by the supervise task type). */
+    supervisor: z
+      .object({
+        /** Endpoint ids to use, in order. Empty: route like any T3 task (most capable). */
+        endpoints: z.array(z.string().min(1)).default([]),
+        paid_policy: PaidPolicySchema.default("never"),
+        max_concurrent_jobs: z.number().int().positive().default(1),
+        max_workers_per_job: z.number().int().positive().default(3),
+        /** Supervisors commit to switchyard/job-<id>; pushing is never automatic. */
+        branch_prefix: z.string().regex(/^[A-Za-z0-9._/-]+$/).default("switchyard/job-"),
+        /** How long ask_user waits for an answer before the job pauses as interrupted. */
+        question_timeout_seconds: z.number().int().positive().default(86_400),
+      })
+      .strict()
+      .prefault({}),
     coding: z
       .object({
-        runner: z.enum(["opencode", "command"]).default("opencode"),
+        runner: z.enum(["native", "opencode", "command"]).default("native"),
         /** Executable for the opencode runner, or the full command for the generic runner. */
         command: z.string().min(1).default("opencode"),
         /** Shell command patterns the coding agent may run (OpenCode permission syntax); everything else is denied. */
@@ -270,7 +332,7 @@ export const ConfigSchema = z
       })
       .strict()
       .prefault({}),
-    profiles: z.record(ProfileNameSchema, ProfileSchema),
+    profiles: z.partialRecord(ProfileNameSchema, ProfileSchema),
   })
   .strict()
   .superRefine((c, ctx) => {
