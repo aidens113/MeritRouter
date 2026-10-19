@@ -9,6 +9,7 @@ import { reportPath } from "../brain/access.js";
 import type { Actor } from "../attribution/index.js";
 import type { HarnessEnv } from "./tools.js";
 import type { TerminalTool } from "./loop.js";
+import { criterionTexts } from "../core/task.js";
 
 export const SUBMIT_RESULT_DEF: ChatTool = {
   type: "function",
@@ -42,7 +43,7 @@ export function submitResultTool(spec: WorkerTask, universe: EvidenceUniverse, d
   return {
     def: SUBMIT_RESULT_DEF,
     accept: async (args) => {
-      const v = validateWorkerOutput(args, { acceptanceCriteria: spec.constraints.acceptanceCriteria, universe, ...(dataValidator ? { dataValidator } : {}) });
+      const v = validateWorkerOutput(args, { acceptanceCriteria: criterionTexts(spec), universe, ...(dataValidator ? { dataValidator } : {}) });
       return v.ok ? { ok: true, value: v.value } : { ok: false, errors: v.errors };
     },
   };

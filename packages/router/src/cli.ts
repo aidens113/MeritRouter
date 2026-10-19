@@ -5,11 +5,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { loadConfig, DEFAULT_CONFIG_NAME } from "./config/load.js";
-import { PROFILE_NAMES, TIER_NAMES, type ProfileName, type TierName } from "./config/schema.js";
+import { ImportanceSchema, PROFILE_NAMES, TIER_NAMES, type ProfileName, type TierName } from "./config/schema.js";
 import { Switchyard } from "./core/service.js";
 import { createCodingRunner } from "./runners/coding/index.js";
 import { z } from "zod";
-import { brainAccessRequests, brainRead, brainSearch, brainTree, decideBrainAccess, jobDetail, jobsView, modelsView, routingPreview, sessionDetail, sessionsView, type SessionDetail, type SessionView } from "./admin/insights.js";
+import { brainAccessRequests, brainRead, brainSearch, brainTree, decideBrainAccess, decideTaskAcceptance, jobDetail, jobsView, modelsView, routingPreview, sessionDetail, sessionsView, type SessionDetail, type SessionView } from "./admin/insights.js";
 import { blame } from "./attribution/index.js";
 import { SwitchyardError } from "./core/errors.js";
 import { SessionStatusSchema, type SessionEvent, type SessionEventData } from "./sessions/events.js";
@@ -36,7 +36,9 @@ Setup
 
 Tasks
   worker                        run the worker loop until interrupted
-  submit <file|-> [--wait] [--timeout s]   submit task JSON (object or array)
+  submit <file|-> [--wait] [--timeout s] [--importance low|normal|high|critical] [--importance-reason "<why>"]
+                                submit task JSON (object or array); --importance fills in
+                                tasks that set none (high and critical need a reason)
   status [ids...]               task status (recent tasks when no ids)
   await <ids...> [--timeout s]  wait for results
   collect <ids...>              print finished results
@@ -44,6 +46,9 @@ Tasks
   resume <id>                   requeue interrupted work: a session id (s_...) continues
                                 that session; a task id continues its latest session
                                 (coding tasks start over in a fresh worktree)
+  accept <id> [--reason "<why>"]   accept a finished result as you (needs_supervisor and
+                                not_verified results need a reason)
+  reject <id> --reason "<why>"  reject a finished result; it becomes unmet
   artifact <ref>                print an artifact
   usage [--hours n]             requests, tokens, and outcomes
 
@@ -229,6 +234,31 @@ function sessionTimeline(d: SessionDetail, after: number): string {
   ].join("\n").trimEnd();
 }
 
+/** Who accepts from this terminal: `cli:<os user>`. */
+function cliActor(): string {
+  let user = "";
+  try {
+    user = userInfo().username;
+  } catch {
+    user = process.env.USER ?? process.env.USERNAME ?? "";
+  }
+  return `cli:${user || "unknown"}`;
+}
+
+/** `--importance` fills in tasks that set none; a task's own importance is never overridden. */
+function withImportance(tasks: unknown[], importance: string | undefined, reason: string | undefined): unknown[] {
+  if (importance === undefined) {
+    if (reason !== undefined) throw new SwitchyardError("usage", "--importance-reason needs --importance");
+    return tasks;
+  }
+  const level = ImportanceSchema.safeParse(importance);
+  if (!level.success) throw new SwitchyardError("usage", `--importance takes ${ImportanceSchema.options.join(", ")}, got ${JSON.stringify(importance)}`);
+  return tasks.map((t) => {
+    if (!t || typeof t !== "object" || Array.isArray(t) || "importance" in t) return t;
+    return { ...t, importance: level.data, ...(reason ? { importanceReason: reason } : {}) };
+  });
+}
+
 // ---------- operations: backup, restore, daemon, service ----------
 
 interface OperationsFlags {
@@ -356,6 +386,9 @@ async function main(): Promise<number> {
       job: { type: "string" },
       after: { type: "string" },
       limit: { type: "string" },
+      reason: { type: "string" },
+      importance: { type: "string" },
+      "importance-reason": { type: "string" },
       force: { type: "boolean", default: false },
       "include-master-key": { type: "boolean", default: false },
       "dry-run": { type: "boolean", default: false },
@@ -494,7 +527,7 @@ async function main(): Promise<number> {
         const src = args[0] ?? "-";
         const text = src === "-" ? readFileSync(0, "utf8") : readFileSync(src, "utf8");
         const parsed = JSON.parse(text) as unknown;
-        const tasks = Array.isArray(parsed) ? parsed : [parsed];
+        const tasks = withImportance(Array.isArray(parsed) ? parsed : [parsed], values.importance, values["importance-reason"]);
         const submitted = await sy.submitTasks(tasks);
         if (!values.wait) {
           out(json ? submitted : table(submitted.map((s) => ({ ...s }))), json);
@@ -526,6 +559,14 @@ async function main(): Promise<number> {
         // A session id continues that session; anything else is a task id. Output is JSON, as before.
         if (sy.sessions.get(id) || (id.startsWith("s_") && !sy.tasks.get(id))) out({ sessionId: id, ...sy.resumeSession(id) }, true);
         else out({ taskId: id, state: sy.resumeTask(id) }, true);
+        return 0;
+      }
+      case "accept":
+      case "reject": {
+        const id = args[0];
+        if (!id) throw new SwitchyardError("usage", `usage: switchyard ${cmd} <task id> ${cmd === "reject" ? "--reason" : "[--reason]"} "<why>"`);
+        const r = decideTaskAcceptance(sy, id, cmd, { kind: "human", id: cliActor() }, values.reason?.trim() || null);
+        out(json ? r : `${r.taskId}: ${r.decision.decision} by ${r.decision.by.id}; acceptance ${r.acceptanceStatus}`, json);
         return 0;
       }
       case "artifact": {

@@ -6,7 +6,7 @@ import { SetupScreen } from "@/components/setup";
 import { Badge, Callout, Card, CardHeader, cx, EmptyState, HelpTip, Mono, PageHeader } from "@/components/ui";
 import { AutoRefresh } from "@/components/client/actions";
 import { NewJobForm } from "@/components/client/jobs";
-import { TaskStateBadge } from "@/components/task-badges";
+import { ACCEPTANCE_LABEL, TaskStateBadge } from "@/components/task-badges";
 import { ago, dateTime, shortId } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -106,7 +106,7 @@ export default async function JobsPage() {
                               {j.pendingQuestions} question{j.pendingQuestions === 1 ? "" : "s"}
                             </Badge>
                           ) : null}
-                          {j.result ? <span className="text-[11px] text-ink-3">{j.result.acceptanceStatus === "met" ? "criteria met" : j.result.acceptanceStatus === "unmet" ? "criteria unmet" : "not verified"}</span> : null}
+                          {j.result ? <span className="text-[11px] text-ink-3">{(ACCEPTANCE_LABEL[j.result.acceptanceStatus] ?? j.result.acceptanceStatus).toLowerCase()}</span> : null}
                         </div>
                       </td>
                       <td className="max-w-[26rem]">

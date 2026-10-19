@@ -11,7 +11,7 @@ import { qualificationLookup } from "../qualification/stats.js";
 import { Classifier } from "../scoring/classifier.js";
 import { loadRulebook, rulebookFingerprint, type Rulebook } from "../scoring/rulebook.js";
 import { classifierCouldMatter, decide, featureScore, measureFeatures, bumpTier, type Classification } from "../scoring/score.js";
-import { planRoute, type RoutePlan } from "./select.js";
+import { planRoute, type ReviewerQualificationRequirement, type RoutePlan } from "./select.js";
 
 export function modalitiesFromMediaType(mediaType: string): Modality | null {
   if (mediaType.startsWith("image/")) return "image";
@@ -63,6 +63,46 @@ export class TaskRouter {
     );
   }
 
+  /**
+   * Route an independent reviewer: never an endpoint in `avoidEndpoints`, other model families
+   * and platforms first, at least `minTotalParametersB`, and qualified reviewers first (or
+   * only, when the requirement is `required`). Routing overrides for the profile still apply.
+   */
+  planReviewer(o: {
+    profile: ProfileName;
+    tier: TierName;
+    inputModalities: Modality[];
+    avoidEndpoints: string[];
+    avoidFamilies: string[];
+    avoidProviders: string[];
+    minTotalParametersB: number | null;
+    reviewer: ReviewerQualificationRequirement;
+  }): RoutePlan {
+    return planRoute(
+      this.cfg,
+      this.catalog.endpoints(),
+      this.catalog.routingOverrides(),
+      {
+        profile: o.profile,
+        tier: o.tier,
+        inputModalities: o.inputModalities,
+        needsStructuredOutput: false,
+        avoidEndpoints: o.avoidEndpoints,
+        avoidFamilies: o.avoidFamilies,
+        avoidProviders: o.avoidProviders,
+        ...(o.minTotalParametersB ? { minTotalParametersB: o.minTotalParametersB } : {}),
+        reviewer: o.reviewer,
+      },
+      {
+        now: new Date(this.now()),
+        qualification: qualificationLookup(this.db, this.cfg),
+        health: this.gate.health.lookup,
+        quarantined: (ep) => this.gate.quarantined(ep),
+        ...(this.gate.paid ? { paidPlatforms: this.gate.paid.spend.paidFreeLlmApiPlatforms() } : {}),
+      },
+    );
+  }
+
   /** Classification requests are T1 completions; they use the summarize type when configured. */
   private classificationPlan(): RoutePlan {
     const profile: ProfileName = this.cfg.profiles.summarize ? "summarize" : (Object.keys(this.cfg.profiles)[0] as ProfileName);
@@ -78,6 +118,14 @@ export class TaskRouter {
     return [...out];
   }
 
+  /** Earlier runs of this task by its author that failed (escalations included); interruptions do not count. */
+  private failedRuns(taskId: string): number {
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS n FROM sessions WHERE task_id = ? AND status = 'failed' AND role NOT IN ('classifier', 'reviewer')")
+      .get(taskId) as { n: number };
+    return row.n;
+  }
+
   async prepare(task: StoredTask, leaseOwner: string): Promise<Prepared> {
     await this.gate.health.refresh();
     const spec = task.spec;
@@ -85,7 +133,7 @@ export class TaskRouter {
     const inputModalities = this.inputModalities(task);
     const sources = await loadSources(this.cfg, spec, this.artifacts);
     const features = await measureFeatures(this.cfg, spec, sources, {
-      runCount: task.row.run_count,
+      failedRuns: this.failedRuns(task.row.id),
       attachmentModalities: inputModalities.filter((m) => m !== "text"),
     });
     const detScore = featureScore(this.rulebook, features).reduce((s, l) => s + l.points, 0);

@@ -13,6 +13,39 @@ export interface RouteRequirements {
   skipQualification?: boolean;
   /** Paid policy for this request; defaults to paid.tiers[tier]. Roles (supervisor) override it. */
   paidPolicy?: PaidPolicy;
+  /** Endpoints that may not serve this request (a reviewer never reviews work it served). */
+  avoidEndpoints?: string[];
+  /** Model families and platforms ranked after the others (independence: prefer a different lineage). */
+  avoidFamilies?: string[];
+  avoidProviders?: string[];
+  /** Raises the size floor (a verification level's reviewer floor). */
+  minTotalParametersB?: number;
+  /**
+   * Reviewer qualification, kept separate from worker qualification: it replaces the
+   * qualification.required check. required: unqualified reviewers are excluded; preferred:
+   * qualified reviewers are ranked first.
+   */
+  reviewer?: ReviewerQualificationRequirement;
+}
+
+export interface ReviewerQualificationRequirement {
+  /** Qualification family (review) and the tier its evaluations count from. */
+  family: string;
+  tier: TierName;
+  /** Pass rate needed (qualification.pass_threshold, or the review_strict threshold). */
+  threshold: number;
+  mode: "preferred" | "required";
+  /** Name shown in reasons and records (review, review_strict). */
+  name: string;
+}
+
+/**
+ * A model's lineage, for reviewer independence: the first word of the model name without its
+ * organisation prefix ("meta-llama/llama-3.3-70b" -> "llama", "qwen/qwen3-235b" -> "qwen").
+ */
+export function modelFamily(ep: Pick<ModelEndpoint, "gatewayModelId" | "providerModelId">): string {
+  const name = (ep.providerModelId ?? ep.gatewayModelId).toLowerCase().split("/").pop()!.replace(/^meta-/, "");
+  return /^[a-z]+/.exec(name)?.[0] ?? name;
 }
 
 /** A model costs money when it is not verified free (direct paid routes always are). */
@@ -27,8 +60,11 @@ export function paidPolicyFor(cfg: ResolvedConfig, req: RouteRequirements): Paid
 }
 
 export interface QualificationLookup {
-  /** Pass rate and trial count for (endpoint, task family, tier), or null when unqualified. */
-  (endpointId: string, profile: ProfileName, tier: TierName): { passRate: number; trials: number; qualified: boolean } | null;
+  /**
+   * Pass rate and trial count for (endpoint, task family, tier), or null when unqualified. With
+   * `family`, that family (e.g. review) at its tier and threshold instead of the profile's.
+   */
+  (endpointId: string, profile: ProfileName, tier: TierName, family?: { family: string; tier: TierName; threshold: number }): { passRate: number; trials: number; qualified: boolean } | null;
 }
 
 export interface ProviderHealthLookup {
@@ -84,7 +120,7 @@ export function endpointExclusions(
   if (ep.status !== "active") reasons.push(ep.statusReason ?? `status is ${ep.status}`);
   if (!ep.available && ep.status === "active") reasons.push(ep.route.kind === "direct" ? "no enabled paid key for this provider" : "FreeLLMAPI reports it unavailable (no key or disabled)");
   if (ep.deniedProfiles.includes(req.profile)) reasons.push(`blocked for ${req.profile} tasks by an override`);
-  const floor = sizeFloor(cfg, req.profile, req.tier);
+  const floor = Math.max(sizeFloor(cfg, req.profile, req.tier), req.minTotalParametersB ?? 0);
   if (ep.totalParametersB !== null && ep.totalParametersB < floor && !opts.allowBelowFloor && !ep.ignoreSizeFloor) {
     reasons.push(`${ep.totalParametersB}B is below the ${floor}B floor for ${req.profile}/${req.tier}`);
   }
@@ -107,7 +143,11 @@ export function endpointExclusions(
   for (const m of req.inputModalities) if (!ep.inputModalities.includes(m)) reasons.push(`cannot read ${m} input`);
   if (profile.mode !== "completion" && !ep.supportsTools) reasons.push("no tool calling (required for repository work)");
   if ((req.needsStructuredOutput || profile.requires_structured_output) && !ep.supportsStructuredOutput) reasons.push("no structured output");
-  if (cfg.qualification.required && !req.skipQualification && !opts.qualification?.qualified) {
+  if (req.reviewer) {
+    if (req.reviewer.mode === "required" && !opts.qualification?.qualified) {
+      reasons.push(opts.qualification ? `not qualified as a ${req.reviewer.name} reviewer (pass rate ${(opts.qualification.passRate * 100).toFixed(0)}% over ${opts.qualification.trials} trials)` : `not yet qualified as a ${req.reviewer.name} reviewer`);
+    }
+  } else if (cfg.qualification.required && !req.skipQualification && !opts.qualification?.qualified) {
     reasons.push(opts.qualification ? `not qualified for ${req.profile}/${req.tier} (pass rate ${(opts.qualification.passRate * 100).toFixed(0)}% over ${opts.qualification.trials} trials)` : `not yet qualified for ${req.profile}/${req.tier}`);
   }
   return reasons;
@@ -143,8 +183,10 @@ export function planRoute(
 
   const explanations: CandidateExplanation[] = [];
   const eligible: Array<{ ep: ModelEndpoint; ex: CandidateExplanation }> = [];
+  const avoid = new Set(req.avoidEndpoints ?? []);
+  const qualify = (id: string) => (req.reviewer ? deps.qualification(id, req.profile, req.tier, req.reviewer) : deps.qualification(id, req.profile, req.tier));
   for (const ep of endpoints) {
-    const qual = deps.qualification(ep.id, req.profile, req.tier);
+    const qual = qualify(ep.id);
     const reasons = endpointExclusions(ep, cfg, req, {
       now: deps.now,
       allowBelowFloor: belowFloor.has(ep.id),
@@ -152,6 +194,7 @@ export function planRoute(
       ...(deps.paidPlatforms ? { paidPlatforms: deps.paidPlatforms } : {}),
     });
     if (blockIds.has(ep.id)) reasons.push(`blocked by routing override for ${req.profile}/${req.tier}`);
+    if (avoid.has(ep.id)) reasons.push("served this task; an independent reviewer must be a different model");
     const q = deps.quarantined?.(ep);
     if (q) reasons.push(q);
     if (forced && !forceIds.has(ep.id)) reasons.push("another model is forced for this task type/tier");
@@ -175,7 +218,12 @@ export function planRoute(
     if (ex.eligible) eligible.push({ ep, ex });
   }
 
-  const score = (id: string) => deps.qualification(id, req.profile, req.tier)?.passRate ?? 0;
+  const score = (id: string) => qualify(id)?.passRate ?? 0;
+  const families = new Set(req.avoidFamilies ?? []);
+  const providers = new Set(req.avoidProviders ?? []);
+  // Reviewers: qualified first (preferred mode), then another model family, then another platform.
+  const independence = (e: { ep: ModelEndpoint; ex: CandidateExplanation }) =>
+    (req.reviewer && !e.ex.qualification?.qualified ? 4 : 0) + (families.has(modelFamily(e.ep)) ? 2 : 0) + (providers.has(e.ep.providerId) ? 1 : 0);
   // Paid models go after free ones unless the policy prefers them.
   const paidRank = (ep: ModelEndpoint) => (isPaid(ep) ? (policy === "preferred" ? 0 : 1) : policy === "preferred" ? 1 : 0);
   eligible.sort((a, b) => {
@@ -186,6 +234,9 @@ export function planRoute(
     const ra = paidRank(a.ep);
     const rb = paidRank(b.ep);
     if (ra !== rb) return ra - rb;
+    const ia = independence(a);
+    const ib = independence(b);
+    if (ia !== ib) return ia - ib;
     const ca = a.ex.circuitOpenUntil !== null ? 2 : a.ex.coolingDownUntil !== null ? 1 : 0;
     const cb = b.ex.circuitOpenUntil !== null ? 2 : b.ex.coolingDownUntil !== null ? 1 : 0;
     if (ca !== cb) return ca - cb;
@@ -206,7 +257,7 @@ export function planRoute(
   return {
     profile: req.profile,
     tier: req.tier,
-    floorB: sizeFloor(cfg, req.profile, req.tier),
+    floorB: Math.max(sizeFloor(cfg, req.profile, req.tier), req.minTotalParametersB ?? 0),
     candidates: eligible.map((e) => e.ep),
     explanations,
     forced,

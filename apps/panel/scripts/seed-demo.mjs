@@ -2,6 +2,8 @@
 // Builds a self-contained demo workspace for the panel in apps/panel/.demo/ (gitignored):
 // a config, a git fixture repository, manual models, and real task/request history produced by
 // running tasks through Switchyard with a scripted in-process gateway (no network, no quota).
+// Independent reviews come from the same scripted client: one unqualified reviewer that cannot
+// settle a criterion, and one qualified reviewer that fails an answer, sees it repaired, and passes it.
 // It also runs two standalone jobs (one finished, one paused on a question for you), fills the
 // brain (in .demo/brain, never your home folder), and records a little paid spend through a fake
 // direct paid client, so the Jobs, Brain, and Paid routes pages have content. Agent sessions (and
@@ -206,7 +208,8 @@ const raw = {
   profiles: {
     summarize: { mode: "completion", min_total_parameters_b: 30, max_model_requests: 4, max_output_tokens: 2000, classify: "never", batching: { enabled: true, max_items: 4, per_item_output_tokens: 500 } },
     inspect: { mode: "read_only", min_total_parameters_b: 30, max_model_requests: 4, tools: "repository_read", classify: "never" },
-    analyze: { mode: "read_only", min_total_parameters_b: 100, max_model_requests: 6, tools: "repository_read_and_artifacts", classify: "auto", min_tier: "T2" },
+    // 10 requests leave room for strict verification's review reserve (6) on critical analyses.
+    analyze: { mode: "read_only", min_total_parameters_b: 100, max_model_requests: 10, tools: "repository_read_and_artifacts", classify: "auto", min_tier: "T2" },
     implement: { mode: "coding", min_total_parameters_b: 100, max_model_requests: 8, tools: "scoped_edit_and_checks", workspace: "isolated_worktree" },
     review: { mode: "read_only", min_total_parameters_b: 100, max_model_requests: 4, tools: "repository_read_and_artifacts" },
     supervise: { mode: "supervisor", tools: "supervisor", min_total_parameters_b: 100, max_model_requests: 30, max_output_tokens: 4000, classify: "never", min_tier: "T3" },
@@ -289,6 +292,8 @@ const client = {
     if (sys.startsWith("# Supervisor charter")) return supervisorTurn(req, s);
     // SwitchYard's native coding worker: edit, then submit.
     if (req.tools?.some((t) => t.function.name === "replace_in_file")) return codingTurn(req, s, user);
+    // Independent reviewers: one verdict per review, decided by the task's goal.
+    if (req.tools?.some((t) => t.function.name === "submit_verdict")) return reviewerTurn(s, user);
 
     // Read-only investigations: read a file first, then submit_result citing it.
     if (req.tools?.length) {
@@ -297,6 +302,18 @@ const client = {
         return reply(null, s, { toolCalls: [{ id: `call_${callNo}`, type: "function", function: { name: "read_file", arguments: JSON.stringify({ alias: "core", path: "src/server.ts" }) } }], out: 40 });
       }
       const criteria = (user.match(/^\s*\[\d+\]/gm) ?? []).length || 1;
+      // A repair run is told why the previous answer was not accepted; it submits a corrected one.
+      if (/was not accepted/.test(user) && MISSING_B.test(user)) {
+        const fixed = {
+          summary: "Corrected: a missing b and an empty b behave differently. Missing: query.b is undefined, Number(undefined) is NaN, and handle() throws 'bad input'. Empty (?b=): Number('') is 0, so the request silently sums as if b were 0.",
+          findings: [
+            { description: "Missing b: Number(undefined) is NaN, so the NaN check on line 6 throws 'bad input'; the request is rejected.", evidenceRefs: ["core:src/server.ts#L5-L6"] },
+            { description: "Empty b (?b=): Number('') is 0 and passes the NaN check, so handle() returns a + 0 instead of rejecting it.", evidenceRefs: ["core:src/server.ts#L4-L7"] },
+          ],
+          criteria: [{ index: 0, status: "met", evidenceRefs: ["core:src/server.ts#L4-L7"] }],
+        };
+        return reply(null, s, { toolCalls: [{ id: `call_${callNo}`, type: "function", function: { name: "submit_result", arguments: JSON.stringify(fixed) } }] });
+      }
       const out = {
         summary: "handle() parses a and b with Number(); empty strings become 0, so a missing parameter silently sums as 0 instead of failing.",
         findings: [
@@ -313,6 +330,40 @@ const client = {
     return reply(JSON.stringify(result(1, "inline", "The log reports ERROR: boom at step 3, after the connection pool was exhausted.")), s);
   },
 };
+
+// The answer a reviewer fails once (it conflates a missing b with an empty one), then passes repaired.
+const MISSING_B = /missing b parameter/;
+
+/** A reviewer's verdict, from the evidence package: binding fields, criteria ids, and a ref it was given. */
+function reviewerTurn(s, pkg) {
+  const field = (k) => new RegExp(`^${k}: (.+)$`, "m").exec(pkg)?.[1].trim() ?? "";
+  const goal = field("Goal");
+  const ids = [...pkg.matchAll(/^- ([\w.-]+) \[verify: /gm)].map((m) => m[1]);
+  const ref = /\((artifact:[^;)\s]+)/.exec(pkg)?.[1] ?? /core:src\/[\w.]+#L\d+-L\d+/.exec(pkg)?.[0] ?? "inline";
+  const bind = { examinedRevision: field("examinedRevision"), policyVersion: field("policyVersion"), missingEvidence: [], blockingFindings: [] };
+  let verdict;
+  if (/negative numbers/.test(goal)) {
+    verdict = {
+      ...bind,
+      verdict: "inconclusive",
+      criteria: ids.map((id) => ({ id, outcome: "inconclusive", evidenceRefs: [ref], reason: "server.ts accepts negatives, but nothing given shows how refunds call handle()." })),
+      missingEvidence: ["The refund code path: whether a refund passes a negative a or b to handle(), or subtracts with a positive amount."],
+      recommendedAction: "needs_supervisor",
+    };
+  } else if (MISSING_B.test(goal) && !/Corrected:/.test(pkg)) {
+    verdict = {
+      ...bind,
+      verdict: "fail",
+      criteria: ids.map((id) => ({ id, outcome: "fail", evidenceRefs: ["core:src/server.ts#L4-L6"], reason: "The answer says a missing parameter sums as 0. A missing b is undefined and Number(undefined) is NaN, so handle() throws; only an empty b (?b=) becomes 0." })),
+      blockingFindings: [{ description: "Conflates a missing b (rejected: NaN, throws 'bad input') with an empty b (accepted as 0). The stated behaviour is wrong for the case the goal asks about.", evidenceRefs: ["core:src/server.ts#L4-L6"], criterionId: ids[0] }],
+      recommendedAction: "repair",
+      score: 0.3,
+    };
+  } else {
+    verdict = { ...bind, verdict: "pass", criteria: ids.map((id) => ({ id, outcome: "pass", evidenceRefs: [ref] })), recommendedAction: "accept", score: 0.9 };
+  }
+  return reply(null, s, { toolCalls: [call("submit_verdict", verdict)], out: 260 });
+}
 
 const call = (name, args) => ({ id: `call_${++callNo}`, type: "function", function: { name, arguments: JSON.stringify(args) } });
 const assistantTurns = (req) => req.messages.filter((m) => m.role === "assistant").length;
@@ -428,6 +479,69 @@ await phase(14, "analysis (classifier scores it)", [
     constraints: { acceptanceCriteria: ["identifies the root cause with line references", "proposes a minimal fix", "states how to verify it"] },
   },
 ]);
+// Importance and verification: a critical analysis is strict (it waits for an explicit decision,
+// left pending so the task page shows Accept/Reject); a high one is deep: its reviewer holds no
+// review qualification yet (reviewer_unqualified) and cannot settle the criterion, so a person
+// accepts it from the CLI and a decision shows.
+const critical = await phase(12.5, "critical analysis (strict: needs a decision)", [
+  {
+    profile: "analyze",
+    label: "billing-rounding",
+    goal: "Find where handle() could produce a wrong sum for the billing reconciliation report.",
+    repositoryAliases: ["core"],
+    context: { fileRefs: ["core:src/server.ts", "core:src/app.ts"] },
+    importance: "critical",
+    importanceReason: "The billing reconciliation report sums with handle(); a wrong total is a financial error.",
+    constraints: {
+      acceptanceCriteria: [
+        { id: "root-cause", text: "identifies every input that yields a wrong sum, with line references", verify: "evidence" },
+        { id: "fix", text: "proposes a minimal fix", verify: "evidence" },
+      ],
+    },
+  },
+]);
+const high = await phase(12, "high-importance analysis (deep: awaits review)", [
+  {
+    profile: "analyze",
+    goal: "Check whether handle() accepts negative numbers and whether that matters for refunds.",
+    repositoryAliases: ["core"],
+    context: { fileRefs: ["core:src/server.ts"] },
+    importance: "high",
+    importanceReason: "Refund amounts are negative; rejecting them would block refunds.",
+    constraints: { acceptanceCriteria: ["states whether negative numbers are accepted, citing the line"] },
+  },
+]);
+for (const r of high.completed) {
+  if (r.acceptanceStatus === "needs_supervisor") insights.decideTaskAcceptance(sy, r.taskId, "accept", { kind: "human", id: "cli:demo" }, "Read server.ts myself: Number() keeps the sign and nothing rejects negatives.");
+}
+if (!critical.completed.some((r) => r.acceptanceStatus === "needs_supervisor")) console.warn("  warning: the critical analysis did not end needs_supervisor");
+
+// Reviewers now hold the review qualification (deterministic illustrative rows), so the next deep
+// review is qualified: it fails the first answer, the one repair corrects it, and the re-review passes.
+{
+  const t0 = Date.now() - 12 * HOUR;
+  const insertRun = sy.db.prepare("INSERT INTO qualification_runs (id, endpoint_id, suite_version, status, started_at, finished_at, detail_json) VALUES (?, ?, ?, ?, ?, ?, ?)");
+  const insertRes = sy.db.prepare("INSERT INTO qualification_results (run_id, endpoint_id, eval_id, family, tier, trial, outcome, task_id, detail_json, created_at) VALUES (?, ?, ?, 'review', 'T3', ?, ?, NULL, ?, ?)");
+  for (const endpointId of ["cerebras/qwen-3-235b-a22b-instruct-2507", "groq/openai/gpt-oss-120b", "openrouter/z-ai/glm-4.5-air:free"]) {
+    const runId = `qr_demo_review_${endpointId.replace(/[^a-z0-9]+/gi, "_")}`;
+    insertRun.run(runId, endpointId, "demo-suite-1", "completed", t0, t0 + 20 * 60_000, JSON.stringify({ demo: true }));
+    for (let trial = 0; trial < 8; trial++) insertRes.run(runId, endpointId, `review-t3-${(trial % 4) + 1}`, Math.floor(trial / 4) + 1, trial === 5 ? "fail" : "pass", JSON.stringify({ demo: true }), t0 + trial * 60_000);
+  }
+}
+const repaired = await phase(11.5, "deep review: fails, repaired, passes", [
+  {
+    profile: "analyze",
+    label: "missing-b",
+    goal: "Does handle() reject a request with a missing b parameter? Explain what a client gets back.",
+    repositoryAliases: ["core"],
+    context: { fileRefs: ["core:src/server.ts"] },
+    importance: "high",
+    importanceReason: "Clients rely on a 400 for a missing parameter; a silent 0 would corrupt their totals.",
+    constraints: { acceptanceCriteria: [{ id: "missing-vs-empty", text: "states what a missing b and an empty b each do, citing the lines", verify: "evidence" }] },
+  },
+]);
+if (!repaired.completed.some((r) => r.acceptanceStatus === "met")) console.warn("  warning: the repaired deep review did not end met");
+
 await phase(11, "batch of three summaries (one request)", [summarize("Summarise shard 1 log"), summarize("Summarise shard 2 log"), summarize("Summarise shard 3 log")]);
 await phase(9, "failure: model returns prose instead of JSON", [summarize("Summarise the billing export log")], { scenario: "garbage" });
 await phase(7, "review (preferred model override)", [

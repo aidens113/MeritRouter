@@ -1,10 +1,14 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import type { Workspace, Worktrees } from "../../workspaces/worktree.js";
 import type { SessionWorkspace } from "../../sessions/events.js";
 import { git } from "../../workspaces/git.js";
+import type { EvidenceUniverse, WorkerOutput } from "../../core/worker-output.js";
 import { baseResult, type RunContext, type RunOutcome } from "../types.js";
 import { minimalEnv, runProcess } from "./process.js";
+import { criteria } from "../../core/task.js";
+import { checkRunOutcome } from "../../verification/checks.js";
 
 export function sourceDirtyFinding(ws: Workspace): RunOutcome["result"]["findings"] {
   return ws.sourceDirty
@@ -18,8 +22,10 @@ export async function prepareWorkspace(ctx: RunContext): Promise<{ ws: Workspace
   const repo = ctx.cfg.repositoryPaths[alias]!;
   const worktrees = new Worktrees(ctx.tasks.db, path.join(ctx.cfg.storageDir, "worktrees"), ctx.now);
   const runNo = ctx.tasks.get(ctx.taskId)!.row.run_count;
-  const ws = await worktrees.prepare({ taskId: ctx.taskId, run: runNo, alias, sourcePath: repo.path, ...(ctx.spec.context.baseCommits?.[alias] ? { baseCommit: ctx.spec.context.baseCommits[alias] } : {}) });
-  ctx.tasks.event(ctx.taskId, "worktree_ready", { path: ws.worktreePath, baseSha: ws.baseSha, sourceDirty: ws.sourceDirty });
+  // A quality repair continues from the submitted revision; the diff is still taken against the base.
+  const start = ctx.retry?.startFrom?.alias === alias ? ctx.retry.startFrom.commit : null;
+  const ws = await worktrees.prepare({ taskId: ctx.taskId, run: runNo, alias, sourcePath: repo.path, ...(ctx.spec.context.baseCommits?.[alias] ? { baseCommit: ctx.spec.context.baseCommits[alias] } : {}), ...(start ? { startCommit: start } : {}) });
+  ctx.tasks.event(ctx.taskId, "worktree_ready", { path: ws.worktreePath, baseSha: ws.baseSha, sourceDirty: ws.sourceDirty, ...(start ? { startCommit: start } : {}) });
   return { ws, worktrees };
 }
 
@@ -50,9 +56,19 @@ export function agentHome(ctx: RunContext, ws: Workspace): string {
   return home;
 }
 
+/** The tree the worktree is submitted at (everything staged): what the checks are bound to. */
+async function stagedTree(worktree: string): Promise<string | null> {
+  try {
+    return (await git(worktree, ["write-tree"])).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Shared end of every coding run: diff against the recorded base, scope and protected-file
- * checks, the supervisor's checks, and acceptance decided from that evidence alone.
+ * checks, the supervisor's checks bound to the submitted tree, and a preliminary acceptance
+ * from that evidence alone (the executor's verification decides the final one).
  */
 export async function finishCoding(
   ctx: RunContext,
@@ -66,11 +82,18 @@ export async function finishCoding(
     /** Agent-level outcome before evidence: completed, budget_exhausted, cancelled, interrupted. */
     state: RunOutcome["state"];
     summaryLead: string;
+    /** What the worker had and read (native runner); refs it cited are checked against it. */
+    universe?: EvidenceUniverse | null;
+    /** The worker's own per-criterion assessment, when it submitted one. */
+    output?: Pick<WorkerOutput, "criteria"> | null;
   },
 ): Promise<RunOutcome> {
   const spec = ctx.spec;
   const alias = spec.writableRepository!;
   const changes = await o.worktrees.collect(o.ws, spec.constraints.allowedPaths ?? [], ctx.cfg.coding.protected_paths);
+  // collect() staged everything: the staged tree is the submitted revision.
+  const revision = await stagedTree(o.ws.worktreePath);
+  const artifactDigest = changes.patch ? createHash("sha256").update(changes.patch).digest("hex") : null;
   const patchRef = changes.patch
     ? ctx.artifacts.write({ taskId: ctx.taskId, executionId: o.executionId, kind: "patch", label: `patch against ${o.ws.baseSha.slice(0, 12)}`, content: changes.patch, mediaType: "text/x-diff", extension: ".patch" })
     : null;
@@ -85,8 +108,8 @@ export async function finishCoding(
     const home = agentHome(ctx, o.ws);
     for (const command of spec.constraints.checks ?? []) {
       const r = await runProcess(command, [], { cwd: o.ws.worktreePath, env: minimalEnv({ HOME: home, USERPROFILE: home, CI: "1" }), timeoutMs: ctx.cfg.execution.check_timeout_seconds * 1000, signal: ctx.signal, shell: true });
-      const logRef = ctx.artifacts.write({ taskId: ctx.taskId, executionId: o.executionId, kind: "check_log", label: command, content: `$ ${command}\nexit ${r.exitCode}${r.killed ? ` (killed: ${r.killed})` : ""}\n\n${r.stdout}\n${r.stderr}`, extension: ".log" });
-      checks.push({ command, exitCode: r.killed ? null : r.exitCode, logRef });
+      const logRef = ctx.artifacts.write({ taskId: ctx.taskId, executionId: o.executionId, kind: "check_log", label: command, content: `$ ${command}\nexit ${r.exitCode}${r.killed ? ` (killed: ${r.killed})` : ""}${revision ? `\nrevision ${revision}` : ""}\n\n${r.stdout}\n${r.stderr}`, extension: ".log" });
+      checks.push({ command, exitCode: r.killed ? null : r.exitCode, logRef, revision, ...(artifactDigest ? { artifactDigest } : {}) });
     }
   }
   o.worktrees.setStatus(ctx.taskId, "collected");
@@ -100,6 +123,14 @@ export async function finishCoding(
         ? "met"
         : "not_verified";
   const state: RunOutcome["state"] = aborted ? (ctx.signal.reason === "cancel" ? "cancelled" : "interrupted") : o.state;
+  // Per criterion: a check-verified criterion is resolved when its own checks passed on this
+  // revision; anything else is unresolved until someone verifies it.
+  const unresolved =
+    acceptance === "met"
+      ? []
+      : criteria(spec)
+          .filter((c) => c.verify !== "check" || changes.outOfScope.length > 0 || c.checks.some((cmd) => checkRunOutcome(cmd, checks, revision, artifactDigest).outcome !== "passed"))
+          .map((c) => c.text);
   return {
     state,
     result: baseResult({
@@ -112,7 +143,11 @@ export async function finishCoding(
       patchRefs: patchRef ? [patchRef] : [],
       baseCommits: { [alias]: o.ws.baseSha },
       checks,
-      unresolvedCriteria: acceptance === "met" ? [] : spec.constraints.acceptanceCriteria,
+      unresolvedCriteria: unresolved,
+      changedPaths: changes.changed.map((c) => c.path),
+      scopeViolation: changes.outOfScope,
+      protectedPathsChanged: changes.protectedChanged,
     }),
+    evidence: { revision, artifactDigest, universe: o.universe ?? null, output: o.output ?? null },
   };
 }

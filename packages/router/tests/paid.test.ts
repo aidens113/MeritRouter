@@ -134,7 +134,8 @@ describe("paid execution", () => {
     const [a] = await sy.submitTasks([summarizeTask({ hints: { difficulty: "T4" } })]);
     const r = (await sy.awaitResults([a!.taskId], { timeoutSeconds: 10 })).completed[0]!;
     expect(r.classification!.tier).toBe("T4");
-    expect(r.servedEndpoints).toEqual([PAID_ID]);
+    // Execution went to the paid model (premium T4 runs at T3, which is deep: a reviewer serves too).
+    expect(sy.gate.admission.servedEndpointsByPurpose(a!.taskId).execution).toEqual([PAID_ID]);
   });
 
   it("an uncertain paid failure keeps the worst case charged", async () => {

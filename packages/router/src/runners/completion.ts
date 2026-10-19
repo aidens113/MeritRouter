@@ -4,6 +4,7 @@ import { evidenceUniverse, extractJson, validateWorkerOutput } from "../core/wor
 import { loadSources, renderSources, readersFor, type ContextSource } from "../context/sources.js";
 import { ask, baseResult, type RunContext, type RunOutcome } from "./types.js";
 import { systemPrompt, taskBrief } from "./prompts.js";
+import { criterionTexts } from "../core/task.js";
 
 export function contextManifest(sources: ContextSource[]) {
   return sources.map((s) => ({ ref: s.ref, sha256: s.sha256, commit: s.commit, uncommittedChanges: s.dirty, lines: s.totalLines }));
@@ -26,7 +27,7 @@ export async function runCompletion(ctx: RunContext): Promise<RunOutcome> {
 
   const messages: ChatMessage[] = [
     { role: "system", content: systemPrompt("Answer from the supplied sources only.") },
-    { role: "user", content: `${taskBrief(spec)}\nSources:\n${renderSources(sources) || "(none)"}` },
+    { role: "user", content: `${taskBrief(spec, ctx.retry)}\nSources:\n${renderSources(sources) || "(none)"}` },
   ];
   const executionId = ctx.gate.admission.createExecution("task", spec.profile, [{ taskId: ctx.taskId, itemId: ctx.taskId }]);
   const responseRefs: string[] = [];
@@ -49,7 +50,7 @@ export async function runCompletion(ctx: RunContext): Promise<RunOutcome> {
     }
     if (raw !== undefined) {
       const v = validateWorkerOutput(raw, {
-        acceptanceCriteria: spec.constraints.acceptanceCriteria,
+        acceptanceCriteria: criterionTexts(spec),
         universe,
         ...(validator ? { dataValidator: validator } : {}),
       });
@@ -68,6 +69,7 @@ export async function runCompletion(ctx: RunContext): Promise<RunOutcome> {
             artifactRefs: [manifestRef, ...responseRefs],
             baseCommits: await baseCommitsFor(ctx),
           }),
+          evidence: { universe, output: v.value.output },
         };
       }
       lastErrors = v.errors;
@@ -86,7 +88,7 @@ export async function runCompletion(ctx: RunContext): Promise<RunOutcome> {
       executionStatus: "failed",
       stopReason: "invalid_output",
       summary: `worker output failed validation: ${lastErrors.join("; ")}`,
-      unresolvedCriteria: spec.constraints.acceptanceCriteria,
+      unresolvedCriteria: criterionTexts(spec),
       artifactRefs: [manifestRef, ...responseRefs],
       baseCommits: await baseCommitsFor(ctx),
     }),

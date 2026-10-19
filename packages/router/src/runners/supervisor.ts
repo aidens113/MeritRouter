@@ -18,6 +18,7 @@ import { supervisorTools, type IntegrationRepo, type SupervisorState } from "../
 import { minimalEnv, runProcess } from "./coding/process.js";
 import { baseResult, type RunContext, type RunOutcome } from "./types.js";
 import { WorkspacePointer } from "./session-workspace.js";
+import { criterionTexts } from "../core/task.js";
 
 interface Finish {
   status: "completed" | "blocked";
@@ -147,7 +148,7 @@ export class SupervisorRunner implements CodingRunner {
           statusDetail: "Job started; plan not written yet.",
           owner: actor.agent,
           scope: spec.goal.replace(/\s+/g, " ").slice(0, 200),
-          currentState: `**Goal:** ${spec.goal.slice(0, 2000)}\n\n**Acceptance:** ${spec.constraints.acceptanceCriteria.join("; ")}\n\nNo plan yet.`,
+          currentState: `**Goal:** ${spec.goal.slice(0, 2000)}\n\n**Acceptance:** ${criterionTexts(spec).join("; ")}\n\nNo plan yet.`,
         });
       }
       brain = { brain: b, access, principal, actor, workingDoc: doc };
@@ -243,7 +244,7 @@ export class SupervisorRunner implements CodingRunner {
         },
         {
           role: "user",
-          content: `Goal:\n${spec.goal}\n\nAcceptance criteria:\n${spec.constraints.acceptanceCriteria.map((c, i) => `[${i}] ${c}`).join("\n")}${spec.constraints.checks?.length ? `\n\nJob checks (run on the job branch when you finish):\n${spec.constraints.checks.map((c) => `- ${c}`).join("\n")}` : ""}\n\nCurrent State of your working document:\n${cs || "(none)"}${lessons.length ? `\n\nRelevant lessons:\n${lessons.map((l) => `- brain:${l.path}: ${l.snippet}`).join("\n")}` : ""}`,
+          content: `Goal:\n${spec.goal}\n\nAcceptance criteria:\n${criterionTexts(spec).map((c, i) => `[${i}] ${c}`).join("\n")}${spec.constraints.checks?.length ? `\n\nJob checks (run on the job branch when you finish):\n${spec.constraints.checks.map((c) => `- ${c}`).join("\n")}` : ""}\n\nCurrent State of your working document:\n${cs || "(none)"}${lessons.length ? `\n\nRelevant lessons:\n${lessons.map((l) => `- brain:${l.path}: ${l.snippet}`).join("\n")}` : ""}`,
         },
       ];
     }
@@ -318,7 +319,7 @@ export class SupervisorRunner implements CodingRunner {
         patchRefs,
         baseCommits: Object.fromEntries([...repos.values()].map((r) => [r.alias, r.baseSha])),
         checks,
-        unresolvedCriteria: acceptance === "met" ? [] : [...(finish?.notVerified ?? []), ...(finish ? [] : spec.constraints.acceptanceCriteria)],
+        unresolvedCriteria: acceptance === "met" ? [] : [...(finish?.notVerified ?? []), ...(finish ? [] : criterionTexts(spec))],
       }),
     };
   }

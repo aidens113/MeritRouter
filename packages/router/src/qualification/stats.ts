@@ -31,7 +31,7 @@ export function familyOf(mode: ProfileMode): string {
  * Pass rate at a tier counts results at that tier and harder ones: passing hard evaluations is
  * evidence for easier work. Infrastructure failures are excluded.
  */
-export function qualificationStat(db: Db, cfg: ResolvedConfig, endpointId: string, family: string, tier: TierName): QualificationStat | null {
+export function qualificationStat(db: Db, cfg: ResolvedConfig, endpointId: string, family: string, tier: TierName, threshold = cfg.qualification.pass_threshold): QualificationStat | null {
   const tiers = TIER_NAMES.slice(TIER_NAMES.indexOf(tier));
   const row = db
     .prepare(
@@ -46,14 +46,29 @@ export function qualificationStat(db: Db, cfg: ResolvedConfig, endpointId: strin
     passRate,
     trials: row.n,
     passes,
-    qualified: row.n >= cfg.qualification.min_trials && passRate >= cfg.qualification.pass_threshold,
+    qualified: row.n >= cfg.qualification.min_trials && passRate >= threshold,
     ...wilson(passes, row.n),
   };
 }
 
 export function qualificationLookup(db: Db, cfg: ResolvedConfig) {
-  return (endpointId: string, profile: ProfileName, tier: TierName) => {
+  return (endpointId: string, profile: ProfileName, tier: TierName, family?: { family: string; tier: TierName; threshold: number }) => {
+    if (family) return qualificationStat(db, cfg, endpointId, family.family, family.tier, family.threshold);
     const mode = cfg.profiles[profile]?.mode;
     return mode ? qualificationStat(db, cfg, endpointId, familyOf(mode), tier) : null;
   };
+}
+
+/** Reviewers qualify on the review evaluation family, separately from worker qualification. */
+export const REVIEW_FAMILY = "review";
+
+/**
+ * What a reviewer must hold for a level's `review.qualification`. review: the review family at
+ * the task's tier and the usual pass threshold, preferred or required per
+ * verification.reviewer_qualification. review_strict: the same family on T3 evaluations at the
+ * higher review_strict threshold, always required. Any other name is its own family.
+ */
+export function reviewerQualification(cfg: ResolvedConfig, name: string, tier: TierName): { family: string; tier: TierName; threshold: number; mode: "preferred" | "required"; name: string } {
+  if (name === "review_strict") return { family: REVIEW_FAMILY, tier: "T3", threshold: cfg.verification.review_strict_pass_threshold, mode: "required", name };
+  return { family: name, tier, threshold: cfg.qualification.pass_threshold, mode: cfg.verification.reviewer_qualification, name };
 }

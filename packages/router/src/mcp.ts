@@ -5,7 +5,7 @@ import { z } from "zod";
 import { loadConfig } from "./config/load.js";
 import { MODALITIES, PROFILE_NAMES, TIER_NAMES } from "./config/schema.js";
 import { Switchyard } from "./core/service.js";
-import { routingPreview, jobDetail, sessionDetail, sessionsView } from "./admin/insights.js";
+import { decideTaskAcceptance, routingPreview, jobDetail, sessionDetail, sessionsView } from "./admin/insights.js";
 import { blame } from "./attribution/index.js";
 import type { Principal } from "./brain/access.js";
 import { SessionStatusSchema } from "./sessions/events.js";
@@ -33,7 +33,10 @@ async function main(): Promise<void> {
         "Validate and persist one or more tasks for external worker models. Returns task ids immediately. " +
         "Profiles: summarize (completion over supplied context), inspect/analyze/review (read-only repository investigation), implement (bounded edits in an isolated worktree). " +
         "Each task needs goal and constraints.acceptanceCriteria; pass context.fileRefs as '<alias>:<path>[#Lstart-Lend]' so workers load files themselves. " +
-        "Optional hints.difficulty (T1-T4) skips the difficulty classifier; routing.tier sets a minimum tier.",
+        "Optional hints.difficulty (T1-T4) skips the difficulty classifier; routing.tier sets a minimum tier. " +
+        "Criteria are strings (ids c1..cn) or { id, text, verify?: check|review|evidence, checks?: [commands from constraints.checks] }. " +
+        "Optional importance (low|normal|high|critical; high and critical need importanceReason) and verification { atLeast?: basic|standard|deep|strict, addChecks? } pick how much evidence a result needs; they can only strengthen the configured policy. " +
+        "A task whose total request budget cannot hold its verification reserve is refused with verification_budget_insufficient.",
       inputSchema: { tasks: z.array(z.record(z.string(), z.unknown())).min(1).max(50) },
     },
     async ({ tasks }) => {
@@ -107,6 +110,40 @@ async function main(): Promise<void> {
         return fail(err);
       }
     },
+  );
+
+  // The MCP client is normally an agent (Claude Code) acting as the user's supervisor, not a
+  // person: decisions are recorded as {kind: "supervisor", id: "mcp:<client name>"}. Human
+  // acceptance (the CLI and the panel) is an explicit manual override, so with
+  // `verification.strict_acceptor: human` an MCP accept of a strict result is refused.
+  const acceptor = () => ({ kind: "supervisor" as const, id: `mcp:${server.server.getClientVersion()?.name ?? "client"}` });
+  const decideResult = (taskId: string, decision: "accept" | "reject", reason: string | undefined) => {
+    try {
+      return json(decideTaskAcceptance(sy, taskId, decision, acceptor(), reason?.trim() || null));
+    } catch (err) {
+      return fail(err);
+    }
+  };
+  server.registerTool(
+    "accept_result",
+    {
+      title: "Accept a task result",
+      description:
+        "Accept a finished, completed task's result as its supervisor (recorded as supervisor mcp:<client>, with the reason). " +
+        "Results in needs_supervisor (strict verification, missing evidence, or a pending review) and not_verified need a reason: judge them against the task's goal and acceptance criteria. Unmet results cannot be accepted. " +
+        "With verification.strict_acceptor: human, a strict result is refused with human_acceptance_required: only a person can accept it, with `switchyard accept <id> --reason ...` or the panel.",
+      inputSchema: { taskId: z.string().min(1), reason: z.string().max(4000).optional() },
+    },
+    async ({ taskId, reason }) => decideResult(taskId, "accept", reason),
+  );
+  server.registerTool(
+    "reject_result",
+    {
+      title: "Reject a task result",
+      description: "Reject a finished task's result with a reason; it becomes unmet and the decision is recorded on the result as supervisor mcp:<client>, with the reason.",
+      inputSchema: { taskId: z.string().min(1), reason: z.string().trim().min(1).max(4000) },
+    },
+    async ({ taskId, reason }) => decideResult(taskId, "reject", reason),
   );
 
   server.registerTool(

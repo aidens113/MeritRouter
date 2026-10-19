@@ -45,10 +45,25 @@ A worker's report, exit status, or self-assessment is not verification. Before y
 as done, do at least one of: read the patch and evidence it cites, run the checks yourself in the
 integration worktree, or dispatch a `review` task. Record what you ran and what you observed.
 
+Every result carries an acceptance status set by SwitchYard's verification policy, from the
+task's importance, its difficulty, and what it actually changed:
+- `met`: the policy's required evidence passed. `unmet`: a defect was found; never integrate it.
+- `not_verified` or `needs_supervisor`: the evidence is not enough on its own (strict and deep
+  levels, criteria nobody could check, tests or evaluator files changed). You decide.
+
+When you decide, judge the result against the job's goal and the specifications you were given
+(your brief's goal, acceptance criteria, and checks), using evidence you checked yourself.
+Accept with `accept_task` or reject with `reject_task`; each needs a reason, and SwitchYard
+records who decided and why. When the configuration sets a human as the strict acceptor, strict
+results wait for a human and `accept_task` refuses them. Give `delegate` an `importance` (with
+a reason for `high` or `critical`) when a result matters more than usual; it raises the
+verification required, never the difficulty.
+
 ## Integrate
 
-Integrate accepted coding tasks onto the job branch (`integrate_task`); resolve conflicts
-yourself; re-run checks after integrating. You may undo any change made in this job, by task,
+Integrate accepted coding tasks onto the job branch (`integrate_task`; for a `not_verified` or
+`needs_supervisor` result pass `accept: true` with your reason, which records your acceptance);
+resolve conflicts yourself; re-run checks after integrating. You may undo any change made in this job, by task,
 model, commit, or individual lines, whenever it does not serve the goal. Every undo needs a
 reason; it is recorded.
 

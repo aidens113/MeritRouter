@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ProfileNameSchema, TierNameSchema } from "../config/schema.js";
+import { CheckNameSchema, ImportanceSchema, ProfileNameSchema, TierNameSchema, VerificationLevelSchema } from "../config/schema.js";
 import { TagsSchema } from "../scoring/rulebook.js";
 
 /**
@@ -8,6 +8,25 @@ import { TagsSchema } from "../scoring/rulebook.js";
  */
 export const FILE_REF_RE = /^([A-Za-z0-9._-]+):([^#]+?)(?:#L(\d+)(?:-L(\d+))?)?$/;
 export const ARTIFACT_REF_RE = /^artifact:([A-Za-z0-9_-]+)$/;
+
+/** How a criterion is verified: by declared checks, by an independent review, or by cited evidence. */
+export const CRITERION_VERIFY_KINDS = ["check", "review", "evidence"] as const;
+export const CriterionVerifySchema = z.enum(CRITERION_VERIFY_KINDS);
+export type CriterionVerify = z.infer<typeof CriterionVerifySchema>;
+
+export const CRITERION_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
+
+/** A criterion with a stable id. Plain-string criteria get ids c1..cn by position. */
+export const AcceptanceCriterionSchema = z
+  .object({
+    id: z.string().regex(CRITERION_ID_RE),
+    text: z.string().min(1).max(4000),
+    verify: CriterionVerifySchema.optional(),
+    /** Commands from constraints.checks that decide this criterion (verify: check). */
+    checks: z.array(z.string().min(1)).min(1).max(10).optional(),
+  })
+  .strict();
+export type AcceptanceCriterionInput = z.infer<typeof AcceptanceCriterionSchema>;
 
 export const WorkerTaskSchema = z
   .object({
@@ -30,12 +49,24 @@ export const WorkerTaskSchema = z
     constraints: z
       .object({
         allowedPaths: z.array(z.string().min(1)).optional(),
-        acceptanceCriteria: z.array(z.string().min(1)).min(1),
+        acceptanceCriteria: z.array(z.union([z.string().min(1), AcceptanceCriterionSchema])).min(1),
         outputSchema: z.record(z.string(), z.unknown()).optional(),
         /** Supervisor-supplied acceptance commands run in the task worktree (coding tasks). */
         checks: z.array(z.string().min(1)).max(10).optional(),
       })
       .strict(),
+    /** How much the result matters (default verification.default_importance). Raises verification only. */
+    importance: ImportanceSchema.optional(),
+    /** Why; required for high and critical. */
+    importanceReason: z.string().min(1).max(2000).optional(),
+    /** Strengthen the verification policy for this task; it can never be weakened. */
+    verification: z
+      .object({
+        atLeast: VerificationLevelSchema.optional(),
+        addChecks: z.array(CheckNameSchema).max(10).optional(),
+      })
+      .strict()
+      .optional(),
     dependsOn: z.array(z.string().min(1)).optional(),
     /** The supervising job (a supervise task) that dispatched this task. */
     parentTaskId: z.string().min(1).optional(),
@@ -76,9 +107,67 @@ export const WorkerTaskSchema = z
       .strict()
       .optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((t, ctx) => {
+    if ((t.importance === "high" || t.importance === "critical") && !t.importanceReason) {
+      ctx.addIssue({ code: "custom", path: ["importanceReason"], message: `importance ${t.importance} needs an importanceReason` });
+    }
+    const declared = new Set(t.constraints.checks ?? []);
+    const seen = new Set<string>();
+    t.constraints.acceptanceCriteria.forEach((c, i) => {
+      const id = typeof c === "string" ? autoCriterionId(i) : c.id;
+      if (seen.has(id)) ctx.addIssue({ code: "custom", path: ["constraints", "acceptanceCriteria", i], message: `criterion id ${id} is used more than once` });
+      seen.add(id);
+      if (typeof c === "string") return;
+      for (const cmd of c.checks ?? []) {
+        if (!declared.has(cmd)) ctx.addIssue({ code: "custom", path: ["constraints", "acceptanceCriteria", i, "checks"], message: `criterion ${c.id} names check "${cmd}", which is not in constraints.checks` });
+      }
+      if (c.verify === "check" && !c.checks?.length && !declared.size) {
+        ctx.addIssue({ code: "custom", path: ["constraints", "acceptanceCriteria", i, "verify"], message: `criterion ${c.id} is verified by checks but the task declares none` });
+      }
+      if (c.checks?.length && c.verify && c.verify !== "check") {
+        ctx.addIssue({ code: "custom", path: ["constraints", "acceptanceCriteria", i, "checks"], message: `criterion ${c.id} lists checks but verify is ${c.verify}` });
+      }
+    });
+  });
 export type WorkerTaskInput = z.input<typeof WorkerTaskSchema>;
 export type WorkerTask = z.infer<typeof WorkerTaskSchema>;
+
+/** Id given to the plain-string criterion at position `index` (0-based). */
+export function autoCriterionId(index: number): string {
+  return `c${index + 1}`;
+}
+
+/** A criterion as the contract, results, and verdicts see it. */
+export interface Criterion {
+  id: string;
+  text: string;
+  verify: CriterionVerify;
+  /** The declared check commands that decide it (empty unless verify is "check"). */
+  checks: string[];
+}
+
+/**
+ * Normalise a task's criteria to ids. A plain string is decided by every declared check when
+ * the task declares checks (today's all-or-none coding semantics), otherwise by evidence. An
+ * object without `verify` is check-verified when it names checks, otherwise evidence-verified;
+ * `verify: "check"` without `checks` means every declared check.
+ */
+export function criteria(spec: Pick<WorkerTask, "constraints">): Criterion[] {
+  const declared = spec.constraints.checks ?? [];
+  return spec.constraints.acceptanceCriteria.map((c, i) => {
+    if (typeof c === "string") {
+      return declared.length ? { id: autoCriterionId(i), text: c, verify: "check", checks: [...declared] } : { id: autoCriterionId(i), text: c, verify: "evidence", checks: [] };
+    }
+    const verify: CriterionVerify = c.verify ?? (c.checks?.length ? "check" : "evidence");
+    return { id: c.id, text: c.text, verify, checks: verify === "check" ? [...(c.checks ?? declared)] : [] };
+  });
+}
+
+/** Criterion texts in order, for prompts and display. */
+export function criterionTexts(spec: Pick<WorkerTask, "constraints">): string[] {
+  return spec.constraints.acceptanceCriteria.map((c) => (typeof c === "string" ? c : c.text));
+}
 
 export const TASK_STATES = [
   "queued",
@@ -123,11 +212,115 @@ export const UsageSchema = z
   .strict();
 export type Usage = z.infer<typeof UsageSchema>;
 
+/** met: the contract's policy is satisfied. needs_supervisor: waiting for the job's supervisor (or a human). */
+export const ACCEPTANCE_STATUSES = ["met", "unmet", "not_verified", "needs_supervisor"] as const;
+export const AcceptanceStatusSchema = z.enum(ACCEPTANCE_STATUSES);
+export type AcceptanceStatus = z.infer<typeof AcceptanceStatusSchema>;
+
+/** Whether the policy's required verification ran and passed; separate from execution and acceptance. */
+export const VERIFICATION_STATUSES = ["not_required", "pending", "passed", "failed", "inconclusive", "skipped_budget"] as const;
+export const VerificationStatusSchema = z.enum(VERIFICATION_STATUSES);
+export type VerificationStatus = z.infer<typeof VerificationStatusSchema>;
+
+/**
+ * Outcome of one named check. stale: bound to a different revision or artifact than the one
+ * submitted. environment_failure: could not run (not a defect). unverified: nothing contradicts
+ * the claim but nothing proves it. not_implemented: a required check this version cannot run.
+ */
+export const CHECK_OUTCOMES = ["passed", "failed", "not_applicable", "not_run", "stale", "environment_failure", "inconclusive", "unverified", "not_implemented"] as const;
+export const CheckOutcomeSchema = z.enum(CHECK_OUTCOMES);
+export type CheckOutcome = z.infer<typeof CheckOutcomeSchema>;
+
+/** Outcome of one criterion. claimed: the author says met with evidence, unverified by anyone else. */
+export const CRITERION_OUTCOMES = ["passed", "failed", "claimed", "unknown", "not_run", "stale", "environment_failure", "pending_review"] as const;
+export const CriterionOutcomeSchema = z.enum(CRITERION_OUTCOMES);
+export type CriterionOutcome = z.infer<typeof CriterionOutcomeSchema>;
+
+export const SupervisorDecisionSchema = z
+  .object({
+    decision: z.enum(["accepted", "rejected"]),
+    by: z.object({ kind: z.enum(["supervisor", "human"]), id: z.string().min(1).max(200) }).strict(),
+    reason: z.string().max(4000).nullable(),
+    at: z.number().int(),
+  })
+  .strict();
+export type SupervisorDecision = z.infer<typeof SupervisorDecisionSchema>;
+
+/**
+ * One independent review of the task (verification/review.ts): who reviewed, whether the
+ * reviewer was qualified, and its verdict per criterion. A review that could not run has a null
+ * verdict and says why in stopReason.
+ */
+export const ReviewRecordSchema = z
+  .object({
+    attempt: z.number().int().min(1),
+    /** The reviewer's child session, when sessions are recorded. */
+    sessionId: z.string().nullable(),
+    /** Endpoint that served the verdict (null when no review ran). */
+    reviewer: z.string().nullable(),
+    /** Qualification family required or preferred (review, review_strict). */
+    qualification: z.string().nullable(),
+    qualified: z.boolean(),
+    /** e.g. reviewer_unqualified, same_model_family. */
+    flags: z.array(z.string()),
+    /** The revision or artifact digest the reviewer was shown and examined. */
+    revision: z.string().nullable(),
+    verdict: z.enum(["pass", "fail", "inconclusive"]).nullable(),
+    recommendedAction: z.enum(["accept", "repair", "run_targeted_check", "needs_supervisor"]).nullable(),
+    criteria: z.array(z.object({ id: z.string(), outcome: z.enum(["pass", "fail", "inconclusive"]), evidenceRefs: z.array(z.string()), reason: z.string().optional() }).strict()),
+    blockingFindings: z.array(z.object({ description: z.string(), evidenceRefs: z.array(z.string()), criterionId: z.string().optional() }).strict()),
+    missingEvidence: z.array(z.string()),
+    score: z.number().nullable(),
+    /** Model requests the review spent (purpose verification). */
+    requests: z.number().int().min(0),
+    stopReason: z.string(),
+    /** The stored verdict and evidence package. */
+    artifactRef: z.string().nullable(),
+  })
+  .strict();
+export type ReviewRecord = z.infer<typeof ReviewRecordSchema>;
+
+/** What verification found, recorded on the result. */
+export const VerificationRecordSchema = z
+  .object({
+    level: VerificationLevelSchema,
+    /** The contract's level when re-evaluation on the result raised it. */
+    raisedFrom: VerificationLevelSchema.nullable(),
+    importance: ImportanceSchema,
+    importanceSource: z.string(),
+    rulesMatched: z.array(z.string()),
+    contractSha256: z.string().nullable(),
+    policyFingerprint: z.string(),
+    checks: z.array(z.object({ name: z.string(), required: z.boolean(), outcome: CheckOutcomeSchema, detail: z.string() }).strict()),
+    criteria: z.array(
+      z
+        .object({
+          id: z.string(),
+          text: z.string(),
+          verify: CriterionVerifySchema,
+          outcome: CriterionOutcomeSchema,
+          checks: z.array(z.string()),
+          evidenceRefs: z.array(z.string()),
+          note: z.string().optional(),
+        })
+        .strict(),
+    ),
+    reasons: z.array(z.string()),
+    decisions: z.array(SupervisorDecisionSchema).default([]),
+    /** Independent reviews, oldest first (absent before V2 and when no review was required). */
+    reviews: z.array(ReviewRecordSchema).optional(),
+  })
+  .strict();
+export type VerificationRecord = z.infer<typeof VerificationRecordSchema>;
+
 export const WorkerResultSchema = z
   .object({
     taskId: z.string(),
     executionStatus: ExecutionStatusSchema,
-    acceptanceStatus: z.enum(["met", "unmet", "not_verified"]),
+    acceptanceStatus: AcceptanceStatusSchema,
+    /** Absent on results recorded before verification existed (read as not_required). */
+    verificationStatus: VerificationStatusSchema.optional(),
+    verification: VerificationRecordSchema.optional(),
     stopReason: z.string(),
     summary: z.string(),
     findings: z.array(z.object({ description: z.string(), evidenceRefs: z.array(z.string()) }).strict()),
@@ -137,9 +330,25 @@ export const WorkerResultSchema = z
     patchRefs: z.array(z.string()),
     baseCommits: z.record(z.string(), z.string()),
     checks: z.array(
-      z.object({ command: z.string(), exitCode: z.number().int().nullable(), logRef: z.string() }).strict(),
+      z
+        .object({
+          command: z.string(),
+          exitCode: z.number().int().nullable(),
+          logRef: z.string(),
+          /** Commit (or tree) sha the check ran against; a later revision invalidates it. */
+          revision: z.string().nullable().optional(),
+          /** sha256 of the patch or artifact the check ran against. */
+          artifactDigest: z.string().optional(),
+        })
+        .strict(),
     ),
     unresolvedCriteria: z.array(z.string()),
+    /** Ids of the criteria in unresolvedCriteria, in the same order (absent on older results). */
+    unresolvedCriterionIds: z.array(z.string()).optional(),
+    /** Coding results: changed paths, paths outside allowedPaths, and protected paths changed. */
+    changedPaths: z.array(z.string()).optional(),
+    scopeViolation: z.array(z.string()).optional(),
+    protectedPathsChanged: z.array(z.string()).optional(),
     usage: UsageSchema,
     servedEndpoints: z.array(z.string()),
     classification: z

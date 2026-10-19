@@ -69,7 +69,9 @@ describe("coding worker", () => {
     setup("tests");
     const [sub] = await sy!.submitTasks([implementTask()]);
     const r = (await sy!.awaitResults([sub!.taskId], { timeoutSeconds: 60 })).completed[0]!;
-    expect(r.acceptanceStatus).toBe("not_verified");
+    // The evaluator-changes rule raises the level to deep; with no reviewer in V1 the supervisor decides.
+    expect(r.acceptanceStatus).toBe("needs_supervisor");
+    expect(r.protectedPathsChanged?.length).toBeGreaterThan(0);
     expect(r.findings.map((f) => f.description).join("\n")).toMatch(/Tests or evaluator files were modified/);
   }, 90_000);
 

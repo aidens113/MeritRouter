@@ -1,0 +1,110 @@
+import type { ResolvedConfig } from "../config/load.js";
+import type { Db } from "../storage/db.js";
+import type { ArtifactStore } from "../storage/artifacts.js";
+import type { StoredTask } from "../storage/tasks.js";
+import { git } from "../workspaces/git.js";
+import { commitAs } from "../attribution/index.js";
+import { agentLabel } from "../roles/index.js";
+import { commandAllowed } from "../harness/tools.js";
+import { minimalEnv, runProcess } from "../runners/coding/process.js";
+import type { ReviewRecord, WorkerResult } from "../core/task.js";
+import type { RetryContext } from "../runners/types.js";
+
+/**
+ * What verification does after a verdict: one bounded repair that continues from the submitted
+ * revision with the reviewer's findings, or one targeted check that supplies missing evidence.
+ */
+
+interface WorkspaceRow {
+  worktree_path: string;
+  base_sha: string;
+  repo_alias: string;
+}
+
+function workspaceOf(db: Db, taskId: string): WorkspaceRow | null {
+  return (db.prepare("SELECT worktree_path, base_sha, repo_alias FROM workspaces WHERE task_id = ?").get(taskId) as WorkspaceRow | undefined) ?? null;
+}
+
+/**
+ * The commit a coding repair starts from: the task worktree's HEAD once everything submitted
+ * is committed, and only when that commit's tree is exactly the revision that was verified.
+ * Null when there is no worktree (or it moved on), so the repair starts from the base.
+ */
+export async function submittedRevisionStart(db: Db, task: StoredTask, revision: string | null): Promise<{ alias: string; commit: string } | null> {
+  const ws = workspaceOf(db, task.row.id);
+  if (!ws || !revision) return null;
+  try {
+    let tree = (await git(ws.worktree_path, ["rev-parse", "HEAD^{tree}"])).trim();
+    if (tree !== revision) {
+      // Submitted but uncommitted edits (an external agent's last response): commit them as the
+      // implementer, so the repair builds on exactly what was reviewed.
+      await commitAs(ws.worktree_path, { agent: agentLabel("implementer", task.spec.label ?? task.row.id), role: "tool", model: null, task: task.row.id, job: task.spec.parentTaskId ?? null }, "implementer: submitted revision before repair");
+      tree = (await git(ws.worktree_path, ["rev-parse", "HEAD^{tree}"])).trim();
+    }
+    if (tree !== revision) return null;
+    return { alias: ws.repo_alias, commit: (await git(ws.worktree_path, ["rev-parse", "HEAD"])).trim() };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The repair's retry context: the failure context plus the reviewer's findings and failed
+ * criteria (data about the previous attempt, never instructions), and where the work resumes.
+ */
+export function repairRetryContext(base: RetryContext, review: ReviewRecord | null, startFrom: { alias: string; commit: string } | null): RetryContext {
+  const fromReview = review?.verdict === "fail"
+    ? [
+        ...review.blockingFindings.map((f) => `Reviewer: ${f.description}${f.evidenceRefs.length ? ` (${f.evidenceRefs.join(", ")})` : ""}`.slice(0, 600)),
+        ...review.criteria.filter((c) => c.outcome === "fail").map((c) => `Reviewer: criterion ${c.id} fails: ${c.reason ?? ""}`.slice(0, 600)),
+      ]
+    : [];
+  return {
+    ...base,
+    findings: [...fromReview, ...base.findings].slice(0, 16),
+    verificationReasons: [
+      ...base.verificationReasons,
+      ...(startFrom ? [`Your workspace starts at the revision you submitted (${startFrom.commit.slice(0, 12)}); fix the defects above rather than starting over.`] : []),
+    ],
+    startFrom,
+  };
+}
+
+/** A targeted check may run a declared check or a command the coding allowlist permits. */
+export function targetedCheckAllowed(cfg: ResolvedConfig, declared: string[]): (command: string) => boolean {
+  return (command) => declared.includes(command.trim()) || commandAllowed(command, cfg.coding.allowed_commands);
+}
+
+/**
+ * Run the reviewer's targeted checks once, in the task's worktree, bound to the submitted
+ * revision. Nothing runs when the worktree is no longer at that revision. Returns the new check
+ * records (appended to the result's checks) or an explanation.
+ */
+export async function runTargetedChecks(
+  d: { cfg: ResolvedConfig; db: Db; artifacts: ArtifactStore; signal: AbortSignal },
+  task: StoredTask,
+  result: Pick<WorkerResult, "checks">,
+  revision: string | null,
+  artifactDigest: string | null,
+  commands: string[],
+): Promise<{ records: WorkerResult["checks"]; note: string }> {
+  const ws = workspaceOf(d.db, task.row.id);
+  if (!ws || !revision) return { records: [], note: "no worktree at the submitted revision; the targeted check did not run" };
+  const allowed = targetedCheckAllowed(d.cfg, task.spec.constraints.checks ?? []);
+  let tree: string;
+  try {
+    // The index is the submitted state (collect staged everything); it must still be the revision.
+    tree = (await git(ws.worktree_path, ["write-tree"])).trim();
+  } catch (err) {
+    return { records: [], note: `the worktree cannot be read (${(err as Error).message.slice(0, 200)}); the targeted check did not run` };
+  }
+  if (tree !== revision) return { records: [], note: `the worktree moved from the submitted revision ${revision.slice(0, 12)}; the targeted check did not run` };
+  const records: WorkerResult["checks"] = [];
+  for (const command of commands.slice(0, 3)) {
+    if (!allowed(command)) continue;
+    const r = await runProcess(command, [], { cwd: ws.worktree_path, env: minimalEnv({ CI: "1" }), timeoutMs: d.cfg.execution.check_timeout_seconds * 1000, signal: d.signal, shell: true });
+    const logRef = d.artifacts.write({ taskId: task.row.id, kind: "check_log", label: `targeted: ${command}`, content: `$ ${command}\nexit ${r.exitCode}${r.killed ? ` (killed: ${r.killed})` : ""}\nrevision ${revision}\n(targeted check requested by the reviewer)\n\n${r.stdout}\n${r.stderr}`, extension: ".log" });
+    records.push({ command, exitCode: r.killed ? null : r.exitCode, logRef, revision, ...(artifactDigest ? { artifactDigest } : {}) });
+  }
+  return { records, note: records.length ? `targeted check(s) ran on ${revision.slice(0, 12)}: ${records.map((c) => `${c.command} -> ${c.exitCode ?? "killed"}`).join("; ")}` : "no requested check is declared or allowed; nothing ran" };
+}

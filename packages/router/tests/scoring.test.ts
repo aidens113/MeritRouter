@@ -79,7 +79,10 @@ describe("rulebook scoring", () => {
   it("the classifier is skipped when tags cannot change the outcome", () => {
     env = makeEnv();
     expect(classifierCouldMatter(env.cfg, DEFAULT_RULEBOOK, 1)).toBe(true);
-    expect(classifierCouldMatter(env.cfg, DEFAULT_RULEBOOK, 9)).toBe(false);
+    // At a measured T3, tags can still reach T4 or reject (ambiguity: high), so it runs.
+    expect(classifierCouldMatter(env.cfg, DEFAULT_RULEBOOK, 9)).toBe(true);
+    // Beyond T3 nothing a tag does can change the outcome.
+    expect(classifierCouldMatter(env.cfg, DEFAULT_RULEBOOK, 12)).toBe(false);
   });
 });
 

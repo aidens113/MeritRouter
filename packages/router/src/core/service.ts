@@ -24,6 +24,9 @@ import { Brain } from "../brain/brain.js";
 import { BrainAccess } from "../brain/access.js";
 import { PaidSpend } from "../paid/spend.js";
 import { SessionStore } from "../sessions/store.js";
+import { ContractStore, type StoredContract } from "../verification/contract.js";
+import type { AcceptanceDecisionInput, AcceptanceDecisionOutcome } from "../runners/types.js";
+import { parentImportance, recordAcceptanceDecision, verificationBudgetShortfall } from "./acceptance.js";
 import { paidEndpoints, paidFingerprint, refreshPaidPrices } from "../paid/catalog.js";
 import { httpDirectClient, type DirectClient } from "../paid/direct.js";
 import { createCodingRunner } from "../runners/coding/index.js";
@@ -99,6 +102,8 @@ export class Switchyard {
   readonly spend: PaidSpend;
   /** Agent sessions: per-run event logs (transcript, model calls, tool journal). */
   readonly sessions: SessionStore;
+  /** Acceptance contracts: one immutable contract per task, compiled before its first run. */
+  readonly contracts: ContractStore;
   private readonly executor: Executor;
   private readonly scheduler: Scheduler;
   private readonly events = new EventEmitter();
@@ -117,6 +122,7 @@ export class Switchyard {
     this.tasks = new TaskStore(this.db, this.now);
     this.artifacts = new ArtifactStore(this.db, cfg.storageDir, this.now);
     this.sessions = new SessionStore(this.db, cfg.storageDir, this.now);
+    this.contracts = new ContractStore(this.db);
     this.admission = new Admission(this.db, this.tasks, cfg, this.now);
     this.brain = new Brain(cfg, this.db, this.now);
     this.brainAccess = new BrainAccess(this.db, cfg, this.now);
@@ -151,6 +157,7 @@ export class Switchyard {
       brain: this.brain,
       access: this.brainAccess,
       sessions: this.sessions,
+      contracts: this.contracts,
       services: {
         submitTasks: (raw, o) => this.submitTasks(raw, o),
         awaitResults: (ids, o) => this.awaitResults(ids, o),
@@ -159,6 +166,8 @@ export class Switchyard {
           return t ? { spec: t.spec, state: t.row.state, result: t.result } : null;
         },
         cancelTasks: (ids) => this.cancelTasks(ids),
+        acceptTask: (id, input) => this.acceptTask(id, input),
+        rejectTask: (id, input) => this.rejectTask(id, input),
       },
       onSettled: (id) => this.events.emit("settled", id),
     });
@@ -243,6 +252,11 @@ export class Switchyard {
         errors.push(`task[${i}]: ${(err as Error).message}`);
       }
     }
+    // A task whose verification policy cannot fit its request budget is refused now.
+    if (!errors.length) specs.forEach((spec, i) => {
+      const shortfall = verificationBudgetShortfall(this.cfg, spec, parentImportance(this.tasks, this.contracts, spec));
+      if (shortfall) errors.push(`task[${i}]: ${shortfall}`);
+    });
     if (errors.length) throw new TaskValidationError(errors.join("\n"), errors);
     const outcomes = this.tasks.submit(specs);
     if (opts.purpose && opts.purpose !== "work") {
@@ -266,12 +280,21 @@ export class Switchyard {
   private status(t: StoredTask): TaskStatus {
     const row = t.row as StoredTask["row"] & { tier?: string | null; purpose?: string };
     const tierCfg = row.tier && row.tier in this.cfg.tiers ? this.cfg.tiers[row.tier as TierName] : null;
-    const budget = Math.min(
-      this.cfg.profiles[t.spec.profile]?.max_model_requests ?? 0,
-      tierCfg ? tierCfg.max_model_requests : Infinity,
-      this.cfg.execution.max_model_requests_per_task,
-      t.spec.budget?.maxModelRequests ?? Infinity,
-    );
+    // With a contract, "allowed" is its total: execution, review, and repair all count against it.
+    let contractTotal: number | null = null;
+    try {
+      contractTotal = this.contracts.get(t.row.id)?.contract.budget.total ?? null;
+    } catch {
+      contractTotal = null; // a corrupt contract is reported where it is read, not in a status line
+    }
+    const budget =
+      contractTotal ??
+      Math.min(
+        this.cfg.profiles[t.spec.profile]?.max_model_requests ?? 0,
+        tierCfg ? tierCfg.max_model_requests : Infinity,
+        this.cfg.execution.max_model_requests_per_task,
+        t.spec.budget?.maxModelRequests ?? Infinity,
+      );
     return {
       taskId: t.row.id,
       profile: t.row.profile,
@@ -372,6 +395,30 @@ export class Switchyard {
       },
     ]);
     return out!;
+  }
+
+  /** A task's acceptance contract, or null when it has none yet (or is a supervisor job). */
+  contract(id: string): StoredContract | null {
+    return this.contracts.get(id);
+  }
+
+  /**
+   * Accept a finished task's result on behalf of its job's supervisor or a human. Who accepted
+   * and why are recorded on the result. Unmet results are refused, not_verified and
+   * needs_supervisor ones need a reason, and with `verification.strict_acceptor: human` only a
+   * human accepts a strict result. Throws a SwitchyardError with the refusal code.
+   */
+  acceptTask(id: string, input: AcceptanceDecisionInput): AcceptanceDecisionOutcome {
+    const out = recordAcceptanceDecision({ cfg: this.cfg, tasks: this.tasks, contracts: this.contracts, now: this.now }, id, "accept", input);
+    this.events.emit("settled", id);
+    return out;
+  }
+
+  /** Reject a finished task's result (a reason is required); it becomes unmet. */
+  rejectTask(id: string, input: AcceptanceDecisionInput): AcceptanceDecisionOutcome {
+    const out = recordAcceptanceDecision({ cfg: this.cfg, tasks: this.tasks, contracts: this.contracts, now: this.now }, id, "reject", input);
+    this.events.emit("settled", id);
+    return out;
   }
 
   /** Questions supervisors are waiting on. */

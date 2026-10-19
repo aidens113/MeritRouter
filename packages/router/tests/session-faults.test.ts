@@ -36,6 +36,9 @@ const turnsIn = (messages: ChatMessage[]) => messages.filter((m) => m.role === "
 const turns = (req: ChatRequest) => turnsIn(req.messages);
 const isSupervisor = (req: ChatRequest) => String(req.messages[0]!.content).startsWith("# Supervisor charter");
 const check = `node -e "process.exit(require('fs').readFileSync('src/app.ts','utf8').includes('subtract')?0:1)"`;
+// Coding tasks below are hinted T2: standard verification (checks on the submitted revision), so
+// "met" proves the checks passed on the resumed revision. Unhinted they classify T3 (deep), which
+// needs an independent reviewer these single-endpoint tests do not have.
 const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd }).toString();
 const count = (text: string, needle: string) => text.split(needle).length - 1;
 
@@ -190,7 +193,7 @@ describe("native coding worker", () => {
       if (turns(req) === 0) return reply(null, { ...s, toolCalls: [call("replace_in_file", { path: "src/app.ts", old_text: "export function add", new_text: "export function subtract(a: number, b: number) {\n  return a - b;\n}\n\nexport function add" }, "edit0")] });
       return reply(null, { ...s, toolCalls: [call("submit_result", goodOutput(1, "core:src/app.ts#L1-L3"), `submit${turns(req)}`)] });
     });
-    const task = { profile: "implement", label: "sub", goal: "Add subtract(a, b) to src/app.ts", repositoryAliases: ["core"], writableRepository: "core", constraints: { acceptanceCriteria: ["subtract exists"], allowedPaths: ["src/**"], checks: [check] } };
+    const task = { profile: "implement", label: "sub", goal: "Add subtract(a, b) to src/app.ts", repositoryAliases: ["core"], writableRepository: "core", hints: { difficulty: "T2" }, constraints: { acceptanceCriteria: ["subtract exists"], allowedPaths: ["src/**"], checks: [check] } };
     const id = await crashThenRecover({ client, fault: "after_tool_run:1:replace_in_file", submit: async (s) => (await s.submitTasks([task]))[0]!.taskId });
     const r = (await sy!.awaitResults([id], { timeoutSeconds: 60 })).completed[0]!;
     expect(r).toMatchObject({ executionStatus: "completed", acceptanceStatus: "met", stopReason: "worker_submitted" });
@@ -232,7 +235,7 @@ describe("native coding worker", () => {
       if (!edited) return reply(null, { ...s, toolCalls: [call("replace_in_file", { path: "src/app.ts", old_text: "export function add", new_text: "export function subtract(a: number, b: number) {\n  return a - b;\n}\n\nexport function add" }, `edit${n}`)] });
       return reply(null, { ...s, toolCalls: [call("submit_result", goodOutput(1, "core:src/app.ts#L1-L3"), `submit${n}`)] });
     });
-    const task = { profile: "implement", label: "sub", goal: "Add subtract(a, b) to src/app.ts", repositoryAliases: ["core"], writableRepository: "core", constraints: { acceptanceCriteria: ["subtract exists"], allowedPaths: ["src/**"], checks: [check] } };
+    const task = { profile: "implement", label: "sub", goal: "Add subtract(a, b) to src/app.ts", repositoryAliases: ["core"], writableRepository: "core", hints: { difficulty: "T2" }, constraints: { acceptanceCriteria: ["subtract exists"], allowedPaths: ["src/**"], checks: [check] } };
     const id = await crashThenRecover({ client, fault: "after_tool_intent:1:replace_in_file", submit: async (s) => (await s.submitTasks([task]))[0]!.taskId });
     const r = (await sy!.awaitResults([id], { timeoutSeconds: 60 })).completed[0]!;
     expect(r).toMatchObject({ executionStatus: "completed", acceptanceStatus: "met" });
@@ -331,7 +334,7 @@ describe("completion task", () => {
 });
 
 describe("operator resume", () => {
-  const task = { profile: "implement", label: "sub", goal: "Add subtract(a, b) to src/app.ts", repositoryAliases: ["core"], writableRepository: "core", constraints: { acceptanceCriteria: ["subtract exists"], allowedPaths: ["src/**"], checks: [check] } };
+  const task = { profile: "implement", label: "sub", goal: "Add subtract(a, b) to src/app.ts", repositoryAliases: ["core"], writableRepository: "core", hints: { difficulty: "T2" }, constraints: { acceptanceCriteria: ["subtract exists"], allowedPaths: ["src/**"], checks: [check] } };
   const coder = () =>
     new ScriptedClient((req) => {
       const s = servedFor(sy!, req);

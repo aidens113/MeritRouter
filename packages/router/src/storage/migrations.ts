@@ -373,4 +373,17 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX session_events_type ON session_events(type, at);
   `,
+  `
+  -- Acceptance contracts: compiled once per task before its first run and never changed.
+  CREATE TABLE task_contracts (
+    task_id TEXT PRIMARY KEY REFERENCES tasks(id),
+    contract_json TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE TRIGGER task_contracts_immutable BEFORE UPDATE ON task_contracts
+  BEGIN
+    SELECT RAISE(ABORT, 'task contracts are immutable');
+  END;
+  `,
 ];

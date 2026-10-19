@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TAG_GROUPS } from "../scoring/rulebook.js";
 
 export const PROFILE_NAMES = ["summarize", "inspect", "analyze", "implement", "review", "supervise"] as const;
 export const ProfileNameSchema = z.enum(PROFILE_NAMES);
@@ -137,6 +138,213 @@ export const PaidModelSchema = z
   })
   .strict();
 export type PaidModelConfig = z.infer<typeof PaidModelSchema>;
+
+/** How much a task's result matters. Raises verification, never difficulty. */
+export const IMPORTANCE_LEVELS = ["low", "normal", "high", "critical"] as const;
+export const ImportanceSchema = z.enum(IMPORTANCE_LEVELS);
+export type Importance = z.infer<typeof ImportanceSchema>;
+
+/** Verification levels, weakest first. Each is a bundle of checks and review requirements. */
+export const VERIFICATION_LEVELS = ["basic", "standard", "deep", "strict"] as const;
+export const VerificationLevelSchema = z.enum(VERIFICATION_LEVELS);
+export type VerificationLevel = z.infer<typeof VerificationLevelSchema>;
+
+/** Named verification check (see src/verification/checks.ts); unknown names never pass. */
+export const CheckNameSchema = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/);
+
+const VerificationRuleIdSchema = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/);
+
+const tagValues = <G extends keyof typeof TAG_GROUPS>(g: G) => z.array(z.enum(TAG_GROUPS[g])).min(1).optional();
+
+/**
+ * A rule condition. Every key given must match; inside a key any listed value matches. Paths
+ * are globs tested against the task's declared paths before dispatch and against the changed
+ * paths of a result.
+ */
+export const VerificationMatchSchema = z
+  .object({
+    tags: z
+      .object({
+        kind: tagValues("kind"),
+        reasoning: tagValues("reasoning"),
+        novelty: tagValues("novelty"),
+        risk: tagValues("risk"),
+        environment: tagValues("environment"),
+        ambiguity: tagValues("ambiguity"),
+      })
+      .strict()
+      .optional(),
+    profiles: z.array(ProfileNameSchema).min(1).optional(),
+    changed_paths: z.array(z.string().min(1)).min(1).optional(),
+    /** Known only on a result: whether files under coding.protected_paths changed. */
+    protected_paths_changed: z.boolean().optional(),
+  })
+  .strict()
+  .refine((w) => Object.values(w).some((v) => v !== undefined), { message: "a rule condition needs at least one key" });
+export type VerificationMatch = z.infer<typeof VerificationMatchSchema>;
+
+const LevelReviewSchema = z
+  .object({
+    required: z.boolean().optional(),
+    /** Qualification family the reviewer must hold (e.g. review, review_strict). */
+    qualification: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/).optional(),
+    min_total_parameters_b: z.number().positive().optional(),
+    /** The reviewer must not be an endpoint that served the task. */
+    independent: z.boolean().optional(),
+  })
+  .strict();
+
+/** A level bundle. `extends` unions checks and inherits review fields the level leaves unset. */
+const VerificationLevelBundleSchema = z
+  .object({
+    extends: VerificationLevelSchema.optional(),
+    checks: z.array(CheckNameSchema).default([]),
+    review: LevelReviewSchema.optional(),
+    /** supervisor: the result waits for the job's supervisor (or a human) to accept it. */
+    acceptance: z.enum(["automatic", "supervisor"]).optional(),
+  })
+  .strict();
+export type VerificationLevelBundle = z.infer<typeof VerificationLevelBundleSchema>;
+
+const DEFAULT_LEVELS: Record<VerificationLevel, z.input<typeof VerificationLevelBundleSchema>> = {
+  basic: { checks: ["output_contract", "evidence_provenance", "scope", "protected_paths"] },
+  standard: { extends: "basic", checks: ["declared_checks", "criterion_evidence"] },
+  deep: { extends: "standard", review: { required: true, qualification: "review", min_total_parameters_b: 100, independent: true } },
+  strict: { extends: "deep", review: { qualification: "review_strict" }, acceptance: "supervisor" },
+};
+
+const MatrixRowSchema = z.object({ low: VerificationLevelSchema, normal: VerificationLevelSchema, high: VerificationLevelSchema, critical: VerificationLevelSchema }).strict();
+const DEFAULT_MATRIX = {
+  T1: { low: "basic", normal: "standard", high: "deep", critical: "strict" },
+  T2: { low: "standard", normal: "standard", high: "deep", critical: "strict" },
+  T3: { low: "deep", normal: "deep", high: "deep", critical: "strict" },
+} as const;
+
+const VerificationFloorSchema = z.object({ id: VerificationRuleIdSchema, when: VerificationMatchSchema, importance: ImportanceSchema }).strict();
+export type VerificationFloor = z.infer<typeof VerificationFloorSchema>;
+
+const VerificationRuleSchema = z
+  .object({
+    id: VerificationRuleIdSchema,
+    when: VerificationMatchSchema,
+    require_at_least: VerificationLevelSchema.optional(),
+    add_checks: z.array(CheckNameSchema).min(1).optional(),
+    importance: ImportanceSchema.optional(),
+  })
+  .strict()
+  .refine((r) => r.require_at_least !== undefined || r.add_checks !== undefined || r.importance !== undefined, {
+    message: "a rule needs require_at_least, add_checks, or importance",
+  });
+export type VerificationRule = z.infer<typeof VerificationRuleSchema>;
+
+const DEFAULT_FLOORS: Array<z.input<typeof VerificationFloorSchema>> = [
+  { id: "risk-critical", when: { tags: { risk: ["security", "data_migration"] } }, importance: "critical" },
+  { id: "risk-public-api", when: { tags: { risk: ["public_api_change"] } }, importance: "high" },
+];
+
+const DEFAULT_VERIFICATION_RULES: Array<z.input<typeof VerificationRuleSchema>> = [
+  { id: "refactor", when: { tags: { kind: ["refactor"] } }, require_at_least: "deep" },
+  { id: "evaluator-changes", when: { protected_paths_changed: true }, require_at_least: "deep", add_checks: ["evaluator_change_review"] },
+];
+
+/** The level chain from `level` up through `extends` (the level itself first); throws on a cycle. */
+export function levelChain(levels: Record<VerificationLevel, Pick<VerificationLevelBundle, "extends">>, level: VerificationLevel): VerificationLevel[] {
+  const chain: VerificationLevel[] = [];
+  let cur: VerificationLevel | undefined = level;
+  while (cur) {
+    if (chain.includes(cur)) throw new Error(`verification level ${level} has an extends cycle: ${[...chain, cur].join(" -> ")}`);
+    chain.push(cur);
+    cur = levels[cur].extends;
+  }
+  return chain;
+}
+
+export const VerificationConfigSchema = z
+  .object({
+    /** Bumped by hand when the policy changes meaning; the fingerprint also hashes the content. */
+    version: z.number().int().positive().default(1),
+    default_importance: ImportanceSchema.default("normal"),
+    /** A critical parent job makes its workers' tasks at least as important. */
+    inherit_parent_importance: z.boolean().default(true),
+    levels: z
+      .object({
+        basic: VerificationLevelBundleSchema.prefault(DEFAULT_LEVELS.basic),
+        standard: VerificationLevelBundleSchema.prefault(DEFAULT_LEVELS.standard),
+        deep: VerificationLevelBundleSchema.prefault(DEFAULT_LEVELS.deep),
+        strict: VerificationLevelBundleSchema.prefault(DEFAULT_LEVELS.strict),
+      })
+      .strict()
+      .prefault({}),
+    /** tier -> importance -> level. T4 never reaches verification (it returns to the supervisor). */
+    matrix: z
+      .object({ T1: MatrixRowSchema.prefault(DEFAULT_MATRIX.T1), T2: MatrixRowSchema.prefault(DEFAULT_MATRIX.T2), T3: MatrixRowSchema.prefault(DEFAULT_MATRIX.T3) })
+      .strict()
+      .prefault({}),
+    /** Importance floors; the strongest matching floor wins. */
+    floors: z.array(VerificationFloorSchema).prefault(DEFAULT_FLOORS),
+    /** Level minimums, extra checks, and importance; matched before dispatch and again on the result. */
+    rules: z.array(VerificationRuleSchema).prefault(DEFAULT_VERIFICATION_RULES),
+    /**
+     * A task's total model requests across every purpose (classification, execution, review,
+     * repair). Review and repair reserves sit on top of the profile and tier execution caps,
+     * within this total; an explicit task budget.maxModelRequests narrows it.
+     */
+    max_total_requests_per_task: z.number().int().positive().default(24),
+    /**
+     * preferred: qualified reviewers are chosen first; without one, deep review uses a reviewer
+     * at the size floor and the verdict is marked reviewer_unqualified. required: deep review
+     * without a qualified reviewer is inconclusive. Strict always requires review_strict.
+     */
+    reviewer_qualification: z.enum(["preferred", "required"]).default("preferred"),
+    /** Pass rate on T3 review evaluations a reviewer needs for review_strict (strict reviews). */
+    review_strict_pass_threshold: z.number().min(0).max(1).default(0.85),
+    /** Requests reserved out of the task's total before execution. */
+    budget: z
+      .object({
+        review_requests: z.partialRecord(VerificationLevelSchema, z.number().int().min(0)).default({ deep: 4, strict: 6 }),
+        /** Per quality retry: a fixed count, or the execution allotment of the next tier. */
+        repair_requests: z.union([z.literal("same_as_execution_at_next_tier"), z.number().int().min(0)]).default("same_as_execution_at_next_tier"),
+      })
+      .strict()
+      .prefault({}),
+    failure: z
+      .object({
+        max_quality_retries: z.number().int().min(0).max(3).default(1),
+        /** Acceptance when required evidence is missing (a check not run, stale, or not runnable). */
+        on_insufficient_evidence: z.enum(["needs_supervisor", "not_verified"]).default("needs_supervisor"),
+        on_verification_budget_exhausted: z.enum(["verification_pending"]).default("verification_pending"),
+      })
+      .strict()
+      .prefault({}),
+    /** Who accepts strict results: the job's supervisor (model or Claude Code) or only a human. */
+    strict_acceptor: z.enum(["supervisor", "human"]).default("supervisor"),
+    /** V3: share of passed results sampled for audit. */
+    audit_sample_rate: z.number().min(0).max(1).default(0),
+  })
+  .strict()
+  .superRefine((v, ctx) => {
+    for (const level of VERIFICATION_LEVELS) {
+      let chain: VerificationLevel[];
+      try {
+        chain = levelChain(v.levels, level);
+      } catch (err) {
+        ctx.addIssue({ code: "custom", path: ["levels", level, "extends"], message: (err as Error).message });
+        continue;
+      }
+      const required = chain.map((l) => v.levels[l].review?.required).find((r) => r !== undefined) ?? false;
+      if (required && !(v.budget.review_requests[level] ?? 0)) {
+        ctx.addIssue({ code: "custom", path: ["budget", "review_requests", level], message: `level ${level} requires review; reserve at least 1 review request` });
+      }
+      const reserve = required ? (v.budget.review_requests[level] ?? 0) : 0;
+      if (reserve + 1 > v.max_total_requests_per_task) {
+        ctx.addIssue({ code: "custom", path: ["max_total_requests_per_task"], message: `level ${level} reserves ${reserve} review request(s); max_total_requests_per_task must leave at least one for execution` });
+      }
+    }
+    const ids = [...v.floors.map((f) => f.id), ...v.rules.map((r) => r.id)];
+    const dup = ids.find((id, i) => ids.indexOf(id) !== i);
+    if (dup) ctx.addIssue({ code: "custom", path: ["rules"], message: `duplicate floor/rule id ${dup}` });
+  });
+export type VerificationConfig = z.infer<typeof VerificationConfigSchema>;
 
 export const ConfigSchema = z
   .object({
@@ -376,6 +584,8 @@ export const ConfigSchema = z
       })
       .strict()
       .prefault({}),
+    /** Importance and verification policy: what evidence a result needs before it is accepted. */
+    verification: VerificationConfigSchema.prefault({}),
     panel: z
       .object({
         port: z.number().int().positive().default(4477),

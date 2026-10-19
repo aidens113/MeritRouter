@@ -68,7 +68,10 @@ export function specHash(spec: WorkerTask): string {
   return createHash("sha256").update(canonicalJson(rest)).digest("hex");
 }
 
-/** Successful under the dependency acceptance policy: completed and not explicitly unmet. */
+/**
+ * Successful under the dependency acceptance policy: completed and not explicitly unmet.
+ * not_verified and needs_supervisor pass (with a dependency_unverified warning event).
+ */
 export function dependencySatisfied(t: StoredTask): boolean {
   return t.row.state === "completed" && t.result?.acceptanceStatus !== "unmet";
 }
@@ -345,6 +348,11 @@ export class TaskStore {
           .prepare("UPDATE tasks SET state = 'queued', state_reason = NULL, updated_at = ? WHERE id = ?")
           .run(now, row.id);
         this.event(row.id, "dependencies_satisfied");
+        // V1 lets results nobody verified through, with a warning; the task graph tightens this.
+        for (const d of deps) {
+          const status = d.result?.acceptanceStatus;
+          if (status === "not_verified" || status === "needs_supervisor") this.event(row.id, "dependency_unverified", { dependency: d.row.id, acceptanceStatus: status });
+        }
       }
       // Interrupted or still-running prerequisites keep the dependent blocked.
     }
@@ -420,6 +428,22 @@ export class TaskStore {
         .run(finalState, finalResult.stopReason, JSON.stringify(finalResult), now, now, id);
       this.event(id, finalState, { stopReason: finalResult.stopReason });
       return finalState;
+    });
+  }
+
+  /**
+   * Replace a finished task's result in one transaction (acceptance decisions). `apply` sees the
+   * current row and returns the new result, the event to record, and a value to return; it may
+   * throw to refuse, and then nothing changes.
+   */
+  updateResult<T>(id: string, apply: (t: StoredTask) => { result: WorkerResult; event: { type: string; data?: unknown }; value: T }): T {
+    return immediate(this.db, () => {
+      const row = this.db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as TaskRow | undefined;
+      if (!row) throw new TaskValidationError(`unknown task ${id}`);
+      const out = apply(this.hydrate(row));
+      this.db.prepare("UPDATE tasks SET result_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(out.result), this.now(), id);
+      this.event(id, out.event.type, out.event.data);
+      return out.value;
     });
   }
 

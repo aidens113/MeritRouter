@@ -61,6 +61,16 @@ export const GLOSSARY = {
     "Each job commits to its own branch (by default switchyard/job-<id>) in an integration worktree. Nothing is merged or pushed for you: review the branch, then merge it yourself.",
   session:
     "One agent's run, whatever its role: a classifier call, a worker attempt at a task, or a supervisor. Everything it does is appended to a durable event log: each transcript message, model request and response, and every tool call as an intent written before it runs and an outcome written after. A retry or escalation is a new session linked to the previous one.",
+  importance:
+    "How much a task's result matters: low, normal, high, or critical. It is set by the submitter (high and critical need a reason), by a parent task, or raised by the policy's floors and rules (for example a security risk tag, or a change touching a critical path). It never lowers. With the tier, it picks the verification level.",
+  verification:
+    "The evidence a result needs before it is accepted. Basic: output contract, evidence provenance, scope, protected paths. Standard adds the declared checks, run on the submitted revision, and evidence per criterion. Deep adds an independent review. Strict also needs an explicit acceptance. The level is fixed in the task's contract before it runs and can only rise when the actual change is checked.",
+  contract:
+    "The acceptance contract: compiled once, after classification and before the first run, and stored unchanged with a SHA-256 digest. It holds the goal, the criteria with ids, the scope and base commits, the effective importance, the verification level and the rules that set it, the required checks, the request budget split (classification, execution, review, repair), and the rulebook and policy fingerprints.",
+  review:
+    "Deep and strict levels add an independent review: a reviewer model that served nothing in this task (another model family first) judges the result against the contract in its own session and submits a verdict per criterion, with evidence. A reviewer without the review qualification may still review (marked reviewer_unqualified) unless the policy requires it; strict always does. A failed review gets one repair, then a re-review. A reviewer missing evidence can ask for one targeted check. Review requests are charged under purpose verification, repairs under repair, within the contract's request budget.",
+  acceptance:
+    "Met: the verification policy was satisfied, or a supervisor or person accepted the result. Not verified: some criteria rest only on the worker's claims. Needs supervisor: the result waits for a decision (strict verification, missing evidence, or a review that has not run). Unmet: a check, criterion, or review failed, or the result was rejected. With verification.strict_acceptor set to human, only a person (CLI, MCP client, or this panel) can accept a strict result.",
   toolJournal:
     "Before a tool runs, its intent (name, arguments, and what it touches) is written to the session log; after it runs, its outcome. An intent with no outcome means the tool was still running, or the process stopped before it finished.",
 } as const;

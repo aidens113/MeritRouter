@@ -34,7 +34,12 @@ async function waitForRun(runId: string, timeoutMs = 60_000) {
 describe("qualification", () => {
   it("the shipped suite is valid", () => {
     const suite = loadSuite();
-    expect(suite.evals.map((e) => e.id)).toEqual(["fix-range", "add-duration", "rename-option", "locate-validator", "diagnose-crash"]);
+    expect(suite.evals.filter((e) => e.family !== "review").map((e) => e.id)).toEqual(["fix-range", "add-duration", "rename-option", "locate-validator", "diagnose-crash"]);
+    // Reviewer evaluations: the four kinds, spread over T1-T3 (all four at T3 for review_strict).
+    const review = suite.evals.filter((e) => e.family === "review");
+    expect(new Set(review.map((e) => e.review!.kind))).toEqual(new Set(["correct", "defect", "unverifiable", "style"]));
+    expect(new Set(review.filter((e) => e.tier === "T3").map((e) => e.review!.kind)).size).toBe(4);
+    expect(new Set(review.map((e) => e.tier))).toEqual(new Set(["T1", "T2", "T3"]));
   });
 
   it("every coding eval's hidden tests fail on the untouched fixture", async () => {

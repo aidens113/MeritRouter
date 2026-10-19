@@ -2,15 +2,17 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { ArrowLeft, CheckCircle2, CircleDashed, CircleX, Terminal } from "lucide-react";
-import { insights, isTerminal, type Classification, type Switchyard } from "switchyard-router";
+import { insights, isTerminal, type Classification, type Switchyard, type VerificationRecord } from "switchyard-router";
 import { getSy } from "@/lib/sy";
 import { SetupScreen } from "@/components/setup";
 import { RequestsTable } from "@/components/requests-table";
 import { SessionsTable } from "@/components/sessions-table";
-import { AcceptanceBadge, TaskStateBadge, TierBadge } from "@/components/task-badges";
+import { AcceptanceBadge, ImportanceBadge, OutcomeBadge, TaskStateBadge, TierBadge, VerificationBadge } from "@/components/task-badges";
 import { Badge, Callout, Card, CardHeader, cx, EmptyState, HelpTip, KeyValue, Mono, PageHeader } from "@/components/ui";
 import { ActionButton, AutoRefresh } from "@/components/client/actions";
 import { ArtifactViewer } from "@/components/client/artifact-viewer";
+import { RequestsByPurpose, TrailHeading, VerificationTrail } from "@/components/verification-trail";
+import { AcceptanceActions } from "@/components/client/acceptance";
 import { dateTime, humanize, modelHref, num } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -55,6 +57,8 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
   const res = d.result;
   const names = new Map(sy.catalog.endpoints().map((e) => [e.id, e.displayName ?? e.gatewayModelId]));
   const unresolved = new Set(res?.unresolvedCriteria ?? []);
+  const unresolvedIds = res?.unresolvedCriterionIds ? new Set(res.unresolvedCriterionIds) : null;
+  const verified = new Map((d.verification?.criteria ?? []).map((c) => [c.id, c]));
   const live = !isTerminal(st.state);
   const sessions = insights.sessionsView(sy, { taskId: st.taskId });
 
@@ -69,7 +73,9 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
           <span className="flex flex-wrap items-center gap-2">
             <TaskStateBadge state={st.state} />
             <TierBadge tier={st.tier} />
+            {d.importance ? <ImportanceBadge level={d.importance.level} /> : null}
             {res ? <AcceptanceBadge status={res.acceptanceStatus} /> : null}
+            {res?.verificationStatus ? <VerificationBadge status={res.verificationStatus} /> : null}
             <Mono>{st.taskId}</Mono>
           </span>
         }
@@ -106,28 +112,55 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
         </Callout>
       ) : null}
 
+      {d.acceptance.awaitingDecision && res ? (
+        <Callout tone="warn" title="This result needs a decision">
+          <div className="space-y-3">
+            <p>
+              {d.acceptance.supervisorAcceptance
+                ? `Strict verification: the result is accepted only by an explicit decision${d.acceptance.strictAcceptor === "human" ? ", and only a person can make it (verification.strict_acceptor is human)" : " from its supervisor or a person"}.`
+                : "Verification could not establish the result on its own. Accept it if it meets the goal and criteria, or reject it with what is wrong."}{" "}
+              <HelpTip term="acceptance" />
+            </p>
+            {d.verification?.reasons.length ? (
+              <ul className="list-disc space-y-0.5 pl-5 text-xs">
+                {d.verification.reasons.map((r) => (
+                  <li key={r}>{r}</li>
+                ))}
+              </ul>
+            ) : null}
+            <div className="max-w-xl">
+              <AcceptanceActions taskId={st.taskId} reasonRequired />
+            </div>
+          </div>
+        </Callout>
+      ) : null}
+
       <div className="grid gap-6 xl:grid-cols-[3fr_2fr]">
         <Card>
           <CardHeader title="Goal and acceptance criteria" />
           <div className="space-y-4 p-4 text-sm">
             <p className="whitespace-pre-wrap text-ink">{d.spec.goal}</p>
             <ol className="space-y-1.5">
-              {d.spec.constraints.acceptanceCriteria.map((c, i) => {
-                const open = [...unresolved].some((u) => u.includes(c) || u.startsWith(`[${i}]`));
+              {d.criteria.map((c, i) => {
+                const v = verified.get(c.id);
+                const open = v ? OPEN_OUTCOMES.includes(v.outcome) : unresolvedIds ? unresolvedIds.has(c.id) : [...unresolved].some((u) => u.includes(c.text) || u.startsWith(`[${i}]`));
+                const good = v ? v.outcome === "passed" : res?.acceptanceStatus === "met";
+                const label = v ? (CRITERION_OUTCOME[v.outcome] ?? v.outcome.replace(/_/g, " ")) : res?.acceptanceStatus === "met" ? "met, verified by checks" : "worker reports met (not verified)";
                 return (
-                  <li key={i} className="flex items-start gap-2">
-                    {!res ? (
+                  <li key={c.id} className="flex items-start gap-2">
+                    {!res || v?.outcome === "pending_review" ? (
                       <CircleDashed size={15} className="mt-0.5 shrink-0 text-ink-3" aria-label="pending" />
                     ) : open ? (
                       <CircleX size={15} className="mt-0.5 shrink-0 text-bad-ink" aria-label="unresolved" />
                     ) : (
-                      <CheckCircle2 size={15} className={cx("mt-0.5 shrink-0", res.acceptanceStatus === "met" ? "text-good-ink" : "text-accent-ink")} aria-label={res.acceptanceStatus === "met" ? "met (verified by checks)" : "worker reports met"} />
+                      <CheckCircle2 size={15} className={cx("mt-0.5 shrink-0", good ? "text-good-ink" : "text-accent-ink")} aria-label={label} />
                     )}
                     <span className="text-ink-2">
-                      <span className="tabular mr-1 text-ink-3">[{i}]</span>
-                      {c}
-                      {res && !open ? <span className="ml-1 text-[11px] text-ink-3">{res.acceptanceStatus === "met" ? "met, verified by checks" : "worker reports met (not verified)"}</span> : null}
-                      {res && open ? <span className="ml-1 text-[11px] text-bad-ink">unresolved</span> : null}
+                      <span className="mr-1 font-mono text-[11px] text-ink-3">{c.id}</span>
+                      {c.text}
+                      <span className="ml-1 text-[11px] text-ink-3">· verified by {c.verify === "check" ? (c.checks.length ? c.checks.join(", ") : "checks") : c.verify}</span>
+                      {res && !open ? <span className="ml-1 text-[11px] text-ink-3">· {label}</span> : null}
+                      {res && open ? <span className="ml-1 text-[11px] text-bad-ink">· {v ? label : "unresolved"}</span> : null}
                     </span>
                   </li>
                 );
@@ -201,6 +234,7 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
                           <Terminal size={14} className="text-ink-3" aria-hidden />
                           {c.exitCode === 0 ? <Badge tone="good">exit 0</Badge> : <Badge tone="bad">exit {c.exitCode ?? "killed"}</Badge>}
                           <code className="break-all font-mono text-xs text-ink-2">{c.command}</code>
+                          {c.revision !== undefined ? <span className="text-[11px] text-ink-3" title="The staged tree the check ran on">{c.revision ? `on ${c.revision.slice(0, 12)}` : "no revision"}</span> : null}
                         </div>
                         <ArtifactViewer refId={c.logRef} kind="check_log" label="Check output" />
                       </li>
@@ -212,7 +246,10 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
             <div className="space-y-4">
               <KeyValue
                 items={[
-                  ["Outcome", <span key="o" className="flex flex-wrap gap-1.5"><TaskStateBadge state={res.executionStatus} /><AcceptanceBadge status={res.acceptanceStatus} /></span>],
+                  ["Outcome", <span key="o" className="flex flex-wrap gap-1.5"><TaskStateBadge state={res.executionStatus} /><AcceptanceBadge status={res.acceptanceStatus} />{res.verificationStatus ? <VerificationBadge status={res.verificationStatus} /> : null}</span>],
+                  ...(res.changedPaths?.length ? ([["Changed", <span key="c" className="flex flex-wrap gap-1">{res.changedPaths.map((p) => <Mono key={p}>{p}</Mono>)}</span>]] as Array<[string, ReactNode]>) : []),
+                  ...(res.scopeViolation?.length ? ([["Out of scope", <span key="sv" className="flex flex-wrap gap-1 text-bad-ink">{res.scopeViolation.map((p) => <Mono key={p}>{p}</Mono>)}</span>]] as Array<[string, ReactNode]>) : []),
+                  ...(res.protectedPathsChanged?.length ? ([["Protected paths", <span key="pp" className="flex flex-wrap gap-1">{res.protectedPathsChanged.map((p) => <Mono key={p}>{p}</Mono>)}</span>]] as Array<[string, ReactNode]>) : []),
                   ["Model requests", num(res.usage.modelRequests)],
                   ["Provider attempts", `${num(res.usage.providerAttempts)}${res.usage.providerAttemptsExact ? "" : " (reported, not exact)"}`],
                   ["Tokens", `${num(res.usage.inputTokens)} in · ${num(res.usage.outputTokens)} out${res.usage.cachedInputTokens ? ` · ${num(res.usage.cachedInputTokens)} cached` : ""}`],
@@ -262,8 +299,10 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
         </Card>
       ) : null}
 
+      <ContractAndVerification d={d} names={names} />
+
       <Card>
-        <CardHeader title="Artifacts" description="Files the task produced: patches (with their base commit), model responses, check logs, and context manifests." />
+        <CardHeader title="Artifacts"description="Files the task produced: patches (with their base commit), model responses, check logs, and context manifests." />
         <div className="space-y-2 p-4">
           {d.artifacts.length ? (
             d.artifacts.map((a) => <ArtifactViewer key={a.id} refId={`artifact:${a.id}`} kind={a.kind} label={a.label} bytes={a.bytes} mediaType={a.media_type} defaultOpen={a.kind === "patch"} />)
@@ -321,9 +360,9 @@ function stateTitle(s: string): string {
 }
 
 function eventTone(type: string): string {
-  if (type === "completed") return "bg-good";
-  if (["failed", "budget_exhausted", "finish_rejected"].includes(type)) return "bg-bad";
-  if (["interrupted", "waiting_for_capacity", "escalated", "cancel_requested", "cancelled"].includes(type)) return "bg-warn";
+  if (type === "completed" || type === "result_accepted") return "bg-good";
+  if (["failed", "budget_exhausted", "finish_rejected", "result_rejected"].includes(type)) return "bg-bad";
+  if (["interrupted", "waiting_for_capacity", "escalated", "cancel_requested", "cancelled", "verification_raised", "dependency_unverified"].includes(type)) return "bg-warn";
   return "bg-accent";
 }
 
@@ -413,6 +452,230 @@ function ClassificationView({ c, sy, profile }: { c: Classification; sy: Switchy
           {c.rejectReason}
         </Callout>
       ) : null}
+    </div>
+  );
+}
+
+/** Criterion outcomes that leave the criterion open. */
+const OPEN_OUTCOMES: string[] = ["failed", "unknown", "not_run", "stale", "environment_failure"];
+
+const CRITERION_OUTCOME: Record<string, string> = {
+  passed: "verified",
+  failed: "failed",
+  claimed: "worker claims met, with evidence (not verified)",
+  unknown: "unknown: no evidence",
+  not_run: "checks did not run",
+  stale: "checks ran on another revision",
+  environment_failure: "a check could not run",
+  pending_review: "waiting for review",
+};
+
+/** "floor:risk-critical" -> "policy floor risk-critical"; "parent:t_x" -> "parent task t_x". */
+function importanceSource(source: string): string {
+  const [kind = "", ...rest] = source.split(":");
+  const id = rest.join(":");
+  const label: Record<string, string> = { task: "set on the task", default: "policy default", floor: "policy floor", rule: "policy rule", parent: "inherited from parent task" };
+  return `${label[kind] ?? kind}${id ? ` ${id}` : ""}`;
+}
+
+function ContractAndVerification({ d, names }: { d: insights.TaskDetail; names: Map<string, string> }) {
+  const c = d.contract?.contract;
+  const v = d.verification;
+  const t = d.trail;
+  if (!c && !v && !d.importance && !d.contractError) return null;
+  const followUps = t.reviews.length + t.retries.length + t.targetedChecks.length + t.raised.length;
+  return (
+    <Card>
+      <CardHeader
+        title="Contract and verification"
+        help="verification"
+        description="What evidence this result needs, fixed before the run, and what verification found. The level can only rise when the actual change is checked."
+        actions={d.result?.verificationStatus ? <VerificationBadge status={d.result.verificationStatus} /> : null}
+      />
+      <div className="grid gap-6 p-4 lg:grid-cols-2">
+        <div className="space-y-3 text-sm">
+          <h3 className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-ink-3">
+            Contract <HelpTip term="contract" />
+          </h3>
+          {d.contractError ? (
+            <Callout tone="bad" title="The stored contract failed validation">
+              {d.contractError}
+            </Callout>
+          ) : null}
+          {d.importance ? (
+            <KeyValue
+              items={[
+                [
+                  <span key="i" className="inline-flex items-center gap-1">
+                    Importance <HelpTip term="importance" />
+                  </span>,
+                  <span key="iv" className="flex flex-col gap-0.5">
+                    <span className="flex flex-wrap items-center gap-1.5">
+                      <ImportanceBadge level={d.importance.level} />
+                      <span className="text-xs text-ink-3">{importanceSource(d.importance.source)}</span>
+                    </span>
+                    {d.importance.requested && d.importance.requested !== d.importance.level ? <span className="text-xs text-ink-3">requested {d.importance.requested}</span> : null}
+                    {d.importance.reason ? <span className="text-xs text-ink-2">{d.importance.reason}</span> : null}
+                    {!d.importance.compiled ? <span className="text-xs text-ink-3">As requested; the contract is compiled when a worker picks the task up.</span> : null}
+                  </span>,
+                ],
+              ]}
+            />
+          ) : null}
+          {c ? (
+            <KeyValue
+              items={[
+                [
+                  "Level",
+                  <span key="l" className="flex flex-col gap-0.5">
+                    <span>
+                      <strong className="text-ink">{c.verification.level}</strong>
+                      <span className="text-xs text-ink-3">{c.verification.matrixLevel !== c.verification.level ? ` (matrix ${c.verification.matrixLevel} at ${c.tier}, raised by rules)` : ` (matrix at ${c.tier})`}</span>
+                    </span>
+                    {v?.raisedFrom ? <span className="text-xs text-serious-ink">Raised on the result from {v.raisedFrom} to {v.level}</span> : null}
+                  </span>,
+                ],
+                ...(c.verification.rulesMatched.length ? ([["Rules matched", <span key="r" className="flex flex-wrap gap-1">{c.verification.rulesMatched.map((r) => <Mono key={r}>{r}</Mono>)}</span>]] as Array<[string, ReactNode]>) : []),
+                ["Required checks", <span key="rc" className="flex flex-wrap gap-1">{c.verification.requiredChecks.map((r) => <Mono key={r}>{r}</Mono>)}</span>],
+                [
+                  "Review",
+                  c.verification.review.required
+                    ? `required${c.verification.review.independent ? ", independent" : ""}${c.verification.review.qualification ? `, qualification ${c.verification.review.qualification}` : ""}${c.verification.review.minTotalParametersB ? `, at least ${c.verification.review.minTotalParametersB}B` : ""}`
+                    : "not required",
+                ],
+                ["Acceptance", c.verification.acceptance === "supervisor" ? `explicit decision by ${c.verification.strictAcceptor === "human" ? "a person" : "the supervisor or a person"}` : "automatic when the policy is satisfied"],
+                ...(c.declaredChecks.length ? ([["Declared checks", <span key="dc" className="flex flex-col gap-0.5">{c.declaredChecks.map((x) => <code key={x} className="break-all font-mono text-xs text-ink-2">{x}</code>)}</span>]] as Array<[string, ReactNode]>) : []),
+                [
+                  "Request budget",
+                  <span key="b" className="tabular text-xs text-ink-2">
+                    {c.budget.total} total: {c.budget.classification} classification · {c.budget.execution} execution · {c.budget.review} review · {c.budget.repair} repair
+                    {c.budget.unallocated ? ` · ${c.budget.unallocated} unallocated` : ""}
+                  </span>,
+                ],
+                ["Fingerprints", <span key="f" className="text-xs text-ink-2">rulebook {c.fingerprints.rulebook ?? "none"} · policy {c.fingerprints.policy}</span>],
+                [
+                  "Digest",
+                  <span key="s" className="flex flex-col gap-0.5">
+                    <Mono>{`sha256 ${d.contract!.sha256.slice(0, 16)}…`}</Mono>
+                    <span className="text-xs text-ink-3">compiled {dateTime(d.contract!.createdAt)}, never edited</span>
+                  </span>,
+                ],
+              ]}
+            />
+          ) : (
+            <p className="text-ink-3">No contract yet. It is compiled after classification, before the first run{d.spec.profile === "supervise" ? "; jobs are verified by their job checks instead" : ""}.</p>
+          )}
+          <div>
+            <h4 className="mb-1 text-xs font-semibold text-ink-3">Model requests by purpose</h4>
+            <RequestsByPurpose used={t.requestsByPurpose} budget={c?.budget ?? null} />
+          </div>
+        </div>
+        <div className="space-y-3 text-sm">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-3">Verification record</h3>
+          {v ? <VerificationRecordView v={v} /> : <p className="text-ink-3">{d.result ? "This result has no verification record." : "Verification runs when the worker returns a result."}</p>}
+        </div>
+      </div>
+      {followUps ? (
+        <div className="space-y-3 border-t border-line p-4">
+          <TrailHeading />
+          <VerificationTrail trail={t} criteria={new Map(d.criteria.map((x) => [x.id, x.text]))} names={names} />
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
+function VerificationRecordView({ v }: { v: VerificationRecord }) {
+  return (
+    <div className="space-y-4">
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th>Check</th>
+            <th>Outcome</th>
+            <th>Detail</th>
+          </tr>
+        </thead>
+        <tbody>
+          {v.checks.map((c) => (
+            <tr key={c.name}>
+              <td className="whitespace-nowrap">
+                <span className={cx("font-mono text-xs", c.required ? "text-ink" : "text-ink-3")}>{c.name}</span>
+                {c.required ? null : <span className="ml-1 text-[10px] text-ink-3">(not required)</span>}
+              </td>
+              <td>
+                <OutcomeBadge outcome={c.outcome} />
+              </td>
+              <td className="text-xs text-ink-2">{c.detail}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {v.criteria.length ? (
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Criterion</th>
+              <th>Outcome</th>
+              <th>Evidence</th>
+            </tr>
+          </thead>
+          <tbody>
+            {v.criteria.map((c) => (
+              <tr key={c.id}>
+                <td className="text-xs text-ink-2">
+                  <span className="mr-1 font-mono text-ink-3">{c.id}</span>
+                  {c.text}
+                  <span className="ml-1 text-ink-3">({c.verify})</span>
+                  {c.note ? <div className="mt-0.5 text-ink-3">{c.note}</div> : null}
+                </td>
+                <td>
+                  <OutcomeBadge outcome={c.outcome} />
+                </td>
+                <td>
+                  <span className="flex flex-wrap gap-1">{c.evidenceRefs.length ? c.evidenceRefs.map((e) => <Mono key={e}>{e}</Mono>) : <span className="text-xs text-ink-3">–</span>}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : null}
+      {v.reasons.length ? (
+        <div>
+          <h4 className="mb-1 text-xs font-semibold text-ink-3">Why</h4>
+          <ul className="list-disc space-y-0.5 pl-5 text-xs text-ink-2">
+            {v.reasons.map((r) => (
+              <li key={r}>{r}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      <div>
+        <h4 className="mb-1 text-xs font-semibold text-ink-3">Decisions</h4>
+        {v.decisions.length ? (
+          <ul className="space-y-1.5">
+            {v.decisions.map((x, i) => (
+              <li key={i} className="rounded-lg border border-line px-3 py-2 text-xs">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone={x.decision === "accepted" ? "good" : "bad"}>{x.decision}</Badge>
+                  <span className="text-ink">
+                    by {x.by.id} <span className="text-ink-3">({x.by.kind})</span>
+                  </span>
+                  <span className="tabular text-ink-3">{dateTime(x.at)}</span>
+                </div>
+                {x.reason ? <p className="mt-1 text-ink-2">{x.reason}</p> : null}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-xs text-ink-3">No supervisor or human decision recorded.</p>
+        )}
+      </div>
+      <p className="text-[11px] text-ink-3">
+        Policy {v.policyFingerprint}
+        {v.contractSha256 ? ` · contract ${v.contractSha256.slice(0, 12)}` : ""}
+        {v.rulesMatched.length ? ` · rules ${v.rulesMatched.join(", ")}` : ""}
+      </p>
     </div>
   );
 }

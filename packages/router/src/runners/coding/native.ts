@@ -58,7 +58,7 @@ export class NativeCodingRunner implements CodingRunner {
         role: "system",
         content: `${charterFor(ctx.cfg, role)}\n\n## Tools\nYour workspace is repository "${alias}" (an isolated worktree). Edit only paths matching: ${(spec.constraints.allowedPaths ?? []).join(", ")}. Read with read_file/search; edit with write_file/replace_in_file/delete_file${patterns.length ? "; run allowed commands with run_command" : ""}. When done, call submit_result once.\n\n## Result\n${OUTPUT_CONTRACT}`,
       },
-      { role: "user", content: `${taskBrief(spec)}${checks}\nProvided context:\n${renderSources(sources) || "(none)"}\n${brainContext(env)}` },
+      { role: "user", content: `${taskBrief(spec, ctx.retry)}${checks}\nProvided context:\n${renderSources(sources) || "(none)"}\n${brainContext(env)}` },
     ];
     const lost = ctx.resume && !reused ? "\nYour previous worktree no longer exists: this is a fresh worktree, and your earlier edits are not in it. Re-apply them." : "";
     const messages = ctx.resume ? ctx.resume.plan.messages : fresh;
@@ -91,6 +91,8 @@ export class NativeCodingRunner implements CodingRunner {
       stopReason: loop.kind === "terminal" ? "worker_submitted" : loop.kind === "budget_exhausted" ? `model request budget (${ctx.budget.maxModelRequests}) exhausted` : "invalid_output",
       state: loop.kind === "budget_exhausted" ? "budget_exhausted" : "completed",
       summaryLead: loop.kind === "terminal" ? loop.value.output.summary : "",
+      universe: env.universe,
+      output: loop.kind === "terminal" ? loop.value.output : null,
     });
   }
 }

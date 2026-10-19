@@ -1,10 +1,15 @@
 import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
-import { ConfigSchema, MODALITIES, PROFILE_NAMES, TIER_NAMES, type Modality, type ProfileName, type TierName } from "../config/schema.js";
+import { ConfigSchema, MODALITIES, PROFILE_NAMES, TIER_NAMES, type Importance, type Modality, type ProfileName, type TierName } from "../config/schema.js";
 import { formatIssues, parseConfig } from "../config/load.js";
 import type { Switchyard } from "../core/service.js";
-import type { TaskState, WorkerResult, WorkerTask } from "../core/task.js";
+import { criteria as taskCriteria, type Criterion, type SupervisorDecision, type TaskState, type VerificationRecord, type WorkerResult, type WorkerTask } from "../core/task.js";
+import { verificationTrail, type TaskVerificationTrail } from "../verification/trail.js";
+import { SwitchyardError } from "../core/errors.js";
+import type { AcceptanceDecisionOutcome } from "../runners/types.js";
+import type { StoredContract } from "../verification/contract.js";
+import { resolveLevel } from "../verification/policy.js";
 import type { EndpointOverride, ModelEndpoint, RoutingOverride } from "../models/catalog.js";
 import type { ChainVerification } from "../models/chains.js";
 import { planRoute, type CandidateExplanation } from "../routing/select.js";
@@ -343,12 +348,54 @@ export interface TaskDetail {
   events: Array<{ ts: number; type: string; data: unknown }>;
   artifacts: ArtifactRow[];
   requests: RequestRow[];
+  /** The acceptance criteria with their ids (strings get c1..cn). */
+  criteria: Criterion[];
+  /** The stored acceptance contract; null before classification and for supervisor jobs. */
+  contract: StoredContract | null;
+  /** Set when the stored contract failed validation or its digest check. */
+  contractError: string | null;
+  /** The result's verification record, if verification ran. */
+  verification: VerificationRecord | null;
+  importance: TaskImportanceView | null;
+  acceptance: TaskAcceptanceView;
+  /** Reviews, retries, targeted checks, raised levels, and requests by purpose. */
+  trail: TaskVerificationTrail;
+}
+
+/** Effective importance: from the result when it was raised there, else the contract, else the request. */
+export interface TaskImportanceView {
+  level: Importance;
+  requested: Importance | null;
+  reason: string | null;
+  source: string;
+  /** False until the contract is compiled: the level shown is only what was requested. */
+  compiled: boolean;
+}
+
+export interface TaskAcceptanceView {
+  /** Finished, completed, and waiting for a supervisor's or a human's decision. */
+  awaitingDecision: boolean;
+  /** The effective verification level requires an explicit acceptance (strict). */
+  supervisorAcceptance: boolean;
+  /** verification.strict_acceptor: with "human", only the CLI, MCP, or panel can accept a strict result. */
+  strictAcceptor: "supervisor" | "human";
+  decisions: SupervisorDecision[];
 }
 
 export function taskDetail(sy: Switchyard, id: string): TaskDetail | null {
   const t = sy.tasks.get(id);
   if (!t) return null;
   const row = t.row as typeof t.row & { classification_json?: string | null };
+  let contract: StoredContract | null = null;
+  let contractError: string | null = null;
+  try {
+    contract = sy.contract(id);
+  } catch (err) {
+    contractError = (err as Error).message;
+  }
+  const verification = t.result?.verification ?? null;
+  const strictAcceptor = contract?.contract.verification.strictAcceptor ?? sy.cfg.verification.strict_acceptor;
+  const supervisorAcceptance = verification ? resolveLevel(sy.cfg.verification, verification.level).acceptance === "supervisor" || contract?.contract.verification.acceptance === "supervisor" : contract?.contract.verification.acceptance === "supervisor";
   return {
     status: sy.getStatus([id])[0]!,
     spec: t.spec,
@@ -357,7 +404,42 @@ export function taskDetail(sy: Switchyard, id: string): TaskDetail | null {
     events: sy.tasks.events(id, 200),
     artifacts: sy.artifacts.listForTask(id),
     requests: requestLog(sy, { taskId: id, limit: 100 }),
+    criteria: taskCriteria(t.spec),
+    contract,
+    contractError,
+    verification,
+    importance: importanceView(t.spec, contract, verification),
+    trail: verificationTrail({ tasks: sy.tasks, catalog: sy.catalog, sessions: sy.sessions, admission: sy.gate.admission }, id, verification),
+    acceptance: {
+      awaitingDecision: t.row.state === "completed" && t.result?.acceptanceStatus === "needs_supervisor",
+      supervisorAcceptance,
+      strictAcceptor,
+      decisions: verification?.decisions ?? [],
+    },
   };
+}
+
+function importanceView(spec: WorkerTask, contract: StoredContract | null, verification: VerificationRecord | null): TaskImportanceView | null {
+  const c = contract?.contract.importance;
+  if (verification) return { level: verification.importance, requested: c?.requested ?? spec.importance ?? null, reason: c?.reason ?? spec.importanceReason ?? null, source: verification.importanceSource, compiled: true };
+  if (c) return { level: c.level, requested: c.requested, reason: c.reason, source: c.source, compiled: true };
+  if (spec.importance) return { level: spec.importance, requested: spec.importance, reason: spec.importanceReason ?? null, source: "task", compiled: false };
+  return null;
+}
+
+/**
+ * Accept or reject a finished task's result from a surface outside a job. Human acceptance is an
+ * explicit manual override: only the CLI (`{kind: "human", id: "cli:<os user>"}`) and the panel
+ * (`{kind: "human", id: "panel"}`) are human. The MCP client is normally an agent (Claude Code)
+ * acting as the user's supervisor, so it records `{kind: "supervisor", id: "mcp:<client>"}` and,
+ * with `verification.strict_acceptor: human`, cannot accept a strict result. Refusals are
+ * SwitchyardErrors with the library's code (reason_required, cannot_accept_unmet,
+ * human_acceptance_required, task_invalid, not_found).
+ */
+export function decideTaskAcceptance(sy: Switchyard, id: string, decision: "accept" | "reject", by: SupervisorDecision["by"], reason: string | null): AcceptanceDecisionOutcome {
+  if (!sy.tasks.get(id)) throw new SwitchyardError("not_found", `unknown task ${id}`);
+  const input = { by, reason };
+  return decision === "accept" ? sy.acceptTask(id, input) : sy.rejectTask(id, input);
 }
 
 export function artifactText(sy: Switchyard, ref: string, maxBytes = 200_000): { row: ArtifactRow; text: string; truncated: boolean } | null {
@@ -534,6 +616,7 @@ export function startQualification(sy: Switchyard, endpointId: string, opts: { e
 }
 
 export type { ModelEndpoint, EndpointOverride, RoutingOverride, CandidateExplanation, Classification, TaskState };
+export type { ReviewView, RetryView, TargetedCheckView, RaisedLevelView, TaskVerificationTrail } from "../verification/trail.js";
 
 // ---------- jobs (standalone supervisors) ----------
 
