@@ -9,21 +9,22 @@ import { Switchyard, type SwitchyardOptions } from "../src/core/service.js";
 
 export const NOW_ISO = new Date().toISOString();
 
+/** A manual catalog endpoint; platform/model default to openrouter/vendor/big-a:free. */
 export function endpoint(overrides: Record<string, unknown> = {}) {
+  const providerId = (overrides.providerId as string) ?? "openrouter";
+  const gatewayModelId = (overrides.gatewayModelId as string) ?? "vendor/big-a:free";
   return {
-    id: "big-a",
-    providerId: "openrouter",
-    providerModelId: "vendor/big-a",
-    gatewayModelId: "vendor/big-a:free",
-    quotaScopeIds: ["openrouter:account"],
+    id: `${providerId}/${gatewayModelId}`,
+    providerId,
+    gatewayModelId,
+    displayName: gatewayModelId,
     totalParametersB: 550,
     activeParametersB: 55,
     contextLimitTokens: 64000,
     outputLimitTokens: 8000,
+    inputModalities: ["text"],
     supportsTools: true,
-    supportsImages: false,
     supportsStructuredOutput: true,
-    approvedProfiles: ["summarize", "inspect", "analyze", "implement", "review"],
     pricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0, freeVerified: true },
     sourceUrls: ["https://example.com/model"],
     checkedAt: NOW_ISO,
@@ -34,17 +35,18 @@ export function endpoint(overrides: Record<string, unknown> = {}) {
 export function baseConfig(overrides: Record<string, unknown> = {}) {
   return {
     version: 1,
-    gateway: { adapter: "freellmapi", base_url: "http://127.0.0.1:9/v1", require_verified_pools: false },
+    gateway: { adapter: "freellmapi", base_url: "http://127.0.0.1:9/v1", require_verified_chains: false },
     storage: { directory: ".switchyard" },
     models: { file: "models.yaml" },
     repositories: { core: { path: "repo" } },
     execution: { max_concurrent_tasks: 4, lease_seconds: 30 },
+    scoring: { batch_window_ms: 50 },
     profiles: {
-      summarize: { mode: "completion", min_total_parameters_b: 30, gateway_model: "auto:switchyard-summary", max_output_tokens: 2000, batching: { enabled: true, max_items: 4, per_item_output_tokens: 500 } },
-      inspect: { mode: "read_only", min_total_parameters_b: 30, gateway_model: "auto:switchyard-inspect", max_model_requests: 4, tools: "repository_read" },
-      analyze: { mode: "read_only", min_total_parameters_b: 100, gateway_model: "auto:switchyard-analysis", max_model_requests: 6, tools: "repository_read_and_artifacts" },
-      implement: { mode: "coding", min_total_parameters_b: 100, gateway_model: "auto:switchyard-code", max_model_requests: 8, tools: "scoped_edit_and_checks", workspace: "isolated_worktree" },
-      review: { mode: "read_only", min_total_parameters_b: 100, gateway_model: "auto:switchyard-review", max_model_requests: 4, tools: "repository_read_and_artifacts" },
+      summarize: { mode: "completion", min_total_parameters_b: 30, max_model_requests: 4, max_output_tokens: 2000, classify: "never", batching: { enabled: true, max_items: 4, per_item_output_tokens: 500 } },
+      inspect: { mode: "read_only", min_total_parameters_b: 30, max_model_requests: 4, tools: "repository_read", classify: "never" },
+      analyze: { mode: "read_only", min_total_parameters_b: 100, max_model_requests: 6, tools: "repository_read_and_artifacts", classify: "auto", min_tier: "T2" },
+      implement: { mode: "coding", min_total_parameters_b: 100, max_model_requests: 8, tools: "scoped_edit_and_checks", workspace: "isolated_worktree" },
+      review: { mode: "read_only", min_total_parameters_b: 100, max_model_requests: 4, tools: "repository_read_and_artifacts" },
     },
     ...overrides,
   };
@@ -61,7 +63,12 @@ function gitIn(cwd: string, ...args: string[]) {
   execFileSync("git", args, { cwd, stdio: "pipe" });
 }
 
-export function makeEnv(opts: { config?: Record<string, unknown>; endpoints?: unknown[]; files?: Record<string, string> } = {}): Env {
+export function commitAll(repo: string, message = "change") {
+  gitIn(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "add", "-A");
+  gitIn(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", message);
+}
+
+export function makeEnv(opts: { config?: Record<string, unknown>; endpoints?: unknown[]; overrides?: Record<string, unknown>; files?: Record<string, string> } = {}): Env {
   const dir = mkdtempSync(path.join(tmpdir(), "switchyard-test-"));
   const repo = path.join(dir, "repo");
   mkdirSync(repo);
@@ -74,9 +81,8 @@ export function makeEnv(opts: { config?: Record<string, unknown>; endpoints?: un
     writeFileSync(path.join(repo, rel), content);
   }
   gitIn(repo, "init", "-q", "-b", "main");
-  gitIn(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "add", "-A");
-  gitIn(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "init");
-  writeFileSync(path.join(dir, "models.yaml"), YAML.stringify({ version: 1, endpoints: opts.endpoints ?? [endpoint()] }));
+  commitAll(repo, "init");
+  writeFileSync(path.join(dir, "models.yaml"), YAML.stringify({ version: 1, endpoints: opts.endpoints ?? [endpoint()], overrides: opts.overrides ?? {} }));
   const raw = opts.config ?? baseConfig();
   const configPath = path.join(dir, "switchyard.config.yaml");
   writeFileSync(configPath, YAML.stringify(raw));
@@ -84,7 +90,10 @@ export function makeEnv(opts: { config?: Record<string, unknown>; endpoints?: un
   return { dir, repo, cfg, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
-export function reply(content: string | null, o: { model?: string; provider?: string; attempts?: number; usage?: Partial<ChatResponse["usage"]>; toolCalls?: ChatResponse["message"]["tool_calls"] } = {}): ChatResponse {
+export function reply(
+  content: string | null,
+  o: { model?: string; provider?: string; attempts?: number; usage?: Partial<ChatResponse["usage"]>; toolCalls?: ChatResponse["message"]["tool_calls"] } = {},
+): ChatResponse {
   return {
     message: { content, ...(o.toolCalls ? { tool_calls: o.toolCalls } : {}) },
     finishReason: "stop",
@@ -103,6 +112,7 @@ export function reply(content: string | null, o: { model?: string; provider?: st
 
 export type Handler = (req: ChatRequest, n: number) => ChatResponse | Promise<ChatResponse>;
 
+/** In-process gateway double. By default replies as the endpoint whose chain was requested. */
 export class ScriptedClient implements InferenceClient {
   readonly name = "scripted";
   readonly requests: ChatRequest[] = [];
@@ -135,4 +145,11 @@ export function summarizeTask(extra: Record<string, unknown> = {}) {
     constraints: { acceptanceCriteria: ["mentions the error"] },
     ...extra,
   };
+}
+
+/** Map a chain name back to the endpoint so replies can claim the right served model. */
+export function servedFor(sy: Switchyard, req: ChatRequest): { model: string; provider: string } {
+  const chain = req.model.replace(/^auto:/, "");
+  const ep = sy.catalog.endpoints().find((e) => e.chainName === chain)!;
+  return { model: ep.gatewayModelId, provider: ep.providerId };
 }

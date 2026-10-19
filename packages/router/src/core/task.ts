@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { ProfileNameSchema } from "../config/schema.js";
+import { ProfileNameSchema, TierNameSchema } from "../config/schema.js";
+import { TagsSchema } from "../scoring/rulebook.js";
 
 /**
  * File reference: `<alias>:<relative/path>` with an optional `#L<start>-L<end>` range.
@@ -36,6 +37,22 @@ export const WorkerTaskSchema = z
       })
       .strict(),
     dependsOn: z.array(z.string().min(1)).optional(),
+    /** Supervisor's own difficulty read; skips the classifier and can only raise the tier. */
+    hints: z
+      .object({
+        difficulty: z.enum(["T1", "T2", "T3", "T4"]).optional(),
+        tags: TagsSchema.partial().optional(),
+      })
+      .strict()
+      .optional(),
+    /** Routing constraints: a minimum tier, or one specific endpoint (still subject to hard checks). */
+    routing: z
+      .object({
+        tier: TierNameSchema.optional(),
+        endpointId: z.string().min(1).optional(),
+      })
+      .strict()
+      .optional(),
     budget: z
       .object({
         maxModelRequests: z.number().int().positive().optional(),
@@ -113,6 +130,24 @@ export const WorkerResultSchema = z
     unresolvedCriteria: z.array(z.string()),
     usage: UsageSchema,
     servedEndpoints: z.array(z.string()),
+    classification: z
+      .object({
+        tier: z.string(),
+        score: z.number(),
+        basis: z.string(),
+        rulebookVersion: z.string(),
+        breakdown: z.array(z.object({ rule: z.string(), points: z.number(), detail: z.string() })),
+      })
+      .nullable()
+      .default(null),
+    routing: z
+      .object({
+        tier: z.string(),
+        escalatedFrom: z.string().nullable(),
+        attempts: z.array(z.object({ endpointId: z.string(), outcome: z.string() })),
+      })
+      .nullable()
+      .default(null),
   })
   .strict();
 export type WorkerResult = z.infer<typeof WorkerResultSchema>;

@@ -139,4 +139,80 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX pool_verifications_model ON pool_verifications(gateway_model, verified_at);
   `,
+  `
+  CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+
+  CREATE TABLE endpoints (
+    id TEXT PRIMARY KEY,
+    data_json TEXT NOT NULL,
+    first_seen_at INTEGER NOT NULL,
+    last_scanned_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE endpoint_overrides (
+    endpoint_id TEXT PRIMARY KEY,
+    data_json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE routing_overrides (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile TEXT,
+    tier TEXT,
+    kind TEXT NOT NULL CHECK (kind IN ('force', 'prefer', 'block')),
+    endpoint_id TEXT NOT NULL,
+    allow_below_floor INTEGER NOT NULL DEFAULT 0,
+    note TEXT,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE classifications (
+    spec_hash TEXT NOT NULL,
+    rulebook_version TEXT NOT NULL,
+    data_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (spec_hash, rulebook_version)
+  );
+
+  CREATE TABLE scans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at INTEGER NOT NULL,
+    finished_at INTEGER,
+    ok INTEGER,
+    summary_json TEXT
+  );
+
+  CREATE TABLE qualification_runs (
+    id TEXT PRIMARY KEY,
+    endpoint_id TEXT NOT NULL,
+    suite_version TEXT NOT NULL,
+    status TEXT NOT NULL,
+    started_at INTEGER NOT NULL,
+    finished_at INTEGER,
+    detail_json TEXT
+  );
+
+  CREATE TABLE qualification_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL REFERENCES qualification_runs(id),
+    endpoint_id TEXT NOT NULL,
+    eval_id TEXT NOT NULL,
+    family TEXT NOT NULL,
+    tier TEXT NOT NULL,
+    trial INTEGER NOT NULL,
+    outcome TEXT NOT NULL CHECK (outcome IN ('pass', 'fail', 'infra_error')),
+    task_id TEXT,
+    detail_json TEXT,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX qualification_results_endpoint ON qualification_results(endpoint_id, family, tier);
+
+  ALTER TABLE tasks ADD COLUMN tier TEXT;
+  ALTER TABLE tasks ADD COLUMN classification_json TEXT;
+  ALTER TABLE tasks ADD COLUMN purpose TEXT NOT NULL DEFAULT 'work';
+  ALTER TABLE model_requests ADD COLUMN endpoint_id TEXT;
+  ALTER TABLE model_requests ADD COLUMN tier TEXT;
+  ALTER TABLE model_requests ADD COLUMN route_note TEXT;
+  `,
 ];

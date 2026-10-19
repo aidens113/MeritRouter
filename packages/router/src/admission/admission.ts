@@ -2,7 +2,7 @@ import type { Db } from "../storage/db.js";
 import { immediate, newId } from "../storage/db.js";
 import type { TaskStore } from "../storage/tasks.js";
 import type { ResolvedConfig } from "../config/load.js";
-import type { ProfileName } from "../config/schema.js";
+import type { ProfileName, TierName } from "../config/schema.js";
 import type { WorkerTask } from "../core/task.js";
 import { AdmissionDenied } from "../core/errors.js";
 import type { ChatResponse } from "../gateway/types.js";
@@ -15,8 +15,9 @@ export interface EffectiveBudget {
   maxPaidUsd: 0;
 }
 
-export function effectiveBudget(cfg: ResolvedConfig, spec: WorkerTask): EffectiveBudget {
+export function effectiveBudget(cfg: ResolvedConfig, spec: WorkerTask, tier: TierName | null = null): EffectiveBudget {
   const profile = cfg.profiles[spec.profile]!;
+  const tierCap = tier ? cfg.tiers[tier].max_model_requests : Number.MAX_SAFE_INTEGER;
   const narrow = (configured: number | undefined, requested: number | undefined): number | null => {
     if (configured === undefined) return requested ?? null;
     return requested === undefined ? configured : Math.min(configured, requested);
@@ -24,6 +25,7 @@ export function effectiveBudget(cfg: ResolvedConfig, spec: WorkerTask): Effectiv
   return {
     maxModelRequests: Math.min(
       profile.max_model_requests,
+      tierCap,
       cfg.execution.max_model_requests_per_task,
       spec.budget?.maxModelRequests ?? Number.MAX_SAFE_INTEGER,
     ),
@@ -47,6 +49,9 @@ export interface ReservationRequest {
   profile: ProfileName;
   purpose: string;
   gatewayModel: string;
+  endpointId: string | null;
+  tier: string | null;
+  routeNote?: string | null;
   /** Physical request totals (a batch is one request shared by several tasks). */
   estInputTokens: number;
   reservedOutputTokens: number;
@@ -180,10 +185,10 @@ export class Admission {
       const requestId = newId("r");
       this.db
         .prepare(
-          `INSERT INTO model_requests (id, execution_id, purpose, gateway_model, status, reserved_at, est_input_tokens, reserved_output_tokens)
-           VALUES (?, ?, ?, ?, 'reserved', ?, ?, ?)`,
+          `INSERT INTO model_requests (id, execution_id, purpose, gateway_model, endpoint_id, tier, route_note, status, reserved_at, est_input_tokens, reserved_output_tokens)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'reserved', ?, ?, ?)`,
         )
-        .run(requestId, req.executionId, req.purpose, req.gatewayModel, now, req.estInputTokens, req.reservedOutputTokens);
+        .run(requestId, req.executionId, req.purpose, req.gatewayModel, req.endpointId, req.tier, req.routeNote ?? null, now, req.estInputTokens, req.reservedOutputTokens);
       const charge = this.db.prepare(
         "INSERT INTO request_charges (request_id, task_id, input_tokens, output_tokens, tokens_exact) VALUES (?, ?, ?, ?, 0)",
       );

@@ -5,7 +5,8 @@ import { evidenceUniverse, validateWorkerOutput, type EvidenceUniverse } from ".
 import { loadSources, readersFor, renderSources } from "../context/sources.js";
 import { sliceLines, type RepoReader } from "../context/repo-reader.js";
 import { AdmissionDenied } from "../core/errors.js";
-import { baseResult, type RunContext, type RunOutcome } from "./types.js";
+import { ask, baseResult, type RunContext, type RunOutcome } from "./types.js";
+import { planLimits } from "../routing/select.js";
 import { systemPrompt, taskBrief } from "./prompts.js";
 import { baseCommitsFor, contextManifest } from "./completion.js";
 
@@ -176,8 +177,8 @@ export async function runReadOnly(ctx: RunContext): Promise<RunOutcome> {
   const allowArtifacts = profile.tools === "repository_read_and_artifacts";
   const tools = repoTools(spec.repositoryAliases, allowArtifacts);
   const maxTokens = Math.min(profile.max_output_tokens, spec.budget?.maxOutputTokens ?? Infinity);
-  const pool = ctx.gate.pool(spec.profile);
-  const inputBudget = Math.max(2000, pool.contextLimitTokens - maxTokens - estimateTokens([], tools) - 500);
+  const limits = planLimits(ctx.plan, ctx.cfg.routing.max_endpoint_fallbacks);
+  const inputBudget = Math.max(2000, limits.contextLimitTokens - maxTokens - estimateTokens([], tools) - 500);
 
   const messages: ChatMessage[] = [
     {
@@ -220,13 +221,10 @@ export async function runReadOnly(ctx: RunContext): Promise<RunOutcome> {
 
     let response;
     try {
-      ({ response } = await ctx.gate.request({
-        profile: spec.profile,
+      ({ response } = await ask(ctx, {
         executionId,
         purpose: "tool_loop",
-        participants: [{ taskId: ctx.taskId, leaseOwner: ctx.leaseOwner, budget: ctx.budget }],
         chat: { messages, max_tokens: maxTokens, temperature: 0.2, tools, tool_choice: remaining === 1 ? "required" : "auto" },
-        signal: ctx.signal,
       }));
     } catch (err) {
       if (err instanceof AdmissionDenied && err.reason === "task_request_budget_exhausted") continue;

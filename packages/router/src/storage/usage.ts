@@ -1,5 +1,5 @@
 import type { Db } from "./db.js";
-import type { EndpointCatalog } from "../models/catalog.js";
+import type { ModelEndpoint } from "../models/catalog.js";
 import type { Usage } from "../core/task.js";
 
 interface ChargeRow {
@@ -23,7 +23,7 @@ interface ChargeRow {
  * Task usage derived from the admission ledger. Exact only when every charged request was a
  * single-task request with provider-reported tokens; batch shares are labelled estimated.
  */
-export function taskUsage(db: Db, catalog: EndpointCatalog, taskId: string): { usage: Usage; servedEndpoints: string[] } {
+export function taskUsage(db: Db, catalog: { endpoints(): ModelEndpoint[] }, taskId: string): { usage: Usage; servedEndpoints: string[] } {
   const rows = db
     .prepare(
       `SELECT c.request_id, c.input_tokens, c.output_tokens, c.tokens_exact, r.status, r.provider_attempts, r.attempts_exact,
@@ -77,7 +77,7 @@ export function taskUsage(db: Db, catalog: EndpointCatalog, taskId: string): { u
     if (r.reported_cost_usd !== null) reportedCost = (reportedCost ?? 0) + r.reported_cost_usd / r.participants;
     if (r.served_endpoint_id) {
       served.add(r.served_endpoint_id);
-      const ep = catalog.endpoints.find((e) => e.id === r.served_endpoint_id);
+      const ep = catalog.endpoints().find((e) => e.id === r.served_endpoint_id);
       const pin = ep?.pricing.inputUsdPerMillion;
       const pout = ep?.pricing.outputUsdPerMillion;
       if (pin === null || pin === undefined || pout === null || pout === undefined) estCostKnown = false;

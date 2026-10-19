@@ -1,9 +1,13 @@
 import type { ResolvedConfig } from "../config/load.js";
+import { TIER_NAMES, type TierName } from "../config/schema.js";
 import type { Db } from "../storage/db.js";
 import type { ArtifactStore } from "../storage/artifacts.js";
 import type { StoredTask, TaskStore } from "../storage/tasks.js";
 import { taskUsage } from "../storage/usage.js";
-import type { Gate } from "../gateway/gate.js";
+import type { Gate, GateAttempt } from "../gateway/gate.js";
+import type { Catalog } from "../models/catalog.js";
+import type { TaskRouter, Prepared } from "../routing/router.js";
+import type { RoutePlan } from "../routing/select.js";
 import { effectiveBudget } from "../admission/admission.js";
 import { AdmissionDenied, GatewayError } from "./errors.js";
 import { WorkerResultSchema, type TaskState, type WorkerResult } from "./task.js";
@@ -11,6 +15,7 @@ import { baseResult, type RunContext, type RunOutcome, type RunnerResult } from 
 import { runCompletion } from "../runners/completion.js";
 import { runReadOnly } from "../runners/readonly.js";
 import { runBatch } from "../runners/batch.js";
+import type { Classification } from "../scoring/score.js";
 
 export type AbortReason = "cancel" | "deadline" | "lease_lost" | "shutdown";
 
@@ -22,6 +27,8 @@ export interface ExecutorDeps {
   cfg: ResolvedConfig;
   db: Db;
   gate: Gate;
+  catalog: Catalog;
+  router: TaskRouter;
   tasks: TaskStore;
   artifacts: ArtifactStore;
   owner: string;
@@ -36,25 +43,38 @@ type Disposition =
   | { kind: "defer"; at: number; reason: string }
   | { kind: "abandon"; reason: string };
 
+interface Routing {
+  classification: Classification | null;
+  tier: TierName | null;
+  escalatedFrom: TierName | null;
+  attempts: GateAttempt[];
+}
+
+const ESCALATE_ON = new Set(["invalid_output", "budget_exhausted", "acceptance_unmet"]);
+
 /** Runs claimed units (single tasks or prompt batches) and records their outcomes. */
 export class Executor {
   readonly controllers = new Map<string, AbortController>();
+  private readonly routing = new Map<string, Routing>();
 
   constructor(private readonly d: ExecutorDeps) {}
 
-  private context(task: StoredTask, signal: AbortSignal): RunContext {
+  private context(task: StoredTask, signal: AbortSignal, plan: RoutePlan, routing: Routing): RunContext {
     return {
       cfg: this.d.cfg,
       profile: this.d.cfg.profiles[task.spec.profile]!,
       spec: task.spec,
       taskId: task.row.id,
       leaseOwner: this.d.owner,
-      budget: effectiveBudget(this.d.cfg, task.spec),
+      budget: effectiveBudget(this.d.cfg, task.spec, plan.tier),
       gate: this.d.gate,
       tasks: this.d.tasks,
       artifacts: this.d.artifacts,
       signal,
       now: this.d.now,
+      tier: plan.tier,
+      plan,
+      attempts: routing.attempts,
     };
   }
 
@@ -75,28 +95,73 @@ export class Executor {
     };
   }
 
+  private runMode(ctx: RunContext): Promise<RunOutcome> {
+    if (ctx.profile.mode === "completion") return runCompletion(ctx);
+    if (ctx.profile.mode === "read_only") return runReadOnly(ctx);
+    if (this.d.coding) return this.d.coding.run(ctx);
+    return Promise.reject(new Error("no coding runner is configured"));
+  }
+
+  private tooDifficult(task: StoredTask, prepared: Prepared): void {
+    const c = prepared.classification;
+    this.record(task, "failed", baseResult({
+      executionStatus: "failed",
+      stopReason: `too_difficult_for_workers: ${c.rejectReason}`,
+      summary: `Not delegated. ${c.rejectReason}. Score ${c.score}: ${c.breakdown.filter((l) => l.points).map((l) => `${l.detail} (+${l.points})`).join(", ")}.`,
+      unresolvedCriteria: task.spec.constraints.acceptanceCriteria,
+    }));
+  }
+
   async runSingle(task: StoredTask): Promise<void> {
     const controller = new AbortController();
     this.controllers.set(task.row.id, controller);
     const release = this.supervise(task, controller);
+    const routing: Routing = { classification: null, tier: null, escalatedFrom: null, attempts: [] };
+    this.routing.set(task.row.id, routing);
     try {
-      const ctx = this.context(task, controller.signal);
-      let outcome: RunOutcome;
+      let prepared: Prepared;
       try {
-        if (ctx.profile.mode === "completion") outcome = await runCompletion(ctx);
-        else if (ctx.profile.mode === "read_only") outcome = await runReadOnly(ctx);
-        else if (this.d.coding) outcome = await this.d.coding.run(ctx);
-        else throw new Error("no coding runner is configured");
+        prepared = await this.d.router.prepare(task, this.d.owner);
       } catch (err) {
         this.settle(task, this.classify(err, controller.signal, task));
         return;
       }
-      if (controller.signal.aborted) {
-        this.settle(task, this.classify(new Error("aborted"), controller.signal, task), outcome.result);
+      routing.classification = prepared.classification;
+      if (!prepared.plan) {
+        this.tooDifficult(task, prepared);
         return;
       }
-      this.record(task, outcome.state, outcome.result);
+      let plan = prepared.plan;
+      for (;;) {
+        routing.tier = plan.tier;
+        let outcome: RunOutcome;
+        try {
+          outcome = await this.runMode(this.context(task, controller.signal, plan, routing));
+        } catch (err) {
+          this.settle(task, this.classify(err, controller.signal, task));
+          return;
+        }
+        if (controller.signal.aborted) {
+          this.settle(task, this.classify(new Error("aborted"), controller.signal, task), outcome.result);
+          return;
+        }
+        const failure = outcome.state === "budget_exhausted" ? "budget_exhausted" : outcome.result.stopReason === "invalid_output" ? "invalid_output" : outcome.result.acceptanceStatus === "unmet" && this.d.cfg.profiles[task.spec.profile]!.mode === "coding" ? "acceptance_unmet" : null;
+        const next = TIER_NAMES[TIER_NAMES.indexOf(plan.tier) + 1];
+        if (failure && ESCALATE_ON.has(failure) && this.d.cfg.routing.escalate_on_failure && !routing.escalatedFrom && next && !task.spec.routing?.endpointId) {
+          const nextPlan = this.d.router.plan(task.spec.profile, next, prepared.inputModalities);
+          if (nextPlan.candidates.length) {
+            this.d.tasks.event(task.row.id, "escalated", { from: plan.tier, to: next, reason: failure });
+            routing.escalatedFrom = plan.tier;
+            this.d.db.prepare("UPDATE tasks SET tier = ? WHERE id = ?").run(next, task.row.id);
+            plan = nextPlan;
+            continue;
+          }
+        }
+        this.record(task, outcome.state, outcome.result);
+        return;
+      }
     } finally {
+      this.routing.delete(task.row.id);
       release();
     }
   }
@@ -113,23 +178,47 @@ export class Executor {
       return this.supervise(t, c);
     });
     try {
+      // Classify each member; the shared request uses the hardest member's tier.
+      const members: StoredTask[] = [];
+      const prepared = new Map<string, Prepared>();
+      for (const t of tasks) {
+        const routing: Routing = { classification: null, tier: null, escalatedFrom: null, attempts: [] };
+        this.routing.set(t.row.id, routing);
+        try {
+          const p = await this.d.router.prepare(t, this.d.owner);
+          routing.classification = p.classification;
+          if (!p.plan) this.tooDifficult(t, p);
+          else {
+            prepared.set(t.row.id, p);
+            members.push(t);
+          }
+        } catch (err) {
+          this.settle(t, this.classify(err, this.controllers.get(t.row.id)!.signal, t));
+        }
+      }
+      if (!members.length) return;
+      const tier = members.map((m) => prepared.get(m.row.id)!.plan!.tier).reduce((a, b) => (TIER_NAMES.indexOf(b) > TIER_NAMES.indexOf(a) ? b : a));
+      const plan = prepared.get(members.find((m) => prepared.get(m.row.id)!.plan!.tier === tier)!.row.id)!.plan!;
+      for (const m of members) this.routing.get(m.row.id)!.tier = tier;
+
       let outcomes: Map<string, RunOutcome>;
       try {
-        outcomes = await runBatch(tasks.map((t) => this.context(t, shared.signal)));
+        outcomes = await runBatch(members.map((t) => this.context(t, shared.signal, plan, this.routing.get(t.row.id)!)));
       } catch (err) {
-        const pendingIds = (err as { batchPendingTaskIds?: string[] }).batchPendingTaskIds ?? tasks.map((t) => t.row.id);
-        for (const t of tasks) {
+        const pendingIds = (err as { batchPendingTaskIds?: string[] }).batchPendingTaskIds ?? members.map((t) => t.row.id);
+        for (const t of members) {
           if (!pendingIds.includes(t.row.id)) continue;
           this.settle(t, this.classify(err, this.controllers.get(t.row.id)?.signal ?? shared.signal, t));
         }
         return;
       }
-      for (const t of tasks) {
+      for (const t of members) {
         const o = outcomes.get(t.row.id);
         if (o) this.record(t, o.state, o.result);
         else this.settle(t, { kind: "final", state: "failed", stopReason: "batch_member_unaccounted" });
       }
     } finally {
+      for (const t of tasks) this.routing.delete(t.row.id);
       for (const r of releases) r();
     }
   }
@@ -193,7 +282,6 @@ export class Executor {
     }
     if (d.kind === "defer") {
       if (!this.d.tasks.deferForCapacity(task.row.id, this.d.owner, d.at, d.reason)) {
-        // Cancellation landed meanwhile; record it.
         this.record(task, "cancelled", baseResult({ executionStatus: "cancelled", stopReason: "cancelled" }));
         return;
       }
@@ -216,8 +304,17 @@ export class Executor {
   }
 
   private record(task: StoredTask, state: TaskState, runner: RunnerResult): void {
-    const { usage, servedEndpoints } = taskUsage(this.d.db, this.d.cfg.catalog, task.row.id);
-    const result = WorkerResultSchema.parse({ ...runner, taskId: task.row.id, usage, servedEndpoints });
+    const { usage, servedEndpoints } = taskUsage(this.d.db, this.d.catalog, task.row.id);
+    const r = this.routing.get(task.row.id);
+    const c = r?.classification;
+    const result = WorkerResultSchema.parse({
+      ...runner,
+      taskId: task.row.id,
+      usage,
+      servedEndpoints,
+      classification: c ? { tier: c.tier, score: c.score, basis: c.basis, rulebookVersion: c.rulebookVersion, breakdown: c.breakdown } : null,
+      routing: r?.tier ? { tier: r.tier, escalatedFrom: r.escalatedFrom, attempts: r.attempts } : null,
+    });
     this.d.tasks.finish(task.row.id, this.d.owner, result, state);
     this.d.onSettled(task.row.id);
   }

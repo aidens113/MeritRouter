@@ -1,5 +1,5 @@
 import { GatewayError } from "../core/errors.js";
-import type { ChatRequest, ChatResponse, GatewayTelemetry, InferenceClient } from "./types.js";
+import type { ChatRequest, ChatResponse, GatewayTelemetry, InferenceClient, ProviderStatus } from "./types.js";
 import { normalizeOpenAiUsage } from "./types.js";
 
 /**
@@ -62,6 +62,10 @@ export class FreeLlmApiClient implements InferenceClient {
 
   constructor(private readonly opts: FreeLlmApiOptions) {
     this.fetchImpl = opts.fetchImpl ?? fetch;
+  }
+
+  providers(): Promise<ProviderStatus[]> {
+    return fetchProviders(this.opts.baseUrl, this.opts.apiKey, this.fetchImpl);
   }
 
   async complete(req: ChatRequest, signal?: AbortSignal): Promise<ChatResponse> {
@@ -130,6 +134,23 @@ export class FreeLlmApiClient implements InferenceClient {
       httpStatus: res.status,
     };
   }
+}
+
+export async function fetchProviders(baseUrl: string, apiKey: string, fetchImpl: typeof fetch = fetch): Promise<ProviderStatus[]> {
+  const res = await fetchImpl(`${baseUrl.replace(/\/$/, "")}/providers`, {
+    headers: { authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) throw new GatewayError(res.status === 401 ? "auth" : "server", `GET /v1/providers: HTTP ${res.status}`, res.status, undefined, false);
+  const body = (await res.json()) as { providers?: Array<Record<string, unknown>> };
+  return (body.providers ?? []).map((p) => ({
+    platform: String(p.platform),
+    status: (["healthy", "rate_limited", "invalid", "unknown"].includes(String(p.status)) ? p.status : "unknown") as ProviderStatus["status"],
+    keys: typeof p.keys === "number" ? p.keys : 0,
+    resumeAt: typeof p.resume_at === "string" ? Date.parse(p.resume_at) : null,
+    requestsRemainingPct: typeof p.requests_remaining_pct === "number" ? p.requests_remaining_pct : null,
+    lastError: typeof p.last_error === "string" ? p.last_error : null,
+  }));
 }
 
 function readTelemetry(h: Headers): GatewayTelemetry {

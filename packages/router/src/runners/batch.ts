@@ -5,7 +5,8 @@ import { compileOutputSchema } from "../core/validate.js";
 import { evidenceUniverse, extractJson, validateWorkerOutput, type EvidenceUniverse, OUTPUT_CONTRACT } from "../core/worker-output.js";
 import { loadSources, renderSources, type ContextSource } from "../context/sources.js";
 import { canonicalJson } from "../storage/tasks.js";
-import { baseResult, type RunContext, type RunOutcome } from "./types.js";
+import { ask, baseResult, type RunContext, type RunOutcome } from "./types.js";
+import { planLimits } from "../routing/select.js";
 import { taskBrief } from "./prompts.js";
 import { baseCommitsFor, contextManifest } from "./completion.js";
 import type { WorkerTask } from "../core/task.js";
@@ -67,7 +68,7 @@ export async function runBatch(ctxs: RunContext[]): Promise<Map<string, RunOutco
   };
 
   // Pack items so each physical request fits every pool member's context and output limits.
-  const pool = first.gate.pool(first.spec.profile);
+  const pool = planLimits(first.plan, first.cfg.routing.max_endpoint_fallbacks);
   const systemTokens = estimateTokens([{ role: "system", content: batchSystemPrompt() }]);
   const fits = (group: Item[]) => {
     const out = group.length * perItemOut + 300;
@@ -133,14 +134,14 @@ async function runChunk(chunk: Item[], done: Done): Promise<void> {
     ];
     let response;
     try {
-      ({ response } = await first.gate.request({
-        profile: first.spec.profile,
+      const res = await ask(first, {
         executionId,
         purpose: round === 0 ? "batch" : "batch_retry",
         participants: pending.map((p) => ({ taskId: p.ctx.taskId, leaseOwner: p.ctx.leaseOwner, budget: p.ctx.budget, weight: p.estTokens })),
         chat: { messages, max_tokens: pending.length * perItemOut + 300, temperature: 0.2, response_format: { type: "json_object" } },
-        signal: first.signal,
-      }));
+      });
+      response = res.response;
+      for (const p of pending) if (p.ctx !== first) p.ctx.attempts.push(...res.attempts);
     } catch (err) {
       admission.finishExecution(executionId, "failed", { error: (err as Error).message });
       if (err instanceof AdmissionDenied && err.taskId && ["cancel_requested", "lease_lost", "task_not_active", "deadline_exceeded"].includes(err.reason)) {

@@ -2,7 +2,7 @@ import type { ChatMessage } from "../gateway/types.js";
 import { compileOutputSchema } from "../core/validate.js";
 import { evidenceUniverse, extractJson, validateWorkerOutput } from "../core/worker-output.js";
 import { loadSources, renderSources, readersFor, type ContextSource } from "../context/sources.js";
-import { baseResult, type RunContext, type RunOutcome } from "./types.js";
+import { ask, baseResult, type RunContext, type RunOutcome } from "./types.js";
 import { systemPrompt, taskBrief } from "./prompts.js";
 
 export function contextManifest(sources: ContextSource[]) {
@@ -33,13 +33,10 @@ export async function runCompletion(ctx: RunContext): Promise<RunOutcome> {
   let lastErrors: string[] = [];
 
   for (let attempt = 0; attempt <= ctx.cfg.execution.max_invalid_output_retries; attempt++) {
-    const { response } = await ctx.gate.request({
-      profile: spec.profile,
+    const { response } = await ask(ctx, {
       executionId,
       purpose: attempt === 0 ? "completion" : "completion_repair",
-      participants: [{ taskId: ctx.taskId, leaseOwner: ctx.leaseOwner, budget: ctx.budget }],
       chat: { messages, max_tokens: maxTokens, temperature: 0.2, response_format: { type: "json_object" } },
-      signal: ctx.signal,
     });
     const text = response.message.content ?? "";
     responseRefs.push(ctx.artifacts.write({ taskId: ctx.taskId, executionId, kind: "model_response", label: `response ${attempt + 1}`, content: text }));

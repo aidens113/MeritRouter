@@ -5,9 +5,11 @@ export interface ChatToolCall {
   function: { name: string; arguments: string };
 }
 
+export type ContentPart = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
+
 export type ChatMessage =
   | { role: "system"; content: string }
-  | { role: "user"; content: string }
+  | { role: "user"; content: string | ContentPart[] }
   | { role: "assistant"; content: string | null; tool_calls?: ChatToolCall[] }
   | { role: "tool"; tool_call_id: string; content: string };
 
@@ -58,10 +60,21 @@ export interface ChatResponse {
   httpStatus: number;
 }
 
+export interface ProviderStatus {
+  platform: string;
+  status: "healthy" | "rate_limited" | "invalid" | "unknown";
+  keys: number;
+  resumeAt: number | null;
+  requestsRemainingPct: number | null;
+  lastError: string | null;
+}
+
 /** Replaceable inference boundary; the FreeLLMAPI adapter is the first implementation. */
 export interface InferenceClient {
   readonly name: string;
   complete(req: ChatRequest, signal?: AbortSignal): Promise<ChatResponse>;
+  /** Per-platform health (cooldowns, key status) when the gateway exposes it. */
+  providers?(): Promise<ProviderStatus[]>;
 }
 
 export function normalizeOpenAiUsage(usage: unknown, costUsd?: unknown): NormalizedUsage {
@@ -91,6 +104,10 @@ export function estimateTokens(messages: ChatMessage[], tools?: ChatTool[]): num
   for (const m of messages) {
     chars += 16;
     if ("content" in m && typeof m.content === "string") chars += m.content.length;
+    else if ("content" in m && Array.isArray(m.content)) {
+      // Images are billed per tile; ~1,000 tokens is a conservative per-image bound.
+      for (const part of m.content) chars += part.type === "text" ? part.text.length : 3000;
+    }
     if (m.role === "assistant" && m.tool_calls) chars += JSON.stringify(m.tool_calls).length;
   }
   if (tools) chars += JSON.stringify(tools).length;

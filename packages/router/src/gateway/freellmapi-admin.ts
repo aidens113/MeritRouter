@@ -25,6 +25,26 @@ export interface FreeLlmApiProfileModel {
   tpd_limit: number | null;
 }
 
+/** Catalog row from GET /api/models (routes/models.ts, server v0.2.1). */
+export interface FreeLlmApiModel {
+  id: number;
+  platform: string;
+  modelId: string;
+  displayName: string | null;
+  sizeLabel: string | null;
+  rpmLimit: number | null;
+  rpdLimit: number | null;
+  tpmLimit: number | null;
+  tpdLimit: number | null;
+  contextWindow: number | null;
+  enabled: boolean;
+  supportsVision: boolean;
+  supportsTools: boolean;
+  source: string;
+  hasProvider: boolean;
+  keyCount: number;
+}
+
 /** Key metadata as listed by FreeLLMAPI. The secret itself is never returned by list. */
 export interface FreeLlmApiKey {
   id: number;
@@ -86,6 +106,16 @@ export class FreeLlmApiAdmin {
   /** Create a curated chain that starts empty and never auto-includes new catalog models. */
   createEmptyProfile(name: string): Promise<FreeLlmApiProfile> {
     return this.call("POST", "/api/profiles", { name, empty: true });
+  }
+
+  /** Replace a chain's members (PUT /api/profiles/:id/reorder deletes and re-inserts rows). */
+  setProfileMembers(profileId: number, members: Array<{ modelDbId: number; priority: number; enabled: boolean }>): Promise<unknown> {
+    return this.call("PUT", `/api/profiles/${profileId}/reorder`, members);
+  }
+
+  /** Full FreeLLMAPI catalog (GET /api/models). */
+  listModels(): Promise<FreeLlmApiModel[]> {
+    return this.call("GET", "/api/models");
   }
 
   listKeys(): Promise<FreeLlmApiKey[]> {

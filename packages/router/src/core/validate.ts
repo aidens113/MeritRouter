@@ -6,7 +6,6 @@ import { WorkerTaskSchema, type WorkerTask } from "./task.js";
 import type { ArtifactStore } from "../storage/artifacts.js";
 import { isGitRepo, resolveCommit } from "../workspaces/git.js";
 import { loadSources } from "../context/sources.js";
-import { assessPool } from "../models/eligibility.js";
 import { estimateTokens } from "../gateway/types.js";
 
 const ajv = new Ajv({ strict: true, allErrors: true });
@@ -20,7 +19,12 @@ export function compileOutputSchema(schema: Record<string, unknown>) {
 }
 
 /** Parse a raw task and run every check that does not need a model. */
-export async function validateTask(cfg: ResolvedConfig, raw: unknown, artifacts: ArtifactStore): Promise<WorkerTask> {
+export async function validateTask(
+  cfg: ResolvedConfig,
+  raw: unknown,
+  artifacts: ArtifactStore,
+  opts: { largestContext?: number; knownEndpoint?: (id: string) => boolean } = {},
+): Promise<WorkerTask> {
   const parsed = WorkerTaskSchema.safeParse(raw);
   if (!parsed.success) {
     const issues = parsed.error.issues.map((i) => `${i.path.join(".") || "<task>"}: ${i.message}`);
@@ -74,6 +78,9 @@ export async function validateTask(cfg: ResolvedConfig, raw: unknown, artifacts:
     }
   }
 
+  if (spec.routing?.endpointId && opts.knownEndpoint && !opts.knownEndpoint(spec.routing.endpointId)) {
+    issues.push(`routing.endpointId ${spec.routing.endpointId} is not in the model catalog`);
+  }
   if (spec.constraints.outputSchema) {
     try {
       compileOutputSchema(spec.constraints.outputSchema);
@@ -92,20 +99,13 @@ export async function validateTask(cfg: ResolvedConfig, raw: unknown, artifacts:
     throw new TaskValidationError(`invalid task context: ${(err as Error).message}`);
   }
 
-  if (profile.mode === "completion") {
-    const pool = assessPool(cfg.catalog, spec.profile, profile, {
-      now: new Date(),
-      maxMetadataAgeDays: cfg.models.max_metadata_age_days,
-      paidRoutingAllowed: cfg.spend.paid_fallback_enabled,
-    });
-    if (pool.routable) {
-      const est = estimateTokens([{ role: "user", content: sources.map((s) => s.text).join("\n") + spec.goal }]);
-      const out = Math.min(profile.max_output_tokens, spec.budget?.maxOutputTokens ?? Infinity);
-      if (est + out > pool.contextLimitTokens) {
-        throw new TaskValidationError(
-          `context (~${est} tokens) plus output (${out}) does not fit the ${spec.profile} pool limit of ${pool.contextLimitTokens} tokens; split the task or pass fewer/narrower file ranges`,
-        );
-      }
+  if (opts.largestContext !== undefined) {
+    const est = estimateTokens([{ role: "user", content: sources.map((x) => x.text).join("\n") + spec.goal }]);
+    const out = Math.min(profile.max_output_tokens, spec.budget?.maxOutputTokens ?? Infinity);
+    if (est + out > opts.largestContext) {
+      throw new TaskValidationError(
+        `context (~${est} tokens) plus output (${out}) does not fit any available model (largest context ${opts.largestContext} tokens); split the task or pass narrower file ranges`,
+      );
     }
   }
   return spec;

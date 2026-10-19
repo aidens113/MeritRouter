@@ -526,5 +526,7 @@ export function syntheticResult(
       estimatedCostUsd: null,
     },
     servedEndpoints: [],
+    classification: null,
+    routing: null,
   };
 }
