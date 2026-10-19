@@ -37,6 +37,7 @@ export function baseConfig(overrides: Record<string, unknown> = {}) {
     version: 1,
     gateway: { adapter: "freellmapi", base_url: "http://127.0.0.1:9/v1", require_verified_chains: false },
     storage: { directory: ".switchyard" },
+    brain: { path: "brain", project: "demo" },
     models: { file: "models.yaml" },
     repositories: { core: { path: "repo" } },
     execution: { max_concurrent_tasks: 4, lease_seconds: 30 },

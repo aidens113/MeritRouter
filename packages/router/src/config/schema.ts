@@ -277,7 +277,8 @@ export const ConfigSchema = z
         /** Project scope this config works in: brain/projects/<project>/. */
         project: z.string().regex(/^[a-z0-9][a-z0-9._-]*$/).default("default"),
         /** Map brain path prefixes to existing folders (e.g. a repository's docs/working). */
-        mounts: z.array(z.object({ prefix: z.string().min(1), path: z.string().min(1) }).strict()).default([]),
+        /** commit: let SwitchYard commit into the mounted folder's repository (off: you commit). */
+        mounts: z.array(z.object({ prefix: z.string().min(1), path: z.string().min(1), commit: z.boolean().default(false) }).strict()).default([]),
         commit: z.boolean().default(true),
         /** Push the brain repository after commits (needs a configured remote). */
         push: z.boolean().default(false),

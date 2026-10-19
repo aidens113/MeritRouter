@@ -1,0 +1,160 @@
+import picomatch from "picomatch";
+import type { ResolvedConfig } from "../config/load.js";
+import type { BrainMode, RoleName, TierName } from "../config/schema.js";
+import { TIER_NAMES } from "../config/schema.js";
+import type { Db } from "../storage/db.js";
+
+export interface Grant {
+  pattern: string;
+  mode: BrainMode;
+}
+
+export type Principal =
+  | { kind: "human"; name?: string }
+  | { kind: "agent"; role: RoleName; taskId: string | null; jobId: string | null; tier: TierName | null; grants: Grant[] };
+
+const RANK: Record<BrainMode, number> = { read: 1, append: 2, write: 3, admin: 4 };
+
+export interface GrantContext {
+  project: string;
+  effort: string;
+  task: string | null;
+  repos: string[];
+}
+
+/** Built-in defaults, overridable per role in config (roles.<role>.brain_grants). */
+const DEFAULTS: Record<RoleName, Grant[]> = {
+  supervisor: [
+    { pattern: "**", mode: "read" },
+    { pattern: "projects/{project}/**", mode: "write" },
+  ],
+  summarizer: [],
+  inspector: [],
+  analyst: [],
+  implementer: [],
+  reviewer: [{ pattern: "projects/{project}/working/{effort}/reports/**", mode: "read" }],
+  classifier: [],
+};
+
+/** Every worker role reads the shared context its brief needs and writes only its own report. */
+const WORKER_BASE: Grant[] = [
+  { pattern: "projects/{project}/working/{effort}.md", mode: "read" },
+  { pattern: "projects/{project}/repos/{repo}.md", mode: "read" },
+  { pattern: "projects/{project}/decisions/**", mode: "read" },
+  { pattern: "global/lessons/**", mode: "read" },
+  { pattern: "global/glossary.md", mode: "read" },
+  { pattern: "projects/{project}/working/{effort}/reports/{task}.md", mode: "write" },
+];
+
+export function reportPath(ctx: GrantContext): string {
+  return `projects/${ctx.project}/working/${ctx.effort}/reports/${ctx.task}.md`;
+}
+
+function substitute(g: Grant, ctx: GrantContext): Grant[] {
+  const base = g.pattern.replaceAll("{project}", ctx.project).replaceAll("{effort}", ctx.effort).replaceAll("{task}", ctx.task ?? "_none_");
+  if (!base.includes("{repo}")) return [{ pattern: base, mode: g.mode }];
+  return ctx.repos.map((r) => ({ pattern: base.replaceAll("{repo}", r), mode: g.mode }));
+}
+
+export function defaultGrants(cfg: ResolvedConfig, role: RoleName, ctx: GrantContext): Grant[] {
+  const configured = cfg.roles[role]?.brain_grants;
+  const templates = configured ?? (role === "supervisor" || role === "classifier" ? DEFAULTS[role] : [...WORKER_BASE, ...DEFAULTS[role]]);
+  return templates.flatMap((g) => substitute(g, ctx));
+}
+
+export function allows(principal: Principal, path: string, mode: BrainMode): boolean {
+  if (principal.kind === "human") return true;
+  return principal.grants.some((g) => RANK[g.mode] >= RANK[mode] && picomatch(g.pattern, { dot: false })(path));
+}
+
+export function denial(principal: Principal, path: string, mode: BrainMode): string | null {
+  if (allows(principal, path, mode)) return null;
+  const who = principal.kind === "agent" ? `${principal.role}${principal.taskId ? ` ${principal.taskId}` : ""}` : "user";
+  return `${who} has no ${mode} access to ${path}. Use brain_request_access(pattern, mode, reason) to ask for it.`;
+}
+
+export interface AccessRequest {
+  id: number;
+  taskId: string | null;
+  jobId: string | null;
+  role: string;
+  pattern: string;
+  mode: BrainMode;
+  reason: string;
+  status: "pending" | "approved" | "denied";
+  decidedBy: string | null;
+  decisionReason: string | null;
+  createdAt: number;
+  decidedAt: number | null;
+}
+
+type Row = { id: number; task_id: string | null; job_id: string | null; role: string; pattern: string; mode: BrainMode; reason: string; status: AccessRequest["status"]; decided_by: string | null; decision_reason: string | null; created_at: number; decided_at: number | null };
+const toRequest = (r: Row): AccessRequest => ({ id: r.id, taskId: r.task_id, jobId: r.job_id, role: r.role, pattern: r.pattern, mode: r.mode, reason: r.reason, status: r.status, decidedBy: r.decided_by, decisionReason: r.decision_reason, createdAt: r.created_at, decidedAt: r.decided_at });
+
+/** Grants beyond the defaults, and the request workflow for obtaining them. */
+export class BrainAccess {
+  constructor(
+    private readonly db: Db,
+    private readonly cfg: ResolvedConfig,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  extraGrants(taskId: string): Grant[] {
+    return this.db.prepare("SELECT pattern, mode FROM brain_grants WHERE task_id = ?").all(taskId) as Grant[];
+  }
+
+  principalFor(role: RoleName, ctx: GrantContext & { jobId: string | null; tier: TierName | null; briefGrants?: Grant[] }): Principal {
+    return {
+      kind: "agent",
+      role,
+      taskId: ctx.task,
+      jobId: ctx.jobId,
+      tier: ctx.tier,
+      grants: [...defaultGrants(this.cfg, role, ctx), ...(ctx.briefGrants ?? []), ...(ctx.task ? this.extraGrants(ctx.task) : [])],
+    };
+  }
+
+  grant(taskId: string, g: Grant, grantedBy: string, requestId: number | null = null): void {
+    this.db.prepare("INSERT INTO brain_grants (task_id, pattern, mode, granted_by, request_id, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(taskId, g.pattern, g.mode, grantedBy, requestId, this.now());
+  }
+
+  /** File a request. Auto-approval rules apply immediately; otherwise it waits for the approver. */
+  request(p: Principal, pattern: string, mode: BrainMode, reason: string): AccessRequest {
+    if (p.kind !== "agent") throw new Error("only agents request access");
+    const id = Number(
+      this.db
+        .prepare("INSERT INTO brain_access_requests (task_id, job_id, role, pattern, mode, reason, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)")
+        .run(p.taskId, p.jobId, p.role, pattern, mode, reason.slice(0, 1000), this.now()).lastInsertRowid,
+    );
+    const auto = this.cfg.brain.access_approver === "auto"
+      ? true
+      : this.cfg.brain.auto_approve.some(
+          (r) => RANK[r.mode] >= RANK[mode] && picomatch(r.pattern)(pattern.replace(/\*+$/, "x")) && (p.tier === null || TIER_NAMES.indexOf(p.tier) >= TIER_NAMES.indexOf(r.min_tier)),
+        );
+    if (auto) return this.decide(id, true, "auto", "matched an auto-approve rule");
+    return this.get(id)!;
+  }
+
+  get(id: number): AccessRequest | null {
+    const r = this.db.prepare("SELECT * FROM brain_access_requests WHERE id = ?").get(id) as Row | undefined;
+    return r ? toRequest(r) : null;
+  }
+
+  list(opts: { status?: AccessRequest["status"]; jobId?: string; taskId?: string } = {}): AccessRequest[] {
+    const where: string[] = [];
+    const args: unknown[] = [];
+    if (opts.status) (where.push("status = ?"), args.push(opts.status));
+    if (opts.jobId) (where.push("job_id = ?"), args.push(opts.jobId));
+    if (opts.taskId) (where.push("task_id = ?"), args.push(opts.taskId));
+    return (this.db.prepare(`SELECT * FROM brain_access_requests ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY id DESC LIMIT 200`).all(...args) as Row[]).map(toRequest);
+  }
+
+  decide(id: number, approve: boolean, decidedBy: string, reason: string): AccessRequest {
+    const req = this.get(id);
+    if (!req) throw new Error(`unknown access request ${id}`);
+    if (req.status !== "pending") return req;
+    this.db.prepare("UPDATE brain_access_requests SET status = ?, decided_by = ?, decision_reason = ?, decided_at = ? WHERE id = ?").run(approve ? "approved" : "denied", decidedBy, reason.slice(0, 1000), this.now(), id);
+    if (approve && req.taskId) this.grant(req.taskId, { pattern: req.pattern, mode: req.mode }, decidedBy, id);
+    return this.get(id)!;
+  }
+}

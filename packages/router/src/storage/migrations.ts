@@ -278,4 +278,36 @@ export const MIGRATIONS: string[] = [
     updated_at INTEGER NOT NULL
   );
   `,
+  `
+  CREATE TABLE brain_access_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT,
+    job_id TEXT,
+    role TEXT NOT NULL,
+    pattern TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'denied')),
+    decided_by TEXT,
+    decision_reason TEXT,
+    created_at INTEGER NOT NULL,
+    decided_at INTEGER
+  );
+  CREATE INDEX brain_access_requests_status ON brain_access_requests(status);
+
+  CREATE TABLE brain_grants (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL,
+    pattern TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    granted_by TEXT NOT NULL,
+    request_id INTEGER,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX brain_grants_task ON brain_grants(task_id);
+
+  -- Disposable search index over the brain's markdown files (rebuilt from the files).
+  CREATE TABLE brain_files (path TEXT PRIMARY KEY, mtime REAL NOT NULL, size INTEGER NOT NULL, title TEXT, kind TEXT, status TEXT, lines INTEGER);
+  CREATE VIRTUAL TABLE brain_fts USING fts5(path UNINDEXED, title, body);
+  `,
 ];
