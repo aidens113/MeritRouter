@@ -332,4 +332,45 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX job_questions_task ON job_questions(task_id);
   `,
+  `
+  -- Agent sessions: one per model-driven run. The JSONL log under <storage>/sessions/ is the
+  -- record of truth; these rows index it (counters, status, events without payloads).
+  CREATE TABLE sessions (
+    id TEXT PRIMARY KEY,
+    task_id TEXT,
+    job_id TEXT,
+    parent_session_id TEXT,
+    previous_session_id TEXT,
+    role TEXT NOT NULL,
+    agent_label TEXT NOT NULL,
+    profile TEXT,
+    tier TEXT,
+    status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed', 'interrupted', 'cancelled')),
+    stop_reason TEXT,
+    log_path TEXT NOT NULL,
+    last_seq INTEGER NOT NULL DEFAULT 0,
+    model_requests INTEGER NOT NULL DEFAULT 0,
+    tool_calls INTEGER NOT NULL DEFAULT 0,
+    workspace_json TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    ended_at INTEGER
+  );
+  CREATE INDEX sessions_task ON sessions(task_id, created_at);
+  CREATE INDEX sessions_job ON sessions(job_id, created_at);
+  CREATE INDEX sessions_parent ON sessions(parent_session_id);
+  CREATE INDEX sessions_status ON sessions(status, created_at);
+  CREATE INDEX sessions_created ON sessions(created_at);
+
+  CREATE TABLE session_events (
+    session_id TEXT NOT NULL REFERENCES sessions(id),
+    seq INTEGER NOT NULL,
+    type TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    name TEXT,
+    ok INTEGER,
+    PRIMARY KEY (session_id, seq)
+  );
+  CREATE INDEX session_events_type ON session_events(type, at);
+  `,
 ];

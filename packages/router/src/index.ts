@@ -13,4 +13,26 @@ export type { InferenceClient, ChatRequest, ChatResponse, ProviderStatus } from 
 export type { UsageSummary } from "./storage/usage.js";
 export type { ScanSummary } from "./models/scanner.js";
 export * as insights from "./admin/insights.js";
+export { SessionStore, CreateSessionInputSchema, SESSIONS_DIR, type CreateSessionInput, type SessionRecord, type SessionListFilter, type SessionEventsPage } from "./sessions/store.js";
+export { SessionRecorder, type ModelRequestInput, type ModelErrorInput, type ToolIntentInput, type ToolOutcomeInput } from "./sessions/recorder.js";
+export {
+  SessionEventSchema,
+  SessionStatusSchema,
+  SessionWorkspaceSchema,
+  ToolSideEffectSchema,
+  SESSION_STATUSES,
+  SESSION_EVENT_TYPES,
+  TOOL_SIDE_EFFECTS,
+  TOOL_OUTPUT_CAP_BYTES,
+  type SessionEvent,
+  type SessionEventOf,
+  type SessionEventData,
+  type SessionEventType,
+  type SessionStatus,
+  type SessionEndStatus,
+  type SessionWorkspace,
+  type WorkspaceRepo,
+  type ToolSideEffect,
+  type CorruptLine,
+} from "./sessions/events.js";
 export { createCodingRunner } from "./runners/coding/index.js";

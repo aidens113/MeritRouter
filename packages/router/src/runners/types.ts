@@ -9,6 +9,7 @@ import type { EffectiveBudget } from "../admission/admission.js";
 import type { TaskState, WorkerResult, WorkerTask } from "../core/task.js";
 import type { Brain } from "../brain/brain.js";
 import type { BrainAccess } from "../brain/access.js";
+import type { SessionRecorder } from "../sessions/recorder.js";
 
 /** What a supervisor needs from the service (kept as an interface to avoid import cycles). */
 export interface SupervisorServices {
@@ -40,24 +41,38 @@ export interface RunContext {
   services: SupervisorServices | null;
   /** Every endpoint attempt made for this task (fallbacks included). */
   attempts: GateAttempt[];
+  /** The agent session recording this run; `ask()` logs the transcript, requests, responses, and errors to it. */
+  session: SessionRecorder | null;
 }
 
-/** Send one model request for this task through the gate, recording endpoint attempts. */
+/**
+ * Send one model request for this task through the gate, recording endpoint attempts. With a
+ * session, the transcript, the request, and the response (or error) are logged; a recording
+ * failure throws.
+ */
 export async function ask(ctx: RunContext, req: Omit<GateRequest, "plan" | "participants" | "signal"> & { participants?: GateRequest["participants"] }): Promise<GateResponse> {
+  const session = ctx.session;
+  if (session) {
+    session.syncMessages(req.chat.messages);
+    session.modelRequest(req);
+  }
+  let res: GateResponse;
   try {
-    const res = await ctx.gate.request({
+    res = await ctx.gate.request({
       ...req,
       plan: ctx.plan,
       participants: req.participants ?? [{ taskId: ctx.taskId, leaseOwner: ctx.leaseOwner, budget: ctx.budget }],
       signal: ctx.signal,
     });
-    ctx.attempts.push(...res.attempts);
-    return res;
   } catch (err) {
     const attempts = (err as { attempts?: GateAttempt[] }).attempts;
     if (attempts) ctx.attempts.push(...attempts);
+    session?.modelError({ executionId: req.executionId, error: err, ...(attempts ? { attempts } : {}) });
     throw err;
   }
+  ctx.attempts.push(...res.attempts);
+  session?.modelResponse(res);
+  return res;
 }
 
 /** Runner output before ledger-derived usage is attached by the executor. */

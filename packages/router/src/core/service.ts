@@ -23,6 +23,7 @@ import { KeyVault } from "../paid/vault.js";
 import { Brain } from "../brain/brain.js";
 import { BrainAccess } from "../brain/access.js";
 import { PaidSpend } from "../paid/spend.js";
+import { SessionStore } from "../sessions/store.js";
 import { paidEndpoints, paidFingerprint, refreshPaidPrices } from "../paid/catalog.js";
 import { httpDirectClient, type DirectClient } from "../paid/direct.js";
 import { createCodingRunner } from "../runners/coding/index.js";
@@ -96,6 +97,8 @@ export class Switchyard {
   readonly brain: Brain;
   readonly brainAccess: BrainAccess;
   readonly spend: PaidSpend;
+  /** Agent sessions: per-run event logs (transcript, model calls, tool journal). */
+  readonly sessions: SessionStore;
   private readonly executor: Executor;
   private readonly scheduler: Scheduler;
   private readonly events = new EventEmitter();
@@ -113,6 +116,7 @@ export class Switchyard {
     this.db = openDatabase(cfg.storageDir);
     this.tasks = new TaskStore(this.db, this.now);
     this.artifacts = new ArtifactStore(this.db, cfg.storageDir, this.now);
+    this.sessions = new SessionStore(this.db, cfg.storageDir, this.now);
     this.admission = new Admission(this.db, this.tasks, cfg, this.now);
     this.brain = new Brain(cfg, this.db, this.now);
     this.brainAccess = new BrainAccess(this.db, cfg, this.now);

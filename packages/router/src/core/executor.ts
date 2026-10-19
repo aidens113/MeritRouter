@@ -103,6 +103,7 @@ export class Executor {
       effort: effortFor(task.spec, task.row.id),
       jobId: task.spec.profile === "supervise" ? task.row.id : (task.spec.parentTaskId ?? null),
       services: this.d.services,
+      session: null,
     };
   }
 

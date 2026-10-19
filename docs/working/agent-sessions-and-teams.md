@@ -1,7 +1,7 @@
 # Agent sessions, failure resilience, and agent teams
 
 Status: Active
-Status detail: Requirements recorded and design drafted 2026-10-19; implementation not started.
+Status detail: Phase S1 in progress (2026-10-19): session store, then runners, surfaces, panel.
 Created: 2026-10-19
 Last updated: 2026-10-19
 Owner: Senior supervisor agent
@@ -123,6 +123,29 @@ Surface: `switchyard sessions [--running|--interrupted]`, `switchyard session <i
   requests and cost per completed task, comparison of team versus single-agent runs on the
   qualification suite.
 
+### S1 implementation decisions (2026-10-19)
+
+- New area `packages/router/src/sessions/`: `events.ts` (zod event schemas), `store.ts`
+  (`SessionStore`), `recorder.ts` (`SessionRecorder`). `Switchyard.sessions` exposes the store.
+- One session per model-driven run: each executor run of a task (a tier escalation or a recovery
+  re-run is a new session with `previous_session_id`), each classification (role `classifier`),
+  each batch item. `parent_session_id` is the session that delegated the task, when known.
+- Log: `<storage.directory>/sessions/<sessionId>.jsonl`, one JSON event per line
+  `{seq, at, type, data}`, appended with `fsyncSync` per event. Session ids come from `newId("s")`.
+- SQLite (new migration): `sessions` (id, task_id, job_id, parent_session_id,
+  previous_session_id, role, agent_label, profile, tier, status, stop_reason, log_path, last_seq,
+  model_requests, tool_calls, workspace_json, created_at, updated_at, ended_at) and
+  `session_events` (session_id, seq, type, at, name, ok; PK session_id+seq) without payloads.
+- Event types: `started`, `message` (each transcript message once, in order), `model_request`,
+  `model_response` (endpoint, request id, content, tool calls, usage), `model_error`,
+  `tool_intent` (call id, name, args, side_effect) written before a tool runs, `tool_outcome`
+  (intent seq, ok, output capped at 16 KB) after, `note`, `workspace`, `ended`.
+- Status: `running` -> `completed` | `failed` | `interrupted` | `cancelled`; on store open,
+  sessions still `running` from a dead owner are marked `interrupted` only by S2 (S1 leaves them).
+- A recording failure (disk) throws: the log is the record of truth.
+- `job_state` stays for supervisor resume until S2 moves resume onto sessions.
+- `resume_session` / `switchyard resume <session>` belong to S2; S1 ships read surfaces only.
+
 ## Phases
 
 | Phase | Deliverable | Acceptance |
@@ -136,6 +159,58 @@ Surface: `switchyard sessions [--running|--interrupted]`, `switchyard session <i
 | R2 (later) | Postgres store, multiple worker hosts | Two hosts share one queue without double execution |
 
 ## Worker Briefs
+
+### Brief: s1-store
+- Repository: this repository.
+- Task: build the session store and recorder per "S1 implementation decisions". `SessionStore`:
+  `create({taskId, jobId, parentSessionId, previousSessionId, role, agentLabel, profile, tier})`
+  -> `SessionRecorder`; `get(id)`; `list({status?, taskId?, jobId?, limit?})`;
+  `events(id, {afterSeq?, limit?})` (reads the JSONL, validates with zod); `forTask(taskId)`.
+  `SessionRecorder`: `id`, `syncMessages(messages)` (logs messages not yet logged, by index),
+  `modelRequest`, `modelResponse`, `modelError`, `toolIntent(...) -> seq`,
+  `toolOutcome(intentSeq, ...)`, `note`, `setWorkspace`, `end(status, stopReason)`; every
+  append updates `sessions` counters and inserts the `session_events` row in one transaction.
+  Add `session: SessionRecorder | null` to `RunContext` and record requests, responses, and
+  errors inside `ask()` when it is set (call `syncMessages(req.chat.messages)` first). Set
+  `session: null` where `RunContext` objects are built so everything compiles. Add
+  `Switchyard.sessions`. Add `sessionsView(sy, filter)` and `sessionDetail(sy, id, {afterSeq,
+  limit})` to `src/admin/insights.ts`; export the store types from `src/index.ts`.
+- Required reads: Current State and "S1 implementation decisions" in this document;
+  `src/runners/types.ts`, `src/storage/db.ts`, `src/storage/migrations.ts` (tail),
+  `src/core/service.ts`, `src/admin/insights.ts` (jobs section), `tests/helpers.ts`.
+- Owns: `packages/router/src/sessions/**`, `src/storage/migrations.ts` (append only),
+  `src/runners/types.ts`, `src/core/service.ts`, `src/admin/insights.ts`, `src/index.ts`, any
+  file needing only `session: null` added to a `RunContext` literal, `tests/sessions.test.ts`.
+- Must not touch: `src/harness/**`, `src/cli.ts`, `src/mcp.ts`, `apps/panel/**`, docs.
+- Definition of done: `tests/sessions.test.ts` covers create/append/list/events/end, fsync'd
+  JSONL readable after the store closes, counters, zod rejection of a corrupt line (skipped and
+  reported, not thrown on read); `pnpm -r typecheck` and `npx vitest run` in packages/router pass.
+- Report to: docs/working/agent-sessions-and-teams/reports/s1-store.md
+
+### Brief: s1-runners (after s1-store)
+- Task: put every runner on sessions. Executor opens a session per run (role from
+  `roleForProfile`, label from `agentLabel`, `previousSessionId` = the task's prior session),
+  sets `ctx.session`, ends it with the outcome state. Harness loop writes `tool_intent` before
+  and `tool_outcome` after each tool call (terminal tool included); tools declare
+  `sideEffect`. Classifier and batch items get sessions; native coding and supervisors record
+  their workspace; delegated tasks carry the delegating session as parent.
+- Owns: `src/core/executor.ts`, `src/core/service.ts`, `src/harness/**`, `src/runners/**` except
+  `types.ts`, `src/scoring/classifier.ts`, `tests/session-recording.test.ts`.
+- Must not touch: `src/sessions/**`, `src/cli.ts`, `src/mcp.ts`, `insights.ts`, `apps/panel/**`.
+- Done: a test per runner shows its model calls and tool calls in the session log; typecheck and
+  its own tests pass. Report: `reports/s1-runners.md`.
+
+### Brief: s1-surface (after s1-store, parallel with s1-runners)
+- Task: CLI `switchyard sessions [--status s] [--task id] [--job id] [--json]` and
+  `switchyard session <id> [--json]` (timeline); MCP tools `list_sessions`, `get_session`.
+- Owns: `src/cli.ts`, `src/mcp.ts`, `tests/mcp.test.ts`, `tests/session-surface.test.ts`.
+- Done: tests for both commands and both MCP tools pass. Report: `reports/s1-surface.md`.
+
+### Brief: s1-panel (after s1-store, parallel)
+- Task: panel Sessions list (`/sessions`, filter by status) and timeline (`/sessions/[id]`),
+  API routes, nav entry, links from task and job detail pages; seed sessions in the demo.
+- Owns: `apps/panel/**`. Done: panel builds; pages screenshot correctly. Report:
+  `reports/s1-panel.md`.
 
 ---
 

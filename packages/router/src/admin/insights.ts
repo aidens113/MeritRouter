@@ -14,6 +14,8 @@ import type { Classification } from "../scoring/score.js";
 import type { UsageSummary } from "../storage/usage.js";
 import type { ArtifactRow } from "../storage/artifacts.js";
 import type { ProviderStatus } from "../gateway/types.js";
+import type { SessionEventsPage, SessionListFilter, SessionRecord } from "../sessions/store.js";
+import type { CorruptLine, SessionEvent, SessionStatus } from "../sessions/events.js";
 
 const DAY = 86_400_000;
 
@@ -552,6 +554,55 @@ export function jobDetail(sy: Switchyard, id: string): (JobView & { transcript: 
     questions: sy.questions({ taskId: id, pendingOnly: false }),
   };
 }
+
+// ---------- agent sessions ----------
+
+export interface SessionView extends SessionRecord {
+  /** The task's label, when the session belongs to a labelled task. */
+  taskLabel: string | null;
+  /** Wall-clock duration so far (to `endedAt`, else the last event). */
+  durationMs: number;
+}
+
+export interface SessionDetail extends Omit<SessionEventsPage, "sessionId"> {
+  session: SessionView;
+  /** Sessions this session spawned (delegated work), oldest first. */
+  children: SessionView[];
+  /** Every session of the same task (retries and escalations), oldest first. */
+  taskSessions: SessionView[];
+}
+
+function sessionViews(sy: Switchyard, records: SessionRecord[]): SessionView[] {
+  const labels = new Map<string, string | null>();
+  const label = (taskId: string | null) => {
+    if (!taskId) return null;
+    if (!labels.has(taskId)) labels.set(taskId, sy.tasks.get(taskId)?.spec.label ?? null);
+    return labels.get(taskId)!;
+  };
+  return records.map((r) => ({ ...r, taskLabel: label(r.taskId), durationMs: Math.max(0, (r.endedAt ?? r.updatedAt) - r.createdAt) }));
+}
+
+/** Sessions matching the filter, newest first. */
+export function sessionsView(sy: Switchyard, filter: SessionListFilter = {}): SessionView[] {
+  return sessionViews(sy, sy.sessions.list(filter));
+}
+
+/** One session with a page of its timeline (events after `afterSeq`), its children, and its task's other sessions. */
+export function sessionDetail(sy: Switchyard, id: string, opts: { afterSeq?: number; limit?: number } = {}): SessionDetail | null {
+  const page = sy.sessions.events(id, opts);
+  const rec = sy.sessions.get(id);
+  if (!page || !rec) return null;
+  const { sessionId: _sessionId, ...rest } = page;
+  const children = sy.sessions.list({ parentSessionId: id, limit: 1000 }).reverse();
+  return {
+    ...rest,
+    session: sessionViews(sy, [rec])[0]!,
+    children: sessionViews(sy, children),
+    taskSessions: rec.taskId ? sessionViews(sy, sy.sessions.forTask(rec.taskId)) : [],
+  };
+}
+
+export type { SessionRecord, SessionListFilter, SessionEventsPage, SessionEvent, SessionStatus, CorruptLine };
 
 // ---------- brain (for people: full access, edits committed as `human`) ----------
 
