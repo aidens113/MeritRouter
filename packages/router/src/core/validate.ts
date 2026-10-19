@@ -1,0 +1,112 @@
+import { Ajv } from "ajv";
+import picomatch from "picomatch";
+import type { ResolvedConfig } from "../config/load.js";
+import { TaskValidationError } from "./errors.js";
+import { WorkerTaskSchema, type WorkerTask } from "./task.js";
+import type { ArtifactStore } from "../storage/artifacts.js";
+import { isGitRepo, resolveCommit } from "../workspaces/git.js";
+import { loadSources } from "../context/sources.js";
+import { assessPool } from "../models/eligibility.js";
+import { estimateTokens } from "../gateway/types.js";
+
+const ajv = new Ajv({ strict: true, allErrors: true });
+
+export function compileOutputSchema(schema: Record<string, unknown>) {
+  try {
+    return ajv.compile(schema);
+  } catch (err) {
+    throw new TaskValidationError(`unsupported outputSchema: ${(err as Error).message}`);
+  }
+}
+
+/** Parse a raw task and run every check that does not need a model. */
+export async function validateTask(cfg: ResolvedConfig, raw: unknown, artifacts: ArtifactStore): Promise<WorkerTask> {
+  const parsed = WorkerTaskSchema.safeParse(raw);
+  if (!parsed.success) {
+    const issues = parsed.error.issues.map((i) => `${i.path.join(".") || "<task>"}: ${i.message}`);
+    throw new TaskValidationError(`invalid task: ${issues.join("; ")}`, issues);
+  }
+  const spec = parsed.data;
+  const issues: string[] = [];
+  const profile = cfg.profiles[spec.profile];
+  if (!profile) throw new TaskValidationError(`profile ${spec.profile} is not configured`);
+
+  for (const alias of spec.repositoryAliases) {
+    const repo = cfg.repositoryPaths[alias];
+    if (!repo) issues.push(`unknown repository alias ${alias}`);
+    else if (!(await isGitRepo(repo.path))) issues.push(`repository ${alias} (${repo.path}) is not a git work tree`);
+  }
+  if (profile.mode !== "completion" && spec.repositoryAliases.length === 0) {
+    issues.push(`profile ${spec.profile} needs at least one repository alias`);
+  }
+
+  if (profile.mode === "coding") {
+    if (!spec.writableRepository) issues.push("coding tasks must name writableRepository");
+    else if (!spec.repositoryAliases.includes(spec.writableRepository)) issues.push("writableRepository must be one of repositoryAliases");
+    else if (!cfg.repositoryPaths[spec.writableRepository]?.writable) issues.push(`repository ${spec.writableRepository} is configured read-only`);
+    if (!spec.constraints.allowedPaths?.length) issues.push("coding tasks must list constraints.allowedPaths");
+  } else {
+    if (spec.writableRepository) issues.push(`profile ${spec.profile} is read-only; writableRepository is not allowed`);
+    if (spec.constraints.checks?.length) issues.push(`profile ${spec.profile} cannot run checks; use a coding profile`);
+  }
+  for (const glob of spec.constraints.allowedPaths ?? []) {
+    try {
+      picomatch(glob);
+    } catch {
+      issues.push(`invalid allowedPaths glob ${glob}`);
+    }
+  }
+
+  if ((spec.budget?.maxPaidUsd ?? 0) > 0 && !cfg.spend.paid_fallback_enabled) {
+    issues.push("budget.maxPaidUsd > 0 requested but paid routing is disabled by configuration");
+  }
+
+  for (const [alias, sha] of Object.entries(spec.context.baseCommits ?? {})) {
+    const repo = cfg.repositoryPaths[alias];
+    if (!repo || !spec.repositoryAliases.includes(alias)) {
+      issues.push(`baseCommits names ${alias}, which is not in repositoryAliases`);
+      continue;
+    }
+    try {
+      spec.context.baseCommits![alias] = await resolveCommit(repo.path, sha);
+    } catch {
+      issues.push(`baseCommits.${alias}: ${sha} is not a commit in ${alias}`);
+    }
+  }
+
+  if (spec.constraints.outputSchema) {
+    try {
+      compileOutputSchema(spec.constraints.outputSchema);
+    } catch (err) {
+      issues.push((err as Error).message);
+    }
+  }
+
+  if (issues.length) throw new TaskValidationError(`invalid task: ${issues.join("; ")}`, issues);
+
+  // Load context now so missing files/artifacts are rejected before dispatch.
+  let sources;
+  try {
+    sources = await loadSources(cfg, spec, artifacts);
+  } catch (err) {
+    throw new TaskValidationError(`invalid task context: ${(err as Error).message}`);
+  }
+
+  if (profile.mode === "completion") {
+    const pool = assessPool(cfg.catalog, spec.profile, profile, {
+      now: new Date(),
+      maxMetadataAgeDays: cfg.models.max_metadata_age_days,
+      paidRoutingAllowed: cfg.spend.paid_fallback_enabled,
+    });
+    if (pool.routable) {
+      const est = estimateTokens([{ role: "user", content: sources.map((s) => s.text).join("\n") + spec.goal }]);
+      const out = Math.min(profile.max_output_tokens, spec.budget?.maxOutputTokens ?? Infinity);
+      if (est + out > pool.contextLimitTokens) {
+        throw new TaskValidationError(
+          `context (~${est} tokens) plus output (${out}) does not fit the ${spec.profile} pool limit of ${pool.contextLimitTokens} tokens; split the task or pass fewer/narrower file ranges`,
+        );
+      }
+    }
+  }
+  return spec;
+}

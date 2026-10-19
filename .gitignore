@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.next/
+*.tsbuildinfo
+coverage/
+
+# Local state: job databases, artifacts, worktrees, logs, secrets
+.switchyard/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.env
+.env.*
+!.env.example
+switchyard.config.yaml
+models.local.yaml

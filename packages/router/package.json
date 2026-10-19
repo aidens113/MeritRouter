@@ -1,0 +1,44 @@
+{
+  "name": "switchyard-router",
+  "version": "0.1.0",
+  "description": "Policy-enforcing task router for delegating bounded work to approved external model pools.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "switchyard": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.11.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "ajv": "^8.17.1",
+    "better-sqlite3": "~12.11.1",
+    "picomatch": "^4.0.3",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^22",
+    "@types/picomatch": "^4.0.3",
+    "typescript": "~6.0.3",
+    "vite": "~6.4.4",
+    "vitest": "~3.2.7"
+  }
+}
