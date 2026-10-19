@@ -82,7 +82,15 @@ item. A delegated task's session names the supervisor session that delegated it 
 
 - Worktrees and agent homes are not deleted automatically. Remove old ones with
   `git worktree remove` in the source repository, then delete the folder.
-- Backups: copy `.switchyard/` while no worker is running (it includes the session logs).
+- Backups: `switchyard backup <dir>` takes a consistent snapshot while workers run (SQLite
+  online backup, then session logs and artifacts; never worktrees; the vault master key only with
+  `--include-master-key`). `switchyard restore <dir>` refuses while any task holds a live lease or
+  a daemon runs, refuses existing state without `--force`, and with `--force` moves the old state
+  to `.switchyard/pre-restore-<time>/`. Restored running tasks have their leases expired so the
+  next worker recovers them.
+- Durability: `storage.durability: full` sets SQLite `synchronous=FULL` (survives power loss at
+  some write cost); `normal` (default) can lose the last transactions on power loss but never
+  corrupts. Session logs are fsynced per event either way.
 - Session logs are not pruned automatically.
 
 ## The brain and attribution
@@ -105,7 +113,8 @@ item. A delegated task's session names the supervisor session that delegated it 
 - Audio/video inputs are routed only to models that accept them; there is no transcription or
   frame-extraction preprocessing yet.
 - Tasks and jobs run only while a worker process is running (the MCP server stops with the
-  Claude session; run `switchyard worker` for unattended work). Interrupted supervisors resume
+  Claude session; run `switchyard worker`, `switchyard daemon`, or `switchyard service install`
+  for unattended work). Interrupted supervisors resume
   from their saved transcript.
 - Line attribution for external agents (OpenCode) is per model request, not per tool call, and can
   blur when the agent sends several requests at once.
