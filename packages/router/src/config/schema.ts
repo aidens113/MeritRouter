@@ -284,6 +284,20 @@ export const VerificationConfigSchema = z
     floors: z.array(VerificationFloorSchema).prefault(DEFAULT_FLOORS),
     /** Level minimums, extra checks, and importance; matched before dispatch and again on the result. */
     rules: z.array(VerificationRuleSchema).prefault(DEFAULT_VERIFICATION_RULES),
+    /**
+     * A task's total model requests across every purpose (classification, execution, review,
+     * repair). Review and repair reserves sit on top of the profile and tier execution caps,
+     * within this total; an explicit task budget.maxModelRequests narrows it.
+     */
+    max_total_requests_per_task: z.number().int().positive().default(24),
+    /**
+     * preferred: qualified reviewers are chosen first; without one, deep review uses a reviewer
+     * at the size floor and the verdict is marked reviewer_unqualified. required: deep review
+     * without a qualified reviewer is inconclusive. Strict always requires review_strict.
+     */
+    reviewer_qualification: z.enum(["preferred", "required"]).default("preferred"),
+    /** Pass rate on T3 review evaluations a reviewer needs for review_strict (strict reviews). */
+    review_strict_pass_threshold: z.number().min(0).max(1).default(0.85),
     /** Requests reserved out of the task's total before execution. */
     budget: z
       .object({
@@ -320,6 +334,10 @@ export const VerificationConfigSchema = z
       const required = chain.map((l) => v.levels[l].review?.required).find((r) => r !== undefined) ?? false;
       if (required && !(v.budget.review_requests[level] ?? 0)) {
         ctx.addIssue({ code: "custom", path: ["budget", "review_requests", level], message: `level ${level} requires review; reserve at least 1 review request` });
+      }
+      const reserve = required ? (v.budget.review_requests[level] ?? 0) : 0;
+      if (reserve + 1 > v.max_total_requests_per_task) {
+        ctx.addIssue({ code: "custom", path: ["max_total_requests_per_task"], message: `level ${level} reserves ${reserve} review request(s); max_total_requests_per_task must leave at least one for execution` });
       }
     }
     const ids = [...v.floors.map((f) => f.id), ...v.rules.map((r) => r.id)];

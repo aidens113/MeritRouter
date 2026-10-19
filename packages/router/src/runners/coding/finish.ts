@@ -21,8 +21,10 @@ export async function prepareWorkspace(ctx: RunContext): Promise<{ ws: Workspace
   const repo = ctx.cfg.repositoryPaths[alias]!;
   const worktrees = new Worktrees(ctx.tasks.db, path.join(ctx.cfg.storageDir, "worktrees"), ctx.now);
   const runNo = ctx.tasks.get(ctx.taskId)!.row.run_count;
-  const ws = await worktrees.prepare({ taskId: ctx.taskId, run: runNo, alias, sourcePath: repo.path, ...(ctx.spec.context.baseCommits?.[alias] ? { baseCommit: ctx.spec.context.baseCommits[alias] } : {}) });
-  ctx.tasks.event(ctx.taskId, "worktree_ready", { path: ws.worktreePath, baseSha: ws.baseSha, sourceDirty: ws.sourceDirty });
+  // A quality repair continues from the submitted revision; the diff is still taken against the base.
+  const start = ctx.retry?.startFrom?.alias === alias ? ctx.retry.startFrom.commit : null;
+  const ws = await worktrees.prepare({ taskId: ctx.taskId, run: runNo, alias, sourcePath: repo.path, ...(ctx.spec.context.baseCommits?.[alias] ? { baseCommit: ctx.spec.context.baseCommits[alias] } : {}), ...(start ? { startCommit: start } : {}) });
+  ctx.tasks.event(ctx.taskId, "worktree_ready", { path: ws.worktreePath, baseSha: ws.baseSha, sourceDirty: ws.sourceDirty, ...(start ? { startCommit: start } : {}) });
   return { ws, worktrees };
 }
 

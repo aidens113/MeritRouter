@@ -8,6 +8,7 @@ import {
   type Importance,
   type TierName,
   type VerificationConfig,
+  type VerificationLevel,
 } from "../config/schema.js";
 import { SwitchyardError } from "../core/errors.js";
 import { criteria, CriterionVerifySchema, type WorkerTask } from "../core/task.js";
@@ -19,20 +20,24 @@ import { evaluatePolicy, type PolicyEvaluation } from "./policy.js";
 
 const count = z.number().int().min(0);
 
-/** Model requests reserved per purpose out of the task's total. */
+/**
+ * Model requests reserved per purpose. The total is what the task may spend in all:
+ * classification + execution + review + repair, never more than the ceiling
+ * (verification.max_total_requests_per_task, or an explicit task budget).
+ */
 export const BudgetAllocationSchema = z
   .object({
-    /** The task's total request cap across every tier and purpose. */
+    /** The task's total across every tier and purpose: the sum of the four reserves below. */
     total: count,
     /** Already spent classifying the task when the contract was compiled. */
     classification: count,
-    /** What the agent loop may use for the first run. */
+    /** What the first run may use (the profile and tier execution cap). */
     execution: count,
-    /** Reserved for independent review (deep and strict). */
+    /** Reserved for independent review: the level's, plus what a repair at a higher tier needs. */
     review: count,
-    /** Reserved for quality retries (repairs). */
+    /** Reserved for quality retries (repairs and escalations). */
     repair: count,
-    /** Left over within the total. */
+    /** Room left under the ceiling; never spent. */
     unallocated: count,
   })
   .strict();
@@ -100,14 +105,23 @@ export type AcceptanceContract = z.infer<typeof AcceptanceContractSchema>;
 
 /** Request counts the allocation is computed from (see allocateBudget). */
 export interface BudgetInput {
-  /** The task's total cap across tiers: effectiveBudget(cfg, spec, null).maxModelRequests. */
+  /**
+   * The task's total across every purpose: verificationTotal(cfg, spec), that is
+   * verification.max_total_requests_per_task narrowed by an explicit budget.maxModelRequests.
+   * Profile and tier caps bound execution only; review and repair sit on top of them.
+   */
   total: number;
   /** The run's cap at the contract tier: effectiveBudget(cfg, spec, tier).maxModelRequests. */
   tierExecution: number;
-  /** The cap at the next tier (repair runs there), or null at T3. */
+  /** The execution cap at the tier a repair runs at, or null for the contract tier. */
   nextTierExecution: number | null;
   /** Requests already charged to the task for classification. */
   classificationUsed: number;
+  /**
+   * The tier a quality repair runs at (the next tier when escalation is on). Its result is
+   * re-evaluated there, so the review that level needs is reserved too. Null: no repair tier.
+   */
+  repairTier?: TierName | null;
 }
 
 export type AllocationResult =
@@ -115,22 +129,78 @@ export type AllocationResult =
   | { ok: false; needed: number; available: number };
 
 /**
- * Reserve requests out of the total, in priority order: classification (already spent), review
- * (required by the level; never dropped), execution (up to the tier cap), then repair (up to
- * max_quality_retries x the per-retry amount, from what is left). The level is never lowered to
- * fit: when classification + review + one execution request exceed the total, it fails.
+ * Reserve requests under the ceiling (b.total), in priority order: classification (already
+ * spent), review (required by the level; never dropped), execution (up to the profile and tier
+ * cap), repair (max_quality_retries x the per-retry amount), then the review a repaired result
+ * needs when its tier raises the level (`repairReview`). The allocation's total is the sum of
+ * what is reserved; the ceiling only bounds it. The level is never lowered to fit: when
+ * classification + review + one execution request exceed the ceiling, it fails. With the
+ * default ceiling (24) that only happens when an explicit task budget is too small.
  */
-export function allocateBudget(policy: VerificationConfig, ev: Pick<PolicyEvaluation, "level" | "review">, b: BudgetInput): AllocationResult {
+export function allocateBudget(policy: VerificationConfig, ev: Pick<PolicyEvaluation, "level" | "review">, b: BudgetInput, repairReview = 0): AllocationResult {
   const review = ev.review.required ? (policy.budget.review_requests[ev.level] ?? 0) : 0;
   const needed = b.classificationUsed + review + 1;
   if (needed > b.total) return { ok: false, needed, available: b.total };
-  const execution = Math.min(b.tierExecution, b.total - b.classificationUsed - review);
+  let left = b.total - b.classificationUsed - review;
+  const execution = Math.min(b.tierExecution, left);
+  left -= execution;
   const perRetry = typeof policy.budget.repair_requests === "number" ? policy.budget.repair_requests : (b.nextTierExecution ?? b.tierExecution);
-  const repair = Math.max(0, Math.min(policy.failure.max_quality_retries * perRetry, b.total - b.classificationUsed - review - execution));
+  const repair = Math.max(0, Math.min(policy.failure.max_quality_retries * perRetry, left));
+  left -= repair;
+  const extraReview = repair > 0 ? Math.max(0, Math.min(repairReview, left)) : 0;
+  const total = b.classificationUsed + execution + review + extraReview + repair;
   return {
     ok: true,
-    allocation: { total: b.total, classification: b.classificationUsed, execution, review, repair, unallocated: b.total - b.classificationUsed - review - execution - repair },
+    allocation: { total, classification: b.classificationUsed, execution, review: review + extraReview, repair, unallocated: b.total - total },
   };
+}
+
+/**
+ * Review requests the task may spend at its effective level. Normally the contract's review
+ * reserve, which already covers the review a repair at a higher tier needs. When the actual
+ * result raised the level to one that needs more (for example a protected-path edit on a
+ * standard task), the difference is drawn from the unallocated room under the ceiling; if even
+ * that cannot hold it, the review ends skipped_budget. The level is never lowered.
+ */
+export function reviewAllowance(policy: Pick<VerificationConfig, "budget">, budget: BudgetAllocation, level: VerificationLevel, required: boolean): number {
+  if (!required) return budget.review;
+  const wanted = policy.budget.review_requests[level] ?? 0;
+  return Math.max(budget.review, Math.min(wanted, budget.review + budget.unallocated));
+}
+
+/** The reserve adjustment a raised level needs: review requests drawn from the unallocated room. */
+export function reviewReserveAdjustment(policy: Pick<VerificationConfig, "budget">, budget: BudgetAllocation, level: VerificationLevel, required: boolean): { from: number; to: number; fromUnallocated: number; wanted: number } | null {
+  if (!required) return null;
+  const wanted = policy.budget.review_requests[level] ?? 0;
+  if (wanted <= budget.review) return null;
+  const to = reviewAllowance(policy, budget, level, required);
+  return { from: budget.review, to, fromUnallocated: to - budget.review, wanted };
+}
+
+/** Requests used so far, as admission counts them (cumulative, by purpose). */
+export interface RequestsUsed {
+  total: number;
+  verification: number;
+  repair: number;
+}
+
+/** Cumulative cap for the first run: the tier's execution cap, never into the review or repair reserves. */
+export function executionCap(budget: BudgetAllocation, tierCap: number): number {
+  return Math.min(tierCap, budget.classification + budget.execution);
+}
+
+/** Cumulative cap for a repair (or escalation) run: what is used plus what is left of the repair reserve. */
+export function repairCap(budget: BudgetAllocation, used: RequestsUsed): number {
+  return used.total + Math.max(0, budget.repair - used.repair);
+}
+
+/**
+ * Cumulative cap for one review session: what is used plus this session's share of what is
+ * left of the review allowance. `share` < 1 keeps part of it for a re-review after a repair.
+ */
+export function reviewCap(allowance: number, used: RequestsUsed, share = 1): number {
+  const left = Math.max(0, allowance - used.verification);
+  return used.total + (share >= 1 ? left : Math.ceil(left * share));
 }
 
 export interface CompileInput {
@@ -168,7 +238,28 @@ export function compileContract(input: CompileInput): CompileResult {
     atLeast: spec.verification?.atLeast ?? null,
     addChecks: spec.verification?.addChecks ?? [],
   });
-  const alloc = allocateBudget(policy, evaluation, input.budget);
+  // A repair at a higher tier is re-evaluated there; reserve the review that level needs beyond this one.
+  const repairTier = input.budget.repairTier ?? null;
+  let repairReview = 0;
+  if (repairTier && repairTier !== input.tier && policy.failure.max_quality_retries > 0) {
+    const atRepair = evaluatePolicy(policy, {
+      tier: repairTier,
+      profile: spec.profile,
+      tags: input.tags,
+      paths: declaredPaths(spec),
+      protectedPathsChanged: null,
+      criteria: crit,
+      requestedImportance: spec.importance ?? null,
+      importanceReason: spec.importanceReason ?? null,
+      parent: input.parent ?? null,
+      atLeast: spec.verification?.atLeast ?? null,
+      addChecks: spec.verification?.addChecks ?? [],
+    });
+    const need = atRepair.review.required ? (policy.budget.review_requests[atRepair.level] ?? 0) : 0;
+    const have = evaluation.review.required ? (policy.budget.review_requests[evaluation.level] ?? 0) : 0;
+    repairReview = Math.max(0, need - have);
+  }
+  const alloc = allocateBudget(policy, evaluation, input.budget, repairReview);
   if (!alloc.ok) {
     return {
       ok: false,

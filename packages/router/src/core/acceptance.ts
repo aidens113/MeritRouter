@@ -1,17 +1,17 @@
 import type { ResolvedConfig } from "../config/load.js";
 import { TIER_NAMES, type Importance, type ProfileMode, type TierName, type VerificationConfig } from "../config/schema.js";
-import { effectiveBudget } from "../admission/admission.js";
+import { budgetInputFor, effectiveBudget, verificationTotal } from "../admission/admission.js";
 import type { ArtifactStore } from "../storage/artifacts.js";
 import type { StoredTask, TaskStore } from "../storage/tasks.js";
 import type { Classification } from "../scoring/score.js";
-import { compileContract, type ContractStore, type StoredContract } from "../verification/contract.js";
+import { compileContract, executionCap, type ContractStore, type StoredContract } from "../verification/contract.js";
 import { evaluatePolicy, reevaluateOnResult, resolveLevel, type Reevaluation } from "../verification/policy.js";
 import { runNamedChecks, selfReportFromOutput } from "../verification/checks.js";
-import { applySupervisorDecision, decide, verificationRecord, type Decision } from "../verification/decide.js";
+import { applySupervisorDecision, decide, verificationRecord, type Decision, type ReviewOutcome } from "../verification/decide.js";
 import { declaredPaths } from "../verification/match.js";
 import type { AcceptanceDecisionInput, AcceptanceDecisionOutcome, RetryContext, RunOutcome, RunnerResult } from "../runners/types.js";
 import { SwitchyardError, TaskValidationError } from "./errors.js";
-import { criteria, isTerminal, type WorkerResult, type WorkerTask } from "./task.js";
+import { criteria, isTerminal, type ReviewRecord, type WorkerResult, type WorkerTask } from "./task.js";
 
 /**
  * The glue between the executor and the verification library: compiling and storing a task's
@@ -52,7 +52,6 @@ export function ensureContract(d: ContractDeps, task: StoredTask, tier: TierName
   const existing = d.contracts.get(task.row.id);
   if (existing) return { ok: true, stored: existing, created: false };
   const spec = task.spec;
-  const next = nextTier(tier);
   const compiled = compileContract({
     taskId: task.row.id,
     spec,
@@ -60,12 +59,7 @@ export function ensureContract(d: ContractDeps, task: StoredTask, tier: TierName
     tags: classification?.tags ?? spec.hints?.tags ?? null,
     rulebookFingerprint: classification?.rulebookVersion ?? null,
     policy: d.cfg.verification,
-    budget: {
-      total: effectiveBudget(d.cfg, spec, null).maxModelRequests,
-      tierExecution: effectiveBudget(d.cfg, spec, tier).maxModelRequests,
-      nextTierExecution: next ? effectiveBudget(d.cfg, spec, next).maxModelRequests : null,
-      classificationUsed: d.requestsUsed(task.row.id),
-    },
+    budget: budgetInputFor(d.cfg, spec, tier, d.requestsUsed(task.row.id)),
     parent: parentImportance(d.tasks, d.contracts, spec),
     now: d.now(),
   });
@@ -84,15 +78,13 @@ export function ensureContract(d: ContractDeps, task: StoredTask, tier: TierName
 }
 
 /**
- * The request cap (cumulative, as admission counts it) for one run. Without a contract it is
- * the tier's cap, as before verification. With one, the first run may not reach into the review
- * and repair reserves, and the repair run may not reach into the review reserve.
+ * The request cap (cumulative, as admission counts it) for a task's first run. Without a
+ * contract it is the tier's cap, as before verification. With one, the run may not reach into
+ * the review and repair reserves (repair and review caps: verification/contract.ts).
  */
-export function runCap(cfg: ResolvedConfig, spec: WorkerTask, tier: TierName, stored: StoredContract | null, purpose: "execution" | "repair"): number {
+export function runCap(cfg: ResolvedConfig, spec: WorkerTask, tier: TierName, stored: StoredContract | null): number {
   const tierCap = effectiveBudget(cfg, spec, tier).maxModelRequests;
-  if (!stored) return tierCap;
-  const b = stored.contract.budget;
-  return Math.min(tierCap, b.classification + b.execution + (purpose === "repair" ? b.repair : 0));
+  return stored ? executionCap(stored.contract.budget, tierCap) : tierCap;
 }
 
 /**
@@ -132,7 +124,7 @@ export function verificationBudgetShortfall(cfg: ResolvedConfig, spec: WorkerTas
     const needed = (ev.review.required ? (policy.budget.review_requests[ev.level] ?? 0) : 0) + 1;
     if (!least || needed < least.needed) least = { needed, level: ev.level };
   }
-  const total = effectiveBudget(cfg, spec, null).maxModelRequests;
+  const total = verificationTotal(cfg, spec);
   if (!least || least.needed <= total) return null;
   return `verification_budget_insufficient: verification level ${least.level} needs at least ${least.needed} model requests (review ${least.needed - 1}, execution 1) but the task allows ${total}; raise budget.maxModelRequests or lower the importance`;
 }
@@ -143,15 +135,30 @@ export interface VerifiedOutcome {
   reevaluation: Reevaluation;
 }
 
+/** What the review phase adds to a verification (see verification/review.ts). */
+export interface VerifyOptions {
+  /** The tier the run actually ran at (escalation or repair); the level can only rise. */
+  tier?: TierName;
+  /** The latest review verdict, when a review ran. */
+  review?: ReviewOutcome | null;
+  /** The review allowance ran out before a required review finished. */
+  verificationBudgetExhausted?: boolean;
+  /** Every review of this task so far, recorded on the result. */
+  reviews?: ReviewRecord[];
+  /** Why a required review did not run or did not decide (reviewer unavailable, unqualified). */
+  notes?: string[];
+}
+
 /**
  * Verify a runner outcome against the contract: re-evaluate the policy on what actually
- * changed (it can only rise), run the named checks on the submitted revision, and decide.
- * Unresolved criteria are those neither verified nor claimed with evidence.
+ * changed and the tier it ran at (it can only rise), run the named checks on the submitted
+ * revision, and decide (with the review verdict, when one ran). Unresolved criteria are those
+ * neither verified nor claimed with evidence.
  */
-export function verifyOutcome(policy: VerificationConfig, stored: StoredContract, mode: ProfileMode, outcome: RunOutcome, qualityRetriesUsed: number): VerifiedOutcome {
+export function verifyOutcome(policy: VerificationConfig, stored: StoredContract, mode: ProfileMode, outcome: RunOutcome, qualityRetriesUsed: number, opts: VerifyOptions = {}): VerifiedOutcome {
   const r = outcome.result;
   const contract = stored.contract;
-  const reevaluation = reevaluateOnResult(policy, contract, { changedPaths: r.changedPaths ?? [], protectedPathsChanged: r.protectedPathsChanged ?? [] });
+  const reevaluation = reevaluateOnResult(policy, contract, { changedPaths: r.changedPaths ?? [], protectedPathsChanged: r.protectedPathsChanged ?? [], ...(opts.tier ? { tier: opts.tier } : {}) });
   const ev = outcome.evidence ?? {};
   const report = runNamedChecks({
     contract,
@@ -163,7 +170,17 @@ export function verifyOutcome(policy: VerificationConfig, stored: StoredContract
     universe: ev.universe ?? null,
     selfReport: ev.output ? selfReportFromOutput(ev.output, contract) : null,
   });
-  const decision = decide({ policy, contract, effective: reevaluation, executionStatus: r.executionStatus, report, qualityRetriesUsed });
+  const decision = decide({
+    policy,
+    contract,
+    effective: reevaluation,
+    executionStatus: r.executionStatus,
+    report,
+    qualityRetriesUsed,
+    review: opts.review ?? null,
+    verificationBudgetExhausted: opts.verificationBudgetExhausted ?? false,
+    notes: opts.notes ?? [],
+  });
   const unresolved = decision.criteria.filter((c) => c.outcome !== "passed" && c.outcome !== "claimed");
   return {
     decision,
@@ -172,7 +189,7 @@ export function verifyOutcome(policy: VerificationConfig, stored: StoredContract
       ...r,
       acceptanceStatus: decision.acceptanceStatus,
       verificationStatus: decision.verificationStatus,
-      verification: verificationRecord({ contract, contractSha256: stored.sha256, reevaluation, report, decision }),
+      verification: verificationRecord({ contract, contractSha256: stored.sha256, reevaluation, report, decision, reviews: opts.reviews ?? [] }),
       unresolvedCriteria: unresolved.map((c) => c.text),
       unresolvedCriterionIds: unresolved.map((c) => c.id),
     },

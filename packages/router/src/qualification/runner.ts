@@ -10,10 +10,30 @@ import { FILE_REF_RE } from "../core/task.js";
 import { git } from "../workspaces/git.js";
 import { minimalEnv, runProcess } from "../runners/coding/process.js";
 import { registerRepository } from "./registry.js";
+import { autoCriterionId } from "../core/task.js";
+import { renderEvidencePackage, validateVerdict, VERDICT_JSON_SCHEMA, VERDICTS } from "../verification/review.js";
+
+const Outcome = z.enum(VERDICTS);
+
+/**
+ * A reviewer evaluation: submitted work (a patch or an answer) to judge against the task's
+ * criteria (ids c1..cn), with the verdict a good reviewer reaches. Kinds: correct work that
+ * passes; plausible work with a real defect; work the evidence cannot settle (inconclusive);
+ * acceptable work in a non-preferred style (must not fail).
+ */
+const ReviewEvalSchema = z.object({
+  kind: z.enum(["correct", "defect", "unverifiable", "style"]),
+  patch: z.string().optional(),
+  work: z.object({ summary: z.string(), findings: z.array(z.object({ description: z.string(), evidenceRefs: z.array(z.string()).default([]) })).default([]) }).optional(),
+  changedPaths: z.array(z.string()).default([]),
+  checks: z.array(z.object({ command: z.string(), exitCode: z.number().int().nullable(), log: z.string() })).default([]),
+  authorSummary: z.string(),
+  expect: z.object({ verdict: Outcome, criteria: z.record(z.string(), z.union([Outcome, z.array(Outcome).min(1)])) }),
+});
 
 const EvalSchema = z.object({
   id: z.string().regex(/^[a-z0-9-]+$/),
-  family: z.enum(["coding", "read_only"]),
+  family: z.enum(["coding", "read_only", "review"]),
   tier: TierNameSchema,
   profile: ProfileNameSchema,
   title: z.string(),
@@ -25,6 +45,7 @@ const EvalSchema = z.object({
     inlineText: z.string().optional(),
   }),
   hidden: z.object({ dir: z.string(), command: z.string() }).optional(),
+  review: ReviewEvalSchema.optional(),
   grade: z
     .object({
       mustCite: z.array(z.object({ path: z.string(), lines: z.tuple([z.number(), z.number()]) })).default([]),
@@ -34,6 +55,34 @@ const EvalSchema = z.object({
   budget: z.object({ maxModelRequests: z.number().int().positive() }),
 });
 export type EvalCase = z.infer<typeof EvalSchema>;
+
+/** The policy version and revision a reviewer evaluation's verdict must echo. */
+export const REVIEW_EVAL_POLICY = "eval";
+export const reviewEvalRevision = (e: Pick<EvalCase, "id">) => `eval-${e.id}`;
+
+/**
+ * The evidence package of a reviewer evaluation, rendered exactly as the production review
+ * phase renders one (the reviewer reads the fixture through the repository tools).
+ */
+export function reviewEvalPackage(e: EvalCase, alias: string): string {
+  const r = e.review!;
+  return renderEvidencePackage({
+    goal: e.task.goal,
+    criteria: e.task.acceptanceCriteria.map((text, i) => ({ id: autoCriterionId(i), text, verify: "review" })),
+    scope: { repositoryAliases: [alias], writableRepository: null, allowedPaths: e.task.allowedPaths ?? null },
+    level: e.tier === "T3" ? "strict" : "deep",
+    policyVersion: REVIEW_EVAL_POLICY,
+    revision: reviewEvalRevision(e),
+    baseCommits: {},
+    changedPaths: r.changedPaths,
+    patch: r.patch !== undefined ? { ref: null, text: r.patch } : null,
+    checks: r.checks.map((c) => ({ command: c.command, exitCode: c.exitCode, revision: reviewEvalRevision(e), logRef: null, logTail: c.log })),
+    deterministic: [],
+    work: r.work ? { summary: r.work.summary, findings: r.work.findings } : null,
+    claim: { summary: r.authorSummary, findings: [], self: [] },
+    context: null,
+  });
+}
 const SuiteSchema = z.object({ version: z.string(), description: z.string().optional(), evals: z.array(EvalSchema) });
 export type Suite = z.infer<typeof SuiteSchema>;
 
@@ -120,8 +169,17 @@ export class Qualifier {
             goal: e.task.goal,
             repositoryAliases: [alias],
             ...(e.family === "coding" ? { writableRepository: alias } : {}),
-            context: e.task.inlineText ? { inlineText: e.task.inlineText } : {},
-            constraints: { acceptanceCriteria: e.task.acceptanceCriteria, ...(e.task.allowedPaths ? { allowedPaths: e.task.allowedPaths } : {}) },
+            ...(e.family === "review"
+              ? {
+                  // The reviewer under evaluation judges the package and returns its verdict as data.
+                  goal: `Review the submitted work below against its contract and return your verdict as data (the verdict object). The reviewed task's goal: ${e.task.goal}`,
+                  context: { inlineText: reviewEvalPackage(e, alias) },
+                  constraints: { acceptanceCriteria: ["returns a verdict on every criterion of the reviewed work"], outputSchema: VERDICT_JSON_SCHEMA },
+                }
+              : {
+                  context: e.task.inlineText ? { inlineText: e.task.inlineText } : {},
+                  constraints: { acceptanceCriteria: e.task.acceptanceCriteria, ...(e.task.allowedPaths ? { allowedPaths: e.task.allowedPaths } : {}) },
+                }),
             hints: { difficulty: e.tier },
             routing: { endpointId },
             budget: { maxModelRequests: e.budget.maxModelRequests },
@@ -183,6 +241,7 @@ export class Qualifier {
   async grade(e: EvalCase, result: WorkerResult, fixture: string): Promise<{ outcome: "pass" | "fail" | "infra_error"; detail: string }> {
     if (result.executionStatus !== "completed" && INFRA.test(result.stopReason)) return { outcome: "infra_error", detail: result.stopReason };
     if (e.family === "coding") return this.gradeCoding(e, result, fixture);
+    if (e.family === "review") return gradeReview(e, result);
     return gradeReadOnly(e, result);
   }
 
@@ -232,6 +291,29 @@ export function gradeReadOnly(e: EvalCase, result: WorkerResult): { outcome: "pa
     if (!group.some((w) => text.includes(w.toLowerCase()))) problems.push(`did not mention any of: ${group.join(", ")}`);
   }
   return problems.length ? { outcome: "fail", detail: problems.join("; ") } : { outcome: "pass", detail: "required evidence cited" };
+}
+
+/**
+ * Grade a reviewer on per-criterion outcomes: the verdict must validate, match the expected
+ * verdict, and give every criterion an acceptable outcome. An approve-everything reviewer
+ * passes the correct and style kinds and fails the defect and unverifiable ones.
+ */
+export function gradeReview(e: EvalCase, result: Pick<WorkerResult, "executionStatus" | "stopReason" | "data">): { outcome: "pass" | "fail"; detail: string } {
+  if (result.executionStatus !== "completed") return { outcome: "fail", detail: result.stopReason };
+  const r = e.review;
+  if (!r) return { outcome: "fail", detail: "review eval without expectations" };
+  const ids = e.task.acceptanceCriteria.map((_, i) => ({ id: autoCriterionId(i) }));
+  const v = validateVerdict(result.data, { criteria: ids, revision: reviewEvalRevision(e), policyVersion: REVIEW_EVAL_POLICY, universe: null, targetedChecksAllowed: () => true });
+  if (!v.ok) return { outcome: "fail", detail: `verdict invalid: ${v.errors.slice(0, 3).join("; ")}` };
+  const problems: string[] = [];
+  if (v.value.verdict !== r.expect.verdict) problems.push(`verdict ${v.value.verdict}, expected ${r.expect.verdict} (${r.kind})`);
+  for (const c of v.value.criteria) {
+    const want = r.expect.criteria[c.id];
+    if (want === undefined) continue;
+    const ok = Array.isArray(want) ? want.includes(c.outcome) : want === c.outcome;
+    if (!ok) problems.push(`${c.id} ${c.outcome}, expected ${Array.isArray(want) ? want.join(" or ") : want}`);
+  }
+  return problems.length ? { outcome: "fail", detail: problems.join("; ") } : { outcome: "pass", detail: `${r.kind}: verdict and criteria match` };
 }
 
 async function initRepo(dir: string): Promise<void> {

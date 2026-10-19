@@ -127,18 +127,15 @@ describe("paid execution", () => {
   });
 
   it("T4 work goes to paid models when the T4 policy is premium", async () => {
-    // Premium T4 runs at T3, where the default policy is deep: the budget must hold its review reserve.
-    const base = baseConfig();
-    const profiles = { ...(base.profiles as Record<string, Record<string, unknown>>) };
-    profiles.summarize = { ...profiles.summarize, max_model_requests: 6 };
-    env = makeEnv({ config: paidCfg({ tiers: { T4: "premium" } }, { profiles }) });
+    env = makeEnv({ config: paidCfg({ tiers: { T4: "premium" } }) });
     const direct = new FakeDirect();
     sy = open(env, new ScriptedClient((req) => reply(JSON.stringify(goodOutput()), servedFor(sy!, req))), { worker: true, directClient: direct });
     sy.vault.add({ provider: "acme", secret: "sk-acme-0000-1111" });
     const [a] = await sy.submitTasks([summarizeTask({ hints: { difficulty: "T4" } })]);
     const r = (await sy.awaitResults([a!.taskId], { timeoutSeconds: 10 })).completed[0]!;
     expect(r.classification!.tier).toBe("T4");
-    expect(r.servedEndpoints).toEqual([PAID_ID]);
+    // Execution went to the paid model (premium T4 runs at T3, which is deep: a reviewer serves too).
+    expect(sy.gate.admission.servedEndpointsByPurpose(a!.taskId).execution).toEqual([PAID_ID]);
   });
 
   it("an uncertain paid failure keeps the worst case charged", async () => {

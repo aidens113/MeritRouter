@@ -246,6 +246,40 @@ export const SupervisorDecisionSchema = z
   .strict();
 export type SupervisorDecision = z.infer<typeof SupervisorDecisionSchema>;
 
+/**
+ * One independent review of the task (verification/review.ts): who reviewed, whether the
+ * reviewer was qualified, and its verdict per criterion. A review that could not run has a null
+ * verdict and says why in stopReason.
+ */
+export const ReviewRecordSchema = z
+  .object({
+    attempt: z.number().int().min(1),
+    /** The reviewer's child session, when sessions are recorded. */
+    sessionId: z.string().nullable(),
+    /** Endpoint that served the verdict (null when no review ran). */
+    reviewer: z.string().nullable(),
+    /** Qualification family required or preferred (review, review_strict). */
+    qualification: z.string().nullable(),
+    qualified: z.boolean(),
+    /** e.g. reviewer_unqualified, same_model_family. */
+    flags: z.array(z.string()),
+    /** The revision or artifact digest the reviewer was shown and examined. */
+    revision: z.string().nullable(),
+    verdict: z.enum(["pass", "fail", "inconclusive"]).nullable(),
+    recommendedAction: z.enum(["accept", "repair", "run_targeted_check", "needs_supervisor"]).nullable(),
+    criteria: z.array(z.object({ id: z.string(), outcome: z.enum(["pass", "fail", "inconclusive"]), evidenceRefs: z.array(z.string()), reason: z.string().optional() }).strict()),
+    blockingFindings: z.array(z.object({ description: z.string(), evidenceRefs: z.array(z.string()), criterionId: z.string().optional() }).strict()),
+    missingEvidence: z.array(z.string()),
+    score: z.number().nullable(),
+    /** Model requests the review spent (purpose verification). */
+    requests: z.number().int().min(0),
+    stopReason: z.string(),
+    /** The stored verdict and evidence package. */
+    artifactRef: z.string().nullable(),
+  })
+  .strict();
+export type ReviewRecord = z.infer<typeof ReviewRecordSchema>;
+
 /** What verification found, recorded on the result. */
 export const VerificationRecordSchema = z
   .object({
@@ -273,6 +307,8 @@ export const VerificationRecordSchema = z
     ),
     reasons: z.array(z.string()),
     decisions: z.array(SupervisorDecisionSchema).default([]),
+    /** Independent reviews, oldest first (absent before V2 and when no review was required). */
+    reviews: z.array(ReviewRecordSchema).optional(),
   })
   .strict();
 export type VerificationRecord = z.infer<typeof VerificationRecordSchema>;

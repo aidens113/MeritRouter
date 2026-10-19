@@ -100,11 +100,11 @@ describe("contract and verification in the executor", () => {
     expect(events.indexOf("contract_compiled")).toBeLessThan(events.indexOf("completed"));
   });
 
-  it("rejects at submit when the budget cannot hold the required verification", async () => {
+  it("rejects at submit when an explicit budget cannot hold the required verification", async () => {
     env = makeEnv();
     sy = open(env, noModel());
-    // T1 critical -> strict: a review reserve of 6 plus one execution request exceeds summarize's 4.
-    await expect(sy.submitTasks([summarizeTask({ importance: "critical", importanceReason: "billing data" })])).rejects.toThrow(/verification_budget_insufficient/);
+    // T1 critical -> strict: a review reserve of 6 plus one execution request exceeds an explicit total of 4.
+    await expect(sy.submitTasks([summarizeTask({ importance: "critical", importanceReason: "billing data", budget: { maxModelRequests: 4 } })])).rejects.toThrow(/verification_budget_insufficient/);
     expect(sy.listTasks()).toEqual([]);
   });
 
@@ -115,10 +115,12 @@ describe("contract and verification in the executor", () => {
     const [sub] = await sy.submitTasks([summarizeTask({ importance: "critical", importanceReason: "billing data" })]);
     const r = await result(sub!.taskId);
     expect(r.acceptanceStatus).toBe("needs_supervisor");
-    expect(r.verificationStatus).toBe("pending");
+    // No review_strict-qualified reviewer exists: the review is inconclusive and nothing is spent on it.
+    expect(r.verificationStatus).toBe("inconclusive");
     expect(r.verification).toMatchObject({ level: "strict", importance: "critical", importanceSource: "task" });
-    // The review reserve is excluded from the run: total 8, review 6, so execution gets 2.
-    expect(sy.contract(sub!.taskId)!.contract.budget).toMatchObject({ total: 8, review: 6, execution: 2 });
+    // The review reserve sits on top of the execution cap (T1: 4); the total is what is reserved:
+    // execution 4 + review 6 + one repair at T2 (summarize's cap there: 8).
+    expect(sy.contract(sub!.taskId)!.contract.budget).toMatchObject({ total: 18, review: 6, execution: 4, repair: 8 });
     expect(client.requests).toHaveLength(1);
 
     const by = { kind: "supervisor" as const, id: "supervisor:job" };
@@ -127,7 +129,7 @@ describe("contract and verification in the executor", () => {
     expect(out.acceptanceStatus).toBe("met");
     const after = sy.tasks.get(sub!.taskId)!.result!;
     expect(after.acceptanceStatus).toBe("met");
-    expect(after.verificationStatus).toBe("pending");
+    expect(after.verificationStatus).toBe("inconclusive");
     expect(after.verification!.decisions).toEqual([expect.objectContaining({ decision: "accepted", by, reason: "compared the summary with the log" })]);
     expect(sy.tasks.events(sub!.taskId).map((e) => e.type)).toContain("result_accepted");
   });
@@ -205,15 +207,16 @@ describe("coding verification", () => {
     expect(raised?.data).toMatchObject({ from: "standard", to: "strict", newRules: ["auth-critical"] });
   });
 
-  it("deep reserves its review out of the run cap and waits for review (none exists in V1)", async () => {
+  it("deep reserves its review on top of the run cap; a reviewer that cannot run leaves it pending", async () => {
     env = makeEnv();
     const coding = stubCoding((ctx) => codingOutcome(ctx));
     sy = open(env, noModel(), { worker: true, coding });
     const [sub] = await sy.submitTasks([implement({ hints: { difficulty: "T3" } })]);
     const r = await result(sub!.taskId);
-    expect(sy.contract(sub!.taskId)!.contract.budget).toMatchObject({ total: 8, review: 4, execution: 4 });
-    expect(coding.calls[0]!.budget.maxModelRequests).toBe(4);
+    expect(sy.contract(sub!.taskId)!.contract.budget).toMatchObject({ total: 20, review: 4, execution: 8, repair: 8 });
+    expect(coding.calls[0]!.budget.maxModelRequests).toBe(8);
     expect(r).toMatchObject({ acceptanceStatus: "needs_supervisor", verificationStatus: "pending" });
+    expect(r.verification!.reasons.join("\n")).toMatch(/review 1: the review could not run/);
   });
 
   it("the escalation retry gets the failing check log, the unresolved criteria, and the repair budget", async () => {
@@ -228,12 +231,18 @@ describe("coding verification", () => {
     expect(second!.retry).toMatchObject({ fromTier: "T2", reason: "acceptance_unmet", unresolvedCriteria: ["subtract exists"] });
     expect(second!.retry!.failingChecks).toEqual([expect.objectContaining({ command: CHECK, exitCode: 1, logTail: expect.stringContaining("subtract is not defined") })]);
     expect(second!.retry!.verificationReasons.join("\n")).toMatch(/declared_checks failed/);
-    // Total 16 at T2: execution 8, repair 8 (one retry at T3's cap of 12, from what is left).
-    expect(sy.contract(sub!.taskId)!.contract.budget).toMatchObject({ total: 16, execution: 8, review: 0, repair: 8 });
-    // First run: T2's cap; the repair run: execution plus the repair reserve, within T3's cap.
+    // Total 24: execution 8 (T2's cap), repair 12 (one retry at T3's cap), and the review the
+    // repaired result needs at T3 (deep: 4), reserved up front.
+    expect(sy.contract(sub!.taskId)!.contract.budget).toMatchObject({ total: 24, execution: 8, review: 4, repair: 12, unallocated: 0 });
+    // First run: T2's cap; the repair run: what is used plus the repair reserve.
     expect(first!.budget.maxModelRequests).toBe(8);
     expect(second!.budget.maxModelRequests).toBe(12);
-    expect(r).toMatchObject({ acceptanceStatus: "met", routing: { tier: "T3", escalatedFrom: "T2" } });
+    expect(first!.purpose).toBeUndefined();
+    expect(second!.purpose).toBe("repair");
+    // The repaired result is re-evaluated at T3, the tier it ran at: deep, so it needs a review
+    // (from the reserve above). This client has no reviewer, so it waits.
+    expect(r).toMatchObject({ acceptanceStatus: "needs_supervisor", verificationStatus: "pending", routing: { tier: "T3", escalatedFrom: "T2" } });
+    expect(r.verification).toMatchObject({ level: "deep", raisedFrom: "standard" });
   });
 });
 

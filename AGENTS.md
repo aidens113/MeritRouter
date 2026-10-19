@@ -180,7 +180,8 @@ The binding rules for this repository:
 - **Placement by area.** Router code lives in `packages/router/src/<area>/`
   (`core`, `config`, `gateway`, `paid`, `routing`, `scoring`, `models`,
   `admission`, `storage`, `context`, `harness`, `runners`, `brain`,
-  `attribution`, `qualification`, `workspaces`, `admin`, `roles`). Put a file
+  `attribution`, `qualification`, `workspaces`, `admin`, `roles`,
+  `verification`). Put a file
   in the area that owns its concern; create a new area only for a new
   concern. The panel's data access goes through `src/admin/insights.ts` and
   the public exports in `src/index.ts`.

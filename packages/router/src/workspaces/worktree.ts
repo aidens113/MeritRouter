@@ -49,7 +49,8 @@ export class Worktrees {
   }
 
   /** Resolve and persist the base commit first, then create the worktree from it. */
-  async prepare(opts: { taskId: string; run: number; alias: string; sourcePath: string; baseCommit?: string }): Promise<Workspace> {
+  /** `startCommit` (a repair): check out that commit instead of the base; diffs stay against the base. */
+  async prepare(opts: { taskId: string; run: number; alias: string; sourcePath: string; baseCommit?: string; startCommit?: string }): Promise<Workspace> {
     const baseSha = opts.baseCommit ?? (await headSha(opts.sourcePath));
     const dirty = await dirtyPaths(opts.sourcePath);
     mkdirSync(this.root, { recursive: true });
@@ -66,7 +67,7 @@ export class Worktrees {
       )
       .run(ws.taskId, ws.repoAlias, ws.sourcePath, ws.worktreePath, ws.baseSha, ws.sourceDirty ? 1 : 0, JSON.stringify(dirty), now, now);
     if (existsSync(worktreePath)) throw new Error(`worktree path already exists: ${worktreePath}`);
-    await git(opts.sourcePath, ["worktree", "add", "--detach", worktreePath, baseSha]);
+    await git(opts.sourcePath, ["worktree", "add", "--detach", worktreePath, opts.startCommit ?? baseSha]);
     this.setStatus(opts.taskId, "ready");
     return ws;
   }

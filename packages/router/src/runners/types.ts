@@ -50,6 +50,8 @@ export interface RetryContext {
   failingChecks: Array<{ command: string; exitCode: number | null; logRef: string; logTail: string }>;
   /** Why verification did not accept the result. */
   verificationReasons: string[];
+  /** Coding repairs: start the new worktree at the previously submitted revision, not the base. */
+  startFrom?: { alias: string; commit: string } | null;
 }
 
 export interface RunContext {
@@ -80,6 +82,8 @@ export interface RunContext {
   contract?: AcceptanceContract | null;
   /** Set on the escalation retry: what went wrong in the previous attempt. */
   retry?: RetryContext | null;
+  /** Labels every request of this run (repair, verification) instead of the runner's own label. */
+  purpose?: "repair" | "verification";
 }
 
 /**
@@ -97,6 +101,7 @@ export async function ask(ctx: RunContext, req: Omit<GateRequest, "plan" | "part
   try {
     res = await ctx.gate.request({
       ...req,
+      ...(ctx.purpose ? { purpose: ctx.purpose } : {}),
       plan: ctx.plan,
       participants: req.participants ?? [{ taskId: ctx.taskId, leaseOwner: ctx.leaseOwner, budget: ctx.budget }],
       signal: ctx.signal,

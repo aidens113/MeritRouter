@@ -1,5 +1,5 @@
 {
-  "version": "2026-10-19.1",
+  "version": "2026-10-19.2",
   "description": "Private qualification tasks. Hidden tests live outside the task worktree and are applied only when grading.",
   "evals": [
     {
@@ -45,7 +45,7 @@
         "allowedPaths": ["src/**"]
       },
       "hidden": { "dir": "hidden/rename-option", "command": "node --test \"hidden/*.test.mjs\"" },
-      "budget": { "maxModelRequests": 12 }
+      "budget": { "maxModelRequests": 16 }
     },
     {
       "id": "locate-validator",
@@ -75,6 +75,339 @@
       },
       "grade": { "mustCite": [{ "path": "src/cart.js", "lines": [7, 16] }], "mustMention": [["twice", "two times", "double", "both", "again"]] },
       "budget": { "maxModelRequests": 10 }
+    },
+    {
+      "id": "review-range-correct",
+      "family": "review",
+      "tier": "T1",
+      "profile": "review",
+      "title": "Review a correct off-by-one fix",
+      "fixture": "fixtures/fix-range",
+      "task": {
+        "goal": "range(start, end, step) in src/range.js is documented to exclude `end`, but it includes it. Fix the bug without changing the function signature.",
+        "acceptanceCriteria": [
+          "range(0, 3) returns [0, 1, 2]",
+          "range(2, 2) returns []",
+          "the step argument still works"
+        ],
+        "allowedPaths": [
+          "src/**"
+        ]
+      },
+      "review": {
+        "kind": "correct",
+        "patch": "diff --git a/src/range.js b/src/range.js\nindex 6231321..b4c5c19 100644\n--- a/src/range.js\n+++ b/src/range.js\n@@ -1,6 +1,6 @@\n // Returns the integers from start (inclusive) to end (exclusive).\n export function range(start, end, step = 1) {\n   const out = [];\n-  for (let i = start; i <= end; i += step) out.push(i);\n+  for (let i = start; i < end; i += step) out.push(i);\n   return out;\n }\n",
+        "changedPaths": [
+          "src/range.js"
+        ],
+        "checks": [],
+        "authorSummary": "Changed the loop condition from <= to < so end is excluded; step is unchanged.",
+        "expect": {
+          "verdict": "pass",
+          "criteria": {
+            "c1": "pass",
+            "c2": "pass",
+            "c3": "pass"
+          }
+        }
+      },
+      "budget": {
+        "maxModelRequests": 10
+      }
+    },
+    {
+      "id": "review-range-defect",
+      "family": "review",
+      "tier": "T1",
+      "profile": "review",
+      "title": "Review a fix that breaks the step argument",
+      "fixture": "fixtures/fix-range",
+      "task": {
+        "goal": "range(start, end, step) in src/range.js is documented to exclude `end`, but it includes it. Fix the bug without changing the function signature.",
+        "acceptanceCriteria": [
+          "range(0, 3) returns [0, 1, 2]",
+          "range(2, 2) returns []",
+          "the step argument still works"
+        ],
+        "allowedPaths": [
+          "src/**"
+        ]
+      },
+      "review": {
+        "kind": "defect",
+        "patch": "diff --git a/src/range.js b/src/range.js\nindex 6231321..7c138f8 100644\n--- a/src/range.js\n+++ b/src/range.js\n@@ -1,6 +1,6 @@\n // Returns the integers from start (inclusive) to end (exclusive).\n export function range(start, end, step = 1) {\n   const out = [];\n-  for (let i = start; i <= end; i += step) out.push(i);\n+  for (let i = start; i < end; i++) out.push(i);\n   return out;\n }\n",
+        "changedPaths": [
+          "src/range.js"
+        ],
+        "checks": [],
+        "authorSummary": "Fixed the off-by-one: range now excludes end. All three criteria are met.",
+        "expect": {
+          "verdict": "fail",
+          "criteria": {
+            "c1": "pass",
+            "c2": "pass",
+            "c3": "fail"
+          }
+        }
+      },
+      "budget": {
+        "maxModelRequests": 10
+      }
+    },
+    {
+      "id": "review-duration-style",
+      "family": "review",
+      "tier": "T2",
+      "profile": "review",
+      "title": "Review a correct parser written in an unusual style",
+      "fixture": "fixtures/add-duration",
+      "task": {
+        "goal": "Add parseDuration(text) to src/duration.js and export it from src/index.js. It is the inverse of formatDuration: it accepts strings such as \"1h30m\", \"45s\", \"2h\", \"90m\" and \"1h0m5s\" and returns whole seconds. It must throw on anything else (empty strings, unknown units, decimals, negative numbers, units without numbers).",
+        "acceptanceCriteria": [
+          "parseDuration parses h/m/s combinations into seconds",
+          "parseDuration(formatDuration(n)) === n for non-negative integers",
+          "invalid input throws",
+          "formatDuration behaviour is unchanged"
+        ],
+        "allowedPaths": [
+          "src/**"
+        ]
+      },
+      "review": {
+        "kind": "style",
+        "patch": "diff --git a/src/duration.js b/src/duration.js\nindex 8bc22ec..0eea27c 100644\n--- a/src/duration.js\n+++ b/src/duration.js\n@@ -17,3 +17,19 @@ export function formatDuration(seconds) {\n   }\n   return out;\n }\n+\n+/** Parse a compact duration such as \"1h30m\" back into whole seconds. */\n+export function parseDuration(text) {\n+  if (typeof text != \"string\" || text.length == 0) throw new RangeError(\"bad duration\");\n+  var total = 0, digits = \"\", seen = \"\";\n+  for (var ch of text) {\n+    if (ch >= \"0\" && ch <= \"9\") { digits += ch; continue; }\n+    var size = ch == \"h\" ? 3600 : ch == \"m\" ? 60 : ch == \"s\" ? 1 : 0;\n+    if (!size || digits == \"\" || seen.includes(ch)) throw new RangeError(\"bad duration\");\n+    total += Number(digits) * size;\n+    digits = \"\";\n+    seen += ch;\n+  }\n+  if (digits != \"\") throw new RangeError(\"bad duration\");\n+  return total;\n+}\ndiff --git a/src/index.js b/src/index.js\nindex 5ed89af..8fe6b8e 100644\n--- a/src/index.js\n+++ b/src/index.js\n@@ -1 +1 @@\n-export { formatDuration } from \"./duration.js\";\n+export { formatDuration, parseDuration } from \"./duration.js\";\n",
+        "changedPaths": [
+          "src/duration.js",
+          "src/index.js"
+        ],
+        "checks": [],
+        "authorSummary": "Added parseDuration as a small hand-written scanner and exported it.",
+        "expect": {
+          "verdict": "pass",
+          "criteria": {
+            "c1": "pass",
+            "c2": "pass",
+            "c3": "pass",
+            "c4": "pass"
+          }
+        }
+      },
+      "budget": {
+        "maxModelRequests": 10
+      }
+    },
+    {
+      "id": "review-cart-unverifiable",
+      "family": "review",
+      "tier": "T2",
+      "profile": "review",
+      "title": "Review a fix whose test claim has no evidence",
+      "fixture": "fixtures/diagnose-crash",
+      "task": {
+        "goal": "Customers with a 10% promotion are charged 81.00 instead of 90.00 for one item priced 100.00. Fix src/cart.js so the promotion is applied exactly once.",
+        "acceptanceCriteria": [
+          "the promotion is applied exactly once per order",
+          "a cart of one item priced 100.00 with a 10% promotion is charged 90.00",
+          "the checkout test suite (npm test) passed on the submitted revision"
+        ],
+        "allowedPaths": [
+          "src/**"
+        ]
+      },
+      "review": {
+        "kind": "unverifiable",
+        "patch": "diff --git a/src/cart.js b/src/cart.js\nindex 89e2f94..9eb3f8c 100644\n--- a/src/cart.js\n+++ b/src/cart.js\n@@ -4,7 +4,7 @@ export function cartTotal(items, discount = 0) {\n   let total = 0;\n   for (const item of items) {\n     const line = item.price * item.quantity;\n-    total += discount ? applyDiscount(line, discount) : line;\n+    total += line;\n   }\n   return finalize(total, discount);\n }\n",
+        "changedPaths": [
+          "src/cart.js"
+        ],
+        "checks": [],
+        "authorSummary": "Removed the per-line discount so only finalize applies it. npm test passes.",
+        "expect": {
+          "verdict": "inconclusive",
+          "criteria": {
+            "c1": "pass",
+            "c2": "pass",
+            "c3": "inconclusive"
+          }
+        }
+      },
+      "budget": {
+        "maxModelRequests": 10
+      }
+    },
+    {
+      "id": "review-rename-correct",
+      "family": "review",
+      "tier": "T3",
+      "profile": "review",
+      "title": "Review a correct option rename across three files",
+      "fixture": "fixtures/rename-option",
+      "task": {
+        "goal": "Replace the `timeoutMs` option (milliseconds) with `timeout` (seconds) everywhere: config defaults (5 seconds), the client, and the server. Keep accepting the deprecated `timeoutMs` input by converting it to seconds, but resolved options must not contain `timeoutMs`. describe() must report the timeout in seconds, e.g. `timeout=7s`. All existing millisecond-based behaviour (client deadline, server idle cutoff = 2x timeout) must stay numerically the same.",
+        "acceptanceCriteria": [
+          "DEFAULTS.timeout is 5 and DEFAULTS has no timeoutMs",
+          "timeoutMs input is converted to timeout in seconds",
+          "client deadline and server idle cutoff are unchanged in milliseconds",
+          "describe() reports seconds"
+        ],
+        "allowedPaths": [
+          "src/**"
+        ]
+      },
+      "review": {
+        "kind": "correct",
+        "patch": "diff --git a/src/client.js b/src/client.js\nindex fa3a041..8e93796 100644\n--- a/src/client.js\n+++ b/src/client.js\n@@ -4,10 +4,10 @@ export function createClient(options) {\n   const opts = resolveOptions(options);\n   return {\n     describe() {\n-      return `retries=${opts.retries} timeout=${opts.timeoutMs}ms`;\n+      return `retries=${opts.retries} timeout=${opts.timeout}s`;\n     },\n     deadline(now) {\n-      return now + opts.timeoutMs;\n+      return now + opts.timeout * 1000;\n     },\n   };\n }\ndiff --git a/src/config.js b/src/config.js\nindex f9d8711..dacf617 100644\n--- a/src/config.js\n+++ b/src/config.js\n@@ -1,6 +1,9 @@\n-export const DEFAULTS = { retries: 2, timeoutMs: 5000 };\n+export const DEFAULTS = { retries: 2, timeout: 5 };\n \n-/** Merge user options over defaults. */\n+/** Merge user options over defaults. The deprecated `timeoutMs` is converted to seconds. */\n export function resolveOptions(options = {}) {\n-  return { ...DEFAULTS, ...options };\n+  const { timeoutMs, ...rest } = options;\n+  const merged = { ...DEFAULTS, ...rest };\n+  if (timeoutMs !== undefined && rest.timeout === undefined) merged.timeout = timeoutMs / 1000;\n+  return merged;\n }\ndiff --git a/src/server.js b/src/server.js\nindex e32a127..3e5d636 100644\n--- a/src/server.js\n+++ b/src/server.js\n@@ -2,5 +2,5 @@ import { resolveOptions } from \"./config.js\";\n \n export function createServer(options) {\n   const opts = resolveOptions(options);\n-  return { idleCutoffMs: opts.timeoutMs * 2, retries: opts.retries };\n+  return { idleCutoffMs: opts.timeout * 1000 * 2, retries: opts.retries };\n }\n",
+        "changedPaths": [
+          "src/client.js",
+          "src/config.js",
+          "src/server.js"
+        ],
+        "checks": [],
+        "authorSummary": "Renamed timeoutMs to timeout (seconds) in config, client, and server; timeoutMs input is converted.",
+        "expect": {
+          "verdict": "pass",
+          "criteria": {
+            "c1": "pass",
+            "c2": "pass",
+            "c3": "pass",
+            "c4": "pass"
+          }
+        }
+      },
+      "budget": {
+        "maxModelRequests": 10
+      }
+    },
+    {
+      "id": "review-rename-defect",
+      "family": "review",
+      "tier": "T3",
+      "profile": "review",
+      "title": "Review a rename that silently changes the server cutoff",
+      "fixture": "fixtures/rename-option",
+      "task": {
+        "goal": "Replace the `timeoutMs` option (milliseconds) with `timeout` (seconds) everywhere: config defaults (5 seconds), the client, and the server. Keep accepting the deprecated `timeoutMs` input by converting it to seconds, but resolved options must not contain `timeoutMs`. describe() must report the timeout in seconds, e.g. `timeout=7s`. All existing millisecond-based behaviour (client deadline, server idle cutoff = 2x timeout) must stay numerically the same.",
+        "acceptanceCriteria": [
+          "DEFAULTS.timeout is 5 and DEFAULTS has no timeoutMs",
+          "timeoutMs input is converted to timeout in seconds",
+          "client deadline and server idle cutoff are unchanged in milliseconds",
+          "describe() reports seconds"
+        ],
+        "allowedPaths": [
+          "src/**"
+        ]
+      },
+      "review": {
+        "kind": "defect",
+        "patch": "diff --git a/src/client.js b/src/client.js\nindex fa3a041..8e93796 100644\n--- a/src/client.js\n+++ b/src/client.js\n@@ -4,10 +4,10 @@ export function createClient(options) {\n   const opts = resolveOptions(options);\n   return {\n     describe() {\n-      return `retries=${opts.retries} timeout=${opts.timeoutMs}ms`;\n+      return `retries=${opts.retries} timeout=${opts.timeout}s`;\n     },\n     deadline(now) {\n-      return now + opts.timeoutMs;\n+      return now + opts.timeout * 1000;\n     },\n   };\n }\ndiff --git a/src/config.js b/src/config.js\nindex f9d8711..dacf617 100644\n--- a/src/config.js\n+++ b/src/config.js\n@@ -1,6 +1,9 @@\n-export const DEFAULTS = { retries: 2, timeoutMs: 5000 };\n+export const DEFAULTS = { retries: 2, timeout: 5 };\n \n-/** Merge user options over defaults. */\n+/** Merge user options over defaults. The deprecated `timeoutMs` is converted to seconds. */\n export function resolveOptions(options = {}) {\n-  return { ...DEFAULTS, ...options };\n+  const { timeoutMs, ...rest } = options;\n+  const merged = { ...DEFAULTS, ...rest };\n+  if (timeoutMs !== undefined && rest.timeout === undefined) merged.timeout = timeoutMs / 1000;\n+  return merged;\n }\ndiff --git a/src/server.js b/src/server.js\nindex e32a127..20f28fa 100644\n--- a/src/server.js\n+++ b/src/server.js\n@@ -2,5 +2,5 @@ import { resolveOptions } from \"./config.js\";\n \n export function createServer(options) {\n   const opts = resolveOptions(options);\n-  return { idleCutoffMs: opts.timeoutMs * 2, retries: opts.retries };\n+  return { idleCutoffMs: opts.timeout * 2, retries: opts.retries };\n }\n",
+        "changedPaths": [
+          "src/client.js",
+          "src/config.js",
+          "src/server.js"
+        ],
+        "checks": [],
+        "authorSummary": "Renamed timeoutMs to timeout (seconds) everywhere. All behaviour is preserved.",
+        "expect": {
+          "verdict": "fail",
+          "criteria": {
+            "c1": "pass",
+            "c2": "pass",
+            "c3": "fail",
+            "c4": "pass"
+          }
+        }
+      },
+      "budget": {
+        "maxModelRequests": 10
+      }
+    },
+    {
+      "id": "review-rename-style",
+      "family": "review",
+      "tier": "T3",
+      "profile": "review",
+      "title": "Review a correct rename in a different style",
+      "fixture": "fixtures/rename-option",
+      "task": {
+        "goal": "Replace the `timeoutMs` option (milliseconds) with `timeout` (seconds) everywhere: config defaults (5 seconds), the client, and the server. Keep accepting the deprecated `timeoutMs` input by converting it to seconds, but resolved options must not contain `timeoutMs`. describe() must report the timeout in seconds, e.g. `timeout=7s`. All existing millisecond-based behaviour (client deadline, server idle cutoff = 2x timeout) must stay numerically the same.",
+        "acceptanceCriteria": [
+          "DEFAULTS.timeout is 5 and DEFAULTS has no timeoutMs",
+          "timeoutMs input is converted to timeout in seconds",
+          "client deadline and server idle cutoff are unchanged in milliseconds",
+          "describe() reports seconds"
+        ],
+        "allowedPaths": [
+          "src/**"
+        ]
+      },
+      "review": {
+        "kind": "style",
+        "patch": "diff --git a/src/client.js b/src/client.js\nindex fa3a041..e35fb93 100644\n--- a/src/client.js\n+++ b/src/client.js\n@@ -4,10 +4,11 @@ export function createClient(options) {\n   const opts = resolveOptions(options);\n   return {\n     describe() {\n-      return `retries=${opts.retries} timeout=${opts.timeoutMs}ms`;\n+      return \"retries=\" + opts.retries + \" timeout=\" + opts.timeout + \"s\";\n     },\n     deadline(now) {\n-      return now + opts.timeoutMs;\n+      const ms = opts.timeout * 1000;\n+      return now + ms;\n     },\n   };\n }\ndiff --git a/src/config.js b/src/config.js\nindex f9d8711..f8f045d 100644\n--- a/src/config.js\n+++ b/src/config.js\n@@ -1,6 +1,11 @@\n-export const DEFAULTS = { retries: 2, timeoutMs: 5000 };\n+export const DEFAULTS = Object.freeze({ retries: 2, timeout: 5 });\n \n-/** Merge user options over defaults. */\n+/** Merge user options over defaults; a deprecated `timeoutMs` becomes `timeout` in seconds. */\n export function resolveOptions(options = {}) {\n-  return { ...DEFAULTS, ...options };\n+  const resolved = Object.assign({}, DEFAULTS);\n+  for (const key of Object.keys(options)) {\n+    if (key !== \"timeoutMs\") resolved[key] = options[key];\n+  }\n+  if (\"timeoutMs\" in options && !(\"timeout\" in options)) resolved.timeout = options.timeoutMs / 1000;\n+  return resolved;\n }\ndiff --git a/src/server.js b/src/server.js\nindex e32a127..9b4c324 100644\n--- a/src/server.js\n+++ b/src/server.js\n@@ -2,5 +2,5 @@ import { resolveOptions } from \"./config.js\";\n \n export function createServer(options) {\n   const opts = resolveOptions(options);\n-  return { idleCutoffMs: opts.timeoutMs * 2, retries: opts.retries };\n+  return { idleCutoffMs: 2 * (opts.timeout * 1000), retries: opts.retries };\n }\n",
+        "changedPaths": [
+          "src/client.js",
+          "src/config.js",
+          "src/server.js"
+        ],
+        "checks": [],
+        "authorSummary": "Moved the option to seconds with a frozen DEFAULTS object and explicit key copying.",
+        "expect": {
+          "verdict": "pass",
+          "criteria": {
+            "c1": "pass",
+            "c2": "pass",
+            "c3": "pass",
+            "c4": "pass"
+          }
+        }
+      },
+      "budget": {
+        "maxModelRequests": 10
+      }
+    },
+    {
+      "id": "review-address-unverifiable",
+      "family": "review",
+      "tier": "T3",
+      "profile": "review",
+      "title": "Review an answer that cites a log nobody attached",
+      "fixture": "fixtures/locate-validator",
+      "task": {
+        "goal": "Which function decides whether an email address is accepted at signup, where is it defined, and how often did it reject signups in the attached production log?",
+        "acceptanceCriteria": [
+          "names the function that validates the email address",
+          "cites the file and lines where it is defined",
+          "reports how many signups the validator rejected in the attached production log"
+        ]
+      },
+      "review": {
+        "kind": "unverifiable",
+        "work": {
+          "summary": "checkAddress in src/validation/address.js (lines 5-9) decides whether an email is accepted; handleSignup calls it. The production log shows 37 rejected signups.",
+          "findings": [
+            {
+              "description": "checkAddress is defined at src/validation/address.js lines 5-9",
+              "evidenceRefs": []
+            },
+            {
+              "description": "The validator rejected 37 signups in the production log",
+              "evidenceRefs": []
+            }
+          ]
+        },
+        "checks": [],
+        "authorSummary": "checkAddress decides it; 37 signups were rejected last week according to the production log.",
+        "expect": {
+          "verdict": "inconclusive",
+          "criteria": {
+            "c1": "pass",
+            "c2": "pass",
+            "c3": "inconclusive"
+          }
+        }
+      },
+      "budget": {
+        "maxModelRequests": 10
+      }
     }
   ]
 }

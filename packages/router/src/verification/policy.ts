@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   levelChain,
+  TIER_NAMES,
   VERIFICATION_LEVELS,
   type Importance,
   type ProfileName,
@@ -139,6 +140,8 @@ export function evaluatePolicy(policy: VerificationConfig, input: PolicyInput): 
 export interface ResultFacts {
   changedPaths: string[];
   protectedPathsChanged: string[];
+  /** The tier the result was produced at (an escalation or repair runs higher); never below the contract's. */
+  tier?: TierName;
 }
 
 export interface Reevaluation {
@@ -159,13 +162,14 @@ export interface Reevaluation {
 }
 
 /**
- * Re-run the policy against the actual result. Inputs are the contract's own (tier, profile,
- * tags, request, parent) plus the changed paths and protected-path flag; nothing the worker
- * says is an input. Level, importance, and checks can only rise above the contract's.
+ * Re-run the policy against the actual result. Inputs are the contract's own (profile, tags,
+ * request, parent), the tier the result was produced at, and the changed paths and
+ * protected-path flag; nothing the worker says is an input. Level, importance, and checks can
+ * only rise above the contract's.
  */
 export function reevaluateOnResult(policy: VerificationConfig, contract: AcceptanceContract, facts: ResultFacts): Reevaluation {
   const ev = evaluatePolicy(policy, {
-    tier: contract.tier,
+    tier: facts.tier && TIER_NAMES.indexOf(facts.tier) > TIER_NAMES.indexOf(contract.tier) ? facts.tier : contract.tier,
     profile: contract.profile,
     tags: contract.inputs.tags,
     paths: facts.changedPaths,

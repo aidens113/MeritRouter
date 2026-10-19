@@ -2,6 +2,7 @@ import picomatch from "picomatch";
 import type { Db } from "../storage/db.js";
 import type { RunContext } from "../runners/types.js";
 import { IMPORTANCE_LEVELS, PROFILE_NAMES } from "../config/schema.js";
+import { resolveLevel } from "../verification/policy.js";
 import { git } from "../workspaces/git.js";
 import { blame, commitsMatching, revertCommits, undoLines, type Actor } from "../attribution/index.js";
 import { formatBrief } from "../brain/protocol.js";
@@ -261,7 +262,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
     tool(
       "integrate_task",
       "edit",
-      "Cherry-pick a finished coding task's commits onto the job branch. Per-line attribution is kept. On conflict nothing changes and the conflict is reported. Refused for unmet results and for patches with out-of-scope edits. A result that is not_verified or needs_supervisor needs accept: true with a reason (recorded as your acceptance, judged against the job's goal and the brief); patches that changed tests or evaluator files also need accept_test_changes: true after you reviewed them.",
+      "Cherry-pick a finished coding task's commits onto the job branch. Per-line attribution is kept. On conflict nothing changes and the conflict is reported. Refused for unmet results and for patches with out-of-scope edits. A result that is not_verified or needs_supervisor needs accept: true with a reason (judged against the job's goal and the brief; recorded as your acceptance once the integration succeeds); patches that changed tests or evaluator files also need accept_test_changes: true after you reviewed them.",
       { task_id: { type: "string" }, accept: { type: "boolean" }, reason: { type: "string" }, accept_test_changes: { type: "boolean" } },
       ["task_id"],
       async (a) => {
@@ -289,20 +290,35 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
           const head = (await git(ws.worktree_path, ["rev-parse", "HEAD^{tree}"])).trim();
           if (head !== verifiedTree) throw new Error(`refused: ${id}'s worktree (tree ${head.slice(0, 12)}) is not the revision its checks ran on (${verifiedTree.slice(0, 12)}); re-delegate it`);
         }
-        // Recorded before integrating: a refusal (for example a human strict acceptor) stops here.
-        if (needsAcceptance) svc.acceptTask(id, { by: supervisorIdentity(s), reason });
+        // A strict result only a human may accept is refused before anything is integrated.
+        const cfgV = s.ctx.cfg.verification;
+        if (needsAcceptance && r.verification && cfgV.strict_acceptor === "human" && resolveLevel(cfgV, r.verification.level).acceptance === "supervisor") {
+          throw new Error(`refused: ${id} is ${r.verification.level}; verification.strict_acceptor is human, so only a human can accept it (panel or CLI)`);
+        }
         const repo = repoFor(s, ws.repo_alias);
         const commits = (await git(ws.worktree_path, ["rev-list", "--reverse", `${ws.base_sha}..HEAD`])).split("\n").filter(Boolean);
-        if (!commits.length) return "nothing to integrate: the task made no commits";
+        if (!commits.length) return "nothing to integrate: the task made no commits (no acceptance was recorded)";
         const env = { GIT_COMMITTER_NAME: s.actor.agent, GIT_COMMITTER_EMAIL: `${s.actor.agent.replace(/[^A-Za-z0-9._-]+/g, ".")}@switchyard.local` };
+        const before = (await git(repo.worktree, ["rev-parse", "HEAD"])).trim();
         try {
           await git(repo.worktree, ["cherry-pick", "-x", "--allow-empty", ...commits], { env });
         } catch (err) {
           const conflicts = await git(repo.worktree, ["diff", "--name-only", "--diff-filter=U"]).catch(() => "");
           await git(repo.worktree, ["cherry-pick", "--abort"]).catch(() => undefined);
-          return `conflict integrating ${id}; nothing was changed. Conflicting files: ${conflicts.trim().split("\n").join(", ") || "unknown"}. Re-delegate based on the current job branch, or edit the files yourself. (${(err as Error).message.slice(0, 200)})`;
+          return `conflict integrating ${id}; nothing was changed and no acceptance was recorded. Conflicting files: ${conflicts.trim().split("\n").join(", ") || "unknown"}. Re-delegate based on the current job branch, or edit the files yourself. (${(err as Error).message.slice(0, 200)})`;
         }
-        return `integrated ${commits.length} commit(s) from ${id} onto ${repo.branch}; head is now ${(await git(repo.worktree, ["rev-parse", "--short", "HEAD"])).trim()}`;
+        // The acceptance is recorded only once the integration succeeded; if it is refused after
+        // all, the integration is rolled back so the branch never carries an unaccepted result.
+        if (needsAcceptance) {
+          try {
+            svc.acceptTask(id, { by: supervisorIdentity(s), reason });
+          } catch (err) {
+            // --keep: drop the picked commits, never the supervisor's own uncommitted edits.
+            await git(repo.worktree, ["reset", "--keep", before]).catch(() => undefined);
+            throw new Error(`refused: ${(err as Error).message}; the integration of ${id} was rolled back`);
+          }
+        }
+        return `integrated ${commits.length} commit(s) from ${id} onto ${repo.branch}; head is now ${(await git(repo.worktree, ["rev-parse", "--short", "HEAD"])).trim()}${needsAcceptance ? "; your acceptance is recorded" : ""}`;
       },
     ),
 

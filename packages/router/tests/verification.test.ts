@@ -204,7 +204,7 @@ describe("contract: budget allocation, digest, immutability", () => {
     const deep = { level: "deep" as const, review: resolveLevel(p, "deep").review };
     expect(allocateBudget(p, std, { total: 16, tierExecution: 4, nextTierExecution: 8, classificationUsed: 1 })).toEqual({
       ok: true,
-      allocation: { total: 16, classification: 1, execution: 4, review: 0, repair: 8, unallocated: 3 },
+      allocation: { total: 13, classification: 1, execution: 4, review: 0, repair: 8, unallocated: 3 },
     });
     expect(allocateBudget(p, deep, { total: 16, tierExecution: 12, nextTierExecution: null, classificationUsed: 0 })).toEqual({
       ok: true,

@@ -11,7 +11,7 @@ import { qualificationLookup } from "../qualification/stats.js";
 import { Classifier } from "../scoring/classifier.js";
 import { loadRulebook, rulebookFingerprint, type Rulebook } from "../scoring/rulebook.js";
 import { classifierCouldMatter, decide, featureScore, measureFeatures, bumpTier, type Classification } from "../scoring/score.js";
-import { planRoute, type RoutePlan } from "./select.js";
+import { planRoute, type ReviewerQualificationRequirement, type RoutePlan } from "./select.js";
 
 export function modalitiesFromMediaType(mediaType: string): Modality | null {
   if (mediaType.startsWith("image/")) return "image";
@@ -53,6 +53,46 @@ export class TaskRouter {
       // Qualification runs measure one model in isolation: routing overrides do not apply.
       skipQualification ? [] : [...this.catalog.routingOverrides(), ...extraOverrides],
       { profile, tier, inputModalities, needsStructuredOutput: false, skipQualification, ...(forcedEndpointId ? { forcedEndpointId } : {}), ...(paidPolicy ? { paidPolicy } : {}) },
+      {
+        now: new Date(this.now()),
+        qualification: qualificationLookup(this.db, this.cfg),
+        health: this.gate.health.lookup,
+        quarantined: (ep) => this.gate.quarantined(ep),
+        ...(this.gate.paid ? { paidPlatforms: this.gate.paid.spend.paidFreeLlmApiPlatforms() } : {}),
+      },
+    );
+  }
+
+  /**
+   * Route an independent reviewer: never an endpoint in `avoidEndpoints`, other model families
+   * and platforms first, at least `minTotalParametersB`, and qualified reviewers first (or
+   * only, when the requirement is `required`). Routing overrides for the profile still apply.
+   */
+  planReviewer(o: {
+    profile: ProfileName;
+    tier: TierName;
+    inputModalities: Modality[];
+    avoidEndpoints: string[];
+    avoidFamilies: string[];
+    avoidProviders: string[];
+    minTotalParametersB: number | null;
+    reviewer: ReviewerQualificationRequirement;
+  }): RoutePlan {
+    return planRoute(
+      this.cfg,
+      this.catalog.endpoints(),
+      this.catalog.routingOverrides(),
+      {
+        profile: o.profile,
+        tier: o.tier,
+        inputModalities: o.inputModalities,
+        needsStructuredOutput: false,
+        avoidEndpoints: o.avoidEndpoints,
+        avoidFamilies: o.avoidFamilies,
+        avoidProviders: o.avoidProviders,
+        ...(o.minTotalParametersB ? { minTotalParametersB: o.minTotalParametersB } : {}),
+        reviewer: o.reviewer,
+      },
       {
         now: new Date(this.now()),
         qualification: qualificationLookup(this.db, this.cfg),

@@ -2,7 +2,8 @@ import type { Db } from "../storage/db.js";
 import { immediate, newId } from "../storage/db.js";
 import type { TaskStore } from "../storage/tasks.js";
 import type { ResolvedConfig } from "../config/load.js";
-import type { ProfileName, TierName } from "../config/schema.js";
+import { TIER_NAMES, type ProfileName, type TierName } from "../config/schema.js";
+import type { BudgetInput } from "../verification/contract.js";
 import type { WorkerTask } from "../core/task.js";
 import { AdmissionDenied } from "../core/errors.js";
 import type { ChatResponse } from "../gateway/types.js";
@@ -36,6 +37,43 @@ export function effectiveBudget(cfg: ResolvedConfig, spec: WorkerTask, tier: Tie
     maxOutputTokens: spec.budget?.maxOutputTokens ?? null,
     maxPaidUsd: cfg.paid.enabled ? (spec.budget?.maxPaidUsd ?? null) : 0,
   };
+}
+
+/**
+ * A task's total model requests across every purpose (classification, execution, review,
+ * repair): verification.max_total_requests_per_task, narrowed by an explicit task
+ * budget.maxModelRequests. Profile and tier caps bound execution only; the review and repair
+ * reserves sit on top of them inside this total.
+ */
+export function verificationTotal(cfg: ResolvedConfig, spec: WorkerTask): number {
+  return Math.min(cfg.verification.max_total_requests_per_task, spec.budget?.maxModelRequests ?? Number.MAX_SAFE_INTEGER);
+}
+
+/**
+ * The request counts a task's contract allocation is computed from: the ceiling, the execution
+ * cap at its tier, and the cap at the tier a quality repair runs at (the next tier when
+ * routing.escalate_on_failure is on, else the same tier).
+ */
+export function budgetInputFor(cfg: ResolvedConfig, spec: WorkerTask, tier: TierName, classificationUsed: number): BudgetInput {
+  const next = TIER_NAMES[TIER_NAMES.indexOf(tier) + 1] ?? null;
+  const repairTier = cfg.routing.escalate_on_failure && next ? next : tier;
+  return {
+    total: verificationTotal(cfg, spec),
+    tierExecution: effectiveBudget(cfg, spec, tier).maxModelRequests,
+    nextTierExecution: effectiveBudget(cfg, spec, repairTier).maxModelRequests,
+    classificationUsed,
+    repairTier,
+  };
+}
+
+/** What a model request was for, as budgets and usage reports group them. */
+export const REQUEST_PURPOSES = ["classification", "execution", "verification", "repair"] as const;
+export type RequestPurpose = (typeof REQUEST_PURPOSES)[number];
+
+/** Group a raw request purpose label: runners label their own (tool_loop, coding, batch, ...), all execution. */
+export function purposeCategory(purpose: string): RequestPurpose {
+  if (purpose === "classification" || purpose === "verification" || purpose === "repair") return purpose;
+  return "execution";
 }
 
 export interface Participant {
@@ -117,6 +155,32 @@ export class Admission {
       )
       .get(taskId) as TaskUsageTotals;
     return r;
+  }
+
+  /** Requests charged to a task, by purpose (see purposeCategory). */
+  taskTotalsByPurpose(taskId: string): Record<RequestPurpose, number> {
+    const rows = this.db
+      .prepare("SELECT r.purpose AS purpose, COUNT(*) AS n FROM request_charges c JOIN model_requests r ON r.id = c.request_id WHERE c.task_id = ? GROUP BY r.purpose")
+      .all(taskId) as Array<{ purpose: string; n: number }>;
+    const out: Record<RequestPurpose, number> = { classification: 0, execution: 0, verification: 0, repair: 0 };
+    for (const r of rows) out[purposeCategory(r.purpose)] += r.n;
+    return out;
+  }
+
+  /** Endpoints that served (succeeded) requests charged to a task, by purpose. */
+  servedEndpointsByPurpose(taskId: string): Record<RequestPurpose, string[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT r.purpose AS purpose, r.served_endpoint_id AS endpoint FROM request_charges c JOIN model_requests r ON r.id = c.request_id
+          WHERE c.task_id = ? AND r.served_endpoint_id IS NOT NULL`,
+      )
+      .all(taskId) as Array<{ purpose: string; endpoint: string }>;
+    const out: Record<RequestPurpose, string[]> = { classification: [], execution: [], verification: [], repair: [] };
+    for (const r of rows) {
+      const list = out[purposeCategory(r.purpose)];
+      if (!list.includes(r.endpoint)) list.push(r.endpoint);
+    }
+    return out;
   }
 
   packageCount(sinceMs: number): number {

@@ -1,10 +1,10 @@
 import type { VerificationConfig, VerificationLevel } from "../config/schema.js";
-import type { AcceptanceStatus, ExecutionStatus, SupervisorDecision, VerificationRecord, VerificationStatus } from "../core/task.js";
+import type { AcceptanceStatus, ExecutionStatus, ReviewRecord, SupervisorDecision, VerificationRecord, VerificationStatus } from "../core/task.js";
 import type { CheckReport, CriterionResult } from "./checks.js";
 import type { AcceptanceContract } from "./contract.js";
 import type { Reevaluation, ResolvedReview } from "./policy.js";
 
-/** A reviewer's verdict as decide() consumes it (V2 produces it through submit_verdict). */
+/** A reviewer's verdict as decide() consumes it (review.ts produces it through submit_verdict). */
 export interface ReviewOutcome {
   verdict: "pass" | "fail" | "inconclusive";
   criteria?: Array<{ id: string; outcome: "pass" | "fail" | "inconclusive"; reason?: string }>;
@@ -29,6 +29,8 @@ export interface DecideInput {
   /** The review reserve ran out before a required review could finish. */
   verificationBudgetExhausted?: boolean;
   qualityRetriesUsed?: number;
+  /** Why a required review did not run or did not decide (reviewer unavailable or unqualified). */
+  notes?: string[];
 }
 
 export interface Decision {
@@ -58,22 +60,27 @@ function applyReview(criteria: CriterionResult[], review: ReviewOutcome | null |
 }
 
 /**
- * V1 deterministic decision. Defects (a failed check, a failed criterion, a failing review)
- * make the result unmet, with one repair while quality retries remain. A required review that
- * has not run, missing or stale evidence, and strict acceptance send the result to the
- * supervisor. Claims nothing contradicts but nothing proves stay not_verified, as before.
+ * The acceptance decision. Defects (a failed check, a failed criterion, a failing review) make
+ * the result unmet, with one repair while quality retries remain; once none remain, a defect
+ * only the reviewer found goes to the supervisor (who may overrule it). A required review that has
+ * not run or is inconclusive, missing or stale evidence, and strict acceptance send the result
+ * to the supervisor. A passing review verifies review and evidence criteria; claims nothing
+ * contradicts but nothing proves stay not_verified, as before.
  */
 export function decide(input: DecideInput): Decision {
   const eff: EffectiveLevel = input.effective ?? input.contract.verification;
   const criteria = applyReview(input.report.criteria, input.review);
   const unresolvedCriterionIds = criteria.filter((c) => c.outcome !== "passed").map((c) => c.id);
-  const reasons: string[] = [];
+  const reasons: string[] = [...(input.notes ?? [])];
   const failedChecks = input.report.checks.filter((c) => c.outcome === "failed");
   const failedCriteria = criteria.filter((c) => c.outcome === "failed");
   for (const c of failedChecks) reasons.push(`${c.name} failed: ${c.detail}`);
   if (failedCriteria.length) reasons.push(`criteria failed: ${failedCriteria.map((c) => c.id).join(", ")}`);
   if (input.review?.verdict === "fail") reasons.push(`review failed${input.review.reason ? `: ${input.review.reason}` : ""}`);
   const defect = failedChecks.length > 0 || failedCriteria.length > 0 || input.review?.verdict === "fail";
+  // Deterministic evidence (a failed check, a check-verified or self-reported failure) is final;
+  // a defect only the reviewer found can be overruled by the supervisor.
+  const deterministicDefect = failedChecks.length > 0 || input.report.criteria.some((c) => c.outcome === "failed");
   const out = (verificationStatus: VerificationStatus, acceptanceStatus: AcceptanceStatus, action: Decision["action"]): Decision => ({ verificationStatus, acceptanceStatus, action, criteria, unresolvedCriterionIds, reasons });
 
   if (input.executionStatus !== "completed") {
@@ -82,7 +89,12 @@ export function decide(input: DecideInput): Decision {
   }
   if (defect) {
     const left = input.contract.verification.maxQualityRetries - (input.qualityRetriesUsed ?? 0);
-    return out("failed", "unmet", left > 0 ? "repair" : "none");
+    if (left > 0) return out("failed", "unmet", "repair");
+    if (!deterministicDefect) {
+      reasons.push("the reviewer's defect stands with no quality retry left: the supervisor decides (accepting overrules the reviewer, rejecting closes it)");
+      return out("failed", "needs_supervisor", "await_supervisor");
+    }
+    return out("failed", "unmet", "none");
   }
   if (eff.review.required && !input.review) {
     if (input.verificationBudgetExhausted) {
@@ -121,6 +133,7 @@ export function verificationRecord(args: {
   report: CheckReport;
   decision: Decision;
   decisions?: SupervisorDecision[];
+  reviews?: ReviewRecord[];
 }): VerificationRecord {
   const { contract, reevaluation: re } = args;
   return {
@@ -135,6 +148,7 @@ export function verificationRecord(args: {
     criteria: args.decision.criteria.map((c) => ({ id: c.id, text: c.text, verify: c.verify, outcome: c.outcome, checks: c.checks, evidenceRefs: c.evidenceRefs, ...(c.note ? { note: c.note } : {}) })),
     reasons: args.decision.reasons,
     decisions: args.decisions ?? [],
+    ...(args.reviews?.length ? { reviews: args.reviews } : {}),
   };
 }
 
