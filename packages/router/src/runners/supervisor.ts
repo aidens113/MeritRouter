@@ -165,7 +165,13 @@ export class SupervisorRunner implements CodingRunner {
     let messages: ChatMessage[];
     if (saved?.messages.length) {
       messages = saved.messages;
-      messages.push({ role: "user", content: "You were interrupted and have been resumed. Check your tasks with await_tasks before acting again; delegations are idempotent by label." });
+      const qs = ctx.tasks.db.prepare("SELECT id, question, answer FROM job_questions WHERE task_id = ? ORDER BY id").all(ctx.taskId) as Array<{ id: number; question: string; answer: string | null }>;
+      const answered = qs.filter((q) => q.answer !== null).map((q) => `- "${q.question}" -> ${q.answer}`);
+      const open = qs.filter((q) => q.answer === null).map((q) => `- "${q.question}" (still unanswered; ask again with ask_user to keep waiting)`);
+      messages.push({
+        role: "user",
+        content: `You were interrupted and have been resumed. Check your tasks with await_tasks before acting again; delegations are idempotent by label.${answered.length ? `\nAnswers from the user so far:\n${answered.join("\n")}` : ""}${open.length ? `\nOpen questions:\n${open.join("\n")}` : ""}`,
+      });
     } else {
       const lessons = brain ? brain.brain.search(brain.principal(), spec.goal, { prefix: "global/lessons", limit: 5 }) : [];
       const cs = brain?.workingDoc ? brain.brain.read(brain.principal(), brain.workingDoc, { section: "Current State" }).content : "";

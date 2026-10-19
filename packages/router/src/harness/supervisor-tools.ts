@@ -308,6 +308,8 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
         if (row.answer !== null) return `answer from ${row.answered_by ?? "user"}: ${row.answer}`;
         await new Promise((r) => setTimeout(r, 1000));
       }
+      // Interrupted while waiting: stop here; the question stays open and the resumed job sees the answer.
+      if (s.ctx.signal.aborted) throw new Error("interrupted while waiting for the user's answer");
       return "no answer arrived; decide with a sensible default and record it";
     }),
   ];

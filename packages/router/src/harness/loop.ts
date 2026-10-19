@@ -60,6 +60,8 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
   let lastErrors: string[] = [];
 
   for (;;) {
+    // Shutdown, cancellation, or deadline: stop before spending another request.
+    if (env.ctx.signal.aborted) throw new Error(`aborted: ${String(env.ctx.signal.reason ?? "aborted")}`);
     const used = env.ctx.gate.admission.taskTotals(env.ctx.taskId).requests;
     const remaining = env.ctx.budget.maxModelRequests - used;
     if (remaining <= 0) return { kind: "budget_exhausted", messages };

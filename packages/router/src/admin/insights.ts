@@ -547,7 +547,7 @@ export function jobDetail(sy: Switchyard, id: string): (JobView & { transcript: 
     transcript: messages.slice(1).map((m) => ({
       role: m.role,
       content: typeof m.content === "string" ? m.content.slice(0, 4000) : m.content === null ? "" : JSON.stringify(m.content).slice(0, 4000),
-      ...(m.tool_calls?.length ? { tools: m.tool_calls.map((c) => `${c.function.name}(${c.function.arguments.slice(0, 300)})`) } : {}),
+      ...(m.tool_calls?.length ? { tools: m.tool_calls.map((c) => `${c.function.name}(${c.function.arguments.slice(0, 8000)})`) } : {}),
     })),
     questions: sy.questions({ taskId: id, pendingOnly: false }),
   };

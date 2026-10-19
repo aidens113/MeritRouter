@@ -118,3 +118,34 @@ describe("standalone supervisor", () => {
     expect(outputs[1]).toBe("answer from user: no");
   }, 120_000);
 });
+
+describe("supervisor interruption", () => {
+  it("a shutdown while waiting for an answer spends no more requests, and the resumed job sees the answer", async () => {
+    env = makeEnv({ config: standaloneConfig() });
+    const resumed: string[] = [];
+    const client = new ScriptedClient((req) => {
+      const n = turns(req);
+      const last = req.messages[req.messages.length - 1]!;
+      if (typeof last.content === "string" && last.content.includes("You were interrupted")) resumed.push(last.content);
+      const calls = n === 0 ? [call("ask_user", { question: "Which format?" })] : [call("finish_job", { status: "blocked", summary: "stopped", verified: [], not_verified: ["all"] })];
+      return reply(null, { ...servedFor(sy!, req), toolCalls: calls });
+    });
+    sy = open(env, client, { worker: true });
+    const job = await sy.startJob({ goal: "Pick a format", repositories: ["core"] });
+    for (let i = 0; i < 100 && !sy.questions().length; i++) await new Promise((r) => setTimeout(r, 100));
+    expect(sy.questions()).toHaveLength(1);
+    await sy.close(); // worker shuts down while the supervisor waits
+    sy = undefined;
+    expect(client.requests).toHaveLength(1);
+
+    sy = open(env, client, { worker: false });
+    expect(sy.getStatus([job.taskId])[0]).toMatchObject({ state: "interrupted" });
+    sy.answerQuestion(sy.questions()[0]!.id, "CSV");
+    await sy.close();
+    sy = open(env, client, { worker: true }); // recovery resumes the supervisor
+    const r = (await sy.awaitResults([job.taskId], { timeoutSeconds: 30 })).completed[0]!;
+    expect(r.stopReason).toBe("supervisor_blocked");
+    expect(resumed[0]).toContain('"Which format?" -> CSV');
+    expect(client.requests).toHaveLength(2);
+  }, 120_000);
+});

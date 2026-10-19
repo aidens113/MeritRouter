@@ -37,7 +37,16 @@ export interface BrainEntry {
   mtime: number;
 }
 
-export class BrainError extends Error {}
+export class BrainError extends Error {
+  readonly code = "brain_rejected";
+  constructor(
+    message: string,
+    /** Individual protocol or access problems, for showing next to the input. */
+    readonly issues: string[] = [message],
+  ) {
+    super(message);
+  }
+}
 
 export function expandHome(p: string): string {
   return p === "~" || p.startsWith("~/") || p.startsWith("~\\") ? path.join(homedir(), p.slice(2)) : p;
@@ -250,7 +259,7 @@ export class Brain {
     const kind = kindOf(r.rel);
     if (kind === "report") {
       const issues = validateReport(content);
-      if (issues.length) throw new BrainError(`report rejected: ${issues.join("; ")}`);
+      if (issues.length) throw new BrainError(`report rejected: ${issues.join("; ")}`, issues);
     }
     if (kind === "working_doc") {
       const doc = parseDoc(content);
@@ -263,7 +272,7 @@ export class Brain {
         const newLedger = section(doc, "Work Ledger")?.body.trim() ?? "";
         if (oldLedger && !newLedger.startsWith(oldLedger)) issues.push("the Work Ledger is append-only: existing entries must stay unchanged (use compaction to archive history)");
       }
-      if (issues.length) throw new BrainError(`working document rejected: ${issues.join("; ")}`);
+      if (issues.length) throw new BrainError(`working document rejected: ${issues.join("; ")}`, issues);
       content = setHeaderField(content, "Last updated", new Date(this.now()).toISOString().slice(0, 10));
     }
     return this.writeFile(r.rel, content, actor, message ?? `${existsSync(r.abs) ? "Update" : "Add"} ${r.rel}`);
@@ -296,7 +305,7 @@ export class Brain {
     if (kindOf(r.rel) !== "working_doc") throw new BrainError(`${r.rel} is not a working document`);
     const text = typeof entry === "string" ? entry.trim() : formatLedgerEntry(entry, new Date(this.now()).toISOString().slice(0, 10));
     const issues = validateLedgerEntry(text);
-    if (issues.length) throw new BrainError(`ledger entry rejected: ${issues.join("; ")}`);
+    if (issues.length) throw new BrainError(`ledger entry rejected: ${issues.join("; ")}`, issues);
     const current = readFileSync(r.abs, "utf8");
     const next = setHeaderField(appendToSection(current, "Work Ledger", text, "Open Questions"), "Last updated", new Date(this.now()).toISOString().slice(0, 10));
     const res = await this.writeFile(r.rel, next, actor, `Ledger: ${text.split("\n")[0]!.replace(/^### /, "")}`);

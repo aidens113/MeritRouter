@@ -23,6 +23,8 @@ export interface PaidKey {
   balanceCheckedAt: number | null;
   expiresAt: number | null;
   createdAt: number;
+  /** The secret was removed (the key is kept only because it has recorded spend). */
+  removed: boolean;
 }
 
 export const NewKeySchema = z
@@ -103,6 +105,7 @@ const toKey = (r: Row): PaidKey => ({
   balanceCheckedAt: r.balance_checked_at,
   expiresAt: r.expires_at,
   createdAt: r.created_at,
+  removed: r.enc === "",
 });
 
 /** AES-256-GCM encrypted store for direct paid-provider keys. Several keys per provider. */
@@ -155,7 +158,9 @@ export class KeyVault {
 
   update(id: number, patch: KeyPatch): PaidKey {
     const p = KeyPatchSchema.parse(patch);
-    if (!this.get(id)) throw new Error(`unknown key ${id}`);
+    const current = this.get(id);
+    if (!current) throw new Error(`unknown key ${id}`);
+    if (current.removed && p.enabled === true && p.secret === undefined) throw new Error(`key ${id} was removed; set a new secret to use it again`);
     const set = (col: string, v: unknown) => this.db.prepare(`UPDATE paid_keys SET ${col} = ? WHERE id = ?`).run(v, id);
     if (p.label !== undefined) set("label", p.label);
     if (p.enabled !== undefined) set("enabled", p.enabled ? 1 : 0);
@@ -190,6 +195,6 @@ export class KeyVault {
   /** Keys that are enabled, not expired, and not free-tier (free-tier direct keys are allowed too). */
   usable(provider: string): PaidKey[] {
     const now = this.now();
-    return this.list(provider).filter((k) => k.enabled && (k.expiresAt === null || k.expiresAt > now));
+    return this.list(provider).filter((k) => k.enabled && !k.removed && (k.expiresAt === null || k.expiresAt > now));
   }
 }
