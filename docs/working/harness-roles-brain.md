@@ -16,12 +16,14 @@ FreeLLMAPI. Everything else uses the defaults recommended below. Everything must
 configurable, with presets including one for Claude Code.
 
 **Done:** routing core, tiers, scanning, qualification, coding runner, CLI, MCP (see
-`decisions.md`). Panel first pass in progress.
+`decisions.md`). Phase A (direct paid routes, vault, budgets) on `dev`. Panel first pass in
+progress.
 
-**Not done:** everything in the phases below.
+**Not done:** Phases B-F.
 
-**Next steps:** Phase A (paid routes), then B (knowledge base), C (roles and charters),
-D (harness and supervisor), E (presets and docs), F (panel second pass).
+**Next steps:** the user asked to review the knowledge-base and harness plan before
+implementation (2026-10-19). Open decisions: brain location (shared vs per project), default
+access-request approver, supervisor commit policy, markdown export mode. Then B, C, D, E, F.
 
 **Blockers:** none. Live checks still need FreeLLMAPI, provider keys, and paid credentials.
 
@@ -144,6 +146,14 @@ preset configuration.
 - Validation: not validated (design only).
 - Outcome: Accepted
 - Follow-up: Phase A.
+
+### 2026-10-19 — Phase A: direct paid routes
+- Agent: supervisor
+- Changed: `packages/router/src/paid/*`, gate, admission, catalog, routing, config schema, CLI, insights, tests
+- Why: user chose direct SwitchYard routing for all paid providers.
+- Validation: `npx vitest run` in packages/router -> 66 passed; example config parsed with `parseConfig`.
+- Outcome: Accepted
+- Follow-up: live check against a real paid provider once a key is available.
 
 ## Open Questions
 
