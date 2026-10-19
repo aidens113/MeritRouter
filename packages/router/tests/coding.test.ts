@@ -91,3 +91,13 @@ describe("coding worker", () => {
     expect(r.acceptanceStatus).toBe("met");
   }, 90_000);
 });
+
+describe("process quoting", () => {
+  it("keeps arguments with spaces intact through the shell", async () => {
+    const { runProcess, minimalEnv, quoteShellArg } = await import("../src/runners/coding/process.js");
+    expect(quoteShellArg(`a "b"`, "win32")).toBe(`"a ""b"""`);
+    expect(quoteShellArg("it's", "linux")).toBe("'it'\\''s'");
+    const r = await runProcess(process.execPath, ["-e", "console.log(JSON.stringify(process.argv.slice(1)))", "two words", "C:/dir with space/x"], { cwd: process.cwd(), env: minimalEnv({}), timeoutMs: 20_000, shell: true });
+    expect(JSON.parse(r.stdout.trim())).toEqual(["two words", "C:/dir with space/x"]);
+  });
+});

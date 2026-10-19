@@ -50,6 +50,17 @@ export interface RunResult {
 
 const CAP = 4 * 1024 * 1024;
 
+/** Quote one argument for the platform shell (cmd.exe on Windows, sh elsewhere). */
+export function quoteShellArg(arg: string, platform: NodeJS.Platform = process.platform): string {
+  if (platform === "win32") return `"${arg.replace(/"/g, '""')}"`;
+  return "'" + arg.replace(/'/g, "'\\''") + "'";
+}
+
+/** Quote an executable path when it contains spaces (e.g. C:\Program Files\...). */
+function quoteCommand(command: string): string {
+  return /\s/.test(command) && !/^["']/.test(command) ? quoteShellArg(command) : command;
+}
+
 /** Run a command with a timeout and abort signal; output is captured (capped). */
 export function runProcess(
   command: string,
@@ -58,7 +69,9 @@ export function runProcess(
 ): Promise<RunResult> {
   return new Promise((resolve) => {
     const started = Date.now();
-    const child = spawn(command, args, {
+    // With a shell, Node joins arguments unquoted; quote them so paths with spaces survive.
+    const shellLine = opts.shell && args.length ? [quoteCommand(command), ...args.map((a) => quoteShellArg(a))].join(" ") : null;
+    const child = spawn(shellLine ?? command, shellLine ? [] : args, {
       cwd: opts.cwd,
       env: opts.env,
       shell: opts.shell ?? false,
