@@ -175,7 +175,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
     tool("await_tasks", "Wait (without model requests) until the given tasks, or all of this job's active tasks, finish or the timeout passes. Returns compact results.", { task_ids: { type: "array", items: { type: "string" } }, timeout_seconds: { type: "integer" } }, [], async (a) => {
       const ids = Array.isArray(a.task_ids) && a.task_ids.length ? (a.task_ids as string[]).map((x) => s.children.get(x) ?? x) : [...s.children.values()];
       if (!ids.length) return "no tasks dispatched yet";
-      const r = await svc.awaitResults(ids, { timeoutSeconds: Math.min(Number(a.timeout_seconds) || 600, 3600), signal: s.ctx.signal });
+      const r = await svc.awaitResults(ids, { timeoutSeconds: Math.min(Number(a.timeout_seconds) || 1800, 3600), signal: s.ctx.signal, uncapped: true });
       return cap([...r.completed.map((c) => summarizeResult(c.taskId, s)), ...r.pending.map((p) => `${p.taskId}: still ${p.state}`)].join("\n"));
     }),
 

@@ -292,8 +292,10 @@ export class Switchyard {
    * Wait inside the package until every task settles or the bounded wait elapses, so the
    * supervisor spends one tool call rather than repeated polling turns.
    */
-  async awaitResults(ids: string[], opts: { timeoutSeconds?: number; signal?: AbortSignal } = {}): Promise<AwaitOutcome> {
-    const limit = Math.min(opts.timeoutSeconds ?? this.cfg.execution.await_max_seconds, this.cfg.execution.await_max_seconds);
+  async awaitResults(ids: string[], opts: { timeoutSeconds?: number; signal?: AbortSignal; uncapped?: boolean } = {}): Promise<AwaitOutcome> {
+    // The cap bounds MCP tool calls; in-process supervisors may wait longer (it costs no requests).
+    const cap = opts.uncapped ? 3600 : this.cfg.execution.await_max_seconds;
+    const limit = Math.min(opts.timeoutSeconds ?? cap, cap);
     const start = this.now();
     const until = start + limit * 1000;
     for (;;) {
