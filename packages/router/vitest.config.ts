@@ -5,5 +5,7 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     include: ["tests/**/*.test.ts"],
+    // Git- and process-heavy tests exceed the 5 s default on a loaded Windows machine.
+    testTimeout: 30_000,
   },
 });
