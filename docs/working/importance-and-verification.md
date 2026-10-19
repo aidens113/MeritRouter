@@ -50,7 +50,7 @@ changed or deferred where they do not (see "Adjustments to the proposal").
 
 **Not done:** everything in Phases.
 
-**Next steps:** user confirms the open questions (ordering against S2, defaults), then V1.
+**Next steps:** V1 (in progress), then V2.
 
 **Blockers:** none.
 
@@ -326,13 +326,10 @@ None yet. V1 split when it starts (by file):
 
 ## Open Questions
 
-- Ordering: V1 after S2 (recommended) or before it? Owner: user.
-- Standard level stays deterministic, with model review only at Deep, Strict, or a `verify:
-  review` criterion. Recommended: yes, to keep free capacity for execution. Owner: user.
-- Strict acceptance by the job's supervisor, or always a human? Recommended: the supervisor by
-  default, `strict_acceptor: human` available. Owner: user.
-- Default importance `normal`, so T1 normal work is verified at Standard (deterministic only).
-  Owner: user.
-- Should worker qualification also become required for live routing (today it is off, and the
-  completion and supervisor families have no evals)? Recommended: not in this effort; reviewer
-  qualification only. Owner: user.
+Resolved by the user 2026-10-19:
+- Order S2 -> V1 -> V2 -> R1 -> T1 approved; execute every phase with workers.
+- Strict acceptance is automated by the job's supervisor, judged against the job's goal and the
+  specifications given to the supervisor; `strict_acceptor: human` is an explicit opt-in override.
+- Standard stays deterministic (supervisor default taken; the user asked what it meant and did
+  not object).
+- Worker qualification stays optional for live routing; only reviewers require qualification.
