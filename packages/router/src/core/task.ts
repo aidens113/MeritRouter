@@ -37,6 +37,18 @@ export const WorkerTaskSchema = z
       })
       .strict(),
     dependsOn: z.array(z.string().min(1)).optional(),
+    /** The supervising job (a supervise task) that dispatched this task. */
+    parentTaskId: z.string().min(1).optional(),
+    /** Short agent label used for the report file and commit identity. */
+    label: z.string().regex(/^[a-z0-9][a-z0-9-]{0,40}$/).optional(),
+    /** Brain context: the working document (effort) this task reports into, and extra grants. */
+    brain: z
+      .object({
+        effort: z.string().regex(/^[a-z0-9][a-z0-9-]{0,60}$/).optional(),
+        grants: z.array(z.object({ pattern: z.string().min(1), mode: z.enum(["read", "append", "write"]) }).strict()).max(20).optional(),
+      })
+      .strict()
+      .optional(),
     /** Supervisor's own difficulty read; skips the classifier and can only raise the tier. */
     hints: z
       .object({

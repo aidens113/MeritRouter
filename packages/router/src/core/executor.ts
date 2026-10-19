@@ -16,6 +16,19 @@ import { runCompletion } from "../runners/completion.js";
 import { runReadOnly } from "../runners/readonly.js";
 import { runBatch } from "../runners/batch.js";
 import type { Classification } from "../scoring/score.js";
+import type { Brain } from "../brain/brain.js";
+import type { BrainAccess } from "../brain/access.js";
+import type { SupervisorServices } from "../runners/types.js";
+import { writeWorkerReport } from "../harness/worker.js";
+import { roleForProfile } from "../roles/index.js";
+
+/** The working document a task belongs to: its job's, an explicit one, or the shared ad-hoc one. */
+export function effortFor(spec: { profile: string; parentTaskId?: string | undefined; brain?: { effort?: string | undefined } | undefined }, taskId: string): string {
+  if (spec.brain?.effort) return spec.brain.effort;
+  if (spec.profile === "supervise") return `job-${taskId}`;
+  if (spec.parentTaskId) return `job-${spec.parentTaskId}`;
+  return "adhoc";
+}
 
 export type AbortReason = "cancel" | "deadline" | "lease_lost" | "shutdown";
 
@@ -34,6 +47,10 @@ export interface ExecutorDeps {
   owner: string;
   now: () => number;
   coding: CodingRunner | null;
+  brain: Brain | null;
+  access: BrainAccess | null;
+  services: SupervisorServices | null;
+  supervisor: CodingRunner | null;
   /** Called after any task reaches a new state, to wake waiters. */
   onSettled: (taskId: string) => void;
 }
@@ -56,6 +73,12 @@ const ESCALATE_ON = new Set(["invalid_output", "budget_exhausted", "acceptance_u
 export class Executor {
   readonly controllers = new Map<string, AbortController>();
   private readonly routing = new Map<string, Routing>();
+  private readonly reports = new Set<Promise<unknown>>();
+
+  /** Wait for pending brain report writes (called on shutdown). */
+  async flush(): Promise<void> {
+    await Promise.allSettled([...this.reports]);
+  }
 
   constructor(private readonly d: ExecutorDeps) {}
 
@@ -75,6 +98,11 @@ export class Executor {
       tier: plan.tier,
       plan,
       attempts: routing.attempts,
+      brain: this.d.brain,
+      access: this.d.access,
+      effort: effortFor(task.spec, task.row.id),
+      jobId: task.spec.profile === "supervise" ? task.row.id : (task.spec.parentTaskId ?? null),
+      services: this.d.services,
     };
   }
 
@@ -98,6 +126,10 @@ export class Executor {
   private runMode(ctx: RunContext): Promise<RunOutcome> {
     if (ctx.profile.mode === "completion") return runCompletion(ctx);
     if (ctx.profile.mode === "read_only") return runReadOnly(ctx);
+    if (ctx.profile.mode === "supervisor") {
+      if (this.d.supervisor) return this.d.supervisor.run(ctx);
+      return Promise.reject(new Error("no supervisor runner is configured"));
+    }
     if (this.d.coding) return this.d.coding.run(ctx);
     return Promise.reject(new Error("no coding runner is configured"));
   }
@@ -318,7 +350,20 @@ export class Executor {
       classification: c ? { tier: c.tier, score: c.score, basis: c.basis, rulebookVersion: c.rulebookVersion, breakdown: c.breakdown } : null,
       routing: r?.tier ? { tier: r.tier, escalatedFrom: r.escalatedFrom, attempts: r.attempts } : null,
     });
-    this.d.tasks.finish(task.row.id, this.d.owner, result, state);
+    const final = this.d.tasks.finish(task.row.id, this.d.owner, result, state);
+    const mode = this.d.cfg.profiles[task.spec.profile]?.mode;
+    if (this.d.brain && mode && mode !== "supervisor" && final !== "running") {
+      const p = writeWorkerReport(
+        { cfg: this.d.cfg, brain: this.d.brain, access: this.d.access, spec: task.spec, taskId: task.row.id, effort: effortFor(task.spec, task.row.id), jobId: task.spec.parentTaskId ?? null, tier: (r?.tier ?? null) as never },
+        roleForProfile(task.spec.profile),
+        runner,
+        final,
+      ).finally(() => {
+        this.reports.delete(p);
+        this.d.onSettled(task.row.id);
+      });
+      this.reports.add(p);
+    }
     this.d.onSettled(task.row.id);
   }
 

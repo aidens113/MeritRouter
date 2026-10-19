@@ -280,6 +280,8 @@ export const ConfigSchema = z
         /** commit: let SwitchYard commit into the mounted folder's repository (off: you commit). */
         mounts: z.array(z.object({ prefix: z.string().min(1), path: z.string().min(1), commit: z.boolean().default(false) }).strict()).default([]),
         commit: z.boolean().default(true),
+        /** Write each worker's report into its working document's reports/ folder. */
+        worker_reports: z.boolean().default(true),
         /** Push the brain repository after commits (needs a configured remote). */
         push: z.boolean().default(false),
         current_state_max_lines: z.number().int().positive().default(150),

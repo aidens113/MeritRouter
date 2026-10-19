@@ -20,6 +20,8 @@ import { TaskRouter } from "../routing/router.js";
 import { Qualifier } from "../qualification/runner.js";
 import { syncRepositoryRegistry } from "../qualification/registry.js";
 import { KeyVault } from "../paid/vault.js";
+import { Brain } from "../brain/brain.js";
+import { BrainAccess } from "../brain/access.js";
 import { PaidSpend } from "../paid/spend.js";
 import { paidEndpoints, paidFingerprint, refreshPaidPrices } from "../paid/catalog.js";
 import { httpDirectClient, type DirectClient } from "../paid/direct.js";
@@ -35,6 +37,8 @@ export interface SwitchyardOptions {
   /** Admin client override; null disables chain management and scanning. */
   admin?: FreeLlmApiAdmin | null;
   coding?: CodingRunner | null;
+  /** Runner for supervise tasks (standalone supervisor jobs). */
+  supervisor?: CodingRunner | null;
   /** Direct paid-provider client override (tests). */
   directClient?: DirectClient;
   fetchImpl?: typeof fetch;
@@ -87,6 +91,8 @@ export class Switchyard {
   readonly owner: string;
   readonly qualifier: Qualifier;
   readonly vault: KeyVault;
+  readonly brain: Brain;
+  readonly brainAccess: BrainAccess;
   readonly spend: PaidSpend;
   private readonly executor: Executor;
   private readonly scheduler: Scheduler;
@@ -106,6 +112,8 @@ export class Switchyard {
     this.tasks = new TaskStore(this.db, this.now);
     this.artifacts = new ArtifactStore(this.db, cfg.storageDir, this.now);
     this.admission = new Admission(this.db, this.tasks, cfg, this.now);
+    this.brain = new Brain(cfg, this.db, this.now);
+    this.brainAccess = new BrainAccess(this.db, cfg, this.now);
     this.vault = new KeyVault(this.db, cfg.storageDir, this.now);
     this.spend = new PaidSpend(this.db, cfg, this.vault, this.now);
     this.catalog = new Catalog(this.db, cfg.modelsPath, {
@@ -133,6 +141,18 @@ export class Switchyard {
       owner: this.owner,
       now: this.now,
       coding: opts.coding ?? null,
+      supervisor: opts.supervisor ?? null,
+      brain: this.brain,
+      access: this.brainAccess,
+      services: {
+        submitTasks: (raw, o) => this.submitTasks(raw, o),
+        awaitResults: (ids, o) => this.awaitResults(ids, o),
+        getTask: (id) => {
+          const t = this.tasks.get(id);
+          return t ? { spec: t.spec, state: t.row.state, result: t.result } : null;
+        },
+        cancelTasks: (ids) => this.cancelTasks(ids),
+      },
       onSettled: (id) => this.events.emit("settled", id),
     });
     syncRepositoryRegistry(this.db, cfg);
@@ -331,6 +351,7 @@ export class Switchyard {
     if (this.scanTimer) clearInterval(this.scanTimer);
     if (this.reloadTimer) clearInterval(this.reloadTimer);
     await this.scheduler.stop();
+    await this.executor.flush();
     this.db.close();
   }
 }

@@ -7,6 +7,16 @@ import type { ArtifactStore } from "../storage/artifacts.js";
 import type { TaskStore } from "../storage/tasks.js";
 import type { EffectiveBudget } from "../admission/admission.js";
 import type { TaskState, WorkerResult, WorkerTask } from "../core/task.js";
+import type { Brain } from "../brain/brain.js";
+import type { BrainAccess } from "../brain/access.js";
+
+/** What a supervisor needs from the service (kept as an interface to avoid import cycles). */
+export interface SupervisorServices {
+  submitTasks(raw: unknown[], opts?: { purpose?: string }): Promise<Array<{ taskId: string; state: string; deduplicated: boolean }>>;
+  awaitResults(ids: string[], opts?: { timeoutSeconds?: number; signal?: AbortSignal }): Promise<{ completed: WorkerResult[]; pending: Array<{ taskId: string; state: string }>; timedOut: boolean }>;
+  getTask(id: string): { spec: WorkerTask; state: string; result: WorkerResult | null } | null;
+  cancelTasks(ids: string[]): unknown;
+}
 
 export interface RunContext {
   cfg: ResolvedConfig;
@@ -22,6 +32,12 @@ export interface RunContext {
   now: () => number;
   tier: TierName;
   plan: RoutePlan;
+  /** Shared knowledge and the effort (working document slug) this task belongs to. */
+  brain: Brain | null;
+  access: BrainAccess | null;
+  effort: string;
+  jobId: string | null;
+  services: SupervisorServices | null;
   /** Every endpoint attempt made for this task (fallbacks included). */
   attempts: GateAttempt[];
 }
