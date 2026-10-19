@@ -24,7 +24,7 @@ pass (jobs, brain, paid, settings). A security review's eleven findings are fixe
 still run worker-editable scripts (needs an OS sandbox to fully contain).
 
 **Next steps:** live validation once credentials exist; consider a container sandbox for
-allowed commands.
+allowed commands. New work continues in [agent-sessions-and-teams.md](./agent-sessions-and-teams.md).
 
 **Blockers:** none.
 
