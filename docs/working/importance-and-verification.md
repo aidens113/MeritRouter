@@ -267,9 +267,12 @@ records the raised level on the verification record.
 - Graded on per-criterion outcomes. An approve-everything model fails the defect and
   inconclusive kinds.
 - `review_strict` is a higher pass threshold on the same family, and harder evals at T3.
-- Until any reviewer qualifies, Deep and Strict reviews come back `inconclusive` ->
-  `needs_supervisor`. That is honest, but it means Deep is not autonomous until qualification
-  has run against live models.
+- `verification.reviewer_qualification: preferred | required` (default `preferred`, supervisor
+  decision 2026-10-19, so Deep stays automated): qualified reviewers are chosen first. Without
+  one, Deep uses a reviewer at the size floor and the verdict is marked
+  `reviewer_unqualified`, which calibration tracks separately. Strict always requires a
+  `review_strict`-qualified reviewer; without one it ends `inconclusive` -> `needs_supervisor`,
+  and the supervisor accepts automatically per the user's decision.
 
 ### Panel and metrics
 
@@ -355,6 +358,37 @@ Branch/worktree: `feat/v1-verification` at `D:/sy-wt/v1`. Workers never commit.
   and accept/reject actions.
 - Owns: `src/cli.ts`, `src/mcp.ts`, `src/admin/insights.ts`, `apps/panel/**`, related tests.
 - Report to: docs/working/importance-and-verification/reports/v1-surface.md
+
+### Brief: v2-review (same branch, after v1-exec; parallel with v1-surface)
+- Task: the Deep/Strict reviewer phase per Design "Verification phase" step 4 and "Decide".
+  - `src/verification/review.ts`: build the evidence package (contract, base, patch or
+    artifact, check logs, author's summary labelled as a claim); run a reviewer child session
+    (role `reviewer`, read-only repository tools within scope) charged to the task under purpose
+    `verification`; a `submit_verdict` terminal tool validated with zod (shape in Design).
+  - Routing: `avoidEndpoints` in route requirements (every endpoint that served the task);
+    prefer another provider family; `verification.reviewer_qualification: preferred |
+    required` per "Qualification for reviewers"; review floor from the level.
+  - Decision: pass -> `met`; a concrete defect -> one repair at the next tier (purpose
+    `repair`) starting from the submitted revision with the verdict findings, then re-review;
+    `run_targeted_check` once when budget allows; otherwise `needs_supervisor`. Failure types
+    per Design. Never exceed the contract allocation.
+  - Qualification: `review` eval family in `evals/suite.json` (four kinds per Design, at T1-T3)
+    graded on per-criterion outcomes; `review_strict` threshold.
+- Owns: `src/verification/review.ts` and `decide.ts`, `src/routing/**`, `src/qualification/**`,
+  `evals/**`, `src/core/executor.ts`, `src/harness/**`, `charters/reviewer.md`,
+  `tests/verification-review.test.ts`.
+- Report to: docs/working/importance-and-verification/reports/v2-review.md
+
+### Brief: v3-calibration (after V2 is on dev)
+- Task: audit sampling (`audit_sample_rate`, background reviews with purpose `audit` that never
+  block acceptance); a calibration record per verdict (reviewer endpoint, level, verdict,
+  qualified or not); confirmation signals (supervisor accepted, integrated, job checks passed,
+  later undone through attribution = escaped defect, reviewer fail overturned = false
+  rejection); cached verdicts keyed by contract digest, artifact digest, policy fingerprint,
+  and source revisions; usage by purpose in insights; a panel Calibration page.
+- Owns: `src/verification/calibration.ts`, `src/attribution/**` (undo hook only),
+  `src/admin/insights.ts`, `apps/panel/**`, a migration, `tests/verification-calibration.test.ts`.
+- Report to: docs/working/importance-and-verification/reports/v3-calibration.md
 
 ---
 
