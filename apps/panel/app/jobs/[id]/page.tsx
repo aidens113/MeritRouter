@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { ArrowLeft, BookOpenText, Bot, ChevronRight, GitBranch, MessageCircleQuestion, Terminal, User, Wrench } from "lucide-react";
-import { insights, isTerminal } from "switchyard-router";
+import { criterionTexts, insights, isTerminal } from "switchyard-router";
 import { getSy } from "@/lib/sy";
 import { SetupScreen } from "@/components/setup";
 import { AcceptanceBadge, TaskStateBadge } from "@/components/task-badges";
@@ -117,7 +117,7 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
             <div>
               <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-3">Acceptance criteria</h3>
               <ol className="list-decimal space-y-1 pl-5 text-ink-2">
-                {spec.constraints.acceptanceCriteria.map((c, i) => (
+                {criterionTexts(spec).map((c, i) => (
                   <li key={i}>{c}</li>
                 ))}
               </ol>

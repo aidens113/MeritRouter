@@ -205,7 +205,8 @@ const raw = {
   profiles: {
     summarize: { mode: "completion", min_total_parameters_b: 30, max_model_requests: 4, max_output_tokens: 2000, classify: "never", batching: { enabled: true, max_items: 4, per_item_output_tokens: 500 } },
     inspect: { mode: "read_only", min_total_parameters_b: 30, max_model_requests: 4, tools: "repository_read", classify: "never" },
-    analyze: { mode: "read_only", min_total_parameters_b: 100, max_model_requests: 6, tools: "repository_read_and_artifacts", classify: "auto", min_tier: "T2" },
+    // 10 requests leave room for strict verification's review reserve (6) on critical analyses.
+    analyze: { mode: "read_only", min_total_parameters_b: 100, max_model_requests: 10, tools: "repository_read_and_artifacts", classify: "auto", min_tier: "T2" },
     implement: { mode: "coding", min_total_parameters_b: 100, max_model_requests: 8, tools: "scoped_edit_and_checks", workspace: "isolated_worktree" },
     review: { mode: "read_only", min_total_parameters_b: 100, max_model_requests: 4, tools: "repository_read_and_artifacts" },
     supervise: { mode: "supervisor", tools: "supervisor", min_total_parameters_b: 100, max_model_requests: 30, max_output_tokens: 4000, classify: "never", min_tier: "T3" },
@@ -427,6 +428,42 @@ await phase(14, "analysis (classifier scores it)", [
     constraints: { acceptanceCriteria: ["identifies the root cause with line references", "proposes a minimal fix", "states how to verify it"] },
   },
 ]);
+// Importance and verification: a critical analysis is strict (it waits for an explicit decision,
+// left pending so the task page shows Accept/Reject); a high one is deep (it waits for a review
+// that V1 cannot run yet) and is then accepted by a person from the CLI, so a decision shows.
+const critical = await phase(12.5, "critical analysis (strict: needs a decision)", [
+  {
+    profile: "analyze",
+    label: "billing-rounding",
+    goal: "Find where handle() could produce a wrong sum for the billing reconciliation report.",
+    repositoryAliases: ["core"],
+    context: { fileRefs: ["core:src/server.ts", "core:src/app.ts"] },
+    importance: "critical",
+    importanceReason: "The billing reconciliation report sums with handle(); a wrong total is a financial error.",
+    constraints: {
+      acceptanceCriteria: [
+        { id: "root-cause", text: "identifies every input that yields a wrong sum, with line references", verify: "evidence" },
+        { id: "fix", text: "proposes a minimal fix", verify: "evidence" },
+      ],
+    },
+  },
+]);
+const high = await phase(12, "high-importance analysis (deep: awaits review)", [
+  {
+    profile: "analyze",
+    goal: "Check whether handle() accepts negative numbers and whether that matters for refunds.",
+    repositoryAliases: ["core"],
+    context: { fileRefs: ["core:src/server.ts"] },
+    importance: "high",
+    importanceReason: "Refund amounts are negative; rejecting them would block refunds.",
+    constraints: { acceptanceCriteria: ["states whether negative numbers are accepted, citing the line"] },
+  },
+]);
+for (const r of high.completed) {
+  if (r.acceptanceStatus === "needs_supervisor") insights.decideTaskAcceptance(sy, r.taskId, "accept", { kind: "human", id: "cli:demo" }, "Read server.ts myself: Number() keeps the sign and nothing rejects negatives.");
+}
+if (!critical.completed.some((r) => r.acceptanceStatus === "needs_supervisor")) console.warn("  warning: the critical analysis did not end needs_supervisor");
+
 await phase(11, "batch of three summaries (one request)", [summarize("Summarise shard 1 log"), summarize("Summarise shard 2 log"), summarize("Summarise shard 3 log")]);
 await phase(9, "failure: model returns prose instead of JSON", [summarize("Summarise the billing export log")], { scenario: "garbage" });
 await phase(7, "review (preferred model override)", [

@@ -32,7 +32,16 @@ export async function handle(fn: (sy: Switchyard) => Promise<unknown> | unknown)
     // Library errors carry a stable code (SwitchyardError). Match on it rather than instanceof:
     // Turbopack bundles the workspace library per route, so class identities can differ.
     const code = typeof e.code === "string" ? e.code : "";
-    const status = code === "task_invalid" || code === "config_invalid" ? 400 : code.startsWith("gateway:") ? 502 : 500;
+    const status =
+      code === "task_invalid" || code === "config_invalid" || code === "reason_required"
+        ? 400
+        : code === "not_found"
+          ? 404
+          : code === "cannot_accept_unmet" || code === "human_acceptance_required"
+            ? 409
+            : code.startsWith("gateway:")
+              ? 502
+              : 500;
     if (status === 500) console.error("[panel] request failed:", e);
     return json({ ok: false, error: e.message || String(err) }, status);
   }

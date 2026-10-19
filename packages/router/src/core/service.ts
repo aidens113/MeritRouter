@@ -273,12 +273,21 @@ export class Switchyard {
   private status(t: StoredTask): TaskStatus {
     const row = t.row as StoredTask["row"] & { tier?: string | null; purpose?: string };
     const tierCfg = row.tier && row.tier in this.cfg.tiers ? this.cfg.tiers[row.tier as TierName] : null;
-    const budget = Math.min(
-      this.cfg.profiles[t.spec.profile]?.max_model_requests ?? 0,
-      tierCfg ? tierCfg.max_model_requests : Infinity,
-      this.cfg.execution.max_model_requests_per_task,
-      t.spec.budget?.maxModelRequests ?? Infinity,
-    );
+    // With a contract, "allowed" is its total: execution, review, and repair all count against it.
+    let contractTotal: number | null = null;
+    try {
+      contractTotal = this.contracts.get(t.row.id)?.contract.budget.total ?? null;
+    } catch {
+      contractTotal = null; // a corrupt contract is reported where it is read, not in a status line
+    }
+    const budget =
+      contractTotal ??
+      Math.min(
+        this.cfg.profiles[t.spec.profile]?.max_model_requests ?? 0,
+        tierCfg ? tierCfg.max_model_requests : Infinity,
+        this.cfg.execution.max_model_requests_per_task,
+        t.spec.budget?.maxModelRequests ?? Infinity,
+      );
     return {
       taskId: t.row.id,
       profile: t.row.profile,

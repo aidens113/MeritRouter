@@ -45,10 +45,60 @@ export function TierBadge({ tier }: { tier: string | null }) {
   );
 }
 
+export const ACCEPTANCE_LABEL: Record<string, string> = {
+  met: "Criteria met",
+  unmet: "Criteria unmet",
+  not_verified: "Not verified",
+  needs_supervisor: "Needs supervisor",
+};
+
+const ACCEPTANCE_TONE: Record<string, Tone> = { met: "good", unmet: "bad", not_verified: "neutral", needs_supervisor: "warn" };
+
+const ACCEPTANCE_TITLE: Record<string, string> = {
+  met: "The verification policy was satisfied, or a supervisor or person accepted the result",
+  unmet: "A check, criterion, or review failed, or the result was rejected",
+  not_verified: "Some criteria rest only on the worker's own claims; nothing failed",
+  needs_supervisor: "Waiting for a supervisor's or a person's decision: strict verification, missing evidence, or a review that has not run",
+};
+
 export function AcceptanceBadge({ status }: { status: string }) {
-  if (status === "met") return <Badge tone="good">Criteria met</Badge>;
-  if (status === "unmet") return <Badge tone="bad">Criteria unmet</Badge>;
-  return <Badge tone="neutral" title="Only passing checks with in-scope changes count as met">Not verified</Badge>;
+  return (
+    <Badge tone={ACCEPTANCE_TONE[status] ?? "neutral"} title={ACCEPTANCE_TITLE[status]}>
+      {ACCEPTANCE_LABEL[status] ?? status}
+    </Badge>
+  );
+}
+
+export const VERIFICATION_LABEL: Record<string, string> = {
+  not_required: "No verification",
+  pending: "Verification pending",
+  passed: "Verification passed",
+  failed: "Verification failed",
+  inconclusive: "Inconclusive",
+  skipped_budget: "Skipped: budget",
+};
+
+const VERIFICATION_TONE: Record<string, Tone> = { not_required: "neutral", pending: "warn", passed: "good", failed: "bad", inconclusive: "serious", skipped_budget: "serious" };
+
+export function VerificationBadge({ status }: { status: string }) {
+  return <Badge tone={VERIFICATION_TONE[status] ?? "neutral"}>{VERIFICATION_LABEL[status] ?? status}</Badge>;
+}
+
+const IMPORTANCE_TONE: Record<string, Tone> = { low: "neutral", normal: "neutral", high: "warn", critical: "serious" };
+
+export function ImportanceBadge({ level }: { level: string }) {
+  return (
+    <Badge tone={IMPORTANCE_TONE[level] ?? "neutral"} title="Task importance: with the tier and the actual change, it picks how much evidence the result needs">
+      {level} importance
+    </Badge>
+  );
+}
+
+/** Outcome of one named check or criterion on a verification record. */
+export function OutcomeBadge({ outcome }: { outcome: string }) {
+  const tone: Tone =
+    outcome === "passed" ? "good" : outcome === "failed" ? "bad" : outcome === "claimed" ? "accent" : ["stale", "environment_failure", "inconclusive", "not_implemented"].includes(outcome) ? "serious" : outcome === "pending_review" ? "warn" : "neutral";
+  return <Badge tone={tone}>{outcome.replace(/_/g, " ")}</Badge>;
 }
 
 export function RequestStatusBadge({ status }: { status: string }) {
