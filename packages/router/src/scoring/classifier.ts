@@ -11,6 +11,7 @@ import type { WorkerTask } from "../core/task.js";
 import { extractJson } from "../core/worker-output.js";
 import { TAG_GROUPS, TagsSchema, type Tags } from "./rulebook.js";
 import type { TaskFeatures } from "./score.js";
+import { criterionTexts } from "../core/task.js";
 
 export interface ClassifierVerdict {
   tags: Tags;
@@ -43,7 +44,7 @@ function describe(id: string, p: Pending): string {
   return `<item id="${id}">
 type: ${p.spec.profile} (${f.mode})
 goal: ${p.spec.goal.slice(0, 4000)}
-acceptance criteria: ${p.spec.constraints.acceptanceCriteria.map((c, i) => `[${i}] ${c}`).join(" ").slice(0, 2000)}
+acceptance criteria: ${criterionTexts(p.spec).map((c, i) => `[${i}] ${c}`).join(" ").slice(0, 2000)}
 scope: ${f.linesApproximate ? "~" : ""}${f.linesInScope} lines, ${f.repositories} repo(s), ~${f.contextTokens} context tokens${f.checksRequired ? ", checks required" : ""}
 sample of scope: ${f.scopeSample.slice(0, 12).join(", ") || "(none)"}
 </item>`;

@@ -11,6 +11,7 @@ import { minimalEnv, runProcess, type RunResult } from "./process.js";
 import { agentHome, finishCoding, prepareWorkspace, sourceDirtyFinding } from "./finish.js";
 import { NativeCodingRunner } from "./native.js";
 import { WorkspacePointer } from "../session-workspace.js";
+import { criterionTexts } from "../../core/task.js";
 
 function brief(ctx: RunContext, readOnlyAliases: string[]): string {
   const s = ctx.spec;
@@ -19,7 +20,7 @@ function brief(ctx: RunContext, readOnlyAliases: string[]): string {
 ${s.goal}
 
 ## Acceptance criteria
-${s.constraints.acceptanceCriteria.map((c, i) => `${i + 1}. ${c}`).join("\n")}
+${criterionTexts(s).map((c, i) => `${i + 1}. ${c}`).join("\n")}
 
 ## Rules
 - Edit only files matching: ${(s.constraints.allowedPaths ?? []).join(", ")}. Changes elsewhere are rejected.
@@ -83,7 +84,7 @@ export class ExternalCodingRunner implements CodingRunner {
           stopReason: "repo_agent_config_present",
           summary: `The repository contains agent configuration (${agentConfig.join(", ")}) that could add model providers; set coding.allow_repo_agent_config to run anyway.`,
           baseCommits: { [alias]: ws.baseSha },
-          unresolvedCriteria: spec.constraints.acceptanceCriteria,
+          unresolvedCriteria: criterionTexts(spec),
           findings,
         }),
       };

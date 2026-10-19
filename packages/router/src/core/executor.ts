@@ -10,7 +10,7 @@ import type { TaskRouter, Prepared } from "../routing/router.js";
 import type { RoutePlan } from "../routing/select.js";
 import { effectiveBudget } from "../admission/admission.js";
 import { AdmissionDenied, GatewayError } from "./errors.js";
-import { WorkerResultSchema, type TaskState, type WorkerResult } from "./task.js";
+import { criterionTexts, WorkerResultSchema, type TaskState, type WorkerResult } from "./task.js";
 import { baseResult, type RunContext, type RunOutcome, type RunnerResult } from "../runners/types.js";
 import { runCompletion } from "../runners/completion.js";
 import { runReadOnly } from "../runners/readonly.js";
@@ -208,7 +208,7 @@ export class Executor {
       executionStatus: "failed",
       stopReason: `too_difficult_for_workers: ${c.rejectReason}`,
       summary: `Not delegated. ${c.rejectReason}. Score ${c.score}: ${c.breakdown.filter((l) => l.points).map((l) => `${l.detail} (+${l.points})`).join(", ")}.`,
-      unresolvedCriteria: task.spec.constraints.acceptanceCriteria,
+      unresolvedCriteria: criterionTexts(task.spec),
     }));
   }
 
@@ -435,7 +435,7 @@ export class Executor {
         stopReason: d.stopReason,
         summary: d.summary ?? partial?.summary ?? "",
         acceptanceStatus: partial?.acceptanceStatus === "unmet" ? "unmet" : "not_verified",
-        unresolvedCriteria: partial?.unresolvedCriteria.length ? partial.unresolvedCriteria : task.spec.constraints.acceptanceCriteria,
+        unresolvedCriteria: partial?.unresolvedCriteria.length ? partial.unresolvedCriteria : criterionTexts(task.spec),
       }),
     );
   }

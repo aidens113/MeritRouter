@@ -3,6 +3,7 @@ import path from "node:path";
 import type { Workspace, Worktrees } from "../../workspaces/worktree.js";
 import { baseResult, type RunContext, type RunOutcome } from "../types.js";
 import { minimalEnv, runProcess } from "./process.js";
+import { criterionTexts } from "../../core/task.js";
 
 export function sourceDirtyFinding(ws: Workspace): RunOutcome["result"]["findings"] {
   return ws.sourceDirty
@@ -89,7 +90,7 @@ export async function finishCoding(
       patchRefs: patchRef ? [patchRef] : [],
       baseCommits: { [alias]: o.ws.baseSha },
       checks,
-      unresolvedCriteria: acceptance === "met" ? [] : spec.constraints.acceptanceCriteria,
+      unresolvedCriteria: acceptance === "met" ? [] : criterionTexts(spec),
     }),
   };
 }

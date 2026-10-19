@@ -11,6 +11,7 @@ import { brainContext, submitResultTool, workerBrainEnv } from "../harness/worke
 import { baseResult, type RunContext, type RunOutcome } from "./types.js";
 import { taskBrief } from "./prompts.js";
 import { baseCommitsFor, contextManifest } from "./completion.js";
+import { criterionTexts } from "../core/task.js";
 
 /** Read-only repository investigation (inspect, analyze, review) on the shared agent harness. */
 export async function runReadOnly(ctx: RunContext): Promise<RunOutcome> {
@@ -71,11 +72,11 @@ export async function runReadOnly(ctx: RunContext): Promise<RunOutcome> {
   if (loop.kind === "budget_exhausted") {
     return {
       state: "budget_exhausted",
-      result: baseResult({ ...common, executionStatus: "budget_exhausted", stopReason: `model request budget (${ctx.budget.maxModelRequests}) exhausted before submit_result`, unresolvedCriteria: spec.constraints.acceptanceCriteria }),
+      result: baseResult({ ...common, executionStatus: "budget_exhausted", stopReason: `model request budget (${ctx.budget.maxModelRequests}) exhausted before submit_result`, unresolvedCriteria: criterionTexts(spec) }),
     };
   }
   return {
     state: "failed",
-    result: baseResult({ ...common, executionStatus: "failed", stopReason: "invalid_output", summary: `worker output failed validation: ${loop.errors.join("; ")}`, unresolvedCriteria: spec.constraints.acceptanceCriteria }),
+    result: baseResult({ ...common, executionStatus: "failed", stopReason: "invalid_output", summary: `worker output failed validation: ${loop.errors.join("; ")}`, unresolvedCriteria: criterionTexts(spec) }),
   };
 }

@@ -11,6 +11,7 @@ import { planLimits } from "../routing/select.js";
 import { taskBrief } from "./prompts.js";
 import { baseCommitsFor, contextManifest } from "./completion.js";
 import type { WorkerTask } from "../core/task.js";
+import { criterionTexts } from "../core/task.js";
 
 /** Tasks that may share one prompt: same profile, data boundary, and response requirements. */
 export function batchKey(spec: WorkerTask): string | null {
@@ -88,7 +89,7 @@ export async function runBatch(ctxs: RunContext[]): Promise<Map<string, RunOutco
             executionStatus: "failed",
             stopReason: "context_does_not_fit",
             summary: `item needs ~${item.estTokens} input tokens; pool context limit is ${pool.contextLimitTokens}`,
-            unresolvedCriteria: item.ctx.spec.constraints.acceptanceCriteria,
+            unresolvedCriteria: criterionTexts(item.ctx.spec),
           }),
         },
         [],
@@ -122,7 +123,7 @@ async function runChunk(chunk: Item[], done: Done): Promise<void> {
     for (const item of [...pending]) {
       if (admission.taskTotals(item.ctx.taskId).requests >= item.ctx.budget.maxModelRequests) {
         pending = pending.filter((p) => p !== item);
-        await done(item, { state: "budget_exhausted", result: baseResult({ executionStatus: "budget_exhausted", stopReason: "model request budget exhausted during batch retries", unresolvedCriteria: item.ctx.spec.constraints.acceptanceCriteria }) }, []);
+        await done(item, { state: "budget_exhausted", result: baseResult({ executionStatus: "budget_exhausted", stopReason: "model request budget exhausted during batch retries", unresolvedCriteria: criterionTexts(item.ctx.spec) }) }, []);
       }
     }
     if (!pending.length) break;
@@ -165,7 +166,7 @@ async function runChunk(chunk: Item[], done: Done): Promise<void> {
         const bad = pending.find((p) => p.ctx.taskId === err.taskId)!;
         pending = pending.filter((p) => p !== bad);
         const state = err.reason === "cancel_requested" ? "cancelled" : err.reason === "deadline_exceeded" ? "failed" : "interrupted";
-        await done(bad, { state, result: baseResult({ executionStatus: state, stopReason: err.reason, unresolvedCriteria: bad.ctx.spec.constraints.acceptanceCriteria }) }, []);
+        await done(bad, { state, result: baseResult({ executionStatus: state, stopReason: err.reason, unresolvedCriteria: criterionTexts(bad.ctx.spec) }) }, []);
         round--;
         continue;
       }
@@ -227,7 +228,7 @@ async function runChunk(chunk: Item[], done: Done): Promise<void> {
       }
       const validator = item.ctx.spec.constraints.outputSchema ? compileOutputSchema(item.ctx.spec.constraints.outputSchema) : undefined;
       const v = validateWorkerOutput(entry.result, {
-        acceptanceCriteria: item.ctx.spec.constraints.acceptanceCriteria,
+        acceptanceCriteria: criterionTexts(item.ctx.spec),
         universe: item.universe,
         ...(validator ? { dataValidator: validator } : {}),
       });
@@ -270,7 +271,7 @@ async function runChunk(chunk: Item[], done: Done): Promise<void> {
           executionStatus: "failed",
           stopReason: "invalid_output",
           summary: `batch item failed validation: ${errors.join("; ")}`,
-          unresolvedCriteria: item.ctx.spec.constraints.acceptanceCriteria,
+          unresolvedCriteria: criterionTexts(item.ctx.spec),
         }),
       },
       [],
