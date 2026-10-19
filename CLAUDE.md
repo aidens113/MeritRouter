@@ -1,8 +1,12 @@
-# SwitchYard Router
+@AGENTS.md
+
+# SwitchYard Router: Claude Code specifics
 
 Multi-agent framework: a supervisor (Claude Code over MCP, or SwitchYard's own on models you
 choose) delegates bounded work to free and optionally paid worker models, with routing, budgets,
-roles, a shared brain, and per-line attribution enforced in code. Standalone project.
+roles, a shared brain, and per-line attribution enforced in code. `AGENTS.md` (imported above)
+holds the binding agent rules: roles, workflow modes, delegation, boundaries, validation,
+branches, and pushing.
 
 ## Start here (handoff)
 
@@ -10,14 +14,16 @@ roles, a shared brain, and per-line attribution enforced in code. Standalone pro
    document you are working on. The next effort is
    [agent-sessions-and-teams.md](docs/working/agent-sessions-and-teams.md) (durable agent
    sessions, failure resilience, agent teams): start with Phase S1.
-2. Background when needed: [docs/roles.md](docs/roles.md) (role model and brain),
+2. Background when needed: [docs/roles.md](docs/roles.md) (runtime role model and brain),
    [docs/decisions.md](docs/decisions.md) (verified FreeLLMAPI behaviour, every design decision),
    [docs/operations.md](docs/operations.md) (hard vs estimated limits, recovery).
-3. Keep working documents current as you go (protocol: rewrite `Current State`, append ledger
-   entries with the exact validation command and its observed output).
 
 State at handoff (2026-10-19): `main` = `dev`. 96 router tests pass; the panel builds. Nothing has
 run against a live FreeLLMAPI, paid provider, or OpenCode yet (no credentials in this environment).
+
+Dispatch workers through the `worker` agent; its definition carries the worker rules, so a brief
+holds only the task. Run independent workers in parallel and verify their claims before
+committing.
 
 ## Layout
 
@@ -50,26 +56,5 @@ run against a live FreeLLMAPI, paid provider, or OpenCode yet (no credentials in
 - Tests must use temp brains (`brain.path` relative to the test config), never the default
   `~/.switchyard/brain`.
 - Symlink tests self-skip on accounts without symlink privileges.
-
-## Branch and push policy (managed automatically by the agent)
-
-- `main`: released, known-good state. `dev`: integration branch. Feature work happens on `dev`
-  (or short-lived `feat/*` branches merged into `dev`).
-- **Push `dev`** after each significant, self-contained change once `pnpm -r typecheck` and
-  `pnpm -r test` pass: a completed subsystem, a phase checklist item, a bug fix with a test.
-  Do not push half-finished work that breaks typecheck or tests.
-- **Fast-forward `main` to `dev`** when a phase (or a coherent group of features) is complete,
-  its acceptance checks pass, docs are updated, and the build succeeds. Never force-push either
-  branch; never rewrite published history.
-- Commits: one logical change each, imperative subject, body explaining why. Never commit
-  secrets, `.switchyard/`, databases, worktrees, demo data, or `.env` files.
-
-## Conventions
-
-- TypeScript strict, ESM, zod for every runtime boundary.
-- Every model request goes through `Gate` (admission + verification). Nothing calls a provider
-  directly.
-- Hard limits are enforced in code (tools, admission, access checks); anything only estimated is
-  labelled as such. Worker output is untrusted data.
-- Every change an agent makes is a commit under its own identity with Agent/Model/Task trailers.
-- Delegate wide reads and bulk work to subagents; verify their claims yourself before accepting.
+- Multi-line patches through bash heredocs mangle backslash escapes; write a patch script file or
+  use the edit tool for regex-heavy code.
