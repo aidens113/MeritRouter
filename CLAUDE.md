@@ -13,12 +13,12 @@ branches, and pushing.
 1. Read [docs/working/README.md](docs/working/README.md), then the `Current State` of the
    document you are working on. The next effort is
    [agent-sessions-and-teams.md](docs/working/agent-sessions-and-teams.md) (durable agent
-   sessions, failure resilience, agent teams): S1, S2, and R1 operations are done; V1-V2 are in progress, then R1b and T1.
+   sessions, failure resilience, agent teams): S1, S2, R1 (operations and resilience), V1, and V2 are done; next is T1 (task graph), then T2, V3, T3.
 2. Background when needed: [docs/roles.md](docs/roles.md) (runtime role model and brain),
    [docs/decisions.md](docs/decisions.md) (verified FreeLLMAPI behaviour, every design decision),
    [docs/operations.md](docs/operations.md) (hard vs estimated limits, recovery).
 
-State at handoff (2026-10-19): S1, S2 (resume), and R1 operations merged. 170 router tests pass; the panel builds. Nothing has
+State at handoff (2026-10-19): S1, S2, R1, R1b, V1, V2 merged. Router tests pass; the panel builds. Nothing has
 run against a live FreeLLMAPI, paid provider, or OpenCode yet (no credentials in this environment).
 
 Dispatch workers through the `worker` agent; its definition carries the worker rules, so a brief

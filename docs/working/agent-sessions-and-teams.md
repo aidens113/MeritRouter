@@ -1,7 +1,7 @@
 # Agent sessions, failure resilience, and agent teams
 
 Status: Active
-Status detail: S1, S2, and R1 operations complete 2026-10-19; R1b and T1 next.
+Status detail: S1, S2, R1 (operations and resilience) complete 2026-10-19; T1 next.
 Created: 2026-10-19
 Last updated: 2026-10-19
 Owner: Senior supervisor agent
@@ -54,14 +54,19 @@ correct).
 launchd, Windows Task Scheduler). Fixed: `switchyard worker` exited after ~0.4 s. Not run: a real
 service install on any platform; Linux/macOS.
 
-**Not done:** R1b (watchdog, circuit breakers, real kill-and-restart acceptance test), T1-T3.
+**Phase R1b done (2026-10-19):** progress watchdog (`execution.watchdog_minutes`, reviewers
+included after the V merge), per-provider circuit breakers (`gateway/breaker.ts`), and the R1
+acceptance test: a real worker process killed with `taskkill /F` mid-task is resumed by a second
+worker in the same session with no duplicated edit. Watchdog reads session tables directly
+(a `SessionStore` method would be cleaner). Kill test has only run on Windows.
+
+**Not done:** T1-T3.
 Open gaps: external-runner resume and crash-during-batch are untested; `recover_edits: reset`
 untested against git; two processes racing to resume untested; a session left `running` by a dead
 process shows no panel Resume until recovery runs; already-finished batch members are not
 recorded when the batch runner throws (sessions end `batch_aborted`).
 
-**Next steps:** V1+V2 merge ([importance-and-verification](./importance-and-verification.md),
-in progress on `feat/v1-verification`), then R1b and T1 in parallel, then T2, T3.
+**Next steps:** T1 on `feat/t1-task-graph`, then T2, V3, T3.
 
 **Blockers:** none. Live checks against real providers are still outstanding from the previous
 document.
@@ -467,6 +472,21 @@ Surface: `switchyard sessions [--running|--interrupted]`, `switchyard session <i
   files, 170 passed.
 - Outcome: Accepted
 - Follow-up: R1b, T1.
+
+---
+
+### 2026-10-19 — R1b, and V1+V2 merged with resume
+- Agent: supervisor; worker r1b-resilience (`feat/r1b-resilience`); V merge per the
+  importance-and-verification ledger
+- Changed: `src/core/watchdog.ts`, `src/gateway/breaker.ts`, gate, select, scheduler, executor
+  hook, insights `providerHealth`, `tests/resilience.test.ts`; docs `operations.md`,
+  `decisions.md` (15).
+- Why: requirement 2 (survive failures); R1 acceptance.
+- Validation: r1b branch: supervisor ran typecheck Done, resilience 11/11, full 181/181. Merged
+  dev after V: router build ok, `pnpm -r typecheck` Done, `npx vitest run tests` -> 25 files, 242
+  passed; `pnpm -r build` Done.
+- Outcome: Accepted
+- Follow-up: T1.
 
 ---
 

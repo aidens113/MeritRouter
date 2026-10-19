@@ -1,7 +1,7 @@
 # Task importance and verification policy
 
 Status: Active
-Status detail: Plan written 2026-10-19 from a consultant's recommendations, checked against the code; implementation not started.
+Status detail: V1 (policy, contracts, deterministic checks, acceptance) and V2 (independent review, repair) done 2026-10-19; V3 (calibration) next.
 Created: 2026-10-19
 Last updated: 2026-10-19
 Owner: Senior supervisor agent
@@ -19,7 +19,7 @@ what actually changed -> verification level). The user forwarded a consultant's 
 asked for a plan adjusted to this codebase; the proposal's ideas are adopted where they fit and
 changed or deferred where they do not (see "Adjustments to the proposal").
 
-**What exists today (verified in code 2026-10-19, `main` at 1751454):**
+**Baseline before this effort (verified in code 2026-10-19, `main` at 1751454):**
 - Difficulty: rulebook scoring (measured features + semantic tags, T1-T4, versioned
   fingerprint); T4 returns to the submitter as `too_difficult_for_workers`.
 - Acceptance: `acceptanceStatus` is `met | unmet | not_verified`. Self-reports never yield `met`.
@@ -48,9 +48,35 @@ changed or deferred where they do not (see "Adjustments to the proposal").
   - The classifier is skipped when the measured tier is already T3, although tags could still
     push it to T4 or reject it.
 
-**Not done:** everything in Phases.
+**V1 and V2 done (2026-10-19, merged to dev):**
+- `src/verification/`: importance floors, policy (levels, matrix, rules, fingerprint), immutable
+  contracts (`task_contracts`) with budget allocation, named deterministic checks, decision,
+  reviewer phase (`review.ts`, `phase.ts`, `followup.ts`), and the panel trail (`trail.ts`).
+- Execution: contract after classification; reserves on top of execution caps under
+  `verification.max_total_requests_per_task` (24); a raised level may draw unallocated room;
+  checks bound to the revision; re-evaluation at the tier actually run; one quality repair across
+  the task (all modes) from the submitted revision; retry state survives restarts.
+- Review: a reviewer child session never served by an endpoint that worked on the task,
+  preferring another family; `reviewer_qualification: preferred` (size-floor fallback marked
+  `reviewer_unqualified`), strict requires `review_strict`; `review` eval family rejects
+  approve-everything models. Reviewer-only defects after the repair go to `needs_supervisor`;
+  deterministic defects stay `unmet`.
+- Acceptance: `accept_task` / `reject_task` (supervisor, judged against the job's goal and
+  specifications), `integrate_task` gate (records acceptance only after a successful
+  cherry-pick), CLI `accept|reject` and panel buttons (human), MCP `accept_result` /
+  `reject_result` (recorded as the supervisor; refused for strict under `strict_acceptor: human`).
+- Resume composes: an interruption during review resumes the author session; interrupted
+  reviewers are superseded; the watchdog covers reviewers; scoring counts only failed runs as
+  retries.
 
-**Next steps:** V1 (in progress), then V2.
+**Not done:** V3 (calibration). Known gaps: the `criterion_evidence` check row still says
+"unverified (claimed)" when a review passed that criterion (display mismatch next to the review
+row); no live model has produced a verdict yet (scripted reviewers only); external-runner repair
+and batch members under review untested; `src/admin/insights.ts` is 824 lines (diagnose before
+it grows further).
+
+**Next steps:** T1 (agent teams) on `feat/t1-task-graph`; V3 after T1 (it touches insights and
+the panel, which T1's surface work also touches).
 
 **Blockers:** none.
 
@@ -404,7 +430,8 @@ Branch/worktree: `feat/v1-verification` at `D:/sy-wt/v1`. Workers never commit.
   later undone through attribution = escaped defect, reviewer fail overturned = false
   rejection); cached verdicts keyed by contract digest, artifact digest, policy fingerprint,
   and source revisions; usage by purpose in insights; a panel Calibration page.
-- Owns: `src/verification/calibration.ts`, `src/attribution/**` (undo hook only),
+- Also: make the `criterion_evidence` check row reflect a criterion a review passed.
+- Owns: `src/verification/calibration.ts`, `src/verification/checks.ts`, `src/attribution/**` (undo hook only),
   `src/admin/insights.ts`, `apps/panel/**`, a migration, `tests/verification-calibration.test.ts`.
 - Report to: docs/working/importance-and-verification/reports/v3-calibration.md
 
@@ -420,6 +447,24 @@ Branch/worktree: `feat/v1-verification` at `D:/sy-wt/v1`. Workers never commit.
   references in the session) and spot checks.
 - Outcome: Accepted
 - Follow-up: user answers the open questions; then V1.
+
+---
+
+### 2026-10-19 — V1 and V2 implemented and merged
+- Agent: supervisor; workers v1-core, v1-exec, v1-surface, v2-review, v-merge, v-finish
+  (`feat/v1-verification`)
+- Changed: `src/verification/**` (new area), task schema, config `verification`, migration
+  `task_contracts`, executor, admission, routing (`avoidEndpoints`, family preference),
+  qualification (`review` family), coding finish, supervisor tools and charters, CLI, MCP,
+  insights, panel, `AGENTS.md` area list; docs `operations.md` (Verification), `decisions.md` (16).
+- Why: user asked for importance-driven verification, executed with workers.
+- Validation: per worker reports; supervisor re-ran on the branch after each step (143, 156, 178,
+  242 tests passing), inspected review screenshots; supervisor fixed retry scoring (interruptions
+  are not failures) and confirmed the session-fault hints are needed (those tasks classify T3 on
+  the first run and single-endpoint tests have no independent reviewer). Merged dev: see the
+  agent-sessions ledger for the combined run.
+- Outcome: Accepted
+- Follow-up: V3; criterion_evidence display mismatch.
 
 ---
 

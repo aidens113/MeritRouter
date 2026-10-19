@@ -78,3 +78,10 @@ non-streaming chat completions only.
     recovered, delegations re-run idempotently, unknown outcomes reported to the agent); a stuck
     run is interrupted by a watchdog and resumed the same way; failing providers are isolated by
     per-provider circuit breakers rather than failing tasks.
+16. **Importance drives verification, not difficulty** (user request, 2026-10-19, adapted from a
+    consultant's proposal): an immutable contract per task; levels basic/standard/deep/strict
+    from tier x importance plus rules re-evaluated on the actual change; Standard stays
+    deterministic; Deep/Strict use an independent reviewer that never served the task;
+    reviewer qualification is preferred for Deep and required for Strict; strict acceptance is
+    automated by the job's supervisor unless `strict_acceptor: human`; verification reserves sit
+    on top of execution caps under a ceiling and the level is never lowered to fit.

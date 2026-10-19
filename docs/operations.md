@@ -32,15 +32,56 @@ they are not reverted in the worktree.
 
 ## Reading results
 
-- `executionStatus` says whether the run finished; `acceptanceStatus` says whether the evidence
-  shows the criteria are met. Only coding tasks whose supervisor-supplied checks all pass, with
-  every change in scope and no test/evaluator edits, are `met`. Read-only and completion results
-  are at best `not_verified`.
+- `executionStatus` says whether the run finished; `verificationStatus` says what verification
+  established (`not_required`, `pending`, `passed`, `failed`, `inconclusive`, `skipped_budget`);
+  `acceptanceStatus` is the outcome: `met`, `unmet`, `not_verified` (nothing established it), or
+  `needs_supervisor` (the supervisor must accept or reject). See "Verification" below.
 - `classification` shows the score breakdown (rulebook version included); `routing.attempts`
   shows every model tried and why it was skipped or failed.
 - `artifactRefs` / `patchRefs` point at files under `.switchyard/artifacts/`
   (`switchyard artifact <ref>`). Patches include the base commit in `baseCommits`; apply them
   with `git apply` after checking the base.
+
+## Verification
+
+Every task gets an immutable acceptance contract before it runs (stored in `task_contracts`,
+shown on the panel's task page): criteria with ids, scope and base commit, the effective
+importance and where it came from, the verification level and the rules that set it, required
+checks, the request budget split (classification, execution, review, repair), and the rulebook
+and policy fingerprints.
+
+- **Importance** (`low | normal | high | critical`, with `importanceReason` for high and
+  critical) is set by the submitter or the supervisor's `delegate`; `verification.floors` raise
+  it (by default `security` / `data_migration` risk tags -> critical, `public_api_change` ->
+  high), as do path rules and the parent job. It raises verification, never difficulty.
+- **Level** comes from `verification.matrix` (tier x importance; T1/T2 normal -> `standard`, T3 ->
+  `deep`, critical -> `strict`) and `verification.rules`, and is re-evaluated on the actual
+  result (changed paths, protected-path edits) at the tier the run used. It only rises.
+  - `basic`: output contract, evidence provenance, scope, protected paths.
+  - `standard`: plus every declared check on the submitted revision and per-criterion
+    evidence. Deterministic; no model review.
+  - `deep`: plus an independent reviewer.
+  - `strict`: a `review_strict`-qualified reviewer, then supervisor acceptance.
+- **Reviewers** run in a child session in a fresh context with an evidence package (contract,
+  base, patch or artifact, check logs; the author's summary labelled as a claim). They are never
+  an endpoint that classified, executed, or repaired the task, and prefer another model family.
+  `verification.reviewer_qualification: preferred` (default) falls back to a size-floor reviewer
+  and marks the verdict `reviewer_unqualified`; strict always requires a qualified reviewer.
+  Qualify reviewers with the `review` eval family (`switchyard qualify`).
+- **Decision:** all mandatory items pass -> `met`; a concrete defect gets one repair at the next
+  tier, starting from the submitted revision, then a re-review; missing evidence can trigger one
+  targeted check; otherwise `needs_supervisor`. Failed checks stay `unmet`; a defect only a
+  reviewer found goes to `needs_supervisor` so the supervisor can overrule it.
+- **Budget:** review and repair reserves are added to the execution caps, bounded by
+  `verification.max_total_requests_per_task` (24) or an explicit task budget. A level raised by
+  the result may draw from the remaining room; if none is left the result is `skipped_budget` /
+  `needs_supervisor`. The level is never lowered to fit.
+- **Acceptance:** the supervisor decides `needs_supervisor` results with `accept_task` /
+  `reject_task`, judged against the job's goal and the specifications it was given, and
+  `integrate_task` refuses `unmet` results and requires an explicit acceptance for
+  `not_verified` ones. With `verification.strict_acceptor: human`, strict results need a person:
+  `switchyard accept|reject <task> --reason ...` or the panel's Accept/Reject buttons (MCP
+  `accept_result` acts as the supervisor and is refused for them).
 
 ## Recovery
 
