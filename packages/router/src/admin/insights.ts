@@ -14,6 +14,7 @@ import type { Classification } from "../scoring/score.js";
 import type { UsageSummary } from "../storage/usage.js";
 import type { ArtifactRow } from "../storage/artifacts.js";
 import type { ProviderStatus } from "../gateway/types.js";
+import { readBreakerRecords, type BreakerRecord, type BreakerSettings } from "../gateway/breaker.js";
 import type { SessionEventsPage, SessionListFilter, SessionRecord } from "../sessions/store.js";
 import type { CorruptLine, SessionEvent, SessionStatus } from "../sessions/events.js";
 
@@ -78,6 +79,39 @@ export async function overview(sy: Switchyard): Promise<Overview> {
     lastScan: sy.scanner.lastScan(),
     attention,
   };
+}
+
+export interface ProviderBreakerView extends Omit<BreakerRecord, "probing"> {
+  /** What routing does with the platform now: `open` skips it, `probe_due` lets one request through. */
+  effective: "closed" | "open" | "probe_due" | "half_open";
+  /** Milliseconds until a probe is due (open breakers only). */
+  probeInMs: number | null;
+}
+
+export interface ProviderHealthView {
+  generatedAt: number;
+  /** Per-platform status FreeLLMAPI reports (GET /v1/providers), cached. */
+  providers: ProviderStatus[];
+  /** Circuit breakers as last recorded by any process sharing this store (meta `circuit:*`). */
+  breakers: ProviderBreakerView[];
+  settings: BreakerSettings;
+}
+
+/** Provider health: reported cooldowns plus circuit breaker state, for the panel and the CLI. */
+export async function providerHealth(sy: Switchyard): Promise<ProviderHealthView> {
+  await sy.health.refresh().catch(() => undefined);
+  const now = Date.now();
+  // Records from the store cover worker processes; this process's own state is newer when it has one.
+  const byPlatform = new Map(readBreakerRecords(sy.db).map((r) => [r.platform, r]));
+  for (const r of sy.health.breakers.list()) if ((byPlatform.get(r.platform)?.updatedAt ?? -1) <= r.updatedAt) byPlatform.set(r.platform, r);
+  const breakers = [...byPlatform.values()]
+    .sort((a, b) => a.platform.localeCompare(b.platform))
+    .map(({ probing, ...r }) => {
+      const due = r.state === "open" && (r.openUntil ?? 0) <= now;
+      const effective: ProviderBreakerView["effective"] = r.state === "closed" ? "closed" : due ? "probe_due" : r.state === "half_open" ? (probing ? "half_open" : "probe_due") : "open";
+      return { ...r, effective, probeInMs: r.state === "open" && !due ? (r.openUntil ?? now) - now : null };
+    });
+  return { generatedAt: now, providers: sy.health.snapshot(), breakers, settings: { ...sy.cfg.routing.circuit_breaker } };
 }
 
 export interface EndpointStats {

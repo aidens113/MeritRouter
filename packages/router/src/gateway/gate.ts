@@ -9,6 +9,7 @@ import { fitsEndpoint } from "../routing/select.js";
 import type { ChatRequest, ChatResponse, InferenceClient, ProviderStatus } from "./types.js";
 import { estimateTokens } from "./types.js";
 import type { DirectClient } from "../paid/direct.js";
+import { CircuitBreakers, countsAsProviderFailure } from "./breaker.js";
 import type { KeyVault } from "../paid/vault.js";
 import { worstCaseUsd, type PaidSpend } from "../paid/spend.js";
 
@@ -44,22 +45,43 @@ export interface GateResponse {
 /** Gateway errors after which trying the next ranked model is reasonable. */
 const FALLBACK_KINDS = new Set(["rate_limited", "pool_exhausted", "server", "timeout", "transport", "bad_request"]);
 
-/** Cached GET /v1/providers so route ordering can skip platforms that are cooling down. */
+/**
+ * Provider health for routing: cached GET /v1/providers (cooldowns FreeLLMAPI reports) and this
+ * process's per-provider circuit breakers, so route ordering can push cooling or failing
+ * platforms to the end and the gate can skip platforms whose breaker is open.
+ */
 export class ProviderHealth {
   private cache: { at: number; byPlatform: Map<string, ProviderStatus> } | null = null;
   private inflight: Promise<void> | null = null;
+  readonly breakers: CircuitBreakers;
 
   constructor(
     private readonly client: InferenceClient,
     private readonly now: () => number = Date.now,
-  ) {}
+  ) {
+    this.breakers = new CircuitBreakers(now);
+  }
 
-  lookup = (platform: string): { status: string; resumeAt: number | null } | undefined => {
+  /** The reported cooldown (while it lasts) and, when the platform's breaker is open, until when. */
+  lookup = (platform: string): { status: string; resumeAt: number | null; circuitOpenUntil?: number } | undefined => {
+    const circuit = this.breakers.blockedUntil(platform);
     const s = this.cache?.byPlatform.get(platform);
-    if (!s) return undefined;
-    if (s.status === "rate_limited" && s.resumeAt !== null && s.resumeAt <= this.now()) return undefined;
-    return { status: s.status, resumeAt: s.resumeAt };
+    const known = s && !(s.status === "rate_limited" && s.resumeAt !== null && s.resumeAt <= this.now());
+    if (!known) return circuit !== null ? { status: "healthy", resumeAt: null, circuitOpenUntil: circuit } : undefined;
+    return { status: s.status, resumeAt: s.resumeAt, ...(circuit !== null ? { circuitOpenUntil: circuit } : {}) };
   };
+
+  /** Feed one dispatched attempt's result to the platform's breaker (null error: it answered). */
+  recordOutcome(platform: string, err: GatewayError | null): void {
+    if (!err) return this.breakers.success(platform);
+    if (err.kind === "aborted") return this.breakers.release(platform);
+    const cooling = this.cache?.byPlatform.get(platform);
+    const coolingReported = cooling?.status === "rate_limited" && (cooling.resumeAt === null || cooling.resumeAt > this.now());
+    if (countsAsProviderFailure(err, coolingReported)) this.breakers.failure(platform, `${err.kind}: ${err.message}`);
+    // A 4xx, auth, or unknown-model answer came from something that is up.
+    else if (!["rate_limited", "pool_exhausted"].includes(err.kind)) this.breakers.success(platform);
+    else this.breakers.release(platform);
+  }
 
   async refresh(maxAgeMs = 30_000): Promise<void> {
     if (!this.client.providers) return;
@@ -98,7 +120,10 @@ export class Gate {
     private readonly chains: ChainManager,
     readonly health: ProviderHealth,
     readonly paid: PaidRuntime | null = null,
-  ) {}
+  ) {
+    // Settings are read live (a config reload mutates cfg in place); state is mirrored to meta.
+    health.breakers.attach(db, () => cfg.routing.circuit_breaker);
+  }
 
   /** An endpoint with a served-model violation stays blocked until its chain is re-verified. */
   quarantined(ep: ModelEndpoint): string | null {
@@ -116,6 +141,16 @@ export class Gate {
     let lastCapacityError: GatewayError | null = null;
     let dispatched = 0;
     let dispatchedPaid = 0;
+    // Earliest time a platform skipped for its open breaker admits a probe.
+    let circuitRetryAt: number | null = null;
+    /** Takes the platform's breaker admission (or its one half-open probe); false records a skip. */
+    const admitted = (ep: ModelEndpoint): boolean => {
+      if (this.health.breakers.admit(ep.providerId)) return true;
+      const until = this.health.breakers.blockedUntil(ep.providerId) ?? this.health.breakers.now();
+      circuitRetryAt = Math.min(circuitRetryAt ?? until, until);
+      attempts.push({ endpointId: ep.id, outcome: `skipped: circuit open for ${ep.providerId}` });
+      return false;
+    };
 
     const totalWeight = req.participants.reduce((s, p) => s + (p.weight ?? 1), 0);
     const participants: Participant[] = req.participants.map((p) => ({
@@ -141,7 +176,7 @@ export class Gate {
         continue;
       }
       if (direct) {
-        const r = await this.requestDirect(ep, req, participants, estInput, attempts);
+        const r = await this.requestDirect(ep, req, participants, estInput, attempts, admitted);
         if (r === "skip") continue;
         dispatchedPaid++;
         if (r instanceof GatewayError) {
@@ -155,19 +190,26 @@ export class Gate {
         attempts.push({ endpointId: ep.id, outcome: `skipped: ${unverified}` });
         continue;
       }
+      if (!admitted(ep)) continue;
 
-      const reservation = this.admission.reserve({
-        executionId: req.executionId,
-        profile: req.plan.profile,
-        purpose: req.purpose,
-        gatewayModel: `auto:${ep.chainName}`,
-        endpointId: ep.id,
-        tier: req.plan.tier,
-        routeNote: req.plan.belowFloorEndpoints.has(ep.id) ? "forced below size floor" : null,
-        estInputTokens: estInput,
-        reservedOutputTokens: req.chat.max_tokens,
-        participants,
-      });
+      let reservation;
+      try {
+        reservation = this.admission.reserve({
+          executionId: req.executionId,
+          profile: req.plan.profile,
+          purpose: req.purpose,
+          gatewayModel: `auto:${ep.chainName}`,
+          endpointId: ep.id,
+          tier: req.plan.tier,
+          routeNote: req.plan.belowFloorEndpoints.has(ep.id) ? "forced below size floor" : null,
+          estInputTokens: estInput,
+          reservedOutputTokens: req.chat.max_tokens,
+          participants,
+        });
+      } catch (err) {
+        this.health.breakers.release(ep.providerId);
+        throw err;
+      }
       dispatched++;
       const chat: ChatRequest = { ...req.chat, model: `auto:${ep.chainName}` };
       if (!ep.supportsStructuredOutput) delete chat.response_format;
@@ -177,6 +219,7 @@ export class Gate {
         response = await this.client.complete(chat, req.signal);
       } catch (err) {
         const ge = err instanceof GatewayError ? err : new GatewayError("transport", (err as Error).message ?? String(err), undefined, undefined, true);
+        this.health.recordOutcome(ep.providerId, req.signal?.aborted ? new GatewayError("aborted", ge.message) : ge);
         this.admission.reconcile(reservation, {
           kind: ge.possiblyConsumed ? "uncertain" : "failed",
           ...(ge.status !== undefined ? { httpStatus: ge.status } : {}),
@@ -192,6 +235,7 @@ export class Gate {
         throw Object.assign(ge, { attempts });
       }
 
+      this.health.recordOutcome(ep.providerId, null);
       const t = response.telemetry;
       let violation: string | undefined;
       if (!t.servedModel) violation = "gateway did not report the served model";
@@ -213,6 +257,11 @@ export class Gate {
     }
 
     if (dispatched === 0 && dispatchedPaid === 0) {
+      // Every dispatchable model sits behind an open breaker: wait for capacity rather than fail.
+      if (circuitRetryAt !== null) {
+        const wait = Math.max(1000, circuitRetryAt - this.health.breakers.now());
+        throw Object.assign(new GatewayError("rate_limited", `circuit open for every remaining provider; next probe in ${Math.ceil(wait / 1000)} s`, undefined, wait, false), { attempts });
+      }
       const reasons = attempts.length ? attempts.map((a) => `${a.endpointId}: ${a.outcome}`) : ["no eligible model for this task type and tier"];
       const allTooLarge = attempts.length > 0 && attempts.every((a) => a.outcome.startsWith("skipped (too large)"));
       const paidOnly = attempts.length > 0 && attempts.every((a) => a.outcome.startsWith("skipped (paid budget)"));
@@ -231,6 +280,7 @@ export class Gate {
     participants: Participant[],
     estInput: number,
     attempts: GateAttempt[],
+    admitted: (ep: ModelEndpoint) => boolean,
   ): Promise<"skip" | GatewayError | { requestId: string; response: ChatResponse }> {
     const route = ep.route as { kind: "direct"; provider: string; model: string };
     const provider = this.cfg.paid.providers[route.provider];
@@ -245,6 +295,7 @@ export class Gate {
       attempts.push({ endpointId: ep.id, outcome: `skipped (paid budget): no ${route.provider} key with $${worst.toFixed(4)} headroom` });
       return "skip";
     }
+    if (!admitted(ep)) return "skip";
     let reservation;
     try {
       reservation = this.admission.reserve({
@@ -261,6 +312,7 @@ export class Gate {
         paid: { spend: this.paid.spend, keyId: key.id, provider: route.provider, worstCaseUsd: worst, price },
       });
     } catch (err) {
+      this.health.breakers.release(ep.providerId);
       if (err instanceof AdmissionDenied && err.reason === "paid_budget_exhausted") {
         attempts.push({ endpointId: ep.id, outcome: `skipped (paid budget): ${err.message}` });
         return "skip";
@@ -282,12 +334,14 @@ export class Gate {
       });
     } catch (err) {
       const ge = err instanceof GatewayError ? err : new GatewayError("transport", (err as Error).message ?? String(err), undefined, undefined, true);
+      this.health.recordOutcome(ep.providerId, req.signal?.aborted ? new GatewayError("aborted", ge.message) : ge);
       this.admission.reconcile(reservation, { kind: ge.possiblyConsumed ? "uncertain" : "failed", ...(ge.status !== undefined ? { httpStatus: ge.status } : {}), errorKind: ge.kind, errorMessage: ge.message });
       attempts.push({ endpointId: ep.id, outcome: ge.kind });
       if (req.signal?.aborted || ge.kind === "aborted") throw Object.assign(ge, { attempts });
       if (FALLBACK_KINDS.has(ge.kind)) return ge;
       throw Object.assign(ge, { attempts });
     }
+    this.health.recordOutcome(ep.providerId, null);
     // Providers often report a dated variant of the requested model id.
     const served = response.telemetry.servedModel;
     const violation =

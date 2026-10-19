@@ -4,7 +4,8 @@ import { batchKey } from "../runners/batch.js";
 import type { Executor } from "./executor.js";
 import type { SessionStore } from "../sessions/store.js";
 
-const MAX_AUTO_RESUMES = 3;
+/** Runs an interrupted task gets automatically (recovery, watchdog) before an operator must resume it. */
+export const MAX_AUTO_RESUMES = 3;
 
 /**
  * In-process worker loop. Claims runnable tasks under a lease, forms prompt batches for
@@ -73,6 +74,8 @@ export class Scheduler {
         this.again = false;
         // Liveness marker for the panel ("a worker is running").
         this.tasks.db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(`worker:${this.owner}`, String(Date.now()));
+        // Stuck runs first: a run aborted here ends `interrupted` and is queued to resume.
+        this.executor.checkWatchdog();
         this.tasks.recoverExpiredLeases();
         this.onTick();
         const leaseMs = this.cfg.execution.lease_seconds * 1000;
