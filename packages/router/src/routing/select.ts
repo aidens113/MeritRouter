@@ -9,6 +9,8 @@ export interface RouteRequirements {
   needsStructuredOutput: boolean;
   /** Per-task forced endpoint (supervisor `routing.endpointId`). Cannot bypass size floors. */
   forcedEndpointId?: string;
+  /** Qualification runs evaluate models that are not yet qualified. */
+  skipQualification?: boolean;
 }
 
 export interface QualificationLookup {
@@ -81,7 +83,7 @@ export function endpointExclusions(
   for (const m of req.inputModalities) if (!ep.inputModalities.includes(m)) reasons.push(`cannot read ${m} input`);
   if (profile.mode !== "completion" && !ep.supportsTools) reasons.push("no tool calling (required for repository work)");
   if ((req.needsStructuredOutput || profile.requires_structured_output) && !ep.supportsStructuredOutput) reasons.push("no structured output");
-  if (cfg.qualification.required && !opts.qualification?.qualified) {
+  if (cfg.qualification.required && !req.skipQualification && !opts.qualification?.qualified) {
     reasons.push(opts.qualification ? `not qualified for ${req.profile}/${req.tier} (pass rate ${(opts.qualification.passRate * 100).toFixed(0)}% over ${opts.qualification.trials} trials)` : `not yet qualified for ${req.profile}/${req.tier}`);
   }
   return reasons;

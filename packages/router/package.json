@@ -15,7 +15,9 @@
     "switchyard": "./dist/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "examples",
+    "evals"
   ],
   "engines": {
     "node": ">=22.11.0"

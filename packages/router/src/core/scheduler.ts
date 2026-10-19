@@ -21,6 +21,8 @@ export class Scheduler {
     private readonly tasks: TaskStore,
     private readonly executor: Executor,
     private readonly owner: string,
+    /** Housekeeping on every tick (registry sync, qualification grading). */
+    private readonly onTick: () => void = () => undefined,
   ) {}
 
   start(intervalMs = 1000): void {
@@ -64,6 +66,7 @@ export class Scheduler {
         // Liveness marker for the panel ("a worker is running").
         this.tasks.db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(`worker:${this.owner}`, String(Date.now()));
         this.tasks.recoverExpiredLeases();
+        this.onTick();
         const leaseMs = this.cfg.execution.lease_seconds * 1000;
         const defaultTimeoutMs = this.cfg.execution.job_timeout_seconds * 1000;
         const claimed = this.tasks.claim(this.owner, {

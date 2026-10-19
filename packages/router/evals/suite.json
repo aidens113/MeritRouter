@@ -1,0 +1,80 @@
+{
+  "version": "2026-10-19.1",
+  "description": "Private qualification tasks. Hidden tests live outside the task worktree and are applied only when grading.",
+  "evals": [
+    {
+      "id": "fix-range",
+      "family": "coding",
+      "tier": "T1",
+      "profile": "implement",
+      "title": "Fix an off-by-one bug",
+      "fixture": "fixtures/fix-range",
+      "task": {
+        "goal": "range(start, end, step) in src/range.js is documented to exclude `end`, but it includes it. Fix the bug without changing the function signature.",
+        "acceptanceCriteria": ["range(0, 3) returns [0, 1, 2]", "range(2, 2) returns []", "the step argument still works"],
+        "allowedPaths": ["src/**"]
+      },
+      "hidden": { "dir": "hidden/fix-range", "command": "node --test \"hidden/*.test.mjs\"" },
+      "budget": { "maxModelRequests": 8 }
+    },
+    {
+      "id": "add-duration",
+      "family": "coding",
+      "tier": "T2",
+      "profile": "implement",
+      "title": "Add a parser that round-trips with an existing formatter",
+      "fixture": "fixtures/add-duration",
+      "task": {
+        "goal": "Add parseDuration(text) to src/duration.js and export it from src/index.js. It is the inverse of formatDuration: it accepts strings such as \"1h30m\", \"45s\", \"2h\", \"90m\" and \"1h0m5s\" and returns whole seconds. It must throw on anything else (empty strings, unknown units, decimals, negative numbers, units without numbers).",
+        "acceptanceCriteria": ["parseDuration parses h/m/s combinations into seconds", "parseDuration(formatDuration(n)) === n for non-negative integers", "invalid input throws", "formatDuration behaviour is unchanged"],
+        "allowedPaths": ["src/**"]
+      },
+      "hidden": { "dir": "hidden/add-duration", "command": "node --test \"hidden/*.test.mjs\"" },
+      "budget": { "maxModelRequests": 10 }
+    },
+    {
+      "id": "rename-option",
+      "family": "coding",
+      "tier": "T3",
+      "profile": "implement",
+      "title": "Rename a config option across files with backward compatibility",
+      "fixture": "fixtures/rename-option",
+      "task": {
+        "goal": "Replace the `timeoutMs` option (milliseconds) with `timeout` (seconds) everywhere: config defaults (5 seconds), the client, and the server. Keep accepting the deprecated `timeoutMs` input by converting it to seconds, but resolved options must not contain `timeoutMs`. describe() must report the timeout in seconds, e.g. `timeout=7s`. All existing millisecond-based behaviour (client deadline, server idle cutoff = 2x timeout) must stay numerically the same.",
+        "acceptanceCriteria": ["DEFAULTS.timeout is 5 and DEFAULTS has no timeoutMs", "timeoutMs input is converted to timeout in seconds", "client deadline and server idle cutoff are unchanged in milliseconds", "describe() reports seconds"],
+        "allowedPaths": ["src/**"]
+      },
+      "hidden": { "dir": "hidden/rename-option", "command": "node --test \"hidden/*.test.mjs\"" },
+      "budget": { "maxModelRequests": 12 }
+    },
+    {
+      "id": "locate-validator",
+      "family": "read_only",
+      "tier": "T1",
+      "profile": "inspect",
+      "title": "Find where a behaviour is implemented",
+      "fixture": "fixtures/locate-validator",
+      "task": {
+        "goal": "Which function decides whether an email address is accepted at signup, and where is it defined? Cite the definition.",
+        "acceptanceCriteria": ["names the function that validates the email address", "cites the file and lines where it is defined"]
+      },
+      "grade": { "mustCite": [{ "path": "src/validation/address.js", "lines": [5, 9] }], "mustMention": [["checkAddress"]] },
+      "budget": { "maxModelRequests": 6 }
+    },
+    {
+      "id": "diagnose-crash",
+      "family": "read_only",
+      "tier": "T2",
+      "profile": "analyze",
+      "title": "Diagnose a wrong result from a bug report",
+      "fixture": "fixtures/diagnose-crash",
+      "task": {
+        "goal": "Customers with a 10% promotion are being charged less than expected: a cart of one item priced 100.00 is charged 81.00 instead of 90.00. Find the root cause in the repository and explain the fix. Do not edit anything.",
+        "acceptanceCriteria": ["identifies the root cause with file and line evidence", "explains why the charged amount is 81.00", "proposes a fix"],
+        "inlineText": "Bug report #4411\ncheckout({ items: [{ price: 100, quantity: 1 }], discount: 0.1 }) => { charged: 81, currency: 'USD' }\nexpected charged: 90"
+      },
+      "grade": { "mustCite": [{ "path": "src/cart.js", "lines": [7, 16] }], "mustMention": [["twice", "two times", "double", "both", "again"]] },
+      "budget": { "maxModelRequests": 10 }
+    }
+  ]
+}

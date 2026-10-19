@@ -42,6 +42,12 @@ if (mode === "stream" && !first.text.includes("data: [DONE]")) process.exit(4);
 const title = await chat("title for the session");
 if (title.status !== 200) process.exit(2);
 
+if (mode === "fixrange") {
+  writeFileSync("src/range.js", readFileSync("src/range.js", "utf8").replace("i <= end", "i < end"));
+  process.exit(0);
+}
+if (mode === "noop") process.exit(0);
+
 const app = readFileSync("src/app.ts", "utf8");
 writeFileSync("src/app.ts", app + "\nexport function subtract(a: number, b: number) {\n  return a - b;\n}\n");
 if (mode === "scope") writeFileSync("README.md", "# changed outside scope\n");

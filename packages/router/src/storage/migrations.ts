@@ -215,4 +215,25 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE model_requests ADD COLUMN tier TEXT;
   ALTER TABLE model_requests ADD COLUMN route_note TEXT;
   `,
+  `
+  -- Repositories registered at runtime (qualification fixtures), merged into config aliases.
+  CREATE TABLE repository_registry (
+    alias TEXT PRIMARY KEY,
+    path TEXT NOT NULL,
+    writable INTEGER NOT NULL DEFAULT 1,
+    origin TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE qualification_tasks (
+    task_id TEXT PRIMARY KEY REFERENCES tasks(id),
+    run_id TEXT NOT NULL REFERENCES qualification_runs(id),
+    eval_id TEXT NOT NULL,
+    trial INTEGER NOT NULL,
+    endpoint_id TEXT NOT NULL,
+    fixture_path TEXT NOT NULL,
+    evaluated INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX qualification_tasks_run ON qualification_tasks(run_id);
+  `,
 ];

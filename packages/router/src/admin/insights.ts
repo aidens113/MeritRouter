@@ -419,4 +419,56 @@ export function addRoutingOverride(sy: Switchyard, o: RoutingOverride): number {
   return sy.catalog.addRoutingOverride(o);
 }
 
+// ---------- qualification ----------
+
+export interface QualificationBoard {
+  suiteVersion: string;
+  evals: Array<{ id: string; family: string; tier: TierName; title: string; profile: ProfileName; maxModelRequests: number }>;
+  rows: Array<{ endpointId: string; displayName: string; status: string; family: string; tier: TierName; stat: QualificationStat | null }>;
+  runs: Array<{ id: string; endpointId: string; status: string; startedAt: number; finishedAt: number | null; detail: unknown; graded: number; total: number }>;
+  results: Array<{ runId: string; endpointId: string; evalId: string; trial: number; outcome: string; detail: unknown; taskId: string | null; createdAt: number }>;
+  requestsUsedToday: number;
+  dailyAllocation: number;
+}
+
+export function qualificationBoard(sy: Switchyard): QualificationBoard {
+  const suite = sy.qualifier.suite();
+  const families = [...new Set(suite.evals.map((e) => e.family))];
+  const rows: QualificationBoard["rows"] = [];
+  for (const ep of sy.catalog.endpoints()) {
+    if (ep.status === "removed") continue;
+    for (const family of families) {
+      for (const tier of TIER_NAMES) rows.push({ endpointId: ep.id, displayName: ep.displayName ?? ep.gatewayModelId, status: ep.status, family, tier, stat: qualificationStat(sy.db, sy.cfg, ep.id, family, tier) });
+    }
+  }
+  const runs = (sy.db.prepare("SELECT * FROM qualification_runs ORDER BY started_at DESC LIMIT 50").all() as Array<{ id: string; endpoint_id: string; status: string; started_at: number; finished_at: number | null; detail_json: string | null }>).map((r) => {
+    const c = sy.db.prepare("SELECT COUNT(*) AS total, SUM(evaluated = 1) AS graded FROM qualification_tasks WHERE run_id = ?").get(r.id) as { total: number; graded: number | null };
+    return { id: r.id, endpointId: r.endpoint_id, status: r.status, startedAt: r.started_at, finishedAt: r.finished_at, detail: r.detail_json ? JSON.parse(r.detail_json) : null, graded: c.graded ?? 0, total: c.total };
+  });
+  const results = (sy.db.prepare("SELECT * FROM qualification_results ORDER BY created_at DESC LIMIT 300").all() as Array<{ run_id: string; endpoint_id: string; eval_id: string; trial: number; outcome: string; detail_json: string | null; task_id: string | null; created_at: number }>).map((r) => ({
+    runId: r.run_id,
+    endpointId: r.endpoint_id,
+    evalId: r.eval_id,
+    trial: r.trial,
+    outcome: r.outcome,
+    detail: r.detail_json ? JSON.parse(r.detail_json) : null,
+    taskId: r.task_id,
+    createdAt: r.created_at,
+  }));
+  return {
+    suiteVersion: suite.version,
+    evals: suite.evals.map((e) => ({ id: e.id, family: e.family, tier: e.tier, title: e.title, profile: e.profile, maxModelRequests: e.budget.maxModelRequests })),
+    rows,
+    runs,
+    results,
+    requestsUsedToday: sy.qualifier.requestsUsedToday(),
+    dailyAllocation: sy.cfg.qualification.max_requests_per_day,
+  };
+}
+
+/** Start a qualification run; a running worker executes it and grades results as they finish. */
+export function startQualification(sy: Switchyard, endpointId: string, opts: { evalIds?: string[]; trials?: number } = {}) {
+  return sy.qualifier.start(endpointId, opts);
+}
+
 export type { ModelEndpoint, EndpointOverride, RoutingOverride, CandidateExplanation, Classification, TaskState };

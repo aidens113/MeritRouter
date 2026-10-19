@@ -17,6 +17,8 @@ import { Catalog } from "../models/catalog.js";
 import { ChainManager } from "../models/chains.js";
 import { Scanner, type ScanSummary } from "../models/scanner.js";
 import { TaskRouter } from "../routing/router.js";
+import { Qualifier } from "../qualification/runner.js";
+import { syncRepositoryRegistry } from "../qualification/registry.js";
 import { GatewayError, TaskValidationError } from "./errors.js";
 import { validateTask } from "./validate.js";
 import { Executor, type CodingRunner } from "./executor.js";
@@ -77,6 +79,7 @@ export class Switchyard {
   readonly admin: FreeLlmApiAdmin | null;
   readonly client: InferenceClient;
   readonly owner: string;
+  readonly qualifier: Qualifier;
   private readonly executor: Executor;
   private readonly scheduler: Scheduler;
   private readonly events = new EventEmitter();
@@ -119,7 +122,12 @@ export class Switchyard {
       coding: opts.coding ?? null,
       onSettled: (id) => this.events.emit("settled", id),
     });
-    this.scheduler = new Scheduler(cfg, this.tasks, this.executor, this.owner);
+    syncRepositoryRegistry(this.db, cfg);
+    this.qualifier = new Qualifier(this);
+    this.scheduler = new Scheduler(cfg, this.tasks, this.executor, this.owner, () => {
+      syncRepositoryRegistry(this.db, this.cfg);
+      void this.qualifier.gradePending().catch(() => undefined);
+    });
     if (opts.worker) this.startWorker(opts.pollIntervalMs);
   }
 
@@ -149,6 +157,7 @@ export class Switchyard {
       const next = parseConfig(readConfigFile(this.cfg.configPath), this.cfg.configPath);
       if (next.storageDir !== this.cfg.storageDir) throw new Error("storage.directory cannot change while running; restart instead");
       Object.assign(this.cfg, next);
+      syncRepositoryRegistry(this.db, this.cfg);
       this.tasks.event(null, "config_reloaded", { at: this.now() });
       return { reloaded: true };
     } catch (err) {
@@ -170,6 +179,7 @@ export class Switchyard {
     if (!Array.isArray(raw) || raw.length === 0) throw new TaskValidationError("submit at least one task");
     const specs: WorkerTask[] = [];
     const errors: string[] = [];
+    syncRepositoryRegistry(this.db, this.cfg);
     const largestContext = this.largestContext();
     for (const [i, r] of raw.entries()) {
       try {

@@ -46,12 +46,13 @@ export class TaskRouter {
     this.classifier = new Classifier(cfg, db, gate, this.fingerprint, () => this.classificationPlan(), now);
   }
 
-  plan(profile: ProfileName, tier: TierName, inputModalities: Modality[], forcedEndpointId?: string): RoutePlan {
+  plan(profile: ProfileName, tier: TierName, inputModalities: Modality[], forcedEndpointId?: string, skipQualification = false): RoutePlan {
     return planRoute(
       this.cfg,
       this.catalog.endpoints(),
-      this.catalog.routingOverrides(),
-      { profile, tier, inputModalities, needsStructuredOutput: false, ...(forcedEndpointId ? { forcedEndpointId } : {}) },
+      // Qualification runs measure one model in isolation: routing overrides do not apply.
+      skipQualification ? [] : this.catalog.routingOverrides(),
+      { profile, tier, inputModalities, needsStructuredOutput: false, skipQualification, ...(forcedEndpointId ? { forcedEndpointId } : {}) },
       { now: new Date(this.now()), qualification: qualificationLookup(this.db, this.cfg), health: this.gate.health.lookup },
     );
   }
@@ -121,6 +122,7 @@ export class TaskRouter {
 
     this.db.prepare("UPDATE tasks SET tier = ?, classification_json = ? WHERE id = ?").run(classification.tier, JSON.stringify(classification), task.row.id);
     if (classification.tier === "T4") return { classification, plan: null, inputModalities };
-    return { classification, plan: this.plan(spec.profile, classification.tier, inputModalities, spec.routing?.endpointId), inputModalities };
+    const qualifying = (task.row as typeof task.row & { purpose?: string }).purpose === "qualification";
+    return { classification, plan: this.plan(spec.profile, classification.tier, inputModalities, spec.routing?.endpointId, qualifying), inputModalities };
   }
 }

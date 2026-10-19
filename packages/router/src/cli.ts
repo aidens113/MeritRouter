@@ -34,6 +34,10 @@ Tasks
   resume <id>                   requeue an interrupted task
   artifact <ref>                print an artifact
   usage [--hours n]             requests, tokens, and outcomes
+
+Qualification
+  qualify <model-id> [--trials n]   run the private eval suite pinned to one model
+  qualify status                    leaderboard (grades any finished runs first)
 `;
 
 function out(value: unknown, json: boolean): void {
@@ -61,6 +65,7 @@ async function main(): Promise<number> {
       hours: { type: "string" },
       params: { type: "string" },
       active: { type: "string" },
+      trials: { type: "string" },
       help: { type: "boolean", short: "h", default: false },
     },
   });
@@ -216,6 +221,19 @@ async function main(): Promise<number> {
         const a = sy.artifacts.read(args[0]!);
         if (!a) throw new SwitchyardError("not_found", `unknown artifact ${args[0]}`);
         process.stdout.write(a.content);
+        return 0;
+      }
+      case "qualify": {
+        if (args[0] === "status" || !args[0]) {
+          await sy.qualifier.gradePending();
+          const b = (await import("./admin/insights.js")).qualificationBoard(sy);
+          const rows = b.rows.filter((r) => r.stat).map((r) => ({ model: r.endpointId, family: r.family, tier: r.tier, pass: `${r.stat!.passes}/${r.stat!.trials}`, rate: `${Math.round(r.stat!.passRate * 100)}%`, "95% CI": `${Math.round(r.stat!.low * 100)}-${Math.round(r.stat!.high * 100)}%`, qualified: r.stat!.qualified ? "yes" : "no" }));
+          out(json ? b : `suite ${b.suiteVersion}; qualification requests today ${b.requestsUsedToday}/${b.dailyAllocation}
+${table(rows)}`, json);
+          return 0;
+        }
+        const run = await sy.qualifier.start(args[0], { ...(values.trials ? { trials: Number(values.trials) } : {}) });
+        out(json ? run : `started ${run.runId}: ${run.tasks} task(s) for ${run.endpointId}; a running worker executes and grades them (check with \`switchyard qualify status\`)`, json);
         return 0;
       }
       case "usage":
