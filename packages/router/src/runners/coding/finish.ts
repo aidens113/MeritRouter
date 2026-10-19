@@ -1,0 +1,95 @@
+import { mkdirSync } from "node:fs";
+import path from "node:path";
+import type { Workspace, Worktrees } from "../../workspaces/worktree.js";
+import { baseResult, type RunContext, type RunOutcome } from "../types.js";
+import { minimalEnv, runProcess } from "./process.js";
+
+export function sourceDirtyFinding(ws: Workspace): RunOutcome["result"]["findings"] {
+  return ws.sourceDirty
+    ? [{ description: `The source checkout had ${ws.dirtyPaths.length} uncommitted change(s) that are NOT in this worktree (based on ${ws.baseSha.slice(0, 12)}).`, evidenceRefs: [] }]
+    : [];
+}
+
+export async function prepareWorkspace(ctx: RunContext): Promise<{ ws: Workspace; worktrees: Worktrees }> {
+  const { Worktrees } = await import("../../workspaces/worktree.js");
+  const alias = ctx.spec.writableRepository!;
+  const repo = ctx.cfg.repositoryPaths[alias]!;
+  const worktrees = new Worktrees(ctx.tasks.db, path.join(ctx.cfg.storageDir, "worktrees"), ctx.now);
+  const runNo = ctx.tasks.get(ctx.taskId)!.row.run_count;
+  const ws = await worktrees.prepare({ taskId: ctx.taskId, run: runNo, alias, sourcePath: repo.path, ...(ctx.spec.context.baseCommits?.[alias] ? { baseCommit: ctx.spec.context.baseCommits[alias] } : {}) });
+  ctx.tasks.event(ctx.taskId, "worktree_ready", { path: ws.worktreePath, baseSha: ws.baseSha, sourceDirty: ws.sourceDirty });
+  return { ws, worktrees };
+}
+
+export function agentHome(ctx: RunContext, ws: Workspace): string {
+  const home = path.join(ctx.cfg.storageDir, "agent-home", path.basename(ws.worktreePath));
+  mkdirSync(home, { recursive: true });
+  return home;
+}
+
+/**
+ * Shared end of every coding run: diff against the recorded base, scope and protected-file
+ * checks, the supervisor's checks, and acceptance decided from that evidence alone.
+ */
+export async function finishCoding(
+  ctx: RunContext,
+  o: {
+    ws: Workspace;
+    worktrees: Worktrees;
+    executionId: string;
+    findings: RunOutcome["result"]["findings"];
+    artifactRefs: string[];
+    stopReason: string;
+    /** Agent-level outcome before evidence: completed, budget_exhausted, cancelled, interrupted. */
+    state: RunOutcome["state"];
+    summaryLead: string;
+  },
+): Promise<RunOutcome> {
+  const spec = ctx.spec;
+  const alias = spec.writableRepository!;
+  const changes = await o.worktrees.collect(o.ws, spec.constraints.allowedPaths ?? [], ctx.cfg.coding.protected_paths);
+  const patchRef = changes.patch
+    ? ctx.artifacts.write({ taskId: ctx.taskId, executionId: o.executionId, kind: "patch", label: `patch against ${o.ws.baseSha.slice(0, 12)}`, content: changes.patch, mediaType: "text/x-diff", extension: ".patch" })
+    : null;
+  const findings = [...o.findings];
+  if (changes.outOfScope.length) findings.push({ description: `Out-of-scope changes (not allowed by allowedPaths): ${changes.outOfScope.join(", ")}`, evidenceRefs: patchRef ? [patchRef] : [] });
+  if (changes.protectedChanged.length) findings.push({ description: `Tests or evaluator files were modified: ${changes.protectedChanged.join(", ")}. Verify the behaviour independently.`, evidenceRefs: patchRef ? [patchRef] : [] });
+  findings.push({ description: `Changed ${changes.changed.length} file(s): ${changes.changed.map((c) => `${c.status} ${c.path}`).join(", ") || "none"}`, evidenceRefs: patchRef ? [patchRef] : [] });
+
+  const aborted = ctx.signal.aborted;
+  const checks: RunOutcome["result"]["checks"] = [];
+  if (!aborted && changes.changed.length) {
+    const home = agentHome(ctx, o.ws);
+    for (const command of spec.constraints.checks ?? []) {
+      const r = await runProcess(command, [], { cwd: o.ws.worktreePath, env: minimalEnv({ HOME: home, USERPROFILE: home, CI: "1" }), timeoutMs: ctx.cfg.execution.check_timeout_seconds * 1000, signal: ctx.signal, shell: true });
+      const logRef = ctx.artifacts.write({ taskId: ctx.taskId, executionId: o.executionId, kind: "check_log", label: command, content: `$ ${command}\nexit ${r.exitCode}${r.killed ? ` (killed: ${r.killed})` : ""}\n\n${r.stdout}\n${r.stderr}`, extension: ".log" });
+      checks.push({ command, exitCode: r.killed ? null : r.exitCode, logRef });
+    }
+  }
+  o.worktrees.setStatus(ctx.taskId, "collected");
+
+  const checksPassed = checks.length > 0 && checks.every((c) => c.exitCode === 0);
+  const anyCheckFailed = checks.some((c) => c.exitCode !== 0);
+  const acceptance =
+    changes.outOfScope.length || anyCheckFailed || changes.changed.length === 0
+      ? "unmet"
+      : checksPassed && !changes.protectedChanged.length && (spec.constraints.checks?.length ?? 0) === checks.length
+        ? "met"
+        : "not_verified";
+  const state: RunOutcome["state"] = aborted ? (ctx.signal.reason === "cancel" ? "cancelled" : "interrupted") : o.state;
+  return {
+    state,
+    result: baseResult({
+      executionStatus: state === "completed" ? "completed" : state,
+      acceptanceStatus: acceptance === "met" && state !== "completed" ? "not_verified" : acceptance,
+      stopReason: o.stopReason,
+      summary: `${changes.changed.length} file(s) changed in an isolated worktree based on ${o.ws.baseSha.slice(0, 12)}. Checks: ${checks.length ? checks.map((c) => `${c.command} -> ${c.exitCode}`).join("; ") : "none run"}.${o.summaryLead ? `\n${o.summaryLead}` : ""}`,
+      findings,
+      artifactRefs: o.artifactRefs,
+      patchRefs: patchRef ? [patchRef] : [],
+      baseCommits: { [alias]: o.ws.baseSha },
+      checks,
+      unresolvedCriteria: acceptance === "met" ? [] : spec.constraints.acceptanceCriteria,
+    }),
+  };
+}

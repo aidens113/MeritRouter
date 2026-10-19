@@ -100,13 +100,22 @@ function workspacePath(env: HarnessEnv, input: unknown): { rel: string; abs: str
   return { rel, abs };
 }
 
+/** A file the worker edited is citable evidence, like one it read. */
+function noteEdited(env: HarnessEnv, rel: string, abs: string): void {
+  env.edits.add(rel);
+  if (env.workspace && existsSync(abs)) env.universe.refs.set(`${env.workspace.alias}:${rel}`, readFileSync(abs, "utf8").split(/\r?\n/).length);
+}
+
 export function editTools(): HarnessTool[] {
   return [
     tool("write_file", "Create or overwrite a file in your workspace with the full new content.", { path: { type: "string" }, content: { type: "string" } }, ["path", "content"], async (a, env) => {
       const { rel, abs } = workspacePath(env, a.path);
       mkdirSync(path.dirname(abs), { recursive: true });
-      writeFileSync(abs, String(a.content ?? ""));
-      env.edits.add(rel);
+      // Keep an existing file's line-ending style.
+      const crlf = existsSync(abs) && readFileSync(abs, "utf8").includes("\r\n");
+      const content = String(a.content ?? "").replace(/\r\n/g, "\n");
+      writeFileSync(abs, crlf ? content.replace(/\n/g, "\r\n") : content);
+      noteEdited(env, rel, abs);
       return `wrote ${rel} (${String(a.content ?? "").split("\n").length} lines)`;
     }),
     tool(
@@ -117,13 +126,19 @@ export function editTools(): HarnessTool[] {
       async (a, env) => {
         const { rel, abs } = workspacePath(env, a.path);
         if (!existsSync(abs)) throw new Error(`${rel} does not exist`);
-        const text = readFileSync(abs, "utf8");
-        const oldText = str(a.old_text, "old_text");
+        // Match on LF-normalised text and write back in the file's own line-ending style, so
+        // CRLF checkouts work with model output that uses \n.
+        const raw = readFileSync(abs, "utf8");
+        const crlf = raw.includes("\r\n");
+        const text = crlf ? raw.replace(/\r\n/g, "\n") : raw;
+        const oldText = str(a.old_text, "old_text").replace(/\r\n/g, "\n");
+        const newText = String(a.new_text ?? "").replace(/\r\n/g, "\n");
         const count = text.split(oldText).length - 1;
         if (count === 0) throw new Error("old_text not found; read the file again and copy the exact text");
         if (count > 1 && a.replace_all !== true) throw new Error(`old_text matches ${count} times; add surrounding context or set replace_all`);
-        writeFileSync(abs, a.replace_all === true ? text.split(oldText).join(String(a.new_text ?? "")) : text.replace(oldText, () => String(a.new_text ?? "")));
-        env.edits.add(rel);
+        const next = a.replace_all === true ? text.split(oldText).join(newText) : text.replace(oldText, () => newText);
+        writeFileSync(abs, crlf ? next.replace(/\n/g, "\r\n") : next);
+        noteEdited(env, rel, abs);
         return `replaced ${a.replace_all === true ? count : 1} occurrence(s) in ${rel}`;
       },
     ),

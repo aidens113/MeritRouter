@@ -1,0 +1,89 @@
+import type { ChatMessage } from "../../gateway/types.js";
+import { estimateTokens } from "../../gateway/types.js";
+import type { CodingRunner } from "../../core/executor.js";
+import { compileOutputSchema } from "../../core/validate.js";
+import { evidenceUniverse, OUTPUT_CONTRACT } from "../../core/worker-output.js";
+import { loadSources, readersFor, renderSources } from "../../context/sources.js";
+import { RepoReader } from "../../context/repo-reader.js";
+import { planLimits } from "../../routing/select.js";
+import { charterFor } from "../../roles/index.js";
+import { commitAs } from "../../attribution/index.js";
+import { runAgentLoop } from "../../harness/loop.js";
+import { artifactTool, brainReadTools, commandTool, editTools, repoTools, type HarnessEnv, type HarnessTool } from "../../harness/tools.js";
+import { brainContext, submitResultTool, workerActor, workerBrainEnv } from "../../harness/worker.js";
+import type { RunContext, RunOutcome } from "../types.js";
+import { taskBrief } from "../prompts.js";
+import { finishCoding, prepareWorkspace, sourceDirtyFinding } from "./finish.js";
+
+/**
+ * SwitchYard's own coding worker. Edits go through tools that refuse paths outside
+ * allowedPaths (containment in code), every model response that edits files is committed under
+ * the agent's identity and serving model, and acceptance comes from the diff and checks.
+ */
+export class NativeCodingRunner implements CodingRunner {
+  async run(ctx: RunContext): Promise<RunOutcome> {
+    const spec = ctx.spec;
+    const role = "implementer" as const;
+    const alias = spec.writableRepository!;
+    const { ws, worktrees } = await prepareWorkspace(ctx);
+    const readers = readersFor(ctx.cfg, spec);
+    readers.set(alias, new RepoReader(alias, ws.worktreePath, null)); // read your own edits
+    const sources = await loadSources(ctx.cfg, spec, ctx.artifacts, readersFor(ctx.cfg, spec));
+    const universe = evidenceUniverse(sources);
+    const validator = spec.constraints.outputSchema ? compileOutputSchema(spec.constraints.outputSchema) : undefined;
+    const brain = workerBrainEnv(ctx, role);
+    const patterns = ctx.cfg.coding.allowed_commands;
+    const env: HarnessEnv = {
+      ctx,
+      role,
+      readers,
+      universe,
+      allowArtifacts: true,
+      workspace: { alias, root: ws.worktreePath, allowedPaths: spec.constraints.allowedPaths ?? [] },
+      ...(patterns.length ? { commands: { patterns, cwd: ws.worktreePath, timeoutMs: ctx.cfg.execution.check_timeout_seconds * 1000 } } : {}),
+      edits: new Set(),
+      ...(brain ? { brain } : {}),
+    };
+    const tools: HarnessTool[] = [...repoTools(spec.repositoryAliases), ...editTools(), ...(patterns.length ? [commandTool(patterns)] : []), artifactTool(), ...(brain ? brainReadTools() : [])];
+    const maxTokens = Math.min(ctx.profile.max_output_tokens, spec.budget?.maxOutputTokens ?? Infinity);
+    const limits = planLimits(ctx.plan, ctx.cfg.routing.max_endpoint_fallbacks);
+    const inputBudget = Math.max(2000, limits.contextLimitTokens - maxTokens - estimateTokens([], tools.map((t) => t.def)) - 500);
+    const checks = spec.constraints.checks?.length ? `\nChecks that will be run after you finish:\n${spec.constraints.checks.map((c) => `- ${c}`).join("\n")}` : "";
+    const messages: ChatMessage[] = [
+      {
+        role: "system",
+        content: `${charterFor(ctx.cfg, role)}\n\n## Tools\nYour workspace is repository "${alias}" (an isolated worktree). Edit only paths matching: ${(spec.constraints.allowedPaths ?? []).join(", ")}. Read with read_file/search; edit with write_file/replace_in_file/delete_file${patterns.length ? "; run allowed commands with run_command" : ""}. When done, call submit_result once.\n\n## Result\n${OUTPUT_CONTRACT}`,
+      },
+      { role: "user", content: `${taskBrief(spec)}${checks}\nProvided context:\n${renderSources(sources) || "(none)"}\n${brainContext(env)}` },
+    ];
+    const executionId = ctx.gate.admission.createExecution("task", spec.profile, [{ taskId: ctx.taskId, itemId: ctx.taskId }]);
+    const loop = await runAgentLoop({
+      env,
+      executionId,
+      messages,
+      tools,
+      terminal: submitResultTool(spec, universe, validator),
+      maxTokens,
+      inputBudget,
+      maxInvalidTerminal: ctx.cfg.execution.max_invalid_output_retries,
+      purpose: "coding",
+      onResponse: async (info) => {
+        const actor = { ...workerActor(ctx, role, info.endpointId), request: info.requestId };
+        await commitAs(ws.worktreePath, actor, `${role}: edit ${info.edits.slice(0, 5).join(", ")}${info.edits.length > 5 ? ` (+${info.edits.length - 5})` : ""}`);
+      },
+    });
+    ctx.gate.admission.finishExecution(executionId, loop.kind);
+    const transcriptRef = ctx.artifacts.writeJson({ taskId: ctx.taskId, executionId, kind: "transcript", label: "coding transcript", value: loop.messages });
+    const findings = [...sourceDirtyFinding(ws), ...(loop.kind === "terminal" ? loop.value.output.findings : [])];
+    return finishCoding(ctx, {
+      ws,
+      worktrees,
+      executionId,
+      findings,
+      artifactRefs: [transcriptRef],
+      stopReason: loop.kind === "terminal" ? "worker_submitted" : loop.kind === "budget_exhausted" ? `model request budget (${ctx.budget.maxModelRequests}) exhausted` : "invalid_output",
+      state: loop.kind === "budget_exhausted" ? "budget_exhausted" : "completed",
+      summaryLead: loop.kind === "terminal" ? loop.value.output.summary : "",
+    });
+  }
+}

@@ -10,7 +10,7 @@ export interface PolicyGateway {
   token: string;
   /** Model id the agent must name; any other value is ignored anyway. */
   model: string;
-  stats: { admitted: number; denied: number; lastDenial: string | null };
+  stats: { admitted: number; denied: number; lastDenial: string | null; lastServed: { endpointId: string; requestId: string } | null };
   close(): Promise<void>;
 }
 
@@ -74,10 +74,20 @@ function sendJson(res: ServerResponse, status: number, body: unknown, headers: R
  * (including titles, summaries, compaction, and its own retries) is admitted through the
  * task's gate, so request budgets and routing cannot be bypassed from inside the agent.
  */
-export async function startPolicyGateway(ctx: RunContext, executionId: string, opts: { maxDenied: number; onStop: (reason: string) => void }): Promise<PolicyGateway> {
+export async function startPolicyGateway(
+  ctx: RunContext,
+  executionId: string,
+  opts: {
+    maxDenied: number;
+    onStop: (reason: string) => void;
+    /** Runs before each request is forwarded (commit the previous response's edits). */
+    beforeRequest?: (lastServed: { endpointId: string; requestId: string } | null) => Promise<void>;
+  },
+): Promise<PolicyGateway> {
   const token = `sy-job-${randomBytes(24).toString("hex")}`;
   const tokenBuf = Buffer.from(token);
-  const stats = { admitted: 0, denied: 0, lastDenial: null as string | null };
+  const stats = { admitted: 0, denied: 0, lastDenial: null as string | null, lastServed: null as { endpointId: string; requestId: string } | null };
+  let serial = Promise.resolve();
   let consecutiveDenied = 0;
   const model = "worker";
   const maxOutput = Math.min(ctx.profile.max_output_tokens, ctx.spec.budget?.maxOutputTokens ?? Infinity);
@@ -108,7 +118,11 @@ export async function startPolicyGateway(ctx: RunContext, executionId: string, o
       const requested = Number(body.max_tokens ?? body.max_completion_tokens ?? maxOutput);
       const tools = Array.isArray(body.tools) ? (body.tools as ChatTool[]) : undefined;
       try {
-        const { response } = await ask(ctx, {
+        // Snapshots must not interleave: serialize the commit step across concurrent requests.
+        const snap = serial.then(() => opts.beforeRequest?.(stats.lastServed));
+        serial = snap.catch(() => undefined);
+        await snap;
+        const { response, endpoint, requestId } = await ask(ctx, {
           executionId,
           purpose: "runner",
           chat: {
@@ -120,6 +134,7 @@ export async function startPolicyGateway(ctx: RunContext, executionId: string, o
           },
         });
         stats.admitted++;
+        stats.lastServed = { endpointId: endpoint.id, requestId };
         consecutiveDenied = 0;
         const created = Math.floor(Date.now() / 1000);
         const id = `chatcmpl-${randomBytes(8).toString("hex")}`;

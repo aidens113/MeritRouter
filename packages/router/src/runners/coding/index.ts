@@ -1,11 +1,15 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import path from "node:path";
 import type { ResolvedConfig } from "../../config/load.js";
 import type { CodingRunner } from "../../core/executor.js";
-import { Worktrees, hasRepoAgentConfig } from "../../workspaces/worktree.js";
+import { hasRepoAgentConfig } from "../../workspaces/worktree.js";
+import { commitAs } from "../../attribution/index.js";
+import { workerActor } from "../../harness/worker.js";
 import { baseResult, type RunContext, type RunOutcome } from "../types.js";
 import { startPolicyGateway } from "./policy-gateway.js";
 import { minimalEnv, runProcess, type RunResult } from "./process.js";
+import { agentHome, finishCoding, prepareWorkspace, sourceDirtyFinding } from "./finish.js";
+import { NativeCodingRunner } from "./native.js";
 
 function brief(ctx: RunContext, readOnlyAliases: string[]): string {
   const s = ctx.spec;
@@ -57,26 +61,16 @@ export function openCodeConfig(gatewayUrl: string, model: string, ctx: RunContex
 }
 
 /**
- * Bounded coding worker: isolated worktree from a recorded base commit, an agent whose only
- * model access is the job's policy gateway, then patch capture, scope validation, and the
- * supervisor's checks. Acceptance comes from that evidence, never from the agent's exit status.
+ * External coding agent (OpenCode, or any command) whose only model access is the job's policy
+ * gateway. The worktree is committed before each new model request, attributed to the model that
+ * served the previous one, so per-line attribution works for external agents too.
  */
-export class CodingRunnerImpl implements CodingRunner {
-  constructor(private readonly cfg: ResolvedConfig) {}
-
+export class ExternalCodingRunner implements CodingRunner {
   async run(ctx: RunContext): Promise<RunOutcome> {
     const spec = ctx.spec;
     const alias = spec.writableRepository!;
-    const repo = ctx.cfg.repositoryPaths[alias]!;
-    const worktrees = new Worktrees(ctx.tasks.db, path.join(ctx.cfg.storageDir, "worktrees"), ctx.now);
-    const runNo = ctx.tasks.get(ctx.taskId)!.row.run_count;
-    const ws = await worktrees.prepare({ taskId: ctx.taskId, run: runNo, alias, sourcePath: repo.path, ...(spec.context.baseCommits?.[alias] ? { baseCommit: spec.context.baseCommits[alias] } : {}) });
-    ctx.tasks.event(ctx.taskId, "worktree_ready", { path: ws.worktreePath, baseSha: ws.baseSha, sourceDirty: ws.sourceDirty });
-    const findings: RunOutcome["result"]["findings"] = [];
-    if (ws.sourceDirty) {
-      findings.push({ description: `The source checkout had ${ws.dirtyPaths.length} uncommitted change(s) that are NOT in this worktree (based on ${ws.baseSha.slice(0, 12)}).`, evidenceRefs: [] });
-    }
-
+    const { ws, worktrees } = await prepareWorkspace(ctx);
+    const findings = sourceDirtyFinding(ws);
     const agentConfig = hasRepoAgentConfig(ws.worktreePath);
     if (agentConfig.length && !ctx.cfg.coding.allow_repo_agent_config) {
       worktrees.setStatus(ctx.taskId, "blocked");
@@ -94,6 +88,10 @@ export class CodingRunnerImpl implements CodingRunner {
     }
 
     const executionId = ctx.gate.admission.createExecution("task", spec.profile, [{ taskId: ctx.taskId, itemId: ctx.taskId }]);
+    const snapshot = async (served: { endpointId: string; requestId: string } | null, note: string) => {
+      const actor = served ? { ...workerActor(ctx, "implementer", served.endpointId), request: served.requestId } : { ...workerActor(ctx, "implementer"), role: "tool" };
+      await commitAs(ws.worktreePath, actor, `implementer: ${note}`).catch(() => null);
+    };
     const stopper = new AbortController();
     let stopReason: string | null = null;
     const gateway = await startPolicyGateway(ctx, executionId, {
@@ -102,12 +100,12 @@ export class CodingRunnerImpl implements CodingRunner {
         stopReason ??= reason;
         stopper.abort(reason);
       },
+      beforeRequest: (last) => (last ? snapshot(last, "edits from previous response") : Promise.resolve()),
     });
     const onCtxAbort = () => stopper.abort(String(ctx.signal.reason ?? "aborted"));
     ctx.signal.addEventListener("abort", onCtxAbort);
 
-    const home = path.join(ctx.cfg.storageDir, "agent-home", path.basename(ws.worktreePath));
-    mkdirSync(home, { recursive: true });
+    const home = agentHome(ctx, ws);
     const promptFile = path.join(home, "TASK.md");
     writeFileSync(promptFile, brief(ctx, spec.repositoryAliases.filter((a) => a !== alias)));
     const deadline = ctx.tasks.get(ctx.taskId)!.row.deadline_at ?? ctx.now() + ctx.cfg.execution.job_timeout_seconds * 1000;
@@ -144,65 +142,30 @@ export class CodingRunnerImpl implements CodingRunner {
       ctx.signal.removeEventListener("abort", onCtxAbort);
       await gateway.close();
     }
+    // Whatever the agent changed after its last request belongs to the last response.
+    await snapshot(gateway.stats.lastServed, "final edits");
     const eventsRef = ctx.artifacts.write({ taskId: ctx.taskId, executionId, kind: "agent_output", label: "agent stdout", content: agent.stdout, extension: ".log" });
     const stderrRef = agent.stderr ? ctx.artifacts.write({ taskId: ctx.taskId, executionId, kind: "agent_output", label: "agent stderr", content: agent.stderr, extension: ".log" }) : null;
-
-    // Evidence: the diff against the recorded base, scope checks, and the supervisor's checks.
-    const changes = await worktrees.collect(ws, spec.constraints.allowedPaths ?? [], ctx.cfg.coding.protected_paths);
-    const patchRef = changes.patch
-      ? ctx.artifacts.write({ taskId: ctx.taskId, executionId, kind: "patch", label: `patch against ${ws.baseSha.slice(0, 12)}`, content: changes.patch, mediaType: "text/x-diff", extension: ".patch" })
-      : null;
-    if (changes.outOfScope.length) findings.push({ description: `Out-of-scope changes (not allowed by allowedPaths): ${changes.outOfScope.join(", ")}`, evidenceRefs: patchRef ? [patchRef] : [] });
-    if (changes.protectedChanged.length) findings.push({ description: `Tests or evaluator files were modified: ${changes.protectedChanged.join(", ")}. Verify the behaviour independently.`, evidenceRefs: patchRef ? [patchRef] : [] });
-    findings.push({ description: `Changed ${changes.changed.length} file(s): ${changes.changed.map((c) => `${c.status} ${c.path}`).join(", ") || "none"}`, evidenceRefs: patchRef ? [patchRef] : [] });
-
-    const aborted = ctx.signal.aborted;
-    const checks: RunOutcome["result"]["checks"] = [];
-    if (!aborted && changes.changed.length) {
-      for (const command of spec.constraints.checks ?? []) {
-        const r = await runProcess(command, [], {
-          cwd: ws.worktreePath,
-          env: minimalEnv({ HOME: home, USERPROFILE: home, CI: "1" }),
-          timeoutMs: ctx.cfg.execution.check_timeout_seconds * 1000,
-          signal: ctx.signal,
-          shell: true,
-        });
-        const logRef = ctx.artifacts.write({ taskId: ctx.taskId, executionId, kind: "check_log", label: command, content: `$ ${command}\nexit ${r.exitCode}${r.killed ? ` (killed: ${r.killed})` : ""}\n\n${r.stdout}\n${r.stderr}`, extension: ".log" });
-        checks.push({ command, exitCode: r.killed ? null : r.exitCode, logRef });
-      }
-    }
-    worktrees.setStatus(ctx.taskId, "collected");
     ctx.gate.admission.finishExecution(executionId, "completed", { agentExit: agent.exitCode, killed: agent.killed, gateway: gateway.stats });
-
-    const checksPassed = checks.length > 0 && checks.every((c) => c.exitCode === 0);
-    const anyCheckFailed = checks.some((c) => c.exitCode !== 0);
-    const acceptance =
-      changes.outOfScope.length || anyCheckFailed || changes.changed.length === 0
-        ? "unmet"
-        : checksPassed && !changes.protectedChanged.length && (spec.constraints.checks?.length ?? 0) === checks.length
-          ? "met"
-          : "not_verified";
     const budgetStop = stopReason === "task_request_budget_exhausted" || stopReason === "task_token_budget_exhausted";
-    const state: RunOutcome["state"] = aborted ? (ctx.signal.reason === "cancel" ? "cancelled" : "interrupted") : budgetStop ? "budget_exhausted" : "completed";
-    const summaryTail = agent.stdout.trim().split("\n").slice(-20).join("\n").slice(-2000);
-    return {
-      state,
-      result: baseResult({
-        executionStatus: state === "completed" ? "completed" : state,
-        acceptanceStatus: acceptance === "met" && state !== "completed" ? "not_verified" : acceptance,
-        stopReason: stopReason ? `agent_stopped: ${stopReason}` : agent.killed ? `agent_killed: ${agent.killed}` : `agent_exit_${agent.exitCode}`,
-        summary: `${changes.changed.length} file(s) changed in an isolated worktree based on ${ws.baseSha.slice(0, 12)}. Checks: ${checks.length ? checks.map((c) => `${c.command} -> ${c.exitCode}`).join("; ") : "none run"}. Agent output tail:\n${summaryTail}`,
-        findings,
-        artifactRefs: [eventsRef, ...(stderrRef ? [stderrRef] : [])],
-        patchRefs: patchRef ? [patchRef] : [],
-        baseCommits: { [alias]: ws.baseSha },
-        checks,
-        unresolvedCriteria: acceptance === "met" ? [] : spec.constraints.acceptanceCriteria,
-      }),
-    };
+    const tail = agent.stdout.trim().split("\n").slice(-20).join("\n").slice(-2000);
+    return finishCoding(ctx, {
+      ws,
+      worktrees,
+      executionId,
+      findings,
+      artifactRefs: [eventsRef, ...(stderrRef ? [stderrRef] : [])],
+      stopReason: stopReason ? `agent_stopped: ${stopReason}` : agent.killed ? `agent_killed: ${agent.killed}` : `agent_exit_${agent.exitCode}`,
+      state: budgetStop ? "budget_exhausted" : "completed",
+      summaryLead: tail ? `Agent output tail:\n${tail}` : "",
+    });
   }
 }
 
+/** The native harness by default; OpenCode or a custom command when configured. */
 export function createCodingRunner(cfg: ResolvedConfig): CodingRunner {
-  return new CodingRunnerImpl(cfg);
+  return cfg.coding.runner === "native" ? new NativeCodingRunner() : new ExternalCodingRunner();
 }
+
+/** @deprecated use createCodingRunner */
+export const CodingRunnerImpl = ExternalCodingRunner;
