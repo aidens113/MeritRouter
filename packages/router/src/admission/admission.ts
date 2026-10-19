@@ -6,13 +6,15 @@ import type { ProfileName, TierName } from "../config/schema.js";
 import type { WorkerTask } from "../core/task.js";
 import { AdmissionDenied } from "../core/errors.js";
 import type { ChatResponse } from "../gateway/types.js";
+import { actualUsd, type PaidSpend } from "../paid/spend.js";
 
 /** Effective per-task limits: task budgets may narrow configured policy, never widen it. */
 export interface EffectiveBudget {
   maxModelRequests: number;
   maxInputTokens: number | null;
   maxOutputTokens: number | null;
-  maxPaidUsd: 0;
+  /** Per-task paid cap in USD (null: only global, key, and balance limits apply). */
+  maxPaidUsd: number | null;
 }
 
 export function effectiveBudget(cfg: ResolvedConfig, spec: WorkerTask, tier: TierName | null = null): EffectiveBudget {
@@ -31,8 +33,7 @@ export function effectiveBudget(cfg: ResolvedConfig, spec: WorkerTask, tier: Tie
     ),
     maxInputTokens: narrow(profile.max_input_tokens, spec.budget?.maxInputTokens),
     maxOutputTokens: spec.budget?.maxOutputTokens ?? null,
-    // Paid routing is disabled package-wide; a task cannot opt in.
-    maxPaidUsd: 0,
+    maxPaidUsd: cfg.paid.enabled ? (spec.budget?.maxPaidUsd ?? null) : 0,
   };
 }
 
@@ -56,12 +57,17 @@ export interface ReservationRequest {
   estInputTokens: number;
   reservedOutputTokens: number;
   participants: Participant[];
+  /** Direct paid request: the worst-case cost is reserved atomically with the request. */
+  paid?: { spend: PaidSpend; keyId: number; provider: string; worstCaseUsd: number; price: { in: number; out: number } };
 }
 
 export interface Reservation {
   requestId: string;
   executionId: string;
   participants: Participant[];
+  paid?: ReservationRequest["paid"];
+  estInputTokens: number;
+  reservedOutputTokens: number;
 }
 
 export interface TaskUsageTotals {
@@ -182,6 +188,23 @@ export class Admission {
         );
       }
 
+      if (req.paid) {
+        const p = req.paid;
+        const global = p.spend.globalDenial(p.worstCaseUsd);
+        if (global) throw new AdmissionDenied("paid_budget_exhausted", global);
+        const key = p.spend.key(p.keyId);
+        if (!key || !key.enabled) throw new AdmissionDenied("paid_budget_exhausted", `paid key ${p.keyId} is not enabled`);
+        const room = p.spend.keyHeadroom(key);
+        if (room < p.worstCaseUsd) throw new AdmissionDenied("paid_budget_exhausted", `key ${key.label || key.id} has $${room.toFixed(4)} left; worst case is $${p.worstCaseUsd.toFixed(4)}`);
+        const share = p.worstCaseUsd / req.participants.length;
+        for (const part of req.participants) {
+          if (part.budget.maxPaidUsd === null) continue;
+          const spent = p.spend.taskSpend(part.taskId);
+          if (spent + share > part.budget.maxPaidUsd) {
+            throw new AdmissionDenied("paid_budget_exhausted", `task ${part.taskId} paid budget: $${spent.toFixed(4)} + $${share.toFixed(4)} exceeds $${part.budget.maxPaidUsd}`, undefined, part.taskId);
+          }
+        }
+      }
       const requestId = newId("r");
       this.db
         .prepare(
@@ -193,7 +216,15 @@ export class Admission {
         "INSERT INTO request_charges (request_id, task_id, input_tokens, output_tokens, tokens_exact) VALUES (?, ?, ?, ?, 0)",
       );
       for (const p of req.participants) charge.run(requestId, p.taskId, p.estInputTokens, p.reservedOutputTokens);
-      return { requestId, executionId: req.executionId, participants: req.participants };
+      if (req.paid) req.paid.spend.record(requestId, req.paid.keyId, req.paid.provider, req.endpointId ?? "", req.paid.worstCaseUsd);
+      return {
+        requestId,
+        executionId: req.executionId,
+        participants: req.participants,
+        estInputTokens: req.estInputTokens,
+        reservedOutputTokens: req.reservedOutputTokens,
+        ...(req.paid ? { paid: req.paid } : {}),
+      };
     });
   }
 
@@ -243,6 +274,29 @@ export class Admission {
           violation: outcome.kind === "succeeded" ? (outcome.policyViolation ?? null) : null,
           telemetry: t ? JSON.stringify(t.headers) : null,
         });
+
+      if (res.paid) {
+        const p = res.paid;
+        let cost: number;
+        let basis: "provider_reported" | "computed" | "not_billed" | "uncertain";
+        if (outcome.kind === "succeeded") {
+          if (usage?.reportedCostUsd !== null && usage?.reportedCostUsd !== undefined) {
+            cost = usage.reportedCostUsd;
+            basis = "provider_reported";
+          } else {
+            cost = actualUsd(usage?.inputTokens ?? res.estInputTokens, usage?.outputTokens ?? res.reservedOutputTokens, p.price);
+            basis = "computed";
+          }
+        } else if (outcome.kind === "failed") {
+          cost = 0;
+          basis = "not_billed";
+        } else {
+          cost = p.worstCaseUsd;
+          basis = "uncertain";
+        }
+        p.spend.settle(res.requestId, cost, basis);
+        this.db.prepare("UPDATE model_requests SET estimated_cost_usd = ? WHERE id = ?").run(cost, res.requestId);
+      }
 
       // Without reported usage the conservative reservation stays as the charge.
       if (!usage || usage.basis !== "provider_reported") return;

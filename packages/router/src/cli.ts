@@ -35,6 +35,13 @@ Tasks
   artifact <ref>                print an artifact
   usage [--hours n]             requests, tokens, and outcomes
 
+Paid keys (direct routes; secrets are encrypted at rest)
+  keys [list]                   keys with billing class, spend, balance, cap
+  keys add <provider> [--label x] [--billing paid_credits|paid_postpaid|trial|free_tier] [--balance usd] [--cap usd]
+                                reads the secret from SWITCHYARD_NEW_KEY
+  keys enable|disable|remove <id>
+  keys spend                    spend against budgets
+
 Qualification
   qualify <model-id> [--trials n]   run the private eval suite pinned to one model
   qualify status                    leaderboard (grades any finished runs first)
@@ -66,6 +73,10 @@ async function main(): Promise<number> {
       params: { type: "string" },
       active: { type: "string" },
       trials: { type: "string" },
+      label: { type: "string" },
+      billing: { type: "string" },
+      balance: { type: "string" },
+      cap: { type: "string" },
       help: { type: "boolean", short: "h", default: false },
     },
   });
@@ -235,6 +246,45 @@ ${table(rows)}`, json);
         const run = await sy.qualifier.start(args[0], { ...(values.trials ? { trials: Number(values.trials) } : {}) });
         out(json ? run : `started ${run.runId}: ${run.tasks} task(s) for ${run.endpointId}; a running worker executes and grades them (check with \`switchyard qualify status\`)`, json);
         return 0;
+      }
+      case "keys": {
+        // Paid provider keys (direct routes). FreeLLMAPI keys are managed in the panel.
+        const sub = args[0] ?? "list";
+        if (sub === "list") {
+          const rows = sy.spend.summary().keys.map((k) => ({ id: k.id, provider: k.provider, label: k.label, billing: k.billingClass, enabled: k.enabled ? "yes" : "no", key: `...${k.last4}`, "spent 30d": `$${k.spent30d.toFixed(4)}`, balance: k.remainingBalanceUsd === null ? "" : `$${k.remainingBalanceUsd.toFixed(2)}`, cap: k.remainingCapUsd === null ? "" : `$${k.remainingCapUsd.toFixed(2)}` }));
+          out(json ? rows : table(rows), json);
+          return 0;
+        }
+        if (sub === "add") {
+          const provider = args[1];
+          const secret = process.env.SWITCHYARD_NEW_KEY;
+          if (!provider || !secret) throw new SwitchyardError("usage", "usage: SWITCHYARD_NEW_KEY=<secret> switchyard keys add <provider> [--label x] [--billing paid_credits] [--balance 10] [--cap 20]  (the secret is read from the environment so it never appears in shell history)");
+          const k = sy.vault.add({
+            provider,
+            secret,
+            label: values.label ?? "",
+            ...(values.billing ? { billingClass: values.billing as "paid_credits" } : {}),
+            ...(values.balance ? { prepaidBalanceUsd: Number(values.balance) } : {}),
+            ...(values.cap ? { monthlyCapUsd: Number(values.cap) } : {}),
+          });
+          out(`added key ${k.id} for ${provider} (...${k.last4})`, json);
+          return 0;
+        }
+        if (sub === "disable" || sub === "enable") {
+          sy.vault.update(Number(args[1]), { enabled: sub === "enable" });
+          out(`key ${args[1]} ${sub}d`, json);
+          return 0;
+        }
+        if (sub === "remove") {
+          sy.vault.remove(Number(args[1]));
+          out(`key ${args[1]} removed`, json);
+          return 0;
+        }
+        if (sub === "spend") {
+          out(sy.spend.summary(), true);
+          return 0;
+        }
+        throw new SwitchyardError("usage", "usage: keys list|add|enable|disable|remove|spend");
       }
       case "usage":
         out(sy.usage(Date.now() - Number(values.hours ?? 24) * 3_600_000), true);

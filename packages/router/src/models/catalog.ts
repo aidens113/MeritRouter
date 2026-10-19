@@ -31,7 +31,16 @@ export const ModelEndpointSchema = z
     gatewayModelId: z.string().min(1),
     providerModelId: z.string().min(1).optional(),
     displayName: z.string().optional(),
-    origin: z.enum(["discovered", "manual"]).default("manual"),
+    origin: z.enum(["discovered", "manual", "paid"]).default("manual"),
+    /** How requests reach the model: a FreeLLMAPI single-model chain, or a direct paid provider. */
+    route: z
+      .discriminatedUnion("kind", [
+        z.object({ kind: z.literal("chain") }).strict(),
+        z.object({ kind: z.literal("direct"), provider: z.string().min(1), model: z.string().min(1) }).strict(),
+      ])
+      .default({ kind: "chain" }),
+    /** Closed models publish no size; exempt them from parameter floors (shown in explanations). */
+    ignoreSizeFloor: z.boolean().default(false),
     /** FreeLLMAPI models.id, needed to write chain membership. */
     flModelDbId: z.number().int().nullable().default(null),
     quotaScopeIds: z.array(z.string().min(1)).default([]),
@@ -164,7 +173,8 @@ function computeStatus(ep: BaseEndpoint, forceStatus: "active" | "disabled" | un
   if (forceStatus === "disabled") return { status: "disabled", reason: "disabled manually" };
   if (!ep.enabled) return { status: "disabled", reason: "disabled in catalog" };
   if (forceStatus === "active") return { status: "active", reason: "enabled manually" };
-  if (ep.totalParametersB === null) return { status: "pending_confirmation", reason: "parameter count unknown: enter it to enable this model" };
+  if (ep.totalParametersB === null && !ep.ignoreSizeFloor) return { status: "pending_confirmation", reason: "parameter count unknown: enter it to enable this model" };
+  if (ep.origin === "paid" && !ep.available) return { status: "disabled", reason: "paid routing is off or no enabled key for this provider" };
   if (requireConfirmation && ep.params.confidence === "heuristic" && !ep.params.confirmed) {
     return { status: "pending_confirmation", reason: `parameter count ${ep.totalParametersB}B comes only from the model name/description: confirm it` };
   }
@@ -181,7 +191,11 @@ export class Catalog {
   constructor(
     private readonly db: Db,
     readonly yamlPath: string | null,
-    private readonly opts: { requireConfirmationForHeuristicParams: boolean },
+    private readonly opts: {
+      requireConfirmationForHeuristicParams: boolean;
+      /** Endpoints defined elsewhere (configured paid models), with a change fingerprint. */
+      extra?: { list: () => ModelEndpointInput[]; key: () => string };
+    },
   ) {
     if (yamlPath && !existsSync(yamlPath)) throw new ConfigError(`model catalog not found: ${yamlPath}`);
     if (yamlPath) this.readYaml(); // fail fast on an invalid file
@@ -224,7 +238,7 @@ export class Catalog {
 
   /** Last-change marker for anything that affects routing (catalog, overrides). */
   changeKey(): string {
-    return `${this.version()}:${this.yamlMtime()}`;
+    return `${this.version()}:${this.yamlMtime()}:${this.opts.extra?.key() ?? ""}`;
   }
 
   endpoints(): ModelEndpoint[] {
@@ -237,6 +251,10 @@ export class Catalog {
       base.set(ep.id, ep);
     }
     for (const ep of yaml.endpoints) base.set(ep.id, ep); // manual entries win over discovery
+    for (const raw of this.opts.extra?.list() ?? []) {
+      const ep = ModelEndpointSchema.parse(raw);
+      base.set(ep.id, ep);
+    }
     const dbOverrides = new Map<string, EndpointOverride>();
     for (const row of this.db.prepare("SELECT endpoint_id, data_json FROM endpoint_overrides").all() as { endpoint_id: string; data_json: string }[]) {
       dbOverrides.set(row.endpoint_id, EndpointOverrideSchema.parse(JSON.parse(row.data_json)));

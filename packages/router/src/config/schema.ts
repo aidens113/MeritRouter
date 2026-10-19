@@ -79,6 +79,42 @@ const DEFAULT_TIERS = {
 
 const RepositorySchema = z.object({ path: z.string().min(1), writable: z.boolean().default(true) }).strict();
 
+/** When paid models may serve: never; only after every free model failed; before free ones; or for T4 work. */
+export const PaidPolicySchema = z.enum(["never", "on_free_exhaustion", "preferred", "premium"]);
+export type PaidPolicy = z.infer<typeof PaidPolicySchema>;
+
+export const PaidProviderSchema = z
+  .object({
+    kind: z.enum(["openai_compatible", "anthropic"]),
+    base_url: z.string().url(),
+    /** Fetch prices from an OpenRouter-style /models endpoint at this URL (OpenRouter credits). */
+    pricing_url: z.string().url().optional(),
+    /** Provider balance endpoint style, when the provider exposes one. */
+    balance_api: z.enum(["none", "openrouter", "deepseek"]).default("none"),
+  })
+  .strict();
+export type PaidProviderConfig = z.infer<typeof PaidProviderSchema>;
+
+export const PaidModelSchema = z
+  .object({
+    provider: z.string().regex(/^[a-z0-9-]+$/),
+    model: z.string().min(1),
+    display_name: z.string().optional(),
+    /** Prices in USD per million tokens. Leave unset to fetch (pricing_url) or to keep the model unusable. */
+    input_usd_per_million: z.number().positive().optional(),
+    output_usd_per_million: z.number().positive().optional(),
+    context_limit_tokens: z.number().int().positive(),
+    output_limit_tokens: z.number().int().positive(),
+    input_modalities: z.array(ModalitySchema).default(["text"]),
+    supports_tools: z.boolean().default(true),
+    supports_structured_output: z.boolean().default(false),
+    /** Closed models do not publish sizes. Declare an assumed size, or exempt the model from size floors. */
+    declared_parameters_b: z.number().positive().optional(),
+    ignore_size_floor: z.boolean().default(false),
+  })
+  .strict();
+export type PaidModelConfig = z.infer<typeof PaidModelSchema>;
+
 export const ConfigSchema = z
   .object({
     version: z.literal(1),
@@ -187,10 +223,26 @@ export const ConfigSchema = z
       })
       .strict()
       .prefault({}),
-    spend: z
+    /** Direct paid routes (never through FreeLLMAPI). Keys live in the encrypted vault, not here. */
+    paid: z
       .object({
-        paid_fallback_enabled: z.boolean().default(false),
-        max_paid_usd_per_week: z.number().min(0).default(0),
+        enabled: z.boolean().default(false),
+        providers: z.record(z.string().regex(/^[a-z0-9-]+$/), PaidProviderSchema).default({}),
+        models: z.array(PaidModelSchema).default([]),
+        budgets: z
+          .object({
+            per_day_usd: z.number().min(0).optional(),
+            per_week_usd: z.number().min(0).default(0),
+            per_month_usd: z.number().min(0).optional(),
+          })
+          .strict()
+          .prefault({}),
+        tiers: z
+          .object({ T1: PaidPolicySchema.default("never"), T2: PaidPolicySchema.default("never"), T3: PaidPolicySchema.default("never"), T4: PaidPolicySchema.default("never") })
+          .strict()
+          .prefault({}),
+        /** Paid endpoints tried per request after free ones (they never count toward free fallbacks). */
+        max_paid_attempts: z.number().int().min(1).max(5).default(2),
       })
       .strict()
       .prefault({}),
@@ -222,15 +274,14 @@ export const ConfigSchema = z
   })
   .strict()
   .superRefine((c, ctx) => {
-    if (c.spend.paid_fallback_enabled) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["spend", "paid_fallback_enabled"],
-        message: "paid routing is not available in this release; only verified-free endpoints are routed",
-      });
+    for (const [i, m] of c.paid.models.entries()) {
+      if (!c.paid.providers[m.provider]) ctx.addIssue({ code: "custom", path: ["paid", "models", i, "provider"], message: `unknown paid provider ${m.provider}` });
     }
-    if (!c.spend.paid_fallback_enabled && c.spend.max_paid_usd_per_week !== 0) {
-      ctx.addIssue({ code: "custom", path: ["spend", "max_paid_usd_per_week"], message: "max_paid_usd_per_week must be 0 while paid fallback is disabled" });
+    if (c.paid.enabled && c.paid.budgets.per_week_usd === 0) {
+      ctx.addIssue({ code: "custom", path: ["paid", "budgets", "per_week_usd"], message: "set a weekly paid budget greater than 0 to enable paid routing" });
+    }
+    if (c.paid.tiers.T4 !== "never" && c.paid.tiers.T4 !== "premium") {
+      ctx.addIssue({ code: "custom", path: ["paid", "tiers", "T4"], message: "T4 accepts only never or premium" });
     }
     const t = c.tiers;
     if (!(t.T1.max_score < t.T2.max_score && t.T2.max_score < t.T3.max_score)) {

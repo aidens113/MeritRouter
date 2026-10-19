@@ -250,6 +250,8 @@ export class Executor {
         case "task_request_budget_exhausted":
         case "task_token_budget_exhausted":
           return { kind: "final", state: "budget_exhausted", stopReason: `${err.reason}: ${err.message}` };
+        case "paid_budget_exhausted":
+          return { kind: "final", state: "failed", stopReason: `paid_budget_exhausted: ${err.message}` };
         case "package_hourly_allocation_exhausted":
         case "package_daily_allocation_exhausted":
           return capacity(err.retryAt ?? now + 60_000, err.message);

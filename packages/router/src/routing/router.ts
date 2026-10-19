@@ -1,5 +1,5 @@
 import type { ResolvedConfig } from "../config/load.js";
-import type { Modality, ProfileName, TierName } from "../config/schema.js";
+import type { Modality, PaidPolicy, ProfileName, TierName } from "../config/schema.js";
 import type { Db } from "../storage/db.js";
 import type { ArtifactStore } from "../storage/artifacts.js";
 import type { StoredTask } from "../storage/tasks.js";
@@ -46,14 +46,19 @@ export class TaskRouter {
     this.classifier = new Classifier(cfg, db, gate, this.fingerprint, () => this.classificationPlan(), now);
   }
 
-  plan(profile: ProfileName, tier: TierName, inputModalities: Modality[], forcedEndpointId?: string, skipQualification = false): RoutePlan {
+  plan(profile: ProfileName, tier: TierName, inputModalities: Modality[], forcedEndpointId?: string, skipQualification = false, paidPolicy?: PaidPolicy): RoutePlan {
     return planRoute(
       this.cfg,
       this.catalog.endpoints(),
       // Qualification runs measure one model in isolation: routing overrides do not apply.
       skipQualification ? [] : this.catalog.routingOverrides(),
-      { profile, tier, inputModalities, needsStructuredOutput: false, skipQualification, ...(forcedEndpointId ? { forcedEndpointId } : {}) },
-      { now: new Date(this.now()), qualification: qualificationLookup(this.db, this.cfg), health: this.gate.health.lookup },
+      { profile, tier, inputModalities, needsStructuredOutput: false, skipQualification, ...(forcedEndpointId ? { forcedEndpointId } : {}), ...(paidPolicy ? { paidPolicy } : {}) },
+      {
+        now: new Date(this.now()),
+        qualification: qualificationLookup(this.db, this.cfg),
+        health: this.gate.health.lookup,
+        ...(this.gate.paid ? { paidPlatforms: this.gate.paid.spend.paidFreeLlmApiPlatforms() } : {}),
+      },
     );
   }
 
@@ -121,7 +126,14 @@ export class TaskRouter {
     }
 
     this.db.prepare("UPDATE tasks SET tier = ?, classification_json = ? WHERE id = ?").run(classification.tier, JSON.stringify(classification), task.row.id);
-    if (classification.tier === "T4") return { classification, plan: null, inputModalities };
+    if (classification.tier === "T4") {
+      // Premium: T4 work goes to paid models (at T3 limits) instead of back to the supervisor.
+      if (this.cfg.paid.enabled && this.cfg.paid.tiers.T4 === "premium" && !classification.rejectReason?.includes("clarification")) {
+        const plan = this.plan(spec.profile, "T3", inputModalities, spec.routing?.endpointId, false, "premium");
+        if (plan.candidates.length) return { classification, plan, inputModalities };
+      }
+      return { classification, plan: null, inputModalities };
+    }
     const qualifying = (task.row as typeof task.row & { purpose?: string }).purpose === "qualification";
     return { classification, plan: this.plan(spec.profile, classification.tier, inputModalities, spec.routing?.endpointId, qualifying), inputModalities };
   }

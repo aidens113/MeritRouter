@@ -19,6 +19,10 @@ import { Scanner, type ScanSummary } from "../models/scanner.js";
 import { TaskRouter } from "../routing/router.js";
 import { Qualifier } from "../qualification/runner.js";
 import { syncRepositoryRegistry } from "../qualification/registry.js";
+import { KeyVault } from "../paid/vault.js";
+import { PaidSpend } from "../paid/spend.js";
+import { paidEndpoints, paidFingerprint, refreshPaidPrices } from "../paid/catalog.js";
+import { httpDirectClient, type DirectClient } from "../paid/direct.js";
 import { GatewayError, TaskValidationError } from "./errors.js";
 import { validateTask } from "./validate.js";
 import { Executor, type CodingRunner } from "./executor.js";
@@ -31,6 +35,8 @@ export interface SwitchyardOptions {
   /** Admin client override; null disables chain management and scanning. */
   admin?: FreeLlmApiAdmin | null;
   coding?: CodingRunner | null;
+  /** Direct paid-provider client override (tests). */
+  directClient?: DirectClient;
   fetchImpl?: typeof fetch;
   now?: () => number;
   /** Run the in-process worker loop (MCP server and `switchyard worker`). */
@@ -80,6 +86,8 @@ export class Switchyard {
   readonly client: InferenceClient;
   readonly owner: string;
   readonly qualifier: Qualifier;
+  readonly vault: KeyVault;
+  readonly spend: PaidSpend;
   private readonly executor: Executor;
   private readonly scheduler: Scheduler;
   private readonly events = new EventEmitter();
@@ -98,14 +106,19 @@ export class Switchyard {
     this.tasks = new TaskStore(this.db, this.now);
     this.artifacts = new ArtifactStore(this.db, cfg.storageDir, this.now);
     this.admission = new Admission(this.db, this.tasks, cfg, this.now);
-    this.catalog = new Catalog(this.db, cfg.modelsPath, { requireConfirmationForHeuristicParams: cfg.discovery.require_confirmation_for_heuristic_params });
+    this.vault = new KeyVault(this.db, cfg.storageDir, this.now);
+    this.spend = new PaidSpend(this.db, cfg, this.vault, this.now);
+    this.catalog = new Catalog(this.db, cfg.modelsPath, {
+      requireConfirmationForHeuristicParams: cfg.discovery.require_confirmation_for_heuristic_params,
+      extra: { list: () => paidEndpoints(this.cfg, this.db, this.vault, this.now()), key: () => paidFingerprint(this.cfg, this.db) },
+    });
     this.owner = `${hostname()}:${process.pid}:${randomBytes(3).toString("hex")}`;
 
     this.client = opts.client ?? createGatewayClient(cfg);
     this.admin = opts.admin === undefined ? createAdminClient(cfg) : opts.admin;
     this.chains = new ChainManager(this.db, cfg, this.catalog, this.admin, this.now);
     this.health = new ProviderHealth(this.client, this.now);
-    this.gate = new Gate(this.db, cfg, this.client, this.admission, this.chains, this.health);
+    this.gate = new Gate(this.db, cfg, this.client, this.admission, this.chains, this.health, { vault: this.vault, spend: this.spend, client: opts.directClient ?? httpDirectClient });
     this.router = new TaskRouter(cfg, this.db, this.catalog, this.gate, this.artifacts, this.now);
     this.scanner = new Scanner(this.db, cfg, this.catalog, this.chains, this.admin, opts.fetchImpl ?? fetch, this.now);
     this.events.setMaxListeners(0);
@@ -299,8 +312,10 @@ export class Switchyard {
     return usageSummary(this.db, sinceMs, untilMs ?? this.now());
   }
 
-  scan(): Promise<ScanSummary> {
-    return this.scanner.scan();
+  async scan(): Promise<ScanSummary> {
+    const summary = await this.scanner.scan();
+    summary.errors.push(...(await refreshPaidPrices(this.db, this.cfg)).map((e) => `paid prices ${e}`));
+    return summary;
   }
 
   /** Run recovery once (expired leases, auto-resume of side-effect-free work). */

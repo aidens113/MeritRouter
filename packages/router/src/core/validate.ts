@@ -61,7 +61,7 @@ export async function validateTask(
     }
   }
 
-  if ((spec.budget?.maxPaidUsd ?? 0) > 0 && !cfg.spend.paid_fallback_enabled) {
+  if ((spec.budget?.maxPaidUsd ?? 0) > 0 && !cfg.paid.enabled) {
     issues.push("budget.maxPaidUsd > 0 requested but paid routing is disabled by configuration");
   }
 

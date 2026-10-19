@@ -8,6 +8,15 @@ import type { RoutePlan } from "../routing/select.js";
 import { fitsEndpoint } from "../routing/select.js";
 import type { ChatRequest, ChatResponse, InferenceClient, ProviderStatus } from "./types.js";
 import { estimateTokens } from "./types.js";
+import type { DirectClient } from "../paid/direct.js";
+import type { KeyVault } from "../paid/vault.js";
+import { worstCaseUsd, type PaidSpend } from "../paid/spend.js";
+
+export interface PaidRuntime {
+  vault: KeyVault;
+  spend: PaidSpend;
+  client: DirectClient;
+}
 
 export interface GateRequest {
   plan: RoutePlan;
@@ -88,6 +97,7 @@ export class Gate {
     readonly admission: Admission,
     private readonly chains: ChainManager,
     readonly health: ProviderHealth,
+    readonly paid: PaidRuntime | null = null,
   ) {}
 
   /** An endpoint with a served-model violation stays blocked until its chain is re-verified. */
@@ -105,6 +115,7 @@ export class Gate {
     const attempts: GateAttempt[] = [];
     let lastCapacityError: GatewayError | null = null;
     let dispatched = 0;
+    let dispatchedPaid = 0;
 
     const totalWeight = req.participants.reduce((s, p) => s + (p.weight ?? 1), 0);
     const participants: Participant[] = req.participants.map((p) => ({
@@ -116,7 +127,9 @@ export class Gate {
     }));
 
     for (const ep of req.plan.candidates) {
-      if (dispatched >= this.cfg.routing.max_endpoint_fallbacks) break;
+      const direct = ep.route.kind === "direct";
+      // Free and paid attempts are limited separately: free fallbacks never use up paid slots.
+      if (direct ? dispatchedPaid >= this.cfg.paid.max_paid_attempts : dispatched >= this.cfg.routing.max_endpoint_fallbacks) continue;
       const misfit = fitsEndpoint(ep, estInput, req.chat.max_tokens);
       if (misfit) {
         attempts.push({ endpointId: ep.id, outcome: `skipped (too large): ${misfit}` });
@@ -126,6 +139,16 @@ export class Gate {
       if (q) {
         attempts.push({ endpointId: ep.id, outcome: `skipped: ${q}` });
         continue;
+      }
+      if (direct) {
+        const r = await this.requestDirect(ep, req, participants, estInput, attempts);
+        if (r === "skip") continue;
+        dispatchedPaid++;
+        if (r instanceof GatewayError) {
+          lastCapacityError = r;
+          continue;
+        }
+        return { requestId: r.requestId, response: r.response, endpoint: ep, attempts, estimatedInputTokens: estInput };
       }
       const unverified = await this.chains.ensureVerified(ep);
       if (unverified) {
@@ -189,11 +212,94 @@ export class Gate {
       return { requestId: reservation.requestId, response, endpoint: ep, attempts, estimatedInputTokens: estInput };
     }
 
-    if (dispatched === 0) {
+    if (dispatched === 0 && dispatchedPaid === 0) {
       const reasons = attempts.length ? attempts.map((a) => `${a.endpointId}: ${a.outcome}`) : ["no eligible model for this task type and tier"];
       const allTooLarge = attempts.length > 0 && attempts.every((a) => a.outcome.startsWith("skipped (too large)"));
-      throw Object.assign(new AdmissionDenied(allTooLarge ? "context_does_not_fit" : "no_eligible_endpoint", reasons.join("; ")), { attempts });
+      const paidOnly = attempts.length > 0 && attempts.every((a) => a.outcome.startsWith("skipped (paid budget)"));
+      throw Object.assign(new AdmissionDenied(allTooLarge ? "context_does_not_fit" : paidOnly ? "paid_budget_exhausted" : "no_eligible_endpoint", reasons.join("; ")), { attempts });
     }
     throw Object.assign(lastCapacityError ?? new GatewayError("pool_exhausted", "all candidate models failed"), { attempts });
+  }
+
+  /**
+   * One direct paid attempt: pick a key with headroom, reserve the worst-case cost with the
+   * request, call the provider once, verify the served model, and settle the cost.
+   */
+  private async requestDirect(
+    ep: ModelEndpoint,
+    req: GateRequest,
+    participants: Participant[],
+    estInput: number,
+    attempts: GateAttempt[],
+  ): Promise<"skip" | GatewayError | { requestId: string; response: ChatResponse }> {
+    const route = ep.route as { kind: "direct"; provider: string; model: string };
+    const provider = this.cfg.paid.providers[route.provider];
+    if (!this.paid || !provider) {
+      attempts.push({ endpointId: ep.id, outcome: "skipped: paid runtime unavailable" });
+      return "skip";
+    }
+    const price = { in: ep.pricing.inputUsdPerMillion ?? Infinity, out: ep.pricing.outputUsdPerMillion ?? Infinity };
+    const worst = worstCaseUsd(estInput, req.chat.max_tokens, price);
+    const key = this.paid.spend.pickKey(route.provider, worst);
+    if (!key) {
+      attempts.push({ endpointId: ep.id, outcome: `skipped (paid budget): no ${route.provider} key with $${worst.toFixed(4)} headroom` });
+      return "skip";
+    }
+    let reservation;
+    try {
+      reservation = this.admission.reserve({
+        executionId: req.executionId,
+        profile: req.plan.profile,
+        purpose: req.purpose,
+        gatewayModel: `direct:${route.provider}/${route.model}`,
+        endpointId: ep.id,
+        tier: req.plan.tier,
+        routeNote: `paid via key ${key.label || key.id}; worst case $${worst.toFixed(4)}`,
+        estInputTokens: estInput,
+        reservedOutputTokens: req.chat.max_tokens,
+        participants,
+        paid: { spend: this.paid.spend, keyId: key.id, provider: route.provider, worstCaseUsd: worst, price },
+      });
+    } catch (err) {
+      if (err instanceof AdmissionDenied && err.reason === "paid_budget_exhausted") {
+        attempts.push({ endpointId: ep.id, outcome: `skipped (paid budget): ${err.message}` });
+        return "skip";
+      }
+      throw err;
+    }
+    const chat = { ...req.chat };
+    if (!ep.supportsStructuredOutput) delete chat.response_format;
+    let response: ChatResponse;
+    try {
+      response = await this.paid.client.complete({
+        providerName: route.provider,
+        provider,
+        apiKey: this.paid.vault.secret(key.id),
+        model: route.model,
+        chat,
+        timeoutMs: this.cfg.gateway.request_timeout_seconds * 1000,
+        ...(req.signal ? { signal: req.signal } : {}),
+      });
+    } catch (err) {
+      const ge = err instanceof GatewayError ? err : new GatewayError("transport", (err as Error).message ?? String(err), undefined, undefined, true);
+      this.admission.reconcile(reservation, { kind: ge.possiblyConsumed ? "uncertain" : "failed", ...(ge.status !== undefined ? { httpStatus: ge.status } : {}), errorKind: ge.kind, errorMessage: ge.message });
+      attempts.push({ endpointId: ep.id, outcome: ge.kind });
+      if (req.signal?.aborted || ge.kind === "aborted") throw Object.assign(ge, { attempts });
+      if (FALLBACK_KINDS.has(ge.kind)) return ge;
+      throw Object.assign(ge, { attempts });
+    }
+    // Providers often report a dated variant of the requested model id.
+    const served = response.telemetry.servedModel;
+    const violation =
+      served && served !== route.model && !served.startsWith(`${route.model}-`) && !served.endsWith(`/${route.model}`)
+        ? `requested ${route.model} but ${route.provider} served ${served}`
+        : undefined;
+    this.admission.reconcile(reservation, { kind: "succeeded", response, servedEndpointId: violation ? null : ep.id, ...(violation ? { policyViolation: violation } : {}) });
+    if (violation) {
+      attempts.push({ endpointId: ep.id, outcome: "policy_violation" });
+      throw Object.assign(new GatewayError("policy_violation", `${violation}; response discarded and ${ep.id} quarantined`), { attempts });
+    }
+    attempts.push({ endpointId: ep.id, outcome: "succeeded" });
+    return { requestId: reservation.requestId, response };
   }
 }

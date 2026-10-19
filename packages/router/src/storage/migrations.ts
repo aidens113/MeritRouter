@@ -236,4 +236,46 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX qualification_tasks_run ON qualification_tasks(run_id);
   `,
+  `
+  CREATE TABLE paid_keys (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider TEXT NOT NULL,
+    label TEXT NOT NULL DEFAULT '',
+    billing_class TEXT NOT NULL,
+    enc TEXT NOT NULL,
+    iv TEXT NOT NULL,
+    tag TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    last4 TEXT NOT NULL DEFAULT '',
+    monthly_cap_usd REAL,
+    prepaid_balance_usd REAL,
+    balance_checked_at INTEGER,
+    expires_at INTEGER,
+    created_at INTEGER NOT NULL
+  );
+
+  -- One row per paid request: worst case reserved before dispatch, settled to actual cost.
+  CREATE TABLE paid_spend (
+    request_id TEXT PRIMARY KEY REFERENCES model_requests(id),
+    key_id INTEGER NOT NULL,
+    provider TEXT NOT NULL,
+    endpoint_id TEXT NOT NULL,
+    reserved_usd REAL NOT NULL,
+    actual_usd REAL,
+    cost_basis TEXT,
+    created_at INTEGER NOT NULL,
+    settled_at INTEGER
+  );
+  CREATE INDEX paid_spend_created ON paid_spend(created_at);
+  CREATE INDEX paid_spend_key ON paid_spend(key_id, created_at);
+
+  -- Billing class of FreeLLMAPI keys (FreeLLMAPI has no paid flag). A paid key blocks its
+  -- platform from free routing because FreeLLMAPI rotates every key on a platform.
+  CREATE TABLE fl_key_billing (
+    fl_key_id INTEGER PRIMARY KEY,
+    platform TEXT NOT NULL,
+    billing_class TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  `,
 ];

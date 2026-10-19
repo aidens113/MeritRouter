@@ -35,6 +35,7 @@ export type AdmissionDenialReason =
   | "package_hourly_allocation_exhausted"
   | "package_daily_allocation_exhausted"
   | "paid_routing_disabled"
+  | "paid_budget_exhausted"
   | "no_eligible_endpoint"
   | "context_does_not_fit";
 

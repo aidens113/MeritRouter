@@ -1,5 +1,5 @@
 import type { ResolvedConfig } from "../config/load.js";
-import type { Modality, ProfileName, TierName } from "../config/schema.js";
+import type { Modality, PaidPolicy, ProfileName, TierName } from "../config/schema.js";
 import type { ModelEndpoint, RoutingOverride } from "../models/catalog.js";
 
 export interface RouteRequirements {
@@ -11,6 +11,19 @@ export interface RouteRequirements {
   forcedEndpointId?: string;
   /** Qualification runs evaluate models that are not yet qualified. */
   skipQualification?: boolean;
+  /** Paid policy for this request; defaults to paid.tiers[tier]. Roles (supervisor) override it. */
+  paidPolicy?: PaidPolicy;
+}
+
+/** A model costs money when it is not verified free (direct paid routes always are). */
+export function isPaid(ep: ModelEndpoint): boolean {
+  if (ep.route.kind === "direct") return true;
+  return !(ep.pricing.freeVerified && (ep.pricing.inputUsdPerMillion ?? 0) === 0 && (ep.pricing.outputUsdPerMillion ?? 0) === 0);
+}
+
+export function paidPolicyFor(cfg: ResolvedConfig, req: RouteRequirements): PaidPolicy {
+  if (!cfg.paid.enabled) return "never";
+  return req.paidPolicy ?? cfg.paid.tiers[req.tier];
 }
 
 export interface QualificationLookup {
@@ -61,19 +74,27 @@ export function endpointExclusions(
   ep: ModelEndpoint,
   cfg: ResolvedConfig,
   req: RouteRequirements,
-  opts: { now: Date; allowBelowFloor: boolean; qualification: ReturnType<QualificationLookup> },
+  opts: { now: Date; allowBelowFloor: boolean; qualification: ReturnType<QualificationLookup>; paidPlatforms?: Set<string> },
 ): string[] {
   const reasons: string[] = [];
   const profile = cfg.profiles[req.profile]!;
   if (ep.status !== "active") reasons.push(ep.statusReason ?? `status is ${ep.status}`);
-  if (!ep.available) reasons.push("FreeLLMAPI reports it unavailable (no key or disabled)");
+  if (!ep.available && ep.status === "active") reasons.push(ep.route.kind === "direct" ? "no enabled paid key for this provider" : "FreeLLMAPI reports it unavailable (no key or disabled)");
   if (ep.deniedProfiles.includes(req.profile)) reasons.push(`blocked for ${req.profile} tasks by an override`);
   const floor = sizeFloor(cfg, req.profile, req.tier);
-  if (ep.totalParametersB !== null && ep.totalParametersB < floor && !opts.allowBelowFloor) {
+  if (ep.totalParametersB !== null && ep.totalParametersB < floor && !opts.allowBelowFloor && !ep.ignoreSizeFloor) {
     reasons.push(`${ep.totalParametersB}B is below the ${floor}B floor for ${req.profile}/${req.tier}`);
   }
-  const free = ep.pricing.freeVerified && (ep.pricing.inputUsdPerMillion ?? 0) === 0 && (ep.pricing.outputUsdPerMillion ?? 0) === 0;
-  if (!free && !cfg.spend.paid_fallback_enabled) reasons.push("not verified free (paid routing is off)");
+  if (ep.route.kind === "chain") {
+    // FreeLLMAPI is the free network only: anything not verified free is excluded there.
+    if (isPaid(ep)) reasons.push("not verified free (FreeLLMAPI routes are free-only; add paid models under paid.models)");
+    if (opts.paidPlatforms?.has(ep.providerId)) reasons.push(`a FreeLLMAPI key on ${ep.providerId} is marked paid, so free routing could bill it`);
+  } else {
+    const policy = paidPolicyFor(cfg, req);
+    if (!cfg.paid.enabled) reasons.push("paid routing is disabled (paid.enabled)");
+    else if (policy === "never") reasons.push(`paid models are not allowed for ${req.tier} (paid.tiers.${req.tier} = never)`);
+    if (ep.pricing.inputUsdPerMillion === null || ep.pricing.outputUsdPerMillion === null) reasons.push("price unknown: set it in paid.models or a pricing_url");
+  }
   const ageDays = (opts.now.getTime() - Date.parse(ep.checkedAt)) / 86_400_000;
   if (!Number.isFinite(ageDays) || ageDays > cfg.models.max_metadata_age_days) {
     reasons.push(`metadata is ${Math.floor(ageDays)} days old (limit ${cfg.models.max_metadata_age_days}); rescan`);
@@ -99,7 +120,7 @@ export function planRoute(
   endpoints: ModelEndpoint[],
   overrides: RoutingOverride[],
   req: RouteRequirements,
-  deps: { now: Date; qualification: QualificationLookup; health?: ProviderHealthLookup },
+  deps: { now: Date; qualification: QualificationLookup; health?: ProviderHealthLookup; paidPlatforms?: Set<string> },
 ): RoutePlan {
   const applicable = overrides.filter((o) => overrideApplies(o, req.profile, req.tier));
   const forceIds = new Set<string>(applicable.filter((o) => o.kind === "force").map((o) => o.endpointId));
@@ -114,14 +135,21 @@ export function planRoute(
   const blockIds = new Set(applicable.filter((o) => o.kind === "block").map((o) => o.endpointId));
   const forced = forceIds.size > 0;
   const prefer = cfg.tiers[req.tier].prefer;
+  const policy = paidPolicyFor(cfg, req);
 
   const explanations: CandidateExplanation[] = [];
   const eligible: Array<{ ep: ModelEndpoint; ex: CandidateExplanation }> = [];
   for (const ep of endpoints) {
     const qual = deps.qualification(ep.id, req.profile, req.tier);
-    const reasons = endpointExclusions(ep, cfg, req, { now: deps.now, allowBelowFloor: belowFloor.has(ep.id), qualification: qual });
+    const reasons = endpointExclusions(ep, cfg, req, {
+      now: deps.now,
+      allowBelowFloor: belowFloor.has(ep.id),
+      qualification: qual,
+      ...(deps.paidPlatforms ? { paidPlatforms: deps.paidPlatforms } : {}),
+    });
     if (blockIds.has(ep.id)) reasons.push(`blocked by routing override for ${req.profile}/${req.tier}`);
     if (forced && !forceIds.has(ep.id)) reasons.push("another model is forced for this task type/tier");
+    if (policy === "premium" && !isPaid(ep) && !forced) reasons.push("premium routing uses paid models only");
     const h = deps.health?.(ep.providerId);
     const cooling = h?.status === "rate_limited" && cfg.routing.respect_provider_cooldowns ? (h.resumeAt ?? Date.now() + 60_000) : null;
     const ex: CandidateExplanation = {
@@ -141,17 +169,26 @@ export function planRoute(
   }
 
   const score = (id: string) => deps.qualification(id, req.profile, req.tier)?.passRate ?? 0;
+  // Paid models go after free ones unless the policy prefers them.
+  const paidRank = (ep: ModelEndpoint) => (isPaid(ep) ? (policy === "preferred" ? 0 : 1) : policy === "preferred" ? 1 : 0);
   eligible.sort((a, b) => {
     const pa = forced ? 0 : preferIds.indexOf(a.ep.id);
     const pb = forced ? 0 : preferIds.indexOf(b.ep.id);
     if ((pa >= 0) !== (pb >= 0)) return pa >= 0 ? -1 : 1;
     if (pa >= 0 && pb >= 0 && pa !== pb) return pa - pb;
+    const ra = paidRank(a.ep);
+    const rb = paidRank(b.ep);
+    if (ra !== rb) return ra - rb;
     const ca = a.ex.coolingDownUntil !== null ? 1 : 0;
     const cb = b.ex.coolingDownUntil !== null ? 1 : 0;
     if (ca !== cb) return ca - cb;
-    const sa = a.ep.totalParametersB ?? 0;
-    const sb = b.ep.totalParametersB ?? 0;
-    if (prefer === "smallest_sufficient") return sa - sb || score(b.ep.id) - score(a.ep.id) || a.ep.id.localeCompare(b.ep.id);
+    const sa = a.ep.totalParametersB ?? (a.ep.ignoreSizeFloor ? 1e6 : 0);
+    const sb = b.ep.totalParametersB ?? (b.ep.ignoreSizeFloor ? 1e6 : 0);
+    if (prefer === "smallest_sufficient") {
+      // Among paid models, cheaper first; among free models, smaller first.
+      if (isPaid(a.ep) && isPaid(b.ep)) return (a.ep.pricing.outputUsdPerMillion ?? 0) - (b.ep.pricing.outputUsdPerMillion ?? 0) || a.ep.id.localeCompare(b.ep.id);
+      return sa - sb || score(b.ep.id) - score(a.ep.id) || a.ep.id.localeCompare(b.ep.id);
+    }
     return score(b.ep.id) - score(a.ep.id) || sb - sa || a.ep.id.localeCompare(b.ep.id);
   });
   eligible.forEach((e, i) => {

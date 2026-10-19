@@ -108,9 +108,10 @@ describe("size floors and eligibility", () => {
 });
 
 describe("configuration policy", () => {
-  it("refuses paid routing", () => {
+  it("requires a weekly budget before paid routing can be enabled, and known providers", () => {
     env = makeEnv();
-    expect(() => parseConfig(baseConfig({ spend: { paid_fallback_enabled: true, max_paid_usd_per_week: 5 } }), env!.cfg.configPath)).toThrow(/paid routing is not available/);
+    expect(() => parseConfig(baseConfig({ paid: { enabled: true } }), env!.cfg.configPath)).toThrow(/weekly paid budget/);
+    expect(() => parseConfig(baseConfig({ paid: { models: [{ provider: "nope", model: "m", context_limit_tokens: 1000, output_limit_tokens: 100 }] } }), env!.cfg.configPath)).toThrow(/unknown paid provider/);
   });
 
   it("requires increasing tier thresholds", () => {

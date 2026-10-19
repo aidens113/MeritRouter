@@ -419,6 +419,32 @@ export function addRoutingOverride(sy: Switchyard, o: RoutingOverride): number {
   return sy.catalog.addRoutingOverride(o);
 }
 
+// ---------- paid routes ----------
+
+/** Spend against budgets, per key and per model (keys never include secrets). */
+export function paidSummary(sy: Switchyard) {
+  return { enabled: sy.cfg.paid.enabled, tiers: sy.cfg.paid.tiers, providers: Object.keys(sy.cfg.paid.providers), ...sy.spend.summary(), freeLlmApiKeyBilling: sy.spend.freeLlmApiKeyBilling() };
+}
+
+export function addPaidKey(sy: Switchyard, input: Parameters<Switchyard["vault"]["add"]>[0]) {
+  if (!sy.cfg.paid.providers[input.provider]) throw new Error(`unknown paid provider ${input.provider}; add it under paid.providers first`);
+  return sy.vault.add(input);
+}
+
+export function updatePaidKey(sy: Switchyard, id: number, patch: Parameters<Switchyard["vault"]["update"]>[1]) {
+  return sy.vault.update(id, patch);
+}
+
+export function removePaidKey(sy: Switchyard, id: number): void {
+  sy.vault.remove(id);
+}
+
+/** Mark a FreeLLMAPI key's billing class. A paid FreeLLMAPI key blocks its platform from free routing. */
+export function setFreeLlmApiKeyBilling(sy: Switchyard, flKeyId: number, platform: string, billingClass: "free_tier" | "paid_credits" | "paid_postpaid" | "trial"): void {
+  sy.spend.setFreeLlmApiKeyBilling(flKeyId, platform, billingClass);
+  sy.catalog.bump();
+}
+
 // ---------- qualification ----------
 
 export interface QualificationBoard {
