@@ -5,7 +5,9 @@ import type { GateAttempt, GateResponse } from "../gateway/gate.js";
 import {
   SessionEventSchema,
   TOOL_OUTPUT_CAP_BYTES,
+  type ResumeAction,
   type SessionEndStatus,
+  type SessionEvent,
   type SessionEventData,
   type SessionEventType,
   type SessionWorkspace,
@@ -42,13 +44,62 @@ export interface ToolOutcomeInput {
   output: string;
 }
 
-interface IndexUpdate {
-  name?: string | null;
-  ok?: boolean | null;
-  requests?: number;
-  tools?: number;
-  workspace?: SessionWorkspace;
-  ended?: { status: SessionEndStatus; stopReason: string };
+/** What one event changes in the SQLite index (`session_events` row and `sessions` counters). */
+export interface IndexUpdate {
+  name: string | null;
+  ok: boolean | null;
+  requests: number;
+  tools: number;
+  workspace: SessionWorkspace | null;
+  ended: { status: SessionEndStatus; stopReason: string } | null;
+}
+
+/** The index update for an event, derived from the event alone (also used to backfill a lagging index). */
+export function indexUpdateFor(event: SessionEvent): IndexUpdate {
+  const u: IndexUpdate = { name: null, ok: null, requests: 0, tools: 0, workspace: null, ended: null };
+  switch (event.type) {
+    case "started":
+      return { ...u, name: event.data.role };
+    case "message":
+      return { ...u, name: event.data.message.role };
+    case "model_request":
+      return { ...u, name: event.data.purpose, requests: 1 };
+    case "model_response":
+      return { ...u, name: event.data.endpointId, ok: true };
+    case "model_error":
+      return { ...u, name: event.data.code, ok: false };
+    case "tool_intent":
+      return { ...u, name: event.data.name, tools: 1 };
+    case "tool_outcome":
+      return { ...u, name: event.data.name, ok: event.data.ok };
+    case "workspace":
+      return { ...u, workspace: event.data };
+    case "ended":
+      return { ...u, name: event.data.status, ended: { status: event.data.status, stopReason: event.data.stopReason } };
+    case "resumed":
+      return { ...u, name: `${event.data.actions.length} action(s)` };
+    case "note":
+      return u;
+  }
+}
+
+/** Transcript and open intents a reopened recorder continues from (see `SessionStore.reopen`). */
+export interface RecorderRestore {
+  /** The transcript as logged (`message` events replayed). */
+  messages: ChatMessage[];
+  /** Intents with no outcome, so `toolOutcome` can still close them. */
+  openIntents: Array<{ seq: number; callId: string; name: string }>;
+}
+
+/** Write one event to the SQLite index. Call inside a transaction. */
+export function writeIndex(db: Db, sessionId: string, seq: number, type: SessionEventType, at: number, idx: IndexUpdate): void {
+  db.prepare("INSERT INTO session_events (session_id, seq, type, at, name, ok) VALUES (?, ?, ?, ?, ?, ?)").run(sessionId, seq, type, at, idx.name, idx.ok === null ? null : idx.ok ? 1 : 0);
+  db.prepare(
+    `UPDATE sessions SET last_seq = MAX(last_seq, ?), updated_at = ?, model_requests = model_requests + ?, tool_calls = tool_calls + ?,
+       workspace_json = COALESCE(?, workspace_json),
+       status = COALESCE(?, status), stop_reason = COALESCE(?, stop_reason), ended_at = COALESCE(?, ended_at)
+     WHERE id = ?`,
+  ).run(seq, at, idx.requests, idx.tools, idx.workspace ? JSON.stringify(idx.workspace) : null, idx.ended?.status ?? null, idx.ended?.stopReason ?? null, idx.ended ? at : null, sessionId);
 }
 
 /** Cheap identity of a logged message; tool outputs are keyed by call id because compaction rewrites them in place. */
@@ -92,8 +143,13 @@ export class SessionRecorder {
     readonly logPath: string,
     private readonly now: () => number,
     lastSeq = 0,
+    restore?: RecorderRestore,
   ) {
     this.seq = lastSeq;
+    if (restore) {
+      for (const m of restore.messages) this.logged.push(fingerprint(m));
+      for (const i of restore.openIntents) this.intents.set(i.seq, { callId: i.callId, name: i.name });
+    }
   }
 
   /** Sequence number of the last appended event (0 before any). */
@@ -121,7 +177,7 @@ export class SessionRecorder {
     if (start < this.logged.length) this.logged.length = start;
     for (let i = start; i < messages.length; i++) {
       const m = messages[i]!;
-      this.append("message", { index: i, message: m }, { name: m.role });
+      this.append("message", { index: i, message: m });
       this.logged.push(fingerprint(m));
     }
     return messages.length;
@@ -141,7 +197,6 @@ export class SessionRecorder {
         toolChoice: c.tool_choice ?? null,
         responseFormat: c.response_format?.type ?? null,
       },
-      { name: req.purpose, requests: 1 },
     );
   }
 
@@ -161,22 +216,17 @@ export class SessionRecorder {
         attempts: res.attempts,
         estimatedInputTokens: res.estimatedInputTokens,
       },
-      { name: res.endpoint.id, ok: true },
     );
   }
 
   modelError(input: ModelErrorInput): number {
     const f = errorFields(input.error);
-    return this.append("model_error", { executionId: input.executionId, ...f, attempts: input.attempts ?? [] }, { name: f.code, ok: false });
+    return this.append("model_error", { executionId: input.executionId, ...f, attempts: input.attempts ?? [] });
   }
 
   /** Record a tool call before it runs. Returns the intent's sequence number for `toolOutcome`. */
   toolIntent(input: ToolIntentInput): number {
-    const seq = this.append(
-      "tool_intent",
-      { callId: input.callId, name: input.name, args: input.args, sideEffect: input.sideEffect, idempotent: input.idempotent ?? false },
-      { name: input.name, tools: 1 },
-    );
+    const seq = this.append("tool_intent", { callId: input.callId, name: input.name, args: input.args, sideEffect: input.sideEffect, idempotent: input.idempotent ?? false });
     this.intents.set(seq, { callId: input.callId, name: input.name });
     return seq;
   }
@@ -186,27 +236,40 @@ export class SessionRecorder {
     const intent = this.intents.get(intentSeq);
     if (!intent) throw new Error(`session ${this.id}: no tool intent at seq ${intentSeq}`);
     this.intents.delete(intentSeq);
-    return this.append("tool_outcome", { intentSeq, callId: intent.callId, name: intent.name, ok: input.ok, ...capOutput(input.output) }, { name: intent.name, ok: input.ok });
+    return this.append("tool_outcome", { intentSeq, callId: intent.callId, name: intent.name, ok: input.ok, ...capOutput(input.output) });
   }
 
   note(text: string, data?: unknown): number {
-    return this.append("note", data === undefined ? { text } : { text, data }, {});
+    return this.append("note", data === undefined ? { text } : { text, data });
   }
 
   setWorkspace(workspace: SessionWorkspace): number {
-    return this.append("workspace", workspace, { workspace });
+    return this.append("workspace", workspace);
   }
 
   /** End the session. Calling it again is a no-op that returns the first `ended` event's seq. */
   end(status: SessionEndStatus, stopReason: string): number {
     if (this.endedSeq !== null) return this.endedSeq;
-    const seq = this.append("ended", { status, stopReason }, { name: status, ended: { status, stopReason } });
+    const seq = this.append("ended", { status, stopReason });
     this.endedSeq = seq;
     return seq;
   }
 
-  /** @internal Used by `SessionStore.create` for the `started` event. */
-  append<T extends SessionEventType>(type: T, data: SessionEventData<T>, idx: IndexUpdate): number {
+  /**
+   * Record that this session was resumed: what the model was told, the plan's actions with the
+   * caller's `result` for each, and the intents and requests the resume settled. Pass the
+   * `ResumePlan` itself as `detail`. Intents listed in `resolvedIntentSeqs` are closed: a later
+   * `toolOutcome` for them throws, and `pendingIntents` no longer reports them.
+   */
+  resumed(summary: string, actions: ResumeAction[], detail: { resolvedIntentSeqs?: number[]; droppedRequestSeqs?: number[] } = {}): number {
+    const resolved = detail.resolvedIntentSeqs ?? [];
+    const seq = this.append("resumed", { summary, actions, resolvedIntentSeqs: resolved, droppedRequestSeqs: detail.droppedRequestSeqs ?? [] });
+    for (const s of resolved) this.intents.delete(s);
+    return seq;
+  }
+
+  /** @internal Typed methods (and `SessionStore.create` for `started`) append through this. */
+  append<T extends SessionEventType>(type: T, data: SessionEventData<T>): number {
     if (this.endedSeq !== null) throw new Error(`session ${this.id} has ended`);
     const seq = this.seq + 1;
     const at = this.now();
@@ -222,19 +285,8 @@ export class SessionRecorder {
     }
     // The line is durable: its seq is taken even if the index update below fails.
     this.seq = seq;
-    immediate(this.db, () => {
-      this.db
-        .prepare("INSERT INTO session_events (session_id, seq, type, at, name, ok) VALUES (?, ?, ?, ?, ?, ?)")
-        .run(this.id, seq, type, at, idx.name ?? null, idx.ok === undefined || idx.ok === null ? null : idx.ok ? 1 : 0);
-      this.db
-        .prepare(
-          `UPDATE sessions SET last_seq = ?, updated_at = ?, model_requests = model_requests + ?, tool_calls = tool_calls + ?,
-             workspace_json = COALESCE(?, workspace_json),
-             status = COALESCE(?, status), stop_reason = COALESCE(?, stop_reason), ended_at = COALESCE(?, ended_at)
-           WHERE id = ?`,
-        )
-        .run(seq, at, idx.requests ?? 0, idx.tools ?? 0, idx.workspace ? JSON.stringify(idx.workspace) : null, idx.ended?.status ?? null, idx.ended?.stopReason ?? null, idx.ended ? at : null, this.id);
-    });
+    const idx = indexUpdateFor(event);
+    immediate(this.db, () => writeIndex(this.db, this.id, seq, type, at, idx));
     return seq;
   }
 }

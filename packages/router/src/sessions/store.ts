@@ -1,10 +1,12 @@
-import { mkdirSync, readFileSync } from "node:fs";
+import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, writeSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { ProfileNameSchema, RoleNameSchema, TierNameSchema, type ProfileName, type RoleName, type TierName } from "../config/schema.js";
-import { newId, type Db } from "../storage/db.js";
-import { SessionEventSchema, SessionStatusSchema, SessionWorkspaceSchema, type CorruptLine, type SessionEvent, type SessionStatus, type SessionWorkspace } from "./events.js";
-import { SessionRecorder } from "./recorder.js";
+import type { ChatMessage } from "../gateway/types.js";
+import { immediate, newId, type Db } from "../storage/db.js";
+import { SessionEventSchema, SessionStatusSchema, SessionWorkspaceSchema, type CorruptLine, type SessionEndStatus, type SessionEvent, type SessionStatus, type SessionWorkspace } from "./events.js";
+import { indexUpdateFor, SessionRecorder, writeIndex } from "./recorder.js";
+import { pendingIntentsFrom, planResume, replayTranscript, type PendingIntent, type PlanResumeOptions, type ResumePlan } from "./resume.js";
 
 /** Logs live under `<storage.directory>/sessions/`; rows store the path relative to the storage directory. */
 export const SESSIONS_DIR = "sessions";
@@ -92,6 +94,58 @@ const RowSchema = z.object({
 const DEFAULT_EVENTS_LIMIT = 1000;
 const MAX_EVENTS_LIMIT = 10_000;
 
+/** Stop reason given to sessions `markDeadRunning` interrupts. */
+export const PROCESS_DIED = "process_died";
+
+export interface ReopenOptions {
+  /** Statuses a session may be reopened from. Default `["interrupted"]`. */
+  from?: SessionEndStatus[];
+}
+
+/** Valid events of a whole log, in log order, and the lines that failed. */
+function parseLog(text: string): { events: SessionEvent[]; corrupt: CorruptLine[] } {
+  const events: SessionEvent[] = [];
+  const corrupt: CorruptLine[] = [];
+  for (const [n, line] of text.split(/\r?\n/).entries()) {
+    if (!line.trim()) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch (err) {
+      corrupt.push({ line: n + 1, error: `invalid JSON: ${(err as Error).message}`, excerpt: line.slice(0, 200) });
+      continue;
+    }
+    const r = SessionEventSchema.safeParse(parsed);
+    if (!r.success) {
+      corrupt.push({ line: n + 1, error: r.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; "), excerpt: line.slice(0, 200) });
+      continue;
+    }
+    events.push(r.data);
+  }
+  return { events, corrupt };
+}
+
+/**
+ * Terminate a torn final line (a crash mid-write) so the next append starts a line of its own;
+ * the torn line stays in the log and is reported as corrupt. A missing log is left missing.
+ */
+function terminateTornLine(logPath: string): void {
+  let buf: Buffer;
+  try {
+    buf = readFileSync(logPath);
+  } catch {
+    return;
+  }
+  if (buf.length === 0 || buf[buf.length - 1] === 0x0a) return;
+  const fd = openSync(logPath, "a");
+  try {
+    writeSync(fd, "\n");
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /** Agent sessions: an append-only JSONL event log per session, indexed in SQLite. */
 export class SessionStore {
   constructor(
@@ -129,8 +183,80 @@ export class SessionStore {
       )
       .run(id, fields.taskId, fields.jobId, fields.parentSessionId, fields.previousSessionId, fields.role, fields.agentLabel, fields.profile, fields.tier, rel, at, at);
     const rec = new SessionRecorder(id, this.db, this.logPathFor(id), this.now);
-    rec.append("started", { sessionId: id, ...fields }, { name: fields.role });
+    rec.append("started", { sessionId: id, ...fields });
     return rec;
+  }
+
+  /**
+   * Continue an ended session: its status goes back to `running` (stop reason and end time
+   * cleared) and the returned recorder continues its sequence numbers, knows the logged
+   * transcript (so `syncMessages` logs only new or rewritten messages), and can still close its
+   * open intents. A torn final log line is terminated first, and index rows missing for durable
+   * log lines are backfilled. Writes a `note` "reopened" with the previous status. Throws when
+   * the session does not exist or its status is not in `opts.from` (default `interrupted`); the
+   * status check and the switch to `running` are one transaction, so two processes cannot
+   * reopen the same session.
+   */
+  reopen(id: string, opts: ReopenOptions = {}): SessionRecorder {
+    const rec = this.get(id);
+    if (!rec) throw new Error(`unknown session ${id}`);
+    const from = opts.from ?? ["interrupted"];
+    const { events, seq } = this.reattach(rec);
+    const prev = this.get(id)!;
+    const at = this.now();
+    const claimed = immediate(this.db, () =>
+      from.length
+        ? this.db
+            .prepare(`UPDATE sessions SET status = 'running', stop_reason = NULL, ended_at = NULL, updated_at = ? WHERE id = ? AND status IN (${from.map(() => "?").join(", ")})`)
+            .run(at, id, ...from).changes
+        : 0,
+    );
+    if (claimed !== 1) throw new Error(`session ${id} is ${prev.status}; only ${from.join(" or ") || "no"} sessions can be reopened`);
+    const recorder = new SessionRecorder(id, this.db, rec.logPath, this.now, seq, {
+      messages: replayTranscript(events).messages,
+      openIntents: pendingIntentsFrom(events).map((p) => ({ seq: p.seq, callId: p.callId, name: p.name })),
+    });
+    recorder.note("reopened", { previousStatus: prev.status, previousStopReason: prev.stopReason });
+    return recorder;
+  }
+
+  /**
+   * At recovery: every `running` session for which `isLeaseLive` returns false (its owner is
+   * gone, e.g. its task lease expired) ends `interrupted` with `stopReason` (default
+   * `process_died`), written to its log as an `ended` event. Returns the sessions it ended.
+   */
+  markDeadRunning(isLeaseLive: (session: SessionRecord) => boolean, stopReason: string = PROCESS_DIED): SessionRecord[] {
+    const out: SessionRecord[] = [];
+    const running = this.db.prepare("SELECT * FROM sessions WHERE status = 'running' ORDER BY created_at, rowid").all().map((r) => this.record(r));
+    for (const rec of running) {
+      if (isLeaseLive(rec)) continue;
+      const { seq } = this.reattach(rec);
+      if (this.get(rec.id)?.status !== "running") continue; // the log already ended it
+      new SessionRecorder(rec.id, this.db, rec.logPath, this.now, seq).end("interrupted", stopReason);
+      out.push(this.get(rec.id)!);
+    }
+    return out;
+  }
+
+  /** The transcript rebuilt from the log's `message` events (see `replayTranscript`). Null for an unknown session. */
+  transcript(id: string): ChatMessage[] | null {
+    const all = this.allEvents(id);
+    return all ? replayTranscript(all.events).messages : null;
+  }
+
+  /** Tool intents with no outcome (see `PendingIntent`). Null for an unknown session. */
+  pendingIntents(id: string): PendingIntent[] | null {
+    const all = this.allEvents(id);
+    return all ? pendingIntentsFrom(all.events) : null;
+  }
+
+  /** `planResume` over the whole log, with corrupt lines added to its warnings. Null for an unknown session. */
+  planResume(id: string, opts: PlanResumeOptions = {}): ResumePlan | null {
+    const all = this.allEvents(id);
+    if (!all) return null;
+    const plan = planResume(all.events, opts);
+    for (const c of all.corrupt) plan.warnings.push(`log line ${c.line} skipped: ${c.error}`);
+    return plan;
   }
 
   get(id: string): SessionRecord | null {
@@ -174,38 +300,44 @@ export class SessionStore {
     if (!rec) return null;
     const afterSeq = opts.afterSeq ?? 0;
     const limit = Math.max(1, Math.min(Math.floor(opts.limit ?? DEFAULT_EVENTS_LIMIT), MAX_EVENTS_LIMIT));
-    const corrupt: CorruptLine[] = [];
-    let text = "";
+    const log = this.readLog(rec.logPath);
+    const after = log.events.filter((e) => e.seq > afterSeq);
+    return { sessionId: id, events: after.slice(0, limit), corrupt: log.corrupt, hasMore: after.length > limit, lastSeq: rec.lastSeq };
+  }
+
+  /** Every valid event of a session's log (no paging). Null for an unknown session. */
+  private allEvents(id: string): { events: SessionEvent[]; corrupt: CorruptLine[] } | null {
+    const rec = this.get(id);
+    return rec ? this.readLog(rec.logPath) : null;
+  }
+
+  private readLog(logPath: string): { events: SessionEvent[]; corrupt: CorruptLine[] } {
+    let text: string;
     try {
-      text = readFileSync(rec.logPath, "utf8");
+      text = readFileSync(logPath, "utf8");
     } catch (err) {
-      corrupt.push({ line: 0, error: `log unreadable: ${(err as Error).message}`, excerpt: "" });
+      return { events: [], corrupt: [{ line: 0, error: `log unreadable: ${(err as Error).message}`, excerpt: "" }] };
     }
-    const events: SessionEvent[] = [];
-    let hasMore = false;
-    const lines = text.split(/\r?\n/);
-    for (const [n, line] of lines.entries()) {
-      if (!line.trim()) continue;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(line);
-      } catch (err) {
-        corrupt.push({ line: n + 1, error: `invalid JSON: ${(err as Error).message}`, excerpt: line.slice(0, 200) });
-        continue;
-      }
-      const r = SessionEventSchema.safeParse(parsed);
-      if (!r.success) {
-        corrupt.push({ line: n + 1, error: r.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; "), excerpt: line.slice(0, 200) });
-        continue;
-      }
-      if (r.data.seq <= afterSeq) continue;
-      if (events.length >= limit) {
-        hasMore = true;
-        continue; // keep scanning so corrupt lines are still reported
-      }
-      events.push(r.data);
-    }
-    return { sessionId: id, events, corrupt, hasMore, lastSeq: rec.lastSeq };
+    return parseLog(text);
+  }
+
+  /**
+   * Bring a session's index in line with its log before appending to it again: terminate a
+   * torn final line, then backfill index rows (and counters, status) for durable log lines the
+   * index missed (a crash between the fsync and the SQLite update). Returns the log's events and
+   * the seq to continue from.
+   */
+  private reattach(rec: SessionRecord): { events: SessionEvent[]; seq: number } {
+    terminateTornLine(rec.logPath);
+    const { events } = this.readLog(rec.logPath);
+    const indexed = immediate(this.db, () => {
+      const row = this.db.prepare("SELECT last_seq FROM sessions WHERE id = ?").get(rec.id) as { last_seq: number } | undefined;
+      const last = row?.last_seq ?? 0;
+      for (const e of events) if (e.seq > last) writeIndex(this.db, rec.id, e.seq, e.type, e.at, indexUpdateFor(e));
+      return last;
+    });
+    const seq = events.reduce((m, e) => Math.max(m, e.seq), Math.max(indexed, rec.lastSeq));
+    return { events, seq };
   }
 
   private record(raw: unknown): SessionRecord {
