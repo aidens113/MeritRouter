@@ -156,7 +156,18 @@ export const ConfigSchema = z
         chain_verification_ttl_seconds: z.number().int().positive().default(600),
       })
       .strict(),
-    storage: z.object({ directory: z.string().min(1).default(".switchyard") }).strict().prefault({}),
+    storage: z
+      .object({
+        directory: z.string().min(1).default(".switchyard"),
+        /**
+         * SQLite durability: `normal` (synchronous=NORMAL; a power loss may drop the last commits)
+         * or `full` (synchronous=FULL; every commit is on disk first). Session logs are fsynced
+         * per event either way.
+         */
+        durability: z.enum(["normal", "full"]).default("normal"),
+      })
+      .strict()
+      .prefault({}),
     models: z
       .object({
         /** Optional YAML with manual endpoints and per-model overrides, relative to the config file. */

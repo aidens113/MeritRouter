@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync, existsSync, copyFileSync, mkdirSync } from "node:fs";
+import { homedir, userInfo } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -12,6 +13,10 @@ import { brainAccessRequests, brainRead, brainSearch, brainTree, decideBrainAcce
 import { blame } from "./attribution/index.js";
 import { SwitchyardError } from "./core/errors.js";
 import { SessionStatusSchema, type SessionEvent, type SessionEventData } from "./sessions/events.js";
+import type { ResolvedConfig } from "./config/load.js";
+import { backupStorage, restoreStorage } from "./operations/backup.js";
+import { Daemon, acquireDaemonLock, logsDirFor, readDaemonLock } from "./operations/daemon.js";
+import { ServiceActionSchema, ServicePlatformSchema, describeServiceSteps, runServiceSteps, servicePlan } from "./operations/service.js";
 
 const HELP = `switchyard - delegate bounded tasks to approved free model pools
 
@@ -67,6 +72,16 @@ Brain (shared knowledge) and attribution
 Qualification
   qualify <model-id> [--trials n]   run the private eval suite pinned to one model
   qualify status                    leaderboard (grades any finished runs first)
+
+Operations (storage.durability: normal | full sets SQLite's synchronous level)
+  backup <dir> [--include-master-key]   online snapshot of the database, session logs, and
+                                artifacts into a new directory (never worktrees)
+  restore <dir> [--force]       restore a backup; refused while a worker holds live leases,
+                                and over existing state unless --force (which moves it aside)
+  daemon [--max-restarts n] [--window s] [--max-delay s]   run the worker and restart it on
+                                failure with backoff; logs under <storage>/logs/
+  service install|uninstall|status [--name n] [--dry-run]   run the daemon at logon as a
+                                systemd user unit, launchd agent, or Windows scheduled task
 `;
 
 function out(value: unknown, json: boolean): void {
@@ -205,6 +220,106 @@ function sessionTimeline(d: SessionDetail, after: number): string {
   ].join("\n").trimEnd();
 }
 
+// ---------- operations: backup, restore, daemon, service ----------
+
+interface OperationsFlags {
+  force?: boolean;
+  "include-master-key"?: boolean;
+  "dry-run"?: boolean;
+  "max-restarts"?: string;
+  window?: string;
+  "max-delay"?: string;
+  name?: string;
+}
+
+const CLI_PATH = fileURLToPath(import.meta.url);
+
+async function operationsCommand(cmd: string, args: string[], values: OperationsFlags, cfg: ResolvedConfig, json: boolean): Promise<number> {
+  switch (cmd) {
+    case "backup": {
+      if (!args[0]) throw new SwitchyardError("usage", "usage: switchyard backup <dir> [--include-master-key]");
+      const m = await backupStorage({ storageDir: cfg.storageDir, targetDir: args[0], includeMasterKey: values["include-master-key"] ?? false });
+      out(json ? m : [
+        `backed up ${cfg.storageDir} to ${path.resolve(args[0])}`,
+        `schema ${m.schemaVersion}; ${m.tasks} task(s), ${m.sessions} session(s) with ${m.sessionLogs} log(s), ${m.artifacts} artifact(s)`,
+        m.includesMasterKey ? "includes the vault master key: keep this backup private" : "the vault master key is not included; paid keys need SWITCHYARD_MASTER_KEY or the original .master-key to decrypt",
+        ...m.missing.map((f) => `MISSING ${f}`),
+      ].join("\n"), json);
+      return m.missing.length ? 1 : 0;
+    }
+    case "restore": {
+      if (!args[0]) throw new SwitchyardError("usage", "usage: switchyard restore <dir> [--force]");
+      const r = restoreStorage({ backupDir: args[0], storageDir: cfg.storageDir, force: values.force ?? false });
+      out(json ? r : [
+        `restored ${path.resolve(args[0])} (taken ${r.manifest.createdAt}) into ${r.storageDir}; schema ${r.schemaVersion}`,
+        ...(r.previousMovedTo ? [`previous state moved to ${r.previousMovedTo}`] : []),
+        ...(r.leasesReleased ? [`${r.leasesReleased} task(s) were running at backup time; the next worker recovers them`] : []),
+      ].join("\n"), json);
+      return 0;
+    }
+    case "daemon": {
+      const seconds = (name: string, v: string | undefined) => (v === undefined ? undefined : countFlag(name, v, 1)! * 1000);
+      const maxRestarts = countFlag("max-restarts", values["max-restarts"], 1);
+      const windowMs = seconds("window", values.window);
+      const maxDelayMs = seconds("max-delay", values["max-delay"]);
+      const logsDir = logsDirFor(cfg.storageDir);
+      const release = acquireDaemonLock(logsDir, cfg.configPath);
+      const daemon = new Daemon({
+        command: process.execPath,
+        args: [...process.execArgv, CLI_PATH, "worker", "--config", cfg.configPath],
+        cwd: path.dirname(cfg.configPath),
+        logsDir,
+        policy: { ...(maxRestarts ? { maxRestarts } : {}), ...(windowMs ? { windowMs } : {}), ...(maxDelayMs ? { maxDelayMs } : {}) },
+      });
+      const stop = () => void daemon.stop();
+      process.once("SIGINT", stop);
+      process.once("SIGTERM", stop);
+      out(`daemon ${process.pid} supervising the worker; logs in ${logsDir}; Ctrl+C to stop`, false);
+      try {
+        const r = await daemon.run();
+        out(json ? r : `daemon ${r.reason}: ${r.detail}`, json);
+        return r.reason === "gave_up" ? 1 : 0;
+      } finally {
+        release();
+      }
+    }
+    case "service": {
+      const action = ServiceActionSchema.safeParse(args[0]);
+      if (!action.success) throw new SwitchyardError("usage", "usage: switchyard service install|uninstall|status [--name n] [--dry-run]");
+      const platform = ServicePlatformSchema.safeParse(process.platform);
+      if (!platform.success) throw new SwitchyardError("usage", `service install supports linux, macOS, and Windows, not ${process.platform}`);
+      const user = userInfo();
+      const plan = servicePlan({
+        platform: platform.data,
+        ...(values.name ? { name: values.name } : {}),
+        nodePath: process.execPath,
+        cliPath: CLI_PATH,
+        configPath: cfg.configPath,
+        workingDir: path.dirname(cfg.configPath),
+        storageDir: cfg.storageDir,
+        logsDir: logsDirFor(cfg.storageDir),
+        homeDir: homedir(),
+        ...(user.uid >= 0 ? { uid: user.uid } : {}),
+        ...(platform.data === "win32" ? { windowsUser: process.env.USERDOMAIN ? `${process.env.USERDOMAIN}\\${user.username}` : user.username } : {}),
+      });
+      if (values["dry-run"]) {
+        out(json ? { action: action.data, plan } : describeServiceSteps(plan, action.data), json);
+        return 0;
+      }
+      const r = runServiceSteps(plan, action.data);
+      const lock = action.data === "status" ? readDaemonLock(logsDirFor(cfg.storageDir)) : null;
+      out(json ? { ...r, daemon: lock } : [
+        ...r.results.map((x) => `${x.step.kind === "run" ? [x.step.command, ...x.step.args].join(" ") : x.output}${x.code ? ` (exit ${x.code})` : ""}${x.step.kind === "run" && x.output.trim() ? `\n${x.output.trimEnd()}` : ""}`),
+        ...(action.data === "status" ? [lock ? `daemon pid ${lock.pid} ${lock.alive ? "running" : "not running (stale lock)"} since ${lock.startedAt}` : "no daemon lock for this storage directory"] : []),
+        ...(action.data === "install" && r.ok ? plan.notes : []),
+      ].join("\n"), json);
+      return r.ok ? 0 : 1;
+    }
+    default:
+      throw new SwitchyardError("usage", `unknown operations command ${cmd}`);
+  }
+}
+
 async function main(): Promise<number> {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
@@ -232,6 +347,13 @@ async function main(): Promise<number> {
       job: { type: "string" },
       after: { type: "string" },
       limit: { type: "string" },
+      force: { type: "boolean", default: false },
+      "include-master-key": { type: "boolean", default: false },
+      "dry-run": { type: "boolean", default: false },
+      "max-restarts": { type: "string" },
+      window: { type: "string" },
+      "max-delay": { type: "string" },
+      name: { type: "string" },
       help: { type: "boolean", short: "h", default: false },
     },
   });
@@ -261,6 +383,9 @@ async function main(): Promise<number> {
   }
 
   const cfg = loadConfig(values.config);
+  // Operations work on the storage directory directly and must not open a Switchyard (restore
+  // replaces the database; the daemon's worker runs in a child process).
+  if (cmd === "backup" || cmd === "restore" || cmd === "daemon" || cmd === "service") return operationsCommand(cmd, args, values, cfg, json);
   const worker = cmd === "worker" || (cmd === "submit" && values.wait);
   const sy = new Switchyard(cfg, { worker, coding: createCodingRunner(cfg) });
   try {
@@ -347,10 +472,13 @@ async function main(): Promise<number> {
       case "worker": {
         sy.recover();
         out(`worker ${sy.owner} running; Ctrl+C to stop`, false);
+        // The service's timers are unref'd; this ref'd timer keeps the worker alive until a signal.
+        const keepAlive = setInterval(() => undefined, 60_000);
         await new Promise<void>((resolve) => {
           process.once("SIGINT", resolve);
           process.once("SIGTERM", resolve);
         });
+        clearInterval(keepAlive);
         return 0;
       }
       case "submit": {
