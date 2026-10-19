@@ -207,6 +207,22 @@ export const ConfigSchema = z
         escalate_on_failure: z.boolean().default(true),
         /** Skip platforms FreeLLMAPI reports as rate limited (GET /v1/providers). */
         respect_provider_cooldowns: z.boolean().default(true),
+        /**
+         * Per-provider circuit breaker: after `failure_threshold` consecutive provider or
+         * transport failures (5xx, timeouts, connection errors, 429s outside a reported
+         * cooldown) the provider is skipped for `open_seconds`, doubling after each failed probe
+         * up to `max_open_seconds`; then one probe request is let through. Invalid model output
+         * never counts.
+         */
+        circuit_breaker: z
+          .object({
+            enabled: z.boolean().default(true),
+            failure_threshold: z.number().int().min(1).max(100).default(5),
+            open_seconds: z.number().int().min(1).default(30),
+            max_open_seconds: z.number().int().min(1).default(900),
+          })
+          .strict()
+          .prefault({}),
       })
       .strict()
       .prefault({}),
@@ -246,6 +262,13 @@ export const ConfigSchema = z
         max_invalid_output_retries: z.number().int().min(0).max(3).default(1),
         await_max_seconds: z.number().int().positive().default(240),
         check_timeout_seconds: z.number().int().positive().default(600),
+        /**
+         * Progress watchdog: a running session with no new event for this long is aborted as
+         * `interrupted` (`watchdog`) and resumes from its last durable event. A tool still
+         * running, a pending model request, or final checks extend the allowance to their own
+         * timeouts; supervisors waiting in await_tasks or ask_user are exempt. 0 disables it.
+         */
+        watchdog_minutes: z.number().min(0).default(10),
       })
       .strict()
       .prefault({}),

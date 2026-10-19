@@ -26,6 +26,8 @@ import type { SessionRecorder } from "../sessions/recorder.js";
 import type { SessionEndStatus } from "../sessions/events.js";
 import type { ResumePlan } from "../sessions/resume.js";
 import { isSimulatedCrash } from "./faults.js";
+import { sessionProgress, watchdogVerdict } from "./watchdog.js";
+import { MAX_AUTO_RESUMES } from "./scheduler.js";
 import { z } from "zod";
 
 /** The working document a task belongs to: its job's, an explicit one, or the shared ad-hoc one. */
@@ -36,7 +38,10 @@ export function effortFor(spec: { profile: string; parentTaskId?: string | undef
   return "adhoc";
 }
 
-export type AbortReason = "cancel" | "deadline" | "lease_lost" | "shutdown";
+export type AbortReason = "cancel" | "deadline" | "lease_lost" | "shutdown" | "watchdog";
+
+/** Stop reason of a session the progress watchdog aborted; the task is re-queued to resume it. */
+export const WATCHDOG_STOP = "watchdog";
 
 export interface CodingRunner {
   run(ctx: RunContext): Promise<RunOutcome>;
@@ -109,6 +114,8 @@ export class Executor {
   readonly controllers = new Map<string, AbortController>();
   private readonly routing = new Map<string, Routing>();
   private readonly reports = new Set<Promise<unknown>>();
+  /** Single-task runs the progress watchdog looks at, with their current session. */
+  private readonly watched = new Map<string, { task: StoredTask; controller: AbortController; session: () => SessionRecorder | null }>();
 
   /** Wait for pending brain report writes (called on shutdown). */
   async flush(): Promise<void> {
@@ -276,6 +283,7 @@ export class Executor {
     const routing: Routing = { classification: null, tier: null, escalatedFrom: null, attempts: [] };
     this.routing.set(task.row.id, routing);
     let session: SessionRecorder | null = null;
+    this.watched.set(task.row.id, { task, controller, session: () => session });
     // A simulated crash (fault injection) skips every cleanup a dying process could not do.
     let crashed = false;
     try {
@@ -356,6 +364,7 @@ export class Executor {
     } finally {
       // Whatever escaped above (a store or recording failure), never leave the session running.
       if (!crashed) this.endSession(task, session, "failed", "executor_error");
+      this.watched.delete(task.row.id);
       this.routing.delete(task.row.id);
       release();
     }
@@ -447,6 +456,7 @@ export class Executor {
     if (reason === "cancel") return { kind: "final", state: "cancelled", stopReason: "cancelled while running" };
     if (reason === "lease_lost") return { kind: "abandon", reason: "lease lost" };
     if (reason === "shutdown") return { kind: "abandon", reason: "shutdown" };
+    if (reason === "watchdog") return { kind: "abandon", reason: WATCHDOG_STOP };
     if (reason === "deadline") return { kind: "final", state: "failed", stopReason: "deadline_exceeded" };
 
     const now = this.d.now();
@@ -498,6 +508,7 @@ export class Executor {
   private settle(task: StoredTask, d: Disposition, partial?: RunnerResult): void {
     if (d.kind === "abandon") {
       if (d.reason === "shutdown") this.d.tasks.interrupt(task.row.id, this.d.owner, "worker shut down");
+      if (d.reason === WATCHDOG_STOP) this.requeueStuck(task);
       this.d.onSettled(task.row.id);
       return;
     }
@@ -551,6 +562,38 @@ export class Executor {
       this.reports.add(p);
     }
     this.d.onSettled(task.row.id);
+  }
+
+  /**
+   * Progress watchdog (called on every scheduler tick): a running session with no new event for
+   * longer than its allowance (see `watchdogVerdict`) is aborted with reason `watchdog`. The
+   * run then ends its session `interrupted` (`watchdog`) and the task is re-queued, so the next
+   * run resumes the session from its last durable event. Returns the aborted task ids.
+   */
+  checkWatchdog(): string[] {
+    if (this.d.cfg.execution.watchdog_minutes <= 0) return [];
+    const aborted: string[] = [];
+    for (const [taskId, w] of this.watched) {
+      const session = w.session();
+      if (w.controller.signal.aborted || !session || session.ended) continue;
+      const progress = sessionProgress(this.d.db, session.id);
+      if (!progress) continue;
+      const v = watchdogVerdict(this.d.cfg, progress, this.d.now(), { checks: w.task.spec.constraints.checks?.length ?? 0 });
+      if (v.kind !== "stuck") continue;
+      this.d.tasks.event(taskId, "watchdog_abort", { sessionId: session.id, idleMs: v.idleMs, allowanceMs: v.allowanceMs, waitingOn: v.waitingOn });
+      w.controller.abort("watchdog" satisfies AbortReason);
+      aborted.push(taskId);
+    }
+    return aborted;
+  }
+
+  /** A run the watchdog stopped: interrupted, then queued again to resume its session (bounded like recovery). */
+  private requeueStuck(task: StoredTask): void {
+    this.d.tasks.interrupt(task.row.id, this.d.owner, "no progress: stopped by the watchdog");
+    const now = this.d.tasks.get(task.row.id);
+    if (now?.row.state !== "interrupted" || now.row.run_count >= MAX_AUTO_RESUMES) return;
+    const sessionId = this.watched.get(task.row.id)?.session()?.id;
+    this.d.tasks.resume(task.row.id, sessionId ? { sessionId } : {});
   }
 
   abortAll(reason: AbortReason): void {
