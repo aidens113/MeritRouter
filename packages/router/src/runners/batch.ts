@@ -1,5 +1,6 @@
 import type { ChatMessage } from "../gateway/types.js";
 import { estimateTokens } from "../gateway/types.js";
+import type { GateAttempt, GateResponse } from "../gateway/gate.js";
 import { AdmissionDenied } from "../core/errors.js";
 import { compileOutputSchema } from "../core/validate.js";
 import { evidenceUniverse, extractJson, validateWorkerOutput, type EvidenceUniverse, OUTPUT_CONTRACT } from "../core/worker-output.js";
@@ -132,17 +133,32 @@ async function runChunk(chunk: Item[], done: Done): Promise<void> {
       { role: "system", content: batchSystemPrompt() },
       { role: "user", content: pending.map(renderItem).join("\n\n") },
     ];
-    let response;
-    try {
-      const res = await ask(first, {
+    const request = {
+      executionId,
+      purpose: round === 0 ? "batch" : "batch_retry",
+      chat: { messages, max_tokens: pending.length * perItemOut + 300, temperature: 0.2, response_format: { type: "json_object" as const } },
+    };
+    // One physical request serves every pending item: record it in each item's session, each
+    // noting that it was shared and with whom. `ask` itself records nothing (session: null).
+    const sessions = pending.flatMap((p) => (p.ctx.session ? [{ item: p, session: p.ctx.session }] : []));
+    for (const { item, session } of sessions) {
+      session.note(`shared batch request (round ${round + 1}, ${pending.length} item(s)); this task is item ${item.itemId}`, {
         executionId,
-        purpose: round === 0 ? "batch" : "batch_retry",
-        participants: pending.map((p) => ({ taskId: p.ctx.taskId, leaseOwner: p.ctx.leaseOwner, budget: p.ctx.budget, weight: p.estTokens })),
-        chat: { messages, max_tokens: pending.length * perItemOut + 300, temperature: 0.2, response_format: { type: "json_object" } },
+        itemId: item.itemId,
+        members: pending.map((p) => ({ taskId: p.ctx.taskId, itemId: p.itemId })),
       });
-      response = res.response;
-      for (const p of pending) if (p.ctx !== first) p.ctx.attempts.push(...res.attempts);
+      session.syncMessages(messages);
+      session.modelRequest(request);
+    }
+    let res: GateResponse;
+    try {
+      res = await ask(
+        { ...first, session: null },
+        { ...request, participants: pending.map((p) => ({ taskId: p.ctx.taskId, leaseOwner: p.ctx.leaseOwner, budget: p.ctx.budget, weight: p.estTokens })) },
+      );
     } catch (err) {
+      const attempts = (err as { attempts?: GateAttempt[] }).attempts;
+      for (const { session } of sessions) session.modelError({ executionId, error: err, ...(attempts ? { attempts } : {}) });
       admission.finishExecution(executionId, "failed", { error: (err as Error).message });
       if (err instanceof AdmissionDenied && err.taskId && ["cancel_requested", "lease_lost", "task_not_active", "deadline_exceeded"].includes(err.reason)) {
         // Drop the member that cannot participate and retry the round without it.
@@ -155,6 +171,9 @@ async function runChunk(chunk: Item[], done: Done): Promise<void> {
       }
       throw Object.assign(err as Error, { batchPendingTaskIds: pending.map((p) => p.ctx.taskId) });
     }
+    for (const { session } of sessions) session.modelResponse(res);
+    const response = res.response;
+    for (const p of pending) if (p.ctx !== first) p.ctx.attempts.push(...res.attempts);
 
     const text = response.message.content ?? "";
     const responseRef = first.artifacts.write({ taskId: null, executionId, kind: "batch_response", label: `batch ${executionId}`, content: text });
@@ -181,6 +200,7 @@ async function runChunk(chunk: Item[], done: Done): Promise<void> {
     for (const item of pending) {
       const entries = byId.get(item.itemId) ?? [];
       const fail = (errors: string[]) => {
+        item.ctx.session?.note(`batch item ${item.itemId} rejected`, { executionId, errors });
         lastErrors.set(item.ctx.taskId, errors);
         admission.setMemberOutcome(executionId, item.ctx.taskId, `invalid: ${errors.join("; ").slice(0, 500)}`);
         stillPending.push(item);
@@ -217,6 +237,7 @@ async function runChunk(chunk: Item[], done: Done): Promise<void> {
         continue;
       }
       coverage.completed.push(item.itemId);
+      item.ctx.session?.note(`batch item ${item.itemId} accepted`, { executionId });
       admission.setMemberOutcome(executionId, item.ctx.taskId, "completed");
       await done(
         item,

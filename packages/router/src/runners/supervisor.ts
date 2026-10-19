@@ -15,6 +15,7 @@ import { artifactTool, brainReadTools, brainSupervisorTools, commandTool, editTo
 import { supervisorTools, type IntegrationRepo, type SupervisorState } from "../harness/supervisor-tools.js";
 import { minimalEnv, runProcess } from "./coding/process.js";
 import { baseResult, type RunContext, type RunOutcome } from "./types.js";
+import { WorkspacePointer } from "./session-workspace.js";
 
 interface Finish {
   status: "completed" | "blocked";
@@ -88,6 +89,10 @@ export class SupervisorRunner implements CodingRunner {
     const saved = loadState(ctx);
     const repos = await integrationRepos(ctx, saved?.repos ?? []);
     const state: SupervisorState = { ctx, db: ctx.tasks.db, actor, repos, briefChecks: new Set(saved?.briefChecks ?? []), children: new Map(Object.entries(saved?.children ?? {})) };
+    const pointer = new WorkspacePointer(
+      ctx.session,
+      await Promise.all([...repos.values()].map(async (r) => ({ alias: r.alias, worktree: r.worktree, branch: r.branch, baseCommit: r.baseSha, head: (await git(r.worktree, ["rev-parse", "HEAD"])).trim() || null }))),
+    );
 
     let brain: HarnessEnv["brain"];
     if (ctx.brain && ctx.access) {
@@ -132,7 +137,20 @@ export class SupervisorRunner implements CodingRunner {
       ...(env.commands ? [commandTool(patterns)] : []),
       artifactTool(),
       ...(brain ? [...brainReadTools(), ...brainSupervisorTools()] : []),
-      ...supervisorTools(state),
+      // Integration and undo commit on the job branch: record the new head after each.
+      ...supervisorTools(state).map((t): HarnessTool => {
+        if (t.sideEffect !== "edit") return t;
+        return {
+          ...t,
+          run: async (a, e) => {
+            try {
+              return await t.run(a, e);
+            } finally {
+              await pointer.refresh();
+            }
+          },
+        };
+      }),
     ];
 
     const terminal: TerminalTool<Finish> = {
@@ -205,7 +223,7 @@ export class SupervisorRunner implements CodingRunner {
       purpose: "supervisor",
       persist: (m) => saveState(ctx, m, state),
       onResponse: async (info) => {
-        if (primary) await commitAs(primary.worktree, { ...state.actor, model: info.endpointId, request: info.requestId }, `supervisor: edit ${info.edits.slice(0, 5).join(", ")}`);
+        if (primary) pointer.setHead(primary.alias, await commitAs(primary.worktree, { ...state.actor, model: info.endpointId, request: info.requestId }, `supervisor: edit ${info.edits.slice(0, 5).join(", ")}`));
       },
     });
     ctx.gate.admission.finishExecution(executionId, loop.kind);

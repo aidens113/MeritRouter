@@ -10,6 +10,7 @@ import { startPolicyGateway } from "./policy-gateway.js";
 import { minimalEnv, runProcess, type RunResult } from "./process.js";
 import { agentHome, finishCoding, prepareWorkspace, sourceDirtyFinding } from "./finish.js";
 import { NativeCodingRunner } from "./native.js";
+import { WorkspacePointer } from "../session-workspace.js";
 
 function brief(ctx: RunContext, readOnlyAliases: string[]): string {
   const s = ctx.spec;
@@ -70,6 +71,7 @@ export class ExternalCodingRunner implements CodingRunner {
     const spec = ctx.spec;
     const alias = spec.writableRepository!;
     const { ws, worktrees } = await prepareWorkspace(ctx);
+    const pointer = new WorkspacePointer(ctx.session, [{ alias, worktree: ws.worktreePath, branch: null, baseCommit: ws.baseSha, head: ws.baseSha }]);
     const findings = sourceDirtyFinding(ws);
     const agentConfig = hasRepoAgentConfig(ws.worktreePath);
     if (agentConfig.length && !ctx.cfg.coding.allow_repo_agent_config) {
@@ -88,9 +90,12 @@ export class ExternalCodingRunner implements CodingRunner {
     }
 
     const executionId = ctx.gate.admission.createExecution("task", spec.profile, [{ taskId: ctx.taskId, itemId: ctx.taskId }]);
+    // The agent's own tool calls run inside its process: the session sees them only in the
+    // transcript it sends with each request, not in the tool journal.
+    ctx.session?.note("external coding agent: tool calls are not journaled; they appear in the transcript", { runner: ctx.cfg.coding.runner, executionId });
     const snapshot = async (served: { endpointId: string; requestId: string } | null, note: string) => {
       const actor = served ? { ...workerActor(ctx, "implementer", served.endpointId), request: served.requestId } : { ...workerActor(ctx, "implementer"), role: "tool" };
-      await commitAs(ws.worktreePath, actor, `implementer: ${note}`).catch(() => null);
+      pointer.setHead(alias, await commitAs(ws.worktreePath, actor, `implementer: ${note}`).catch(() => null));
     };
     const stopper = new AbortController();
     let stopReason: string | null = null;

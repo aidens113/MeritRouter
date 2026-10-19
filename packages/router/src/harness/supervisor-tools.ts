@@ -5,6 +5,7 @@ import { PROFILE_NAMES } from "../config/schema.js";
 import { git } from "../workspaces/git.js";
 import { blame, commitsMatching, revertCommits, undoLines, type Actor } from "../attribution/index.js";
 import { formatBrief } from "../brain/protocol.js";
+import type { ToolSideEffect } from "../sessions/events.js";
 import { minimalEnv, runProcess } from "../runners/coding/process.js";
 import { commandAllowed, type HarnessEnv, type HarnessTool } from "./tools.js";
 
@@ -32,8 +33,8 @@ const str = (v: unknown, n: string) => {
   if (typeof v !== "string" || !v) throw new Error(`${n} is required`);
   return v;
 };
-function tool(name: string, description: string, properties: Record<string, unknown>, required: string[], run: HarnessTool["run"]): HarnessTool {
-  return { def: { type: "function", function: { name, description, parameters: { type: "object", properties, required } } }, run };
+function tool(name: string, sideEffect: ToolSideEffect, description: string, properties: Record<string, unknown>, required: string[], run: HarnessTool["run"]): HarnessTool {
+  return { def: { type: "function", function: { name, description, parameters: { type: "object", properties, required } } }, sideEffect, run };
 }
 
 /** Resolve a label or id to one of this job's own tasks; other jobs' tasks are refused. */
@@ -98,6 +99,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
 
   return [
     tool(
+      "delegate",
       "delegate",
       "Dispatch worker tasks. Each brief is recorded in the job's working document first. Coding briefs must name allowedPaths and should name checks; concurrent coding briefs may not overlap paths in the same repository.",
       {
@@ -188,32 +190,33 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
           for (const alias of Object.keys(bc)) bc[alias] = (await git(s.repos.get(alias)!.worktree, ["rev-parse", "HEAD"])).trim();
         }
         if (doc && env.brain) for (const sp of specs) await env.brain.brain.addBrief(env.brain.principal(), env.brain.actor, doc, sp.brief);
-        const out = await svc.submitTasks(specs.map((sp) => sp.spec));
+        // The delegating session becomes each new task's parent session.
+        const out = await svc.submitTasks(specs.map((sp) => sp.spec), { purpose: "work", ...(s.ctx.session ? { parentSessionId: s.ctx.session.id } : {}) });
         out.forEach((o, i) => s.children.set(specs[i]!.label, o.taskId));
         return out.map((o, i) => `${specs[i]!.label} -> ${o.taskId} (${o.state}${o.deduplicated ? ", already submitted" : ""})`).join("\n");
       },
     ),
 
-    tool("await_tasks", "Wait (without model requests) until the given tasks, or all of this job's active tasks, finish or the timeout passes. Returns compact results.", { task_ids: { type: "array", items: { type: "string" } }, timeout_seconds: { type: "integer" } }, [], async (a) => {
+    tool("await_tasks", "none", "Wait (without model requests) until the given tasks, or all of this job's active tasks, finish or the timeout passes. Returns compact results.", { task_ids: { type: "array", items: { type: "string" } }, timeout_seconds: { type: "integer" } }, [], async (a) => {
       const ids = Array.isArray(a.task_ids) && a.task_ids.length ? (a.task_ids as string[]).map((x) => ownTask(s, x)) : [...s.children.values()];
       if (!ids.length) return "no tasks dispatched yet";
       const r = await svc.awaitResults(ids, { timeoutSeconds: Math.min(Number(a.timeout_seconds) || 1800, 3600), signal: s.ctx.signal, uncapped: true });
       return cap([...r.completed.map((c) => summarizeResult(c.taskId, s)), ...r.pending.map((p) => `${p.taskId}: still ${p.state}`)].join("\n"));
     }),
 
-    tool("task_result", "Full result of one task (findings, evidence, checks, patch references).", { task_id: { type: "string" } }, ["task_id"], async (a) => {
+    tool("task_result", "read", "Full result of one task (findings, evidence, checks, patch references).", { task_id: { type: "string" } }, ["task_id"], async (a) => {
       const id = ownTask(s, a.task_id);
       const t = svc.getTask(id);
       if (!t) throw new Error("unknown task");
       return cap(JSON.stringify({ state: t.state, spec: { label: t.spec.label, profile: t.spec.profile, goal: t.spec.goal }, result: t.result }, null, 1));
     }),
 
-    tool("cancel_tasks", "Cancel tasks this job dispatched.", { task_ids: { type: "array", items: { type: "string" } } }, ["task_ids"], async (a) => {
+    tool("cancel_tasks", "delegate", "Cancel tasks this job dispatched.", { task_ids: { type: "array", items: { type: "string" } } }, ["task_ids"], async (a) => {
       svc.cancelTasks((a.task_ids as string[]).map((x) => ownTask(s, x)));
       return "cancellation requested";
     }),
 
-    tool("integrate_task", "Cherry-pick a finished coding task's commits onto the job branch. Per-line attribution is kept. On conflict nothing changes and the conflict is reported. Patches with out-of-scope edits are refused; patches that changed tests need accept_test_changes after you reviewed them.", { task_id: { type: "string" }, accept_test_changes: { type: "boolean" } }, ["task_id"], async (a) => {
+    tool("integrate_task", "edit", "Cherry-pick a finished coding task's commits onto the job branch. Per-line attribution is kept. On conflict nothing changes and the conflict is reported. Patches with out-of-scope edits are refused; patches that changed tests need accept_test_changes after you reviewed them.", { task_id: { type: "string" }, accept_test_changes: { type: "boolean" } }, ["task_id"], async (a) => {
       const id = ownTask(s, a.task_id);
       const t = svc.getTask(id);
       if (!t?.result) throw new Error("task has not finished");
@@ -238,7 +241,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
       return `integrated ${commits.length} commit(s) from ${id} onto ${repo.branch}; head is now ${(await git(repo.worktree, ["rev-parse", "--short", "HEAD"])).trim()}`;
     }),
 
-    tool("run_check", "Run a check command in the job's integration worktree (commands from your briefs' checks or the supervisor allowlist).", { command: { type: "string" }, repository: { type: "string" } }, ["command"], async (a) => {
+    tool("run_check", "command", "Run a check command in the job's integration worktree (commands from your briefs' checks or the supervisor allowlist).", { command: { type: "string" }, repository: { type: "string" } }, ["command"], async (a) => {
       const repo = repoFor(s, a.repository);
       const command = str(a.command, "command");
       const allowed = s.briefChecks.has(command) || commandAllowed(command, [...s.ctx.cfg.supervisor.allowed_commands, ...s.ctx.cfg.coding.allowed_commands]);
@@ -248,7 +251,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
       return cap(`$ ${command}\nexit ${r.exitCode}${r.killed ? ` (killed: ${r.killed})` : ""} (log ${log})\n${r.stdout.slice(-6000)}\n${r.stderr.slice(-3000)}`);
     }),
 
-    tool("blame", "Who wrote each line of a file on the job branch: agent, model, task, grouped into ranges.", { path: { type: "string" }, repository: { type: "string" } }, ["path"], async (a) => {
+    tool("blame", "read", "Who wrote each line of a file on the job branch: agent, model, task, grouped into ranges.", { path: { type: "string" }, repository: { type: "string" } }, ["path"], async (a) => {
       const repo = repoFor(s, a.repository);
       const lines = await blame(repo.worktree, str(a.path, "path"));
       const ranges: string[] = [];
@@ -266,6 +269,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
 
     tool(
       "undo",
+      "edit",
       "Undo changes on the job branch at your discretion: a whole task, everything a model did, one commit, or specific lines of a file. Every undo is a new commit with your reason; changes made before this job are never touched.",
       { kind: { type: "string", enum: ["task", "model", "agent", "commit", "lines"] }, target: { type: "string", description: "task id/label, model endpoint id, agent, or commit" }, path: { type: "string" }, ranges: { type: "array", items: { type: "array", items: { type: "integer" } } }, reason: { type: "string" }, repository: { type: "string" } },
       ["kind", "reason"],
@@ -297,7 +301,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
       },
     ),
 
-    tool("ask_user", "Ask the user a question and wait for the answer. Use only when a decision belongs to them.", { question: { type: "string" }, options: { type: "array", items: { type: "string" } } }, ["question"], async (a) => {
+    tool("ask_user", "external", "Ask the user a question and wait for the answer. Use only when a decision belongs to them.", { question: { type: "string" }, options: { type: "array", items: { type: "string" } } }, ["question"], async (a) => {
       const id = Number(
         s.db.prepare("INSERT INTO job_questions (task_id, question, options_json, asked_at) VALUES (?, ?, ?, ?)").run(jobId, str(a.question, "question"), a.options ? JSON.stringify(a.options) : null, Date.now()).lastInsertRowid,
       );

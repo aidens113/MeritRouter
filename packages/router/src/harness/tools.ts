@@ -9,6 +9,7 @@ import { normalizeRelPath, sliceLines, type RepoReader } from "../context/repo-r
 import type { Brain } from "../brain/brain.js";
 import type { BrainAccess, Principal } from "../brain/access.js";
 import type { Actor } from "../attribution/index.js";
+import type { ToolSideEffect } from "../sessions/events.js";
 import { minimalEnv, runProcess } from "../runners/coding/process.js";
 
 export interface HarnessEnv {
@@ -27,6 +28,10 @@ export interface HarnessEnv {
 
 export interface HarnessTool {
   def: ChatTool;
+  /** What the tool does to the world; journaled with each call so resume knows how to treat it. */
+  sideEffect: ToolSideEffect;
+  /** For `command` tools: safe to re-run on resume. */
+  idempotent?: boolean;
   run(args: Record<string, unknown>, env: HarnessEnv): Promise<string>;
 }
 
@@ -37,8 +42,8 @@ const str = (v: unknown, name: string): string => {
   return v;
 };
 
-function tool(name: string, description: string, properties: Record<string, unknown>, required: string[], run: HarnessTool["run"]): HarnessTool {
-  return { def: { type: "function", function: { name, description, parameters: { type: "object", properties, required } } }, run };
+function tool(name: string, sideEffect: ToolSideEffect, description: string, properties: Record<string, unknown>, required: string[], run: HarnessTool["run"]): HarnessTool {
+  return { def: { type: "function", function: { name, description, parameters: { type: "object", properties, required } } }, sideEffect, run };
 }
 
 // ---------- repository reading ----------
@@ -51,18 +56,18 @@ export function repoTools(aliases: string[]): HarnessTool[] {
     return r;
   };
   return [
-    tool("list_files", "List files in a repository directory (git-tracked and untracked-not-ignored).", { alias, dir: { type: "string" }, glob: { type: "string" } }, ["alias"], async (a, env) => {
+    tool("list_files", "read", "List files in a repository directory (git-tracked and untracked-not-ignored).", { alias, dir: { type: "string" }, glob: { type: "string" } }, ["alias"], async (a, env) => {
       const r = await reader(env, a.alias).listFiles(String(a.dir ?? ""), typeof a.glob === "string" ? a.glob : undefined);
       return cap(`${r.files.join("\n")}${r.truncated ? "\n[more files not shown; narrow dir or glob]" : ""}`) || "(no files)";
     }),
-    tool("read_file", "Read a file with numbered lines. Use line ranges for large files.", { alias, path: { type: "string" }, start_line: { type: "integer" }, end_line: { type: "integer" } }, ["alias", "path"], async (a, env) => {
+    tool("read_file", "read", "Read a file with numbered lines. Use line ranges for large files.", { alias, path: { type: "string" }, start_line: { type: "integer" }, end_line: { type: "integer" } }, ["alias", "path"], async (a, env) => {
       const r = reader(env, a.alias);
       const f = await r.readFile(str(a.path, "path"));
       env.universe.refs.set(`${r.alias}:${f.relPath}`, f.totalLines);
       const s = sliceLines(f.content, Number(a.start_line) || undefined, Number(a.end_line) || undefined);
       return cap(`ref: ${r.alias}:${f.relPath}#L${s.start}-L${s.end} (of ${f.totalLines} lines)\n${s.text}`);
     }),
-    tool("search", "Search file contents with an extended regular expression. Returns path:line matches.", { alias, pattern: { type: "string" }, path_glob: { type: "string" }, ignore_case: { type: "boolean" } }, ["alias", "pattern"], async (a, env) => {
+    tool("search", "read", "Search file contents with an extended regular expression. Returns path:line matches.", { alias, pattern: { type: "string" }, path_glob: { type: "string" }, ignore_case: { type: "boolean" } }, ["alias", "pattern"], async (a, env) => {
       const r = reader(env, a.alias);
       const res = await r.search(str(a.pattern, "pattern"), { ...(typeof a.path_glob === "string" ? { pathGlob: a.path_glob } : {}), ignoreCase: a.ignore_case === true });
       return cap(res.matches.map((m) => `${r.alias}:${m.path}#L${m.line}: ${m.text}`).join("\n") + (res.truncated ? "\n[more matches]" : "")) || "(no matches)";
@@ -71,7 +76,7 @@ export function repoTools(aliases: string[]): HarnessTool[] {
 }
 
 export function artifactTool(): HarnessTool {
-  return tool("read_artifact", "Read a stored artifact (logs, traces, patches, earlier results) by its artifact:<id> reference.", { ref: { type: "string" } }, ["ref"], async (a, env) => {
+  return tool("read_artifact", "read", "Read a stored artifact (logs, traces, patches, earlier results) by its artifact:<id> reference.", { ref: { type: "string" } }, ["ref"], async (a, env) => {
     if (!env.allowArtifacts) throw new Error("artifacts are not available to this role");
     const art = env.ctx.artifacts.read(str(a.ref, "ref"));
     if (!art) throw new Error("unknown artifact");
@@ -114,7 +119,7 @@ function noteEdited(env: HarnessEnv, rel: string, abs: string): void {
 
 export function editTools(): HarnessTool[] {
   return [
-    tool("write_file", "Create or overwrite a file in your workspace with the full new content.", { path: { type: "string" }, content: { type: "string" } }, ["path", "content"], async (a, env) => {
+    tool("write_file", "edit", "Create or overwrite a file in your workspace with the full new content.", { path: { type: "string" }, content: { type: "string" } }, ["path", "content"], async (a, env) => {
       const { rel, abs } = workspacePath(env, a.path);
       mkdirSync(path.dirname(abs), { recursive: true });
       // Keep an existing file's line-ending style.
@@ -126,6 +131,7 @@ export function editTools(): HarnessTool[] {
     }),
     tool(
       "replace_in_file",
+      "edit",
       "Replace an exact text snippet in a file. old_text must match exactly once unless replace_all is true.",
       { path: { type: "string" }, old_text: { type: "string" }, new_text: { type: "string" }, replace_all: { type: "boolean" } },
       ["path", "old_text", "new_text"],
@@ -148,7 +154,7 @@ export function editTools(): HarnessTool[] {
         return `replaced ${a.replace_all === true ? count : 1} occurrence(s) in ${rel}`;
       },
     ),
-    tool("delete_file", "Delete a file in your workspace.", { path: { type: "string" } }, ["path"], async (a, env) => {
+    tool("delete_file", "edit", "Delete a file in your workspace.", { path: { type: "string" } }, ["path"], async (a, env) => {
       const { rel, abs } = workspacePath(env, a.path);
       if (!existsSync(abs)) throw new Error(`${rel} does not exist`);
       rmSync(abs);
@@ -182,6 +188,7 @@ export function commandAllowed(command: string, patterns: string[]): boolean {
 export function commandTool(patterns: string[]): HarnessTool {
   return tool(
     "run_command",
+    "command",
     `Run an allowed command in your workspace. Allowed patterns: ${patterns.join(", ")}`,
     { command: { type: "string" } },
     ["command"],
@@ -204,23 +211,24 @@ function brainOf(env: HarnessEnv) {
 
 export function brainReadTools(): HarnessTool[] {
   return [
-    tool("brain_search", "Search shared knowledge (working documents, decisions, lessons) you have access to.", { query: { type: "string" }, prefix: { type: "string" } }, ["query"], async (a, env) => {
+    tool("brain_search", "read", "Search shared knowledge (working documents, decisions, lessons) you have access to.", { query: { type: "string" }, prefix: { type: "string" } }, ["query"], async (a, env) => {
       const b = brainOf(env);
       const hits = b.brain.search(b.principal(), str(a.query, "query"), { ...(typeof a.prefix === "string" ? { prefix: a.prefix } : {}), limit: 8 });
       return hits.map((h) => `brain:${h.path} (${h.kind}) ${h.title ?? ""}\n  ${h.snippet}`).join("\n") || "(no results you can read; request access if you need more)";
     }),
-    tool("brain_read", "Read a brain entry, optionally one section (e.g. 'Current State').", { path: { type: "string" }, section: { type: "string" } }, ["path"], async (a, env) => {
+    tool("brain_read", "read", "Read a brain entry, optionally one section (e.g. 'Current State').", { path: { type: "string" }, section: { type: "string" } }, ["path"], async (a, env) => {
       const b = brainOf(env);
       const r = b.brain.read(b.principal(), str(a.path, "path"), typeof a.section === "string" ? { section: a.section } : {});
       env.universe.refs.set(`brain:${r.path}`, r.lines);
       return cap(`ref: brain:${r.path}\n${r.content}`);
     }),
-    tool("brain_list", "List brain entries under a prefix that you can read.", { prefix: { type: "string" } }, [], async (a, env) => {
+    tool("brain_list", "read", "List brain entries under a prefix that you can read.", { prefix: { type: "string" } }, [], async (a, env) => {
       const b = brainOf(env);
       return b.brain.list(b.principal(), typeof a.prefix === "string" ? a.prefix : "").map((e) => `${e.path} (${e.kind}${e.status ? `, ${e.status}` : ""}) ${e.title ?? ""}`).join("\n") || "(nothing you can read here)";
     }),
     tool(
       "brain_request_access",
+      "brain",
       "Ask for access to brain entries outside your grants. Continue with what you have; check back with brain_my_requests.",
       { pattern: { type: "string", description: "Path or glob, e.g. projects/x/decisions/**" }, mode: { type: "string", enum: ["read", "append", "write"] }, reason: { type: "string" } },
       ["pattern", "mode", "reason"],
@@ -230,7 +238,7 @@ export function brainReadTools(): HarnessTool[] {
         return `request ${req.id}: ${req.status}${req.status === "pending" ? ` (decided by the ${env.ctx.cfg.brain.access_approver})` : ""}`;
       },
     ),
-    tool("brain_my_requests", "Status of your brain access requests.", {}, [], async (_a, env) => {
+    tool("brain_my_requests", "read", "Status of your brain access requests.", {}, [], async (_a, env) => {
       const p = brainOf(env).principal();
       const reqs = brainOf(env).access.list(p.kind === "agent" && p.taskId ? { taskId: p.taskId } : {});
       return reqs.map((r) => `${r.id} ${r.mode} ${r.pattern}: ${r.status}${r.decisionReason ? ` (${r.decisionReason})` : ""}`).join("\n") || "(no requests)";
@@ -241,13 +249,14 @@ export function brainReadTools(): HarnessTool[] {
 export function brainSupervisorTools(): HarnessTool[] {
   const doc = (env: HarnessEnv, a: Record<string, unknown>) => (typeof a.path === "string" && a.path ? a.path : brainOf(env).workingDoc ?? "");
   return [
-    tool("brain_set_current_state", "Rewrite the Current State of your job's working document (or another you own). Keep it under the line limit.", { body: { type: "string" }, path: { type: "string" } }, ["body"], async (a, env) => {
+    tool("brain_set_current_state", "brain", "Rewrite the Current State of your job's working document (or another you own). Keep it under the line limit.", { body: { type: "string" }, path: { type: "string" } }, ["body"], async (a, env) => {
       const b = brainOf(env);
       await b.brain.setCurrentState(b.principal(), b.actor, doc(env, a), str(a.body, "body"));
       return "Current State updated";
     }),
     tool(
       "brain_append_ledger",
+      "brain",
       "Append a Work Ledger entry. validation must be the exact command you ran and what it printed, or 'not validated' and why.",
       { title: { type: "string" }, changed: { type: "string" }, why: { type: "string" }, validation: { type: "string" }, outcome: { type: "string", enum: ["Accepted", "Partial", "Reverted", "Blocked"] }, follow_up: { type: "string" }, path: { type: "string" } },
       ["title", "changed", "why", "validation", "outcome", "follow_up"],
@@ -265,27 +274,27 @@ export function brainSupervisorTools(): HarnessTool[] {
         return `ledger entry added${r.compactionDue ? "; the document is due for compaction (brain_compact)" : ""}`;
       },
     ),
-    tool("brain_write", "Create or replace a brain note (decisions/, facts/, repos/<alias>.md) in your project.", { path: { type: "string" }, content: { type: "string" } }, ["path", "content"], async (a, env) => {
+    tool("brain_write", "brain", "Create or replace a brain note (decisions/, facts/, repos/<alias>.md) in your project.", { path: { type: "string" }, content: { type: "string" } }, ["path", "content"], async (a, env) => {
       const b = brainOf(env);
       const r = await b.brain.write(b.principal(), b.actor, str(a.path, "path"), str(a.content, "content"));
       return `wrote ${r.path}`;
     }),
-    tool("brain_promote_lesson", "Promote a reusable lesson to global knowledge, citing its sources.", { title: { type: "string" }, body: { type: "string" }, sources: { type: "array", items: { type: "string" } } }, ["title", "body"], async (a, env) => {
+    tool("brain_promote_lesson", "brain", "Promote a reusable lesson to global knowledge, citing its sources.", { title: { type: "string" }, body: { type: "string" }, sources: { type: "array", items: { type: "string" } } }, ["title", "body"], async (a, env) => {
       const b = brainOf(env);
       const r = await b.brain.promoteLesson(b.principal(), b.actor, str(a.title, "title"), str(a.body, "body"), Array.isArray(a.sources) ? a.sources.map(String) : []);
       return `promoted to ${r.path}`;
     }),
-    tool("brain_compact", "Move older ledger entries of a working document to its archive.", { path: { type: "string" } }, [], async (a, env) => {
+    tool("brain_compact", "brain", "Move older ledger entries of a working document to its archive.", { path: { type: "string" } }, [], async (a, env) => {
       const b = brainOf(env);
       const r = await b.brain.compact(b.principal(), b.actor, doc(env, a));
       return r.archive ? `archived to ${r.archive}` : "nothing to compact";
     }),
-    tool("brain_access_requests", "List pending brain access requests from your workers.", {}, [], async (_a, env) => {
+    tool("brain_access_requests", "read", "List pending brain access requests from your workers.", {}, [], async (_a, env) => {
       const p = brainOf(env).principal();
       const reqs = brainOf(env).access.list({ status: "pending", ...(p.kind === "agent" && p.jobId ? { jobId: p.jobId } : {}) });
       return reqs.map((r) => `${r.id} task ${r.taskId} (${r.role}) wants ${r.mode} on ${r.pattern}: ${r.reason}`).join("\n") || "(none pending)";
     }),
-    tool("brain_decide_request", "Approve or deny a worker's brain access request, with a reason.", { id: { type: "integer" }, approve: { type: "boolean" }, reason: { type: "string" } }, ["id", "approve", "reason"], async (a, env) => {
+    tool("brain_decide_request", "brain", "Approve or deny a worker's brain access request, with a reason.", { id: { type: "integer" }, approve: { type: "boolean" }, reason: { type: "string" } }, ["id", "approve", "reason"], async (a, env) => {
       const b = brainOf(env);
       const r = b.access.decide(Number(a.id), a.approve === true, b.actor.agent, str(a.reason, "reason"));
       return `request ${r.id}: ${r.status}`;

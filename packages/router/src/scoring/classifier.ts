@@ -1,6 +1,10 @@
 import type { ResolvedConfig } from "../config/load.js";
 import type { Db } from "../storage/db.js";
-import type { Gate } from "../gateway/gate.js";
+import type { Gate, GateAttempt, GateResponse } from "../gateway/gate.js";
+import type { ChatRequest } from "../gateway/types.js";
+import { SessionStore } from "../sessions/store.js";
+import type { SessionRecorder } from "../sessions/recorder.js";
+import { agentLabel } from "../roles/index.js";
 import type { EffectiveBudget } from "../admission/admission.js";
 import type { RoutePlan } from "../routing/select.js";
 import type { WorkerTask } from "../core/task.js";
@@ -52,6 +56,8 @@ sample of scope: ${f.scopeSample.slice(0, 12).join(", ") || "(none)"}
 export class Classifier {
   private queue: Pending[] = [];
   private timer: NodeJS.Timeout | null = null;
+  /** Each classification is a `classifier` session per task (see `flush`). */
+  private readonly sessions: SessionStore;
 
   constructor(
     private readonly cfg: ResolvedConfig,
@@ -61,7 +67,22 @@ export class Classifier {
     /** Route for classification requests (T1 completion). */
     private readonly planFor: () => RoutePlan,
     private readonly now: () => number = Date.now,
-  ) {}
+  ) {
+    this.sessions = new SessionStore(db, cfg.storageDir, now);
+  }
+
+  /** End a classifier session with its verdict. Recording failures are dropped: the verdict stands. */
+  private endSession(session: SessionRecorder | null, verdict: ClassifierVerdict | null, failure: string | null): void {
+    if (!session || session.ended) return;
+    try {
+      if (verdict) {
+        session.note("verdict", verdict);
+        session.end("completed", "classified");
+      } else session.end("failed", failure ? `classifier_failed: ${failure}` : "no_valid_verdict");
+    } catch {
+      // The task's classification is recorded in the tasks table either way.
+    }
+  }
 
   cached(specHash: string): ClassifierVerdict | null {
     if (!this.cfg.scoring.cache) return null;
@@ -92,22 +113,48 @@ export class Classifier {
     const plan = this.planFor();
     const executionId = this.gate.admission.createExecution(batch.length > 1 ? "batch" : "task", plan.profile, batch.map((p, i) => ({ taskId: p.taskId, itemId: ids[i]! })));
     let parsed: Map<string, ClassifierVerdict> = new Map();
+    const sessions: SessionRecorder[] = [];
+    let failure: string | null = null;
     try {
-      const { response } = await this.gate.request({
-        plan,
-        executionId,
-        purpose: "classification",
-        participants: batch.map((p) => ({ taskId: p.taskId, leaseOwner: p.leaseOwner, budget: p.budget })),
-        chat: {
-          messages: [
-            { role: "system", content: SYSTEM },
-            { role: "user", content: batch.map((p, i) => describe(ids[i]!, p)).join("\n\n") },
-          ],
-          max_tokens: 200 * batch.length + 100,
-          temperature: 0,
-          response_format: { type: "json_object" },
-        },
-      });
+      const chat: Omit<ChatRequest, "model"> = {
+        messages: [
+          { role: "system", content: SYSTEM },
+          { role: "user", content: batch.map((p, i) => describe(ids[i]!, p)).join("\n\n") },
+        ],
+        max_tokens: 200 * batch.length + 100,
+        temperature: 0,
+        response_format: { type: "json_object" },
+      };
+      // One classifier session per task; a shared request is recorded in each, noting it was shared.
+      for (const [i, p] of batch.entries()) {
+        const s = this.sessions.create({
+          taskId: p.taskId,
+          jobId: p.spec.profile === "supervise" ? p.taskId : (p.spec.parentTaskId ?? null),
+          role: "classifier",
+          agentLabel: agentLabel("classifier", p.spec.label ?? p.taskId),
+          tier: plan.tier,
+        });
+        sessions.push(s);
+        if (batch.length > 1) s.note(`shared classification request (${batch.length} items); this task is item ${ids[i]}`, { executionId, itemId: ids[i], members: batch.map((b, j) => ({ taskId: b.taskId, itemId: ids[j] })) });
+        s.syncMessages(chat.messages);
+        s.modelRequest({ executionId, purpose: "classification", chat });
+      }
+      let res: GateResponse;
+      try {
+        res = await this.gate.request({
+          plan,
+          executionId,
+          purpose: "classification",
+          participants: batch.map((p) => ({ taskId: p.taskId, leaseOwner: p.leaseOwner, budget: p.budget })),
+          chat,
+        });
+      } catch (err) {
+        const attempts = (err as { attempts?: GateAttempt[] }).attempts;
+        for (const s of sessions) s.modelError({ executionId, error: err, ...(attempts ? { attempts } : {}) });
+        throw err;
+      }
+      for (const s of sessions) s.modelResponse(res);
+      const { response } = res;
       const raw = extractJson(response.message.content ?? "") as { items?: Array<Record<string, unknown>> };
       for (const it of raw.items ?? []) {
         const tags = TagsSchema.safeParse(it.tags);
@@ -123,10 +170,12 @@ export class Classifier {
       this.gate.admission.finishExecution(executionId, "completed", { classified: parsed.size, of: batch.length });
     } catch (err) {
       parsed = new Map();
-      this.gate.admission.finishExecution(executionId, "failed", { error: (err as Error).message });
+      failure = (err as Error).message;
+      this.gate.admission.finishExecution(executionId, "failed", { error: failure });
     }
     batch.forEach((p, i) => {
       const v = parsed.get(ids[i]!) ?? null;
+      this.endSession(sessions[i] ?? null, v, failure);
       if (v && this.cfg.scoring.cache) {
         this.db
           .prepare("INSERT OR REPLACE INTO classifications (spec_hash, rulebook_version, data_json, created_at) VALUES (?, ?, ?, ?)")

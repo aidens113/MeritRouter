@@ -20,7 +20,11 @@ import type { Brain } from "../brain/brain.js";
 import type { BrainAccess } from "../brain/access.js";
 import type { SupervisorServices } from "../runners/types.js";
 import { writeWorkerReport } from "../harness/worker.js";
-import { roleForProfile } from "../roles/index.js";
+import { agentLabel, roleForProfile } from "../roles/index.js";
+import type { SessionStore } from "../sessions/store.js";
+import type { SessionRecorder } from "../sessions/recorder.js";
+import type { SessionEndStatus } from "../sessions/events.js";
+import { z } from "zod";
 
 /** The working document a task belongs to: its job's, an explicit one, or the shared ad-hoc one. */
 export function effortFor(spec: { profile: string; parentTaskId?: string | undefined; brain?: { effort?: string | undefined } | undefined }, taskId: string): string {
@@ -51,6 +55,8 @@ export interface ExecutorDeps {
   access: BrainAccess | null;
   services: SupervisorServices | null;
   supervisor: CodingRunner | null;
+  /** Agent sessions; null runs without recording (each run's `ctx.session` stays null). */
+  sessions: SessionStore | null;
   /** Called after any task reaches a new state, to wake waiters. */
   onSettled: (taskId: string) => void;
 }
@@ -69,6 +75,21 @@ interface Routing {
 
 const ESCALATE_ON = new Set(["invalid_output", "budget_exhausted", "acceptance_unmet"]);
 
+/** Task event written when a session delegates the task (see `Switchyard.submitTasks`). */
+export const DELEGATED_BY_SESSION = "delegated_by_session";
+const DelegatedBySchema = z.object({ sessionId: z.string().min(1) });
+
+/** A run's outcome state as a session end status: a spent budget is a failure with that reason. */
+export function sessionEnd(state: RunOutcome["state"], stopReason: string): { status: SessionEndStatus; stopReason: string } {
+  if (state === "budget_exhausted") return { status: "failed", stopReason: "budget_exhausted" };
+  return { status: state, stopReason: stopReason || state };
+}
+
+/** The job a task belongs to: a supervise task is its own job; a delegated task belongs to its parent's. */
+function jobIdFor(task: StoredTask): string | null {
+  return task.spec.profile === "supervise" ? task.row.id : (task.spec.parentTaskId ?? null);
+}
+
 /** Runs claimed units (single tasks or prompt batches) and records their outcomes. */
 export class Executor {
   readonly controllers = new Map<string, AbortController>();
@@ -82,7 +103,53 @@ export class Executor {
 
   constructor(private readonly d: ExecutorDeps) {}
 
-  private context(task: StoredTask, signal: AbortSignal, plan: RoutePlan, routing: Routing): RunContext {
+  /**
+   * Open the session for one run of a task: a recovery re-run or an escalation links to the
+   * task's previous run, and a delegated task to the session that delegated it.
+   */
+  private openSession(task: StoredTask, plan: RoutePlan, previousSessionId?: string | null): SessionRecorder | null {
+    const store = this.d.sessions;
+    if (!store) return null;
+    const id = task.row.id;
+    const role = roleForProfile(task.spec.profile);
+    const previous = previousSessionId !== undefined ? previousSessionId : (store.forTask(id).filter((s) => s.role !== "classifier").at(-1)?.id ?? null);
+    const delegatedBy = this.d.tasks
+      .events(id, 500)
+      .filter((e) => e.type === DELEGATED_BY_SESSION)
+      .map((e) => DelegatedBySchema.safeParse(e.data))
+      .find((r) => r.success)?.data?.sessionId;
+    return store.create({
+      taskId: id,
+      jobId: jobIdFor(task),
+      parentSessionId: delegatedBy ?? null,
+      previousSessionId: previous,
+      role,
+      agentLabel: agentLabel(role, task.spec.label ?? id),
+      profile: task.spec.profile,
+      tier: plan.tier,
+    });
+  }
+
+  /** End a run's session. The task outcome is already decided, so a recording failure is logged, not thrown. */
+  private endSession(task: StoredTask, session: SessionRecorder | null, status: SessionEndStatus, stopReason: string): void {
+    if (!session || session.ended) return;
+    try {
+      session.end(status, stopReason);
+    } catch (err) {
+      this.d.tasks.event(task.row.id, "session_record_failed", { sessionId: session.id, error: (err as Error).message });
+    }
+  }
+
+  /** End a session for a disposition reached without a runner outcome (errors, aborts, deferrals). */
+  private endForDisposition(task: StoredTask, session: SessionRecorder | null, d: Disposition): void {
+    if (d.kind === "final") {
+      const e = sessionEnd(d.state, d.stopReason);
+      this.endSession(task, session, e.status, e.stopReason);
+    } else if (d.kind === "defer") this.endSession(task, session, "interrupted", `deferred_for_capacity: ${d.reason}`);
+    else this.endSession(task, session, "interrupted", d.reason);
+  }
+
+  private context(task: StoredTask, signal: AbortSignal, plan: RoutePlan, routing: Routing, session: SessionRecorder | null): RunContext {
     return {
       cfg: this.d.cfg,
       profile: this.d.cfg.profiles[task.spec.profile]!,
@@ -101,9 +168,9 @@ export class Executor {
       brain: this.d.brain,
       access: this.d.access,
       effort: effortFor(task.spec, task.row.id),
-      jobId: task.spec.profile === "supervise" ? task.row.id : (task.spec.parentTaskId ?? null),
+      jobId: jobIdFor(task),
       services: this.d.services,
-      session: null,
+      session,
     };
   }
 
@@ -151,6 +218,7 @@ export class Executor {
     const release = this.supervise(task, controller);
     const routing: Routing = { classification: null, tier: null, escalatedFrom: null, attempts: [] };
     this.routing.set(task.row.id, routing);
+    let session: SessionRecorder | null = null;
     try {
       let prepared: Prepared;
       try {
@@ -165,17 +233,23 @@ export class Executor {
         return;
       }
       let plan = prepared.plan;
+      let previous: string | null | undefined;
       for (;;) {
         routing.tier = plan.tier;
         let outcome: RunOutcome;
         try {
-          outcome = await this.runMode(this.context(task, controller.signal, plan, routing));
+          session = this.openSession(task, plan, previous);
+          outcome = await this.runMode(this.context(task, controller.signal, plan, routing, session));
         } catch (err) {
-          this.settle(task, this.classify(err, controller.signal, task));
+          const d = this.classify(err, controller.signal, task);
+          this.endForDisposition(task, session, d);
+          this.settle(task, d);
           return;
         }
         if (controller.signal.aborted) {
-          this.settle(task, this.classify(new Error("aborted"), controller.signal, task), outcome.result);
+          const d = this.classify(new Error("aborted"), controller.signal, task);
+          this.endForDisposition(task, session, d);
+          this.settle(task, d, outcome.result);
           return;
         }
         const failure = outcome.state === "budget_exhausted" ? "budget_exhausted" : outcome.result.stopReason === "invalid_output" ? "invalid_output" : outcome.result.acceptanceStatus === "unmet" && this.d.cfg.profiles[task.spec.profile]!.mode === "coding" ? "acceptance_unmet" : null;
@@ -185,16 +259,24 @@ export class Executor {
           const nextPlan = this.d.router.plan(task.spec.profile, next, prepared.inputModalities);
           if (nextPlan.candidates.length) {
             this.d.tasks.event(task.row.id, "escalated", { from: plan.tier, to: next, reason: failure });
+            const e = sessionEnd(outcome.state, outcome.result.stopReason);
+            this.endSession(task, session, e.status, `${e.stopReason}; escalated to ${next}`);
+            previous = session?.id ?? null;
+            session = null;
             routing.escalatedFrom = plan.tier;
             this.d.db.prepare("UPDATE tasks SET tier = ? WHERE id = ?").run(next, task.row.id);
             plan = nextPlan;
             continue;
           }
         }
+        const e = sessionEnd(outcome.state, outcome.result.stopReason);
+        this.endSession(task, session, e.status, e.stopReason);
         this.record(task, outcome.state, outcome.result);
         return;
       }
     } finally {
+      // Whatever escaped above (a store or recording failure), never leave the session running.
+      this.endSession(task, session, "failed", "executor_error");
       this.routing.delete(task.row.id);
       release();
     }
@@ -211,6 +293,7 @@ export class Executor {
       });
       return this.supervise(t, c);
     });
+    const sessions = new Map<string, SessionRecorder>();
     try {
       // Classify each member; the shared request uses the hardest member's tier.
       const members: StoredTask[] = [];
@@ -237,21 +320,39 @@ export class Executor {
 
       let outcomes: Map<string, RunOutcome>;
       try {
-        outcomes = await runBatch(members.map((t) => this.context(t, shared.signal, plan, this.routing.get(t.row.id)!)));
+        // Each member is its own session; the batch runner records the shared request in every one.
+        const ctxs: RunContext[] = [];
+        for (const t of members) {
+          const session = this.openSession(t, plan);
+          if (session) sessions.set(t.row.id, session);
+          ctxs.push(this.context(t, shared.signal, plan, this.routing.get(t.row.id)!, session));
+        }
+        outcomes = await runBatch(ctxs);
       } catch (err) {
         const pendingIds = (err as { batchPendingTaskIds?: string[] }).batchPendingTaskIds ?? members.map((t) => t.row.id);
         for (const t of members) {
           if (!pendingIds.includes(t.row.id)) continue;
-          this.settle(t, this.classify(err, this.controllers.get(t.row.id)?.signal ?? shared.signal, t));
+          const d = this.classify(err, this.controllers.get(t.row.id)?.signal ?? shared.signal, t);
+          this.endForDisposition(t, sessions.get(t.row.id) ?? null, d);
+          this.settle(t, d);
         }
         return;
       }
       for (const t of members) {
         const o = outcomes.get(t.row.id);
-        if (o) this.record(t, o.state, o.result);
-        else this.settle(t, { kind: "final", state: "failed", stopReason: "batch_member_unaccounted" });
+        const session = sessions.get(t.row.id) ?? null;
+        if (o) {
+          const e = sessionEnd(o.state, o.result.stopReason);
+          this.endSession(t, session, e.status, e.stopReason);
+          this.record(t, o.state, o.result);
+        } else {
+          this.endSession(t, session, "failed", "batch_member_unaccounted");
+          this.settle(t, { kind: "final", state: "failed", stopReason: "batch_member_unaccounted" });
+        }
       }
     } finally {
+      // Members that left the batch without an outcome (an error escaped) still end their sessions.
+      for (const t of tasks) this.endSession(t, sessions.get(t.row.id) ?? null, "failed", "batch_aborted");
       for (const t of tasks) this.routing.delete(t.row.id);
       for (const r of releases) r();
     }

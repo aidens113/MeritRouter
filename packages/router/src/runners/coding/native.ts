@@ -14,6 +14,7 @@ import { brainContext, submitResultTool, workerActor, workerBrainEnv } from "../
 import type { RunContext, RunOutcome } from "../types.js";
 import { taskBrief } from "../prompts.js";
 import { finishCoding, prepareWorkspace, sourceDirtyFinding } from "./finish.js";
+import { WorkspacePointer } from "../session-workspace.js";
 
 /**
  * SwitchYard's own coding worker. Edits go through tools that refuse paths outside
@@ -26,6 +27,7 @@ export class NativeCodingRunner implements CodingRunner {
     const role = "implementer" as const;
     const alias = spec.writableRepository!;
     const { ws, worktrees } = await prepareWorkspace(ctx);
+    const pointer = new WorkspacePointer(ctx.session, [{ alias, worktree: ws.worktreePath, branch: null, baseCommit: ws.baseSha, head: ws.baseSha }]);
     const readers = readersFor(ctx.cfg, spec);
     readers.set(alias, new RepoReader(alias, ws.worktreePath, null)); // read your own edits
     const sources = await loadSources(ctx.cfg, spec, ctx.artifacts, readersFor(ctx.cfg, spec));
@@ -69,7 +71,7 @@ export class NativeCodingRunner implements CodingRunner {
       purpose: "coding",
       onResponse: async (info) => {
         const actor = { ...workerActor(ctx, role, info.endpointId), request: info.requestId };
-        await commitAs(ws.worktreePath, actor, `${role}: edit ${info.edits.slice(0, 5).join(", ")}${info.edits.length > 5 ? ` (+${info.edits.length - 5})` : ""}`);
+        pointer.setHead(alias, await commitAs(ws.worktreePath, actor, `${role}: edit ${info.edits.slice(0, 5).join(", ")}${info.edits.length > 5 ? ` (+${info.edits.length - 5})` : ""}`));
       },
     });
     ctx.gate.admission.finishExecution(executionId, loop.kind);

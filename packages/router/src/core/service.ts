@@ -30,7 +30,7 @@ import { createCodingRunner } from "../runners/coding/index.js";
 import { SupervisorRunner } from "../runners/supervisor.js";
 import { GatewayError, TaskValidationError } from "./errors.js";
 import { validateTask } from "./validate.js";
-import { Executor, type CodingRunner } from "./executor.js";
+import { DELEGATED_BY_SESSION, Executor, type CodingRunner } from "./executor.js";
 import { Scheduler } from "./scheduler.js";
 import { isTerminal, type TaskState, type WorkerResult, type WorkerTask } from "./task.js";
 
@@ -150,6 +150,7 @@ export class Switchyard {
       supervisor: opts.supervisor === undefined ? new SupervisorRunner() : opts.supervisor,
       brain: this.brain,
       access: this.brainAccess,
+      sessions: this.sessions,
       services: {
         submitTasks: (raw, o) => this.submitTasks(raw, o),
         awaitResults: (ids, o) => this.awaitResults(ids, o),
@@ -213,8 +214,11 @@ export class Switchyard {
     return ctx.length ? Math.max(...ctx) : undefined;
   }
 
-  /** Validate every task, then persist them atomically before acknowledging. */
-  async submitTasks(raw: unknown[], opts: { purpose?: string } = {}): Promise<SubmitOutcome[]> {
+  /**
+   * Validate every task, then persist them atomically before acknowledging. `parentSessionId`
+   * names the agent session delegating the tasks; their sessions record it as their parent.
+   */
+  async submitTasks(raw: unknown[], opts: { purpose?: string; parentSessionId?: string } = {}): Promise<SubmitOutcome[]> {
     if (!Array.isArray(raw) || raw.length === 0) throw new TaskValidationError("submit at least one task");
     const specs: WorkerTask[] = [];
     const errors: string[] = [];
@@ -236,6 +240,10 @@ export class Switchyard {
     const outcomes = this.tasks.submit(specs);
     if (opts.purpose && opts.purpose !== "work") {
       for (const o of outcomes) if (!o.deduplicated) this.db.prepare("UPDATE tasks SET purpose = ? WHERE id = ?").run(opts.purpose, o.taskId);
+    }
+    // Recorded before the scheduler can claim the tasks, so their first session sees it.
+    if (opts.parentSessionId) {
+      for (const o of outcomes) if (!o.deduplicated) this.tasks.event(o.taskId, DELEGATED_BY_SESSION, { sessionId: opts.parentSessionId });
     }
     this.scheduler.kick();
     return outcomes;
