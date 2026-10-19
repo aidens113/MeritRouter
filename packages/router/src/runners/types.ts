@@ -6,10 +6,24 @@ import type { TierName } from "../config/schema.js";
 import type { ArtifactStore } from "../storage/artifacts.js";
 import type { TaskStore } from "../storage/tasks.js";
 import type { EffectiveBudget } from "../admission/admission.js";
-import type { TaskState, WorkerResult, WorkerTask } from "../core/task.js";
+import type { AcceptanceStatus, SupervisorDecision, TaskState, WorkerResult, WorkerTask } from "../core/task.js";
+import type { EvidenceUniverse, WorkerOutput } from "../core/worker-output.js";
 import type { Brain } from "../brain/brain.js";
 import type { BrainAccess } from "../brain/access.js";
 import type { SessionRecorder } from "../sessions/recorder.js";
+import type { AcceptanceContract } from "../verification/contract.js";
+
+/** Who decides a result and why (see `Switchyard.acceptTask`). */
+export interface AcceptanceDecisionInput {
+  by: SupervisorDecision["by"];
+  reason?: string | null;
+}
+
+export interface AcceptanceDecisionOutcome {
+  taskId: string;
+  acceptanceStatus: AcceptanceStatus;
+  decision: SupervisorDecision;
+}
 
 /** What a supervisor needs from the service (kept as an interface to avoid import cycles). */
 export interface SupervisorServices {
@@ -17,6 +31,25 @@ export interface SupervisorServices {
   awaitResults(ids: string[], opts?: { timeoutSeconds?: number; signal?: AbortSignal; uncapped?: boolean }): Promise<{ completed: WorkerResult[]; pending: Array<{ taskId: string; state: string }>; timedOut: boolean }>;
   getTask(id: string): { spec: WorkerTask; state: string; result: WorkerResult | null } | null;
   cancelTasks(ids: string[]): unknown;
+  /** Record the supervisor's (or a human's) acceptance; throws with the refusal reason. */
+  acceptTask(id: string, input: AcceptanceDecisionInput): AcceptanceDecisionOutcome;
+  rejectTask(id: string, input: AcceptanceDecisionInput): AcceptanceDecisionOutcome;
+}
+
+/**
+ * What an escalation retry is told about the attempt that failed: data from the previous run,
+ * never instructions. Findings and check logs are capped.
+ */
+export interface RetryContext {
+  fromTier: TierName;
+  /** invalid_output, budget_exhausted, or acceptance_unmet. */
+  reason: string;
+  stopReason: string;
+  findings: string[];
+  unresolvedCriteria: string[];
+  failingChecks: Array<{ command: string; exitCode: number | null; logRef: string; logTail: string }>;
+  /** Why verification did not accept the result. */
+  verificationReasons: string[];
 }
 
 export interface RunContext {
@@ -43,6 +76,10 @@ export interface RunContext {
   attempts: GateAttempt[];
   /** The agent session recording this run; `ask()` logs the transcript, requests, responses, and errors to it. */
   session: SessionRecorder | null;
+  /** The task's acceptance contract (absent for supervisor jobs and runs outside the executor). */
+  contract?: AcceptanceContract | null;
+  /** Set on the escalation retry: what went wrong in the previous attempt. */
+  retry?: RetryContext | null;
 }
 
 /**
@@ -78,9 +115,22 @@ export async function ask(ctx: RunContext, req: Omit<GateRequest, "plan" | "part
 /** Runner output before ledger-derived usage is attached by the executor. */
 export type RunnerResult = Omit<WorkerResult, "usage" | "servedEndpoints" | "taskId">;
 
+/**
+ * Material verification needs that is not part of the stored result: the revision and digest
+ * the result was submitted at, the evidence universe the worker had, and its per-criterion
+ * self-assessment (criteria by index, as the worker returned them).
+ */
+export interface RunEvidence {
+  revision?: string | null;
+  artifactDigest?: string | null;
+  universe?: EvidenceUniverse | null;
+  output?: Pick<WorkerOutput, "criteria"> | null;
+}
+
 export interface RunOutcome {
   state: Extract<TaskState, "completed" | "failed" | "budget_exhausted" | "cancelled" | "interrupted">;
   result: RunnerResult;
+  evidence?: RunEvidence;
 }
 
 export function baseResult(partial: Partial<RunnerResult> = {}): RunnerResult {

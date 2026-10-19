@@ -152,11 +152,21 @@ export function bumpTier(t: TierOrRejected): TierOrRejected {
   return t === "T4" ? "T4" : (TIER_NAMES[tierIndex(t) + 1] ?? "T4");
 }
 
-/** Does classifying have any chance of changing the outcome? */
+/** Can some tag value send the task back to the supervisor (for example `ambiguity: high`)? */
+export function rulebookCanReject(r: Rulebook): boolean {
+  return Object.values(r.tags).some((values) => Object.values(values as Record<string, number | "reject">).includes("reject"));
+}
+
+/**
+ * Does classifying have any chance of changing the outcome? Tags can raise the tier or reject
+ * the task, so the classifier matters whenever the measured tier is below T4 and either could
+ * happen, including at a measured T3 (tags can still reach T4 or reject).
+ */
 export function classifierCouldMatter(cfg: ResolvedConfig, r: Rulebook, deterministicScore: number): boolean {
   const lo = tierForScore(cfg, deterministicScore);
+  if (lo === "T4") return false;
   const hi = tierForScore(cfg, deterministicScore + maxTagPoints(r));
-  return lo !== "T3" && lo !== "T4" && lo !== hi;
+  return lo !== hi || rulebookCanReject(r);
 }
 
 /** Final tier: the rulebook decides from measured features plus tags; tags only add points. */

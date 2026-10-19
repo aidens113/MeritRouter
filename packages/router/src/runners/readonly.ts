@@ -35,7 +35,7 @@ export async function runReadOnly(ctx: RunContext): Promise<RunOutcome> {
       role: "system",
       content: `${charterFor(ctx.cfg, role)}\n\n## Tools\nInvestigate the repositories (${spec.repositoryAliases.join(", ")}) with the read-only tools, then call submit_result exactly once. You cannot modify anything.\n\n## Result\n${OUTPUT_CONTRACT}`,
     },
-    { role: "user", content: `${taskBrief(spec)}\nProvided context:\n${renderSources(sources) || "(none)"}\n${brainContext(env)}` },
+    { role: "user", content: `${taskBrief(spec, ctx.retry)}\nProvided context:\n${renderSources(sources) || "(none)"}\n${brainContext(env)}` },
   ];
   const executionId = ctx.gate.admission.createExecution("task", spec.profile, [{ taskId: ctx.taskId, itemId: ctx.taskId }]);
   const loop = await runAgentLoop({
@@ -67,6 +67,7 @@ export async function runReadOnly(ctx: RunContext): Promise<RunOutcome> {
         ...(v.output.data !== undefined ? { data: v.output.data } : {}),
         unresolvedCriteria: v.unresolvedCriteria,
       }),
+      evidence: { universe: env.universe, output: v.output },
     };
   }
   if (loop.kind === "budget_exhausted") {

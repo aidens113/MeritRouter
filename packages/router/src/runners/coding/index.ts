@@ -12,6 +12,7 @@ import { agentHome, finishCoding, prepareWorkspace, sourceDirtyFinding } from ".
 import { NativeCodingRunner } from "./native.js";
 import { WorkspacePointer } from "../session-workspace.js";
 import { criterionTexts } from "../../core/task.js";
+import { renderRetryContext } from "../prompts.js";
 
 function brief(ctx: RunContext, readOnlyAliases: string[]): string {
   const s = ctx.spec;
@@ -29,7 +30,7 @@ ${criterionTexts(s).map((c, i) => `${i + 1}. ${c}`).join("\n")}
 ${s.constraints.checks?.length ? `- These checks will be run after you finish (you may not be able to run them yourself):\n${s.constraints.checks.map((c) => `  - \`${c}\``).join("\n")}` : ""}
 ${readOnlyAliases.length ? `- Other repositories (${readOnlyAliases.join(", ")}) are context only and are not available in this workspace.` : ""}
 - Finish with a short summary of what you changed and anything unresolved.
-`;
+${ctx.retry ? `\n## Previous attempt\n${renderRetryContext(ctx.retry)}` : ""}`;
 }
 
 /** OpenCode config pinned to the job's policy gateway; passed inline so it outranks project files. */

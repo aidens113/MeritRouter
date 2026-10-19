@@ -253,6 +253,7 @@ async function runChunk(chunk: Item[], done: Done): Promise<void> {
             ...(v.value.output.data !== undefined ? { data: v.value.output.data } : {}),
             unresolvedCriteria: v.value.unresolvedCriteria,
           }),
+          evidence: { universe: item.universe, output: v.value.output },
         },
         [responseRef],
       );

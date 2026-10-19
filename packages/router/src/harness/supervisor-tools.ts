@@ -1,7 +1,7 @@
 import picomatch from "picomatch";
 import type { Db } from "../storage/db.js";
 import type { RunContext } from "../runners/types.js";
-import { PROFILE_NAMES } from "../config/schema.js";
+import { IMPORTANCE_LEVELS, PROFILE_NAMES } from "../config/schema.js";
 import { git } from "../workspaces/git.js";
 import { blame, commitsMatching, revertCommits, undoLines, type Actor } from "../attribution/index.js";
 import { formatBrief } from "../brain/protocol.js";
@@ -35,6 +35,15 @@ const str = (v: unknown, n: string) => {
 };
 function tool(name: string, sideEffect: ToolSideEffect, description: string, properties: Record<string, unknown>, required: string[], run: HarnessTool["run"]): HarnessTool {
   return { def: { type: "function", function: { name, description, parameters: { type: "object", properties, required } } }, sideEffect, run };
+}
+
+/** How the supervisor judges a result; shared by the acceptance tools' descriptions. */
+export const ACCEPTANCE_JUDGEMENT =
+  "Judge the result against the job's goal and the specifications you were given (the goal, acceptance criteria, and checks in your brief), using evidence you checked yourself, not the worker's own report.";
+
+/** The supervisor as recorded on acceptance decisions: this job's agent. */
+function supervisorIdentity(s: SupervisorState): { kind: "supervisor"; id: string } {
+  return { kind: "supervisor", id: `${s.actor.agent} (job ${s.ctx.taskId})` };
 }
 
 /** Resolve a label or id to one of this job's own tasks; other jobs' tasks are refused. */
@@ -76,8 +85,11 @@ function summarizeResult(id: string, s: SupervisorState): string {
   if (!t) return `${id}: unknown`;
   const r = t.result;
   if (!r) return `${id} (${t.spec.label ?? t.spec.profile}): ${t.state}`;
+  const v = r.verification;
   return [
     `${id} (${t.spec.label ?? t.spec.profile}): ${r.executionStatus}, acceptance ${r.acceptanceStatus}, ${r.stopReason}`,
+    ...(v ? [`  verification ${r.verificationStatus ?? "?"} at level ${v.level}${v.raisedFrom ? ` (raised from ${v.raisedFrom})` : ""}, importance ${v.importance}${v.reasons.length ? `: ${v.reasons.slice(0, 3).join("; ").slice(0, 400)}` : ""}`] : []),
+    ...(r.acceptanceStatus === "needs_supervisor" || r.acceptanceStatus === "not_verified" ? ["  decide: accept_task (with your reason) or reject_task after checking it against the goal and your brief"] : []),
     `  summary: ${r.summary.split("\n").slice(0, 3).join(" ").slice(0, 400)}`,
     ...r.findings.slice(0, 5).map((f) => `  finding: ${f.description.slice(0, 200)}${f.evidenceRefs.length ? ` [${f.evidenceRefs.slice(0, 3).join(", ")}]` : ""}`),
     ...(r.patchRefs.length ? [`  patch: ${r.patchRefs.join(", ")} (base ${Object.values(r.baseCommits).map((c) => c.slice(0, 12)).join(", ")})`] : []),
@@ -119,6 +131,8 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
               must_not_touch: { type: "array", items: { type: "string" } },
               checks: { type: "array", items: { type: "string" } },
               difficulty: { type: "string", enum: ["T1", "T2", "T3", "T4"] },
+              importance: { type: "string", enum: [...IMPORTANCE_LEVELS], description: "how much the result matters (default normal); raises verification, never difficulty" },
+              importance_reason: { type: "string", description: "why; required for high and critical" },
               depends_on: { type: "array", items: { type: "string" }, description: "labels of earlier tasks" },
               brain_grants: { type: "array", items: { type: "object", properties: { pattern: { type: "string" }, mode: { type: "string", enum: ["read", "append"] } } } },
             },
@@ -179,6 +193,8 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
               context: { ...(it.file_refs ? { fileRefs: it.file_refs } : {}), baseCommits },
               constraints: { acceptanceCriteria: it.acceptance_criteria, ...(it.allowed_paths ? { allowedPaths: it.allowed_paths } : {}), ...(checks.length ? { checks } : {}) },
               ...(it.difficulty ? { hints: { difficulty: it.difficulty } } : {}),
+              ...(it.importance ? { importance: it.importance } : {}),
+              ...(it.importance_reason ? { importanceReason: it.importance_reason } : {}),
               ...(deps.length ? { dependsOn: deps } : {}),
               brain: { effort: s.ctx.effort, ...(it.brain_grants ? { grants: it.brain_grants } : {}) },
             } as Record<string, unknown>,
@@ -216,30 +232,79 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
       return "cancellation requested";
     }),
 
-    tool("integrate_task", "edit", "Cherry-pick a finished coding task's commits onto the job branch. Per-line attribution is kept. On conflict nothing changes and the conflict is reported. Patches with out-of-scope edits are refused; patches that changed tests need accept_test_changes after you reviewed them.", { task_id: { type: "string" }, accept_test_changes: { type: "boolean" } }, ["task_id"], async (a) => {
-      const id = ownTask(s, a.task_id);
-      const t = svc.getTask(id);
-      if (!t?.result) throw new Error("task has not finished");
-      const findings = t.result.findings.map((f) => f.description);
-      const outOfScope = findings.find((f) => f.startsWith("Out-of-scope changes"));
-      if (outOfScope) throw new Error(`refused: ${outOfScope}. Undo those files in a follow-up task or re-delegate with the right allowed_paths.`);
-      const tests = findings.find((f) => f.startsWith("Tests or evaluator files were modified"));
-      if (tests && a.accept_test_changes !== true) throw new Error(`${tests} Review the change, then call integrate_task again with accept_test_changes: true if it is legitimate.`);
-      const ws = s.db.prepare("SELECT worktree_path, base_sha, repo_alias FROM workspaces WHERE task_id = ?").get(id) as { worktree_path: string; base_sha: string; repo_alias: string } | undefined;
-      if (!ws) throw new Error("task has no worktree (not a coding task?)");
-      const repo = repoFor(s, ws.repo_alias);
-      const commits = (await git(ws.worktree_path, ["rev-list", "--reverse", `${ws.base_sha}..HEAD`])).split("\n").filter(Boolean);
-      if (!commits.length) return "nothing to integrate: the task made no commits";
-      const env = { GIT_COMMITTER_NAME: s.actor.agent, GIT_COMMITTER_EMAIL: `${s.actor.agent.replace(/[^A-Za-z0-9._-]+/g, ".")}@switchyard.local` };
-      try {
-        await git(repo.worktree, ["cherry-pick", "-x", "--allow-empty", ...commits], { env });
-      } catch (err) {
-        const conflicts = await git(repo.worktree, ["diff", "--name-only", "--diff-filter=U"]).catch(() => "");
-        await git(repo.worktree, ["cherry-pick", "--abort"]).catch(() => undefined);
-        return `conflict integrating ${id}; nothing was changed. Conflicting files: ${conflicts.trim().split("\n").join(", ") || "unknown"}. Re-delegate based on the current job branch, or edit the files yourself. (${(err as Error).message.slice(0, 200)})`;
-      }
-      return `integrated ${commits.length} commit(s) from ${id} onto ${repo.branch}; head is now ${(await git(repo.worktree, ["rev-parse", "--short", "HEAD"])).trim()}`;
-    }),
+    tool(
+      "accept_task",
+      "delegate",
+      `${ACCEPTANCE_JUDGEMENT} Accept a finished task's result for this job. Acceptance is recorded on the task with who accepted (this job's supervisor) and your reason, so state what you checked and how it meets the goal and the brief. A reason is required unless the result is already met. Unmet results cannot be accepted: reject them or re-delegate. When verification.strict_acceptor is human, strict results are refused here and wait for a human (CLI, MCP, or panel).`,
+      { task_id: { type: "string" }, reason: { type: "string", description: "what you verified and why the result meets the job's goal and the brief's specifications" } },
+      ["task_id"],
+      async (a) => {
+        const id = ownTask(s, a.task_id);
+        const r = svc.acceptTask(id, { by: supervisorIdentity(s), reason: typeof a.reason === "string" ? a.reason : null });
+        return `${id} accepted (acceptance ${r.acceptanceStatus}); recorded as ${r.decision.by.kind} ${r.decision.by.id}`;
+      },
+    ),
+
+    tool(
+      "reject_task",
+      "delegate",
+      `${ACCEPTANCE_JUDGEMENT} Reject a finished task's result for this job; it becomes unmet (dependents waiting on it fail). The rejection is recorded with who rejected and your reason, which is required.`,
+      { task_id: { type: "string" }, reason: { type: "string" } },
+      ["task_id", "reason"],
+      async (a) => {
+        const id = ownTask(s, a.task_id);
+        const r = svc.rejectTask(id, { by: supervisorIdentity(s), reason: str(a.reason, "reason") });
+        return `${id} rejected (acceptance ${r.acceptanceStatus})`;
+      },
+    ),
+
+    tool(
+      "integrate_task",
+      "edit",
+      "Cherry-pick a finished coding task's commits onto the job branch. Per-line attribution is kept. On conflict nothing changes and the conflict is reported. Refused for unmet results and for patches with out-of-scope edits. A result that is not_verified or needs_supervisor needs accept: true with a reason (recorded as your acceptance, judged against the job's goal and the brief); patches that changed tests or evaluator files also need accept_test_changes: true after you reviewed them.",
+      { task_id: { type: "string" }, accept: { type: "boolean" }, reason: { type: "string" }, accept_test_changes: { type: "boolean" } },
+      ["task_id"],
+      async (a) => {
+        const id = ownTask(s, a.task_id);
+        const t = svc.getTask(id);
+        if (!t?.result) throw new Error("task has not finished");
+        const r = t.result;
+        // Structured fields; results recorded before they existed fall back to the finding text.
+        const findings = r.findings.map((f) => f.description);
+        const outOfScope = r.scopeViolation ?? (findings.some((f) => f.startsWith("Out-of-scope changes")) ? ["(see findings)"] : []);
+        if (outOfScope.length) throw new Error(`refused: out-of-scope changes (not allowed by allowedPaths): ${outOfScope.join(", ")}. Undo those files in a follow-up task or re-delegate with the right allowed_paths.`);
+        if (r.acceptanceStatus === "unmet") throw new Error(`refused: ${id} is unmet (${r.stopReason}${r.verification?.reasons.length ? `; ${r.verification.reasons.slice(0, 3).join("; ")}` : ""}). Re-delegate or fix it; an unmet result is never integrated.`);
+        const tests = r.protectedPathsChanged ?? (findings.some((f) => f.startsWith("Tests or evaluator files were modified")) ? ["(see findings)"] : []);
+        if (tests.length && a.accept_test_changes !== true) throw new Error(`Tests or evaluator files were modified: ${tests.join(", ")}. Review the change, then call integrate_task again with accept_test_changes: true if it is legitimate.`);
+        const needsAcceptance = r.acceptanceStatus === "not_verified" || r.acceptanceStatus === "needs_supervisor";
+        const reason = typeof a.reason === "string" ? a.reason.trim() : "";
+        if (needsAcceptance && (a.accept !== true || !reason)) {
+          throw new Error(`${id} is ${r.acceptanceStatus}${r.verification?.reasons.length ? ` (${r.verification.reasons.slice(0, 3).join("; ")})` : ""}. Check it against the job's goal and the brief, then call integrate_task again with accept: true and a reason (or use accept_task / reject_task).`);
+        }
+        const ws = s.db.prepare("SELECT worktree_path, base_sha, repo_alias FROM workspaces WHERE task_id = ?").get(id) as { worktree_path: string; base_sha: string; repo_alias: string } | undefined;
+        if (!ws) throw new Error("task has no worktree (not a coding task?)");
+        // Checks are bound to the tree they ran on: a worktree changed since then is not what was verified.
+        const verifiedTree = r.checks.map((c) => c.revision).find((x): x is string => typeof x === "string");
+        if (verifiedTree) {
+          const head = (await git(ws.worktree_path, ["rev-parse", "HEAD^{tree}"])).trim();
+          if (head !== verifiedTree) throw new Error(`refused: ${id}'s worktree (tree ${head.slice(0, 12)}) is not the revision its checks ran on (${verifiedTree.slice(0, 12)}); re-delegate it`);
+        }
+        // Recorded before integrating: a refusal (for example a human strict acceptor) stops here.
+        if (needsAcceptance) svc.acceptTask(id, { by: supervisorIdentity(s), reason });
+        const repo = repoFor(s, ws.repo_alias);
+        const commits = (await git(ws.worktree_path, ["rev-list", "--reverse", `${ws.base_sha}..HEAD`])).split("\n").filter(Boolean);
+        if (!commits.length) return "nothing to integrate: the task made no commits";
+        const env = { GIT_COMMITTER_NAME: s.actor.agent, GIT_COMMITTER_EMAIL: `${s.actor.agent.replace(/[^A-Za-z0-9._-]+/g, ".")}@switchyard.local` };
+        try {
+          await git(repo.worktree, ["cherry-pick", "-x", "--allow-empty", ...commits], { env });
+        } catch (err) {
+          const conflicts = await git(repo.worktree, ["diff", "--name-only", "--diff-filter=U"]).catch(() => "");
+          await git(repo.worktree, ["cherry-pick", "--abort"]).catch(() => undefined);
+          return `conflict integrating ${id}; nothing was changed. Conflicting files: ${conflicts.trim().split("\n").join(", ") || "unknown"}. Re-delegate based on the current job branch, or edit the files yourself. (${(err as Error).message.slice(0, 200)})`;
+        }
+        return `integrated ${commits.length} commit(s) from ${id} onto ${repo.branch}; head is now ${(await git(repo.worktree, ["rev-parse", "--short", "HEAD"])).trim()}`;
+      },
+    ),
 
     tool("run_check", "command", "Run a check command in the job's integration worktree (commands from your briefs' checks or the supervisor allowlist).", { command: { type: "string" }, repository: { type: "string" } }, ["command"], async (a) => {
       const repo = repoFor(s, a.repository);

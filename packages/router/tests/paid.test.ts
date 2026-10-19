@@ -127,7 +127,11 @@ describe("paid execution", () => {
   });
 
   it("T4 work goes to paid models when the T4 policy is premium", async () => {
-    env = makeEnv({ config: paidCfg({ tiers: { T4: "premium" } }) });
+    // Premium T4 runs at T3, where the default policy is deep: the budget must hold its review reserve.
+    const base = baseConfig();
+    const profiles = { ...(base.profiles as Record<string, Record<string, unknown>>) };
+    profiles.summarize = { ...profiles.summarize, max_model_requests: 6 };
+    env = makeEnv({ config: paidCfg({ tiers: { T4: "premium" } }, { profiles }) });
     const direct = new FakeDirect();
     sy = open(env, new ScriptedClient((req) => reply(JSON.stringify(goodOutput()), servedFor(sy!, req))), { worker: true, directClient: direct });
     sy.vault.add({ provider: "acme", secret: "sk-acme-0000-1111" });

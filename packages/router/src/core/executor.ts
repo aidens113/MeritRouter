@@ -11,7 +11,9 @@ import type { RoutePlan } from "../routing/select.js";
 import { effectiveBudget } from "../admission/admission.js";
 import { AdmissionDenied, GatewayError } from "./errors.js";
 import { criterionTexts, WorkerResultSchema, type TaskState, type WorkerResult } from "./task.js";
-import { baseResult, type RunContext, type RunOutcome, type RunnerResult } from "../runners/types.js";
+import { baseResult, type RetryContext, type RunContext, type RunOutcome, type RunnerResult } from "../runners/types.js";
+import type { ContractStore, StoredContract } from "../verification/contract.js";
+import { ensureContract, failureContext, runCap, verifyOutcome } from "./acceptance.js";
 import { runCompletion } from "../runners/completion.js";
 import { runReadOnly } from "../runners/readonly.js";
 import { runBatch } from "../runners/batch.js";
@@ -57,6 +59,8 @@ export interface ExecutorDeps {
   supervisor: CodingRunner | null;
   /** Agent sessions; null runs without recording (each run's `ctx.session` stays null). */
   sessions: SessionStore | null;
+  /** Acceptance contracts, compiled after classification and before the first run. */
+  contracts: ContractStore;
   /** Called after any task reaches a new state, to wake waiters. */
   onSettled: (taskId: string) => void;
 }
@@ -149,14 +153,25 @@ export class Executor {
     else this.endSession(task, session, "interrupted", d.reason);
   }
 
-  private context(task: StoredTask, signal: AbortSignal, plan: RoutePlan, routing: Routing, session: SessionRecorder | null): RunContext {
+  private context(
+    task: StoredTask,
+    signal: AbortSignal,
+    plan: RoutePlan,
+    routing: Routing,
+    session: SessionRecorder | null,
+    v: { contract: StoredContract | null; retry: RetryContext | null } = { contract: null, retry: null },
+  ): RunContext {
+    const budget = effectiveBudget(this.d.cfg, task.spec, plan.tier);
     return {
       cfg: this.d.cfg,
       profile: this.d.cfg.profiles[task.spec.profile]!,
       spec: task.spec,
       taskId: task.row.id,
       leaseOwner: this.d.owner,
-      budget: effectiveBudget(this.d.cfg, task.spec, plan.tier),
+      // The contract's allocation keeps the review (and, on the first run, repair) reserves free.
+      budget: { ...budget, maxModelRequests: runCap(this.d.cfg, task.spec, plan.tier, v.contract, v.retry ? "repair" : "execution") },
+      contract: v.contract?.contract ?? null,
+      retry: v.retry,
       gate: this.d.gate,
       tasks: this.d.tasks,
       artifacts: this.d.artifacts,
@@ -202,6 +217,37 @@ export class Executor {
     return Promise.reject(new Error("no coding runner is configured"));
   }
 
+  /**
+   * The task's acceptance contract (compiled now or stored earlier). When the verification
+   * policy needs more requests than the task allows, the task fails here and null is returned.
+   */
+  private contractFor(task: StoredTask, tier: TierName, classification: Prepared["classification"]): StoredContract | null {
+    const c = ensureContract(
+      { cfg: this.d.cfg, tasks: this.d.tasks, contracts: this.d.contracts, requestsUsed: (id) => this.d.gate.admission.taskTotals(id).requests, now: this.d.now },
+      task,
+      tier,
+      classification,
+    );
+    if (c.ok) return c.stored;
+    this.record(task, "failed", baseResult({
+      executionStatus: "failed",
+      stopReason: `verification_budget_insufficient: ${c.message}`,
+      summary: `Not run. ${c.message}.`,
+      unresolvedCriteria: criterionTexts(task.spec),
+    }));
+    return null;
+  }
+
+  /** Verify one outcome against the contract; a level raised by the actual change is recorded. */
+  private verify(task: StoredTask, contract: StoredContract, mode: Parameters<typeof verifyOutcome>[2], outcome: RunOutcome, qualityRetriesUsed: number) {
+    const v = verifyOutcome(this.d.cfg.verification, contract, mode, outcome, qualityRetriesUsed);
+    const re = v.reevaluation;
+    if (re.raised) {
+      this.d.tasks.event(task.row.id, "verification_raised", { from: contract.contract.verification.level, to: re.level, importance: re.importance, importanceSource: re.importanceSource, newRules: re.newRules, checks: re.checks });
+    }
+    return v;
+  }
+
   private tooDifficult(task: StoredTask, prepared: Prepared): void {
     const c = prepared.classification;
     this.record(task, "failed", baseResult({
@@ -233,13 +279,23 @@ export class Executor {
         return;
       }
       let plan = prepared.plan;
+      const mode = this.d.cfg.profiles[task.spec.profile]!.mode;
+      // Supervisor jobs are judged by their own job checks; every other task gets a contract.
+      let contract: StoredContract | null = null;
+      if (mode !== "supervisor") {
+        const c = this.contractFor(task, plan.tier, prepared.classification);
+        if (!c) return;
+        contract = c;
+      }
       let previous: string | null | undefined;
+      let retry: RetryContext | null = null;
+      let qualityRetriesUsed = 0;
       for (;;) {
         routing.tier = plan.tier;
         let outcome: RunOutcome;
         try {
           session = this.openSession(task, plan, previous);
-          outcome = await this.runMode(this.context(task, controller.signal, plan, routing, session));
+          outcome = await this.runMode(this.context(task, controller.signal, plan, routing, session, { contract, retry }));
         } catch (err) {
           const d = this.classify(err, controller.signal, task);
           this.endForDisposition(task, session, d);
@@ -252,13 +308,20 @@ export class Executor {
           this.settle(task, d, outcome.result);
           return;
         }
-        const failure = outcome.state === "budget_exhausted" ? "budget_exhausted" : outcome.result.stopReason === "invalid_output" ? "invalid_output" : outcome.result.acceptanceStatus === "unmet" && this.d.cfg.profiles[task.spec.profile]!.mode === "coding" ? "acceptance_unmet" : null;
+        const verified = contract ? this.verify(task, contract, mode, outcome, qualityRetriesUsed) : null;
+        const result: RunnerResult = verified ? verified.result : { ...outcome.result, verificationStatus: "not_required" };
+        // A quality defect is retried only where verification asks for a repair (coding, in V1).
+        const repair = verified ? verified.decision.action === "repair" : result.acceptanceStatus === "unmet";
+        const failure = outcome.state === "budget_exhausted" ? "budget_exhausted" : result.stopReason === "invalid_output" ? "invalid_output" : repair && mode === "coding" ? "acceptance_unmet" : null;
         const next = TIER_NAMES[TIER_NAMES.indexOf(plan.tier) + 1];
-        const budgetLeft = next ? effectiveBudget(this.d.cfg, task.spec, next).maxModelRequests - this.d.gate.admission.taskTotals(task.row.id).requests : 0;
+        const budgetLeft = next ? runCap(this.d.cfg, task.spec, next, contract, "repair") - this.d.gate.admission.taskTotals(task.row.id).requests : 0;
         if (failure && ESCALATE_ON.has(failure) && this.d.cfg.routing.escalate_on_failure && !routing.escalatedFrom && next && budgetLeft > 0 && !task.spec.routing?.endpointId) {
           const nextPlan = this.d.router.plan(task.spec.profile, next, prepared.inputModalities);
           if (nextPlan.candidates.length) {
             this.d.tasks.event(task.row.id, "escalated", { from: plan.tier, to: next, reason: failure });
+            retry = failureContext(this.d.artifacts, plan.tier, failure, result);
+            // The escalation is the task's one bounded retry, whatever triggered it.
+            qualityRetriesUsed++;
             const e = sessionEnd(outcome.state, outcome.result.stopReason);
             this.endSession(task, session, e.status, `${e.stopReason}; escalated to ${next}`);
             previous = session?.id ?? null;
@@ -271,7 +334,7 @@ export class Executor {
         }
         const e = sessionEnd(outcome.state, outcome.result.stopReason);
         this.endSession(task, session, e.status, e.stopReason);
-        this.record(task, outcome.state, outcome.result);
+        this.record(task, outcome.state, result);
         return;
       }
     } finally {
@@ -317,6 +380,15 @@ export class Executor {
       const tier = members.map((m) => prepared.get(m.row.id)!.plan!.tier).reduce((a, b) => (TIER_NAMES.indexOf(b) > TIER_NAMES.indexOf(a) ? b : a));
       const plan = prepared.get(members.find((m) => prepared.get(m.row.id)!.plan!.tier === tier)!.row.id)!.plan!;
       for (const m of members) this.routing.get(m.row.id)!.tier = tier;
+      // Each member's contract is compiled at its own classified tier; a member whose policy
+      // cannot fit its budget fails before the shared request.
+      const contracts = new Map<string, StoredContract>();
+      for (const m of [...members]) {
+        const c = this.contractFor(m, prepared.get(m.row.id)!.plan!.tier, prepared.get(m.row.id)!.classification);
+        if (c) contracts.set(m.row.id, c);
+        else members.splice(members.indexOf(m), 1);
+      }
+      if (!members.length) return;
 
       let outcomes: Map<string, RunOutcome>;
       try {
@@ -325,7 +397,7 @@ export class Executor {
         for (const t of members) {
           const session = this.openSession(t, plan);
           if (session) sessions.set(t.row.id, session);
-          ctxs.push(this.context(t, shared.signal, plan, this.routing.get(t.row.id)!, session));
+          ctxs.push(this.context(t, shared.signal, plan, this.routing.get(t.row.id)!, session, { contract: contracts.get(t.row.id) ?? null, retry: null }));
         }
         outcomes = await runBatch(ctxs);
       } catch (err) {
@@ -344,7 +416,8 @@ export class Executor {
         if (o) {
           const e = sessionEnd(o.state, o.result.stopReason);
           this.endSession(t, session, e.status, e.stopReason);
-          this.record(t, o.state, o.result);
+          const contract = contracts.get(t.row.id);
+          this.record(t, o.state, contract ? this.verify(t, contract, this.d.cfg.profiles[t.spec.profile]!.mode, o, 0).result : o.result);
         } else {
           this.endSession(t, session, "failed", "batch_member_unaccounted");
           this.settle(t, { kind: "final", state: "failed", stopReason: "batch_member_unaccounted" });

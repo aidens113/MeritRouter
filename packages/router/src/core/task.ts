@@ -307,6 +307,8 @@ export const WorkerResultSchema = z
         .strict(),
     ),
     unresolvedCriteria: z.array(z.string()),
+    /** Ids of the criteria in unresolvedCriteria, in the same order (absent on older results). */
+    unresolvedCriterionIds: z.array(z.string()).optional(),
     /** Coding results: changed paths, paths outside allowedPaths, and protected paths changed. */
     changedPaths: z.array(z.string()).optional(),
     scopeViolation: z.array(z.string()).optional(),

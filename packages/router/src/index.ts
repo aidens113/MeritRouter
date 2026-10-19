@@ -1,7 +1,62 @@
 export { Switchyard, createAdminClient, createGatewayClient, type SwitchyardOptions, type TaskStatus, type AwaitOutcome } from "./core/service.js";
 export { loadConfig, parseConfig, resolveConfigPath, CONFIG_ENV, DEFAULT_CONFIG_NAME, type ResolvedConfig } from "./config/load.js";
 export * from "./config/schema.js";
-export { WorkerTaskSchema, WorkerResultSchema, TASK_STATES, isTerminal, type WorkerTask, type WorkerTaskInput, type WorkerResult, type TaskState, type Usage } from "./core/task.js";
+export {
+  WorkerTaskSchema,
+  WorkerResultSchema,
+  TASK_STATES,
+  isTerminal,
+  AcceptanceCriterionSchema,
+  AcceptanceStatusSchema,
+  VerificationStatusSchema,
+  VerificationRecordSchema,
+  SupervisorDecisionSchema,
+  CheckOutcomeSchema,
+  CriterionOutcomeSchema,
+  CriterionVerifySchema,
+  ACCEPTANCE_STATUSES,
+  VERIFICATION_STATUSES,
+  CHECK_OUTCOMES,
+  CRITERION_OUTCOMES,
+  CRITERION_VERIFY_KINDS,
+  autoCriterionId,
+  criteria,
+  criterionTexts,
+  type WorkerTask,
+  type WorkerTaskInput,
+  type WorkerResult,
+  type TaskState,
+  type Usage,
+  type Criterion,
+  type CriterionVerify,
+  type AcceptanceCriterionInput,
+  type AcceptanceStatus,
+  type VerificationStatus,
+  type VerificationRecord,
+  type SupervisorDecision,
+  type CheckOutcome,
+  type CriterionOutcome,
+} from "./core/task.js";
+export type { AcceptanceDecisionInput, AcceptanceDecisionOutcome, RetryContext } from "./runners/types.js";
+export {
+  AcceptanceContractSchema,
+  BudgetAllocationSchema,
+  ContractStore,
+  allocateBudget,
+  canonicalContractJson,
+  compileContract,
+  contractDigest,
+  type AcceptanceContract,
+  type BudgetAllocation,
+  type BudgetInput,
+  type CompileInput,
+  type CompileResult,
+  type StoredContract,
+} from "./verification/contract.js";
+export { BUILTIN_RULES, LEVEL_RANK, evaluatePolicy, policyFingerprint, reevaluateOnResult, resolveLevel, strongerLevel, type PolicyEvaluation, type PolicyInput, type Reevaluation, type ResolvedLevel, type ResolvedReview } from "./verification/policy.js";
+export { IMPORTANCE_RANK, effectiveImportance, formatImportanceSource, strongerImportance, type EffectiveImportance, type ImportanceSource } from "./verification/importance.js";
+export { NAMED_CHECKS, checkRunOutcome, runNamedChecks, selfReportFromOutput, type CheckReport, type CriterionResult, type NamedCheckResult, type SelfReportEntry } from "./verification/checks.js";
+export { applySupervisorDecision, decide as decideVerification, verificationRecord, type Decision as VerificationDecision, type ReviewOutcome, type SupervisorDecisionInput, type SupervisorDecisionResult } from "./verification/decide.js";
 export { SwitchyardError, ConfigError, TaskValidationError, AdmissionDenied, GatewayError } from "./core/errors.js";
 export { Catalog, chainNameFor, endpointIdFor, EndpointOverrideSchema, RoutingOverrideSchema, type ModelEndpoint, type EndpointOverride, type RoutingOverride, type EndpointStatus, type ParamEvidence } from "./models/catalog.js";
 export { planRoute, type RoutePlan, type CandidateExplanation } from "./routing/select.js";

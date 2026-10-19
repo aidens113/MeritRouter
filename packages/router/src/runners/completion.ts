@@ -27,7 +27,7 @@ export async function runCompletion(ctx: RunContext): Promise<RunOutcome> {
 
   const messages: ChatMessage[] = [
     { role: "system", content: systemPrompt("Answer from the supplied sources only.") },
-    { role: "user", content: `${taskBrief(spec)}\nSources:\n${renderSources(sources) || "(none)"}` },
+    { role: "user", content: `${taskBrief(spec, ctx.retry)}\nSources:\n${renderSources(sources) || "(none)"}` },
   ];
   const executionId = ctx.gate.admission.createExecution("task", spec.profile, [{ taskId: ctx.taskId, itemId: ctx.taskId }]);
   const responseRefs: string[] = [];
@@ -69,6 +69,7 @@ export async function runCompletion(ctx: RunContext): Promise<RunOutcome> {
             artifactRefs: [manifestRef, ...responseRefs],
             baseCommits: await baseCommitsFor(ctx),
           }),
+          evidence: { universe, output: v.value.output },
         };
       }
       lastErrors = v.errors;

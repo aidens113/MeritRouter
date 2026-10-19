@@ -104,18 +104,22 @@ export function runNamedChecks(s: CheckSubject): CheckReport {
   const results: NamedCheckResult[] = [];
   const add = (name: string, outcome: CheckOutcome, detail: string) => results.push({ name, required: required.has(name), outcome, detail });
 
-  // output_contract: the run produced a well-formed answer for its mode.
+  // output_contract: the run produced a well-formed answer for its mode. An execution that did
+  // not complete produced no answer to judge: that is its execution status, not a defect, so
+  // only defects in what it did produce (a coding run that changed nothing) fail here.
   {
     const problems: string[] = [];
-    if (!completed) problems.push(`execution ${r.executionStatus}`);
-    if (r.stopReason === "invalid_output") problems.push("worker output failed validation");
-    if (s.contract.hasOutputSchema && r.data === undefined) problems.push("the task's outputSchema requires data");
-    if (coding && r.changedPaths !== undefined && r.changedPaths.length === 0) problems.push("no files changed");
-    if (!coding && s.selfReport) {
-      const missing = s.contract.criteria.filter((c) => !self.has(c.id)).map((c) => c.id);
-      if (missing.length) problems.push(`criteria not assessed: ${missing.join(", ")}`);
+    if (completed) {
+      if (r.stopReason === "invalid_output") problems.push("worker output failed validation");
+      if (s.contract.hasOutputSchema && r.data === undefined) problems.push("the task's outputSchema requires data");
+      if (!coding && s.selfReport) {
+        const missing = s.contract.criteria.filter((c) => !self.has(c.id)).map((c) => c.id);
+        if (missing.length) problems.push(`criteria not assessed: ${missing.join(", ")}`);
+      }
     }
+    if (coding && r.changedPaths !== undefined && r.changedPaths.length === 0) problems.push("no files changed");
     if (problems.length) add("output_contract", "failed", problems.join("; "));
+    else if (!completed) add("output_contract", "not_run", `execution ${r.executionStatus}${r.stopReason ? ` (${r.stopReason})` : ""}`);
     else if (coding && r.changedPaths === undefined) add("output_contract", "not_run", "the result does not report its changed paths");
     else add("output_contract", "passed", coding ? `${r.changedPaths!.length} file(s) changed` : "output validated");
   }

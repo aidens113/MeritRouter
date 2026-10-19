@@ -229,7 +229,8 @@ describe("supervisor sessions", () => {
     const script = [
       () => [call("delegate", { tasks: [{ label: "subtract", profile: "implement", goal: "Add subtract(a, b) to src/app.ts", acceptance_criteria: ["subtract exists"], allowed_paths: ["src/**"], difficulty: "T2" }] })],
       () => [call("await_tasks", { timeout_seconds: 60 })],
-      () => [call("integrate_task", { task_id: "subtract" })],
+      // The task declares no checks, so its result is not_verified: integrating records the acceptance.
+      () => [call("integrate_task", { task_id: "subtract", accept: true, reason: "read the patch: subtract(a, b) returns a - b" })],
       () => [call("finish_job", { status: "completed", summary: "integrated", verified: [{ claim: "integrated", evidence: "integrate_task" }], not_verified: [] })],
     ];
     const client = new ScriptedClient((req) => {
