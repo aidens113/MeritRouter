@@ -7,7 +7,8 @@ import { loadConfig, DEFAULT_CONFIG_NAME } from "./config/load.js";
 import { PROFILE_NAMES, TIER_NAMES, type ProfileName, type TierName } from "./config/schema.js";
 import { Switchyard } from "./core/service.js";
 import { createCodingRunner } from "./runners/coding/index.js";
-import { modelsView, routingPreview } from "./admin/insights.js";
+import { brainAccessRequests, brainRead, brainSearch, brainTree, decideBrainAccess, jobDetail, jobsView, modelsView, routingPreview } from "./admin/insights.js";
+import { blame } from "./attribution/index.js";
 import { SwitchyardError } from "./core/errors.js";
 
 const HELP = `switchyard - delegate bounded tasks to approved free model pools
@@ -15,7 +16,9 @@ const HELP = `switchyard - delegate bounded tasks to approved free model pools
 Usage: switchyard <command> [options]   (global: --config <file>, --json)
 
 Setup
-  init [dir]                    write example switchyard.config.yaml and models.yaml
+  init [dir] [--preset <name>]  write switchyard.config.yaml and models.yaml
+                                presets: claude-code (default), standalone-free,
+                                standalone-hybrid, standalone-paid
   doctor                        check config, gateway, admin access, models, and repositories
   models [--all]                list models with status and eligibility
   models scan                   scan FreeLLMAPI's catalog and sync per-model chains
@@ -41,6 +44,18 @@ Paid keys (direct routes; secrets are encrypted at rest)
                                 reads the secret from SWITCHYARD_NEW_KEY
   keys enable|disable|remove <id>
   keys spend                    spend against budgets
+
+Standalone jobs (a SwitchYard supervisor plans, delegates, verifies, integrates)
+  run "<goal>" --repo <alias> [--check "<cmd>"] [--criteria "<text>"] [--wait]
+  jobs                          list jobs
+  job <id>                      job status, workers, branch, questions
+  questions                     questions supervisors are waiting on
+  answer <id> "<answer>"        answer one
+
+Brain (shared knowledge) and attribution
+  brain ls [prefix] | read <path> | search <query>
+  brain requests | approve <id> [reason] | deny <id> [reason]
+  blame <repo-alias> <path> [--ref <branch>]   which agent and model wrote each line
 
 Qualification
   qualify <model-id> [--trials n]   run the private eval suite pinned to one model
@@ -73,6 +88,11 @@ async function main(): Promise<number> {
       params: { type: "string" },
       active: { type: "string" },
       trials: { type: "string" },
+      repo: { type: "string", multiple: true },
+      check: { type: "string", multiple: true },
+      criteria: { type: "string", multiple: true },
+      preset: { type: "string" },
+      ref: { type: "string" },
       label: { type: "string" },
       billing: { type: "string" },
       balance: { type: "string" },
@@ -90,8 +110,11 @@ async function main(): Promise<number> {
   if (cmd === "init") {
     const dir = path.resolve(args[0] ?? ".");
     const examples = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "examples");
+    const preset = values.preset ?? "claude-code";
+    const presetFile = path.join("presets", `${preset}.yaml`);
+    if (!existsSync(path.join(examples, presetFile))) throw new SwitchyardError("usage", `unknown preset ${preset}; choose claude-code, standalone-free, standalone-hybrid, or standalone-paid`);
     mkdirSync(dir, { recursive: true });
-    for (const [src, dst] of [["switchyard.config.example.yaml", DEFAULT_CONFIG_NAME], ["models.example.yaml", "models.yaml"]] as const) {
+    for (const [src, dst] of [[presetFile, DEFAULT_CONFIG_NAME], ["models.example.yaml", "models.yaml"]] as const) {
       const target = path.join(dir, dst);
       if (existsSync(target)) out(`kept existing ${target}`, false);
       else {
@@ -285,6 +308,72 @@ ${table(rows)}`, json);
           return 0;
         }
         throw new SwitchyardError("usage", "usage: keys list|add|enable|disable|remove|spend");
+      }
+      case "run": {
+        const goal = args.join(" ").trim();
+        if (!goal || !values.repo?.length) throw new SwitchyardError("usage", 'usage: switchyard run "<goal>" --repo <alias> [--repo ...] [--check "<command>"] [--criteria "<text>"] [--wait]');
+        const job = await sy.startJob({ goal, repositories: values.repo.flatMap((r) => r.split(",")), ...(values.check ? { checks: values.check } : {}), ...(values.criteria ? { acceptanceCriteria: values.criteria } : {}) });
+        if (!values.wait) {
+          out(json ? job : `job ${job.taskId} ${job.state}. A worker runs it (switchyard worker, or the MCP server). Follow with: switchyard job ${job.taskId}`, json);
+          return 0;
+        }
+        const r = await sy.awaitResults([job.taskId], { timeoutSeconds: Number(values.timeout ?? cfg.supervisor.job_timeout_seconds) });
+        out(r, true);
+        return r.timedOut ? 2 : 0;
+      }
+      case "jobs": {
+        const rows = jobsView(sy).map((j) => ({ job: j.taskId, state: j.state, questions: j.pendingQuestions || "", workers: `${j.children.filter((c) => c.state === "completed").length}/${j.children.length}`, branch: j.branches.map((b) => b.branch).join(", "), goal: j.goal.slice(0, 60) }));
+        out(json ? rows : table(rows), json);
+        return 0;
+      }
+      case "job": {
+        const j = jobDetail(sy, args[0] ?? "");
+        if (!j) throw new SwitchyardError("not_found", `unknown job ${args[0]}`);
+        out(json ? j : [
+          `${j.taskId} ${j.state}: ${j.goal}`,
+          ...j.branches.map((b) => `branch ${b.branch} in ${b.alias} (merge with: git merge --no-ff ${b.branch})`),
+          ...j.children.map((c) => `  ${c.label ?? c.taskId} [${c.profile}] ${c.state}${c.acceptance ? ` / ${c.acceptance}` : ""}`),
+          ...j.questions.filter((q) => !q.answer).map((q) => `  QUESTION ${q.id}: ${q.question}${q.options ? ` (${q.options.join(" / ")})` : ""}  -> switchyard answer ${q.id} "<answer>"`),
+          `working document: brain:${j.workingDoc}`,
+          ...(j.result ? [`result: ${j.result.stopReason}, acceptance ${j.result.acceptanceStatus}`, j.result.summary] : []),
+        ].join("\n"), json);
+        return 0;
+      }
+      case "questions": {
+        const rows = sy.questions().map((q) => ({ id: q.id, job: q.taskId, question: q.question, options: q.options?.join(" / ") ?? "" }));
+        out(json ? rows : table(rows), json);
+        return 0;
+      }
+      case "answer": {
+        sy.answerQuestion(Number(args[0]), args.slice(1).join(" "));
+        out(`answered question ${args[0]}`, json);
+        return 0;
+      }
+      case "brain": {
+        const sub = args[0] ?? "ls";
+        if (sub === "ls") {
+          const rows = (await brainTree(sy, args[1] ?? "")).map((e) => ({ path: e.path, kind: e.kind, status: e.status ?? "", lines: e.lines, title: e.title ?? "" }));
+          out(json ? rows : table(rows), json);
+        } else if (sub === "read") process.stdout.write(brainRead(sy, args[1] ?? "").content + "\n");
+        else if (sub === "search") {
+          const rows = (await brainSearch(sy, args.slice(1).join(" "))).map((h) => ({ path: h.path, kind: h.kind, snippet: h.snippet }));
+          out(json ? rows : table(rows), json);
+        } else if (sub === "requests") {
+          const rows = brainAccessRequests(sy, "pending").map((r) => ({ id: r.id, task: r.taskId ?? "", role: r.role, mode: r.mode, pattern: r.pattern, reason: r.reason }));
+          out(json ? rows : table(rows), json);
+        } else if (sub === "approve" || sub === "deny") {
+          const r = decideBrainAccess(sy, Number(args[1]), sub === "approve", args.slice(2).join(" ") || `${sub}d by the user`);
+          out(`request ${r.id}: ${r.status}`, json);
+        } else throw new SwitchyardError("usage", "usage: brain ls [prefix] | read <path> | search <query> | requests | approve|deny <id> [reason]");
+        return 0;
+      }
+      case "blame": {
+        const repo = cfg.repositoryPaths[args[0] ?? ""];
+        if (!repo || !args[1]) throw new SwitchyardError("usage", "usage: switchyard blame <repo-alias> <path> [--ref <branch or commit>]");
+        const lines = await blame(repo.path, args[1], values.ref ?? "HEAD");
+        const rows = lines.map((l) => ({ line: l.line, agent: l.agent ?? l.authorName, model: l.model ?? "", role: l.role ?? "", commit: l.commit.slice(0, 10), text: l.text.slice(0, 80) }));
+        out(json ? lines : table(rows), json);
+        return 0;
       }
       case "usage":
         out(sy.usage(Date.now() - Number(values.hours ?? 24) * 3_600_000), true);

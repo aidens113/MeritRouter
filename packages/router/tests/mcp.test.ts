@@ -19,7 +19,11 @@ describe("MCP server", () => {
     client = new Client({ name: "test", version: "1" });
     await client.connect(new StdioClientTransport({ command: process.execPath, args: [server, "--config", env.cfg.configPath], env: { PATH: process.env.PATH ?? "" } }));
     const tools = (await client.listTools()).tools.map((t) => t.name).sort();
-    expect(tools).toEqual(["await_results", "cancel_tasks", "collect_results", "get_task_status", "preview_route", "read_artifact", "resume_task", "submit_tasks", "usage_summary"]);
+    expect(tools).toEqual([
+      "answer_question", "await_results", "blame", "brain_access_requests", "brain_append_ledger", "brain_decide_request", "brain_list", "brain_promote_lesson",
+      "brain_read", "brain_search", "brain_set_current_state", "brain_start_working_doc", "brain_write", "cancel_tasks", "collect_results", "get_task_status",
+      "job_status", "list_questions", "preview_route", "read_artifact", "resume_task", "start_job", "submit_tasks", "usage_summary",
+    ]);
 
     const bad = await client.callTool({ name: "submit_tasks", arguments: { tasks: [{ profile: "summarize" }] } });
     expect(bad.isError).toBe(true);
@@ -29,6 +33,12 @@ describe("MCP server", () => {
     expect(submitted[0].taskId).toMatch(/^t_/);
     const again = await client.callTool({ name: "submit_tasks", arguments: { tasks: [summarizeTask({ idempotencyKey: "mcp-1" })] } });
     expect(JSON.parse((again.content as Array<{ text: string }>)[0]!.text).submitted[0]).toMatchObject({ taskId: submitted[0].taskId, deduplicated: true });
+
+    // Claude Code uses the shared brain as a supervisor: it can start a working document and read it back.
+    const doc = await client.callTool({ name: "brain_start_working_doc", arguments: { effort: "mcp-effort", title: "From Claude", scope: "test", currentState: "hello" } });
+    expect(doc.isError).toBeFalsy();
+    const read = await client.callTool({ name: "brain_read", arguments: { path: "projects/demo/working/mcp-effort.md", section: "Current State" } });
+    expect(JSON.parse((read.content as Array<{ text: string }>)[0]!.text).content).toBe("hello");
 
     // No gateway key in this environment: the task fails with a typed auth reason, not a hang.
     const res = await client.callTool({ name: "await_results", arguments: { taskIds: [submitted[0].taskId], timeoutSeconds: 15 } });

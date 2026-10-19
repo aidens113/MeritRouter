@@ -5,8 +5,9 @@ import { z } from "zod";
 import { loadConfig } from "./config/load.js";
 import { MODALITIES, PROFILE_NAMES, TIER_NAMES } from "./config/schema.js";
 import { Switchyard } from "./core/service.js";
-import { createCodingRunner } from "./runners/coding/index.js";
-import { routingPreview } from "./admin/insights.js";
+import { routingPreview, jobDetail } from "./admin/insights.js";
+import { blame } from "./attribution/index.js";
+import type { Principal } from "./brain/access.js";
 
 /**
  * MCP stdio server for Claude Code. Runs the worker loop in-process; jobs continue only while
@@ -16,7 +17,7 @@ import { routingPreview } from "./admin/insights.js";
 async function main(): Promise<void> {
   const configArg = process.argv.indexOf("--config");
   const cfg = loadConfig(configArg > 0 ? process.argv[configArg + 1] : undefined);
-  const sy = new Switchyard(cfg, { worker: true, coding: createCodingRunner(cfg) });
+  const sy = new Switchyard(cfg, { worker: true });
   sy.recover();
 
   const server = new McpServer({ name: "switchyard", version: "0.1.0" });
@@ -141,6 +142,87 @@ async function main(): Promise<void> {
       inputSchema: { hours: z.number().positive().max(24 * 31).optional() },
     },
     async ({ hours }) => json(sy.usage(Date.now() - (hours ?? 24) * 3_600_000)),
+  );
+
+  // ---------- jobs (standalone supervisor) ----------
+  server.registerTool(
+    "start_job",
+    {
+      title: "Start a SwitchYard-supervised job",
+      description: "Hand a whole goal to SwitchYard's own supervisor (models configured under supervisor), which plans, delegates, verifies, and integrates onto a job branch. Use when you want SwitchYard to run the job end to end instead of supervising tasks yourself.",
+      inputSchema: { goal: z.string().min(1), repositories: z.array(z.string()).min(1), acceptanceCriteria: z.array(z.string()).optional(), checks: z.array(z.string()).optional(), label: z.string().optional() },
+    },
+    async (a) => {
+      try {
+        return json(await sy.startJob({ goal: a.goal, repositories: a.repositories, ...(a.acceptanceCriteria ? { acceptanceCriteria: a.acceptanceCriteria } : {}), ...(a.checks ? { checks: a.checks } : {}), ...(a.label ? { label: a.label } : {}) }));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+  server.registerTool("job_status", { title: "Job status", description: "A job's state, workers, branch, pending questions, and result.", inputSchema: { jobId: z.string() } }, async ({ jobId }) => {
+    const j = jobDetail(sy, jobId);
+    if (!j) return fail(new Error(`unknown job ${jobId}`));
+    const { transcript: _t, ...rest } = j;
+    return json(rest);
+  });
+  server.registerTool("list_questions", { title: "Questions from supervisors", description: "Questions SwitchYard supervisors are waiting on.", inputSchema: {} }, async () => json(sy.questions()));
+  server.registerTool("answer_question", { title: "Answer a supervisor's question", description: "Answer a pending question so the job continues.", inputSchema: { id: z.number().int(), answer: z.string().min(1) } }, async ({ id, answer }) => {
+    try {
+      sy.answerQuestion(id, answer, "claude-code");
+      return json({ answered: id });
+    } catch (err) {
+      return fail(err);
+    }
+  });
+
+  // ---------- brain: Claude Code acts as a supervisor (reads everything, writes its project) ----------
+  const effort = "claude-code";
+  const principal = (): Principal => sy.brainAccess.principalFor("supervisor", { project: sy.brain.project, effort, task: null, repos: Object.keys(cfg.repositoryPaths), jobId: null, tier: null });
+  const actor = { agent: "supervisor:claude-code", role: "supervisor", model: "claude-code" };
+  const brainTool = (name: string, description: string, inputSchema: Record<string, z.ZodTypeAny>, run: (a: Record<string, unknown>) => Promise<unknown> | unknown) =>
+    server.registerTool(name, { title: name.replace(/_/g, " "), description, inputSchema }, async (a: Record<string, unknown>) => {
+      try {
+        await sy.brain.ensure();
+        return json(await run(a));
+      } catch (err) {
+        return fail(err);
+      }
+    });
+  brainTool("brain_search", "Search shared knowledge: working documents, decisions, lessons, worker reports.", { query: z.string(), prefix: z.string().optional() }, async (a) => {
+    await sy.brain.refreshIndex();
+    return sy.brain.search(principal(), String(a.query), { ...(a.prefix ? { prefix: String(a.prefix) } : {}), limit: 10 });
+  });
+  brainTool("brain_read", "Read a brain entry, or one section of it (e.g. 'Current State').", { path: z.string(), section: z.string().optional() }, (a) => sy.brain.read(principal(), String(a.path), a.section ? { section: String(a.section) } : {}));
+  brainTool("brain_list", "List brain entries under a prefix (index of working documents: README.md).", { prefix: z.string().optional() }, (a) => sy.brain.list(principal(), String(a.prefix ?? "")));
+  brainTool("brain_start_working_doc", "Create a working document for an effort (header, Current State, briefs, ledger, open questions).", { effort: z.string(), title: z.string(), scope: z.string(), currentState: z.string() }, (a) =>
+    sy.brain.createWorkingDoc(principal(), actor, String(a.effort), { title: String(a.title), statusDetail: "Started from Claude Code", owner: actor.agent, scope: String(a.scope), currentState: String(a.currentState) }),
+  );
+  brainTool("brain_set_current_state", "Rewrite a working document's Current State (<= the configured line limit).", { path: z.string(), body: z.string() }, (a) => sy.brain.setCurrentState(principal(), actor, String(a.path), String(a.body)));
+  brainTool(
+    "brain_append_ledger",
+    "Append a Work Ledger entry; validation must be the exact command run and its observed result, or 'not validated' and why.",
+    { path: z.string(), title: z.string(), changed: z.string(), why: z.string(), validation: z.string(), outcome: z.enum(["Accepted", "Partial", "Reverted", "Blocked"]), followUp: z.string() },
+    (a) => sy.brain.appendLedger(principal(), actor, String(a.path), { title: String(a.title), agent: actor.agent, changed: String(a.changed), why: String(a.why), validation: String(a.validation), outcome: a.outcome as "Accepted", followUp: String(a.followUp) }),
+  );
+  brainTool("brain_write", "Create or replace a note in your project (decisions/, facts/, repos/<alias>.md).", { path: z.string(), content: z.string() }, (a) => sy.brain.write(principal(), actor, String(a.path), String(a.content)));
+  brainTool("brain_promote_lesson", "Promote a reusable lesson to global knowledge.", { title: z.string(), body: z.string(), sources: z.array(z.string()).optional() }, (a) => sy.brain.promoteLesson(principal(), actor, String(a.title), String(a.body), (a.sources as string[] | undefined) ?? []));
+  brainTool("brain_access_requests", "Workers' pending requests for more brain access.", {}, () => sy.brainAccess.list({ status: "pending" }));
+  brainTool("brain_decide_request", "Approve or deny a worker's brain access request.", { id: z.number().int(), approve: z.boolean(), reason: z.string() }, (a) => sy.brainAccess.decide(Number(a.id), a.approve === true, actor.agent, String(a.reason)));
+
+  server.registerTool(
+    "blame",
+    { title: "Line attribution", description: "Which agent and model wrote each line of a file (SwitchYard commits carry Agent/Model trailers). Use a job branch as ref to inspect a SwitchYard job.", inputSchema: { repository: z.string(), path: z.string(), ref: z.string().optional() } },
+    async ({ repository, path: file, ref }) => {
+      const repo = cfg.repositoryPaths[repository];
+      if (!repo) return fail(new Error(`unknown repository ${repository}`));
+      try {
+        const lines = await blame(repo.path, file, ref ?? "HEAD");
+        return json(lines.map((l) => ({ line: l.line, agent: l.agent ?? l.authorName, model: l.model, role: l.role, task: l.task, commit: l.commit.slice(0, 12), text: l.text })));
+      } catch (err) {
+        return fail(err);
+      }
+    },
   );
 
   const shutdown = async () => {
