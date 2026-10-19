@@ -83,6 +83,11 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
       throw err;
     }
 
+    // Tools run on behalf of the model that produced this response: attribute their writes to it.
+    if (env.brain) {
+      env.brain.actor.model = endpointId;
+      env.brain.actor.request = requestId;
+    }
     const calls: ChatToolCall[] = response.message.tool_calls ?? [];
     messages.push({ role: "assistant", content: response.message.content, ...(calls.length ? { tool_calls: calls } : {}) });
     env.edits.clear();

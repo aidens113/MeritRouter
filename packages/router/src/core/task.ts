@@ -44,7 +44,7 @@ export const WorkerTaskSchema = z
     /** Brain context: the working document (effort) this task reports into, and extra grants. */
     brain: z
       .object({
-        effort: z.string().regex(/^[a-z0-9][a-z0-9-]{0,60}$/).optional(),
+        effort: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,80}$/).optional(),
         grants: z.array(z.object({ pattern: z.string().min(1), mode: z.enum(["read", "append", "write"]) }).strict()).max(20).optional(),
       })
       .strict()

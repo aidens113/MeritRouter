@@ -65,7 +65,7 @@ export function kindOf(p: string): EntryKind {
   return "note";
 }
 
-const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "note";
+const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9_]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "note";
 
 /**
  * Shared knowledge stored as markdown in a git repository. Agents reach it only through these

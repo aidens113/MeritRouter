@@ -25,6 +25,8 @@ import { BrainAccess } from "../brain/access.js";
 import { PaidSpend } from "../paid/spend.js";
 import { paidEndpoints, paidFingerprint, refreshPaidPrices } from "../paid/catalog.js";
 import { httpDirectClient, type DirectClient } from "../paid/direct.js";
+import { createCodingRunner } from "../runners/coding/index.js";
+import { SupervisorRunner } from "../runners/supervisor.js";
 import { GatewayError, TaskValidationError } from "./errors.js";
 import { validateTask } from "./validate.js";
 import { Executor, type CodingRunner } from "./executor.js";
@@ -140,8 +142,8 @@ export class Switchyard {
       artifacts: this.artifacts,
       owner: this.owner,
       now: this.now,
-      coding: opts.coding ?? null,
-      supervisor: opts.supervisor ?? null,
+      coding: opts.coding === undefined ? createCodingRunner(cfg) : opts.coding,
+      supervisor: opts.supervisor === undefined ? new SupervisorRunner() : opts.supervisor,
       brain: this.brain,
       access: this.brainAccess,
       services: {
@@ -320,6 +322,50 @@ export class Switchyard {
       this.events.emit("settled", o.taskId);
     }
     return out;
+  }
+
+  /**
+   * Start a standalone job: a supervisor (the models you configured for the role) plans,
+   * delegates to workers, verifies, and integrates onto a job branch.
+   */
+  async startJob(input: {
+    goal: string;
+    repositories: string[];
+    acceptanceCriteria?: string[];
+    checks?: string[];
+    label?: string;
+    idempotencyKey?: string;
+    maxModelRequests?: number;
+    maxPaidUsd?: number;
+  }): Promise<SubmitOutcome> {
+    if (!this.cfg.profiles.supervise) throw new TaskValidationError("this configuration has no supervise task type; use a standalone preset or add profiles.supervise");
+    const [out] = await this.submitTasks([
+      {
+        profile: "supervise",
+        goal: input.goal,
+        repositoryAliases: input.repositories,
+        ...(input.label ? { label: input.label } : {}),
+        ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+        constraints: { acceptanceCriteria: input.acceptanceCriteria?.length ? input.acceptanceCriteria : ["The goal is achieved and the supervisor verified it"], ...(input.checks?.length ? { checks: input.checks } : {}) },
+        ...(input.maxModelRequests || input.maxPaidUsd !== undefined ? { budget: { ...(input.maxModelRequests ? { maxModelRequests: input.maxModelRequests } : {}), ...(input.maxPaidUsd !== undefined ? { maxPaidUsd: input.maxPaidUsd } : {}) } } : {}),
+      },
+    ]);
+    return out!;
+  }
+
+  /** Questions supervisors are waiting on. */
+  questions(opts: { pendingOnly?: boolean; taskId?: string } = {}): Array<{ id: number; taskId: string; question: string; options: string[] | null; answer: string | null; askedAt: number; answeredAt: number | null }> {
+    const where: string[] = [];
+    const args: unknown[] = [];
+    if (opts.pendingOnly ?? true) where.push("answer IS NULL");
+    if (opts.taskId) (where.push("task_id = ?"), args.push(opts.taskId));
+    const rows = this.db.prepare(`SELECT * FROM job_questions ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY id DESC LIMIT 100`).all(...args) as Array<{ id: number; task_id: string; question: string; options_json: string | null; answer: string | null; asked_at: number; answered_at: number | null }>;
+    return rows.map((r) => ({ id: r.id, taskId: r.task_id, question: r.question, options: r.options_json ? (JSON.parse(r.options_json) as string[]) : null, answer: r.answer, askedAt: r.asked_at, answeredAt: r.answered_at }));
+  }
+
+  answerQuestion(id: number, answer: string, by = "user"): void {
+    const r = this.db.prepare("UPDATE job_questions SET answer = ?, answered_by = ?, answered_at = ? WHERE id = ? AND answer IS NULL").run(answer, by, this.now(), id);
+    if (r.changes === 0) throw new TaskValidationError(`question ${id} does not exist or was already answered`);
   }
 
   resumeTask(id: string): TaskState {

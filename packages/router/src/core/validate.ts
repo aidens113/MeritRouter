@@ -51,7 +51,7 @@ export async function validateTask(
     if (!spec.constraints.allowedPaths?.length) issues.push("coding tasks must list constraints.allowedPaths");
   } else {
     if (spec.writableRepository) issues.push(`profile ${spec.profile} is read-only; writableRepository is not allowed`);
-    if (spec.constraints.checks?.length) issues.push(`profile ${spec.profile} cannot run checks; use a coding profile`);
+    if (spec.constraints.checks?.length && profile.mode !== "supervisor") issues.push(`profile ${spec.profile} cannot run checks; use a coding profile`);
   }
   for (const glob of spec.constraints.allowedPaths ?? []) {
     try {
