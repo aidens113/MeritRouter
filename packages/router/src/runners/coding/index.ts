@@ -8,9 +8,20 @@ import { workerActor } from "../../harness/worker.js";
 import { baseResult, type RunContext, type RunOutcome } from "../types.js";
 import { startPolicyGateway } from "./policy-gateway.js";
 import { minimalEnv, runProcess, type RunResult } from "./process.js";
-import { agentHome, finishCoding, prepareWorkspace, sourceDirtyFinding } from "./finish.js";
+import { agentHome, finishCoding, prepareWorkspace, resumeWorkspace, sourceDirtyFinding } from "./finish.js";
 import { NativeCodingRunner } from "./native.js";
 import { WorkspacePointer } from "../session-workspace.js";
+import { git } from "../../workspaces/git.js";
+import type { ResumePlan } from "../../sessions/resume.js";
+
+/** What a relaunched external agent is told about its interrupted run: the resume notice and its last messages. */
+function resumeBrief(plan: ResumePlan, recovered: string): string {
+  const said = plan.messages
+    .filter((m) => m.role === "assistant" && typeof m.content === "string" && m.content.trim())
+    .slice(-3)
+    .map((m) => `> ${String(m.content).trim().slice(0, 600).replace(/\n/g, "\n> ")}`);
+  return `\n## Resumed after an interruption\n\n${plan.summary}\n\nYour work so far is in this worktree (see \`git log\`). ${recovered}\n${said.length ? `\nYour last messages before the interruption:\n\n${said.join("\n\n")}\n` : ""}`;
+}
 
 function brief(ctx: RunContext, readOnlyAliases: string[]): string {
   const s = ctx.spec;
@@ -70,8 +81,10 @@ export class ExternalCodingRunner implements CodingRunner {
   async run(ctx: RunContext): Promise<RunOutcome> {
     const spec = ctx.spec;
     const alias = spec.writableRepository!;
-    const { ws, worktrees } = await prepareWorkspace(ctx);
-    const pointer = new WorkspacePointer(ctx.session, [{ alias, worktree: ws.worktreePath, branch: null, baseCommit: ws.baseSha, head: ws.baseSha }]);
+    // A resumed session relaunches the agent in the worktree it recorded; otherwise a fresh one.
+    const reused = ctx.resume ? await resumeWorkspace(ctx, ctx.resume.plan.workspace) : null;
+    const { ws, worktrees } = reused ?? (await prepareWorkspace(ctx));
+    const pointer = new WorkspacePointer(ctx.session, [{ alias, worktree: ws.worktreePath, branch: null, baseCommit: ws.baseSha, head: reused?.head ?? ws.baseSha }]);
     const findings = sourceDirtyFinding(ws);
     const agentConfig = hasRepoAgentConfig(ws.worktreePath);
     if (agentConfig.length && !ctx.cfg.coding.allow_repo_agent_config) {
@@ -97,6 +110,27 @@ export class ExternalCodingRunner implements CodingRunner {
       const actor = served ? { ...workerActor(ctx, "implementer", served.endpointId), request: served.requestId } : { ...workerActor(ctx, "implementer"), role: "tool" };
       pointer.setHead(alias, await commitAs(ws.worktreePath, actor, `implementer: ${note}`).catch(() => null));
     };
+    // Resuming: settle what the dead agent left uncommitted (policy), record the resume, brief the agent.
+    let resumed = "";
+    if (ctx.resume) {
+      const plan = ctx.resume.plan;
+      let recovered = "Its earlier worktree no longer exists: this is a fresh worktree, and earlier edits are not in it.";
+      if (reused) {
+        if (ctx.cfg.sessions.recover_edits === "reset") {
+          await git(ws.worktreePath, ["add", "-A"]);
+          const dirty = (await git(ws.worktreePath, ["diff", "--cached", "--name-only", "HEAD"])).trim();
+          if (dirty) await git(ws.worktreePath, ["reset", "-q", "--hard", "HEAD"]);
+          recovered = dirty ? `Uncommitted changes left by the interruption were reset: ${dirty.split(/\r?\n/).join(", ")}.` : "Nothing was left uncommitted.";
+        } else {
+          const before = reused.head;
+          await snapshot(null, "recovered edits after interruption");
+          const after = (await git(ws.worktreePath, ["rev-parse", "HEAD"])).trim();
+          recovered = after !== before ? "Uncommitted changes left by the interruption were committed as recovered." : "Nothing was left uncommitted.";
+        }
+      }
+      ctx.session?.resumed(plan.summary, [], plan);
+      resumed = resumeBrief(plan, recovered);
+    }
     const stopper = new AbortController();
     let stopReason: string | null = null;
     const gateway = await startPolicyGateway(ctx, executionId, {
@@ -112,7 +146,7 @@ export class ExternalCodingRunner implements CodingRunner {
 
     const home = agentHome(ctx, ws);
     const promptFile = path.join(home, "TASK.md");
-    writeFileSync(promptFile, brief(ctx, spec.repositoryAliases.filter((a) => a !== alias)));
+    writeFileSync(promptFile, brief(ctx, spec.repositoryAliases.filter((a) => a !== alias)) + resumed);
     const deadline = ctx.tasks.get(ctx.taskId)!.row.deadline_at ?? ctx.now() + ctx.cfg.execution.job_timeout_seconds * 1000;
     const timeoutMs = Math.max(10_000, deadline - ctx.now() - ctx.cfg.execution.check_timeout_seconds * 1000 * Math.min(1, spec.constraints.checks?.length ?? 0));
     const env = minimalEnv({

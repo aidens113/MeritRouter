@@ -238,6 +238,17 @@ export const ConfigSchema = z
       })
       .strict()
       .prefault({}),
+    /** Agent sessions (durable per-run logs) and how an interrupted session is resumed. */
+    sessions: z
+      .object({
+        /**
+         * Uncommitted changes an interrupted edit left in a worktree: commit them as "recovered"
+         * under the session's identity, or reset the worktree to its last commit.
+         */
+        recover_edits: z.enum(["commit", "reset"]).default("commit"),
+      })
+      .strict()
+      .prefault({}),
     /** How much gateway capacity this package may consume (package allocation layer). */
     allocation: z
       .object({

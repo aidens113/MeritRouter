@@ -259,7 +259,7 @@ describe("supervisor sessions", () => {
     expect(sy.sessions.list({ parentSessionId: sup!.id }).map((s) => s.id)).toEqual([child!.id]);
   }, 180_000);
 
-  it("a shutdown ends the session as interrupted; the resumed run is a new session linked to it", async () => {
+  it("a shutdown ends the session as interrupted; the resumed run continues that session", async () => {
     const cfg = baseConfig({ coding: { runner: "native" } });
     (cfg.profiles as Record<string, unknown>).supervise = { mode: "supervisor", tools: "supervisor", min_total_parameters_b: 100, max_model_requests: 30, max_output_tokens: 4000, classify: "never", min_tier: "T3" };
     env = makeEnv({ config: cfg });
@@ -280,11 +280,15 @@ describe("supervisor sessions", () => {
     await sy.close();
     sy = open(env, client, { worker: true });
     await sy.awaitResults([job.taskId], { timeoutSeconds: 30 });
-    const [, second, ...rest] = runs(job.taskId);
+    // S2: the same session is reopened and continued, not a new one.
+    const [again, ...rest] = runs(job.taskId);
     expect(rest).toEqual([]);
-    expect(second).toMatchObject({ previousSessionId: first!.id, status: "completed", stopReason: "supervisor_blocked" });
-    // The resumed session's transcript starts with the saved one, including the resume notice.
-    const messages = ofType(eventsOf(second!.id), "message").map((m) => m.data.message);
+    expect(again).toMatchObject({ id: first!.id, status: "completed", stopReason: "supervisor_blocked" });
+    const evs = eventsOf(first!.id);
+    expect(ofType(evs, "note").some((n) => n.data.text === "reopened")).toBe(true);
+    expect(ofType(evs, "resumed")).toHaveLength(1);
+    // The continued transcript holds the resume notice with the answer given meanwhile.
+    const messages = ofType(evs, "message").map((m) => m.data.message);
     expect(messages.some((m) => m.role === "user" && typeof m.content === "string" && m.content.includes('"Which format?" -> CSV'))).toBe(true);
   }, 120_000);
 });

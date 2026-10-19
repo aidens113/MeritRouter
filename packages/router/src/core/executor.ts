@@ -24,6 +24,8 @@ import { agentLabel, roleForProfile } from "../roles/index.js";
 import type { SessionStore } from "../sessions/store.js";
 import type { SessionRecorder } from "../sessions/recorder.js";
 import type { SessionEndStatus } from "../sessions/events.js";
+import type { ResumePlan } from "../sessions/resume.js";
+import { isSimulatedCrash } from "./faults.js";
 import { z } from "zod";
 
 /** The working document a task belongs to: its job's, an explicit one, or the shared ad-hoc one. */
@@ -79,6 +81,18 @@ const ESCALATE_ON = new Set(["invalid_output", "budget_exhausted", "acceptance_u
 export const DELEGATED_BY_SESSION = "delegated_by_session";
 const DelegatedBySchema = z.object({ sessionId: z.string().min(1) });
 
+/**
+ * Data of the task event `resumed` (see `TaskStore.resume`): how the next run should start.
+ * `sessionId` resumes that session; `freshWorkspace` starts a coding task over in a new
+ * worktree (the operator's `resume <task>`). Without either, an interrupted latest session is
+ * resumed when its role allows it.
+ */
+export const ResumeDirectiveSchema = z.object({ sessionId: z.string().min(1).optional(), freshWorkspace: z.boolean().optional() }).strict();
+export type ResumeDirective = z.infer<typeof ResumeDirectiveSchema>;
+
+/** Profile modes whose runs continue an interrupted session (agent loops); the others re-run fresh. */
+const RESUMABLE_MODES = new Set(["read_only", "coding", "supervisor"]);
+
 /** A run's outcome state as a session end status: a spent budget is a failure with that reason. */
 export function sessionEnd(state: RunOutcome["state"], stopReason: string): { status: SessionEndStatus; stopReason: string } {
   if (state === "budget_exhausted") return { status: "failed", stopReason: "budget_exhausted" };
@@ -130,6 +144,48 @@ export class Executor {
     });
   }
 
+  /** The directive of the `resumed` task event that queued the current run, if any. */
+  private resumeDirective(taskId: string): ResumeDirective {
+    const events = this.d.tasks.events(taskId, 500);
+    let claim = -1;
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (events[i]!.type === "claimed") {
+        claim = i;
+        break;
+      }
+    }
+    for (let i = claim - 1; i >= 0; i--) {
+      const e = events[i]!;
+      if (e.type === "claimed") break;
+      if (e.type === "resumed") {
+        const d = ResumeDirectiveSchema.safeParse(e.data ?? {});
+        return d.success ? d.data : {};
+      }
+    }
+    return {};
+  }
+
+  /**
+   * The resume rule: a run continues the task's latest session (or the one a directive names)
+   * when that session is `interrupted` and the task's mode is an agent loop, unless the
+   * operator asked a coding task to start over. The session is reopened and its plan returned;
+   * null means a fresh run (linked to the previous session).
+   */
+  private resumeFor(task: StoredTask): { session: SessionRecorder; plan: ResumePlan } | null {
+    const store = this.d.sessions;
+    const mode = this.d.cfg.profiles[task.spec.profile]?.mode;
+    if (!store || !mode || !RESUMABLE_MODES.has(mode)) return null;
+    const directive = this.resumeDirective(task.row.id);
+    if (directive.freshWorkspace && mode === "coding" && !directive.sessionId) return null;
+    const target = directive.sessionId ? store.get(directive.sessionId) : (store.forTask(task.row.id).filter((s) => s.role !== "classifier").at(-1) ?? null);
+    if (!target || target.taskId !== task.row.id || target.status !== "interrupted") return null;
+    const plan = store.planResume(target.id, { recoverEdits: this.d.cfg.sessions.recover_edits });
+    if (!plan || plan.messages.length === 0) return null; // nothing logged: start fresh
+    const session = store.reopen(target.id);
+    this.d.tasks.event(task.row.id, "session_resumed", { sessionId: target.id, actions: plan.actions.map((a) => a.kind), warnings: plan.warnings });
+    return { session, plan };
+  }
+
   /** End a run's session. The task outcome is already decided, so a recording failure is logged, not thrown. */
   private endSession(task: StoredTask, session: SessionRecorder | null, status: SessionEndStatus, stopReason: string): void {
     if (!session || session.ended) return;
@@ -149,7 +205,7 @@ export class Executor {
     else this.endSession(task, session, "interrupted", d.reason);
   }
 
-  private context(task: StoredTask, signal: AbortSignal, plan: RoutePlan, routing: Routing, session: SessionRecorder | null): RunContext {
+  private context(task: StoredTask, signal: AbortSignal, plan: RoutePlan, routing: Routing, session: SessionRecorder | null, resume: { plan: ResumePlan } | null = null): RunContext {
     return {
       cfg: this.d.cfg,
       profile: this.d.cfg.profiles[task.spec.profile]!,
@@ -171,6 +227,7 @@ export class Executor {
       jobId: jobIdFor(task),
       services: this.d.services,
       session,
+      resume,
     };
   }
 
@@ -219,11 +276,19 @@ export class Executor {
     const routing: Routing = { classification: null, tier: null, escalatedFrom: null, attempts: [] };
     this.routing.set(task.row.id, routing);
     let session: SessionRecorder | null = null;
+    // A simulated crash (fault injection) skips every cleanup a dying process could not do.
+    let crashed = false;
     try {
+      // Sessions of this task still running belong to a dead process: this one holds the lease now.
+      this.d.sessions?.markDeadRunning((s) => s.taskId !== task.row.id);
       let prepared: Prepared;
       try {
         prepared = await this.d.router.prepare(task, this.d.owner);
       } catch (err) {
+        if (isSimulatedCrash(err)) {
+          crashed = true;
+          return;
+        }
         this.settle(task, this.classify(err, controller.signal, task));
         return;
       }
@@ -234,13 +299,27 @@ export class Executor {
       }
       let plan = prepared.plan;
       let previous: string | null | undefined;
+      // Only the first attempt resumes; an escalation always starts fresh.
+      let resume: ReturnType<Executor["resumeFor"]> = null;
+      try {
+        resume = this.resumeFor(task);
+      } catch (err) {
+        // An unreadable or already-claimed session: run fresh (linked to it) rather than not at all.
+        this.d.tasks.event(task.row.id, "session_resume_failed", { error: (err as Error).message });
+      }
       for (;;) {
         routing.tier = plan.tier;
         let outcome: RunOutcome;
         try {
-          session = this.openSession(task, plan, previous);
-          outcome = await this.runMode(this.context(task, controller.signal, plan, routing, session));
+          session = resume ? resume.session : this.openSession(task, plan, previous);
+          const ctx = this.context(task, controller.signal, plan, routing, session, resume ? { plan: resume.plan } : null);
+          resume = null;
+          outcome = await this.runMode(ctx);
         } catch (err) {
+          if (isSimulatedCrash(err)) {
+            crashed = true;
+            return;
+          }
           const d = this.classify(err, controller.signal, task);
           this.endForDisposition(task, session, d);
           this.settle(task, d);
@@ -276,7 +355,7 @@ export class Executor {
       }
     } finally {
       // Whatever escaped above (a store or recording failure), never leave the session running.
-      this.endSession(task, session, "failed", "executor_error");
+      if (!crashed) this.endSession(task, session, "failed", "executor_error");
       this.routing.delete(task.row.id);
       release();
     }
@@ -294,6 +373,7 @@ export class Executor {
       return this.supervise(t, c);
     });
     const sessions = new Map<string, SessionRecorder>();
+    let crashed = false;
     try {
       // Classify each member; the shared request uses the hardest member's tier.
       const members: StoredTask[] = [];
@@ -329,6 +409,10 @@ export class Executor {
         }
         outcomes = await runBatch(ctxs);
       } catch (err) {
+        if (isSimulatedCrash(err)) {
+          crashed = true;
+          return;
+        }
         const pendingIds = (err as { batchPendingTaskIds?: string[] }).batchPendingTaskIds ?? members.map((t) => t.row.id);
         for (const t of members) {
           if (!pendingIds.includes(t.row.id)) continue;
@@ -352,7 +436,7 @@ export class Executor {
       }
     } finally {
       // Members that left the batch without an outcome (an error escaped) still end their sessions.
-      for (const t of tasks) this.endSession(t, sessions.get(t.row.id) ?? null, "failed", "batch_aborted");
+      if (!crashed) for (const t of tasks) this.endSession(t, sessions.get(t.row.id) ?? null, "failed", "batch_aborted");
       for (const t of tasks) this.routing.delete(t.row.id);
       for (const r of releases) r();
     }

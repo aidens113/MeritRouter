@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { Bot, CircleAlert, CornerDownRight, Cpu, Flag, FolderGit2, MessageSquare, Play, Send, StickyNote, User, Wrench } from "lucide-react";
+import { Bot, CircleAlert, CornerDownRight, Cpu, Flag, FolderGit2, MessageSquare, Play, RotateCcw, Send, StickyNote, User, Wrench } from "lucide-react";
 import type { SessionEvent } from "switchyard-router";
 import { Badge, cx, Mono, type Tone } from "./ui";
 import { SessionStatusBadge } from "./sessions-table";
@@ -21,6 +21,7 @@ const TYPE_LABEL: Record<SessionEvent["type"], string> = {
   note: "Note",
   workspace: "Workspace",
   ended: "Ended",
+  resumed: "Resumed",
 };
 
 const SIDE_EFFECT: Record<string, { label: string; tone: Tone; title: string }> = {
@@ -272,9 +273,39 @@ function EventBody({
           <SessionStatusBadge status={e.data.status} /> {humanize(e.data.stopReason)}
         </p>
       );
+    case "resumed":
+      return <ResumedView data={e.data} />;
     default:
       return null;
   }
+}
+
+/** What a resume reconciled: the notice the model got, and each action with its result. */
+function ResumedView({ data }: { data: Ev<"resumed">["data"] }) {
+  const label = (a: Ev<"resumed">["data"]["actions"][number]): string =>
+    a.kind === "rerun_tool"
+      ? `Re-ran ${a.name} (${a.sideEffect === "delegate" ? "delegation, idempotent by label" : "idempotent command"})`
+      : a.kind === "reconcile_edits"
+        ? `Reconciled interrupted edits: ${a.policy === "commit" ? "committed as recovered" : "reset to the last commit"} (${a.repos.map((r) => r.alias).join(", ") || "no repositories"})`
+        : `Reported the stored state of ${a.name}`;
+  return (
+    <div className="space-y-1.5 text-sm">
+      <LongText text={data.summary} />
+      {data.actions.length ? (
+        <ul className="space-y-1 text-xs text-ink-2">
+          {data.actions.map((a, i) => (
+            <li key={i} className="space-y-0.5">
+              <span className="font-medium text-ink">{label(a)}</span>
+              {a.result ? <Pre className="max-h-40">{a.result}</Pre> : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <p className="text-[11px] text-ink-3">
+        {num(data.resolvedIntentSeqs.length)} interrupted tool call(s) settled · {num(data.droppedRequestSeqs.length)} unanswered model request(s) dropped
+      </p>
+    </div>
+  );
 }
 
 function MessageView({ index, message }: { index: number; message: Ev<"message">["data"]["message"] }) {
@@ -379,6 +410,8 @@ function typeIcon(e: SessionEvent): ReactNode {
       return <FolderGit2 {...p} />;
     case "ended":
       return <Flag {...p} />;
+    case "resumed":
+      return <RotateCcw {...p} />;
     default:
       return null;
   }
@@ -395,6 +428,7 @@ function dotTone(e: SessionEvent): string {
     case "tool_outcome":
       return e.data.ok ? "bg-ink-3" : "bg-bad";
     case "tool_intent":
+    case "resumed":
       return "bg-warn";
     case "model_request":
     case "model_response":

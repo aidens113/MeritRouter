@@ -2,6 +2,7 @@ import type { ResolvedConfig } from "../config/load.js";
 import type { StoredTask, TaskStore } from "../storage/tasks.js";
 import { batchKey } from "../runners/batch.js";
 import type { Executor } from "./executor.js";
+import type { SessionStore } from "../sessions/store.js";
 
 const MAX_AUTO_RESUMES = 3;
 
@@ -23,6 +24,8 @@ export class Scheduler {
     private readonly owner: string,
     /** Housekeeping on every tick (registry sync, qualification grading). */
     private readonly onTick: () => void = () => undefined,
+    /** Agent sessions: sessions left running by a dead process are ended `interrupted` at recovery. */
+    private readonly sessions: SessionStore | null = null,
   ) {}
 
   start(intervalMs = 1000): void {
@@ -35,14 +38,17 @@ export class Scheduler {
   }
 
   /**
-   * Expired leases become interrupted. Read-only and completion work has no side effects, so
-   * it is resumed automatically (a bounded number of times); coding work never is.
+   * Expired leases become interrupted, and sessions whose task lease is gone end `interrupted`
+   * (`process_died`). Interrupted tasks are resumed automatically a bounded number of times:
+   * agent-loop roles continue their session (coding in the same worktree, with interrupted
+   * edits reconciled), the others re-run fresh (see the executor's resume rule).
    */
   recover(): string[] {
     const interrupted = this.tasks.recoverExpiredLeases();
+    this.sessions?.markDeadRunning((s) => !s.taskId || this.tasks.leaseLive(s.taskId));
     for (const t of this.tasks.list({ states: ["interrupted"], limit: 500 })) {
       const mode = this.cfg.profiles[t.spec.profile]?.mode;
-      if (mode && mode !== "coding" && t.row.run_count < MAX_AUTO_RESUMES) {
+      if (mode && t.row.run_count < MAX_AUTO_RESUMES) {
         this.tasks.resume(t.row.id);
       }
     }

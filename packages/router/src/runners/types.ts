@@ -10,6 +10,8 @@ import type { TaskState, WorkerResult, WorkerTask } from "../core/task.js";
 import type { Brain } from "../brain/brain.js";
 import type { BrainAccess } from "../brain/access.js";
 import type { SessionRecorder } from "../sessions/recorder.js";
+import type { ResumePlan } from "../sessions/resume.js";
+import { faultPoint } from "../core/faults.js";
 
 /** What a supervisor needs from the service (kept as an interface to avoid import cycles). */
 export interface SupervisorServices {
@@ -43,6 +45,11 @@ export interface RunContext {
   attempts: GateAttempt[];
   /** The agent session recording this run; `ask()` logs the transcript, requests, responses, and errors to it. */
   session: SessionRecorder | null;
+  /**
+   * Set when this run continues an interrupted session (`session` is that session, reopened):
+   * the plan to apply before the next model request. Null for a fresh run.
+   */
+  resume: { plan: ResumePlan } | null;
 }
 
 /**
@@ -56,6 +63,7 @@ export async function ask(ctx: RunContext, req: Omit<GateRequest, "plan" | "part
     session.syncMessages(req.chat.messages);
     session.modelRequest(req);
   }
+  faultPoint("after_model_request", req.purpose);
   let res: GateResponse;
   try {
     res = await ctx.gate.request({
@@ -72,6 +80,7 @@ export async function ask(ctx: RunContext, req: Omit<GateRequest, "plan" | "part
   }
   ctx.attempts.push(...res.attempts);
   session?.modelResponse(res);
+  faultPoint("after_model_response", req.purpose);
   return res;
 }
 

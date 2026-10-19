@@ -65,8 +65,9 @@ describe("standalone supervisor", () => {
 
     // The job branch exists in the source repository and the subtract lines are attributed to the worker.
     const branch = `switchyard/job-${job.taskId}`;
-    const wt = (sy.db.prepare("SELECT detail_json FROM job_state WHERE task_id = ?").get(job.taskId) as { detail_json: string }).detail_json;
-    const integration = JSON.parse(wt).repos[0].worktree as string;
+    // The integration worktree is recorded in the job's session (job_state is no longer written).
+    const integration = sy.sessions.forTask(job.taskId).at(-1)!.workspace!.repos[0]!.worktree;
+    expect(sy.db.prepare("SELECT 1 FROM job_state WHERE task_id = ?").get(job.taskId)).toBeUndefined();
     expect(execFileSync("git", ["branch", "--list", branch], { cwd: env.repo }).toString()).toContain(branch);
     const lines = await blame(integration, "src/app.ts");
     const sub = lines.find((l) => l.text.includes("return a - b"))!;
@@ -126,7 +127,7 @@ describe("supervisor interruption", () => {
     const client = new ScriptedClient((req) => {
       const n = turns(req);
       const last = req.messages[req.messages.length - 1]!;
-      if (typeof last.content === "string" && last.content.includes("You were interrupted")) resumed.push(last.content);
+      if (typeof last.content === "string" && last.content.includes("has been resumed")) resumed.push(last.content);
       const calls = n === 0 ? [call("ask_user", { question: "Which format?" })] : [call("finish_job", { status: "blocked", summary: "stopped", verified: [], not_verified: ["all"] })];
       return reply(null, { ...servedFor(sy!, req), toolCalls: calls });
     });
