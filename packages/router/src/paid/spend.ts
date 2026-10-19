@@ -129,9 +129,16 @@ export class PaidSpend {
   }
 }
 
-/** Worst-case USD for a request: every input token plus the full output allowance. */
+/** Input estimates are approximate; reserve this much headroom over them for paid requests. */
+export const PAID_INPUT_SAFETY = 1.5;
+
+/**
+ * Worst-case USD for a request: the input estimate with a safety margin (tokenizers differ;
+ * dense text such as base64 tokenizes worse than ~3 characters per token) plus the full output
+ * allowance. Reasoning tokens count inside max_tokens for the supported APIs.
+ */
 export function worstCaseUsd(inputTokens: number, maxOutputTokens: number, price: { in: number; out: number }): number {
-  return (inputTokens * price.in + maxOutputTokens * price.out) / 1_000_000;
+  return (Math.ceil(inputTokens * PAID_INPUT_SAFETY) * price.in + maxOutputTokens * price.out) / 1_000_000;
 }
 
 export function actualUsd(inputTokens: number, outputTokens: number, price: { in: number; out: number }): number {

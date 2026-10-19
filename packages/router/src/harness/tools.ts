@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import picomatch from "picomatch";
 import type { ChatTool } from "../gateway/types.js";
@@ -97,6 +97,12 @@ function workspacePath(env: HarnessEnv, input: unknown): { rel: string; abs: str
   while (!existsSync(probe)) probe = path.dirname(probe);
   const rel2 = path.relative(rootReal, realpathSync(probe));
   if (rel2.startsWith("..") || path.isAbsolute(rel2)) throw new Error(`${rel} resolves outside the workspace`);
+  // Never write through a symlink: the link itself could point anywhere.
+  if (existsSync(abs) || lstatExists(abs)) {
+    if (lstatSync(abs).isSymbolicLink()) throw new Error(`${rel} is a symbolic link; edits through links are refused`);
+    const rel3 = path.relative(rootReal, realpathSync(abs));
+    if (rel3.startsWith("..") || path.isAbsolute(rel3)) throw new Error(`${rel} resolves outside the workspace`);
+  }
   return { rel, abs };
 }
 
@@ -152,8 +158,24 @@ export function editTools(): HarnessTool[] {
   ];
 }
 
-/** Allowed command patterns use `*` as a wildcard (e.g. `npm test*`). */
+function lstatExists(p: string): boolean {
+  try {
+    lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Shell syntax that could chain, redirect, or substitute commands. */
+const SHELL_META = /[;&|<>`$\n\r\\%^]|\(|\)/;
+
+/**
+ * Allowed command patterns use `*` as a wildcard (e.g. `npm test*`). Commands containing shell
+ * operators are refused outright, so a pattern can never be extended with `&& ...` or `; ...`.
+ */
 export function commandAllowed(command: string, patterns: string[]): boolean {
+  if (SHELL_META.test(command)) return false;
   return patterns.some((p) => new RegExp(`^${p.split("*").map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`).test(command.trim()));
 }
 

@@ -284,9 +284,13 @@ export class Admission {
           if (usage?.reportedCostUsd !== null && usage?.reportedCostUsd !== undefined) {
             cost = usage.reportedCostUsd;
             basis = "provider_reported";
-          } else {
-            cost = actualUsd(usage?.inputTokens ?? res.estInputTokens, usage?.outputTokens ?? res.reservedOutputTokens, p.price);
+          } else if (usage?.inputTokens != null && usage.outputTokens != null) {
+            cost = actualUsd(usage.inputTokens, usage.outputTokens, p.price);
             basis = "computed";
+          } else {
+            // No billed usage reported: keep the worst case rather than an estimate.
+            cost = p.worstCaseUsd;
+            basis = "uncertain";
           }
         } else if (outcome.kind === "failed") {
           cost = 0;

@@ -80,6 +80,8 @@ export interface BlameLine {
   text: string;
   commit: string;
   origLine: number;
+  /** The file's path in the commit that last changed this line (differs after a rename). */
+  origPath: string;
   agent: string | null;
   role: string | null;
   model: string | null;
@@ -93,11 +95,12 @@ export interface BlameLine {
 /** Per-line attribution: git blame, then each commit's agent/model trailers. */
 export async function blame(repo: string, file: string, rev = "HEAD"): Promise<BlameLine[]> {
   const raw = await git(repo, ["blame", "--line-porcelain", rev, "--", file]);
-  const lines: Array<{ commit: string; origLine: number; finalLine: number; text: string }> = [];
-  let cur: { commit: string; origLine: number; finalLine: number } | null = null;
+  const lines: Array<{ commit: string; origLine: number; finalLine: number; text: string; origPath: string }> = [];
+  let cur: { commit: string; origLine: number; finalLine: number; origPath: string } | null = null;
   for (const l of raw.split("\n")) {
     const h = /^([0-9a-f]{40}) (\d+) (\d+)/.exec(l);
-    if (h) cur = { commit: h[1]!, origLine: Number(h[2]), finalLine: Number(h[3]) };
+    if (h) cur = { commit: h[1]!, origLine: Number(h[2]), finalLine: Number(h[3]), origPath: file };
+    else if (cur && l.startsWith("filename ")) cur.origPath = l.slice("filename ".length).replace(/\r$/, "");
     else if (l.startsWith("\t") && cur) {
       lines.push({ ...cur, text: l.slice(1) });
       cur = null;
@@ -112,6 +115,7 @@ export async function blame(repo: string, file: string, rev = "HEAD"): Promise<B
       text: l.text,
       commit: l.commit,
       origLine: l.origLine,
+      origPath: l.origPath,
       agent: t.Agent ?? null,
       role: t.Role ?? (c ? "human" : null),
       model: t.Model ?? null,
@@ -137,7 +141,10 @@ export async function commitsMatching(repo: string, range: string, filter: Parti
  */
 export async function revertCommits(repo: string, commits: string[], actor: Actor, reason: string): Promise<string | null> {
   if (!commits.length) return null;
-  const ordered = (await git(repo, ["rev-list", "--no-walk=sorted", ...commits])).split("\n").filter(Boolean); // newest first
+  // Newest first in history order (commit dates tie after a cherry-pick, so dates are not enough).
+  const wanted = new Set(await Promise.all(commits.map(async (c) => (await git(repo, ["rev-parse", c])).trim())));
+  const ordered = (await git(repo, ["rev-list", "--topo-order", "HEAD"])).split("\n").filter((c) => wanted.has(c));
+  if (ordered.length !== wanted.size) throw new GitError("some commits to undo are not on the current branch", null, "");
   try {
     await git(repo, ["revert", "--no-commit", ...ordered]);
   } catch (err) {
@@ -164,7 +171,7 @@ function parseHunks(diff: string): Hunk[] {
     if (m) {
       h = { oldStart: Number(m[1]), oldLines: [], newStart: Number(m[3]), newCount: m[4] === undefined ? 1 : Number(m[4]) };
       hunks.push(h);
-    } else if (h && line.startsWith("-") && !line.startsWith("---")) h.oldLines.push(line.slice(1));
+    } else if (h && line.startsWith("-") && !line.startsWith("---")) h.oldLines.push(line.slice(1).replace(/\r$/, ""));
   }
   return hunks;
 }
@@ -208,8 +215,11 @@ export async function undoLines(
   const insertAfter = new Map<number, string[]>();
   for (const [commit, picked] of byCommit) {
     const parent = (await git(repo, ["rev-list", "--parents", "-n", "1", commit])).trim().split(" ")[1];
-    const diff = parent ? await git(repo, ["diff", "-U0", parent, commit, "--", file]) : null;
-    const hunks = diff ? parseHunks(diff) : null;
+    let hunks: Hunk[] | null = null; // null: the commit has no parent, so every line was added by it
+    if (parent) {
+      // Diff under the file's name in that commit (it may have been renamed since).
+      hunks = parseHunks(await git(repo, ["diff", "-U0", parent, commit, "--", picked[0]!.origPath]));
+    }
     const pickedOrig = new Set(picked.map((p) => p.origLine));
     for (const p of picked) {
       const h = hunks?.find((x) => p.origLine >= x.newStart && p.origLine < x.newStart + x.newCount);

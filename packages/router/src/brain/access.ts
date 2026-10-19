@@ -64,7 +64,7 @@ export function defaultGrants(cfg: ResolvedConfig, role: RoleName, ctx: GrantCon
 
 export function allows(principal: Principal, path: string, mode: BrainMode): boolean {
   if (principal.kind === "human") return true;
-  return principal.grants.some((g) => RANK[g.mode] >= RANK[mode] && picomatch(g.pattern, { dot: false })(path));
+  return principal.grants.some((g) => RANK[g.mode] >= RANK[mode] && picomatch(g.pattern, { dot: false, nocase: true })(path));
 }
 
 export function denial(principal: Principal, path: string, mode: BrainMode): string | null {
@@ -90,6 +90,20 @@ export interface AccessRequest {
 
 type Row = { id: number; task_id: string | null; job_id: string | null; role: string; pattern: string; mode: BrainMode; reason: string; status: AccessRequest["status"]; decided_by: string | null; decision_reason: string | null; created_at: number; decided_at: number | null };
 const toRequest = (r: Row): AccessRequest => ({ id: r.id, taskId: r.task_id, jobId: r.job_id, role: r.role, pattern: r.pattern, mode: r.mode, reason: r.reason, status: r.status, decidedBy: r.decided_by, decisionReason: r.decision_reason, createdAt: r.created_at, decidedAt: r.decided_at });
+
+/**
+ * Does an auto-approve rule cover everything a request could match? Only literal paths and
+ * literal-prefix `/**` requests qualify (a glob in the request could widen what it grants); the
+ * rule must match the path itself or, for `/**`, shallow and deep paths under the prefix.
+ */
+export function ruleCovers(rule: string, requested: string): boolean {
+  const m = /^([^*?{}[\]!()+@]+?)(\/\*\*)?$/.exec(requested);
+  if (!m) return false;
+  const match = picomatch(rule, { nocase: true });
+  const prefix = m[1]!.replace(/\/+$/, "");
+  if (!m[2]) return match(prefix);
+  return match(`${prefix}/x.md`) && match(`${prefix}/a/b/c.md`);
+}
 
 /** Grants beyond the defaults, and the request workflow for obtaining them. */
 export class BrainAccess {
@@ -126,11 +140,7 @@ export class BrainAccess {
         .prepare("INSERT INTO brain_access_requests (task_id, job_id, role, pattern, mode, reason, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)")
         .run(p.taskId, p.jobId, p.role, pattern, mode, reason.slice(0, 1000), this.now()).lastInsertRowid,
     );
-    const auto = this.cfg.brain.access_approver === "auto"
-      ? true
-      : this.cfg.brain.auto_approve.some(
-          (r) => RANK[r.mode] >= RANK[mode] && picomatch(r.pattern)(pattern.replace(/\*+$/, "x")) && (p.tier === null || TIER_NAMES.indexOf(p.tier) >= TIER_NAMES.indexOf(r.min_tier)),
-        );
+    const auto = this.cfg.brain.access_approver === "auto" ? true : this.cfg.brain.auto_approve.some((r) => RANK[r.mode] >= RANK[mode] && ruleCovers(r.pattern, pattern) && (p.tier === null || TIER_NAMES.indexOf(p.tier) >= TIER_NAMES.indexOf(r.min_tier)));
     if (auto) return this.decide(id, true, "auto", "matched an auto-approve rule");
     return this.get(id)!;
   }

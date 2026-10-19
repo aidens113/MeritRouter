@@ -36,6 +36,14 @@ function tool(name: string, description: string, properties: Record<string, unkn
   return { def: { type: "function", function: { name, description, parameters: { type: "object", properties, required } } }, run };
 }
 
+/** Resolve a label or id to one of this job's own tasks; other jobs' tasks are refused. */
+function ownTask(s: SupervisorState, ref: unknown): string {
+  const key = String(ref ?? "");
+  const id = s.children.get(key) ?? key;
+  if (![...s.children.values()].includes(id)) throw new Error(`${key} is not a task of this job`);
+  return id;
+}
+
 function repoFor(s: SupervisorState, alias: unknown): IntegrationRepo {
   const a = typeof alias === "string" && alias ? alias : [...s.repos.keys()][0];
   const r = a ? s.repos.get(a) : undefined;
@@ -43,11 +51,23 @@ function repoFor(s: SupervisorState, alias: unknown): IntegrationRepo {
   return r;
 }
 
-function overlaps(a: string[], b: string[]): boolean {
-  const ma = picomatch(a, { dot: true });
-  const mb = picomatch(b, { dot: true });
-  // Cheap overlap test: identical globs, or either side matches the other's literal prefix.
-  return a.some((x) => b.includes(x)) || a.some((x) => mb(x.replace(/\*+.*$/, "x"))) || b.some((x) => ma(x.replace(/\*+.*$/, "x")));
+/** The literal directory part of a glob, before its first wildcard. */
+function staticPrefix(glob: string): string {
+  const cut = glob.search(/[*?{[!]/);
+  const head = cut < 0 ? glob : glob.slice(0, cut);
+  return cut < 0 ? head : head.slice(0, head.lastIndexOf("/") + 1);
+}
+
+/**
+ * Conservative overlap test: two path sets may overlap when one's literal prefix contains the
+ * other's (may report overlap where none exists; never misses one).
+ */
+export function overlaps(a: string[], b: string[]): boolean {
+  return a.some((x) => b.some((y) => {
+    const px = staticPrefix(x);
+    const py = staticPrefix(y);
+    return px.startsWith(py) || py.startsWith(px);
+  }));
 }
 
 function summarizeResult(id: string, s: SupervisorState): string {
@@ -112,15 +132,17 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
         if (activeChildren().length + items.length > limit) throw new Error(`at most ${limit} workers may run for one job; await some first`);
         // Partition by file: concurrent coding briefs in one repository must not overlap.
         const active = activeChildren().map((id) => svc.getTask(id)!.spec).filter((t) => t.writableRepository);
-        const pending = [...active];
+        const pending: Array<{ label: string | undefined; repo: string; paths: string[] }> = active.map((t) => ({ label: t.label, repo: t.writableRepository!, paths: t.constraints.allowedPaths ?? [] }));
         for (const it of items) {
           if (it.profile !== "implement") continue;
           const repo = String(it.writable_repository ?? [...s.repos.keys()][0] ?? "");
           const paths = (it.allowed_paths as string[] | undefined) ?? [];
           if (!paths.length) throw new Error(`${String(it.label)}: implement briefs need allowed_paths`);
-          const clash = pending.find((t) => t.writableRepository === repo && overlaps(t.constraints.allowedPaths ?? [], paths));
-          if (clash) throw new Error(`${String(it.label)} overlaps ${clash.label ?? "an active task"} in ${repo}; make it depend on that task or narrow allowed_paths`);
-          pending.push({ writableRepository: repo, constraints: { allowedPaths: paths }, label: String(it.label) } as never);
+          // A task that depends on another runs after it, so their paths may overlap.
+          const deps = new Set((it.depends_on as string[] | undefined) ?? []);
+          const clash = pending.find((t) => t.repo === repo && !deps.has(t.label ?? "") && overlaps(t.paths, paths));
+          if (clash) throw new Error(`${String(it.label)} overlaps ${clash.label ?? "an active task"} in ${repo}; add it to depends_on or narrow allowed_paths`);
+          pending.push({ label: String(it.label), repo, paths });
         }
         const doc = env.brain?.workingDoc ?? null;
         const specs = items.map((it) => {
@@ -173,28 +195,33 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
     ),
 
     tool("await_tasks", "Wait (without model requests) until the given tasks, or all of this job's active tasks, finish or the timeout passes. Returns compact results.", { task_ids: { type: "array", items: { type: "string" } }, timeout_seconds: { type: "integer" } }, [], async (a) => {
-      const ids = Array.isArray(a.task_ids) && a.task_ids.length ? (a.task_ids as string[]).map((x) => s.children.get(x) ?? x) : [...s.children.values()];
+      const ids = Array.isArray(a.task_ids) && a.task_ids.length ? (a.task_ids as string[]).map((x) => ownTask(s, x)) : [...s.children.values()];
       if (!ids.length) return "no tasks dispatched yet";
       const r = await svc.awaitResults(ids, { timeoutSeconds: Math.min(Number(a.timeout_seconds) || 1800, 3600), signal: s.ctx.signal, uncapped: true });
       return cap([...r.completed.map((c) => summarizeResult(c.taskId, s)), ...r.pending.map((p) => `${p.taskId}: still ${p.state}`)].join("\n"));
     }),
 
     tool("task_result", "Full result of one task (findings, evidence, checks, patch references).", { task_id: { type: "string" } }, ["task_id"], async (a) => {
-      const id = s.children.get(String(a.task_id)) ?? String(a.task_id);
+      const id = ownTask(s, a.task_id);
       const t = svc.getTask(id);
       if (!t) throw new Error("unknown task");
       return cap(JSON.stringify({ state: t.state, spec: { label: t.spec.label, profile: t.spec.profile, goal: t.spec.goal }, result: t.result }, null, 1));
     }),
 
     tool("cancel_tasks", "Cancel tasks this job dispatched.", { task_ids: { type: "array", items: { type: "string" } } }, ["task_ids"], async (a) => {
-      svc.cancelTasks((a.task_ids as string[]).map((x) => s.children.get(x) ?? x));
+      svc.cancelTasks((a.task_ids as string[]).map((x) => ownTask(s, x)));
       return "cancellation requested";
     }),
 
-    tool("integrate_task", "Cherry-pick a finished coding task's commits onto the job branch. Per-line attribution is kept. On conflict nothing changes and the conflict is reported.", { task_id: { type: "string" } }, ["task_id"], async (a) => {
-      const id = s.children.get(String(a.task_id)) ?? String(a.task_id);
+    tool("integrate_task", "Cherry-pick a finished coding task's commits onto the job branch. Per-line attribution is kept. On conflict nothing changes and the conflict is reported. Patches with out-of-scope edits are refused; patches that changed tests need accept_test_changes after you reviewed them.", { task_id: { type: "string" }, accept_test_changes: { type: "boolean" } }, ["task_id"], async (a) => {
+      const id = ownTask(s, a.task_id);
       const t = svc.getTask(id);
       if (!t?.result) throw new Error("task has not finished");
+      const findings = t.result.findings.map((f) => f.description);
+      const outOfScope = findings.find((f) => f.startsWith("Out-of-scope changes"));
+      if (outOfScope) throw new Error(`refused: ${outOfScope}. Undo those files in a follow-up task or re-delegate with the right allowed_paths.`);
+      const tests = findings.find((f) => f.startsWith("Tests or evaluator files were modified"));
+      if (tests && a.accept_test_changes !== true) throw new Error(`${tests} Review the change, then call integrate_task again with accept_test_changes: true if it is legitimate.`);
       const ws = s.db.prepare("SELECT worktree_path, base_sha, repo_alias FROM workspaces WHERE task_id = ?").get(id) as { worktree_path: string; base_sha: string; repo_alias: string } | undefined;
       if (!ws) throw new Error("task has no worktree (not a coding task?)");
       const repo = repoFor(s, ws.repo_alias);
@@ -252,7 +279,13 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
         }
         const target = str(a.target, "target");
         let commits: string[];
-        if (a.kind === "commit") commits = [(await git(repo.worktree, ["rev-parse", target])).trim()];
+        if (a.kind === "commit") {
+          // Only commits made during this job (after its base) may be undone.
+          const sha = (await git(repo.worktree, ["rev-parse", "--verify", `${target}^{commit}`])).trim();
+          const jobCommits = new Set((await git(repo.worktree, ["rev-list", `${repo.baseSha}..HEAD`])).split("\n").filter(Boolean));
+          if (!jobCommits.has(sha)) throw new Error(`${target} is not a commit made during this job; changes from before the job are never undone`);
+          commits = [sha];
+        }
         else {
           const key = a.kind === "task" ? "Task" : a.kind === "model" ? "Model" : "Agent";
           const value = a.kind === "task" ? (s.children.get(target) ?? target) : target;

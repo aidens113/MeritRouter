@@ -22,10 +22,19 @@ export interface FileContent {
 export function normalizeRelPath(rel: string): string {
   const posix = rel.replace(/\\/g, "/").replace(/^\.\/+/, "");
   if (!posix || posix.startsWith("/") || /^[A-Za-z]:/.test(posix)) throw new Error(`path must be repository-relative: ${rel}`);
-  const norm = path.posix.normalize(posix);
+  const norm = path.posix.normalize(posix).replace(/\/+$/, "");
   if (norm === ".." || norm.startsWith("../")) throw new Error(`path escapes the repository: ${rel}`);
-  if (norm === ".git" || norm.startsWith(".git/") || norm.includes("/.git/")) throw new Error(`path inside .git is not readable: ${rel}`);
+  if (norm.split("/").some(isGitSegment)) throw new Error(`paths inside or named .git are not accessible: ${rel}`);
   return norm === "." ? "" : norm;
+}
+
+/**
+ * A path segment that resolves to git metadata on some filesystem: `.git` in any case, with the
+ * trailing dots or spaces Windows ignores, or its 8.3 short name (`GIT~1`).
+ */
+export function isGitSegment(segment: string): boolean {
+  const s = segment.replace(/[. ]+$/, "").toLowerCase();
+  return s === ".git" || /^git~\d+$/.test(s);
 }
 
 /**

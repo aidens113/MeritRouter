@@ -5,6 +5,7 @@ import type { ResolvedConfig } from "../config/load.js";
 import type { BrainMode } from "../config/schema.js";
 import type { Db } from "../storage/db.js";
 import { git } from "../workspaces/git.js";
+import { isGitSegment } from "../context/repo-reader.js";
 import { blame, commitAs, type Actor, type BlameLine } from "../attribution/index.js";
 import { denial, type Principal } from "./access.js";
 import {
@@ -44,16 +45,18 @@ export function expandHome(p: string): string {
 
 /** Normalize a brain-relative path; refuses escapes, absolute paths, and git internals. */
 export function normalizeBrainPath(p: string): string {
-  const posix = p.replace(/\\/g, "/").replace(/^\.\/+/, "").replace(/^\/+/, "");
   if (/^[A-Za-z]:/.test(p)) throw new BrainError(`brain paths are relative: ${p}`);
+  const posix = p.replace(/\\/g, "/").replace(/^\.\/+/, "").replace(/^\/+/, "").replace(/\/+$/, "");
   const norm = path.posix.normalize(posix || ".");
   if (norm === ".." || norm.startsWith("../")) throw new BrainError(`path escapes the brain: ${p}`);
-  if (norm.split("/").includes(".git")) throw new BrainError(`path inside .git: ${p}`);
+  if (norm !== "." && norm.split("/").some((seg) => isGitSegment(seg) || /[. ]$/.test(seg))) throw new BrainError(`invalid brain path: ${p}`);
   return norm === "." ? "" : norm;
 }
 
-export function kindOf(p: string): EntryKind {
-  if (p === "README.md") return "index";
+/** Kind from the path, case-insensitively (so `E.MD` cannot dodge working-document rules). */
+export function kindOf(input: string): EntryKind {
+  const p = input.toLowerCase();
+  if (p === "readme.md") return "index";
   if (/\/working\/[^/]+\/reports\/[^/]+\.md$/.test(p)) return "report";
   if (/\/working\/[^/]+\/archive\//.test(p)) return "archive";
   if (/\/working\/[^/]+\.md$/.test(p)) return "working_doc";
@@ -242,6 +245,7 @@ export class Brain {
   /** Create or replace a file. Working documents keep their ledger append-only. */
   async write(p: Principal, actor: Actor, rel: string, content: string, message?: string): Promise<{ path: string; commit: string | null }> {
     const r = this.resolve(rel);
+    if (!r.rel.toLowerCase().endsWith(".md")) throw new BrainError(`brain entries are markdown files ending in .md: ${r.rel}`);
     this.check(p, r.rel, "write");
     const kind = kindOf(r.rel);
     if (kind === "report") {

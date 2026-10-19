@@ -101,15 +101,23 @@ export function normalizeOpenAiUsage(usage: unknown, costUsd?: unknown): Normali
  */
 export function estimateTokens(messages: ChatMessage[], tools?: ChatTool[]): number {
   let chars = 0;
+  let dense = 0; // non-ASCII characters: count each as a full token (CJK, emoji, and the like)
+  const add = (t: string) => {
+    chars += t.length;
+    for (let i = 0; i < t.length; i++) if (t.charCodeAt(i) > 127) dense++;
+  };
   for (const m of messages) {
     chars += 16;
-    if ("content" in m && typeof m.content === "string") chars += m.content.length;
+    if ("content" in m && typeof m.content === "string") add(m.content);
     else if ("content" in m && Array.isArray(m.content)) {
       // Images are billed per tile; ~1,000 tokens is a conservative per-image bound.
-      for (const part of m.content) chars += part.type === "text" ? part.text.length : 3000;
+      for (const part of m.content) {
+        if (part.type === "text") add(part.text);
+        else chars += 3000;
+      }
     }
     if (m.role === "assistant" && m.tool_calls) chars += JSON.stringify(m.tool_calls).length;
   }
   if (tools) chars += JSON.stringify(tools).length;
-  return Math.ceil(chars / 3);
+  return Math.ceil((chars - dense) / 3 + dense);
 }

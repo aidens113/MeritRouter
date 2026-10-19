@@ -20,6 +20,11 @@
 | Provider attempts inside one model (key rotation, retries) | External, reported | FreeLLMAPI; `providerAttemptsExact` is always false |
 | Provider quotas and cooldowns | External | FreeLLMAPI is authoritative; SwitchYard reads `/v1/providers` |
 
+Allowed commands (`coding.allowed_commands`, `supervisor.allowed_commands`) refuse shell
+operators, so a pattern cannot be extended with `&& ...`, but an allowed command such as
+`npm test` still runs scripts the worker can edit (`package.json`, test files). Treat any allowed
+command as arbitrary code execution and use an OS-level sandbox or container if that matters.
+
 A worktree is not a sandbox. Containment for coding agents is: a provider allowlist that only
 reaches the job gateway, stripped credentials, denied shell by default, and diff validation
 against `allowedPaths` afterwards. Out-of-scope edits are reported and make acceptance `unmet`;
@@ -77,4 +82,5 @@ they are not reverted in the worktree.
 - Tasks and jobs run only while a worker process is running (the MCP server stops with the
   Claude session; run `switchyard worker` for unattended work). Interrupted supervisors resume
   from their saved transcript.
-- Line attribution for external agents (OpenCode) is per model request, not per tool call.
+- Line attribution for external agents (OpenCode) is per model request, not per tool call, and can
+  blur when the agent sends several requests at once.
