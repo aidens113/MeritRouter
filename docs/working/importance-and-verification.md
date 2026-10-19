@@ -379,6 +379,24 @@ Branch/worktree: `feat/v1-verification` at `D:/sy-wt/v1`. Workers never commit.
   `tests/verification-review.test.ts`.
 - Report to: docs/working/importance-and-verification/reports/v2-review.md
 
+### Brief: v-merge (integrate dev into feat/v1-verification)
+- Repository: worktree `D:/sy-wt/v1`, merge of `dev` (S2 resume, R1 ops, R1b) in progress with
+  conflicts in cli.ts, executor.ts, select.ts, coding/finish.ts, coding/index.ts,
+  runners/types.ts, tests/mcp.test.ts.
+- Task: resolve keeping both behaviours, and make resume and verification compose: when a
+  task is interrupted during its verification phase, the next run resumes the author's session
+  (not the reviewer's): S2 finishes an already-accepted submission without a model request and
+  verification re-runs on the submitted revision; an interrupted reviewer session is ended as
+  superseded and a new linked reviewer session runs; review requests already spent still count
+  against the allocation. A repair session resumes like any author session. The watchdog
+  (R1b) must also cover reviewer sessions. Add a fault-injection test: crash mid-review, restart,
+  verification completes once with no duplicated repair.
+- Owns: every conflicted file plus `src/core/**`, `src/verification/**`, `src/harness/**`,
+  `src/runners/**`, `tests/**` as needed for the merge.
+- Definition of done: merge committed-ready (no conflict markers), build, `pnpm -r typecheck`,
+  and the full suite pass; panel builds.
+- Report to: docs/working/importance-and-verification/reports/v-merge.md
+
 ### Brief: v3-calibration (after V2 is on dev)
 - Task: audit sampling (`audit_sample_rate`, background reviews with purpose `audit` that never
   block acceptance); a calibration record per verdict (reviewer endpoint, level, verdict,
