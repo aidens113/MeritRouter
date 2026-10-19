@@ -22,8 +22,8 @@ progress.
 **Not done:** Phases B-F.
 
 **Next steps:** the user asked to review the knowledge-base and harness plan before
-implementation (2026-10-19). Open decisions: brain location (shared vs per project), default
-access-request approver, supervisor commit policy, markdown export mode. Then B, C, D, E, F.
+implementation (2026-10-19). Open decisions: brain location (dedicated shared brain repo +
+mounts), access-request approver, commit granularity, brain repo push policy. Then B, C, D, E, F.
 
 **Blockers:** none. Live checks still need FreeLLMAPI, provider keys, and paid credentials.
 
@@ -66,27 +66,32 @@ access-request approver, supervisor commit policy, markdown export mode. Then B,
   Default `never` for every worker tier. `premium` makes T4 go to paid models instead of back to
   the supervisor. Supervisors in standalone-paid presets use `preferred`.
 
-## Phase B: knowledge base
+## Phase B: knowledge base (revised 2026-10-19: markdown files in git)
 
-- **Storage**: `kb_entries` (current version), `kb_versions` (history), FTS5 index, `kb_grants`,
-  `kb_access_requests`. Markdown export/import to a directory so the brain can be tracked in git
-  (durability rule from FluxIQ).
-- **Scopes** (hierarchical paths): `global`, `project/<name>`, `repo/<alias>`, `job/<id>`,
-  `task/<id>`. Kinds: `working_doc`, `ledger_entry`, `brief`, `report`, `decision`, `fact`,
-  `lesson`, `glossary`, `note`.
-- **Working-document protocol** built in: a working doc has a header block, a `Current State`
-  (rewritten, capped at 150 lines), a ledger (append-only entries with a mandatory
-  `Validation` line), and open questions. Workers never edit `Current State` or the ledger.
-- **Access**:
-  - supervisor: read/write everywhere it is configured for (default `global` and its job).
-  - worker: read its brief's grants (default: its task scope, its job's `Current State`, and the
-    repo scopes of its repositories); write only its own `task/<id>` report.
-  - classifier: none.
-  - Workers call `kb_request_access(scope, mode, reason)`. Requests are decided by the policy:
-    `auto` rules (e.g. read `repo/*` for T2+), the supervisor agent, or a human (panel/MCP).
-    Default: supervisor decides; in the Claude Code preset, Claude Code decides via MCP.
-- **Provenance**: every write records role, task, job, model endpoint, and evidence refs.
-- **Promotion**: lessons in worker reports are promoted to `global` only by a supervisor.
+Source of truth is a git repository of markdown files, not a database. SwitchYard adds what
+plain files lack: scoped access (agents reach the brain only through SwitchYard tools), per-file
+locks with atomic writes, protocol validation on write, and a disposable full-text index cached
+under `.switchyard/` and rebuilt from the files.
+
+```text
+brain/
+  README.md                         generated index: status, owner, size, scope per document
+  global/lessons/  global/glossary.md
+  projects/<name>/
+    decisions/  facts/  repos/<alias>.md
+    working/<effort>.md             FluxIQ protocol document
+    working/<effort>/reports/<task-label>.md
+    working/<effort>/archive/YYYY-MM-DD-<topic>.md
+```
+
+- Mounts: a project scope can point at a repository's `docs/working/` (FluxIQ's existing docs
+  become that project's brain without copying).
+- Working docs keep FluxIQ's header block; other notes use YAML front matter.
+- Validation: `Current State` <= 150 lines, ledger entries need a real `Validation` line (hearsay
+  rejected), workers never write `Current State` or the ledger, compaction past 800 lines.
+- Every write is a git commit with attribution trailers (same as code, Phase G); human edits made
+  outside SwitchYard are committed as `Role: human` before SwitchYard writes.
+- Access: scopes are folder paths; grants, access requests, and approval as designed earlier.
 
 ## Phase C: roles and charters
 
@@ -116,6 +121,19 @@ access-request approver, supervisor commit policy, markdown export mode. Then B,
   tasks.
 - **Supervisor model selection**: `roles.supervisor.model` = an endpoint id, a list in order,
   or a selection rule (tier + prefer + paid policy).
+
+## Phase G: line-level attribution and undo
+
+- Commit trailers on every change: `Model`, `Role`, `Task`, `Job`, `Tier`, `Request`.
+- Native harness: one commit per model response that edits files; OpenCode: worktree snapshot
+  committed each time a new request reaches the job gateway; check commands that rewrite files
+  commit as `Role: tool`.
+- Integration cherry-picks worker commits onto `switchyard/job-<id>` (no squash); final merge
+  into the user's branch with `--no-ff`.
+- `switchyard blame`, panel blame view, MCP blame tool (git blame -> commit -> trailers).
+- Supervisor-only undo tools: `undo_task`, `undo_model`, `undo_commit`, `undo_lines(file,
+  ranges)`; each undo is a revert commit with a reason, recorded in the job ledger; confined to
+  the job branch; never rewrites history.
 
 ## Phase E: presets and documentation
 
@@ -157,5 +175,5 @@ preset configuration.
 
 ## Open Questions
 
-- Should the knowledge base also sync to FluxIQ-style `docs/working/` files in each repository
-  automatically, or only on export? Default: export on demand. Owner: user.
+- Brain location, approver default, commit granularity, brain push policy: awaiting the user
+  (recommendations in the 2026-10-19 conversation). Owner: user.
