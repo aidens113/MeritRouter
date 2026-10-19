@@ -498,3 +498,97 @@ export function startQualification(sy: Switchyard, endpointId: string, opts: { e
 }
 
 export type { ModelEndpoint, EndpointOverride, RoutingOverride, CandidateExplanation, Classification, TaskState };
+
+// ---------- jobs (standalone supervisors) ----------
+
+export interface JobView {
+  taskId: string;
+  label: string | null;
+  goal: string;
+  state: TaskState;
+  createdAt: number;
+  finishedAt: number | null;
+  modelRequestsUsed: number;
+  branches: Array<{ alias: string; branch: string; baseSha: string; worktree: string }>;
+  children: Array<{ taskId: string; label: string | null; profile: string; state: string; acceptance: string | null }>;
+  pendingQuestions: number;
+  workingDoc: string;
+  result: WorkerResult | null;
+}
+
+export function jobsView(sy: Switchyard, limit = 50): JobView[] {
+  const rows = sy.db.prepare("SELECT id FROM tasks WHERE profile = 'supervise' ORDER BY created_at DESC LIMIT ?").all(limit) as { id: string }[];
+  return rows.map((r) => jobDetail(sy, r.id)!).filter(Boolean);
+}
+
+export function jobDetail(sy: Switchyard, id: string): (JobView & { transcript: Array<{ role: string; content: string; tools?: string[] }>; questions: ReturnType<Switchyard["questions"]> }) | null {
+  const t = sy.tasks.get(id);
+  if (!t || t.spec.profile !== "supervise") return null;
+  const st = sy.db.prepare("SELECT messages_json, detail_json FROM job_state WHERE task_id = ?").get(id) as { messages_json: string; detail_json: string | null } | undefined;
+  const detail = st?.detail_json ? (JSON.parse(st.detail_json) as { repos?: JobView["branches"] }) : {};
+  const messages = st ? (JSON.parse(st.messages_json) as Array<{ role: string; content: unknown; tool_calls?: Array<{ function: { name: string; arguments: string } }> }>) : [];
+  const children = (sy.db.prepare("SELECT id FROM tasks WHERE json_extract(spec_json, '$.parentTaskId') = ? ORDER BY created_at").all(id) as { id: string }[]).map((c) => {
+    const ct = sy.tasks.get(c.id)!;
+    return { taskId: c.id, label: ct.spec.label ?? null, profile: ct.spec.profile, state: ct.row.state, acceptance: ct.result?.acceptanceStatus ?? null };
+  });
+  return {
+    taskId: id,
+    label: t.spec.label ?? null,
+    goal: t.spec.goal,
+    state: t.row.state,
+    createdAt: t.row.created_at,
+    finishedAt: t.row.finished_at,
+    modelRequestsUsed: sy.admission.taskTotals(id).requests,
+    branches: detail.repos ?? [],
+    children,
+    pendingQuestions: sy.questions({ taskId: id }).length,
+    workingDoc: sy.brain.workingDocPath(`job-${id}`),
+    result: t.result,
+    transcript: messages.slice(1).map((m) => ({
+      role: m.role,
+      content: typeof m.content === "string" ? m.content.slice(0, 4000) : m.content === null ? "" : JSON.stringify(m.content).slice(0, 4000),
+      ...(m.tool_calls?.length ? { tools: m.tool_calls.map((c) => `${c.function.name}(${c.function.arguments.slice(0, 300)})`) } : {}),
+    })),
+    questions: sy.questions({ taskId: id, pendingOnly: false }),
+  };
+}
+
+// ---------- brain (for people: full access, edits committed as `human`) ----------
+
+const HUMAN = { kind: "human" } as const;
+const humanActor = { agent: "human", role: "human" };
+
+export async function brainTree(sy: Switchyard, prefix = "") {
+  await sy.brain.ensure();
+  return sy.brain.list(HUMAN, prefix);
+}
+
+export function brainRead(sy: Switchyard, path: string) {
+  return sy.brain.read(HUMAN, path);
+}
+
+export async function brainSearch(sy: Switchyard, query: string, prefix?: string) {
+  await sy.brain.refreshIndex();
+  return sy.brain.search(HUMAN, query, { ...(prefix ? { prefix } : {}), limit: 30 });
+}
+
+export function brainHistory(sy: Switchyard, path: string) {
+  return sy.brain.history(path);
+}
+
+export function brainBlame(sy: Switchyard, path: string) {
+  return sy.brain.blame(path);
+}
+
+/** Save a brain file as the user (protocol validation still applies to working docs and reports). */
+export function brainWrite(sy: Switchyard, path: string, content: string) {
+  return sy.brain.write(HUMAN, humanActor, path, content, `Edit ${path} in the panel`);
+}
+
+export function brainAccessRequests(sy: Switchyard, status?: "pending" | "approved" | "denied") {
+  return sy.brainAccess.list(status ? { status } : {});
+}
+
+export function decideBrainAccess(sy: Switchyard, id: number, approve: boolean, reason: string) {
+  return sy.brainAccess.decide(id, approve, "human", reason);
+}
