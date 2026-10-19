@@ -100,7 +100,11 @@ Claude requests.
 
 The MCP process runs the worker loop, so tasks run while the Claude Code session is open. For
 work that should continue after closing Claude, run `node packages/router/dist/cli.js worker`
-in a terminal; any number of processes can share the store.
+in a terminal; any number of processes can share the store. To keep a worker running across
+crashes and logins, use `switchyard daemon` (restarts the worker with backoff; logs under
+`.switchyard/logs/`) or install it as a user service with `switchyard service install`
+(systemd user unit, launchd agent, or a Windows scheduled task at logon; `--dry-run` prints the
+definition first, `service status` / `service uninstall` manage it).
 
 ## 5. Coding workers
 

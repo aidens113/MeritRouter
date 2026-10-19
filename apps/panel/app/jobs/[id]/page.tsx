@@ -298,7 +298,18 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
       </Card>
 
       <Card>
-        <CardHeader title="Supervisor transcript" help="supervisor" description="What the supervisor said and did, turn by turn. Tool calls are collapsed; open one to see its arguments and result." />
+        <CardHeader
+          title="Supervisor transcript"
+          help="supervisor"
+          description="What the supervisor said and did, turn by turn, from its latest session. Tool calls are collapsed; open one to see its arguments and result."
+          actions={
+            job.sessionId ? (
+              <Link href={`/sessions/${encodeURIComponent(job.sessionId)}`} className="text-xs text-accent-ink hover:underline">
+                Full event log
+              </Link>
+            ) : null
+          }
+        />
         <div className="p-4">{job.transcript.length ? <Transcript turns={job.transcript} /> : <p className="text-sm text-ink-3">Empty until the supervisor starts.</p>}</div>
       </Card>
     </div>

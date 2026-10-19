@@ -1,7 +1,7 @@
 # Agent sessions, failure resilience, and agent teams
 
 Status: Active
-Status detail: Phase S1 (agent session recording) complete 2026-10-19; S2 (resume) next.
+Status detail: S1, S2, and R1 operations complete 2026-10-19; R1b and T1 next.
 Created: 2026-10-19
 Last updated: 2026-10-19
 Owner: Senior supervisor agent
@@ -35,24 +35,33 @@ Related: [importance and verification](./importance-and-verification.md), [harne
 
 **Phase S1 done (2026-10-19):** every model-driven run records an agent session
 (`packages/router/src/sessions/`): fsync'd JSONL log under `<storage>/sessions/`, indexed in
-SQLite; transcript, model requests/responses/errors, a tool journal (intent before, outcome after,
-with side-effect class), workspace changes, end state. Executor runs, classifications, batch
-items, native and external coding, and supervisors all record; delegated tasks link to the
-delegating session. Read surfaces: `switchyard sessions` / `switchyard session <id>`, MCP
-`list_sessions` / `get_session`, panel `/sessions` and `/sessions/[id]`. Supervisor resume still
-uses `job_state`. Worker reports: `agent-sessions-and-teams/reports/s1-*.md`.
+SQLite; transcript, model traffic, a tool journal (intent before, outcome after, side-effect
+class), workspace changes, end state. Read surfaces in CLI, MCP, and panel.
 
-**Not done:** S2 onwards. Known S1 gaps for S2: no recorder reattach after restart; capacity
-deferrals end `interrupted` (S2 must not resume them as crashes, or change them to `failed`);
-side-effect classes to revisit (`cancel_tasks` = delegate, `ask_user` = external, brain
-access requests = brain, `run_check` not idempotent); external agents re-log changed message
-arrays; when the batch runner throws, already-finished members are not recorded on their task
-(pre-existing; sessions end `batch_aborted`).
+**Phase S2 done (2026-10-19):** interrupted sessions resume. Read-only, native coding, and
+supervisor tasks reopen their latest interrupted session (`SessionStore.reopen`), rebuild the
+transcript, settle in-flight tool calls by side-effect class (`planResume`,
+`src/harness/resume.ts`), and continue; coding resumes in the same worktree; supervisors no longer
+write `job_state` (fallback read only); a submission accepted before the crash finishes without
+another request; completion/batch/classifier runs re-run fresh, linked. Recovery marks dead
+`running` sessions `interrupted`. Fault hook `SWITCHYARD_FAULT_AT` (`src/core/faults.ts`) drives
+crash/restart tests. Surfaces: `switchyard resume <session|task>`, MCP `resume_session`, panel
+Resume. Capacity deferrals end `interrupted` and resume like crashes (accepted: continuing is
+correct).
 
-**Next steps:** Phase S2 (resume protocol on sessions), then V1-V2 of
-[importance-and-verification](./importance-and-verification.md) (pending user confirmation of the
-order), then R1 (durability), T1 (teams). S2 must cover resuming a task in its verification phase
-once V2 lands.
+**Phase R1 operations done (2026-10-19):** `storage.durability`, `switchyard backup` / `restore`,
+`switchyard daemon` (restart policy), `switchyard service install|uninstall|status` (systemd,
+launchd, Windows Task Scheduler). Fixed: `switchyard worker` exited after ~0.4 s. Not run: a real
+service install on any platform; Linux/macOS.
+
+**Not done:** R1b (watchdog, circuit breakers, real kill-and-restart acceptance test), T1-T3.
+Open gaps: external-runner resume and crash-during-batch are untested; `recover_edits: reset`
+untested against git; two processes racing to resume untested; a session left `running` by a dead
+process shows no panel Resume until recovery runs; already-finished batch members are not
+recorded when the batch runner throws (sessions end `batch_aborted`).
+
+**Next steps:** V1+V2 merge ([importance-and-verification](./importance-and-verification.md),
+in progress on `feat/v1-verification`), then R1b and T1 in parallel, then T2, T3.
 
 **Blockers:** none. Live checks against real providers are still outstanding from the previous
 document.
@@ -164,6 +173,61 @@ Surface: `switchyard sessions [--running|--interrupted]`, `switchyard session <i
 - `job_state` stays for supervisor resume until S2 moves resume onto sessions.
 - `resume_session` / `switchyard resume <session>` belong to S2; S1 ships read surfaces only.
 
+### R1b and T implementation decisions (2026-10-19)
+
+- **R1b (after S2):**
+  - Progress watchdog: a running session with no new event for
+    `execution.watchdog_minutes` (default 10; supervisors waiting in `await_tasks` or on a
+    question are exempt) is aborted as `interrupted` (`watchdog`) and resumes through S2.
+  - Per-provider circuit breaker in `ProviderHealth`: N consecutive failures (default 5) open it
+    for a backoff that doubles up to a cap; half-open admits one probe; routing skips open
+    platforms like cooling ones.
+  - Acceptance: a test kills a worker process mid-run (real child process), restarts it, and
+    the session resumes; backup/restore round trip.
+- **T1 (task graph):**
+  - A `plan_work` supervisor tool records the job's decomposition as a versioned plan
+    (`job_plans`: nodes with label, profile, goal, criteria, allowed paths, depends_on labels,
+    difficulty, importance; validated acyclic) and dispatches every node through the existing
+    delegate path. Re-planning appends a version; nodes already dispatched keep their tasks.
+  - Ready nodes run as soon as their dependencies are satisfied (the existing dependency
+    gate).
+  - Dependents receive their upstream results: summary, findings, artifact and patch refs,
+    and acceptance status, injected as context and listed in the evidence universe. For coding
+    dependents the base commit is the job branch after the upstream was integrated, or the
+    upstream's head when it is not integrated yet (recorded).
+  - Team-wide file leases (`file_leases`: job, task, repository, path globs, mode, acquired,
+    released) are acquired at claim and released at finish. The scheduler skips a coding task
+    whose write globs overlap a live lease in the same repository; this replaces the
+    per-call overlap check, which becomes advisory. Leases expire with the task lease.
+  - `team.max_agents` (default 8) caps concurrently running tasks per job (replacing
+    `supervisor.max_workers_per_job`, which stays as an alias). Global
+    `execution.max_concurrent_tasks` still bounds everything.
+  - Critical path: the longest chain by estimated cost (tier weight) is computed from the plan
+    and exposed in insights.
+- **T2 (team coordination):**
+  - Sub-supervisors: `delegate` accepts profile `supervise` for a sub-goal when `team.max_depth`
+    (default 2) allows. The child job works on its own branch `switchyard/job-<child>` forked
+    from the parent's job branch and gets its own working-document section; its request budget
+    is carved from the parent's (`team.child_budget_share`, default 0.5 of the remaining).
+  - Merge queue: `integrate_task` enqueues; one integration per job branch at a time; job checks
+    run after each; on conflict the item is rebased onto the branch head in its worktree when
+    clean, else re-delegated once with the conflict as context; every outcome is recorded.
+  - Team channel: an append-only per-job channel (`job_channel` table, mirrored to the brain
+    document section) with tools `post_channel` (kinds finding, blocker, interface_contract)
+    and `read_channel`; workers can read channel posts that reference their task.
+  - Redundant execution (opt-in per node, `redundancy: 2`) runs a small task on two cheap
+    models and takes the first result that passes verification; the other is cancelled.
+- **T3 (capacity and metrics):**
+  - AIMD concurrency per provider: start at `team.provider_concurrency_start` (2); +1 after N
+    successes, halve on 429 or cooldown; bounded by FreeLLMAPI-reported limits when known. The
+    scheduler admits a task only if a provider in its plan has a free slot.
+  - Cost-aware staffing: `plan_work` nodes without a tier get one from the rulebook. When
+    capacity is free, the planner prompt prefers more smaller nodes; strong models are kept for
+    the supervisor and for Deep/Strict review.
+  - Metrics, stored per job: wall-clock time, parallelism over time (sampled running count),
+    critical-path length, requests and cost per completed task. A qualification-suite
+    comparison runs the same goals as team vs single agent. Shown in a panel Teams view.
+
 ## Phases
 
 | Phase | Deliverable | Acceptance |
@@ -259,6 +323,50 @@ Surface: `switchyard sessions [--running|--interrupted]`, `switchyard session <i
   typecheck and tests pass.
 - Report to: docs/working/agent-sessions-and-teams/reports/r1-ops.md
 
+### Brief: r1b-resilience
+- Repository: worktree `D:/sy-wt/r1` (branch `feat/r1b-resilience`).
+- Task: per "R1b and T implementation decisions": (1) progress watchdog
+  (`execution.watchdog_minutes`, default 10; supervisors in `await_tasks` or waiting on a
+  question exempt) aborting a stuck run as `interrupted` (`watchdog`) so it resumes through S2;
+  (2) per-provider circuit breaker in `ProviderHealth` (open after N consecutive failures,
+  default 5; doubling backoff to a cap; half-open single probe; routing skips open platforms like
+  cooling ones; state visible in insights); (3) the R1 acceptance test: a real child-process
+  worker (`dist/cli.js worker`) killed mid-run (taskkill /F on Windows) and restarted on the same
+  storage finishes the task by resuming its session.
+- Owns: `src/gateway/**`, `src/routing/select.ts`, `src/core/scheduler.ts`, the watchdog hook in
+  `src/core/executor.ts` (small, self-contained), `src/config/schema.ts` (execution and routing
+  keys only), `src/admin/insights.ts` (provider health view only), `tests/resilience.test.ts`.
+- Must not touch: `src/verification/**`, `src/harness/**`, `src/runners/**`, panel.
+- Definition of done: tests for the watchdog (fake clock), breaker transitions, routing skip,
+  and the real kill-and-restart; typecheck and all tests pass.
+- Report to: docs/working/agent-sessions-and-teams/reports/r1b-resilience.md
+
+### Brief: t1-graph (after V1+V2 are on dev)
+- Repository: worktree `D:/sy-wt/t1` (branch `feat/t1-task-graph`).
+- Task: T1 per "R1b and T implementation decisions": the `plan_work` supervisor tool and
+  versioned `job_plans`; dispatch through the existing delegate path (importance and criteria
+  pass through to contracts); upstream results injected into dependents (context + evidence
+  universe; coding base commit rule); team-wide `file_leases` acquired at claim, released at
+  finish or lease expiry, enforced by the scheduler (overlap check becomes advisory);
+  `team.max_agents` (alias `supervisor.max_workers_per_job`); critical path computed from the
+  plan; supervisor charter updated to plan first for multi-part goals.
+- Owns: `src/harness/supervisor-tools.ts`, `src/runners/supervisor.ts`, `src/runners/prompts.ts`,
+  `src/context/**`, `src/core/scheduler.ts`, `src/core/executor.ts` (context injection only),
+  `src/storage/tasks.ts`, new `src/storage/plans.ts` and `src/storage/file-leases.ts`,
+  `src/storage/migrations.ts` (append), `src/config/schema.ts` (team section), `charters/**`,
+  `tests/team-graph.test.ts`.
+- Definition of done: a supervisor plan of N independent nodes runs them concurrently up to
+  `team.max_agents`; dependents see upstream results; overlapping write globs never run at the
+  same time across the job; re-planning keeps dispatched nodes; critical path correct on a
+  diamond graph; typecheck and all tests pass.
+- Report to: docs/working/agent-sessions-and-teams/reports/t1-graph.md
+
+### Brief: t1-surface (after t1-graph)
+- Task: plan view (nodes, states, dependencies, critical path, leases) in insights, CLI
+  `switchyard plan <job>`, MCP `get_plan`, and the panel job page.
+- Owns: `src/cli.ts`, `src/mcp.ts`, `src/admin/insights.ts`, `apps/panel/**`, related tests.
+- Report to: docs/working/agent-sessions-and-teams/reports/t1-surface.md
+
 ### Brief: s1-store
 - Repository: this repository.
 - Task: build the session store and recorder per "S1 implementation decisions". `SessionStore`:
@@ -341,6 +449,24 @@ Surface: `switchyard sessions [--running|--interrupted]`, `switchyard session <i
   404; bad query 400; screenshots of the list and a supervisor timeline inspected; server stopped.
 - Outcome: Accepted
 - Follow-up: Phase S2.
+
+---
+
+### 2026-10-19 — Phase S2 (resume) and R1 operations
+- Agent: supervisor; workers s2-core, s2-exec, s2-surface (`feat/s2-resume`), r1-ops (`feat/r1-ops`)
+- Changed: `src/sessions/resume.ts`, store/recorder reopen; `src/harness/{resume,journal}.ts`,
+  executor, scheduler, service, runners, supervisor tools, `src/core/faults.ts`; CLI, MCP,
+  insights, panel; `src/operations/{backup,daemon,service}.ts`, `storage/db.ts`, config; docs
+  `operations.md`, `setup.md`.
+- Why: requirement 1 (resume where it stopped) and 2 (survive failures).
+- Validation: s2 branch: typecheck router+panel Done, 147 tests passed, panel on :4521 pages 200
+  and API 400/401/404/409/200 as expected, screenshots inspected (worker); supervisor re-ran
+  typecheck + 147 tests and inspected the resume screenshot. r1 branch: 145 tests passed; the
+  supervisor reproduced the worker exiting, fixed it, and saw it stay alive (exit 124 at
+  timeout). Merged dev: router build ok, `pnpm -r typecheck` Done, `npx vitest run tests` -> 19
+  files, 170 passed.
+- Outcome: Accepted
+- Follow-up: R1b, T1.
 
 ---
 

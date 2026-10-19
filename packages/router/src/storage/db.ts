@@ -8,18 +8,39 @@ export type Db = Database.Database;
 
 export const DB_FILE = "switchyard.db";
 
-export function openDatabase(storageDir: string, opts: { readonly?: boolean } = {}): Db {
+/**
+ * `storage.durability`: `normal` (SQLite `synchronous=NORMAL`; in WAL mode a power loss can drop
+ * the last commits but never corrupts) or `full` (`synchronous=FULL`; every commit is on disk
+ * before it returns). Session logs are fsynced per event either way.
+ */
+export type Durability = "normal" | "full";
+
+export interface OpenDatabaseOptions {
+  readonly?: boolean;
+  /** Defaults to `normal`. */
+  durability?: Durability;
+}
+
+export function openDatabase(storageDir: string, opts: OpenDatabaseOptions = {}): Db {
   mkdirSync(storageDir, { recursive: true });
   const db = new Database(path.join(storageDir, DB_FILE), { readonly: opts.readonly ?? false });
   db.pragma("busy_timeout = 10000");
   if (!opts.readonly) {
     db.pragma("journal_mode = WAL");
     db.pragma("foreign_keys = ON");
-    db.pragma("synchronous = NORMAL");
+    applyDurability(db, opts.durability ?? "normal");
     migrate(db);
   }
   return db;
 }
+
+/** Set the connection's `synchronous` level (a per-connection pragma). */
+export function applyDurability(db: Db, durability: Durability): void {
+  db.pragma(`synchronous = ${durability === "full" ? "FULL" : "NORMAL"}`);
+}
+
+/** The schema version this build migrates to; a database with a higher `user_version` is newer. */
+export const SCHEMA_VERSION = MIGRATIONS.length;
 
 function migrate(db: Db): void {
   const current = db.pragma("user_version", { simple: true }) as number;

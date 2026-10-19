@@ -47,9 +47,31 @@ they are not reverted in the worktree.
 - State lives in `.switchyard/switchyard.db` (SQLite, WAL). It is written before every
   acknowledgement and at every state change.
 - When a worker dies, its leases expire (`execution.lease_seconds`). The next worker marks those
-  tasks `interrupted`. Completion and read-only tasks are resumed automatically (up to 3 runs);
-  coding tasks are not. Their worktree is kept under `.switchyard/worktrees/`; inspect it, then
-  `switchyard resume <id>` (starts a fresh worktree; the old one stays as evidence) or cancel.
+  tasks `interrupted` and their still-running sessions `interrupted` (`process_died`), then
+  resumes them automatically (up to 3 runs per task):
+  - read-only workers, native coding workers, and supervisors continue their session from its
+    log: the transcript is restored, and any tool call that was in flight is settled first
+    (reads are retried; delegations and idempotent commands re-run under their original call id;
+    edits made but not committed are committed as "recovered edits after interruption" under the
+    agent's identity, or discarded with `sessions.recover_edits: reset`; a pending `ask_user`
+    is answered from the stored question). A submission accepted before the crash finishes
+    without another model request. Coding work continues in the same worktree.
+  - external coding agents (OpenCode) are relaunched in the same worktree with a summary of the
+    interrupted session.
+  - completion, batch, and classification runs re-run fresh in a new linked session.
+- Manual resume: `switchyard resume <session-id>` continues that session; `switchyard resume
+  <task-id>` restarts the task (a coding task in a fresh worktree; the old one stays as
+  evidence). MCP `resume_session` / `resume_task` and the panel's Resume buttons do the same.
+- Stuck runs: a run whose session records nothing for `execution.watchdog_minutes` (default 10;
+  0 disables) is interrupted with stop reason `watchdog` and resumed like a crash (counts against
+  the 3 automatic runs). A pending model request, a running tool call, or final checks extend the
+  allowance to their own timeout plus 60 s; supervisors waiting in `await_tasks` or on a question
+  are exempt.
+- Failing providers: each provider has a circuit breaker for transport failures (5xx, timeouts,
+  connection errors, 429 without a reported cooldown; never invalid model output). After 5
+  consecutive failures it opens for 30 s, doubling to 15 minutes, then lets one probe through.
+  Routing ranks open providers last and the gate skips them; when every candidate is open the
+  task waits for capacity instead of failing. `insights.providerHealth` shows the state.
 - A model that served a request it should not have is quarantined until its chain is re-verified:
   run `switchyard models scan`.
 - Tasks waiting for capacity (`waiting_for_capacity`) retry automatically until their deadline.
@@ -74,15 +96,21 @@ item. A delegated task's session names the supervisor session that delegated it 
   `get_session`, or the panel's Sessions page (also linked from task and job pages).
 - External agents (OpenCode) run their tools inside their own process: their sessions record the
   model traffic through the policy gateway, not individual tool calls.
-- Resuming a session from its log is Phase S2 of
-  [agent-sessions-and-teams](working/agent-sessions-and-teams.md); until then recovery works as
-  described above.
+- A resume appends a `resumed` event recording what was settled and the notice the agent got.
 
 ## Housekeeping
 
 - Worktrees and agent homes are not deleted automatically. Remove old ones with
   `git worktree remove` in the source repository, then delete the folder.
-- Backups: copy `.switchyard/` while no worker is running (it includes the session logs).
+- Backups: `switchyard backup <dir>` takes a consistent snapshot while workers run (SQLite
+  online backup, then session logs and artifacts; never worktrees; the vault master key only with
+  `--include-master-key`). `switchyard restore <dir>` refuses while any task holds a live lease or
+  a daemon runs, refuses existing state without `--force`, and with `--force` moves the old state
+  to `.switchyard/pre-restore-<time>/`. Restored running tasks have their leases expired so the
+  next worker recovers them.
+- Durability: `storage.durability: full` sets SQLite `synchronous=FULL` (survives power loss at
+  some write cost); `normal` (default) can lose the last transactions on power loss but never
+  corrupts. Session logs are fsynced per event either way.
 - Session logs are not pruned automatically.
 
 ## The brain and attribution
@@ -105,7 +133,7 @@ item. A delegated task's session names the supervisor session that delegated it 
 - Audio/video inputs are routed only to models that accept them; there is no transcription or
   frame-extraction preprocessing yet.
 - Tasks and jobs run only while a worker process is running (the MCP server stops with the
-  Claude session; run `switchyard worker` for unattended work). Interrupted supervisors resume
-  from their saved transcript.
+  Claude session; run `switchyard worker`, `switchyard daemon`, or `switchyard service install`
+  for unattended work).
 - Line attribution for external agents (OpenCode) is per model request, not per tool call, and can
   blur when the agent sends several requests at once.

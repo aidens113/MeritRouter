@@ -24,6 +24,8 @@ export interface AcceptanceDecisionOutcome {
   acceptanceStatus: AcceptanceStatus;
   decision: SupervisorDecision;
 }
+import type { ResumePlan } from "../sessions/resume.js";
+import { faultPoint } from "../core/faults.js";
 
 /** What a supervisor needs from the service (kept as an interface to avoid import cycles). */
 export interface SupervisorServices {
@@ -84,6 +86,11 @@ export interface RunContext {
   retry?: RetryContext | null;
   /** Labels every request of this run (repair, verification) instead of the runner's own label. */
   purpose?: "repair" | "verification";
+  /**
+   * Set when this run continues an interrupted session (`session` is that session, reopened):
+   * the plan to apply before the next model request. Null for a fresh run.
+   */
+  resume: { plan: ResumePlan } | null;
 }
 
 /**
@@ -97,6 +104,7 @@ export async function ask(ctx: RunContext, req: Omit<GateRequest, "plan" | "part
     session.syncMessages(req.chat.messages);
     session.modelRequest(req);
   }
+  faultPoint("after_model_request", ctx.purpose ?? req.purpose);
   let res: GateResponse;
   try {
     res = await ctx.gate.request({
@@ -114,6 +122,7 @@ export async function ask(ctx: RunContext, req: Omit<GateRequest, "plan" | "part
   }
   ctx.attempts.push(...res.attempts);
   session?.modelResponse(res);
+  faultPoint("after_model_response", ctx.purpose ?? req.purpose);
   return res;
 }
 

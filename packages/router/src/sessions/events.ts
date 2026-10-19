@@ -23,7 +23,7 @@ export const TOOL_SIDE_EFFECTS = ["none", "read", "edit", "command", "delegate",
 export const ToolSideEffectSchema = z.enum(TOOL_SIDE_EFFECTS);
 export type ToolSideEffect = z.infer<typeof ToolSideEffectSchema>;
 
-export const SESSION_EVENT_TYPES = ["started", "message", "model_request", "model_response", "model_error", "tool_intent", "tool_outcome", "note", "workspace", "ended"] as const;
+export const SESSION_EVENT_TYPES = ["started", "message", "model_request", "model_response", "model_error", "tool_intent", "tool_outcome", "note", "workspace", "ended", "resumed"] as const;
 export type SessionEventType = (typeof SESSION_EVENT_TYPES)[number];
 
 /** Tool outputs above this many bytes (UTF-8) are truncated in the log. */
@@ -144,6 +144,60 @@ export const NoteDataSchema = z.object({ text: z.string(), data: z.unknown().opt
 
 export const EndedDataSchema = z.object({ status: SessionStatusSchema.exclude(["running"]), stopReason: z.string() });
 
+/** How a resume treats uncommitted worktree changes left by an interrupted edit. */
+export const RecoverEditsPolicySchema = z.enum(["commit", "reset"]);
+export type RecoverEditsPolicy = z.infer<typeof RecoverEditsPolicySchema>;
+
+/** One interrupted tool call that a resume action covers. */
+export const ResumeToolRefSchema = z.object({
+  /** Seq of the `tool_intent` with no outcome. */
+  intentSeq: z.number().int().positive(),
+  callId: z.string(),
+  name: z.string(),
+  args: z.unknown(),
+  /** Index in `ResumePlan.messages` of the tool message to fill with the result; null when the call has no slot in the transcript. */
+  messageIndex: z.number().int().nonnegative().nullable(),
+});
+export type ResumeToolRef = z.infer<typeof ResumeToolRefSchema>;
+
+/**
+ * Work a resume leaves to its caller (see `planResume`). `result` is unset in a plan; the
+ * caller fills it with what it did before recording the `resumed` event.
+ */
+export const ResumeActionSchema = z.discriminatedUnion("kind", [
+  /** Run the tool again (a `delegate`, or an `idempotent` `command`) and use its output as the call's result. */
+  ResumeToolRefSchema.extend({ kind: z.literal("rerun_tool"), sideEffect: z.enum(["delegate", "command"]), result: z.string().optional() }),
+  /**
+   * Diff each repo's worktree against its `head` (last committed head) and commit the difference
+   * as "recovered" under the session's identity (`commit`) or reset to `head` (`reset`), then tell
+   * the model which files (`calls[].messageIndex`).
+   */
+  z.object({
+    kind: z.literal("reconcile_edits"),
+    policy: RecoverEditsPolicySchema,
+    repos: z.array(WorkspaceRepoSchema),
+    /** Edit calls with no outcome: their tool messages carry a placeholder to replace. */
+    calls: z.array(ResumeToolRefSchema),
+    /** Edit calls that completed after the last recorded head (their changes are uncommitted); their tool messages are real outputs. */
+    completedCallIds: z.array(z.string()),
+    result: z.string().optional(),
+  }),
+  /** Report the stored state of an external interaction (`ask_user`: the question and any answer) as the call's result. */
+  ResumeToolRefSchema.extend({ kind: z.literal("report_external"), result: z.string().optional() }),
+]);
+export type ResumeAction = z.infer<typeof ResumeActionSchema>;
+
+export const ResumedDataSchema = z.object({
+  /** What the model was told. */
+  summary: z.string(),
+  /** The plan's actions, with `result` set to what the caller did. */
+  actions: z.array(ResumeActionSchema),
+  /** Intents with no outcome that this resume settled; `pendingIntents` no longer reports them. */
+  resolvedIntentSeqs: z.array(z.number().int().positive()),
+  /** `model_request` events that got no response and were dropped. */
+  droppedRequestSeqs: z.array(z.number().int().positive()),
+});
+
 const envelope = <T extends string, D extends z.ZodType>(type: T, data: D) =>
   z.object({ seq: z.number().int().positive(), at: z.number(), type: z.literal(type), data });
 
@@ -158,6 +212,7 @@ export const SessionEventSchema = z.discriminatedUnion("type", [
   envelope("note", NoteDataSchema),
   envelope("workspace", SessionWorkspaceSchema),
   envelope("ended", EndedDataSchema),
+  envelope("resumed", ResumedDataSchema),
 ]);
 export type SessionEvent = z.infer<typeof SessionEventSchema>;
 export type SessionEventOf<T extends SessionEventType> = Extract<SessionEvent, { type: T }>;

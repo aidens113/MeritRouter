@@ -6,7 +6,7 @@ import { insights, type SessionEvent } from "switchyard-router";
 import { getSy } from "@/lib/sy";
 import { SetupScreen } from "@/components/setup";
 import { buttonClass, Callout, Card, CardHeader, cx, KeyValue, Mono, PageHeader, Stat } from "@/components/ui";
-import { AutoRefresh } from "@/components/client/actions";
+import { ActionButton, AutoRefresh } from "@/components/client/actions";
 import { roleLabel, SessionStatusBadge, SessionsTable, taskHref } from "@/components/sessions-table";
 import { SessionTimeline } from "@/components/session-timeline";
 import { dateTime, duration, humanize, num } from "@/lib/format";
@@ -63,7 +63,10 @@ export default async function SessionDetailPage({ params, searchParams }: { para
   const previous = s.previousSessionId ? d.taskSessions.find((t) => t.id === s.previousSessionId) : undefined;
   const next = d.taskSessions.find((t) => t.previousSessionId === s.id);
   const href = taskHref(s);
-  const unanswered = d.events.filter((e) => e.type === "tool_intent").length - d.events.filter((e) => e.type === "tool_outcome").length;
+  // Intents without an outcome on this page, less those a resume settled.
+  const settledByResume = d.events.reduce((n, e) => n + (e.type === "resumed" ? e.data.resolvedIntentSeqs.length : 0), 0);
+  const unanswered = d.events.filter((e) => e.type === "tool_intent").length - d.events.filter((e) => e.type === "tool_outcome").length - settledByResume;
+  const taskState = s.taskId ? (sy.tasks.get(s.taskId)?.row.state ?? null) : null;
 
   const pager = paged ? (
     <nav aria-label="Event pages" className="flex flex-wrap items-center gap-1">
@@ -99,7 +102,15 @@ export default async function SessionDetailPage({ params, searchParams }: { para
             <Mono>{s.id}</Mono>
           </span>
         }
-        actions={running ? <AutoRefresh seconds={4} /> : null}
+        actions={
+          running ? (
+            <AutoRefresh seconds={4} />
+          ) : s.resumable ? (
+            <ActionButton url={`/api/sessions/${encodeURIComponent(s.id)}/resume`} variant="primary" success="Requeued: a running worker continues this session where it stopped">
+              Resume session
+            </ActionButton>
+          ) : null
+        }
       />
 
       {s.status === "interrupted" || s.status === "failed" || s.status === "cancelled" ? (
@@ -113,8 +124,13 @@ export default async function SessionDetailPage({ params, searchParams }: { para
               </Link>
               .
             </>
+          ) : s.resumable ? (
+            "Resume it to continue where it stopped: its transcript is restored, any tool call that was in flight is settled first (edits committed as recovered, delegations re-run, unknown outcomes reported to the agent), and a running worker picks it up."
           ) : s.status === "interrupted" ? (
-            "Its log ends at the last event written before it stopped."
+            <>
+              Its log ends at the last event written before it stopped.
+              {taskState && taskState !== "interrupted" ? ` Its task is now ${humanize(taskState).toLowerCase()}, so this session cannot be resumed.` : taskState === "interrupted" ? " A later session of its task is the one to resume." : ""}
+            </>
           ) : null}
         </Callout>
       ) : null}

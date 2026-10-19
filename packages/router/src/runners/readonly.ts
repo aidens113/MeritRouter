@@ -7,7 +7,7 @@ import { planLimits } from "../routing/select.js";
 import { charterFor, roleForProfile } from "../roles/index.js";
 import { runAgentLoop } from "../harness/loop.js";
 import { artifactTool, brainReadTools, repoTools, type HarnessEnv, type HarnessTool } from "../harness/tools.js";
-import { brainContext, submitResultTool, workerBrainEnv } from "../harness/worker.js";
+import { brainContext, submitResultTool, workerActor, workerBrainEnv } from "../harness/worker.js";
 import { baseResult, type RunContext, type RunOutcome } from "./types.js";
 import { taskBrief } from "./prompts.js";
 import { baseCommitsFor, contextManifest } from "./completion.js";
@@ -30,19 +30,22 @@ export async function runReadOnly(ctx: RunContext): Promise<RunOutcome> {
   const limits = planLimits(ctx.plan, ctx.cfg.routing.max_endpoint_fallbacks);
   const inputBudget = Math.max(2000, limits.contextLimitTokens - maxTokens - estimateTokens([], tools.map((t) => t.def)) - 500);
 
-  const messages: ChatMessage[] = [
+  const fresh: ChatMessage[] = [
     {
       role: "system",
       content: `${charterFor(ctx.cfg, role)}\n\n## Tools\nInvestigate the repositories (${spec.repositoryAliases.join(", ")}) with the read-only tools, then call submit_result exactly once. You cannot modify anything.\n\n## Result\n${OUTPUT_CONTRACT}`,
     },
     { role: "user", content: `${taskBrief(spec, ctx.retry)}\nProvided context:\n${renderSources(sources) || "(none)"}\n${brainContext(env)}` },
   ];
+  // A resumed session continues its own transcript (the fresh one above still registered the evidence).
+  const messages = ctx.resume ? ctx.resume.plan.messages : fresh;
   const executionId = ctx.gate.admission.createExecution("task", spec.profile, [{ taskId: ctx.taskId, itemId: ctx.taskId }]);
   const loop = await runAgentLoop({
     env,
     executionId,
     messages,
     tools,
+    ...(ctx.resume ? { resume: { plan: ctx.resume.plan, actor: workerActor(ctx, role), pointer: null } } : {}),
     terminal: submitResultTool(spec, universe, validator),
     maxTokens,
     inputBudget,

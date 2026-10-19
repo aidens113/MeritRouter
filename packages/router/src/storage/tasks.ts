@@ -379,6 +379,12 @@ export class TaskStore {
     return r.changes === 1;
   }
 
+  /** Does some process hold a live lease on this task (running and not expired)? */
+  leaseLive(id: string): boolean {
+    const row = this.db.prepare("SELECT state, lease_expires_at FROM tasks WHERE id = ?").get(id) as Pick<TaskRow, "state" | "lease_expires_at"> | undefined;
+    return !!row && ["running", "cancel_requested"].includes(row.state) && (row.lease_expires_at ?? 0) > this.now();
+  }
+
   /** Lease holder still active and not asked to cancel? Checked before every dispatch. */
   activeStatus(id: string, owner: string): "active" | "cancel_requested" | "lease_lost" | "not_active" {
     const row = this.db
@@ -502,8 +508,12 @@ export class TaskStore {
     });
   }
 
-  /** Explicitly resume an interrupted task. Budgets already consumed stay consumed. */
-  resume(id: string): TaskState {
+  /**
+   * Resume an interrupted task. Budgets already consumed stay consumed. `directive` is recorded
+   * on the `resumed` event for the next run: `sessionId` resumes that session, `freshWorkspace`
+   * starts a coding task over in a new worktree (see `ResumeDirectiveSchema` in the executor).
+   */
+  resume(id: string, directive: { sessionId?: string; freshWorkspace?: boolean } = {}): TaskState {
     return immediate(this.db, () => {
       const row = this.db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as TaskRow | undefined;
       if (!row) throw new TaskValidationError(`unknown task ${id}`);
@@ -511,9 +521,17 @@ export class TaskStore {
       this.db
         .prepare("UPDATE tasks SET state = 'queued', state_reason = 'resumed', result_json = NULL, updated_at = ? WHERE id = ?")
         .run(this.now(), id);
-      this.event(id, "resumed");
+      this.event(id, "resumed", Object.keys(directive).length ? directive : undefined);
       return "queued";
     });
+  }
+
+  /** Tasks a job (supervisor task) delegated, oldest first. */
+  childrenOf(parentTaskId: string): StoredTask[] {
+    const rows = this.db
+      .prepare("SELECT * FROM tasks WHERE json_extract(spec_json, '$.parentTaskId') = ? ORDER BY created_at ASC, rowid ASC")
+      .all(parentTaskId) as TaskRow[];
+    return rows.map((r) => this.hydrate(r));
   }
 }
 

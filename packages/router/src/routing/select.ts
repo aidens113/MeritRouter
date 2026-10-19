@@ -68,7 +68,8 @@ export interface QualificationLookup {
 }
 
 export interface ProviderHealthLookup {
-  (platform: string): { status: string; resumeAt: number | null } | undefined;
+  /** A reported cooldown, and `circuitOpenUntil` while the platform's circuit breaker is open. */
+  (platform: string): { status: string; resumeAt: number | null; circuitOpenUntil?: number | null } | undefined;
 }
 
 export interface CandidateExplanation {
@@ -83,6 +84,8 @@ export interface CandidateExplanation {
   rank: number | null;
   qualification: { passRate: number; trials: number; qualified: boolean } | null;
   coolingDownUntil: number | null;
+  /** Set while the platform's circuit breaker is open: ranked after cooling platforms, skipped by the gate. */
+  circuitOpenUntil: number | null;
   belowFloorAllowed: boolean;
 }
 
@@ -153,7 +156,8 @@ export function endpointExclusions(
 /**
  * Build the ordered candidate list for a task. Order: forced models only (if any force override
  * applies), else preferred models first, then automatic order by the tier's preference.
- * Platforms FreeLLMAPI reports as cooling down move to the end.
+ * Platforms FreeLLMAPI reports as cooling down move to the end, and platforms whose circuit
+ * breaker is open go after those (the gate skips them until a probe is due).
  */
 export function planRoute(
   cfg: ResolvedConfig,
@@ -207,6 +211,7 @@ export function planRoute(
       rank: null,
       qualification: qual,
       coolingDownUntil: cooling,
+      circuitOpenUntil: h?.circuitOpenUntil ?? null,
       belowFloorAllowed: belowFloor.has(ep.id),
     };
     explanations.push(ex);
@@ -232,8 +237,8 @@ export function planRoute(
     const ia = independence(a);
     const ib = independence(b);
     if (ia !== ib) return ia - ib;
-    const ca = a.ex.coolingDownUntil !== null ? 1 : 0;
-    const cb = b.ex.coolingDownUntil !== null ? 1 : 0;
+    const ca = a.ex.circuitOpenUntil !== null ? 2 : a.ex.coolingDownUntil !== null ? 1 : 0;
+    const cb = b.ex.circuitOpenUntil !== null ? 2 : b.ex.coolingDownUntil !== null ? 1 : 0;
     if (ca !== cb) return ca - cb;
     const sa = a.ep.totalParametersB ?? (a.ep.ignoreSizeFloor ? 1e6 : 0);
     const sb = b.ep.totalParametersB ?? (b.ep.ignoreSizeFloor ? 1e6 : 0);

@@ -25,6 +25,7 @@ import type { RunContext, RunOutcome } from "../runners/types.js";
 import { reviewAllowance, reviewCap, reviewReserveAdjustment, type StoredContract } from "./contract.js";
 import type { ReviewOutcome } from "./decide.js";
 import type { Reevaluation } from "./policy.js";
+import { isSimulatedCrash } from "../core/faults.js";
 
 /**
  * The deep and strict review phase: an independent reviewer, in its own child session and
@@ -369,6 +370,31 @@ export function reviewReaders(d: Pick<ReviewDeps, "cfg" | "db">, task: StoredTas
 
 const tail = (t: string, n: number) => (t.length > n ? `[...]\n${t.slice(-n)}` : t);
 
+/** Stop reason of a reviewer session ended because a later review replaced it. */
+export const REVIEW_SUPERSEDED = "superseded";
+
+/**
+ * End every interrupted reviewer session of the task (children of its own runs) as `cancelled`
+ * / superseded: a review is never resumed, it runs again. Writes `review_superseded` per session
+ * and returns the latest one's id (the new reviewer session links to it), or null.
+ */
+export function supersedeInterruptedReviews(sessions: SessionStore, tasks: TaskStore, taskId: string, attempt: number): string | null {
+  const all = sessions.forTask(taskId);
+  const own = new Set(all.map((s) => s.id));
+  let latest: string | null = null;
+  for (const s of all) {
+    if (s.role !== "reviewer" || !s.parentSessionId || !own.has(s.parentSessionId) || s.status !== "interrupted") continue;
+    try {
+      sessions.reopen(s.id).end("cancelled", `${REVIEW_SUPERSEDED}: review ${attempt} runs again`);
+    } catch {
+      continue; // another process took it, or its log is unreadable: leave it as it is
+    }
+    tasks.event(taskId, "review_superseded", { sessionId: s.id, previousStopReason: s.stopReason, attempt });
+    latest = s.id;
+  }
+  return latest;
+}
+
 /**
  * Run one independent review of a result: pick a reviewer that served nothing in this task
  * (another model family first; qualified first, or only when required), within the review
@@ -480,13 +506,16 @@ export async function reviewResult(d: ReviewDeps, r: ReviewRequest): Promise<Rev
     context: sources.length ? renderSources(sources) : null,
   });
 
-  // The reviewer's child session and run context.
+  // The reviewer's child session and run context. A reviewer interrupted earlier (crash,
+  // shutdown, watchdog) is never resumed: it is ended as superseded and this one links to it;
+  // the requests it spent stay charged to the review allowance.
+  const superseded = d.sessions ? supersedeInterruptedReviews(d.sessions, d.tasks, id, r.attempt) : null;
   const session =
     d.sessions?.create({
       taskId: id,
       jobId: r.jobId,
       parentSessionId: r.parentSessionId,
-      previousSessionId: null,
+      previousSessionId: superseded,
       role: "reviewer",
       agentLabel: agentLabel("reviewer", task.spec.label ?? id),
       profile,
@@ -507,6 +536,8 @@ export async function reviewResult(d: ReviewDeps, r: ReviewRequest): Promise<Rev
   try {
     run = await runReviewSession({ ctx, readers, evidence, given, expect: { criteria, revision, policyVersion: contract.contract.fingerprints.policy, targetedChecksAllowed: coding ? r.targetedChecksAllowed : null } });
   } catch (err) {
+    // A simulated process death leaves the session running, as a real one would.
+    if (isSimulatedCrash(err)) throw err;
     if (ctx.signal.aborted) {
       end("interrupted", String(ctx.signal.reason ?? "aborted"));
       throw err;

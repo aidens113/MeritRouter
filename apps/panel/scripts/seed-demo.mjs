@@ -6,7 +6,8 @@
 // brain (in .demo/brain, never your home folder), and records a little paid spend through a fake
 // direct paid client, so the Jobs, Brain, and Paid routes pages have content. Agent sessions (and
 // their event logs) come from those runs themselves; only the interrupted task's session, which
-// never ran, is recorded by hand.
+// never ran, is recorded by hand (through the same store calls a worker makes, including one
+// resume), so it shows a `resumed` event and the Resume action.
 //
 //   pnpm --filter switchyard-router build
 //   pnpm --filter switchyard-panel seed:demo
@@ -574,10 +575,11 @@ const store = (specs) => idle.tasks.submit(specs.map((x) => WorkerTaskSchema.par
 const [queued] = store([summarize("Summarise the payments log (queued: no worker running)")]);
 store([summarize("Summarise the follow-up incident report", { id: "followup_after_payments", dependsOn: [queued.taskId] })]);
 const [interrupted] = store([inspect("List every exported function (interrupted when the worker stopped)")]);
-idle.db.prepare("UPDATE tasks SET state = 'interrupted', state_reason = 'worker lease expired', started_at = ?, run_count = 1, updated_at = ? WHERE id = ?").run(Date.now() - 20 * 60_000, Date.now(), interrupted.taskId);
+idle.db.prepare("UPDATE tasks SET state = 'interrupted', state_reason = 'worker lease expired', started_at = ?, run_count = 2, updated_at = ? WHERE id = ?").run(Date.now() - 20 * 60_000, Date.now(), interrupted.taskId);
 idle.tasks.event(interrupted.taskId, "interrupted", { previousOwner: "demo-worker" });
 // The task never ran (it went straight into the store), so its session is recorded by hand: the
-// first request went out, then the worker stopped before an answer was recorded.
+// worker died with a read_file call in flight, a restarted worker resumed the session from its log
+// (settling the call), and then that worker stopped too before its request was answered.
 if (!idle.sessions.forTask(interrupted.taskId).length) {
   const t0 = Date.now() - 20 * 60_000;
   const at = (ms) => {
@@ -593,8 +595,35 @@ if (!idle.sessions.forTask(interrupted.taskId).length) {
   at(700);
   rec.syncMessages(messages);
   rec.modelRequest({ executionId: "x_demo_interrupted", purpose: "tool_loop", chat: { messages, max_tokens: 4096, tools } });
-  at(31_000);
-  rec.end("interrupted", "worker lease expired");
+  at(4_200);
+  const read = { id: "call_read_server", type: "function", function: { name: "read_file", arguments: JSON.stringify({ path: "src/server.ts" }) } };
+  const served = "groq/openai/gpt-oss-120b";
+  rec.modelResponse({
+    requestId: "r_demo_interrupted",
+    endpoint: { id: served },
+    response: {
+      message: { role: "assistant", content: null, tool_calls: [read] },
+      finishReason: "tool_calls",
+      usage: { inputTokens: 412, outputTokens: 38, cachedInputTokens: null, reasoningTokens: null, reportedCostUsd: null, basis: "provider_reported" },
+      telemetry: { servedModel: "openai/gpt-oss-120b", servedProvider: "groq" },
+    },
+    attempts: [{ endpointId: served, outcome: "succeeded" }],
+    estimatedInputTokens: 400,
+  });
+  rec.syncMessages([...messages, { role: "assistant", content: null, tool_calls: [read] }]);
+  rec.toolIntent({ callId: read.id, name: "read_file", args: { path: "src/server.ts" }, sideEffect: "read" });
+  at(4_300);
+  rec.end("interrupted", "process_died");
+  // A restarted worker reopens the session and settles the read that never returned.
+  at(64_000);
+  const again = idle.sessions.reopen(rec.id);
+  const plan = idle.sessions.planResume(rec.id);
+  again.resumed(plan.summary, plan.actions, plan);
+  const resumedMessages = [...plan.messages, { role: "user", content: plan.summary }];
+  again.syncMessages(resumedMessages);
+  again.modelRequest({ executionId: "x_demo_interrupted_2", purpose: "tool_loop", chat: { messages: resumedMessages, max_tokens: 4096, tools } });
+  at(95_000);
+  again.end("interrupted", "worker lease expired");
 }
 offset = 0;
 await idle.close();

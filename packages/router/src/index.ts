@@ -100,7 +100,7 @@ export type { InferenceClient, ChatRequest, ChatResponse, ProviderStatus } from 
 export type { UsageSummary } from "./storage/usage.js";
 export type { ScanSummary } from "./models/scanner.js";
 export * as insights from "./admin/insights.js";
-export { SessionStore, CreateSessionInputSchema, SESSIONS_DIR, type CreateSessionInput, type SessionRecord, type SessionListFilter, type SessionEventsPage } from "./sessions/store.js";
+export { SessionStore, CreateSessionInputSchema, SESSIONS_DIR, PROCESS_DIED, type CreateSessionInput, type SessionRecord, type SessionListFilter, type SessionEventsPage, type ReopenOptions } from "./sessions/store.js";
 export { SessionRecorder, type ModelRequestInput, type ModelErrorInput, type ToolIntentInput, type ToolOutcomeInput } from "./sessions/recorder.js";
 export {
   SessionEventSchema,
@@ -111,6 +111,11 @@ export {
   SESSION_EVENT_TYPES,
   TOOL_SIDE_EFFECTS,
   TOOL_OUTPUT_CAP_BYTES,
+  ResumeActionSchema,
+  RecoverEditsPolicySchema,
+  type ResumeAction,
+  type ResumeToolRef,
+  type RecoverEditsPolicy,
   type SessionEvent,
   type SessionEventOf,
   type SessionEventData,
@@ -122,4 +127,15 @@ export {
   type ToolSideEffect,
   type CorruptLine,
 } from "./sessions/events.js";
+export {
+  planResume,
+  replayTranscript,
+  pendingIntentsFrom,
+  editRecoveryMessage,
+  RESUME_TEXT,
+  type PendingIntent,
+  type PlanResumeOptions,
+  type ResumePlan,
+  type TranscriptReplay,
+} from "./sessions/resume.js";
 export { createCodingRunner } from "./runners/coding/index.js";

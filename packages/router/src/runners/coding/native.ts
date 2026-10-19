@@ -13,7 +13,7 @@ import { artifactTool, brainReadTools, commandTool, editTools, repoTools, type H
 import { brainContext, submitResultTool, workerActor, workerBrainEnv } from "../../harness/worker.js";
 import type { RunContext, RunOutcome } from "../types.js";
 import { taskBrief } from "../prompts.js";
-import { finishCoding, prepareWorkspace, sourceDirtyFinding } from "./finish.js";
+import { finishCoding, prepareWorkspace, resumeWorkspace, sourceDirtyFinding } from "./finish.js";
 import { WorkspacePointer } from "../session-workspace.js";
 
 /**
@@ -26,8 +26,10 @@ export class NativeCodingRunner implements CodingRunner {
     const spec = ctx.spec;
     const role = "implementer" as const;
     const alias = spec.writableRepository!;
-    const { ws, worktrees } = await prepareWorkspace(ctx);
-    const pointer = new WorkspacePointer(ctx.session, [{ alias, worktree: ws.worktreePath, branch: null, baseCommit: ws.baseSha, head: ws.baseSha }]);
+    // A resumed session continues in the worktree it recorded; otherwise a fresh one.
+    const reused = ctx.resume ? await resumeWorkspace(ctx, ctx.resume.plan.workspace) : null;
+    const { ws, worktrees } = reused ?? (await prepareWorkspace(ctx));
+    const pointer = new WorkspacePointer(ctx.session, [{ alias, worktree: ws.worktreePath, branch: null, baseCommit: ws.baseSha, head: reused?.head ?? ws.baseSha }]);
     const readers = readersFor(ctx.cfg, spec);
     readers.set(alias, new RepoReader(alias, ws.worktreePath, null)); // read your own edits
     const sources = await loadSources(ctx.cfg, spec, ctx.artifacts, readersFor(ctx.cfg, spec));
@@ -51,19 +53,22 @@ export class NativeCodingRunner implements CodingRunner {
     const limits = planLimits(ctx.plan, ctx.cfg.routing.max_endpoint_fallbacks);
     const inputBudget = Math.max(2000, limits.contextLimitTokens - maxTokens - estimateTokens([], tools.map((t) => t.def)) - 500);
     const checks = spec.constraints.checks?.length ? `\nChecks that will be run after you finish:\n${spec.constraints.checks.map((c) => `- ${c}`).join("\n")}` : "";
-    const messages: ChatMessage[] = [
+    const fresh: ChatMessage[] = [
       {
         role: "system",
         content: `${charterFor(ctx.cfg, role)}\n\n## Tools\nYour workspace is repository "${alias}" (an isolated worktree). Edit only paths matching: ${(spec.constraints.allowedPaths ?? []).join(", ")}. Read with read_file/search; edit with write_file/replace_in_file/delete_file${patterns.length ? "; run allowed commands with run_command" : ""}. When done, call submit_result once.\n\n## Result\n${OUTPUT_CONTRACT}`,
       },
       { role: "user", content: `${taskBrief(spec, ctx.retry)}${checks}\nProvided context:\n${renderSources(sources) || "(none)"}\n${brainContext(env)}` },
     ];
+    const lost = ctx.resume && !reused ? "\nYour previous worktree no longer exists: this is a fresh worktree, and your earlier edits are not in it. Re-apply them." : "";
+    const messages = ctx.resume ? ctx.resume.plan.messages : fresh;
     const executionId = ctx.gate.admission.createExecution("task", spec.profile, [{ taskId: ctx.taskId, itemId: ctx.taskId }]);
     const loop = await runAgentLoop({
       env,
       executionId,
       messages,
       tools,
+      ...(ctx.resume ? { resume: { plan: ctx.resume.plan, actor: workerActor(ctx, role), pointer, ...(lost ? { notice: lost } : {}) } } : {}),
       terminal: submitResultTool(spec, universe, validator),
       maxTokens,
       inputBudget,

@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import type { Workspace, Worktrees } from "../../workspaces/worktree.js";
+import type { SessionWorkspace } from "../../sessions/events.js";
 import { git } from "../../workspaces/git.js";
 import type { EvidenceUniverse, WorkerOutput } from "../../core/worker-output.js";
 import { baseResult, type RunContext, type RunOutcome } from "../types.js";
@@ -26,6 +27,27 @@ export async function prepareWorkspace(ctx: RunContext): Promise<{ ws: Workspace
   const ws = await worktrees.prepare({ taskId: ctx.taskId, run: runNo, alias, sourcePath: repo.path, ...(ctx.spec.context.baseCommits?.[alias] ? { baseCommit: ctx.spec.context.baseCommits[alias] } : {}), ...(start ? { startCommit: start } : {}) });
   ctx.tasks.event(ctx.taskId, "worktree_ready", { path: ws.worktreePath, baseSha: ws.baseSha, sourceDirty: ws.sourceDirty, ...(start ? { startCommit: start } : {}) });
   return { ws, worktrees };
+}
+
+/**
+ * The worktree a resumed session recorded, when it still exists: the run continues there (its
+ * commits and any reconciled edits included). Null when there is nothing to reuse.
+ */
+export async function resumeWorkspace(ctx: RunContext, recorded: SessionWorkspace | null): Promise<{ ws: Workspace; worktrees: Worktrees; head: string } | null> {
+  const alias = ctx.spec.writableRepository!;
+  const rec = recorded?.repos.find((r) => r.alias === alias);
+  if (!rec || !rec.baseCommit || !existsSync(rec.worktree)) return null;
+  const { Worktrees } = await import("../../workspaces/worktree.js");
+  const worktrees = new Worktrees(ctx.tasks.db, path.join(ctx.cfg.storageDir, "worktrees"), ctx.now);
+  const prev = worktrees.previous(ctx.taskId);
+  const ws: Workspace =
+    prev && path.resolve(prev.worktreePath) === path.resolve(rec.worktree)
+      ? prev
+      : { taskId: ctx.taskId, repoAlias: alias, sourcePath: ctx.cfg.repositoryPaths[alias]!.path, worktreePath: rec.worktree, baseSha: rec.baseCommit, sourceDirty: false, dirtyPaths: [] };
+  worktrees.setStatus(ctx.taskId, "ready");
+  ctx.tasks.event(ctx.taskId, "worktree_reused", { path: ws.worktreePath, baseSha: ws.baseSha });
+  const head = (await git(ws.worktreePath, ["rev-parse", "HEAD"])).trim();
+  return { ws, worktrees, head };
 }
 
 export function agentHome(ctx: RunContext, ws: Workspace): string {

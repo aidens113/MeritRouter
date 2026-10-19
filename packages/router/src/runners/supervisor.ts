@@ -11,6 +11,8 @@ import { charterFor } from "../roles/index.js";
 import { commitAs, type Actor } from "../attribution/index.js";
 import { git, headSha } from "../workspaces/git.js";
 import { runAgentLoop, type TerminalTool } from "../harness/loop.js";
+import type { ResumeInput } from "../harness/resume.js";
+import type { ResumeToolRef } from "../sessions/events.js";
 import { artifactTool, brainReadTools, brainSupervisorTools, commandTool, editTools, repoTools, type HarnessEnv, type HarnessTool } from "../harness/tools.js";
 import { supervisorTools, type IntegrationRepo, type SupervisorState } from "../harness/supervisor-tools.js";
 import { minimalEnv, runProcess } from "./coding/process.js";
@@ -45,17 +47,41 @@ const FINISH_DEF: ChatTool = {
   },
 };
 
-function loadState(ctx: RunContext): { messages: ChatMessage[]; repos: IntegrationRepo[]; children: Record<string, string>; briefChecks: string[] } | null {
+/**
+ * Legacy resume state for jobs interrupted before sessions were resumable (S2): the transcript
+ * and detail persisted in `job_state`. Read only when the job has no session to resume; never
+ * written any more.
+ */
+function loadLegacyState(ctx: RunContext): { messages: ChatMessage[]; repos: IntegrationRepo[]; children: Record<string, string>; briefChecks: string[] } | null {
   const row = ctx.tasks.db.prepare("SELECT messages_json, detail_json FROM job_state WHERE task_id = ?").get(ctx.taskId) as { messages_json: string; detail_json: string | null } | undefined;
   if (!row) return null;
   const d = row.detail_json ? (JSON.parse(row.detail_json) as { repos?: IntegrationRepo[]; children?: Record<string, string>; briefChecks?: string[] }) : {};
   return { messages: JSON.parse(row.messages_json) as ChatMessage[], repos: d.repos ?? [], children: d.children ?? {}, briefChecks: d.briefChecks ?? [] };
 }
 
-function saveState(ctx: RunContext, messages: ChatMessage[], s: SupervisorState): void {
-  ctx.tasks.db
-    .prepare("INSERT INTO job_state (task_id, messages_json, detail_json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(task_id) DO UPDATE SET messages_json = excluded.messages_json, detail_json = excluded.detail_json, updated_at = excluded.updated_at")
-    .run(ctx.taskId, JSON.stringify(messages), JSON.stringify({ repos: [...s.repos.values()], children: Object.fromEntries(s.children), briefChecks: [...s.briefChecks] }), Date.now());
+/** The job's integration repositories as its resumed session last recorded them. */
+function sessionRepos(ctx: RunContext): IntegrationRepo[] {
+  const repos = ctx.resume?.plan.workspace?.repos ?? [];
+  return repos.flatMap((r) => (r.baseCommit ? [{ alias: r.alias, worktree: r.worktree, branch: r.branch ?? `${ctx.cfg.supervisor.branch_prefix}${ctx.taskId}`, baseSha: r.baseCommit }] : []));
+}
+
+/** Questions this job asked, answered and still open, for a resumed supervisor. */
+function questionNotes(ctx: RunContext): string {
+  const qs = ctx.tasks.db.prepare("SELECT id, question, answer FROM job_questions WHERE task_id = ? ORDER BY id").all(ctx.taskId) as Array<{ id: number; question: string; answer: string | null }>;
+  const answered = qs.filter((q) => q.answer !== null).map((q) => `- "${q.question}" -> ${q.answer}`);
+  const open = qs.filter((q) => q.answer === null).map((q) => `- "${q.question}" (still unanswered; ask again with ask_user to keep waiting)`);
+  return `${answered.length ? `\nAnswers from the user so far:\n${answered.join("\n")}` : ""}${open.length ? `\nOpen questions:\n${open.join("\n")}` : ""}`;
+}
+
+/** The stored state of an ask_user call interrupted before its outcome was recorded. */
+function questionState(ctx: RunContext, ref: ResumeToolRef): string {
+  const asked = (ref.args && typeof ref.args === "object" ? (ref.args as Record<string, unknown>).question : undefined) as string | undefined;
+  const row = asked
+    ? (ctx.tasks.db.prepare("SELECT answer, answered_by FROM job_questions WHERE task_id = ? AND question = ? ORDER BY id DESC LIMIT 1").get(ctx.taskId, asked) as { answer: string | null; answered_by: string | null } | undefined)
+    : undefined;
+  if (!row) return "interrupted before the question was recorded; ask again with ask_user if you still need the answer";
+  if (row.answer !== null) return `answer from ${row.answered_by ?? "user"}: ${row.answer}`;
+  return "interrupted while waiting; the question is still open. Call ask_user again to keep waiting for the answer.";
 }
 
 /** Create (or reuse after a restart) the job branch and its integration worktree per writable repo. */
@@ -69,8 +95,14 @@ async function integrationRepos(ctx: RunContext, saved: IntegrationRepo[]): Prom
     if (!repo?.writable || out.has(alias)) continue;
     const branch = `${ctx.cfg.supervisor.branch_prefix}${ctx.taskId}`;
     const worktree = path.join(root, `job-${ctx.taskId}-${alias}`);
-    const baseSha = ctx.spec.context.baseCommits?.[alias] ?? (await headSha(repo.path));
     const exists = (await git(repo.path, ["branch", "--list", branch])).trim().length > 0;
+    if (exists && existsSync(worktree)) {
+      // A run that died before recording its workspace: reuse the job's worktree.
+      const baseSha = ctx.spec.context.baseCommits?.[alias] ?? (await git(repo.path, ["merge-base", "HEAD", branch])).trim();
+      out.set(alias, { alias, worktree, branch, baseSha });
+      continue;
+    }
+    const baseSha = ctx.spec.context.baseCommits?.[alias] ?? (await headSha(repo.path));
     await git(repo.path, exists ? ["worktree", "add", worktree, branch] : ["worktree", "add", "-b", branch, worktree, baseSha]);
     out.set(alias, { alias, worktree, branch, baseSha });
   }
@@ -79,17 +111,24 @@ async function integrationRepos(ctx: RunContext, saved: IntegrationRepo[]): Prom
 
 /**
  * Standalone supervisor: plans, delegates to workers, verifies, integrates their commits onto a
- * job branch, keeps the job's working document, and finishes with a verified summary. Its own
- * transcript is persisted every turn, so an interrupted job resumes where it stopped.
+ * job branch, keeps the job's working document, and finishes with a verified summary. Its
+ * session records every turn, so an interrupted job resumes from the session where it stopped.
  */
 export class SupervisorRunner implements CodingRunner {
   async run(ctx: RunContext): Promise<RunOutcome> {
     const spec = ctx.spec;
     const label = spec.label ?? ctx.taskId;
     const actor: Actor = { agent: `supervisor:${label}`, role: "supervisor", model: null, job: ctx.taskId, task: ctx.taskId, tier: ctx.tier };
-    const saved = loadState(ctx);
-    const repos = await integrationRepos(ctx, saved?.repos ?? []);
-    const state: SupervisorState = { ctx, db: ctx.tasks.db, actor, repos, briefChecks: new Set(saved?.briefChecks ?? []), children: new Map(Object.entries(saved?.children ?? {})) };
+    const legacy = ctx.resume ? null : loadLegacyState(ctx);
+    const repos = await integrationRepos(ctx, ctx.resume ? sessionRepos(ctx) : (legacy?.repos ?? []));
+    // Delegated tasks and their checks come from the task store, so a resumed job knows them.
+    const children = new Map(Object.entries(legacy?.children ?? {}));
+    const briefChecks = new Set(legacy?.briefChecks ?? []);
+    for (const c of ctx.tasks.childrenOf(ctx.taskId)) {
+      if (c.spec.label) children.set(c.spec.label, c.row.id);
+      for (const check of c.spec.constraints.checks ?? []) briefChecks.add(check);
+    }
+    const state: SupervisorState = { ctx, db: ctx.tasks.db, actor, repos, briefChecks, children };
     const pointer = new WorkspacePointer(
       ctx.session,
       await Promise.all([...repos.values()].map(async (r) => ({ alias: r.alias, worktree: r.worktree, branch: r.branch, baseCommit: r.baseSha, head: (await git(r.worktree, ["rev-parse", "HEAD"])).trim() || null }))),
@@ -182,15 +221,19 @@ export class SupervisorRunner implements CodingRunner {
 
     const repoNotes = [...repos.values()].map((r) => `- ${r.alias}: branch ${r.branch} (based on ${r.baseSha.slice(0, 12)}), integration worktree is your workspace`).join("\n");
     let messages: ChatMessage[];
-    if (saved?.messages.length) {
-      messages = saved.messages;
-      const qs = ctx.tasks.db.prepare("SELECT id, question, answer FROM job_questions WHERE task_id = ? ORDER BY id").all(ctx.taskId) as Array<{ id: number; question: string; answer: string | null }>;
-      const answered = qs.filter((q) => q.answer !== null).map((q) => `- "${q.question}" -> ${q.answer}`);
-      const open = qs.filter((q) => q.answer === null).map((q) => `- "${q.question}" (still unanswered; ask again with ask_user to keep waiting)`);
-      messages.push({
-        role: "user",
-        content: `You were interrupted and have been resumed. Check your tasks with await_tasks before acting again; delegations are idempotent by label.${answered.length ? `\nAnswers from the user so far:\n${answered.join("\n")}` : ""}${open.length ? `\nOpen questions:\n${open.join("\n")}` : ""}`,
-      });
+    let resume: ResumeInput | undefined;
+    if (ctx.resume) {
+      messages = ctx.resume.plan.messages;
+      resume = {
+        plan: ctx.resume.plan,
+        actor: state.actor,
+        pointer,
+        external: (ref) => questionState(ctx, ref),
+        notice: `Check your tasks with await_tasks before acting again; delegations are idempotent by label.${questionNotes(ctx)}`,
+      };
+    } else if (legacy?.messages.length) {
+      messages = legacy.messages;
+      messages.push({ role: "user", content: `You were interrupted and have been resumed. Check your tasks with await_tasks before acting again; delegations are idempotent by label.${questionNotes(ctx)}` });
     } else {
       const lessons = brain ? brain.brain.search(brain.principal(), spec.goal, { prefix: "global/lessons", limit: 5 }) : [];
       const cs = brain?.workingDoc ? brain.brain.read(brain.principal(), brain.workingDoc, { section: "Current State" }).content : "";
@@ -206,7 +249,6 @@ export class SupervisorRunner implements CodingRunner {
       ];
     }
     for (const c of spec.constraints.checks ?? []) state.briefChecks.add(c);
-    saveState(ctx, messages, state);
 
     const maxTokens = ctx.profile.max_output_tokens;
     const limits = planLimits(ctx.plan, ctx.cfg.routing.max_endpoint_fallbacks);
@@ -222,7 +264,7 @@ export class SupervisorRunner implements CodingRunner {
       inputBudget,
       maxInvalidTerminal: 3,
       purpose: "supervisor",
-      persist: (m) => saveState(ctx, m, state),
+      ...(resume ? { resume } : {}),
       onResponse: async (info) => {
         if (primary) pointer.setHead(primary.alias, await commitAs(primary.worktree, { ...state.actor, model: info.endpointId, request: info.requestId }, `supervisor: edit ${info.edits.slice(0, 5).join(", ")}`));
       },
