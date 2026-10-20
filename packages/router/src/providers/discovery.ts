@@ -26,7 +26,7 @@ import { requestJson, type FetchLike } from "./transport.js";
  * Direct-provider model discovery: list each provider's models with one of its usable keys,
  * keep the models that key can use, enrich them (see `enrich.ts`), and map them to catalog
  * endpoints `<provider>/<model>` routed `{kind:"direct"}`. Results only: persisting them
- * (`Catalog.saveDiscovered`) and scheduling are the caller's.
+ * (`runProviderDiscovery`, `Catalog.saveProviderDiscovery`) and scheduling are the caller's.
  */
 
 /** Guards against a provider that keeps returning a continuation token. */
@@ -385,7 +385,7 @@ function toEndpoint(provider: ResolvedProvider, e: EnrichedModel, free: { value:
   };
 }
 
-const isDirect = (e: ModelEndpointInput, providerId: string) => e.origin === "discovered" && e.route?.kind === "direct" && e.providerId === providerId;
+const isDirect = (e: ModelEndpointInput, providerId: string) => e.origin === "discovered" && e.providerId === providerId;
 
 /** Discover models on every enabled provider that has a usable credential. Never throws for one provider's failure. */
 export async function discoverModels(opts: DiscoveryOptions): Promise<DiscoveryResult> {

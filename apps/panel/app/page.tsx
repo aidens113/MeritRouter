@@ -234,7 +234,7 @@ export default async function OverviewPage() {
               </ul>
             ) : (
               <EmptyState icon={<Server size={20} />} title="No provider health reported">
-                {ov.gatewayConfigured ? "FreeLLMAPI did not return provider status. Check that the gateway is running." : `Set ${sy.cfg.gateway.api_key_env} so the panel can ask FreeLLMAPI for provider status.`}
+                {ov.gatewayConfigured ? "No provider has reported health yet." : "Add a provider key (under providers in the config) so models can be reached."}
               </EmptyState>
             )}
           </div>
@@ -243,7 +243,7 @@ export default async function OverviewPage() {
         <Card>
           <CardHeader
             title="Model catalog scan"
-            description="Discovers models in FreeLLMAPI, checks sizes and prices, and syncs their chains."
+            description="Lists the models of every provider with a usable key and checks their sizes and prices."
             actions={<ActionButton url="/api/scan" small variant="secondary" success="Scan finished">
               <Radar size={13} aria-hidden /> Scan now
             </ActionButton>}
@@ -262,7 +262,7 @@ export default async function OverviewPage() {
                     <li>{ov.lastScan.summary.scanned} models scanned</li>
                     <li>{ov.lastScan.summary.added.length} new</li>
                     <li>{ov.lastScan.summary.pendingConfirmation.length} need confirmation</li>
-                    <li>{ov.lastScan.summary.chainsSynced} chains synced</li>
+                    <li>{ov.lastScan.summary.unavailable.length} unavailable</li>
                     {ov.lastScan.summary.errors.length ? <li className="col-span-2 text-bad-ink">{ov.lastScan.summary.errors.length} error(s): {ov.lastScan.summary.errors[0]}</li> : null}
                   </ul>
                 ) : null}
@@ -270,11 +270,6 @@ export default async function OverviewPage() {
             ) : (
               <p className="text-ink-2">No scan has run yet.</p>
             )}
-            {!ov.adminConfigured ? (
-              <p className="text-xs text-ink-3">
-                Scanning needs <Mono>{sy.cfg.gateway.admin_token_env}</Mono> (a FreeLLMAPI dashboard token) in the environment that runs the panel or worker. <HelpTip term="chain" />
-              </p>
-            ) : null}
           </div>
         </Card>
       </div>

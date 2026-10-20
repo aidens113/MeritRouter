@@ -7,7 +7,7 @@ import type { BudgetInput } from "../verification/contract.js";
 import type { WorkerTask } from "../core/task.js";
 import { AdmissionDenied } from "../core/errors.js";
 import type { ChatResponse } from "../gateway/types.js";
-import { actualUsd, type PaidSpend } from "../paid/spend.js";
+import { actualUsd, type PaidSpend, type SpendKey } from "../paid/spend.js";
 
 /** Effective per-task limits: task budgets may narrow configured policy, never widen it. */
 export interface EffectiveBudget {
@@ -168,7 +168,7 @@ export interface ReservationRequest {
   reservedOutputTokens: number;
   participants: Participant[];
   /** Direct paid request: the worst-case cost is reserved atomically with the request. */
-  paid?: { spend: PaidSpend; keyId: number; provider: string; worstCaseUsd: number; price: { in: number; out: number } };
+  paid?: { spend: PaidSpend; key: SpendKey; provider: string; worstCaseUsd: number; price: { in: number; out: number } };
 }
 
 export interface Reservation {
@@ -330,10 +330,10 @@ export class Admission {
         const p = req.paid;
         const global = p.spend.globalDenial(p.worstCaseUsd);
         if (global) throw new AdmissionDenied("paid_budget_exhausted", global);
-        const key = p.spend.key(p.keyId);
-        if (!key || !key.enabled) throw new AdmissionDenied("paid_budget_exhausted", `paid key ${p.keyId} is not enabled`);
+        const key = p.key;
+        if (!key.enabled) throw new AdmissionDenied("paid_budget_exhausted", `paid key ${key.label || key.ref} is not enabled`);
         const room = p.spend.keyHeadroom(key);
-        if (room < p.worstCaseUsd) throw new AdmissionDenied("paid_budget_exhausted", `key ${key.label || key.id} has $${room.toFixed(4)} left; worst case is $${p.worstCaseUsd.toFixed(4)}`);
+        if (room < p.worstCaseUsd) throw new AdmissionDenied("paid_budget_exhausted", `key ${key.label || key.ref} has $${room.toFixed(4)} left; worst case is $${p.worstCaseUsd.toFixed(4)}`);
         const share = p.worstCaseUsd / req.participants.length;
         for (const part of req.participants) {
           if (part.budget.maxPaidUsd === null) continue;
@@ -354,7 +354,7 @@ export class Admission {
         "INSERT INTO request_charges (request_id, task_id, input_tokens, output_tokens, tokens_exact) VALUES (?, ?, ?, ?, 0)",
       );
       for (const p of req.participants) charge.run(requestId, p.taskId, p.estInputTokens, p.reservedOutputTokens);
-      if (req.paid) req.paid.spend.record(requestId, req.paid.keyId, req.paid.provider, req.endpointId ?? "", req.paid.worstCaseUsd);
+      if (req.paid) req.paid.spend.record(requestId, req.paid.key.ref, req.paid.provider, req.endpointId ?? "", req.paid.worstCaseUsd);
       return {
         requestId,
         executionId: req.executionId,

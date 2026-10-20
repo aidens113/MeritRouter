@@ -129,7 +129,7 @@ export default async function ModelDetailPage({ searchParams }: { searchParams: 
                   </span>,
                   <span key="cv" className="space-y-1">
                     <span className="flex flex-wrap items-center gap-2">
-                      <Mono>{ep.chainName}</Mono>
+                      <Mono>{`${ep.route.provider}/${ep.route.model}`}</Mono>
                       {chain.state === "verified" ? <Badge tone="good">Verified</Badge> : chain.state === "failed" ? <Badge tone="bad">Verification failed</Badge> : <Badge>Not checked</Badge>}
                     </span>
                     {chain.detail ? <span className="block text-xs text-ink-3">{chain.detail}</span> : null}

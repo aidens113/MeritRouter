@@ -1,5 +1,16 @@
 import "server-only";
-import type { FreeLlmApiKey } from "switchyard-router";
+
+/** A key record as the removed external gateway reported it (kept until P3 rebuilds the keys page). */
+interface RemoteKey {
+  id: number | string;
+  platform: string;
+  label?: string | null;
+  status?: string | null;
+  enabled?: boolean;
+  groupLabel?: string | null;
+  created_at?: string | null;
+  last_checked_at?: string | null;
+}
 
 /** Key metadata safe to send to the browser. Secrets are write-only and never leave the server. */
 export interface SafeKey {
@@ -13,8 +24,8 @@ export interface SafeKey {
   lastCheckedAt: string | null;
 }
 
-export function safeKey(k: FreeLlmApiKey): SafeKey {
-  const raw = k as Record<string, unknown>;
+export function safeKey(k: RemoteKey): SafeKey {
+  const raw = k as unknown as Record<string, unknown>;
   const str = (v: unknown) => (typeof v === "string" && v.length ? v : null);
   return {
     id: Number(k.id),

@@ -11,7 +11,6 @@ import type { AcceptanceDecisionOutcome } from "../runners/types.js";
 import type { StoredContract } from "../verification/contract.js";
 import { resolveLevel } from "../verification/policy.js";
 import type { EndpointOverride, ModelEndpoint, RoutingOverride } from "../models/catalog.js";
-import type { ChainVerification } from "../models/chains.js";
 import { planRoute, type CandidateExplanation } from "../routing/select.js";
 import { qualificationLookup, qualificationStat, type QualificationStat } from "../qualification/stats.js";
 import { DEFAULT_RULEBOOK, RulebookSchema } from "../scoring/rulebook.js";
@@ -38,7 +37,9 @@ export function workers(sy: Switchyard, withinMs = 15_000): WorkerInfo[] {
 
 export interface Overview {
   generatedAt: number;
+  /** At least one provider key (or keyless provider) is usable. */
   gatewayConfigured: boolean;
+  /** Always true: scanning needs no separate token (kept for the panel until P3 reworks it). */
   adminConfigured: boolean;
   workers: WorkerInfo[];
   usage24h: UsageSummary;
@@ -59,20 +60,18 @@ export async function overview(sy: Switchyard): Promise<Overview> {
   const eps = sy.catalog.endpoints();
   const models = { active: 0, pending_confirmation: 0, disabled: 0, removed: 0, routable: 0 };
   for (const e of eps) models[e.status]++;
-  models.routable = eps.filter((e) => e.status === "active" && e.available && sy.chains.latest(e.chainName)?.ok !== false).length;
+  models.routable = eps.filter((e) => e.status === "active" && e.available).length;
   const attention: string[] = [];
-  const gatewayConfigured = sy.client.name !== "unconfigured";
-  if (!gatewayConfigured) attention.push(`Set ${sy.cfg.gateway.api_key_env} so tasks can reach FreeLLMAPI.`);
-  if (!sy.admin) attention.push(`Set ${sy.cfg.gateway.admin_token_env} to scan models, manage chains, and edit provider keys.`);
+  const gatewayConfigured = sy.providers.credentials().list().some((c) => c.unusableReason === null);
+  if (!gatewayConfigured) attention.push("Add a provider key (under providers in the config) so tasks can reach a model.");
   if (models.pending_confirmation) attention.push(`${models.pending_confirmation} model(s) need a confirmed parameter count before they can be used.`);
   if (eps.length === 0) attention.push("No models in the catalog yet. Run a scan from the Models page.");
-  if (sy.cfg.discovery.free_platforms.length === 0) attention.push("No free platforms declared (discovery.free_platforms); only OpenRouter models priced at $0 count as free.");
   const s = sy.usage(now - DAY);
   if (s.policyViolations) attention.push(`${s.policyViolations} served-model policy violation(s) in the last 24h; affected models are quarantined.`);
   return {
     generatedAt: now,
     gatewayConfigured,
-    adminConfigured: sy.admin !== null,
+    adminConfigured: true,
     workers: workers(sy),
     usage24h: s,
     usage7d: sy.usage(now - 7 * DAY),
@@ -93,7 +92,7 @@ export interface ProviderBreakerView extends Omit<BreakerRecord, "probing"> {
 
 export interface ProviderHealthView {
   generatedAt: number;
-  /** Per-platform status FreeLLMAPI reports (GET /v1/providers), cached. */
+  /** Per-provider status derived from key state (cooldowns, invalid keys, limits). */
   providers: ProviderStatus[];
   /** Circuit breakers as last recorded by any process sharing this store (meta `circuit:*`). */
   breakers: ProviderBreakerView[];
@@ -173,7 +172,6 @@ export interface EligibilityCell {
 export interface ModelView {
   endpoint: ModelEndpoint;
   override: EndpointOverride | null;
-  chain: ChainVerification | null;
   quarantined: string | null;
   firstSeenAt: number | null;
   stats7d: EndpointStats;
@@ -202,7 +200,7 @@ function matrix(sy: Switchyard): Map<string, EligibilityCell[]> {
 }
 
 function headline(ep: ModelEndpoint, cells: EligibilityCell[], quarantined: string | null): string {
-  if (quarantined) return "Quarantined after serving a request it should not have. Rescan to re-verify its chain.";
+  if (quarantined) return "Quarantined after its provider served a different model than the one requested.";
   if (ep.status !== "active") return ep.statusReason ?? ep.status;
   const usable = cells.filter((c) => c.eligible);
   if (!usable.length) return `Not used for any task: ${cells[0]?.reasons[0] ?? "no eligible task type"}.`;
@@ -221,7 +219,6 @@ export function modelsView(sy: Switchyard): ModelView[] {
     return {
       endpoint: ep,
       override: sy.catalog.override(ep.id),
-      chain: sy.chains.latest(ep.chainName),
       quarantined,
       firstSeenAt: sy.catalog.discoveredRow(ep.id)?.firstSeenAt ?? null,
       stats7d: endpointStats(sy, ep.id, since),
@@ -539,7 +536,7 @@ export function addRoutingOverride(sy: Switchyard, o: RoutingOverride): number {
 
 /** Spend against budgets, per key and per model (keys never include secrets). */
 export function paidSummary(sy: Switchyard) {
-  return { enabled: sy.cfg.paid.enabled, tiers: sy.cfg.paid.tiers, providers: Object.keys(sy.cfg.paid.providers), ...sy.spend.summary(), freeLlmApiKeyBilling: sy.spend.freeLlmApiKeyBilling() };
+  return { enabled: sy.cfg.paid.enabled, tiers: sy.cfg.paid.tiers, providers: Object.keys(sy.cfg.paid.providers), ...sy.spend.summary() };
 }
 
 export function addPaidKey(sy: Switchyard, input: Parameters<Switchyard["vault"]["add"]>[0]) {
@@ -553,12 +550,6 @@ export function updatePaidKey(sy: Switchyard, id: number, patch: Parameters<Swit
 
 export function removePaidKey(sy: Switchyard, id: number): void {
   sy.vault.remove(id);
-}
-
-/** Mark a FreeLLMAPI key's billing class. A paid FreeLLMAPI key blocks its platform from free routing. */
-export function setFreeLlmApiKeyBilling(sy: Switchyard, flKeyId: number, platform: string, billingClass: "free_tier" | "paid_credits" | "paid_postpaid" | "trial"): void {
-  sy.spend.setFreeLlmApiKeyBilling(flKeyId, platform, billingClass);
-  sy.catalog.bump();
 }
 
 // ---------- qualification ----------

@@ -19,7 +19,6 @@ import {
   type ProviderRequest,
   type ResolvedProvider,
 } from "../src/providers/index.js";
-import { httpDirectClient } from "../src/paid/direct.js";
 import { baseConfig } from "./helpers.js";
 
 const NOW = Date.UTC(2026, 9, 20, 12, 0, 0);
@@ -102,7 +101,7 @@ describe("providers config", () => {
       expect.objectContaining({ api_key: "gsk_literal_secret", label: "spare" }),
     ]);
     expect(cfg.providers.byId.cloudflare!.keys[0]!.quota_group).toBe("cf-main");
-    expect(ConfigSchema.parse(baseConfig()).providers).toEqual({ request_timeout_seconds: 300, byId: {} });
+    expect(ConfigSchema.parse({ ...baseConfig(), providers: undefined }).providers).toEqual({ request_timeout_seconds: 300, byId: {} });
   });
 
   it("rejects bad provider entries with paths under providers", () => {
@@ -373,21 +372,5 @@ describe("rate-limit header families", () => {
     expect(parseResetValue(String(NOW + 5000), NOW)).toBe(NOW + 5000);
     expect(parseResetValue("2026-10-20T12:00:10Z", NOW)).toBe(NOW + 10_000);
     expect(parseResetValue("soon", NOW)).toBeNull();
-  });
-});
-
-describe("paid direct shim", () => {
-  afterEach(() => vi.unstubAllGlobals());
-
-  it("keeps the paid client's interface on top of the provider client", async () => {
-    const f = fakeFetch(() => json(okChat({ model: "acme-large" })));
-    vi.stubGlobal("fetch", f);
-    const res = await httpDirectClient.complete({ providerName: "acme", provider: { kind: "openai_compatible", base_url: "https://api.acme.test/v1/", balance_api: "none" }, apiKey: "sk-acme-1234", model: "acme-large", chat: { messages: [{ role: "user", content: "x" }], max_tokens: 9, tools: [tool] }, timeoutMs: 5000 });
-    expect(f.calls[0]!.url).toBe("https://api.acme.test/v1/chat/completions");
-    expect(f.calls[0]!.body).toMatchObject({ max_tokens: 9, tool_choice: "auto" });
-    expect(res.telemetry.servedProvider).toBe("paid:acme");
-    expect(res).not.toHaveProperty("rateLimits");
-    await httpDirectClient.complete({ providerName: "claude", provider: { kind: "anthropic", base_url: "https://api.anthropic.com", balance_api: "none" }, apiKey: "sk-ant-1234", model: "c", chat: { messages: [{ role: "user", content: "x" }], max_tokens: 9 }, timeoutMs: 5000 }).catch(() => undefined);
-    expect(f.calls[1]!.url).toBe("https://api.anthropic.com/v1/messages");
   });
 });

@@ -1,6 +1,6 @@
 import type { Db } from "../storage/db.js";
 import type { ResolvedConfig } from "../config/load.js";
-import type { KeyVault, PaidKey } from "./vault.js";
+import type { KeyVault, PaidKey } from "../providers/vault.js";
 import type { ProviderCredential } from "../providers/credentials.js";
 
 const DAY = 86_400_000;
@@ -14,20 +14,24 @@ export interface SpendSummary {
   byEndpoint: Array<{ endpointId: string; requests: number; usd: number }>;
 }
 
-const round = (n: number) => Math.round(n * 1e6) / 1e6;
-
-/** A stable negative ledger id for a config-declared key (vault ids are positive). */
-function configSpendId(ref: string): number {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < ref.length; i++) h = Math.imul(h ^ ref.charCodeAt(i), 0x01000193);
-  return -(1 + ((h >>> 0) & 0x3fffffff));
+/**
+ * A key as the spend ledger sees it. `ref` is the credential ref (`vault:<id>`, or
+ * `config:<provider>:...` for a key declared in config), so a config key keeps its spend across
+ * restarts. Only vault keys carry a monthly cap or a prepaid balance.
+ */
+export interface SpendKey {
+  ref: string;
+  label: string;
+  enabled: boolean;
+  monthlyCapUsd: number | null;
+  prepaidBalanceUsd: number | null;
+  balanceCheckedAt: number | null;
 }
 
-/** Paid spend ledger. Reservations count as spent until settled to the actual cost. */
-export class PaidSpend {
-  /** Config-declared keys seen by `spendKeyId`, by their negative ledger id. */
-  private readonly configKeys = new Map<number, { key: PaidKey; ref: string }>();
+const round = (n: number) => Math.round(n * 1e6) / 1e6;
 
+/** Paid spend ledger, keyed by credential ref. Reservations count as spent until settled to the actual cost. */
+export class PaidSpend {
   constructor(
     private readonly db: Db,
     private readonly cfg: ResolvedConfig,
@@ -35,21 +39,15 @@ export class PaidSpend {
     private readonly now: () => number = Date.now,
   ) {}
 
-  /** A vault key, or a config key registered by `spendKeyId` (no cap or balance: only global and task budgets apply). */
-  key(id: number): PaidKey | null {
-    if (id < 0) return this.configKeys.get(id)?.key ?? null;
-    return this.vault.get(id);
-  }
-
-  /** The ledger id a paid request through this credential is recorded under. */
-  spendKeyId(cred: Pick<ProviderCredential, "ref" | "vaultKeyId" | "provider" | "label" | "billingClass" | "enabled" | "last4" | "accountId" | "quotaGroup" | "limits">): number {
-    if (cred.vaultKeyId !== null) return cred.vaultKeyId;
-    const id = configSpendId(cred.ref);
-    this.configKeys.set(id, {
-      ref: cred.ref,
-      key: { id, provider: cred.provider, label: cred.label, billingClass: cred.billingClass, enabled: cred.enabled, last4: cred.last4, monthlyCapUsd: null, prepaidBalanceUsd: null, balanceCheckedAt: null, expiresAt: null, createdAt: 0, removed: false, accountId: cred.accountId, quotaGroup: cred.quotaGroup, limits: cred.limits },
-    });
-    return id;
+  /**
+   * The ledger's view of a credential: a vault key with its cap and balance (null when the vault
+   * no longer has it), or a config key with neither (only global and task budgets apply to it).
+   */
+  spendKey(cred: Pick<ProviderCredential, "ref" | "vaultKeyId" | "label" | "enabled">): SpendKey | null {
+    if (cred.vaultKeyId === null) return { ref: cred.ref, label: cred.label, enabled: cred.enabled, monthlyCapUsd: null, prepaidBalanceUsd: null, balanceCheckedAt: null };
+    const k = this.vault.get(cred.vaultKeyId);
+    if (!k) return null;
+    return { ref: cred.ref, label: k.label, enabled: k.enabled && !k.removed, monthlyCapUsd: k.monthlyCapUsd, prepaidBalanceUsd: k.prepaidBalanceUsd, balanceCheckedAt: k.balanceCheckedAt };
   }
 
   private sum(where: string, ...args: unknown[]): number {
@@ -60,8 +58,8 @@ export class PaidSpend {
     return this.sum("created_at > ?", sinceMs);
   }
 
-  keySpendSince(keyId: number, sinceMs: number): number {
-    return this.sum("key_id = ? AND created_at > ?", keyId, sinceMs);
+  keySpendSince(keyRef: string, sinceMs: number): number {
+    return this.sum("key_ref = ? AND created_at > ?", keyRef, sinceMs);
   }
 
   taskSpend(taskId: string): number {
@@ -76,18 +74,12 @@ export class PaidSpend {
   }
 
   /** Remaining headroom for a key: the smaller of its monthly cap and its prepaid balance. */
-  keyHeadroom(k: PaidKey): number {
+  keyHeadroom(k: SpendKey): number {
     const now = this.now();
     let room = Infinity;
-    if (k.monthlyCapUsd !== null) room = Math.min(room, k.monthlyCapUsd - this.keySpendSince(k.id, now - 30 * DAY));
-    if (k.prepaidBalanceUsd !== null) room = Math.min(room, k.prepaidBalanceUsd - this.keySpendSince(k.id, k.balanceCheckedAt ?? 0));
+    if (k.monthlyCapUsd !== null) room = Math.min(room, k.monthlyCapUsd - this.keySpendSince(k.ref, now - 30 * DAY));
+    if (k.prepaidBalanceUsd !== null) room = Math.min(room, k.prepaidBalanceUsd - this.keySpendSince(k.ref, k.balanceCheckedAt ?? 0));
     return room;
-  }
-
-  /** First usable key for the provider with room for the worst-case cost. */
-  pickKey(provider: string, worstUsd: number): PaidKey | null {
-    for (const k of this.vault.usable(provider)) if (this.keyHeadroom(k) >= worstUsd) return k;
-    return null;
   }
 
   /** Global windows. Returns a reason when the worst case would exceed one, else null. */
@@ -107,10 +99,10 @@ export class PaidSpend {
     return null;
   }
 
-  record(requestId: string, keyId: number, provider: string, endpointId: string, reservedUsd: number): void {
+  record(requestId: string, keyRef: string, provider: string, endpointId: string, reservedUsd: number): void {
     this.db
-      .prepare("INSERT INTO paid_spend (request_id, key_id, key_ref, provider, endpoint_id, reserved_usd, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .run(requestId, keyId, keyId < 0 ? (this.configKeys.get(keyId)?.ref ?? null) : `vault:${keyId}`, provider, endpointId, round(reservedUsd), this.now());
+      .prepare("INSERT INTO paid_spend (request_id, key_ref, provider, endpoint_id, reserved_usd, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(requestId, keyRef, provider, endpointId, round(reservedUsd), this.now());
   }
 
   settle(requestId: string, actualUsd: number, basis: "provider_reported" | "computed" | "not_billed" | "uncertain"): void {
@@ -125,31 +117,19 @@ export class PaidSpend {
       week: round(this.windowSpend(now - 7 * DAY)),
       month: round(this.windowSpend(now - 30 * DAY)),
       budgets: { perDayUsd: b.per_day_usd ?? null, perWeekUsd: b.per_week_usd, perMonthUsd: b.per_month_usd ?? null },
-      keys: this.vault.list().map((k) => ({
-        ...k,
-        spent30d: round(this.keySpendSince(k.id, now - 30 * DAY)),
-        remainingBalanceUsd: k.prepaidBalanceUsd === null ? null : round(k.prepaidBalanceUsd - this.keySpendSince(k.id, k.balanceCheckedAt ?? 0)),
-        remainingCapUsd: k.monthlyCapUsd === null ? null : round(k.monthlyCapUsd - this.keySpendSince(k.id, now - 30 * DAY)),
-      })),
+      keys: this.vault.list().map((k) => {
+        const ref = `vault:${k.id}`;
+        return {
+          ...k,
+          spent30d: round(this.keySpendSince(ref, now - 30 * DAY)),
+          remainingBalanceUsd: k.prepaidBalanceUsd === null ? null : round(k.prepaidBalanceUsd - this.keySpendSince(ref, k.balanceCheckedAt ?? 0)),
+          remainingCapUsd: k.monthlyCapUsd === null ? null : round(k.monthlyCapUsd - this.keySpendSince(ref, now - 30 * DAY)),
+        };
+      }),
       byEndpoint: this.db
         .prepare("SELECT endpoint_id AS endpointId, COUNT(*) AS requests, ROUND(COALESCE(SUM(COALESCE(actual_usd, reserved_usd)),0), 6) AS usd FROM paid_spend WHERE created_at > ? GROUP BY endpoint_id ORDER BY usd DESC")
         .all(now - 30 * DAY) as SpendSummary["byEndpoint"],
     };
-  }
-
-  /** FreeLLMAPI platforms that hold a key marked paid: unsafe for free routing. */
-  paidFreeLlmApiPlatforms(): Set<string> {
-    return new Set((this.db.prepare("SELECT DISTINCT platform FROM fl_key_billing WHERE billing_class != 'free_tier'").all() as { platform: string }[]).map((r) => r.platform));
-  }
-
-  setFreeLlmApiKeyBilling(flKeyId: number, platform: string, billingClass: string): void {
-    this.db
-      .prepare("INSERT INTO fl_key_billing (fl_key_id, platform, billing_class, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(fl_key_id) DO UPDATE SET platform = excluded.platform, billing_class = excluded.billing_class, updated_at = excluded.updated_at")
-      .run(flKeyId, platform, billingClass, this.now());
-  }
-
-  freeLlmApiKeyBilling(): Array<{ flKeyId: number; platform: string; billingClass: string }> {
-    return (this.db.prepare("SELECT fl_key_id, platform, billing_class FROM fl_key_billing").all() as Array<{ fl_key_id: number; platform: string; billing_class: string }>).map((r) => ({ flKeyId: r.fl_key_id, platform: r.platform, billingClass: r.billing_class }));
   }
 }
 

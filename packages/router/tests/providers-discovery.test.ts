@@ -372,7 +372,7 @@ describe("availability", () => {
   it("marks previously known but unlisted models unavailable; manual entries win and are never marked", async () => {
     const manual = { ...known("manual-model"), origin: "manual" as const };
     const r = await run({ groq: key("GROQ_KEY") }, { GROQ_KEY: "g" }, fakeFetch(groqList(["model-a", "manual-model"])), {
-      known: [known("model-a"), known("model-gone"), known("already-gone", { available: false, enabled: false }), known("manual-model"), { ...known("chain-model"), route: { kind: "chain" } }],
+      known: [known("model-a"), known("model-gone"), known("already-gone", { available: false, enabled: false }), known("manual-model")],
       manual: [manual],
     });
     expect(r.endpoints.map((e) => e.endpoint.id)).toEqual(["groq/model-a"]);
@@ -491,7 +491,8 @@ describe("tool probe", () => {
 describe("discovery config", () => {
   it("defaults: probing off, 20 probes per day, hourly", () => {
     const cfg = ConfigSchema.parse(baseConfig());
-    expect(cfg.discovery).toMatchObject({ interval_minutes: 60, probe_tools: false, max_probe_requests_per_day: 20 });
+    expect(cfg.discovery).toMatchObject({ interval_minutes: 0, probe_tools: false, max_probe_requests_per_day: 20 });
+    expect(ConfigSchema.parse({ ...baseConfig(), discovery: {} }).discovery.interval_minutes).toBe(60);
     expect(() => ConfigSchema.parse(baseConfig({ discovery: { max_probe_requests_per_day: -1 } }))).toThrow();
   });
 });

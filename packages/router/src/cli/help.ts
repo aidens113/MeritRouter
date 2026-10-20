@@ -8,9 +8,9 @@ Setup
   init [dir] [--preset <name>]  write switchyard.config.yaml and models.yaml
                                 presets: claude-code (default), standalone-free,
                                 standalone-hybrid, standalone-paid
-  doctor                        check config, gateway, admin access, models, and repositories
+  doctor                        check config, provider keys, models, and repositories
   models [--all]                list models with status and eligibility
-  models scan                   scan FreeLLMAPI's catalog and sync per-model chains
+  models scan                   list the models of every provider with a usable key
   models show <id>              full analysis of one model
   models confirm <id> [--params <B>] [--active <B>]   accept or set parameter counts
   models enable|disable <id>    force a model on or off

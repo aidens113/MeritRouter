@@ -50,7 +50,8 @@ describe("size floors and eligibility", () => {
     expect(plan.candidates.map((c) => c.gatewayModelId)).toEqual(["vision"]);
     const reasons = plan.explanations.flatMap((e) => e.reasons).join("\n");
     expect(reasons).toMatch(/metadata is \d+ days old/);
-    expect(reasons).toMatch(/not verified free/);
+    // A priced model is paid: excluded while paid routing is off.
+    expect(reasons).toMatch(/paid routing is disabled/);
     expect(reasons).toMatch(/disabled/);
     expect(reasons).toMatch(/cannot read image input/);
     db.close();

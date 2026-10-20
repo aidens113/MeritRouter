@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import YAML from "yaml";
 import { z } from "zod";
@@ -19,30 +18,34 @@ const EvidenceSchema = z.object({
 });
 export type ParamEvidence = z.infer<typeof EvidenceSchema>;
 
+/** How requests reach the model: its provider and the provider's own model id. */
+export const EndpointRouteSchema = z
+  .object({
+    kind: z.literal("direct", { error: "the only route is direct: delete route (it defaults to providerId and gatewayModelId) or set kind: direct" }),
+    provider: z.string().min(1),
+    model: z.string().min(1),
+  })
+  .strict();
+export type EndpointRoute = z.infer<typeof EndpointRouteSchema>;
+
 /**
- * Package-owned endpoint record. An endpoint is one model served by one provider (a direct
- * provider, or a FreeLLMAPI platform until chains are removed); its id is `<provider>/<model_id>`.
+ * Package-owned endpoint record. An endpoint is one model served by one provider; its id is
+ * `<provider>/<model_id>`. Without a `route`, requests go to provider `providerId` for model
+ * `gatewayModelId`.
  */
 export const ModelEndpointSchema = z
   .object({
     id: z.string().min(1),
     providerId: z.string().min(1),
-    /** FreeLLMAPI `model_id`; with providerId it identifies the served route. */
+    /** The provider's model id; with providerId it identifies the served route. */
     gatewayModelId: z.string().min(1),
     providerModelId: z.string().min(1).optional(),
     displayName: z.string().optional(),
     origin: z.enum(["discovered", "manual", "paid"]).default("manual"),
-    /** How requests reach the model: a FreeLLMAPI single-model chain, or a direct paid provider. */
-    route: z
-      .discriminatedUnion("kind", [
-        z.object({ kind: z.literal("chain") }).strict(),
-        z.object({ kind: z.literal("direct"), provider: z.string().min(1), model: z.string().min(1) }).strict(),
-      ])
-      .default({ kind: "chain" }),
+    /** The provider and model requests go to (defaults to providerId and gatewayModelId). */
+    route: EndpointRouteSchema.optional(),
     /** Closed models publish no size; exempt them from parameter floors (shown in explanations). */
     ignoreSizeFloor: z.boolean().default(false),
-    /** FreeLLMAPI models.id, needed to write chain membership. */
-    flModelDbId: z.number().int().nullable().default(null),
     quotaScopeIds: z.array(z.string().min(1)).default([]),
     totalParametersB: z.number().positive().nullable(),
     activeParametersB: z.number().positive().nullable(),
@@ -87,15 +90,14 @@ export const ModelEndpointSchema = z
     sourceUrls: z.array(z.string()).default([]),
     checkedAt: z.iso.datetime({ offset: true }),
   })
-  .strict();
+  .strict()
+  .transform((ep) => ({ ...ep, route: ep.route ?? { kind: "direct" as const, provider: ep.providerId, model: ep.gatewayModelId } }));
 export type ModelEndpointInput = z.input<typeof ModelEndpointSchema>;
 type BaseEndpoint = z.infer<typeof ModelEndpointSchema>;
 
 export interface ModelEndpoint extends BaseEndpoint {
   status: EndpointStatus;
   statusReason: string | null;
-  /** FreeLLMAPI single-model chain name (`sy-<hash>`), routed as `auto:<chainName>`. */
-  chainName: string;
 }
 
 /** Manual corrections applied on top of discovered metadata (YAML file or panel). */
@@ -142,10 +144,6 @@ export const RoutingOverrideSchema = z
   .strict();
 export type RoutingOverride = z.infer<typeof RoutingOverrideSchema>;
 
-export function chainNameFor(endpointId: string): string {
-  return `sy-${createHash("sha256").update(endpointId).digest("hex").slice(0, 10)}`;
-}
-
 export function endpointIdFor(platform: string, modelId: string): string {
   return `${platform}/${modelId}`;
 }
@@ -175,7 +173,7 @@ function applyOverride(ep: BaseEndpoint, o: EndpointOverride | undefined): { ep:
 }
 
 function computeStatus(ep: BaseEndpoint, forceStatus: "active" | "disabled" | undefined, requireConfirmation: boolean): { status: EndpointStatus; reason: string | null } {
-  if (!ep.enabled && ep.origin === "discovered" && !ep.available) return { status: "removed", reason: ep.route.kind === "direct" ? `no longer listed by ${ep.route.provider}` : "no longer offered by FreeLLMAPI" };
+  if (!ep.enabled && ep.origin === "discovered" && !ep.available) return { status: "removed", reason: `no longer listed by ${ep.route.provider}` };
   if (forceStatus === "disabled") return { status: "disabled", reason: "disabled manually" };
   if (!ep.enabled) return { status: "disabled", reason: "disabled in catalog" };
   if (forceStatus === "active") return { status: "active", reason: "enabled manually" };
@@ -276,7 +274,7 @@ export class Catalog {
       const forceStatus = panel.forceStatus ?? cur.forceStatus;
       cur = panel;
       const s = computeStatus(cur.ep, forceStatus, this.opts.requireConfirmationForHeuristicParams);
-      out.push({ ...cur.ep, status: s.status, statusReason: s.reason, chainName: chainNameFor(ep.id) });
+      out.push({ ...cur.ep, status: s.status, statusReason: s.reason });
     }
     out.sort((a, b) => a.id.localeCompare(b.id));
     this.cache = { key, endpoints: out };
@@ -311,46 +309,18 @@ export class Catalog {
   }
 
   /**
-   * Persist FreeLLMAPI-scanned endpoint records. Chain rows not in `records` are marked
-   * unavailable; direct-provider rows belong to `saveProviderDiscovery` and are left alone.
+   * Persist one provider discovery run. Every record is upserted; then, for each provider in
+   * `listed` (its model list succeeded), its stored discovered rows not in `records` are marked
+   * unavailable and disabled. Other providers, and providers whose listing failed, are untouched.
    */
-  saveDiscovered(records: BaseEndpoint[], now = Date.now()): void {
-    const upsert = this.db.prepare(
-      `INSERT INTO endpoints (id, data_json, first_seen_at, last_scanned_at) VALUES (?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET data_json = excluded.data_json, last_scanned_at = excluded.last_scanned_at`,
-    );
-    this.db.transaction(() => {
-      const seen = new Set<string>();
-      for (const r of records) {
-        upsert.run(r.id, JSON.stringify(ModelEndpointSchema.parse(r)), now, now);
-        seen.add(r.id);
-      }
-      for (const row of this.db.prepare("SELECT id, data_json FROM endpoints").all() as { id: string; data_json: string }[]) {
-        if (seen.has(row.id)) continue;
-        const ep = JSON.parse(row.data_json) as BaseEndpoint;
-        if (ep.route?.kind === "direct") continue;
-        if (ep.available === false && ep.enabled === false) continue;
-        this.db.prepare("UPDATE endpoints SET data_json = ?, last_scanned_at = ? WHERE id = ?").run(JSON.stringify({ ...ep, available: false, enabled: false }), now, row.id);
-      }
-    }).immediate();
-    this.bump();
-  }
-
-  /**
-   * Persist one direct-provider discovery run. Every record is upserted; then, for each provider
-   * in `listed` (its model list succeeded), its stored discovered direct rows not in `records` are
-   * marked unavailable and disabled. Other providers, and providers whose listing failed, are
-   * untouched. A record whose id is held by a FreeLLMAPI chain row is skipped (returned) until
-   * chains are removed, so the two scanners never overwrite each other.
-   */
-  saveProviderDiscovery(records: ModelEndpointInput[], listed: readonly string[], now = Date.now()): { saved: number; skipped: string[] } {
+  saveProviderDiscovery(records: ModelEndpointInput[], listed: readonly string[], now = Date.now()): { saved: number } {
     const upsert = this.db.prepare(
       `INSERT INTO endpoints (id, data_json, first_seen_at, last_scanned_at) VALUES (?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET data_json = excluded.data_json, last_scanned_at = excluded.last_scanned_at`,
     );
     const parsed = records.map((r) => ModelEndpointSchema.parse(r));
     const scope = new Set(listed);
-    const out = { saved: 0, skipped: [] as string[] };
+    const out = { saved: 0 };
     this.db.transaction(() => {
       const stored = new Map<string, BaseEndpoint>();
       for (const row of this.db.prepare("SELECT id, data_json FROM endpoints").all() as { id: string; data_json: string }[]) {
@@ -359,16 +329,12 @@ export class Catalog {
       }
       const seen = new Set<string>();
       for (const r of parsed) {
-        if (stored.get(r.id)?.route.kind === "chain") {
-          out.skipped.push(r.id);
-          continue;
-        }
         upsert.run(r.id, JSON.stringify(r), now, now);
         seen.add(r.id);
         out.saved++;
       }
       for (const [id, ep] of stored) {
-        if (seen.has(id) || ep.origin !== "discovered" || ep.route.kind !== "direct" || !scope.has(ep.route.provider)) continue;
+        if (seen.has(id) || ep.origin !== "discovered" || !scope.has(ep.route.provider)) continue;
         if (!ep.available && !ep.enabled) continue;
         this.db.prepare("UPDATE endpoints SET data_json = ?, last_scanned_at = ? WHERE id = ?").run(JSON.stringify({ ...ep, available: false, enabled: false }), now, id);
       }
@@ -377,7 +343,7 @@ export class Catalog {
     return out;
   }
 
-  /** Stored discovered rows (FreeLLMAPI and direct), before overrides. */
+  /** Stored discovered rows, before overrides. */
   storedEndpoints(): BaseEndpoint[] {
     const out: BaseEndpoint[] = [];
     for (const row of this.db.prepare("SELECT data_json FROM endpoints").all() as { data_json: string }[]) {

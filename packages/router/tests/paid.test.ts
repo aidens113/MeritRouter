@@ -2,10 +2,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { Switchyard } from "../src/core/service.js";
-import type { DirectClient, DirectRequest } from "../src/paid/direct.js";
-import { toAnthropic } from "../src/paid/direct.js";
+import { toAnthropic } from "../src/providers/anthropic.js";
 import { GatewayError } from "../src/core/errors.js";
-import { baseConfig, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, summarizeTask, type Env } from "./helpers.js";
+import type { ChatResponse } from "../src/gateway/types.js";
+import { baseConfig, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, summarizeTask, type Env, type ScriptedRequest } from "./helpers.js";
 
 let env: Env | undefined;
 let sy: Switchyard | undefined;
@@ -28,13 +28,21 @@ const paidCfg = (paid: Record<string, unknown> = {}, extra: Record<string, unkno
     ...extra,
   });
 
-class FakeDirect implements DirectClient {
-  calls: DirectRequest[] = [];
-  constructor(public handler: (r: DirectRequest) => ReturnType<DirectClient["complete"]> = async (r) => ({ ...reply(JSON.stringify(goodOutput()), { model: r.model, provider: `paid:${r.providerName}` }), usage: { inputTokens: 1000, outputTokens: 500, cachedInputTokens: null, reasoningTokens: null, reportedCostUsd: null, basis: "provider_reported" } })) {}
-  complete(r: DirectRequest) {
-    this.calls.push(r);
-    return this.handler(r);
-  }
+/** A good answer billed at 1000 input and 500 output tokens. */
+const paidAnswer = (req: ScriptedRequest): ChatResponse => ({ ...reply(JSON.stringify(goodOutput()), { model: req.model }), usage: { inputTokens: 1000, outputTokens: 500, cachedInputTokens: null, reasoningTokens: null, reportedCostUsd: null, basis: "provider_reported" } });
+
+/**
+ * One scripted provider fetch for both routes: requests to the paid provider `acme` go to
+ * `paid` (and are collected in `paidCalls`), every other provider to `free`.
+ */
+function providers(free: (req: ScriptedRequest) => ChatResponse | Promise<ChatResponse>, paid: (req: ScriptedRequest) => ChatResponse | Promise<ChatResponse> = paidAnswer) {
+  const paidCalls: ScriptedRequest[] = [];
+  const client = new ScriptedClient((req) => {
+    if (req.provider !== "acme") return free(req);
+    paidCalls.push(req);
+    return paid(req);
+  });
+  return { client, paidCalls };
 }
 
 const PAID_ID = "paid:acme/acme-large";
@@ -71,65 +79,58 @@ describe("paid routing policy", () => {
     sy.vault.add({ provider: "acme", secret: "sk-acme-0000-1111" });
     expect(ex().reasons.join(";")).toMatch(/price unknown/);
   });
-
-  it("a FreeLLMAPI key marked paid blocks its platform from free routing", async () => {
-    env = makeEnv({ config: paidCfg() });
-    sy = open(env, new ScriptedClient(() => reply("{}")));
-    sy.spend.setFreeLlmApiKeyBilling(7, "openrouter", "paid_postpaid");
-    const ex = sy.router.plan("summarize", "T1", ["text"]).explanations.find((e) => e.endpointId === "openrouter/vendor/big-a:free")!;
-    expect(ex.reasons.join(";")).toMatch(/marked paid/);
-  });
 });
 
 describe("paid execution", () => {
   it("uses paid only after free capacity fails, reserves the worst case, and settles to the billed cost", async () => {
     env = makeEnv({ config: paidCfg() });
-    const free = new ScriptedClient(() => {
+    const { client, paidCalls } = providers(() => {
       throw new GatewayError("pool_exhausted", "all free keys cooling down", 429, 60_000, false);
     });
-    const direct = new FakeDirect();
-    sy = open(env, free, { worker: true, directClient: direct });
-    sy.vault.add({ provider: "acme", secret: "sk-acme-0000-1111", prepaidBalanceUsd: 3 });
+    sy = open(env, client, { worker: true });
+    const key = sy.vault.add({ provider: "acme", secret: "sk-acme-0000-1111", prepaidBalanceUsd: 3 });
     const [sub] = await sy.submitTasks([summarizeTask()]);
     const r = (await sy.awaitResults([sub!.taskId], { timeoutSeconds: 10 })).completed[0]!;
     expect(r.executionStatus).toBe("completed");
     expect(r.routing!.attempts.map((a) => a.outcome)).toEqual(["pool_exhausted", "succeeded"]);
-    expect(direct.calls[0]!.apiKey).toBe("sk-acme-0000-1111");
+    expect(paidCalls[0]!.key).toBe("sk-acme-0000-1111");
     // 1000 in x $2/M + 500 out x $8/M = $0.006
     expect(r.usage.estimatedCostUsd).toBeCloseTo(0.006, 6);
     const s = sy.spend.summary();
     expect(s.week).toBeCloseTo(0.006, 6);
     expect(s.keys[0]!.remainingBalanceUsd).toBeCloseTo(3 - 0.006, 6);
+    // Recorded by the vault key's credential ref.
+    expect(sy.db.prepare("SELECT key_ref FROM paid_spend").get()).toEqual({ key_ref: `vault:${key.id}` });
   });
 
   it("budgets stop paid requests before dispatch: weekly window, key balance, and task cap", async () => {
     env = makeEnv({ config: paidCfg({ budgets: { per_week_usd: 0.01 }, tiers: { T1: "preferred" } }) });
-    const direct = new FakeDirect();
-    sy = open(env, new ScriptedClient((req) => reply(JSON.stringify(goodOutput()), servedFor(sy!, req))), { worker: true, directClient: direct });
+    const { client, paidCalls } = providers((req) => reply(JSON.stringify(goodOutput()), servedFor(sy!, req)));
+    sy = open(env, client, { worker: true });
     sy.vault.add({ provider: "acme", secret: "sk-acme-0000-1111" });
     // max_output_tokens 2000 x $8/M = $0.016 worst case > $0.01 weekly budget: paid is skipped, free serves.
     const [a] = await sy.submitTasks([summarizeTask()]);
     const ra = (await sy.awaitResults([a!.taskId], { timeoutSeconds: 10 })).completed[0]!;
-    expect(direct.calls).toHaveLength(0);
+    expect(paidCalls).toHaveLength(0);
     expect(ra.servedEndpoints).toEqual(["openrouter/vendor/big-a:free"]);
     expect(ra.routing!.attempts[0]!.outcome).toMatch(/skipped \(paid budget\).*weekly paid budget/);
   });
 
   it("a task-level maxPaidUsd cap is enforced", async () => {
     env = makeEnv({ config: paidCfg({ tiers: { T1: "preferred" } }), endpoints: [] });
-    const direct = new FakeDirect();
-    sy = open(env, new ScriptedClient(() => reply("{}")), { worker: true, directClient: direct });
+    const { client, paidCalls } = providers(() => reply("{}"));
+    sy = open(env, client, { worker: true });
     sy.vault.add({ provider: "acme", secret: "sk-acme-0000-1111" });
     const [a] = await sy.submitTasks([summarizeTask({ budget: { maxPaidUsd: 0.001 } })]);
     const r = (await sy.awaitResults([a!.taskId], { timeoutSeconds: 10 })).completed[0]!;
-    expect(direct.calls).toHaveLength(0);
+    expect(paidCalls).toHaveLength(0);
     expect(r.stopReason).toMatch(/paid_budget_exhausted/);
   });
 
   it("T4 work goes to paid models when the T4 policy is premium", async () => {
     env = makeEnv({ config: paidCfg({ tiers: { T4: "premium" } }) });
-    const direct = new FakeDirect();
-    sy = open(env, new ScriptedClient((req) => reply(JSON.stringify(goodOutput()), servedFor(sy!, req))), { worker: true, directClient: direct });
+    const { client } = providers((req) => reply(JSON.stringify(goodOutput()), servedFor(sy!, req)));
+    sy = open(env, client, { worker: true });
     sy.vault.add({ provider: "acme", secret: "sk-acme-0000-1111" });
     const [a] = await sy.submitTasks([summarizeTask({ hints: { difficulty: "T4" } })]);
     const r = (await sy.awaitResults([a!.taskId], { timeoutSeconds: 10 })).completed[0]!;
@@ -140,10 +141,13 @@ describe("paid execution", () => {
 
   it("an uncertain paid failure keeps the worst case charged", async () => {
     env = makeEnv({ config: paidCfg({ tiers: { T1: "preferred" } }), endpoints: [] });
-    const direct = new FakeDirect(async () => {
-      throw new GatewayError("transport", "connection reset", undefined, undefined, true);
-    });
-    sy = open(env, new ScriptedClient(() => reply("{}")), { worker: true, directClient: direct });
+    const { client } = providers(
+      () => reply("{}"),
+      () => {
+        throw new GatewayError("transport", "connection reset", undefined, undefined, true);
+      },
+    );
+    sy = open(env, client, { worker: true });
     sy.vault.add({ provider: "acme", secret: "sk-acme-0000-1111" });
     const [a] = await sy.submitTasks([summarizeTask({ budget: { timeoutSeconds: 2 } })]);
     await sy.awaitResults([a!.taskId], { timeoutSeconds: 5 });
@@ -168,4 +172,3 @@ describe("anthropic conversion", () => {
     expect(c.messages[2]!.content).toEqual([{ type: "tool_result", tool_use_id: "t1", content: "file body" }, { type: "text", text: "continue" }]);
   });
 });
-

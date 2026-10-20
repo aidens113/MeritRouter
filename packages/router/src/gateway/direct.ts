@@ -81,8 +81,8 @@ function ineligibleKeys(ep: ModelEndpoint, creds: ProviderCredential[], spend: P
   for (const c of creds) {
     if (paid && c.billingClass === "free_tier") out.set(c.ref, "a free_tier key cannot serve a priced model");
     else if (keyOnly && c.billingClass !== "free_tier") out.set(c.ref, `a ${c.billingClass} key would bill a model that is free only on free_tier keys`);
-    else if (paid && c.vaultKeyId !== null) {
-      const k = spend.key(c.vaultKeyId);
+    else if (paid) {
+      const k = spend.spendKey(c);
       const room = k ? spend.keyHeadroom(k) : -Infinity;
       if (room < worst) out.set(c.ref, `$${Math.max(0, room).toFixed(4)} headroom`);
     }
@@ -167,6 +167,11 @@ export async function requestDirect(
         }
       }
 
+      const spendKey = paid ? d.direct.spend.spendKey(cred) : null;
+      if (paid && !spendKey) {
+        release();
+        continue;
+      }
       let reservation: ReturnType<Admission["reserve"]>;
       try {
         reservation = d.admission.reserve({
@@ -180,7 +185,7 @@ export async function requestDirect(
           estInputTokens: estInput,
           reservedOutputTokens: req.chat.max_tokens,
           participants,
-          ...(paid ? { paid: { spend: d.direct.spend, keyId: d.direct.spend.spendKeyId(cred), provider: route.provider, worstCaseUsd: worst, price } } : {}),
+          ...(spendKey ? { paid: { spend: d.direct.spend, key: spendKey, provider: route.provider, worstCaseUsd: worst, price } } : {}),
         });
       } catch (err) {
         release();

@@ -40,7 +40,7 @@ export async function refreshPaidPrices(db: Db, cfg: ResolvedConfig, fetchImpl: 
 }
 
 /**
- * Configured paid models as catalog endpoints. They route directly (never via FreeLLMAPI), are
+ * Configured paid models as catalog endpoints. They route directly to their provider, are
  * available only with a usable key that may pay (`paidKeys`: vault or config keys that are not
  * `free_tier`), and need a known price to be eligible.
  */

@@ -1,4 +1,4 @@
-/** Minimal OpenAI-compatible chat shapes used between the package and the gateway. */
+/** Minimal OpenAI-compatible chat shapes used between the package and its provider clients. */
 export interface ChatToolCall {
   id: string;
   type: "function";
@@ -19,7 +19,7 @@ export interface ChatTool {
 }
 
 export interface ChatRequest {
-  /** Always a curated pool name; adapters must not accept raw model ids from callers. */
+  /** The provider's model id, chosen by the gate from the catalog (never taken from a caller). */
   model: string;
   messages: ChatMessage[];
   max_tokens: number;
@@ -43,12 +43,12 @@ export interface NormalizedUsage {
 export interface GatewayTelemetry {
   servedModel: string | null;
   servedProvider: string | null;
-  /** Upstream provider attempts for this one gateway request, when the gateway reports it. */
+  /** Provider attempts behind this one request (1 for a direct call). */
   providerAttempts: number | null;
   /** True only when the attempt count comes from an authoritative source. */
   providerAttemptsExact: boolean;
   cacheHit: boolean | null;
-  /** Gateway headers kept for audit (subset; never includes credentials). */
+  /** Provider headers kept for audit (subset; never includes credentials). */
   headers: Record<string, string>;
 }
 
@@ -67,14 +67,6 @@ export interface ProviderStatus {
   resumeAt: number | null;
   requestsRemainingPct: number | null;
   lastError: string | null;
-}
-
-/** Replaceable inference boundary; the FreeLLMAPI adapter is the first implementation. */
-export interface InferenceClient {
-  readonly name: string;
-  complete(req: ChatRequest, signal?: AbortSignal): Promise<ChatResponse>;
-  /** Per-platform health (cooldowns, key status) when the gateway exposes it. */
-  providers?(): Promise<ProviderStatus[]>;
 }
 
 export function normalizeOpenAiUsage(usage: unknown, costUsd?: unknown): NormalizedUsage {

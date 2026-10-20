@@ -3,12 +3,11 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import type { Switchyard, SwitchyardOptions } from "../src/core/service.js";
-import type { ChatMessage, ChatRequest, InferenceClient } from "../src/gateway/types.js";
+import type { ChatMessage, ChatRequest } from "../src/gateway/types.js";
 import type { SessionEvent, SessionEventOf } from "../src/sessions/events.js";
 import type { SessionRecord } from "../src/sessions/store.js";
-import type { DirectClient, DirectRequest } from "../src/paid/direct.js";
 import { FAULT_ENV, resetFaults, simulatedCrashCount } from "../src/core/faults.js";
-import { baseConfig, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, summarizeTask, type Env } from "./helpers.js";
+import { baseConfig, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, summarizeTask, type Env, type ScriptedRequest } from "./helpers.js";
 
 /**
  * Fault injection (S2): a run dies at a named point (SWITCHYARD_FAULT_AT), leaving its session
@@ -59,7 +58,7 @@ function runs(taskId: string): SessionRecord[] {
  * process. Checks the crash left the task running and its session running (as a dead process
  * would), then opens a fresh worker whose clock is past the lease, so recovery takes over.
  */
-async function crashThenRecover(o: { client: InferenceClient; fault: string; submit: (s: Switchyard) => Promise<string>; opts?: SwitchyardOptions; operator?: (s: Switchyard, taskId: string) => void }): Promise<string> {
+async function crashThenRecover(o: { client: ScriptedClient; fault: string; submit: (s: Switchyard) => Promise<string>; opts?: SwitchyardOptions; operator?: (s: Switchyard, taskId: string) => void }): Promise<string> {
   const before = simulatedCrashCount();
   process.env[FAULT_ENV] = o.fault;
   sy = open(env!, o.client, { worker: true, ...o.opts });
@@ -127,20 +126,16 @@ describe("read-only worker", () => {
       }),
       endpoints: [],
     });
-    const calls: DirectRequest[] = [];
-    const direct: DirectClient = {
-      complete: async (r) => {
-        calls.push(r);
-        const base = reply(null, { model: r.model, provider: `paid:${r.providerName}`, toolCalls: reader(r.chat.messages) });
-        return { ...base, usage: { ...base.usage, inputTokens: 1000, outputTokens: 500 } };
-      },
-    };
-    const free = new ScriptedClient(() => {
-      throw new Error("the free gateway must not be used");
+    // Only the paid provider acme serves (no free endpoint is configured).
+    const calls: ScriptedRequest[] = [];
+    const paid = new ScriptedClient((r) => {
+      if (r.provider !== "acme") throw new Error("only the paid provider may be used");
+      calls.push(r);
+      const base = reply(null, { model: r.model, toolCalls: reader(r.messages) });
+      return { ...base, usage: { ...base.usage, inputTokens: 1000, outputTokens: 500 } };
     });
     const id = await crashThenRecover({
-      client: free,
-      opts: { directClient: direct },
+      client: paid,
       fault: "after_tool_run:1:submit_result",
       submit: async (s) => {
         s.vault.add({ provider: "acme", secret: "sk-acme-0000-1111" });

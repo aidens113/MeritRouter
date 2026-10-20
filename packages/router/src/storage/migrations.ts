@@ -619,4 +619,32 @@ export const MIGRATIONS: string[] = [
   -- or a stable negative id for a config key.
   ALTER TABLE paid_spend ADD COLUMN key_ref TEXT;
   `,
+  `
+  -- Direct providers (P2): the external gateway is gone. Drop its tables (chain verifications and
+  -- its keys' billing classes) and its chain-routed endpoint rows; every stored endpoint now
+  -- routes directly to its provider.
+  DROP TABLE IF EXISTS fl_key_billing;
+  DROP TABLE IF EXISTS pool_verifications;
+  DELETE FROM endpoints WHERE json_extract(data_json, '$.route.kind') IS NOT 'direct';
+  UPDATE endpoints SET data_json = json_remove(data_json, '$.flModelDbId');
+  -- Paid spend is recorded by credential ref (vault:<id> or config:...), so a config-declared
+  -- key keeps its identity across restarts; the numeric key_id goes.
+  CREATE TABLE paid_spend_by_ref (
+    request_id TEXT PRIMARY KEY REFERENCES model_requests(id),
+    key_ref TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    endpoint_id TEXT NOT NULL,
+    reserved_usd REAL NOT NULL,
+    actual_usd REAL,
+    cost_basis TEXT,
+    created_at INTEGER NOT NULL,
+    settled_at INTEGER
+  );
+  INSERT INTO paid_spend_by_ref (request_id, key_ref, provider, endpoint_id, reserved_usd, actual_usd, cost_basis, created_at, settled_at)
+    SELECT request_id, COALESCE(key_ref, 'vault:' || key_id), provider, endpoint_id, reserved_usd, actual_usd, cost_basis, created_at, settled_at FROM paid_spend;
+  DROP TABLE paid_spend;
+  ALTER TABLE paid_spend_by_ref RENAME TO paid_spend;
+  CREATE INDEX paid_spend_created ON paid_spend(created_at);
+  CREATE INDEX paid_spend_key ON paid_spend(key_ref, created_at);
+  `,
 ];

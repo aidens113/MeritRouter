@@ -2,7 +2,6 @@ import { z } from "zod";
 import { MODALITIES, type Modality } from "../config/schema.js";
 import type { EndpointOverride, ParamEvidence } from "../models/catalog.js";
 import { parseParamsFromDescription, parseParamsFromName, resolveParams, type ResolvedParams } from "../models/params.js";
-import { modelKey } from "../models/scanner.js";
 import type { ProviderClient, RequestCredential } from "./client.js";
 import { ProviderError } from "./errors.js";
 import type { ResolvedProvider } from "./registry.js";
@@ -112,6 +111,12 @@ export function listedFromOpenRouter(m: OpenRouterModel): ListedModel {
     price: input === null || output === null ? null : input === 0 && output === 0 ? "zero" : "positive",
     huggingFaceId: m.hugging_face_id || null,
   };
+}
+
+/** Strip routing suffixes and the vendor prefix so the same model matches across providers. */
+export function modelKey(id: string): string {
+  const base = id.toLowerCase().replace(/:free$|:beta$|-free$/, "");
+  return base.includes("/") ? base.slice(base.lastIndexOf("/") + 1) : base;
 }
 
 export interface OpenRouterCatalog {

@@ -92,7 +92,7 @@ describe("backup and restore", () => {
     const cfg = parseConfig(baseConfig({ storage: { directory: "restored" } }), env!.cfg.configPath);
     expect(cfg.storageDir).toBe(restoredDir);
     const { Switchyard } = await import("../src/core/service.js");
-    sy = new Switchyard(cfg, { client: new ScriptedClient(() => reply("unused")), admin: null });
+    sy = new Switchyard(cfg, { providerFetch: new ScriptedClient(() => reply("unused")).fetch });
     expect(sy.getStatus([taskId])[0]).toMatchObject({ taskId, state: "completed" });
     expect(sy.collectResults([taskId]).completed[0]).toMatchObject({ taskId, executionStatus: "completed" });
     expect(sy.artifacts.read(artifact)?.content.toString("utf8")).toBe("artifact body\n");
