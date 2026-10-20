@@ -66,6 +66,77 @@ export function budgetInputFor(cfg: ResolvedConfig, spec: WorkerTask, tier: Tier
   };
 }
 
+// ---------- sub-supervisor budgets ----------
+
+/** A request budget carved from a parent job for one sub-supervisor (`job_budget_carves`). */
+export interface BudgetCarve {
+  childTaskId: string;
+  parentTaskId: string;
+  requests: number;
+  /** The parent's remaining requests when it carved (null when recorded on recovery). */
+  parentRemaining: number | null;
+  share: number;
+  depth: number;
+  createdAt: number;
+}
+
+const TERMINAL_TASK_STATES = new Set(["completed", "failed", "cancelled", "budget_exhausted"]);
+
+function requestsCharged(db: Db, taskId: string): number {
+  return (db.prepare("SELECT COUNT(*) AS n FROM request_charges WHERE task_id = ?").get(taskId) as { n: number }).n;
+}
+
+/**
+ * Requests a parent job has handed to its sub-supervisors: an open sub-job holds its whole
+ * carve; a finished one counts what it (and its own sub-jobs) actually used, so the unused rest
+ * returns to the parent.
+ */
+export function carvedRequests(db: Db, parentTaskId: string, depth = 0): number {
+  if (depth > 8) return 0;
+  const rows = db
+    .prepare("SELECT c.child_task_id AS child, c.requests AS requests, t.state AS state FROM job_budget_carves c JOIN tasks t ON t.id = c.child_task_id WHERE c.parent_task_id = ?")
+    .all(parentTaskId) as Array<{ child: string; requests: number; state: string }>;
+  let total = 0;
+  for (const r of rows) total += TERMINAL_TASK_STATES.has(r.state) ? Math.min(r.requests, requestsCharged(db, r.child) + carvedRequests(db, r.child, depth + 1)) : r.requests;
+  return total;
+}
+
+/**
+ * The budget a new sub-supervisor gets: `share` of what the parent has left after its own
+ * requests and its open carves, rounded down; null when that is below `min`.
+ */
+export function childRequestBudget(o: { parentCap: number; parentUsed: number; carved: number; share: number; min: number }): { requests: number; remaining: number } | null {
+  const remaining = Math.max(0, o.parentCap - o.parentUsed - o.carved);
+  const requests = Math.floor(remaining * o.share);
+  return requests >= o.min ? { requests, remaining } : null;
+}
+
+/** Record a carve; idempotent per child (a resumed parent records missing carves again). */
+export function recordCarve(db: Db, c: Omit<BudgetCarve, "createdAt">, now: number): void {
+  db.prepare("INSERT OR IGNORE INTO job_budget_carves (child_task_id, parent_task_id, requests, parent_remaining, share, depth, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+    c.childTaskId,
+    c.parentTaskId,
+    c.requests,
+    c.parentRemaining,
+    c.share,
+    c.depth,
+    now,
+  );
+}
+
+export function carvesOf(db: Db, parentTaskId: string): BudgetCarve[] {
+  const rows = db.prepare("SELECT * FROM job_budget_carves WHERE parent_task_id = ? ORDER BY created_at, child_task_id").all(parentTaskId) as Array<{
+    child_task_id: string;
+    parent_task_id: string;
+    requests: number;
+    parent_remaining: number | null;
+    share: number;
+    depth: number;
+    created_at: number;
+  }>;
+  return rows.map((r) => ({ childTaskId: r.child_task_id, parentTaskId: r.parent_task_id, requests: r.requests, parentRemaining: r.parent_remaining, share: r.share, depth: r.depth, createdAt: r.created_at }));
+}
+
 /** What a model request was for, as budgets and usage reports group them. */
 export const REQUEST_PURPOSES = ["classification", "execution", "verification", "repair"] as const;
 export type RequestPurpose = (typeof REQUEST_PURPOSES)[number];
@@ -211,10 +282,12 @@ export class Admission {
         if (deadline !== null && now >= deadline) throw new AdmissionDenied("deadline_exceeded", `task ${p.taskId} passed its deadline`, undefined, p.taskId);
 
         const used = this.taskTotals(p.taskId);
-        if (used.requests + 1 > p.budget.maxModelRequests) {
+        // A job's budget also covers what it carved for its sub-supervisors.
+        const carved = carvedRequests(this.db, p.taskId);
+        if (used.requests + carved + 1 > p.budget.maxModelRequests) {
           throw new AdmissionDenied(
             "task_request_budget_exhausted",
-            `task ${p.taskId} used ${used.requests}/${p.budget.maxModelRequests} model requests`,
+            `task ${p.taskId} used ${used.requests}/${p.budget.maxModelRequests} model requests${carved ? ` (plus ${carved} carved for sub-supervisors)` : ""}`,
             undefined,
             p.taskId,
           );

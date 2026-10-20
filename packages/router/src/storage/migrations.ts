@@ -468,4 +468,47 @@ export const MIGRATIONS: string[] = [
   CREATE INDEX file_leases_task ON file_leases(task_id);
   CREATE INDEX file_leases_job ON file_leases(job_id, acquired_at);
   `,
+  `
+  -- Agent teams (T2): request budgets carved from a parent job for its sub-supervisors, and the
+  -- merge queue that integrates tasks and sub-jobs onto a job branch one at a time.
+  CREATE TABLE job_budget_carves (
+    child_task_id TEXT PRIMARY KEY REFERENCES tasks(id),
+    parent_task_id TEXT NOT NULL REFERENCES tasks(id),
+    requests INTEGER NOT NULL,
+    parent_remaining INTEGER,
+    share REAL NOT NULL,
+    depth INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX job_budget_carves_parent ON job_budget_carves(parent_task_id);
+
+  CREATE TABLE merge_queue (
+    id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL,
+    task_id TEXT NOT NULL REFERENCES tasks(id),
+    kind TEXT NOT NULL CHECK (kind IN ('task', 'job')),
+    repo_alias TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    lock_key TEXT NOT NULL,
+    integration_worktree TEXT NOT NULL,
+    source_worktree TEXT,
+    source_base TEXT NOT NULL,
+    source_head TEXT NOT NULL,
+    commits_json TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('queued', 'integrating', 'picked', 'integrated', 'conflict', 'redelegated', 'refused', 'failed')),
+    owner TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    before_head TEXT,
+    after_head TEXT,
+    rebased INTEGER NOT NULL DEFAULT 0,
+    acceptance_json TEXT,
+    redelegated_to TEXT,
+    detail_json TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX merge_queue_job ON merge_queue(job_id, created_at);
+  CREATE INDEX merge_queue_task ON merge_queue(task_id, created_at);
+  CREATE INDEX merge_queue_lock ON merge_queue(lock_key, state);
+  `,
 ];

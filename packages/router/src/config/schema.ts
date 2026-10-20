@@ -594,6 +594,14 @@ export const ConfigSchema = z
          * everything, and tasks over the cap wait queued.
          */
         max_agents: z.number().int().positive().optional(),
+        /**
+         * Supervisor levels a job tree may have: a top-level job is depth 1, and a job may
+         * delegate a `supervise` sub-job only while its depth is below this (default 2: one
+         * level of sub-supervisors; 1 disables nesting).
+         */
+        max_depth: z.number().int().min(1).max(5).default(2),
+        /** Share of the parent's remaining request budget a sub-supervisor is given (and the parent loses while it runs). */
+        child_budget_share: z.number().gt(0).max(1).default(0.5),
       })
       .strict()
       .prefault({}),
@@ -651,3 +659,6 @@ export const DEFAULT_MAX_AGENTS = 8;
 export function maxAgentsPerJob(cfg: { team: { max_agents?: number | undefined }; supervisor: { max_workers_per_job?: number | undefined } }): number {
   return cfg.team.max_agents ?? cfg.supervisor.max_workers_per_job ?? DEFAULT_MAX_AGENTS;
 }
+
+/** Fewest model requests a sub-supervisor is started with; a smaller carve is refused. */
+export const MIN_CHILD_REQUESTS = 3;
