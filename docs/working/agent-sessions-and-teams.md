@@ -382,27 +382,58 @@ Surface: `switchyard sessions [--running|--interrupted]`, `switchyard session <i
 - Owns: `src/cli.ts`, `src/mcp.ts`, `src/admin/insights.ts`, `apps/panel/**`, related tests.
 - Report to: docs/working/agent-sessions-and-teams/reports/t1-surface.md
 
-### Brief: t2-team (after T1 is on dev)
-- Task: T2 per "R1b and T implementation decisions": sub-supervisors (`delegate` with profile
-  `supervise`, `team.max_depth` 2, child branch forked from the parent job branch, child budget
-  carved from the parent's by `team.child_budget_share`, own working-document section,
-  integrated upward by the parent through the merge queue; resume and verification apply to
-  child jobs like any task); the merge queue (`integrate_task` enqueues; one integration per job
-  branch at a time; job checks after each; clean rebase onto the branch head on conflict, else
-  one re-delegation with the conflict as context; every outcome recorded as task events); the
-  team channel (`job_channel` table mirrored to the brain section; `post_channel` with kinds
-  finding / blocker / interface_contract, `read_channel`; workers read posts referencing their
-  task); opt-in redundant execution (`redundancy: 2` on a plan node: two cheap models, first
-  result that passes verification wins, the other is cancelled and its session ended
-  `cancelled` / `superseded`).
-- Owns: `src/harness/supervisor-tools.ts`, `src/runners/supervisor.ts`, `src/core/**`,
-  `src/storage/**` (append a migration), `src/brain/**` (channel mirror only),
-  `src/config/schema.ts` (team keys), `charters/**`, `tests/team-coordination.test.ts`.
-- Definition of done: a nested job (parent -> child supervisor -> workers) completes with
-  correct attribution trailers and no lost integrations; two conflicting integrations are
-  serialised and the second rebased; channel posts visible to the referenced worker; redundant
-  node takes the first verified result; typecheck and all tests pass.
-- Report to: docs/working/agent-sessions-and-teams/reports/t2-team.md
+### T2 split (2026-10-19)
+T2 runs as two parallel branches partitioned by file: `feat/t2-nesting` (worktree `D:/sy-wt/v1`)
+and `feat/t2-channel` (worktree `D:/sy-wt/s2`). Both append a migration (order set at merge).
+The supervisor wires the channel tools into the supervisor's tool list at merge.
+
+### Brief: t2-nesting
+- Task: sub-supervisors and the merge queue, per the T2 bullet of "R1b and T implementation
+  decisions". Sub-supervisors: `delegate` / `plan_work` accept profile `supervise` for a
+  sub-goal when depth < `team.max_depth` (2); the child job's branch `switchyard/job-<child>` is
+  forked from the parent's job branch; the child's request budget is carved from the parent's
+  remaining (`team.child_budget_share`, 0.5) and recorded; it gets its own working-document
+  section in the parent's effort; the parent integrates the child's branch through the merge
+  queue; resume (S2), verification (V), and leases (T1) apply to child jobs like any task.
+  Merge queue: `integrate_task` enqueues; one integration per job branch at a time; job checks
+  run after each; on conflict, rebase onto the branch head in the item's worktree when clean,
+  else re-delegate once with the conflict as context; every outcome a task event.
+- Owns: `src/harness/supervisor-tools.ts`, `src/runners/supervisor.ts`, `src/workspaces/**`, new
+  `src/workspaces/merge-queue.ts`, `src/config/schema.ts` (team section), `src/admission/**`
+  (child budget), `charters/supervisor.md`, a migration, `tests/team-nesting.test.ts`.
+- Must not touch: `src/core/executor.ts`, `src/core/scheduler.ts`, `src/storage/plans.ts`,
+  `src/brain/**`, `src/harness/tools.ts`, panel.
+- Definition of done: a nested job (parent -> child supervisor -> workers) completes with correct
+  Agent/Model/Task trailers on the parent branch and no lost integrations; two conflicting
+  integrations are serialised and the second rebased; a crash mid-integration resumes without a
+  double cherry-pick; typecheck and all tests pass.
+- Report to: docs/working/agent-sessions-and-teams/reports/t2-nesting.md
+
+### Brief: t2-channel
+- Task: the team channel and redundant execution. Channel: `job_channel` table (job, author
+  session/task, kind finding | blocker | interface_contract, refs to tasks, text, created_at),
+  mirrored as an append-only section of the job's working document in the brain; tools in a new
+  `src/harness/channel-tools.ts` exporting `channelTools(): HarnessTool[]` (`post_channel`,
+  `read_channel`) for supervisors and workers (workers read posts that reference their task or
+  are job-wide; posting is bounded per task). Wire the worker side in `harness/tools.ts`; the
+  supervisor side is wired by the supervisor at merge. Redundancy: plan nodes accept
+  `redundancy: 2` (small nodes only: T1/T2, non-coding or disjoint worktrees); two runs on
+  different cheap endpoints; the first result that passes verification wins; the other is
+  cancelled, its session ended `cancelled` / `superseded`; both charged.
+- Owns: `src/harness/channel-tools.ts`, `src/harness/tools.ts`, new `src/storage/channel.ts`,
+  `src/storage/plans.ts` (redundancy field), `src/brain/**` (mirror only), `src/core/executor.ts`,
+  `src/core/scheduler.ts`, a migration, `tests/team-channel.test.ts`.
+- Must not touch: `src/harness/supervisor-tools.ts`, `src/runners/supervisor.ts`,
+  `src/workspaces/**`, `src/config/schema.ts` (ask the supervisor for keys), panel.
+- Definition of done: channel posts persist, mirror to the brain, survive restart, and are
+  visible to the referenced worker; a redundant node takes the first verified result and cancels
+  the other; typecheck and all tests pass.
+- Report to: docs/working/agent-sessions-and-teams/reports/t2-channel.md
+
+### Brief: t2-surface (after both)
+- Task: panel/CLI/MCP for sub-jobs (job tree), merge queue state, channel; docs.
+- Owns: `src/cli.ts`, `src/mcp.ts`, `src/admin/**`, `apps/panel/**`, related tests.
+- Report to: docs/working/agent-sessions-and-teams/reports/t2-surface.md
 
 ### Brief: t3-capacity (after T2 is on dev)
 - Task: T3 per "R1b and T implementation decisions": AIMD concurrency per provider (start
