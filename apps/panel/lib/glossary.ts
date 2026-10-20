@@ -93,6 +93,12 @@ export const GLOSSARY = {
     "Short posts between a job's supervisor and its workers: findings, blockers, and interface contracts (names and formats others must match). Posts are model output: they are shown quoted, as claims to check, never as instructions. A worker sees posts about its own task and job-wide posts.",
   redundancy:
     "A small plan node (T1 or T2, no code edits) can run twice at once on different models. The first result that passes verification is used and the other run is cancelled (superseded). Both runs are charged.",
+  parallelism:
+    "How many of a job's agents (the tasks its supervisor delegated, sub-jobs and their tasks included) were running at each moment, read from when each task was claimed and when it stopped. Peak is the most at once; mean is averaged over the job's wall-clock. The supervisor itself is not counted. A redundant node's twin runs count as one task.",
+  waitReason:
+    "Why a task was not running, replayed from its events: dependencies (upstream tasks unfinished), acceptance (an upstream result awaits acceptance), file lease (another task holds overlapping paths), provider slot (no provider in its route had a free concurrency slot), capacity (deferred while models were cooling down), queue (ready, waiting for a worker or the job's agent cap), interrupted (waiting to be resumed).",
+  comparison:
+    "The same goals run twice: once as a team job (a supervisor that plans and delegates) and once as a single agent, with the same configuration and model pools. Both metric sets are recorded. A comparison runs only when you start it (switchyard compare --yes) and its planned request budget must fit what is left of today's qualification allocation.",
 } as const;
 
 export type GlossaryKey = keyof typeof GLOSSARY;

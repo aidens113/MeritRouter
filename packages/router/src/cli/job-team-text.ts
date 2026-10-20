@@ -1,12 +1,10 @@
-import type { ChannelPostView, JobChannelView, JobTeamView, MergeBranchView, TeamTreeNode } from "./job-team.js";
+import type { ChannelPostView, JobChannelView, JobTeamView, MergeBranchView, TeamTreeNode } from "../admin/job-team.js";
+import { plural, stamp } from "./terminal.js";
 
 // The team view as terminal text (`switchyard job` and `switchyard channel`). Channel posts are
 // model output: each is printed as `> `-quoted lines under a header naming its author, never as
 // a line of its own that could pass for the CLI's output. Control characters were stripped when
 // the post was stored.
-
-const stamp = (ms: number) => `${new Date(ms).toISOString().slice(0, 19).replace("T", " ")}Z`;
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 function nodeLine(n: TeamTreeNode, self: boolean): string {
   const parts = [`${n.label ?? n.taskId} [${n.profile}] ${n.state}${n.acceptance ? ` / ${n.acceptance}` : ""}`];

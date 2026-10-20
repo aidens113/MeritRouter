@@ -1,4 +1,5 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { comparisonRequestsToday } from "./comparison.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -113,7 +114,7 @@ export class Qualifier {
 
   constructor(
     private readonly sy: Switchyard,
-    private readonly suiteDir = evalsDir(),
+    readonly suiteDir = evalsDir(),
   ) {}
 
   suite(): Suite {
@@ -128,7 +129,7 @@ export class Qualifier {
             WHERE t.purpose = 'qualification' AND r.reserved_at > ?`,
         )
         .get(Date.now() - 86_400_000) as { n: number }
-    ).n;
+    ).n + comparisonRequestsToday(this.sy);
   }
 
   async start(endpointId: string, opts: { evalIds?: string[]; trials?: number } = {}): Promise<StartedRun> {
@@ -316,7 +317,8 @@ export function gradeReview(e: EvalCase, result: Pick<WorkerResult, "executionSt
   return problems.length ? { outcome: "fail", detail: problems.join("; ") } : { outcome: "pass", detail: `${r.kind}: verdict and criteria match` };
 }
 
-async function initRepo(dir: string): Promise<void> {
+/** Make `dir` a git repository with everything in it committed (a fixture copy). */
+export async function initRepo(dir: string): Promise<void> {
   if (!existsSync(path.join(dir, ".git"))) await git(dir, ["init", "-q", "-b", "main"]);
   await git(dir, ["add", "-A"]);
   await git(dir, ["-c", "user.email=qualification@switchyard.local", "-c", "user.name=switchyard", "commit", "-q", "--allow-empty", "-m", "fixture"]);

@@ -9,6 +9,7 @@ import { AcceptanceBadge, TaskStateBadge } from "@/components/task-badges";
 import { SessionsTable } from "@/components/sessions-table";
 import { PlanCard } from "@/components/job-plan";
 import { ChannelCard, MergeQueueCard, TeamCard } from "@/components/job-team";
+import { JobMetricsCard } from "@/components/job-metrics";
 import { Badge, Callout, Card, CardHeader, cx, EmptyState, HelpTip, KeyValue, Mono, PageHeader } from "@/components/ui";
 import { ActionButton, AutoRefresh } from "@/components/client/actions";
 import { ArtifactViewer } from "@/components/client/artifact-viewer";
@@ -37,6 +38,7 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
   const sessions = insights.sessionsView(sy, { jobId: id, limit: 200 });
   const plan = insights.jobPlan(sy, id);
   const team = insights.jobTeam(sy, id)!;
+  const metrics = insights.jobMetrics(sy, id);
 
   return (
     <div className="space-y-6">
@@ -184,6 +186,8 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
 
       {plan?.plan ? <PlanCard plan={plan} /> : null}
 
+      {metrics && metrics.tasks.agents ? <JobMetricsCard m={metrics} /> : null}
+
       <MergeQueueCard team={team} />
 
       <ChannelCard team={team} />
@@ -200,10 +204,18 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
                   <Mono>{b.branch}</Mono>
                   <span className="text-xs text-ink-3">based on {b.baseSha.slice(0, 12)}</span>
                 </div>
-                <CopyCommand command={`git merge --no-ff ${b.branch}`} />
-                <p className="text-xs text-ink-3">
-                  Run it in <Mono>{sy.cfg.repositoryPaths[b.alias]?.path ?? b.alias}</Mono> after reviewing <Mono>{`git log --stat ${b.baseSha.slice(0, 12)}..${b.branch}`}</Mono>. Integration worktree: <Mono>{b.worktree}</Mono>
-                </p>
+                {team.parentJobId ? (
+                  <p className="text-xs text-ink-3">
+                    The parent job integrates this branch through its merge queue; there is nothing to merge by hand. Integration worktree: <Mono>{b.worktree}</Mono>
+                  </p>
+                ) : (
+                  <>
+                    <CopyCommand command={`git merge --no-ff ${b.branch}`} />
+                    <p className="text-xs text-ink-3">
+                      Run it in <Mono>{sy.cfg.repositoryPaths[b.alias]?.path ?? b.alias}</Mono> after reviewing <Mono>{`git log --stat ${b.baseSha.slice(0, 12)}..${b.branch}`}</Mono>. Integration worktree: <Mono>{b.worktree}</Mono>
+                    </p>
+                  </>
+                )}
               </div>
             ))
           ) : (

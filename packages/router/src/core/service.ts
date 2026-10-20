@@ -17,6 +17,7 @@ import { Catalog } from "../models/catalog.js";
 import { ChainManager } from "../models/chains.js";
 import { Scanner, type ScanSummary } from "../models/scanner.js";
 import { TaskRouter } from "../routing/router.js";
+import { ProviderSlotAdmission } from "../routing/claim-capacity.js";
 import { Qualifier } from "../qualification/runner.js";
 import { syncRepositoryRegistry } from "../qualification/registry.js";
 import { KeyVault } from "../paid/vault.js";
@@ -191,6 +192,7 @@ export class Switchyard {
         void this.auditor.sweep().catch(() => undefined);
       },
       this.sessions,
+      new ProviderSlotAdmission(cfg, this.router, this.health.capacity, this.now),
     );
     if (opts.worker) this.startWorker(opts.pollIntervalMs);
   }

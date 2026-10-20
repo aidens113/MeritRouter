@@ -277,7 +277,7 @@ describe("upstream results", () => {
 // ---------- a supervisor plan, end to end ----------
 
 function teamConfig(maxAgents: number) {
-  const cfg = baseConfig({ coding: { runner: "native" }, team: { max_agents: maxAgents }, execution: { max_concurrent_tasks: 8, lease_seconds: 30 } });
+  const cfg = baseConfig({ coding: { runner: "native" }, team: { max_agents: maxAgents, provider_concurrency_start: 8 }, execution: { max_concurrent_tasks: 8, lease_seconds: 30 } });
   (cfg.profiles as Record<string, unknown>).supervise = { mode: "supervisor", tools: "supervisor", min_total_parameters_b: 100, max_model_requests: 30, max_output_tokens: 4000, classify: "never", min_tier: "T3" };
   return cfg;
 }

@@ -1,284 +1,28 @@
 #!/usr/bin/env node
 import { readFileSync, existsSync, copyFileSync, mkdirSync } from "node:fs";
-import { homedir, userInfo } from "node:os";
+import { userInfo } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { loadConfig, DEFAULT_CONFIG_NAME } from "./config/load.js";
-import { ImportanceSchema, PROFILE_NAMES, TIER_NAMES, type ProfileName, type TierName } from "./config/schema.js";
+import { PROFILE_NAMES, TIER_NAMES, type ProfileName, type TierName } from "./config/schema.js";
 import { Switchyard } from "./core/service.js";
 import { createCodingRunner } from "./runners/coding/index.js";
 import { z } from "zod";
-import { brainAccessRequests, brainRead, brainSearch, brainTree, CHANNEL_KINDS, decideBrainAccess, decideTaskAcceptance, jobChannel, jobDetail, jobPlan, jobsView, jobTeam, modelsView, routingPreview, sessionDetail, sessionsView, type JobPlanView, type SessionDetail, type SessionView } from "./admin/insights.js";
-import { channelText, jobTeamLines } from "./admin/job-team-text.js";
+import { brainAccessRequests, brainRead, brainSearch, brainTree, CHANNEL_KINDS, decideBrainAccess, decideTaskAcceptance, jobChannel, jobDetail, jobMetrics, jobPlan, jobsView, jobTeam, modelsView, routingPreview, sessionDetail, sessionsView } from "./admin/insights.js";
+import { comparison, comparisons, planComparison, runComparison } from "./qualification/comparison.js";
 import { blame } from "./attribution/index.js";
 import { SwitchyardError } from "./core/errors.js";
-import { SessionStatusSchema, type SessionEvent, type SessionEventData } from "./sessions/events.js";
-import type { ResolvedConfig } from "./config/load.js";
-import { backupStorage, restoreStorage } from "./operations/backup.js";
-import { Daemon, acquireDaemonLock, logsDirFor, readDaemonLock } from "./operations/daemon.js";
-import { ServiceActionSchema, ServicePlatformSchema, describeServiceSteps, runServiceSteps, servicePlan } from "./operations/service.js";
+import { countFlag, statusFlag, withImportance } from "./cli/args.js";
+import { HELP } from "./cli/help.js";
+import { channelText, jobTeamLines } from "./cli/job-team-text.js";
+import { comparisonPlanText, comparisonsTable, comparisonText, metricsText } from "./cli/metrics-text.js";
+import { operationsCommand } from "./cli/operations.js";
+import { planText } from "./cli/plan-text.js";
+import { sessionRows, sessionTimeline } from "./cli/session-text.js";
+import { out, table } from "./cli/terminal.js";
 
-const HELP = `switchyard - delegate bounded tasks to approved free model pools
-
-Usage: switchyard <command> [options]   (global: --config <file>, --json)
-
-Setup
-  init [dir] [--preset <name>]  write switchyard.config.yaml and models.yaml
-                                presets: claude-code (default), standalone-free,
-                                standalone-hybrid, standalone-paid
-  doctor                        check config, gateway, admin access, models, and repositories
-  models [--all]                list models with status and eligibility
-  models scan                   scan FreeLLMAPI's catalog and sync per-model chains
-  models show <id>              full analysis of one model
-  models confirm <id> [--params <B>] [--active <B>]   accept or set parameter counts
-  models enable|disable <id>    force a model on or off
-  route <profile> <tier>        preview which models would serve a task type at a tier
-
-Tasks
-  worker                        run the worker loop until interrupted
-  submit <file|-> [--wait] [--timeout s] [--importance low|normal|high|critical] [--importance-reason "<why>"]
-                                submit task JSON (object or array); --importance fills in
-                                tasks that set none (high and critical need a reason)
-  status [ids...]               task status (recent tasks when no ids)
-  await <ids...> [--timeout s]  wait for results
-  collect <ids...>              print finished results
-  cancel <ids...>               cancel tasks
-  resume <id>                   requeue interrupted work: a session id (s_...) continues
-                                that session; a task id continues its latest session
-                                (coding tasks start over in a fresh worktree)
-  accept <id> [--reason "<why>"]   accept a finished result as you (needs_supervisor and
-                                not_verified results need a reason)
-  reject <id> --reason "<why>"  reject a finished result; it becomes unmet
-  artifact <ref>                print an artifact
-  usage [--hours n]             requests, tokens, and outcomes
-
-Agent sessions (every model call and tool call, in order)
-  sessions [--status s[,s]] [--task id] [--job id] [--limit n]   list sessions, newest first
-                                statuses: running, completed, failed, interrupted, cancelled
-  session <id> [--after seq] [--limit n]   timeline (--json prints the raw page)
-
-Paid keys (direct routes; secrets are encrypted at rest)
-  keys [list]                   keys with billing class, spend, balance, cap
-  keys add <provider> [--label x] [--billing paid_credits|paid_postpaid|trial|free_tier] [--balance usd] [--cap usd]
-                                reads the secret from SWITCHYARD_NEW_KEY
-  keys enable|disable|remove <id>
-  keys spend                    spend against budgets
-
-Standalone jobs (a SwitchYard supervisor plans, delegates, verifies, integrates)
-  run "<goal>" --repo <alias> [--check "<cmd>"] [--criteria "<text>"] [--wait]
-  jobs                          list jobs
-  job <id>                      job status, workers, branch, questions; sub-jobs (tree with
-                                branches and carved budgets), merge queue, recent channel posts
-  channel <job> [--after id] [--limit n] [--kind k[,k]]   the job's team channel, oldest first
-                                (kinds: finding, blocker, interface_contract); posts are data
-  plan <job>                    the job's task graph: nodes with state, tier, and importance,
-                                dependencies, critical path (*), file leases, why nodes wait
-  questions                     questions supervisors are waiting on
-  answer <id> "<answer>"        answer one
-
-Brain (shared knowledge) and attribution
-  brain ls [prefix] | read <path> | search <query>
-  brain requests | approve <id> [reason] | deny <id> [reason]
-  blame <repo-alias> <path> [--ref <branch>]   which agent and model wrote each line
-
-Qualification
-  qualify <model-id> [--trials n]   run the private eval suite pinned to one model
-  qualify status                    leaderboard (grades any finished runs first)
-
-Operations (storage.durability: normal | full sets SQLite's synchronous level)
-  backup <dir> [--include-master-key]   online snapshot of the database, session logs, and
-                                artifacts into a new directory (never worktrees)
-  restore <dir> [--force]       restore a backup; refused while a worker holds live leases,
-                                and over existing state unless --force (which moves it aside)
-  daemon [--max-restarts n] [--window s] [--max-delay s]   run the worker and restart it on
-                                failure with backoff; logs under <storage>/logs/
-  service install|uninstall|status [--name n] [--dry-run]   run the daemon at logon as a
-                                systemd user unit, launchd agent, or Windows scheduled task
-`;
-
-function out(value: unknown, json: boolean): void {
-  if (json || typeof value !== "string") process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
-  else process.stdout.write(`${value}\n`);
-}
-
-function table(rows: Array<Record<string, unknown>>): string {
-  if (!rows.length) return "(none)";
-  const cols = Object.keys(rows[0]!);
-  const width = cols.map((c) => Math.min(60, Math.max(c.length, ...rows.map((r) => String(r[c] ?? "").length))));
-  const line = (vals: string[]) => vals.map((v, i) => v.slice(0, width[i]).padEnd(width[i]!)).join("  ");
-  return [line(cols), line(width.map((w) => "-".repeat(w))), ...rows.map((r) => line(cols.map((c) => String(r[c] ?? ""))))].join("\n");
-}
-
-// ---------- agent sessions ----------
-
-const CountFlag = z.coerce.number().int().nonnegative();
-
-/** Parse a numeric flag with zod; a bad value is a usage error, not NaN. */
-function countFlag(name: string, value: string | undefined, min = 0): number | undefined {
-  if (value === undefined) return undefined;
-  const r = CountFlag.min(min).safeParse(value);
-  if (!r.success) throw new SwitchyardError("usage", `--${name} must be an integer >= ${min}, got ${JSON.stringify(value)}`);
-  return r.data;
-}
-
-/** `--status completed,failed` -> validated statuses. */
-function statusFlag(value: string | undefined) {
-  if (value === undefined) return undefined;
-  const r = z.array(SessionStatusSchema).min(1).safeParse(value.split(",").map((s) => s.trim()).filter(Boolean));
-  if (!r.success) throw new SwitchyardError("usage", `--status takes ${SessionStatusSchema.options.join(", ")} (comma-separated), got ${JSON.stringify(value)}`);
-  return r.data.length === 1 ? r.data[0]! : r.data;
-}
-
-const oneLine = (text: string, max = 120): string => {
-  const t = text.replace(/\s+/g, " ").trim();
-  return t.length > max ? `${t.slice(0, max - 3)}...` : t;
-};
-const clock = (ms: number) => new Date(ms).toISOString().slice(11, 23);
-const stamp = (ms: number) => `${new Date(ms).toISOString().slice(0, 19).replace("T", " ")}Z`;
-function duration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-  const s = Math.floor(ms / 1000);
-  return s < 3600 ? `${Math.floor(s / 60)}m${s % 60}s` : `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}m`;
-}
-const compact = (v: unknown): string => (typeof v === "string" ? v : (JSON.stringify(v) ?? ""));
-
-function messageText(m: SessionEventData<"message">["message"]): string {
-  if (m.role === "tool") return `(${m.tool_call_id}) ${m.content}`;
-  if (m.role === "assistant") return [m.content ?? "", m.tool_calls?.length ? `-> ${m.tool_calls.map((c) => c.function.name).join(", ")}` : ""].filter(Boolean).join(" ");
-  if (typeof m.content === "string") return m.content;
-  return m.content.map((p) => (p.type === "text" ? p.text : "[image]")).join(" ");
-}
-
-/** The name/ok column: what `session_events.name` and `ok` hold for the event. */
-function eventName(e: SessionEvent): { name: string; ok?: boolean } {
-  switch (e.type) {
-    case "started": return { name: e.data.role };
-    case "message": return { name: e.data.message.role };
-    case "model_request": return { name: e.data.purpose };
-    case "model_response": return { name: e.data.endpointId, ok: true };
-    case "model_error": return { name: e.data.code ?? "error", ok: false };
-    case "tool_intent": return { name: e.data.name };
-    case "tool_outcome": return { name: e.data.name, ok: e.data.ok };
-    case "ended": return { name: e.data.status };
-    case "resumed": return { name: `${e.data.actions.length} action(s)` };
-    default: return { name: "" };
-  }
-}
-
-/** Fit the name/ok cell to `width`, shortening the name but never the ok/FAIL marker. */
-function nameCell(e: SessionEvent, width: number): string {
-  const { name, ok } = eventName(e);
-  const mark = ok === undefined ? "" : ok ? " ok" : " FAIL";
-  const room = width - mark.length;
-  return `${name.length > room ? `${name.slice(0, room - 3)}...` : name}${mark}`.padEnd(width);
-}
-
-function eventSummary(e: SessionEvent): string {
-  switch (e.type) {
-    case "started": {
-      const d = e.data;
-      return [`agent ${d.agentLabel}`, d.profile && `profile ${d.profile}`, d.tier && `tier ${d.tier}`, d.taskId && `task ${d.taskId}`, d.parentSessionId && `parent ${d.parentSessionId}`, d.previousSessionId && `retries ${d.previousSessionId}`].filter(Boolean).join(", ");
-    }
-    case "message": return `#${e.data.index} ${messageText(e.data.message)}`;
-    case "model_request": {
-      const d = e.data;
-      return [`${d.messageCount} msgs`, `max ${d.maxTokens} tok`, d.tools.length ? `tools ${d.tools.join(",")}` : "", d.responseFormat ? `format ${d.responseFormat}` : ""].filter(Boolean).join(", ");
-    }
-    case "model_response": {
-      const d = e.data;
-      const head = [d.finishReason ?? "?", `in ${d.usage.inputTokens ?? "?"} / out ${d.usage.outputTokens ?? "?"} tok`, d.attempts.length > 1 ? `${d.attempts.length} attempts` : ""].filter(Boolean).join(", ");
-      const body = d.toolCalls.length ? `-> ${d.toolCalls.map((c) => c.function.name).join(", ")}` : (d.content ?? "");
-      return body ? `${head}: ${body}` : head;
-    }
-    case "model_error": return `${e.data.status !== null ? `HTTP ${e.data.status}: ` : ""}${e.data.message}`;
-    case "tool_intent": return `[${e.data.sideEffect}${e.data.idempotent ? ", idempotent" : ""}] ${compact(e.data.args)}`;
-    case "tool_outcome": return `intent #${e.data.intentSeq}${e.data.truncated ? " (truncated)" : ""}: ${e.data.output}`;
-    case "note": return e.data.data === undefined ? e.data.text : `${e.data.text} ${compact(e.data.data)}`;
-    case "workspace": return e.data.repos.map((r) => `${r.alias} ${r.branch ?? "-"} @ ${(r.head ?? r.baseCommit ?? "?").slice(0, 10)}`).join("; ") || "(no repositories)";
-    case "ended": return e.data.stopReason;
-    case "resumed": {
-      const d = e.data;
-      const acts = d.actions.map((a) => (a.kind === "reconcile_edits" ? `reconcile edits (${a.policy})` : a.kind === "rerun_tool" ? `re-run ${a.name}` : `report ${a.name}`));
-      const counts = [d.resolvedIntentSeqs.length && `${d.resolvedIntentSeqs.length} interrupted call(s) settled`, d.droppedRequestSeqs.length && `${d.droppedRequestSeqs.length} request(s) dropped`].filter(Boolean);
-      return [acts.length ? acts.join(", ") : "", ...counts, d.summary].filter(Boolean).join("; ");
-    }
-    default: return "";
-  }
-}
-
-function sessionLine(s: SessionView): string {
-  return `${s.id} ${s.agentLabel} (${s.role}) ${s.status}${s.stopReason ? `: ${s.stopReason}` : ""}`;
-}
-
-/** A terminal timeline: header, one line per event (seq, time, type, name/ok, summary), paging hint. */
-function sessionTimeline(d: SessionDetail, after: number): string {
-  const s = d.session;
-  const header = [
-    sessionLine(s),
-    [s.taskId && `task ${s.taskId}${s.taskLabel ? ` "${s.taskLabel}"` : ""}`, s.jobId && `job ${s.jobId}`, s.profile && `profile ${s.profile}`, s.tier && `tier ${s.tier}`].filter(Boolean).join("  ") || "(no task)",
-    `started ${stamp(s.createdAt)}  ${s.endedAt ? `ended after ${duration(s.durationMs)}` : `running for ${duration(s.durationMs)}`}  model requests ${s.modelRequests}  tool calls ${s.toolCalls}  events ${s.lastSeq}`,
-    ...(s.parentSessionId ? [`parent ${s.parentSessionId}`] : []),
-    ...(s.previousSessionId ? [`retries ${s.previousSessionId}`] : []),
-    `log ${s.logPath}`,
-  ];
-  const seqWidth = Math.max(3, String(s.lastSeq).length);
-  const nameWidth = 32;
-  const rows = d.events.map((e) => [String(e.seq).padStart(seqWidth), clock(e.at), e.type.padEnd(14), nameCell(e, nameWidth), oneLine(eventSummary(e))].join("  "));
-  const cols = ["seq".padStart(seqWidth), "time".padEnd(12), "type".padEnd(14), "name/ok".padEnd(nameWidth), "summary"].join("  ");
-  const lastShown = d.events.at(-1)?.seq ?? after;
-  return [
-    ...header,
-    "",
-    cols,
-    ...(rows.length ? rows : [`(no events after seq ${after})`]),
-    ...d.corrupt.map((c) => `CORRUPT ${c.line ? `line ${c.line}` : "log"}: ${c.error}${c.excerpt ? ` [${oneLine(c.excerpt, 60)}]` : ""}`),
-    ...(d.hasMore ? [`more events: switchyard session ${s.id} --after ${lastShown}`] : []),
-    ...(d.children.length ? ["", "delegated sessions:", ...d.children.map((c) => `  ${sessionLine(c)}`)] : []),
-    ...(d.taskSessions.length > 1 ? ["", "sessions of this task:", ...d.taskSessions.map((t) => `  ${t.id === s.id ? "*" : " "} ${sessionLine(t)}`)] : []),
-  ].join("\n").trimEnd();
-}
-
-/** A job's plan for the terminal: header, one row per node (critical path marked *), leases. */
-function planText(p: JobPlanView): string {
-  const head = [`job ${p.jobId} ${p.jobState}: ${oneLine(p.goal)}`];
-  if (!p.plan) {
-    return [...head, "no plan recorded (the supervisor delegated without plan_work)", ...p.otherTasks.map((t) => `  ${t.label ?? t.taskId} [${t.profile}] ${t.state}`)].join("\n");
-  }
-  head.push(
-    `plan v${p.plan.version} of ${p.versions.length}, recorded ${stamp(p.plan.createdAt)}${p.plan.createdBy ? ` by ${p.plan.createdBy}` : ""}${p.plan.note ? `: ${oneLine(p.plan.note, 80)}` : ""}`,
-    `critical path (*): ${p.criticalPath.labels.join(" -> ") || "(none)"} (estimated cost ${p.criticalPath.cost})`,
-    `agents running: ${p.running} of ${p.maxAgents} (team.max_agents)`,
-  );
-  const rows = [...p.nodes]
-    .sort((a, b) => a.depth - b.depth)
-    .map((n) => ({
-      cp: n.onCriticalPath ? "*" : "",
-      node: n.label,
-      profile: n.profile,
-      after: n.dependsOn.join(",") || "-",
-      tier: `${n.difficulty ?? "-"}/${n.tier ?? "-"}`,
-      importance: n.importance ?? "normal",
-      inputs: n.requiresAcceptedInputs ? "accepted" : "any",
-      state: n.state,
-      acceptance: n.acceptanceStatus ?? "",
-      task: n.taskId ?? "",
-      runs: n.redundancy > 1 ? `${n.redundancy}${n.twins ? ` ${n.twins.status}` : ""}` : "",
-      waiting: n.waiting?.text ?? (n.leaseWaits ? `waited for a file lease ${n.leaseWaits}x` : ""),
-    }));
-  const live = p.leases.filter((l) => l.live);
-  return [
-    ...head,
-    "",
-    table(rows),
-    "(tier: planned/assigned; inputs: accepted = starts only on accepted upstream results)",
-    "",
-    live.length ? "live file leases:" : "live file leases: none",
-    ...live.map((l) => `  ${l.taskLabel ?? l.taskId} holds ${l.globs.join(", ")} in ${l.repository} since ${stamp(l.acquiredAt)}`),
-    ...(p.otherTasks.length ? ["", "tasks outside this plan version:", ...p.otherTasks.map((t) => `  ${t.label ?? t.taskId} [${t.profile}] ${t.state}`)] : []),
-  ].join("\n");
-}
+// The `switchyard` command: argument parsing and dispatch. Terminal rendering lives in src/cli/.
 
 /** Who accepts from this terminal: `cli:<os user>`. */
 function cliActor(): string {
@@ -291,119 +35,7 @@ function cliActor(): string {
   return `cli:${user || "unknown"}`;
 }
 
-/** `--importance` fills in tasks that set none; a task's own importance is never overridden. */
-function withImportance(tasks: unknown[], importance: string | undefined, reason: string | undefined): unknown[] {
-  if (importance === undefined) {
-    if (reason !== undefined) throw new SwitchyardError("usage", "--importance-reason needs --importance");
-    return tasks;
-  }
-  const level = ImportanceSchema.safeParse(importance);
-  if (!level.success) throw new SwitchyardError("usage", `--importance takes ${ImportanceSchema.options.join(", ")}, got ${JSON.stringify(importance)}`);
-  return tasks.map((t) => {
-    if (!t || typeof t !== "object" || Array.isArray(t) || "importance" in t) return t;
-    return { ...t, importance: level.data, ...(reason ? { importanceReason: reason } : {}) };
-  });
-}
-
-// ---------- operations: backup, restore, daemon, service ----------
-
-interface OperationsFlags {
-  force?: boolean;
-  "include-master-key"?: boolean;
-  "dry-run"?: boolean;
-  "max-restarts"?: string;
-  window?: string;
-  "max-delay"?: string;
-  name?: string;
-}
-
 const CLI_PATH = fileURLToPath(import.meta.url);
-
-async function operationsCommand(cmd: string, args: string[], values: OperationsFlags, cfg: ResolvedConfig, json: boolean): Promise<number> {
-  switch (cmd) {
-    case "backup": {
-      if (!args[0]) throw new SwitchyardError("usage", "usage: switchyard backup <dir> [--include-master-key]");
-      const m = await backupStorage({ storageDir: cfg.storageDir, targetDir: args[0], includeMasterKey: values["include-master-key"] ?? false });
-      out(json ? m : [
-        `backed up ${cfg.storageDir} to ${path.resolve(args[0])}`,
-        `schema ${m.schemaVersion}; ${m.tasks} task(s), ${m.sessions} session(s) with ${m.sessionLogs} log(s), ${m.artifacts} artifact(s)`,
-        m.includesMasterKey ? "includes the vault master key: keep this backup private" : "the vault master key is not included; paid keys need SWITCHYARD_MASTER_KEY or the original .master-key to decrypt",
-        ...m.missing.map((f) => `MISSING ${f}`),
-      ].join("\n"), json);
-      return m.missing.length ? 1 : 0;
-    }
-    case "restore": {
-      if (!args[0]) throw new SwitchyardError("usage", "usage: switchyard restore <dir> [--force]");
-      const r = restoreStorage({ backupDir: args[0], storageDir: cfg.storageDir, force: values.force ?? false });
-      out(json ? r : [
-        `restored ${path.resolve(args[0])} (taken ${r.manifest.createdAt}) into ${r.storageDir}; schema ${r.schemaVersion}`,
-        ...(r.previousMovedTo ? [`previous state moved to ${r.previousMovedTo}`] : []),
-        ...(r.leasesReleased ? [`${r.leasesReleased} task(s) were running at backup time; the next worker recovers them`] : []),
-      ].join("\n"), json);
-      return 0;
-    }
-    case "daemon": {
-      const seconds = (name: string, v: string | undefined) => (v === undefined ? undefined : countFlag(name, v, 1)! * 1000);
-      const maxRestarts = countFlag("max-restarts", values["max-restarts"], 1);
-      const windowMs = seconds("window", values.window);
-      const maxDelayMs = seconds("max-delay", values["max-delay"]);
-      const logsDir = logsDirFor(cfg.storageDir);
-      const release = acquireDaemonLock(logsDir, cfg.configPath);
-      const daemon = new Daemon({
-        command: process.execPath,
-        args: [...process.execArgv, CLI_PATH, "worker", "--config", cfg.configPath],
-        cwd: path.dirname(cfg.configPath),
-        logsDir,
-        policy: { ...(maxRestarts ? { maxRestarts } : {}), ...(windowMs ? { windowMs } : {}), ...(maxDelayMs ? { maxDelayMs } : {}) },
-      });
-      const stop = () => void daemon.stop();
-      process.once("SIGINT", stop);
-      process.once("SIGTERM", stop);
-      out(`daemon ${process.pid} supervising the worker; logs in ${logsDir}; Ctrl+C to stop`, false);
-      try {
-        const r = await daemon.run();
-        out(json ? r : `daemon ${r.reason}: ${r.detail}`, json);
-        return r.reason === "gave_up" ? 1 : 0;
-      } finally {
-        release();
-      }
-    }
-    case "service": {
-      const action = ServiceActionSchema.safeParse(args[0]);
-      if (!action.success) throw new SwitchyardError("usage", "usage: switchyard service install|uninstall|status [--name n] [--dry-run]");
-      const platform = ServicePlatformSchema.safeParse(process.platform);
-      if (!platform.success) throw new SwitchyardError("usage", `service install supports linux, macOS, and Windows, not ${process.platform}`);
-      const user = userInfo();
-      const plan = servicePlan({
-        platform: platform.data,
-        ...(values.name ? { name: values.name } : {}),
-        nodePath: process.execPath,
-        cliPath: CLI_PATH,
-        configPath: cfg.configPath,
-        workingDir: path.dirname(cfg.configPath),
-        storageDir: cfg.storageDir,
-        logsDir: logsDirFor(cfg.storageDir),
-        homeDir: homedir(),
-        ...(user.uid >= 0 ? { uid: user.uid } : {}),
-        ...(platform.data === "win32" ? { windowsUser: process.env.USERDOMAIN ? `${process.env.USERDOMAIN}\\${user.username}` : user.username } : {}),
-      });
-      if (values["dry-run"]) {
-        out(json ? { action: action.data, plan } : describeServiceSteps(plan, action.data), json);
-        return 0;
-      }
-      const r = runServiceSteps(plan, action.data);
-      const lock = action.data === "status" ? readDaemonLock(logsDirFor(cfg.storageDir)) : null;
-      out(json ? { ...r, daemon: lock } : [
-        ...r.results.map((x) => `${x.step.kind === "run" ? [x.step.command, ...x.step.args].join(" ") : x.output}${x.code ? ` (exit ${x.code})` : ""}${x.step.kind === "run" && x.output.trim() ? `\n${x.output.trimEnd()}` : ""}`),
-        ...(action.data === "status" ? [lock ? `daemon pid ${lock.pid} ${lock.alive ? "running" : "not running (stale lock)"} since ${lock.startedAt}` : "no daemon lock for this storage directory"] : []),
-        ...(action.data === "install" && r.ok ? plan.notes : []),
-      ].join("\n"), json);
-      return r.ok ? 0 : 1;
-    }
-    default:
-      throw new SwitchyardError("usage", `unknown operations command ${cmd}`);
-  }
-}
 
 async function main(): Promise<number> {
   const { values, positionals } = parseArgs({
@@ -443,6 +75,11 @@ async function main(): Promise<number> {
       "max-delay": { type: "string" },
       name: { type: "string" },
       kind: { type: "string" },
+      eval: { type: "string" },
+      goals: { type: "string" },
+      "team-factor": { type: "string" },
+      "team-requests": { type: "string" },
+      yes: { type: "boolean", default: false },
       help: { type: "boolean", short: "h", default: false },
     },
   });
@@ -474,8 +111,9 @@ async function main(): Promise<number> {
   const cfg = loadConfig(values.config);
   // Operations work on the storage directory directly and must not open a Switchyard (restore
   // replaces the database; the daemon's worker runs in a child process).
-  if (cmd === "backup" || cmd === "restore" || cmd === "daemon" || cmd === "service") return operationsCommand(cmd, args, values, cfg, json);
-  const worker = cmd === "worker" || (cmd === "submit" && values.wait);
+  if (cmd === "backup" || cmd === "restore" || cmd === "daemon" || cmd === "service") return operationsCommand(cmd, args, values, cfg, json, CLI_PATH);
+  const compareRun = cmd === "compare" && args[0] !== "list" && args[0] !== "show" && values.yes && !values["dry-run"];
+  const worker = cmd === "worker" || (cmd === "submit" && values.wait) || compareRun;
   const sy = new Switchyard(cfg, { worker, coding: createCodingRunner(cfg) });
   try {
     switch (cmd) {
@@ -697,7 +335,7 @@ ${table(rows)}`, json);
         const team = jobTeam(sy, j.taskId)!;
         out(json ? { ...j, team } : [
           `${j.taskId} ${j.state}: ${j.goal}`,
-          ...j.branches.map((b) => `branch ${b.branch} in ${b.alias} (merge with: git merge --no-ff ${b.branch})`),
+          ...j.branches.map((b) => `branch ${b.branch} in ${b.alias} (${j.parentJobId ? "the parent job integrates it" : `merge with: git merge --no-ff ${b.branch}`})`),
           ...j.children.map((c) => `  ${c.label ?? c.taskId} [${c.profile}] ${c.state}${c.acceptance ? ` / ${c.acceptance}` : ""}`),
           ...j.questions.filter((q) => !q.answer).map((q) => `  QUESTION ${q.id}: ${q.question}${q.options ? ` (${q.options.join(" / ")})` : ""}  -> switchyard answer ${q.id} "<answer>"`),
           `working document: brain:${j.workingDoc}`,
@@ -716,6 +354,47 @@ ${table(rows)}`, json);
         if (!c) throw new SwitchyardError("not_found", `unknown job ${args[0]}`);
         out(json ? c : channelText(c), json);
         return 0;
+      }
+      case "metrics": {
+        const id = args[0];
+        if (!id) throw new SwitchyardError("usage", "usage: switchyard metrics <job-id|task-id> [--json]");
+        const m = jobMetrics(sy, id);
+        if (!m) throw new SwitchyardError("not_found", `unknown job or task ${id}`);
+        out(json ? m : metricsText(m), json);
+        return 0;
+      }
+      case "compare": {
+        if (args[0] === "list") {
+          const list = comparisons(sy, { limit: countFlag("limit", values.limit, 1) ?? 20 });
+          out(json ? list : comparisonsTable(list), json);
+          return 0;
+        }
+        if (args[0] === "show") {
+          const c = comparison(sy, args[1] ?? "");
+          if (!c) throw new SwitchyardError("not_found", `unknown comparison ${args[1] ?? ""}`);
+          out(json ? c : comparisonText(c), json);
+          return 0;
+        }
+        const plan = planComparison(sy, {
+          ...(values.eval ? { evalIds: values.eval.split(",").map((e) => e.trim()).filter(Boolean) } : {}),
+          ...(values.goals ? { goals: JSON.parse(readFileSync(values.goals, "utf8")) as unknown } : {}),
+          ...(values["team-factor"] ? { teamFactor: Number(values["team-factor"]) } : {}),
+          ...(values["team-requests"] ? { teamRequests: countFlag("team-requests", values["team-requests"], 1)! } : {}),
+        });
+        if (!compareRun) {
+          out(json ? plan : `${comparisonPlanText(plan)}
+${values["dry-run"] ? "dry run: nothing ran" : `nothing ran: add --yes to run it (up to ${plan.plannedRequests} requests)`}`, json);
+          return plan.fits ? 0 : 1;
+        }
+        if (!plan.fits) throw new SwitchyardError("budget", `${comparisonPlanText(plan)}
+the planned budget does not fit what is left of today's qualification allocation`);
+        if (!json) out(comparisonPlanText(plan), false);
+        sy.recover();
+        const stop = new AbortController();
+        process.once("SIGINT", () => stop.abort());
+        const c = await runComparison(sy, plan, { signal: stop.signal, ...(values.timeout ? { timeoutSeconds: countFlag("timeout", values.timeout, 1)! } : {}), ...(json ? {} : { onProgress: (line: string) => out(line, false) }) });
+        out(json ? c : comparisonText(c), json);
+        return c.status === "finished" ? 0 : 1;
       }
       case "plan": {
         const id = args[0];
@@ -765,21 +444,7 @@ ${table(rows)}`, json);
         const status = statusFlag(values.status);
         const limit = countFlag("limit", values.limit, 1);
         const list = sessionsView(sy, { ...(status ? { status } : {}), ...(values.task ? { taskId: values.task } : {}), ...(values.job ? { jobId: values.job } : {}), ...(limit ? { limit } : {}) });
-        const rows = list.map((s) => ({
-          session: s.id,
-          status: s.status,
-          role: s.role,
-          agent: s.agentLabel,
-          task: s.taskLabel ?? s.taskId ?? "",
-          job: s.jobId ?? "",
-          requests: s.modelRequests,
-          tools: s.toolCalls,
-          events: s.lastSeq,
-          started: stamp(s.createdAt),
-          duration: duration(s.durationMs),
-          reason: s.stopReason ?? "",
-        }));
-        out(json ? list : table(rows), json);
+        out(json ? list : table(sessionRows(list)), json);
         return 0;
       }
       case "session": {

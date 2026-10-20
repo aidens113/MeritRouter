@@ -623,7 +623,10 @@ export * from "./calibration.js";
 export * from "./jobs.js";
 export * from "./job-plans.js";
 export * from "./job-team.js";
+export * from "./job-metrics.js";
 export * from "./sessions.js";
+// Team-vs-single comparisons (recorded by the qualification comparison runner).
+export { comparisons, comparison, type ComparisonRecord, type ComparisonResult, type ComparisonRunRecord, type MetricsSnapshot } from "../qualification/comparison.js";
 
 // ---------- brain (for people: full access, edits committed as `human`) ----------
 

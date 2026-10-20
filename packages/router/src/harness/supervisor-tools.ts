@@ -16,6 +16,9 @@ import type { ToolSideEffect } from "../sessions/events.js";
 import { minimalEnv, runProcess } from "../runners/coding/process.js";
 import { commandAllowed, type HarnessEnv, type HarnessTool } from "./tools.js";
 import { integrationHooks, integrationTools, type IntegrationSeam } from "./integration-tools.js";
+import { rulebookTier } from "../routing/staffing.js";
+import { liveSlotCounts, readConcurrencyRecords } from "../gateway/capacity.js";
+import type { WorkerTaskInput } from "../core/task.js";
 
 export { queueOf } from "./integration-tools.js";
 
@@ -356,6 +359,54 @@ async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, un
 }
 
 /**
+ * Cost-aware staffing: a new worker node without a difficulty is planned at the tier the
+ * rulebook's deterministic score gives it (plan node only: the task itself is still classified,
+ * so semantic tags can raise its tier and set importance floors). A node scoring above T3 is
+ * reported so the supervisor splits it. Returns the planned tiers and one note per node scored.
+ */
+async function staffNodes(s: SupervisorState, items: Array<Record<string, unknown>>): Promise<{ tiers: Map<string, PlanDifficulty>; notes: string[] }> {
+  const notes: string[] = [];
+  const tiers = new Map<string, PlanDifficulty>();
+  if (!s.ctx.artifacts) return { tiers, notes };
+  for (const it of items) {
+    if (it.difficulty || it.profile === "supervise" || typeof it.label !== "string" || s.children.has(slug(it.label))) continue;
+    const repos = (it.repositories as string[] | undefined) ?? [...new Set([...s.repos.keys(), ...s.ctx.spec.repositoryAliases])];
+    const writable = it.profile === "implement" ? String(it.writable_repository ?? [...s.repos.keys()][0] ?? "") : "";
+    const brief = {
+      profile: it.profile,
+      goal: String(it.goal ?? ""),
+      repositoryAliases: repos,
+      ...(writable ? { writableRepository: writable } : {}),
+      context: { ...(it.file_refs ? { fileRefs: it.file_refs } : {}) },
+      constraints: { acceptanceCriteria: it.acceptance_criteria, ...(it.allowed_paths ? { allowedPaths: it.allowed_paths } : {}), ...(it.checks ? { checks: it.checks } : {}) },
+    } as WorkerTaskInput;
+    const staffed = await rulebookTier(s.ctx.cfg, brief, s.ctx.artifacts);
+    if (!staffed) continue;
+    const label = slug(it.label);
+    if (staffed.tier === "T4") {
+      notes.push(`${label} scores ${staffed.score}, above T3: split it into smaller nodes`);
+      continue;
+    }
+    tiers.set(label, staffed.tier as PlanDifficulty);
+    notes.push(`${label} ${staffed.tier} (score ${staffed.score})`);
+  }
+  return { tiers, notes };
+}
+
+/** Provider slots in use right now, so the supervisor can size its plan to free capacity. */
+function capacityLine(s: SupervisorState): string[] {
+  // A context without a gate (a stubbed supervisor) has no slots to show.
+  const capacity = s.ctx.gate?.health?.capacity;
+  if (!capacity) return [];
+  if (!capacity.enabled) return ["provider slots: not limited (team.provider_concurrency_enabled is off)"];
+  const counts = liveSlotCounts(s.db, s.ctx.now());
+  const platforms = [...new Set([...readConcurrencyRecords(s.db).map((r) => r.platform), ...counts.map((c) => c.platform)])].sort();
+  if (!platforms.length) return [`provider slots: none in use (each platform starts with ${s.ctx.cfg.team.provider_concurrency_start})`];
+  const n = (p: string, kind: string) => counts.find((c) => c.platform === p && c.kind === kind)?.n ?? 0;
+  return [`provider slots (in flight/limit): ${platforms.map((p) => `${p} ${n(p, "request")}/${capacity.limit(p)}${n(p, "wait") ? `, ${n(p, "wait")} waiting` : ""}`).join("; ")}`];
+}
+
+/**
  * Record carves a crash lost between a sub-job's submission and its carve (idempotent): the
  * sub-job's budget is in its spec, so the parent's admission counts it again.
  */
@@ -466,16 +517,17 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
       },
       ["nodes"],
       async (a, env) => {
-        const items = Array.isArray(a.nodes) ? (a.nodes as Array<Record<string, unknown>>) : [];
+        const items = Array.isArray(a.nodes) ? (a.nodes as Array<Record<string, unknown>>).map((it) => ({ ...it })) : [];
         if (!items.length) throw new Error("nodes is empty");
         if (items.length > MAX_PLAN_NODES) throw new Error(`a plan holds at most ${MAX_PLAN_NODES} nodes`);
+        const { tiers: plannedTiers, notes: staffed } = await staffNodes(s, items);
         const store = new PlanStore(s.db, s.ctx.now);
         const previous = store.latest(jobId);
         const nodes: PlanNodeInput[] = items.map((it) => {
           const label = slug(str(it.label, "label"));
           const profile = String(it.profile ?? "");
           const importance = (it.importance as Importance | undefined) ?? null;
-          const difficulty = (it.difficulty as PlanDifficulty | undefined) ?? null;
+          const difficulty = (it.difficulty as PlanDifficulty | undefined) ?? plannedTiers.get(label) ?? null;
           return {
             label,
             profile: profile as PlanNodeInput["profile"],
@@ -519,6 +571,8 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
         return [
           `plan v${plan.version} recorded: ${plan.nodes.length} node(s); ${fresh} dispatched now, ${kept.length} already dispatched (kept)${carried.length ? `, ${carried.length} carried over (${carried.map((c) => c.label).join(", ")})` : ""}`,
           `critical path: ${cp.labels.join(" -> ")} (estimated cost ${cp.cost}); at most ${maxAgentsPerJob(s.ctx.cfg)} task(s) of this job run at once`,
+          ...(staffed.length ? [`tiers from the rulebook (nodes without difficulty): ${staffed.join("; ")}`] : []),
+          ...capacityLine(s),
           ...(dispatched ? [dispatched] : []),
         ].join("\n");
       },

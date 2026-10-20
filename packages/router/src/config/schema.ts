@@ -611,6 +611,22 @@ export const ConfigSchema = z
          * (`CHANNEL_MAX_TEXT_CHARS` in storage/channel.ts).
          */
         channel_max_post_chars: z.number().int().min(100).max(2000).default(2000),
+        /**
+         * Per-provider concurrency (AIMD): at most this many model requests in flight per
+         * platform, across every task and process sharing the store. Off: no slot limit.
+         */
+        provider_concurrency_enabled: z.boolean().default(true),
+        /** Slots a platform starts with (and returns to when its state is unknown). */
+        provider_concurrency_start: z.number().int().min(1).max(64).default(2),
+        /** Consecutive successful requests on a platform that add one slot. */
+        provider_concurrency_increase_after: z.number().int().min(1).max(1000).default(5),
+        /** Most slots any platform grows to. */
+        provider_concurrency_max: z.number().int().min(1).max(256).default(8),
+        /**
+         * Confirmed per-platform ceilings (a provider's documented concurrent-request limit),
+         * below `provider_concurrency_max`. FreeLLMAPI v0.2.1 reports no concurrency limit.
+         */
+        provider_concurrency_limits: z.record(z.string().min(1), z.number().int().min(1).max(256)).default({}),
       })
       .strict()
       .prefault({}),

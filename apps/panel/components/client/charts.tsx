@@ -215,7 +215,7 @@ export function StackedColumns({
   );
 }
 
-function ChartTooltip({ x, width, title, rows, total, unit }: { x: number; width: number; title: string; rows: Array<{ key: string; label: string; color: string; value: number }>; total: number; unit: string }) {
+function ChartTooltip({ x, width, title, rows, total, unit, showTotal = true }: { x: number; width: number; title: string; rows: Array<{ key: string; label: string; color: string; value: number }>; total: number; unit: string; showTotal?: boolean }) {
   const left = Math.min(Math.max(8, x + 12), Math.max(8, width - 232));
   const shown = rows.filter((r) => r.value > 0);
   return (
@@ -229,7 +229,7 @@ function ChartTooltip({ x, width, title, rows, total, unit }: { x: number; width
           <span className="truncate text-ink-2">{r.label}</span>
         </div>
       ))}
-      {shown.length > 1 ? (
+      {showTotal && shown.length > 1 ? (
         <div className="mt-1 border-t border-line pt-1 text-ink-2">
           <span className="tabular font-semibold text-ink">{total.toLocaleString("en-US")}</span> total {unit}
         </div>
@@ -326,6 +326,140 @@ function SegmentRow({ segs, max }: { segs: Array<{ s: Series; v: number }>; max:
           style={{ width: `${(d.v / max) * 100}%`, background: d.s.color, borderLeft: j > 0 ? "2px solid var(--surface)" : undefined }}
         />
       ))}
+    </div>
+  );
+}
+
+/** Elapsed time as a short axis label: 45s, 3m, 3m20s, 1h05. */
+function elapsed(ms: number): string {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return s % 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s` : `${s / 60}m`;
+  return `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}`;
+}
+
+export interface StepPoint {
+  at: number;
+  /** One value per series, held from `at` until the next point. */
+  values: number[];
+}
+
+/**
+ * Step lines over elapsed time (counts that change at instants, e.g. agents running and tasks
+ * waiting). The first series is drawn as a filled step area, the others as dashed step lines;
+ * hover or focus shows a crosshair and the counts at that moment, with a table view twin.
+ */
+export function StepChart({ points, series, start, end, unit = "agents", height = 200 }: { points: StepPoint[]; series: Array<Pick<Series, "key" | "label" | "color">>; start: number; end: number; unit?: string; height?: number }) {
+  const [ref, width] = useWidth<HTMLDivElement>();
+  const [hover, setHover] = useState<number | null>(null);
+  const [table, setTable] = useState(false);
+  const span = Math.max(1, end - start);
+  const { max, step } = niceMax(Math.max(1, ...points.flatMap((p) => p.values)));
+  const padL = 30;
+  const padB = 22;
+  const padT = 8;
+  const plotW = Math.max(0, width - padL - 8);
+  const plotH = height - padB - padT;
+  const x = (t: number) => padL + ((Math.min(Math.max(t, start), end) - start) / span) * plotW;
+  const y = (v: number) => padT + plotH - (v / max) * plotH;
+  const ticks: number[] = [];
+  for (let v = 0; v <= max + 1e-9; v += step) ticks.push(v);
+  const xTicks = Math.max(2, Math.min(8, Math.floor(plotW / 80)));
+  const path = (k: number) => {
+    let d = "";
+    points.forEach((p, i) => {
+      const nx = x(points[i + 1]?.at ?? end);
+      d += `${i === 0 ? "M" : "L"}${x(p.at)},${y(p.values[k] ?? 0)}H${nx}`;
+    });
+    return d;
+  };
+  const indexAt = (px: number) => {
+    const t = start + ((px - padL) / Math.max(1, plotW)) * span;
+    let i = 0;
+    while (i + 1 < points.length && points[i + 1]!.at <= t) i++;
+    return i;
+  };
+  const shown = points.filter((p, i) => i === 0 || p.values.some((v, k) => v !== points[i - 1]!.values[k]));
+
+  return (
+    <div>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        {series.length >= 2 ? <Legend series={series} shape="line" /> : <span />}
+        <ViewToggle table={table} onChange={setTable} />
+      </div>
+      {table ? (
+        <div className="max-h-80 overflow-auto rounded-lg border border-line">
+          <table className="data-table tabular">
+            <thead>
+              <tr>
+                <th>From</th>
+                {series.map((s) => (
+                  <th key={s.key}>{s.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map((p) => (
+                <tr key={p.at}>
+                  <td>+{elapsed(p.at - start)}</td>
+                  {series.map((s, k) => (
+                    <td key={s.key}>{p.values[k] ?? 0}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div
+          ref={ref}
+          className="relative w-full min-w-0 overflow-hidden"
+          style={{ height }}
+          onPointerMove={(e) => setHover(indexAt(e.clientX - e.currentTarget.getBoundingClientRect().left))}
+          onPointerLeave={() => setHover(null)}
+          tabIndex={0}
+          aria-label={`Step chart of ${series.map((s) => s.label.toLowerCase()).join(" and ")} over the run; use the table view for exact values`}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowRight") setHover((h) => Math.min(points.length - 1, (h ?? -1) + 1));
+            if (e.key === "ArrowLeft") setHover((h) => Math.max(0, (h ?? points.length) - 1));
+          }}
+          onBlur={() => setHover(null)}
+        >
+          {width > 0 ? (
+            <svg width={width} height={height} role="img" aria-hidden>
+              {ticks.map((t) => (
+                <g key={t}>
+                  <line x1={padL} x2={padL + plotW} y1={y(t)} y2={y(t)} stroke={t === 0 ? "var(--axis)" : "var(--grid)"} strokeWidth={1} shapeRendering="crispEdges" />
+                  <text x={padL - 6} y={y(t)} dy="0.32em" textAnchor="end" className="tabular fill-ink-3 text-[10px]">
+                    {t}
+                  </text>
+                </g>
+              ))}
+              {Array.from({ length: xTicks + 1 }, (_, i) => start + (span * i) / xTicks).map((t, i) => (
+                <text key={i} x={x(t)} y={height - 6} textAnchor={i === 0 ? "start" : i === xTicks ? "end" : "middle"} className="tabular fill-ink-3 text-[10px]">
+                  {i === 0 ? "start" : `+${elapsed(t - start)}`}
+                </text>
+              ))}
+              {series[0] ? <path d={`${path(0)}V${y(0)}H${x(start)}Z`} fill={series[0].color} opacity={0.16} /> : null}
+              {series.map((s, k) => (
+                <path key={s.key} d={path(k)} fill="none" stroke={s.color} strokeWidth={2} strokeLinejoin="round" strokeDasharray={k === 0 ? undefined : "5 3"} />
+              ))}
+              {hover !== null ? <line x1={x(points[hover]!.at)} x2={x(points[hover]!.at)} y1={padT} y2={padT + plotH} stroke="var(--ink-3)" strokeWidth={1} strokeDasharray="2 2" /> : null}
+            </svg>
+          ) : null}
+          {hover !== null && width > 0 ? (
+            <ChartTooltip
+              x={x(points[hover]!.at)}
+              width={width}
+              title={`From +${elapsed(points[hover]!.at - start)} to +${elapsed((points[hover + 1]?.at ?? end) - start)}`}
+              rows={series.map((s, k) => ({ key: s.key, label: s.label, color: s.color, value: points[hover]!.values[k] ?? 0 }))}
+              total={0}
+              unit={unit}
+              showTotal={false}
+            />
+          ) : null}
+        </div>
+      )}
     </div>
   );
 }
