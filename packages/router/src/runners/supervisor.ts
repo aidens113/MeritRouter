@@ -341,7 +341,10 @@ export class SupervisorRunner implements CodingRunner {
     const finish = loop.kind === "terminal" ? loop.value : null;
     const checksPass = checks.length > 0 && checks.every((c) => c.exitCode === 0);
     const acceptance = checks.some((c) => c.exitCode !== 0) ? "unmet" : finish?.status === "completed" && checksPass ? "met" : "not_verified";
-    const branchNote = [...repos.values()].map((r) => `${r.alias}: review and merge with \`git merge --no-ff ${r.branch}\``).join("; ");
+    // A sub-job's branches are integrated by its parent job (integrate_task), not merged by hand.
+    const branchNote = [...repos.values()]
+      .map((r) => (isSubJob ? `${r.alias}: delivered on ${r.branch}; the parent job ${spec.parentTaskId} integrates it through its merge queue (integrate_task ${label})` : `${r.alias}: review and merge with \`git merge --no-ff ${r.branch}\``))
+      .join("; ");
 
     if (brain?.workingDoc) {
       const validation = checks.length ? checks.map((c) => `\`${c.command}\` -> exit ${c.exitCode}`).join("; ") : "not validated: the job defined no checks";

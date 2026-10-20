@@ -131,6 +131,8 @@ export type { UsageSummary } from "./storage/usage.js";
 export type { ScanSummary } from "./models/scanner.js";
 export * as insights from "./admin/insights.js";
 export type { JobPlanView, PlanNodeView, PlanEdge, PlanWait, PlanLeaseView, PlanVersionSummary } from "./admin/job-plans.js";
+export { jobMetrics, teamMetrics, agentTimeline, parallelismSeries, seriesStats, longestChain, WAIT_REASONS, WAITING_FOR_PROVIDER_SLOT, type JobMetrics, type JobMetricsSummary, type ParallelismPoint, type AgentTimeline, type WaitReason } from "./admin/job-metrics.js";
+export { planComparison, runComparison, comparisons, comparison, comparisonRequestsToday, ComparisonGoalsSchema, COMPARISON_PURPOSE, DEFAULT_TEAM_FACTOR, type ComparisonPlan, type ComparisonGoal, type ComparisonRecord, type ComparisonResult, type ComparisonRunRecord, type MetricsSnapshot } from "./qualification/comparison.js";
 export {
   PlanStore,
   PlanNodeSchema,

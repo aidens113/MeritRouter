@@ -23,6 +23,7 @@ import {
   Settings,
   Sun,
   TrainTrack,
+  UsersRound,
   X,
 } from "lucide-react";
 import { cx } from "../ui";
@@ -33,6 +34,7 @@ const NAV = [
   { href: "/models", label: "Models", icon: Boxes },
   { href: "/routing", label: "Routing", icon: Route },
   { href: "/jobs", label: "Jobs", icon: Network },
+  { href: "/teams", label: "Teams", icon: UsersRound },
   { href: "/tasks", label: "Tasks", icon: ListChecks },
   { href: "/sessions", label: "Sessions", icon: ScrollText },
   { href: "/requests", label: "Requests", icon: Activity },

@@ -5,7 +5,7 @@ import { z } from "zod";
 import { loadConfig } from "./config/load.js";
 import { MODALITIES, PROFILE_NAMES, TIER_NAMES } from "./config/schema.js";
 import { Switchyard } from "./core/service.js";
-import { CHANNEL_KINDS, decideTaskAcceptance, routingPreview, jobChannel, jobDetail, jobPlan, jobTeam, sessionDetail, sessionsView } from "./admin/insights.js";
+import { CHANNEL_KINDS, decideTaskAcceptance, routingPreview, jobChannel, jobDetail, jobMetrics, jobPlan, jobTeam, sessionDetail, sessionsView } from "./admin/insights.js";
 import { blame } from "./attribution/index.js";
 import type { Principal } from "./brain/access.js";
 import { SessionStatusSchema } from "./sessions/events.js";
@@ -242,6 +242,29 @@ async function main(): Promise<void> {
         const t = jobTeam(sy, jobId, channelLimit ? { channelLimit } : {});
         if (!t) return fail(new Error(`unknown job ${jobId}`));
         return json(t);
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+  server.registerTool(
+    "get_job_metrics",
+    {
+      title: "Job metrics (team performance)",
+      description:
+        "How a job ran as a team, derived from its stored task events, plan, and request ledger (works for a sub-job, or any task as a single agent): wall-clock and time queued; " +
+        "parallelism over time (change points of running agents and waiting tasks) with peak and time-weighted mean; the critical path planned (by estimated cost) and actual (by agent time); " +
+        "requests by purpose and cost, per completed task; the verification share of requests; and waiting time by reason (dependencies, acceptance, file_lease, provider_slot, capacity, queue, interrupted). " +
+        "Sub-jobs are summarised; their tasks also count in the parent. `agents: true` adds every agent's run and wait intervals.",
+      inputSchema: { jobId: z.string().min(1), agents: z.boolean().optional() },
+    },
+    async ({ jobId, agents }) => {
+      try {
+        const m = jobMetrics(sy, jobId);
+        if (!m) return fail(new Error(`unknown job or task ${jobId}`));
+        if (agents) return json(m);
+        const { agents: _a, ...rest } = m;
+        return json(rest);
       } catch (err) {
         return fail(err);
       }
