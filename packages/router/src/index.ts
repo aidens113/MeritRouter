@@ -127,6 +127,9 @@ export type { Classification, ScoreLine } from "./scoring/score.js";
 export { FreeLlmApiAdmin, type FreeLlmApiKey, type FreeLlmApiModel, type FreeLlmApiProfile } from "./gateway/freellmapi-admin.js";
 export { FreeLlmApiClient } from "./gateway/freellmapi.js";
 export type { InferenceClient, ChatRequest, ChatResponse, ProviderStatus } from "./gateway/types.js";
+// Direct providers: registry, key vault, credentials, client, key state, limits, health, discovery.
+export * from "./providers/index.js";
+export { isPaid, freeKeyOnly } from "./routing/select.js";
 export type { UsageSummary } from "./storage/usage.js";
 export type { ScanSummary } from "./models/scanner.js";
 export * as insights from "./admin/insights.js";

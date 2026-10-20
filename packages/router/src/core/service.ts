@@ -30,7 +30,12 @@ import { Auditor } from "../verification/audit.js";
 import type { AcceptanceDecisionInput, AcceptanceDecisionOutcome } from "../runners/types.js";
 import { parentImportance, recordAcceptanceDecision, verificationBudgetShortfall } from "./acceptance.js";
 import { paidEndpoints, paidFingerprint, refreshPaidPrices } from "../paid/catalog.js";
-import { httpDirectClient, type DirectClient } from "../paid/direct.js";
+import { directClientAsProviderClient, type DirectClient } from "../paid/direct.js";
+import { createProviderClient, type ProviderClient } from "../providers/client.js";
+import { ProviderRuntime } from "../providers/runtime.js";
+import { runProviderDiscovery, type DiscoveryRun } from "../providers/discovery-run.js";
+import { dailyProbeBudget, type ProbeBudget } from "../providers/enrich.js";
+import type { FetchLike } from "../providers/transport.js";
 import { createCodingRunner } from "../runners/coding/index.js";
 import { SupervisorRunner } from "../runners/supervisor.js";
 import { GatewayError, TaskValidationError } from "./errors.js";
@@ -47,8 +52,12 @@ export interface SwitchyardOptions {
   coding?: CodingRunner | null;
   /** Runner for supervise tasks (standalone supervisor jobs). */
   supervisor?: CodingRunner | null;
-  /** Direct paid-provider client override (tests). */
+  /** Paid-provider client override for `paid.providers` (tests); other providers use the provider client. */
   directClient?: DirectClient;
+  /** Provider client override for every direct provider (tests). */
+  providerClient?: ProviderClient;
+  /** Fetch for direct providers and their discovery (tests use a fake provider). */
+  providerFetch?: FetchLike;
   fetchImpl?: typeof fetch;
   now?: () => number;
   /** Run the in-process worker loop (MCP server and `switchyard worker`). */
@@ -101,6 +110,8 @@ export class Switchyard {
   /** Audit sampling: background reviews of passed results, recorded for calibration only. */
   readonly auditor: Auditor;
   readonly vault: KeyVault;
+  /** Direct providers: registry, credentials, key state, limits, client, health. */
+  readonly providers: ProviderRuntime;
   readonly brain: Brain;
   readonly brainAccess: BrainAccess;
   readonly spend: PaidSpend;
@@ -114,6 +125,9 @@ export class Switchyard {
   private readonly now: () => number;
   private configMtime = 0;
   private scanTimer: NodeJS.Timeout | null = null;
+  private discoveryTimer: NodeJS.Timeout | null = null;
+  private discovering: Promise<DiscoveryRun | null> | null = null;
+  private readonly probeBudget: ProbeBudget;
   private reloadTimer: NodeJS.Timeout | null = null;
 
   constructor(
@@ -132,17 +146,27 @@ export class Switchyard {
     this.brainAccess = new BrainAccess(this.db, cfg, this.now);
     this.vault = new KeyVault(this.db, cfg.storageDir, this.now);
     this.spend = new PaidSpend(this.db, cfg, this.vault, this.now);
+    const fallbackClient = opts.providerClient ?? createProviderClient({ ...(opts.providerFetch ? { fetch: opts.providerFetch } : {}), now: this.now });
+    this.providers = new ProviderRuntime(cfg, this.db, this.vault, {
+      client: opts.directClient ? directClientAsProviderClient(opts.directClient, () => this.cfg.paid.providers, fallbackClient, this.now) : fallbackClient,
+      ...(opts.providerFetch ? { fetch: opts.providerFetch } : {}),
+      now: this.now,
+    });
+    this.probeBudget = dailyProbeBudget(cfg.discovery.max_probe_requests_per_day, this.now);
     this.catalog = new Catalog(this.db, cfg.modelsPath, {
       requireConfirmationForHeuristicParams: cfg.discovery.require_confirmation_for_heuristic_params,
-      extra: { list: () => paidEndpoints(this.cfg, this.db, this.vault, this.now()), key: () => paidFingerprint(this.cfg, this.db) },
+      extra: {
+        list: () => paidEndpoints(this.cfg, this.db, (p) => this.providers.credentials().usable(p).filter((c) => c.billingClass !== "free_tier").length, this.now()),
+        key: () => paidFingerprint(this.cfg, this.db),
+      },
     });
     this.owner = `${hostname()}:${process.pid}:${randomBytes(3).toString("hex")}`;
 
     this.client = opts.client ?? createGatewayClient(cfg);
     this.admin = opts.admin === undefined ? createAdminClient(cfg) : opts.admin;
     this.chains = new ChainManager(this.db, cfg, this.catalog, this.admin, this.now);
-    this.health = new ProviderHealth(this.client, this.now);
-    this.gate = new Gate(this.db, cfg, this.client, this.admission, this.chains, this.health, { vault: this.vault, spend: this.spend, client: opts.directClient ?? httpDirectClient });
+    this.health = new ProviderHealth(this.client, this.now, () => this.providers.statuses());
+    this.gate = new Gate(this.db, cfg, this.client, this.admission, this.chains, this.health, { providers: this.providers, spend: this.spend });
     this.router = new TaskRouter(cfg, this.db, this.catalog, this.gate, this.artifacts, this.now);
     this.scanner = new Scanner(this.db, cfg, this.catalog, this.chains, this.admin, opts.fetchImpl ?? fetch, this.now);
     this.events.setMaxListeners(0);
@@ -209,6 +233,48 @@ export class Switchyard {
       this.scanTimer = setInterval(run, minutes * 60_000);
       this.scanTimer.unref?.();
     }
+    if (minutes > 0) {
+      // Direct providers: list each provider with a usable key on the interval (nothing to do
+      // while no key is configured; a key added later is picked up on the next run).
+      const run = () => void this.discover().catch(() => undefined);
+      const last = this.lastDiscovery();
+      if (this.providers.discoverable().length && (last === null || this.now() - last > minutes * 60_000)) setTimeout(run, 2000).unref?.();
+      this.discoveryTimer = setInterval(run, minutes * 60_000);
+      this.discoveryTimer.unref?.();
+    }
+  }
+
+  private lastDiscovery(): number | null {
+    const r = this.db.prepare("SELECT value FROM meta WHERE key = 'provider_discovery_last'").get() as { value: string } | undefined;
+    return r ? Number(r.value) : null;
+  }
+
+  /**
+   * Discover the models of direct providers with usable keys (all, or `only` these, e.g. right
+   * after a key was added) and save them per provider. Null when no provider has a usable key.
+   * One run at a time: a call during a run waits for that run.
+   */
+  async discover(opts: { only?: string[] } = {}): Promise<DiscoveryRun | null> {
+    if (this.discovering) return this.discovering;
+    const only = opts.only ?? this.providers.discoverable();
+    if (!only.length) return null;
+    this.discovering = runProviderDiscovery({
+      runtime: this.providers,
+      catalog: this.catalog,
+      config: this.cfg.discovery,
+      only,
+      probeClient: this.gate.probeClient(),
+      probeBudget: this.probeBudget,
+    })
+      .then((run) => {
+        this.db.prepare("INSERT INTO meta (key, value) VALUES ('provider_discovery_last', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(String(run.startedAt));
+        this.tasks.event(null, "provider_discovery", { added: run.added.length, saved: run.saved, providers: run.providers.map((p) => ({ provider: p.provider, status: p.status, kept: p.kept, errors: p.errors.length })), warnings: run.warnings });
+        return run;
+      })
+      .finally(() => {
+        this.discovering = null;
+      });
+    return this.discovering;
   }
 
   /**
@@ -483,8 +549,22 @@ export class Switchyard {
     return usageSummary(this.db, sinceMs, untilMs ?? this.now());
   }
 
+  /**
+   * Discover models now: direct providers with usable keys, and FreeLLMAPI when its admin token
+   * is set (or when nothing else is configured, so the summary says what is missing).
+   */
   async scan(): Promise<ScanSummary> {
-    const summary = await this.scanner.scan();
+    const direct = this.providers.discoverable().length ? await this.discover() : null;
+    const summary: ScanSummary =
+      this.admin || !direct ? await this.scanner.scan() : { scanned: 0, added: [], pendingConfirmation: [], unavailable: [], chainsSynced: 0, chainsDisabled: 0, errors: [] };
+    if (direct) {
+      summary.scanned += direct.endpoints.length;
+      summary.added.push(...direct.added);
+      summary.unavailable.push(...direct.unavailable.map((u) => u.endpoint.id));
+      for (const p of direct.providers) for (const e of p.errors) summary.errors.push(`${p.provider} (${e.ref}): ${e.message}`);
+      summary.errors.push(...direct.warnings);
+      for (const ep of this.catalog.endpoints()) if (ep.route.kind === "direct" && ep.status === "pending_confirmation" && !summary.pendingConfirmation.includes(ep.id)) summary.pendingConfirmation.push(ep.id);
+    }
     summary.errors.push(...(await refreshPaidPrices(this.db, this.cfg)).map((e) => `paid prices ${e}`));
     return summary;
   }
@@ -500,7 +580,9 @@ export class Switchyard {
 
   async close(): Promise<void> {
     if (this.scanTimer) clearInterval(this.scanTimer);
+    if (this.discoveryTimer) clearInterval(this.discoveryTimer);
     if (this.reloadTimer) clearInterval(this.reloadTimer);
+    await this.discovering?.catch(() => undefined);
     await this.scheduler.stop();
     await this.executor.flush();
     this.db.close();

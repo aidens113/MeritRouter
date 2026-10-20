@@ -100,8 +100,8 @@ export default async function ModelDetailPage({ searchParams }: { searchParams: 
                     </Badge>
                   </span>,
                 ],
-                ["Tool calling", ep.supportsTools ? "Yes" : "No (cannot do repository work)"],
-                ["Structured output", ep.supportsStructuredOutput ? "Yes" : "No"],
+                ["Tool calling", ep.supportsTools === null ? "Unknown (cannot do repository work until set)" : ep.supportsTools ? "Yes" : "No (cannot do repository work)"],
+                ["Structured output", ep.supportsStructuredOutput === null ? "Unknown" : ep.supportsStructuredOutput ? "Yes" : "No"],
                 [
                   "Price",
                   <span key="p" className="flex flex-wrap items-center gap-2">

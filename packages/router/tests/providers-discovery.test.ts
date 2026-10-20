@@ -189,7 +189,7 @@ describe("model-list shapes", () => {
     expect(r.endpoints[0]!.endpoint).toMatchObject({ contextLimitTokens: 200000, outputLimitTokens: 64000, pricing: { freeVerified: false, inputUsdPerMillion: null } });
     expect(r.endpoints[0]!.free).toEqual({ value: false, reason: "only paid or trial keys" });
     // Nothing reports Claude B's limits: unknown, never defaulted.
-    expect(r.endpoints[1]!.endpoint).toMatchObject({ contextLimitTokens: null, outputLimitTokens: null, outputLimitSource: "default", supportsTools: false });
+    expect(r.endpoints[1]!.endpoint).toMatchObject({ contextLimitTokens: null, outputLimitTokens: null, outputLimitSource: "default", supportsTools: null });
     expect(r.endpoints[1]!.enriched.provenance.contextLimitTokens.source).toBe("unknown");
   });
 
@@ -319,7 +319,7 @@ describe("enrichment", () => {
     const mystery = r.endpoints.find((e) => e.endpoint.id === "openai/gpt-mystery")!;
     expect(mystery.enriched).toMatchObject({ contextLimitTokens: null, outputLimitTokens: null, supportsTools: null, inputModalities: null, openRouter: null });
     expect(Object.values(mystery.enriched.provenance).every((p) => p.source === "unknown")).toBe(true);
-    expect(mystery.endpoint).toMatchObject({ supportsTools: false, inputModalities: ["text"], totalParametersB: null });
+    expect(mystery.endpoint).toMatchObject({ supportsTools: null, inputModalities: ["text"], totalParametersB: null });
     expect(r.endpoints.some((e) => e.endpoint.id === "openai/text-embedding-3-small")).toBe(false);
   });
 

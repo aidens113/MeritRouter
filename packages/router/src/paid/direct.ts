@@ -1,10 +1,11 @@
-import { ProviderEntrySchema, type PaidProviderConfig } from "../config/schema.js";
+import type { PaidProviderConfig } from "../config/schema.js";
 import type { ChatRequest, ChatResponse } from "../gateway/types.js";
-import { createProviderClient } from "../providers/client.js";
-import { builtinProvider, customProvider, defaultProvider, type ResolvedProvider } from "../providers/registry.js";
+import { createProviderClient, type ProviderClient } from "../providers/client.js";
+import { paidProviderAsDirect } from "../providers/runtime.js";
 
-// The direct clients moved to src/providers/ (direct providers, P1). This shim keeps the paid
-// route's interface and behaviour until P2 routes every request through the provider client.
+// Paid requests go through the direct-provider path (gateway/direct.ts) since direct providers
+// P2. This module keeps the old paid-client interface as a seam for callers and tests that
+// still inject one; p2-remove retires it with the FreeLLMAPI code.
 export { toAnthropic } from "../providers/anthropic.js";
 
 export interface DirectRequest {
@@ -22,20 +23,12 @@ export interface DirectClient {
   complete(req: DirectRequest): Promise<ChatResponse>;
 }
 
-/** The paid config as a provider: generic OpenAI-compatible (OpenRouter extras by URL) or Anthropic. */
-function asProvider(name: string, cfg: PaidProviderConfig): ResolvedProvider {
-  const base = cfg.base_url.replace(/\/+$/, "");
-  if (cfg.kind === "anthropic") return { ...defaultProvider("anthropic")!, id: name, baseUrl: `${base}/v1` };
-  const p = customProvider(name, ProviderEntrySchema.parse({ base_url: base }));
-  return /openrouter\.ai/.test(base) ? { ...p, bodyExtras: builtinProvider("openrouter")!.bodyExtras } : p;
-}
-
 const client = createProviderClient();
 
 export const httpDirectClient: DirectClient = {
   async complete(req) {
     const { rateLimits: _rateLimits, ...res } = await client.complete({
-      provider: asProvider(req.providerName, req.provider),
+      provider: paidProviderAsDirect(req.providerName, req.provider),
       credential: { apiKey: req.apiKey },
       model: req.model,
       chat: req.chat,
@@ -45,3 +38,26 @@ export const httpDirectClient: DirectClient = {
     return { ...res, telemetry: { ...res.telemetry, servedProvider: `paid:${req.providerName}` } };
   },
 };
+
+/**
+ * An injected `DirectClient` as a provider client: it serves the providers declared under
+ * `paid.providers`; every other provider goes to `fallback`.
+ */
+export function directClientAsProviderClient(direct: DirectClient, paidProviders: () => Readonly<Record<string, PaidProviderConfig>>, fallback: ProviderClient, now: () => number = Date.now): ProviderClient {
+  return {
+    async complete(req) {
+      const provider = paidProviders()[req.provider.id];
+      if (!provider) return fallback.complete(req);
+      const res = await direct.complete({
+        providerName: req.provider.id,
+        provider,
+        apiKey: req.credential.apiKey ?? "",
+        model: req.model,
+        chat: req.chat,
+        timeoutMs: req.timeoutMs,
+        ...(req.signal ? { signal: req.signal } : {}),
+      });
+      return { ...res, rateLimits: { family: "none", observedAt: now(), retryAfterMs: null, windows: [] } };
+    },
+  };
+}

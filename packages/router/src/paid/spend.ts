@@ -1,6 +1,7 @@
 import type { Db } from "../storage/db.js";
 import type { ResolvedConfig } from "../config/load.js";
 import type { KeyVault, PaidKey } from "./vault.js";
+import type { ProviderCredential } from "../providers/credentials.js";
 
 const DAY = 86_400_000;
 
@@ -15,8 +16,18 @@ export interface SpendSummary {
 
 const round = (n: number) => Math.round(n * 1e6) / 1e6;
 
+/** A stable negative ledger id for a config-declared key (vault ids are positive). */
+function configSpendId(ref: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < ref.length; i++) h = Math.imul(h ^ ref.charCodeAt(i), 0x01000193);
+  return -(1 + ((h >>> 0) & 0x3fffffff));
+}
+
 /** Paid spend ledger. Reservations count as spent until settled to the actual cost. */
 export class PaidSpend {
+  /** Config-declared keys seen by `spendKeyId`, by their negative ledger id. */
+  private readonly configKeys = new Map<number, { key: PaidKey; ref: string }>();
+
   constructor(
     private readonly db: Db,
     private readonly cfg: ResolvedConfig,
@@ -24,8 +35,21 @@ export class PaidSpend {
     private readonly now: () => number = Date.now,
   ) {}
 
+  /** A vault key, or a config key registered by `spendKeyId` (no cap or balance: only global and task budgets apply). */
   key(id: number): PaidKey | null {
+    if (id < 0) return this.configKeys.get(id)?.key ?? null;
     return this.vault.get(id);
+  }
+
+  /** The ledger id a paid request through this credential is recorded under. */
+  spendKeyId(cred: Pick<ProviderCredential, "ref" | "vaultKeyId" | "provider" | "label" | "billingClass" | "enabled" | "last4" | "accountId" | "quotaGroup" | "limits">): number {
+    if (cred.vaultKeyId !== null) return cred.vaultKeyId;
+    const id = configSpendId(cred.ref);
+    this.configKeys.set(id, {
+      ref: cred.ref,
+      key: { id, provider: cred.provider, label: cred.label, billingClass: cred.billingClass, enabled: cred.enabled, last4: cred.last4, monthlyCapUsd: null, prepaidBalanceUsd: null, balanceCheckedAt: null, expiresAt: null, createdAt: 0, removed: false, accountId: cred.accountId, quotaGroup: cred.quotaGroup, limits: cred.limits },
+    });
+    return id;
   }
 
   private sum(where: string, ...args: unknown[]): number {
@@ -85,8 +109,8 @@ export class PaidSpend {
 
   record(requestId: string, keyId: number, provider: string, endpointId: string, reservedUsd: number): void {
     this.db
-      .prepare("INSERT INTO paid_spend (request_id, key_id, provider, endpoint_id, reserved_usd, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(requestId, keyId, provider, endpointId, round(reservedUsd), this.now());
+      .prepare("INSERT INTO paid_spend (request_id, key_id, key_ref, provider, endpoint_id, reserved_usd, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(requestId, keyId, keyId < 0 ? (this.configKeys.get(keyId)?.ref ?? null) : `vault:${keyId}`, provider, endpointId, round(reservedUsd), this.now());
   }
 
   settle(requestId: string, actualUsd: number, basis: "provider_reported" | "computed" | "not_billed" | "uncertain"): void {

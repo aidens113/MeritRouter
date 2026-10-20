@@ -29,7 +29,7 @@ export interface ModelRow {
   overrideFields: string[];
   eligibleProfiles: string[];
   eligibleCells: number;
-  supportsTools: boolean;
+  supportsTools: boolean | null;
 }
 
 export function isFree(ep: ModelView["endpoint"]): boolean {

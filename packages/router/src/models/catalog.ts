@@ -20,8 +20,8 @@ const EvidenceSchema = z.object({
 export type ParamEvidence = z.infer<typeof EvidenceSchema>;
 
 /**
- * Package-owned endpoint record (not FreeLLMAPI's schema). An endpoint is one model served
- * by one FreeLLMAPI platform; its id is `<platform>/<model_id>`.
+ * Package-owned endpoint record. An endpoint is one model served by one provider (a direct
+ * provider, or a FreeLLMAPI platform until chains are removed); its id is `<provider>/<model_id>`.
  */
 export const ModelEndpointSchema = z
   .object({
@@ -58,14 +58,20 @@ export const ModelEndpointSchema = z
     outputLimitTokens: z.number().int().positive().nullable(),
     outputLimitSource: z.enum(["provider", "override", "manual", "default"]).default("manual"),
     inputModalities: z.array(ModalitySchema).default(["text"]),
-    supportsTools: z.boolean(),
-    supportsStructuredOutput: z.boolean(),
+    /** Null when no source reports it: unknown support is excluded from work that needs it, never guessed. */
+    supportsTools: z.boolean().nullable(),
+    supportsStructuredOutput: z.boolean().nullable(),
     pricing: z
       .object({
         inputUsdPerMillion: z.number().min(0).nullable(),
         outputUsdPerMillion: z.number().min(0).nullable(),
         freeVerified: z.boolean(),
         source: z.string().default("manual"),
+        /**
+         * Why a direct endpoint is free: `model` (a `:free` or $0 model: any key serves it without
+         * charge) or `key` (free only through a `free_tier` key: other keys would bill it).
+         */
+        freeBasis: z.enum(["model", "key"]).optional(),
       })
       .strict(),
     rateLimits: z
@@ -169,7 +175,7 @@ function applyOverride(ep: BaseEndpoint, o: EndpointOverride | undefined): { ep:
 }
 
 function computeStatus(ep: BaseEndpoint, forceStatus: "active" | "disabled" | undefined, requireConfirmation: boolean): { status: EndpointStatus; reason: string | null } {
-  if (!ep.enabled && ep.origin === "discovered" && !ep.available) return { status: "removed", reason: "no longer offered by FreeLLMAPI" };
+  if (!ep.enabled && ep.origin === "discovered" && !ep.available) return { status: "removed", reason: ep.route.kind === "direct" ? `no longer listed by ${ep.route.provider}` : "no longer offered by FreeLLMAPI" };
   if (forceStatus === "disabled") return { status: "disabled", reason: "disabled manually" };
   if (!ep.enabled) return { status: "disabled", reason: "disabled in catalog" };
   if (forceStatus === "active") return { status: "active", reason: "enabled manually" };
@@ -304,7 +310,10 @@ export class Catalog {
     this.bump();
   }
 
-  /** Persist discovered endpoint records. Rows not in `seen` are marked unavailable. */
+  /**
+   * Persist FreeLLMAPI-scanned endpoint records. Chain rows not in `records` are marked
+   * unavailable; direct-provider rows belong to `saveProviderDiscovery` and are left alone.
+   */
   saveDiscovered(records: BaseEndpoint[], now = Date.now()): void {
     const upsert = this.db.prepare(
       `INSERT INTO endpoints (id, data_json, first_seen_at, last_scanned_at) VALUES (?, ?, ?, ?)
@@ -319,11 +328,77 @@ export class Catalog {
       for (const row of this.db.prepare("SELECT id, data_json FROM endpoints").all() as { id: string; data_json: string }[]) {
         if (seen.has(row.id)) continue;
         const ep = JSON.parse(row.data_json) as BaseEndpoint;
+        if (ep.route?.kind === "direct") continue;
         if (ep.available === false && ep.enabled === false) continue;
         this.db.prepare("UPDATE endpoints SET data_json = ?, last_scanned_at = ? WHERE id = ?").run(JSON.stringify({ ...ep, available: false, enabled: false }), now, row.id);
       }
     }).immediate();
     this.bump();
+  }
+
+  /**
+   * Persist one direct-provider discovery run. Every record is upserted; then, for each provider
+   * in `listed` (its model list succeeded), its stored discovered direct rows not in `records` are
+   * marked unavailable and disabled. Other providers, and providers whose listing failed, are
+   * untouched. A record whose id is held by a FreeLLMAPI chain row is skipped (returned) until
+   * chains are removed, so the two scanners never overwrite each other.
+   */
+  saveProviderDiscovery(records: ModelEndpointInput[], listed: readonly string[], now = Date.now()): { saved: number; skipped: string[] } {
+    const upsert = this.db.prepare(
+      `INSERT INTO endpoints (id, data_json, first_seen_at, last_scanned_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET data_json = excluded.data_json, last_scanned_at = excluded.last_scanned_at`,
+    );
+    const parsed = records.map((r) => ModelEndpointSchema.parse(r));
+    const scope = new Set(listed);
+    const out = { saved: 0, skipped: [] as string[] };
+    this.db.transaction(() => {
+      const stored = new Map<string, BaseEndpoint>();
+      for (const row of this.db.prepare("SELECT id, data_json FROM endpoints").all() as { id: string; data_json: string }[]) {
+        const ep = ModelEndpointSchema.safeParse(JSON.parse(row.data_json));
+        if (ep.success) stored.set(row.id, ep.data);
+      }
+      const seen = new Set<string>();
+      for (const r of parsed) {
+        if (stored.get(r.id)?.route.kind === "chain") {
+          out.skipped.push(r.id);
+          continue;
+        }
+        upsert.run(r.id, JSON.stringify(r), now, now);
+        seen.add(r.id);
+        out.saved++;
+      }
+      for (const [id, ep] of stored) {
+        if (seen.has(id) || ep.origin !== "discovered" || ep.route.kind !== "direct" || !scope.has(ep.route.provider)) continue;
+        if (!ep.available && !ep.enabled) continue;
+        this.db.prepare("UPDATE endpoints SET data_json = ?, last_scanned_at = ? WHERE id = ?").run(JSON.stringify({ ...ep, available: false, enabled: false }), now, id);
+      }
+    }).immediate();
+    this.bump();
+    return out;
+  }
+
+  /** Stored discovered rows (FreeLLMAPI and direct), before overrides. */
+  storedEndpoints(): BaseEndpoint[] {
+    const out: BaseEndpoint[] = [];
+    for (const row of this.db.prepare("SELECT data_json FROM endpoints").all() as { data_json: string }[]) {
+      const ep = ModelEndpointSchema.safeParse(JSON.parse(row.data_json));
+      if (ep.success) out.push(ep.data);
+    }
+    return out;
+  }
+
+  /** Endpoints defined in the models file (manual entries win over discovery). */
+  manualEndpoints(): BaseEndpoint[] {
+    return this.readYaml().endpoints;
+  }
+
+  /** Overrides by endpoint id: the models file's, with the panel's fields on top. */
+  mergedOverrides(): Record<string, EndpointOverride> {
+    const out: Record<string, EndpointOverride> = { ...this.readYaml().overrides };
+    for (const row of this.db.prepare("SELECT endpoint_id, data_json FROM endpoint_overrides").all() as { endpoint_id: string; data_json: string }[]) {
+      out[row.endpoint_id] = { ...out[row.endpoint_id], ...EndpointOverrideSchema.parse(JSON.parse(row.data_json)) };
+    }
+    return out;
   }
 
   discoveredRow(id: string): { firstSeenAt: number; lastScannedAt: number } | null {

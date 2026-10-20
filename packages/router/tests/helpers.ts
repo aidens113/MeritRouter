@@ -154,3 +154,78 @@ export function servedFor(sy: Switchyard, req: ChatRequest): { model: string; pr
   const ep = sy.catalog.endpoints().find((e) => e.chainName === chain)!;
   return { model: ep.gatewayModelId, provider: ep.providerId };
 }
+
+// ---------- fake direct provider (direct providers P2) ----------
+
+/** One HTTP request a fake provider received. */
+export interface FakeProviderCall {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body: Record<string, unknown> | null;
+  /** The bearer key, when one was sent. */
+  key: string | null;
+}
+
+export type FakeProviderHandler = (call: FakeProviderCall, n: number) => Response | Promise<Response>;
+
+export function providerJson(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
+  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
+}
+
+/** An OpenAI-compatible chat completion for `model`. */
+export function providerChat(
+  model: string,
+  o: { content?: string | null; toolCalls?: ChatResponse["message"]["tool_calls"]; promptTokens?: number; completionTokens?: number; headers?: Record<string, string> } = {},
+): Response {
+  const content = o.content === undefined ? JSON.stringify(goodOutput()) : o.content;
+  return providerJson(
+    {
+      id: "chatcmpl-test",
+      model,
+      choices: [{ index: 0, message: { role: "assistant", content, ...(o.toolCalls ? { tool_calls: o.toolCalls } : {}) }, finish_reason: o.toolCalls ? "tool_calls" : "stop" }],
+      usage: { prompt_tokens: o.promptTokens ?? 100, completion_tokens: o.completionTokens ?? 50 },
+    },
+    200,
+    o.headers,
+  );
+}
+
+/** An OpenAI-shaped model list. */
+export function providerModels(models: Array<string | Record<string, unknown>>): Response {
+  return providerJson({ object: "list", data: models.map((m) => (typeof m === "string" ? { id: m, object: "model" } : { object: "model", ...m })) });
+}
+
+/**
+ * A fake provider behind an injectable fetch (`SwitchyardOptions.providerFetch`). By default it
+ * answers chat completions with a good result for the requested model, lists no models, and
+ * returns 404 for anything else (the OpenRouter catalog, Hugging Face).
+ */
+export class FakeProvider {
+  readonly calls: FakeProviderCall[] = [];
+  constructor(public handler: FakeProviderHandler = (call) => (call.url.endsWith("/chat/completions") ? providerChat(String(call.body?.model)) : call.url.endsWith("/models") ? providerModels([]) : providerJson({ error: { message: "not found" } }, 404))) {}
+
+  readonly fetch = async (url: string, init: { method: string; headers: Record<string, string>; body?: string; signal?: AbortSignal }): Promise<Response> => {
+    if (init.signal?.aborted) throw new DOMException("aborted", "AbortError");
+    const auth = init.headers.authorization ?? init.headers.Authorization ?? null;
+    const call: FakeProviderCall = { url, method: init.method, headers: { ...init.headers }, body: init.body ? (JSON.parse(init.body) as Record<string, unknown>) : null, key: auth?.startsWith("Bearer ") ? auth.slice(7) : null };
+    this.calls.push(call);
+    return this.handler(call, this.calls.length);
+  };
+
+  /** Chat completion requests only. */
+  chats(): FakeProviderCall[] {
+    return this.calls.filter((c) => c.url.endsWith("/chat/completions"));
+  }
+}
+
+/** A manual catalog endpoint routed directly to `provider` (free through free_tier keys by default). */
+export function directEndpoint(provider: string, model: string, overrides: Record<string, unknown> = {}) {
+  return endpoint({
+    providerId: provider,
+    gatewayModelId: model,
+    route: { kind: "direct", provider, model },
+    pricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0, freeVerified: true, freeBasis: "key" },
+    ...overrides,
+  });
+}

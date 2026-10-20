@@ -613,4 +613,10 @@ export const MIGRATIONS: string[] = [
   CREATE INDEX provider_usage_at ON provider_usage(at);
   CREATE INDEX provider_usage_reservation ON provider_usage(reservation);
   `,
+  `
+  -- Direct providers (P2): a paid request may go through a config-declared key, which has no
+  -- vault id. key_ref is the credential ref (vault:<id> or config:...); key_id holds the vault id,
+  -- or a stable negative id for a config key.
+  ALTER TABLE paid_spend ADD COLUMN key_ref TEXT;
+  `,
 ];

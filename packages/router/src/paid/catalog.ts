@@ -1,7 +1,6 @@
 import type { ResolvedConfig } from "../config/load.js";
 import type { Db } from "../storage/db.js";
 import type { ModelEndpointInput } from "../models/catalog.js";
-import type { KeyVault } from "./vault.js";
 
 export function paidEndpointId(provider: string, model: string): string {
   return `paid:${provider}/${model}`;
@@ -41,16 +40,17 @@ export async function refreshPaidPrices(db: Db, cfg: ResolvedConfig, fetchImpl: 
 }
 
 /**
- * Configured paid models as catalog endpoints. They route directly (never via FreeLLMAPI),
- * are available only with an enabled key, and need a known price to be eligible.
+ * Configured paid models as catalog endpoints. They route directly (never via FreeLLMAPI), are
+ * available only with a usable key that may pay (`paidKeys`: vault or config keys that are not
+ * `free_tier`), and need a known price to be eligible.
  */
-export function paidEndpoints(cfg: ResolvedConfig, db: Db, vault: KeyVault, now = Date.now()): ModelEndpointInput[] {
+export function paidEndpoints(cfg: ResolvedConfig, db: Db, paidKeys: (provider: string) => number, now = Date.now()): ModelEndpointInput[] {
   return cfg.paid.models.map((m) => {
     const provider = cfg.paid.providers[m.provider]!;
     const fetched = fetchedPrices(db, m.provider)[m.model];
     const pin = m.input_usd_per_million ?? fetched?.in ?? null;
     const pout = m.output_usd_per_million ?? fetched?.out ?? null;
-    const keys = vault.usable(m.provider);
+    const keys = paidKeys(m.provider);
     return {
       id: paidEndpointId(m.provider, m.model),
       providerId: `paid:${m.provider}`,
@@ -77,7 +77,7 @@ export function paidEndpoints(cfg: ResolvedConfig, db: Db, vault: KeyVault, now 
         freeVerified: false,
         source: m.input_usd_per_million !== undefined ? "configured in paid.models" : fetched ? `fetched from ${provider.pricing_url}` : "unknown: set prices or a pricing_url",
       },
-      available: cfg.paid.enabled && keys.length > 0,
+      available: cfg.paid.enabled && keys > 0,
       enabled: true,
       quotaScopeIds: [`paid:${m.provider}`],
       sourceUrls: [],
@@ -89,5 +89,5 @@ export function paidEndpoints(cfg: ResolvedConfig, db: Db, vault: KeyVault, now 
 export function paidFingerprint(cfg: ResolvedConfig, db: Db): string {
   const keys = (db.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(enabled), 0) AS e, COALESCE(MAX(id), 0) AS m FROM paid_keys").get() as { n: number; e: number; m: number });
   const prices = (db.prepare("SELECT COUNT(*) AS n, COALESCE(MAX(length(value)), 0) AS l FROM meta WHERE key LIKE 'paid_prices:%'").get() as { n: number; l: number });
-  return `${cfg.paid.enabled}:${cfg.paid.models.length}:${JSON.stringify(cfg.paid.models).length}:${keys.n}/${keys.e}/${keys.m}:${prices.n}/${prices.l}`;
+  return `${cfg.paid.enabled}:${cfg.paid.models.length}:${JSON.stringify(cfg.paid.models).length}:${JSON.stringify(cfg.providers).length}:${keys.n}/${keys.e}/${keys.m}:${prices.n}/${prices.l}`;
 }
