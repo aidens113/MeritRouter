@@ -7,6 +7,7 @@ import type { Switchyard } from "../src/core/service.js";
 import { MIGRATIONS } from "../src/storage/migrations.js";
 import { DB_FILE, openDatabase } from "../src/storage/db.js";
 import { Catalog } from "../src/models/catalog.js";
+import { ProviderError } from "../src/providers/errors.js";
 import { baseConfig, directEndpoint, endpoint, FakeProvider, makeEnv, open, providerChat, providerJson, providerModels, summarizeTask, type Env } from "./helpers.js";
 
 let env: Env | undefined;
@@ -188,6 +189,53 @@ describe("paid policy on direct providers", () => {
     expect(fake.chats()).toHaveLength(0);
     expect(r.executionStatus).not.toBe("completed");
     expect(r.stopReason).toMatch(/would bill a model that is free only on free_tier keys/);
+  });
+});
+
+describe("health of a paid.providers provider", () => {
+  const ACME = "paid:acme/acme-large";
+  const BETA = "paid:beta/beta-large";
+  const model = (provider: string) => ({ provider, model: `${provider}-large`, input_usd_per_million: 2, output_usd_per_million: 8, context_limit_tokens: 100000, output_limit_tokens: 8000, ignore_size_floor: true });
+  const cfg = () =>
+    baseConfig({
+      paid: {
+        enabled: true,
+        budgets: { per_week_usd: 5 },
+        tiers: { T1: "on_free_exhaustion" },
+        providers: { acme: { kind: "openai_compatible", base_url: "https://api.acme.test/v1" }, beta: { kind: "openai_compatible", base_url: "https://api.beta.test/v1" } },
+        models: [model("acme"), model("beta")],
+      },
+    });
+
+  it("is reported once, under the provider id, and a cooling or invalid key still reaches its paid endpoints", async () => {
+    env = makeEnv({ config: cfg() });
+    sy = open(env, new FakeProvider());
+    const key = sy.vault.add({ provider: "acme", secret: "sk-acme-0000-1111", billingClass: "paid_credits" });
+    sy.vault.add({ provider: "beta", secret: "sk-beta-0000-2222", billingClass: "paid_credits" });
+    const plan = () => sy!.router.plan("summarize", "T1", ["text"], undefined, false, "preferred");
+    const paidIds = () => plan().candidates.map((c) => c.id).filter((id) => id.startsWith("paid:"));
+    const acme = () => sy!.health.snapshot().filter((s) => s.platform.includes("acme"));
+    await sy.health.refresh();
+    expect(acme()).toEqual([expect.objectContaining({ platform: "acme", status: "healthy" })]);
+    expect(sy.providers.statuses().map((s) => s.platform).filter((p) => p.startsWith("paid:"))).toEqual([]);
+    expect(paidIds()).toEqual([ACME, BETA]);
+
+    // Every acme key cooling: its paid endpoint (platform paid:acme) reads acme's status and goes behind beta's.
+    sy.providers.keys.recordFailure(`vault:${key.id}`, new ProviderError("rate_limited", "slow down", { provider: "acme", status: 429, retryAfterMs: 60_000 }));
+    await sy.health.refresh();
+    expect(acme()).toEqual([expect.objectContaining({ platform: "acme", status: "rate_limited" })]);
+    expect(sy.health.lookup("paid:acme")).toMatchObject({ status: "rate_limited" });
+    expect(paidIds()).toEqual([BETA, ACME]);
+    expect(plan().explanations.find((e) => e.endpointId === ACME)!.coolingDownUntil).not.toBeNull();
+    // The cooldown halved the paid platform's slots too; breakers and slots keep their own name.
+    expect(sy.health.capacity.record("paid:acme").cooldownResumeAt).not.toBeNull();
+
+    // The key turns out invalid: the paid endpoint reads that as well.
+    sy.providers.keys.clear(`vault:${key.id}`);
+    sy.providers.keys.recordFailure(`vault:${key.id}`, new ProviderError("auth_invalid", "bad key", { provider: "acme", status: 401 }));
+    await sy.health.refresh();
+    expect(sy.health.lookup("paid:acme")).toMatchObject({ status: "invalid" });
+    expect(acme()).toEqual([expect.objectContaining({ platform: "acme", status: "invalid" })]);
   });
 });
 

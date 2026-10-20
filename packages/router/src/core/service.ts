@@ -145,7 +145,11 @@ export class Switchyard {
     });
     this.owner = `${hostname()}:${process.pid}:${randomBytes(3).toString("hex")}`;
 
-    this.health = new ProviderHealth(this.now, () => this.providers.statuses());
+    this.health = new ProviderHealth(
+      this.now,
+      () => this.providers.statuses(),
+      (platform) => this.providers.statusPlatform(platform),
+    );
     this.gate = new Gate(this.db, cfg, this.admission, this.health, { providers: this.providers, spend: this.spend });
     this.router = new TaskRouter(cfg, this.db, this.catalog, this.gate, this.artifacts, this.now);
     this.scanner = new Scanner({

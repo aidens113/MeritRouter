@@ -216,3 +216,83 @@ Checks: `pnpm -r typecheck` passes, `pnpm -r build` passes, and `npx vitest run`
    can work on a key that has no credits or is rate-limited, so recording success there would
    be wrong. As a result, after a key test that clears the mark, the panel still shows the old
    error as current until a real request succeeds.
+
+## Item 6 (follow-up dispatch, 2026-10-20)
+
+The coordinator committed items 1 to 5 (fd407a3), then gave this worker `src/gateway/gate.ts`,
+`src/providers/runtime.ts` and `src/core/service.ts` so it could implement the fix proposed
+above. **Outcome: Done.**
+
+### Cause
+
+- `ProviderRuntime.statuses()` emitted a `paid:<name>` copy of every `paid.providers` status.
+  Configured paid endpoints have `providerId: "paid:<provider>"` (`src/paid/catalog.ts`, which
+  is unchanged).
+- `ProviderHealth` looked up key-derived status, and observed cooldowns, under that exact
+  platform name. The copy was the only way paid endpoints got their provider's health.
+- The panel overview and health page show `ProviderHealth.snapshot()`, so each paid provider
+  appeared twice.
+
+### Fix
+
+- **`src/gateway/gate.ts`.** `ProviderHealth` takes a third, optional constructor argument,
+  `statusPlatform(platform) => string`.
+  - `status(platform)` reads the status of `statusPlatform(platform)`, so `lookup()` and the
+    cooling check in `recordOutcome()` both go through it.
+  - Each platform name that reads another provider's status is remembered as an alias.
+  - On every refresh, a cooling provider's cooldown is passed to `capacity.observeCooldown`
+    under the provider id and under each alias. The first time an alias is seen, it catches up
+    on a cooldown already in progress. `observeCooldown` is idempotent per `resumeAt`.
+  - Breakers, slots, and `recordOutcome` throttling stay keyed on the platform name as given.
+  - Without a resolver, behaviour is unchanged (`tests/team-capacity.test.ts` builds a
+    `ProviderHealth` with no resolver).
+- **`src/providers/runtime.ts`.**
+  - `statuses()` returns `providerStatuses(...)` directly: one entry per provider, no copy.
+  - New `statusPlatform(platform)`: `paid:<name>` maps to `<name>` when `<name>` is a
+    `paid.providers` entry, and every other name maps to itself.
+- **`src/core/service.ts`.** It passes `(platform) => this.providers.statusPlatform(platform)` to
+  `ProviderHealth`.
+
+### Test
+
+New test in `tests/providers-routing.test.ts`, describe "health of a paid.providers provider". It
+sets up two paid providers, `acme` and `beta`, each with one model and one vault key, and uses
+policy `preferred`:
+
+- **Healthy.** `sy.health.snapshot()` has exactly one acme entry, `platform: "acme"`, and
+  `statuses()` has no `paid:` platforms. The paid order is `[paid:acme/acme-large,
+  paid:beta/beta-large]`.
+- **acme's only key cooling (429, 60 s).**
+  - The snapshot still has one acme entry, now `rate_limited`.
+  - `lookup("paid:acme")` is `rate_limited`.
+  - The paid order becomes `[beta, acme]`, and acme's explanation has `coolingDownUntil` set.
+  - `capacity.record("paid:acme").cooldownResumeAt` is set, so the paid platform's slots were
+    halved.
+- **acme's key invalid (401).** `lookup("paid:acme")` is `invalid`, and the snapshot has one acme
+  entry, `invalid`.
+
+A note on "pushes back": `planRoute` ranks paid against free by policy before it looks at
+cooling. So a cooling paid endpoint moves behind other paid endpoints and is marked
+`coolingDownUntil`, but it does not move behind free models under `preferred`. An `invalid`
+status is not used in ordering at all. It reaches the gate, where key selection skips the
+invalid key. Both of these were the same before this change.
+
+### Commands run and observed results
+
+- `npx vitest run tests/providers-routing.test.ts`: 13 passed.
+  - A first version of the test expected a cooling paid endpoint to move behind the free model.
+    It failed because paid rank is decided first (see above), so the test now compares two paid
+    providers instead.
+- `pnpm -r typecheck`: `packages/router typecheck: Done`, `apps/panel typecheck: Done`.
+- `pnpm -r build`: `packages/router build: Done`, `apps/panel build: Done`.
+- `cd packages/router && npx vitest run`: **39 files, 395 tests passed**, with no flaky timing
+  failure in this run.
+
+### Not verified
+
+- The panel overview was not rendered. `snapshot()` now has one entry per provider, but no
+  screenshot was taken.
+- Breaker records for `paid:<name>` still exist and still show separately on the health page's
+  breaker list. That is by design: breakers stay per platform name.
+- I did not run the new test against the old code to watch it fail. By inspection, the old
+  runtime's `paid:acme` copy would fail the first assertion (one acme entry).

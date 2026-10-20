@@ -114,14 +114,22 @@ export class ProviderRuntime {
   }
 
   /**
-   * Health of every provider that has a credential, from key state and configured limits. A
-   * provider from `paid.providers` is also reported as `paid:<name>`, the platform its
-   * configured paid endpoints use, so their breakers and slots see the same state.
+   * Health of every provider that has a credential, from key state and configured limits: one
+   * entry per provider. Configured paid endpoints use the platform `paid:<name>`; they read
+   * their provider's entry through `statusPlatform`.
    */
   statuses(): ProviderStatus[] {
-    const providers = this.providers();
-    const list = providerStatuses(providers, this.credentials().list(), this.keys, { limits: this.limits });
-    const paid = new Set(Object.keys(this.cfg.paid.providers));
-    return list.flatMap((s) => (paid.has(s.platform) ? [s, { ...s, platform: `paid:${s.platform}` }] : [s]));
+    return providerStatuses(this.providers(), this.credentials().list(), this.keys, { limits: this.limits });
+  }
+
+  /**
+   * The provider whose key-derived status a platform name reads: `paid:<name>` (the platform of
+   * the endpoints configured under `paid.models`) reads `<name>` when `<name>` is a
+   * `paid.providers` entry; every other name reads itself.
+   */
+  statusPlatform(platform: string): string {
+    if (!platform.startsWith("paid:")) return platform;
+    const name = platform.slice("paid:".length);
+    return Object.hasOwn(this.cfg.paid.providers, name) ? name : platform;
   }
 }

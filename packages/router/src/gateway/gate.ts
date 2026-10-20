@@ -47,9 +47,16 @@ const STATUS_TTL_MS = 1000;
  * (`ProviderRuntime.statuses`) and this process's per-provider circuit breakers, so route
  * ordering can push cooling or failing providers to the end and the gate can skip providers
  * whose breaker is open.
+ *
+ * Key-derived status is reported once per provider. A platform name that is not a provider id
+ * (configured paid endpoints use `paid:<provider>`) reads its provider's status through
+ * `statusPlatform`; breakers and concurrency slots stay keyed per platform name, and a cooling
+ * provider halves the slots of every platform name that reads its status.
  */
 export class ProviderHealth {
   private cache: { at: number; byPlatform: Map<string, ProviderStatus> } | null = null;
+  /** Platform names seen that read another platform's status (alias -> provider id). */
+  private readonly aliases = new Map<string, string>();
   readonly breakers: CircuitBreakers;
   /** Per-provider concurrency slots and their AIMD limits (see gateway/capacity.ts). */
   readonly capacity: ProviderCapacity;
@@ -58,9 +65,17 @@ export class ProviderHealth {
     private readonly now: () => number = Date.now,
     /** Providers' health from key state (synchronous store reads); null reports nothing. */
     private readonly source: (() => ProviderStatus[]) | null = null,
+    /** The provider id whose key-derived status a platform name reads (`paid:x` -> `x`); identity when omitted. */
+    private readonly statusPlatform: ((platform: string) => string) | null = null,
   ) {
     this.breakers = new CircuitBreakers(now);
     this.capacity = new ProviderCapacity(now);
+  }
+
+  /** Every cooling provider halves its concurrency once per cooldown, under its own name and its aliases'. */
+  private observeCooldown(p: ProviderStatus, platforms: Iterable<string>): void {
+    if (p.status !== "rate_limited" || p.resumeAt === null) return;
+    for (const platform of platforms) this.capacity.observeCooldown(platform, p.resumeAt);
   }
 
   private statuses(): Map<string, ProviderStatus> {
@@ -74,12 +89,19 @@ export class ProviderHealth {
     }
     this.cache = { at: this.now(), byPlatform: new Map(list.map((p) => [p.platform, p])) };
     // Every key of a provider cooling halves its concurrency (once per cooldown).
-    for (const p of list) if (p.status === "rate_limited" && p.resumeAt !== null) this.capacity.observeCooldown(p.platform, p.resumeAt);
+    for (const p of list) this.observeCooldown(p, [p.platform, ...[...this.aliases].filter(([, id]) => id === p.platform).map(([alias]) => alias)]);
     return this.cache.byPlatform;
   }
 
   private status(platform: string): ProviderStatus | undefined {
-    return this.statuses().get(platform);
+    const id = this.statusPlatform?.(platform) ?? platform;
+    if (id === platform) return this.statuses().get(platform);
+    const known = this.aliases.has(platform);
+    if (!known) this.aliases.set(platform, id);
+    const s = this.statuses().get(id);
+    // A newly seen alias catches up on a cooldown already in progress.
+    if (!known && s) this.observeCooldown(s, [platform]);
+    return s;
   }
 
   /** The reported cooldown (while it lasts) and, when the platform's breaker is open, until when. */
