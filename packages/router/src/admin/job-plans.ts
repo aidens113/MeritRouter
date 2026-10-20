@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { maxAgentsPerJob, type Importance, type ProfileName } from "../config/schema.js";
 import type { Switchyard } from "../core/service.js";
 import { isTerminal, type TaskState } from "../core/task.js";
@@ -5,6 +6,7 @@ import { UPSTREAM_CONTEXT_EVENT, UpstreamContextEventSchema, type BaseChoice } f
 import { FileLeaseStore, type FileLease } from "../storage/file-leases.js";
 import { PlanStore, criticalPath, type CriticalPath, type JobPlan, type PlanDifficulty } from "../storage/plans.js";
 import { AWAITING_ACCEPTANCE, WAITING_FOR_FILE_LEASE, type StoredTask, type TaskRow } from "../storage/tasks.js";
+import { REDUNDANCY_SETTLED, REDUNDANCY_SKIPPED, REDUNDANCY_STARTED } from "../core/redundancy.js";
 
 // A job's task graph for people and supervisors: the plan's nodes joined with the tasks they
 // were dispatched as, the critical path, the job's file leases, and why waiting nodes wait.
@@ -51,6 +53,37 @@ export interface PlanNodeView {
   leaseWaits: number;
   /** The upstream results artifact this node was given, and the base commits chosen for it. */
   upstream: { artifactRef: string; baseCommits: BaseChoice[] } | null;
+  /** Runs the node's first attempt asked for (`redundancy`: 1, or 2 for twin runs). */
+  redundancy: number;
+  /** What happened to a redundant node's twin runs; null for a node that runs once or has not started. */
+  twins: TwinRunsView | null;
+}
+
+/** One of a redundant node's two runs. */
+export interface TwinRunView {
+  sessionId: string | null;
+  /** Endpoints this run was given (the plan's candidates, split so the twins never share one). */
+  endpoints: string[];
+  /** Endpoints that actually served it. */
+  servedEndpoints: string[];
+  /** The run's outcome state and verification, once it finished; null while it runs or when cancelled. */
+  state: string | null;
+  verification: string | null;
+  sessionStatus: string | null;
+  stopReason: string | null;
+  /** Its result passed verification first. */
+  winner: boolean;
+  /** Its result became the task's result. */
+  used: boolean;
+}
+
+export interface TwinRunsView {
+  /** `racing` while both run; `verified`: one passed verification first; `none_passed` / `both_failed`; `skipped`: ran once (why in reason); `refused`: the contract could not pay for a second run. */
+  status: "racing" | "verified" | "none_passed" | "both_failed" | "skipped" | "refused";
+  reason: string | null;
+  /** The shared request cap of both runs. */
+  cap: number | null;
+  runs: TwinRunView[];
 }
 
 export interface PlanEdge {
@@ -114,6 +147,49 @@ function depths(plan: JobPlan): Map<string, number> {
   };
   for (const n of plan.nodes) visit(n.label, new Set());
   return out;
+}
+
+const TwinStartedSchema = z.object({ sessions: z.array(z.string().nullable()), endpoints: z.array(z.array(z.string())), cap: z.number() }).passthrough();
+const TwinSettledSchema = z
+  .object({
+    winner: z.string().nullable(),
+    used: z.string().nullable(),
+    outcome: z.enum(["verified", "none_passed", "both_failed"]),
+    runs: z.array(z.object({ sessionId: z.string().nullable(), finished: z.boolean(), state: z.string(), verification: z.string().nullable(), servedEndpoints: z.array(z.string()) }).passthrough()),
+  })
+  .passthrough();
+const TwinSkippedSchema = z.object({ reason: z.string() }).passthrough();
+
+/** A redundant node's twin runs, from its task events (validated: stored rows are runtime input) and sessions. */
+function twinsOf(sy: Switchyard, t: StoredTask): TwinRunsView | null {
+  const events = sy.tasks.events(t.row.id, 500);
+  const last = (type: string) => events.filter((e) => e.type === type).at(-1);
+  const started = TwinStartedSchema.safeParse(last(REDUNDANCY_STARTED)?.data);
+  if (!started.success) {
+    const skipped = TwinSkippedSchema.safeParse(last(REDUNDANCY_SKIPPED)?.data);
+    if (skipped.success) return { status: "skipped", reason: skipped.data.reason, cap: null, runs: [] };
+    const stop = t.result?.stopReason ?? "";
+    if (stop.startsWith("redundancy_budget_insufficient")) return { status: "refused", reason: stop.slice(stop.indexOf(":") + 1).trim(), cap: null, runs: [] };
+    return null;
+  }
+  const settled = TwinSettledSchema.safeParse(last(REDUNDANCY_SETTLED)?.data);
+  const s = settled.success ? settled.data : null;
+  const runs = started.data.sessions.map((sessionId, i): TwinRunView => {
+    const r = s?.runs.find((x) => x.sessionId === sessionId);
+    const session = sessionId ? sy.sessions.get(sessionId) : null;
+    return {
+      sessionId,
+      endpoints: started.data.endpoints[i] ?? [],
+      servedEndpoints: r?.servedEndpoints ?? [],
+      state: r?.finished ? r.state : null,
+      verification: r?.verification ?? null,
+      sessionStatus: session?.status ?? null,
+      stopReason: session?.stopReason ?? null,
+      winner: Boolean(s?.winner && s.winner === sessionId),
+      used: Boolean(s?.used && s.used === sessionId),
+    };
+  });
+  return { status: s ? s.outcome : "racing", reason: null, cap: started.data.cap, runs };
 }
 
 function upstreamOf(sy: Switchyard, taskId: string): PlanNodeView["upstream"] {
@@ -213,6 +289,8 @@ export function jobPlan(sy: Switchyard, jobId: string, opts: { version?: number 
       waiting: t ? waitingOf(t, n.dependsOn) : null,
       leaseWaits: t ? sy.tasks.events(t.row.id, 500).filter((e) => e.type === "waiting_for_file_lease").length : 0,
       upstream: t ? upstreamOf(sy, t.row.id) : null,
+      redundancy: n.redundancy,
+      twins: t && n.redundancy > 1 ? twinsOf(sy, t) : null,
     };
   });
 

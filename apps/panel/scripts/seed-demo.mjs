@@ -10,7 +10,10 @@
 // It also runs three more standalone jobs (one finished, one planned as a diamond task graph with
 // plan_work where two coding nodes contend for a file lease, one paused on a question), fills the
 // brain (in .demo/brain, never your home folder), and records a little paid spend through a fake
-// direct paid client, so the Jobs, Brain, and Paid routes pages have content. Agent sessions (and
+// direct paid client, so the Jobs, Brain, and Paid routes pages have content. A nested team job
+// (parent -> sub-supervisor -> two workers) shows the team view: a carved sub-job budget, two
+// integrations onto the sub-job's branch where the second is rebased, team channel posts of each
+// kind, and a redundant plan node whose twin runs race. Agent sessions (and
 // their event logs) come from those runs themselves; only the interrupted task's session, which
 // never ran, is recorded by hand (through the same store calls a worker makes, including one
 // resume), so it shows a `resumed` event and the Resume action.
@@ -420,6 +423,7 @@ const powerCheck = hasCheck("power");
 const OPS = { multiply: "*", subtract: "-", divide: "/", modulo: "%", power: "**" };
 
 function codingTurn(req, s, user) {
+  if (user.includes(SUB_WORKER)) return subTeamCodingTurn(req, s, user);
   // The goal comes first in the brief ("Add divide(a, b) ..."); the brain context after it may name other functions.
   const named = /Add (\w+)\(a, b\)/.exec(user)?.[1];
   const fn = named && OPS[named] ? named : /multiply/i.test(user) ? "multiply" : "subtract";
@@ -431,6 +435,121 @@ function codingTurn(req, s, user) {
     return reply(`Adding ${fn}() next to add().`, s, { toolCalls: calls, out: 120 });
   }
   return reply(null, s, { toolCalls: [call("submit_result", { summary: `Added ${fn}(a, b) to src/app.ts.`, findings: [{ description: `${fn}() is exported from src/app.ts`, evidenceRefs: ["core:src/app.ts#L1-L3"] }], criteria: [{ index: 0, status: "met", evidenceRefs: ["core:src/app.ts#L1-L3"] }] })] });
+}
+
+// ---------- the nested team job (parent -> sub-supervisor -> workers) ----------
+// The parent plans a redundant survey node and a sub-job; the sub-job delegates mean() and
+// range() to two workers that both edit src/app.ts. range's worker adds the same mean() first
+// (mean is not on its base yet), so when the sub-supervisor integrates both in one turn, the
+// queue rebases range's work and drops the duplicate commit. Workers and supervisors post to the
+// team channel (a finding, a blocker, interface contracts).
+const SUB_WORKER = "Sub-team worker:";
+const TEAM_PARENT = "through a sub-team";
+const TEAM_CHILD = "Sub-team: implement mean(a, b) and range(a, b)";
+const helperText = (fn, body) => `export function ${fn}(a: number, b: number) {\n  return ${body};\n}\n\nexport function add`;
+const MEAN = helperText("mean", "(a + b) / 2");
+const RANGE = helperText("range", "Math.abs(a - b)");
+
+function subTeamCodingTurn(req, s, user) {
+  const n = assistantTurns(req);
+  // The goal comes first in the brief; brain context after it may name the other worker's helper.
+  const range = /Add (mean|range)\(a, b\)/.exec(user)?.[1] === "range";
+  const done = (fn) => call("submit_result", { summary: `Added ${fn} to src/app.ts.`, findings: [{ description: `${fn} is exported from src/app.ts`, evidenceRefs: ["core:src/app.ts#L1-L3"] }], criteria: [{ index: 0, status: "met", evidenceRefs: ["core:src/app.ts#L1-L3"] }] });
+  if (!range) {
+    if (n === 0) {
+      return reply("Adding mean() above add(), and telling range's worker where it goes.", s, {
+        toolCalls: [
+          call("replace_in_file", { path: "src/app.ts", old_text: "export function add", new_text: MEAN }),
+          call("post_channel", { kind: "finding", text: "mean(a, b) now sits directly above add() in src/app.ts.\nPut range(a, b) between mean and add so our hunks stay apart.", refs: ["range"] }),
+        ],
+        out: 140,
+      });
+    }
+    return reply(null, s, { toolCalls: [done("mean(a, b)")] });
+  }
+  // range's worker: its base predates mean, so it adds the same mean() first, then range().
+  if (n === 0) {
+    return reply("mean() is not on my base yet; adding it first so range's check can import it.", s, {
+      toolCalls: [
+        call("replace_in_file", { path: "src/app.ts", old_text: "export function add", new_text: MEAN }),
+        call("post_channel", { kind: "blocker", text: "My base does not have mean() yet, so I added the same mean() first.\nIntegrate mean before range; the queue should drop my duplicate.", refs: [] }),
+      ],
+      out: 140,
+    });
+  }
+  if (n === 1) return reply("Now range() between mean and add.", s, { toolCalls: [call("replace_in_file", { path: "src/app.ts", old_text: "export function add", new_text: RANGE })], out: 90 });
+  return reply(null, s, { toolCalls: [done("range(a, b)")] });
+}
+
+const lastCallsOf = (req) => [...req.messages].reverse().find((m) => m.role === "assistant")?.tool_calls?.map((c) => c.function.name) ?? [];
+
+/** The sub-supervisor: delegate both workers, wait, integrate both in one turn, report, finish. */
+function subJobTurn(req) {
+  const n = assistantTurns(req);
+  const last = lastCallsOf(req);
+  const lastTool = textOf(req.messages.at(-1));
+  const finish = call("finish_job", { status: "completed", summary: "mean(a, b) and range(a, b) are on the sub-job branch; range's duplicate mean commit was dropped by the queue's rebase.", verified: [{ claim: "both helpers exported on the sub-job branch", evidence: "job checks after each integration" }], not_verified: [] });
+  if (n === 0) {
+    return {
+      text: "Two small helpers in one file: one worker each; they take turns on the file lease.",
+      calls: [
+        call("brain_set_job_section", { body: "Delegated mean and range (both edit src/app.ts; range waits for mean's lease)." }),
+        call("delegate", {
+          tasks: [
+            { label: "mean", profile: "implement", goal: `${SUB_WORKER} Add mean(a, b) to src/app.ts next to add().`, acceptance_criteria: ["mean is exported from src/app.ts"], allowed_paths: ["src/app.ts"], checks: [hasCheck("mean")], difficulty: "T2" },
+            { label: "range", profile: "implement", goal: `${SUB_WORKER} Add range(a, b) to src/app.ts next to add().`, acceptance_criteria: ["range is exported from src/app.ts"], allowed_paths: ["src/app.ts"], checks: [hasCheck("range")], difficulty: "T2" },
+          ],
+        }),
+      ],
+    };
+  }
+  if (n > 20) return { text: "Stopping.", calls: [finish] };
+  if (last.includes("delegate")) return { text: "Waiting for both workers.", calls: [call("await_tasks", { timeout_seconds: 60 })] };
+  if (last.includes("await_tasks")) {
+    if (/: still /.test(lastTool)) return { text: "Still running; waiting again.", calls: [call("await_tasks", { timeout_seconds: 60 })] };
+    return { text: "Both finished with passing checks. Integrating both; the queue takes them one at a time.", calls: [call("integrate_task", { task_id: "mean" }), call("integrate_task", { task_id: "range" })] };
+  }
+  if (last.includes("integrate_task")) {
+    return {
+      text: "Both integrated. Recording what happened for the parent.",
+      calls: [
+        call("post_channel", { kind: "finding", text: "Both helpers are on the sub-job branch. range's first commit repeated mean's change; the merge queue rebased range and dropped it.", refs: ["range"] }),
+        call("brain_set_job_section", { body: "mean and range integrated (range rebased; its duplicate mean commit dropped). Job checks passed after each." }),
+      ],
+    };
+  }
+  return { text: "Done.", calls: [finish] };
+}
+
+/** The parent: plan a redundant survey and a sub-job, publish the helpers' contract, wait, integrate the sub-job's branch. */
+function teamParentTurn(req) {
+  const n = assistantTurns(req);
+  const last = lastCallsOf(req);
+  const lastTool = textOf(req.messages.at(-1));
+  const finish = call("finish_job", { status: "completed", summary: "The sub-team delivered mean(a, b) and range(a, b); its branch is integrated onto this job's branch with each worker's attribution.", verified: [{ claim: "mean and range exported on the job branch", evidence: "job checks after the integration" }], not_verified: [] });
+  if (n === 0) {
+    return {
+      text: "A survey and a self-contained sub-goal: plan them, and hand the helpers to a sub-team.",
+      calls: [
+        call("brain_set_current_state", { body: "**Goal:** mean() and range() delivered by a sub-team.\n\n**Plan (plan_work v1):** survey (redundant, T1) and helpers (sub-supervisor with its own workers).\n\n**Status:** dispatched." }),
+        call("post_channel", { kind: "interface_contract", text: "Every helper is exported from src/app.ts as (a: number, b: number) => number, placed above add().", refs: [] }),
+        call("plan_work", {
+          nodes: [
+            { label: "survey", profile: "inspect", goal: "List the exported helpers in src/app.ts and their signatures.", acceptance_criteria: ["names every exported function with its line"], file_refs: ["core:src/app.ts"], difficulty: "T1", redundancy: 2 },
+            { label: "helpers", profile: "supervise", goal: `${TEAM_CHILD} with two workers.`, acceptance_criteria: ["mean and range are exported from src/app.ts"], checks: [hasCheck("mean"), hasCheck("range")] },
+          ],
+          note: "a redundant survey and one sub-team",
+        }),
+      ],
+    };
+  }
+  if (n > 30) return { text: "Stopping.", calls: [finish] };
+  if (last.includes("plan_work")) return { text: "Waiting for the survey and the sub-team.", calls: [call("await_tasks", { timeout_seconds: 60 })] };
+  if (last.includes("await_tasks")) {
+    if (/: still /.test(lastTool)) return { text: "The sub-team is still working; waiting again.", calls: [call("await_tasks", { timeout_seconds: 60 })] };
+    return { text: "The sub-team finished. Integrating its branch onto the job branch.", calls: [call("integrate_task", { task_id: "helpers" })] };
+  }
+  return { text: "Done.", calls: [finish] };
 }
 
 const JOB_A = [
@@ -506,6 +625,10 @@ function jobCTurn(req) {
 
 function supervisorTurn(req, s) {
   const brief = textOf(req.messages[1]);
+  if (brief.includes(TEAM_CHILD) || brief.includes(TEAM_PARENT)) {
+    const step = brief.includes(TEAM_CHILD) ? subJobTurn(req) : teamParentTurn(req);
+    return reply(step.text, s, { toolCalls: step.calls, in: 3000 + Math.round(Math.random() * 3000), out: 250 });
+  }
   // Each job's goal names a function no other job's goal does: power (Job D), divide (Job C), multiply (Job A).
   if (!/power\(a, b\)/.test(brief) && /divide\(a, b\)/.test(brief)) {
     const step = jobCTurn(req);
@@ -724,6 +847,20 @@ const jobD = await sy.startJob({ goal: "Add power(a, b) to the calculator and in
 const jobDOut = await sy.awaitResults([jobD.taskId], { timeoutSeconds: 180 });
 const rd = jobDOut.completed[0];
 console.log(`  ${"job: add power (integrated, then undone)".padEnd(44)} ${rd ? `${rd.executionStatus}/${rd.acceptanceStatus}` : "did not finish"}`);
+
+// The nested team job: parent -> sub-supervisor -> two workers, a redundant node, and the channel.
+offset = Math.round(1.65 * HOUR);
+const jobE = await sy.startJob({ goal: `Deliver mean(a, b) and range(a, b) ${TEAM_PARENT}, with a redundant survey.`, repositories: ["core"], acceptanceCriteria: ["mean and range are exported from src/app.ts on the job branch"], checks: [hasCheck("mean"), hasCheck("range")], label: "team-helpers" });
+const jobEOut = await sy.awaitResults([jobE.taskId], { timeoutSeconds: 300 });
+const re = jobEOut.completed[0];
+const teamE = insights.jobTeam(sy, jobE.taskId);
+const twinsE = insights.jobPlan(sy, jobE.taskId)?.nodes.find((x) => x.label === "survey")?.twins;
+const rebasedE = teamE?.queues.flatMap((q) => q.items).filter((i) => i.rebased).length ?? 0;
+console.log(
+  `  ${"job: nested team (sub-job, queue, channel)".padEnd(44)} ${re ? `${re.executionStatus}/${re.acceptanceStatus}` : "did not finish"}; ${teamE?.subJobs ?? 0} sub-job, ${teamE?.queues.reduce((a, q) => a + q.items.length, 0) ?? 0} integrations (${rebasedE} rebased), ${teamE?.channel.total ?? 0} posts, survey twins ${twinsE?.status ?? "none"}`,
+);
+if (!rebasedE) console.warn("  warning: no integration of the nested job was rebased");
+if (twinsE?.status !== "verified") console.warn(`  warning: the redundant survey ended ${twinsE?.status ?? "without twins"}${twinsE?.reason ? ` (${twinsE.reason})` : ""}`);
 
 // A reviewer keeps failing a right answer; a person overrules it (a false rejection).
 const rounding = await phase(1.6, "deep review overruled by a person", [

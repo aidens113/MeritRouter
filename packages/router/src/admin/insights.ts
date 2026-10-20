@@ -618,10 +618,11 @@ export type { ReviewView, RetryView, TargetedCheckView, RaisedLevelView, TaskVer
 // Calibration views live in their own file (insights.ts is a facade over many panel concerns).
 export * from "./calibration.js";
 
-// Jobs, their plans, and agent sessions live in their own modules; re-exported here so
-// `insights.*` stays the panel's single entry point.
+// Jobs, their plans and teams, and agent sessions live in their own modules; re-exported here
+// so `insights.*` stays the panel's single entry point.
 export * from "./jobs.js";
 export * from "./job-plans.js";
+export * from "./job-team.js";
 export * from "./sessions.js";
 
 // ---------- brain (for people: full access, edits committed as `human`) ----------
