@@ -65,10 +65,13 @@ as free; a 429 cools the key for every model of that provider; paid spend is key
 credential ref; upgrading deletes stored chain-routed endpoints (a scan with keys refills them).
 367 tests green; `init` presets are valid again (supervisor fix plus a test).
 
-**Next steps:** P3: `p3-panel` and `p3-cli-docs` in parallel (dispatched 2026-10-20). Their
-inputs are the "P3 leftovers" and "Open questions" sections of the p2-remove report. Then
-merge to `dev`, fast-forward `main`, and plan the first live check with the user (it spends
-real quota).
+**P3 (2026-10-20):** `p3-panel` and `p3-cli-docs` done and verified (386 tests; see their
+reports). Follow-ups they raised are briefed as `p3-fixes` (dispatched 2026-10-20). Known flaky
+under load: one full run in four failed a single test (consistent with the `operations` daemon
+stop and `scoring` classifier batching timing tests both workers saw); reruns pass.
+
+**Next steps:** `p3-fixes`; then merge to `dev`, fast-forward `main`, and plan the first live
+check with the user (it spends real quota).
 
 **Blockers:** none.
 
@@ -263,6 +266,22 @@ llama.cpp, vLLM, LM Studio) is a custom provider.
   `scripts/build-presets.mjs`, `docs/*.md`. Record in `decisions.md` the P2 decisions listed in Current State, and the
   upgrade notes (chain endpoints deleted, `ScanSummary` lost `chainsSynced`/`chainsDisabled`).
 
+### Brief: p3-fixes (after p3-panel and p3-cli-docs)
+- Task: (1) mask secrets in provider error text at the source: `requestJson` (auth header values
+  and key query params) and `ProviderClient.complete` (the credential, for HTTP-200 error
+  bodies); drop the CLI's own masking. (2) a 401/403/402 during discovery listing records the
+  failure on that key (callback from `discoverModels`, wired in `discovery-run.ts`). (3) one
+  shared key-test function in `src/providers/` used by `src/admin/provider-keys.ts` and
+  `src/cli/keys.ts`. (4) `health.ts`: `lastError` only when newer than the key's last success;
+  simplify the admin view's workaround to use it. (5) a `base_url` override also moves the
+  model-list URL for providers whose registry list URL is absolute (google, cohere,
+  cloudflare). (6) a provider under `paid.providers` appears once in health, not as both `x`
+  and `paid:x`.
+- Owns: `src/providers/**`, `src/admin/provider-keys.ts`, `src/cli/keys.ts`,
+  `src/core/service.ts` (only for item 6), `tests/providers-*.test.ts`,
+  `tests/admin-keys.test.ts`, `tests/cli-keys.test.ts`.
+- Report to: docs/working/direct-providers/reports/p3-fixes.md
+
 ---
 
 ## Work Ledger
@@ -349,6 +368,25 @@ llama.cpp, vLLM, LM Studio) is a custom provider.
   no real keys); P3 makes the demo offline.
 - Outcome: Accepted
 - Follow-up: P3.
+
+### 2026-10-20 — p3-panel and p3-cli-docs
+- Agent: workers p3-panel and p3-cli-docs (parallel); verified by supervisor
+- Changed: Provider keys page on the vault and config keys, `/api/keys*` routes, Paid routes
+  folded in, panel FreeLLMAPI wording removed, offline demo, `src/admin/provider-keys.ts` and
+  `config-edit.ts`; CLI `keys add|list|test|enable|disable|remove`, per-provider `doctor`,
+  example config wording and regenerated presets, `setup.md`, `operations.md`, `decisions.md`
+  (D1-D10, provider facts, upgrade notes, FreeLLMAPI history), README. Details:
+  [panel](./direct-providers/reports/p3-panel.md), [CLI/docs](./direct-providers/reports/p3-cli-docs.md).
+- Why: P3 surfaces.
+- Validation: supervisor ran `pnpm -r typecheck` (pass), `pnpm -r build` (pass),
+  `npx vitest run` four times (39 files, 386 passed three times; one run had a single failure
+  that did not recur); `grep -i freellmapi` over panel, router src, examples, README, setup,
+  operations finds only an applied migration comment and marked upgrade history. The panel
+  worker confirmed the demo Scan stays on 127.0.0.1 with fetch/connect logging (it found and
+  fixed a Google leak through the absolute model-list URL).
+- Outcome: Accepted
+- Follow-up: `p3-fixes`; contract changes for callers: `doctor --json` checks gain `level`,
+  `models scan` exits 1 when nothing was listed and there were errors, `/api/paid/keys*` removed.
 
 ---
 
