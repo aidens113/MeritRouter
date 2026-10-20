@@ -11,14 +11,15 @@ branches, and pushing.
 ## Start here (handoff)
 
 1. Read [docs/working/README.md](docs/working/README.md), then the `Current State` of the
-   document you are working on. The next effort is
-   [agent-sessions-and-teams.md](docs/working/agent-sessions-and-teams.md) (durable agent
-   sessions, failure resilience, agent teams): S1, S2, R1, V1-V3, T1, and T2 are done; next is T3 (adaptive capacity, staffing, metrics).
+   document you are working on. Every planned phase of
+   [agent-sessions-and-teams.md](docs/working/agent-sessions-and-teams.md) (S1-S2, R1, T1-T3)
+   and [importance-and-verification.md](docs/working/importance-and-verification.md) (V1-V3)
+   is done. Next: live validation against FreeLLMAPI and OpenCode once credentials exist.
 2. Background when needed: [docs/roles.md](docs/roles.md) (runtime role model and brain),
    [docs/decisions.md](docs/decisions.md) (verified FreeLLMAPI behaviour, every design decision),
    [docs/operations.md](docs/operations.md) (hard vs estimated limits, recovery).
 
-State at handoff (2026-10-19): S1, S2, R1, R1b, V1-V3, T1, T2 merged. Router tests pass; the panel builds. Nothing has
+State at handoff (2026-10-19): all phases merged; 305 router tests pass; the panel builds. Nothing has
 run against a live FreeLLMAPI, paid provider, or OpenCode yet (no credentials in this environment).
 
 Dispatch workers through the `worker` agent; its definition carries the worker rules, so a brief
@@ -36,7 +37,8 @@ committing.
     `src/admin/insights.ts` the panel's API (a facade re-exporting `admin/jobs.ts`,
     `admin/sessions.ts`, `admin/job-plans.ts`, `admin/job-team.ts`, `admin/calibration.ts`); `src/verification`
     contracts, review, calibration; `src/sessions` session logs and resume; `src/operations`
-    backup, daemon, service install.
+    backup, daemon, service install; `src/cli/` terminal formatting for `cli.ts`;
+    `src/gateway/capacity.ts` provider slots; `src/admin/job-metrics.ts` team metrics.
 - `apps/panel`: Next.js panel (`pnpm --filter switchyard-panel seed:demo` for demo data).
 - `docs/`: setup, roles, operations, decisions, working documents.
 

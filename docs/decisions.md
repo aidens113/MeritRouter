@@ -95,3 +95,8 @@ non-streaming chat completions only.
     branch is serialised by a crash-safe merge queue that preserves worker trailers; a per-job
     channel carries findings and contracts between agents as untrusted, quoted data; redundant
     execution is opt-in per small node and decided by verification, not by speed alone.
+19. **Parallelism is bounded by measured provider capacity** (user requirement, 2026-10-19):
+    per-provider AIMD slot limits shared through the store decide how many requests run at
+    once, rather than fixed numbers; supervisors and reviewers are never starved by their own
+    workers; team effectiveness is measured from stored data and compared against a single
+    agent on the same goals, with every comparison budgeted up front.

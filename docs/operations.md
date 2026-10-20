@@ -141,6 +141,27 @@ subsequently-confirmed per level and per reviewer, with review cost per accepted
   call, mirrored into a "Team Channel" section of the job's working document, and shown to other
   agents as quoted data, never as instructions. A worker sees job-wide posts and posts that
   reference its task.
+- **Provider capacity.** Each provider (platform) has an adaptive limit on in-flight requests,
+  shared by every process on the store: it starts at `team.provider_concurrency_start` (2),
+  grows by one after `team.provider_concurrency_increase_after` (5) consecutive successes, and
+  halves on a 429, a reported cooldown, or an open circuit breaker, between 1 and
+  `team.provider_concurrency_max` (8) or a per-platform `team.provider_concurrency_limits`
+  ceiling (FreeLLMAPI v0.2.1 reports none). A worker whose providers are all full waits queued
+  (`waiting_for_provider_slot`); supervisors are never held back and supervisor and reviewer
+  requests take the next free slot first, so a job whose workers fill every slot still
+  completes. Slots of a dead process expire with its task lease.
+- **Staffing.** `plan_work` plans nodes without a difficulty at the rulebook's deterministic
+  tier (the task is still classified, so tags can raise it) and reports nodes to split and the
+  slots in use; the charter keeps strong models for supervision and Deep/Strict review.
+- **Metrics.** Per job (sub-jobs included), derived from stored data: wall-clock, parallelism
+  over time (peak and mean), planned and actual critical path, requests and cost per completed
+  task, verification share, and waiting time by reason. `switchyard metrics <job>`, MCP
+  `get_job_metrics`, the panel's Teams page and job pages.
+- **Team vs single agent.** `switchyard compare` runs the same goals as a team job and as one
+  agent with the same models and records both metric sets. It prints the plan and its request
+  budget first, `--dry-run` stops there, and nothing runs without `--yes`; runs are capped and
+  share `qualification.max_requests_per_day` with `qualify`. The team cap inside a comparison
+  is enforced by polling, so a run can briefly exceed it.
 - **Redundant nodes.** A small non-coding plan node (T1/T2) with `redundancy: 2` runs on two
   different endpoints; the first result that passes verification wins and the other run is
   superseded. Both runs are charged; a node whose budget cannot hold both is refused.

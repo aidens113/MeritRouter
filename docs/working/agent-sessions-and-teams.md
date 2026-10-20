@@ -1,7 +1,7 @@
 # Agent sessions, failure resilience, and agent teams
 
 Status: Active
-Status detail: S1, S2, R1, T1, T2 complete 2026-10-19; T3 next.
+Status detail: S1, S2, R1, T1, T2, T3 complete 2026-10-19; R2 (Postgres, multiple hosts) deferred; live validation outstanding.
 Created: 2026-10-19
 Last updated: 2026-10-19
 Owner: Senior supervisor agent
@@ -79,7 +79,19 @@ surfaces: `switchyard job` (tree, queue, posts), `switchyard channel`, MCP `get_
 `sessions/run-sessions.ts`, `core/disposition.ts`, `core/watchdog.ts`); integration tools moved
 to `harness/integration-tools.ts`.
 
-**Not done:** T3. T2 gaps: two processes integrating on one branch, a real kill mid-integration,
+**Phase T3 done (2026-10-19):** per-provider AIMD slot limits (`gateway/capacity.ts`,
+`routing/claim-capacity.ts`; workers wait `waiting_for_provider_slot`, supervisors never held,
+reviewer/supervisor requests first), rulebook-tier staffing for plan nodes (`routing/staffing.ts`;
+the task is still classified), job metrics (`admin/job-metrics.ts`), team-vs-single comparisons
+(`qualification/comparison.ts`, budgeted, opt-in), panel Teams page, `switchyard metrics` /
+`compare`, MCP `get_job_metrics`; CLI formatting moved to `src/cli/` (`cli.ts` 813 -> 478);
+sub-job result text fixed.
+
+**Not done:** R2 (Postgres store, multiple worker hosts; marked "later"). Nothing has run
+against a live FreeLLMAPI, real models, paid providers, or OpenCode (no credentials here).
+T3 gaps: two real processes competing for slots, a kill while holding a slot, the gate's wait
+expiring into deferral, paid routes under contention, and a real comparison on eval fixtures
+(dry run only) are untested; the comparison's team cap is poll-enforced. T2 gaps: two processes integrating on one branch, a real kill mid-integration,
 depth > 2, a crash mid-redundancy race (the first twin stays interrupted), paid budget carving,
 parent `allowed_paths` not limiting a sub-job; a sub-job's result card still says `git merge`;
 `cli.ts` is 813 lines (terminal formatting should move to `src/cli/`). T1 gaps: two processes claiming at once untested; native coding plan
@@ -90,7 +102,8 @@ untested against git; two processes racing to resume untested; a session left `r
 process shows no panel Resume until recovery runs; already-finished batch members are not
 recorded when the batch runner throws (sessions end `batch_aborted`).
 
-**Next steps:** T3.
+**Next steps:** live validation against FreeLLMAPI and OpenCode when credentials exist
+(Testing And Live Validation mode, with a stated budget); then R2 if multi-host is needed.
 
 **Blockers:** none. Live checks against real providers are still outstanding from the previous
 document.
@@ -662,6 +675,22 @@ and request timestamps; plans; the request ledger), so no sampling timer is need
   31 files, 290 passed; dev after merge: see the commit that records this entry.
 - Outcome: Accepted
 - Follow-up: T3; move CLI terminal formatting into `src/cli/`; sub-job result text.
+
+---
+
+### 2026-10-19 — Phase T3 (capacity, staffing, metrics)
+- Agent: supervisor; workers t3-capacity, t3-metrics (`feat/t3-capacity`, `feat/t3-metrics`)
+- Changed: see Current State; docs `operations.md` (Teams), `decisions.md` (19), CLAUDE.md
+  layout, supervisor charter.
+- Why: requirement 3 (as many agents as capacity allows, cheaply) and its metrics.
+- Validation: supervisor rejected task-level staffing hints (they would skip classification and
+  the risk-tag importance floors), kept the tier on plan nodes only, updated the test, applied
+  the team-graph slot config; deduplicated the wait-reason constant; shared the daily
+  qualification allocation between qualify and compare without double counting; merged branch:
+  router build ok, `pnpm -r typecheck` Done, `npx vitest run` -> 33 files, 305 passed, panel
+  build compiled; Teams screenshot inspected.
+- Outcome: Accepted
+- Follow-up: live validation.
 
 ---
 
