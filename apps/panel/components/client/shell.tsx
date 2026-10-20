@@ -18,6 +18,7 @@ import {
   Moon,
   Network,
   Route,
+  Scale,
   ScrollText,
   Settings,
   Sun,
@@ -39,6 +40,7 @@ const NAV = [
   { href: "/keys", label: "Provider keys", icon: KeyRound },
   { href: "/paid", label: "Paid routes", icon: CreditCard },
   { href: "/qualification", label: "Qualification", icon: BadgeCheck },
+  { href: "/calibration", label: "Calibration", icon: Scale },
   { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 

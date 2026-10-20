@@ -617,6 +617,8 @@ export function startQualification(sy: Switchyard, endpointId: string, opts: { e
 
 export type { ModelEndpoint, EndpointOverride, RoutingOverride, CandidateExplanation, Classification, TaskState };
 export type { ReviewView, RetryView, TargetedCheckView, RaisedLevelView, TaskVerificationTrail } from "../verification/trail.js";
+// Calibration views live in their own file (insights.ts is a facade over many panel concerns).
+export * from "./calibration.js";
 
 // ---------- jobs (standalone supervisors) ----------
 

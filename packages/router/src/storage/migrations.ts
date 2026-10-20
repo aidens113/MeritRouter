@@ -386,4 +386,55 @@ export const MIGRATIONS: string[] = [
     SELECT RAISE(ABORT, 'task contracts are immutable');
   END;
   `,
+  `
+  -- Verdict calibration: one row per reviewer verdict (a verification review, a reuse of a cached
+  -- verdict, or a background audit), keyed for the verdict cache.
+  CREATE TABLE verdict_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL,
+    purpose TEXT NOT NULL CHECK (purpose IN ('verification', 'audit')),
+    attempt INTEGER NOT NULL,
+    reviewer TEXT,
+    level TEXT NOT NULL,
+    qualification TEXT,
+    qualified INTEGER NOT NULL,
+    verdict TEXT CHECK (verdict IS NULL OR verdict IN ('pass', 'fail', 'inconclusive')),
+    revision TEXT,
+    requests INTEGER NOT NULL DEFAULT 0,
+    cache_key TEXT,
+    cached_from INTEGER,
+    audit_task_id TEXT,
+    record_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX verdict_records_task ON verdict_records(task_id, created_at);
+  CREATE INDEX verdict_records_cache ON verdict_records(cache_key);
+  CREATE INDEX verdict_records_reviewer ON verdict_records(reviewer, created_at);
+
+  -- What happened to a result after verification: integrated onto a job branch, a job check on
+  -- that branch, or undone through attribution.
+  CREATE TABLE verification_signals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('integrated', 'job_check', 'undone')),
+    job_id TEXT,
+    detail_json TEXT,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX verification_signals_task ON verification_signals(task_id, created_at);
+  CREATE INDEX verification_signals_job ON verification_signals(job_id, kind, created_at);
+
+  -- Audit sampling: one decision per finished result considered, and the audit task it started.
+  CREATE TABLE verification_audits (
+    task_id TEXT PRIMARY KEY,
+    decision TEXT NOT NULL,
+    audit_task_id TEXT,
+    reviewer TEXT,
+    status TEXT NOT NULL,
+    detail_json TEXT,
+    created_at INTEGER NOT NULL,
+    finished_at INTEGER
+  );
+  CREATE INDEX verification_audits_status ON verification_audits(status);
+  `,
 ];

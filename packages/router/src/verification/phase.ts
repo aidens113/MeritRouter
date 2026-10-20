@@ -13,7 +13,8 @@ import type { RetryContext, RunContext, RunOutcome, RunnerResult } from "../runn
 import { failureContext, nextTier, runCap, verifyOutcome, type VerifiedOutcome, type VerifyOptions } from "../core/acceptance.js";
 import { restoreRunState, retryStarted, RETRY_STARTED, REVIEW_RECORDED, type VerificationState } from "../core/retry-state.js";
 import { repairCap, reviewReserveAdjustment, type StoredContract } from "./contract.js";
-import { reviewResult, type ReviewPhaseResult } from "./review.js";
+import type { ReviewPhaseResult } from "./review.js";
+import { calibratedReview } from "./calibration.js";
 import { repairRetryContext, runTargetedChecks, submittedRevisionStart, targetedCheckAllowed } from "./followup.js";
 
 /**
@@ -136,9 +137,12 @@ export async function verifyWithReview(d: PhaseDeps, task: StoredTask, contract:
   let verified = verifyRecorded(d, task, contract, mode, outcome, st.qualityRetriesUsed, opts());
   const needsReview = (v: VerifiedOutcome) => v.reevaluation.review.required && outcome.result.executionStatus === "completed" && v.decision.acceptanceStatus !== "unmet";
   if (!needsReview(verified)) return done(verified);
-  if ((task.row as typeof task.row & { purpose?: string }).purpose === "qualification") {
+  const purpose = (task.row as typeof task.row & { purpose?: string }).purpose;
+  if (purpose === "qualification" || purpose === "audit") {
     // Qualification runs are graded by the evaluation suite; a reviewer would measure another model.
-    return done(verifyRecorded(d, task, contract, mode, outcome, st.qualityRetriesUsed, opts({ notes: ["qualification task: graded by the evaluation suite, not reviewed"] }), false));
+    // An audit is itself a review, recorded for calibration; reviewing it would never end.
+    const note = purpose === "audit" ? "audit task: its verdict is recorded for calibration, not reviewed" : "qualification task: graded by the evaluation suite, not reviewed";
+    return done(verifyRecorded(d, task, contract, mode, outcome, st.qualityRetriesUsed, opts({ notes: [note] }), false));
   }
   const allowed = mode === "coding" ? targetedCheckAllowed(d.cfg, task.spec.constraints.checks ?? []) : null;
   let phase: ReviewPhaseResult | null = null;
@@ -146,7 +150,8 @@ export async function verifyWithReview(d: PhaseDeps, task: StoredTask, contract:
   for (let round = 0; round < 2; round++) {
     let reviewing = false;
     try {
-      phase = await reviewResult(
+      // Calibrated: a cached verdict for the same contract, artifact, policy, and sources is reused; every verdict is recorded.
+      phase = await calibratedReview(
         { cfg: d.cfg, db: d.db, gate: d.gate, catalog: d.catalog, router: d.router, tasks: d.tasks, artifacts: d.artifacts, sessions: d.sessions },
         {
           task,
@@ -168,6 +173,7 @@ export async function verifyWithReview(d: PhaseDeps, task: StoredTask, contract:
           },
           targetedChecksAllowed: allowed,
         },
+        d.now,
       );
     } finally {
       if (reviewing) run.onReviewer?.(null);

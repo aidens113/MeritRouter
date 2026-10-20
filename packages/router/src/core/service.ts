@@ -25,6 +25,7 @@ import { BrainAccess } from "../brain/access.js";
 import { PaidSpend } from "../paid/spend.js";
 import { SessionStore } from "../sessions/store.js";
 import { ContractStore, type StoredContract } from "../verification/contract.js";
+import { Auditor } from "../verification/audit.js";
 import type { AcceptanceDecisionInput, AcceptanceDecisionOutcome } from "../runners/types.js";
 import { parentImportance, recordAcceptanceDecision, verificationBudgetShortfall } from "./acceptance.js";
 import { paidEndpoints, paidFingerprint, refreshPaidPrices } from "../paid/catalog.js";
@@ -96,6 +97,8 @@ export class Switchyard {
   readonly client: InferenceClient;
   readonly owner: string;
   readonly qualifier: Qualifier;
+  /** Audit sampling: background reviews of passed results, recorded for calibration only. */
+  readonly auditor: Auditor;
   readonly vault: KeyVault;
   readonly brain: Brain;
   readonly brainAccess: BrainAccess;
@@ -173,6 +176,10 @@ export class Switchyard {
     });
     syncRepositoryRegistry(this.db, cfg);
     this.qualifier = new Qualifier(this);
+    this.auditor = new Auditor(
+      { cfg, db: this.db, tasks: this.tasks, artifacts: this.artifacts, admission: this.admission, catalog: this.catalog, router: this.router, contracts: this.contracts, submitTasks: (raw, o) => this.submitTasks(raw, o) },
+      this.now,
+    );
     this.scheduler = new Scheduler(
       cfg,
       this.tasks,
@@ -181,6 +188,7 @@ export class Switchyard {
       () => {
         syncRepositoryRegistry(this.db, this.cfg);
         void this.qualifier.gradePending().catch(() => undefined);
+        void this.auditor.sweep().catch(() => undefined);
       },
       this.sessions,
     );
