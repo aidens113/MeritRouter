@@ -318,8 +318,24 @@ export const VerificationConfigSchema = z
       .prefault({}),
     /** Who accepts strict results: the job's supervisor (model or Claude Code) or only a human. */
     strict_acceptor: z.enum(["supervisor", "human"]).default("supervisor"),
-    /** V3: share of passed results sampled for audit. */
+    /**
+     * Share of passed results sampled for a background audit review (purpose audit). Audits never
+     * block or change acceptance; they only calibrate reviewers and checks. 0 turns them off.
+     */
     audit_sample_rate: z.number().min(0).max(1).default(0),
+    /** Model requests one audit review may use (its own audit task's budget). */
+    audit_max_requests: z.number().int().min(1).max(20).default(4),
+    /**
+     * Audits are skipped while the package allocation is tight: when less than this share of the
+     * hourly or daily allocation (allocation.max_model_requests_per_*) is left.
+     */
+    audit_min_free_fraction: z.number().min(0).max(1).default(0.25),
+    /**
+     * Reuse a decisive verdict (pass or fail) for the same contract, artifact, policy, and source
+     * revisions instead of running the reviewer again. A verdict at a lower level never satisfies a
+     * higher one; a verdict later contradicted (false approval or rejection) is never reused.
+     */
+    cache_verdicts: z.boolean().default(true),
   })
   .strict()
   .superRefine((v, ctx) => {

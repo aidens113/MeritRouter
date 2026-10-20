@@ -83,6 +83,24 @@ and policy fingerprints.
   `switchyard accept|reject <task> --reason ...` or the panel's Accept/Reject buttons (MCP
   `accept_result` acts as the supervisor and is refused for them).
 
+### Calibration
+
+Verification is itself measured. Every reviewer verdict is recorded with its reviewer, level,
+and qualification; what happens afterwards confirms or contradicts it: acceptance or rejection,
+integration onto a job branch, job checks after integration, and undo through attribution (an
+undone or later-failing result that passed is an escaped defect; a reviewer fail the supervisor
+overrules is a false rejection). The panel's Calibration page shows passed-verification vs
+subsequently-confirmed per level and per reviewer, with review cost per accepted task.
+
+- Cached verdicts (`verification.cache_verdicts`, default on): a decisive verdict is reused,
+  at no cost, for the same judged content (contract criteria, artifact digest, policy
+  fingerprint, source revisions) when it was given at the required level or a stricter one, by
+  a reviewer that did not author the task, unless something contradicted it since.
+- Audits (`verification.audit_sample_rate`, default 0): a deterministic sample of results that
+  needed no review is reviewed in the background as a separate `audit` task. Audits never
+  change acceptance and are skipped when the request allocation is tight or tasks are waiting
+  for capacity.
+
 ## Recovery
 
 - State lives in `.switchyard/switchyard.db` (SQLite, WAL). It is written before every

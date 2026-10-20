@@ -1,7 +1,7 @@
 # Task importance and verification policy
 
 Status: Active
-Status detail: V1 (policy, contracts, deterministic checks, acceptance) and V2 (independent review, repair) done 2026-10-19; V3 (calibration) next.
+Status detail: V1, V2, and V3 (calibration) done 2026-10-19; live-model validation outstanding.
 Created: 2026-10-19
 Last updated: 2026-10-19
 Owner: Senior supervisor agent
@@ -69,14 +69,16 @@ changed or deferred where they do not (see "Adjustments to the proposal").
   reviewers are superseded; the watchdog covers reviewers; scoring counts only failed runs as
   retries.
 
-**Not done:** V3 (calibration). Known gaps: the `criterion_evidence` check row still says
-"unverified (claimed)" when a review passed that criterion (display mismatch next to the review
-row); no live model has produced a verdict yet (scripted reviewers only); external-runner repair
-and batch members under review untested; `src/admin/insights.ts` is 824 lines (diagnose before
-it grows further).
+**V3 done (2026-10-19):** `verification/calibration.ts` (verdict records, confirmation
+signals, cached verdicts), `verification/audit.ts` (sampled background audits, off by default),
+`admin/calibration.ts`, panel Calibration page; `criterion_evidence` now shows "passed (review)".
 
-**Next steps:** T1 (agent teams) on `feat/t1-task-graph`; V3 after T1 (it touches insights and
-the panel, which T1's surface work also touches).
+**Not done:** nothing planned. Known gaps: no live model has produced a verdict yet (scripted
+reviewers only); external-runner repair, batch members under review, and failed audit tasks are
+untested; a job check failing after integration counts as an escaped defect for every task
+integrated on that branch (noisy on shared branches).
+
+**Next steps:** live validation against FreeLLMAPI when credentials exist.
 
 **Blockers:** none.
 
@@ -465,6 +467,22 @@ Branch/worktree: `feat/v1-verification` at `D:/sy-wt/v1`. Workers never commit.
   agent-sessions ledger for the combined run.
 - Outcome: Accepted
 - Follow-up: V3; criterion_evidence display mismatch.
+
+---
+
+### 2026-10-19 — V3 calibration
+- Agent: supervisor; worker v3-calibration (`feat/v3-calibration`)
+- Changed: `src/verification/{calibration,audit}.ts`, `checks.ts`, `phase.ts`, attribution undo
+  hook, supervisor tools (integration and job-check signals), service (audit sweep),
+  `admin/calibration.ts`, migration, config keys, panel Calibration page, demo seed; docs
+  `operations.md` (Calibration).
+- Why: phase V3.
+- Validation: branch: typecheck Done, 250 tests passed (supervisor re-ran), panel built; the
+  supervisor saw a page-level horizontal overflow in the screenshots, sent it back; fixed (shared
+  HelpTip popover; root fix assigned to t1-surface) and re-verified scrollWidth === clientWidth
+  at 1400/1024/800/420 by the worker; supervisor inspected the 800 px screenshot.
+- Outcome: Accepted
+- Follow-up: live-model validation.
 
 ---
 

@@ -135,11 +135,46 @@ export async function commitsMatching(repo: string, range: string, filter: Parti
   return ids.map((id) => info.get(id)!).filter((c) => c && Object.entries(filter).every(([k, v]) => c.trailers[k] === v));
 }
 
+/** A commit an undo took back (in whole or in part), with its attribution. */
+export interface UndoneCommit {
+  commit: string;
+  task: string | null;
+  job: string | null;
+  agent: string | null;
+  model: string | null;
+}
+
+/** What an undo did, as the undo hook is told (verification calibration counts it as an escaped defect). */
+export interface UndoneChange {
+  kind: "commits" | "lines";
+  repo: string;
+  /** The undo commit (null when nothing needed committing). */
+  commit: string | null;
+  undone: UndoneCommit[];
+  reason: string;
+  actor: Actor;
+  /** lines: the file and the lines put back. */
+  file?: string;
+  lines?: number[];
+}
+
+/** Told after an undo commits. It never affects the undo: a throwing hook is ignored. */
+export type UndoHook = (change: UndoneChange) => void;
+
+function notifyUndone(hook: UndoHook | undefined, change: UndoneChange): void {
+  if (!hook || !change.commit) return;
+  try {
+    hook(change);
+  } catch {
+    /* the undo is done; recording it is best effort */
+  }
+}
+
 /**
  * Revert whole commits (newest first) in one undo commit. History is kept; the undo commit
- * names what it reverts and why.
+ * names what it reverts and why. `onUndone` is told which commits (and tasks) were undone.
  */
-export async function revertCommits(repo: string, commits: string[], actor: Actor, reason: string): Promise<string | null> {
+export async function revertCommits(repo: string, commits: string[], actor: Actor, reason: string, opts: { onUndone?: UndoHook } = {}): Promise<string | null> {
   if (!commits.length) return null;
   // Newest first in history order (commit dates tie after a cherry-pick, so dates are not enough).
   const wanted = new Set(await Promise.all(commits.map(async (c) => (await git(repo, ["rev-parse", c])).trim())));
@@ -151,9 +186,18 @@ export async function revertCommits(repo: string, commits: string[], actor: Acto
     await git(repo, ["revert", "--abort"]).catch(() => undefined);
     throw new GitError(`undo would conflict with later changes: ${(err as Error).message}; undo specific lines instead`, (err as GitError).exitCode ?? null, (err as GitError).stderr ?? "");
   }
-  return commitAs(repo, actor, `Undo ${ordered.length} commit(s): ${reason}`.slice(0, 200), {
+  const commit = await commitAs(repo, actor, `Undo ${ordered.length} commit(s): ${reason}`.slice(0, 200), {
     extraTrailers: { Reverts: ordered.map((c) => c.slice(0, 12)).join(" "), Reason: reason.slice(0, 300) },
   });
+  if (opts.onUndone && commit) {
+    const info = await commitInfo(repo, ordered);
+    notifyUndone(opts.onUndone, { kind: "commits", repo, commit, reason, actor, undone: ordered.map((c) => undoneCommit(c, info.get(c)?.trailers ?? {})) });
+  }
+  return commit;
+}
+
+function undoneCommit(commit: string, t: Record<string, string>): UndoneCommit {
+  return { commit, task: t.Task ?? null, job: t.Job ?? null, agent: t.Agent ?? null, model: t.Model ?? null };
 }
 
 interface Hunk {
@@ -188,7 +232,7 @@ export async function undoLines(
   ranges: Array<[number, number]>,
   actor: Actor,
   reason: string,
-  opts: { sinceCommit?: string } = {},
+  opts: { sinceCommit?: string; onUndone?: UndoHook } = {},
 ): Promise<{ commit: string | null; undone: number[]; skipped: Array<{ line: number; why: string }> }> {
   const abs = path.join(repo, file);
   if (!existsSync(abs)) throw new Error(`${file} does not exist`);
@@ -213,6 +257,8 @@ export async function undoLines(
   // Edits against current line numbers: replace or delete; extra old lines inserted after a fully selected hunk.
   const replace = new Map<number, string | null>();
   const insertAfter = new Map<number, string[]>();
+  // Commits that had at least one of their lines put back, with the attribution blame gave them.
+  const touched = new Map<string, BlameLine>();
   for (const [commit, picked] of byCommit) {
     const parent = (await git(repo, ["rev-list", "--parents", "-n", "1", commit])).trim().split(" ")[1];
     let hunks: Hunk[] | null = null; // null: the commit has no parent, so every line was added by it
@@ -225,6 +271,7 @@ export async function undoLines(
       const h = hunks?.find((x) => p.origLine >= x.newStart && p.origLine < x.newStart + x.newCount);
       if (!hunks) {
         replace.set(p.line, null); // file created by this commit: the line was added
+        touched.set(commit, p);
         continue;
       }
       if (!h) {
@@ -233,6 +280,7 @@ export async function undoLines(
       }
       const offset = p.origLine - h.newStart;
       replace.set(p.line, offset < h.oldLines.length ? h.oldLines[offset]! : null);
+      touched.set(commit, p);
       const wholeHunk = Array.from({ length: h.newCount }, (_, i) => h.newStart + i).every((o) => pickedOrig.has(o));
       if (wholeHunk && offset === h.newCount - 1 && h.oldLines.length > h.newCount) insertAfter.set(p.line, h.oldLines.slice(h.newCount));
     }
@@ -258,6 +306,16 @@ export async function undoLines(
   const commit = await commitAs(repo, actor, `Undo ${undone.length} line(s) in ${file}: ${reason}`.slice(0, 200), {
     paths: [file],
     extraTrailers: { Undoes: [...byCommit.keys()].map((c) => c.slice(0, 12)).join(" "), Lines: `${file}:${undone.join(",")}`.slice(0, 300), Reason: reason.slice(0, 300) },
+  });
+  notifyUndone(opts.onUndone, {
+    kind: "lines",
+    repo,
+    commit,
+    reason,
+    actor,
+    file,
+    lines: undone,
+    undone: [...touched].map(([c, l]) => ({ commit: c, task: l.task, job: l.job, agent: l.agent, model: l.model })),
   });
   return { commit, undone, skipped };
 }

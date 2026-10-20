@@ -179,6 +179,7 @@ export function verifyOutcome(policy: VerificationConfig, stored: StoredContract
     artifactDigest: ev.artifactDigest ?? null,
     universe: ev.universe ?? null,
     selfReport: ev.output ? selfReportFromOutput(ev.output, contract) : null,
+    review: opts.review?.criteria ?? null,
   });
   const decision = decide({
     policy,
