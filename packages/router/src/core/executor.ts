@@ -9,7 +9,6 @@ import type { Catalog } from "../models/catalog.js";
 import type { TaskRouter, Prepared } from "../routing/router.js";
 import type { RoutePlan } from "../routing/select.js";
 import { effectiveBudget } from "../admission/admission.js";
-import { AdmissionDenied, GatewayError } from "./errors.js";
 import { criterionTexts, WorkerResultSchema, type TaskState, type WorkerResult } from "./task.js";
 import { restoreRunState } from "./retry-state.js";
 import { baseResult, type RetryContext, type RunContext, type RunOutcome, type RunnerResult } from "../runners/types.js";
@@ -24,18 +23,22 @@ import type { Brain } from "../brain/brain.js";
 import type { BrainAccess } from "../brain/access.js";
 import type { SupervisorServices } from "../runners/types.js";
 import { writeWorkerReport } from "../harness/worker.js";
-import { agentLabel, roleForProfile } from "../roles/index.js";
-import type { SessionRecord, SessionStore } from "../sessions/store.js";
+import { roleForProfile } from "../roles/index.js";
+import type { SessionStore } from "../sessions/store.js";
 import type { SessionRecorder } from "../sessions/recorder.js";
 import type { SessionEndStatus } from "../sessions/events.js";
 import type { ResumePlan } from "../sessions/resume.js";
+import { endRunSession, interruptedTier, jobIdFor, openRunSession, resumeFor, sessionEnd, type RunResume } from "../sessions/run-sessions.js";
 import { isSimulatedCrash } from "./faults.js";
 import { withUpstreamContext } from "../context/upstream.js";
-import { sessionProgress, watchdogVerdict } from "./watchdog.js";
-import { MAX_AUTO_RESUMES } from "./scheduler.js";
+import { abortStuckRuns, requeueStuck, type WatchedRun } from "./watchdog.js";
+import { classifyFailure, dispositionSessionEnd, WATCHDOG_STOP, type AbortReason, type Disposition } from "./disposition.js";
 import { redundancyFor } from "../storage/plans.js";
 import { planRedundancy, raceTwins, redundancyRefused, REDUNDANCY_SKIPPED, type RedundancyPlan, type TwinResult } from "./redundancy.js";
-import { z } from "zod";
+
+// Moved to their owning modules; re-exported so existing importers keep working.
+export { authorSessions, DELEGATED_BY_SESSION, ResumeDirectiveSchema, sessionEnd, type ResumeDirective } from "../sessions/run-sessions.js";
+export { WATCHDOG_STOP, type AbortReason } from "./disposition.js";
 
 /** The working document a task belongs to: its job's, an explicit one, or the shared ad-hoc one. */
 export function effortFor(spec: { profile: string; parentTaskId?: string | undefined; brain?: { effort?: string | undefined } | undefined }, taskId: string): string {
@@ -44,11 +47,6 @@ export function effortFor(spec: { profile: string; parentTaskId?: string | undef
   if (spec.parentTaskId) return `job-${spec.parentTaskId}`;
   return "adhoc";
 }
-
-export type AbortReason = "cancel" | "deadline" | "lease_lost" | "shutdown" | "watchdog";
-
-/** Stop reason of a session the progress watchdog aborted; the task is re-queued to resume it. */
-export const WATCHDOG_STOP = "watchdog";
 
 export interface CodingRunner {
   run(ctx: RunContext): Promise<RunOutcome>;
@@ -77,11 +75,6 @@ export interface ExecutorDeps {
   onSettled: (taskId: string) => void;
 }
 
-type Disposition =
-  | { kind: "final"; state: RunOutcome["state"]; stopReason: string; summary?: string }
-  | { kind: "defer"; at: number; reason: string }
-  | { kind: "abandon"; reason: string };
-
 interface Routing {
   classification: Classification | null;
   tier: TierName | null;
@@ -89,60 +82,13 @@ interface Routing {
   attempts: GateAttempt[];
 }
 
-/** Task event written when a session delegates the task (see `Switchyard.submitTasks`). */
-export const DELEGATED_BY_SESSION = "delegated_by_session";
-const DelegatedBySchema = z.object({ sessionId: z.string().min(1) });
-
-/**
- * Data of the task event `resumed` (see `TaskStore.resume`): how the next run should start.
- * `sessionId` resumes that session; `freshWorkspace` starts a coding task over in a new
- * worktree (the operator's `resume <task>`). Without either, an interrupted latest session is
- * resumed when its role allows it.
- */
-export const ResumeDirectiveSchema = z.object({ sessionId: z.string().min(1).optional(), freshWorkspace: z.boolean().optional() }).strict();
-export type ResumeDirective = z.infer<typeof ResumeDirectiveSchema>;
-
-/** Profile modes whose runs continue an interrupted session (agent loops); the others re-run fresh. */
-const RESUMABLE_MODES = new Set(["read_only", "coding", "supervisor"]);
-
-/** A run's outcome state as a session end status: a spent budget is a failure with that reason. */
-export function sessionEnd(state: RunOutcome["state"], stopReason: string): { status: SessionEndStatus; stopReason: string } {
-  if (state === "budget_exhausted") return { status: "failed", stopReason: "budget_exhausted" };
-  return { status: state, stopReason: stopReason || state };
-}
-
-/**
- * The task's own runs, oldest first: not its classifier sessions, and not the reviewer sessions
- * that are children of its runs (a reviewer's parent is a session of the same task).
- */
-export function authorSessions(store: SessionStore, taskId: string): SessionRecord[] {
-  const all = store.forTask(taskId);
-  const ids = new Set(all.map((s) => s.id));
-  return all.filter((s) => s.role !== "classifier" && !(s.parentSessionId && ids.has(s.parentSessionId)));
-}
-
-/** The author session a session belongs to: itself, or for a reviewer the run it reviewed. */
-function authorOf(store: SessionStore, s: SessionRecord): SessionRecord | null {
-  if (!s.taskId || !s.parentSessionId) return s;
-  const parent = store.get(s.parentSessionId);
-  return parent && parent.taskId === s.taskId ? parent : s;
-}
-
-/** The job a task belongs to: a supervise task is its own job; a delegated task belongs to its parent's. */
-function jobIdFor(task: StoredTask): string | null {
-  return task.spec.profile === "supervise" ? task.row.id : (task.spec.parentTaskId ?? null);
-}
-
 /** Runs claimed units (single tasks or prompt batches) and records their outcomes. */
 export class Executor {
   readonly controllers = new Map<string, AbortController>();
   private readonly routing = new Map<string, Routing>();
   private readonly reports = new Set<Promise<unknown>>();
-  /**
-   * Single-task runs the progress watchdog looks at: the run's (author's) session, the reviewer
-   * session while a review runs (the one making progress then), and when that phase began.
-   */
-  private readonly watched = new Map<string, { task: StoredTask; controller: AbortController; session: () => SessionRecorder | null; reviewer: SessionRecorder | null; phaseAt: number }>();
+  /** Single-task runs the progress watchdog looks at (see `WatchedRun`). */
+  private readonly watched = new Map<string, WatchedRun>();
 
   /** Wait for pending brain report writes (called on shutdown). */
   async flush(): Promise<void> {
@@ -151,108 +97,20 @@ export class Executor {
 
   constructor(private readonly d: ExecutorDeps) {}
 
-  /**
-   * Open the session for one run of a task: a recovery re-run or an escalation links to the
-   * task's previous run, and a delegated task to the session that delegated it.
-   */
+  /** Open the session for one run of a task (see `openRunSession`). */
   private openSession(task: StoredTask, plan: RoutePlan, previousSessionId?: string | null): SessionRecorder | null {
-    const store = this.d.sessions;
-    if (!store) return null;
-    const id = task.row.id;
-    const role = roleForProfile(task.spec.profile);
-    const previous = previousSessionId !== undefined ? previousSessionId : (authorSessions(store, id).at(-1)?.id ?? null);
-    const delegatedBy = this.d.tasks
-      .events(id, 500)
-      .filter((e) => e.type === DELEGATED_BY_SESSION)
-      .map((e) => DelegatedBySchema.safeParse(e.data))
-      .find((r) => r.success)?.data?.sessionId;
-    return store.create({
-      taskId: id,
-      jobId: jobIdFor(task),
-      parentSessionId: delegatedBy ?? null,
-      previousSessionId: previous,
-      role,
-      agentLabel: agentLabel(role, task.spec.label ?? id),
-      profile: task.spec.profile,
-      tier: plan.tier,
-    });
+    return openRunSession(this.d, task, plan, previousSessionId);
   }
 
-  /** The directive of the `resumed` task event that queued the current run, if any. */
-  private resumeDirective(taskId: string): ResumeDirective {
-    const events = this.d.tasks.events(taskId, 500);
-    let claim = -1;
-    for (let i = events.length - 1; i >= 0; i--) {
-      if (events[i]!.type === "claimed") {
-        claim = i;
-        break;
-      }
-    }
-    for (let i = claim - 1; i >= 0; i--) {
-      const e = events[i]!;
-      if (e.type === "claimed") break;
-      if (e.type === "resumed") {
-        const d = ResumeDirectiveSchema.safeParse(e.data ?? {});
-        return d.success ? d.data : {};
-      }
-    }
-    return {};
-  }
-
-  /**
-   * The resume rule: a run continues the task's latest session (or the one a directive names)
-   * when that session is `interrupted` and the task's mode is an agent loop, unless the
-   * operator asked a coding task to start over. The session is reopened and its plan returned;
-   * null means a fresh run (linked to the previous session).
-   */
-  private resumeFor(task: StoredTask): { session: SessionRecorder; plan: ResumePlan } | null {
-    const store = this.d.sessions;
-    const mode = this.d.cfg.profiles[task.spec.profile]?.mode;
-    if (!store || !mode || !RESUMABLE_MODES.has(mode)) return null;
-    const directive = this.resumeDirective(task.row.id);
-    if (directive.freshWorkspace && mode === "coding" && !directive.sessionId) return null;
-    const named = directive.sessionId ? store.get(directive.sessionId) : null;
-    // A reviewer is never resumed: the run continues the author's session it reviewed (an
-    // accepted submission then finishes without a request and verification runs again).
-    const target = named ? authorOf(store, named) : (authorSessions(store, task.row.id).at(-1) ?? null);
-    if (!target || target.taskId !== task.row.id || target.status !== "interrupted") return null;
-    const plan = store.planResume(target.id, { recoverEdits: this.d.cfg.sessions.recover_edits });
-    if (!plan || plan.messages.length === 0) return null; // nothing logged: start fresh
-    const session = store.reopen(target.id);
-    this.d.tasks.event(task.row.id, "session_resumed", { sessionId: target.id, actions: plan.actions.map((a) => a.kind), warnings: plan.warnings });
-    return { session, plan };
-  }
-
-  /**
-   * The tier of the run this one continues after an interruption: the resumed session's, or
-   * the latest author session's when it ended `interrupted` (crash, shutdown, lease loss,
-   * watchdog, capacity deferral). Null when the previous run ended otherwise or there is none.
-   */
-  private interruptedTier(task: StoredTask, resume: { session: SessionRecorder } | null): TierName | null {
-    const store = this.d.sessions;
-    if (!store) return null;
-    const last = resume ? store.get(resume.session.id) : (authorSessions(store, task.row.id).at(-1) ?? null);
-    if (!last || (!resume && last.status !== "interrupted")) return null;
-    return last.tier;
-  }
-
-  /** End a run's session. The task outcome is already decided, so a recording failure is logged, not thrown. */
+  /** End a run's session; a recording failure is logged, not thrown (see `endRunSession`). */
   private endSession(task: StoredTask, session: SessionRecorder | null, status: SessionEndStatus, stopReason: string): void {
-    if (!session || session.ended) return;
-    try {
-      session.end(status, stopReason);
-    } catch (err) {
-      this.d.tasks.event(task.row.id, "session_record_failed", { sessionId: session.id, error: (err as Error).message });
-    }
+    endRunSession(this.d.tasks, task, session, status, stopReason);
   }
 
   /** End a session for a disposition reached without a runner outcome (errors, aborts, deferrals). */
   private endForDisposition(task: StoredTask, session: SessionRecorder | null, d: Disposition): void {
-    if (d.kind === "final") {
-      const e = sessionEnd(d.state, d.stopReason);
-      this.endSession(task, session, e.status, e.stopReason);
-    } else if (d.kind === "defer") this.endSession(task, session, "interrupted", `deferred_for_capacity: ${d.reason}`);
-    else this.endSession(task, session, "interrupted", d.reason);
+    const e = dispositionSessionEnd(d);
+    this.endSession(task, session, e.status, e.stopReason);
   }
 
   private context(
@@ -462,9 +320,9 @@ export class Executor {
       let previous: string | null | undefined;
       const forced = !!task.spec.routing?.endpointId;
       // Only the first attempt resumes; an escalation always starts fresh.
-      let resume: ReturnType<Executor["resumeFor"]> = null;
+      let resume: RunResume | null = null;
       try {
-        resume = this.resumeFor(task);
+        resume = resumeFor(this.d, task);
       } catch (err) {
         // An unreadable or already-claimed session: run fresh (linked to it) rather than not at all.
         this.d.tasks.event(task.row.id, "session_resume_failed", { error: (err as Error).message });
@@ -472,7 +330,7 @@ export class Executor {
       // Verification and the one retry span the task's runs: a run after an interruption
       // continues them (the same repair run, at its tier) instead of starting over.
       const exempt = mode === "supervisor" || forced || (task.row as typeof task.row & { purpose?: string }).purpose === "qualification";
-      const continued = continueRun(this.d, task, plan, prepared.inputModalities, { interruptedTier: () => this.interruptedTier(task, resume), exempt });
+      const continued = continueRun(this.d, task, plan, prepared.inputModalities, { interruptedTier: () => interruptedTier(this.d.sessions, task, resume), exempt });
       const st = continued.st;
       let retry: RetryContext | null = continued.retry;
       let repairing = continued.repairing;
@@ -685,63 +543,13 @@ export class Executor {
   }
 
   private classify(err: unknown, signal: AbortSignal, task: StoredTask): Disposition {
-    const reason = signal.aborted ? (signal.reason as AbortReason) : null;
-    if (reason === "cancel") return { kind: "final", state: "cancelled", stopReason: "cancelled while running" };
-    if (reason === "lease_lost") return { kind: "abandon", reason: "lease lost" };
-    if (reason === "shutdown") return { kind: "abandon", reason: "shutdown" };
-    if (reason === "watchdog") return { kind: "abandon", reason: WATCHDOG_STOP };
-    if (reason === "deadline") return { kind: "final", state: "failed", stopReason: "deadline_exceeded" };
-
-    const now = this.d.now();
-    const deadline = this.d.tasks.get(task.row.id)?.row.deadline_at ?? Infinity;
-    const capacity = (at: number, why: string): Disposition =>
-      this.d.cfg.execution.on_capacity_exhausted === "queue" && at < deadline
-        ? { kind: "defer", at, reason: why }
-        : { kind: "final", state: "failed", stopReason: `capacity_exhausted: ${why}` };
-
-    if (err instanceof AdmissionDenied) {
-      switch (err.reason) {
-        case "cancel_requested":
-          return { kind: "final", state: "cancelled", stopReason: "cancelled before dispatch" };
-        case "lease_lost":
-        case "task_not_active":
-          return { kind: "abandon", reason: err.reason };
-        case "deadline_exceeded":
-          return { kind: "final", state: "failed", stopReason: "deadline_exceeded" };
-        case "task_request_budget_exhausted":
-        case "task_token_budget_exhausted":
-          return { kind: "final", state: "budget_exhausted", stopReason: `${err.reason}: ${err.message}` };
-        case "paid_budget_exhausted":
-          return { kind: "final", state: "failed", stopReason: `paid_budget_exhausted: ${err.message}` };
-        case "package_hourly_allocation_exhausted":
-        case "package_daily_allocation_exhausted":
-          return capacity(err.retryAt ?? now + 60_000, err.message);
-        default:
-          return { kind: "final", state: "failed", stopReason: `${err.reason}: ${err.message}` };
-      }
-    }
-    if (err instanceof GatewayError) {
-      switch (err.kind) {
-        case "rate_limited":
-        case "pool_exhausted":
-          return capacity(now + Math.max(5_000, err.retryAfterMs ?? 60_000), err.message);
-        case "transport":
-        case "timeout":
-        case "server":
-          return capacity(now + 30_000, err.message);
-        case "aborted":
-          return { kind: "final", state: "cancelled", stopReason: "aborted" };
-        default:
-          return { kind: "final", state: "failed", stopReason: `gateway_${err.kind}: ${err.message}` };
-      }
-    }
-    return { kind: "final", state: "failed", stopReason: `internal_error: ${(err as Error)?.message ?? String(err)}` };
+    return classifyFailure(err, signal, { cfg: this.d.cfg, now: () => this.d.now(), deadline: () => this.d.tasks.get(task.row.id)?.row.deadline_at ?? Infinity });
   }
 
   private settle(task: StoredTask, d: Disposition, partial?: RunnerResult): void {
     if (d.kind === "abandon") {
       if (d.reason === "shutdown") this.d.tasks.interrupt(task.row.id, this.d.owner, "worker shut down");
-      if (d.reason === WATCHDOG_STOP) this.requeueStuck(task);
+      if (d.reason === WATCHDOG_STOP) requeueStuck(this.d.tasks, this.d.owner, task, this.watched.get(task.row.id));
       this.d.onSettled(task.row.id);
       return;
     }
@@ -797,43 +605,9 @@ export class Executor {
     this.d.onSettled(task.row.id);
   }
 
-  /**
-   * Progress watchdog (called on every scheduler tick): a running session with no new event for
-   * longer than its allowance (see `watchdogVerdict`) is aborted with reason `watchdog`. The
-   * run then ends its session `interrupted` (`watchdog`) and the task is re-queued, so the next
-   * run resumes the session from its last durable event. Returns the aborted task ids.
-   */
+  /** Progress watchdog, called on every scheduler tick (see `abortStuckRuns`). Returns the aborted task ids. */
   checkWatchdog(): string[] {
-    if (this.d.cfg.execution.watchdog_minutes <= 0) return [];
-    const aborted: string[] = [];
-    for (const [taskId, w] of this.watched) {
-      // During a review the reviewer's session is the one that must make progress (it runs no checks).
-      const reviewing = !!w.reviewer && !w.reviewer.ended;
-      const session = reviewing ? w.reviewer : w.session();
-      if (w.controller.signal.aborted || !session || session.ended) continue;
-      const progress = sessionProgress(this.d.db, session.id);
-      if (!progress) continue;
-      // Idle time counts from the later of the session's last event and the last phase switch
-      // (a review starting or ending), so time spent in another session is not held against it.
-      const v = watchdogVerdict(this.d.cfg, { ...progress, at: Math.max(progress.at, w.phaseAt) }, this.d.now(), { checks: reviewing ? 0 : (w.task.spec.constraints.checks?.length ?? 0), repositories: w.task.spec.repositoryAliases.length });
-      if (v.kind !== "stuck") continue;
-      this.d.tasks.event(taskId, "watchdog_abort", { sessionId: session.id, ...(reviewing ? { role: "reviewer" } : {}), idleMs: v.idleMs, allowanceMs: v.allowanceMs, waitingOn: v.waitingOn });
-      w.controller.abort("watchdog" satisfies AbortReason);
-      aborted.push(taskId);
-    }
-    return aborted;
-  }
-
-  /**
-   * A run the watchdog stopped: interrupted, then queued again to resume its session (bounded
-   * like recovery). The author's session is named even when a reviewer was the one stuck.
-   */
-  private requeueStuck(task: StoredTask): void {
-    this.d.tasks.interrupt(task.row.id, this.d.owner, "no progress: stopped by the watchdog");
-    const now = this.d.tasks.get(task.row.id);
-    if (now?.row.state !== "interrupted" || now.row.run_count >= MAX_AUTO_RESUMES) return;
-    const sessionId = this.watched.get(task.row.id)?.session()?.id;
-    this.d.tasks.resume(task.row.id, sessionId ? { sessionId } : {});
+    return abortStuckRuns(this.d, this.watched);
   }
 
   abortAll(reason: AbortReason): void {

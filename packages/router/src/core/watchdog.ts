@@ -1,5 +1,9 @@
 import type { ResolvedConfig } from "../config/load.js";
 import type { Db } from "../storage/db.js";
+import type { StoredTask, TaskStore } from "../storage/tasks.js";
+import type { SessionRecorder } from "../sessions/recorder.js";
+import type { AbortReason } from "./disposition.js";
+import { MAX_AUTO_RESUMES } from "./scheduler.js";
 
 /** Slack added to a bounded operation's own timeout before the watchdog calls it stuck. */
 export const WATCHDOG_MARGIN_MS = 60_000;
@@ -68,4 +72,55 @@ export function watchdogVerdict(cfg: ResolvedConfig, progress: SessionProgress, 
   const allowanceMs = Math.max(base, bound > 0 ? bound + WATCHDOG_MARGIN_MS : 0);
   const idleMs = Math.max(0, now - progress.at);
   return { kind: idleMs > allowanceMs ? "stuck" : "ok", idleMs, allowanceMs, waitingOn };
+}
+
+/**
+ * A single-task run the progress watchdog looks at: the run's (author's) session, the reviewer
+ * session while a review runs (the one making progress then), and when that phase began.
+ */
+export interface WatchedRun {
+  task: StoredTask;
+  controller: AbortController;
+  session: () => SessionRecorder | null;
+  reviewer: SessionRecorder | null;
+  phaseAt: number;
+}
+
+/**
+ * Progress watchdog (called on every scheduler tick): a running session with no new event for
+ * longer than its allowance (see `watchdogVerdict`) is aborted with reason `watchdog`. The
+ * run then ends its session `interrupted` (`watchdog`) and the task is re-queued, so the next
+ * run resumes the session from its last durable event. Returns the aborted task ids.
+ */
+export function abortStuckRuns(d: { cfg: ResolvedConfig; db: Db; tasks: TaskStore; now: () => number }, watched: ReadonlyMap<string, WatchedRun>): string[] {
+  if (d.cfg.execution.watchdog_minutes <= 0) return [];
+  const aborted: string[] = [];
+  for (const [taskId, w] of watched) {
+    // During a review the reviewer's session is the one that must make progress (it runs no checks).
+    const reviewing = !!w.reviewer && !w.reviewer.ended;
+    const session = reviewing ? w.reviewer : w.session();
+    if (w.controller.signal.aborted || !session || session.ended) continue;
+    const progress = sessionProgress(d.db, session.id);
+    if (!progress) continue;
+    // Idle time counts from the later of the session's last event and the last phase switch
+    // (a review starting or ending), so time spent in another session is not held against it.
+    const v = watchdogVerdict(d.cfg, { ...progress, at: Math.max(progress.at, w.phaseAt) }, d.now(), { checks: reviewing ? 0 : (w.task.spec.constraints.checks?.length ?? 0), repositories: w.task.spec.repositoryAliases.length });
+    if (v.kind !== "stuck") continue;
+    d.tasks.event(taskId, "watchdog_abort", { sessionId: session.id, ...(reviewing ? { role: "reviewer" } : {}), idleMs: v.idleMs, allowanceMs: v.allowanceMs, waitingOn: v.waitingOn });
+    w.controller.abort("watchdog" satisfies AbortReason);
+    aborted.push(taskId);
+  }
+  return aborted;
+}
+
+/**
+ * A run the watchdog stopped: interrupted, then queued again to resume its session (bounded
+ * like recovery). The author's session is named even when a reviewer was the one stuck.
+ */
+export function requeueStuck(tasks: TaskStore, owner: string, task: StoredTask, watched: WatchedRun | undefined): void {
+  tasks.interrupt(task.row.id, owner, "no progress: stopped by the watchdog");
+  const now = tasks.get(task.row.id);
+  if (now?.row.state !== "interrupted" || now.row.run_count >= MAX_AUTO_RESUMES) return;
+  const sessionId = watched?.session()?.id;
+  tasks.resume(task.row.id, sessionId ? { sessionId } : {});
 }
