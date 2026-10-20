@@ -1,8 +1,10 @@
 import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
-import { ConfigSchema, MODALITIES, PROFILE_NAMES, TIER_NAMES, type Importance, type Modality, type ProfileName, type TierName } from "../config/schema.js";
-import { formatIssues, parseConfig } from "../config/load.js";
+import { MODALITIES, PROFILE_NAMES, TIER_NAMES, type Importance, type Modality, type ProfileName, type TierName } from "../config/schema.js";
+import { formatIssues } from "../config/load.js";
+import { patchConfig } from "./config-edit.js";
+import { providerKeysView } from "./provider-keys.js";
 import type { Switchyard } from "../core/service.js";
 import { criteria as taskCriteria, type Criterion, type SupervisorDecision, type TaskState, type VerificationRecord, type WorkerResult, type WorkerTask } from "../core/task.js";
 import { verificationTrail, type TaskVerificationTrail } from "../verification/trail.js";
@@ -37,10 +39,8 @@ export function workers(sy: Switchyard, withinMs = 15_000): WorkerInfo[] {
 
 export interface Overview {
   generatedAt: number;
-  /** At least one provider key (or keyless provider) is usable. */
-  gatewayConfigured: boolean;
-  /** Always true: scanning needs no separate token (kept for the panel until P3 reworks it). */
-  adminConfigured: boolean;
+  /** Provider keys (and keyless providers) that can be used, before cooldowns and limits. */
+  usableKeys: number;
   workers: WorkerInfo[];
   usage24h: UsageSummary;
   usage7d: UsageSummary;
@@ -62,16 +62,17 @@ export async function overview(sy: Switchyard): Promise<Overview> {
   for (const e of eps) models[e.status]++;
   models.routable = eps.filter((e) => e.status === "active" && e.available).length;
   const attention: string[] = [];
-  const gatewayConfigured = sy.providers.credentials().list().some((c) => c.unusableReason === null);
-  if (!gatewayConfigured) attention.push("Add a provider key (under providers in the config) so tasks can reach a model.");
+  const usable = sy.providers.credentials().list().filter((c) => c.unusableReason === null);
+  if (!usable.length) attention.push("Add a provider key on the Provider keys page (or under providers in the config) so tasks can reach a model.");
+  const switchedOff = providerKeysView(sy).providers.flatMap((p) => p.keys).filter((k) => k.status === "invalid" || k.status === "out_of_credits").length;
+  if (switchedOff) attention.push(`${switchedOff} provider key(s) are invalid or out of credits; see the Provider keys page.`);
   if (models.pending_confirmation) attention.push(`${models.pending_confirmation} model(s) need a confirmed parameter count before they can be used.`);
   if (eps.length === 0) attention.push("No models in the catalog yet. Run a scan from the Models page.");
   const s = sy.usage(now - DAY);
   if (s.policyViolations) attention.push(`${s.policyViolations} served-model policy violation(s) in the last 24h; affected models are quarantined.`);
   return {
     generatedAt: now,
-    gatewayConfigured,
-    adminConfigured: true,
+    usableKeys: usable.length,
     workers: workers(sy),
     usage24h: s,
     usage7d: sy.usage(now - 7 * DAY),
@@ -444,48 +445,9 @@ export function artifactText(sy: Switchyard, ref: string, maxBytes = 200_000): {
   return { row: a.row, text: a.content.subarray(0, maxBytes).toString("utf8"), truncated };
 }
 
-// ---------- configuration editing ----------
+// ---------- configuration editing (config-edit.ts) ----------
 
-export function readConfigText(sy: Switchyard): string {
-  return readFileSync(sy.cfg.configPath, "utf8");
-}
-
-export function validateConfigText(text: string, configPath: string): { ok: true } | { ok: false; errors: string[] } {
-  let raw: unknown;
-  try {
-    raw = YAML.parse(text);
-  } catch (err) {
-    return { ok: false, errors: [`YAML: ${(err as Error).message}`] };
-  }
-  const parsed = ConfigSchema.safeParse(raw);
-  if (!parsed.success) return { ok: false, errors: formatIssues(parsed.error.issues) };
-  try {
-    parseConfig(raw, configPath);
-  } catch (err) {
-    return { ok: false, errors: [(err as Error).message] };
-  }
-  return { ok: true };
-}
-
-/** Validate, back up the previous file, and write. Running workers reload it automatically. */
-export function writeConfigText(sy: Switchyard, text: string): { ok: true } | { ok: false; errors: string[] } {
-  const v = validateConfigText(text, sy.cfg.configPath);
-  if (!v.ok) return v;
-  copyFileSync(sy.cfg.configPath, `${sy.cfg.configPath}.bak`);
-  writeFileSync(sy.cfg.configPath, text);
-  sy.reloadIfChanged();
-  return { ok: true };
-}
-
-/** Apply a structured patch (e.g. from a settings form) to the YAML, preserving comments. */
-export function patchConfig(sy: Switchyard, patch: Array<{ path: Array<string | number>; value: unknown }>): { ok: true } | { ok: false; errors: string[] } {
-  const doc = YAML.parseDocument(readConfigText(sy));
-  for (const p of patch) {
-    if (p.value === undefined || p.value === null) doc.deleteIn(p.path);
-    else doc.setIn(p.path, p.value);
-  }
-  return writeConfigText(sy, doc.toString());
-}
+export { readConfigText, validateConfigText, writeConfigText, patchConfig } from "./config-edit.js";
 
 export function configSchemaInfo() {
   return { profiles: PROFILE_NAMES, tiers: TIER_NAMES, modalities: MODALITIES };
@@ -532,25 +494,8 @@ export function addRoutingOverride(sy: Switchyard, o: RoutingOverride): number {
   return sy.catalog.addRoutingOverride(o);
 }
 
-// ---------- paid routes ----------
-
-/** Spend against budgets, per key and per model (keys never include secrets). */
-export function paidSummary(sy: Switchyard) {
-  return { enabled: sy.cfg.paid.enabled, tiers: sy.cfg.paid.tiers, providers: Object.keys(sy.cfg.paid.providers), ...sy.spend.summary() };
-}
-
-export function addPaidKey(sy: Switchyard, input: Parameters<Switchyard["vault"]["add"]>[0]) {
-  if (!sy.cfg.paid.providers[input.provider]) throw new Error(`unknown paid provider ${input.provider}; add it under paid.providers first`);
-  return sy.vault.add(input);
-}
-
-export function updatePaidKey(sy: Switchyard, id: number, patch: Parameters<Switchyard["vault"]["update"]>[1]) {
-  return sy.vault.update(id, patch);
-}
-
-export function removePaidKey(sy: Switchyard, id: number): void {
-  sy.vault.remove(id);
-}
+// Provider keys (vault and config), key tests, custom providers, and paid spend.
+export * from "./provider-keys.js";
 
 // ---------- qualification ----------
 

@@ -62,7 +62,7 @@ export default function QualificationPage() {
         actions={<AutoRefresh seconds={10} />}
       />
       <Callout tone="warn" icon={<FlaskConical size={16} />} title="Qualification uses your free quota">
-        Each run sends real requests through FreeLLMAPI ({perRun ? `up to ${perRun} per model with the current suite` : "a few dozen per model"}), capped at {q.max_requests_per_day} qualification requests per day. Runs execute only while a worker is active.
+        Each run sends real requests to the model's provider with your keys ({perRun ? `up to ${perRun} per model with the current suite` : "a few dozen per model"}), capped at {q.max_requests_per_day} qualification requests per day. Runs execute only while a worker is active.
       </Callout>
       {board.fallbackReason ? (
         <Callout tone="neutral" title="Evaluation suite unavailable">

@@ -11,9 +11,13 @@ import {
   KeyVault,
   ProviderCredentials,
   ProviderError,
+  ProviderKeys,
   createProviderClient,
+  maskSecrets,
   parseRateLimitHeaders,
   parseResetValue,
+  requestJson,
+  requestSecrets,
   resolveProviders,
   type FetchLike,
   type ProviderRequest,
@@ -372,5 +376,73 @@ describe("rate-limit header families", () => {
     expect(parseResetValue(String(NOW + 5000), NOW)).toBe(NOW + 5000);
     expect(parseResetValue("2026-10-20T12:00:10Z", NOW)).toBe(NOW + 10_000);
     expect(parseResetValue("soon", NOW)).toBeNull();
+  });
+});
+
+describe("secrets in provider errors", () => {
+  let dir: string | undefined;
+  let db: Db | undefined;
+  afterEach(() => {
+    db?.close();
+    db = undefined;
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    dir = undefined;
+  });
+
+  const KEY = "sk-echoed-secret-0123456789-WXYZ";
+  const GOOGLE_KEY = "AIzaSyEchoedGoogleKey-0123-QRST";
+  const spec = { family: "none" as const, requestsPeriod: "unknown" as const, tokensPeriod: "unknown" as const };
+
+  it("masks every secret the request carried, wherever the error text came from, and key state stores only the masked text", async () => {
+    // A 401 body echoing the bearer key, straight from the transport.
+    const echoed = await failure(
+      requestJson(fakeFetch(() => json({ error: { message: `Invalid API Key: ${KEY}` } }, 401)), { provider: "groq", url: "https://api.groq.com/openai/v1/models", headers: { authorization: `Bearer ${KEY}` }, timeoutMs: 5000, rateLimitHeaders: spec }, () => NOW),
+    );
+    expect(echoed).toMatchObject({ reason: "auth_invalid", status: 401 });
+    expect(echoed.message).not.toContain(KEY);
+    expect(echoed.message).toContain("Invalid API Key: ...WXYZ");
+
+    // A network failure whose text quotes the URL, key query parameter included (raw and encoded).
+    const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${GOOGLE_KEY}`;
+    const unreachable = await failure(
+      requestJson(() => Promise.reject(new TypeError(`fetch failed: getaddrinfo ENOTFOUND for ${url} (${encodeURIComponent(url)})`)), { provider: "google", url, headers: { accept: "application/json" }, timeoutMs: 5000, rateLimitHeaders: spec }, () => NOW),
+    );
+    expect(unreachable).toMatchObject({ reason: "transport", possiblyConsumed: true });
+    expect(unreachable.message).not.toContain(GOOGLE_KEY);
+    expect(unreachable.message).toContain("key=...QRST");
+
+    // Through the client: a 401 echo, and an error inside an HTTP 200 body echoing the key.
+    const client401 = await failure(createProviderClient({ fetch: fakeFetch(() => json({ error: { message: `bad key ${KEY}` } }, 401)) }).complete(request(provider("groq"), { credential: { apiKey: KEY } })));
+    expect(client401.message).not.toContain(KEY);
+    const in200 = await failure(createProviderClient({ fetch: fakeFetch(() => json({ error: { code: 401, message: `No auth credentials found for ${KEY}` } }, 200)) }).complete(request(provider("openrouter"), { credential: { apiKey: KEY } })));
+    expect(in200).toMatchObject({ reason: "auth_invalid", status: 200 });
+    expect(in200.message).not.toContain(KEY);
+    expect(in200.message).toContain("...WXYZ");
+
+    // What key state records is the masked message.
+    dir = mkdtempSync(path.join(os.tmpdir(), "sy-mask-"));
+    db = openDatabase(dir);
+    const keys = new ProviderKeys(db, () => NOW);
+    for (const [i, err] of [echoed, unreachable, client401, in200].entries()) {
+      keys.recordFailure(`k${i}`, err);
+      const stored = keys.get(`k${i}`)!.lastError!;
+      expect(stored).not.toContain(KEY);
+      expect(stored).not.toContain(GOOGLE_KEY);
+    }
+    const row = db.prepare("SELECT group_concat(last_error, ' | ') AS all_errors FROM provider_key_state").get() as { all_errors: string };
+    expect(row.all_errors).not.toContain(KEY);
+    expect(row.all_errors).not.toContain(GOOGLE_KEY);
+  });
+
+  it("masks credential headers after their scheme, key query parameters, and leaves short or absent secrets alone", () => {
+    expect(requestSecrets({ authorization: "Bearer abc-123-secret", "x-goog-api-key": "goog-secret-1", accept: "application/json", "anthropic-version": "2023-06-01" }, "https://h.test/p?key=q-secret-77&page=2")).toEqual([
+      "Bearer abc-123-secret",
+      "abc-123-secret",
+      "goog-secret-1",
+      "q-secret-77",
+    ]);
+    expect(maskSecrets("a abc-123-secret b", ["abc-123-secret"])).toBe("a ...cret b");
+    expect(maskSecrets("short abc12 here", ["abc12"])).toBe("short [redacted] here");
+    expect(maskSecrets("nothing to hide", [null, undefined, "ab"])).toBe("nothing to hide");
   });
 });

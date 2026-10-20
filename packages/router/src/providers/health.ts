@@ -49,6 +49,16 @@ function requestsRemainingPct(states: ReadonlyArray<KeyState | undefined>, now: 
   return limit > 0 ? Math.round((100 * remaining) / limit) : null;
 }
 
+/**
+ * The key's last error while it still describes the key: recorded after its last success. An
+ * error a later success resolved is history, not health (key state keeps it for display).
+ */
+export function currentError(state: Pick<KeyState, "lastError" | "lastErrorAt" | "lastSuccessAt"> | null | undefined): { message: string; at: number } | null {
+  if (!state || state.lastError === null || state.lastErrorAt === null) return null;
+  if (state.lastSuccessAt !== null && state.lastSuccessAt >= state.lastErrorAt) return null;
+  return { message: state.lastError, at: state.lastErrorAt };
+}
+
 /** Health of one provider from its credentials and their recorded state. */
 export function providerHealth(provider: ResolvedProvider, credentials: ReadonlyArray<ProviderCredential>, keys: ProviderKeys, opts: ProviderHealthOptions = {}): ProviderHealthDetail {
   const creds = credentials.filter((c) => c.provider === provider.id);
@@ -69,7 +79,11 @@ export function providerHealth(provider: ResolvedProvider, credentials: Readonly
     const times = usable.filter((a) => !disabled(a)).map((a) => a.until);
     resumeAt = times.every((t) => t !== null) ? Math.min(...(times as number[])) : null;
   }
-  const recorded = [...states.values()].filter((s) => s.lastError !== null && s.lastErrorAt !== null).sort((a, b) => b.lastErrorAt! - a.lastErrorAt!);
+  // The newest error that no later success on the same key resolved.
+  const recorded = [...states.values()]
+    .map(currentError)
+    .filter((e): e is NonNullable<typeof e> => e !== null)
+    .sort((a, b) => b.at - a.at);
   const now = keys.now();
   return {
     status: {
@@ -78,7 +92,7 @@ export function providerHealth(provider: ResolvedProvider, credentials: Readonly
       keys: usable.length,
       resumeAt,
       requestsRemainingPct: requestsRemainingPct(usable.map((a) => states.get(a.ref)), now),
-      lastError: recorded[0]?.lastError ?? null,
+      lastError: recorded[0]?.message ?? null,
     },
     keys: avail,
   };

@@ -178,7 +178,7 @@ or data specific to any downstream project, including FluxIQ.
 The binding rules for this repository:
 
 - **Placement by area.** Router code lives in `packages/router/src/<area>/`
-  (`core`, `config`, `gateway`, `paid`, `routing`, `scoring`, `models`,
+  (`core`, `config`, `gateway`, `providers`, `paid`, `routing`, `scoring`, `models`,
   `admission`, `storage`, `context`, `harness`, `runners`, `brain`,
   `attribution`, `qualification`, `workspaces`, `admin`, `roles`,
   `verification`, `sessions`, `operations`). Put a file

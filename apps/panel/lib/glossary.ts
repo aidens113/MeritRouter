@@ -7,20 +7,20 @@ export const GLOSSARY = {
     "The smallest model (total parameters, in billions) allowed for a task type and tier. It is the larger of the task type's floor and the tier's floor. Smaller models are never used unless a force override explicitly allows it.",
   provenance:
     "Where the parameter count came from. Exact: read from Hugging Face model files or entered by you. Agreed: two independent sources agree. From name only: guessed from the model's name or description and needs your confirmation. Unknown: no source found.",
-  chain:
-    "Each model gets its own single-model chain in FreeLLMAPI (named sy-…). SwitchYard picks the model and FreeLLMAPI only rotates keys inside that chain, so a request can never silently land on a different model. 'Verified' means the chain was checked to contain exactly this model.",
+  available:
+    "Reachable: at least one usable key exists for the model's provider and the provider still lists the model. SwitchYard sends every request directly to the provider, rotating that provider's keys.",
   quarantine:
-    "A model is quarantined when FreeLLMAPI reported that a different model actually served a request. SwitchYard discards that answer and stops using the model until its chain is verified again by a scan.",
+    "A model is quarantined when its provider reported that a different model actually served a request. SwitchYard discards that answer and stops using the model.",
   taskType:
     "What the supervisor asked for: summarize (answer from supplied text), inspect (simple repository lookups), analyze (cross-file reasoning), review (check a patch or evidence), implement (edit code in an isolated worktree).",
   prefer:
     "Smallest sufficient: try the smallest model that clears the size floor first, saving big-model quota. Most capable: try the best-qualified, largest model first.",
   freeVerified:
-    "SwitchYard only routes to models it can show are free: either the platform is in your discovery.free_platforms list, or OpenRouter publishes a $0 price. Paid models are separate direct routes, used only under the paid policy you set.",
+    "Free means no money can move: the provider lists the model at $0 (or as :free), or the request goes through a free-tier key. Anything else is paid and is used only under the paid policy and budgets you set.",
   qualification:
     "Short evaluation tasks run against a model to measure its pass rate per task family and tier. Results carry a 95% confidence interval. Qualification uses your free quota.",
   quotaScope:
-    "Keys on the same provider account share one allowance. Give them the same group label so SwitchYard does not assume two keys means twice the quota.",
+    "Keys on the same provider account or project share one allowance. Give them the same quota group so SwitchYard does not assume two keys means twice the quota.",
   override:
     "A manual correction you made in the panel. Overrides sit on top of what was discovered and survive rescans. Reset removes them.",
   eligibility:
@@ -36,7 +36,7 @@ export const GLOSSARY = {
   requests:
     "One model request is one physical call admitted at SwitchYard's gate. A batch of several tasks answered in one call counts once.",
   outputDefault:
-    "No source reported this model's output limit, so the configured default (discovery.default_output_limit_tokens) is assumed.",
+    "No provider reported this model's output limit, so the value shown was assumed. Set the real limit in an override; a model whose output limit is unknown is left out of work that needs it.",
   job:
     "A standalone piece of work handed to a SwitchYard supervisor: it plans, delegates bounded tasks to workers, checks their results, and integrates their commits onto a job branch for you to review and merge.",
   supervisor:
@@ -52,7 +52,7 @@ export const GLOSSARY = {
   accessRequest:
     "A worker asked for more brain access than its role grants (for example, write access to decisions). The configured approver (the supervisor, you, or auto rules) approves or denies it with a reason.",
   billingClass:
-    "How a key is paid for. Free tier: no charge. Paid credits: a prepaid balance is drawn down. Billed to card: usage is charged after the fact. Trial: free credits that run out. A FreeLLMAPI key marked as anything but free tier blocks its platform from free routing.",
+    "How a key is paid for. Free tier: no charge. Paid credits: a prepaid balance is drawn down. Billed to card: usage is charged after the fact. Trial: free credits that run out. Only a free-tier key makes a model free to use; any other key follows the paid policy and budgets.",
   premium:
     "For T4 work (too hard for free workers), 'premium' sends the task to a paid model instead of returning it to the supervisor. 'Never' keeps T4 with the supervisor.",
   paidPolicy:

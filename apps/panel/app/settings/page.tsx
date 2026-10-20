@@ -104,7 +104,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             <RowsForm
               id="paid-providers"
               title="Paid providers"
-              description="Providers paid models are reached through directly. Keys for them are added on the Paid routes page, never here."
+              description="Providers paid models are reached through directly. Keys for them are added on the Provider keys page, never here."
               path={["paid", "providers"]}
               keyField="name"
               columns={PROVIDER_COLUMNS}

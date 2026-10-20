@@ -18,7 +18,7 @@ import {
   type OpenRouterCatalog,
   type ProbeBudget,
 } from "./enrich.js";
-import { ProviderError, type ProviderErrorKind } from "./errors.js";
+import { isKeyFailure, ProviderError, type ProviderErrorKind } from "./errors.js";
 import { expandUrl, requestHeaders, type ModelListShape, type ResolvedProvider } from "./registry.js";
 import { requestJson, type FetchLike } from "./transport.js";
 
@@ -299,6 +299,12 @@ export interface DiscoveryOptions {
   probeClient?: Pick<ProviderClient, "complete">;
   probeBudget?: ProbeBudget;
   signal?: AbortSignal;
+  /**
+   * Called when a listing shows a key is unusable: the provider rejected it (401/403,
+   * `auth_invalid`) or it is out of credits (402, `out_of_credits`). The caller records it on
+   * the key (`ProviderKeys.recordFailure`), as a failed request would.
+   */
+  onKeyFailure?: (credential: ProviderCredential, err: ProviderError) => void;
 }
 
 export type ProviderDiscoveryStatus = "listed" | "no_key" | "disabled" | "failed";
@@ -430,6 +436,7 @@ export async function discoverModels(opts: DiscoveryOptions): Promise<DiscoveryR
         break;
       } catch (err) {
         report.errors.push({ ref: cred.ref, kind: err instanceof ProviderError ? err.reason : "error", message: (err as Error).message });
+        if (isKeyFailure(err)) opts.onKeyFailure?.(cred, err);
         if (err instanceof ProviderError && err.reason === "aborted") break;
       }
     }

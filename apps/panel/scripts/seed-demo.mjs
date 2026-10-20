@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 // Builds a self-contained demo workspace for the panel in apps/panel/.demo/ (gitignored):
 // a config, a git fixture repository, manual models, and real task/request history produced by
-// running tasks through Switchyard with a scripted in-process gateway (no network, no quota).
+// running tasks through Switchyard with a scripted in-process provider client (no network, no
+// quota). Every provider (built-in ones with fake keys, a custom keyless "lab" server, and the paid
+// Anthropic route) points at 127.0.0.1 on a closed port, as do the OpenRouter catalog and Hugging
+// Face lookups, so pressing Scan or Test in the panel never leaves the machine: listings just fail.
 // Independent reviews come from the same scripted client: one unqualified reviewer that cannot
 // settle a criterion, and one qualified reviewer that fails an answer, sees it repaired, and passes it.
 // Calibration gets real signals too: a job that integrates a reviewed power() change and later
@@ -10,7 +13,7 @@
 // It also runs three more standalone jobs (one finished, one planned as a diamond task graph with
 // plan_work where two coding nodes contend for a file lease, one paused on a question), fills the
 // brain (in .demo/brain, never your home folder), and records a little paid spend through a fake
-// direct paid client, so the Jobs, Brain, and Paid routes pages have content. A nested team job
+// direct paid client, so the Jobs, Brain, and Provider keys pages have content. A nested team job
 // (parent -> sub-supervisor -> two workers) shows the team view: a carved sub-job budget, two
 // integrations onto the sub-job's branch where the second is rebased, team channel posts of each
 // kind, and a redundant plan node whose twin runs race. One team-vs-single comparison is
@@ -28,7 +31,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
-import { GatewayError, Switchyard, WorkerTaskSchema, insights, parseConfig, planComparison, runComparison } from "switchyard-router";
+import { GatewayError, ProviderError, Switchyard, WorkerTaskSchema, insights, parseConfig, planComparison, runComparison } from "switchyard-router";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const demo = path.resolve(here, "..", ".demo");
@@ -69,7 +72,7 @@ const ep = (o) => ({
   inputModalities: ["text"],
   supportsTools: true,
   supportsStructuredOutput: true,
-  pricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0, freeVerified: true, source: "free_platforms" },
+  pricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0, freeVerified: true, source: "demo" },
   sourceUrls: [],
   checkedAt,
   ...o,
@@ -174,8 +177,8 @@ const endpoints = [
     outputLimitTokens: 8192,
   }),
   ep({
-    providerId: "github",
-    gatewayModelId: "openai/gpt-4.1",
+    providerId: "openai",
+    gatewayModelId: "gpt-4.1",
     displayName: "GPT-4.1",
     totalParametersB: null,
     activeParametersB: null,
@@ -192,8 +195,11 @@ writeFileSync(
   `# Demo catalog written by scripts/seed-demo.mjs\n${YAML.stringify({ version: 1, overrides: {}, endpoints })}`,
 );
 
-// One fake free_tier key per provider the demo models use: only the scripted provider client sees them.
-const demoKey = (id) => ({ keys: [{ label: `demo ${id} key (fake)`, api_key: `demo-${id}-NOT-A-REAL-KEY`, billing_class: "free_tier" }] });
+// One fake free_tier key per provider the demo models use: only the scripted provider client sees
+// them. Each provider's base URL points at a closed local port, so a panel Scan or key Test fails
+// fast without any request leaving the machine.
+const OFFLINE = "http://127.0.0.1:9";
+const demoKey = (id, extra = {}) => ({ base_url: `${OFFLINE}/${id}/v1`, ...extra, keys: [{ label: `demo ${id} key (fake)`, api_key: `demo-${id}-NOT-A-REAL-KEY`, billing_class: "free_tier" }] });
 const raw = {
   version: 1,
   providers: {
@@ -201,11 +207,15 @@ const raw = {
     groq: demoKey("groq"),
     cerebras: demoKey("cerebras"),
     openrouter: demoKey("openrouter"),
-    google: demoKey("google"),
+    // Google lists models at an absolute URL outside its base URL; models_path keeps the list offline too.
+    google: demoKey("google", { models_path: "/models" }),
+    // A custom keyless server (a local Ollama or llama.cpp would look like this).
+    lab: { display_name: "Lab server (demo)", base_url: `${OFFLINE}/lab/v1`, no_key: true },
   },
   storage: { directory: ".switchyard" },
   models: { file: "models.yaml" },
-  discovery: { interval_minutes: 0 },
+  // Enrichment sources are offline too: the demo never fetches the OpenRouter catalog or Hugging Face.
+  discovery: { interval_minutes: 0, openrouter_models_url: `${OFFLINE}/openrouter-catalog/models`, huggingface_api_url: `${OFFLINE}/huggingface/api/models` },
   repositories: { core: { path: "repo" } },
   execution: { max_concurrent_tasks: 4, lease_seconds: 30 },
   scoring: { batch_window_ms: 50 },
@@ -214,12 +224,12 @@ const raw = {
   brain: { path: "brain", project: "demo", access_approver: "supervisor" },
   supervisor: { question_timeout_seconds: 86400 },
   team: { max_agents: 3 },
-  // Paid routes are on with small budgets; the demo key is fake and only a fake client ever sees it.
+  // Paid routing is on with small budgets; the demo key is fake and only a fake client ever sees it.
   paid: {
     enabled: true,
     budgets: { per_day_usd: 1, per_week_usd: 5, per_month_usd: 15 },
     tiers: { T1: "on_free_exhaustion", T2: "on_free_exhaustion", T3: "on_free_exhaustion", T4: "never" },
-    providers: { anthropic: { kind: "anthropic", base_url: "https://api.anthropic.com" } },
+    providers: { anthropic: { kind: "anthropic", base_url: `${OFFLINE}/anthropic` } },
     models: [
       { provider: "anthropic", model: "claude-sonnet-4-5", display_name: "Claude Sonnet 4.5 (paid)", input_usd_per_million: 3, output_usd_per_million: 15, context_limit_tokens: 200000, output_limit_tokens: 16000, input_modalities: ["text", "image"], supports_tools: true, supports_structured_output: false, ignore_size_floor: true },
     ],
@@ -277,9 +287,9 @@ const client = {
     await new Promise((r) => setTimeout(r, 15 + Math.random() * 40));
 
     // Every free key is rate limited for a minute (a short cooldown, so later phases have them back).
-    if (scenario === "free_exhausted") throw new GatewayError("rate_limited", "429 all free keys are cooling down (demo)", 429, 60_000, false);
+    if (scenario === "free_exhausted") throw new GatewayError("rate_limited", "429 rate limited (demo)", 429, 60_000, false);
     if (scenario === "rate_limit_first" && s.id === "nvidia/meta/llama-3.3-70b-instruct") {
-      throw new GatewayError("rate_limited", "429 Too Many Requests from nvidia (all keys cooling down)", 429, 30_000, false);
+      throw new GatewayError("rate_limited", "429 Too Many Requests from nvidia (demo)", 429, 30_000, false);
     }
     if (scenario === "policy" && s.id === "nvidia/meta/llama-3.3-70b-instruct") {
       return reply(JSON.stringify(result(1, "inline", "done")), { model: "meta/llama-3.1-8b-instruct", provider: "nvidia" });
@@ -1082,6 +1092,12 @@ if (!idle.sessions.forTask(interrupted.taskId).length) {
   again.end("interrupted", "worker lease expired");
 }
 offset = 0;
+
+// Key states for the Provider keys page, as of now: a second groq key the provider rejected
+// (invalid), and the cerebras key cooling down for a while after a 429. Both are fake.
+const revoked = idle.vault.add({ provider: "groq", label: "old key (revoked, fake)", secret: "gsk_demo-REVOKED-NOT-REAL-0d1e", billingClass: "free_tier" });
+idle.providers.keys.recordFailure(idle.providers.credentials().get(`vault:${revoked.id}`), new ProviderError("auth_invalid", "401 Invalid API Key (demo)", { provider: "groq", status: 401 }));
+idle.providers.keys.recordFailure(idle.providers.credentials().get("config:cerebras:literal:0"), new ProviderError("rate_limited", "429 Too Many Requests (demo)", { provider: "cerebras", status: 429, retryAfterMs: 45 * 60_000 }));
 await idle.close();
 
 // The demo config samples 20% of passed results for audit (seeding forced its two audits instead).

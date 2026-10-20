@@ -294,15 +294,56 @@ function customDefinition(id: string, entry: ProviderEntryConfig): ProviderDefin
   };
 }
 
+const ORIGIN = /^([a-z][a-z0-9+.-]*:\/\/[^/?#]*)(.*)$/i;
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Move an absolute registry URL template (one not under `{base}`, such as Google's native model
+ * list or Cloudflare's model search) along with a `base_url` override. When the override ends in
+ * the default base URL's path (a proxy or gateway in front of the same API), what precedes that
+ * path becomes the new root and the template's own path and query follow it; a template
+ * parameter the override fills with a literal (an account id) is filled the same way. Otherwise
+ * the template's path goes on the override's origin. `models_path` sets the list path exactly.
+ */
+export function rebaseUrl(template: string, defaultBase: string, override: string): string {
+  if (template.startsWith("{base}")) return template;
+  const t = ORIGIN.exec(template);
+  const d = ORIGIN.exec(defaultBase);
+  const o = ORIGIN.exec(override);
+  if (!t || !d || !o) return template;
+  const names: string[] = [];
+  const pattern = d[2]!
+    .split(/(\{[a-z_]+\})/)
+    .map((part) => {
+      const param = /^\{([a-z_]+)\}$/.exec(part);
+      if (!param) return escapeRegExp(part);
+      names.push(param[1]!);
+      return "([^/?#]+)";
+    })
+    .join("");
+  const match = new RegExp(`^(.*?)${pattern}$`).exec(o[2]!);
+  if (!match) return `${o[1]}${t[2]}`;
+  let rest = t[2]!;
+  names.forEach((name, i) => {
+    const value = match[i + 2]!;
+    if (value !== `{${name}}`) rest = rest.split(`{${name}}`).join(value);
+  });
+  return `${o[1]}${match[1]}${rest}`;
+}
+
 function applyEntry(def: ProviderDefinition, entry: ProviderEntryConfig | undefined, builtIn: boolean): ResolvedProvider {
   const auth: AuthStyle = entry?.no_key ? "none" : def.auth;
+  const baseUrl = entry?.base_url ? trimSlash(entry.base_url) : def.baseUrl;
+  // An override moves every request, including the registry's absolute (non-`{base}`) URLs.
+  const moved = (url: string) => (entry?.base_url ? rebaseUrl(url, def.baseUrl, baseUrl) : url);
   return {
     ...def,
     displayName: entry?.display_name ?? def.displayName,
-    baseUrl: entry?.base_url ? trimSlash(entry.base_url) : def.baseUrl,
+    baseUrl,
     auth,
     extraHeaders: { ...def.extraHeaders, ...(entry?.headers ?? {}) },
-    models: entry?.models_path ? { ...def.models, url: `{base}${entry.models_path.startsWith("/") ? "" : "/"}${entry.models_path}` } : def.models,
+    models: { ...def.models, url: entry?.models_path ? `{base}${entry.models_path.startsWith("/") ? "" : "/"}${entry.models_path}` : moved(def.models.url) },
+    keyInfoUrl: def.keyInfoUrl === null ? null : moved(def.keyInfoUrl),
     tokenLimitParam: entry?.token_limit_param ?? def.tokenLimitParam,
     rateLimitHeaders: entry?.rate_limit_headers ? { family: entry.rate_limit_headers, requestsPeriod: "unknown", tokensPeriod: "unknown" } : def.rateLimitHeaders,
     builtIn,

@@ -21,8 +21,10 @@ export interface ModelRow {
   outputSource: string;
   free: boolean;
   freeSource: string;
-  chain: "verified" | "failed" | "unchecked";
-  chainDetail: string | null;
+  /** Its provider has a usable key and still lists the model (manual entries: a usable key). */
+  available: boolean;
+  /** The provider requests are sent to (direct). */
+  routeProvider: string;
   requests7d: number;
   succeeded7d: number;
   failed7d: number;
@@ -36,14 +38,18 @@ export function isFree(ep: ModelView["endpoint"]): boolean {
   return ep.pricing.freeVerified && (ep.pricing.inputUsdPerMillion ?? 0) === 0 && (ep.pricing.outputUsdPerMillion ?? 0) === 0;
 }
 
-/** Chains were removed with the external gateway (requests go to the provider directly); P3 drops this column. */
-export function chainState(_sy: Switchyard, v: ModelView): { state: ModelRow["chain"]; detail: string | null } {
-  return { state: "unchecked", detail: `Sent directly to ${v.endpoint.route.provider}` };
+/** Providers with at least one usable key (before cooldowns and limits). */
+export function keyedProviders(sy: Switchyard): Set<string> {
+  return new Set(sy.providers.credentials().list().filter((c) => c.unusableReason === null).map((c) => c.provider));
 }
 
-export function toRow(sy: Switchyard, v: ModelView): ModelRow {
+/** Whether requests can reach the model: it is available and its provider has a usable key. */
+export function reachable(ep: ModelView["endpoint"], keyed: Set<string>): boolean {
+  return ep.available && keyed.has(ep.route.provider);
+}
+
+export function toRow(sy: Switchyard, v: ModelView, keyed: Set<string> = keyedProviders(sy)): ModelRow {
   const ep = v.endpoint;
-  const c = chainState(sy, v);
   return {
     id: ep.id,
     name: ep.displayName ?? ep.gatewayModelId,
@@ -61,8 +67,8 @@ export function toRow(sy: Switchyard, v: ModelView): ModelRow {
     outputSource: ep.outputLimitSource,
     free: isFree(ep),
     freeSource: ep.pricing.source,
-    chain: c.state,
-    chainDetail: c.detail,
+    available: reachable(ep, keyed),
+    routeProvider: ep.route.provider,
     requests7d: v.stats7d.requests,
     succeeded7d: v.stats7d.succeeded,
     failed7d: v.stats7d.failed + v.stats7d.uncertain,

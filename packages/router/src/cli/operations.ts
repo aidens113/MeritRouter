@@ -31,7 +31,7 @@ export async function operationsCommand(cmd: string, args: string[], values: Ope
       out(json ? m : [
         `backed up ${cfg.storageDir} to ${path.resolve(args[0])}`,
         `schema ${m.schemaVersion}; ${m.tasks} task(s), ${m.sessions} session(s) with ${m.sessionLogs} log(s), ${m.artifacts} artifact(s)`,
-        m.includesMasterKey ? "includes the vault master key: keep this backup private" : "the vault master key is not included; paid keys need SWITCHYARD_MASTER_KEY or the original .master-key to decrypt",
+        m.includesMasterKey ? "includes the vault master key: keep this backup private" : "the vault master key is not included; provider keys in the vault need SWITCHYARD_MASTER_KEY or the original .master-key to decrypt",
         ...m.missing.map((f) => `MISSING ${f}`),
       ].join("\n"), json);
       return m.missing.length ? 1 : 0;

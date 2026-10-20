@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { ArrowLeft, ExternalLink, Radar, ShieldAlert } from "lucide-react";
 import { insights, MODALITIES, TIER_NAMES } from "switchyard-router";
 import { getSy } from "@/lib/sy";
-import { chainState, isFree, type ModelView } from "@/lib/models";
+import { isFree, keyedProviders, reachable, type ModelView } from "@/lib/models";
 import { SetupScreen } from "@/components/setup";
 import { Modalities, ProvenanceBadge, StatusBadge, statusKey } from "@/components/model-badges";
 import { RequestsTable } from "@/components/requests-table";
@@ -27,7 +27,6 @@ export default async function ModelDetailPage({ searchParams }: { searchParams: 
 
   const ep = view.endpoint;
   const st = statusKey(ep, view.quarantined);
-  const chain = chainState(sy, view);
   const names = new Map(sy.catalog.endpoints().map((e) => [e.id, e.displayName ?? e.gatewayModelId]));
   const recent = insights.requestLog(sy, { endpointId: ep.id, limit: 15 });
   const s = view.stats7d;
@@ -95,7 +94,7 @@ export default async function ModelDetailPage({ searchParams }: { searchParams: 
                   "Output limit",
                   <span key="o">
                     {tokens(ep.outputLimitTokens)} tokens{" "}
-                    <Badge tone={ep.outputLimitSource === "default" ? "warn" : "neutral"} title={ep.outputLimitSource === "default" ? "No source reported it; the configured default is assumed" : undefined}>
+                    <Badge tone={ep.outputLimitSource === "default" ? "warn" : "neutral"} title={ep.outputLimitSource === "default" ? "No provider reported it: the value was assumed. Set the real limit in an override." : undefined}>
                       {ep.outputLimitSource}
                     </Badge>
                   </span>,
@@ -122,17 +121,26 @@ export default async function ModelDetailPage({ searchParams }: { searchParams: 
                     : "not reported",
                 ],
                 ["Quota scope", ep.quotaScopeIds.length ? ep.quotaScopeIds.join(", ") : <span className="text-ink-3">none set <HelpTip term="quotaScope" /></span>],
-                ["Available in FreeLLMAPI", ep.available ? "Yes" : "No (no key, or disabled there)"],
                 [
-                  <span key="c" className="inline-flex items-center gap-1">
-                    Chain <HelpTip term="chain" />
+                  <span key="a" className="inline-flex items-center gap-1">
+                    Reachable <HelpTip term="available" />
                   </span>,
-                  <span key="cv" className="space-y-1">
-                    <span className="flex flex-wrap items-center gap-2">
-                      <Mono>{`${ep.route.provider}/${ep.route.model}`}</Mono>
-                      {chain.state === "verified" ? <Badge tone="good">Verified</Badge> : chain.state === "failed" ? <Badge tone="bad">Verification failed</Badge> : <Badge>Not checked</Badge>}
+                  reachable(ep, keyedProviders(sy)) ? (
+                    "Yes"
+                  ) : (
+                    <span key="av">
+                      No: no usable key for {ep.route.provider}, or the provider no longer lists it.{" "}
+                      <Link href="/keys" className="text-accent-ink hover:underline">
+                        Provider keys
+                      </Link>
                     </span>
-                    {chain.detail ? <span className="block text-xs text-ink-3">{chain.detail}</span> : null}
+                  ),
+                ],
+                [
+                  "Sent to",
+                  <span key="r" className="space-y-1">
+                    <Mono>{`${ep.route.provider}/${ep.route.model}`}</Mono>
+                    <span className="block text-xs text-ink-3">Directly to the provider with one of its keys; the model it reports serving is checked against this one.</span>
                   </span>,
                 ],
                 ...(view.quarantined ? ([["Quarantine", <span key="q" className="text-bad-ink">{view.quarantined}</span>]] as Array<[string, ReactNode]>) : []),

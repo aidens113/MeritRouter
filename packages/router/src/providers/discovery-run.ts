@@ -78,6 +78,8 @@ export async function runProviderDiscovery(o: DiscoveryRunOptions): Promise<Disc
     known,
     manual: o.catalog.manualEndpoints(),
     overrides: o.catalog.mergedOverrides(),
+    // A key the listing shows is revoked or out of credits is switched off, as a request would.
+    onKeyFailure: (cred, err) => o.runtime.keys.recordFailure(cred, err),
     ...(o.probeClient ? { probeClient: o.probeClient } : {}),
     ...(o.probeBudget ? { probeBudget: o.probeBudget } : {}),
     ...(o.signal ? { signal: o.signal } : {}),

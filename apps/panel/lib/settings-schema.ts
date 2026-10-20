@@ -34,7 +34,7 @@ export const SECTIONS: Section[] = [
   {
     id: "providers",
     title: "Providers",
-    description: "SwitchYard calls each provider directly. Provider keys are set under providers in the config file for now.",
+    description: "SwitchYard calls each provider directly. Keys are added on the Provider keys page (or under providers in the config file).",
     fields: [f("providers.request_timeout_seconds", "Request timeout", "int", "Give up on a single model request after this long.", { min: 1, unit: "seconds" })],
   },
   {
@@ -76,7 +76,7 @@ export const SECTIONS: Section[] = [
     fields: [
       f("routing.max_endpoint_fallbacks", "Models tried per request", "int", "Distinct models tried for one model request before giving up on capacity.", { min: 1, max: 10 }),
       f("routing.escalate_on_failure", "Retry failures one tier up", "bool", "Retry a failed task once at the next tier (with larger models)."),
-      f("routing.respect_provider_cooldowns", "Skip rate-limited platforms", "bool", "Move platforms FreeLLMAPI reports as rate limited to the end of the order until they recover."),
+      f("routing.respect_provider_cooldowns", "Skip rate-limited platforms", "bool", "Move providers whose every key is cooling down or at a limit to the end of the order until a key is back."),
     ],
   },
   {
@@ -122,7 +122,7 @@ export const SECTIONS: Section[] = [
   {
     id: "allocation",
     title: "Capacity allocation",
-    description: "How much of your FreeLLMAPI capacity SwitchYard may use. Leave empty for no limit.",
+    description: "How many model requests SwitchYard may send across all providers. Leave empty for no limit.",
     fields: [
       f("allocation.max_model_requests_per_hour", "Requests per hour", "optInt", "Most model requests SwitchYard may send in any hour, across all tasks.", { min: 1, placeholder: "no limit" }),
       f("allocation.max_model_requests_per_day", "Requests per day", "optInt", "Most model requests SwitchYard may send in any 24 hours.", { min: 1, placeholder: "no limit" }),
@@ -171,7 +171,7 @@ const POLICY_HELP: Record<string, string> = {
 export const PAID_SECTION: Section = {
   id: "paid",
   title: "Paid routing",
-  description: "Direct paid-provider routes (never through FreeLLMAPI). Off by default; keys are added on the Paid routes page and stored encrypted, never here.",
+  description: "When paid models and paid keys may be used, and the budgets they spend within. Off by default. Keys are added on the Provider keys page and stored encrypted, never here.",
   fields: [
     f("paid.enabled", "Paid routing on", "bool", "Master switch. Off means no paid request is ever made, whatever the tier policies say. Needs a weekly budget above $0."),
     f("paid.budgets.per_day_usd", "Daily budget", "optNumber", "Most paid spend in any 24 hours. Empty: no daily limit.", { min: 0, unit: "USD", placeholder: "no limit" }),

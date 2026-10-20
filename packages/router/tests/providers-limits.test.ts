@@ -15,6 +15,7 @@ import {
   ProviderLimits,
   limitScopes,
   nextUtcMidnight,
+  currentError,
   probeFreeDailyQuota,
   providerHealth,
   providerStatuses,
@@ -341,5 +342,30 @@ describe("provider health", () => {
     clock = T0;
     limits.reserve(limitScopes(limited.groq, limited.list()[0]!), 0);
     expect(providerHealth(limited.groq, limited.list(), keys, { limits }).status).toMatchObject({ status: "rate_limited", resumeAt: T0 + MINUTE_MS });
+  });
+
+  it("reports a key's last error only while no later success on that key resolved it", () => {
+    const keys = new ProviderKeys(store(), now);
+    const s = setup();
+    const [a, b] = s.list();
+    const lastError = () => providerHealth(s.groq, s.list(), keys).status.lastError;
+    keys.recordFailure(a!, rateLimited(1000));
+    expect(lastError()).toBe("rate_limited: groq HTTP 429: slow down");
+    expect(currentError(keys.get(a!.ref))).toEqual({ message: "rate_limited: groq HTTP 429: slow down", at: T0 });
+
+    // The same key serves later: the error is history (kept in key state), not health.
+    clock = T0 + 5000;
+    keys.recordSuccess(a!);
+    expect(lastError()).toBeNull();
+    expect(currentError(keys.get(a!.ref))).toBeNull();
+    expect(keys.get(a!.ref)!.lastError).toMatch(/429/);
+
+    // Another key's success does not resolve this key's newer error.
+    clock = T0 + 6000;
+    keys.recordFailure(a!, new ProviderError("server", "groq HTTP 503: busy", { provider: "groq", status: 503 }));
+    clock = T0 + 7000;
+    keys.recordSuccess(b!);
+    expect(lastError()).toBe("server: groq HTTP 503: busy");
+    expect(currentError(null)).toBeNull();
   });
 });

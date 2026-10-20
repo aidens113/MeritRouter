@@ -14,15 +14,20 @@ control of which models run, what they may touch, what they spend, or what count
   scoped access and an access-request workflow.
 - **Every line attributed.** Commits carry the agent and model that wrote them; supervisors can
   undo any task, model, commit, or individual lines.
-- **Paid credits, safely.** Optional direct routes to Anthropic, Gemini, DeepSeek, OpenRouter, ...
-  with an encrypted key vault, billing classes, and hard budgets; off by default.
-- **Every model is scanned and assigned.** Models in your FreeLLMAPI catalog are scanned for
-  parameter counts (Hugging Face weights, provider descriptions, names), modalities, limits, and
-  verified-free pricing. Uncertain counts wait for your confirmation.
+- **Your keys, no other service.** Enter provider keys in the panel, with `switchyard keys add`,
+  or in the config: Groq, Google AI Studio, NVIDIA, OpenRouter, Mistral, Cerebras, Cohere,
+  Cloudflare, SambaNova, Together, Hugging Face, Anthropic, OpenAI, or any OpenAI-compatible
+  server (Ollama, llama.cpp, vLLM, LM Studio). SwitchYard calls each provider directly, rotates
+  between your keys, honours cooldowns and limits, and marks bad keys. Keys are encrypted at rest.
+- **Paid credits, safely.** Billing classes on every key and hard budgets; paid routing is off by
+  default.
+- **Every model is found and assigned.** The models your keys can use are listed from each
+  provider and scanned for parameter counts (Hugging Face weights, provider descriptions, names),
+  modalities, limits, and verified-free pricing. Uncertain counts wait for your confirmation.
 - **Tasks are scored, then routed.** A versioned rulebook scores each task (scope, mode, checks,
   plus classifier tags when they can matter) into tiers T1-T3; T4 goes back to the supervisor.
-  SwitchYard picks the smallest sufficient model for the tier and falls back across models
-  itself, one single-model FreeLLMAPI chain per model.
+  SwitchYard picks the smallest sufficient model for the tier and falls back across models and
+  keys itself.
 - **Hard limits in code.** Per-task request budgets (including every coding-agent call), package
   allocations, deadlines, cancellation, and served-model verification are enforced before
   dispatch. Paid routing is off by default.
@@ -41,14 +46,16 @@ control of which models run, what they may touch, what they spend, or what count
 | `apps/panel` | Next.js web panel |
 | `docs/setup.md` | Install, presets, configure, register with Claude Code, standalone jobs |
 | `docs/roles.md` | Supervisors, workers, choosing models per role, the brain, attribution |
-| `docs/operations.md` | Limits, results, recovery, known limitations |
-| `docs/decisions.md` | Verified FreeLLMAPI behaviour and design decisions |
+| `docs/operations.md` | Limits, provider keys, results, recovery, known limitations |
+| `docs/decisions.md` | Design decisions, provider facts and sources, upgrade notes |
 
 ## Quick start
 
 ```bash
 pnpm install && pnpm -r build
 node packages/router/dist/cli.js init . --preset claude-code   # or standalone-free, standalone-hybrid, standalone-paid
+SWITCHYARD_NEW_KEY=gsk_... node packages/router/dist/cli.js keys add groq --billing free_tier   # or the panel's Provider keys page
+node packages/router/dist/cli.js models scan
 node packages/router/dist/cli.js doctor
 ```
 

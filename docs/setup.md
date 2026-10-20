@@ -13,21 +13,19 @@ pnpm -r build
 
 Node 22.11 works; 22.12+ or 24 LTS is recommended.
 
-## 2. Run FreeLLMAPI
+## 2. Start the panel
 
-Install and start FreeLLMAPI (https://github.com/tashfeenahmed/freellmapi) on
-`http://localhost:3001`. Add your provider keys in its dashboard or later from the SwitchYard
-panel (Keys). Then collect two credentials:
+```bash
+node packages/router/dist/cli.js init . --preset claude-code   # writes switchyard.config.yaml and models.yaml
+SWITCHYARD_CONFIG=$PWD/switchyard.config.yaml pnpm --filter switchyard-panel start   # http://127.0.0.1:4477
+```
 
-- **Unified API key** (inference): FreeLLMAPI dashboard, Settings, API key.
-- **Dashboard session token** (admin API: catalog, chains, keys): `POST /api/auth/login` with
-  your dashboard credentials; the token lasts 30 days.
+```powershell
+$env:SWITCHYARD_CONFIG = "D:path	oswitchyard.config.yaml"   # use setx for persistence
+pnpm --filter switchyard-panel start
+```
 
-Keep FreeLLMAPI's routing strategy off `decision` (that strategy sends prompts to an extra model).
-
-## 3. Configure SwitchYard
-
-Pick a preset (see [roles.md](roles.md) for what each role does):
+`--preset` chooses who supervises and what may be paid (see [roles.md](roles.md) for each role):
 
 | Preset | Supervisor | Workers | Paid |
 | --- | --- | --- | --- |
@@ -36,48 +34,82 @@ Pick a preset (see [roles.md](roles.md) for what each role does):
 | `standalone-hybrid` | SwitchYard, on a paid model you set | free; paid fallback at T3 | supervisor, T3 fallback |
 | `standalone-paid` | SwitchYard, on a paid model | paid preferred at T2-T3, premium for T4 | on, budgeted |
 
-```bash
-node packages/router/dist/cli.js init . --preset claude-code   # writes switchyard.config.yaml and models.yaml
-```
+The panel binds to 127.0.0.1. Set `SWITCHYARD_PANEL_TOKEN` to require a login. Nothing else has
+to be installed or running: SwitchYard calls each provider's API itself.
 
-Edit `switchyard.config.yaml`:
+## 3. Add provider keys
+
+Get a key from each provider you want to use (Groq, Google AI Studio, NVIDIA, OpenRouter,
+Mistral, Cerebras, Cohere, Cloudflare Workers AI, SambaNova, Together, Hugging Face, Anthropic,
+OpenAI), then add it in one of three ways:
+
+- **Panel**: Provider keys, pick the provider, paste the key, Test (lists the models it can
+  use), choose the billing class and optional limits, save. Keys are stored encrypted.
+- **CLI**: the secret comes from `SWITCHYARD_NEW_KEY` or a hidden prompt, never from the
+  command line, and is stored encrypted in the same vault:
+
+  ```bash
+  SWITCHYARD_NEW_KEY=gsk_... node packages/router/dist/cli.js keys add groq --billing free_tier --label main
+  node packages/router/dist/cli.js keys add mistral --billing free_tier --test   # prompts; stores only if the key lists models
+  node packages/router/dist/cli.js keys add cloudflare --billing free_tier --account-id <account id>
+  node packages/router/dist/cli.js keys list    # source, billing class, status, last four only
+  node packages/router/dist/cli.js keys test    # the models each key can use
+  ```
+
+  In PowerShell, set the variable for one command and clear it afterwards:
+  `$env:SWITCHYARD_NEW_KEY = "gsk_..."; node packages/router/dist/cli.js keys add groq --billing free_tier; Remove-Item Env:SWITCHYARD_NEW_KEY`.
+  Without the variable, `keys add` asks for the key with a hidden prompt when it runs in an
+  interactive terminal.
+
+- **Config**: under `providers` in `switchyard.config.yaml`, preferably naming an environment
+  variable (a literal `api_key` works, but `doctor` warns that the file then holds a secret):
+
+  ```yaml
+  providers:
+    groq:
+      keys:
+        - { api_key_env: GROQ_API_KEY, billing_class: free_tier }
+    local:                       # any OpenAI-compatible server: Ollama, llama.cpp, vLLM, LM Studio
+      base_url: http://localhost:11434/v1
+      no_key: true
+  ```
+
+**Billing class is required** and decides money: `free_tier` keys never cost anything;
+`paid_credits`, `paid_postpaid`, and `trial` keys are paid and follow `paid.*` policy and
+budgets. A model is free only when it is priced at $0, has a `:free` id, or is served by a
+`free_tier` key (then only free_tier keys serve it). Several keys per provider are normal:
+SwitchYard rotates between them. Keys of one provider quota (a Google project, a Cloudflare
+account) share a `quota_group` (`--quota-group`). Optional `rpm`, `rpd`, `tpm`, `tpd`
+limits apply per key, per quota group, or per provider. See [operations.md](operations.md#provider-keys).
+
+Vault secrets are encrypted with a master key from `SWITCHYARD_MASTER_KEY` (64 hex characters)
+or a generated `.switchyard/.master-key` file; back that file up (or set the variable) or the
+vault keys cannot be decrypted.
+
+## 3b. Configure and run
+
+Edit `switchyard.config.yaml` (or the panel's Settings):
 
 - `repositories`: the repositories workers may read (and, for `implement`, edit).
-- `discovery.free_platforms`: the FreeLLMAPI platforms that are free tiers **on your accounts**
-  (for example `groq`, `nvidia`, `google`). Nothing is treated as free unless declared here or
-  priced at $0 by OpenRouter.
 - `brain.project` (and optionally `brain.path`, default `~/.switchyard/brain`, shared across
   projects). Mount an existing `docs/working/` folder with `brain.mounts` if you have one.
 - Standalone and paid presets: set the paid model id and **current prices** in `paid.models` and
-  `supervisor.endpoints`, then add keys (secrets are read from the environment, never typed on
-  the command line):
-
-  ```bash
-  SWITCHYARD_NEW_KEY=sk-... node packages/router/dist/cli.js keys add anthropic --label main --billing paid_credits --balance 20
-  ```
-
-Set the credentials as environment variables (never in the config file):
-
-```powershell
-# PowerShell (current session); use setx for persistence
-$env:FREELLMAPI_API_KEY = "freellmapi-..."
-$env:FREELLMAPI_ADMIN_TOKEN = "..."
-$env:SWITCHYARD_CONFIG = "D:\path\to\switchyard.config.yaml"
-```
-
-```bash
-export FREELLMAPI_API_KEY=freellmapi-... FREELLMAPI_ADMIN_TOKEN=... SWITCHYARD_CONFIG=/path/to/switchyard.config.yaml
-```
+  `supervisor.endpoints`, and add a paid key for that provider
+  (`keys add anthropic --billing paid_credits --balance 20`).
 
 Then:
 
 ```bash
-node packages/router/dist/cli.js doctor        # every line should say ok
-node packages/router/dist/cli.js models scan   # discover models, resolve params, sync chains
+node packages/router/dist/cli.js models scan   # list each provider's models with your keys, resolve params
+node packages/router/dist/cli.js doctor        # every line should say ok (WARN lines are advice)
 node packages/router/dist/cli.js models        # review; confirm "pending" models
 node packages/router/dist/cli.js models confirm groq/some-model --params 70
 node packages/router/dist/cli.js route implement T2   # who would serve this, and why
 ```
+
+The panel's Scan button does the same as `models scan`; a running worker repeats it every
+`discovery.interval_minutes` (60). Point the CLI at the config with `--config` or
+`SWITCHYARD_CONFIG` when you run it from another directory.
 
 ## 4. Register the MCP server with Claude Code
 
@@ -113,8 +145,8 @@ The default `coding.runner: native` is SwitchYard's own harness: edits are confi
 identity. Shell commands are available only for patterns in `coding.allowed_commands`.
 
 Alternatives: `runner: opencode` (install OpenCode so `opencode` is on PATH; it runs with an inline
-config whose only provider is the job gateway, isolated HOME/XDG directories, and no inherited
-provider keys) or `runner: command` for any other agent, which receives `SWITCHYARD_BASE_URL`,
+config whose only provider is SwitchYard's per-job policy gateway, isolated HOME/XDG
+directories, and no inherited provider keys) or `runner: command` for any other agent, which receives `SWITCHYARD_BASE_URL`,
 `SWITCHYARD_JOB_TOKEN`, `SWITCHYARD_MODEL`, and `SWITCHYARD_PROMPT_FILE`.
 
 ## 5b. Standalone jobs
@@ -136,9 +168,10 @@ pnpm --filter switchyard-router build
 SWITCHYARD_CONFIG=/path/to/switchyard.config.yaml pnpm --filter switchyard-panel start   # http://127.0.0.1:4477
 ```
 
-It binds to 127.0.0.1. Set `SWITCHYARD_PANEL_TOKEN` to require a login.
+Models and why each is or is not used, routing previews and overrides, tasks, sessions, jobs,
+provider keys and their status, qualification, and every setting.
 
-## 7. Qualify models (optional, uses free quota)
+## 7. Qualify models (optional, uses your providers' quota)
 
 ```bash
 node packages/router/dist/cli.js qualify openrouter/vendor/model:free --trials 3

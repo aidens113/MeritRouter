@@ -10,10 +10,10 @@ import { modelHref, params, pct, tokens } from "@/lib/format";
 
 const STATUSES: StatusKey[] = ["active", "pending_confirmation", "quarantined", "disabled", "removed"];
 
-export function ModelsTable({ rows, profiles, modalities }: { rows: ModelRow[]; profiles: string[]; modalities: string[] }) {
+export function ModelsTable({ rows, profiles, modalities, initialPlatform = "" }: { rows: ModelRow[]; profiles: string[]; modalities: string[]; initialPlatform?: string }) {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<string>("");
-  const [platform, setPlatform] = useState("");
+  const [platform, setPlatform] = useState(initialPlatform);
   const [modality, setModality] = useState("");
   const [eligibleFor, setEligibleFor] = useState("");
   const [overridesOnly, setOverridesOnly] = useState(false);
@@ -74,7 +74,7 @@ export function ModelsTable({ rows, profiles, modalities }: { rows: ModelRow[]; 
 
       {shown.length === 0 ? (
         <EmptyState icon={<SlidersHorizontal size={22} />} title={rows.length ? "No models match these filters" : "No models in the catalog yet"}>
-          {rows.length ? "Clear a filter to see more." : "Run a scan to discover FreeLLMAPI's models, or add manual entries to the models file."}
+          {rows.length ? "Clear a filter to see more." : "Add a provider key on the Provider keys page and run a scan to find the models it can use, or add manual entries to the models file."}
         </EmptyState>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-line">
@@ -97,7 +97,7 @@ export function ModelsTable({ rows, profiles, modalities }: { rows: ModelRow[]; 
                 </th>
                 <th>
                   <span className="inline-flex items-center gap-1">
-                    Chain <HelpTip term="chain" />
+                    Reachable <HelpTip term="available" />
                   </span>
                 </th>
                 <th className="text-right">Used 7d</th>
@@ -142,22 +142,14 @@ export function ModelsTable({ rows, profiles, modalities }: { rows: ModelRow[]; 
                     <div className="text-[11px] text-ink-3">
                       out {tokens(r.outputTokens)}
                       {r.outputSource === "default" ? (
-                        <span title="No source reported an output limit; the configured default is assumed" className="ml-1 rounded bg-warn-soft px-1 text-warn-ink">
+                        <span title="No provider reported this output limit: the value was assumed. Set the real limit in an override." className="ml-1 rounded bg-warn-soft px-1 text-warn-ink">
                           default
                         </span>
                       ) : null}
                     </div>
                   </td>
                   <td>{r.free ? <Badge tone="good" title={`Source: ${r.freeSource}`}>Free</Badge> : <Badge tone="bad" title={`Source: ${r.freeSource}`}>Not free</Badge>}</td>
-                  <td>
-                    {r.chain === "verified" ? (
-                      <Badge tone="good" {...(r.chainDetail ? { title: r.chainDetail } : {})}>Verified</Badge>
-                    ) : r.chain === "failed" ? (
-                      <Badge tone="bad" {...(r.chainDetail ? { title: r.chainDetail } : {})}>Failed</Badge>
-                    ) : (
-                      <Badge {...(r.chainDetail ? { title: r.chainDetail } : {})}>Not checked</Badge>
-                    )}
-                  </td>
+                  <td>{r.available ? <Badge tone="good" title={`Sent directly to ${r.routeProvider}`}>Yes</Badge> : <Badge title="No usable key for its provider, or the provider no longer lists it">No</Badge>}</td>
                   <td className="tabular whitespace-nowrap text-right">
                     <div className="font-medium text-ink">{r.requests7d}</div>
                     {r.requests7d ? <div className={cx("text-[11px]", r.failed7d ? "text-warn-ink" : "text-ink-3")}>{pct(r.succeeded7d, r.requests7d)} ok</div> : null}

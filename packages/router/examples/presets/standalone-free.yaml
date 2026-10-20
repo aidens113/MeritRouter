@@ -7,7 +7,13 @@
 version: 1
 
 # Model providers. SwitchYard calls each provider directly with your keys and finds the models
-# they can use. Add keys here or in the panel (Provider keys); the panel stores them encrypted.
+# they can use. Add keys in the panel (Provider keys) or with
+#   SWITCHYARD_NEW_KEY=<key> switchyard keys add groq --billing free_tier
+# (both store them encrypted), or declare them here. Built-in providers: groq, google, nvidia,
+# openrouter, mistral, cerebras, cohere, cloudflare, sambanova, together, huggingface, anthropic,
+# openai. billing_class is required: free_tier keys never cost money; paid_credits,
+# paid_postpaid, and trial keys are paid and follow the paid section below. Prefer api_key_env;
+# a literal api_key puts the secret in this file (switchyard doctor warns about it).
 providers:
   request_timeout_seconds: 300
   # groq:
@@ -16,6 +22,13 @@ providers:
   # openrouter:
   #   keys:
   #     - { api_key_env: OPENROUTER_API_KEY, billing_class: free_tier }
+  # google:                       # Gemini quotas are per project: keys of one project share a quota_group
+  #   keys:
+  #     - { api_key_env: GEMINI_API_KEY, billing_class: free_tier, quota_group: my-project, rpm: 10 }
+  # cloudflare:
+  #   account_id: <your account id>
+  #   keys:
+  #     - { api_key_env: CLOUDFLARE_API_TOKEN, billing_class: free_tier }
   # local:                        # any OpenAI-compatible server (Ollama, llama.cpp, vLLM, LM Studio)
   #   base_url: http://localhost:11434/v1
   #   no_key: true
@@ -118,8 +131,10 @@ allocation:
   max_model_requests_per_hour: 150
   max_model_requests_per_day: 1500
 
-# Paid routing policy and budgets. A request is paid when the model has a price or the key is
-# not free_tier.
+# Paid routing policy and budgets. A model is free only when verified: priced at $0, a :free id,
+# or served by a free_tier key (then only free_tier keys serve it). Everything else is paid and
+# follows this section, including the priced models a paid key under providers can reach.
+# paid.providers and paid.models declare paid models by hand, with prices.
 paid:
   enabled: false
   budgets: { per_week_usd: 0 } # required > 0 to enable

@@ -1,9 +1,9 @@
 # Direct providers (remove FreeLLMAPI)
 
 Status: Active
-Status detail: Plan written 2026-10-19; paused by the user before implementation (no code changed). Resume at P1.
+Status detail: P1-P3 implemented, verified, and merged 2026-10-20. Only a first live check with real provider keys remains (needs user approval; spends quota).
 Created: 2026-10-19
-Last updated: 2026-10-19
+Last updated: 2026-10-20
 Owner: Senior supervisor agent
 Scope: SwitchYard calls model providers directly with keys the user enters in the SwitchYard panel or config; it discovers each provider's models itself; FreeLLMAPI is removed from the package entirely.
 Paired document: none
@@ -15,62 +15,44 @@ Related: [agent sessions and teams](./agent-sessions-and-teams.md), [importance 
 
 **Requirement (user, 2026-10-19):** the user enters provider keys directly in SwitchYard's panel
 or config files and never has to install, run, or log in to anything else. SwitchYard finds the
-models those keys can use automatically. FreeLLMAPI is removed from the package (not kept as an
-optional adapter).
+models those keys can use automatically. FreeLLMAPI is removed from the package.
 
-**What exists today (verified 2026-10-19, `main` at d5c213e):**
-- Free models go only through FreeLLMAPI: one single-model chain per endpoint (`auto:sy-*`),
-  admin token required for scanning and chain verification, served-model checks from its
-  headers, cooldowns from its `/v1/providers`, key rotation and per-key rate limits done inside
-  FreeLLMAPI. `gateway` config is required and FreeLLMAPI-only.
-- Paid models already go direct (`src/paid/`): an encrypted key vault (AES-256-GCM, master key
-  from `SWITCHYARD_MASTER_KEY` or `<storage>/.master-key`), billing classes
-  (`free_tier | paid_credits | paid_postpaid | trial`), OpenAI-compatible and Anthropic clients,
-  spend tracking, price refresh from OpenRouter-style `/models`. Key choice is ordered fallback
-  with no rotation on 429; billing class is not used in routing.
-- SwitchYard already has its own circuit breakers, adaptive per-provider slots, admission
-  budgets, and package allocation. Stored per-model `rateLimits` are never enforced.
-- FreeLLMAPI itself gets models and limits from a signed catalog downloaded from its author's
-  service (`api.freellmapi.co`) plus some `/models` discovery; source read from a local clone
-  (v0.2.1, 0c456ea). Its provider base URLs are a useful cross-check (see research).
-- The panel's Provider keys page talks only to FreeLLMAPI's admin API; the Paid routes page uses
-  SwitchYard's vault.
+**Done (2026-10-20), merged to `dev` and `main`:**
+- P1 `src/providers/`: registry of 13 built-ins plus custom OpenAI-compatible providers, the
+  vault (moved from `src/paid/`), config-declared keys, one client (`openai_compatible`,
+  `anthropic`) with classified errors and normalized rate-limit headers, discovery with
+  per-field provenance, per-key state and round-robin rotation, configured and per-model
+  limits, health from key state.
+- P2: every model request goes direct (`src/gateway/direct.ts`); FreeLLMAPI client, admin,
+  chains, `gateway` config, and its tables are deleted; tests run through a fake provider.
+- P3: Provider keys panel page on the vault (add, test, edit, status, models found; Paid
+  routes folded in), CLI `keys add|list|test|enable|disable|remove` and per-provider `doctor`,
+  offline demo, docs (`setup`, `operations`, `decisions` D1-D10 with upgrade notes, README).
+- p3-fixes: secrets masked in provider errors at the source, discovery marks rejected keys,
+  one shared key test, stale errors dropped from health, `base_url` overrides move absolute
+  model-list URLs, a paid provider appears once in health.
+- Decisions are in `docs/decisions.md` and the [reports](./direct-providers/reports/).
 
-**P1 done (2026-10-20)** on `feat/direct-providers` (worktree `D:/sy-wt/dp`): `src/providers/`
-has the registry, vault, credentials, client, discovery, enrichment, key state, limits, and
-health; nothing is wired into Gate, the catalog, or the service yet. 359 tests green.
+**Not verified:** nothing has run against a real provider. Unconfirmed against live APIs:
+rate-limit header formats (OpenRouter reset, SambaNova `-day`, Anthropic periods), OpenAI
+`insufficient_quota` as out of credits, Cloudflare/Cohere list pagination, Anthropic
+`capabilities`, OpenRouter `/api/v1/key` shape, real proxy URL layouts, the upgrade migration on
+a real store, two workers scanning at once, the panel's client-side forms in a real browser.
 
-**Carried into P2 (from the P1 reports):**
-- Gate: choose how key health reaches it (`providers()` calls `providerStatuses`, or
-  `ProviderHealth.lookup` reads key state); an out-of-credits key shows as `invalid` in
-  `ProviderStatus`, check against `pool_exhausted` handling in `gate.ts`.
-- Catalog: make `supportsTools`/`supportsStructuredOutput` nullable (unknown is stored as
-  `false` today); `Catalog.saveDiscovered` disables every row not passed in, so add a
-  per-provider save that leaves failed listings alone.
-- The discovery tool probe must be given a Gate-backed client.
-- Config: remove `gateway`, `discovery.free_platforms`, `discovery.default_output_limit_tokens`;
-  `schema.ts` is at 790 lines and must shrink.
-- Export `src/providers` from `src/index.ts`.
-- Live confirmation still needed: rate-limit header formats (OpenRouter reset, SambaNova -day,
-  Anthropic periods), OpenAI `insufficient_quota` as out of credits, Cloudflare/Cohere list
-  pagination, Anthropic `capabilities`, OpenRouter `/api/v1/key` shape.
+**Known issues:**
+- Flaky under load: `operations.test.ts` "stop() during a backoff wait" (and once
+  `scoring` classifier batching); they pass alone and on rerun.
+- Served-model quarantine never lifts (pre-existing).
+- Under `preferred` paid policy a cooling paid endpoint moves behind other paid endpoints but
+  not behind free ones (pre-existing ordering).
+- `refreshPaidPrices` uses the global `fetch`.
 
-**P2 done (2026-10-20):** FreeLLMAPI is removed from the router; every model request goes
-direct through `src/providers` (`src/gateway/direct.ts`). Decisions are in the
-[p2-wire](./direct-providers/reports/p2-wire.md) and
-[p2-remove](./direct-providers/reports/p2-remove.md) reports: health read from key state;
-out of credits disables only that key; a model is paid unless verified free at $0, a
-key-basis free model uses only `free_tier` keys, and a paid key on a `:free`/$0 model is treated
-as free; a 429 cools the key for every model of that provider; paid spend is keyed by
-credential ref; upgrading deletes stored chain-routed endpoints (a scan with keys refills them).
-367 tests green; `init` presets are valid again (supervisor fix plus a test).
+**Next steps:** a first live check, only with the user's approval and budget: one free-tier key
+per provider the user has, `keys test`, `models scan`, and one small task, recording measured
+header formats and list shapes in `docs/decisions.md`. Paid routing stays off unless the user
+authorizes it.
 
-**Next steps:** P3: `p3-panel` and `p3-cli-docs` in parallel (dispatched 2026-10-20). Their
-inputs are the "P3 leftovers" and "Open questions" sections of the p2-remove report. Then
-merge to `dev`, fast-forward `main`, and plan the first live check with the user (it spends
-real quota).
-
-**Blockers:** none.
+**Blockers:** live checks need the user's keys and approval.
 
 ---
 
@@ -263,6 +245,22 @@ llama.cpp, vLLM, LM Studio) is a custom provider.
   `scripts/build-presets.mjs`, `docs/*.md`. Record in `decisions.md` the P2 decisions listed in Current State, and the
   upgrade notes (chain endpoints deleted, `ScanSummary` lost `chainsSynced`/`chainsDisabled`).
 
+### Brief: p3-fixes (after p3-panel and p3-cli-docs)
+- Task: (1) mask secrets in provider error text at the source: `requestJson` (auth header values
+  and key query params) and `ProviderClient.complete` (the credential, for HTTP-200 error
+  bodies); drop the CLI's own masking. (2) a 401/403/402 during discovery listing records the
+  failure on that key (callback from `discoverModels`, wired in `discovery-run.ts`). (3) one
+  shared key-test function in `src/providers/` used by `src/admin/provider-keys.ts` and
+  `src/cli/keys.ts`. (4) `health.ts`: `lastError` only when newer than the key's last success;
+  simplify the admin view's workaround to use it. (5) a `base_url` override also moves the
+  model-list URL for providers whose registry list URL is absolute (google, cohere,
+  cloudflare). (6) a provider under `paid.providers` appears once in health, not as both `x`
+  and `paid:x`.
+- Owns: `src/providers/**`, `src/admin/provider-keys.ts`, `src/cli/keys.ts`,
+  `src/core/service.ts` (only for item 6), `tests/providers-*.test.ts`,
+  `tests/admin-keys.test.ts`, `tests/cli-keys.test.ts`.
+- Report to: docs/working/direct-providers/reports/p3-fixes.md
+
 ---
 
 ## Work Ledger
@@ -349,6 +347,41 @@ llama.cpp, vLLM, LM Studio) is a custom provider.
   no real keys); P3 makes the demo offline.
 - Outcome: Accepted
 - Follow-up: P3.
+
+### 2026-10-20 — p3-panel and p3-cli-docs
+- Agent: workers p3-panel and p3-cli-docs (parallel); verified by supervisor
+- Changed: Provider keys page on the vault and config keys, `/api/keys*` routes, Paid routes
+  folded in, panel FreeLLMAPI wording removed, offline demo, `src/admin/provider-keys.ts` and
+  `config-edit.ts`; CLI `keys add|list|test|enable|disable|remove`, per-provider `doctor`,
+  example config wording and regenerated presets, `setup.md`, `operations.md`, `decisions.md`
+  (D1-D10, provider facts, upgrade notes, FreeLLMAPI history), README. Details:
+  [panel](./direct-providers/reports/p3-panel.md), [CLI/docs](./direct-providers/reports/p3-cli-docs.md).
+- Why: P3 surfaces.
+- Validation: supervisor ran `pnpm -r typecheck` (pass), `pnpm -r build` (pass),
+  `npx vitest run` four times (39 files, 386 passed three times; one run had a single failure
+  that did not recur); `grep -i freellmapi` over panel, router src, examples, README, setup,
+  operations finds only an applied migration comment and marked upgrade history. The panel
+  worker confirmed the demo Scan stays on 127.0.0.1 with fetch/connect logging (it found and
+  fixed a Google leak through the absolute model-list URL).
+- Outcome: Accepted
+- Follow-up: `p3-fixes`; contract changes for callers: `doctor --json` checks gain `level`,
+  `models scan` exits 1 when nothing was listed and there were errors, `/api/paid/keys*` removed.
+
+### 2026-10-20 — p3-fixes and handoff (effort complete)
+- Agent: worker p3-fixes (items 1-5, then item 6 with `gate.ts` added); supervisor merge
+- Changed: `src/providers/{secret-masking,key-test}.ts` (new), transport, client, discovery,
+  discovery-run, health, registry, runtime; `src/gateway/gate.ts` health resolver;
+  `src/core/service.ts`; `src/admin/provider-keys.ts`, `src/cli/keys.ts`; tests.
+- Why: follow-ups raised by p3-panel and p3-cli-docs.
+- Validation: `pnpm -r typecheck` printed `packages/router typecheck: Done`,
+  `apps/panel typecheck: Done`; `pnpm -r build` printed `packages/router build: Done`,
+  `apps/panel build: Done`; `npx vitest run` first printed `Tests 1 failed | 394 passed (395)`
+  (`operations.test.ts > daemon > stop() during a backoff wait ends the daemon without another
+  start`), then that file alone three times `Tests 23 passed (23)`, then the full suite
+  `Tests 395 passed (395)`. Demo panel `/`, `/keys`, `/models` 200 and `/paid` 308; overview
+  screenshot shows `anthropic` once in Provider health.
+- Outcome: Accepted
+- Follow-up: live check (Current State).
 
 ---
 
