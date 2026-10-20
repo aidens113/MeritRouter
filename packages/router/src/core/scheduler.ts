@@ -2,6 +2,7 @@ import type { ResolvedConfig } from "../config/load.js";
 import { maxAgentsPerJob } from "../config/schema.js";
 import type { StoredTask, TaskStore } from "../storage/tasks.js";
 import { batchKey } from "../runners/batch.js";
+import { redundancyFor } from "../storage/plans.js";
 import type { Executor } from "./executor.js";
 import type { SessionStore } from "../sessions/store.js";
 
@@ -99,18 +100,18 @@ export class Scheduler {
           if (taken.has(task.row.id)) continue;
           taken.add(task.row.id);
           const profile = this.cfg.profiles[task.spec.profile]!;
-          const key = profile.mode === "completion" && profile.batching.enabled ? batchKey(task.spec) : null;
+          const key = profile.mode === "completion" && profile.batching.enabled && !this.redundant(task) ? batchKey(task.spec) : null;
           if (key) {
             const companions = this.tasks.claimCompanions(
               this.owner,
               task,
-              (t: StoredTask) => !taken.has(t.row.id) && batchKey(t.spec) === key,
+              (t: StoredTask) => !taken.has(t.row.id) && batchKey(t.spec) === key && !this.redundant(t),
               profile.batching.max_items - 1,
               leaseMs,
               defaultTimeoutMs,
             );
             // Claimed tasks that fit this batch join it instead of running alone.
-            const extra = claimed.filter((c) => !taken.has(c.row.id) && batchKey(c.spec) === key).slice(0, profile.batching.max_items - 1 - companions.length);
+            const extra = claimed.filter((c) => !taken.has(c.row.id) && batchKey(c.spec) === key && !this.redundant(c)).slice(0, profile.batching.max_items - 1 - companions.length);
             const members = [task, ...companions, ...extra];
             for (const m of members) taken.add(m.row.id);
             this.track(members.length > 1 ? this.executor.runBatch(members) : this.executor.runSingle(task));
@@ -122,6 +123,11 @@ export class Scheduler {
     } finally {
       this.ticking = false;
     }
+  }
+
+  /** A plan node asking for redundant runs never joins a prompt batch (it runs as its own pair). */
+  private redundant(task: StoredTask): boolean {
+    return redundancyFor(this.tasks.db, task.spec) > 1;
   }
 
   private track(p: Promise<void>): void {

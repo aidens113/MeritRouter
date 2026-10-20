@@ -1,5 +1,5 @@
 import type { ResolvedConfig } from "../config/load.js";
-import { TIER_NAMES, type TierName } from "../config/schema.js";
+import { TIER_NAMES, type ProfileMode, type TierName } from "../config/schema.js";
 import type { Db } from "../storage/db.js";
 import type { ArtifactStore } from "../storage/artifacts.js";
 import type { StoredTask, TaskStore } from "../storage/tasks.js";
@@ -33,6 +33,8 @@ import { isSimulatedCrash } from "./faults.js";
 import { withUpstreamContext } from "../context/upstream.js";
 import { sessionProgress, watchdogVerdict } from "./watchdog.js";
 import { MAX_AUTO_RESUMES } from "./scheduler.js";
+import { redundancyFor } from "../storage/plans.js";
+import { planRedundancy, raceTwins, redundancyRefused, REDUNDANCY_SKIPPED, type RedundancyPlan, type TwinResult } from "./redundancy.js";
 import { z } from "zod";
 
 /** The working document a task belongs to: its job's, an explicit one, or the shared ad-hoc one. */
@@ -374,6 +376,39 @@ export class Executor {
     }
   }
 
+  /** Whether this run is the redundant pair its plan node asked for (null: one run, as usual). */
+  private redundancy(task: StoredTask, mode: ProfileMode, plan: RoutePlan, contract: StoredContract | null, o: { firstAttempt: boolean; pinned: boolean }): RedundancyPlan | null {
+    const requested = redundancyFor(this.d.db, task.spec);
+    if (requested < 2) return null;
+    const used = requestsUsed(this.d.gate, task.row.id).total;
+    const r = planRedundancy({ requested, mode, plan, contract, runCap: runCap(this.d.cfg, task.spec, plan.tier, contract), used, ...o });
+    if (r.kind === "skip") this.d.tasks.event(task.row.id, REDUNDANCY_SKIPPED, { reason: r.reason });
+    if (r.kind === "refuse") this.d.tasks.event(task.row.id, REDUNDANCY_SKIPPED, { reason: r.reason, refused: true });
+    return r.kind === "single" || r.kind === "skip" ? null : r;
+  }
+
+  /** The redundant pair of a task's first attempt (see `raceTwins`), wired to this executor. */
+  private runTwins(task: StoredTask, parent: AbortController, routing: Routing, contract: StoredContract, mode: ProfileMode, st: Parameters<typeof verifyWithReview>[5], twin: Extract<RedundancyPlan, { kind: "twin" }>, previous: string | null | undefined, adopt: (session: SessionRecorder | null) => void): Promise<TwinResult> {
+    const watch = this.watched.get(task.row.id);
+    const own = watch?.session;
+    return raceTwins(parent.signal, twin, previous, {
+      open: (plan, prev) => this.openSession(task, plan, prev),
+      run: (r) => {
+        const ctx = this.context(task, r.controller.signal, r.plan, routing, r.session, { contract, retry: null });
+        return this.runMode({ ...ctx, budget: { ...ctx.budget, maxModelRequests: twin.cap } });
+      },
+      verify: (r, outcome) => verifyWithReview(this.d, task, contract, mode, outcome, st, this.reviewRun(task, r.controller.signal, routing, r.session, contract, r.plan.tier, repairPossible(this.d.gate, task, contract, st, false))),
+      end: (s, status, stopReason) => this.endSession(task, s, status, stopReason),
+      endWithError: (s, err) => this.endForDisposition(task, s, this.classify(err, parent.signal, task)),
+      event: (type, data) => this.d.tasks.event(task.row.id, type, data),
+      served: (s) => (s ? (this.d.db.prepare("SELECT DISTINCT name FROM session_events WHERE session_id = ? AND type = 'model_response' AND name IS NOT NULL").all(s.id) as Array<{ name: string }>).map((x) => x.name) : []),
+      adopt,
+      watch: (current) => {
+        if (watch && own) watch.session = current ?? own;
+      },
+    });
+  }
+
   private tooDifficult(task: StoredTask, prepared: Prepared): void {
     const c = prepared.classification;
     this.record(task, "failed", baseResult({
@@ -443,16 +478,32 @@ export class Executor {
       let repairing = continued.repairing;
       plan = continued.plan;
       routing.escalatedFrom = continued.escalatedFrom;
+      // Redundant execution (T2): a plan node's first attempt may run twice, on different endpoints.
+      let twin = this.redundancy(task, mode, plan, contract, { firstAttempt: !resume && !repairing && !retry, pinned: exempt });
+      if (twin?.kind === "refuse") {
+        this.record(task, "failed", redundancyRefused(task.spec, twin.reason));
+        return;
+      }
       for (;;) {
         routing.tier = plan.tier;
         let outcome: RunOutcome;
+        let raced: VerifiedRun | null = null;
         try {
-          session = resume ? resume.session : this.openSession(task, plan, previous);
-          // A repair run (also one resumed after an interruption) draws on the repair reserve.
-          const cap = repairing && contract ? repairCap(contract.contract.budget, requestsUsed(this.d.gate, task.row.id)) : null;
-          const ctx = this.context(task, controller.signal, plan, routing, session, { contract, retry, repairCap: cap }, resume ? { plan: resume.plan } : null);
-          resume = null;
-          outcome = await this.runMode(ctx);
+          if (twin?.kind === "twin" && contract) {
+            const t = twin;
+            twin = null;
+            const r = await this.runTwins(task, controller, routing, contract, mode, st, t, previous, (s) => (session = s));
+            if (r.kind === "error") throw r.error;
+            outcome = r.outcome;
+            raced = r.verified;
+          } else {
+            session = resume ? resume.session : this.openSession(task, plan, previous);
+            // A repair run (also one resumed after an interruption) draws on the repair reserve.
+            const cap = repairing && contract ? repairCap(contract.contract.budget, requestsUsed(this.d.gate, task.row.id)) : null;
+            const ctx = this.context(task, controller.signal, plan, routing, session, { contract, retry, repairCap: cap }, resume ? { plan: resume.plan } : null);
+            resume = null;
+            outcome = await this.runMode(ctx);
+          }
         } catch (err) {
           if (isSimulatedCrash(err)) {
             crashed = true;
@@ -471,7 +522,11 @@ export class Executor {
         }
         let verified: VerifiedRun["verified"] | null = null;
         let settle: VerifiedRun["settle"] | null = null;
-        if (contract) {
+        if (raced) {
+          // The redundant runs were verified as they finished.
+          verified = raced.verified;
+          settle = raced.settle;
+        } else if (contract) {
           try {
             const run = this.reviewRun(task, controller.signal, routing, session, contract, plan.tier, repairPossible(this.d.gate, task, contract, st, forced));
             const v = await verifyWithReview(this.d, task, contract, mode, outcome, st, run);
