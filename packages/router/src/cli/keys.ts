@@ -1,9 +1,9 @@
 import { z } from "zod";
 import type { Switchyard } from "../core/service.js";
 import { SwitchyardError } from "../core/errors.js";
-import { listProviderModels } from "../providers/discovery.js";
-import { ProviderError, type ProviderErrorKind } from "../providers/errors.js";
+import type { ProviderErrorKind } from "../providers/errors.js";
 import { providerHealth } from "../providers/health.js";
+import { keyTestTimeoutMs, testKeyListing, type KeyTestOutcome } from "../providers/key-test.js";
 import type { ProviderCredential } from "../providers/credentials.js";
 import type { KeyAvailability } from "../providers/keys.js";
 import type { ResolvedProvider } from "../providers/registry.js";
@@ -18,8 +18,6 @@ import { out, stamp, table } from "./terminal.js";
 
 /** Environment variable `keys add` reads the new secret from. */
 export const NEW_KEY_ENV = "SWITCHYARD_NEW_KEY";
-/** Model listings in `keys test` give up after this long (the same bound discovery uses). */
-const LIST_TIMEOUT_MS = 30_000;
 
 export type KeyStatus = "available" | "unusable" | "invalid" | "out_of_credits" | "cooling" | "exhausted" | "free_quota" | "limit";
 
@@ -172,16 +170,14 @@ export interface KeyTest {
   cleared: boolean;
 }
 
-async function listWith(sy: Switchyard, provider: ResolvedProvider, credential: { apiKey: string | null; accountId?: string | null | undefined }) {
-  return listProviderModels(sy.providers.fetch, provider, { apiKey: credential.apiKey, accountId: credential.accountId ?? provider.accountId }, { timeoutMs: LIST_TIMEOUT_MS, now: sy.providers.now });
+/** A key test's result in `keys test` terms (models as sorted ids). */
+function keyTest(base: KeyTest, o: KeyTestOutcome): KeyTest {
+  if (o.skipped) return { ...base, skipped: o.skipped };
+  if (!o.listing) return { ...base, error: o.error };
+  return { ...base, ok: true, models: o.listing.models.map((m) => m.id).sort(), excluded: o.listing.excluded, pages: o.listing.pages, cleared: o.cleared };
 }
 
-/** Some providers echo the key in an error message: never print or store it. */
-function redact(message: string, secret: string | null): string {
-  return secret && secret.length >= 8 ? message.split(secret).join(`...${secret.slice(-4)}`) : message;
-}
-
-const failure = (err: unknown, secret: string | null): KeyTest["error"] => ({ kind: err instanceof ProviderError ? err.reason : "error", message: redact((err as Error).message, secret) });
+const testOpts = (sy: Switchyard) => ({ timeoutMs: keyTestTimeoutMs(sy.cfg.providers.request_timeout_seconds) });
 
 /** The credentials `keys test <target>` covers: every key, one provider's, a vault id, or a ref. */
 export function testTargets(sy: Switchyard, target: string | undefined): ProviderCredential[] {
@@ -195,32 +191,17 @@ export function testTargets(sy: Switchyard, target: string | undefined): Provide
 }
 
 /**
- * List the models each key can use (`keys test`). A key the provider rejects (401/403) is recorded
- * as invalid, exactly as a failed request would; a key recorded as invalid whose listing now
- * works is cleared. Nothing is written to the catalog: `models scan` does that.
+ * List the models each key can use (`keys test`), through the shared key test
+ * (`testKeyListing`): a key the provider rejects (401/403) or reports out of credits (402) is
+ * recorded as a failed request would record it; a key recorded as invalid whose listing now
+ * works is cleared. Provider messages arrive with the secret masked. Nothing is written to the
+ * catalog: `models scan` does that.
  */
 export async function testKeys(sy: Switchyard, target?: string): Promise<KeyTest[]> {
   const results: KeyTest[] = [];
   for (const cred of testTargets(sy, target)) {
     const base: KeyTest = { ref: cred.ref, provider: cred.provider, label: cred.label, last4: cred.last4, ok: false, models: [], excluded: [], pages: 0, skipped: null, error: null, cleared: false };
-    const provider = sy.providers.provider(cred.provider);
-    if (cred.unusableReason || !provider) {
-      results.push({ ...base, skipped: cred.unusableReason ?? `provider ${cred.provider} is not configured` });
-      continue;
-    }
-    let secret: string | null = null;
-    try {
-      const rc = sy.providers.credentials().requestCredential(cred.ref);
-      secret = rc.apiKey;
-      const listing = await listWith(sy, provider, rc);
-      const state = sy.providers.keys.get(cred.ref);
-      const cleared = state?.disabledReason === "auth_invalid";
-      if (cleared) sy.providers.keys.clear(cred.ref);
-      results.push({ ...base, ok: true, models: listing.models.map((m) => m.id).sort(), excluded: listing.excluded, pages: listing.pages, cleared });
-    } catch (err) {
-      if (err instanceof ProviderError && err.reason === "auth_invalid") sy.providers.keys.recordFailure(cred, new ProviderError(err.reason, redact(err.message, secret), { provider: err.provider, rateLimits: err.rateLimits }));
-      results.push({ ...base, error: failure(err, secret) });
-    }
+    results.push(keyTest(base, await testKeyListing(sy.providers, { credential: cred }, testOpts(sy))));
   }
   return results;
 }
@@ -228,12 +209,7 @@ export async function testKeys(sy: Switchyard, target?: string): Promise<KeyTest
 /** List models with a secret that is not stored yet (`keys add --test`). Nothing is recorded. */
 export async function testSecret(sy: Switchyard, provider: ResolvedProvider, secret: string, accountId: string | null): Promise<KeyTest> {
   const base: KeyTest = { ref: null, provider: provider.id, label: "new key", last4: secret.slice(-4), ok: false, models: [], excluded: [], pages: 0, skipped: null, error: null, cleared: false };
-  try {
-    const listing = await listWith(sy, provider, { apiKey: secret, accountId });
-    return { ...base, ok: true, models: listing.models.map((m) => m.id).sort(), excluded: listing.excluded, pages: listing.pages };
-  } catch (err) {
-    return { ...base, error: failure(err, secret) };
-  }
+  return keyTest(base, await testKeyListing(sy.providers, { provider, secret, accountId }, testOpts(sy)));
 }
 
 /** One key's test as terminal text: a header line, then the models (up to `max`). */

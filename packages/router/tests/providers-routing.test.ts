@@ -245,6 +245,33 @@ describe("direct discovery", () => {
     expect(stored().get("groq/other-model")).toMatchObject({ available: true, enabled: true });
   });
 
+  it("a scan that finds a key revoked (401) or out of credits (402) records it on the key; a server error does not", async () => {
+    let answer: "revoked" | "broke" | "down" = "revoked";
+    const fake = new FakeProvider((call) => {
+      if (call.url === "https://one.test/v1/models") return providerJson({ error: { message: `Invalid API Key ${call.key}` } }, 401);
+      if (call.url === "https://two.test/v1/models") return answer === "broke" ? providerJson({ error: { message: "insufficient credits" } }, 402) : answer === "down" ? providerJson({ error: { message: "upstream down" } }, 500) : providerModels(["gamma-32b"]);
+      return providerJson({ error: { message: "not found" } }, 404);
+    });
+    env = makeEnv({ config: twoProviders(), endpoints: [] });
+    sy = open(env, fake);
+    const scan = await sy.scan();
+    expect(scan.providers).toEqual(["two"]);
+    expect(scan.errors.join(" ")).toMatch(/one/);
+    const one = sy.providers.keys.get("config:one:literal:0")!;
+    expect(one.disabledReason).toBe("auth_invalid");
+    // The provider echoed the key; the stored error has it masked.
+    expect(one.lastError).not.toContain("sk-one-1111");
+    expect(one.lastError).toContain("...1111");
+    expect(sy.providers.statuses().find((s) => s.platform === "one")!.status).toBe("invalid");
+
+    answer = "down";
+    await sy.discover({ only: ["two"] });
+    expect(sy.providers.keys.get("config:two:literal:0")?.disabledReason ?? null).toBeNull();
+    answer = "broke";
+    await sy.discover({ only: ["two"] });
+    expect(sy.providers.keys.get("config:two:literal:0")!.disabledReason).toBe("out_of_credits");
+  });
+
   it("stores unknown tool support as null and excludes it from tool work; a gate-backed probe fills it in", async () => {
     const fake = new FakeProvider((call) => {
       if (call.url === "https://one.test/v1/models") return providerModels(["alpha-70b"]);

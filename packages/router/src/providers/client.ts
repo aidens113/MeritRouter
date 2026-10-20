@@ -4,6 +4,7 @@ import { ProviderError } from "./errors.js";
 import { completeOpenAiCompatible } from "./openai-compatible.js";
 import type { RateLimitSnapshot } from "./rate-limits.js";
 import type { ResolvedProvider } from "./registry.js";
+import { maskProviderError } from "./secret-masking.js";
 import type { FetchLike } from "./transport.js";
 
 /** The secret and account for one request. `apiKey` is null only for keyless (local) providers. */
@@ -33,7 +34,7 @@ export interface ProviderResponse extends ChatResponse {
 /**
  * One HTTP attempt per call, no retries: key rotation and fallback belong to the caller.
  * Failures throw `ProviderError` (a `GatewayError`) with a reason, retryability, and the
- * rate-limit snapshot when the provider answered.
+ * rate-limit snapshot when the provider answered; the key never appears in their messages.
  */
 export interface ProviderClient {
   complete(req: ProviderRequest): Promise<ProviderResponse>;
@@ -56,7 +57,12 @@ export function createProviderClient(opts: ProviderClientOptions = {}): Provider
       if (p.urlParams.includes("account_id") && !(req.credential.accountId ?? p.accountId)) {
         throw new ProviderError("bad_request", `${p.id} needs an account id (set account_id on the key or provider)`, { provider: p.id, possiblyConsumed: false });
       }
-      return p.api === "anthropic" ? completeAnthropic(fetchFn, req, now) : completeOpenAiCompatible(fetchFn, req, now);
+      try {
+        return await (p.api === "anthropic" ? completeAnthropic(fetchFn, req, now) : completeOpenAiCompatible(fetchFn, req, now));
+      } catch (err) {
+        // The transport masks what it sent; an error inside an HTTP 200 body is built after it returned.
+        throw err instanceof ProviderError ? maskProviderError(err, [req.credential.apiKey]) : err;
+      }
     },
   };
 }

@@ -6,6 +6,7 @@ import {
   dailyProbeBudget,
   discoverModels,
   parseModelListPage,
+  rebaseUrl,
   resolveProviders,
   type DiscoveryOptions,
   type FetchLike,
@@ -253,6 +254,66 @@ describe("model-list shapes", () => {
   });
 });
 
+describe("base_url overrides", () => {
+  const listUrl = (id: string, entry: Record<string, unknown> = {}) => setup({ [id]: entry }).providers.get(id)!.models.url;
+
+  it("keep the registry's absolute model-list URLs when there is no override", () => {
+    expect(listUrl("google")).toBe("https://generativelanguage.googleapis.com/v1beta/models");
+    expect(listUrl("cohere")).toBe("https://api.cohere.com/v1/models?endpoint=chat");
+    expect(listUrl("cloudflare", { account_id: "acct1" })).toBe("https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/models/search");
+    expect(listUrl("groq")).toBe("{base}/models");
+  });
+
+  it("move google's native list with the override, keeping its path relative to the API root", async () => {
+    // A gateway in front of the same API: the part before /v1beta/openai is the new root.
+    const gw = "https://gw.example.test/v1/acct/gw/google-ai-studio";
+    expect(listUrl("google", { base_url: `${gw}/v1beta/openai/` })).toBe(`${gw}/v1beta/models`);
+    // An override that does not end in the default path: the list path goes on its origin.
+    expect(listUrl("google", { base_url: "https://proxy.example.test/gemini" })).toBe("https://proxy.example.test/v1beta/models");
+    // models_path still sets the list exactly.
+    expect(listUrl("google", { base_url: "https://proxy.example.test/gemini", models_path: "/list" })).toBe("{base}/list");
+
+    const f = fakeFetch({ ...catalogRoute, [`${gw}/v1beta/models`]: () => json({ models: [{ name: "models/gemini-2.5-flash", supportedGenerationMethods: ["generateContent"] }] }) });
+    const r = await run({ google: { base_url: `${gw}/v1beta/openai`, ...key("GEMINI_KEY") } }, { GEMINI_KEY: "AIza-secret" }, f);
+    expect(r.providers[0]).toMatchObject({ status: "listed", kept: 1 });
+    expect(f.calls.some((c) => c.url.includes("generativelanguage.googleapis.com"))).toBe(false);
+  });
+
+  it("move cohere's list (another host by default) and cloudflare's search, account id included", async () => {
+    expect(listUrl("cohere", { base_url: "https://proxy.example.test/cohere/compatibility/v1" })).toBe("https://proxy.example.test/cohere/v1/models?endpoint=chat");
+    // Cloudflare: the account id stays a template, or takes the literal the override carries.
+    expect(listUrl("cloudflare", { base_url: "https://gw.example.test/client/v4/accounts/{account_id}/ai/v1", account_id: "acct1" })).toBe("https://gw.example.test/client/v4/accounts/{account_id}/ai/models/search");
+    expect(listUrl("cloudflare", { base_url: "https://gw.example.test/client/v4/accounts/acct999/ai/v1", account_id: "acct1" })).toBe("https://gw.example.test/client/v4/accounts/acct999/ai/models/search");
+
+    const f = fakeFetch({
+      ...catalogRoute,
+      "https://proxy.example.test/cohere/v1/models?endpoint=chat": () => json({ models: [{ name: "command-r", context_length: 128000 }] }),
+      "https://gw.example.test/client/v4/accounts/acct1/ai/models/search": () => json({ result: [{ id: "x", name: "@cf/meta/llama-3.1-8b-instruct", task: { name: "Text Generation" } }] }),
+    });
+    const r = await run(
+      {
+        cohere: { base_url: "https://proxy.example.test/cohere/compatibility/v1", ...key("COHERE_KEY") },
+        cloudflare: { base_url: "https://gw.example.test/client/v4/accounts/{account_id}/ai/v1", ...key("CF_KEY", "free_tier", { account_id: "acct1" }) },
+      },
+      { COHERE_KEY: "co-secret", CF_KEY: "cf-secret" },
+      f,
+    );
+    expect(r.providers.map((p) => [p.provider, p.status, p.kept])).toEqual([
+      ["cohere", "listed", 1],
+      ["cloudflare", "listed", 1],
+    ]);
+    expect(f.calls.some((c) => /api\.cohere\.com|api\.cloudflare\.com/.test(c.url))).toBe(false);
+  });
+
+  it("leave {base} templates alone and move any absolute key-info URL the same way", () => {
+    const or = setup({ openrouter: { base_url: "https://or-proxy.example.test/api/v1" } }).providers.get("openrouter")!;
+    expect(or.models.url).toBe("{base}/models");
+    expect(or.keyInfoUrl).toBe("{base}/key");
+    expect(rebaseUrl("https://info.example.test/v2/key?x=1", "https://api.example.test/v1", "https://proxy.example.test/team/v1")).toBe("https://proxy.example.test/team/v2/key?x=1");
+    expect(rebaseUrl("{base}/key", "https://api.example.test/v1", "https://proxy.example.test/v1")).toBe("{base}/key");
+  });
+});
+
 describe("free marking", () => {
   const orList = { "https://openrouter.ai/api/v1/models": () => json(OR_CATALOG) };
 
@@ -398,9 +459,12 @@ describe("availability", () => {
       "https://api.groq.com/openai/v1/models": (c) => (c.headers.authorization === "Bearer bad" ? json({ error: { message: "Invalid API Key" } }, 401) : json({ data: [{ id: "model-a" }] })),
     });
     const section = { groq: { keys: [{ api_key_env: "K1", billing_class: "free_tier" }, { api_key_env: "K2", billing_class: "free_tier" }] } };
-    const r = await run(section, { K1: "bad", K2: "good" }, f);
+    const failed: Array<[string, string]> = [];
+    const r = await run(section, { K1: "bad", K2: "good" }, f, { onKeyFailure: (cred, err) => failed.push([cred.ref, err.reason]) });
     expect(r.providers[0]).toMatchObject({ status: "listed", credentialRef: "config:groq:env:K2", errors: [{ ref: "config:groq:env:K1", kind: "auth_invalid" }] });
     expect(r.endpoints).toHaveLength(1);
+    // The rejected key is reported to the caller, which records it on the key.
+    expect(failed).toEqual([["config:groq:env:K1", "auth_invalid"]]);
   });
 
   it("an envelope that is not the documented shape fails the provider", async () => {

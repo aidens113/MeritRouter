@@ -80,6 +80,7 @@ describe("provider keys view", () => {
     expect(entry.keys[0]!.until).toBeGreaterThan(Date.now());
     expect(entry.health).toMatchObject({ status: "rate_limited" });
     expect(entry.health!.summary).toMatch(/1 cooling down/);
+    expect(sy.providers.statuses().find((s) => s.platform === "mistral")!.lastError).toMatch(/429/);
 
     // The cooldown ends and the key serves again: healthy, and the old 429 is history only.
     sy.providers.keys.clear(ref);
@@ -88,6 +89,8 @@ describe("provider keys view", () => {
     expect(entry.keys[0]).toMatchObject({ status: "healthy", errorCurrent: false, statusDetail: null });
     expect(entry.keys[0]!.lastError).toMatch(/429/);
     expect(entry.health).toMatchObject({ status: "healthy", summary: "The key is ready" });
+    // Provider health agrees: a resolved error is not reported beside a healthy status.
+    expect(sy.providers.statuses().find((s) => s.platform === "mistral")).toMatchObject({ status: "healthy", lastError: null });
   });
 });
 

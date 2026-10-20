@@ -157,3 +157,12 @@ export function errorInOkBody(provider: string, json: unknown, httpStatus: numbe
   const status = body.status ?? (POLICY.test(`${body.code ?? ""} ${body.message}`) ? 400 : 502);
   return classifyProviderError(provider, status, JSON.stringify(json), rateLimits, { httpStatus });
 }
+
+/**
+ * A failure that says the key itself cannot serve until the user acts: the provider rejected it
+ * (401/403, `auth_invalid`) or it is out of credits (402 or a spend cap, `out_of_credits`).
+ * Model listings and key tests record these on the key exactly as a failed request would.
+ */
+export function isKeyFailure(err: unknown): err is ProviderError {
+  return err instanceof ProviderError && (err.reason === "auth_invalid" || err.reason === "out_of_credits");
+}

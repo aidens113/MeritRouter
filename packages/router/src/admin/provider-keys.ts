@@ -4,10 +4,11 @@ import { SwitchyardError } from "../core/errors.js";
 import type { ProviderStatus } from "../gateway/types.js";
 import type { ModelEndpoint } from "../models/catalog.js";
 import type { ProviderCredential } from "../providers/credentials.js";
-import { freeStatus, listProviderModels } from "../providers/discovery.js";
+import { freeStatus } from "../providers/discovery.js";
 import type { DiscoveryRun } from "../providers/discovery-run.js";
-import { ProviderError, type ProviderErrorKind } from "../providers/errors.js";
-import { providerHealth as keyHealth } from "../providers/health.js";
+import type { ProviderErrorKind } from "../providers/errors.js";
+import { currentError, providerHealth as keyHealth } from "../providers/health.js";
+import { keyTestTimeoutMs, testKeyListing, type KeyTestOutcome } from "../providers/key-test.js";
 import type { KeyAvailability, KeyState } from "../providers/keys.js";
 import { BUILTIN_PROVIDER_IDS, type ProviderApiKind, type ResolvedProvider } from "../providers/registry.js";
 import { BillingClassSchema, KeyPatchSchema, NewKeySchema, type BillingClass, type KeyLimits, type KeyPatch, type NewKey, type PaidKey } from "../providers/vault.js";
@@ -17,8 +18,8 @@ import { patchConfig } from "./config-edit.js";
  * The panel's Provider keys page: every provider SwitchYard can call (the registry, custom
  * providers from config, and `paid.providers`), every key from the vault and the config with its
  * health from key state, models found per provider, and paid spend per key. Secrets never leave
- * this module: views carry only the last four characters, and key tests redact the secret from
- * provider messages.
+ * this module: views carry only the last four characters, and provider error messages arrive
+ * with secrets already masked (`src/providers/secret-masking.ts`).
  */
 
 const DAY = 86_400_000;
@@ -54,7 +55,7 @@ export interface ProviderKeyView {
   lastError: string | null;
   lastErrorAt: number | null;
   lastSuccessAt: number | null;
-  /** The last error came after the last success, so it still describes the key. */
+  /** The last error came after the last success, so it still describes the key (`currentError`); otherwise the key recovered since. */
   errorCurrent: boolean;
   createdAt: number | null;
   expiresAt: number | null;
@@ -139,8 +140,6 @@ function origin(sy: Switchyard, cred: ProviderCredential): { origin: string | nu
 function keyView(sy: Switchyard, cred: ProviderCredential, a: KeyAvailability | null, state: KeyState | undefined, vaultKey: PaidKey | undefined, now: number): ProviderKeyView {
   const spent30dUsd = round(sy.spend.keySpendSince(cred.ref, now - 30 * DAY));
   const status = keyStatus(cred, a);
-  const lastErrorAt = state?.lastErrorAt ?? null;
-  const lastSuccessAt = state?.lastSuccessAt ?? null;
   return {
     ref: cred.ref,
     provider: cred.provider,
@@ -159,9 +158,9 @@ function keyView(sy: Switchyard, cred: ProviderCredential, a: KeyAvailability | 
     statusDetail: status === "healthy" ? null : (cred.unusableReason ?? a?.detail ?? null),
     until: status === "healthy" ? null : (a?.until ?? null),
     lastError: state?.lastError ?? null,
-    lastErrorAt,
-    lastSuccessAt,
-    errorCurrent: lastErrorAt !== null && (lastSuccessAt === null || lastErrorAt > lastSuccessAt),
+    lastErrorAt: state?.lastErrorAt ?? null,
+    lastSuccessAt: state?.lastSuccessAt ?? null,
+    errorCurrent: currentError(state) !== null,
     createdAt: vaultKey?.createdAt ?? null,
     expiresAt: vaultKey?.expiresAt ?? null,
     monthlyCapUsd: vaultKey?.monthlyCapUsd ?? null,
@@ -368,61 +367,39 @@ export interface KeyTestResult {
   durationMs: number;
 }
 
-const redact = (text: string, secret: string | null) => (secret && secret.length >= 4 ? text.split(secret).join("••••") : text);
-
 /**
  * List the models a key can use with the provider's model list (no chat request, no quota for
- * completions). A stored key that the provider rejects as invalid is recorded as such; one that
- * lists successfully while recorded as invalid is cleared. Never throws for a provider failure.
+ * completions), through the shared key test (`testKeyListing`): a stored key the provider
+ * rejects is recorded as such, and one that lists while recorded as invalid is cleared. Never
+ * throws for a provider failure.
  */
 export async function testProviderKey(sy: Switchyard, input: KeyTestInput): Promise<KeyTestResult> {
   const t = KeyTestSchema.parse(input);
-  const started = sy.providers.now();
-  let provider: ResolvedProvider;
-  let credential: { apiKey: string | null; accountId: string | null };
-  let cred: ProviderCredential | null = null;
+  let provider: ResolvedProvider | null;
   let billing: BillingClass;
+  let outcome: KeyTestOutcome;
+  const opts = { timeoutMs: keyTestTimeoutMs(sy.cfg.providers.request_timeout_seconds) };
   if ("ref" in t) {
-    cred = sy.providers.credentials().get(t.ref);
+    const cred = sy.providers.credentials().get(t.ref);
     if (!cred) throw new SwitchyardError("not_found", `unknown key ${t.ref}`);
-    const p = sy.providers.provider(cred.provider);
-    const fail = (message: string): KeyTestResult => ({ ok: false, provider: cred!.provider, ref: cred!.ref, models: [], excluded: [], pages: 0, error: { kind: "error", message }, durationMs: 0 });
-    if (!p) return fail(`provider ${cred.provider} is not configured`);
-    if (cred.unusableReason) return fail(`this key cannot be used: ${cred.unusableReason}`);
-    provider = p;
-    const rc = sy.providers.credentials().requestCredential(cred.ref);
-    credential = { apiKey: rc.apiKey, accountId: rc.accountId ?? p.accountId };
+    provider = sy.providers.provider(cred.provider);
     billing = cred.billingClass;
+    outcome = await testKeyListing(sy.providers, { credential: cred }, opts);
   } else {
     provider = keyProvider(sy, t.provider, t.accountId);
-    credential = { apiKey: t.secret, accountId: t.accountId ?? provider.accountId };
     billing = t.billingClass;
+    outcome = await testKeyListing(sy.providers, { provider, secret: t.secret, accountId: t.accountId }, opts);
   }
-  const timeoutMs = Math.min(30_000, sy.cfg.providers.request_timeout_seconds * 1000);
-  try {
-    const listing = await listProviderModels(sy.providers.fetch, provider, credential, { timeoutMs, now: sy.providers.now });
-    const models: KeyTestModel[] = [];
-    const excluded = [...listing.excluded];
-    for (const m of listing.models) {
-      const f = freeStatus(provider, m, [{ billingClass: billing }]);
-      if (!f.usable) excluded.push({ model: m.id, reason: f.reason });
-      else models.push({ id: m.id, displayName: m.displayName, contextLimitTokens: m.contextLimitTokens, free: f.value, freeReason: f.reason });
-    }
-    if (cred && sy.providers.keys.get(cred.ref)?.disabledReason === "auth_invalid") sy.providers.keys.clear(cred.ref);
-    return { ok: true, provider: provider.id, ref: cred?.ref ?? null, models, excluded, pages: listing.pages, error: null, durationMs: sy.providers.now() - started };
-  } catch (err) {
-    if (cred && err instanceof ProviderError && err.reason === "auth_invalid") sy.providers.keys.recordFailure(cred, err);
-    return {
-      ok: false,
-      provider: provider.id,
-      ref: cred?.ref ?? null,
-      models: [],
-      excluded: [],
-      pages: 0,
-      error: { kind: err instanceof ProviderError ? err.reason : "error", message: redact((err as Error).message ?? String(err), credential.apiKey) },
-      durationMs: sy.providers.now() - started,
-    };
+  const result: KeyTestResult = { ok: outcome.ok, provider: outcome.provider, ref: outcome.ref, models: [], excluded: [], pages: 0, error: outcome.error, durationMs: outcome.durationMs };
+  if (outcome.skipped) return { ...result, error: { kind: "error", message: `this key cannot be used: ${outcome.skipped}` } };
+  if (!outcome.listing || !provider) return result;
+  const excluded = [...outcome.listing.excluded];
+  for (const m of outcome.listing.models) {
+    const f = freeStatus(provider, m, [{ billingClass: billing }]);
+    if (!f.usable) excluded.push({ model: m.id, reason: f.reason });
+    else result.models.push({ id: m.id, displayName: m.displayName, contextLimitTokens: m.contextLimitTokens, free: f.value, freeReason: f.reason });
   }
+  return { ...result, excluded, pages: outcome.listing.pages };
 }
 
 // ---------- discovery for one provider ----------

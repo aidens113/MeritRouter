@@ -214,9 +214,12 @@ describe("doctor", () => {
     expect(byName["provider groq"]).toMatchObject({ ok: true, level: "ok" });
     expect(byName["provider groq"]!.detail).toMatch(/2 keys, 1 available, 1 cooling down until .*Z/);
     expect(byName["provider groq"]!.detail).toMatch(/last listing .*: 2 models; 0 of 2 stored models active/);
-    // cerebras: its only key was rejected while listing, so the listing failed with the provider's message.
-    expect(byName["provider cerebras"]).toMatchObject({ level: "warn", ok: true });
+    // cerebras: its only key was rejected while listing: the listing failed with the provider's
+    // message, and the scan recorded the key as invalid, so no key is left.
+    expect(byName["provider cerebras"]).toMatchObject({ level: "fail", ok: false });
     expect(byName["provider cerebras"]!.detail).toMatch(/FAILED: cerebras \(config:cerebras:literal:0\): .*Wrong API Key/);
+    expect(byName["provider cerebras"]!.detail).toMatch(/1 invalid \(config:cerebras:literal:0 \.\.\.-key\)/);
+    expect(sy.providers.keys.get("config:cerebras:literal:0")!.disabledReason).toBe("auth_invalid");
     // mistral: the env var is unset, so it has no usable key.
     expect(byName["provider mistral"]).toMatchObject({ level: "fail", ok: false });
     expect(byName["provider mistral"]!.detail).toMatch(/SY_TEST_UNSET_MISTRAL_KEY is not set/);
@@ -225,7 +228,7 @@ describe("doctor", () => {
     expect(byName["secrets in config"]!.detail).toMatch(/providers\.groq\.keys\[0\].*providers\.cerebras\.keys\[0\].*use api_key_env/);
     expect(byName["secrets in config"]!.detail).not.toContain("test-groq-key");
 
-    // An invalid key marks the provider failed once no key is left.
+    // A request that finds the key invalid keeps the provider failed.
     sy.providers.keys.recordFailure("config:cerebras:literal:0", new ProviderError("auth_invalid", "Wrong API Key", { provider: "cerebras", status: 401 }));
     const after = doctorChecks(sy).find((c) => c.check === "provider cerebras")!;
     expect(after).toMatchObject({ level: "fail", ok: false });

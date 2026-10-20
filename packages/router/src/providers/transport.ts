@@ -1,6 +1,7 @@
 import { classifyProviderError, ProviderError } from "./errors.js";
 import { parseRateLimitHeaders, type RateLimitSnapshot } from "./rate-limits.js";
 import type { RateLimitHeaderSpec } from "./registry.js";
+import { maskProviderError, requestSecrets } from "./secret-masking.js";
 
 export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body?: string; signal?: AbortSignal }) => Promise<Response>;
 
@@ -25,8 +26,18 @@ export interface HttpResult {
 /**
  * One HTTP attempt, no retries. Non-2xx statuses become classified `ProviderError`s carrying
  * the rate-limit snapshot; timeouts, caller aborts, and network failures are classified too.
+ * Every error message has the request's credentials (auth header values, key query parameters)
+ * masked, whether a provider echoed them in its body or a network error quoted the URL.
  */
 export async function requestJson(fetchFn: FetchLike, call: HttpCall, now: () => number): Promise<HttpResult> {
+  try {
+    return await attempt(fetchFn, call, now);
+  } catch (err) {
+    throw err instanceof ProviderError ? maskProviderError(err, requestSecrets(call.headers, call.url)) : err;
+  }
+}
+
+async function attempt(fetchFn: FetchLike, call: HttpCall, now: () => number): Promise<HttpResult> {
   const timeout = AbortSignal.timeout(call.timeoutMs);
   const signal = call.signal ? AbortSignal.any([call.signal, timeout]) : timeout;
   const headers = call.body === undefined ? call.headers : { "content-type": "application/json", ...call.headers };
