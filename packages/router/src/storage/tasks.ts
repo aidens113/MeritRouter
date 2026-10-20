@@ -55,6 +55,18 @@ export interface ClaimLimits {
   supervisorTimeoutMs?: number;
   /** Most running tasks per job (`team.max_agents`); counts every task the job delegated, sub-supervisors included. */
   maxAgentsPerJob?: number;
+  /** Per-provider concurrency: a worker task starts only when a platform in its route plan has a free slot. */
+  providerSlots?: ClaimAdmission;
+}
+
+/**
+ * Admission of one queued worker task at claim (supervisors are never held back). `check`
+ * returns null when the task may start, else what it waits for; `claimed` is called once it
+ * was claimed. Both run inside the claim transaction.
+ */
+export interface ClaimAdmission {
+  check(row: TaskRow, spec: WorkerTask): { wait: string; data: Record<string, unknown> } | null;
+  claimed(row: TaskRow, spec: WorkerTask, owner: string): void;
 }
 
 /** Canonical JSON (sorted keys) so equivalent specs hash identically. */
@@ -86,6 +98,8 @@ export function dependencySatisfied(t: StoredTask): boolean {
 export const AWAITING_ACCEPTANCE = "awaiting_acceptance";
 /** Prefix of a queued coding task's state reason while another task's file lease blocks it. */
 export const WAITING_FOR_FILE_LEASE = "waiting_for_file_lease";
+/** Prefix of a queued task's state reason while every platform in its route plan is out of slots. */
+export const WAITING_FOR_PROVIDER_SLOT = "waiting_for_provider_slot";
 
 export class TaskStore {
   constructor(
@@ -278,6 +292,20 @@ export class TaskStore {
         if (isSup ? supSlots <= 0 : !isSubSup && slots <= 0) continue;
         const job = !isSup ? (spec.parentTaskId ?? null) : null;
         if (job && limits.maxAgentsPerJob !== undefined && (perJob.get(job) ?? 0) >= limits.maxAgentsPerJob) continue;
+        // Provider slots: a worker starts only when a platform it can route to has room. A
+        // supervisor never waits here (its workers may hold every slot; its requests are served
+        // first at the gate instead).
+        if (limits.providerSlots && !isSup && !isSubSup) {
+          const blocked = limits.providerSlots.check(row, spec);
+          if (blocked) {
+            const reason = `${WAITING_FOR_PROVIDER_SLOT}:${blocked.wait}`;
+            if (row.state_reason !== reason) {
+              this.db.prepare("UPDATE tasks SET state_reason = ?, updated_at = ? WHERE id = ?").run(reason, now, row.id);
+              this.event(row.id, WAITING_FOR_PROVIDER_SLOT, blocked.data);
+            }
+            continue;
+          }
+        }
         if (row.writable_repo && !isSup) {
           // Team-wide file leases: never two live writers on overlapping paths in one repository
           // (checked before the writer count so a blocked task says what it waits for).
@@ -301,6 +329,7 @@ export class TaskStore {
         const fallback = isSup || isSubSup ? (limits.supervisorTimeoutMs ?? limits.defaultTimeoutMs) : limits.defaultTimeoutMs;
         const timeoutMs = spec.budget?.timeoutSeconds ? spec.budget.timeoutSeconds * 1000 : fallback;
         update.run(owner, now + limits.leaseMs, now, now + timeoutMs, now, row.id);
+        if (limits.providerSlots && !isSup && !isSubSup) limits.providerSlots.claimed(row, spec, owner);
         this.event(row.id, "claimed", { owner, run: row.run_count + 1 });
         claimed.push(this.get(row.id)!);
         if (isSup) supSlots--;

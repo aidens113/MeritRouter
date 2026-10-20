@@ -545,4 +545,25 @@ export const MIGRATIONS: string[] = [
     SELECT RAISE(ABORT, 'channel posts are append-only');
   END;
   `,
+  `
+  -- Agent teams (T3): per-provider concurrency slots, shared by every process on this store.
+  -- kind request: one in-flight model request (reserve to reconcile; a batch is one);
+  -- claim: a task the scheduler admitted on this platform that has not sent a request yet;
+  -- wait: a request waiting for a slot (priority 1 for supervisors and reviewers).
+  -- A row counts only while its task's lease is live (see gateway/capacity.ts).
+  CREATE TABLE provider_slots (
+    id TEXT PRIMARY KEY,
+    platform TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('request', 'claim', 'wait')),
+    holder TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    lease_owner TEXT,
+    priority INTEGER NOT NULL DEFAULT 0,
+    since INTEGER NOT NULL,
+    seen_at INTEGER NOT NULL
+  );
+  CREATE INDEX provider_slots_platform ON provider_slots(platform, kind);
+  CREATE INDEX provider_slots_task ON provider_slots(task_id);
+  CREATE INDEX provider_slots_holder ON provider_slots(holder);
+  `,
 ];

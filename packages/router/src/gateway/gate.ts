@@ -10,6 +10,8 @@ import type { ChatRequest, ChatResponse, InferenceClient, ProviderStatus } from 
 import { estimateTokens } from "./types.js";
 import type { DirectClient } from "../paid/direct.js";
 import { CircuitBreakers, countsAsProviderFailure } from "./breaker.js";
+import { ProviderCapacity, SLOT_POLL_MS, type SlotHandle, type SlotHolder } from "./capacity.js";
+import { newId } from "../storage/db.js";
 import type { KeyVault } from "../paid/vault.js";
 import { worstCaseUsd, type PaidSpend } from "../paid/spend.js";
 
@@ -54,12 +56,15 @@ export class ProviderHealth {
   private cache: { at: number; byPlatform: Map<string, ProviderStatus> } | null = null;
   private inflight: Promise<void> | null = null;
   readonly breakers: CircuitBreakers;
+  /** Per-provider concurrency slots and their AIMD limits (see gateway/capacity.ts). */
+  readonly capacity: ProviderCapacity;
 
   constructor(
     private readonly client: InferenceClient,
     private readonly now: () => number = Date.now,
   ) {
     this.breakers = new CircuitBreakers(now);
+    this.capacity = new ProviderCapacity(now);
   }
 
   /** The reported cooldown (while it lasts) and, when the platform's breaker is open, until when. */
@@ -71,16 +76,27 @@ export class ProviderHealth {
     return { status: s.status, resumeAt: s.resumeAt, ...(circuit !== null ? { circuitOpenUntil: circuit } : {}) };
   };
 
-  /** Feed one dispatched attempt's result to the platform's breaker (null error: it answered). */
-  recordOutcome(platform: string, err: GatewayError | null): void {
-    if (!err) return this.breakers.success(platform);
+  /**
+   * Feed one dispatched attempt's result to the platform's breaker and its concurrency limit
+   * (null error: it answered). `generation` is the slot's AIMD generation: a 429 halves the
+   * platform's slots once per generation, and so does a breaker opening.
+   */
+  recordOutcome(platform: string, err: GatewayError | null, generation?: number): void {
+    if (!err) {
+      this.breakers.success(platform);
+      this.capacity.success(platform);
+      return;
+    }
     if (err.kind === "aborted") return this.breakers.release(platform);
     const cooling = this.cache?.byPlatform.get(platform);
     const coolingReported = cooling?.status === "rate_limited" && (cooling.resumeAt === null || cooling.resumeAt > this.now());
+    const wasOpen = this.breakers.get(platform).state === "open";
     if (countsAsProviderFailure(err, coolingReported)) this.breakers.failure(platform, `${err.kind}: ${err.message}`);
     // A 4xx, auth, or unknown-model answer came from something that is up.
     else if (!["rate_limited", "pool_exhausted"].includes(err.kind)) this.breakers.success(platform);
     else this.breakers.release(platform);
+    const throttled = (err.kind === "rate_limited" || err.status === 429) && this.capacity.throttle(platform, "rate_limited", generation);
+    if (!throttled && !wasOpen && this.breakers.get(platform).state === "open") this.capacity.throttle(platform, "circuit_open", generation);
   }
 
   async refresh(maxAgeMs = 30_000): Promise<void> {
@@ -90,6 +106,8 @@ export class ProviderHealth {
       .providers()
       .then((list) => {
         this.cache = { at: this.now(), byPlatform: new Map(list.map((p) => [p.platform, p])) };
+        // A reported cooldown halves the platform's concurrency (once per cooldown).
+        for (const p of list) if (p.status === "rate_limited" && p.resumeAt !== null) this.capacity.observeCooldown(p.platform, p.resumeAt);
       })
       .catch(() => {
         this.cache = { at: this.now(), byPlatform: this.cache?.byPlatform ?? new Map() };
@@ -123,6 +141,30 @@ export class Gate {
   ) {
     // Settings are read live (a config reload mutates cfg in place); state is mirrored to meta.
     health.breakers.attach(db, () => cfg.routing.circuit_breaker);
+    // A request slot older than every attempt's timeout belongs to a request that is gone.
+    health.capacity.attach(db, () => cfg.team, () => (cfg.gateway.request_timeout_seconds * 2 + 60) * 1000);
+  }
+
+  /** Supervisors and independent reviewers are served before waiting workers. */
+  private priorityOf(req: GateRequest): 0 | 1 {
+    if (req.purpose === "supervisor" || req.purpose === "verification") return 1;
+    return this.cfg.profiles[req.plan.profile]?.mode === "supervisor" ? 1 : 0;
+  }
+
+  /**
+   * Take a slot on the endpoint's platform, then its breaker admission. Null (recorded as a
+   * skipped attempt) when either refuses; a full platform is added to `full`.
+   */
+  private admit(ep: ModelEndpoint, holder: SlotHolder, attempts: GateAttempt[], full: Set<string>, breaker: (ep: ModelEndpoint) => boolean): SlotHandle | null {
+    const slot = this.health.capacity.tryAcquire(holder, ep.providerId);
+    if ("full" in slot) {
+      full.add(ep.providerId);
+      attempts.push({ endpointId: ep.id, outcome: `skipped: provider slots full for ${ep.providerId} (${slot.held}/${slot.limit} in flight${slot.ahead ? `, ${slot.ahead} waiting ahead` : ""})` });
+      return null;
+    }
+    if (breaker(ep)) return slot;
+    this.health.capacity.release(slot);
+    return null;
   }
 
   /** An endpoint with a served-model violation stays blocked until its chain is re-verified. */
@@ -135,9 +177,36 @@ export class Gate {
     return row ? `quarantined after a policy violation: ${row.policy_violation}` : null;
   }
 
+  /**
+   * Send one request. When every candidate's platform is out of concurrency slots (and nothing
+   * was dispatched), wait without holding anything until a slot frees, up to one request
+   * timeout; then fail `rate_limited` so the executor defers the task for capacity.
+   */
   async request(req: GateRequest): Promise<GateResponse> {
+    const holder: SlotHolder = { id: newId("h"), taskIds: req.participants.map((p) => p.taskId), leaseOwner: req.participants[0]?.leaseOwner ?? null, priority: this.priorityOf(req), since: null };
+    const started = Date.now();
+    const maxWaitMs = this.cfg.gateway.request_timeout_seconds * 1000;
+    try {
+      for (;;) {
+        const r = await this.round(req, holder);
+        if (!("full" in r)) return r;
+        if (req.signal?.aborted) throw Object.assign(new GatewayError("aborted", "aborted while waiting for a provider slot"), { attempts: r.attempts });
+        if (Date.now() - started >= maxWaitMs) {
+          throw Object.assign(new GatewayError("rate_limited", `provider slots full for ${r.full.join(", ")} for ${Math.round(maxWaitMs / 1000)} s`, undefined, 5000, false), { attempts: r.attempts });
+        }
+        this.health.capacity.wait(holder, r.full);
+        await this.health.capacity.nextWake(SLOT_POLL_MS, req.signal);
+      }
+    } finally {
+      this.health.capacity.leave(holder);
+    }
+  }
+
+  /** One pass over the candidates; `full` when nothing was dispatched because slots were taken. */
+  private async round(req: GateRequest, holder: SlotHolder): Promise<GateResponse | { full: string[]; attempts: GateAttempt[] }> {
     const estInput = estimateTokens(req.chat.messages, req.chat.tools);
     const attempts: GateAttempt[] = [];
+    const full = new Set<string>();
     let lastCapacityError: GatewayError | null = null;
     let dispatched = 0;
     let dispatchedPaid = 0;
@@ -176,7 +245,7 @@ export class Gate {
         continue;
       }
       if (direct) {
-        const r = await this.requestDirect(ep, req, participants, estInput, attempts, admitted);
+        const r = await this.requestDirect(ep, req, participants, estInput, attempts, (e) => this.admit(e, holder, attempts, full, admitted));
         if (r === "skip") continue;
         dispatchedPaid++;
         if (r instanceof GatewayError) {
@@ -190,7 +259,8 @@ export class Gate {
         attempts.push({ endpointId: ep.id, outcome: `skipped: ${unverified}` });
         continue;
       }
-      if (!admitted(ep)) continue;
+      const slot = this.admit(ep, holder, attempts, full, admitted);
+      if (!slot) continue;
 
       let reservation;
       try {
@@ -208,46 +278,52 @@ export class Gate {
         });
       } catch (err) {
         this.health.breakers.release(ep.providerId);
+        this.health.capacity.release(slot);
         throw err;
       }
       dispatched++;
       const chat: ChatRequest = { ...req.chat, model: `auto:${ep.chainName}` };
       if (!ep.supportsStructuredOutput) delete chat.response_format;
 
+      // The slot is held from reservation to reconciliation.
       let response: ChatResponse;
-      try {
-        response = await this.client.complete(chat, req.signal);
-      } catch (err) {
-        const ge = err instanceof GatewayError ? err : new GatewayError("transport", (err as Error).message ?? String(err), undefined, undefined, true);
-        this.health.recordOutcome(ep.providerId, req.signal?.aborted ? new GatewayError("aborted", ge.message) : ge);
-        this.admission.reconcile(reservation, {
-          kind: ge.possiblyConsumed ? "uncertain" : "failed",
-          ...(ge.status !== undefined ? { httpStatus: ge.status } : {}),
-          errorKind: ge.kind,
-          errorMessage: ge.message,
-        });
-        attempts.push({ endpointId: ep.id, outcome: ge.kind });
-        if (req.signal?.aborted || ge.kind === "aborted") throw Object.assign(ge, { attempts });
-        if (FALLBACK_KINDS.has(ge.kind)) {
-          lastCapacityError = ge;
-          continue;
-        }
-        throw Object.assign(ge, { attempts });
-      }
-
-      this.health.recordOutcome(ep.providerId, null);
-      const t = response.telemetry;
       let violation: string | undefined;
-      if (!t.servedModel) violation = "gateway did not report the served model";
-      else if (t.servedModel !== ep.gatewayModelId || (t.servedProvider !== null && t.servedProvider !== ep.providerId)) {
-        violation = `chain ${ep.chainName} for ${ep.id} was served by ${t.servedProvider ?? "?"}/${t.servedModel}`;
+      try {
+        try {
+          response = await this.client.complete(chat, req.signal);
+        } catch (err) {
+          const ge = err instanceof GatewayError ? err : new GatewayError("transport", (err as Error).message ?? String(err), undefined, undefined, true);
+          this.health.recordOutcome(ep.providerId, req.signal?.aborted ? new GatewayError("aborted", ge.message) : ge, slot.generation);
+          this.admission.reconcile(reservation, {
+            kind: ge.possiblyConsumed ? "uncertain" : "failed",
+            ...(ge.status !== undefined ? { httpStatus: ge.status } : {}),
+            errorKind: ge.kind,
+            errorMessage: ge.message,
+          });
+          attempts.push({ endpointId: ep.id, outcome: ge.kind });
+          if (req.signal?.aborted || ge.kind === "aborted") throw Object.assign(ge, { attempts });
+          if (FALLBACK_KINDS.has(ge.kind)) {
+            lastCapacityError = ge;
+            continue;
+          }
+          throw Object.assign(ge, { attempts });
+        }
+
+        this.health.recordOutcome(ep.providerId, null, slot.generation);
+        const t = response.telemetry;
+        if (!t.servedModel) violation = "gateway did not report the served model";
+        else if (t.servedModel !== ep.gatewayModelId || (t.servedProvider !== null && t.servedProvider !== ep.providerId)) {
+          violation = `chain ${ep.chainName} for ${ep.id} was served by ${t.servedProvider ?? "?"}/${t.servedModel}`;
+        }
+        this.admission.reconcile(reservation, {
+          kind: "succeeded",
+          response,
+          servedEndpointId: violation ? null : ep.id,
+          ...(violation ? { policyViolation: violation } : {}),
+        });
+      } finally {
+        this.health.capacity.release(slot);
       }
-      this.admission.reconcile(reservation, {
-        kind: "succeeded",
-        response,
-        servedEndpointId: violation ? null : ep.id,
-        ...(violation ? { policyViolation: violation } : {}),
-      });
       if (violation) {
         attempts.push({ endpointId: ep.id, outcome: "policy_violation" });
         throw Object.assign(new GatewayError("policy_violation", `${violation}; response discarded and ${ep.id} quarantined`), { attempts });
@@ -257,6 +333,8 @@ export class Gate {
     }
 
     if (dispatched === 0 && dispatchedPaid === 0) {
+      // Every dispatchable platform is out of slots: the caller waits for one.
+      if (full.size) return { full: [...full], attempts };
       // Every dispatchable model sits behind an open breaker: wait for capacity rather than fail.
       if (circuitRetryAt !== null) {
         const wait = Math.max(1000, circuitRetryAt - this.health.breakers.now());
@@ -280,7 +358,7 @@ export class Gate {
     participants: Participant[],
     estInput: number,
     attempts: GateAttempt[],
-    admitted: (ep: ModelEndpoint) => boolean,
+    admit: (ep: ModelEndpoint) => SlotHandle | null,
   ): Promise<"skip" | GatewayError | { requestId: string; response: ChatResponse }> {
     const route = ep.route as { kind: "direct"; provider: string; model: string };
     const provider = this.cfg.paid.providers[route.provider];
@@ -295,7 +373,8 @@ export class Gate {
       attempts.push({ endpointId: ep.id, outcome: `skipped (paid budget): no ${route.provider} key with $${worst.toFixed(4)} headroom` });
       return "skip";
     }
-    if (!admitted(ep)) return "skip";
+    const slot = admit(ep);
+    if (!slot) return "skip";
     let reservation;
     try {
       reservation = this.admission.reserve({
@@ -313,6 +392,7 @@ export class Gate {
       });
     } catch (err) {
       this.health.breakers.release(ep.providerId);
+      this.health.capacity.release(slot);
       if (err instanceof AdmissionDenied && err.reason === "paid_budget_exhausted") {
         attempts.push({ endpointId: ep.id, outcome: `skipped (paid budget): ${err.message}` });
         return "skip";
@@ -321,12 +401,33 @@ export class Gate {
     }
     const chat = { ...req.chat };
     if (!ep.supportsStructuredOutput) delete chat.response_format;
+    // The slot is held from reservation to reconciliation.
+    try {
+      return await this.dispatchDirect(ep, req, route, provider, key.id, chat, reservation, attempts, slot);
+    } finally {
+      this.health.capacity.release(slot);
+    }
+  }
+
+  /** Call the paid provider once for a reserved request, verify the served model, and settle the cost. */
+  private async dispatchDirect(
+    ep: ModelEndpoint,
+    req: GateRequest,
+    route: { kind: "direct"; provider: string; model: string },
+    provider: NonNullable<ResolvedConfig["paid"]["providers"][string]>,
+    keyId: number,
+    chat: Omit<ChatRequest, "model">,
+    reservation: ReturnType<Admission["reserve"]>,
+    attempts: GateAttempt[],
+    slot: SlotHandle,
+  ): Promise<GatewayError | { requestId: string; response: ChatResponse }> {
+    const paid = this.paid!;
     let response: ChatResponse;
     try {
-      response = await this.paid.client.complete({
+      response = await paid.client.complete({
         providerName: route.provider,
         provider,
-        apiKey: this.paid.vault.secret(key.id),
+        apiKey: paid.vault.secret(keyId),
         model: route.model,
         chat,
         timeoutMs: this.cfg.gateway.request_timeout_seconds * 1000,
@@ -334,14 +435,14 @@ export class Gate {
       });
     } catch (err) {
       const ge = err instanceof GatewayError ? err : new GatewayError("transport", (err as Error).message ?? String(err), undefined, undefined, true);
-      this.health.recordOutcome(ep.providerId, req.signal?.aborted ? new GatewayError("aborted", ge.message) : ge);
+      this.health.recordOutcome(ep.providerId, req.signal?.aborted ? new GatewayError("aborted", ge.message) : ge, slot.generation);
       this.admission.reconcile(reservation, { kind: ge.possiblyConsumed ? "uncertain" : "failed", ...(ge.status !== undefined ? { httpStatus: ge.status } : {}), errorKind: ge.kind, errorMessage: ge.message });
       attempts.push({ endpointId: ep.id, outcome: ge.kind });
       if (req.signal?.aborted || ge.kind === "aborted") throw Object.assign(ge, { attempts });
       if (FALLBACK_KINDS.has(ge.kind)) return ge;
       throw Object.assign(ge, { attempts });
     }
-    this.health.recordOutcome(ep.providerId, null);
+    this.health.recordOutcome(ep.providerId, null, slot.generation);
     // Providers often report a dated variant of the requested model id.
     const served = response.telemetry.servedModel;
     const violation =

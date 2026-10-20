@@ -1,6 +1,6 @@
 import type { ResolvedConfig } from "../config/load.js";
 import { maxAgentsPerJob } from "../config/schema.js";
-import type { StoredTask, TaskStore } from "../storage/tasks.js";
+import type { ClaimAdmission, StoredTask, TaskStore } from "../storage/tasks.js";
 import { batchKey } from "../runners/batch.js";
 import { redundancyFor } from "../storage/plans.js";
 import type { Executor } from "./executor.js";
@@ -14,7 +14,8 @@ export const MAX_AUTO_RESUMES = 3;
  * compatible completion tasks, and runs them. Several processes may share one store. Every
  * ready task of a job's task graph is claimed at once, up to `team.max_agents` per job and
  * `execution.max_concurrent_tasks` in all; a coding task whose write globs overlap another
- * task's live file lease in the same repository waits (see `TaskStore.claim`).
+ * task's live file lease in the same repository waits (see `TaskStore.claim`), and a worker
+ * task waits while every platform in its route plan is out of concurrency slots.
  */
 export class Scheduler {
   private timer: NodeJS.Timeout | null = null;
@@ -32,6 +33,11 @@ export class Scheduler {
     private readonly onTick: () => void = () => undefined,
     /** Agent sessions: sessions left running by a dead process are ended `interrupted` at recovery. */
     private readonly sessions: SessionStore | null = null,
+    /**
+     * Per-provider concurrency: a worker task is claimed only when a platform in its route plan
+     * has a free slot (see `ProviderSlotAdmission`); null claims without looking at providers.
+     */
+    private readonly providerSlots: ClaimAdmission | null = null,
   ) {}
 
   start(intervalMs = 1000): void {
@@ -94,6 +100,7 @@ export class Scheduler {
           maxSupervisors: this.cfg.supervisor.max_concurrent_jobs,
           supervisorTimeoutMs: this.cfg.supervisor.job_timeout_seconds * 1000,
           maxAgentsPerJob: maxAgentsPerJob(this.cfg),
+          ...(this.providerSlots ? { providerSlots: this.providerSlots } : {}),
         });
         const taken = new Set<string>();
         for (const task of claimed) {

@@ -36,6 +36,16 @@ below). For a small, important non-coding node (T1/T2) whose answer you want con
 `redundancy: 2`: two different cheap models run it and the first result that passes
 verification wins; it costs both runs, so do not use it by default.
 
+Staff the plan for cost and capacity. A node you give no `difficulty` is planned at the tier the
+rulebook scores for it (reported by `plan_work`; classification may still raise the task), so
+leave it out unless you know better; a node the
+rulebook scores above T3 is reported for you to split. Each provider runs only a limited number of
+requests at once (its slots grow while it answers and halve when it rate-limits), and `plan_work`
+shows the slots in use. When slots are free, prefer more, smaller nodes on cheap tiers (T1/T2): they
+run in parallel and finish sooner. When every slot is busy, more nodes only queue: plan fewer,
+larger ones. Keep strong models (T3) for supervision, for nodes that genuinely need them, and for
+Deep and Strict review; never raise a node's tier to make it start sooner.
+
 ## Hand whole sub-goals to sub-supervisors
 
 When a part of the goal is itself a multi-task effort (several workers, its own plan and
@@ -58,7 +68,7 @@ verification, integration, conflict resolution, and anything needing the user's 
 
 Every brief (the `delegate` tool records it in the working document before dispatch):
 - names the task type (`summarize`, `inspect`, `analyze`, `implement`, `review`) and, when you
-  know it, a difficulty hint (T1-T4);
+  know it, a difficulty hint (T1-T4; in `plan_work`, leave it out to use the rulebook's tier);
 - states the goal and concrete acceptance criteria;
 - lists the exact files to read (`fileRefs`) and, for edits, the only paths it owns
   (`allowedPaths`) and the checks that prove it done;
