@@ -55,15 +55,20 @@ health; nothing is wired into Gate, the catalog, or the service yet. 359 tests g
   Anthropic periods), OpenAI `insufficient_quota` as out of credits, Cloudflare/Cohere list
   pagination, Anthropic `capabilities`, OpenRouter `/api/v1/key` shape.
 
-**P2 progress:** `p2-wire` done and verified (369 tests; panel builds; model detail page checked
-on the demo). Every `{kind:"direct"}` endpoint goes through `src/providers` via
-`src/gateway/direct.ts`; FreeLLMAPI chains still work. Decisions recorded in its
-[report](./direct-providers/reports/p2-wire.md): health read from key state
-(`ProviderRuntime.statuses()`); out of credits disables only that key (never trips the breaker);
-a model is paid unless verified free at $0, a key-basis free model uses only `free_tier` keys,
-and a paid key on a `:free`/$0 model is treated as free (no money moves).
+**P2 done (2026-10-20):** FreeLLMAPI is removed from the router; every model request goes
+direct through `src/providers` (`src/gateway/direct.ts`). Decisions are in the
+[p2-wire](./direct-providers/reports/p2-wire.md) and
+[p2-remove](./direct-providers/reports/p2-remove.md) reports: health read from key state;
+out of credits disables only that key; a model is paid unless verified free at $0, a
+key-basis free model uses only `free_tier` keys, and a paid key on a `:free`/$0 model is treated
+as free; a 429 cools the key for every model of that provider; paid spend is keyed by
+credential ref; upgrading deletes stored chain-routed endpoints (a scan with keys refills them).
+367 tests green; `init` presets are valid again (supervisor fix plus a test).
 
-**Next steps:** `p2-remove` (dispatched 2026-10-20), then P3.
+**Next steps:** P3: `p3-panel` and `p3-cli-docs` in parallel (dispatched 2026-10-20). Their
+inputs are the "P3 leftovers" and "Open questions" sections of the p2-remove report. Then
+merge to `dev`, fast-forward `main`, and plan the first live check with the user (it spends
+real quota).
 
 **Blockers:** none.
 
@@ -244,13 +249,19 @@ llama.cpp, vLLM, LM Studio) is a custom provider.
 - Report to: docs/working/direct-providers/reports/p2-remove.md
 
 ### Brief: p3-panel and p3-cli-docs (after P2, parallel)
+- Both: start from the p2-remove report's "P3 leftovers" list; no FreeLLMAPI wording may remain
+  outside history records.
 - p3-panel: Provider keys page on the vault (provider picker incl. custom, paste key, Test,
   billing class, limits, status, models found), Paid routes folded in, models/overview/settings
-  without FreeLLMAPI, demo seed with fake providers. Owns `apps/panel/**`, `src/admin/**`.
+  without FreeLLMAPI, demo seed with fake providers on an offline base URL so Scan never reaches
+  the network; `addPaidKey` accepts every registry and configured provider; check the provider
+  health badge against key cooldowns (the demo showed "healthy" beside "all keys cooling
+  down"). Owns `apps/panel/**`, `src/admin/**`.
 - p3-cli-docs: CLI `keys add|test|list|remove`, `models scan`, `doctor`, `init`, presets and
   example config, `docs/setup.md`, `docs/operations.md`, `docs/decisions.md` (FreeLLMAPI section
   becomes history), README. Owns `src/cli.ts`, `src/cli/**`, `src/mcp.ts`, `examples/**`,
-  `scripts/build-presets.mjs`, `docs/*.md`.
+  `scripts/build-presets.mjs`, `docs/*.md`. Record in `decisions.md` the P2 decisions listed in Current State, and the
+  upgrade notes (chain endpoints deleted, `ScanSummary` lost `chainsSynced`/`chainsDisabled`).
 
 ---
 
@@ -317,6 +328,27 @@ llama.cpp, vLLM, LM Studio) is a custom provider.
   providers; migration not tried on an upgraded store.
 - Outcome: Accepted
 - Follow-up: in the p2-remove brief.
+
+### 2026-10-20 — p2-remove (P2 complete)
+- Agent: worker p2-remove; supervisor fix for `init` presets
+- Changed: FreeLLMAPI client, admin client, chains, `gateway` config, chain routes deleted;
+  migration dropping `fl_key_billing`/`pool_verifications`, chain endpoint rows, and rekeying
+  `paid_spend` by `key_ref`; scan runs direct discovery and the OpenRouter quota refresh; tests
+  moved to the fake provider (7 FreeLLMAPI-only tests deleted, 4 added); minimal panel changes
+  (read-only keys list, `/api/keys*` 410). Supervisor: example config and presets carry a
+  `providers` section instead of `gateway`, `models.example.yaml` comment, and a test that
+  parses the example and every preset (fails on the old presets, passes now).
+- Why: P2 step 2, remove FreeLLMAPI.
+- Validation: supervisor ran `pnpm -r typecheck` (pass), `pnpm -r build` (pass),
+  `npx vitest run` (37 files, 367 passed), `switchyard init --preset standalone-free` then
+  `doctor` in a temp dir (config ok; asks for provider keys; nothing written to `~/.switchyard`);
+  demo panel `/`, `/keys`, `/paid`, `/models`, `/settings`, `/routing`, `/requests`,
+  `/qualification` returned 200, screenshots of `/` and `/keys` checked. The worker's panel
+  check pressed Scan on the demo, which sent model-list requests with fake keys to nvidia,
+  groq, cerebras, openrouter, google, OpenRouter `/key`, and Hugging Face (no chat requests,
+  no real keys); P3 makes the demo offline.
+- Outcome: Accepted
+- Follow-up: P3.
 
 ---
 
