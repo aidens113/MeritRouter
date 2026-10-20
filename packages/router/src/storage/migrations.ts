@@ -576,4 +576,41 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE paid_keys ADD COLUMN tpm INTEGER;
   ALTER TABLE paid_keys ADD COLUMN tpd INTEGER;
   `,
+  `
+  -- Direct providers (P1): per-key state, keyed on the credential ref (vault:<id>,
+  -- config:<provider>:env:<VAR>, config:<provider>:literal:<n>, none:<provider>), shared by every
+  -- process on this store (see providers/keys.ts).
+  CREATE TABLE provider_key_state (
+    ref TEXT PRIMARY KEY,
+    provider TEXT,
+    -- Last four characters of the secret when it was disabled; a changed secret clears the disable.
+    last4 TEXT,
+    cooldown_until INTEGER,
+    disabled_reason TEXT CHECK (disabled_reason IN ('auth_invalid', 'out_of_credits')),
+    disabled_at INTEGER,
+    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    last_error_at INTEGER,
+    last_success_at INTEGER,
+    rate_limits_json TEXT,
+    quota_json TEXT,
+    -- Round-robin cursor: among a provider's keys, the highest value was chosen last.
+    selected_seq INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX provider_key_state_provider ON provider_key_state(provider);
+  -- Sliding-window usage for configured and per-model limits (providers/limits.ts). Scopes:
+  -- provider:<id>, key:<ref>, group:<provider>:<group>, model:<unit>:<model>. Rows older than a
+  -- day are pruned.
+  CREATE TABLE provider_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    tokens INTEGER NOT NULL DEFAULT 0,
+    reservation TEXT NOT NULL
+  );
+  CREATE INDEX provider_usage_scope ON provider_usage(scope, at);
+  CREATE INDEX provider_usage_at ON provider_usage(at);
+  CREATE INDEX provider_usage_reservation ON provider_usage(reservation);
+  `,
 ];

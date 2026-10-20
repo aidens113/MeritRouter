@@ -29,3 +29,6 @@ export { buildOpenAiBody, PASS_THROUGH_PARAMS } from "./openai-compatible.js";
 export { buildAnthropicBody, toAnthropic } from "./anthropic.js";
 export { ProviderCredentials, type ProviderCredential } from "./credentials.js";
 export * from "./vault.js";
+export { DEFAULT_COOLDOWN_MS, MAX_DEFAULT_COOLDOWN_MS, OUT_OF_CREDITS_RECHECK_MS, ProviderKeys, snapshotBlockedUntil, type KeyAvailability, type KeyBlockReason, type KeyDisabledReason, type KeyRef, type KeySelection, type KeySelectOptions, type KeyState } from "./keys.js";
+export { DAY_MS, FreeDailyQuotaSchema, MINUTE_MS, ProviderLimits, hasLimits, limitScopes, nextUtcMidnight, probeFreeDailyQuota, quotaGroupOf, quotaUnit, tightestLimits, type FreeDailyQuota, type LimitBlock, type LimitCheck, type LimitMetric, type LimitScope, type QuotaProbeOptions, type Reservation, type ReserveResult, type ScopeOptions, type ScopeUsage } from "./limits.js";
+export { providerHealth, providerStatuses, type ProviderHealthDetail, type ProviderHealthOptions } from "./health.js";
