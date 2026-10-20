@@ -10,6 +10,8 @@ import { blame, commitAs, type Actor, type BlameLine } from "../attribution/inde
 import { denial, type Principal } from "./access.js";
 import {
   appendToSection,
+  channelEntryIds,
+  formatChannelEntry,
   formatLedgerEntry,
   formatReport,
   ledgerEntryCount,
@@ -22,6 +24,8 @@ import {
   validateLedgerEntry,
   validateReport,
   workingDocTemplate,
+  TEAM_CHANNEL_SECTION,
+  type ChannelEntryFields,
   type LedgerFields,
   type ReportFields,
 } from "./protocol.js";
@@ -187,11 +191,17 @@ export class Brain {
     if (changed.length) await commitAs(repo, { agent: "human", role: "human" }, "Record edits made outside SwitchYard");
   }
 
-  private async writeFile(rel: string, content: string, actor: Actor, message: string): Promise<{ path: string; commit: string | null }> {
+  /**
+   * Write a file and commit it. `content` may be a function of the file's current text (null
+   * when absent), evaluated under the repository lock; returning null skips the write.
+   */
+  private async writeFile(rel: string, contentOrFn: string | ((current: string | null) => string | null), actor: Actor, message: string): Promise<{ path: string; commit: string | null }> {
     await this.ensure();
     const r = this.resolve(rel);
     const doWrite = async () => {
       if (r.repo && r.commit) await this.adoptExternalEdits(r.repo);
+      const content = typeof contentOrFn === "string" ? contentOrFn : contentOrFn(existsSync(r.abs) ? readFileSync(r.abs, "utf8") : null);
+      if (content === null) return { path: rel, commit: null };
       mkdirSync(path.dirname(r.abs), { recursive: true });
       const tmp = `${r.abs}.${process.pid}.tmp`;
       writeFileSync(tmp, content.endsWith("\n") ? content : `${content}\n`);
@@ -271,6 +281,9 @@ export class Brain {
         const oldLedger = section(parseDoc(readFileSync(r.abs, "utf8")), "Work Ledger")?.body.trim() ?? "";
         const newLedger = section(doc, "Work Ledger")?.body.trim() ?? "";
         if (oldLedger && !newLedger.startsWith(oldLedger)) issues.push("the Work Ledger is append-only: existing entries must stay unchanged (use compaction to archive history)");
+        const oldChannel = section(parseDoc(readFileSync(r.abs, "utf8")), TEAM_CHANNEL_SECTION)?.body.trim() ?? "";
+        const newChannel = section(doc, TEAM_CHANNEL_SECTION)?.body.trim() ?? "";
+        if (oldChannel && !newChannel.startsWith(oldChannel)) issues.push(`the ${TEAM_CHANNEL_SECTION} is append-only: it mirrors the job's channel and must stay unchanged`);
       }
       if (issues.length) throw new BrainError(`working document rejected: ${issues.join("; ")}`, issues);
       content = setHeaderField(content, "Last updated", new Date(this.now()).toISOString().slice(0, 10));
@@ -319,6 +332,35 @@ export class Brain {
     this.check(p, r.rel, "write");
     const next = appendToSection(readFileSync(r.abs, "utf8"), "Worker Briefs", brief, "Work Ledger");
     return this.writeFile(r.rel, next, actor, `Brief: ${brief.split("\n")[0]!.replace(/^### Brief: /, "")}`);
+  }
+
+  /**
+   * Mirror team channel posts into a working document's append-only Team Channel section
+   * (created before the Work Ledger). A system write on behalf of the posts' authors: the posts
+   * were already validated and stored, so no principal is checked. Entries the section already
+   * holds (by post id) are skipped, under the repository lock. Returns the ids now mirrored.
+   */
+  async appendChannel(actor: Actor, rel: string, entries: ChannelEntryFields[]): Promise<{ path: string; commit: string | null; mirrored: number[] }> {
+    const r = this.resolve(rel);
+    if (kindOf(r.rel) !== "working_doc") throw new BrainError(`${r.rel} is not a working document`);
+    if (!existsSync(r.abs)) throw new BrainError(`${r.rel} does not exist`);
+    let mirrored: number[] = [];
+    const res = await this.writeFile(
+      r.rel,
+      (current) => {
+        if (current === null) return null;
+        const present = channelEntryIds(section(parseDoc(current), TEAM_CHANNEL_SECTION)?.body ?? "");
+        const fresh = entries.filter((e) => !present.has(e.id));
+        mirrored = entries.map((e) => e.id);
+        if (!fresh.length) return null;
+        let next = current;
+        for (const e of fresh) next = appendToSection(next, TEAM_CHANNEL_SECTION, formatChannelEntry(e), "Work Ledger");
+        return next;
+      },
+      actor,
+      `Team channel: ${entries.map((e) => `#${e.id}`).join(", ")}`,
+    );
+    return { ...res, mirrored };
   }
 
   async writeReport(p: Principal, actor: Actor, rel: string, report: string | ReportFields): Promise<{ path: string; commit: string | null }> {

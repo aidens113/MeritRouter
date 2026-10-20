@@ -14,7 +14,11 @@ import { runAgentLoop, type TerminalTool } from "../harness/loop.js";
 import type { ResumeInput } from "../harness/resume.js";
 import type { ResumeToolRef } from "../sessions/events.js";
 import { artifactTool, brainReadTools, brainSupervisorTools, commandTool, editTools, repoTools, type HarnessEnv, type HarnessTool } from "../harness/tools.js";
-import { supervisorTools, type IntegrationRepo, type SupervisorState } from "../harness/supervisor-tools.js";
+import { ensureCarves, jobDepth, mergeHooks, subJobSection, supervisorTools, type IntegrationRepo, type SupervisorState } from "../harness/supervisor-tools.js";
+import { MergeQueue, type MergeItem } from "../workspaces/merge-queue.js";
+import { newId } from "../storage/db.js";
+import { isSimulatedCrash } from "../core/faults.js";
+import { parseDoc, replaceSection, section } from "../brain/protocol.js";
 import { minimalEnv, runProcess } from "./coding/process.js";
 import { baseResult, type RunContext, type RunOutcome } from "./types.js";
 import { WorkspacePointer } from "./session-workspace.js";
@@ -110,6 +114,12 @@ async function integrationRepos(ctx: RunContext, saved: IntegrationRepo[]): Prom
   return out;
 }
 
+/** One recovered merge-queue item, for the resumed supervisor. */
+function mergeNote(i: MergeItem): string {
+  const what = i.state === "integrated" ? `integrated (${i.commits.length} commit(s), head ${(i.afterHead ?? "").slice(0, 7)})` : i.state === "redelegated" ? `conflicted; re-delegated as ${i.redelegatedTo}` : `${i.state}${i.detail.error ? `: ${String(i.detail.error).slice(0, 200)}` : ""}`;
+  return `- ${i.taskId} onto ${i.branch}: ${what}`;
+}
+
 /**
  * Standalone supervisor: plans, delegates to workers, verifies, integrates their commits onto a
  * job branch, keeps the job's working document, and finishes with a verified summary. Its
@@ -129,7 +139,15 @@ export class SupervisorRunner implements CodingRunner {
       if (c.spec.label) children.set(c.spec.label, c.row.id);
       for (const check of c.spec.constraints.checks ?? []) briefChecks.add(check);
     }
-    const state: SupervisorState = { ctx, db: ctx.tasks.db, actor, repos, briefChecks, children };
+    // A sub-job (delegated by another supervisor) works in its own section of the parent's document.
+    const parentJob = spec.parentTaskId ? ctx.tasks.get(spec.parentTaskId) : undefined;
+    const isSubJob = parentJob?.spec.profile === "supervise";
+    const depth = jobDepth(ctx.tasks, ctx.taskId);
+    const docSection = isSubJob ? subJobSection(label) : null;
+    // One merge-queue owner per run: items a dead run left in progress are recovered below.
+    const queue = new MergeQueue(ctx.tasks.db, ctx.tasks, newId("mqrun"));
+    const state: SupervisorState = { ctx, db: ctx.tasks.db, actor, repos, briefChecks, children, queue, depth, docSection };
+    ensureCarves(state);
     const pointer = new WorkspacePointer(
       ctx.session,
       await Promise.all([...repos.values()].map(async (r) => ({ alias: r.alias, worktree: r.worktree, branch: r.branch, baseCommit: r.baseSha, head: (await git(r.worktree, ["rev-parse", "HEAD"])).trim() || null }))),
@@ -144,6 +162,7 @@ export class SupervisorRunner implements CodingRunner {
       const principal = () => access.principalFor("supervisor", { project: b.project, effort: ctx.effort, task: null, repos: spec.repositoryAliases, jobId: ctx.taskId, tier: ctx.tier });
       const doc = b.workingDocPath(ctx.effort);
       if (!b.exists(doc)) {
+        // A sub-job whose parent has no document yet starts one like a top-level job.
         await b.createWorkingDoc(principal(), actor, ctx.effort, {
           title: spec.goal.split("\n")[0]!.slice(0, 80),
           statusDetail: "Job started; plan not written yet.",
@@ -151,6 +170,14 @@ export class SupervisorRunner implements CodingRunner {
           scope: spec.goal.replace(/\s+/g, " ").slice(0, 200),
           currentState: `**Goal:** ${spec.goal.slice(0, 2000)}\n\n**Acceptance:** ${criterionTexts(spec).join("; ")}\n\nNo plan yet.`,
         });
+      }
+      if (docSection) {
+        // The parent writes the sub-job's section when it delegates; start it here if that failed.
+        const text = b.read(principal(), doc).content;
+        if (!section(parseDoc(text), docSection)) {
+          const body = `**Goal:** ${spec.goal.slice(0, 2000)}\n\n**Acceptance:** ${criterionTexts(spec).join("; ")}`;
+          await b.write(principal(), actor, doc, replaceSection(text, docSection, body, "Work Ledger"), `Sub-job: ${label}`).catch(() => undefined);
+        }
       }
       brain = { brain: b, access, principal, actor, workingDoc: doc };
     }
@@ -177,7 +204,8 @@ export class SupervisorRunner implements CodingRunner {
       ...(primary ? editTools() : []),
       ...(env.commands ? [commandTool(patterns)] : []),
       artifactTool(),
-      ...(brain ? [...brainReadTools(), ...brainSupervisorTools()] : []),
+      // A sub-job rewrites its own section (brain_set_job_section), never the parent's Current State.
+      ...(brain ? [...brainReadTools(), ...brainSupervisorTools().filter((t) => !docSection || !["brain_set_current_state", "brain_compact"].includes(t.def.function.name))] : []),
       // Integration and undo commit on the job branch: record the new head after each.
       ...supervisorTools(state).map((t): HarnessTool => {
         if (t.sideEffect !== "edit") return t;
@@ -220,6 +248,18 @@ export class SupervisorRunner implements CodingRunner {
       },
     };
 
+    // Integrations a dead run of this job left in its merge queue finish (or are retried once)
+    // before the model acts again; the resumed model is told what happened.
+    let recovered: MergeItem[] = [];
+    try {
+      recovered = await queue.recover(ctx.taskId, mergeHooks(state, env));
+    } catch (err) {
+      if (isSimulatedCrash(err)) throw err;
+      ctx.tasks.event(ctx.taskId, "merge_recovery_failed", { error: (err as Error).message.slice(0, 500) });
+    }
+    if (recovered.length) await pointer.refresh();
+    const queueNote = recovered.length ? `\nMerge queue after the interruption (integrate_task again reports these without picking twice):\n${recovered.map(mergeNote).join("\n")}` : "";
+
     const repoNotes = [...repos.values()].map((r) => `- ${r.alias}: branch ${r.branch} (based on ${r.baseSha.slice(0, 12)}), integration worktree is your workspace`).join("\n");
     let messages: ChatMessage[];
     let resume: ResumeInput | undefined;
@@ -230,24 +270,35 @@ export class SupervisorRunner implements CodingRunner {
         actor: state.actor,
         pointer,
         external: (ref) => questionState(ctx, ref),
-        notice: `Check your tasks with await_tasks before acting again; delegations are idempotent by label.${questionNotes(ctx)}`,
+        notice: `Check your tasks with await_tasks before acting again; delegations are idempotent by label.${questionNotes(ctx)}${queueNote}`,
       };
     } else if (legacy?.messages.length) {
       messages = legacy.messages;
-      messages.push({ role: "user", content: `You were interrupted and have been resumed. Check your tasks with await_tasks before acting again; delegations are idempotent by label.${questionNotes(ctx)}` });
+      messages.push({ role: "user", content: `You were interrupted and have been resumed. Check your tasks with await_tasks before acting again; delegations are idempotent by label.${questionNotes(ctx)}${queueNote}` });
     } else {
       const lessons = brain ? brain.brain.search(brain.principal(), spec.goal, { prefix: "global/lessons", limit: 5 }) : [];
-      const cs = brain?.workingDoc ? brain.brain.read(brain.principal(), brain.workingDoc, { section: "Current State" }).content : "";
+      let cs = "";
+      try {
+        cs = brain?.workingDoc ? brain.brain.read(brain.principal(), brain.workingDoc, { section: docSection ?? "Current State" }).content : "";
+      } catch {
+        cs = ""; // a sub-job section that could not be written
+      }
+      const subNote = isSubJob
+        ? `\n- Sub-job of job ${spec.parentTaskId} (supervisor level ${depth} of at most ${ctx.cfg.team.max_depth}): your branches fork from the parent job's branches; the parent integrates them when you finish, so finish with everything you want delivered integrated on your branch\n- Your section of the parent's working document: "${docSection}" (rewrite your status with brain_set_job_section; the parent's Current State is not yours)`
+        : depth < ctx.cfg.team.max_depth
+          ? `\n- You may delegate sub-goals to sub-supervisors (profile supervise); each gets ${ctx.cfg.team.child_budget_share} of your remaining request budget and its own branch forked from yours`
+          : "";
       messages = [
         {
           role: "system",
-          content: `${charterFor(ctx.cfg, "supervisor")}\n\n## This job\n- Job id: ${ctx.taskId}\n- Working document: brain:${brain?.workingDoc ?? "(brain disabled)"}\n- Repositories:\n${repoNotes || "- none writable (read-only job)"}\n- Model request budget: ${ctx.budget.maxModelRequests} (await_tasks costs none)\n- Tasks of this job running at once (team.max_agents): ${maxAgentsPerJob(ctx.cfg)}; more wait queued\n\nEnd with finish_job.`,
+          content: `${charterFor(ctx.cfg, "supervisor")}\n\n## This job\n- Job id: ${ctx.taskId}\n- Working document: brain:${brain?.workingDoc ?? "(brain disabled)"}\n- Repositories:\n${repoNotes || "- none writable (read-only job)"}\n- Model request budget: ${ctx.budget.maxModelRequests} (await_tasks costs none)\n- Tasks of this job running at once (team.max_agents): ${maxAgentsPerJob(ctx.cfg)}; more wait queued${subNote}\n\nEnd with finish_job.`,
         },
         {
           role: "user",
-          content: `Goal:\n${spec.goal}\n\nAcceptance criteria:\n${criterionTexts(spec).map((c, i) => `[${i}] ${c}`).join("\n")}${spec.constraints.checks?.length ? `\n\nJob checks (run on the job branch when you finish):\n${spec.constraints.checks.map((c) => `- ${c}`).join("\n")}` : ""}\n\nCurrent State of your working document:\n${cs || "(none)"}${lessons.length ? `\n\nRelevant lessons:\n${lessons.map((l) => `- brain:${l.path}: ${l.snippet}`).join("\n")}` : ""}`,
+          content: `Goal:\n${spec.goal}\n\nAcceptance criteria:\n${criterionTexts(spec).map((c, i) => `[${i}] ${c}`).join("\n")}${spec.constraints.checks?.length ? `\n\nJob checks (run on the job branch when you finish):\n${spec.constraints.checks.map((c) => `- ${c}`).join("\n")}` : ""}\n\n${docSection ? `Your section of the parent job's working document (${docSection})` : "Current State of your working document"}:\n${cs || "(none)"}${lessons.length ? `\n\nRelevant lessons:\n${lessons.map((l) => `- brain:${l.path}: ${l.snippet}`).join("\n")}` : ""}`,
         },
       ];
+      if (queueNote) messages.push({ role: "user", content: queueNote.trim() });
     }
     for (const c of spec.constraints.checks ?? []) state.briefChecks.add(c);
 
@@ -296,7 +347,7 @@ export class SupervisorRunner implements CodingRunner {
       const validation = checks.length ? checks.map((c) => `\`${c.command}\` -> exit ${c.exitCode}`).join("; ") : "not validated: the job defined no checks";
       await brain.brain
         .appendLedger(brain.principal(), state.actor, brain.workingDoc, {
-          title: `Job ${finish?.status ?? loop.kind}`,
+          title: `${isSubJob ? `Sub-job ${label}` : "Job"} ${finish?.status ?? loop.kind}`,
           agent: state.actor.agent,
           changed: [...repos.values()].map((r) => r.branch).join(", ") || "nothing",
           why: spec.goal.replace(/\s+/g, " ").slice(0, 160),

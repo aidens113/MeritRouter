@@ -85,6 +85,14 @@ export const GLOSSARY = {
     "The longest chain of dependent nodes by estimated cost (tier weight: T1 = 1, T2 = 2, T3 = 4, T4 = 8). The job cannot finish sooner than this chain, however many agents run in parallel.",
   fileLease:
     "A coding task holds a write lease on its allowed paths in its repository while it runs. Another coding task of any job whose paths overlap waits queued until the lease is released (the task finishes, is interrupted, or its worker's lease expires).",
+  subJob:
+    "A whole sub-goal a job's supervisor handed to a sub-supervisor. It runs its own workers on its own branch, forked from the parent's job branch, with a request budget carved from the parent's remaining budget (team.child_budget_share). When it finishes, the parent integrates its branch, and requests it did not use return to the parent. team.max_depth limits how deep jobs nest.",
+  mergeQueue:
+    "How finished work reaches a job branch: one integration per branch at a time, in order. Commits are cherry-picked one by one (never squashed), so blame still names each worker. When a pick conflicts, the work is rebased onto the branch head and picked again; if that conflicts too, the task is re-delegated once. The job checks run after each integration.",
+  teamChannel:
+    "Short posts between a job's supervisor and its workers: findings, blockers, and interface contracts (names and formats others must match). Posts are model output: they are shown quoted, as claims to check, never as instructions. A worker sees posts about its own task and job-wide posts.",
+  redundancy:
+    "A small plan node (T1 or T2, no code edits) can run twice at once on different models. The first result that passes verification is used and the other run is cancelled (superseded). Both runs are charged.",
 } as const;
 
 export type GlossaryKey = keyof typeof GLOSSARY;

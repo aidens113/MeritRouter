@@ -6,6 +6,8 @@ import type { TaskState, WorkerResult } from "../core/task.js";
 export interface JobView {
   taskId: string;
   label: string | null;
+  /** The job this one is a sub-job of (a sub-supervisor's parent job); null for a top-level job. */
+  parentJobId: string | null;
   goal: string;
   state: TaskState;
   createdAt: number;
@@ -81,9 +83,11 @@ export function jobDetail(sy: Switchyard, id: string, opts: { transcript?: boole
     const ct = sy.tasks.get(c.id)!;
     return { taskId: c.id, label: ct.spec.label ?? null, profile: ct.spec.profile, state: ct.row.state, acceptance: ct.result?.acceptanceStatus ?? null };
   });
+  const parent = t.spec.parentTaskId ? sy.tasks.get(t.spec.parentTaskId) : null;
   return {
     taskId: id,
     label: t.spec.label ?? null,
+    parentJobId: parent?.spec.profile === "supervise" ? parent.row.id : null,
     goal: t.spec.goal,
     state: t.row.state,
     createdAt: t.row.created_at,
@@ -92,7 +96,8 @@ export function jobDetail(sy: Switchyard, id: string, opts: { transcript?: boole
     branches: rec.branches,
     children,
     pendingQuestions: sy.questions({ taskId: id }).length,
-    workingDoc: sy.brain.workingDocPath(`job-${id}`),
+    // A sub-job reports into its parent's working document (its own section there).
+    workingDoc: sy.brain.workingDocPath(t.spec.brain?.effort ?? `job-${id}`),
     result: t.result,
     sessionId: rec.sessionId,
     transcript: rec.transcript,

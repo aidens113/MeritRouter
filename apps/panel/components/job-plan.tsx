@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { Hourglass, Lock, ShieldCheck, Users } from "lucide-react";
-import type { JobPlanView, PlanNodeView, PlanWait } from "switchyard-router";
+import { Copy, Hourglass, Lock, ShieldCheck, Users } from "lucide-react";
+import type { JobPlanView, PlanNodeView, PlanWait, insights } from "switchyard-router";
 import { Badge, Card, CardHeader, HelpTip, Mono } from "./ui";
 import { AcceptanceBadge, ImportanceBadge, TASK_STATE_LABEL, TaskStateBadge, TierBadge } from "./task-badges";
 import { dateTime, humanize, shortId } from "@/lib/format";
@@ -103,7 +103,7 @@ export function PlanGraph({ plan }: { plan: JobPlanView }) {
       {plan.nodes.map((n) => {
         const p = pos.get(n.label)!;
         const tier = n.tier && n.tier !== n.difficulty ? `${n.difficulty ?? "–"}→${n.tier}` : (n.difficulty ?? n.tier ?? "–");
-        const meta = [n.profile, tier, n.importance && n.importance !== "normal" ? n.importance : null, n.requiresAcceptedInputs ? "accepted inputs" : null].filter(Boolean).join(" · ");
+        const meta = [n.profile, tier, n.redundancy > 1 ? `×${n.redundancy}` : null, n.importance && n.importance !== "normal" ? n.importance : null, n.requiresAcceptedInputs ? "accepted inputs" : null].filter(Boolean).join(" · ");
         const status = `${TASK_STATE_LABEL[n.state] ?? humanize(n.state)}${shortWait(n.waiting) && n.state !== "running" ? ` · ${shortWait(n.waiting)}` : ""}`;
         const box = (
           <g>
@@ -235,6 +235,11 @@ export function PlanCard({ plan }: { plan: JobPlanView }) {
                     <span className="inline-flex items-center gap-1.5 font-medium text-ink">
                       {n.onCriticalPath ? <span className="inline-block h-2 w-2 rounded-full bg-accent" title="On the critical path" aria-label="On the critical path" /> : null}
                       {n.label}
+                      {n.redundancy > 1 ? (
+                        <Badge tone="accent" icon={<Copy size={10} aria-hidden />} title="Redundant node: its first attempt runs twice on different models; the first verified result wins">
+                          ×{n.redundancy}
+                        </Badge>
+                      ) : null}
                     </span>
                     <div className="max-w-[16rem] truncate text-xs text-ink-3" title={n.goal}>
                       {n.goal}
@@ -296,6 +301,7 @@ export function PlanCard({ plan }: { plan: JobPlanView }) {
           </tbody>
         </table>
       </div>
+      <Twins nodes={plan.nodes} />
       <div className="space-y-2 border-t border-line p-4">
         <h3 className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-ink-3">
           File leases <HelpTip term="fileLease" />
@@ -344,5 +350,69 @@ export function PlanCard({ plan }: { plan: JobPlanView }) {
         </p>
       ) : null}
     </Card>
+  );
+}
+
+const TWIN_STATUS: Record<insights.TwinRunsView["status"], { label: string; tone: "accent" | "good" | "warn" | "bad" | "neutral" }> = {
+  racing: { label: "both running", tone: "accent" },
+  verified: { label: "first verified result used", tone: "good" },
+  none_passed: { label: "neither passed verification", tone: "warn" },
+  both_failed: { label: "both runs failed", tone: "bad" },
+  skipped: { label: "ran once", tone: "neutral" },
+  refused: { label: "refused: budget", tone: "bad" },
+};
+
+/** Redundant nodes: each twin run with its endpoints, session, and whether it won or was superseded. */
+function Twins({ nodes }: { nodes: PlanNodeView[] }) {
+  const twins = nodes.filter((n) => n.redundancy > 1);
+  if (!twins.length) return null;
+  return (
+    <div className="space-y-3 border-t border-line p-4">
+      <h3 className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-ink-3">
+        Redundant nodes <HelpTip term="redundancy" />
+      </h3>
+      {twins.map((n) => {
+        const st = n.twins ? TWIN_STATUS[n.twins.status] : null;
+        return (
+          <div key={n.label} className="space-y-1.5">
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="font-medium text-ink">{n.label}</span>
+              {st ? <Badge tone={st.tone}>{st.label}</Badge> : <Badge>not started</Badge>}
+              {n.twins?.cap ? <span className="text-xs text-ink-3">shared cap {n.twins.cap} requests</span> : null}
+              {n.twins?.reason ? <span className="text-xs text-ink-3">{n.twins.reason}</span> : null}
+            </div>
+            {n.twins?.runs.length ? (
+              <ul className="grid gap-2 md:grid-cols-2">
+                {n.twins.runs.map((r, i) => (
+                  <li key={r.sessionId ?? i} className="min-w-0 rounded-lg border border-line px-3 py-2 text-xs">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium text-ink">Run {i + 1}</span>
+                      {r.winner ? <Badge tone="good">verified first: used</Badge> : r.used ? <Badge tone="accent">used</Badge> : null}
+                      {r.stopReason === "superseded" ? <Badge>superseded</Badge> : null}
+                      {r.sessionStatus ? <span className="text-ink-3">session {r.sessionStatus}</span> : null}
+                      {r.verification ? <span className="text-ink-3">verification {r.verification}</span> : null}
+                    </div>
+                    <div className="mt-1 break-all text-ink-3">
+                      endpoints: <span className="font-mono text-ink-2">{r.endpoints.join(", ") || "–"}</span>
+                      {r.servedEndpoints.length ? (
+                        <>
+                          {" "}
+                          · served by <span className="font-mono text-ink-2">{r.servedEndpoints.join(", ")}</span>
+                        </>
+                      ) : null}
+                    </div>
+                    {r.sessionId ? (
+                      <Link href={`/sessions/${encodeURIComponent(r.sessionId)}`} className="mt-1 inline-block font-mono text-accent-ink hover:underline">
+                        {shortId(r.sessionId, 18)}
+                      </Link>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
   );
 }

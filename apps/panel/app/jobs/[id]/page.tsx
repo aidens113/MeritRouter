@@ -1,13 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
-import { ArrowLeft, BookOpenText, Bot, ChevronRight, GitBranch, MessageCircleQuestion, Terminal, User, Wrench } from "lucide-react";
+import { ArrowLeft, BookOpenText, Bot, ChevronRight, GitBranch, MessageCircleQuestion, Network, Terminal, User, Wrench } from "lucide-react";
 import { criterionTexts, insights, isTerminal } from "switchyard-router";
 import { getSy } from "@/lib/sy";
 import { SetupScreen } from "@/components/setup";
 import { AcceptanceBadge, TaskStateBadge } from "@/components/task-badges";
 import { SessionsTable } from "@/components/sessions-table";
 import { PlanCard } from "@/components/job-plan";
+import { ChannelCard, MergeQueueCard, TeamCard } from "@/components/job-team";
 import { Badge, Callout, Card, CardHeader, cx, EmptyState, HelpTip, KeyValue, Mono, PageHeader } from "@/components/ui";
 import { ActionButton, AutoRefresh } from "@/components/client/actions";
 import { ArtifactViewer } from "@/components/client/artifact-viewer";
@@ -35,6 +36,7 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
   const res = job.result;
   const sessions = insights.sessionsView(sy, { jobId: id, limit: 200 });
   const plan = insights.jobPlan(sy, id);
+  const team = insights.jobTeam(sy, id)!;
 
   return (
     <div className="space-y-6">
@@ -48,6 +50,15 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
             <TaskStateBadge state={job.state} />
             {res ? <AcceptanceBadge status={res.acceptanceStatus} /> : null}
             {pending.length ? <Badge tone="warn" icon={<MessageCircleQuestion size={11} />}>{pending.length} waiting for you</Badge> : null}
+            {team.parentJobId ? (
+              <Link href={`/jobs/${encodeURIComponent(team.parentJobId)}`} className="inline-flex items-center gap-1 text-xs text-accent-ink hover:underline">
+                <Network size={12} aria-hidden /> sub-job of {team.parentLabel ?? team.parentJobId}
+              </Link>
+            ) : team.subJobs ? (
+              <Badge tone="accent" icon={<Network size={11} />}>
+                {team.subJobs} sub-job{team.subJobs === 1 ? "" : "s"}
+              </Badge>
+            ) : null}
             <Mono>{job.taskId}</Mono>
           </span>
         }
@@ -169,7 +180,13 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
         </Card>
       </div>
 
+      {team.subJobs || team.parentJobId ? <TeamCard team={team} /> : null}
+
       {plan?.plan ? <PlanCard plan={plan} /> : null}
+
+      <MergeQueueCard team={team} />
+
+      <ChannelCard team={team} />
 
       <Card>
         <CardHeader title="Branches" help="branch" description="Integrated work lives on these branches. Nothing is merged or pushed for you." />

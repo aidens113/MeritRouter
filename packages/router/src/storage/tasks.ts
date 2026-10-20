@@ -53,7 +53,7 @@ export interface ClaimLimits {
   supervisorProfiles?: string[];
   maxSupervisors?: number;
   supervisorTimeoutMs?: number;
-  /** Most running tasks per job (`team.max_agents`); counts delegated, non-supervisor tasks. */
+  /** Most running tasks per job (`team.max_agents`); counts every task the job delegated, sub-supervisors included. */
   maxAgentsPerJob?: number;
 }
 
@@ -223,13 +223,16 @@ export class TaskStore {
       this.resolveDependencyGates(now);
 
       const sup = new Set(limits.supervisorProfiles ?? []);
+      // Sub-supervisors (supervise tasks a job delegated) take neither a top-level job slot nor a
+      // worker slot: their parent waits on them, so either would deadlock a full system. They
+      // count toward their parent job's agent cap instead (below).
       const runningRows = this.db
-        .prepare("SELECT profile FROM tasks WHERE state IN ('running','cancel_requested') AND lease_expires_at > ?")
-        .all(now) as { profile: string }[];
-      const runningSup = runningRows.filter((r) => sup.has(r.profile)).length;
-      let slots = Math.min(limits.maxConcurrent - (runningRows.length - runningSup), limits.limit ?? Number.MAX_SAFE_INTEGER);
+        .prepare("SELECT profile, json_extract(spec_json, '$.parentTaskId') AS parent FROM tasks WHERE state IN ('running','cancel_requested') AND lease_expires_at > ?")
+        .all(now) as { profile: string; parent: string | null }[];
+      const runningSup = runningRows.filter((r) => sup.has(r.profile) && !r.parent).length;
+      const runningSubSup = runningRows.filter((r) => sup.has(r.profile) && r.parent).length;
+      let slots = Math.min(limits.maxConcurrent - (runningRows.length - runningSup - runningSubSup), limits.limit ?? Number.MAX_SAFE_INTEGER);
       let supSlots = (limits.maxSupervisors ?? 0) - runningSup;
-      if (slots <= 0 && supSlots <= 0) return [];
 
       const candidates = this.db
         .prepare(
@@ -248,7 +251,7 @@ export class TaskStore {
             "SELECT json_extract(spec_json, '$.parentTaskId') AS job, profile FROM tasks WHERE state IN ('running','cancel_requested') AND lease_expires_at > ? AND json_extract(spec_json, '$.parentTaskId') IS NOT NULL",
           )
           .all(now) as { job: string; profile: string }[]) {
-          if (!sup.has(r.profile)) perJob.set(r.job, (perJob.get(r.job) ?? 0) + 1);
+          perJob.set(r.job, (perJob.get(r.job) ?? 0) + 1);
         }
       }
 
@@ -269,9 +272,10 @@ export class TaskStore {
          WHERE id = ?`,
       );
       for (const row of candidates) {
-        const isSup = sup.has(row.profile);
-        if (isSup ? supSlots <= 0 : slots <= 0) continue;
         const spec = JSON.parse(row.spec_json) as WorkerTask;
+        const isSubSup = sup.has(row.profile) && !!spec.parentTaskId;
+        const isSup = sup.has(row.profile) && !isSubSup;
+        if (isSup ? supSlots <= 0 : !isSubSup && slots <= 0) continue;
         const job = !isSup ? (spec.parentTaskId ?? null) : null;
         if (job && limits.maxAgentsPerJob !== undefined && (perJob.get(job) ?? 0) >= limits.maxAgentsPerJob) continue;
         if (row.writable_repo && !isSup) {
@@ -294,13 +298,13 @@ export class TaskStore {
           this.event(row.id, "file_lease_acquired", { repository: row.writable_repo, globs });
         }
         if (job) perJob.set(job, (perJob.get(job) ?? 0) + 1);
-        const fallback = isSup ? (limits.supervisorTimeoutMs ?? limits.defaultTimeoutMs) : limits.defaultTimeoutMs;
+        const fallback = isSup || isSubSup ? (limits.supervisorTimeoutMs ?? limits.defaultTimeoutMs) : limits.defaultTimeoutMs;
         const timeoutMs = spec.budget?.timeoutSeconds ? spec.budget.timeoutSeconds * 1000 : fallback;
         update.run(owner, now + limits.leaseMs, now, now + timeoutMs, now, row.id);
         this.event(row.id, "claimed", { owner, run: row.run_count + 1 });
         claimed.push(this.get(row.id)!);
         if (isSup) supSlots--;
-        else slots--;
+        else if (!isSubSup) slots--;
       }
       return claimed;
     });

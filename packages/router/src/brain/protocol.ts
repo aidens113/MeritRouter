@@ -220,6 +220,34 @@ None yet.
 `;
 }
 
+/**
+ * The job's team channel, mirrored into its working document: append-only, one entry per post.
+ * Post text is other agents' output, so it is quoted line by line (a post can never start a
+ * heading, a ledger entry, or a separator of the document).
+ */
+export const TEAM_CHANNEL_SECTION = "Team Channel";
+
+export interface ChannelEntryFields {
+  id: number;
+  at: number;
+  kind: string;
+  author: string;
+  authorTask: string | null;
+  refs: string[];
+  text: string;
+}
+
+export function formatChannelEntry(f: ChannelEntryFields): string {
+  const head = `- #${f.id} ${new Date(f.at).toISOString().slice(0, 16).replace("T", " ")} ${f.kind} by ${f.author}${f.authorTask ? ` (task ${f.authorTask})` : ""}; ${f.refs.length ? `refs ${f.refs.join(", ")}` : "job-wide"}`;
+  const quoted = f.text.replace(/\r\n?/g, "\n").split("\n").map((l) => `  > ${l}`.trimEnd());
+  return [head, ...quoted].join("\n");
+}
+
+/** Ids of the channel entries a Team Channel section already holds. */
+export function channelEntryIds(sectionBody: string): Set<number> {
+  return new Set([...sectionBody.matchAll(/^- #(\d+) /gm)].map((m) => Number(m[1])));
+}
+
 export function formatBrief(b: { label: string; repository: string; task: string; requiredReads: string; owns: string; mustNotTouch: string; done: string; reportTo: string }): string {
   return [
     `### Brief: ${b.label}`,

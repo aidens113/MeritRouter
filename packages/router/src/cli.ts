@@ -9,7 +9,8 @@ import { ImportanceSchema, PROFILE_NAMES, TIER_NAMES, type ProfileName, type Tie
 import { Switchyard } from "./core/service.js";
 import { createCodingRunner } from "./runners/coding/index.js";
 import { z } from "zod";
-import { brainAccessRequests, brainRead, brainSearch, brainTree, decideBrainAccess, decideTaskAcceptance, jobDetail, jobPlan, jobsView, modelsView, routingPreview, sessionDetail, sessionsView, type JobPlanView, type SessionDetail, type SessionView } from "./admin/insights.js";
+import { brainAccessRequests, brainRead, brainSearch, brainTree, CHANNEL_KINDS, decideBrainAccess, decideTaskAcceptance, jobChannel, jobDetail, jobPlan, jobsView, jobTeam, modelsView, routingPreview, sessionDetail, sessionsView, type JobPlanView, type SessionDetail, type SessionView } from "./admin/insights.js";
+import { channelText, jobTeamLines } from "./admin/job-team-text.js";
 import { blame } from "./attribution/index.js";
 import { SwitchyardError } from "./core/errors.js";
 import { SessionStatusSchema, type SessionEvent, type SessionEventData } from "./sessions/events.js";
@@ -67,7 +68,10 @@ Paid keys (direct routes; secrets are encrypted at rest)
 Standalone jobs (a SwitchYard supervisor plans, delegates, verifies, integrates)
   run "<goal>" --repo <alias> [--check "<cmd>"] [--criteria "<text>"] [--wait]
   jobs                          list jobs
-  job <id>                      job status, workers, branch, questions
+  job <id>                      job status, workers, branch, questions; sub-jobs (tree with
+                                branches and carved budgets), merge queue, recent channel posts
+  channel <job> [--after id] [--limit n] [--kind k[,k]]   the job's team channel, oldest first
+                                (kinds: finding, blocker, interface_contract); posts are data
   plan <job>                    the job's task graph: nodes with state, tier, and importance,
                                 dependencies, critical path (*), file leases, why nodes wait
   questions                     questions supervisors are waiting on
@@ -260,6 +264,7 @@ function planText(p: JobPlanView): string {
       state: n.state,
       acceptance: n.acceptanceStatus ?? "",
       task: n.taskId ?? "",
+      runs: n.redundancy > 1 ? `${n.redundancy}${n.twins ? ` ${n.twins.status}` : ""}` : "",
       waiting: n.waiting?.text ?? (n.leaseWaits ? `waited for a file lease ${n.leaseWaits}x` : ""),
     }));
   const live = p.leases.filter((l) => l.live);
@@ -437,6 +442,7 @@ async function main(): Promise<number> {
       window: { type: "string" },
       "max-delay": { type: "string" },
       name: { type: "string" },
+      kind: { type: "string" },
       help: { type: "boolean", short: "h", default: false },
     },
   });
@@ -688,14 +694,27 @@ ${table(rows)}`, json);
       case "job": {
         const j = jobDetail(sy, args[0] ?? "");
         if (!j) throw new SwitchyardError("not_found", `unknown job ${args[0]}`);
-        out(json ? j : [
+        const team = jobTeam(sy, j.taskId)!;
+        out(json ? { ...j, team } : [
           `${j.taskId} ${j.state}: ${j.goal}`,
           ...j.branches.map((b) => `branch ${b.branch} in ${b.alias} (merge with: git merge --no-ff ${b.branch})`),
           ...j.children.map((c) => `  ${c.label ?? c.taskId} [${c.profile}] ${c.state}${c.acceptance ? ` / ${c.acceptance}` : ""}`),
           ...j.questions.filter((q) => !q.answer).map((q) => `  QUESTION ${q.id}: ${q.question}${q.options ? ` (${q.options.join(" / ")})` : ""}  -> switchyard answer ${q.id} "<answer>"`),
           `working document: brain:${j.workingDoc}`,
           ...(j.result ? [`result: ${j.result.stopReason}, acceptance ${j.result.acceptanceStatus}`, j.result.summary] : []),
+          ...jobTeamLines(team),
         ].join("\n"), json);
+        return 0;
+      }
+      case "channel": {
+        if (!args[0]) throw new SwitchyardError("usage", "usage: switchyard channel <job-id> [--after <post id>] [--limit <n>] [--kind finding,blocker,interface_contract] [--json]");
+        const kinds = values.kind === undefined ? undefined : z.array(z.enum(CHANNEL_KINDS)).min(1).safeParse(values.kind.split(",").map((k) => k.trim()).filter(Boolean));
+        if (kinds && !kinds.success) throw new SwitchyardError("usage", `--kind takes ${CHANNEL_KINDS.join(", ")} (comma-separated), got ${JSON.stringify(values.kind)}`);
+        const after = countFlag("after", values.after);
+        const limit = countFlag("limit", values.limit, 1);
+        const c = jobChannel(sy, args[0], { ...(after !== undefined ? { afterId: after } : {}), ...(limit ? { limit } : {}), ...(kinds?.success ? { kinds: kinds.data } : {}) });
+        if (!c) throw new SwitchyardError("not_found", `unknown job ${args[0]}`);
+        out(json ? c : channelText(c), json);
         return 0;
       }
       case "plan": {

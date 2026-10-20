@@ -16,6 +16,11 @@ export type PlanDifficulty = (typeof PLAN_DIFFICULTIES)[number];
 /** Most nodes one plan version may hold. */
 export const MAX_PLAN_NODES = 50;
 
+/** Most runs a redundant node may get. */
+export const MAX_REDUNDANCY = 2;
+/** Difficulties a redundant node may have (small nodes only). */
+export const REDUNDANT_DIFFICULTIES: ReadonlySet<PlanDifficulty> = new Set(["T1", "T2"]);
+
 /** Estimated cost of a node by tier, for the critical path (a T3 node costs four T1 nodes). */
 export const TIER_WEIGHT: Readonly<Record<PlanDifficulty, number>> = { T1: 1, T2: 2, T3: 4, T4: 8 };
 /** Weight of a node with no difficulty hint and no profile minimum tier. */
@@ -24,7 +29,8 @@ export const DEFAULT_NODE_WEIGHT = TIER_WEIGHT.T2;
 export const PlanNodeSchema = z
   .object({
     label: z.string().regex(PLAN_LABEL_RE),
-    profile: ProfileNameSchema.refine((p) => p !== "supervise", "a plan node cannot be a supervise task"),
+    /** `supervise` starts a sub-job (dispatched through the delegate path: depth limit, branch fork, budget carve). */
+    profile: ProfileNameSchema,
     goal: z.string().min(1).max(20_000),
     acceptanceCriteria: z.array(z.string().min(1)).min(1),
     /** Labels of nodes in this plan, or of tasks the job dispatched earlier. */
@@ -42,8 +48,20 @@ export const PlanNodeSchema = z
     requiresAcceptedInputs: z.boolean(),
     /** Estimated cost (tier weight) used for the critical path. */
     weight: z.number().positive(),
+    /**
+     * Redundant execution: 2 runs the node's first attempt twice, on different endpoints, and
+     * keeps the first result that passes verification (the other run is cancelled; both are
+     * charged). Only for small non-coding nodes: T1/T2, no writable repository.
+     */
+    redundancy: z.number().int().min(1).max(MAX_REDUNDANCY).default(1),
   })
-  .strict();
+  .strict()
+  .superRefine((n, ctx) => {
+    if (n.redundancy < 2) return;
+    if (n.profile === "supervise") ctx.addIssue({ code: "custom", path: ["redundancy"], message: `plan node ${n.label}: redundancy is not for sub-supervisors (supervise nodes)` });
+    if (n.writableRepository !== null) ctx.addIssue({ code: "custom", path: ["redundancy"], message: `plan node ${n.label}: redundancy is only for non-coding nodes (it has a writable repository)` });
+    if (n.difficulty && !REDUNDANT_DIFFICULTIES.has(n.difficulty)) ctx.addIssue({ code: "custom", path: ["redundancy"], message: `plan node ${n.label}: redundancy is only for small nodes (T1 or T2, not ${n.difficulty})` });
+  });
 export type PlanNode = z.infer<typeof PlanNodeSchema>;
 export type PlanNodeInput = z.input<typeof PlanNodeSchema>;
 
@@ -225,4 +243,10 @@ export function requiresAcceptedInputs(db: Db, spec: { parentTaskId?: string | u
     if (node) return node.requiresAcceptedInputs;
   }
   return defaultRequiresAcceptedInputs(spec.importance);
+}
+
+/** How many runs a task's first attempt gets: its plan node's `redundancy`, else 1. */
+export function redundancyFor(db: Db, spec: { parentTaskId?: string | undefined; label?: string | undefined }): number {
+  if (!spec.parentTaskId || !spec.label) return 1;
+  return new PlanStore(db).nodeFor(spec.parentTaskId, spec.label)?.redundancy ?? 1;
 }
