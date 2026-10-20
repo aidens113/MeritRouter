@@ -129,6 +129,29 @@ export type { InferenceClient, ChatRequest, ChatResponse, ProviderStatus } from 
 export type { UsageSummary } from "./storage/usage.js";
 export type { ScanSummary } from "./models/scanner.js";
 export * as insights from "./admin/insights.js";
+export type { JobPlanView, PlanNodeView, PlanEdge, PlanWait, PlanLeaseView, PlanVersionSummary } from "./admin/job-plans.js";
+export {
+  PlanStore,
+  PlanNodeSchema,
+  assertPlanGraph,
+  criticalPath,
+  nodeWeight,
+  defaultRequiresAcceptedInputs,
+  requiresAcceptedInputs,
+  TIER_WEIGHT,
+  DEFAULT_NODE_WEIGHT,
+  MAX_PLAN_NODES,
+  PLAN_DIFFICULTIES,
+  PLAN_LABEL_RE,
+  type JobPlan,
+  type PlanNode,
+  type PlanNodeInput,
+  type PlanDifficulty,
+  type CriticalPath,
+} from "./storage/plans.js";
+export { FileLeaseStore, LEASE_MODES, globsOverlap, writeGlobs, type FileLease, type LeaseMode } from "./storage/file-leases.js";
+export { AWAITING_ACCEPTANCE, WAITING_FOR_FILE_LEASE } from "./storage/tasks.js";
+export { UPSTREAM_CONTEXT_EVENT, UPSTREAM_RESULTS_KIND, INTEGRATED_EVENT, type UpstreamContext, type UpstreamPackage, type UpstreamEntry, type BaseChoice } from "./context/upstream.js";
 export { SessionStore, CreateSessionInputSchema, SESSIONS_DIR, PROCESS_DIED, type CreateSessionInput, type SessionRecord, type SessionListFilter, type SessionEventsPage, type ReopenOptions } from "./sessions/store.js";
 export { SessionRecorder, type ModelRequestInput, type ModelErrorInput, type ToolIntentInput, type ToolOutcomeInput } from "./sessions/recorder.js";
 export {

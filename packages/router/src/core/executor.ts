@@ -30,6 +30,7 @@ import type { SessionRecorder } from "../sessions/recorder.js";
 import type { SessionEndStatus } from "../sessions/events.js";
 import type { ResumePlan } from "../sessions/resume.js";
 import { isSimulatedCrash } from "./faults.js";
+import { withUpstreamContext } from "../context/upstream.js";
 import { sessionProgress, watchdogVerdict } from "./watchdog.js";
 import { MAX_AUTO_RESUMES } from "./scheduler.js";
 import { z } from "zod";
@@ -359,6 +360,20 @@ export class Executor {
     };
   }
 
+  /**
+   * Context injection for dependents: the task as its runs see it, with its upstream results
+   * frozen into its context (see context/upstream.ts). A failure to build it is recorded and
+   * the task runs with its spec as submitted.
+   */
+  private async withUpstream(task: StoredTask): Promise<StoredTask> {
+    try {
+      return await withUpstreamContext({ cfg: this.d.cfg, tasks: this.d.tasks, artifacts: this.d.artifacts }, task);
+    } catch (err) {
+      this.d.tasks.event(task.row.id, "upstream_context_failed", { error: (err as Error).message });
+      return task;
+    }
+  }
+
   private tooDifficult(task: StoredTask, prepared: Prepared): void {
     const c = prepared.classification;
     this.record(task, "failed", baseResult({
@@ -398,6 +413,8 @@ export class Executor {
         this.tooDifficult(task, prepared);
         return;
       }
+      // A dependent sees its upstream results (and, for coding, its chosen base commit) from here on.
+      task = await this.withUpstream(task);
       let plan = prepared.plan;
       const mode = this.d.cfg.profiles[task.spec.profile]!.mode;
       // Supervisor jobs are judged by their own job checks; every other task gets a contract.
@@ -531,7 +548,7 @@ export class Executor {
           if (!p.plan) this.tooDifficult(t, p);
           else {
             prepared.set(t.row.id, p);
-            members.push(t);
+            members.push(await this.withUpstream(t));
           }
         } catch (err) {
           this.settle(t, this.classify(err, this.controllers.get(t.row.id)!.signal, t));

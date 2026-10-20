@@ -1,4 +1,5 @@
 import type { ResolvedConfig } from "../config/load.js";
+import { maxAgentsPerJob } from "../config/schema.js";
 import type { StoredTask, TaskStore } from "../storage/tasks.js";
 import { batchKey } from "../runners/batch.js";
 import type { Executor } from "./executor.js";
@@ -9,7 +10,10 @@ export const MAX_AUTO_RESUMES = 3;
 
 /**
  * In-process worker loop. Claims runnable tasks under a lease, forms prompt batches for
- * compatible completion tasks, and runs them. Several processes may share one store.
+ * compatible completion tasks, and runs them. Several processes may share one store. Every
+ * ready task of a job's task graph is claimed at once, up to `team.max_agents` per job and
+ * `execution.max_concurrent_tasks` in all; a coding task whose write globs overlap another
+ * task's live file lease in the same repository waits (see `TaskStore.claim`).
  */
 export class Scheduler {
   private timer: NodeJS.Timeout | null = null;
@@ -88,6 +92,7 @@ export class Scheduler {
           supervisorProfiles: Object.entries(this.cfg.profiles).filter(([, p]) => p?.mode === "supervisor").map(([n]) => n),
           maxSupervisors: this.cfg.supervisor.max_concurrent_jobs,
           supervisorTimeoutMs: this.cfg.supervisor.job_timeout_seconds * 1000,
+          maxAgentsPerJob: maxAgentsPerJob(this.cfg),
         });
         const taken = new Set<string>();
         for (const task of claimed) {

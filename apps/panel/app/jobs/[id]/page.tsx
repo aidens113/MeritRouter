@@ -7,6 +7,7 @@ import { getSy } from "@/lib/sy";
 import { SetupScreen } from "@/components/setup";
 import { AcceptanceBadge, TaskStateBadge } from "@/components/task-badges";
 import { SessionsTable } from "@/components/sessions-table";
+import { PlanCard } from "@/components/job-plan";
 import { Badge, Callout, Card, CardHeader, cx, EmptyState, HelpTip, KeyValue, Mono, PageHeader } from "@/components/ui";
 import { ActionButton, AutoRefresh } from "@/components/client/actions";
 import { ArtifactViewer } from "@/components/client/artifact-viewer";
@@ -33,6 +34,7 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
   const docExists = sy.brain.exists(job.workingDoc);
   const res = job.result;
   const sessions = insights.sessionsView(sy, { jobId: id, limit: 200 });
+  const plan = insights.jobPlan(sy, id);
 
   return (
     <div className="space-y-6">
@@ -167,6 +169,8 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
         </Card>
       </div>
 
+      {plan?.plan ? <PlanCard plan={plan} /> : null}
+
       <Card>
         <CardHeader title="Branches" help="branch" description="Integrated work lives on these branches. Nothing is merged or pushed for you." />
         <div className="space-y-4 p-4">
@@ -192,7 +196,7 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
       </Card>
 
       <Card>
-        <CardHeader title="Worker tasks" description="Tasks the supervisor delegated. Each has its own page with requests, artifacts, and checks." />
+        <CardHeader title="Worker tasks" description={plan?.plan ? "Every task the supervisor dispatched, planned or not. Each has its own page with requests, artifacts, and checks." : "Tasks the supervisor delegated. Each has its own page with requests, artifacts, and checks."} />
         {job.children.length ? (
           <div className="overflow-x-auto">
             <table className="data-table">

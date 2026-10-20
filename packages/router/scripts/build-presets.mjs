@@ -42,7 +42,7 @@ const presets = {
     edits: [
       [["profiles", "supervise"], supervise],
       [["brain", "project"], "my-project"],
-      [["supervisor"], { endpoints: [], paid_policy: "never", max_concurrent_jobs: 1, max_workers_per_job: 3 }],
+      [["supervisor"], { endpoints: [], paid_policy: "never", max_concurrent_jobs: 1 }],
     ],
   },
   "standalone-hybrid": {
@@ -51,7 +51,7 @@ const presets = {
       [["profiles", "supervise"], supervise],
       [["brain", "project"], "my-project"],
       [["paid"], { enabled: true, budgets: { per_week_usd: 5 }, tiers: { T1: "never", T2: "never", T3: "on_free_exhaustion", T4: "never" }, max_paid_attempts: 2, providers: { anthropic }, models: [claudeModel] }],
-      [["supervisor"], { endpoints: ["paid:anthropic/REPLACE-with-a-model-id"], paid_policy: "preferred", max_concurrent_jobs: 1, max_workers_per_job: 3 }],
+      [["supervisor"], { endpoints: ["paid:anthropic/REPLACE-with-a-model-id"], paid_policy: "preferred", max_concurrent_jobs: 1 }],
     ],
   },
   "standalone-paid": {
@@ -60,7 +60,7 @@ const presets = {
       [["profiles", "supervise"], supervise],
       [["brain", "project"], "my-project"],
       [["paid"], { enabled: true, budgets: { per_week_usd: 20, per_month_usd: 60 }, tiers: { T1: "never", T2: "preferred", T3: "preferred", T4: "premium" }, max_paid_attempts: 2, providers: { anthropic }, models: [claudeModel] }],
-      [["supervisor"], { endpoints: ["paid:anthropic/REPLACE-with-a-model-id"], paid_policy: "preferred", max_concurrent_jobs: 1, max_workers_per_job: 4 }],
+      [["supervisor"], { endpoints: ["paid:anthropic/REPLACE-with-a-model-id"], paid_policy: "preferred", max_concurrent_jobs: 1 }],
     ],
   },
 };

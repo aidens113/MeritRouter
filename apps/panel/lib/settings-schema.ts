@@ -119,6 +119,7 @@ export const SECTIONS: Section[] = [
     fields: [
       f("execution.max_concurrent_tasks", "Tasks at once", "int", "Most tasks a worker runs at the same time.", { min: 1 }),
       f("execution.max_concurrent_writers_per_repository", "Coding tasks per repository", "int", "Most coding tasks editing the same repository at once.", { min: 1 }),
+      f("team.max_agents", "Agents per job", "optInt", "Most tasks of one job running at the same time (team.max_agents). Tasks over the cap wait queued; Tasks at once still bounds everything. Empty: the old Workers per job setting if set, else 8.", { min: 1, placeholder: "8" }),
       f("execution.max_model_requests_per_task", "Request ceiling per task", "int", "Hard ceiling on model requests for any task, regardless of tier or task type.", { min: 1, unit: "requests" }),
       f("execution.job_timeout_seconds", "Task timeout", "int", "A task that runs longer than this fails (unless it sets its own timeout).", { min: 1, unit: "seconds" }),
       f("execution.lease_seconds", "Worker lease", "int", "How long a worker's claim on a task lasts without a heartbeat. Expired leases mark the task interrupted.", { min: 10, unit: "seconds" }),
@@ -226,7 +227,7 @@ export const SUPERVISOR_SECTION: Section = {
     f("supervisor.endpoints", "Supervisor models", "list", "Model ids to supervise with, in order. Empty: route like any T3 task (most capable first).", { placeholder: "cerebras/qwen-3-235b-a22b-instruct-2507" }),
     f("supervisor.paid_policy", "Paid policy for supervisors", "enum", "Whether a job's supervisor may use paid models.", { options: ["never", "on_free_exhaustion", "preferred", "premium"], optionHelp: POLICY_HELP }),
     f("supervisor.max_concurrent_jobs", "Jobs at once", "int", "Most jobs running at the same time.", { min: 1 }),
-    f("supervisor.max_workers_per_job", "Workers per job", "int", "Most worker tasks one job runs at the same time.", { min: 1 }),
+    f("supervisor.max_workers_per_job", "Workers per job (old name)", "optInt", "Old name for Agents per job (Execution, team.max_agents), used only when that is empty. Leave empty.", { min: 1 }),
     f("supervisor.job_timeout_seconds", "Job time limit", "int", "Wall-clock limit for one job.", { min: 1, unit: "seconds" }),
     f("supervisor.question_timeout_seconds", "Wait for an answer", "int", "How long a supervisor waits for your answer to a question before deciding with a sensible default.", { min: 1, unit: "seconds" }),
     f("supervisor.branch_prefix", "Branch prefix", "text", "Jobs commit to <prefix><job id>. Pushing is never automatic."),

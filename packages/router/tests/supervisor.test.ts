@@ -90,7 +90,7 @@ describe("standalone supervisor", () => {
     expect(brainLog).toMatch(/supervisor:subtract-job\s*\topenrouter\/vendor\/big-a:free\s*\tUpdate Current State/);
   }, 180_000);
 
-  it("refuses overlapping concurrent coding briefs and asks the user when needed", async () => {
+  it("serialises overlapping coding briefs through file leases and asks the user when needed", async () => {
     env = makeEnv({ config: standaloneConfig() });
     const overlap = [
       { label: "a", profile: "implement", goal: "edit app", acceptance_criteria: ["x"], allowed_paths: ["src/**"], difficulty: "T2" },
@@ -99,6 +99,8 @@ describe("standalone supervisor", () => {
     const script = [
       () => [call("delegate", { tasks: overlap })],
       () => [call("ask_user", { question: "Should subtract round?", options: ["yes", "no"] })],
+      // The overlap check is advisory (T1): both briefs run, one after the other, so wait for them.
+      () => [call("await_tasks", { timeout_seconds: 60 })],
       () => [call("finish_job", { status: "blocked", summary: "waiting on design", verified: [], not_verified: ["everything"] })],
     ];
     const client = new ScriptedClient((req) => (isSupervisor(req) ? reply(null, { ...servedFor(sy!, req), toolCalls: script[turns(req)]!() }) : worker(req)));
@@ -117,6 +119,9 @@ describe("standalone supervisor", () => {
     const outputs = sup.messages.filter((m) => m.role === "tool").map((m) => String(m.content));
     expect(outputs[0]).toMatch(/overlaps a in core/);
     expect(outputs[1]).toBe("answer from user: no");
+    // b's write globs overlap a's, so b waited on a's file lease rather than running beside it.
+    const [a, b] = sy.tasks.childrenOf(job.taskId);
+    expect(sy.tasks.events(b!.row.id).find((e) => e.type === "waiting_for_file_lease")?.data).toMatchObject({ holder: a!.row.id });
   }, 120_000);
 });
 

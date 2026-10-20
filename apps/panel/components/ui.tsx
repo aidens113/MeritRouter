@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import { CircleHelp } from "lucide-react";
-import { GLOSSARY, type GlossaryKey } from "@/lib/glossary";
+import type { GlossaryKey } from "@/lib/glossary";
+import { HelpTip } from "./client/help-tip";
 
 export function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(" ");
@@ -61,23 +61,8 @@ export function PageHeader({ title, description, actions }: { title: string; des
   );
 }
 
-/** Hover/focus popover explaining a term. Keyboard reachable; no JS needed. */
-export function HelpTip({ term, text, label }: { term?: GlossaryKey; text?: string; label?: string }) {
-  const body = text ?? (term ? GLOSSARY[term] : "");
-  return (
-    <span className="group relative inline-flex align-middle">
-      <button type="button" aria-label={label ?? "What does this mean?"} className="inline-flex rounded-full text-ink-3 hover:text-ink focus:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">
-        <CircleHelp size={14} aria-hidden />
-      </button>
-      <span
-        role="tooltip"
-        className="pointer-events-none invisible absolute left-1/2 top-full z-50 mt-1.5 w-72 -translate-x-1/2 rounded-lg border border-line bg-surface p-3 text-left text-xs font-normal leading-relaxed text-ink-2 opacity-0 shadow-lg transition-opacity group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100"
-      >
-        {body}
-      </span>
-    </span>
-  );
-}
+// The help popover keeps itself inside the viewport, which needs a little client code.
+export { HelpTip };
 
 export function EmptyState({ icon, title, children, action }: { icon?: ReactNode; title: string; children?: ReactNode; action?: ReactNode }) {
   return (

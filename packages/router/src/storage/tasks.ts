@@ -5,6 +5,8 @@ import type { ProfileName } from "../config/schema.js";
 import { TaskValidationError } from "../core/errors.js";
 import type { TaskState, WorkerResult, WorkerTask } from "../core/task.js";
 import { isTerminal } from "../core/task.js";
+import { acquireLease, conflictingLease, releaseLeases, writeGlobs } from "./file-leases.js";
+import { requiresAcceptedInputs } from "./plans.js";
 
 export interface TaskRow {
   id: string;
@@ -51,6 +53,8 @@ export interface ClaimLimits {
   supervisorProfiles?: string[];
   maxSupervisors?: number;
   supervisorTimeoutMs?: number;
+  /** Most running tasks per job (`team.max_agents`); counts delegated, non-supervisor tasks. */
+  maxAgentsPerJob?: number;
 }
 
 /** Canonical JSON (sorted keys) so equivalent specs hash identically. */
@@ -70,11 +74,18 @@ export function specHash(spec: WorkerTask): string {
 
 /**
  * Successful under the dependency acceptance policy: completed and not explicitly unmet.
- * not_verified and needs_supervisor pass (with a dependency_unverified warning event).
+ * not_verified and needs_supervisor pass (with a dependency_unverified warning event) unless
+ * the dependent requires accepted inputs (see `requiresAcceptedInputs`): then it waits until
+ * they are accepted (`met`).
  */
 export function dependencySatisfied(t: StoredTask): boolean {
   return t.row.state === "completed" && t.result?.acceptanceStatus !== "unmet";
 }
+
+/** Prefix of a waiting task's state reason while it waits for its upstream results to be accepted. */
+export const AWAITING_ACCEPTANCE = "awaiting_acceptance";
+/** Prefix of a queued coding task's state reason while another task's file lease blocks it. */
+export const WAITING_FOR_FILE_LEASE = "waiting_for_file_lease";
 
 export class TaskStore {
   constructor(
@@ -229,6 +240,18 @@ export class TaskStore {
         )
         .all(now) as TaskRow[];
 
+      // Running delegated tasks per job (team.max_agents).
+      const perJob = new Map<string, number>();
+      if (limits.maxAgentsPerJob !== undefined) {
+        for (const r of this.db
+          .prepare(
+            "SELECT json_extract(spec_json, '$.parentTaskId') AS job, profile FROM tasks WHERE state IN ('running','cancel_requested') AND lease_expires_at > ? AND json_extract(spec_json, '$.parentTaskId') IS NOT NULL",
+          )
+          .all(now) as { job: string; profile: string }[]) {
+          if (!sup.has(r.profile)) perJob.set(r.job, (perJob.get(r.job) ?? 0) + 1);
+        }
+      }
+
       const writers = new Map<string, number>();
       for (const r of this.db
         .prepare(
@@ -248,12 +271,29 @@ export class TaskStore {
       for (const row of candidates) {
         const isSup = sup.has(row.profile);
         if (isSup ? supSlots <= 0 : slots <= 0) continue;
+        const spec = JSON.parse(row.spec_json) as WorkerTask;
+        const job = !isSup ? (spec.parentTaskId ?? null) : null;
+        if (job && limits.maxAgentsPerJob !== undefined && (perJob.get(job) ?? 0) >= limits.maxAgentsPerJob) continue;
         if (row.writable_repo && !isSup) {
+          // Team-wide file leases: never two live writers on overlapping paths in one repository
+          // (checked before the writer count so a blocked task says what it waits for).
+          const globs = writeGlobs(spec.constraints.allowedPaths);
+          const holder = conflictingLease(this.db, row.writable_repo, globs, now, row.id);
+          if (holder) {
+            const reason = `${WAITING_FOR_FILE_LEASE}:${holder.taskId}`;
+            if (row.state_reason !== reason) {
+              this.db.prepare("UPDATE tasks SET state_reason = ?, updated_at = ? WHERE id = ?").run(reason, now, row.id);
+              this.event(row.id, "waiting_for_file_lease", { holder: holder.taskId, repository: row.writable_repo, globs, held: holder.globs });
+            }
+            continue;
+          }
           const n = writers.get(row.writable_repo) ?? 0;
           if (n >= limits.maxWritersPerRepo) continue;
           writers.set(row.writable_repo, n + 1);
+          acquireLease(this.db, { jobId: spec.parentTaskId ?? null, taskId: row.id, repository: row.writable_repo, globs }, now);
+          this.event(row.id, "file_lease_acquired", { repository: row.writable_repo, globs });
         }
-        const spec = JSON.parse(row.spec_json) as WorkerTask;
+        if (job) perJob.set(job, (perJob.get(job) ?? 0) + 1);
         const fallback = isSup ? (limits.supervisorTimeoutMs ?? limits.defaultTimeoutMs) : limits.defaultTimeoutMs;
         const timeoutMs = spec.budget?.timeoutSeconds ? spec.budget.timeoutSeconds * 1000 : fallback;
         update.run(owner, now + limits.leaseMs, now, now + timeoutMs, now, row.id);
@@ -322,6 +362,7 @@ export class TaskStore {
           "UPDATE tasks SET state = 'interrupted', state_reason = ?, result_json = ?, lease_owner = NULL, lease_expires_at = NULL, updated_at = ? WHERE id = ?",
         )
         .run(reason, JSON.stringify(syntheticResult(id, "interrupted", reason)), now, id);
+      releaseLeases(this.db, id, "interrupted", now);
       this.event(id, "interrupted", { reason });
       return true;
     });
@@ -344,11 +385,23 @@ export class TaskStore {
         continue;
       }
       if (deps.every(dependencySatisfied)) {
+        // A dependent that requires accepted inputs waits until every upstream result is met
+        // (verified, or accepted by the supervisor or a human); others start with a warning.
+        const spec = JSON.parse(row.spec_json) as WorkerTask;
+        const strict = requiresAcceptedInputs(this.db, spec);
+        const unaccepted = strict ? deps.filter((d) => d.result?.acceptanceStatus !== "met") : [];
+        if (unaccepted.length) {
+          const reason = `${AWAITING_ACCEPTANCE}:${unaccepted.map((d) => d.row.id).join(",")}`;
+          if (row.state_reason !== reason) {
+            this.db.prepare("UPDATE tasks SET state_reason = ?, updated_at = ? WHERE id = ?").run(reason, now, row.id);
+            this.event(row.id, "dependency_awaiting_acceptance", { dependencies: unaccepted.map((d) => ({ dependency: d.row.id, acceptanceStatus: d.result?.acceptanceStatus ?? null })) });
+          }
+          continue;
+        }
         this.db
           .prepare("UPDATE tasks SET state = 'queued', state_reason = NULL, updated_at = ? WHERE id = ?")
           .run(now, row.id);
-        this.event(row.id, "dependencies_satisfied");
-        // V1 lets results nobody verified through, with a warning; the task graph tightens this.
+        this.event(row.id, "dependencies_satisfied", strict ? { acceptedInputs: true } : undefined);
         for (const d of deps) {
           const status = d.result?.acceptanceStatus;
           if (status === "not_verified" || status === "needs_supervisor") this.event(row.id, "dependency_unverified", { dependency: d.row.id, acceptanceStatus: status });
@@ -365,6 +418,7 @@ export class TaskStore {
         "UPDATE tasks SET state = ?, state_reason = ?, result_json = ?, finished_at = ?, updated_at = ?, lease_owner = NULL, lease_expires_at = NULL WHERE id = ?",
       )
       .run(state, reason, JSON.stringify(result), now, now, row.id);
+    releaseLeases(this.db, row.id, state, now);
     this.event(row.id, state, { reason });
   }
 
@@ -426,6 +480,7 @@ export class TaskStore {
           "UPDATE tasks SET state = ?, state_reason = ?, result_json = ?, finished_at = ?, updated_at = ?, lease_owner = NULL, lease_expires_at = NULL WHERE id = ?",
         )
         .run(finalState, finalResult.stopReason, JSON.stringify(finalResult), now, now, id);
+      releaseLeases(this.db, id, "finished", now);
       this.event(id, finalState, { stopReason: finalResult.stopReason });
       return finalState;
     });
@@ -455,7 +510,10 @@ export class TaskStore {
         "UPDATE tasks SET state = 'waiting_for_capacity', state_reason = ?, next_attempt_at = ?, lease_owner = NULL, lease_expires_at = NULL, updated_at = ? WHERE id = ? AND lease_owner = ? AND state = 'running' AND cancel_requested = 0",
       )
       .run(reason, nextAttemptAt, now, id, owner);
-    if (r.changes) this.event(id, "waiting_for_capacity", { reason, nextAttemptAt });
+    if (r.changes) {
+      releaseLeases(this.db, id, "deferred", now);
+      this.event(id, "waiting_for_capacity", { reason, nextAttemptAt });
+    }
     return r.changes === 1;
   }
 
@@ -502,6 +560,8 @@ export class TaskStore {
             "UPDATE tasks SET state = 'interrupted', state_reason = ?, result_json = ?, lease_owner = NULL, lease_expires_at = NULL, updated_at = ? WHERE id = ?",
           )
           .run("worker lease expired", JSON.stringify(result), now, row.id);
+        // File leases expire with the task lease; a resumed run acquires them again at claim.
+        releaseLeases(this.db, row.id, "expired", now);
         this.event(row.id, "interrupted", { previousOwner: row.lease_owner });
       }
       return rows.map((r) => r.id);

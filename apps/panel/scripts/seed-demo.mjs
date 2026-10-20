@@ -4,10 +4,11 @@
 // running tasks through Switchyard with a scripted in-process gateway (no network, no quota).
 // Independent reviews come from the same scripted client: one unqualified reviewer that cannot
 // settle a criterion, and one qualified reviewer that fails an answer, sees it repaired, and passes it.
-// Calibration gets real signals too: a job that integrates a reviewed change and later undoes it
-// (a false approval), a reviewer fail a person overrules (a false rejection), a reused verdict,
-// and two forced background audits (one agrees, one disagrees).
-// It also runs two standalone jobs (one finished, one paused on a question for you), fills the
+// Calibration gets real signals too: a job that integrates a reviewed power() change and later
+// undoes it (a false approval), a reviewer fail a person overrules (a false rejection), a reused
+// verdict, and two forced background audits (one agrees, one disagrees).
+// It also runs three more standalone jobs (one finished, one planned as a diamond task graph with
+// plan_work where two coding nodes contend for a file lease, one paused on a question), fills the
 // brain (in .demo/brain, never your home folder), and records a little paid spend through a fake
 // direct paid client, so the Jobs, Brain, and Paid routes pages have content. Agent sessions (and
 // their event logs) come from those runs themselves; only the interrupted task's session, which
@@ -197,7 +198,8 @@ const raw = {
   coding: { runner: "native" },
   // The brain lives inside the demo folder so seeding never touches ~/.switchyard/brain.
   brain: { path: "brain", project: "demo", access_approver: "supervisor" },
-  supervisor: { max_workers_per_job: 2, question_timeout_seconds: 86400 },
+  supervisor: { question_timeout_seconds: 86400 },
+  team: { max_agents: 3 },
   // Paid routes are on with small budgets; the demo key is fake and only a fake client ever sees it.
   paid: {
     enabled: true,
@@ -412,11 +414,16 @@ const call = (name, args) => ({ id: `call_${++callNo}`, type: "function", functi
 const assistantTurns = (req) => req.messages.filter((m) => m.role === "assistant").length;
 const hasCheck = (fn) => `node -e "process.exit(require('fs').readFileSync('src/app.ts','utf8').includes('${fn}')?0:1)"`;
 const multiplyCheck = hasCheck("multiply");
-const divideCheck = hasCheck("divide");
+const powerCheck = hasCheck("power");
+
+// Every helper a scripted coding worker adds, with its operator.
+const OPS = { multiply: "*", subtract: "-", divide: "/", modulo: "%", power: "**" };
 
 function codingTurn(req, s, user) {
-  const fn = /multiply/i.test(user) ? "multiply" : /divide/i.test(user) ? "divide" : "subtract";
-  const op = fn === "multiply" ? "*" : fn === "divide" ? "/" : "-";
+  // The goal comes first in the brief ("Add divide(a, b) ..."); the brain context after it may name other functions.
+  const named = /Add (\w+)\(a, b\)/.exec(user)?.[1];
+  const fn = named && OPS[named] ? named : /multiply/i.test(user) ? "multiply" : "subtract";
+  const op = OPS[fn];
   if (assistantTurns(req) === 0) {
     const calls = [call("replace_in_file", { path: "src/app.ts", old_text: "export function add", new_text: `export function ${fn}(a: number, b: number) {\n  return a ${op} b;\n}\n\nexport function add` })];
     // In the job, the worker also asks for brain access it does not have (left pending for you).
@@ -444,21 +451,67 @@ const JOB_A = [
 const JOB_B = [
   () => ({ text: "Before changing error handling I need a decision that belongs to the user.", calls: [call("brain_set_current_state", { body: "**Goal:** make handle() reject missing parameters.\n\n**Open decision:** status code for missing parameters (asked the user).\n\n**Plan once answered:** one implement brief for src/server.ts plus a review." }), call("ask_user", { question: "Should a missing a or b parameter return HTTP 400 with a JSON error body, or keep throwing so the framework returns 500?", options: ["Return 400 with a JSON error", "Keep throwing (500)"] })] }),
 ];
-// Job C: integrates a reviewed divide(), confirms it on the branch, then finds the defect the
+// Job D: integrates a reviewed power(), confirms it on the branch, then finds the defect the
 // reviewer missed and undoes the task through attribution (calibration: a false approval).
-const JOB_C = [
-  () => ({ text: "Delegating divide() as a high-importance change: the API is public, so it gets an independent review.", calls: [call("delegate", { tasks: [{ label: "divide", profile: "implement", goal: "Add divide(a, b) to src/app.ts next to add().", acceptance_criteria: ["divide is exported from src/app.ts"], allowed_paths: ["src/**"], checks: [divideCheck], difficulty: "T2", importance: "high", importance_reason: "divide() becomes part of the public calculator API." }] })] }),
+const JOB_D = [
+  () => ({ text: "Delegating power() as a high-importance change: the API is public, so it gets an independent review.", calls: [call("delegate", { tasks: [{ label: "power", profile: "implement", goal: "Add power(a, b) to src/app.ts next to add().", acceptance_criteria: ["power is exported from src/app.ts"], allowed_paths: ["src/**"], checks: [powerCheck], difficulty: "T2", importance: "high", importance_reason: "power() becomes part of the public calculator API." }] })] }),
   () => ({ text: "Waiting for the implementer and its review.", calls: [call("await_tasks", { timeout_seconds: 60 })] }),
-  () => ({ text: "Reviewed and passed. Integrating it onto the job branch.", calls: [call("integrate_task", { task_id: "divide" })] }),
-  () => ({ text: "Running the check on the job branch.", calls: [call("run_check", { command: divideCheck })] }),
-  () => ({ text: "Reading the integrated code again: divide(a, 0) returns Infinity, and the API must reject a zero divisor. Undoing the task.", calls: [call("undo", { kind: "task", target: "divide", reason: "divide(a, 0) returns Infinity; the API must reject a zero divisor" })] }),
-  () => ({ text: "Done.", calls: [call("finish_job", { status: "blocked", summary: "divide() was integrated, then undone: it does not reject a zero divisor. Re-delegate with a criterion for b = 0.", verified: [], not_verified: ["divide(a, 0) behaviour"], follow_up: "re-delegate divide with a zero-divisor criterion" })] }),
+  () => ({ text: "Reviewed and passed. Integrating it onto the job branch.", calls: [call("integrate_task", { task_id: "power" })] }),
+  () => ({ text: "Running the check on the job branch.", calls: [call("run_check", { command: powerCheck })] }),
+  () => ({ text: "Reading the integrated code again: power(-8, 0.5) returns NaN, and the API must reject a fractional exponent of a negative base. Undoing the task.", calls: [call("undo", { kind: "task", target: "power", reason: "power(-8, 0.5) returns NaN; the API must reject a fractional exponent of a negative base" })] }),
+  () => ({ text: "Done.", calls: [call("finish_job", { status: "blocked", summary: "power() was integrated, then undone: it returns NaN for a fractional exponent of a negative base. Re-delegate with a criterion for that case.", verified: [], not_verified: ["power(a, b) behaviour for a < 0 and fractional b"], follow_up: "re-delegate power with a negative-base criterion" })] }),
 ];
 let jobAId = "";
 
+// Job C plans a diamond with plan_work: scan -> (divide, modulo) -> check-exports. divide and
+// modulo both edit src/app.ts, so modulo waits for divide's file lease. modulo is planned at T3,
+// so the critical path runs through it. The join starts only on accepted inputs.
+const JOB_C_PLAN = [
+  { label: "scan", profile: "inspect", goal: "Find where the arithmetic helpers live and how handle() calls them.", acceptance_criteria: ["names the file and lines of add()"], file_refs: ["core:src/app.ts"], difficulty: "T1" },
+  { label: "divide", profile: "implement", goal: "Add divide(a, b) to src/app.ts next to add().", acceptance_criteria: ["divide is exported from src/app.ts"], allowed_paths: ["src/app.ts"], checks: [hasCheck("divide")], depends_on: ["scan"], difficulty: "T2" },
+  { label: "modulo", profile: "implement", goal: "Add modulo(a, b) to src/app.ts next to add().", acceptance_criteria: ["modulo is exported from src/app.ts"], allowed_paths: ["src/**"], checks: [hasCheck("modulo")], depends_on: ["scan"], difficulty: "T3" },
+  { label: "check-exports", profile: "inspect", goal: "Confirm the new helpers are exported next to add().", acceptance_criteria: ["lists every exported helper"], file_refs: ["core:src/app.ts"], depends_on: ["divide", "modulo"], difficulty: "T1", requires_accepted_inputs: true },
+];
+
+/** Job C's supervisor: plan, wait (accepting upstream results a node waits on), integrate, finish. */
+function jobCTurn(req) {
+  const n = assistantTurns(req);
+  if (n === 0) {
+    return {
+      text: "Four parts with a clear order: plan them as a graph so independent nodes run in parallel.",
+      calls: [
+        call("brain_set_current_state", { body: "**Goal:** add divide() and modulo() next to add().\n\n**Plan (plan_work v1):** scan -> divide, modulo -> check-exports.\n\n**Status:** plan dispatched." }),
+        call("plan_work", { nodes: JOB_C_PLAN, note: "diamond: one scan, two helpers, one check" }),
+      ],
+    };
+  }
+  const lastCalls = [...req.messages].reverse().find((m) => m.role === "assistant")?.tool_calls?.map((c) => c.function.name) ?? [];
+  const lastTool = textOf(req.messages.at(-1));
+  const finish = call("finish_job", {
+    status: "completed",
+    summary: "divide(a, b) integrated onto the job branch; modulo(a, b) is done in its worktree and waits for a follow-up integration (it edits the same lines).",
+    verified: [{ claim: "every plan node finished", evidence: "await_tasks" }],
+    not_verified: ["modulo is not on the job branch yet"],
+  });
+  if (n > 30) return { text: "Stopping.", calls: [finish] };
+  if (lastCalls.includes("plan_work") || lastCalls.includes("accept_task")) return { text: "Waiting for the plan's nodes.", calls: [call("await_tasks", { timeout_seconds: 60 })] };
+  if (lastCalls.includes("await_tasks")) {
+    const awaiting = [...new Set([...lastTool.matchAll(/awaiting_acceptance:([\w,]+)/g)].flatMap((m) => m[1].split(",")))];
+    if (awaiting.length) return { text: "check-exports waits on accepted inputs; both helpers passed their checks.", calls: awaiting.map((id) => call("accept_task", { task_id: id, reason: "Its check passed on the submitted revision and the diff adds only the requested helper." })) };
+    if (/: still /.test(lastTool)) return { text: "Still running; waiting again.", calls: [call("await_tasks", { timeout_seconds: 60 })] };
+    return { text: "All nodes finished. Integrating divide onto the job branch.", calls: [call("integrate_task", { task_id: "divide" })] };
+  }
+  return { text: "Done.", calls: [finish] };
+}
+
 function supervisorTurn(req, s) {
   const brief = textOf(req.messages[1]);
-  const script = /divide/.test(brief) ? JOB_C : /multiply/.test(brief) ? JOB_A : JOB_B;
+  // Each job's goal names a function no other job's goal does: power (Job D), divide (Job C), multiply (Job A).
+  if (!/power\(a, b\)/.test(brief) && /divide\(a, b\)/.test(brief)) {
+    const step = jobCTurn(req);
+    return reply(step.text, s, { toolCalls: step.calls, in: 3000 + Math.round(Math.random() * 3000), out: 250 });
+  }
+  const script = /power\(a, b\)/.test(brief) ? JOB_D : /multiply/.test(brief) ? JOB_A : JOB_B;
   // Job B only gets past its question when the seeder shuts the worker down: end the run there.
   if (script === JOB_B && assistantTurns(req) >= JOB_B.length) throw new GatewayError("aborted", "worker shut down while waiting for an answer (demo)", undefined, undefined, false);
   const step = script[Math.min(assistantTurns(req), script.length - 1)]();
@@ -639,6 +692,16 @@ const jobAOut = await sy.awaitResults([jobA.taskId], { timeoutSeconds: 180 });
 const ra = jobAOut.completed[0];
 console.log(`  ${"job: add multiply (finished)".padEnd(44)} ${ra ? `${ra.executionStatus}/${ra.acceptanceStatus}` : "did not finish"}`);
 
+// A planned job: plan_work records a diamond task graph; two coding nodes contend for a file lease.
+offset = Math.round(1.9 * HOUR);
+const jobC = await sy.startJob({ goal: "Add divide(a, b) and modulo(a, b) to the calculator, planned as a task graph.", repositories: ["core"], acceptanceCriteria: ["divide and modulo are exported from src/app.ts"], label: "plan-divide-modulo" });
+const jobCOut = await sy.awaitResults([jobC.taskId], { timeoutSeconds: 240 });
+const rc = jobCOut.completed[0];
+const planC = insights.jobPlan(sy, jobC.taskId);
+console.log(
+  `  ${"job: divide + modulo (plan_work diamond)".padEnd(44)} ${rc ? `${rc.executionStatus}/${rc.acceptanceStatus}` : "did not finish"}; plan v${planC?.plan?.version ?? "-"}, critical path ${planC?.criticalPath.labels.join(" -> ") || "-"}, lease waits ${planC?.nodes.reduce((a, x) => a + x.leaseWaits, 0) ?? 0}`,
+);
+
 // A person's notes in the brain, committed as "human".
 offset = Math.round(1.8 * HOUR);
 await insights.brainWrite(sy, "projects/demo/facts/runtime.md", "# Runtime facts\n\n- The calculator service runs on Node 22 behind the API gateway.\n- `GET /sum?a=&b=` is the only public route today.\n- Requests time out after 5 seconds at the gateway.\n");
@@ -654,13 +717,13 @@ if (sy.brain.exists(decision)) {
 const repairedId = repaired.completed.find((r) => r.acceptanceStatus === "met")?.taskId;
 if (repairedId) insights.decideTaskAcceptance(sy, repairedId, "accept", { kind: "human", id: "cli:demo" }, "Matches what server.ts does for a missing and an empty b.");
 
-// Job C: a reviewed change is integrated, confirmed by a job check, then undone (a false approval).
+// Job D: a reviewed change is integrated, confirmed by a job check, then undone (a false approval).
 offset = Math.round(1.7 * HOUR);
 scenario = "ok";
-const jobC = await sy.startJob({ goal: "Add divide(a, b) to the calculator and integrate it onto a job branch.", repositories: ["core"], acceptanceCriteria: ["divide is exported from src/app.ts on the job branch"], label: "add-divide" });
-const jobCOut = await sy.awaitResults([jobC.taskId], { timeoutSeconds: 180 });
-const rc = jobCOut.completed[0];
-console.log(`  ${"job: add divide (integrated, then undone)".padEnd(44)} ${rc ? `${rc.executionStatus}/${rc.acceptanceStatus}` : "did not finish"}`);
+const jobD = await sy.startJob({ goal: "Add power(a, b) to the calculator and integrate it onto a job branch.", repositories: ["core"], acceptanceCriteria: ["power is exported from src/app.ts on the job branch"], label: "add-power" });
+const jobDOut = await sy.awaitResults([jobD.taskId], { timeoutSeconds: 180 });
+const rd = jobDOut.completed[0];
+console.log(`  ${"job: add power (integrated, then undone)".padEnd(44)} ${rd ? `${rd.executionStatus}/${rd.acceptanceStatus}` : "did not finish"}`);
 
 // A reviewer keeps failing a right answer; a person overrules it (a false rejection).
 const rounding = await phase(1.6, "deep review overruled by a person", [
