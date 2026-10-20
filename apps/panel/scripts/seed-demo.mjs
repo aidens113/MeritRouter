@@ -13,7 +13,9 @@
 // direct paid client, so the Jobs, Brain, and Paid routes pages have content. A nested team job
 // (parent -> sub-supervisor -> two workers) shows the team view: a carved sub-job budget, two
 // integrations onto the sub-job's branch where the second is rebased, team channel posts of each
-// kind, and a redundant plan node whose twin runs race. Agent sessions (and
+// kind, and a redundant plan node whose twin runs race. One team-vs-single comparison is
+// recorded (the same read-only goal as a two-node team job and as one agent) for the Teams view;
+// every job's metrics come from the stored runs themselves. Agent sessions (and
 // their event logs) come from those runs themselves; only the interrupted task's session, which
 // never ran, is recorded by hand (through the same store calls a worker makes, including one
 // resume), so it shows a `resumed` event and the Resume action.
@@ -26,7 +28,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
-import { GatewayError, Switchyard, WorkerTaskSchema, insights, parseConfig } from "switchyard-router";
+import { GatewayError, Switchyard, WorkerTaskSchema, insights, parseConfig, planComparison, runComparison } from "switchyard-router";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const demo = path.resolve(here, "..", ".demo");
@@ -623,8 +625,41 @@ function jobCTurn(req) {
   return { text: "Done.", calls: [finish] };
 }
 
+// ---------- the recorded comparison (team vs single agent) ----------
+// The team run plans two independent read-only nodes, so two agents run at once; the single run
+// is one inspect task on the same goal. Both take the read-only path of the scripted client.
+const COMPARE_GOAL = "Where does handle() validate its input, and what does add() return? (team vs single comparison)";
+
+function compareTurn(req) {
+  const n = assistantTurns(req);
+  const last = lastCallsOf(req);
+  const lastTool = textOf(req.messages.at(-1));
+  const finish = call("finish_job", { status: "completed", summary: "handle() validates a and b with Number() and a NaN check in src/server.ts; add() returns a + b.", verified: [{ claim: "both answers cite src/server.ts", evidence: "the two inspect results" }], not_verified: [] });
+  if (n === 0) {
+    return {
+      text: "Two independent lookups: plan them as parallel nodes.",
+      calls: [
+        call("plan_work", {
+          nodes: [
+            { label: "find-validation", profile: "inspect", goal: "Where does handle() validate its input?", acceptance_criteria: ["cites the exact lines"], file_refs: ["core:src/server.ts"], difficulty: "T1" },
+            { label: "find-add", profile: "inspect", goal: "What does add() return, and where is it called?", acceptance_criteria: ["cites the exact lines"], file_refs: ["core:src/server.ts"], difficulty: "T1" },
+          ],
+          note: "two parallel lookups",
+        }),
+      ],
+    };
+  }
+  if (n > 20) return { text: "Stopping.", calls: [finish] };
+  if (last.includes("plan_work") || (last.includes("await_tasks") && /: still /.test(lastTool))) return { text: "Waiting for both lookups.", calls: [call("await_tasks", { timeout_seconds: 60 })] };
+  return { text: "Both lookups are in.", calls: [finish] };
+}
+
 function supervisorTurn(req, s) {
   const brief = textOf(req.messages[1]);
+  if (brief.includes(COMPARE_GOAL)) {
+    const step = compareTurn(req);
+    return reply(step.text, s, { toolCalls: step.calls, in: 2500 + Math.round(Math.random() * 2000), out: 200 });
+  }
   if (brief.includes(TEAM_CHILD) || brief.includes(TEAM_PARENT)) {
     const step = brief.includes(TEAM_CHILD) ? subJobTurn(req) : teamParentTurn(req);
     return reply(step.text, s, { toolCalls: step.calls, in: 3000 + Math.round(Math.random() * 3000), out: 250 });
@@ -861,6 +896,16 @@ console.log(
 );
 if (!rebasedE) console.warn("  warning: no integration of the nested job was rebased");
 if (twinsE?.status !== "verified") console.warn(`  warning: the redundant survey ended ${twinsE?.status ?? "without twins"}${twinsE?.reason ? ` (${twinsE.reason})` : ""}`);
+
+// One recorded comparison: the same goal as a team job and as a single agent, metrics for both.
+offset = Math.round(1.62 * HOUR);
+const cmpPlan = planComparison(sy, { goals: [{ id: "find-validation", goal: COMPARE_GOAL, repository: "core", profile: "inspect", acceptanceCriteria: ["cites the exact lines"], singleRequests: 4, teamRequests: 16 }] });
+const cmp = await runComparison(sy, cmpPlan, { timeoutSeconds: 180 });
+const cmpRes = cmp.results[0];
+console.log(
+  `  ${"comparison: team vs single (read-only goal)".padEnd(44)} ${cmp.status}; ${cmpRes ? `team ${cmpRes.team.metrics.state} peak ${cmpRes.team.metrics.peakParallelism}, ${cmpRes.team.metrics.requests} requests; single ${cmpRes.single.metrics.state}, ${cmpRes.single.metrics.requests} requests` : "no result"}`,
+);
+if (!cmpRes || cmpRes.team.metrics.peakParallelism < 2) console.warn("  warning: the comparison's team run never had two agents running at once");
 
 // A reviewer keeps failing a right answer; a person overrules it (a false rejection).
 const rounding = await phase(1.6, "deep review overruled by a person", [

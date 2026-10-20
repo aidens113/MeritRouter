@@ -113,7 +113,7 @@ export class Qualifier {
 
   constructor(
     private readonly sy: Switchyard,
-    private readonly suiteDir = evalsDir(),
+    readonly suiteDir = evalsDir(),
   ) {}
 
   suite(): Suite {
@@ -316,7 +316,8 @@ export function gradeReview(e: EvalCase, result: Pick<WorkerResult, "executionSt
   return problems.length ? { outcome: "fail", detail: problems.join("; ") } : { outcome: "pass", detail: `${r.kind}: verdict and criteria match` };
 }
 
-async function initRepo(dir: string): Promise<void> {
+/** Make `dir` a git repository with everything in it committed (a fixture copy). */
+export async function initRepo(dir: string): Promise<void> {
   if (!existsSync(path.join(dir, ".git"))) await git(dir, ["init", "-q", "-b", "main"]);
   await git(dir, ["add", "-A"]);
   await git(dir, ["-c", "user.email=qualification@switchyard.local", "-c", "user.name=switchyard", "commit", "-q", "--allow-empty", "-m", "fixture"]);
