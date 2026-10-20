@@ -1,7 +1,7 @@
 # Agent sessions, failure resilience, and agent teams
 
 Status: Active
-Status detail: S1, S2, R1 (operations and resilience) complete 2026-10-19; T1 next.
+Status detail: S1, S2, R1, T1 complete 2026-10-19; T2 next.
 Created: 2026-10-19
 Last updated: 2026-10-19
 Owner: Senior supervisor agent
@@ -60,13 +60,23 @@ acceptance test: a real worker process killed with `taskkill /F` mid-task is res
 worker in the same session with no duplicated edit. Watchdog reads session tables directly
 (a `SessionStore` method would be cleaner). Kill test has only run on Windows.
 
-**Not done:** T1-T3.
+**Phase T1 done (2026-10-19):** `plan_work` and versioned `job_plans` with critical path;
+upstream results injected into dependents (native and external runners) with the coding
+base-commit rule; team-wide `file_leases` taken at claim, released at finish/interruption/expiry,
+re-taken on resume; `team.max_agents` (default 8; presets regenerated) caps running tasks per
+job; `requires_accepted_inputs` on plan nodes (default for high/critical importance) holds a
+dependent on unaccepted upstreams. Surfaces: `switchyard plan`, MCP `get_plan`, panel plan card.
+`src/admin/insights.ts` split into `jobs.ts`, `sessions.ts`, `job-plans.ts`, `calibration.ts`.
+
+**Not done:** T2, T3. T1 gaps: two processes claiming at once untested; native coding plan
+nodes end to end only through the demo; the external runner's TASK.md still omits inline text
+and file refs (pre-existing).
 Open gaps: external-runner resume and crash-during-batch are untested; `recover_edits: reset`
 untested against git; two processes racing to resume untested; a session left `running` by a dead
 process shows no panel Resume until recovery runs; already-finished batch members are not
 recorded when the batch runner throws (sessions end `batch_aborted`).
 
-**Next steps:** T1 on `feat/t1-task-graph`, then T2, V3, T3.
+**Next steps:** T2, then T3.
 
 **Blockers:** none. Live checks against real providers are still outstanding from the previous
 document.
@@ -523,6 +533,24 @@ Surface: `switchyard sessions [--running|--interrupted]`, `switchyard session <i
   passed; `pnpm -r build` Done.
 - Outcome: Accepted
 - Follow-up: T1.
+
+---
+
+### 2026-10-19 — Phase T1 (task graph, file leases, upstream results)
+- Agent: supervisor; workers t1-graph, t1-surface, seed-merge (`feat/t1-task-graph`)
+- Changed: `src/storage/{plans,file-leases}.ts`, `src/context/upstream.ts`, scheduler,
+  executor (context), supervisor tools and charter, config `team`, CLI, MCP, `src/admin/*`
+  split, panel plan card and shared HelpTip fix, presets; docs `roles.md`, `operations.md`
+  (Teams), `decisions.md` (17), CLAUDE.md layout, AGENTS.md areas.
+- Why: requirement 3 (native multi-agent teams).
+- Validation: supervisor applied t1-graph's test fix (overlap test now waits and asserts the
+  lease wait), passed the service clock to plan writes, resolved the migration and
+  supervisor-tools conflicts with V3 (one supervisor edit broke two tests and was reverted);
+  branch after merging dev: router build ok, `pnpm -r typecheck` Done, `npx vitest run` -> 28
+  files, 265 passed; plan-view screenshot inspected; seed worker confirmed plan and calibration
+  demo data.
+- Outcome: Accepted
+- Follow-up: T2.
 
 ---
 

@@ -181,9 +181,10 @@ The binding rules for this repository:
   (`core`, `config`, `gateway`, `paid`, `routing`, `scoring`, `models`,
   `admission`, `storage`, `context`, `harness`, `runners`, `brain`,
   `attribution`, `qualification`, `workspaces`, `admin`, `roles`,
-  `verification`). Put a file
+  `verification`, `sessions`, `operations`). Put a file
   in the area that owns its concern; create a new area only for a new
-  concern. The panel's data access goes through `src/admin/insights.ts` and
+  concern. The panel's data access goes through `src/admin/insights.ts` (and the `src/admin/`
+  files it re-exports) and
   the public exports in `src/index.ts`.
 - **No catch-all files.** No `utils`, `helpers`, `misc`, or `common`. Name a
   file for what it does.

@@ -101,6 +101,26 @@ subsequently-confirmed per level and per reviewer, with review cost per accepted
   change acceptance and are skipped when the request allocation is tight or tasks are waiting
   for capacity.
 
+## Teams: plans, leases, and capacity
+
+- **Plans.** A supervisor's `plan_work` records the job's decomposition as an immutable,
+  versioned, acyclic plan (`job_plans`) and dispatches every node through the normal delegate
+  path; re-planning adds a version and keeps nodes already dispatched. The plan reports its
+  critical path (tier-weighted: T1=1, T2=2, T3=4). See it with `switchyard plan <job>`, MCP
+  `get_plan`, or the panel's job page.
+- **Upstream results.** When a dependent first runs, its upstreams' summaries, findings, artifact
+  and patch refs, and acceptance/verification status are saved as one artifact and shown to it as
+  an "Upstream results" block; the upstream artifacts become citable evidence. A coding
+  dependent starts from the job branch head once the upstream is integrated, otherwise from the
+  upstream's own head. A node with `requires_accepted_inputs` (default for high and critical
+  importance) waits while an upstream is `not_verified` or `needs_supervisor`, and fails on
+  `unmet`.
+- **File leases.** A coding task takes a lease on its write globs when it is claimed and keeps it
+  until it finishes, is interrupted, or its task lease expires; a resumed task re-takes it. A task
+  whose globs overlap a live lease in the same repository waits (`waiting_for_file_lease`).
+- **Capacity.** `team.max_agents` (default 8; `supervisor.max_workers_per_job` is an older alias)
+  caps running tasks per job; `execution.max_concurrent_tasks` bounds everything.
+
 ## Recovery
 
 - State lives in `.switchyard/switchyard.db` (SQLite, WAL). It is written before every

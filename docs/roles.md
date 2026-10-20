@@ -84,9 +84,14 @@ The full text ships as `packages/router/charters/supervisor.md` and can be overr
    or independent pieces. Keep one- or two-file edits, verification, integration, conflicts, and
    anything needing the user's intent.
 5. **Brief precisely** (at most about 40 lines): task type, goal, acceptance criteria, files to
-   read, `allowedPaths`, checks, difficulty hint. Briefs are written into the working document
-   before dispatch. Concurrent coding briefs may not overlap paths in one repository (enforced).
-6. **Verify before accepting**: read the patch and evidence, run checks, or dispatch a review.
+   read, `allowedPaths`, checks, difficulty hint, importance. Briefs are written into the working
+   document before dispatch. For multi-part goals, record the decomposition first with
+   `plan_work` (a versioned task graph); every ready node runs at once, up to `team.max_agents`
+   per job. Coding tasks whose paths overlap are serialised by file leases (enforced at claim);
+   dependents receive their upstream results as context.
+6. **Verify before accepting**: read the patch and evidence, run checks, or rely on the
+   task's verification (independent review at Deep/Strict); decide `needs_supervisor` results
+   with `accept_task` / `reject_task` against the job's goal and specifications.
 7. **Integrate** onto the job branch (cherry-pick keeps per-line attribution), re-run checks, and
    undo anything that does not serve the goal, always with a reason.
 8. **Keep memory**: rewrite `Current State`, append ledger entries whose `Validation` is a real

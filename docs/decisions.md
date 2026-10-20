@@ -85,3 +85,8 @@ non-streaming chat completions only.
     reviewer qualification is preferred for Deep and required for Strict; strict acceptance is
     automated by the job's supervisor unless `strict_acceptor: human`; verification reserves sit
     on top of execution caps under a ceiling and the level is never lowered to fit.
+17. **Teams plan as task graphs with enforced file leases** (user requirement, 2026-10-19):
+    parallelism comes from dispatching every ready node of a versioned plan, bounded by
+    `team.max_agents`; write conflicts are prevented by file leases taken at claim (the old
+    per-delegate overlap refusal is advisory); dependents receive upstream results; whether a
+    dependent may start on unaccepted inputs follows its importance.
