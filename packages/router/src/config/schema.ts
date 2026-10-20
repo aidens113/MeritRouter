@@ -498,8 +498,12 @@ export const ConfigSchema = z
       .prefault({}),
     discovery: z
       .object({
-        /** Rescan FreeLLMAPI's catalog this often from a running worker (0 disables). */
+        /** Rediscover models this often from a running worker (0 disables). */
         interval_minutes: z.number().int().min(0).default(60),
+        /** Opt-in: probe tool calling with one cheap request when no source reports it. */
+        probe_tools: z.boolean().default(false),
+        /** Most tool probes per UTC day across all providers (spends provider quota). */
+        max_probe_requests_per_day: z.number().int().min(0).default(20),
         /**
          * Platforms whose every model is a free tier on your accounts. You declare this; it is
          * never inferred. OpenRouter models count as free only when their published price is 0.
