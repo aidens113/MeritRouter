@@ -464,19 +464,55 @@ The supervisor wires the channel tools into the supervisor's tool list at merge.
 - Owns: `src/cli.ts`, `src/mcp.ts`, `src/admin/**`, `apps/panel/**`, related tests.
 - Report to: docs/working/agent-sessions-and-teams/reports/t2-surface.md
 
-### Brief: t3-capacity (after T2 is on dev)
-- Task: T3 per "R1b and T implementation decisions": AIMD concurrency per provider (start
-  `team.provider_concurrency_start` 2, +1 after N successes, halve on 429/cooldown/breaker
-  open, bounded by FreeLLMAPI-reported limits when known; the scheduler admits a task only when
-  a provider in its plan has a free slot); cost-aware staffing (planner prompt and `plan_work`
-  tier defaults from the rulebook; strong models reserved for supervisors and Deep/Strict
-  review); job metrics (wall-clock, sampled parallelism, critical-path length, requests and
-  cost per completed task); a team-vs-single comparison runner over the qualification suite;
-  panel Teams view.
-- Owns: `src/gateway/**`, `src/admission/**`, `src/core/scheduler.ts`, new `src/core/metrics.ts`
-  or `src/admin/team-metrics.ts`, `src/qualification/**` (comparison), `src/admin/**`,
-  `apps/panel/**`, `charters/supervisor.md`, `tests/team-capacity.test.ts`.
+### T3 split (2026-10-19)
+Two parallel branches partitioned by file: `feat/t3-capacity` (worktree `D:/sy-wt/v1`) and
+`feat/t3-metrics` (worktree `D:/sy-wt/s2`). Metrics are derived from stored data (task, session,
+and request timestamps; plans; the request ledger), so no sampling timer is needed.
+
+### Brief: t3-capacity
+- Task: AIMD concurrency per provider and cost-aware staffing, per the T3 bullet of "R1b and T
+  implementation decisions". A provider limiter (in `src/gateway/`, next to the breaker): start
+  `team.provider_concurrency_start` (2), +1 after `team.provider_concurrency_increase_after` (5)
+  consecutive successes, halve on 429 / reported cooldown / breaker open, floor 1, ceiling from
+  FreeLLMAPI-reported limits when known else `team.provider_concurrency_max` (8); state persisted
+  like the breaker. The scheduler admits a task only when a provider in its route plan has a free
+  slot (otherwise it stays queued with reason `waiting_for_provider_slot`); in-flight requests
+  hold a slot from reserve to reconcile. Staffing: `plan_work` nodes without a tier get one from
+  the rulebook's deterministic score; the supervisor charter tells it to prefer more, smaller
+  nodes when capacity is free and to keep strong models for supervision and Deep/Strict review.
+- Owns: `src/gateway/**`, `src/admission/**`, `src/core/scheduler.ts`, `src/routing/**`,
+  `src/harness/supervisor-tools.ts`, `charters/supervisor.md`, `src/config/schema.ts` (team keys),
+  a migration if needed, `tests/team-capacity.test.ts`.
+- Must not touch: `src/admin/**`, `src/cli.ts`, `src/cli/**`, `src/mcp.ts`, `src/qualification/**`,
+  `src/runners/**`, panel.
+- Definition of done: limiter transitions (increase, halve, floor, ceiling) under a fake clock;
+  the scheduler holds tasks beyond a provider's slots and releases them as slots free; a 429
+  burst halves concurrency and recovery grows it back; plan nodes get rulebook tiers; typecheck
+  and all tests pass.
 - Report to: docs/working/agent-sessions-and-teams/reports/t3-capacity.md
+
+### Brief: t3-metrics
+- Task: job metrics, the team-vs-single comparison, the Teams view, and CLI tidy-up. Metrics per
+  job (including sub-jobs): wall-clock, parallelism over time (from task run intervals),
+  peak and mean parallelism, critical-path length (planned and actual), requests and cost per
+  completed task, verification share, waiting time by reason (dependencies, file lease, provider
+  slot, capacity). Comparison runner in `src/qualification/`: run the same goals (the eval
+  suite's goals, or a supplied set) as a team job and as a single agent with the same models, and
+  record both metric sets; never run against live providers in tests. Panel Teams view (job list
+  with metrics, a parallelism chart, and comparisons) plus CLI `switchyard metrics <job>` and MCP
+  `get_job_metrics`. Move CLI terminal formatting out of `cli.ts` into `src/cli/` (sessions,
+  plans, team/channel text; `src/admin/job-team-text.ts` moves there too) so `cli.ts` ends well
+  under 800 lines. Fix a sub-job's result text, which tells the user to `git merge` its branch
+  although the parent integrates it (`src/runners/supervisor.ts`).
+- Owns: `src/admin/**`, `src/qualification/**`, `src/cli.ts`, `src/cli/**`, `src/mcp.ts`,
+  `src/runners/supervisor.ts` (result text only), `src/index.ts`, `apps/panel/**`,
+  `tests/team-metrics.test.ts`, `tests/mcp.test.ts`, CLI tests touched by the move.
+- Must not touch: `src/gateway/**`, `src/admission/**`, `src/core/scheduler.ts`,
+  `src/harness/**`, `src/config/schema.ts` (list keys you need; the supervisor adds them).
+- Definition of done: metrics correct on a seeded job with known intervals; comparison records
+  both runs (fake gateway); Teams view screenshots inspected with no page-level horizontal
+  scroll; `cli.ts` < 700 lines; typecheck and all tests pass.
+- Report to: docs/working/agent-sessions-and-teams/reports/t3-metrics.md
 
 ### Brief: s1-store
 - Repository: this repository.
