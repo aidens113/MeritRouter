@@ -430,6 +430,21 @@ The supervisor wires the channel tools into the supervisor's tool list at merge.
   the other; typecheck and all tests pass.
 - Report to: docs/working/agent-sessions-and-teams/reports/t2-channel.md
 
+### Brief: t2-integrate (after both are merged on feat/t2-nesting)
+- Task: tie T2 together: `plan_work` accepts `supervise` nodes (drop the refusal in
+  `storage/plans.ts`) and exposes/passes `redundancy`; channel tools only for tasks in a job;
+  config keys `team.channel_max_posts_per_task` (10), `team.channel_max_posts_per_supervisor`
+  (40), `team.channel_max_post_chars` (2000) replacing the constants; calibration's integration
+  signal uses its own event type so the dependents' `integrated` event is unambiguous; move the
+  integration block out of `supervisor-tools.ts` (863 lines) into
+  `src/harness/integration-tools.ts`; the watchdog allowance covers `integrate_task` running
+  several job checks; `undo` by task on a sub-job reaches its descendants' commits; exports in
+  `src/index.ts`.
+- Owns: `src/harness/**`, `src/storage/plans.ts`, `src/config/schema.ts`,
+  `src/verification/calibration.ts`, `src/core/watchdog.ts`, `src/attribution/**`,
+  `src/index.ts`, tests.
+- Report to: docs/working/agent-sessions-and-teams/reports/t2-integrate.md
+
 ### Brief: t2-surface (after both)
 - Task: panel/CLI/MCP for sub-jobs (job tree), merge queue state, channel; docs.
 - Owns: `src/cli.ts`, `src/mcp.ts`, `src/admin/**`, `apps/panel/**`, related tests.
