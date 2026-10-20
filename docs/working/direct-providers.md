@@ -36,9 +36,26 @@ optional adapter).
 - The panel's Provider keys page talks only to FreeLLMAPI's admin API; the Paid routes page uses
   SwitchYard's vault.
 
-**Next steps:** P1 (providers core). Create `feat/direct-providers` and its worktree, then
-dispatch `p1-foundation`; after it, `p1-discovery` and `p1-limits` in parallel; then P2, then P3.
-A first `p1-foundation` dispatch was stopped at the user's request before it changed anything.
+**P1 done (2026-10-20)** on `feat/direct-providers` (worktree `D:/sy-wt/dp`): `src/providers/`
+has the registry, vault, credentials, client, discovery, enrichment, key state, limits, and
+health; nothing is wired into Gate, the catalog, or the service yet. 359 tests green.
+
+**Carried into P2 (from the P1 reports):**
+- Gate: choose how key health reaches it (`providers()` calls `providerStatuses`, or
+  `ProviderHealth.lookup` reads key state); an out-of-credits key shows as `invalid` in
+  `ProviderStatus`, check against `pool_exhausted` handling in `gate.ts`.
+- Catalog: make `supportsTools`/`supportsStructuredOutput` nullable (unknown is stored as
+  `false` today); `Catalog.saveDiscovered` disables every row not passed in, so add a
+  per-provider save that leaves failed listings alone.
+- The discovery tool probe must be given a Gate-backed client.
+- Config: remove `gateway`, `discovery.free_platforms`, `discovery.default_output_limit_tokens`;
+  `schema.ts` is at 790 lines and must shrink.
+- Export `src/providers` from `src/index.ts`.
+- Live confirmation still needed: rate-limit header formats (OpenRouter reset, SambaNova -day,
+  Anthropic periods), OpenAI `insufficient_quota` as out of credits, Cloudflare/Cohere list
+  pagination, Anthropic `capabilities`, OpenRouter `/api/v1/key` shape.
+
+**Next steps:** P2 (`p2-integrate`), then P3.
 
 **Blockers:** none.
 
@@ -216,6 +233,35 @@ llama.cpp, vLLM, LM Studio) is a custom provider.
 - Validation: not validated (no code changed; the stopped worker's worktree had no edits).
 - Outcome: Accepted
 - Follow-up: resume at P1.
+
+### 2026-10-20 — p1-foundation
+- Agent: worker p1-foundation; verified by supervisor
+- Changed: `src/providers/` (registry, vault, credentials, client, transport, errors,
+  rate-limits, openai-compatible, anthropic, index); `src/paid/vault.ts` and `direct.ts` shims;
+  `providers` config section; migration adding account/quota-group/limit columns to `paid_keys`;
+  `tests/providers-client.test.ts`. Details: [report](./direct-providers/reports/p1-foundation.md).
+- Why: P1 foundation.
+- Validation: supervisor ran `pnpm -r typecheck` (pass), router build (pass), `npx vitest run`
+  (34 files, 323 passed). No live provider calls.
+- Outcome: Accepted
+- Follow-up: unverified header formats (OpenRouter reset, SambaNova -day, Anthropic periods) and
+  OpenAI `insufficient_quota` as out-of-credits need live confirmation; `schema.ts` at 786 lines,
+  P2's `gateway` removal must shrink it.
+
+### 2026-10-20 — p1-limits and p1-discovery (P1 complete)
+- Agent: workers p1-limits and p1-discovery (parallel, disjoint files); verified by supervisor
+- Changed: `src/providers/{keys,limits,health}.ts`, migration for `provider_key_state` and
+  `provider_usage`, `tests/providers-limits.test.ts`; `src/providers/{discovery,enrich}.ts`,
+  `discovery` config fields `probe_tools` and `max_probe_requests_per_day`,
+  `tests/providers-discovery.test.ts`. Details: [limits](./direct-providers/reports/p1-limits.md),
+  [discovery](./direct-providers/reports/p1-discovery.md).
+- Why: P1 key state, rotation, limits, health, and discovery.
+- Validation: supervisor ran `pnpm -r typecheck` (pass), `pnpm -r build` (router and panel
+  pass), `npx vitest run` (36 files, 359 passed). The discovery worker saw one
+  `operations.test.ts` ENOTEMPTY temp-dir failure under load that passed on re-run; not seen
+  in the supervisor's run. No live provider calls.
+- Outcome: Accepted
+- Follow-up: the P2 carry-over list in Current State.
 
 ---
 
