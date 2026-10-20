@@ -56,7 +56,7 @@ export function watchdogVerdict(cfg: ResolvedConfig, progress: SessionProgress, 
   let bound = 0;
   let waitingOn = progress.type ?? "start";
   if (progress.type === "model_request") {
-    bound = cfg.gateway.request_timeout_seconds * 1000 * (cfg.routing.max_endpoint_fallbacks + cfg.paid.max_paid_attempts);
+    bound = cfg.providers.request_timeout_seconds * 1000 * (cfg.routing.max_endpoint_fallbacks + cfg.paid.max_paid_attempts);
     waitingOn = `model request (${progress.name ?? "?"})`;
   } else if (progress.type === "tool_intent") {
     if (progress.name && WATCHDOG_EXEMPT_TOOLS.has(progress.name)) return { kind: "exempt", reason: `waiting in ${progress.name}` };

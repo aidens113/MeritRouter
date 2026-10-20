@@ -64,7 +64,8 @@ describe("native coding worker", () => {
   it("attributes lines to each model when a task falls back mid-way", async () => {
     env = makeEnv({
       config: baseConfig({ coding: { runner: "native" } }),
-      endpoints: [endpoint({ gatewayModelId: "first", totalParametersB: 120 }), endpoint({ gatewayModelId: "second", totalParametersB: 200 })],
+      // A 429 cools that provider's key, so the fallback model is on another provider.
+      endpoints: [endpoint({ gatewayModelId: "first", totalParametersB: 120 }), endpoint({ providerId: "groq", gatewayModelId: "second", totalParametersB: 200 })],
     });
     let firstCalls = 0;
     const client = new ScriptedClient((req) => {
@@ -83,7 +84,7 @@ describe("native coding worker", () => {
     await sy.awaitResults([sub!.taskId], { timeoutSeconds: 60 });
     const lines = await blame(worktreeOf(sub!.taskId), "src/app.ts");
     expect(lines.find((l) => l.text.includes("by first"))!.model).toBe("openrouter/first");
-    expect(lines.find((l) => l.text.includes("by second"))!.model).toBe("openrouter/second");
+    expect(lines.find((l) => l.text.includes("by second"))!.model).toBe("groq/second");
   }, 90_000);
 
   it("external agents get per-response attribution through the job gateway", async () => {

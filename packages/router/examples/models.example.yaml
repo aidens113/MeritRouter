@@ -12,6 +12,6 @@ overrides: {}
 #    activeParametersB: 12
 #    deniedProfiles: [implement]
 
-# Manual endpoints (rarely needed). A manual endpoint still needs its FreeLLMAPI chain
-# (named in the panel) to route.
+# Manual endpoints (rarely needed): a model your provider serves but does not list. It routes
+# directly to its provider with that provider's keys.
 endpoints: []

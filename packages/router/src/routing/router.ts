@@ -58,7 +58,6 @@ export class TaskRouter {
         qualification: qualificationLookup(this.db, this.cfg),
         health: this.gate.health.lookup,
         quarantined: (ep) => this.gate.quarantined(ep),
-        ...(this.gate.paid ? { paidPlatforms: this.gate.paid.spend.paidFreeLlmApiPlatforms() } : {}),
       },
     );
   }
@@ -98,7 +97,6 @@ export class TaskRouter {
         qualification: qualificationLookup(this.db, this.cfg),
         health: this.gate.health.lookup,
         quarantined: (ep) => this.gate.quarantined(ep),
-        ...(this.gate.paid ? { paidPlatforms: this.gate.paid.spend.paidFreeLlmApiPlatforms() } : {}),
       },
     );
   }

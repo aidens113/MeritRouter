@@ -29,16 +29,16 @@ export interface ModelRow {
   overrideFields: string[];
   eligibleProfiles: string[];
   eligibleCells: number;
-  supportsTools: boolean;
+  supportsTools: boolean | null;
 }
 
 export function isFree(ep: ModelView["endpoint"]): boolean {
   return ep.pricing.freeVerified && (ep.pricing.inputUsdPerMillion ?? 0) === 0 && (ep.pricing.outputUsdPerMillion ?? 0) === 0;
 }
 
-export function chainState(sy: Switchyard, v: ModelView): { state: ModelRow["chain"]; detail: string | null } {
-  if (!v.chain) return { state: "unchecked", detail: sy.cfg.gateway.require_verified_chains ? "Not verified yet. A scan (or the first request) verifies it." : "Not verified; chain verification is turned off (gateway.require_verified_chains)." };
-  return v.chain.ok ? { state: "verified", detail: `Verified ${new Date(v.chain.verifiedAt).toLocaleString("en-GB")}` } : { state: "failed", detail: v.chain.problems.join("; ") };
+/** Chains were removed with the external gateway (requests go to the provider directly); P3 drops this column. */
+export function chainState(_sy: Switchyard, v: ModelView): { state: ModelRow["chain"]; detail: string | null } {
+  return { state: "unchecked", detail: `Sent directly to ${v.endpoint.route.provider}` };
 }
 
 export function toRow(sy: Switchyard, v: ModelView): ModelRow {

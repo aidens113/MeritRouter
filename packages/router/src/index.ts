@@ -1,4 +1,4 @@
-export { Switchyard, createAdminClient, createGatewayClient, type SwitchyardOptions, type TaskStatus, type AwaitOutcome } from "./core/service.js";
+export { Switchyard, type SwitchyardOptions, type TaskStatus, type AwaitOutcome } from "./core/service.js";
 export { loadConfig, parseConfig, resolveConfigPath, CONFIG_ENV, DEFAULT_CONFIG_NAME, type ResolvedConfig } from "./config/load.js";
 export * from "./config/schema.js";
 export {
@@ -120,13 +120,14 @@ export { REQUEST_PURPOSES, budgetInputFor, purposeCategory, verificationTotal, c
 export { REVIEW_FAMILY, reviewerQualification } from "./qualification/stats.js";
 export { gradeReview, reviewEvalPackage } from "./qualification/runner.js";
 export { SwitchyardError, ConfigError, TaskValidationError, AdmissionDenied, GatewayError } from "./core/errors.js";
-export { Catalog, chainNameFor, endpointIdFor, EndpointOverrideSchema, RoutingOverrideSchema, type ModelEndpoint, type EndpointOverride, type RoutingOverride, type EndpointStatus, type ParamEvidence } from "./models/catalog.js";
+export { Catalog, endpointIdFor, EndpointOverrideSchema, RoutingOverrideSchema, type ModelEndpoint, type EndpointOverride, type RoutingOverride, type EndpointStatus, type ParamEvidence } from "./models/catalog.js";
 export { modelFamily, planRoute, type RoutePlan, type CandidateExplanation, type ReviewerQualificationRequirement } from "./routing/select.js";
 export { DEFAULT_RULEBOOK, RulebookSchema, TAG_GROUPS, type Rulebook } from "./scoring/rulebook.js";
 export type { Classification, ScoreLine } from "./scoring/score.js";
-export { FreeLlmApiAdmin, type FreeLlmApiKey, type FreeLlmApiModel, type FreeLlmApiProfile } from "./gateway/freellmapi-admin.js";
-export { FreeLlmApiClient } from "./gateway/freellmapi.js";
-export type { InferenceClient, ChatRequest, ChatResponse, ProviderStatus } from "./gateway/types.js";
+export type { ChatRequest, ChatResponse, ProviderStatus } from "./gateway/types.js";
+// Providers: registry, key vault, credentials, client, key state, limits, health, discovery.
+export * from "./providers/index.js";
+export { isPaid, freeKeyOnly } from "./routing/select.js";
 export type { UsageSummary } from "./storage/usage.js";
 export type { ScanSummary } from "./models/scanner.js";
 export * as insights from "./admin/insights.js";

@@ -189,7 +189,7 @@ describe("model-list shapes", () => {
     expect(r.endpoints[0]!.endpoint).toMatchObject({ contextLimitTokens: 200000, outputLimitTokens: 64000, pricing: { freeVerified: false, inputUsdPerMillion: null } });
     expect(r.endpoints[0]!.free).toEqual({ value: false, reason: "only paid or trial keys" });
     // Nothing reports Claude B's limits: unknown, never defaulted.
-    expect(r.endpoints[1]!.endpoint).toMatchObject({ contextLimitTokens: null, outputLimitTokens: null, outputLimitSource: "default", supportsTools: false });
+    expect(r.endpoints[1]!.endpoint).toMatchObject({ contextLimitTokens: null, outputLimitTokens: null, outputLimitSource: "default", supportsTools: null });
     expect(r.endpoints[1]!.enriched.provenance.contextLimitTokens.source).toBe("unknown");
   });
 
@@ -319,7 +319,7 @@ describe("enrichment", () => {
     const mystery = r.endpoints.find((e) => e.endpoint.id === "openai/gpt-mystery")!;
     expect(mystery.enriched).toMatchObject({ contextLimitTokens: null, outputLimitTokens: null, supportsTools: null, inputModalities: null, openRouter: null });
     expect(Object.values(mystery.enriched.provenance).every((p) => p.source === "unknown")).toBe(true);
-    expect(mystery.endpoint).toMatchObject({ supportsTools: false, inputModalities: ["text"], totalParametersB: null });
+    expect(mystery.endpoint).toMatchObject({ supportsTools: null, inputModalities: ["text"], totalParametersB: null });
     expect(r.endpoints.some((e) => e.endpoint.id === "openai/text-embedding-3-small")).toBe(false);
   });
 
@@ -372,7 +372,7 @@ describe("availability", () => {
   it("marks previously known but unlisted models unavailable; manual entries win and are never marked", async () => {
     const manual = { ...known("manual-model"), origin: "manual" as const };
     const r = await run({ groq: key("GROQ_KEY") }, { GROQ_KEY: "g" }, fakeFetch(groqList(["model-a", "manual-model"])), {
-      known: [known("model-a"), known("model-gone"), known("already-gone", { available: false, enabled: false }), known("manual-model"), { ...known("chain-model"), route: { kind: "chain" } }],
+      known: [known("model-a"), known("model-gone"), known("already-gone", { available: false, enabled: false }), known("manual-model")],
       manual: [manual],
     });
     expect(r.endpoints.map((e) => e.endpoint.id)).toEqual(["groq/model-a"]);
@@ -491,7 +491,8 @@ describe("tool probe", () => {
 describe("discovery config", () => {
   it("defaults: probing off, 20 probes per day, hourly", () => {
     const cfg = ConfigSchema.parse(baseConfig());
-    expect(cfg.discovery).toMatchObject({ interval_minutes: 60, probe_tools: false, max_probe_requests_per_day: 20 });
+    expect(cfg.discovery).toMatchObject({ interval_minutes: 0, probe_tools: false, max_probe_requests_per_day: 20 });
+    expect(ConfigSchema.parse({ ...baseConfig(), discovery: {} }).discovery.interval_minutes).toBe(60);
     expect(() => ConfigSchema.parse(baseConfig({ discovery: { max_probe_requests_per_day: -1 } }))).toThrow();
   });
 });

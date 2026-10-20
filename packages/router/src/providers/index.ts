@@ -69,3 +69,5 @@ export {
   type ProbeBudget,
   type ToolProbe,
 } from "./enrich.js";
+export { ProviderRuntime, paidProviderAsDirect, routingProviders, type ProviderRuntimeConfig, type ProviderRuntimeOptions } from "./runtime.js";
+export { runProviderDiscovery, type DiscoveryRun, type DiscoveryRunOptions } from "./discovery-run.js";

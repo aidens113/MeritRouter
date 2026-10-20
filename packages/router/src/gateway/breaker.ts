@@ -43,7 +43,7 @@ const CAPACITY = new Set(["rate_limited", "pool_exhausted"]);
 /**
  * Whether a failed attempt counts toward opening the provider's breaker: 5xx, timeouts, and
  * connection errors always; a 429 (or a 5xx capacity answer) only when the provider is not in a
- * cooldown FreeLLMAPI already reported, since cooling providers are handled by cooldown ordering.
+ * cooldown its key state already reports, since cooling providers are handled by cooldown ordering.
  * Request errors (4xx), served-model violations, aborts, and invalid output never count.
  */
 export function countsAsProviderFailure(err: Pick<GatewayError, "kind" | "status">, coolingReported: boolean): boolean {

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CreditCard, KeyRound, Power, TriangleAlert } from "lucide-react";
+import { CreditCard, KeyRound, Power } from "lucide-react";
 import { insights } from "switchyard-router";
 import { getSy } from "@/lib/sy";
 import { removedKeyIds, safePaidKey } from "@/lib/paid";
@@ -28,7 +28,6 @@ export default async function PaidPage() {
   const keys = s.keys.map((k) => safePaidKey(k as unknown as Record<string, unknown>, removed.has(k.id)));
   const names = new Map(sy.catalog.endpoints().map((e) => [e.id, e.displayName ?? e.gatewayModelId]));
   const models = sy.cfg.paid.models;
-  const flPaid = s.freeLlmApiKeyBilling.filter((b) => b.billingClass !== "free_tier");
   const windows: Array<{ label: string; spent: number; budget: number | null }> = [
     { label: "Last 24 hours", spent: s.day, budget: s.budgets.perDayUsd },
     { label: "Last 7 days", spent: s.week, budget: s.budgets.perWeekUsd },
@@ -209,27 +208,6 @@ export default async function PaidPage() {
         </Card>
       </div>
 
-      <Card>
-        <CardHeader title="FreeLLMAPI keys marked as paid" help="billingClass" description="Set on the Provider keys page. A FreeLLMAPI key marked as anything but free tier blocks its whole platform from free routing." />
-        <div className="p-4 text-sm">
-          {flPaid.length ? (
-            <ul className="space-y-1.5">
-              {flPaid.map((b) => (
-                <li key={b.flKeyId} className="flex flex-wrap items-center gap-2">
-                  <TriangleAlert size={14} className="text-warn-ink" aria-hidden />
-                  <span className="text-ink">
-                    Key #{b.flKeyId} on <strong>{b.platform}</strong>
-                  </span>
-                  <Badge>{BILLING_LABEL[b.billingClass] ?? b.billingClass}</Badge>
-                  <span className="text-xs text-ink-3">{b.platform} is not used for free routing</span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-ink-3">None. Every FreeLLMAPI key is treated as free tier unless you mark it on the <Link href="/keys" className="text-accent-ink hover:underline">Provider keys</Link> page.</p>
-          )}
-        </div>
-      </Card>
     </div>
   );
 }

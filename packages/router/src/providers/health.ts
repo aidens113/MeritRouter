@@ -6,8 +6,7 @@ import type { RateLimitSnapshot } from "./rate-limits.js";
 import type { ResolvedProvider } from "./registry.js";
 
 /**
- * Provider health computed from SwitchYard's own key state (replacing FreeLLMAPI's
- * `/v1/providers`), in the `ProviderStatus` shape the circuit breakers, adaptive slots, routing,
+ * Provider health computed from SwitchYard's own key state, in the `ProviderStatus` shape the circuit breakers, adaptive slots, routing,
  * and the panel already consume:
  * - `healthy`: at least one key can take a request now.
  * - `invalid`: every usable key is disabled (bad key, or out of credits) and needs the user.

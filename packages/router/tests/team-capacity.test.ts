@@ -122,15 +122,13 @@ describe("provider concurrency (AIMD)", () => {
     cap.observeCooldown("mistral", clock - 1); // already over: nothing
     expect(cap.record("mistral").generation).toBe(2);
 
-    // Through ProviderHealth: a cooldown from GET /v1/providers, and a breaker opening.
-    const client = new ScriptedClient(() => reply("x"));
-    Object.assign(client, { providers: async () => [{ platform: "openrouter", status: "rate_limited", keys: 1, resumeAt: clock + 30_000, requestsRemainingPct: 0, lastError: null }] });
-    const health = new ProviderHealth(client, () => clock);
+    // Through ProviderHealth: every key of a provider cooling down, and a breaker opening.
+    const health = new ProviderHealth(() => clock, () => [{ platform: "openrouter", status: "rate_limited", keys: 1, resumeAt: clock + 30_000, requestsRemainingPct: 0, lastError: null }]);
     health.breakers.attach(sy.db, () => ({ enabled: true, failure_threshold: 2, open_seconds: 30, max_open_seconds: 900 }));
     health.capacity.attach(sy.db, () => env!.cfg.team, () => 600_000);
     for (let i = 0; i < 3; i++) health.recordOutcome("openrouter", null);
     expect(health.capacity.limit("openrouter")).toBe(3);
-    await health.refresh(0);
+    await health.refresh();
     expect(health.capacity.limit("openrouter")).toBe(1);
     for (let i = 0; i < 6; i++) health.recordOutcome("openrouter", null);
     expect(health.capacity.limit("openrouter")).toBe(3);
@@ -343,6 +341,8 @@ describe("gate", () => {
     expect(cap.record("groq")).toMatchObject({ limit: 2, generation: 1, lastReason: "rate_limited" });
     expect(cap.usage("groq").requests).toBe(0);
 
+    // The 429s cooled groq's only key for their retry-after (0.1 s).
+    await new Promise((r) => setTimeout(r, 150));
     mode = "ok";
     await ask(out[0]!.taskId);
     await ask(out[1]!.taskId);

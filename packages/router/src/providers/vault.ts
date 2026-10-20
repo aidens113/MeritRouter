@@ -222,7 +222,7 @@ export class KeyVault {
 
   remove(id: number): void {
     this.db.prepare("UPDATE paid_keys SET enabled = 0, enc = '', iv = '', tag = '' WHERE id = ?").run(id);
-    this.db.prepare("DELETE FROM paid_keys WHERE id = ? AND NOT EXISTS (SELECT 1 FROM paid_spend WHERE key_id = ?)").run(id, id);
+    this.db.prepare("DELETE FROM paid_keys WHERE id = ? AND NOT EXISTS (SELECT 1 FROM paid_spend WHERE key_ref = ?)").run(id, `vault:${id}`);
   }
 
   /** Decrypt for a provider request. Not exposed through any listing interface. */

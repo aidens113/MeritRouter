@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { parseParamsFromDescription, parseParamsFromName, resolveParams } from "../src/models/params.js";
-import { FreeLlmApiClient } from "../src/gateway/freellmapi.js";
-import type { FreeLlmApiAdmin, FreeLlmApiModel, FreeLlmApiProfile, FreeLlmApiProfileModel } from "../src/gateway/freellmapi-admin.js";
+import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
+import YAML from "yaml";
+import { parseConfig } from "../src/config/load.js";
 import type { Switchyard } from "../src/core/service.js";
-import { baseConfig, makeEnv, open, reply, ScriptedClient, type Env } from "./helpers.js";
+import { baseConfig, FakeProvider, makeEnv, open, providerJson, providerModels, testProviders, type Env } from "./helpers.js";
 
 let env: Env | undefined;
 let sy: Switchyard | undefined;
@@ -36,149 +38,68 @@ describe("parameter evidence", () => {
   });
 });
 
-/** In-memory FreeLLMAPI admin double that records chain writes. */
-class FakeAdmin {
-  profiles: FreeLlmApiProfile[] = [];
-  members = new Map<number, Array<{ modelDbId: number; priority: number; enabled: boolean }>>();
-  constructor(public models: FreeLlmApiModel[]) {}
-  async listModels() {
-    return this.models;
-  }
-  async listProfiles() {
-    return this.profiles;
-  }
-  async createEmptyProfile(name: string) {
-    const p = { id: this.profiles.length + 1, name, type: "custom", auto_include_new_models: 0 };
-    this.profiles.push(p);
-    return p;
-  }
-  async setProfileMembers(id: number, m: Array<{ modelDbId: number; priority: number; enabled: boolean }>) {
-    this.members.set(id, m);
-  }
-  async profileModels(id: number): Promise<FreeLlmApiProfileModel[]> {
-    return (this.members.get(id) ?? []).map((m) => {
-      const model = this.models.find((x) => x.id === m.modelDbId)!;
-      return { model_db_id: m.modelDbId, priority: m.priority, enabled: m.enabled, platform: model.platform, model_id: model.modelId, display_name: null, size_label: null, rpm_limit: null, rpd_limit: null, tpm_limit: null, tpd_limit: null };
+describe("models scan", () => {
+  const OPENROUTER_MODELS = [
+    { id: "vendor/moe-120b-a12b:free", description: "MoE with 12B active parameters out of 120B total", context_length: 131072, architecture: { input_modalities: ["text", "image"] }, pricing: { prompt: "0", completion: "0" }, top_provider: { context_length: 131072, max_completion_tokens: 16000 }, supported_parameters: ["tools", "response_format"] },
+  ];
+
+  it("lists every provider with a usable key, records the scan, and refreshes free daily quotas", async () => {
+    const fake = new FakeProvider((call) => {
+      if (call.url === "https://openrouter.ai/api/v1/models") return providerModels(OPENROUTER_MODELS);
+      if (call.url === "https://api.groq.com/openai/v1/models") return providerModels(["llama-3.3-70b-versatile"]);
+      if (call.url === "https://openrouter.ai/api/v1/key") return providerJson({ data: { label: "test", free_model_daily_requests: { used: 10, limit: 50, remaining: 40 } } });
+      return providerJson({ error: { message: "not found" } }, 404);
     });
-  }
-}
-
-const flModel = (id: number, platform: string, modelId: string, o: Partial<FreeLlmApiModel> = {}): FreeLlmApiModel => ({
-  id,
-  platform,
-  modelId,
-  displayName: null,
-  sizeLabel: "Large",
-  rpmLimit: 20,
-  rpdLimit: 50,
-  tpmLimit: null,
-  tpdLimit: null,
-  contextWindow: 131072,
-  enabled: true,
-  supportsVision: false,
-  supportsTools: true,
-  source: "catalog",
-  hasProvider: true,
-  keyCount: 2,
-  ...o,
-});
-
-describe("catalog scanning", () => {
-  it("scans every model, assigns params with provenance, and syncs single-model chains", async () => {
-    env = makeEnv({ config: baseConfig({ gateway: { adapter: "freellmapi", base_url: "http://127.0.0.1:9/v1", require_verified_chains: true }, discovery: { free_platforms: ["groq"] }, models: {} }) });
-    const admin = new FakeAdmin([
-      flModel(1, "openrouter", "vendor/moe-120b-a12b:free", { supportsVision: true }),
-      flModel(2, "groq", "openai/gpt-oss-120b"),
-      flModel(3, "groq", "mystery-model"),
-      flModel(4, "openrouter", "vendor/paid-70b"),
-    ]);
-    const fetchImpl = (async (url: string) => {
-      if (url.includes("openrouter")) {
-        return new Response(
-          JSON.stringify({
-            data: [
-              { id: "vendor/moe-120b-a12b:free", description: "MoE with 12B active parameters out of 120B total", architecture: { input_modalities: ["text", "image", "video"] }, pricing: { prompt: "0", completion: "0" }, top_provider: { max_completion_tokens: 16000 }, supported_parameters: ["tools", "response_format"] },
-              { id: "openai/gpt-oss-120b", hugging_face_id: "openai/gpt-oss-120b", pricing: { prompt: "0.0000001", completion: "0.0000005" } },
-              { id: "vendor/paid-70b", pricing: { prompt: "0.000001", completion: "0.000002" } },
-            ],
-          }),
-        );
-      }
-      if (url.endsWith("/openai/gpt-oss-120b")) return new Response(JSON.stringify({ safetensors: { total: 116829156672 } }));
-      return new Response("{}", { status: 404 });
-    }) as typeof fetch;
-    sy = open(env, new ScriptedClient(() => reply("{}")), { admin: admin as unknown as FreeLlmApiAdmin, fetchImpl });
+    env = makeEnv({ config: baseConfig({ providers: testProviders(["openrouter", "groq"]) }), endpoints: [] });
+    sy = open(env, fake);
+    expect(sy.scanner.lastScan()).toBeNull();
     const summary = await sy.scan();
-    expect(summary.errors).toEqual([]);
-    expect(summary.scanned).toBe(4);
+    expect(summary.providers.sort()).toEqual(["groq", "openrouter"]);
+    expect(summary.added.sort()).toEqual(["groq/llama-3.3-70b-versatile", "openrouter/vendor/moe-120b-a12b:free"]);
+    expect(summary.scanned).toBe(2);
 
     const moe = sy.catalog.get("openrouter/vendor/moe-120b-a12b:free")!;
-    expect(moe).toMatchObject({ totalParametersB: 120, activeParametersB: 12, status: "active", outputLimitTokens: 16000, supportsStructuredOutput: true });
-    expect(moe.params.confidence).toBe("agreed");
-    expect(moe.inputModalities.sort()).toEqual(["image", "text", "video"]);
+    expect(moe).toMatchObject({ totalParametersB: 120, activeParametersB: 12, status: "active", route: { kind: "direct", provider: "openrouter", model: "vendor/moe-120b-a12b:free" } });
     expect(moe.pricing.freeVerified).toBe(true);
 
-    const oss = sy.catalog.get("groq/openai/gpt-oss-120b")!;
-    expect(oss).toMatchObject({ totalParametersB: 116.8, status: "active" });
-    expect(oss.params.confidence).toBe("exact");
-    expect(oss.pricing.source).toMatch(/declared a free platform/);
-    expect(oss.outputLimitSource).toBe("default");
+    // OpenRouter's key-info endpoint was asked for the key's free daily quota, and it was stored.
+    expect(fake.calls.filter((c) => c.url === "https://openrouter.ai/api/v1/key").map((c) => c.key)).toEqual(["test-openrouter-key"]);
+    expect(sy.providers.keys.get("config:openrouter:literal:0")!.quota).toMatchObject({ used: 10, limit: 50, remaining: 40 });
 
-    expect(sy.catalog.get("groq/mystery-model")!.status).toBe("pending_confirmation");
-    const paid = sy.catalog.get("openrouter/vendor/paid-70b")!;
-    expect(paid.pricing.freeVerified).toBe(false);
-    expect(paid.status).toBe("pending_confirmation"); // name-only evidence
+    const last = sy.scanner.lastScan()!;
+    expect(last).toMatchObject({ ok: summary.errors.length === 0 });
+    expect(last.summary).toMatchObject({ scanned: 2, providers: summary.providers });
+    expect(sy.db.prepare("SELECT COUNT(*) AS n FROM events WHERE task_id IS NULL AND type = 'provider_discovery'").get()).toEqual({ n: 1 });
+  });
 
-    // Chains: one per active endpoint, each containing exactly that model, verified.
-    expect(summary.chainsSynced).toBe(2);
-    for (const id of ["openrouter/vendor/moe-120b-a12b:free", "groq/openai/gpt-oss-120b"]) {
-      const ep = sy.catalog.get(id)!;
-      expect(await sy.chains.ensureVerified(ep)).toBeNull();
-    }
-    // A chain that gains an extra member fails verification.
-    const chain = admin.profiles.find((p) => p.name === oss.chainName)!;
-    admin.members.set(chain.id, [{ modelDbId: 2, priority: 1, enabled: true }, { modelDbId: 4, priority: 2, enabled: true }]);
-    const v = await sy.chains.verify(oss);
-    expect(v.ok).toBe(false);
-    expect(v.problems[0]).toMatch(/must contain exactly/);
-
-    // A model that disappears from FreeLLMAPI is marked removed.
-    admin.models = admin.models.filter((m) => m.id !== 2);
-    await sy.scan();
-    expect(sy.catalog.get("groq/openai/gpt-oss-120b")!.status).toBe("removed");
+  it("with no provider key, says what to add", async () => {
+    env = makeEnv({ config: baseConfig({ providers: {} }), endpoints: [] });
+    sy = open(env, new FakeProvider());
+    const summary = await sy.scan();
+    expect(summary.scanned).toBe(0);
+    expect(summary.errors).toEqual([expect.stringMatching(/no provider has a usable key: add one under providers/)]);
+    expect(sy.scanner.lastScan()).toMatchObject({ ok: false });
   });
 });
 
-describe("FreeLLMAPI adapter", () => {
-  const fetchReturning = (status: number, body: unknown, headers: Record<string, string> = {}) =>
-    (async () => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } })) as unknown as typeof fetch;
-
-  it("reads served model, fallback hops and usage; sends cache bypass", async () => {
-    let sent: RequestInit | undefined;
-    const fetchImpl = (async (_u: string, init: RequestInit) => {
-      sent = init;
-      return new Response(JSON.stringify({ model: "vendor/x", _routed_via: { platform: "kilo", model: "vendor/x" }, choices: [{ message: { content: "hi" }, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 2 } }), {
-        status: 200,
-        headers: { "x-routed-via": "kilo/vendor/x", "x-fallback-attempts": "2" },
-      });
-    }) as unknown as typeof fetch;
-    const c = new FreeLlmApiClient({ baseUrl: "http://gw/v1", apiKey: "k", timeoutMs: 5000, bypassCache: true, fetchImpl });
-    const r = await c.complete({ model: "auto:sy-abc", messages: [{ role: "user", content: "x" }], max_tokens: 10 });
-    expect(r.telemetry).toMatchObject({ servedModel: "vendor/x", servedProvider: "kilo", providerAttempts: 3, providerAttemptsExact: false });
-    expect((sent!.headers as Record<string, string>)["x-freellm-cache"]).toBe("bypass");
+describe("removed configuration", () => {
+  it("a config with a gateway section fails and says to add provider keys instead", () => {
+    const withGateway = baseConfig({ gateway: { adapter: "freellmapi", base_url: "http://127.0.0.1:9/v1", request_timeout_seconds: 60 } });
+    expect(() => parseConfig(withGateway, "/tmp/sy.yaml")).toThrow(/gateway: the gateway section is no longer supported: SwitchYard calls providers directly\. Delete it and add your provider keys under providers/);
+    expect(() => parseConfig(baseConfig({ discovery: { free_platforms: ["groq"] } }), "/tmp/sy.yaml")).toThrow(/discovery\.free_platforms: .*billing_class: free_tier/);
+    expect(() => parseConfig(baseConfig({ discovery: { default_output_limit_tokens: 4096 } }), "/tmp/sy.yaml")).toThrow(/discovery\.default_output_limit_tokens: .*outputLimitTokens/);
   });
+});
 
-  it("refuses raw model ids and whole-catalog aliases", async () => {
-    const c = new FreeLlmApiClient({ baseUrl: "http://gw/v1", apiKey: "k", timeoutMs: 5000, bypassCache: true, fetchImpl: fetchReturning(200, {}) });
-    await expect(c.complete({ model: "vendor/raw", messages: [], max_tokens: 1 })).rejects.toThrow(/bypass curated chains/);
-    await expect(c.complete({ model: "auto:fastest", messages: [], max_tokens: 1 })).rejects.toThrow(/whole-catalog sort/);
-  });
-
-  it("classifies exhaustion and pre-attempt errors", async () => {
-    const mk = (status: number, body: unknown, headers: Record<string, string> = {}) =>
-      new FreeLlmApiClient({ baseUrl: "http://gw/v1", apiKey: "k", timeoutMs: 5000, bypassCache: true, fetchImpl: fetchReturning(status, body, headers) });
-    await expect(mk(429, { error: { message: "x", code: "routing_exhausted" } }).complete({ model: "auto:sy-a", messages: [], max_tokens: 1 })).rejects.toMatchObject({ kind: "pool_exhausted", possiblyConsumed: false });
-    await expect(mk(429, { error: { message: "slow down", type: "rate_limit_error" } }, { "retry-after": "7" }).complete({ model: "auto:sy-a", messages: [], max_tokens: 1 })).rejects.toMatchObject({ kind: "rate_limited", retryAfterMs: 7000, possiblyConsumed: false });
-    await expect(mk(400, { error: { message: "Profile not found" } }).complete({ model: "auto:sy-a", messages: [], max_tokens: 1 })).rejects.toMatchObject({ kind: "unknown_model" });
+describe("shipped configuration", () => {
+  it("the example config and every preset `init` writes parse without a gateway", () => {
+    const examples = path.resolve(import.meta.dirname, "../examples");
+    const files = [path.join(examples, "switchyard.config.example.yaml"), ...readdirSync(path.join(examples, "presets")).map((f) => path.join(examples, "presets", f))];
+    expect(files.length).toBeGreaterThan(1);
+    for (const file of files) {
+      const raw = YAML.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+      expect(raw.gateway, file).toBeUndefined();
+      expect(() => parseConfig(raw, file), file).not.toThrow();
+    }
   });
 });

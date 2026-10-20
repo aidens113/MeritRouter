@@ -460,21 +460,10 @@ export type VerificationConfig = z.infer<typeof VerificationConfigSchema>;
 export const ConfigSchema = z
   .object({
     version: z.literal(1),
+    /** Removed with the external gateway: SwitchYard calls providers directly. */
     gateway: z
-      .object({
-        adapter: z.literal("freellmapi"),
-        base_url: z.string().url(),
-        api_key_env: z.string().min(1).default("FREELLMAPI_API_KEY"),
-        request_timeout_seconds: z.number().int().positive().default(300),
-        /** FreeLLMAPI's cache key ignores the client key (entries are shared), so bypass by default. */
-        bypass_cache: z.boolean().default(true),
-        /** Dashboard session token for FreeLLMAPI's /api admin routes (catalog, chains, keys). */
-        admin_token_env: z.string().min(1).default("FREELLMAPI_ADMIN_TOKEN"),
-        /** Refuse live dispatch unless the endpoint's single-model chain was verified. */
-        require_verified_chains: z.boolean().default(true),
-        chain_verification_ttl_seconds: z.number().int().positive().default(600),
-      })
-      .strict(),
+      .never({ error: "the gateway section is no longer supported: SwitchYard calls providers directly. Delete it and add your provider keys under providers (or in the panel's Provider keys page); request_timeout_seconds now lives under providers" })
+      .optional(),
     storage: z
       .object({
         directory: z.string().min(1).default(".switchyard"),
@@ -504,13 +493,10 @@ export const ConfigSchema = z
         probe_tools: z.boolean().default(false),
         /** Most tool probes per UTC day across all providers (spends provider quota). */
         max_probe_requests_per_day: z.number().int().min(0).default(20),
-        /**
-         * Platforms whose every model is a free tier on your accounts. You declare this; it is
-         * never inferred. OpenRouter models count as free only when their published price is 0.
-         */
-        free_platforms: z.array(z.string().min(1)).default([]),
-        /** Output limit assumed when no source reports one (labelled "default"). */
-        default_output_limit_tokens: z.number().int().positive().default(4096),
+        /** Removed: a model is free from its price and the key's billing class (providers.<id>.keys). */
+        free_platforms: z.never({ error: "discovery.free_platforms is no longer supported: set billing_class: free_tier on the provider's keys instead" }).optional(),
+        /** Removed: a model whose output limit is unknown is excluded until an override sets it. */
+        default_output_limit_tokens: z.never({ error: "discovery.default_output_limit_tokens is no longer supported: set outputLimitTokens in a model override instead" }).optional(),
         /** Assign profiles automatically only with exact or agreeing parameter evidence. */
         require_confirmation_for_heuristic_params: z.boolean().default(true),
         openrouter_models_url: z.string().url().default("https://openrouter.ai/api/v1/models"),
@@ -528,7 +514,7 @@ export const ConfigSchema = z
         max_endpoint_fallbacks: z.number().int().min(1).max(10).default(3),
         /** Retry a failed task once at the next tier. */
         escalate_on_failure: z.boolean().default(true),
-        /** Skip platforms FreeLLMAPI reports as rate limited (GET /v1/providers). */
+        /** Rank providers whose every key is cooling down last (from key state and rate-limit headers). */
         respect_provider_cooldowns: z.boolean().default(true),
         /**
          * Per-provider circuit breaker: after `failure_threshold` consecutive provider or
@@ -616,7 +602,7 @@ export const ConfigSchema = z
       .prefault({}),
     /** Direct providers: built-in and custom provider settings and keys declared in config. */
     providers: ProvidersSectionSchema.prefault({}),
-    /** Direct paid routes (never through FreeLLMAPI). Keys live in the encrypted vault, not here. */
+    /** Paid routing: policy, budgets, and configured paid models. Keys live in the vault or under providers. */
     paid: z
       .object({
         enabled: z.boolean().default(false),
@@ -725,7 +711,7 @@ export const ConfigSchema = z
         provider_concurrency_max: z.number().int().min(1).max(256).default(8),
         /**
          * Confirmed per-platform ceilings (a provider's documented concurrent-request limit),
-         * below `provider_concurrency_max`. FreeLLMAPI v0.2.1 reports no concurrency limit.
+         * below `provider_concurrency_max`.
          */
         provider_concurrency_limits: z.record(z.string().min(1), z.number().int().min(1).max(256)).default({}),
       })

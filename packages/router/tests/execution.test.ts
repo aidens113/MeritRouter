@@ -15,7 +15,7 @@ afterEach(async () => {
   env?.cleanup();
 });
 
-/** Reply as whichever endpoint's chain the request targeted. */
+/** Reply as whichever endpoint the request targeted. */
 function asServed(get: () => Switchyard, content: (n: number, req: Parameters<ScriptedClient["handler"]>[0]) => string) {
   return new ScriptedClient((req, n) => reply(content(n, req), servedFor(get(), req)));
 }
@@ -35,7 +35,8 @@ describe("completion tasks", () => {
     expect(r.servedEndpoints).toEqual(["openrouter/vendor/big-a:free"]);
     expect(r.classification).toMatchObject({ tier: "T1", basis: "rules" });
     expect(r.routing?.attempts).toEqual([{ endpointId: "openrouter/vendor/big-a:free", outcome: "succeeded" }]);
-    expect(client.requests[0]!.model).toMatch(/^auto:sy-[0-9a-f]{10}$/);
+    // Sent directly to the provider with the provider's model id and the configured key.
+    expect(client.requests[0]).toMatchObject({ provider: "openrouter", model: "vendor/big-a:free", key: "test-openrouter-key" });
   });
 
   it("idempotency keys deduplicate resubmission and reject a different spec", async () => {
@@ -74,7 +75,8 @@ describe("completion tasks", () => {
 
 describe("routing fallback and policy", () => {
   it("falls back to the next ranked model on capacity errors, each attempt counted", async () => {
-    env = makeEnv({ endpoints: [endpoint({ gatewayModelId: "first", totalParametersB: 40 }), endpoint({ gatewayModelId: "second", totalParametersB: 70 })] });
+    // A 429 cools that provider key, so the next model is on another provider.
+    env = makeEnv({ endpoints: [endpoint({ gatewayModelId: "first", totalParametersB: 40 }), endpoint({ providerId: "groq", gatewayModelId: "second", totalParametersB: 70 })] });
     const client = new ScriptedClient((req) => {
       const s = servedFor(sy!, req);
       if (s.model === "first") throw new GatewayError("rate_limited", "429", 429, 1000, false);
@@ -86,7 +88,7 @@ describe("routing fallback and policy", () => {
     expect(r.executionStatus).toBe("completed");
     expect(r.routing?.attempts.map((a) => `${a.endpointId.split("/").pop()}:${a.outcome}`)).toEqual(["first:rate_limited", "second:succeeded"]);
     expect(r.usage.modelRequests).toBe(2);
-    expect(r.servedEndpoints).toEqual(["openrouter/second"]);
+    expect(r.servedEndpoints).toEqual(["groq/second"]);
   });
 
   it("skips a model whose context cannot hold the request and uses one that can", async () => {
@@ -110,9 +112,8 @@ describe("routing fallback and policy", () => {
     await new Promise((r) => setTimeout(r, 400));
     const status = sy.getStatus([sub!.taskId])[0] as { state: string };
     expect(status.state).toBe("waiting_for_capacity");
-    const targeted = new Set(client.requests.map((r) => r.model));
-    const only = sy.catalog.get("openrouter/only")!;
-    expect([...targeted]).toEqual([`auto:${only.chainName}`]);
+    const targeted = new Set(client.requests.map((r) => `${r.provider}/${r.model}`));
+    expect([...targeted]).toEqual(["openrouter/only"]);
   });
 
   it("a served-model mismatch discards the response, fails the task, and quarantines the model", async () => {
@@ -127,15 +128,6 @@ describe("routing fallback and policy", () => {
     const r2 = (await sy.awaitResults([sub2!.taskId], { timeoutSeconds: 10 })).completed[0]!;
     expect(r2.stopReason).toMatch(/no_eligible_endpoint/);
     expect(client.requests).toHaveLength(1);
-  });
-
-  it("hidden gateway retries are recorded but never reported as exact", async () => {
-    env = makeEnv();
-    sy = open(env, new ScriptedClient((req) => reply(JSON.stringify(goodOutput()), { ...servedFor(sy!, req), attempts: 3 })), { worker: true });
-    const [sub] = await sy.submitTasks([summarizeTask()]);
-    const r = (await sy.awaitResults([sub!.taskId], { timeoutSeconds: 10 })).completed[0]!;
-    expect(r.usage.providerAttempts).toBe(3);
-    expect(r.usage.providerAttemptsExact).toBe(false);
   });
 });
 

@@ -26,7 +26,7 @@ import { requestJson, type FetchLike } from "./transport.js";
  * Direct-provider model discovery: list each provider's models with one of its usable keys,
  * keep the models that key can use, enrich them (see `enrich.ts`), and map them to catalog
  * endpoints `<provider>/<model>` routed `{kind:"direct"}`. Results only: persisting them
- * (`Catalog.saveDiscovered`) and scheduling are the caller's.
+ * (`runProviderDiscovery`, `Catalog.saveProviderDiscovery`) and scheduling are the caller's.
  */
 
 /** Guards against a provider that keeps returning a continuation token. */
@@ -333,18 +333,24 @@ export interface DiscoveryResult {
  * Free when no money can move: a `:free` or $0 model, or any request through a `free_tier` key.
  * On OpenRouter a free key only reaches free models, so priced models there are not usable.
  */
-export function freeStatus(provider: ResolvedProvider, model: Pick<ListedModel, "id" | "price">, creds: readonly Pick<ProviderCredential, "billingClass">[]): { value: boolean; usable: boolean; reason: string } {
-  if (/:free$/.test(model.id)) return { value: true, usable: true, reason: "model id ends in :free" };
-  if (model.price === "zero") return { value: true, usable: true, reason: "provider lists a price of 0" };
+export function freeStatus(
+  provider: ResolvedProvider,
+  model: Pick<ListedModel, "id" | "price">,
+  creds: readonly Pick<ProviderCredential, "billingClass">[],
+): { value: boolean; usable: boolean; reason: string; basis?: "model" | "key" } {
+  if (/:free$/.test(model.id)) return { value: true, usable: true, reason: "model id ends in :free", basis: "model" };
+  if (model.price === "zero") return { value: true, usable: true, reason: "provider lists a price of 0", basis: "model" };
   const freeKey = creds.some((c) => c.billingClass === "free_tier");
   const perModelFree = provider.models.shape === "openrouter";
-  if (freeKey && !(perModelFree && model.price === "positive")) return { value: true, usable: true, reason: "a free_tier key serves it" };
+  if (freeKey && !(perModelFree && model.price === "positive")) return { value: true, usable: true, reason: "a free_tier key serves it", basis: "key" };
   if (perModelFree && model.price === "positive" && creds.every((c) => c.billingClass === "free_tier")) return { value: false, usable: false, reason: "priced model; only free_tier keys" };
   return { value: false, usable: true, reason: freeKey ? "priced model" : "only paid or trial keys" };
 }
 
-function toEndpoint(provider: ResolvedProvider, e: EnrichedModel, free: { value: boolean; reason: string }, override: EndpointOverride | undefined, now: number): ModelEndpointInput {
+function toEndpoint(provider: ResolvedProvider, e: EnrichedModel, free: { value: boolean; reason: string; basis?: "model" | "key" }, override: EndpointOverride | undefined, now: number): ModelEndpointInput {
   const freeValue = override?.freeVerified ?? free.value;
+  // The user saying a model is free covers every key; otherwise a key-based free model stays on free keys.
+  const freeBasis = !freeValue ? undefined : override?.freeVerified !== undefined ? "model" : (free.basis ?? "key");
   const usd = e.priceUsdPerMillion;
   return {
     id: endpointIdFor(provider.id, e.modelId),
@@ -362,14 +368,15 @@ function toEndpoint(provider: ResolvedProvider, e: EnrichedModel, free: { value:
     outputLimitTokens: e.outputLimitTokens,
     outputLimitSource: e.provenance.outputLimitTokens.source === "override" ? "override" : e.outputLimitTokens !== null ? "provider" : "default",
     inputModalities: e.inputModalities ?? ["text"],
-    // The catalog needs booleans: unknown support is false (excluded), and provenance says "unknown".
-    supportsTools: e.supportsTools ?? false,
-    supportsStructuredOutput: e.supportsStructuredOutput ?? false,
+    // Unknown support is stored as null: routing excludes it from work that needs it.
+    supportsTools: e.supportsTools,
+    supportsStructuredOutput: e.supportsStructuredOutput,
     pricing: {
       inputUsdPerMillion: freeValue ? 0 : (usd?.input ?? null),
       outputUsdPerMillion: freeValue ? 0 : (usd?.output ?? null),
       freeVerified: freeValue,
       source: override?.freeVerified !== undefined ? "override" : `${provider.id}: ${free.reason}`,
+      ...(freeBasis ? { freeBasis } : {}),
     },
     available: true,
     enabled: true,
@@ -378,7 +385,7 @@ function toEndpoint(provider: ResolvedProvider, e: EnrichedModel, free: { value:
   };
 }
 
-const isDirect = (e: ModelEndpointInput, providerId: string) => e.origin === "discovered" && e.route?.kind === "direct" && e.providerId === providerId;
+const isDirect = (e: ModelEndpointInput, providerId: string) => e.origin === "discovered" && e.providerId === providerId;
 
 /** Discover models on every enabled provider that has a usable credential. Never throws for one provider's failure. */
 export async function discoverModels(opts: DiscoveryOptions): Promise<DiscoveryResult> {

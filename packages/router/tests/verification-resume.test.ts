@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Switchyard, SwitchyardOptions } from "../src/core/service.js";
-import type { ChatRequest, ChatResponse, InferenceClient } from "../src/gateway/types.js";
+import type { ChatRequest, ChatResponse } from "../src/gateway/types.js";
 import type { SessionEvent, SessionEventOf } from "../src/sessions/events.js";
 import type { SessionRecord } from "../src/sessions/store.js";
 import { GatewayError } from "../src/core/errors.js";
 import { FAULT_ENV, resetFaults, simulatedCrashCount } from "../src/core/faults.js";
 import { createCodingRunner } from "../src/runners/coding/index.js";
-import { baseConfig, endpoint, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
+import { baseConfig, endpoint, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, testProviders, type Env } from "./helpers.js";
 
 /**
  * Resume and verification together: a task interrupted while its result is being reviewed
@@ -92,7 +92,7 @@ const byRole = (id: string, role: string): SessionRecord[] => sy!.sessions.forTa
 const taskEvents = (id: string, type: string) => sy!.tasks.events(id, 1000).filter((e) => e.type === type);
 
 /** Run with the fault armed until the simulated crash, then reopen with the clock past the lease. */
-async function crashThenRecover(client: InferenceClient, fault: string, opts: SwitchyardOptions = {}): Promise<string> {
+async function crashThenRecover(client: ScriptedClient, fault: string, opts: SwitchyardOptions = {}): Promise<string> {
   const before = simulatedCrashCount();
   process.env[FAULT_ENV] = fault;
   sy = open(env!, client, { worker: true, coding: createCodingRunner(env!.cfg), ...opts });
@@ -229,24 +229,21 @@ describe("watchdog during review", () => {
         coding: { runner: "native" },
         execution: { max_concurrent_tasks: 4, lease_seconds: 3600, job_timeout_seconds: 7200 },
         // A short request timeout keeps the allowance for a pending request at watchdog_minutes (10).
-        gateway: { adapter: "freellmapi", base_url: "http://127.0.0.1:9/v1", require_verified_chains: false, request_timeout_seconds: 10 },
+        providers: { ...testProviders(), request_timeout_seconds: 10 },
       }),
       endpoints: [AUTHOR, REVIEWER],
     });
     let hung = 0;
     const requests: ChatRequest[] = [];
-    const client: InferenceClient = {
-      name: "hanging-reviewer",
-      complete(req, signal): Promise<ChatResponse> {
-        requests.push(structuredClone(req));
-        if (!isReviewer(req)) return Promise.resolve(author(req, "a - b"));
-        if (hung++ === 0) {
-          // The first reviewer's provider never answers; only the abort ends this request.
-          return new Promise<ChatResponse>((_, reject) => signal?.addEventListener("abort", () => reject(new GatewayError("aborted", "request aborted by caller"))));
-        }
-        return Promise.resolve(reviewer(req));
-      },
-    };
+    const client = new ScriptedClient((req, _n, signal) => {
+      requests.push(structuredClone(req));
+      if (!isReviewer(req)) return author(req, "a - b");
+      if (hung++ === 0) {
+        // The first reviewer's provider never answers; only the abort ends this request.
+        return new Promise<ChatResponse>((_, reject) => signal?.addEventListener("abort", () => reject(new GatewayError("aborted", "request aborted by caller"))));
+      }
+      return reviewer(req);
+    });
     sy = open(env, client, { worker: true, coding: createCodingRunner(env.cfg), now: () => Date.now() + offset });
     const id = (await sy.submitTasks([task]))[0]!.taskId;
     for (let i = 0; i < 1500 && hung === 0; i++) await sleep(20);

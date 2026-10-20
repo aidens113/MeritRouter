@@ -20,8 +20,8 @@ export interface OverrideEditorProps {
     contextTokens: number | null;
     outputTokens: number | null;
     modalities: string[];
-    supportsTools: boolean;
-    supportsStructuredOutput: boolean;
+    supportsTools: boolean | null;
+    supportsStructuredOutput: boolean | null;
     free: boolean;
     needsConfirmation: boolean;
     heuristic: boolean;
@@ -294,12 +294,12 @@ function NumberField({ label, value, onChange, placeholder, suffix }: { label: s
   );
 }
 
-function TriSelect({ label, value, onChange, discovered }: { label: string; value: Tri; onChange: (v: Tri) => void; discovered: boolean }) {
+function TriSelect({ label, value, onChange, discovered }: { label: string; value: Tri; onChange: (v: Tri) => void; discovered: boolean | null }) {
   return (
     <label className="block text-sm text-ink-2">
       {label}
       <select value={value} onChange={(e) => onChange(e.target.value as Tri)} className="field mt-1">
-        <option value="">Discovered ({discovered ? "yes" : "no"})</option>
+        <option value="">Discovered ({discovered === null ? "unknown" : discovered ? "yes" : "no"})</option>
         <option value="true">Yes</option>
         <option value="false">No</option>
       </select>

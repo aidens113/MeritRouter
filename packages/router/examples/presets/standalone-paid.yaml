@@ -6,13 +6,19 @@
 # Every setting here can also be edited from the web panel (Settings).
 version: 1
 
-gateway:
-  adapter: freellmapi
-  base_url: http://localhost:3001/v1
-  api_key_env: FREELLMAPI_API_KEY # unified FreeLLMAPI key (inference)
-  admin_token_env: FREELLMAPI_ADMIN_TOKEN # dashboard session token (catalog, chains, keys)
-  require_verified_chains: true # refuse dispatch unless the model's chain is verified
-  bypass_cache: true # FreeLLMAPI's cache is shared across clients
+# Model providers. SwitchYard calls each provider directly with your keys and finds the models
+# they can use. Add keys here or in the panel (Provider keys); the panel stores them encrypted.
+providers:
+  request_timeout_seconds: 300
+  # groq:
+  #   keys:
+  #     - { api_key_env: GROQ_API_KEY, billing_class: free_tier }
+  # openrouter:
+  #   keys:
+  #     - { api_key_env: OPENROUTER_API_KEY, billing_class: free_tier }
+  # local:                        # any OpenAI-compatible server (Ollama, llama.cpp, vLLM, LM Studio)
+  #   base_url: http://localhost:11434/v1
+  #   no_key: true
 
 storage:
   directory: .switchyard
@@ -51,10 +57,9 @@ models:
   max_metadata_age_days: 30
 
 discovery:
-  interval_minutes: 60
-  # Platforms where every model is a free tier on YOUR accounts. Never inferred.
-  # OpenRouter models count as free only when their published price is 0.
-  free_platforms: [] # e.g. [groq, google, nvidia, kilo]
+  interval_minutes: 60 # rediscover models with your keys this often (0 disables)
+  probe_tools: false # opt-in: one cheap request to learn tool support when unreported
+  max_probe_requests_per_day: 20
   require_confirmation_for_heuristic_params: true
 
 tiers:
@@ -114,7 +119,8 @@ allocation:
   max_model_requests_per_hour: 150
   max_model_requests_per_day: 1500
 
-# Direct paid routes (never through FreeLLMAPI). Keys: `switchyard keys add <provider>`.
+# Paid routing policy and budgets. A request is paid when the model has a price or the key is
+# not free_tier.
 paid:
   enabled: true
   budgets:

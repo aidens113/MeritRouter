@@ -32,18 +32,10 @@ const f = (path: string, label: string, kind: FieldKind, help: string, extra: Pa
 
 export const SECTIONS: Section[] = [
   {
-    id: "gateway",
-    title: "Gateway (FreeLLMAPI)",
-    description: "Where SwitchYard sends model requests and how it authenticates. Secrets are read from environment variables, never stored here.",
-    fields: [
-      f("gateway.base_url", "Gateway URL", "url", "FreeLLMAPI's OpenAI-compatible endpoint, usually ending in /v1. Admin routes are reached on the same origin.", { placeholder: "http://localhost:3001/v1" }),
-      f("gateway.api_key_env", "Inference key variable", "text", "Name of the environment variable holding FreeLLMAPI's unified inference key."),
-      f("gateway.admin_token_env", "Admin token variable", "text", "Name of the environment variable holding a FreeLLMAPI dashboard token. Needed to scan models, verify chains, and manage provider keys."),
-      f("gateway.request_timeout_seconds", "Request timeout", "int", "Give up on a single model request after this long.", { min: 1, unit: "seconds" }),
-      f("gateway.bypass_cache", "Bypass FreeLLMAPI's cache", "bool", "FreeLLMAPI's response cache is shared between clients (its key ignores who asked), so SwitchYard bypasses it by default."),
-      f("gateway.require_verified_chains", "Require verified chains", "bool", "Refuse to send a request unless the model's single-model chain was checked to contain exactly that model."),
-      f("gateway.chain_verification_ttl_seconds", "Chain check valid for", "int", "How long a chain verification is trusted before it is checked again.", { min: 1, unit: "seconds" }),
-    ],
+    id: "providers",
+    title: "Providers",
+    description: "SwitchYard calls each provider directly. Provider keys are set under providers in the config file for now.",
+    fields: [f("providers.request_timeout_seconds", "Request timeout", "int", "Give up on a single model request after this long.", { min: 1, unit: "seconds" })],
   },
   {
     id: "models",
@@ -58,11 +50,9 @@ export const SECTIONS: Section[] = [
   {
     id: "discovery",
     title: "Discovery",
-    description: "How models are found in FreeLLMAPI and how sizes and prices are verified.",
+    description: "How each provider's models are found and how sizes and prices are verified.",
     fields: [
-      f("discovery.interval_minutes", "Rescan every", "int", "A running worker rescans FreeLLMAPI's catalog this often. 0 turns automatic scans off.", { min: 0, unit: "minutes" }),
-      f("discovery.free_platforms", "Free platforms", "list", "Platforms where every model is a free tier on your accounts. You declare this; it is never guessed. OpenRouter models count as free only when their published price is $0.", { placeholder: "groq" }),
-      f("discovery.default_output_limit_tokens", "Default output limit", "int", "Output limit assumed when no source reports one. Such models are labelled 'default'.", { min: 1, unit: "tokens" }),
+      f("discovery.interval_minutes", "Rescan every", "int", "A running worker lists every provider's models this often. 0 turns automatic scans off.", { min: 0, unit: "minutes" }),
       f("discovery.require_confirmation_for_heuristic_params", "Confirm sizes guessed from names", "bool", "When a model's size comes only from its name or description, wait for you to confirm it before routing to it."),
       f("discovery.openrouter_models_url", "OpenRouter models URL", "url", "Where prices, context lengths, and Hugging Face ids are looked up."),
       f("discovery.huggingface_api_url", "Hugging Face API URL", "url", "Where exact parameter counts are read from model files."),

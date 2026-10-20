@@ -120,22 +120,8 @@ async function main(): Promise<number> {
       case "doctor": {
         const checks: Array<{ check: string; ok: boolean; detail: string }> = [];
         checks.push({ check: "config", ok: true, detail: cfg.configPath });
-        checks.push({ check: "gateway key", ok: sy.client.name !== "unconfigured", detail: cfg.gateway.api_key_env });
-        try {
-          await sy.health.refresh(0);
-          checks.push({ check: "gateway reachable", ok: sy.health.snapshot().length > 0 || sy.client.name !== "unconfigured", detail: `${sy.health.snapshot().length} provider(s) reported` });
-        } catch (err) {
-          checks.push({ check: "gateway reachable", ok: false, detail: (err as Error).message });
-        }
-        checks.push({ check: "admin token", ok: sy.admin !== null, detail: cfg.gateway.admin_token_env });
-        if (sy.admin) {
-          try {
-            await sy.admin.listProfiles();
-            checks.push({ check: "admin API", ok: true, detail: "profiles readable" });
-          } catch (err) {
-            checks.push({ check: "admin API", ok: false, detail: (err as Error).message });
-          }
-        }
+        const usableKeys = sy.providers.credentials().list().filter((c) => c.unusableReason === null);
+        checks.push({ check: "provider keys", ok: usableKeys.length > 0, detail: usableKeys.length ? `${usableKeys.length} usable key(s): ${[...new Set(usableKeys.map((c) => c.provider))].join(", ")}` : "none: add keys under providers in the config" });
         const eps = sy.catalog.endpoints();
         checks.push({ check: "models", ok: eps.some((e) => e.status === "active"), detail: `${eps.filter((e) => e.status === "active").length} active of ${eps.length}` });
         for (const [alias, repo] of Object.entries(cfg.repositoryPaths)) checks.push({ check: `repo ${alias}`, ok: existsSync(path.join(repo.path, ".git")), detail: repo.path });
@@ -274,7 +260,7 @@ ${table(rows)}`, json);
         return 0;
       }
       case "keys": {
-        // Paid provider keys (direct routes). FreeLLMAPI keys are managed in the panel.
+        // Provider keys in the vault (the `keys` commands are reworked in P3).
         const sub = args[0] ?? "list";
         if (sub === "list") {
           const rows = sy.spend.summary().keys.map((k) => ({ id: k.id, provider: k.provider, label: k.label, billing: k.billingClass, enabled: k.enabled ? "yes" : "no", key: `...${k.last4}`, "spent 30d": `$${k.spent30d.toFixed(4)}`, balance: k.remainingBalanceUsd === null ? "" : `$${k.remainingBalanceUsd.toFixed(2)}`, cap: k.remainingCapUsd === null ? "" : `$${k.remainingCapUsd.toFixed(2)}` }));

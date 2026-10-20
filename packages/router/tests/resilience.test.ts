@@ -9,7 +9,7 @@ import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import Database from "better-sqlite3";
 import type { Switchyard } from "../src/core/service.js";
 import { GatewayError } from "../src/core/errors.js";
-import type { ChatMessage, ChatRequest, ChatResponse, InferenceClient } from "../src/gateway/types.js";
+import type { ChatMessage, ChatRequest, ChatResponse } from "../src/gateway/types.js";
 import { CircuitBreakers, countsAsProviderFailure, openDurationMs, readBreakerRecords, type BreakerSettings } from "../src/gateway/breaker.js";
 import { planRoute } from "../src/routing/select.js";
 import { watchdogVerdict, type SessionProgress } from "../src/core/watchdog.js";
@@ -17,7 +17,7 @@ import { openDatabase, type Db } from "../src/storage/db.js";
 import { parseConfig } from "../src/config/load.js";
 import * as insights from "../src/admin/insights.js";
 import type { SessionEvent, SessionEventOf } from "../src/sessions/events.js";
-import { baseConfig, endpoint, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, summarizeTask, type Env } from "./helpers.js";
+import { baseConfig, endpoint, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, summarizeTask, testProviders, type Env } from "./helpers.js";
 
 /**
  * R1b: the progress watchdog, per-provider circuit breakers, and the R1 acceptance test (a real
@@ -216,7 +216,7 @@ describe("routing with open breakers", () => {
 });
 
 describe("progress watchdog", () => {
-  const cfg = parseConfig(baseConfig({ execution: { watchdog_minutes: 10, check_timeout_seconds: 900 }, gateway: { adapter: "freellmapi", base_url: "http://127.0.0.1:9/v1", request_timeout_seconds: 60 } }), path.join(tmpdir(), "x.yaml"));
+  const cfg = parseConfig(baseConfig({ execution: { watchdog_minutes: 10, check_timeout_seconds: 900 }, providers: { ...testProviders(), request_timeout_seconds: 60 } }), path.join(tmpdir(), "x.yaml"));
   const at = 1_000_000;
   const min = 60_000;
   const v = (p: Partial<SessionProgress>, idle: number, checks = 0) => watchdogVerdict(cfg, { at, type: null, name: null, ...p }, at + idle, { checks });
@@ -232,7 +232,7 @@ describe("progress watchdog", () => {
     expect(v({ type: "tool_intent", name: "run_command" }, 15 * min)).toMatchObject({ kind: "ok", allowanceMs: 16 * min });
     expect(v({ type: "tool_intent", name: "run_command" }, 16 * min + 1)).toMatchObject({ kind: "stuck" });
     expect(v({ type: "model_response" }, 15 * min)).toMatchObject({ kind: "ok" });
-    // A pending model request: every endpoint the gate may try times the gateway timeout (60 s x 5) is under 10 min.
+    // A pending model request: every endpoint the gate may try times the provider timeout (60 s x 5) is under 10 min.
     expect(v({ type: "model_request", name: "tool_loop" }, 10 * min + 1)).toMatchObject({ kind: "stuck", allowanceMs: 10 * min, waitingOn: "model request (tool_loop)" });
     // Final checks run unjournaled after the loop: each one's timeout counts.
     expect(v({ type: "tool_outcome", name: "submit_result" }, 30 * min, 2)).toMatchObject({ kind: "ok", allowanceMs: 31 * min });
@@ -248,24 +248,21 @@ describe("progress watchdog", () => {
 
   it("aborts a stuck run as interrupted (watchdog) and the task resumes the same session to completion", async () => {
     let offset = 0;
-    const e = makeEnv({ config: baseConfig({ execution: { max_concurrent_tasks: 4, lease_seconds: 3600, job_timeout_seconds: 7200 }, gateway: { adapter: "freellmapi", base_url: "http://127.0.0.1:9/v1", require_verified_chains: false, request_timeout_seconds: 10 } }) });
+    const e = makeEnv({ config: baseConfig({ execution: { max_concurrent_tasks: 4, lease_seconds: 3600, job_timeout_seconds: 7200 }, providers: { ...testProviders(), request_timeout_seconds: 10 } }) });
     env = e;
     let hung = 0;
     const requests: ChatRequest[] = [];
-    const client: InferenceClient = {
-      name: "hanging",
-      complete(req, signal) {
-        requests.push(structuredClone(req));
-        const s = servedFor(sy!, req);
-        const read = req.messages.some((m) => m.role === "tool" && m.content.startsWith("ref: core:src/app.ts"));
-        if (!read) return Promise.resolve(reply(null, { ...s, toolCalls: [call("read_file", { alias: "core", path: "src/app.ts" }, `read${turnsIn(req.messages)}`)] }));
-        if (hung++ === 0) {
-          // The provider never answers; only the abort ends this request.
-          return new Promise<ChatResponse>((_, reject) => signal?.addEventListener("abort", () => reject(new GatewayError("aborted", "request aborted by caller"))));
-        }
-        return Promise.resolve(reply(null, { ...s, toolCalls: [call("submit_result", goodOutput(1, "core:src/app.ts#L1-L3"), "submit")] }));
-      },
-    };
+    const client = new ScriptedClient((req, _n, signal) => {
+      requests.push(structuredClone(req));
+      const s = servedFor(sy!, req);
+      const read = req.messages.some((m) => m.role === "tool" && m.content.startsWith("ref: core:src/app.ts"));
+      if (!read) return reply(null, { ...s, toolCalls: [call("read_file", { alias: "core", path: "src/app.ts" }, `read${turnsIn(req.messages)}`)] });
+      if (hung++ === 0) {
+        // The provider never answers; only the abort ends this request.
+        return new Promise<ChatResponse>((_, reject) => signal?.addEventListener("abort", () => reject(new GatewayError("aborted", "request aborted by caller"))));
+      }
+      return reply(null, { ...s, toolCalls: [call("submit_result", goodOutput(1, "core:src/app.ts#L1-L3"), "submit")] });
+    });
     sy = open(e, client, { worker: true, now: () => Date.now() + offset });
     const [t] = await sy.submitTasks([{ profile: "inspect", label: "find-add", goal: "Where is add() defined?", repositoryAliases: ["core"], constraints: { acceptanceCriteria: ["names the file"] } }]);
     const id = t!.taskId;
@@ -302,22 +299,22 @@ describe("progress watchdog", () => {
 
 const CLI = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
 
-interface FakeGateway {
+interface FakeHttpProvider {
   baseUrl: string;
   chats: Array<{ messages: ChatMessage[] }>;
   close: () => Promise<void>;
 }
 
-/** A FreeLLMAPI double over HTTP: GET /v1/providers and POST /v1/chat/completions. */
-async function fakeGateway(answer: (body: { model: string; messages: ChatMessage[] }, n: number) => { toolCalls: unknown[] } | "hang"): Promise<FakeGateway> {
-  const chats: FakeGateway["chats"] = [];
+/** An OpenAI-compatible provider over HTTP: GET /v1/models and POST /v1/chat/completions. */
+async function fakeHttpProvider(answer: (body: { model: string; messages: ChatMessage[] }, n: number) => { toolCalls: unknown[] } | "hang"): Promise<FakeHttpProvider> {
+  const chats: FakeHttpProvider["chats"] = [];
   const hanging = new Set<ServerResponse>();
   const server: Server = createServer((req: IncomingMessage, res: ServerResponse) => {
     let raw = "";
     req.on("data", (c: Buffer) => (raw += c.toString("utf8")));
     req.on("end", () => {
-      if (req.method === "GET" && req.url?.endsWith("/providers")) {
-        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ providers: [] }));
+      if (req.method === "GET" && req.url?.endsWith("/models")) {
+        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ object: "list", data: [] }));
         return;
       }
       if (req.method !== "POST" || !req.url?.endsWith("/chat/completions")) {
@@ -333,7 +330,7 @@ async function fakeGateway(answer: (body: { model: string; messages: ChatMessage
         return;
       }
       res
-        .writeHead(200, { "content-type": "application/json", "x-routed-via": "openrouter/vendor/big-a:free", "x-request-id": `r${chats.length}` })
+        .writeHead(200, { "content-type": "application/json", "x-request-id": `r${chats.length}` })
         .end(
           JSON.stringify({
             id: `c${chats.length}`,
@@ -360,7 +357,7 @@ async function fakeGateway(answer: (body: { model: string; messages: ChatMessage
 }
 
 function startWorker(configPath: string, cwd: string): ChildProcess {
-  const childEnv: NodeJS.ProcessEnv = { ...process.env, FREELLMAPI_API_KEY: "test-key" };
+  const childEnv: NodeJS.ProcessEnv = { ...process.env };
   delete childEnv.SWITCHYARD_FAULT_AT;
   const child = spawn(process.execPath, [CLI, "worker", "--config", configPath], { cwd, env: childEnv, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   let log = "";
@@ -391,7 +388,7 @@ describe("R1 acceptance: kill and restart a worker process", () => {
   it.skipIf(!existsSync(CLI))("a native coding run killed mid-request resumes its session in a restarted worker, with the edit made once (needs dist/cli.js: pnpm --filter switchyard-router build)", async () => {
     const edit = call("replace_in_file", { path: "src/app.ts", old_text: "export function add", new_text: "export function subtract(a: number, b: number) {\n  return a - b;\n}\n\nexport function add" }, "edit0");
     let hangs = 0;
-    const gw = await fakeGateway((body) => {
+    const gw = await fakeHttpProvider((body) => {
       if (turnsIn(body.messages) === 0) return { toolCalls: [edit] };
       // The first request after the edit never gets an answer: the worker is killed while waiting.
       if (hangs++ === 0) return "hang";
@@ -400,12 +397,13 @@ describe("R1 acceptance: kill and restart a worker process", () => {
     cleanups.push(() => gw.close());
     const check = `node -e "process.exit(require('fs').readFileSync('src/app.ts','utf8').includes('subtract')?0:1)"`;
     const raw = baseConfig({
-      gateway: { adapter: "freellmapi", base_url: gw.baseUrl, require_verified_chains: false },
+      // A custom provider at the fake server, with one free key.
+      providers: { local: { base_url: gw.baseUrl, keys: [{ api_key: "test-key", billing_class: "free_tier" }] } },
       execution: { max_concurrent_tasks: 2, lease_seconds: 10 },
       coding: { runner: "native" },
       profiles: { implement: { mode: "coding", min_total_parameters_b: 100, max_model_requests: 8, tools: "scoped_edit_and_checks", workspace: "isolated_worktree", classify: "never" } },
     });
-    env = makeEnv({ config: raw });
+    env = makeEnv({ config: raw, endpoints: [endpoint({ providerId: "local" })] });
     const configPath = env.cfg.configPath;
 
     // Submit from a process that runs no tasks, then hand the queue to a real worker process.

@@ -48,10 +48,24 @@ export function modelFamily(ep: Pick<ModelEndpoint, "gatewayModelId" | "provider
   return /^[a-z]+/.exec(name)?.[0] ?? name;
 }
 
-/** A model costs money when it is not verified free (direct paid routes always are). */
-export function isPaid(ep: ModelEndpoint): boolean {
-  if (ep.route.kind === "direct") return true;
+/**
+ * A model costs money unless it is verified free at $0. A free endpoint stays free at dispatch
+ * because the gate serves it only through keys that cannot be charged (see `freeKeyOnly`); a
+ * priced one obeys the paid policy, budgets, and spend tracking.
+ */
+export function isPaid(ep: Pick<ModelEndpoint, "pricing">): boolean {
   return !(ep.pricing.freeVerified && (ep.pricing.inputUsdPerMillion ?? 0) === 0 && (ep.pricing.outputUsdPerMillion ?? 0) === 0);
+}
+
+/**
+ * Whether a free endpoint may only use `free_tier` keys: it is free because a free key serves it
+ * (`freeBasis: key`, or unrecorded), not because the model itself is `:free` or $0. Any other
+ * key would bill it at a price nobody recorded.
+ */
+export function freeKeyOnly(ep: Pick<ModelEndpoint, "pricing" | "route">): boolean {
+  if (isPaid(ep)) return false;
+  if (ep.pricing.freeBasis === "model") return false;
+  return ep.pricing.freeBasis === "key" || !/:free$/.test(ep.route.model);
 }
 
 export function paidPolicyFor(cfg: ResolvedConfig, req: RouteRequirements): PaidPolicy {
@@ -113,22 +127,18 @@ export function endpointExclusions(
   ep: ModelEndpoint,
   cfg: ResolvedConfig,
   req: RouteRequirements,
-  opts: { now: Date; allowBelowFloor: boolean; qualification: ReturnType<QualificationLookup>; paidPlatforms?: Set<string> },
+  opts: { now: Date; allowBelowFloor: boolean; qualification: ReturnType<QualificationLookup> },
 ): string[] {
   const reasons: string[] = [];
   const profile = cfg.profiles[req.profile]!;
   if (ep.status !== "active") reasons.push(ep.statusReason ?? `status is ${ep.status}`);
-  if (!ep.available && ep.status === "active") reasons.push(ep.route.kind === "direct" ? "no enabled paid key for this provider" : "FreeLLMAPI reports it unavailable (no key or disabled)");
+  if (!ep.available && ep.status === "active") reasons.push("no enabled key for this provider");
   if (ep.deniedProfiles.includes(req.profile)) reasons.push(`blocked for ${req.profile} tasks by an override`);
   const floor = Math.max(sizeFloor(cfg, req.profile, req.tier), req.minTotalParametersB ?? 0);
   if (ep.totalParametersB !== null && ep.totalParametersB < floor && !opts.allowBelowFloor && !ep.ignoreSizeFloor) {
     reasons.push(`${ep.totalParametersB}B is below the ${floor}B floor for ${req.profile}/${req.tier}`);
   }
-  if (ep.route.kind === "chain") {
-    // FreeLLMAPI is the free network only: anything not verified free is excluded there.
-    if (isPaid(ep)) reasons.push("not verified free (FreeLLMAPI routes are free-only; add paid models under paid.models)");
-    if (opts.paidPlatforms?.has(ep.providerId)) reasons.push(`a FreeLLMAPI key on ${ep.providerId} is marked paid, so free routing could bill it`);
-  } else {
+  if (isPaid(ep)) {
     const policy = paidPolicyFor(cfg, req);
     if (!cfg.paid.enabled) reasons.push("paid routing is disabled (paid.enabled)");
     else if (policy === "never") reasons.push(`paid models are not allowed for ${req.tier} (paid.tiers.${req.tier} = never)`);
@@ -141,8 +151,8 @@ export function endpointExclusions(
   if (ep.contextLimitTokens === null) reasons.push("context limit unknown");
   if (ep.outputLimitTokens === null) reasons.push("output limit unknown");
   for (const m of req.inputModalities) if (!ep.inputModalities.includes(m)) reasons.push(`cannot read ${m} input`);
-  if (profile.mode !== "completion" && !ep.supportsTools) reasons.push("no tool calling (required for repository work)");
-  if ((req.needsStructuredOutput || profile.requires_structured_output) && !ep.supportsStructuredOutput) reasons.push("no structured output");
+  if (profile.mode !== "completion" && ep.supportsTools !== true) reasons.push(ep.supportsTools === null ? "tool calling unknown (required for repository work; set it in an override)" : "no tool calling (required for repository work)");
+  if ((req.needsStructuredOutput || profile.requires_structured_output) && ep.supportsStructuredOutput !== true) reasons.push(ep.supportsStructuredOutput === null ? "structured output unknown" : "no structured output");
   if (req.reviewer) {
     if (req.reviewer.mode === "required" && !opts.qualification?.qualified) {
       reasons.push(opts.qualification ? `not qualified as a ${req.reviewer.name} reviewer (pass rate ${(opts.qualification.passRate * 100).toFixed(0)}% over ${opts.qualification.trials} trials)` : `not yet qualified as a ${req.reviewer.name} reviewer`);
@@ -156,7 +166,7 @@ export function endpointExclusions(
 /**
  * Build the ordered candidate list for a task. Order: forced models only (if any force override
  * applies), else preferred models first, then automatic order by the tier's preference.
- * Platforms FreeLLMAPI reports as cooling down move to the end, and platforms whose circuit
+ * Providers whose keys are all cooling down move to the end, and platforms whose circuit
  * breaker is open go after those (the gate skips them until a probe is due).
  */
 export function planRoute(
@@ -164,7 +174,7 @@ export function planRoute(
   endpoints: ModelEndpoint[],
   overrides: RoutingOverride[],
   req: RouteRequirements,
-  deps: { now: Date; qualification: QualificationLookup; health?: ProviderHealthLookup; paidPlatforms?: Set<string>; quarantined?: (ep: ModelEndpoint) => string | null },
+  deps: { now: Date; qualification: QualificationLookup; health?: ProviderHealthLookup; quarantined?: (ep: ModelEndpoint) => string | null },
 ): RoutePlan {
   const applicable = overrides.filter((o) => overrideApplies(o, req.profile, req.tier));
   const forceIds = new Set<string>(applicable.filter((o) => o.kind === "force").map((o) => o.endpointId));
@@ -191,7 +201,6 @@ export function planRoute(
       now: deps.now,
       allowBelowFloor: belowFloor.has(ep.id),
       qualification: qual,
-      ...(deps.paidPlatforms ? { paidPlatforms: deps.paidPlatforms } : {}),
     });
     if (blockIds.has(ep.id)) reasons.push(`blocked by routing override for ${req.profile}/${req.tier}`);
     if (avoid.has(ep.id)) reasons.push("served this task; an independent reviewer must be a different model");

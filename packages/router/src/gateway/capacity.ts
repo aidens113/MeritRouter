@@ -37,7 +37,7 @@ export const ConcurrencyRecordSchema = z
     lastChange: z.enum(["increase", "decrease"]).nullable(),
     lastReason: z.string().nullable(),
     lastChangeAt: z.number().nullable(),
-    /** The FreeLLMAPI cooldown last reacted to (a cooldown halves once, not on every refresh). */
+    /** The provider cooldown last reacted to (a cooldown halves once, not on every refresh). */
     cooldownResumeAt: z.number().nullable(),
     updatedAt: z.number(),
   })
@@ -231,7 +231,7 @@ export class ProviderCapacity {
     }
   }
 
-  /** FreeLLMAPI reported a cooldown for the platform: halve once per reported cooldown. */
+  /** Every key of the provider is cooling down: halve once per reported cooldown. */
   observeCooldown(platform: string, resumeAt: number): void {
     if (!this.enabled || resumeAt <= this.now()) return;
     try {
