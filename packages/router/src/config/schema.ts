@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { TAG_GROUPS } from "../scoring/rulebook.js";
+import { BillingClassSchema } from "../providers/vault.js";
+import { BUILTIN_PROVIDER_IDS } from "../providers/registry.js";
 
 export const PROFILE_NAMES = ["summarize", "inspect", "analyze", "implement", "review", "supervise"] as const;
 export const ProfileNameSchema = z.enum(PROFILE_NAMES);
@@ -138,6 +140,99 @@ export const PaidModelSchema = z
   })
   .strict();
 export type PaidModelConfig = z.infer<typeof PaidModelSchema>;
+
+const ProviderLimitFields = {
+  rpm: z.number().int().positive().optional(),
+  rpd: z.number().int().positive().optional(),
+  tpm: z.number().int().positive().optional(),
+  tpd: z.number().int().positive().optional(),
+  /** Keys (or providers) sharing one provider quota: a Gemini project, a Cloudflare account. */
+  quota_group: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/).optional(),
+};
+
+/** One provider key declared in config. Prefer `api_key_env`; a literal `api_key` puts a secret in the file. */
+export const ProviderKeyConfigSchema = z
+  .object({
+    label: z.string().max(80).default(""),
+    api_key_env: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).optional(),
+    api_key: z.string().min(1).optional(),
+    /** Required: whether this key is free or paid decides which routing policy applies. */
+    billing_class: BillingClassSchema,
+    enabled: z.boolean().default(true),
+    /** Cloudflare: the account id that goes in the URL. */
+    account_id: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).optional(),
+    ...ProviderLimitFields,
+  })
+  .strict()
+  .superRefine((k, ctx) => {
+    if ((k.api_key_env === undefined) === (k.api_key === undefined)) ctx.addIssue({ code: "custom", message: "set exactly one of api_key_env or api_key" });
+  });
+export type ProviderKeyConfig = z.infer<typeof ProviderKeyConfigSchema>;
+
+/** `providers.<id>`: a built-in provider's keys and overrides, or a custom OpenAI-compatible provider. */
+export const ProviderEntrySchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    display_name: z.string().min(1).max(80).optional(),
+    /** Required for a custom provider; overrides a built-in's base URL (a proxy, a region). */
+    base_url: z.string().url().optional(),
+    /** Custom providers only; defaults to openai_compatible. */
+    api: z.enum(["openai_compatible", "anthropic"]).optional(),
+    /** Send no key (a local server such as Ollama, llama.cpp, vLLM, LM Studio). Needs base_url. */
+    no_key: z.boolean().default(false),
+    /** Cloudflare: account id for keys that do not set their own. */
+    account_id: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).optional(),
+    /** Extra request headers (OpenRouter's optional HTTP-Referer, X-OpenRouter-Title). */
+    headers: z.record(z.string().regex(/^[A-Za-z0-9-]+$/), z.string()).default({}),
+    /** Model list path below base_url (custom providers; default /models). */
+    models_path: z.string().min(1).optional(),
+    token_limit_param: z.enum(["max_tokens", "max_completion_tokens"]).optional(),
+    rate_limit_headers: z.enum(["openai", "openrouter", "anthropic", "none"]).optional(),
+    keys: z.array(ProviderKeyConfigSchema).default([]),
+    ...ProviderLimitFields,
+  })
+  .strict();
+export type ProviderEntryConfig = z.infer<typeof ProviderEntrySchema>;
+
+const PROVIDER_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const ProviderTimeoutSchema = z.number().int().positive().default(300);
+
+/**
+ * `providers`: section-wide settings (`request_timeout_seconds`) beside one entry per provider
+ * id. Parsed into `{ request_timeout_seconds, byId }` so the two never share a type.
+ */
+export const ProvidersSectionSchema = z.record(z.string(), z.unknown()).transform((raw, ctx) => {
+  const timeout = ProviderTimeoutSchema.safeParse(raw.request_timeout_seconds);
+  if (!timeout.success) for (const i of timeout.error.issues) ctx.addIssue({ code: "custom", message: i.message, path: ["request_timeout_seconds", ...i.path] });
+  const byId: Record<string, ProviderEntryConfig> = {};
+  for (const [id, value] of Object.entries(raw)) {
+    if (id === "request_timeout_seconds") continue;
+    if (!PROVIDER_ID.test(id)) {
+      ctx.addIssue({ code: "custom", message: `provider id must match ${PROVIDER_ID}`, path: [id] });
+      continue;
+    }
+    const parsed = ProviderEntrySchema.safeParse(value ?? {});
+    if (!parsed.success) {
+      for (const i of parsed.error.issues) ctx.addIssue({ code: "custom", message: i.message, path: [id, ...i.path] });
+      continue;
+    }
+    const e = parsed.data;
+    const builtIn = BUILTIN_PROVIDER_IDS.includes(id);
+    if (!builtIn && !e.base_url) ctx.addIssue({ code: "custom", message: `${id} is not a built-in provider (${BUILTIN_PROVIDER_IDS.join(", ")}); set base_url to add it as a custom provider`, path: [id, "base_url"] });
+    if (builtIn && e.api !== undefined) ctx.addIssue({ code: "custom", message: "api is set only for custom providers", path: [id, "api"] });
+    if (e.no_key && !e.base_url) ctx.addIssue({ code: "custom", message: "no_key needs base_url (a local or custom server)", path: [id, "no_key"] });
+    if (e.no_key && e.keys.length) ctx.addIssue({ code: "custom", message: "no_key providers take no keys", path: [id, "keys"] });
+    if (id === "cloudflare") {
+      for (const [n, k] of e.keys.entries()) if (!k.account_id && !e.account_id) ctx.addIssue({ code: "custom", message: "Cloudflare keys need account_id (on the key or the provider)", path: [id, "keys", n, "account_id"] });
+    }
+    const envs = e.keys.flatMap((k) => (k.api_key_env ? [k.api_key_env] : []));
+    const dup = envs.find((v, n) => envs.indexOf(v) !== n);
+    if (dup) ctx.addIssue({ code: "custom", message: `api_key_env ${dup} is listed twice`, path: [id, "keys"] });
+    byId[id] = e;
+  }
+  return { request_timeout_seconds: timeout.success ? timeout.data : 300, byId };
+});
+export type ProvidersConfig = z.output<typeof ProvidersSectionSchema>;
 
 /** How much a task's result matters. Raises verification, never difficulty. */
 export const IMPORTANCE_LEVELS = ["low", "normal", "high", "critical"] as const;
@@ -515,6 +610,8 @@ export const ConfigSchema = z
       })
       .strict()
       .prefault({}),
+    /** Direct providers: built-in and custom provider settings and keys declared in config. */
+    providers: ProvidersSectionSchema.prefault({}),
     /** Direct paid routes (never through FreeLLMAPI). Keys live in the encrypted vault, not here. */
     paid: z
       .object({

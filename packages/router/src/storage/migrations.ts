@@ -566,4 +566,14 @@ export const MIGRATIONS: string[] = [
   CREATE INDEX provider_slots_task ON provider_slots(task_id);
   CREATE INDEX provider_slots_holder ON provider_slots(holder);
   `,
+  `
+  -- Direct providers (P1): vault keys carry a Cloudflare-style account id, a quota group
+  -- (keys sharing one provider quota), and optional user-configured per-key limits.
+  ALTER TABLE paid_keys ADD COLUMN account_id TEXT;
+  ALTER TABLE paid_keys ADD COLUMN quota_group TEXT;
+  ALTER TABLE paid_keys ADD COLUMN rpm INTEGER;
+  ALTER TABLE paid_keys ADD COLUMN rpd INTEGER;
+  ALTER TABLE paid_keys ADD COLUMN tpm INTEGER;
+  ALTER TABLE paid_keys ADD COLUMN tpd INTEGER;
+  `,
 ];
