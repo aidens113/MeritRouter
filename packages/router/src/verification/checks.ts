@@ -38,6 +38,12 @@ export interface CheckSubject {
   universe?: EvidenceUniverse | null;
   /** Per-criterion self-assessment (selfReportFromOutput); null for runners that have none. */
   selfReport?: SelfReportEntry[] | null;
+  /**
+   * The latest independent review's per-criterion outcomes, when one ran. The criterion_evidence
+   * row then counts a criterion the review passed as verified (as decide() does); the criteria
+   * list itself stays the deterministic evidence, and decide() applies the review to it.
+   */
+  review?: Array<{ id: string; outcome: "pass" | "fail" | "inconclusive" }> | null;
 }
 
 export interface NamedCheckResult {
@@ -190,9 +196,14 @@ export function runNamedChecks(s: CheckSubject): CheckReport {
     return { ...base, outcome: r.unresolvedCriteria.includes(c.text) || !completed ? "unknown" : "claimed", evidenceRefs: [] };
   });
   {
-    const o = crit.map((c) => c.outcome);
-    const ids = (k: CriterionOutcome) => crit.filter((c) => c.outcome === k).map((c) => c.id);
-    const detail = crit.map((c) => `${c.id}: ${c.outcome}`).join("; ");
+    // The row reflects a criterion an independent review passed (never one a check decides, or
+    // one already failed): the same rule decide() applies to the criteria.
+    const reviewed = new Set((s.review ?? []).filter((v) => v.outcome === "pass").map((v) => v.id));
+    const byReview = (c: CriterionResult) => reviewed.has(c.id) && c.verify !== "check" && c.outcome !== "failed";
+    const row = crit.map((c) => ({ id: c.id, outcome: byReview(c) ? ("passed" as const) : c.outcome, review: byReview(c) }));
+    const o = row.map((c) => c.outcome);
+    const ids = (k: CriterionOutcome) => row.filter((c) => c.outcome === k).map((c) => c.id);
+    const detail = row.map((c) => `${c.id}: ${c.outcome}${c.review ? " (review)" : ""}`).join("; ");
     if (o.includes("failed")) add("criterion_evidence", "failed", `failed: ${ids("failed").join(", ")}`);
     else if (o.some((x) => x === "not_run" || x === "stale" || x === "environment_failure")) add("criterion_evidence", "inconclusive", detail);
     else if (o.every((x) => x === "passed")) add("criterion_evidence", "passed", detail);

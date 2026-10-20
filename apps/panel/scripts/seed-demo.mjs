@@ -4,6 +4,9 @@
 // running tasks through Switchyard with a scripted in-process gateway (no network, no quota).
 // Independent reviews come from the same scripted client: one unqualified reviewer that cannot
 // settle a criterion, and one qualified reviewer that fails an answer, sees it repaired, and passes it.
+// Calibration gets real signals too: a job that integrates a reviewed change and later undoes it
+// (a false approval), a reviewer fail a person overrules (a false rejection), a reused verdict,
+// and two forced background audits (one agrees, one disagrees).
 // It also runs two standalone jobs (one finished, one paused on a question for you), fills the
 // brain (in .demo/brain, never your home folder), and records a little paid spend through a fake
 // direct paid client, so the Jobs, Brain, and Paid routes pages have content. Agent sessions (and
@@ -294,6 +297,8 @@ const client = {
     if (req.tools?.some((t) => t.function.name === "replace_in_file")) return codingTurn(req, s, user);
     // Independent reviewers: one verdict per review, decided by the task's goal.
     if (req.tools?.some((t) => t.function.name === "submit_verdict")) return reviewerTurn(s, user);
+    // Background audits: a review task that returns its verdict as data.
+    if (user.includes("Audit: review the submitted work")) return auditTurn(s, user);
 
     // Read-only investigations: read a file first, then submit_result citing it.
     if (req.tools?.length) {
@@ -302,6 +307,15 @@ const client = {
         return reply(null, s, { toolCalls: [{ id: `call_${callNo}`, type: "function", function: { name: "read_file", arguments: JSON.stringify({ alias: "core", path: "src/server.ts" }) } }], out: 40 });
       }
       const criteria = (user.match(/^\s*\[\d+\]/gm) ?? []).length || 1;
+      // The rounding analysis: its repair restates the same (correct) answer with the lines checked.
+      if (/was not accepted/.test(user) && ROUNDING.test(user)) {
+        const again = {
+          summary: "Rechecked: add() does not round. Number() parses '2.5' as 2.5 and add() returns the exact floating-point sum; only the client's display rounds.",
+          findings: [{ description: "add() returns a + b with no rounding.", evidenceRefs: ["core:src/app.ts#L1-L3"] }],
+          criteria: [{ index: 0, status: "met", evidenceRefs: ["core:src/app.ts#L1-L3"] }],
+        };
+        return reply(null, s, { toolCalls: [{ id: `call_${callNo}`, type: "function", function: { name: "submit_result", arguments: JSON.stringify(again) } }] });
+      }
       // A repair run is told why the previous answer was not accepted; it submits a corrected one.
       if (/was not accepted/.test(user) && MISSING_B.test(user)) {
         const fixed = {
@@ -333,6 +347,8 @@ const client = {
 
 // The answer a reviewer fails once (it conflates a missing b with an empty one), then passes repaired.
 const MISSING_B = /missing b parameter/;
+// An answer the reviewer keeps failing although it is right: a person overrules it (a false rejection).
+const ROUNDING = /round fractional inputs/;
 
 /** A reviewer's verdict, from the evidence package: binding fields, criteria ids, and a ref it was given. */
 function reviewerTurn(s, pkg) {
@@ -350,6 +366,15 @@ function reviewerTurn(s, pkg) {
       missingEvidence: ["The refund code path: whether a refund passes a negative a or b to handle(), or subtracts with a positive amount."],
       recommendedAction: "needs_supervisor",
     };
+  } else if (ROUNDING.test(goal)) {
+    verdict = {
+      ...bind,
+      verdict: "fail",
+      criteria: ids.map((id) => ({ id, outcome: "fail", evidenceRefs: [ref], reason: "The answer ignores that the gateway may round a fractional string before handle() sees it." })),
+      blockingFindings: [{ description: "Claims no rounding happens without checking how fractional inputs reach handle().", evidenceRefs: [ref], criterionId: ids[0] }],
+      recommendedAction: "repair",
+      score: 0.4,
+    };
   } else if (MISSING_B.test(goal) && !/Corrected:/.test(pkg)) {
     verdict = {
       ...bind,
@@ -365,14 +390,33 @@ function reviewerTurn(s, pkg) {
   return reply(null, s, { toolCalls: [call("submit_verdict", verdict)], out: 260 });
 }
 
+/** An audit task's answer: a verdict on the audited work, as data. It disagrees on the "addition" inspection. */
+function auditTurn(s, pkg) {
+  const field = (k) => new RegExp(`^${k}: (.+)$`, "m").exec(pkg)?.[1].trim() ?? "";
+  const ids = [...pkg.matchAll(/^- ([\w.-]+) \[verify: /gm)].map((m) => m[1]);
+  const disagree = /had the goal: Which function does the addition/.test(pkg);
+  const verdict = {
+    verdict: disagree ? "fail" : "pass",
+    examinedRevision: field("examinedRevision"),
+    policyVersion: field("policyVersion"),
+    criteria: ids.map((id) => ({ id, outcome: disagree ? "fail" : "pass", evidenceRefs: ["inline"], ...(disagree ? { reason: "The cited lines show where add() is called, not where it is imported from." } : {}) })),
+    blockingFindings: disagree ? [{ description: "The cited lines do not support the claim about where add() is imported.", evidenceRefs: ["inline"] }] : [],
+    missingEvidence: [],
+    recommendedAction: disagree ? "needs_supervisor" : "accept",
+  };
+  const out = { summary: `Audit verdict: ${verdict.verdict}.`, findings: [{ description: `Audit verdict: ${verdict.verdict}`, evidenceRefs: ["inline"] }], criteria: [{ index: 0, status: "met", evidenceRefs: ["inline"] }], data: verdict };
+  return reply(null, s, { toolCalls: [call("submit_result", out)], out: 220 });
+}
+
 const call = (name, args) => ({ id: `call_${++callNo}`, type: "function", function: { name, arguments: JSON.stringify(args) } });
 const assistantTurns = (req) => req.messages.filter((m) => m.role === "assistant").length;
 const hasCheck = (fn) => `node -e "process.exit(require('fs').readFileSync('src/app.ts','utf8').includes('${fn}')?0:1)"`;
 const multiplyCheck = hasCheck("multiply");
+const divideCheck = hasCheck("divide");
 
 function codingTurn(req, s, user) {
-  const fn = /multiply/i.test(user) ? "multiply" : "subtract";
-  const op = fn === "multiply" ? "*" : "-";
+  const fn = /multiply/i.test(user) ? "multiply" : /divide/i.test(user) ? "divide" : "subtract";
+  const op = fn === "multiply" ? "*" : fn === "divide" ? "/" : "-";
   if (assistantTurns(req) === 0) {
     const calls = [call("replace_in_file", { path: "src/app.ts", old_text: "export function add", new_text: `export function ${fn}(a: number, b: number) {\n  return a ${op} b;\n}\n\nexport function add` })];
     // In the job, the worker also asks for brain access it does not have (left pending for you).
@@ -400,11 +444,21 @@ const JOB_A = [
 const JOB_B = [
   () => ({ text: "Before changing error handling I need a decision that belongs to the user.", calls: [call("brain_set_current_state", { body: "**Goal:** make handle() reject missing parameters.\n\n**Open decision:** status code for missing parameters (asked the user).\n\n**Plan once answered:** one implement brief for src/server.ts plus a review." }), call("ask_user", { question: "Should a missing a or b parameter return HTTP 400 with a JSON error body, or keep throwing so the framework returns 500?", options: ["Return 400 with a JSON error", "Keep throwing (500)"] })] }),
 ];
+// Job C: integrates a reviewed divide(), confirms it on the branch, then finds the defect the
+// reviewer missed and undoes the task through attribution (calibration: a false approval).
+const JOB_C = [
+  () => ({ text: "Delegating divide() as a high-importance change: the API is public, so it gets an independent review.", calls: [call("delegate", { tasks: [{ label: "divide", profile: "implement", goal: "Add divide(a, b) to src/app.ts next to add().", acceptance_criteria: ["divide is exported from src/app.ts"], allowed_paths: ["src/**"], checks: [divideCheck], difficulty: "T2", importance: "high", importance_reason: "divide() becomes part of the public calculator API." }] })] }),
+  () => ({ text: "Waiting for the implementer and its review.", calls: [call("await_tasks", { timeout_seconds: 60 })] }),
+  () => ({ text: "Reviewed and passed. Integrating it onto the job branch.", calls: [call("integrate_task", { task_id: "divide" })] }),
+  () => ({ text: "Running the check on the job branch.", calls: [call("run_check", { command: divideCheck })] }),
+  () => ({ text: "Reading the integrated code again: divide(a, 0) returns Infinity, and the API must reject a zero divisor. Undoing the task.", calls: [call("undo", { kind: "task", target: "divide", reason: "divide(a, 0) returns Infinity; the API must reject a zero divisor" })] }),
+  () => ({ text: "Done.", calls: [call("finish_job", { status: "blocked", summary: "divide() was integrated, then undone: it does not reject a zero divisor. Re-delegate with a criterion for b = 0.", verified: [], not_verified: ["divide(a, 0) behaviour"], follow_up: "re-delegate divide with a zero-divisor criterion" })] }),
+];
 let jobAId = "";
 
 function supervisorTurn(req, s) {
   const brief = textOf(req.messages[1]);
-  const script = /multiply/.test(brief) ? JOB_A : JOB_B;
+  const script = /divide/.test(brief) ? JOB_C : /multiply/.test(brief) ? JOB_A : JOB_B;
   // Job B only gets past its question when the seeder shuts the worker down: end the run there.
   if (script === JOB_B && assistantTurns(req) >= JOB_B.length) throw new GatewayError("aborted", "worker shut down while waiting for an answer (demo)", undefined, undefined, false);
   const step = script[Math.min(assistantTurns(req), script.length - 1)]();
@@ -595,6 +649,65 @@ if (sy.brain.exists(decision)) {
   await insights.brainWrite(sy, decision, `${text.trimEnd()}\n- Reviewed by a person: keep helpers free of I/O so they stay trivially testable.\n`);
 }
 
+// ---------- calibration signals ----------
+// A person confirms the repaired analysis (its passing review is then confirmed correct).
+const repairedId = repaired.completed.find((r) => r.acceptanceStatus === "met")?.taskId;
+if (repairedId) insights.decideTaskAcceptance(sy, repairedId, "accept", { kind: "human", id: "cli:demo" }, "Matches what server.ts does for a missing and an empty b.");
+
+// Job C: a reviewed change is integrated, confirmed by a job check, then undone (a false approval).
+offset = Math.round(1.7 * HOUR);
+scenario = "ok";
+const jobC = await sy.startJob({ goal: "Add divide(a, b) to the calculator and integrate it onto a job branch.", repositories: ["core"], acceptanceCriteria: ["divide is exported from src/app.ts on the job branch"], label: "add-divide" });
+const jobCOut = await sy.awaitResults([jobC.taskId], { timeoutSeconds: 180 });
+const rc = jobCOut.completed[0];
+console.log(`  ${"job: add divide (integrated, then undone)".padEnd(44)} ${rc ? `${rc.executionStatus}/${rc.acceptanceStatus}` : "did not finish"}`);
+
+// A reviewer keeps failing a right answer; a person overrules it (a false rejection).
+const rounding = await phase(1.6, "deep review overruled by a person", [
+  {
+    profile: "analyze",
+    label: "rounding",
+    goal: "Does add() round fractional inputs such as 2.5? Answer with the lines that show it.",
+    repositoryAliases: ["core"],
+    context: { fileRefs: ["core:src/app.ts", "core:src/server.ts"] },
+    importance: "high",
+    importanceReason: "Invoices sum fractional amounts; rounding would change totals.",
+    constraints: { acceptanceCriteria: [{ id: "rounding", text: "states whether add() rounds, citing the lines", verify: "evidence" }] },
+  },
+]);
+for (const r of rounding.completed) {
+  if (r.acceptanceStatus === "needs_supervisor") insights.decideTaskAcceptance(sy, r.taskId, "accept", { kind: "human", id: "cli:demo" }, "add() returns a + b unrounded; the gateway passes the string through. The reviewer is wrong here.");
+  else console.warn(`  warning: the rounding analysis ended ${r.acceptanceStatus}, not needs_supervisor`);
+}
+
+// The same deep analysis twice: the second reuses the first one's verdict (no reviewer runs).
+const cacheTask = (label) => ({
+  profile: "analyze",
+  label,
+  goal: "Which line of server.ts rejects non-numeric input, and what error does the client see?",
+  repositoryAliases: ["core"],
+  context: { fileRefs: ["core:src/server.ts"] },
+  importance: "high",
+  importanceReason: "Client error handling depends on the exact error.",
+  constraints: { acceptanceCriteria: [{ id: "line", text: "names the line and the error, citing it", verify: "evidence" }] },
+});
+await phase(1.4, "deep analysis (reviewed)", [cacheTask("non-numeric-a")]);
+const reused = await phase(1.3, "same analysis again (verdict reused)", [cacheTask("non-numeric-b")]);
+if (!reused.completed.some((r) => r.verification?.reviews?.some((x) => x.flags.includes("cached_verdict")))) console.warn("  warning: the repeated analysis did not reuse the cached verdict");
+
+// Two background audits, forced on chosen results (sampling itself is off while seeding).
+offset = Math.round(1.2 * HOUR);
+const auditOf = [
+  sy.listTasks(["completed"], 300).find((t) => /Add multiply/.test(t.goal)),
+  sy.listTasks(["completed"], 300).find((t) => /Which function does the addition/.test(t.goal)),
+].filter(Boolean);
+for (const t of auditOf) {
+  const a = await sy.auditor.consider(t.taskId, { force: true });
+  if (a.auditTaskId) await sy.awaitResults([a.auditTaskId], { timeoutSeconds: 60 });
+  sy.auditor.gradeFinished();
+  console.log(`  ${`audit: ${t.goal.slice(0, 36)}`.padEnd(44)} ${a.decision}${a.decision === "sampled" ? "" : ` (${a.reason})`}`);
+}
+
 // A second job that pauses on a question for you. The worker is shut down while the supervisor
 // waits, so the job is left interrupted with the question unanswered.
 offset = 0;
@@ -704,6 +817,13 @@ if (!idle.sessions.forTask(interrupted.taskId).length) {
 }
 offset = 0;
 await idle.close();
+
+// The demo config samples 20% of passed results for audit (seeding forced its two audits instead).
+raw.verification = { ...(raw.verification ?? {}), audit_sample_rate: 0.2 };
+writeFileSync(
+  configPath,
+  `# SwitchYard demo configuration (generated by apps/panel/scripts/seed-demo.mjs).\n# The gateway URL is a placeholder: the demo data was produced by a scripted in-process gateway.\n${YAML.stringify(raw)}`,
+);
 
 console.log(
   `\nDemo ready. Start the panel against it with:\n  SWITCHYARD_CONFIG="${configPath}" pnpm --filter switchyard-panel dev\n(a relative SWITCHYARD_CONFIG resolves against apps/panel, e.g. SWITCHYARD_CONFIG=.demo/switchyard.config.yaml)`,

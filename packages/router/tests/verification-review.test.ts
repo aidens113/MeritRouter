@@ -390,7 +390,8 @@ describe("budget", () => {
     expect(sy.gate.admission.taskTotals(roomy!.taskId).requests).toBeLessThanOrEqual(b1.total + b1.unallocated);
 
     // An explicit budget of 16 leaves no room: the level stays deep and the review is skipped.
-    const [tight] = await sy.submitTasks([task({ label: "tight", budget: { maxModelRequests: 16 } })]);
+    // (Another goal: the same contract and revision would reuse the first task's cached verdict.)
+    const [tight] = await sy.submitTasks([task({ label: "tight", goal: "Add login to src/auth/login.ts", budget: { maxModelRequests: 16 } })]);
     const r2 = await result(tight!.taskId);
     expect(sy.contract(tight!.taskId)!.contract.budget).toMatchObject({ total: 16, unallocated: 0 });
     expect(r2.verification).toMatchObject({ level: "deep", raisedFrom: "standard" });

@@ -5,6 +5,7 @@ import { IMPORTANCE_LEVELS, PROFILE_NAMES } from "../config/schema.js";
 import { resolveLevel } from "../verification/policy.js";
 import { git } from "../workspaces/git.js";
 import { blame, commitsMatching, revertCommits, undoLines, type Actor } from "../attribution/index.js";
+import { calibrationUndoHook, recordIntegration, recordJobCheck } from "../verification/calibration.js";
 import { formatBrief } from "../brain/protocol.js";
 import type { ToolSideEffect } from "../sessions/events.js";
 import { minimalEnv, runProcess } from "../runners/coding/process.js";
@@ -322,7 +323,10 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
             throw new Error(`refused: ${(err as Error).message}; the integration of ${id} was rolled back`);
           }
         }
-        return `integrated ${commits.length} commit(s) from ${id} onto ${repo.branch}; head is now ${(await git(repo.worktree, ["rev-parse", "--short", "HEAD"])).trim()}${needsAcceptance ? "; your acceptance is recorded" : ""}`;
+        const head = (await git(repo.worktree, ["rev-parse", "HEAD"])).trim();
+        // Calibration: integration is a confirmation signal for the result's verification.
+        recordIntegration(s.db, s.ctx.tasks ?? null, { taskId: id, jobId, repo: repo.alias, commits: commits.length, head, now: Date.now() });
+        return `integrated ${commits.length} commit(s) from ${id} onto ${repo.branch}; head is now ${head.slice(0, 7)}${needsAcceptance ? "; your acceptance is recorded" : ""}`;
       },
     ),
 
@@ -333,6 +337,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
       if (!allowed) throw new Error("command not allowed: use a check from one of your briefs or add it to supervisor.allowed_commands");
       const r = await runProcess(command, [], { cwd: repo.worktree, env: minimalEnv({ CI: "1" }), timeoutMs: s.ctx.cfg.execution.check_timeout_seconds * 1000, signal: s.ctx.signal, shell: true });
       const log = s.ctx.artifacts.write({ taskId: jobId, kind: "check_log", label: command, content: `$ ${command}\nexit ${r.exitCode}\n${r.stdout}\n${r.stderr}`, extension: ".log" });
+      recordJobCheck(s.db, { jobId, repo: repo.alias, command, exitCode: r.killed ? null : r.exitCode, now: Date.now() });
       return cap(`$ ${command}\nexit ${r.exitCode}${r.killed ? ` (killed: ${r.killed})` : ""} (log ${log})\n${r.stdout.slice(-6000)}\n${r.stderr.slice(-3000)}`);
     }),
 
@@ -363,7 +368,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
         const reason = str(a.reason, "reason");
         if (a.kind === "lines") {
           const ranges = ((a.ranges as number[][] | undefined) ?? []).map((r) => [r[0]!, r[1] ?? r[0]!] as [number, number]);
-          const r = await undoLines(repo.worktree, str(a.path, "path"), ranges, s.actor, reason, { sinceCommit: repo.baseSha });
+          const r = await undoLines(repo.worktree, str(a.path, "path"), ranges, s.actor, reason, { sinceCommit: repo.baseSha, onUndone: calibrationUndoHook(s.db, s.ctx.tasks ?? null, { jobId, now: Date.now }) });
           return `undid lines ${r.undone.join(", ") || "none"}${r.skipped.length ? `; skipped ${r.skipped.map((x) => `${x.line} (${x.why})`).join(", ")}` : ""}${r.commit ? ` in ${r.commit.slice(0, 10)}` : ""}`;
         }
         const target = str(a.target, "target");
@@ -381,7 +386,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
           commits = (await commitsMatching(repo.worktree, `${repo.baseSha}..HEAD`, { [key]: value })).map((c) => c.commit);
         }
         if (!commits.length) return "no matching commits on the job branch";
-        const c = await revertCommits(repo.worktree, commits, s.actor, reason);
+        const c = await revertCommits(repo.worktree, commits, s.actor, reason, { onUndone: calibrationUndoHook(s.db, s.ctx.tasks ?? null, { jobId, now: Date.now }) });
         return `reverted ${commits.length} commit(s) in ${c?.slice(0, 10) ?? "(nothing to commit)"}`;
       },
     ),

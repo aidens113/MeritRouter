@@ -86,6 +86,35 @@ export {
   type VerdictExpectations,
 } from "./verification/review.js";
 export { repairRetryContext, runTargetedChecks, submittedRevisionStart, targetedCheckAllowed } from "./verification/followup.js";
+export {
+  SIGNAL_KINDS,
+  VERDICT_PURPOSES,
+  calibratedReview,
+  calibrationUndoHook,
+  cachedVerdict,
+  judgedContractDigest,
+  recordIntegration,
+  recordJobCheck,
+  recordSignal,
+  recordVerdict,
+  resultRevision,
+  reviewCacheKey,
+  sameRevision,
+  taskConfirmation,
+  verdictCacheKey,
+  verdictOutcome,
+  verdictRecords,
+  type CacheQuery,
+  type ConfirmationStatus,
+  type SignalKind,
+  type StoredVerdict,
+  type TaskConfirmation,
+  type VerdictCacheKeyParts,
+  type VerdictInput,
+  type VerdictOutcome,
+  type VerdictPurpose,
+} from "./verification/calibration.js";
+export { Auditor, auditCapacityShortfall, auditSampled, type AuditDecision, type AuditHost, type AuditStart } from "./verification/audit.js";
 export { REQUEST_PURPOSES, budgetInputFor, purposeCategory, verificationTotal, type RequestPurpose } from "./admission/admission.js";
 export { REVIEW_FAMILY, reviewerQualification } from "./qualification/stats.js";
 export { gradeReview, reviewEvalPackage } from "./qualification/runner.js";
