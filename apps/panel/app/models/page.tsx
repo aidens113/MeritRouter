@@ -1,7 +1,7 @@
 import { Radar } from "lucide-react";
 import { insights, MODALITIES } from "switchyard-router";
 import { getSy } from "@/lib/sy";
-import { toRow } from "@/lib/models";
+import { keyedProviders, toRow } from "@/lib/models";
 import { SetupScreen } from "@/components/setup";
 import { Card, Mono, PageHeader } from "@/components/ui";
 import { ActionButton } from "@/components/client/actions";
@@ -10,12 +10,15 @@ import { ModelsTable } from "@/components/client/models-table";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Models" };
 
-export default function ModelsPage() {
+export default async function ModelsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const r = getSy();
   if (!r.sy) return <SetupScreen error={r.error} configPath={r.configPath} />;
   const sy = r.sy;
   const views = insights.modelsView(sy);
-  const rows = views.map((v) => toRow(sy, v));
+  const keyed = keyedProviders(sy);
+  const rows = views.map((v) => toRow(sy, v, keyed));
+  const sp = await searchParams;
+  const platform = typeof sp.platform === "string" ? sp.platform : "";
   return (
     <div>
       <PageHeader
@@ -32,7 +35,7 @@ export default function ModelsPage() {
         }
       />
       <Card className="p-4">
-        <ModelsTable rows={rows} profiles={Object.keys(sy.cfg.profiles)} modalities={[...MODALITIES]} />
+        <ModelsTable rows={rows} profiles={Object.keys(sy.cfg.profiles)} modalities={[...MODALITIES]} initialPlatform={platform} />
       </Card>
     </div>
   );

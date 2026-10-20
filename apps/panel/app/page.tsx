@@ -113,7 +113,7 @@ export default async function OverviewPage() {
         </Card>
       ) : (
         <Callout tone="good" icon={<CheckCircle2 size={16} />} title="Nothing needs your attention">
-          The gateway is configured, models are confirmed, and no policy violations were recorded in the last 24 hours.
+          Provider keys are set up, models are confirmed, and no policy violations were recorded in the last 24 hours.
         </Callout>
       )}
 
@@ -207,7 +207,7 @@ export default async function OverviewPage() {
         </Card>
 
         <Card>
-          <CardHeader title="Provider health" description="As reported by FreeLLMAPI (GET /v1/providers)." />
+          <CardHeader title="Provider health" description={<>From SwitchYard&apos;s own key state: cooldowns, invalid keys, and limits. <Link href="/keys" className="text-accent-ink hover:underline">Provider keys</Link></>} />
           <div className="p-4">
             {ov.providers.length ? (
               <ul className="space-y-2 text-sm">
@@ -234,7 +234,7 @@ export default async function OverviewPage() {
               </ul>
             ) : (
               <EmptyState icon={<Server size={20} />} title="No provider health reported">
-                {ov.gatewayConfigured ? "No provider has reported health yet." : "Add a provider key (under providers in the config) so models can be reached."}
+                {ov.usableKeys ? "No provider has reported health yet." : <>Add a provider key on the <Link href="/keys" className="text-accent-ink hover:underline">Provider keys</Link> page so models can be reached.</>}
               </EmptyState>
             )}
           </div>
