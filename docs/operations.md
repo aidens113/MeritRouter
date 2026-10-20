@@ -6,10 +6,10 @@
 | --- | --- | --- |
 | Model requests per task (`maxModelRequests`), including fallbacks, classification, repairs, and every coding-agent call | Hard | Atomic reservation before dispatch (`admission.ts`) |
 | Package allocation per hour/day | Hard | Same reservation |
-| Only verified-free, eligible models; one model per request; served model must match | Hard | Route plan, chain verification, gate |
+| Only verified-free, eligible models (unless paid policy allows); one model per request; served model must match | Hard | Route plan, gate |
 | Size floors, modalities, tool support, metadata age | Hard | Route plan |
 | Paid spend | Hard | Worst-case cost reserved per request against global, per-key, prepaid-balance, and per-task budgets before dispatch; settled to billed cost |
-| Paid policy | Hard | Paid models only where `paid.tiers` / `supervisor.paid_policy` allow; direct routes only, never via FreeLLMAPI |
+| Paid policy | Hard | Paid models (priced models, or any model through a paid key) only where `paid.tiers` / `supervisor.paid_policy` allow |
 | Worker file edits | Hard (native runner) | Edit tools refuse paths outside `allowedPaths` |
 | Brain access | Hard | Every brain read and write checked against role grants; workers write only their report |
 | Ledger integrity | Hard | Ledger entries are append-only and need a real validation record |
@@ -17,8 +17,9 @@
 | One writer per repository | Hard | Claim transaction |
 | Input/output token budgets | Estimated | ~3 chars/token at admission; reconciled when the provider reports usage |
 | Per-item tokens inside a prompt batch | Estimated | Proportional share, labelled `estimated` |
-| Provider attempts inside one model (key rotation, retries) | External, reported | FreeLLMAPI; `providerAttemptsExact` is always false |
-| Provider quotas and cooldowns | External | FreeLLMAPI is authoritative; SwitchYard reads `/v1/providers` |
+| Provider calls, including a retry on the provider's next key | Hard | Each call is admitted and recorded before it is sent; attempts are exact |
+| Configured key limits (`rpm`, `rpd`, `tpm`, `tpd`) and known per-model rate limits | Hard | Sliding windows in the store, reserved with the key (`providers/limits.ts`) |
+| Provider rate limits and quotas | External, tracked | The provider decides; SwitchYard keeps per-key state from 429s, `retry-after`, rate-limit headers, and OpenRouter's free daily quota |
 
 Allowed commands (`coding.allowed_commands`, `supervisor.allowed_commands`) refuse shell
 operators, so a pattern cannot be extended with `&& ...`, but an allowed command such as
@@ -29,6 +30,66 @@ A worktree is not a sandbox. Containment for coding agents is: a provider allowl
 reaches the job gateway, stripped credentials, denied shell by default, and diff validation
 against `allowedPaths` afterwards. Out-of-scope edits are reported and make acceptance `unmet`;
 they are not reverted in the worktree.
+
+## Provider keys
+
+SwitchYard calls every provider directly with your keys: keys in the encrypted vault (added in
+the panel or with `switchyard keys add`) and keys declared under `providers` in the config.
+`switchyard keys list` shows every key with its source, billing class, status, and last four
+characters; `switchyard doctor` adds one line per provider.
+
+- **Rotation between keys.** Each request takes the provider's next available key, least
+  recently chosen first. A key is skipped while it is cooling down, disabled, at a rate limit its
+  last response headers reported, out of OpenRouter free daily quota (for `:free` models), or at
+  a configured limit. A key-level failure (429, invalid key, out of credits) moves the same
+  request to the provider's next key before the gate moves to the next model; every one of
+  those calls is admitted and counted against the task's request budget.
+- **Cooldowns.** A 429 cools the key for every model of that provider, for the wait the provider
+  named (`retry-after` or a rate-limit reset header), else 30 s doubling with consecutive 429s
+  up to 15 minutes. A provider whose every key is cooling reports `rate_limited` with the
+  earliest return time; routing ranks it last (`routing.respect_provider_cooldowns`), and a
+  request whose provider has no available key moves on to the next ranked model.
+- **Invalid keys.** A 401 or 403 marks the key invalid until you fix it. It stays visible as
+  INVALID in `keys list`, `doctor`, and the panel. Fix it by replacing the secret (a different
+  secret under the same env var or vault entry counts as a new key), by `switchyard keys enable
+  <id>`, or by a `switchyard keys test` whose listing now works; each clears the mark.
+- **Out of credits.** A 402 or a spend-cap refusal disables only that key. After 6 hours one
+  request may check it again; `keys enable <id>` clears it at once.
+- **Limits.** Optional `rpm`, `rpd`, `tpm`, `tpd` on a provider (`providers.<id>.rpm`), on a key
+  (config or `keys add --rpm ...`), and per quota group (`quota_group`, `--quota-group`: keys
+  sharing one provider quota, such as a Google project or a Cloudflare account; the tightest
+  limit any member declares applies to their combined use). They are sliding windows kept in the
+  store, so every process shares them and they survive restarts. A model's stored `rateLimits`
+  are enforced the same way when known. Provider-side limits are learned from responses; they
+  are never hard-coded.
+- **Health.** Per provider, from key state: `healthy` (a key can serve now), `rate_limited`
+  (keys will return; `resumeAt` when known), `invalid` (every key needs you), `unknown` (no
+  usable key: none added, disabled, or an unset env var). The circuit breakers and adaptive
+  slots in [Teams](#teams-plans-leases-and-capacity) and [Recovery](#recovery) work on top of it.
+- **Discovery.** `switchyard models scan`, the panel's Scan button, and a running worker every
+  `discovery.interval_minutes` (60) list the models of each provider with a usable key, using
+  the first key whose listing works. Each model is enriched with recorded provenance: the
+  provider's metadata, OpenRouter's public catalog, Hugging Face parameter counts, an opt-in tool
+  probe (`discovery.probe_tools`, at most `discovery.max_probe_requests_per_day`), and your
+  overrides. A model whose context limit, output limit, or tool support stays unknown is not used
+  for work that needs it. A provider whose listing failed keeps its stored models; models a
+  successful listing no longer includes become unavailable. The same run refreshes OpenRouter's
+  free daily quota for each key and fetches paid prices. `switchyard keys test` lists what one
+  key can use without changing the catalog.
+- **Replacing a key.** Add the new key, `switchyard keys test vault:<new id>`, then
+  `switchyard keys remove <old id>` (a removed key with recorded spend keeps its row, without the
+  secret). For a config key, change the environment variable and restart the worker and panel,
+  which read the environment when they start.
+- **Secrets.** Vault secrets are AES-256-GCM encrypted with the master key from
+  `SWITCHYARD_MASTER_KEY` or `<storage>/.master-key`. Without that key the vault cannot be read:
+  back it up (`switchyard backup --include-master-key` copies it; keep that backup private) or add
+  the keys again. A literal `api_key` in the config file works, but `doctor` warns that the file
+  holds a secret; prefer `api_key_env` or the vault.
+- **Upgrading from a FreeLLMAPI setup** (history: SwitchYard used FreeLLMAPI as its gateway before
+  2026-10-20). A config that still has a `gateway` section fails to load and says what to do:
+  delete it, move `request_timeout_seconds` under `providers`, add your keys, and run
+  `switchyard models scan`. Stored FreeLLMAPI-discovered models are deleted by the upgrade and come
+  back from that scan.
 
 ## Reading results
 
@@ -146,7 +207,7 @@ subsequently-confirmed per level and per reviewer, with review cost per accepted
   grows by one after `team.provider_concurrency_increase_after` (5) consecutive successes, and
   halves on a 429, a reported cooldown, or an open circuit breaker, between 1 and
   `team.provider_concurrency_max` (8) or a per-platform `team.provider_concurrency_limits`
-  ceiling (FreeLLMAPI v0.2.1 reports none). A worker whose providers are all full waits queued
+  ceiling. A worker whose providers are all full waits queued
   (`waiting_for_provider_slot`); supervisors are never held back and supervisor and reviewer
   requests take the next free slot first, so a job whose workers fill every slot still
   completes. Slots of a dead process expire with its task lease.
@@ -196,8 +257,9 @@ subsequently-confirmed per level and per reviewer, with review cost per accepted
   consecutive failures it opens for 30 s, doubling to 15 minutes, then lets one probe through.
   Routing ranks open providers last and the gate skips them; when every candidate is open the
   task waits for capacity instead of failing. `insights.providerHealth` shows the state.
-- A model that served a request it should not have is quarantined until its chain is re-verified:
-  run `switchyard models scan`.
+- A model whose provider reports serving a different model than the one requested is quarantined
+  (the response is discarded). Nothing lifts the quarantine yet; see Known limitations.
+- Provider keys: see [Provider keys](#provider-keys) for cooling, invalid, and out-of-credits keys.
 - Tasks waiting for capacity (`waiting_for_capacity`) retry automatically until their deadline.
 
 ## Agent sessions
@@ -248,9 +310,14 @@ item. A delegated task's session names the supervisor session that delegated it 
 
 ## Known limitations
 
-- Live behaviour against a real FreeLLMAPI instance, real providers, and OpenCode has not been
-  exercised yet (no gateway or credentials were available during development). Every policy path
-  is covered by tests with an in-process gateway double and a scripted coding agent.
+- Live behaviour against real providers and OpenCode has not been exercised yet (no credentials
+  were available during development). Every policy path is covered by tests with fake providers
+  behind an injectable HTTP fetch and a scripted coding agent. Still to confirm live: rate-limit
+  header formats (OpenRouter reset, SambaNova `-day`, Anthropic periods), OpenAI
+  `insufficient_quota` as out of credits, Cloudflare and Cohere list pagination, Anthropic model
+  `capabilities`, and the shape of OpenRouter's `/api/v1/key`.
+- A served-model quarantine never lifts yet: a release rule (a later discovery, or a panel
+  action) is still to come.
 - OpenCode's JSON event format is undocumented; its output is stored as evidence, not parsed.
 - Paid routes have not been exercised against real providers yet; prices are yours to keep
   current (OpenRouter prices are fetched when `pricing_url` is set).

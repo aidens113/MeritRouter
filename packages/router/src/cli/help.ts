@@ -1,6 +1,6 @@
 // The CLI's help text (`switchyard --help`).
 
-export const HELP = `switchyard - delegate bounded tasks to approved free model pools
+export const HELP = `switchyard - delegate bounded tasks to the models your provider keys can use
 
 Usage: switchyard <command> [options]   (global: --config <file>, --json)
 
@@ -8,9 +8,11 @@ Setup
   init [dir] [--preset <name>]  write switchyard.config.yaml and models.yaml
                                 presets: claude-code (default), standalone-free,
                                 standalone-hybrid, standalone-paid
-  doctor                        check config, provider keys, models, and repositories
+  doctor                        check config, each provider (keys, cooldowns, invalid keys,
+                                last model listing), secrets in the config, models, repositories
   models [--all]                list models with status and eligibility
-  models scan                   list the models of every provider with a usable key
+  models scan                   list the models of every provider with a usable key, refresh
+                                free daily quotas and paid prices (exit 1 if nothing was listed)
   models show <id>              full analysis of one model
   models confirm <id> [--params <B>] [--active <B>]   accept or set parameter counts
   models enable|disable <id>    force a model on or off
@@ -39,12 +41,19 @@ Agent sessions (every model call and tool call, in order)
                                 statuses: running, completed, failed, interrupted, cancelled
   session <id> [--after seq] [--limit n]   timeline (--json prints the raw page)
 
-Paid keys (direct routes; secrets are encrypted at rest)
-  keys [list]                   keys with billing class, spend, balance, cap
-  keys add <provider> [--label x] [--billing paid_credits|paid_postpaid|trial|free_tier] [--balance usd] [--cap usd]
-                                reads the secret from SWITCHYARD_NEW_KEY
-  keys enable|disable|remove <id>
-  keys spend                    spend against budgets
+Provider keys (stored encrypted in the vault; keys under providers in the config are listed too)
+  keys [list] [provider]        every key with its source, billing class, status (ok, cooling
+                                down until, INVALID, out of credits), and last four characters
+  keys add <provider> --billing free_tier|paid_credits|paid_postpaid|trial [--label x]
+           [--rpm n] [--rpd n] [--tpm n] [--tpd n] [--quota-group g] [--account-id id]
+           [--balance usd] [--cap usd] [--test]
+                                the secret comes from SWITCHYARD_NEW_KEY or a hidden prompt,
+                                never the command line; --test lists its models first and
+                                stores the key only if that works
+  keys test [provider|id|ref]   list the models each key can use (a rejected key is marked
+                                invalid; nothing is added to the catalog: run models scan)
+  keys enable|disable|remove <id>   vault keys (config keys are changed in the config file)
+  keys spend                    paid spend against budgets
 
 Standalone jobs (a SwitchYard supervisor plans, delegates, verifies, integrates)
   run "<goal>" --repo <alias> [--check "<cmd>"] [--criteria "<text>"] [--wait]

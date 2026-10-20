@@ -14,6 +14,8 @@ import { comparison, comparisons, planComparison, runComparison } from "./qualif
 import { blame } from "./attribution/index.js";
 import { SwitchyardError } from "./core/errors.js";
 import { countFlag, statusFlag, withImportance } from "./cli/args.js";
+import { doctorChecks, doctorText } from "./cli/doctor.js";
+import { keysCommand } from "./cli/keys.js";
 import { HELP } from "./cli/help.js";
 import { channelText, jobTeamLines } from "./cli/job-team-text.js";
 import { comparisonPlanText, comparisonsTable, comparisonText, metricsText } from "./cli/metrics-text.js";
@@ -21,6 +23,7 @@ import { operationsCommand } from "./cli/operations.js";
 import { planText } from "./cli/plan-text.js";
 import { sessionRows, sessionTimeline } from "./cli/session-text.js";
 import { out, table } from "./cli/terminal.js";
+import type { ScanSummary } from "./models/scanner.js";
 
 // The `switchyard` command: argument parsing and dispatch. Terminal rendering lives in src/cli/.
 
@@ -36,6 +39,15 @@ function cliActor(): string {
 }
 
 const CLI_PATH = fileURLToPath(import.meta.url);
+
+/** `models scan` as terminal text. */
+function scanText(s: ScanSummary): string {
+  return [
+    s.providers.length ? `listed ${s.providers.length} provider(s): ${s.providers.join(", ")}; ${s.scanned} model(s), ${s.added.length} new, ${s.unavailable.length} now unavailable` : "no provider was listed",
+    ...(s.pendingConfirmation.length ? [`${s.pendingConfirmation.length} model(s) wait for parameter confirmation: switchyard models confirm <id>`] : []),
+    ...s.errors.map((e) => `error: ${e}`),
+  ].join("\n");
+}
 
 async function main(): Promise<number> {
   const { values, positionals } = parseArgs({
@@ -59,6 +71,13 @@ async function main(): Promise<number> {
       billing: { type: "string" },
       balance: { type: "string" },
       cap: { type: "string" },
+      rpm: { type: "string" },
+      rpd: { type: "string" },
+      tpm: { type: "string" },
+      tpd: { type: "string" },
+      "quota-group": { type: "string" },
+      "account-id": { type: "string" },
+      test: { type: "boolean", default: false },
       status: { type: "string" },
       task: { type: "string" },
       job: { type: "string" },
@@ -118,21 +137,18 @@ async function main(): Promise<number> {
   try {
     switch (cmd) {
       case "doctor": {
-        const checks: Array<{ check: string; ok: boolean; detail: string }> = [];
-        checks.push({ check: "config", ok: true, detail: cfg.configPath });
-        const usableKeys = sy.providers.credentials().list().filter((c) => c.unusableReason === null);
-        checks.push({ check: "provider keys", ok: usableKeys.length > 0, detail: usableKeys.length ? `${usableKeys.length} usable key(s): ${[...new Set(usableKeys.map((c) => c.provider))].join(", ")}` : "none: add keys under providers in the config" });
-        const eps = sy.catalog.endpoints();
-        checks.push({ check: "models", ok: eps.some((e) => e.status === "active"), detail: `${eps.filter((e) => e.status === "active").length} active of ${eps.length}` });
-        for (const [alias, repo] of Object.entries(cfg.repositoryPaths)) checks.push({ check: `repo ${alias}`, ok: existsSync(path.join(repo.path, ".git")), detail: repo.path });
-        out(json ? checks : table(checks.map((c) => ({ "": c.ok ? "ok" : "FAIL", check: c.check, detail: c.detail }))), json);
+        // Reads stored state only: per-provider keys, health, and last listing; never calls a provider.
+        const checks = doctorChecks(sy);
+        out(json ? checks : doctorText(checks), json);
         return checks.every((c) => c.ok) ? 0 : 1;
       }
       case "models": {
         const sub = args[0];
         if (sub === "scan") {
-          out(await sy.scan(), true);
-          return 0;
+          const summary = await sy.scan();
+          out(json ? summary : scanText(summary), json);
+          // Exit 1 only when nothing could be listed and something went wrong.
+          return summary.providers.length === 0 && summary.errors.length > 0 ? 1 : 0;
         }
         if (sub === "show") {
           const m = modelsView(sy).find((x) => x.endpoint.id === args[1]);
@@ -259,45 +275,8 @@ ${table(rows)}`, json);
         out(json ? run : `started ${run.runId}: ${run.tasks} task(s) for ${run.endpointId}; a running worker executes and grades them (check with \`switchyard qualify status\`)`, json);
         return 0;
       }
-      case "keys": {
-        // Provider keys in the vault (the `keys` commands are reworked in P3).
-        const sub = args[0] ?? "list";
-        if (sub === "list") {
-          const rows = sy.spend.summary().keys.map((k) => ({ id: k.id, provider: k.provider, label: k.label, billing: k.billingClass, enabled: k.enabled ? "yes" : "no", key: `...${k.last4}`, "spent 30d": `$${k.spent30d.toFixed(4)}`, balance: k.remainingBalanceUsd === null ? "" : `$${k.remainingBalanceUsd.toFixed(2)}`, cap: k.remainingCapUsd === null ? "" : `$${k.remainingCapUsd.toFixed(2)}` }));
-          out(json ? rows : table(rows), json);
-          return 0;
-        }
-        if (sub === "add") {
-          const provider = args[1];
-          const secret = process.env.SWITCHYARD_NEW_KEY;
-          if (!provider || !secret) throw new SwitchyardError("usage", "usage: SWITCHYARD_NEW_KEY=<secret> switchyard keys add <provider> [--label x] [--billing paid_credits] [--balance 10] [--cap 20]  (the secret is read from the environment so it never appears in shell history)");
-          const k = sy.vault.add({
-            provider,
-            secret,
-            label: values.label ?? "",
-            ...(values.billing ? { billingClass: values.billing as "paid_credits" } : {}),
-            ...(values.balance ? { prepaidBalanceUsd: Number(values.balance) } : {}),
-            ...(values.cap ? { monthlyCapUsd: Number(values.cap) } : {}),
-          });
-          out(`added key ${k.id} for ${provider} (...${k.last4})`, json);
-          return 0;
-        }
-        if (sub === "disable" || sub === "enable") {
-          sy.vault.update(Number(args[1]), { enabled: sub === "enable" });
-          out(`key ${args[1]} ${sub}d`, json);
-          return 0;
-        }
-        if (sub === "remove") {
-          sy.vault.remove(Number(args[1]));
-          out(`key ${args[1]} removed`, json);
-          return 0;
-        }
-        if (sub === "spend") {
-          out(sy.spend.summary(), true);
-          return 0;
-        }
-        throw new SwitchyardError("usage", "usage: keys list|add|enable|disable|remove|spend");
-      }
+      case "keys":
+        return await keysCommand(sy, args, values, json);
       case "run": {
         const goal = args.join(" ").trim();
         if (!goal || !values.repo?.length) throw new SwitchyardError("usage", 'usage: switchyard run "<goal>" --repo <alias> [--repo ...] [--check "<command>"] [--criteria "<text>"] [--wait]');
