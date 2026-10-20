@@ -14,6 +14,7 @@ import { WorkspacePointer } from "../session-workspace.js";
 import { criterionTexts } from "../../core/task.js";
 import { renderRetryContext } from "../prompts.js";
 import { git } from "../../workspaces/git.js";
+import { loadSources, renderSources } from "../../context/sources.js";
 import type { ResumePlan } from "../../sessions/resume.js";
 
 /** What a relaunched external agent is told about its interrupted run: the resume notice and its last messages. */
@@ -25,7 +26,20 @@ function resumeBrief(plan: ResumePlan, recovered: string): string {
   return `\n## Resumed after an interruption\n\n${plan.summary}\n\nYour work so far is in this worktree (see \`git log\`). ${recovered}\n${said.length ? `\nYour last messages before the interruption:\n\n${said.join("\n\n")}\n` : ""}`;
 }
 
-function brief(ctx: RunContext, readOnlyAliases: string[]): string {
+/**
+ * The "Upstream results" block of a dependent task (T1), as the native runner shows it: what the
+ * tasks it depends on produced, labelled as data from other agents. Empty when the task has none.
+ * Only the task's artifact references are loaded; the external agent reads files itself.
+ */
+async function upstreamBrief(ctx: RunContext): Promise<string> {
+  const refs = ctx.spec.context.artifactRefs ?? [];
+  if (!refs.length) return "";
+  const sources = await loadSources(ctx.cfg, { ...ctx.spec, context: { artifactRefs: refs } }, ctx.artifacts, new Map());
+  const upstream = sources.filter((s) => s.upstream);
+  return upstream.length ? `\n## Upstream results\n\n${renderSources(upstream)}\n` : "";
+}
+
+function brief(ctx: RunContext, readOnlyAliases: string[], upstream: string): string {
   const s = ctx.spec;
   return `# Task
 
@@ -41,7 +55,7 @@ ${criterionTexts(s).map((c, i) => `${i + 1}. ${c}`).join("\n")}
 ${s.constraints.checks?.length ? `- These checks will be run after you finish (you may not be able to run them yourself):\n${s.constraints.checks.map((c) => `  - \`${c}\``).join("\n")}` : ""}
 ${readOnlyAliases.length ? `- Other repositories (${readOnlyAliases.join(", ")}) are context only and are not available in this workspace.` : ""}
 - Finish with a short summary of what you changed and anything unresolved.
-${ctx.retry ? `\n## Previous attempt\n${renderRetryContext(ctx.retry)}` : ""}`;
+${upstream}${ctx.retry ? `\n## Previous attempt\n${renderRetryContext(ctx.retry)}` : ""}`;
 }
 
 /** OpenCode config pinned to the job's policy gateway; passed inline so it outranks project files. */
@@ -148,7 +162,7 @@ export class ExternalCodingRunner implements CodingRunner {
 
     const home = agentHome(ctx, ws);
     const promptFile = path.join(home, "TASK.md");
-    writeFileSync(promptFile, brief(ctx, spec.repositoryAliases.filter((a) => a !== alias)) + resumed);
+    writeFileSync(promptFile, brief(ctx, spec.repositoryAliases.filter((a) => a !== alias), await upstreamBrief(ctx)) + resumed);
     const deadline = ctx.tasks.get(ctx.taskId)!.row.deadline_at ?? ctx.now() + ctx.cfg.execution.job_timeout_seconds * 1000;
     const timeoutMs = Math.max(10_000, deadline - ctx.now() - ctx.cfg.execution.check_timeout_seconds * 1000 * Math.min(1, spec.constraints.checks?.length ?? 0));
     const env = minimalEnv({

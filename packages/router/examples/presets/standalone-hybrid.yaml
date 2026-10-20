@@ -34,7 +34,11 @@ supervisor:
     - paid:anthropic/REPLACE-with-a-model-id
   paid_policy: preferred
   max_concurrent_jobs: 1
-  max_workers_per_job: 3
+
+# Agent teams: how one job's task graph (plan_work) runs. execution.max_concurrent_tasks still
+# bounds everything; team.max_agents replaces supervisor.max_workers_per_job (still read as an alias).
+team:
+  max_agents: 8 # most tasks of one job running at once
 
 # Per-role rules: override a charter or add rules. Roles: supervisor, summarizer, inspector,
 # analyst, implementer, reviewer, classifier.

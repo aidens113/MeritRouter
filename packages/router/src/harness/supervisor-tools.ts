@@ -261,7 +261,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
         const items = Array.isArray(a.nodes) ? (a.nodes as Array<Record<string, unknown>>) : [];
         if (!items.length) throw new Error("nodes is empty");
         if (items.length > MAX_PLAN_NODES) throw new Error(`a plan holds at most ${MAX_PLAN_NODES} nodes`);
-        const store = new PlanStore(s.db);
+        const store = new PlanStore(s.db, s.ctx.now);
         const previous = store.latest(jobId);
         const nodes: PlanNodeInput[] = items.map((it) => {
           const label = slug(str(it.label, "label"));

@@ -4,7 +4,8 @@
 // running tasks through Switchyard with a scripted in-process gateway (no network, no quota).
 // Independent reviews come from the same scripted client: one unqualified reviewer that cannot
 // settle a criterion, and one qualified reviewer that fails an answer, sees it repaired, and passes it.
-// It also runs two standalone jobs (one finished, one paused on a question for you), fills the
+// It also runs three standalone jobs (one finished, one planned as a diamond task graph with
+// plan_work where two coding nodes contend for a file lease, one paused on a question), fills the
 // brain (in .demo/brain, never your home folder), and records a little paid spend through a fake
 // direct paid client, so the Jobs, Brain, and Paid routes pages have content. Agent sessions (and
 // their event logs) come from those runs themselves; only the interrupted task's session, which
@@ -194,7 +195,8 @@ const raw = {
   coding: { runner: "native" },
   // The brain lives inside the demo folder so seeding never touches ~/.switchyard/brain.
   brain: { path: "brain", project: "demo", access_approver: "supervisor" },
-  supervisor: { max_workers_per_job: 2, question_timeout_seconds: 86400 },
+  supervisor: { question_timeout_seconds: 86400 },
+  team: { max_agents: 3 },
   // Paid routes are on with small budgets; the demo key is fake and only a fake client ever sees it.
   paid: {
     enabled: true,
@@ -370,9 +372,13 @@ const assistantTurns = (req) => req.messages.filter((m) => m.role === "assistant
 const hasCheck = (fn) => `node -e "process.exit(require('fs').readFileSync('src/app.ts','utf8').includes('${fn}')?0:1)"`;
 const multiplyCheck = hasCheck("multiply");
 
+const OPS = { multiply: "*", subtract: "-", divide: "/", modulo: "%" };
+
 function codingTurn(req, s, user) {
-  const fn = /multiply/i.test(user) ? "multiply" : "subtract";
-  const op = fn === "multiply" ? "*" : "-";
+  // The goal comes first in the brief ("Add divide(a, b) ..."); the brain context after it may name other functions.
+  const named = /Add (\w+)\(a, b\)/.exec(user)?.[1];
+  const fn = named && OPS[named] ? named : /multiply/i.test(user) ? "multiply" : "subtract";
+  const op = OPS[fn];
   if (assistantTurns(req) === 0) {
     const calls = [call("replace_in_file", { path: "src/app.ts", old_text: "export function add", new_text: `export function ${fn}(a: number, b: number) {\n  return a ${op} b;\n}\n\nexport function add` })];
     // In the job, the worker also asks for brain access it does not have (left pending for you).
@@ -402,8 +408,53 @@ const JOB_B = [
 ];
 let jobAId = "";
 
+// Job C plans a diamond with plan_work: scan -> (divide, modulo) -> check-exports. divide and
+// modulo both edit src/app.ts, so modulo waits for divide's file lease. modulo is planned at T3,
+// so the critical path runs through it. The join starts only on accepted inputs.
+const JOB_C_PLAN = [
+  { label: "scan", profile: "inspect", goal: "Find where the arithmetic helpers live and how handle() calls them.", acceptance_criteria: ["names the file and lines of add()"], file_refs: ["core:src/app.ts"], difficulty: "T1" },
+  { label: "divide", profile: "implement", goal: "Add divide(a, b) to src/app.ts next to add().", acceptance_criteria: ["divide is exported from src/app.ts"], allowed_paths: ["src/app.ts"], checks: [hasCheck("divide")], depends_on: ["scan"], difficulty: "T2" },
+  { label: "modulo", profile: "implement", goal: "Add modulo(a, b) to src/app.ts next to add().", acceptance_criteria: ["modulo is exported from src/app.ts"], allowed_paths: ["src/**"], checks: [hasCheck("modulo")], depends_on: ["scan"], difficulty: "T3" },
+  { label: "check-exports", profile: "inspect", goal: "Confirm the new helpers are exported next to add().", acceptance_criteria: ["lists every exported helper"], file_refs: ["core:src/app.ts"], depends_on: ["divide", "modulo"], difficulty: "T1", requires_accepted_inputs: true },
+];
+
+/** Job C's supervisor: plan, wait (accepting upstream results a node waits on), integrate, finish. */
+function jobCTurn(req) {
+  const n = assistantTurns(req);
+  if (n === 0) {
+    return {
+      text: "Four parts with a clear order: plan them as a graph so independent nodes run in parallel.",
+      calls: [
+        call("brain_set_current_state", { body: "**Goal:** add divide() and modulo() next to add().\n\n**Plan (plan_work v1):** scan -> divide, modulo -> check-exports.\n\n**Status:** plan dispatched." }),
+        call("plan_work", { nodes: JOB_C_PLAN, note: "diamond: one scan, two helpers, one check" }),
+      ],
+    };
+  }
+  const lastCalls = [...req.messages].reverse().find((m) => m.role === "assistant")?.tool_calls?.map((c) => c.function.name) ?? [];
+  const lastTool = textOf(req.messages.at(-1));
+  const finish = call("finish_job", {
+    status: "completed",
+    summary: "divide(a, b) integrated onto the job branch; modulo(a, b) is done in its worktree and waits for a follow-up integration (it edits the same lines).",
+    verified: [{ claim: "every plan node finished", evidence: "await_tasks" }],
+    not_verified: ["modulo is not on the job branch yet"],
+  });
+  if (n > 30) return { text: "Stopping.", calls: [finish] };
+  if (lastCalls.includes("plan_work") || lastCalls.includes("accept_task")) return { text: "Waiting for the plan's nodes.", calls: [call("await_tasks", { timeout_seconds: 60 })] };
+  if (lastCalls.includes("await_tasks")) {
+    const awaiting = [...new Set([...lastTool.matchAll(/awaiting_acceptance:([\w,]+)/g)].flatMap((m) => m[1].split(",")))];
+    if (awaiting.length) return { text: "check-exports waits on accepted inputs; both helpers passed their checks.", calls: awaiting.map((id) => call("accept_task", { task_id: id, reason: "Its check passed on the submitted revision and the diff adds only the requested helper." })) };
+    if (/: still /.test(lastTool)) return { text: "Still running; waiting again.", calls: [call("await_tasks", { timeout_seconds: 60 })] };
+    return { text: "All nodes finished. Integrating divide onto the job branch.", calls: [call("integrate_task", { task_id: "divide" })] };
+  }
+  return { text: "Done.", calls: [finish] };
+}
+
 function supervisorTurn(req, s) {
   const brief = textOf(req.messages[1]);
+  if (/divide/.test(brief)) {
+    const step = jobCTurn(req);
+    return reply(step.text, s, { toolCalls: step.calls, in: 3000 + Math.round(Math.random() * 3000), out: 250 });
+  }
   const script = /multiply/.test(brief) ? JOB_A : JOB_B;
   // Job B only gets past its question when the seeder shuts the worker down: end the run there.
   if (script === JOB_B && assistantTurns(req) >= JOB_B.length) throw new GatewayError("aborted", "worker shut down while waiting for an answer (demo)", undefined, undefined, false);
@@ -584,6 +635,16 @@ startWorker();
 const jobAOut = await sy.awaitResults([jobA.taskId], { timeoutSeconds: 180 });
 const ra = jobAOut.completed[0];
 console.log(`  ${"job: add multiply (finished)".padEnd(44)} ${ra ? `${ra.executionStatus}/${ra.acceptanceStatus}` : "did not finish"}`);
+
+// A planned job: plan_work records a diamond task graph; two coding nodes contend for a file lease.
+offset = Math.round(1.9 * HOUR);
+const jobC = await sy.startJob({ goal: "Add divide(a, b) and modulo(a, b) to the calculator, planned as a task graph.", repositories: ["core"], acceptanceCriteria: ["divide and modulo are exported from src/app.ts"], label: "plan-divide-modulo" });
+const jobCOut = await sy.awaitResults([jobC.taskId], { timeoutSeconds: 240 });
+const rc = jobCOut.completed[0];
+const planC = insights.jobPlan(sy, jobC.taskId);
+console.log(
+  `  ${"job: divide + modulo (plan_work diamond)".padEnd(44)} ${rc ? `${rc.executionStatus}/${rc.acceptanceStatus}` : "did not finish"}; plan v${planC?.plan?.version ?? "-"}, critical path ${planC?.criticalPath.labels.join(" -> ") || "-"}, lease waits ${planC?.nodes.reduce((a, x) => a + x.leaseWaits, 0) ?? 0}`,
+);
 
 // A person's notes in the brain, committed as "human".
 offset = Math.round(1.8 * HOUR);

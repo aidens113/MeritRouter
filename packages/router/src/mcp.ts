@@ -5,7 +5,7 @@ import { z } from "zod";
 import { loadConfig } from "./config/load.js";
 import { MODALITIES, PROFILE_NAMES, TIER_NAMES } from "./config/schema.js";
 import { Switchyard } from "./core/service.js";
-import { decideTaskAcceptance, routingPreview, jobDetail, sessionDetail, sessionsView } from "./admin/insights.js";
+import { decideTaskAcceptance, routingPreview, jobDetail, jobPlan, sessionDetail, sessionsView } from "./admin/insights.js";
 import { blame } from "./attribution/index.js";
 import type { Principal } from "./brain/access.js";
 import { SessionStatusSchema } from "./sessions/events.js";
@@ -206,6 +206,27 @@ async function main(): Promise<void> {
     const { transcript: _t, ...rest } = j;
     return json(rest);
   });
+  server.registerTool(
+    "get_plan",
+    {
+      title: "Job plan (task graph)",
+      description:
+        "A job's task graph as its supervisor recorded it with plan_work (the latest version, or `version`): each node with its task, state, planned difficulty and assigned tier, importance, " +
+        "whether it starts only on accepted upstream results, and why it waits (dependencies, an upstream awaiting acceptance, another task's file lease, the job's agent cap); " +
+        "the dependency edges, the critical path (longest chain by estimated cost), running agents against team.max_agents, and every file lease the job's tasks held or hold. " +
+        "plan is null when the job delegated without a plan.",
+      inputSchema: { jobId: z.string().min(1), version: z.number().int().positive().optional() },
+    },
+    async ({ jobId, version }) => {
+      try {
+        const p = jobPlan(sy, jobId, version !== undefined ? { version } : {});
+        if (!p) return fail(new Error(version !== undefined ? `unknown job ${jobId} or plan version ${version}` : `unknown job ${jobId}`));
+        return json(p);
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
   server.registerTool("list_questions", { title: "Questions from supervisors", description: "Questions SwitchYard supervisors are waiting on.", inputSchema: {} }, async () => json(sy.questions()));
   server.registerTool("answer_question", { title: "Answer a supervisor's question", description: "Answer a pending question so the job continues.", inputSchema: { id: z.number().int(), answer: z.string().min(1) } }, async ({ id, answer }) => {
     try {

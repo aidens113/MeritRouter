@@ -73,6 +73,12 @@ export const GLOSSARY = {
     "Met: the verification policy was satisfied, or a supervisor or person accepted the result. Not verified: some criteria rest only on the worker's claims. Needs supervisor: the result waits for a decision (strict verification, missing evidence, or a review that has not run). Unmet: a check, criterion, or review failed, or the result was rejected. With verification.strict_acceptor set to human, only a person (CLI, MCP client, or this panel) can accept a strict result.",
   toolJournal:
     "Before a tool runs, its intent (name, arguments, and what it touches) is written to the session log; after it runs, its outcome. An intent with no outcome means the tool was still running, or the process stopped before it finished.",
+  plan:
+    "The job's task graph, recorded by its supervisor with plan_work. Each node is a task; a node starts once the nodes it depends on finish, and is given their results (summary, findings, artifacts, patches, acceptance). Nodes with nothing to wait for run in parallel, up to the job's agent cap (team.max_agents). Re-planning adds a version; nodes already dispatched keep their tasks.",
+  criticalPath:
+    "The longest chain of dependent nodes by estimated cost (tier weight: T1 = 1, T2 = 2, T3 = 4, T4 = 8). The job cannot finish sooner than this chain, however many agents run in parallel.",
+  fileLease:
+    "A coding task holds a write lease on its allowed paths in its repository while it runs. Another coding task of any job whose paths overlap waits queued until the lease is released (the task finishes, is interrupted, or its worker's lease expires).",
 } as const;
 
 export type GlossaryKey = keyof typeof GLOSSARY;

@@ -9,7 +9,7 @@ import { ImportanceSchema, PROFILE_NAMES, TIER_NAMES, type ProfileName, type Tie
 import { Switchyard } from "./core/service.js";
 import { createCodingRunner } from "./runners/coding/index.js";
 import { z } from "zod";
-import { brainAccessRequests, brainRead, brainSearch, brainTree, decideBrainAccess, decideTaskAcceptance, jobDetail, jobsView, modelsView, routingPreview, sessionDetail, sessionsView, type SessionDetail, type SessionView } from "./admin/insights.js";
+import { brainAccessRequests, brainRead, brainSearch, brainTree, decideBrainAccess, decideTaskAcceptance, jobDetail, jobPlan, jobsView, modelsView, routingPreview, sessionDetail, sessionsView, type JobPlanView, type SessionDetail, type SessionView } from "./admin/insights.js";
 import { blame } from "./attribution/index.js";
 import { SwitchyardError } from "./core/errors.js";
 import { SessionStatusSchema, type SessionEvent, type SessionEventData } from "./sessions/events.js";
@@ -68,6 +68,8 @@ Standalone jobs (a SwitchYard supervisor plans, delegates, verifies, integrates)
   run "<goal>" --repo <alias> [--check "<cmd>"] [--criteria "<text>"] [--wait]
   jobs                          list jobs
   job <id>                      job status, workers, branch, questions
+  plan <job>                    the job's task graph: nodes with state, tier, and importance,
+                                dependencies, critical path (*), file leases, why nodes wait
   questions                     questions supervisors are waiting on
   answer <id> "<answer>"        answer one
 
@@ -232,6 +234,45 @@ function sessionTimeline(d: SessionDetail, after: number): string {
     ...(d.children.length ? ["", "delegated sessions:", ...d.children.map((c) => `  ${sessionLine(c)}`)] : []),
     ...(d.taskSessions.length > 1 ? ["", "sessions of this task:", ...d.taskSessions.map((t) => `  ${t.id === s.id ? "*" : " "} ${sessionLine(t)}`)] : []),
   ].join("\n").trimEnd();
+}
+
+/** A job's plan for the terminal: header, one row per node (critical path marked *), leases. */
+function planText(p: JobPlanView): string {
+  const head = [`job ${p.jobId} ${p.jobState}: ${oneLine(p.goal)}`];
+  if (!p.plan) {
+    return [...head, "no plan recorded (the supervisor delegated without plan_work)", ...p.otherTasks.map((t) => `  ${t.label ?? t.taskId} [${t.profile}] ${t.state}`)].join("\n");
+  }
+  head.push(
+    `plan v${p.plan.version} of ${p.versions.length}, recorded ${stamp(p.plan.createdAt)}${p.plan.createdBy ? ` by ${p.plan.createdBy}` : ""}${p.plan.note ? `: ${oneLine(p.plan.note, 80)}` : ""}`,
+    `critical path (*): ${p.criticalPath.labels.join(" -> ") || "(none)"} (estimated cost ${p.criticalPath.cost})`,
+    `agents running: ${p.running} of ${p.maxAgents} (team.max_agents)`,
+  );
+  const rows = [...p.nodes]
+    .sort((a, b) => a.depth - b.depth)
+    .map((n) => ({
+      cp: n.onCriticalPath ? "*" : "",
+      node: n.label,
+      profile: n.profile,
+      after: n.dependsOn.join(",") || "-",
+      tier: `${n.difficulty ?? "-"}/${n.tier ?? "-"}`,
+      importance: n.importance ?? "normal",
+      inputs: n.requiresAcceptedInputs ? "accepted" : "any",
+      state: n.state,
+      acceptance: n.acceptanceStatus ?? "",
+      task: n.taskId ?? "",
+      waiting: n.waiting?.text ?? (n.leaseWaits ? `waited for a file lease ${n.leaseWaits}x` : ""),
+    }));
+  const live = p.leases.filter((l) => l.live);
+  return [
+    ...head,
+    "",
+    table(rows),
+    "(tier: planned/assigned; inputs: accepted = starts only on accepted upstream results)",
+    "",
+    live.length ? "live file leases:" : "live file leases: none",
+    ...live.map((l) => `  ${l.taskLabel ?? l.taskId} holds ${l.globs.join(", ")} in ${l.repository} since ${stamp(l.acquiredAt)}`),
+    ...(p.otherTasks.length ? ["", "tasks outside this plan version:", ...p.otherTasks.map((t) => `  ${t.label ?? t.taskId} [${t.profile}] ${t.state}`)] : []),
+  ].join("\n");
 }
 
 /** Who accepts from this terminal: `cli:<os user>`. */
@@ -655,6 +696,14 @@ ${table(rows)}`, json);
           `working document: brain:${j.workingDoc}`,
           ...(j.result ? [`result: ${j.result.stopReason}, acceptance ${j.result.acceptanceStatus}`, j.result.summary] : []),
         ].join("\n"), json);
+        return 0;
+      }
+      case "plan": {
+        const id = args[0];
+        if (!id) throw new SwitchyardError("usage", "usage: switchyard plan <job-id> [--json]");
+        const p = jobPlan(sy, id);
+        if (!p) throw new SwitchyardError("not_found", `unknown job ${id}`);
+        out(json ? p : planText(p), json);
         return 0;
       }
       case "questions": {
