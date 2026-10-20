@@ -511,4 +511,38 @@ export const MIGRATIONS: string[] = [
   CREATE INDEX merge_queue_task ON merge_queue(task_id, created_at);
   CREATE INDEX merge_queue_lock ON merge_queue(lock_key, state);
   `,
+  `
+  -- Agent teams (T2): the per-job team channel. Posts are append-only; only the brain mirror
+  -- stamp (mirrored_at) may be set, once. A post is idempotent per (author session, call id).
+  CREATE TABLE job_channel (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT NOT NULL REFERENCES tasks(id),
+    author_task_id TEXT,
+    author_session_id TEXT,
+    author_role TEXT NOT NULL,
+    author_label TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('finding', 'blocker', 'interface_contract')),
+    refs_json TEXT NOT NULL,
+    text TEXT NOT NULL,
+    call_id TEXT,
+    created_at INTEGER NOT NULL,
+    mirrored_at INTEGER
+  );
+  CREATE INDEX job_channel_job ON job_channel(job_id, id);
+  CREATE INDEX job_channel_author ON job_channel(author_task_id);
+  CREATE UNIQUE INDEX job_channel_call ON job_channel(author_session_id, call_id) WHERE author_session_id IS NOT NULL AND call_id IS NOT NULL;
+  CREATE TRIGGER job_channel_append_only BEFORE UPDATE ON job_channel
+  WHEN NEW.id IS NOT OLD.id OR NEW.job_id IS NOT OLD.job_id OR NEW.author_task_id IS NOT OLD.author_task_id
+    OR NEW.author_session_id IS NOT OLD.author_session_id OR NEW.author_role IS NOT OLD.author_role
+    OR NEW.author_label IS NOT OLD.author_label OR NEW.kind IS NOT OLD.kind OR NEW.refs_json IS NOT OLD.refs_json
+    OR NEW.text IS NOT OLD.text OR NEW.call_id IS NOT OLD.call_id OR NEW.created_at IS NOT OLD.created_at
+    OR OLD.mirrored_at IS NOT NULL
+  BEGIN
+    SELECT RAISE(ABORT, 'channel posts are append-only');
+  END;
+  CREATE TRIGGER job_channel_no_delete BEFORE DELETE ON job_channel
+  BEGIN
+    SELECT RAISE(ABORT, 'channel posts are append-only');
+  END;
+  `,
 ];

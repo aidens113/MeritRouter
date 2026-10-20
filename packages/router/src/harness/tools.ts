@@ -11,6 +11,7 @@ import type { BrainAccess, Principal } from "../brain/access.js";
 import type { Actor } from "../attribution/index.js";
 import type { ToolSideEffect } from "../sessions/events.js";
 import { minimalEnv, runProcess } from "../runners/coding/process.js";
+import { channelTools } from "./channel-tools.js";
 
 export interface HarnessEnv {
   ctx: RunContext;
@@ -209,8 +210,13 @@ function brainOf(env: HarnessEnv) {
   return env.brain;
 }
 
+/**
+ * Brain read tools, and the team channel (`post_channel`, `read_channel`): every role given the
+ * brain (workers and supervisors) gets the channel with it. Reviewers get neither.
+ */
 export function brainReadTools(): HarnessTool[] {
   return [
+    ...channelTools(),
     tool("brain_search", "read", "Search shared knowledge (working documents, decisions, lessons) you have access to.", { query: { type: "string" }, prefix: { type: "string" } }, ["query"], async (a, env) => {
       const b = brainOf(env);
       const hits = b.brain.search(b.principal(), str(a.query, "query"), { ...(typeof a.prefix === "string" ? { prefix: a.prefix } : {}), limit: 8 });
