@@ -1,7 +1,7 @@
 # Direct providers (remove FreeLLMAPI)
 
 Status: Active
-Status detail: Plan written 2026-10-19; implementation starting.
+Status detail: Plan written 2026-10-19; paused by the user before implementation (no code changed). Resume at P1.
 Created: 2026-10-19
 Last updated: 2026-10-19
 Owner: Senior supervisor agent
@@ -36,7 +36,9 @@ optional adapter).
 - The panel's Provider keys page talks only to FreeLLMAPI's admin API; the Paid routes page uses
   SwitchYard's vault.
 
-**Next steps:** P1 (providers core) on `feat/direct-providers`.
+**Next steps:** P1 (providers core). Create `feat/direct-providers` and its worktree, then
+dispatch `p1-foundation`; after it, `p1-discovery` and `p1-limits` in parallel; then P2, then P3.
+A first `p1-foundation` dispatch was stopped at the user's request before it changed anything.
 
 **Blockers:** none.
 
@@ -206,6 +208,14 @@ llama.cpp, vLLM, LM Studio) is a custom provider.
 - Validation: not validated (design only).
 - Outcome: Accepted
 - Follow-up: P1.
+
+### 2026-10-19 — Paused before P1
+- Agent: supervisor
+- Changed: this document (Current State, briefs), `research.md`, handoff in `CLAUDE.md`.
+- Why: user asked to write the plan down and wrap up.
+- Validation: not validated (no code changed; the stopped worker's worktree had no edits).
+- Outcome: Accepted
+- Follow-up: resume at P1.
 
 ---
 

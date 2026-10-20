@@ -14,7 +14,10 @@ branches, and pushing.
    document you are working on. Every planned phase of
    [agent-sessions-and-teams.md](docs/working/agent-sessions-and-teams.md) (S1-S2, R1, T1-T3)
    and [importance-and-verification.md](docs/working/importance-and-verification.md) (V1-V3)
-   is done. Next: live validation against FreeLLMAPI and OpenCode once credentials exist.
+   is done. **Next effort:** [direct-providers.md](docs/working/direct-providers.md): users
+   enter provider keys directly in SwitchYard (panel or config), SwitchYard calls providers and
+   discovers models itself, and FreeLLMAPI is removed from the package (user decision
+   2026-10-19). Plan and provider research are written; start at P1.
 2. Background when needed: [docs/roles.md](docs/roles.md) (runtime role model and brain),
    [docs/decisions.md](docs/decisions.md) (verified FreeLLMAPI behaviour, every design decision),
    [docs/operations.md](docs/operations.md) (hard vs estimated limits, recovery).
