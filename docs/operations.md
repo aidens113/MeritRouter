@@ -120,6 +120,30 @@ subsequently-confirmed per level and per reviewer, with review cost per accepted
   whose globs overlap a live lease in the same repository waits (`waiting_for_file_lease`).
 - **Capacity.** `team.max_agents` (default 8; `supervisor.max_workers_per_job` is an older alias)
   caps running tasks per job; `execution.max_concurrent_tasks` bounds everything.
+- **Sub-supervisors.** A supervisor may hand a sub-goal to a child supervisor (`delegate` or a
+  `plan_work` node with profile `supervise`) while the job tree is shallower than
+  `team.max_depth` (2). The child works on `switchyard/job-<child>` forked from the parent's job
+  branch as integrated so far, keeps its own section of the parent's working document, and runs on
+  a carved share of the parent's remaining request budget (`team.child_budget_share`, 0.5;
+  unused requests return when it finishes, an interrupted child keeps its share). Sub-supervisors
+  take no job slot; they count toward the parent's `team.max_agents`. The parent integrates the
+  child's branch like any task, so worker commits keep their trailers and blame still names the
+  worker. Undoing a sub-job by task reverts its whole subtree.
+- **Merge queue.** `integrate_task` enqueues; each job branch integrates one item at a time and
+  runs the job's checks after each (a failing check is recorded, not undone automatically). A
+  failed pick is retried as a clean rebase in the item's worktree; a real conflict re-delegates
+  the task once with the conflict as context. Recovery after a crash picks only the commits not
+  yet on the branch.
+- **Team channel.** Agents in a job post findings, blockers, and interface contracts with
+  `post_channel` and read them with `read_channel` (only tasks in a job see these tools). Posts
+  are append-only, validated and capped (`team.channel_max_posts_per_task` 10,
+  `team.channel_max_posts_per_supervisor` 40, `team.channel_max_post_chars` 2000), idempotent per
+  call, mirrored into a "Team Channel" section of the job's working document, and shown to other
+  agents as quoted data, never as instructions. A worker sees job-wide posts and posts that
+  reference its task.
+- **Redundant nodes.** A small non-coding plan node (T1/T2) with `redundancy: 2` runs on two
+  different endpoints; the first result that passes verification wins and the other run is
+  superseded. Both runs are charged; a node whose budget cannot hold both is refused.
 
 ## Recovery
 

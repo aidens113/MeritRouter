@@ -90,3 +90,8 @@ non-streaming chat completions only.
     `team.max_agents`; write conflicts are prevented by file leases taken at claim (the old
     per-delegate overlap refusal is advisory); dependents receive upstream results; whether a
     dependent may start on unaccepted inputs follows its importance.
+18. **Teams nest and integrate through a queue** (user requirement, 2026-10-19): sub-supervisors
+    fork their branch from the parent's and run on a carved budget; integration onto a job
+    branch is serialised by a crash-safe merge queue that preserves worker trailers; a per-job
+    channel carries findings and contracts between agents as untrusted, quoted data; redundant
+    execution is opt-in per small node and decided by verification, not by speed alone.

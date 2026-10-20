@@ -1,7 +1,7 @@
 # Agent sessions, failure resilience, and agent teams
 
 Status: Active
-Status detail: S1, S2, R1, T1 complete 2026-10-19; T2 next.
+Status detail: S1, S2, R1, T1, T2 complete 2026-10-19; T3 next.
 Created: 2026-10-19
 Last updated: 2026-10-19
 Owner: Senior supervisor agent
@@ -68,7 +68,21 @@ job; `requires_accepted_inputs` on plan nodes (default for high/critical importa
 dependent on unaccepted upstreams. Surfaces: `switchyard plan`, MCP `get_plan`, panel plan card.
 `src/admin/insights.ts` split into `jobs.ts`, `sessions.ts`, `job-plans.ts`, `calibration.ts`.
 
-**Not done:** T2, T3. T1 gaps: two processes claiming at once untested; native coding plan
+**Phase T2 done (2026-10-19):** sub-supervisors (`supervise` via `delegate` or `plan_work`,
+`team.max_depth`, branch forked from the parent's, carved budget returned on finish, no job slot),
+a crash-safe merge queue (`workspaces/merge-queue.ts`; serialised per job branch, job checks
+after each, clean rebase or one re-delegation), the team channel (`job_channel`, brain mirror,
+`post_channel` / `read_channel` only inside a job, quoted as data, config limits), opt-in
+`redundancy: 2` plan nodes (first verified result wins), undo of a sub-job reverts its subtree;
+surfaces: `switchyard job` (tree, queue, posts), `switchyard channel`, MCP `get_job_tree` /
+`read_channel`, panel Team / Merge queue / Channel cards. Executor split (842 -> 616 lines:
+`sessions/run-sessions.ts`, `core/disposition.ts`, `core/watchdog.ts`); integration tools moved
+to `harness/integration-tools.ts`.
+
+**Not done:** T3. T2 gaps: two processes integrating on one branch, a real kill mid-integration,
+depth > 2, a crash mid-redundancy race (the first twin stays interrupted), paid budget carving,
+parent `allowed_paths` not limiting a sub-job; a sub-job's result card still says `git merge`;
+`cli.ts` is 813 lines (terminal formatting should move to `src/cli/`). T1 gaps: two processes claiming at once untested; native coding plan
 nodes end to end only through the demo; the external runner's TASK.md still omits inline text
 and file refs (pre-existing).
 Open gaps: external-runner resume and crash-during-batch are untested; `recover_edits: reset`
@@ -76,7 +90,7 @@ untested against git; two processes racing to resume untested; a session left `r
 process shows no panel Resume until recovery runs; already-finished batch members are not
 recorded when the batch runner throws (sessions end `batch_aborted`).
 
-**Next steps:** T2, then T3.
+**Next steps:** T3.
 
 **Blockers:** none. Live checks against real providers are still outstanding from the previous
 document.
@@ -597,6 +611,21 @@ The supervisor wires the channel tools into the supervisor's tool list at merge.
   demo data.
 - Outcome: Accepted
 - Follow-up: T2.
+
+---
+
+### 2026-10-19 — Phase T2 (nesting, merge queue, channel, redundancy)
+- Agent: supervisor; workers t2-nesting, t2-channel, t2-integrate, t2-surface, executor-split
+  (`feat/t2-nesting`, `feat/t2-channel`)
+- Changed: see Current State; docs `operations.md` (Teams), `decisions.md` (18), supervisor
+  charter.
+- Why: requirement 3 (coordinated teams).
+- Validation: supervisor verified each branch (276 and 272 tests), resolved the migration
+  conflict, added the per-repository watchdog allowance and its test, removed dead constants,
+  updated the charter; branch after all T2 work: `pnpm -r typecheck` Done, `npx vitest run` ->
+  31 files, 290 passed; dev after merge: see the commit that records this entry.
+- Outcome: Accepted
+- Follow-up: T3; move CLI terminal formatting into `src/cli/`; sub-job result text.
 
 ---
 
