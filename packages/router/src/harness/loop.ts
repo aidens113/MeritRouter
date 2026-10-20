@@ -2,7 +2,7 @@ import type { ChatMessage, ChatTool, ChatToolCall } from "../gateway/types.js";
 import { estimateTokens } from "../gateway/types.js";
 import { AdmissionDenied } from "../core/errors.js";
 import { ask } from "../runners/types.js";
-import type { HarnessEnv, HarnessTool } from "./tools.js";
+import { availableTools, type HarnessEnv, type HarnessTool } from "./tools.js";
 import { journaled, parseArgs } from "./journal.js";
 import { applyResume, type ResumeInput } from "./resume.js";
 
@@ -61,14 +61,16 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
   const session = env.ctx.session;
   /** Log transcript messages the session has not seen (the next request would; the last turn has none). */
   const sync = () => session?.syncMessages(messages);
-  const byName = new Map(o.tools.map((t) => [t.def.function.name, t]));
-  const defs = [...o.tools.map((t) => t.def), o.terminal.def];
+  // Tools this run may not have are neither offered nor run (a call to one is an unknown tool).
+  const tools = availableTools(o.tools, env);
+  const byName = new Map(tools.map((t) => [t.def.function.name, t]));
+  const defs = [...tools.map((t) => t.def), o.terminal.def];
   const terminalName = o.terminal.def.function.name;
   let invalid = 0;
   let lastErrors: string[] = [];
 
   if (o.resume) {
-    const r = await applyResume({ env, messages, tools: o.tools, terminal: o.terminal }, o.resume);
+    const r = await applyResume({ env, messages, tools, terminal: o.terminal }, o.resume);
     if (r.kind === "finished") {
       sync();
       return { kind: "terminal", value: r.value, messages };

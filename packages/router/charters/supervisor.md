@@ -31,7 +31,10 @@ upstream nodes finish and is given their results; set `requires_accepted_inputs`
 high and critical importance) when it must not build on work nobody verified: it then waits until
 you accept the upstream result. Re-plan by calling `plan_work` again with the full plan;
 dispatched nodes keep their tasks. Use the critical path it returns to decide what to watch.
-Use `delegate` for a single task or a quick addition.
+Use `delegate` for a single task or a quick addition. A plan node may be a `supervise` node (see
+below). For a small, important non-coding node (T1/T2) whose answer you want confirmed fast, set
+`redundancy: 2`: two different cheap models run it and the first result that passes
+verification wins; it costs both runs, so do not use it by default.
 
 ## Hand whole sub-goals to sub-supervisors
 
@@ -96,7 +99,8 @@ conflicts, SwitchYard rebases the work onto your branch head and tries again; if
 too, it re-delegates the task once on the current branch and tells you which task to integrate
 instead. Calling `integrate_task` again for an integrated task picks nothing twice. You may undo
 any change made in this job, by task, model, commit, or individual lines, whenever it does not
-serve the goal. Every undo needs a reason; it is recorded.
+serve the goal; undoing a sub-job by task reverts its whole subtree. Every undo needs a reason;
+it is recorded.
 
 ## Keep memory
 

@@ -8,7 +8,8 @@ import type { WorkerTask } from "../src/core/task.js";
 import type { HarnessEnv } from "../src/harness/tools.js";
 import { openDatabase, type Db } from "../src/storage/db.js";
 import { TaskStore } from "../src/storage/tasks.js";
-import { ChannelStore, DEFAULT_CHANNEL_POSTS_PER_TASK } from "../src/storage/channel.js";
+import { ChannelStore } from "../src/storage/channel.js";
+import { parseConfig } from "../src/config/load.js";
 import { PlanStore, type PlanNodeInput } from "../src/storage/plans.js";
 import { channelTools, renderChannelPost } from "../src/harness/channel-tools.js";
 import { channelEntryIds, formatChannelEntry, parseDoc, section, TEAM_CHANNEL_SECTION } from "../src/brain/protocol.js";
@@ -92,8 +93,11 @@ describe("channel store", () => {
     const [post, read] = channelTools();
     expect(post!.sideEffect).toBe("brain");
     expect(read!.sideEffect).toBe("read");
+    const cfg = parseConfig(baseConfig(), path.join(tmpdir(), "x.yaml"));
     const envFor = (taskId: string, role: string, jobId: string | null = "job") =>
-      ({ role, ctx: { taskId, jobId, tasks, now: () => 3_000_000, session: null, brain: null, spec: tasks.get(taskId)!.spec, tier: "T1" } }) as unknown as HarnessEnv;
+      ({ role, ctx: { taskId, jobId, tasks, cfg, now: () => 3_000_000, session: null, brain: null, spec: tasks.get(taskId)!.spec, tier: "T1" } }) as unknown as HarnessEnv;
+    // Only a task in a job has the channel (the agent loop drops unavailable tools).
+    expect([post!.available!(envFor("a", "inspector")), read!.available!(envFor("a", "inspector")), post!.available!(envFor("a", "inspector", null))]).toEqual([true, true, false]);
     await expect(post!.run({ kind: "finding", text: "x", refs: ["nope"] }, envFor("a", "inspector"))).rejects.toThrow(/unknown task "nope"/);
     await expect(post!.run({ kind: "finding", text: "x" }, envFor("a", "inspector", null))).rejects.toThrow(/not part of a job/);
     await expect(post!.run({ kind: "finding", text: "x".repeat(2001) }, envFor("a", "inspector"))).rejects.toThrow(/longer than 2000/);
@@ -109,7 +113,7 @@ describe("channel store", () => {
     expect(await read!.run({}, envFor("c", "inspector"))).toBe("(no channel posts for you yet)");
     expect(await read!.run({ kinds: ["finding"] }, envFor("job", "supervisor"))).toContain('<channel-post id="1" kind="finding" from="inspector:a"');
     // Workers are bounded per task.
-    for (let i = 1; i < DEFAULT_CHANNEL_POSTS_PER_TASK; i++) await post!.run({ kind: "blocker", text: `b${i}` }, envFor("c", "inspector"));
+    for (let i = 1; i < cfg.team.channel_max_posts_per_task; i++) await post!.run({ kind: "blocker", text: `b${i}` }, envFor("c", "inspector"));
     await expect(post!.run({ kind: "blocker", text: "one too many" }, envFor("c", "inspector"))).resolves.toMatch(/^posted/);
     await expect(post!.run({ kind: "blocker", text: "over" }, envFor("c", "inspector"))).rejects.toThrow(/post limit reached: 10 of 10/);
   });

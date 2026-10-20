@@ -130,9 +130,19 @@ export async function blame(repo: string, file: string, rev = "HEAD"): Promise<B
 
 /** Commits in `range` (e.g. `<base>..HEAD`) whose trailers match every given filter. */
 export async function commitsMatching(repo: string, range: string, filter: Partial<Record<"Agent" | "Model" | "Task" | "Job" | "Role", string>>): Promise<CommitInfo[]> {
+  return (await commitsIn(repo, range)).filter((c) => Object.entries(filter).every(([k, v]) => c.trailers[k] === v));
+}
+
+/** Commits in `range` whose `Task` trailer names any of `tasks` (a sub-job and every task under it). */
+export async function commitsOfTasks(repo: string, range: string, tasks: ReadonlySet<string>): Promise<CommitInfo[]> {
+  return (await commitsIn(repo, range)).filter((c) => c.trailers.Task !== undefined && tasks.has(c.trailers.Task));
+}
+
+/** Every commit in `range`, oldest first, with its attribution. */
+async function commitsIn(repo: string, range: string): Promise<CommitInfo[]> {
   const ids = (await git(repo, ["rev-list", "--reverse", range])).split("\n").filter(Boolean);
   const info = await commitInfo(repo, ids);
-  return ids.map((id) => info.get(id)!).filter((c) => c && Object.entries(filter).every(([k, v]) => c.trailers[k] === v));
+  return ids.map((id) => info.get(id)).filter((c): c is CommitInfo => c !== undefined);
 }
 
 /** A commit an undo took back (in whole or in part), with its attribution. */

@@ -7,6 +7,12 @@ export const WATCHDOG_MARGIN_MS = 60_000;
 /** Tools that wait on purpose (other tasks, the user): a session inside one is never stuck. */
 export const WATCHDOG_EXEMPT_TOOLS = new Set(["await_tasks", "ask_user"]);
 
+/**
+ * Tools that run the task's checks inside one call: `integrate_task` runs every job check after
+ * each integration, so its allowance is one check timeout per check, not one in all.
+ */
+export const WATCHDOG_CHECK_RUNNING_TOOLS = new Set(["integrate_task"]);
+
 /** The last durable event of a session, from the SQLite index. */
 export interface SessionProgress {
   /** When the session last changed (its last event, or a reopen). */
@@ -33,11 +39,13 @@ export type WatchdogVerdict =
  * that is bounded by its own timeout extends it so it never trips the watchdog:
  * - a pending model request: the gateway timeout for every endpoint the gate may try;
  * - a tool intent without outcome, or a model response whose tool calls an agent (native or
- *   external) is running: the check timeout;
+ *   external) is running: the check timeout; for a tool that runs the task's checks itself
+ *   (`integrate_task`), the check timeout times the number of checks times the job's
+ *   repositories (it runs the checks once per repository it integrates into);
  * - anything else while the task has checks (the final checks run unjournaled): every check.
  * Supervisors waiting in await_tasks or ask_user are exempt.
  */
-export function watchdogVerdict(cfg: ResolvedConfig, progress: SessionProgress, now: number, task: { checks: number }): WatchdogVerdict {
+export function watchdogVerdict(cfg: ResolvedConfig, progress: SessionProgress, now: number, task: { checks: number; repositories?: number }): WatchdogVerdict {
   const base = cfg.execution.watchdog_minutes * 60_000;
   if (base <= 0) return { kind: "disabled" };
   const check = cfg.execution.check_timeout_seconds * 1000;
@@ -48,7 +56,7 @@ export function watchdogVerdict(cfg: ResolvedConfig, progress: SessionProgress, 
     waitingOn = `model request (${progress.name ?? "?"})`;
   } else if (progress.type === "tool_intent") {
     if (progress.name && WATCHDOG_EXEMPT_TOOLS.has(progress.name)) return { kind: "exempt", reason: `waiting in ${progress.name}` };
-    bound = check;
+    bound = progress.name && WATCHDOG_CHECK_RUNNING_TOOLS.has(progress.name) ? check * Math.max(1, task.checks) * Math.max(1, task.repositories ?? 1) : check;
     waitingOn = `tool ${progress.name ?? "?"}`;
   } else if (progress.type === "model_response") {
     bound = check;

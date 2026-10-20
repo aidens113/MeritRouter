@@ -93,6 +93,7 @@ export {
   calibrationUndoHook,
   cachedVerdict,
   judgedContractDigest,
+  INTEGRATION_RECORDED_EVENT,
   recordIntegration,
   recordJobCheck,
   recordSignal,
@@ -115,7 +116,7 @@ export {
   type VerdictPurpose,
 } from "./verification/calibration.js";
 export { Auditor, auditCapacityShortfall, auditSampled, type AuditDecision, type AuditHost, type AuditStart } from "./verification/audit.js";
-export { REQUEST_PURPOSES, budgetInputFor, purposeCategory, verificationTotal, type RequestPurpose } from "./admission/admission.js";
+export { REQUEST_PURPOSES, budgetInputFor, purposeCategory, verificationTotal, carvedRequests, carvesOf, childRequestBudget, type RequestPurpose, type BudgetCarve } from "./admission/admission.js";
 export { REVIEW_FAMILY, reviewerQualification } from "./qualification/stats.js";
 export { gradeReview, reviewEvalPackage } from "./qualification/runner.js";
 export { SwitchyardError, ConfigError, TaskValidationError, AdmissionDenied, GatewayError } from "./core/errors.js";
@@ -143,6 +144,9 @@ export {
   MAX_PLAN_NODES,
   PLAN_DIFFICULTIES,
   PLAN_LABEL_RE,
+  MAX_REDUNDANCY,
+  REDUNDANT_DIFFICULTIES,
+  redundancyFor,
   type JobPlan,
   type PlanNode,
   type PlanNodeInput,
@@ -191,3 +195,23 @@ export {
   type TranscriptReplay,
 } from "./sessions/resume.js";
 export { createCodingRunner } from "./runners/coding/index.js";
+// Agent teams (T2): sub-jobs, the merge queue, the team channel, redundant execution.
+export { jobDepth, subJobSection, type SupervisorState, type IntegrationRepo } from "./harness/supervisor-tools.js";
+export { MergeQueue, MERGE_STATES, ACTIVE_MERGE_STATES, MAX_MERGE_ATTEMPTS, type MergeItem, type MergeState, type MergeHooks, type MergeConflict, type MergeAcceptance } from "./workspaces/merge-queue.js";
+export {
+  ChannelStore,
+  ChannelError,
+  ChannelPostInputSchema,
+  CHANNEL_KINDS,
+  CHANNEL_MAX_TEXT_CHARS,
+  CHANNEL_MAX_REFS,
+  CHANNEL_READ_LIMIT,
+  type ChannelKind,
+  type ChannelPost,
+  type ChannelAuthor,
+  type ChannelReadFilter,
+} from "./storage/channel.js";
+export { channelTools, renderChannelPost, mirrorChannel } from "./harness/channel-tools.js";
+export { REDUNDANCY_STARTED, REDUNDANCY_SKIPPED, REDUNDANCY_SETTLED, SUPERSEDED, type RedundancyPlan } from "./core/redundancy.js";
+export { WATCHDOG_CHECK_RUNNING_TOOLS, WATCHDOG_EXEMPT_TOOLS, WATCHDOG_MARGIN_MS, watchdogVerdict, type WatchdogVerdict, type SessionProgress } from "./core/watchdog.js";
+export { commitsMatching, commitsOfTasks, type CommitInfo } from "./attribution/index.js";

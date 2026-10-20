@@ -18,13 +18,6 @@ export type ChannelKind = z.infer<typeof ChannelKindSchema>;
 export const CHANNEL_MAX_TEXT_CHARS = 2_000;
 /** Most task references on one post. */
 export const CHANNEL_MAX_REFS = 8;
-/**
- * Default posts one worker task may make to its job's channel (proposed config key
- * `team.channel_max_posts_per_task`).
- */
-export const DEFAULT_CHANNEL_POSTS_PER_TASK = 10;
-/** Default posts a supervisor may make to its own job's channel. */
-export const DEFAULT_CHANNEL_POSTS_PER_SUPERVISOR = 40;
 /** Most posts one read returns. */
 export const CHANNEL_READ_LIMIT = 50;
 

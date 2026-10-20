@@ -152,10 +152,16 @@ export function recordSignal(db: Db, s: { taskId: string; kind: SignalKind; jobI
   db.prepare("INSERT INTO verification_signals (task_id, kind, job_id, detail_json, created_at) VALUES (?, ?, ?, ?, ?)").run(s.taskId, s.kind, s.jobId, s.detail === undefined ? null : JSON.stringify(s.detail), s.now);
 }
 
+/**
+ * Task event recording calibration's integration signal. Distinct from the `integrated` event
+ * (`INTEGRATED_EVENT`, context/upstream.ts) that dependents read, so each has one shape.
+ */
+export const INTEGRATION_RECORDED_EVENT = "integration_recorded";
+
 /** A task's commits were integrated onto a job branch (supervisor `integrate_task`). */
 export function recordIntegration(db: Db, tasks: Pick<TaskStore, "event"> | null, i: { taskId: string; jobId: string; repo: string; commits: number; head: string; now: number }): void {
   recordSignal(db, { taskId: i.taskId, kind: "integrated", jobId: i.jobId, detail: { repo: i.repo, commits: i.commits, head: i.head }, now: i.now });
-  tasks?.event(i.taskId, "integrated", { jobId: i.jobId, repo: i.repo, commits: i.commits, head: i.head });
+  tasks?.event(i.taskId, INTEGRATION_RECORDED_EVENT, { jobId: i.jobId, repo: i.repo, commits: i.commits, head: i.head });
 }
 
 /** A check ran on a job's integration branch (supervisor `run_check`); it confirms what was integrated before it. */

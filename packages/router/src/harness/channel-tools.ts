@@ -4,27 +4,19 @@ import type { HarnessEnv, HarnessTool } from "./tools.js";
 import type { SessionRecorder } from "../sessions/recorder.js";
 import type { Actor } from "../attribution/index.js";
 import { agentLabel } from "../roles/index.js";
-import {
-  CHANNEL_KINDS,
-  CHANNEL_MAX_REFS,
-  CHANNEL_MAX_TEXT_CHARS,
-  CHANNEL_READ_LIMIT,
-  ChannelError,
-  ChannelKindSchema,
-  ChannelPostInputSchema,
-  ChannelStore,
-  DEFAULT_CHANNEL_POSTS_PER_SUPERVISOR,
-  DEFAULT_CHANNEL_POSTS_PER_TASK,
-  type ChannelPost,
-} from "../storage/channel.js";
+import { CHANNEL_KINDS, CHANNEL_MAX_REFS, CHANNEL_MAX_TEXT_CHARS, CHANNEL_READ_LIMIT, ChannelError, ChannelKindSchema, ChannelPostInputSchema, ChannelStore, type ChannelPost } from "../storage/channel.js";
 
 /**
  * Team channel tools (T2) for supervisors and workers: `post_channel` (journaled as a `brain`
  * write: an interrupted post is reported as outcome unknown, and a repeat returns the stored
  * post) and `read_channel` (a `read`). A worker sees posts that reference its task, job-wide
  * posts, and its own; the job's supervisor sees every post. Posts are other agents' claims:
- * rendered as quoted data, never as instructions.
+ * rendered as quoted data, never as instructions. Both are available only to a task that belongs
+ * to a job (`ctx.jobId`); limits come from `team.channel_max_*`.
  */
+
+/** The channel exists only for tasks in a job: a task outside any job is never offered it. */
+const inJob = (env: HarnessEnv): boolean => Boolean(env.ctx.jobId);
 
 interface JobView {
   jobId: string;
@@ -156,7 +148,7 @@ export function channelTools(): HarnessTool[] {
   const post: HarnessTool = {
     def: def(
       "post_channel",
-      `Post to your job's team channel: a finding other agents need, a blocker, or an interface contract (names, signatures, formats others must match). refs names the job's tasks it concerns (labels or ids; empty = job-wide). At most ${CHANNEL_MAX_TEXT_CHARS} characters; posts per task are limited.`,
+      `Post to your job's team channel: a finding other agents need, a blocker, or an interface contract (names, signatures, formats others must match). refs names the job's tasks it concerns (labels or ids; empty = job-wide). Keep it short: posts are limited in length (${CHANNEL_MAX_TEXT_CHARS} characters at most) and in number per task.`,
       {
         kind: { type: "string", enum: [...CHANNEL_KINDS] },
         text: { type: "string" },
@@ -165,9 +157,12 @@ export function channelTools(): HarnessTool[] {
       ["kind", "text"],
     ),
     sideEffect: "brain",
+    available: inJob,
     async run(args, env) {
       const input = ChannelPostInputSchema.safeParse(args);
       if (!input.success) throw new ChannelError(input.error.issues.map((i) => `${i.path.join(".") || "args"}: ${i.message}`).join("; "));
+      const team = env.ctx.cfg.team;
+      if (input.data.text.length > team.channel_max_post_chars) throw new ChannelError(`text: text is longer than ${team.channel_max_post_chars} characters (team.channel_max_post_chars)`);
       const view = jobOf(env);
       const refs = resolveRefs(view, input.data.refs);
       const store = new ChannelStore(env.ctx.tasks.db, env.ctx.now);
@@ -178,7 +173,7 @@ export function channelTools(): HarnessTool[] {
         text: input.data.text,
         refs,
         callId: currentCallId(env.ctx.session, "post_channel"),
-        maxPerAuthor: view.supervisor ? DEFAULT_CHANNEL_POSTS_PER_SUPERVISOR : DEFAULT_CHANNEL_POSTS_PER_TASK,
+        maxPerAuthor: view.supervisor ? team.channel_max_posts_per_supervisor : team.channel_max_posts_per_task,
       });
       let mirror: string;
       try {
@@ -203,6 +198,7 @@ export function channelTools(): HarnessTool[] {
       [],
     ),
     sideEffect: "read",
+    available: inJob,
     async run(args, env) {
       const a = ReadArgsSchema.safeParse(args);
       if (!a.success) throw new ChannelError(a.error.issues.map((i) => `${i.path.join(".") || "args"}: ${i.message}`).join("; "));

@@ -602,6 +602,15 @@ export const ConfigSchema = z
         max_depth: z.number().int().min(1).max(5).default(2),
         /** Share of the parent's remaining request budget a sub-supervisor is given (and the parent loses while it runs). */
         child_budget_share: z.number().gt(0).max(1).default(0.5),
+        /** Posts one worker task may make to its job's team channel. */
+        channel_max_posts_per_task: z.number().int().min(1).max(1000).default(10),
+        /** Posts a job's supervisor may make to its own job's team channel. */
+        channel_max_posts_per_supervisor: z.number().int().min(1).max(1000).default(40),
+        /**
+         * Longest team-channel post, in characters. At most 2000: the channel store's own limit
+         * (`CHANNEL_MAX_TEXT_CHARS` in storage/channel.ts).
+         */
+        channel_max_post_chars: z.number().int().min(100).max(2000).default(2000),
       })
       .strict()
       .prefault({}),

@@ -29,7 +29,8 @@ export const DEFAULT_NODE_WEIGHT = TIER_WEIGHT.T2;
 export const PlanNodeSchema = z
   .object({
     label: z.string().regex(PLAN_LABEL_RE),
-    profile: ProfileNameSchema.refine((p) => p !== "supervise", "a plan node cannot be a supervise task"),
+    /** `supervise` starts a sub-job (dispatched through the delegate path: depth limit, branch fork, budget carve). */
+    profile: ProfileNameSchema,
     goal: z.string().min(1).max(20_000),
     acceptanceCriteria: z.array(z.string().min(1)).min(1),
     /** Labels of nodes in this plan, or of tasks the job dispatched earlier. */
@@ -57,6 +58,7 @@ export const PlanNodeSchema = z
   .strict()
   .superRefine((n, ctx) => {
     if (n.redundancy < 2) return;
+    if (n.profile === "supervise") ctx.addIssue({ code: "custom", path: ["redundancy"], message: `plan node ${n.label}: redundancy is not for sub-supervisors (supervise nodes)` });
     if (n.writableRepository !== null) ctx.addIssue({ code: "custom", path: ["redundancy"], message: `plan node ${n.label}: redundancy is only for non-coding nodes (it has a writable repository)` });
     if (n.difficulty && !REDUNDANT_DIFFICULTIES.has(n.difficulty)) ctx.addIssue({ code: "custom", path: ["redundancy"], message: `plan node ${n.label}: redundancy is only for small nodes (T1 or T2, not ${n.difficulty})` });
   });

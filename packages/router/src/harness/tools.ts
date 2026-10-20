@@ -33,7 +33,18 @@ export interface HarnessTool {
   sideEffect: ToolSideEffect;
   /** For `command` tools: safe to re-run on resume. */
   idempotent?: boolean;
+  /**
+   * Whether this run may have the tool at all (default: yes). A tool that is not available is
+   * neither offered to the model nor run (the agent loop drops it), e.g. the team channel outside
+   * a job.
+   */
+  available?(env: HarnessEnv): boolean;
   run(args: Record<string, unknown>, env: HarnessEnv): Promise<string>;
+}
+
+/** The tools this run may have (see `HarnessTool.available`). */
+export function availableTools(tools: HarnessTool[], env: HarnessEnv): HarnessTool[] {
+  return tools.filter((t) => t.available?.(env) ?? true);
 }
 
 const MAX = 16_000;
@@ -212,7 +223,8 @@ function brainOf(env: HarnessEnv) {
 
 /**
  * Brain read tools, and the team channel (`post_channel`, `read_channel`): every role given the
- * brain (workers and supervisors) gets the channel with it. Reviewers get neither.
+ * brain (workers and supervisors) gets the channel with it, but only while its task belongs to a
+ * job (the channel tools are unavailable otherwise). Reviewers get neither.
  */
 export function brainReadTools(): HarnessTool[] {
   return [

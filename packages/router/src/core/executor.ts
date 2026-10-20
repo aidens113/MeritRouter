@@ -815,7 +815,7 @@ export class Executor {
       if (!progress) continue;
       // Idle time counts from the later of the session's last event and the last phase switch
       // (a review starting or ending), so time spent in another session is not held against it.
-      const v = watchdogVerdict(this.d.cfg, { ...progress, at: Math.max(progress.at, w.phaseAt) }, this.d.now(), { checks: reviewing ? 0 : (w.task.spec.constraints.checks?.length ?? 0) });
+      const v = watchdogVerdict(this.d.cfg, { ...progress, at: Math.max(progress.at, w.phaseAt) }, this.d.now(), { checks: reviewing ? 0 : (w.task.spec.constraints.checks?.length ?? 0), repositories: w.task.spec.repositoryAliases.length });
       if (v.kind !== "stuck") continue;
       this.d.tasks.event(taskId, "watchdog_abort", { sessionId: session.id, ...(reviewing ? { role: "reviewer" } : {}), idleMs: v.idleMs, allowanceMs: v.allowanceMs, waitingOn: v.waitingOn });
       w.controller.abort("watchdog" satisfies AbortReason);
