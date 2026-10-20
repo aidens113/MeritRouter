@@ -1,4 +1,5 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { comparisonRequestsToday } from "./comparison.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -128,7 +129,7 @@ export class Qualifier {
             WHERE t.purpose = 'qualification' AND r.reserved_at > ?`,
         )
         .get(Date.now() - 86_400_000) as { n: number }
-    ).n;
+    ).n + comparisonRequestsToday(this.sy);
   }
 
   async start(endpointId: string, opts: { evalIds?: string[]; trials?: number } = {}): Promise<StartedRun> {

@@ -90,7 +90,7 @@ export function comparisonRequestsToday(sy: Switchyard, now = Date.now()): numbe
 
 function budgetState(sy: Switchyard): { dailyAllocation: number; usedToday: number; remaining: number } {
   const dailyAllocation = sy.cfg.qualification.max_requests_per_day;
-  const usedToday = sy.qualifier.requestsUsedToday() + comparisonRequestsToday(sy);
+  const usedToday = sy.qualifier.requestsUsedToday(); // qualification + comparison requests
   return { dailyAllocation, usedToday, remaining: Math.max(0, dailyAllocation - usedToday) };
 }
 

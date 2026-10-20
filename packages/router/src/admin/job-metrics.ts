@@ -15,7 +15,8 @@ export const WAIT_REASONS = ["dependencies", "acceptance", "file_lease", "provid
 export type WaitReason = (typeof WAIT_REASONS)[number];
 
 /** Task event (and state_reason prefix) of a queued task held for a free provider slot (T3 capacity). */
-export const WAITING_FOR_PROVIDER_SLOT = "waiting_for_provider_slot";
+import { WAITING_FOR_PROVIDER_SLOT } from "../storage/tasks.js";
+export { WAITING_FOR_PROVIDER_SLOT };
 
 const TERMINAL_EVENTS: ReadonlySet<string> = new Set(["completed", "failed", "cancelled", "budget_exhausted"]);
 const FAILED_STATES: ReadonlySet<string> = new Set(["failed", "cancelled", "budget_exhausted"]);
