@@ -49,7 +49,18 @@ settings page's name field does not look read-only; a restore whose brain step f
 store restored and the brain not; alias matching in D9 is strict (an `app` alias rejects
 "the app").
 
-**Next steps:** caching-and-continuity (C1, C2), then the live check with real keys.
+**In progress, paused by the user (2026-10-21):** branch `feat/repo-autoprep`, worktree
+`D:/sy-wt/rp`, not merged. Two user requests: (1) project repositories are prepared automatically
+(missing folder created, git initialised with an initial commit, a default `.gitignore` for plain
+folders; runs on project/repository creation and at service start; the "missing or not a git
+repository" attention item replaced by an info notice); committed as unverified WIP (2d961a3),
+its worker was stopped before reporting. (2) The Live control is a status chip plus a separate
+"Pause updates" button with a confirmation dialog (`ConfirmDialog`); done and checked in Chrome
+(8ccb935). To finish: read `docs/working/reports/repo-autoprep.md` on that branch, run
+typecheck, build, the full suite, and a demo panel check, then merge to `dev` and `main`.
+
+**Next steps:** finish `feat/repo-autoprep`; then caching-and-continuity (C1, C2); then the live
+check with real keys.
 
 **Blockers:** none.
 
