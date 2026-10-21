@@ -178,12 +178,25 @@ export const ProviderEntrySchema = z
   .object({
     enabled: z.boolean().default(true),
     display_name: z.string().min(1).max(80).optional(),
-    /** Required for a custom provider; overrides a built-in's base URL (a proxy, a region). */
+    /**
+     * Required for a custom provider and for llamacpp (no default port); overrides a built-in's
+     * base URL (a proxy, a region, a local server on another host or port).
+     */
     base_url: z.string().url().optional(),
     /** Custom providers only; defaults to openai_compatible. */
     api: z.enum(["openai_compatible", "anthropic"]).optional(),
-    /** Send no key (a local server such as Ollama, llama.cpp, vLLM, LM Studio). Needs base_url. */
+    /**
+     * Send no key (a custom local server such as vLLM or LocalAI). Needs base_url. The built-in
+     * local servers need no flag: ollama never takes a key, and lmstudio, llamacpp, and ovhcloud
+     * run keyless when their entry has no keys.
+     */
     no_key: z.boolean().default(false),
+    /**
+     * Local servers: the context a model gets when it sets none (Ollama's server default, from
+     * OLLAMA_CONTEXT_LENGTH or VRAM; an LM Studio or llama.cpp load-time context). Budgets use it
+     * when discovery cannot read a model's own context.
+     */
+    default_context_tokens: z.number().int().positive().optional(),
     /** Cloudflare: account id for keys that do not set their own. */
     account_id: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).optional(),
     /** Extra request headers (OpenRouter's optional HTTP-Referer, X-OpenRouter-Title). */

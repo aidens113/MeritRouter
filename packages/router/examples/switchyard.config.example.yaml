@@ -7,9 +7,11 @@ version: 1
 #   SWITCHYARD_NEW_KEY=<key> switchyard keys add groq --billing free_tier
 # (both store them encrypted), or declare them here. Built-in providers: groq, google, nvidia,
 # openrouter, mistral, cerebras, cohere, cloudflare, sambanova, together, huggingface, anthropic,
-# openai. billing_class is required: free_tier keys never cost money; paid_credits,
-# paid_postpaid, and trial keys are paid and follow the paid section below. Prefer api_key_env;
-# a literal api_key puts the secret in this file (switchyard doctor warns about it).
+# openai, deepseek, fireworks, deepinfra, nebius, scaleway, ovhcloud, zai, moonshot, vercel,
+# ollama-cloud, and the local servers ollama, lmstudio, llamacpp. billing_class is required:
+# free_tier keys never cost money; paid_credits, paid_postpaid, and trial keys are paid and follow
+# the paid section below. Prefer api_key_env; a literal api_key puts the secret in this file
+# (switchyard doctor warns about it).
 providers:
   request_timeout_seconds: 300
   # groq:
@@ -25,9 +27,36 @@ providers:
   #   account_id: <your account id>
   #   keys:
   #     - { api_key_env: CLOUDFLARE_API_TOKEN, billing_class: free_tier }
-  # local:                        # any OpenAI-compatible server (Ollama, llama.cpp, vLLM, LM Studio)
-  #   base_url: http://localhost:11434/v1
-  #   no_key: true
+  # deepseek:                     # limits concurrent requests: set team.provider_concurrency_limits.deepseek
+  #   keys:
+  #     - { api_key_env: DEEPSEEK_API_KEY, billing_class: paid_credits }
+  #
+  # Local servers are built in and take no key; an entry turns one on:
+  # ollama: {}                    # 127.0.0.1:11434, or OLLAMA_HOST when set; base_url for another host
+  #   # default_context_tokens: 32768   # the server's default context (OLLAMA_CONTEXT_LENGTH or by VRAM; 4096 assumed)
+  # lmstudio: {}                  # localhost:1234; add its token as a key only if API tokens are on
+  # llamacpp:
+  #   base_url: http://127.0.0.1:8080/v1   # required: llama-server's default port differs by release
+  # ovhcloud: { rpm: 2 }          # anonymous (no key): 2 requests per minute per model and IP
+  #
+  # Any other OpenAI-compatible server or provider is a custom entry with base_url (see
+  # docs/setup.md, "Custom providers"). Servers without auth set no_key: true.
+  # vllm:      { base_url: http://localhost:8000/v1, no_key: true }
+  # localai:   { base_url: http://localhost:8080/v1, no_key: true }
+  # jan:       { base_url: http://127.0.0.1:1337/v1, no_key: true }
+  # koboldcpp: { base_url: http://localhost:5001/v1, no_key: true }
+  # textgen:   { base_url: http://127.0.0.1:5000/v1, no_key: true }     # text-generation-webui --api
+  # sglang:    { base_url: http://127.0.0.1:30000/v1, no_key: true }
+  # xai:
+  #   base_url: https://api.x.ai/v1
+  #   token_limit_param: max_completion_tokens
+  #   keys: [{ api_key_env: XAI_API_KEY, billing_class: paid_credits }]
+  # venice:                       # its reset header is an epoch-ms timestamp; the openai family reads it
+  #   base_url: https://api.venice.ai/api/v1
+  #   rate_limit_headers: openai
+  #   keys: [{ api_key_env: VENICE_API_KEY, billing_class: paid_credits }]
+  # More (Alibaba, MiniMax, Novita, Hyperbolic, Chutes, Featherless, Baseten, AI21, SiliconFlow,
+  # Azure, Bedrock) with their base URLs and caveats: docs/setup.md, "Custom providers".
 
 storage:
   directory: .switchyard

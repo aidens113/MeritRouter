@@ -16,11 +16,14 @@ was removed from the package rather than kept as an optional adapter. Plan and p
   `<storage>/.master-key`) or in config (`providers.<id>.keys[]` with `api_key_env`, or a literal
   `api_key`, which `doctor` flags). Every model request, free or paid, goes through the gate's
   direct path (`src/gateway/direct.ts`) and one provider client with `openai_compatible` and
-  `anthropic` adapters. Any other OpenAI-compatible server (Ollama, llama.cpp, vLLM, LM Studio)
-  is a custom provider with a `base_url` and optional `no_key`.
+  `anthropic` adapters. Ollama, LM Studio, and llama.cpp are built in (D11); any other
+  OpenAI-compatible server (vLLM, LocalAI, ...) is a custom provider with a `base_url` and
+  optional `no_key`.
 - **D2. A built-in registry from documentation, not from a catalog service.** Built-ins: groq,
   google, nvidia, openrouter, mistral, cerebras, cohere, cloudflare, sambanova, together,
-  huggingface, anthropic, openai, each with its source URL and check date
+  huggingface, anthropic, openai (2026-10-19), and from the coverage research (2026-10-20)
+  ollama, ollama-cloud, lmstudio, llamacpp, deepseek, fireworks, deepinfra, nebius, scaleway,
+  ovhcloud, zai, moonshot, vercel, each with its source URL and check date
   (`src/providers/registry.ts`). GitHub Models is excluded (retired 2026-07-30). Limits, prices,
   and model lists are never hard-coded; they come from discovery, response headers, or the user.
 - **D3. Billing class is required on every key** (`free_tier | paid_credits | paid_postpaid |
@@ -81,6 +84,73 @@ often and are never used as truth in code.
 Still unconfirmed against live providers: rate-limit header formats (OpenRouter reset, SambaNova
 `-day`, Anthropic periods), OpenAI `insufficient_quota` as out of credits, Cloudflare and Cohere
 list pagination, Anthropic `capabilities`, and the shape of OpenRouter's `/api/v1/key`.
+
+### Wider coverage (P4, 2026-10-20)
+
+Source of record: [research-coverage.md](working/direct-providers/research-coverage.md) (official
+documentation, fetched 2026-10-20); worker report
+[p4-coverage.md](working/direct-providers/reports/p4-coverage.md).
+
+- **D11. Local servers are built in and keyless.** `ollama` (never takes a key), `lmstudio` and
+  `llamacpp` (keys optional: sent when configured, for servers with auth turned on). An entry
+  under `providers` turns one on and gives it one keyless `free_tier` credential; an unconfigured
+  local server is never contacted. `llamacpp` has no default address (its README says port 9931,
+  older releases 8080): without `base_url` its credential is unusable and the client refuses
+  locally. `OLLAMA_HOST` sets Ollama's address when `base_url` is not configured (`host`,
+  `host:port`, or a URL; bind-all addresses become `127.0.0.1`). OVHcloud's documented anonymous
+  tier uses the same optional-key path.
+- **D12. Budgets use a local server's effective context.** Ollama: `num_ctx` from `/api/show`,
+  else a loaded model's context from `/api/ps`, else `providers.ollama.default_context_tokens`,
+  else 4096, the smallest documented server default (the real default depends on VRAM and
+  `OLLAMA_CONTEXT_LENGTH`, which SwitchYard cannot see), always capped at the trained maximum.
+  A local server's output is bounded by that context (Ollama: `num_predict` when set). LM Studio
+  uses a loaded instance's context; an unloaded model's load-time context is undocumented, so it
+  stays unknown unless configured. `/api/show` answers are cached per process by digest.
+- **D13. New list shapes** `ollama_tags`, `lmstudio_native`, `deepinfra_list`, `ovh_catalog`,
+  with an OpenAI-shaped fallback list (`{base}/models`, ids only) for Ollama and LM Studio when
+  the native list fails for a reason other than the key. `models_path` on a native-list provider
+  switches it to the OpenAI list. Server-reported exact parameter counts (Ollama
+  `general.parameter_count`, llama.cpp `n_params`) are exact and confirmed; the catalog's
+  evidence sources have no "provider" value, so they are stored as `description` evidence whose
+  detail names the field.
+- **D14. `tool_choice` is omitted where it is unsupported or unverified.** Ollama (local and
+  cloud) never receives it; LM Studio, llama.cpp, Fireworks, Scaleway, Nebius, OVHcloud, and Z.ai
+  receive only `auto`. A required tool call is enforced locally: the agent loop sends a reply
+  without a tool call back to the model.
+- **D15. Concurrency is a limit kind of its own.** DeepSeek (per account), DeepInfra (per model),
+  and Ollama Cloud (per plan) document concurrent-request limits, recorded as `concurrency` in
+  the registry. The number is account-specific and never assumed; the existing
+  `team.provider_concurrency_limits.<id>` caps the gate's provider slots, which are shared across
+  processes and already halve on 429s.
+- **D16. Free per model without prices.** Z.ai's list states no prices, so its documented free
+  models (GLM-4.7-Flash, GLM-4.5-Flash, GLM-4.6V-Flash) are listed in the registry with the check
+  date; a `free_tier` key reaches only those, and any other Z.ai model is paid.
+- **D17. Ollama Cloud's balance** (`/api/balance`) has its own key-info shape and probe
+  (`probeOllamaBalance`); it is not OpenRouter's free daily quota and is not yet stored or shown.
+
+**Excluded providers** (not built in and not addable as a custom provider):
+
+| Provider | Reason |
+| --- | --- |
+| Google Vertex AI | OAuth access tokens from Application Default Credentials, valid one hour; no static key |
+| Amazon Bedrock with SigV4 credentials | request signing, not a key (a long-term Bedrock API key on `bedrock-mantle` works as a custom provider) |
+| Azure with Entra ID only | token auth (an Azure resource key works as a custom provider) |
+| Perplexity | Sonar Chat Completions superseded by the Agent API (July 2026); search-specialised |
+| Lambda Inference API | winding down |
+| Kluster.ai | inference end of life 2025-07-24 (from a search snippet of kluster.ai's blog; the site no longer resolves) |
+| Inference.net | pivoted to tracing and gateway products; no documented serverless model API (unverified) |
+
+xAI, Alibaba Model Studio, MiniMax, Venice, Novita, Hyperbolic, Chutes, Featherless, Baseten,
+AI21, SiliconFlow, Azure (resource keys), Bedrock (`bedrock-mantle`), vLLM, LocalAI, Jan,
+KoboldCpp, text-generation-webui, SGLang, and TGI are custom-provider examples in
+[setup.md](setup.md#custom-providers) rather than built-ins: deprecated or unverified APIs (xAI
+Chat Completions), per-account URLs (Alibaba workspace, Azure resource), or no free tier and
+unverified list fields.
+
+Still unconfirmed against live servers: every new list shape, Ollama `/api/show` on ollama.com,
+`OLLAMA_HOST` forms beyond `host:port`, which OVHcloud catalog field is the request model id,
+whether Z.ai and Moonshot serve `/models`, LM Studio's `key` as the chat model id, and
+`tool_choice` values on LM Studio, llama.cpp, Fireworks, Scaleway, and Nebius.
 
 ### Upgrade notes (from a FreeLLMAPI-based install)
 

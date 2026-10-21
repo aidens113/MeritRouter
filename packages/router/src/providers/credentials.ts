@@ -6,7 +6,8 @@ import type { BillingClass, KeyLimits, KeyVault } from "./vault.js";
 /**
  * One provider key as routing sees it, whatever its source: the encrypted vault (keys added in
  * the panel or CLI), config (`providers.<id>.keys[]`), or the single keyless credential of a
- * `no_key` provider. Metadata only; the secret comes from `secret(ref)`.
+ * configured provider that runs without a key (`no_key`, Ollama, or a keyless local server).
+ * Metadata only; the secret comes from `secret(ref)`.
  */
 export interface ProviderCredential {
   /** Stable id: `vault:<id>`, `config:<provider>:env:<VAR>`, `config:<provider>:literal:<n>`, or `none:<provider>`. */
@@ -40,15 +41,29 @@ export class ProviderCredentials {
     private readonly now: () => number = Date.now,
   ) {}
 
+  /**
+   * Whether a configured provider runs without a key: `no_key` in config, a provider that never
+   * takes one (Ollama), or one whose keys are optional (LM Studio, llama.cpp, OVHcloud's anonymous
+   * tier) and that has no keys in config or the vault. Only providers with a `providers.<id>`
+   * entry get the keyless credential, so an unused local server is never contacted.
+   */
+  private keyless(id: string, entry: ProvidersConfig["byId"][string]): boolean {
+    const policy = this.providers.get(id)?.keyPolicy ?? "required";
+    if (entry.no_key || policy === "none") return true;
+    return policy === "optional" && entry.keys.length === 0 && !this.vault?.list(id).some((k) => !k.removed);
+  }
+
   private configKeys(providerId?: string): Array<{ cred: ProviderCredential; secret: ConfigSecret }> {
     const out: Array<{ cred: ProviderCredential; secret: ConfigSecret }> = [];
     for (const [id, entry] of Object.entries(this.section.byId)) {
       if (providerId !== undefined && id !== providerId) continue;
-      if (entry.no_key) {
+      const keyless = this.keyless(id, entry);
+      if (keyless) {
         out.push({
           secret: { kind: "none" },
           cred: { ref: `none:${id}`, source: "none", provider: id, label: "no key", billingClass: "free_tier", enabled: true, last4: "", accountId: entry.account_id ?? null, quotaGroup: entry.quota_group ?? null, limits: { rpm: null, rpd: null, tpm: null, tpd: null }, vaultKeyId: null, apiKeyEnv: null, unusableReason: null },
         });
+        // A provider that never takes a key ignores configured keys (a proxy in front of it takes `headers`).
         continue;
       }
       for (const [n, k] of entry.keys.entries()) {
@@ -103,6 +118,7 @@ export class ProviderCredentials {
     let reason: string | null = null;
     if (!p) reason = `provider ${c.provider} is not configured`;
     else if (!p.enabled) reason = `provider ${c.provider} is disabled`;
+    else if (!p.baseUrl) reason = `${c.provider} has no base URL: set providers.${c.provider}.base_url`;
     else if (p.urlParams.includes("account_id") && !(c.accountId ?? p.accountId)) reason = `${c.provider} keys need an account id`;
     return reason ? { ...c, unusableReason: reason } : c;
   }

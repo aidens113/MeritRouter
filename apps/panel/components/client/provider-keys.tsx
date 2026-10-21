@@ -22,6 +22,18 @@ export interface ProviderOption {
 }
 
 const CUSTOM = "__custom";
+
+/**
+ * Built-in local servers (mirrors the registry's `local` providers in
+ * packages/router/src/providers/registry.ts): set up by writing `providers.<id>` to the config
+ * with an optional base URL; they take no key (Ollama never; LM Studio and llama.cpp only when
+ * their own authentication is turned on).
+ */
+const LOCAL_SERVERS: Record<string, { defaultUrl: string | null; keys: "none" | "optional"; hint: string }> = {
+  ollama: { defaultUrl: "http://127.0.0.1:11434/v1", keys: "none", hint: "Empty uses OLLAMA_HOST if set, else 127.0.0.1:11434." },
+  lmstudio: { defaultUrl: "http://localhost:1234/v1", keys: "optional", hint: "Start the server in LM Studio's Developer tab. Empty uses localhost:1234." },
+  llamacpp: { defaultUrl: null, keys: "optional", hint: "Required: llama-server's port differs between releases (9931 or 8080)." },
+};
 const LIMITS = ["rpm", "rpd", "tpm", "tpd"] as const;
 const LIMIT_LABEL: Record<(typeof LIMITS)[number], string> = { rpm: "Requests / minute", rpd: "Requests / day", tpm: "Tokens / minute", tpd: "Tokens / day" };
 
@@ -117,8 +129,10 @@ export function AddKeyForm({ providers, billingClasses }: { providers: ProviderO
   const [testing, setTesting] = useState(false);
   const { run, busy, error, errors, message, setError, setMessage } = useAction();
   const p = providers.find((x) => x.id === provider) ?? null;
-  const takesKeys = providers.filter((x) => !x.noKey);
+  const local = p && p.kind === "builtin" ? (LOCAL_SERVERS[p.id] ?? null) : null;
+  const takesKeys = providers.filter((x) => !x.noKey && !(x.kind === "builtin" && LOCAL_SERVERS[x.id]));
   const groups: Array<[string, ProviderOption[]]> = [
+    ["Local servers (no key)", providers.filter((x) => x.kind === "builtin" && LOCAL_SERVERS[x.id])],
     ["Built-in providers", takesKeys.filter((x) => x.kind === "builtin")],
     ["Custom providers (from the config)", takesKeys.filter((x) => x.kind === "custom")],
     ["Paid providers (Settings)", takesKeys.filter((x) => x.kind === "paid")],
@@ -135,6 +149,38 @@ export function AddKeyForm({ providers, billingClasses }: { providers: ProviderO
     if (!r.ok) setError(r.error ?? "The test could not run");
     else setTest(r.result as KeyTestResult);
   };
+
+  const providerSelect = (
+    <Field label="Provider">
+      <select
+        value={provider}
+        onChange={(e) => {
+          setProvider(e.target.value);
+          setTest(null);
+        }}
+        className="field mt-1"
+        required
+      >
+        <option value="" disabled>
+          Choose…
+        </option>
+        {groups.map(([g, list]) =>
+          list.length ? (
+            <optgroup key={g} label={g}>
+              {list.map((x) => (
+                <option key={x.id} value={x.id}>
+                  {x.displayName === x.id ? x.id : `${x.displayName} (${x.id})`}
+                </option>
+              ))}
+            </optgroup>
+          ) : null,
+        )}
+        <option value={CUSTOM}>Add a custom provider…</option>
+      </select>
+    </Field>
+  );
+
+  if (p && local) return <LocalServerForm key={p.id} provider={p} local={local} select={providerSelect} />;
 
   return (
     <div className="space-y-4">
@@ -157,33 +203,7 @@ export function AddKeyForm({ providers, billingClasses }: { providers: ProviderO
         }}
       >
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <Field label="Provider">
-            <select
-              value={provider}
-              onChange={(e) => {
-                setProvider(e.target.value);
-                setTest(null);
-              }}
-              className="field mt-1"
-              required
-            >
-              <option value="" disabled>
-                Choose…
-              </option>
-              {groups.map(([g, list]) =>
-                list.length ? (
-                  <optgroup key={g} label={g}>
-                    {list.map((x) => (
-                      <option key={x.id} value={x.id}>
-                        {x.displayName === x.id ? x.id : `${x.displayName} (${x.id})`}
-                      </option>
-                    ))}
-                  </optgroup>
-                ) : null,
-              )}
-              <option value={CUSTOM}>Add a custom provider…</option>
-            </select>
-          </Field>
+          {providerSelect}
           {provider === CUSTOM ? null : (
             <>
               <Field label="API key">
@@ -236,6 +256,63 @@ export function AddKeyForm({ providers, billingClasses }: { providers: ProviderO
   );
 }
 
+/**
+ * Set up a built-in local server: write `providers.<id>` (enabled, with the base URL when one is
+ * given) through the config API, and optionally store a token for a server whose authentication
+ * is turned on. No key is needed otherwise; models are found with Find models on its card.
+ */
+function LocalServerForm({ provider, local, select }: { provider: ProviderOption; local: (typeof LOCAL_SERVERS)[string]; select: ReactNode }) {
+  const [baseUrl, setBaseUrl] = useState("");
+  const [token, setToken] = useState("");
+  const { run, busy, error, errors, message, setError } = useAction();
+  const required = local.defaultUrl === null;
+  return (
+    <form
+      className="space-y-3"
+      autoComplete="off"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        const url = baseUrl.trim().replace(/\/+$/, "");
+        if (url && !/^https?:\/\//i.test(url)) return setError("The base URL must start with http:// or https://");
+        const patch = [
+          { path: ["providers", provider.id, "enabled"], value: true },
+          { path: ["providers", provider.id, "base_url"], value: url || null },
+        ];
+        const r = await run("/api/config", "POST", { patch }, { success: `${provider.displayName} is set up${url ? ` at ${url}` : ""}. It takes no key: use Find models on its card.` });
+        if (!r.ok || !token.trim()) return;
+        const k = await run("/api/keys", "POST", { provider: provider.id, label: "server token", secret: token.trim(), billingClass: "free_tier" }, { success: `${provider.displayName} is set up, with its token stored in the encrypted vault. Use Find models on its card.` });
+        setToken("");
+        if (!k.ok) setError(`The server was set up, but its token was not stored: ${k.error ?? "unknown error"}`);
+      }}
+    >
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {select}
+        <Field label={required ? "Base URL" : "Base URL (optional)"} help={local.hint}>
+          <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} className="field mt-1 font-mono" placeholder={local.defaultUrl ?? "http://127.0.0.1:8080/v1"} required={required} type="url" />
+        </Field>
+        {local.keys === "optional" ? (
+          <Field label="Token (only if the server requires one)" help="Stored encrypted, like any key. Leave empty for a server without authentication.">
+            <input type="password" value={token} onChange={(e) => setToken(e.target.value)} className="field mt-1 font-mono" placeholder="none" autoComplete="new-password" />
+          </Field>
+        ) : (
+          <div className="self-end pb-2 text-sm text-ink-2">
+            <Badge tone="good">No key needed</Badge>
+          </div>
+        )}
+      </div>
+      <p className="text-xs text-ink-3">
+        A local server runs on your machine or network and costs nothing per request. SwitchYard writes <code className="font-mono">providers.{provider.id}</code> to the config file and reads the server&apos;s own model list, including each model&apos;s context and tool support where the server reports them.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="submit" className={buttonClass("primary")} disabled={busy || (required && !baseUrl.trim())}>
+          <Server size={14} aria-hidden /> Set up {provider.displayName}
+        </button>
+        <ActionStatus error={error} message={message} errors={errors} />
+      </div>
+    </form>
+  );
+}
+
 function CustomProviderForm({ onAdded }: { onAdded: (id: string) => void }) {
   const [id, setId] = useState("");
   const [name, setName] = useState("");
@@ -261,16 +338,16 @@ function CustomProviderForm({ onAdded }: { onAdded: (id: string) => void }) {
       <div className="flex items-center gap-2 text-sm font-medium text-ink">
         <Server size={14} aria-hidden /> Custom provider
       </div>
-      <p className="text-xs text-ink-3">Any OpenAI-compatible server: a local Ollama, llama.cpp, vLLM, or LM Studio, or a hosted provider that is not built in. It is written under <code className="font-mono">providers</code> in the config file.</p>
+      <p className="text-xs text-ink-3">Any OpenAI-compatible server: a local vLLM, LocalAI, Jan, KoboldCpp, or SGLang, or a hosted provider that is not built in. Ollama, LM Studio, and llama.cpp are built in: pick them under Local servers. It is written under <code className="font-mono">providers</code> in the config file.</p>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <Field label="Id" help="Lowercase letters, digits, dashes. Models appear as <id>/<model>.">
-          <input value={id} onChange={(e) => setId(e.target.value.toLowerCase())} className="field mt-1 font-mono" placeholder="e.g. ollama" required pattern="[a-z0-9][a-z0-9-]{0,63}" />
+          <input value={id} onChange={(e) => setId(e.target.value.toLowerCase())} className="field mt-1 font-mono" placeholder="e.g. vllm" required pattern="[a-z0-9][a-z0-9-]{0,63}" />
         </Field>
         <Field label="Name (optional)">
-          <input value={name} onChange={(e) => setName(e.target.value)} className="field mt-1" placeholder="e.g. Ollama on this machine" maxLength={80} />
+          <input value={name} onChange={(e) => setName(e.target.value)} className="field mt-1" placeholder="e.g. vLLM on the GPU box" maxLength={80} />
         </Field>
         <Field label="Base URL" help="The URL the API paths go under, usually ending in /v1.">
-          <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} className="field mt-1 font-mono" placeholder="http://localhost:11434/v1" required type="url" />
+          <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} className="field mt-1 font-mono" placeholder="http://localhost:8000/v1" required type="url" />
         </Field>
         <Field label="API style">
           <select value={api} onChange={(e) => setApi(e.target.value)} className="field mt-1">
