@@ -87,12 +87,13 @@ export function projectInfo(sy: Switchyard, slug: string): ProjectSummary {
 
 /**
  * The settings a task's views read (its project's verification, team, and supervisor overrides):
- * its project's context, or the primary project's for a task whose project is unassigned or no
- * longer configured (views never fail on old rows).
+ * its project's context (the internal `_qualification` project for qualification and comparison
+ * work), or the primary project's for a task whose project is unassigned or no longer configured
+ * (views never fail on old rows).
  */
 export function contextOfTask(sy: Switchyard, taskId: string): ProjectContext {
   const p = sy.tasks.projectOf(taskId);
-  return (p ? sy.projects.get(p) : undefined) ?? sy.projects.primary;
+  return (p ? sy.projects.context(p) : undefined) ?? sy.projects.primary;
 }
 
 /** Every configured project as the CLI and MCP choose among them (archived ones included, marked). */

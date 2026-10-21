@@ -5,16 +5,20 @@ import { z } from "zod";
 import { DB_FILE, SCHEMA_VERSION, openDatabase, type Db } from "../storage/db.js";
 import { SwitchyardError } from "../core/errors.js";
 import { logsDirFor, readDaemonLock } from "./daemon.js";
+import { backupBrain, BrainManifestSchema, planBrainRestore, restoreBrain, type BrainMountNote, type BrainRestoreResult } from "./brain-backup.js";
 
 /**
- * Backup and restore of a storage directory: an online SQLite snapshot (consistent while a worker
- * runs), then the session logs and artifacts it indexes. Worktrees, agent homes, qualification
- * scratch, and logs are never included. The vault's master key is included only on request,
- * because a backup holding both the key and the encrypted paid keys is a secret in itself.
+ * Backup and restore of an install: an online SQLite snapshot of the store (consistent while a
+ * worker runs; every project's rows), the session logs and artifacts it indexes, and the brain
+ * repository as a git bundle (every project's folder and `global/`; see brain-backup.ts).
+ * Worktrees, agent homes, qualification scratch, logs, and brain mounts are never included. The
+ * vault's master key is included only on request, because a backup holding both the key and the
+ * encrypted paid keys is a secret in itself.
  */
 
 export const MANIFEST_FILE = "manifest.json";
-export const BACKUP_FORMAT = 1;
+/** 2 added the brain bundle; format 1 backups (store only) still restore. */
+export const BACKUP_FORMAT = 2;
 /** Storage entries a backup carries (relative to the storage directory). */
 const SESSIONS_DIR = "sessions";
 const ARTIFACTS_DIR = "artifacts";
@@ -23,7 +27,7 @@ const DB_SIDECARS = [`${DB_FILE}-wal`, `${DB_FILE}-shm`, `${DB_FILE}-journal`];
 
 export const BackupManifestSchema = z
   .object({
-    format: z.literal(BACKUP_FORMAT),
+    format: z.union([z.literal(1), z.literal(BACKUP_FORMAT)]),
     createdAt: z.string(),
     sourceStorageDir: z.string(),
     schemaVersion: z.number().int().nonnegative(),
@@ -35,6 +39,8 @@ export const BackupManifestSchema = z
     includesMasterKey: z.boolean(),
     /** Indexed files the snapshot references but the copy could not find. */
     missing: z.array(z.string()),
+    /** The brain repository (format 2; absent in format 1, null when no brain path was given). */
+    brain: BrainManifestSchema.nullable().optional(),
   })
   .strict();
 export type BackupManifest = z.infer<typeof BackupManifestSchema>;
@@ -44,6 +50,10 @@ export const BackupOptionsSchema = z
     storageDir: z.string().min(1),
     targetDir: z.string().min(1),
     includeMasterKey: z.boolean().default(false),
+    /** The brain repository to bundle (omitted: the backup has no brain). */
+    brainPath: z.string().min(1).optional(),
+    /** Brain mounts to list in the manifest as not included. */
+    brainMounts: z.array(z.object({ prefix: z.string(), path: z.string(), project: z.string().nullable() }).strict()).default([]),
   })
   .strict();
 export type BackupOptions = z.input<typeof BackupOptionsSchema>;
@@ -53,6 +63,8 @@ export const RestoreOptionsSchema = z
     backupDir: z.string().min(1),
     storageDir: z.string().min(1),
     force: z.boolean().default(false),
+    /** Where to restore the backup's brain (omitted: the brain is left alone). */
+    brainPath: z.string().min(1).optional(),
     now: z.number().int().optional(),
   })
   .strict();
@@ -66,6 +78,8 @@ export interface RestoreResult {
   /** Running tasks whose leases were expired so the next worker recovers them. */
   leasesReleased: number;
   schemaVersion: number;
+  /** What happened to the brain (restored, already current, or skipped and why). */
+  brain: BrainRestoreResult;
 }
 
 const isNonEmptyDir = (dir: string) => existsSync(dir) && readdirSync(dir).length > 0;
@@ -174,6 +188,9 @@ export async function backupStorage(input: BackupOptions): Promise<BackupManifes
   const includesMasterKey = opts.includeMasterKey && existsSync(masterKey);
   if (includesMasterKey) copyFileSync(masterKey, path.join(targetDir, MASTER_KEY_FILE));
 
+  const brainMounts: BrainMountNote[] = opts.brainMounts;
+  const brain = opts.brainPath ? backupBrain(opts.brainPath, targetDir, brainMounts) : null;
+
   const missing = [
     ...logPaths.filter((p) => !path.isAbsolute(p) && !existsSync(path.join(targetDir, ...p.split("/")))),
     ...artifactPaths.filter((p) => !existsSync(path.join(targetDir, ARTIFACTS_DIR, ...p.split("/")))).map((p) => `${ARTIFACTS_DIR}/${p}`),
@@ -191,6 +208,7 @@ export async function backupStorage(input: BackupOptions): Promise<BackupManifes
     artifactFiles,
     includesMasterKey,
     missing,
+    brain,
   };
   const manifestPath = path.join(targetDir, MANIFEST_FILE);
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
@@ -242,11 +260,13 @@ export function liveLeases(storageDir: string, now = Date.now()): Array<{ id: st
 const RESTORED_ENTRIES = [DB_FILE, ...DB_SIDECARS, SESSIONS_DIR, ARTIFACTS_DIR];
 
 /**
- * Restore a backup into `storageDir`. Refused while a worker holds live leases on the current
- * database or a daemon runs for it, and refused over existing state unless `force` is set; with `force`, the replaced
- * entries are moved to `<storage>/pre-restore-<time>/` rather than deleted. The restored database
- * is migrated to this build's schema, and tasks that were running at backup time have their
- * leases expired so the next worker recovers them.
+ * Restore a backup into `storageDir` and, given `brainPath`, its brain. Refused while a worker
+ * holds live leases on the current database or a daemon runs for it, over a brain with
+ * uncommitted changes (always), and over existing state unless `force` is set; with `force`, the
+ * replaced storage entries are moved to `<storage>/pre-restore-<time>/` and a replaced brain to
+ * `<brain>.pre-restore-<time>`, never deleted. Every refusal happens before anything changes. The
+ * restored database is migrated to this build's schema, and tasks that were running at backup
+ * time have their leases expired so the next worker recovers them.
  */
 export function restoreStorage(input: RestoreOptions): RestoreResult {
   const opts = RestoreOptionsSchema.parse(input);
@@ -276,6 +296,8 @@ export function restoreStorage(input: RestoreOptions): RestoreResult {
   if (occupied && !opts.force) {
     throw new SwitchyardError("conflict", `refusing to restore over existing state in ${storageDir} (${existing.join(", ")}); pass --force to move it aside first`);
   }
+  // Decided before anything moves: a dirty or occupied brain refuses the whole restore.
+  const brainPlan = planBrainRestore(manifest.brain, backupDir, opts.brainPath, opts.force);
 
   mkdirSync(storageDir, { recursive: true });
   let previousMovedTo: string | null = null;
@@ -314,5 +336,6 @@ export function restoreStorage(input: RestoreOptions): RestoreResult {
   } finally {
     db.close();
   }
-  return { manifest, storageDir, previousMovedTo, leasesReleased, schemaVersion };
+  const brain = restoreBrain(brainPlan, manifest.brain, backupDir, now);
+  return { manifest, storageDir, previousMovedTo, leasesReleased, schemaVersion, brain };
 }

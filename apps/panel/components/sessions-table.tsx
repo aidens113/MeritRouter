@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { insights } from "switchyard-router";
 import { Badge, EmptyState, type Tone } from "./ui";
 import { ago, dateTime, duration, humanize, shortId } from "@/lib/format";
+import { jobHref, sessionHref, taskHref } from "@/lib/links";
 
 export type SessionRow = ReturnType<typeof insights.sessionsView>[number];
 
@@ -40,13 +41,13 @@ export function roleLabel(role: string): string {
 }
 
 /** Where a session's task is best viewed: jobs (supervise) have their own page. */
-export function taskHref(s: Pick<SessionRow, "taskId" | "profile">): string | null {
+export function sessionTaskHref(s: Pick<SessionRow, "taskId" | "profile">, base: string): string | null {
   if (!s.taskId) return null;
-  return s.profile === "supervise" ? `/jobs/${s.taskId}` : `/tasks/${s.taskId}`;
+  return s.profile === "supervise" ? jobHref(base, s.taskId) : taskHref(base, s.taskId);
 }
 
-/** Sessions as a table; used by the Sessions page and the task, job, and session detail pages. */
-export function SessionsTable({ rows, now = Date.now(), hideTask = false, empty }: { rows: SessionRow[]; now?: number; hideTask?: boolean; empty?: string }) {
+/** Sessions as a table; used by the Sessions page and the task, job, and session detail pages. `base` is the project path links start from. */
+export function SessionsTable({ rows, base, now = Date.now(), hideTask = false, empty }: { rows: SessionRow[]; base: string; now?: number; hideTask?: boolean; empty?: string }) {
   if (!rows.length) return <EmptyState title={empty ?? "No sessions recorded"}>Sessions appear as agents run: one per classifier call, worker attempt, or supervisor.</EmptyState>;
   return (
     <div className="overflow-x-auto">
@@ -65,7 +66,7 @@ export function SessionsTable({ rows, now = Date.now(), hideTask = false, empty 
         </thead>
         <tbody>
           {rows.map((s) => {
-            const href = taskHref(s);
+            const href = sessionTaskHref(s, base);
             return (
               <tr key={s.id}>
                 <td className="whitespace-nowrap">
@@ -73,7 +74,7 @@ export function SessionsTable({ rows, now = Date.now(), hideTask = false, empty 
                   <div className="text-[11px] text-ink-3">{s.status === "running" ? `last event at +${duration(s.durationMs)}` : `took ${duration(s.durationMs)}`}</div>
                 </td>
                 <td className="whitespace-nowrap">
-                  <Link href={`/sessions/${encodeURIComponent(s.id)}`} className="font-medium text-accent-ink hover:underline">
+                  <Link href={sessionHref(base, s.id)} className="font-medium text-accent-ink hover:underline">
                     {roleLabel(s.role)}
                   </Link>
                   <span className="ml-1.5 text-xs text-ink-3">
@@ -105,7 +106,7 @@ export function SessionsTable({ rows, now = Date.now(), hideTask = false, empty 
                 )}
                 <td className="whitespace-nowrap">
                   {s.parentSessionId ? (
-                    <Link href={`/sessions/${encodeURIComponent(s.parentSessionId)}`} className="font-mono text-[11px] text-accent-ink hover:underline">
+                    <Link href={sessionHref(base, s.parentSessionId)} className="font-mono text-[11px] text-accent-ink hover:underline">
                       {shortId(s.parentSessionId, 18)}
                     </Link>
                   ) : (

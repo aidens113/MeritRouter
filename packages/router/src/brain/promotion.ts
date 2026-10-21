@@ -23,7 +23,8 @@ import type { Principal } from "./access.js";
  * supervisor, sources, and review verdict with the reviewer's model.
  */
 
-export const PROMOTION_STATUSES = ["pending_review", "pending_approval", "approved", "rejected"] as const;
+/** `reverted`: a person removed the approved lesson from `global/` again (who, when, and why are kept). */
+export const PROMOTION_STATUSES = ["pending_review", "pending_approval", "approved", "rejected", "reverted"] as const;
 export type PromotionStatus = (typeof PROMOTION_STATUSES)[number];
 
 /** Review attempts (reviewer failures or inconclusive verdicts) before a person must decide. */
@@ -171,6 +172,10 @@ export const PromotionRecordSchema = z
     decided_at: Iso.nullable(),
     global_path: z.string().max(400).nullable(),
     lesson_path: z.string().max(400).nullable(),
+    /** Set when a person reverted the global lesson (absent on records written before reverts existed). */
+    reverted_by: z.string().max(200).nullable().optional(),
+    reverted_at: Iso.nullable().optional(),
+    revert_reason: z.string().max(1000).nullable().optional(),
   })
   .strict();
 export type PromotionRecordMeta = z.infer<typeof PromotionRecordSchema>;
@@ -396,6 +401,16 @@ export class GlobalPromotions {
       if (cur) await this.finishApproval(cur);
     }
     return changed;
+  }
+
+  /**
+   * Record that a person reverted this promotion's global lesson (the file is already removed, see
+   * `Brain.remove`): an approved record becomes `reverted` with who, when, and why. `settle()` only
+   * finishes `approved` records, so a reverted lesson is never written again. Returns the record,
+   * or null when it is unknown or not approved.
+   */
+  markReverted(id: string, by: string, reason: string): Promise<PromotionRecord | null> {
+    return this.serial(() => this.transition(id, "approved", (x) => ({ ...x, status: "reverted", reverted_by: (by.trim() || "user").slice(0, 200), reverted_at: this.iso(), revert_reason: reason.trim().slice(0, 1000) })));
   }
 
   /** A person approves a waiting promotion (pending approval, or pending review when no reviewer settles it). */

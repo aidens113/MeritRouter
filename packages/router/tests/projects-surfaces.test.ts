@@ -132,7 +132,7 @@ describe("project selection", () => {
     const legacy = initConfigText(YAML.stringify(baseConfig()), { slug: "demo2" });
     const raw = YAML.parse(legacy) as Record<string, unknown>;
     expect(raw.repositories).toBeUndefined();
-    expect(raw.projects).toEqual({ demo2: { repositories: { core: { path: "repo" } } } });
+    expect(raw.projects).toEqual({ demo2: { name: "demo2", repositories: { core: { path: "repo" } } } });
     expect(() => initConfigText("version: 1\n", { slug: "Bad Slug" })).toThrow(/--project/);
   });
 });
@@ -231,7 +231,7 @@ describe("CLI with projects", () => {
       const r = spawnSync(process.execPath, [cliJs, "init", dir, "--project", "shop", "--repo", "web=../web"], { encoding: "utf8", env: childEnv(), timeout: 30_000 });
       expect(r.status, r.stderr).toBe(0);
       const raw = YAML.parse(readFileSync(path.join(dir, "switchyard.config.yaml"), "utf8")) as { brain: { project: string }; projects: Record<string, unknown>; repositories?: unknown };
-      expect(raw.projects).toEqual({ shop: { name: "My project", repositories: { web: { path: "../web" } } } });
+      expect(raw.projects).toEqual({ shop: { name: "shop", repositories: { web: { path: "../web" } } } });
       expect(raw.brain.project).toBe("shop");
       expect(raw.repositories).toBeUndefined();
       expect(() => parseConfig(raw, path.join(dir, "switchyard.config.yaml"))).not.toThrow();

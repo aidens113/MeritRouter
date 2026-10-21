@@ -286,7 +286,7 @@ describe("per-project budgets (D7)", () => {
     const beta = running.find((t) => t.row.project_id === "beta")!.row.id;
     reserve(alpha);
     reserve(alpha);
-    // Alpha's share is 2 of 4 requests/hour; a third is denied with the allocation reason and a retry time.
+    // Alpha's share is 2 of 4 requests/hour; a third is denied with the project's own reason and a retry time.
     let denied: unknown;
     try {
       reserve(alpha);
@@ -294,7 +294,7 @@ describe("per-project budgets (D7)", () => {
       denied = err;
     }
     expect(denied).toBeInstanceOf(AdmissionDenied);
-    expect((denied as AdmissionDenied).reason).toBe("package_hourly_allocation_exhausted");
+    expect((denied as AdmissionDenied).reason).toBe("project_allocation_exhausted");
     expect((denied as AdmissionDenied).message).toMatch(/project alpha share of the package allocation \(2 of 4 requests\/hour\)/);
     expect((denied as AdmissionDenied).retryAt).toBeGreaterThan(s.clock.t);
     // Beta has no share: it may use the rest of the package allocation.

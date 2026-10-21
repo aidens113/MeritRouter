@@ -6,7 +6,7 @@ import { UPSTREAM_CONTEXT_EVENT, UpstreamContextEventSchema, type BaseChoice } f
 import { FileLeaseStore, type FileLease } from "../storage/file-leases.js";
 import { splitRepoKey } from "../projects/context.js";
 import { PlanStore, criticalPath, type CriticalPath, type JobPlan, type PlanDifficulty } from "../storage/plans.js";
-import { AWAITING_ACCEPTANCE, WAITING_FOR_FILE_LEASE, type StoredTask, type TaskRow } from "../storage/tasks.js";
+import { AWAITING_ACCEPTANCE, WAITING_FOR_FILE_LEASE, WAITING_FOR_PROJECT_CAP, type StoredTask, type TaskRow } from "../storage/tasks.js";
 import { REDUNDANCY_SETTLED, REDUNDANCY_SKIPPED, REDUNDANCY_STARTED } from "../core/redundancy.js";
 import { contextOfTask } from "./projects.js";
 
@@ -262,6 +262,8 @@ export function jobPlan(sy: Switchyard, jobId: string, opts: { version?: number 
         text: `waits for the file lease ${holderLabel ?? holder} holds${held ? ` on ${held.globs.join(", ")} in ${repository}` : ""}`,
       };
     }
+    // A project's max_concurrent_tasks: capacity of the project's own (the reason names it).
+    if (reason?.startsWith(`${WAITING_FOR_PROJECT_CAP}:`)) return { kind: "capacity", reason, text: `waits for a slot: ${reason.slice(WAITING_FOR_PROJECT_CAP.length + 1).trim()}` };
     if (running >= maxAgents) return { kind: "agent_cap", running, cap: maxAgents, text: `waits for a free agent slot (${running} of ${maxAgents} running)` };
     return { kind: "worker", text: "ready; waits for a worker to claim it" };
   };

@@ -124,11 +124,13 @@ export {
 export { Auditor, auditCapacityShortfall, auditSampled, type AuditDecision, type AuditHost, type AuditStart } from "./verification/audit.js";
 export { PROMOTION_RUBRIC, PROMOTION_RUBRIC_VERSION, PromotionReviewer } from "./verification/promotion-review.js";
 export { GlobalPromotions, PROMOTION_STATUSES, projectSpecificIssues, type PromotionOutcome, type PromotionRecord, type PromotionStatus, type PromotionReviewPort } from "./brain/promotion.js";
-export { systemManaged } from "./brain/access.js";
+export { systemManaged, isBrainIndex } from "./brain/access.js";
+export { projectIndexPath } from "./brain/brain.js";
 export { REQUEST_PURPOSES, budgetInputFor, purposeCategory, verificationTotal, carvedRequests, carvesOf, childRequestBudget, type RequestPurpose, type BudgetCarve } from "./admission/admission.js";
 export { REVIEW_FAMILY, reviewerQualification } from "./qualification/stats.js";
 export { gradeReview, reviewEvalPackage } from "./qualification/runner.js";
-export { SwitchyardError, ConfigError, TaskValidationError, AdmissionDenied, GatewayError } from "./core/errors.js";
+export { QUALIFICATION_PROJECT } from "./qualification/registry.js";
+export { SwitchyardError, ConfigError, TaskValidationError, AdmissionDenied, GatewayError, PAID_BUDGET_DENIALS } from "./core/errors.js";
 export { Catalog, endpointIdFor, EndpointOverrideSchema, RoutingOverrideSchema, type ModelEndpoint, type EndpointOverride, type RoutingOverride, type EndpointStatus, type ParamEvidence } from "./models/catalog.js";
 export { modelFamily, planRoute, type RoutePlan, type CandidateExplanation, type ReviewerQualificationRequirement } from "./routing/select.js";
 export { DEFAULT_RULEBOOK, RulebookSchema, TAG_GROUPS, type Rulebook } from "./scoring/rulebook.js";
@@ -166,7 +168,7 @@ export {
   type CriticalPath,
 } from "./storage/plans.js";
 export { FileLeaseStore, LEASE_MODES, globsOverlap, writeGlobs, type FileLease, type LeaseMode } from "./storage/file-leases.js";
-export { AWAITING_ACCEPTANCE, WAITING_FOR_FILE_LEASE } from "./storage/tasks.js";
+export { AWAITING_ACCEPTANCE, WAITING_FOR_FILE_LEASE, WAITING_FOR_PROJECT_CAP, projectCapReason } from "./storage/tasks.js";
 export { UPSTREAM_CONTEXT_EVENT, UPSTREAM_RESULTS_KIND, INTEGRATED_EVENT, type UpstreamContext, type UpstreamPackage, type UpstreamEntry, type BaseChoice } from "./context/upstream.js";
 export { SessionStore, CreateSessionInputSchema, SESSIONS_DIR, PROCESS_DIED, type CreateSessionInput, type SessionRecord, type SessionListFilter, type SessionEventsPage, type ReopenOptions } from "./sessions/store.js";
 export { SessionRecorder, type ModelRequestInput, type ModelErrorInput, type ToolIntentInput, type ToolOutcomeInput } from "./sessions/recorder.js";

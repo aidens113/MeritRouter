@@ -170,7 +170,7 @@ describe("job metrics", () => {
     expect(m.verificationShare).toBe(0.167);
 
     // Waiting by reason: B 12s + C 11.5s + D 38.5s on dependencies; A 1s + E 0.5s ready in the queue.
-    expect(m.waiting.byReason).toEqual({ dependencies: 62 * S, acceptance: 0, file_lease: 11 * S, provider_slot: 2 * S, capacity: 3 * S, queue: 1.5 * S, interrupted: 0 });
+    expect(m.waiting.byReason).toEqual({ dependencies: 62 * S, acceptance: 0, file_lease: 11 * S, provider_slot: 2 * S, project_cap: 0, capacity: 3 * S, queue: 1.5 * S, interrupted: 0 });
     expect(m.waitingMs).toBe(79.5 * S);
     expect(m.waiting.tasksThatWaited).toBe(5);
     expect(m.agents.find((a) => a.taskId === "t_c")!.runs.map((r) => [(r.start - T0) / S, (r.end - T0) / S])).toEqual([[25, 27], [30, 40]]);

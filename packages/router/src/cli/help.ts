@@ -102,13 +102,20 @@ Qualification
                                     runs only with --yes, within qualification.max_requests_per_day
   compare list | show <id>          recorded comparisons
 
-Operations (storage.durability: normal | full sets SQLite's synchronous level)
+Operations (install-wide: every project; --project is refused here.
+storage.durability: normal | full sets SQLite's synchronous level)
   backup <dir> [--include-master-key]   online snapshot of the database, session logs, and
-                                artifacts into a new directory (never worktrees)
-  restore <dir> [--force]       restore a backup; refused while a worker holds live leases,
-                                and over existing state unless --force (which moves it aside)
-  daemon [--max-restarts n] [--window s] [--max-delay s]   run the worker and restart it on
-                                failure with backoff; logs under <storage>/logs/
+                                artifacts, plus the brain repository as a git bundle, into a
+                                new directory (never worktrees; brain mounts are listed, not
+                                copied)
+  restore <dir> [--force]       restore a backup and its brain; refused while a worker holds
+                                live leases, over a brain with uncommitted changes, and over
+                                existing state unless --force (which moves it aside)
+  daemon [run] [--max-restarts n] [--window s] [--max-delay s]   run one worker for every
+                                project and restart it on failure with backoff; logs under
+                                <storage>/logs/
+  daemon start | status | stop [--timeout s]   the same in the background; status shows the
+                                daemon and each project's queued and running tasks
   service install|uninstall|status [--name n] [--dry-run]   run the daemon at logon as a
                                 systemd user unit, launchd agent, or Windows scheduled task
 `;

@@ -1,6 +1,7 @@
 import type { Switchyard } from "../core/service.js";
 import type { TaskState } from "../core/task.js";
 import type { UsageSummary } from "../storage/usage.js";
+import { QUALIFICATION_PROJECT } from "../qualification/registry.js";
 import { overview, workers, type Overview, type WorkerInfo } from "./insights.js";
 import { projectActivity, projectAttention, projectInfo, projectList, QUEUED_STATES, RUNNING_STATES, type ProjectCard, type ProjectSummary } from "./projects.js";
 
@@ -90,8 +91,16 @@ function tasksByState(sy: Switchyard, project?: string): Record<string, number> 
   return Object.fromEntries(rows.map((r) => [r.state, r.n]));
 }
 
+/** Submission time of a project's oldest queued task (how long its queue has been waiting). */
+function oldestQueuedAt(sy: Switchyard, project: string): number | null {
+  const r = sy.db.prepare(`SELECT MIN(created_at) AS t FROM tasks WHERE project_id = ? AND state IN (${QUEUED_STATES.map(() => "?").join(",")})`).get(project, ...QUEUED_STATES) as { t: number | null };
+  return r.t ?? null;
+}
+
 export interface DashboardProject extends ProjectCard {
   tasksByState: Record<string, number>;
+  /** When the oldest of the project's queued tasks was submitted (null when nothing is queued). */
+  oldestQueuedAt: number | null;
   usage24h: ProjectUsage;
   usage7d: ProjectUsage;
 }
@@ -108,6 +117,8 @@ export interface GlobalDashboard {
   attention: Array<{ project: string | null; text: string }>;
   /** Requests charged to no project (probes, scans). */
   unattributed: { usage24h: ProjectUsage; usage7d: ProjectUsage };
+  /** Qualification runs and eval comparisons (the reserved `_qualification` project, never listed as a project). */
+  qualification: { usage24h: ProjectUsage; usage7d: ProjectUsage };
   totals: { runningJobs: number; queuedJobs: number; runningTasks: number; queuedTasks: number; usage24h: ProjectUsage; usage7d: ProjectUsage };
 }
 
@@ -128,18 +139,21 @@ export async function globalDashboard(sy: Switchyard, opts: { includeArchived?: 
       attention: attentionItems.length,
       attentionItems,
       tasksByState: tasksByState(sy, p.slug),
+      oldestQueuedAt: oldestQueuedAt(sy, p.slug),
       usage24h: projectUsage(sy.usage(now - DAY, now, p.slug), paid1.get(p.slug) ?? 0),
       usage7d: projectUsage(sy.usage(now - 7 * DAY, now, p.slug), paid7.get(p.slug) ?? 0),
     };
   });
   const shown = new Set(projects.map((p) => p.slug));
-  const sum = (k: "usage24h" | "usage7d", unattributed: ProjectUsage): ProjectUsage => {
-    const all = [...projects.map((p) => p[k]), unattributed];
+  const sum = (k: "usage24h" | "usage7d", ...rest: ProjectUsage[]): ProjectUsage => {
+    const all = [...projects.map((p) => p[k]), ...rest];
     const add = (f: keyof ProjectUsage) => all.reduce((n, u) => n + ((u[f] as number | null) ?? 0), 0);
     const reported = all.some((u) => u.reportedCostUsd !== null);
     return { requests: add("requests"), failedRequests: add("failedRequests"), inputTokens: add("inputTokens"), outputTokens: add("outputTokens"), tasksSubmitted: add("tasksSubmitted"), tasksCompleted: add("tasksCompleted"), tasksFailed: add("tasksFailed"), reportedCostUsd: reported ? add("reportedCostUsd") : null, paidSpendUsd: add("paidSpendUsd") };
   };
   const unattributed = { usage24h: unattributedUsage(sy, now - DAY, paid1.get("") ?? 0), usage7d: unattributedUsage(sy, now - 7 * DAY, paid7.get("") ?? 0) };
+  const q = QUALIFICATION_PROJECT;
+  const qualification = { usage24h: projectUsage(sy.usage(now - DAY, now, q), paid1.get(q) ?? 0), usage7d: projectUsage(sy.usage(now - 7 * DAY, now, q), paid7.get(q) ?? 0) };
   return {
     generatedAt: now,
     install,
@@ -147,13 +161,14 @@ export async function globalDashboard(sy: Switchyard, opts: { includeArchived?: 
     jobs: activeJobs(sy).filter((j) => shown.has(j.project)),
     attention: [...install.attention.map((text) => ({ project: null, text })), ...projects.flatMap((p) => p.attentionItems.map((text) => ({ project: p.slug, text })))],
     unattributed,
+    qualification,
     totals: {
       runningJobs: projects.reduce((n, p) => n + p.runningJobs, 0),
       queuedJobs: projects.reduce((n, p) => n + p.queuedJobs, 0),
       runningTasks: projects.reduce((n, p) => n + p.runningTasks, 0),
       queuedTasks: projects.reduce((n, p) => n + p.queuedTasks, 0),
-      usage24h: sum("usage24h", unattributed.usage24h),
-      usage7d: sum("usage7d", unattributed.usage7d),
+      usage24h: sum("usage24h", unattributed.usage24h, qualification.usage24h),
+      usage7d: sum("usage7d", unattributed.usage7d, qualification.usage7d),
     },
   };
 }

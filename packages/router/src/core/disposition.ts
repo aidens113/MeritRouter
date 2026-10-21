@@ -56,9 +56,11 @@ export function classifyFailure(err: unknown, signal: AbortSignal, f: FailureCon
       case "task_token_budget_exhausted":
         return { kind: "final", state: "budget_exhausted", stopReason: `${err.reason}: ${err.message}` };
       case "paid_budget_exhausted":
-        return { kind: "final", state: "failed", stopReason: `paid_budget_exhausted: ${err.message}` };
+      case "project_paid_budget_exhausted":
+        return { kind: "final", state: "failed", stopReason: `${err.reason}: ${err.message}` };
       case "package_hourly_allocation_exhausted":
       case "package_daily_allocation_exhausted":
+      case "project_allocation_exhausted":
         return capacity(err.retryAt ?? now + 60_000, err.message);
       default:
         return { kind: "final", state: "failed", stopReason: `${err.reason}: ${err.message}` };

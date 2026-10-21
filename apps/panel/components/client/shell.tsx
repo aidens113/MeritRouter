@@ -20,45 +20,78 @@ import {
   Scale,
   ScrollText,
   Settings,
+  SlidersHorizontal,
   Sun,
-  TrainTrack,
   UsersRound,
   X,
+  LayoutGrid,
+  Library,
+  type LucideIcon,
 } from "lucide-react";
 import { cx } from "../ui";
 import { THEME_KEY } from "@/lib/theme";
+import { ALL, projectBase, slugOfPath } from "@/lib/links";
+import { ProjectSwitcher, type Scope, type SwitcherProject } from "./project-switcher";
 
-const NAV = [
-  { href: "/", label: "Overview", icon: LayoutDashboard },
-  { href: "/models", label: "Models", icon: Boxes },
-  { href: "/routing", label: "Routing", icon: Route },
-  { href: "/jobs", label: "Jobs", icon: Network },
-  { href: "/teams", label: "Teams", icon: UsersRound },
-  { href: "/tasks", label: "Tasks", icon: ListChecks },
-  { href: "/sessions", label: "Sessions", icon: ScrollText },
-  { href: "/requests", label: "Requests", icon: Activity },
-  { href: "/brain", label: "Brain", icon: BookOpenText },
-  { href: "/keys", label: "Provider keys", icon: KeyRound },
-  { href: "/qualification", label: "Qualification", icon: BadgeCheck },
-  { href: "/calibration", label: "Calibration", icon: Scale },
-  { href: "/settings", label: "Settings", icon: Settings },
-] as const;
+type NavItem = { href: string; label: string; icon: LucideIcon; exact?: boolean };
 
-function isActive(path: string, href: string) {
-  return href === "/" ? path === "/" : path === href || path.startsWith(`${href}/`);
+/** Inside a project: that project's pages. */
+function projectNav(slug: string): NavItem[] {
+  const b = projectBase(slug);
+  return [
+    { href: b, label: "Overview", icon: LayoutDashboard, exact: true },
+    { href: `${b}/jobs`, label: "Jobs", icon: Network },
+    { href: `${b}/teams`, label: "Teams", icon: UsersRound },
+    { href: `${b}/tasks`, label: "Tasks", icon: ListChecks },
+    { href: `${b}/sessions`, label: "Sessions", icon: ScrollText },
+    { href: `${b}/requests`, label: "Requests", icon: Activity },
+    { href: `${b}/brain`, label: "Brain", icon: BookOpenText },
+    { href: `${b}/settings`, label: "Project settings", icon: SlidersHorizontal },
+  ];
 }
 
-export function Shell({ children, configPath, loginEnabled }: { children: ReactNode; configPath: string; loginEnabled: boolean }) {
+/** "All projects" and the projects grid: the install-wide pages. */
+const GLOBAL_NAV: NavItem[] = [
+  { href: "/", label: "Projects", icon: LayoutGrid, exact: true },
+  { href: ALL, label: "Dashboard", icon: LayoutDashboard, exact: true },
+  { href: `${ALL}/requests`, label: "Requests", icon: Activity },
+  { href: `${ALL}/models`, label: "Models", icon: Boxes },
+  { href: `${ALL}/routing`, label: "Routing", icon: Route },
+  { href: `${ALL}/keys`, label: "Provider keys", icon: KeyRound },
+  { href: `${ALL}/qualification`, label: "Qualification", icon: BadgeCheck },
+  { href: `${ALL}/calibration`, label: "Calibration", icon: Scale },
+  { href: `${ALL}/knowledge`, label: "Knowledge", icon: Library },
+  { href: `${ALL}/settings`, label: "Settings", icon: Settings },
+];
+
+function scopeOf(path: string): Scope {
+  const slug = slugOfPath(path);
+  if (slug) return { kind: "project", slug };
+  if (path === ALL || path.startsWith(`${ALL}/`)) return { kind: "all" };
+  return { kind: "home" };
+}
+
+function isActive(path: string, item: NavItem) {
+  return item.exact ? path === item.href : path === item.href || path.startsWith(`${item.href}/`);
+}
+
+export function Shell({ children, configPath, loginEnabled, projects }: { children: ReactNode; configPath: string; loginEnabled: boolean; projects: SwitcherProject[] }) {
   const path = usePathname();
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(false), [path]);
 
   if (path === "/login") return <main className="min-h-screen">{children}</main>;
 
+  const scope = scopeOf(path);
+  // A project missing from the live list is archived (its settings page is the only one that opens).
+  const archived = scope.kind === "project" && !projects.some((p) => p.slug === scope.slug);
+  const items = scope.kind === "project" ? projectNav(scope.slug).filter((i) => !archived || i.href.endsWith("/settings")) : GLOBAL_NAV;
   const nav = (
-    <nav aria-label="Main" className="flex flex-col gap-0.5">
-      {NAV.map(({ href, label, icon: Icon }) => {
-        const active = isActive(path, href);
+    <nav aria-label={scope.kind === "project" ? "Project" : "All projects"} className="flex flex-col gap-0.5">
+      {scope.kind !== "project" ? <div className="px-3 pb-1 pt-1 text-[11px] font-medium uppercase tracking-wide text-ink-3">All projects</div> : null}
+      {items.map((item) => {
+        const { href, label, icon: Icon } = item;
+        const active = isActive(path, item);
         return (
           <Link
             key={href}
@@ -91,42 +124,30 @@ export function Shell({ children, configPath, loginEnabled }: { children: ReactN
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-[15rem_1fr]">
       <aside className="sticky top-0 hidden h-screen flex-col gap-4 overflow-y-auto border-r border-line bg-surface px-3 py-4 lg:flex">
-        <Brand />
+        <ProjectSwitcher scope={scope} initial={projects} />
         <div className="flex-1">{nav}</div>
         {footer}
       </aside>
 
-      <div className="sticky top-0 z-40 flex items-center justify-between border-b border-line bg-surface px-4 py-2.5 lg:hidden">
-        <Brand />
-        <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-label="Toggle navigation" className="rounded-lg p-2 text-ink-2 hover:bg-surface-2">
+      <div className="sticky top-0 z-40 flex items-center justify-between gap-2 border-b border-line bg-surface px-4 py-2 lg:hidden">
+        <div className="min-w-0 max-w-[20rem] flex-1">
+          <ProjectSwitcher scope={scope} initial={projects} />
+        </div>
+        <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-label="Toggle navigation" className="shrink-0 rounded-lg p-2 text-ink-2 hover:bg-surface-2">
           {open ? <X size={18} /> : <Menu size={18} />}
         </button>
+        {open ? (
+          <div className="absolute inset-x-0 top-full max-h-[calc(100vh-4rem)] space-y-4 overflow-y-auto border-b border-line bg-surface px-3 py-3 shadow-lg">
+            {nav}
+            {footer}
+          </div>
+        ) : null}
       </div>
-      {open ? (
-        <div className="fixed inset-x-0 top-[53px] z-30 space-y-4 border-b border-line bg-surface px-3 py-3 shadow-lg lg:hidden">
-          {nav}
-          {footer}
-        </div>
-      ) : null}
 
       <main className="min-w-0 px-4 py-6 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-[1400px]">{children}</div>
       </main>
     </div>
-  );
-}
-
-function Brand() {
-  return (
-    <Link href="/" className="flex items-center gap-2 px-2">
-      <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent text-white">
-        <TrainTrack size={16} aria-hidden />
-      </span>
-      <span className="leading-tight">
-        <span className="block text-sm font-semibold text-ink">SwitchYard</span>
-        <span className="block text-[11px] text-ink-3">Router panel</span>
-      </span>
-    </Link>
   );
 }
 

@@ -438,7 +438,7 @@ async function main(): Promise<void> {
     return brain.search(principal(), String(a.query), { ...(a.prefix ? { prefix: String(a.prefix) } : {}), limit: 10 });
   });
   brainTool("brain_read", "Read a brain entry, or one section of it (e.g. 'Current State').", { path: z.string(), section: z.string().optional() }, (a) => brain.read(principal(), String(a.path), a.section ? { section: String(a.section) } : {}));
-  brainTool("brain_list", "List brain entries under a prefix (index of working documents: README.md).", { prefix: z.string().optional() }, (a) => brain.list(principal(), String(a.prefix ?? "")));
+  brainTool("brain_list", `List brain entries under a prefix that you can read. This project's index of its working documents is projects/${brain.project}/README.md; global knowledge is under global/.`, { prefix: z.string().optional() }, (a) => brain.list(principal(), String(a.prefix ?? "")));
   brainTool("brain_start_working_doc", "Create a working document for an effort (header, Current State, briefs, ledger, open questions).", { effort: z.string(), title: z.string(), scope: z.string(), currentState: z.string() }, (a) =>
     brain.createWorkingDoc(principal(), actor, String(a.effort), { title: String(a.title), statusDetail: "Started from Claude Code", owner: actor.agent, scope: String(a.scope), currentState: String(a.currentState) }),
   );

@@ -73,7 +73,7 @@ describe("backup and restore", () => {
 
     // Backup with the worker still open: the online snapshot must be consistent.
     const m = await backupStorage({ storageDir: env!.cfg.storageDir, targetDir: target });
-    expect(m).toMatchObject({ format: 1, includesMasterKey: false, missing: [] });
+    expect(m).toMatchObject({ format: 2, includesMasterKey: false, missing: [], brain: null });
     expect(m.tasks).toBeGreaterThan(0);
     expect(m.sessions).toBe(m.sessionLogs);
     expect(m.artifacts).toBeGreaterThan(0);

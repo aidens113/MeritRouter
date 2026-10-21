@@ -36,8 +36,15 @@ export type AdmissionDenialReason =
   | "package_daily_allocation_exhausted"
   | "paid_routing_disabled"
   | "paid_budget_exhausted"
+  /** A project's own paid cap (`projects.<slug>.paid_budgets`); like `paid_budget_exhausted`, the request falls back to free routes. */
+  | "project_paid_budget_exhausted"
+  /** A project's share of the package allocation (`projects.<slug>.request_share`); like the package reasons, the task waits for the window. */
+  | "project_allocation_exhausted"
   | "no_eligible_endpoint"
   | "context_does_not_fit";
+
+/** Denials of a paid route's budget: the paid endpoint is skipped and free routes are tried instead. */
+export const PAID_BUDGET_DENIALS: ReadonlySet<AdmissionDenialReason> = new Set<AdmissionDenialReason>(["paid_budget_exhausted", "project_paid_budget_exhausted"]);
 
 export class AdmissionDenied extends SwitchyardError {
   constructor(

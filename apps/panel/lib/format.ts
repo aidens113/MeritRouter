@@ -70,7 +70,7 @@ export function shortId(id: string, n = 10): string {
 }
 
 export function modelHref(id: string): string {
-  return `/models/detail?id=${encodeURIComponent(id)}`;
+  return `/all/models/detail?id=${encodeURIComponent(id)}`;
 }
 
 /** Compact timestamp for dense tables: "19 Oct 00:34:29". */

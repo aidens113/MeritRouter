@@ -1,6 +1,10 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { cx } from "./ui";
+import { brainHref } from "@/lib/links";
+
+/** The document being rendered and the project path (`/p/<slug>`) its brain links open under. */
+type Ctx = { basePath: string; linkBase: string };
 
 /**
  * Small, safe markdown renderer for brain documents. It builds React elements only (no HTML
@@ -8,7 +12,8 @@ import { cx } from "./ui";
  * brain-relative paths. Supports front matter, headings, paragraphs, lists, task boxes, block
  * quotes, fenced code, pipe tables, rules, and inline code/bold/italic/links.
  */
-export function Markdown({ text, basePath }: { text: string; basePath: string }) {
+export function Markdown({ text, basePath, linkBase }: { text: string; basePath: string; linkBase: string }) {
+  const ctx: Ctx = { basePath, linkBase };
   const lines = text.replace(/\r\n/g, "\n").split("\n");
   const out: ReactNode[] = [];
   let i = 0;
@@ -67,7 +72,7 @@ export function Markdown({ text, basePath }: { text: string; basePath: string })
       const Tag = (`h${Math.min(level + 1, 6)}`) as "h2";
       out.push(
         <Tag key={k()} id={slug(h[2]!)} className={cx("text-ink", cls)}>
-          {inline(h[2]!, basePath)}
+          {inline(h[2]!, ctx)}
         </Tag>,
       );
       i++;
@@ -83,7 +88,7 @@ export function Markdown({ text, basePath }: { text: string; basePath: string })
       while (i < lines.length && /^\s*>/.test(lines[i]!)) body.push(lines[i++]!.replace(/^\s*>\s?/, ""));
       out.push(
         <blockquote key={k()} className="my-3 border-l-2 border-line-strong pl-3 text-ink-2">
-          <Markdown text={body.join("\n")} basePath={basePath} />
+          <Markdown text={body.join("\n")} basePath={basePath} linkBase={linkBase} />
         </blockquote>,
       );
       continue;
@@ -100,7 +105,7 @@ export function Markdown({ text, basePath }: { text: string; basePath: string })
             <thead>
               <tr>
                 {head.map((c, j) => (
-                  <th key={j}>{inline(c, basePath)}</th>
+                  <th key={j}>{inline(c, ctx)}</th>
                 ))}
               </tr>
             </thead>
@@ -108,7 +113,7 @@ export function Markdown({ text, basePath }: { text: string; basePath: string })
               {rows.map((r, ri) => (
                 <tr key={ri}>
                   {head.map((_, j) => (
-                    <td key={j}>{inline(r[j] ?? "", basePath)}</td>
+                    <td key={j}>{inline(r[j] ?? "", ctx)}</td>
                   ))}
                 </tr>
               ))}
@@ -140,7 +145,7 @@ export function Markdown({ text, basePath }: { text: string; basePath: string })
             return (
               <li key={j} className={task ? "list-none -ml-5 flex items-start gap-2" : undefined}>
                 {task ? <input type="checkbox" checked={task[1] !== " "} readOnly disabled className="mt-1" aria-label={task[1] !== " " ? "done" : "not done"} /> : null}
-                <span>{inline(task ? task[2]! : it, basePath)}</span>
+                <span>{inline(task ? task[2]! : it, ctx)}</span>
               </li>
             );
           })}
@@ -160,7 +165,7 @@ export function Markdown({ text, basePath }: { text: string; basePath: string })
             return (
               <div key={j} className="contents">
                 <dt className="text-ink-3">{l.slice(0, idx)}</dt>
-                <dd className="min-w-0 break-words text-ink">{inline(l.slice(idx + 1).trim(), basePath)}</dd>
+                <dd className="min-w-0 break-words text-ink">{inline(l.slice(idx + 1).trim(), ctx)}</dd>
               </div>
             );
           })}
@@ -174,7 +179,7 @@ export function Markdown({ text, basePath }: { text: string; basePath: string })
     }
     out.push(
       <p key={k()} className="my-2 leading-relaxed text-ink">
-        {inline(para.join(" "), basePath)}
+        {inline(para.join(" "), ctx)}
       </p>,
     );
   }
@@ -202,7 +207,7 @@ function resolveBrain(basePath: string, href: string): string | null {
 
 const INLINE = /(`[^`]+`)|(\*\*[^*]+\*\*|__[^_]+__)|(\*[^*\s][^*]*\*|_[^_\s][^_]*_)|(\[[^\]]+\]\([^)\s]+\))/g;
 
-function inline(text: string, basePath: string): ReactNode[] {
+function inline(text: string, ctx: Ctx): ReactNode[] {
   const out: ReactNode[] = [];
   let last = 0;
   let n = 0;
@@ -210,8 +215,8 @@ function inline(text: string, basePath: string): ReactNode[] {
     if (m.index! > last) out.push(text.slice(last, m.index));
     const s = m[0];
     if (m[1]) out.push(<code key={n++} className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[0.85em] text-ink-2">{s.slice(1, -1)}</code>);
-    else if (m[2]) out.push(<strong key={n++} className="font-semibold">{inline(s.slice(2, -2), basePath)}</strong>);
-    else if (m[3]) out.push(<em key={n++}>{inline(s.slice(1, -1), basePath)}</em>);
+    else if (m[2]) out.push(<strong key={n++} className="font-semibold">{inline(s.slice(2, -2), ctx)}</strong>);
+    else if (m[3]) out.push(<em key={n++}>{inline(s.slice(1, -1), ctx)}</em>);
     else {
       const lm = /^\[([^\]]+)\]\(([^)\s]+)\)$/.exec(s)!;
       const label = lm[1]!;
@@ -232,10 +237,10 @@ function inline(text: string, basePath: string): ReactNode[] {
           </a>,
         );
       } else {
-        const target = href.startsWith("brain:") ? resolveBrain("", `/${href.slice(6)}`) : resolveBrain(basePath, href);
+        const target = href.startsWith("brain:") ? resolveBrain("", `/${href.slice(6)}`) : resolveBrain(ctx.basePath, href);
         out.push(
           target ? (
-            <Link key={n++} href={`/brain?path=${encodeURIComponent(target)}`} className="text-accent-ink underline decoration-accent/40 hover:decoration-accent">
+            <Link key={n++} href={brainHref(ctx.linkBase, target)} className="text-accent-ink underline decoration-accent/40 hover:decoration-accent">
               {label}
             </Link>
           ) : (

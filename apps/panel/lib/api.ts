@@ -37,7 +37,7 @@ export async function handle(fn: (sy: Switchyard) => Promise<unknown> | unknown)
         ? 400
         : code === "not_found"
           ? 404
-          : code === "cannot_accept_unmet" || code === "human_acceptance_required"
+          : code === "cannot_accept_unmet" || code === "human_acceptance_required" || code === "usage"
             ? 409
             : code.startsWith("gateway:")
               ? 502

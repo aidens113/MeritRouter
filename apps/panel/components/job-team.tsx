@@ -4,6 +4,7 @@ import type { insights } from "switchyard-router";
 import { Badge, Card, CardHeader, Mono, type Tone } from "./ui";
 import { AcceptanceBadge, TaskStateBadge } from "./task-badges";
 import { dateTime, humanize, shortId } from "@/lib/format";
+import { jobHref, taskHref } from "@/lib/links";
 
 // The job page's team view (T2): the job tree (sub-jobs with branch and carved budget, and their
 // workers), the merge queue of each job branch, and the team channel. Channel post text is model
@@ -32,8 +33,8 @@ function Budget({ b }: { b: NonNullable<TreeNode["budget"]> }) {
   );
 }
 
-function TreeRow({ n, self }: { n: TreeNode; self: boolean }) {
-  const href = n.kind === "job" ? `/jobs/${encodeURIComponent(n.taskId)}` : `/tasks/${encodeURIComponent(n.taskId)}`;
+function TreeRow({ n, self, base }: { n: TreeNode; self: boolean; base: string }) {
+  const href = n.kind === "job" ? jobHref(base, n.taskId) : taskHref(base, n.taskId);
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 py-1.5">
       <span className="inline-flex min-w-0 items-center gap-1.5">
@@ -60,14 +61,14 @@ function TreeRow({ n, self }: { n: TreeNode; self: boolean }) {
   );
 }
 
-function Tree({ n, self }: { n: TreeNode; self: boolean }) {
+function Tree({ n, self, base }: { n: TreeNode; self: boolean; base: string }) {
   return (
     <li>
-      <TreeRow n={n} self={self} />
+      <TreeRow n={n} self={self} base={base} />
       {n.children.length ? (
         <ul className="ml-2 border-l border-line pl-4">
           {n.children.map((c) => (
-            <Tree key={c.taskId} n={c} self={false} />
+            <Tree key={c.taskId} n={c} self={false} base={base} />
           ))}
         </ul>
       ) : null}
@@ -75,7 +76,8 @@ function Tree({ n, self }: { n: TreeNode; self: boolean }) {
   );
 }
 
-export function TeamCard({ team }: { team: Team }) {
+/** `base` is the project path (`/p/<slug>`) links start from. */
+export function TeamCard({ team, base }: { team: Team; base: string }) {
   return (
     <Card id="team">
       <CardHeader
@@ -88,7 +90,7 @@ export function TeamCard({ team }: { team: Team }) {
               <>
                 {" "}
                 A sub-job of{" "}
-                <Link href={`/jobs/${encodeURIComponent(team.parentJobId)}`} className="text-accent-ink hover:underline">
+                <Link href={jobHref(base, team.parentJobId)} className="text-accent-ink hover:underline">
                   {team.parentLabel ?? shortId(team.parentJobId, 18)}
                 </Link>
                 .
@@ -103,7 +105,7 @@ export function TeamCard({ team }: { team: Team }) {
         }
       />
       <ul className="px-4 py-2 text-sm">
-        <Tree n={team.tree} self />
+        <Tree n={team.tree} self base={base} />
       </ul>
     </Card>
   );
@@ -111,7 +113,7 @@ export function TeamCard({ team }: { team: Team }) {
 
 const ITEM_TONE: Record<string, Tone> = { integrated: "good", queued: "accent", integrating: "accent", picked: "accent", conflict: "bad", failed: "bad", redelegated: "warn", refused: "warn" };
 
-export function MergeQueueCard({ team }: { team: Team }) {
+export function MergeQueueCard({ team, base }: { team: Team; base: string }) {
   if (!team.queues.length) return null;
   return (
     <Card id="merge-queue">
@@ -126,7 +128,7 @@ export function MergeQueueCard({ team }: { team: Team }) {
               {q.jobId !== team.jobId ? (
                 <span className="text-xs text-ink-3">
                   branch of sub-job{" "}
-                  <Link href={`/jobs/${encodeURIComponent(q.jobId)}`} className="text-accent-ink hover:underline">
+                  <Link href={jobHref(base, q.jobId)} className="text-accent-ink hover:underline">
                     {q.jobLabel ?? shortId(q.jobId, 16)}
                   </Link>
                 </span>
@@ -150,7 +152,7 @@ export function MergeQueueCard({ team }: { team: Team }) {
                     <tr key={i.id}>
                       <td className="tabular text-xs text-ink-3">{k + 1}</td>
                       <td>
-                        <Link href={i.kind === "job" ? `/jobs/${encodeURIComponent(i.taskId)}` : `/tasks/${encodeURIComponent(i.taskId)}`} className="font-medium text-accent-ink hover:underline">
+                        <Link href={i.kind === "job" ? jobHref(base, i.taskId) : taskHref(base, i.taskId)} className="font-medium text-accent-ink hover:underline">
                           {i.taskLabel ?? shortId(i.taskId, 16)}
                         </Link>
                         <div className="text-[11px] text-ink-3">
@@ -169,7 +171,7 @@ export function MergeQueueCard({ team }: { team: Team }) {
                         {i.redelegatedTo ? (
                           <div>
                             re-delegated:{" "}
-                            <Link href={`/tasks/${encodeURIComponent(i.redelegatedTo)}`} className="text-accent-ink hover:underline">
+                            <Link href={taskHref(base, i.redelegatedTo)} className="text-accent-ink hover:underline">
                               {i.redelegatedLabel ?? shortId(i.redelegatedTo, 16)}
                             </Link>
                           </div>
@@ -209,7 +211,7 @@ const KIND: Record<string, { label: string; tone: Tone }> = {
   interface_contract: { label: "interface contract", tone: "good" },
 };
 
-function PostItem({ p, showJob }: { p: Post; showJob: boolean }) {
+function PostItem({ p, showJob, base }: { p: Post; showJob: boolean; base: string }) {
   const k = KIND[p.kind] ?? { label: p.kind, tone: "neutral" as Tone };
   return (
     <li className="space-y-1.5 px-4 py-3">
@@ -220,7 +222,7 @@ function PostItem({ p, showJob }: { p: Post; showJob: boolean }) {
         {showJob ? (
           <span>
             in{" "}
-            <Link href={`/jobs/${encodeURIComponent(p.jobId)}`} className="text-accent-ink hover:underline">
+            <Link href={jobHref(base, p.jobId)} className="text-accent-ink hover:underline">
               {p.jobLabel ?? shortId(p.jobId, 14)}
             </Link>
           </span>
@@ -232,7 +234,7 @@ function PostItem({ p, showJob }: { p: Post; showJob: boolean }) {
               {p.refs.map((r, i) => (
                 <span key={r.taskId}>
                   {i ? ", " : ""}
-                  <Link href={`/tasks/${encodeURIComponent(r.taskId)}`} className="text-accent-ink hover:underline">
+                  <Link href={taskHref(base, r.taskId)} className="text-accent-ink hover:underline">
                     {r.label ?? shortId(r.taskId, 14)}
                   </Link>
                 </span>
@@ -253,7 +255,7 @@ function PostItem({ p, showJob }: { p: Post; showJob: boolean }) {
   );
 }
 
-export function ChannelCard({ team }: { team: Team }) {
+export function ChannelCard({ team, base }: { team: Team; base: string }) {
   const c = team.channel;
   if (!c.total) return null;
   const kinds = Object.entries(c.byKind)
@@ -279,7 +281,7 @@ export function ChannelCard({ team }: { team: Team }) {
       <p className="border-b border-line bg-surface-2 px-4 py-2 text-xs text-ink-3">{c.notice}</p>
       <ul className="divide-y divide-line">
         {c.posts.map((p) => (
-          <PostItem key={p.id} p={p} showJob={team.subJobs > 0} />
+          <PostItem key={p.id} p={p} showJob={team.subJobs > 0} base={base} />
         ))}
       </ul>
     </Card>

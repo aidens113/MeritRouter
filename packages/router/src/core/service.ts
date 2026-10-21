@@ -84,8 +84,13 @@ export interface AwaitOutcome {
 
 const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
 
-/** Task purposes SwitchYard submits itself; without a named project they go to the primary one. */
+/**
+ * Task purposes SwitchYard submits itself. Without a named project, qualification and comparison
+ * runs go to the reserved qualification project (their fixture repositories live only there);
+ * audits go to the primary project (the auditor names the audited task's project).
+ */
 const SYSTEM_PURPOSES = new Set(["qualification", "comparison", "audit"]);
+const QUALIFICATION_PURPOSES = new Set(["qualification", "comparison"]);
 
 /** Library entry point shared by the CLI, the MCP server, and the web panel. */
 export class Switchyard {
@@ -245,7 +250,7 @@ export class Switchyard {
   private projectBrain(project: string): { brain: Brain; access: BrainAccess } {
     let b = this.brains.get(project);
     if (!b) {
-      const ctx = this.projects.require(project);
+      const ctx = this.projects.context(project) ?? this.projects.require(project);
       b = { brain: new Brain(ctx, this.db, this.now, { reviewer: () => this.promotionReviewer }), access: new BrainAccess(this.db, ctx, this.now) };
       this.brains.set(project, b);
     }
@@ -296,7 +301,7 @@ export class Switchyard {
    */
   projectContext(project: string): ProjectContext {
     if (!project) return this.projects.primary;
-    const c = this.projects.get(project);
+    const c = this.projects.context(project);
     if (!c) throw new TaskValidationError(`project ${project} is not configured (configured: ${this.projects.slugs().join(", ")})`);
     return c;
   }
@@ -396,9 +401,9 @@ export class Switchyard {
 
   /**
    * The project a submission goes to: the named one; else the project of the job (parentTaskId)
-   * or dependency the tasks name; else, for SwitchYard's own purposes (qualification, audits,
-   * comparisons), the primary project; else the only project. With several projects and nothing
-   * to infer from, a project must be named.
+   * or dependency the tasks name; else, for qualification and comparison runs, the reserved
+   * qualification project, and for audits the primary project; else the only project. With
+   * several projects and nothing to infer from, a project must be named.
    */
   private submissionProject(raw: unknown[], opts: { purpose?: string; project?: string }): ProjectContext {
     const linked = new Set<string>();
@@ -419,6 +424,7 @@ export class Switchyard {
     }
     if (linked.size > 1) throw new TaskValidationError(`the tasks name jobs or dependencies in several projects (${[...linked].join(", ")})`);
     if (linked.size === 1) return this.projectContext([...linked][0]!);
+    if (opts.purpose && QUALIFICATION_PURPOSES.has(opts.purpose)) return this.projects.qualification;
     if (opts.purpose && SYSTEM_PURPOSES.has(opts.purpose)) return this.projects.primary;
     return this.projects.forWrite();
   }

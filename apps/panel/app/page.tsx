@@ -1,288 +1,166 @@
 import Link from "next/link";
-import { CheckCircle2, CircleAlert, Cpu, Radar, Server, TriangleAlert } from "lucide-react";
+import { Archive, CircleAlert, Clock, FolderGit2, FolderPlus, Network, Plus } from "lucide-react";
 import { insights } from "switchyard-router";
 import { getSy } from "@/lib/sy";
+import { projectBase } from "@/lib/links";
 import { SetupScreen } from "@/components/setup";
-import { Badge, Callout, Card, CardHeader, EmptyState, HelpTip, Mono, PageHeader, Stat } from "@/components/ui";
+import { Badge, buttonClass, Card, EmptyState, PageHeader } from "@/components/ui";
 import { ActionButton, AutoRefresh } from "@/components/client/actions";
-import { StackedBars, StackedColumns, type Series } from "@/components/client/charts";
-import { ago, compact, dateTime, num, pct } from "@/lib/format";
-import { TASK_STATE_LABEL, TaskStateBadge } from "@/components/task-badges";
+import { ago, dateTime } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Overview" };
+export const metadata = { title: "Projects" };
 
-const HOUR = 3_600_000;
-const SLOTS = ["var(--series-1)", "var(--series-2)", "var(--series-3)", "var(--series-4)", "var(--series-5)"];
+type ProjectCard = insights.ProjectCard;
 
-export default async function OverviewPage() {
-  const r = getSy();
-  if (!r.sy) return <SetupScreen error={r.error} configPath={r.configPath} />;
-  const sy = r.sy;
-  const ov = await insights.overview(sy);
-  const now = Date.now();
-  // Re-bucket on our side: the library's SQL bucket expression can return raw timestamps when
-  // the bucket size is bound as a float, so align every point to its hour here.
-  const ts = insights.timeseries(sy, { hours: 24, bucketMinutes: 60 }).map((p) => ({ ...p, bucketStart: Math.floor(p.bucketStart / HOUR) * HOUR }));
-  const tiers = insights.tierDistribution(sy, now - 7 * 24 * HOUR);
-  const names = new Map(sy.catalog.endpoints().map((e) => [e.id, e.displayName ?? e.gatewayModelId]));
-
-  // Buckets: every hour in the last 24h, so quiet hours show as gaps rather than disappearing.
-  const first = Math.floor((now - 24 * HOUR) / HOUR) * HOUR + HOUR;
-  const buckets = Array.from({ length: 24 }, (_, i) => first + i * HOUR);
-  const byEp = new Map<string, number>();
-  for (const p of ts) byEp.set(p.endpointId, (byEp.get(p.endpointId) ?? 0) + p.requests);
-  // Top five models by volume get the first five categorical slots (ordered by id so a model keeps
-  // its colour while it stays in the top five); the rest fold into "Other".
-  const top = [...byEp.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([id]) => id)
-    .sort();
-  const series: Series[] = top.map((id, i) => ({
-    key: id,
-    label: id === "(none)" ? "No model (refused before dispatch)" : (names.get(id) ?? id),
-    color: SLOTS[i]!,
-    values: buckets.map((b) => ts.filter((p) => p.endpointId === id && p.bucketStart === b).reduce((s, p) => s + p.requests, 0)),
-  }));
-  const otherIds = [...byEp.keys()].filter((id) => !top.includes(id));
-  if (otherIds.length)
-    series.push({
-      key: "__other",
-      label: `Other (${otherIds.length} model${otherIds.length > 1 ? "s" : ""})`,
-      color: "var(--series-other)",
-      values: buckets.map((b) => ts.filter((p) => otherIds.includes(p.endpointId) && p.bucketStart === b).reduce((s, p) => s + p.requests, 0)),
-    });
-
-  const u = ov.usage24h;
-  const tierOrder = ["T1", "T2", "T3", "T4", "unclassified"];
-  const tierRows = tierOrder
-    .map((t) => tiers.find((x) => x.tier === t) ?? (t === "unclassified" ? null : { tier: t, tasks: 0, completed: 0 }))
-    .filter((x): x is { tier: string; tasks: number; completed: number } => x !== null);
-  const tierHint: Record<string, string> = { T1: "easy", T2: "moderate", T3: "hard", T4: "to supervisor", unclassified: "not scored yet" };
-  const states = Object.entries(ov.tasksByState).sort((a, b) => b[1] - a[1]);
-  // Items that need a decision from you, computed here so each can link to where you act.
-  const questions = sy.questions({ pendingOnly: true });
-  const jobsAsking = [...new Set(questions.map((q) => q.taskId))];
-  const accessPending = insights.brainAccessRequests(sy, "pending");
-  const actions: Array<{ key: string; text: string; href: string; cta: string }> = [];
-  if (questions.length)
-    actions.push({
-      key: "questions",
-      text: `${questions.length} question${questions.length === 1 ? "" : "s"} waiting for you from ${jobsAsking.length} job${jobsAsking.length === 1 ? "" : "s"}: "${questions[0]!.question.slice(0, 120)}"`,
-      href: jobsAsking.length === 1 ? `/jobs/${jobsAsking[0]}#questions` : "/jobs",
-      cta: "Answer",
-    });
-  if (accessPending.length)
-    actions.push({
-      key: "access",
-      text: `${accessPending.length} brain access request${accessPending.length === 1 ? "" : "s"} pending (${accessPending[0]!.role} wants ${accessPending[0]!.mode} on ${accessPending[0]!.pattern})`,
-      href: "/brain?view=requests",
-      cta: "Review",
-    });
-  const attentionCount = ov.attention.length + actions.length;
-  const totalModels = ov.models.active + ov.models.pending_confirmation + ov.models.disabled + ov.models.removed;
-
+function Count({ n, label, tone }: { n: number; label: string; tone?: "live" | "queued" }) {
   return (
-    <div className="space-y-6">
-      <PageHeader title="Overview" description="What SwitchYard is doing right now, what it used in the last 24 hours, and anything that needs your attention." actions={<AutoRefresh seconds={8} />} />
-
-      {attentionCount ? (
-        <Card className="border-warn/40">
-          <div className="flex items-center gap-2 border-b border-line px-4 py-3 text-sm font-semibold text-ink">
-            <TriangleAlert size={16} className="text-warn-ink" aria-hidden /> Needs your attention
-            <Badge tone="warn">{attentionCount}</Badge>
-          </div>
-          <ul className="divide-y divide-line">
-            {actions.map((a) => (
-              <li key={a.key} className="flex items-start gap-2 px-4 py-2.5 text-sm text-ink">
-                <CircleAlert size={15} className="mt-0.5 shrink-0 text-warn-ink" aria-hidden />
-                <span className="min-w-0 flex-1">{a.text}</span>
-                <Link href={a.href} className="shrink-0 text-xs font-medium text-accent-ink hover:underline">
-                  {a.cta} →
-                </Link>
-              </li>
-            ))}
-            {ov.attention.map((a) => (
-              <li key={a} className="flex items-start gap-2 px-4 py-2.5 text-sm text-ink">
-                <CircleAlert size={15} className="mt-0.5 shrink-0 text-warn-ink" aria-hidden />
-                <AttentionText text={a} />
-              </li>
-            ))}
-          </ul>
-        </Card>
-      ) : (
-        <Callout tone="good" icon={<CheckCircle2 size={16} />} title="Nothing needs your attention">
-          Provider keys are set up, models are confirmed, and no policy violations were recorded in the last 24 hours.
-        </Callout>
-      )}
-
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <Stat label="Model requests (24h)" help="requests" value={compact(u.modelRequests)} sub={`${compact(ov.usage7d.modelRequests)} in the last 7 days`} />
-        <Stat
-          label="Success rate (24h)"
-          value={u.modelRequests ? pct(u.succeededResponses, u.modelRequests) : "–"}
-          tone={u.modelRequests && u.succeededResponses / u.modelRequests < 0.8 ? "warn" : undefined}
-          sub={u.modelRequests ? `${num(u.failedRequests)} failed · ${num(u.uncertainRequests)} uncertain` : "No requests yet"}
-        />
-        <Stat label="Tasks (24h)" value={`${num(u.logicalTasks.completed)} done`} sub={`${num(u.logicalTasks.failed)} failed · ${num(u.logicalTasks.other)} other · ${num(u.logicalTasks.submitted)} submitted`} tone={u.logicalTasks.failed > u.logicalTasks.completed ? "bad" : undefined} />
-        <Stat label="Tokens (24h)" value={compact(u.inputTokens + u.outputTokens)} sub={`${compact(u.inputTokens)} in · ${compact(u.outputTokens)} out · ${compact(u.cachedInputTokens)} cached`} />
-        <Stat label="Routable models" value={`${ov.models.routable} of ${totalModels}`} sub={`${ov.models.active} active · ${ov.models.pending_confirmation} need confirmation · ${ov.models.disabled} disabled`} tone={ov.models.routable === 0 ? "bad" : undefined} />
-      </div>
-
-      <div className="grid gap-6 xl:grid-cols-[2fr_1fr]">
-        <Card>
-          <CardHeader title="Requests over the last 24 hours" description="Physical model requests per hour, stacked by the model that was targeted." help="requests" actions={<Link className="text-xs text-accent-ink hover:underline" href="/requests">Request log →</Link>} />
-          <div className="p-4">
-            {ts.length ? (
-              <StackedColumns buckets={buckets} series={series} bucketMinutes={60} />
-            ) : (
-              <EmptyState icon={<Cpu size={22} />} title="No model requests in the last 24 hours">
-                Requests appear here once a worker runs delegated tasks. Start Claude Code with the SwitchYard MCP server, or run <Mono>switchyard worker</Mono>.
-              </EmptyState>
-            )}
-          </div>
-        </Card>
-
-        <Card>
-          <CardHeader title="Tasks by tier (7 days)" help="tier" description="How difficult delegated work was, and how much of it completed." />
-          <div className="p-4">
-            {tierRows.some((t) => t.tasks) ? (
-              <StackedBars
-                rows={tierRows.map((t) => ({ key: t.tier, label: t.tier === "unclassified" ? "Unscored" : t.tier, hint: tierHint[t.tier] ?? "" }))}
-                series={[
-                  { key: "completed", label: "Completed", color: "var(--series-1)", values: tierRows.map((t) => t.completed) },
-                  { key: "other", label: "Not completed", color: "var(--series-other)", values: tierRows.map((t) => t.tasks - t.completed) },
-                ]}
-              />
-            ) : (
-              <EmptyState title="No tasks in the last 7 days">Tasks submitted by the supervisor are scored into tiers T1–T3 (or T4, returned to the supervisor).</EmptyState>
-            )}
-          </div>
-        </Card>
-      </div>
-
-      <div className="grid gap-6 lg:grid-cols-3">
-        <Card>
-          <CardHeader title="Worker" help="worker" />
-          <div className="space-y-3 p-4 text-sm">
-            {ov.workers.length ? (
-              <>
-                <div className="flex items-center gap-2">
-                  <Badge tone="good" icon={<CheckCircle2 size={12} />}>Running</Badge>
-                  <span className="text-ink-2">{ov.workers.length} worker{ov.workers.length > 1 ? "s" : ""} active</span>
-                </div>
-                <ul className="space-y-1 text-xs text-ink-3">
-                  {ov.workers.map((w) => (
-                    <li key={w.owner} className="flex justify-between gap-2">
-                      <span className="truncate font-mono">{w.owner}</span>
-                      <span>seen {ago(w.lastSeen, now)}</span>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            ) : (
-              <>
-                <Badge tone="neutral">No worker running</Badge>
-                <p className="text-ink-2">
-                  Tasks run while a worker is active: the MCP server inside Claude Code, or <Mono>switchyard worker</Mono>. Queued tasks wait until one starts.
-                </p>
-              </>
-            )}
-            <div className="border-t border-line pt-3">
-              <div className="mb-1.5 text-xs font-medium text-ink-3">Tasks by state (all time)</div>
-              {states.length ? (
-                <div className="flex flex-wrap gap-1.5">
-                  {states.map(([s, n]) => (
-                    <Link key={s} href={`/tasks?state=${s}`} className="inline-flex items-center gap-1 rounded-full hover:opacity-80" title={`Show ${TASK_STATE_LABEL[s] ?? s} tasks`}>
-                      <TaskStateBadge state={s} count={n} />
-                    </Link>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-ink-3">No tasks yet.</p>
-              )}
-            </div>
-          </div>
-        </Card>
-
-        <Card>
-          <CardHeader title="Provider health" description={<>From SwitchYard&apos;s own key state: cooldowns, invalid keys, and limits. <Link href="/keys" className="text-accent-ink hover:underline">Provider keys</Link></>} />
-          <div className="p-4">
-            {ov.providers.length ? (
-              <ul className="space-y-2 text-sm">
-                {ov.providers.map((p) => (
-                  <li key={p.platform} className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="font-medium text-ink">{p.platform}</span>
-                    <span className="flex items-center gap-2 text-xs text-ink-3">
-                      {p.keys} key{p.keys === 1 ? "" : "s"}
-                      {p.requestsRemainingPct !== null ? <span>{Math.round(p.requestsRemainingPct)}% left</span> : null}
-                      {p.status === "healthy" ? (
-                        <Badge tone="good">Healthy</Badge>
-                      ) : p.status === "rate_limited" ? (
-                        <Badge tone="warn" title={p.lastError ?? undefined}>
-                          Rate limited{p.resumeAt ? ` · resumes ${ago(p.resumeAt, now)}` : ""}
-                        </Badge>
-                      ) : p.status === "invalid" ? (
-                        <Badge tone="bad" title={p.lastError ?? undefined}>Key invalid</Badge>
-                      ) : (
-                        <Badge>Unknown</Badge>
-                      )}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <EmptyState icon={<Server size={20} />} title="No provider health reported">
-                {ov.usableKeys ? "No provider has reported health yet." : <>Add a provider key on the <Link href="/keys" className="text-accent-ink hover:underline">Provider keys</Link> page so models can be reached.</>}
-              </EmptyState>
-            )}
-          </div>
-        </Card>
-
-        <Card>
-          <CardHeader
-            title="Model catalog scan"
-            description="Lists the models of every provider with a usable key and checks their sizes and prices."
-            actions={<ActionButton url="/api/scan" small variant="secondary" success="Scan finished">
-              <Radar size={13} aria-hidden /> Scan now
-            </ActionButton>}
-          />
-          <div className="space-y-2 p-4 text-sm">
-            {ov.lastScan ? (
-              <>
-                <div className="flex items-center gap-2">
-                  {ov.lastScan.ok === null ? <Badge tone="accent">Running</Badge> : ov.lastScan.ok ? <Badge tone="good">Succeeded</Badge> : <Badge tone="bad">Failed</Badge>}
-                  <span className="text-ink-2" title={dateTime(ov.lastScan.startedAt)}>
-                    {ago(ov.lastScan.startedAt, now)}
-                  </span>
-                </div>
-                {ov.lastScan.summary ? (
-                  <ul className="grid grid-cols-2 gap-1 text-xs text-ink-2">
-                    <li>{ov.lastScan.summary.scanned} models scanned</li>
-                    <li>{ov.lastScan.summary.added.length} new</li>
-                    <li>{ov.lastScan.summary.pendingConfirmation.length} need confirmation</li>
-                    <li>{ov.lastScan.summary.unavailable.length} unavailable</li>
-                    {ov.lastScan.summary.errors.length ? <li className="col-span-2 text-bad-ink">{ov.lastScan.summary.errors.length} error(s): {ov.lastScan.summary.errors[0]}</li> : null}
-                  </ul>
-                ) : null}
-              </>
-            ) : (
-              <p className="text-ink-2">No scan has run yet.</p>
-            )}
-          </div>
-        </Card>
-      </div>
+    <div className="min-w-0">
+      <div className={tone === "live" && n ? "text-lg font-semibold text-good-ink" : tone === "queued" && n ? "text-lg font-semibold text-warn-ink" : "text-lg font-semibold text-ink"}>{n}</div>
+      <div className="truncate text-[11px] text-ink-3">{label}</div>
     </div>
   );
 }
 
-/** Attention items mention env vars and config keys; render those as code. */
-function AttentionText({ text }: { text: string }) {
-  const parts = text.split(/(\b[A-Z][A-Z0-9_]{3,}\b|\b[a-z_]+\.[a-z_]+\b)/g);
+function ProjectTile({ p, now }: { p: ProjectCard; now: number }) {
+  const live = p.runningTasks > 0;
   return (
-    <span>
-      {parts.map((p, i) => (i % 2 === 1 ? <Mono key={i}>{p}</Mono> : <span key={i}>{p}</span>))}
-    </span>
+    <li className="min-w-0">
+      <Link
+        href={projectBase(p.slug)}
+        className="group flex h-full flex-col rounded-xl border border-line bg-surface p-4 shadow-[0_1px_2px_rgba(0,0,0,0.03)] transition-colors hover:border-accent/50 hover:bg-surface-2/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+      >
+        <div className="flex items-start gap-2">
+          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent-ink">
+            <FolderGit2 size={16} aria-hidden />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-base font-semibold text-ink group-hover:text-accent-ink">{p.name}</h2>
+            <div className="truncate font-mono text-[11px] text-ink-3">
+              {p.slug}
+              {p.primary ? " · primary" : ""}
+            </div>
+          </div>
+          {p.attention ? (
+            <Badge tone="warn" icon={<CircleAlert size={11} />} title={p.attentionItems.join("\n")}>
+              {p.attention} need{p.attention === 1 ? "s" : ""} you
+            </Badge>
+          ) : live ? (
+            <Badge tone="good">running</Badge>
+          ) : null}
+        </div>
+
+        <ul className="mt-3 space-y-1 text-xs">
+          {p.repositories.length ? (
+            p.repositories.slice(0, 4).map((r) => (
+              <li key={r.alias} className="flex min-w-0 items-center gap-1.5">
+                <span className="shrink-0 font-mono text-ink">{r.alias}</span>
+                <span className="truncate font-mono text-ink-3" title={r.path}>
+                  {r.path}
+                </span>
+                {r.exists ? null : <Badge tone="bad" className="!py-0">missing</Badge>}
+              </li>
+            ))
+          ) : (
+            <li className="text-ink-3">No repositories</li>
+          )}
+          {p.repositories.length > 4 ? <li className="text-ink-3">and {p.repositories.length - 4} more</li> : null}
+        </ul>
+
+        <div className="mt-4 grid grid-cols-4 gap-2 border-t border-line pt-3">
+          <Count n={p.runningJobs} label="jobs running" tone="live" />
+          <Count n={p.queuedJobs} label="jobs queued" tone="queued" />
+          <Count n={p.runningTasks} label="tasks running" tone="live" />
+          <Count n={p.queuedTasks} label="tasks queued" tone="queued" />
+        </div>
+
+        {p.attentionItems.length ? <p className="mt-3 line-clamp-2 text-xs text-warn-ink">{p.attentionItems[0]}</p> : null}
+
+        <div className="mt-auto flex items-center gap-1.5 pt-3 text-[11px] text-ink-3" title={p.lastActivityAt ? dateTime(p.lastActivityAt) : undefined}>
+          <Clock size={12} aria-hidden /> {p.lastActivityAt ? `active ${ago(p.lastActivityAt, now)}` : "no activity yet"}
+        </div>
+      </Link>
+    </li>
+  );
+}
+
+/** The starting screen: every project as a card, "New project", and the archived ones. */
+export default async function ProjectsPage() {
+  const r = getSy();
+  if (!r.sy) return <SetupScreen error={r.error} configPath={r.configPath} />;
+  const all = insights.projectsGrid(r.sy, { includeArchived: true });
+  const live = all.filter((p) => !p.archived);
+  const archived = all.filter((p) => p.archived);
+  const now = Date.now();
+  const busy = live.some((p) => p.runningTasks + p.queuedTasks > 0);
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Projects"
+        description="Each project has its own repositories, jobs, tasks, sessions, and knowledge. Providers, models, routing, and budgets are shared by all of them."
+        actions={
+          <>
+            {busy ? <AutoRefresh seconds={8} /> : null}
+            <Link href="/new" className={buttonClass("primary")}>
+              <Plus size={15} aria-hidden /> New project
+            </Link>
+          </>
+        }
+      />
+
+      {live.length ? (
+        <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3" aria-label="Projects">
+          {live.map((p) => (
+            <ProjectTile key={p.slug} p={p} now={now} />
+          ))}
+          <li>
+            <Link href="/new" className="flex h-full min-h-[12rem] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-line-strong p-4 text-sm text-ink-2 hover:border-accent/60 hover:text-accent-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+              <FolderPlus size={22} aria-hidden />
+              New project
+            </Link>
+          </li>
+        </ul>
+      ) : (
+        <Card>
+          <EmptyState
+            icon={<Network size={22} />}
+            title="No projects yet"
+            action={
+              <Link href="/new" className={buttonClass("primary")}>
+                <Plus size={15} aria-hidden /> Create your first project
+              </Link>
+            }
+          >
+            A project groups the repositories SwitchYard works in with their jobs, tasks, and knowledge.
+          </EmptyState>
+        </Card>
+      )}
+
+      {archived.length ? (
+        <details className="group rounded-xl border border-line bg-surface">
+          <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm font-medium text-ink-2 hover:text-ink">
+            <Archive size={15} aria-hidden /> Archived projects <Badge>{archived.length}</Badge>
+            <span className="ml-auto text-xs font-normal text-ink-3">kept with their history; hidden from the switcher</span>
+          </summary>
+          <ul className="divide-y divide-line border-t border-line">
+            {archived.map((p) => (
+              <li key={p.slug} className="flex flex-wrap items-center gap-3 px-4 py-2.5 text-sm">
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium text-ink">{p.name}</div>
+                  <div className="font-mono text-[11px] text-ink-3">
+                    {p.slug}
+                    {p.archivedAt ? ` · archived ${ago(p.archivedAt, now)}` : ""}
+                  </div>
+                </div>
+                <ActionButton url={`/api/projects/${encodeURIComponent(p.slug)}`} method="PATCH" payload={{ archived: false }} small success="Unarchived">
+                  Unarchive
+                </ActionButton>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+    </div>
   );
 }

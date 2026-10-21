@@ -1,8 +1,14 @@
+import { existsSync, statSync } from "node:fs";
+import path from "node:path";
 import YAML from "yaml";
+import { REPOSITORY_ALIAS_RE, ROLE_NAMES } from "../config/schema.js";
 import { SwitchyardError } from "../core/errors.js";
 import type { Switchyard } from "../core/service.js";
 import { PROJECT_CODING_KEYS, PROJECT_SUPERVISOR_KEYS, PROJECT_TEAM_KEYS, ProjectConfigSchema } from "../projects/schema.js";
+import { expandHome } from "../brain/brain.js";
 import { patchConfig, readConfigText } from "./config-edit.js";
+import { TERMINAL_STATES } from "../core/task.js";
+import { projectActivity, projectInfo } from "./projects.js";
 
 // Settings split for the panel (decision D2): global sections (providers, models, routing,
 // budgets, profiles, execution, ...) vs one project's settings, which live under
@@ -124,6 +130,301 @@ export function patchProjectSettings(sy: Switchyard, slug: string, patch: Settin
     if (ctx.project.legacy && head === "brain" && p.path.length === 1) errors.push("brain: set brain.<key> one key at a time in a single-project config (the brain section is global there)");
   }
   if (errors.length) return { ok: false, errors };
+  errors.push(...repositoryRemovalErrors(sy, slug, removedAliases(Object.keys(ctx.repositories), patch)), ...mountFolderErrors(sy, patch));
+  if (errors.length) return { ok: false, errors };
   const prefix: Array<string | number> = ctx.project.legacy ? [] : ["projects", slug];
   return patchConfig(sy, patch.map((p) => ({ path: [...prefix, ...p.path], value: p.value })));
+}
+
+/** The repository aliases a patch removes, given the project's current aliases (patches apply in order). */
+export function removedAliases(current: string[], patch: SettingsPatch): string[] {
+  const now = new Set(current);
+  for (const p of patch) {
+    if (p.path[0] !== "repositories") continue;
+    if (p.path.length === 1) {
+      const next = new Set(p.value && typeof p.value === "object" ? Object.keys(p.value) : []);
+      for (const a of [...now]) if (!next.has(a)) now.delete(a);
+      for (const a of next) now.add(a);
+    } else if (p.path.length === 2 && (p.value === null || p.value === undefined)) now.delete(String(p.path[1]));
+    else now.add(String(p.path[1]));
+  }
+  return current.filter((a) => !now.has(a));
+}
+
+/**
+ * Unfinished tasks of a project that name a repository alias (read or written): queued, running,
+ * waiting, and interrupted ones, since an interrupted task can be resumed.
+ */
+export function tasksUsingRepository(sy: Switchyard, slug: string, alias: string): string[] {
+  const states = [...TERMINAL_STATES];
+  const rows = sy.db
+    .prepare(
+      `SELECT id FROM tasks WHERE project_id = ? AND state NOT IN (${states.map(() => "?").join(",")})
+          AND (json_extract(spec_json, '$.writableRepository') = ? OR EXISTS (SELECT 1 FROM json_each(tasks.spec_json, '$.repositoryAliases') WHERE value = ?))
+        ORDER BY created_at`,
+    )
+    .all(slug, ...states, alias, alias) as Array<{ id: string }>;
+  return rows.map((r) => r.id);
+}
+
+/**
+ * Removing a repository is refused while unfinished tasks of the project use its alias: they
+ * would fail when they run or resume. Each message names the tasks (or, past five, how many).
+ */
+export function repositoryRemovalErrors(sy: Switchyard, slug: string, aliases: string[]): string[] {
+  return aliases.flatMap((alias) => {
+    const ids = tasksUsingRepository(sy, slug, alias);
+    if (!ids.length) return [];
+    const named = ids.length <= 5 ? ids.join(", ") : `${ids.slice(0, 3).join(", ")} and ${ids.length - 3} more`;
+    return [`repositories.${alias}: repository ${alias} is used by ${ids.length} unfinished task${ids.length === 1 ? "" : "s"} (${named}); cancel them or let them finish before removing it`];
+  });
+}
+
+/** The brain mounts a patch writes, each with the field it came from (`brain.mounts.<i>.path`). */
+function patchedMounts(patch: SettingsPatch): Array<{ field: string; path: unknown }> {
+  const out: Array<{ field: string; path: unknown }> = [];
+  const list = (v: unknown) => (Array.isArray(v) ? v : []).forEach((m, i) => out.push({ field: `brain.mounts.${i}.path`, path: (m as { path?: unknown } | null)?.path }));
+  for (const p of patch) {
+    if (p.path[0] !== "brain" || p.value === null || p.value === undefined) continue;
+    if (p.path.length === 1) list((p.value as { mounts?: unknown }).mounts);
+    else if (p.path[1] !== "mounts") continue;
+    else if (p.path.length === 2) list(p.value);
+    else if (p.path.length === 3) out.push({ field: `brain.mounts.${String(p.path[2])}.path`, path: (p.value as { path?: unknown }).path });
+    else if (p.path.length === 4 && p.path[3] === "path") out.push({ field: `brain.mounts.${String(p.path[2])}.path`, path: p.value });
+  }
+  return out;
+}
+
+/** Brain mount folders must exist when they are saved (relative paths resolve against the config file's folder). */
+export function mountFolderErrors(sy: Switchyard, patch: SettingsPatch): string[] {
+  const base = path.dirname(sy.cfg.configPath);
+  return patchedMounts(patch).flatMap(({ field, path: p }) => {
+    if (typeof p !== "string" || !p.trim()) return []; // the config schema reports a missing path
+    const abs = path.resolve(base, expandHome(p.trim()));
+    let dir = false;
+    try {
+      dir = statSync(abs).isDirectory();
+    } catch {
+      dir = false;
+    }
+    return dir ? [] : [`${field}: ${abs} does not exist or is not a folder; create it first`];
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// The project settings page (J2): one read model with every value the page shows (each override
+// beside the inherited global value), repository checks with errors keyed by field, and the
+// mapping of config validation messages back onto project-relative fields.
+
+/** What the server finds at a repository folder (relative paths resolve against the config file). */
+export interface RepositoryPathCheck {
+  input: string;
+  resolved: string;
+  exists: boolean;
+  isDirectory: boolean;
+  isGit: boolean;
+  /** Plain-language problem, or null when the folder is a git repository. */
+  problem: string | null;
+}
+
+export function inspectRepositoryPath(sy: Switchyard, input: string): RepositoryPathCheck {
+  const trimmed = input.trim();
+  const resolved = path.resolve(path.dirname(sy.cfg.configPath), trimmed || ".");
+  let exists = false;
+  let isDirectory = false;
+  try {
+    const st = statSync(resolved);
+    exists = true;
+    isDirectory = st.isDirectory();
+  } catch {
+    exists = false;
+  }
+  const isGit = isDirectory && existsSync(path.join(resolved, ".git"));
+  const problem = !trimmed ? "enter the repository's folder" : !exists ? `${resolved} does not exist` : !isDirectory ? `${resolved} is not a folder` : !isGit ? `${resolved} is not a git repository (no .git)` : null;
+  return { input, resolved, exists, isDirectory, isGit, problem };
+}
+
+export interface ProjectRepositoryInput {
+  alias: string;
+  path: string;
+  writable: boolean;
+}
+
+/** Problems keyed by project-relative field (`repositories.0.path`, `team.max_agents`); `form` holds the rest. */
+export type FieldErrors = Record<string, string[]>;
+
+export type SettingsSaveResult = { ok: true } | { ok: false; errors: string[]; fieldErrors: FieldErrors };
+
+function addError(errors: FieldErrors, key: string, msg: string): void {
+  (errors[key] ??= []).push(msg);
+}
+
+const flatErrors = (fe: FieldErrors) => Object.entries(fe).flatMap(([k, v]) => v.map((m) => (k === "form" ? m : `${k}: ${m}`)));
+
+/** Check a project's repository rows: aliases valid and unique, each folder an existing git repository. */
+export function validateProjectRepositories(sy: Switchyard, rows: ProjectRepositoryInput[]): FieldErrors {
+  const errors: FieldErrors = {};
+  const seen = new Map<string, number>();
+  rows.forEach((r, i) => {
+    const alias = r.alias.trim();
+    if (!alias) addError(errors, `repositories.${i}.alias`, "enter an alias");
+    else if (!REPOSITORY_ALIAS_RE.test(alias)) addError(errors, `repositories.${i}.alias`, "letters, digits, '.', '_', '-' only");
+    else if (seen.has(alias)) addError(errors, `repositories.${i}.alias`, `alias ${alias} is already used by row ${seen.get(alias)! + 1}`);
+    else seen.set(alias, i);
+    const check = inspectRepositoryPath(sy, r.path);
+    if (check.problem) addError(errors, `repositories.${i}.path`, check.problem);
+  });
+  return errors;
+}
+
+/**
+ * Replace a project's repositories with `rows` (add, remove, change folder or writable). Every
+ * folder must exist and be a git repository; problems come back keyed by row and field. Other
+ * entries of the file, and comments around them, are kept.
+ */
+export function saveProjectRepositories(sy: Switchyard, slug: string, rows: ProjectRepositoryInput[]): SettingsSaveResult {
+  if (!sy.projects.get(slug)) return { ok: false, errors: [`unknown project ${slug}`], fieldErrors: { form: [`unknown project ${slug}`] } };
+  // A removed repository has no row left to mark, so its refusal is a form-level error.
+  const current = Object.keys((projectSettings(sy, slug).raw.repositories ?? {}) as Record<string, unknown>);
+  const keep = new Set(rows.map((r) => r.alias.trim()));
+  const inUse = repositoryRemovalErrors(sy, slug, current.filter((a) => !keep.has(a))).map((e) => e.replace(/^repositories\.[^:]+: /, ""));
+  if (inUse.length) return { ok: false, errors: inUse, fieldErrors: { form: inUse } };
+  const fieldErrors = validateProjectRepositories(sy, rows);
+  if (Object.keys(fieldErrors).length) return { ok: false, errors: flatErrors(fieldErrors), fieldErrors };
+  const patch: SettingsPatch = rows.length
+    ? [
+        ...current.filter((a) => !keep.has(a)).map((a) => ({ path: ["repositories", a], value: null })),
+        ...rows.map((r) => ({ path: ["repositories", r.alias.trim()], value: { path: r.path.trim(), ...(r.writable ? {} : { writable: false }) } })),
+      ]
+    : [{ path: ["repositories"], value: {} }];
+  return withFieldErrors(sy, slug, patchProjectSettings(sy, slug, patch));
+}
+
+/**
+ * Map validation messages onto project-relative fields: config messages name
+ * `projects.<slug>.team.max_agents` (inside an "invalid config" block), and
+ * `patchProjectSettings`'s own refusals name `team.max_agents`. Anything else goes under `form`.
+ */
+export function projectFieldErrors(sy: Switchyard, slug: string, errors: string[]): FieldErrors {
+  const legacy = sy.projects.get(slug)?.project.legacy ?? false;
+  const prefix = `projects.${slug}.`;
+  const out: FieldErrors = {};
+  const lines = errors.flatMap((e) => e.split("\n").map((l) => l.trim())).filter((l) => l && !/^invalid config /.test(l));
+  for (const line of lines) {
+    const m = /^([\w.-]+):\s*(.*)$/.exec(line);
+    let key = m?.[1] ?? "";
+    if (!legacy && key.startsWith(prefix)) key = key.slice(prefix.length);
+    if (m && PROJECT_SETTING_KEYS.includes(key.split(".")[0]!)) addError(out, key, m[2] || line);
+    else addError(out, "form", line);
+  }
+  return out;
+}
+
+function withFieldErrors(sy: Switchyard, slug: string, r: { ok: true } | { ok: false; errors: string[] }): SettingsSaveResult {
+  return r.ok ? r : { ok: false, errors: r.errors, fieldErrors: projectFieldErrors(sy, slug, r.errors) };
+}
+
+/** `patchProjectSettings` with its errors also keyed by project-relative field, for forms. */
+export function saveProjectSettings(sy: Switchyard, slug: string, patch: SettingsPatch): SettingsSaveResult {
+  return withFieldErrors(sy, slug, patchProjectSettings(sy, slug, patch));
+}
+
+/** One overridable setting: the install-wide value, this project's own value (if any), and the result. */
+export interface ProjectOverrideView {
+  /** Project-relative path joined with dots (`team.max_agents`, `roles.reviewer`). */
+  id: string;
+  path: string[];
+  section: "verification" | "team" | "coding" | "supervisor" | "roles" | "brain";
+  /** The install-wide value (undefined when the global config leaves it unset). */
+  global: unknown;
+  /** True when the project sets its own value. */
+  overridden: boolean;
+  /** The project's own value as written (undefined when inherited). */
+  override: unknown;
+  /** The value this project's agents use. */
+  effective: unknown;
+}
+
+type Budgets = { per_day_usd: number | null; per_week_usd: number | null; per_month_usd: number | null };
+type MountRow = { prefix: string; path: string; commit: boolean };
+
+export interface ProjectSettingsView extends ProjectSettings {
+  archived: boolean;
+  archivedAt: number | null;
+  /** Running and queued tasks: archiving is refused while either is above zero. */
+  activity: { runningTasks: number; queuedTasks: number };
+  /** The repositories as written, each with what the server finds at its folder. */
+  repositoryRows: Array<ProjectRepositoryInput & { resolved: string; isGit: boolean; problem: string | null }>;
+  /** Fair-share and budget fields as written (null = no per-project limit), with the global caps they divide. */
+  limits: {
+    priority: number | null;
+    max_concurrent_tasks: number | null;
+    paid_budgets: Budgets;
+    request_share: number | null;
+    global: { maxConcurrentTasks: number; paidEnabled: boolean; paidBudgets: Budgets; requestsPerHour: number | null; requestsPerDay: number | null };
+  };
+  /** Brain mounts: the install-wide ones (every project gets them) and this project's own. */
+  mounts: { global: MountRow[]; project: MountRow[] };
+  overrides: ProjectOverrideView[];
+}
+
+const hasOwn = (o: unknown, k: string) => typeof o === "object" && o !== null && Object.prototype.hasOwnProperty.call(o, k);
+const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+const budgetsOf = (o: unknown): Budgets => {
+  const b = (o ?? {}) as Record<string, unknown>;
+  return { per_day_usd: num(b.per_day_usd), per_week_usd: num(b.per_week_usd), per_month_usd: num(b.per_month_usd) };
+};
+const mountRows = (ms: Array<{ prefix: string; path: string; commit?: boolean }>): MountRow[] => ms.map((m) => ({ prefix: m.prefix, path: m.path, commit: m.commit ?? false }));
+
+/** Everything the project settings page shows, each override beside the value it would inherit. */
+export function projectSettingsView(sy: Switchyard, slug: string): ProjectSettingsView {
+  const base = projectSettings(sy, slug);
+  const info = projectInfo(sy, slug);
+  const act = projectActivity(sy, slug);
+  const raw = base.raw as Record<string, unknown>;
+  const g = sy.cfg as unknown as Record<string, Record<string, unknown> | undefined>;
+  const legacy = base.legacy;
+  const eff = base.effective;
+  const overrides: ProjectOverrideView[] = [];
+  const item = (section: ProjectOverrideView["section"], key: string, global: unknown, effective: unknown) => {
+    const own = raw[section] as Record<string, unknown> | undefined;
+    // A single-project config has no overrides: its sections are the global ones.
+    const overridden = !legacy && hasOwn(own, key);
+    overrides.push({ id: `${section}.${key}`, path: [section, key], section, global, overridden, override: overridden ? own![key] : undefined, effective });
+  };
+  for (const k of Object.keys(g.verification ?? {})) item("verification", k, g.verification![k], (eff.verification as Record<string, unknown>)[k]);
+  for (const k of PROJECT_TEAM_KEYS) item("team", k, g.team?.[k], eff.team[k]);
+  for (const k of PROJECT_CODING_KEYS) item("coding", k, g.coding?.[k], eff.coding[k]);
+  for (const k of PROJECT_SUPERVISOR_KEYS) item("supervisor", k, g.supervisor?.[k], eff.supervisor[k]);
+  for (const k of ROLE_NAMES) item("roles", k, g.roles?.[k], (eff.roles as Record<string, unknown> | undefined)?.[k]);
+  item("brain", "access_approver", g.brain?.access_approver, eff.brain.access_approver);
+  item("brain", "auto_approve", g.brain?.auto_approve, eff.brain.auto_approve);
+
+  const ownMounts = ((raw.brain as { mounts?: unknown } | undefined)?.mounts ?? []) as Array<{ prefix: string; path: string; commit?: boolean }>;
+  return {
+    ...base,
+    archived: info.archived,
+    archivedAt: info.archivedAt,
+    activity: { runningTasks: act.runningTasks, queuedTasks: act.queuedTasks },
+    repositoryRows: Object.entries((raw.repositories ?? {}) as Record<string, { path: string; writable?: boolean }>).map(([alias, r]) => {
+      const check = inspectRepositoryPath(sy, r.path);
+      return { alias, path: r.path, writable: r.writable !== false, resolved: check.resolved, isGit: check.isGit, problem: check.problem };
+    }),
+    limits: {
+      priority: legacy ? null : num(raw.priority),
+      max_concurrent_tasks: legacy ? null : num(raw.max_concurrent_tasks),
+      paid_budgets: legacy ? budgetsOf(null) : budgetsOf(raw.paid_budgets),
+      request_share: legacy ? null : num(raw.request_share),
+      global: {
+        maxConcurrentTasks: sy.cfg.execution.max_concurrent_tasks,
+        paidEnabled: sy.cfg.paid.enabled,
+        paidBudgets: budgetsOf(sy.cfg.paid.budgets),
+        requestsPerHour: sy.cfg.allocation.max_model_requests_per_hour ?? null,
+        requestsPerDay: sy.cfg.allocation.max_model_requests_per_day ?? null,
+      },
+    },
+    // In a single-project config the brain section (and its mounts) is the project's own.
+    mounts: legacy ? { global: [], project: mountRows(sy.cfg.brain.mounts) } : { global: mountRows(sy.cfg.brain.mounts), project: mountRows(ownMounts) },
+    overrides,
+  };
 }

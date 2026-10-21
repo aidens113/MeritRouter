@@ -1,7 +1,7 @@
 import type { ResolvedConfig } from "../config/load.js";
 import { TaskValidationError } from "../core/errors.js";
 import type { Db } from "../storage/db.js";
-import { syncRepositoryRegistry } from "../qualification/registry.js";
+import { QUALIFICATION_PROJECT, qualificationOverlay, syncRepositoryRegistry } from "../qualification/registry.js";
 import { backfillProjects } from "./backfill.js";
 import { projectContext, type ProjectContext, type ProjectInfo } from "./context.js";
 import type { ResolvedProject } from "./resolve.js";
@@ -22,6 +22,8 @@ export interface ProjectRow {
  */
 export class ProjectRegistry {
   private readonly entries = new Map<string, { ctx: ProjectContext; overlay: Record<string, unknown> }>();
+  /** The reserved qualification project (not listed among the projects; see `QUALIFICATION_PROJECT`). */
+  private internal: { ctx: ProjectContext; overlay: Record<string, unknown> } | null = null;
   private db: Db | null = null;
   private now: () => number = Date.now;
 
@@ -44,6 +46,15 @@ export class ProjectRegistry {
       }
     }
     for (const slug of [...this.entries.keys()]) if (!seen.has(slug)) this.entries.delete(slug);
+    const internal = qualificationOverlay(this.cfg);
+    if (this.internal) {
+      // Keep the runtime-registered fixtures; take the rest (the brain section) from the reloaded config.
+      internal.repositoryPaths = this.internal.overlay.repositoryPaths;
+      for (const k of Object.keys(this.internal.overlay)) delete this.internal.overlay[k];
+      Object.assign(this.internal.overlay, internal);
+    } else {
+      this.internal = { ctx: projectContext(this.cfg, internal), overlay: internal };
+    }
     if (this.db) {
       this.syncRuntimeRepositories();
       this.recordRows();
@@ -67,11 +78,27 @@ export class ProjectRegistry {
     for (const c of this.list()) up.run(c.project.slug, c.project.name, this.now());
   }
 
-  /** Repositories registered at runtime (qualification and comparison fixtures) belong to every project. */
+  /**
+   * Repositories registered at runtime (qualification and comparison fixtures) belong to the
+   * qualification project only: user projects, and the global config, never list them.
+   */
   syncRuntimeRepositories(): void {
     if (!this.db) return;
-    syncRepositoryRegistry(this.db, this.cfg);
-    for (const c of this.list()) syncRepositoryRegistry(this.db, c);
+    syncRepositoryRegistry(this.db, this.qualification);
+  }
+
+  /**
+   * The reserved project qualification runs and eval-goal comparisons work in. It is not one of
+   * the projects (`list`, `slugs`, `get`, `require`, and `forWrite` never return it); tasks reach it
+   * through their stored project (`context`).
+   */
+  get qualification(): ProjectContext {
+    return this.internal!.ctx;
+  }
+
+  /** A stored project id's context: a configured project, or the qualification project. */
+  context(slug: string): ProjectContext | undefined {
+    return slug === QUALIFICATION_PROJECT ? this.qualification : this.get(slug);
   }
 
   list(): ProjectContext[] {

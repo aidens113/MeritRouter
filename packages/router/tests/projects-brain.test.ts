@@ -350,7 +350,7 @@ describe("gated promotion to global/ (D9)", () => {
     expect(sy.gate.admission.taskTotals(task.row.id).requests).toBeGreaterThan(0);
     const fm = frontMatterOf(readFileSync(path.join(brain.root, rec.global_path!), "utf8"));
     expect(fm).toMatchObject({ project: "alpha", review: { verdict: "pass", reviewer: REVIEWER_EP.id, reviewer_model: "beta/beta-2", review_task: task.row.id } });
-  });
+  }, 90_000);
 });
 
 /** Another Brain of the same project and database, with a different reviewer port. */

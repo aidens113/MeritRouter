@@ -3,15 +3,18 @@ import { purposeCategory, REQUEST_PURPOSES, type RequestPurpose } from "../admis
 import type { Switchyard } from "../core/service.js";
 import type { TaskState } from "../core/task.js";
 import { criticalPath as plannedPath, PlanStore } from "../storage/plans.js";
-import { WAITING_FOR_FILE_LEASE, type StoredTask } from "../storage/tasks.js";
+import { WAITING_FOR_FILE_LEASE, WAITING_FOR_PROJECT_CAP, type StoredTask } from "../storage/tasks.js";
 
 // Team metrics, derived from stored data (task events, plans, and the request ledger); nothing
 // is sampled. For a job (a supervise task) they cover every task under it, sub-jobs included;
 // for any other task they describe that one agent, so a team run and a single-agent run of the
 // same goal compare on the same terms.
 
-/** Why a task was not running. `queue`: ready, waiting for a worker or the job's agent cap (the scheduler records no reason for those). */
-export const WAIT_REASONS = ["dependencies", "acceptance", "file_lease", "provider_slot", "capacity", "queue", "interrupted"] as const;
+/**
+ * Why a task was not running. `queue`: ready, waiting for a worker or the job's agent cap (the
+ * scheduler records no reason for those). `project_cap`: its project ran `max_concurrent_tasks`.
+ */
+export const WAIT_REASONS = ["dependencies", "acceptance", "file_lease", "provider_slot", "project_cap", "capacity", "queue", "interrupted"] as const;
 export type WaitReason = (typeof WAIT_REASONS)[number];
 
 /** Task event (and state_reason prefix) of a queued task held for a free provider slot (T3 capacity). */
@@ -178,6 +181,9 @@ export function agentTimeline(t: StoredTask, events: Array<{ ts: number; type: s
       case WAITING_FOR_PROVIDER_SLOT:
         because("provider_slot", e.ts);
         break;
+      case WAITING_FOR_PROJECT_CAP:
+        because("project_cap", e.ts);
+        break;
       case "waiting_for_capacity":
         wait("capacity", e.ts);
         break;
@@ -198,6 +204,7 @@ export function agentTimeline(t: StoredTask, events: Array<{ ts: number; type: s
   // A ready task held for a provider slot may carry only the state reason (set when it changed).
   const open = mode as { kind: "run"; since: number } | { kind: "wait"; reason: WaitReason; since: number } | null;
   if (open?.kind === "wait" && open.reason === "queue" && t.row.state_reason?.startsWith(WAITING_FOR_PROVIDER_SLOT)) because("provider_slot", Math.max(open.since, Math.min(now, t.row.updated_at)));
+  if (open?.kind === "wait" && open.reason === "queue" && t.row.state_reason?.startsWith(WAITING_FOR_PROJECT_CAP)) because("project_cap", Math.max(open.since, Math.min(now, t.row.updated_at)));
   close(t.row.finished_at ?? now);
   return { taskId: t.row.id, label: t.spec.label ?? null, profile: t.spec.profile, state: t.row.state, runs, waits };
 }
@@ -422,9 +429,13 @@ export function summaryOf(m: JobMetrics): JobMetricsSummary {
   };
 }
 
-/** Metric summaries of the newest jobs (sub-jobs included), newest first. */
-export function teamMetrics(sy: Switchyard, opts: { limit?: number; now?: number } = {}): JobMetricsSummary[] {
-  const rows = sy.db.prepare("SELECT id FROM tasks WHERE profile = 'supervise' ORDER BY created_at DESC LIMIT ?").all(opts.limit ?? 50) as Array<{ id: string }>;
+/** Metric summaries of the newest jobs (sub-jobs included), newest first; `project` limits them to one project's jobs. */
+export function teamMetrics(sy: Switchyard, opts: { limit?: number; now?: number; project?: string } = {}): JobMetricsSummary[] {
+  const rows = (
+    opts.project
+      ? sy.db.prepare("SELECT id FROM tasks WHERE profile = 'supervise' AND project_id = ? ORDER BY created_at DESC LIMIT ?").all(opts.project, opts.limit ?? 50)
+      : sy.db.prepare("SELECT id FROM tasks WHERE profile = 'supervise' ORDER BY created_at DESC LIMIT ?").all(opts.limit ?? 50)
+  ) as Array<{ id: string }>;
   return rows.flatMap((r) => {
     const m = jobMetrics(sy, r.id, opts.now !== undefined ? { now: opts.now } : {});
     return m ? [summaryOf(m)] : [];

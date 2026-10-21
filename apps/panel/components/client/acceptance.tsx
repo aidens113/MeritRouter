@@ -10,14 +10,14 @@ import { ActionStatus, useAction } from "./actions";
  * as the acceptor, and the reason are recorded on the result. A reason is required to reject, and
  * to accept a result that is not already met.
  */
-export function AcceptanceActions({ taskId, reasonRequired }: { taskId: string; reasonRequired: boolean }) {
+export function AcceptanceActions({ taskId, project, reasonRequired }: { taskId: string; project: string; reasonRequired: boolean }) {
   const { run, busy, error, errors, message } = useAction();
   const [reason, setReason] = useState("");
   const [last, setLast] = useState<"accept" | "reject" | null>(null);
   const trimmed = reason.trim();
   const decide = async (decision: "accept" | "reject") => {
     setLast(decision);
-    const r = await run(`/api/tasks/${decision}`, "POST", { id: taskId, ...(trimmed ? { reason: trimmed } : {}) }, { success: decision === "accept" ? "Accepted: recorded as panel" : "Rejected: the result is now unmet" });
+    const r = await run(`/api/tasks/${decision}`, "POST", { project, id: taskId, ...(trimmed ? { reason: trimmed } : {}) }, { success: decision === "accept" ? "Accepted: recorded as panel" : "Rejected: the result is now unmet" });
     if (r.ok) setReason("");
   };
   return (

@@ -110,6 +110,13 @@ export const AWAITING_ACCEPTANCE = "awaiting_acceptance";
 export const WAITING_FOR_FILE_LEASE = "waiting_for_file_lease";
 /** Prefix of a queued task's state reason while every platform in its route plan is out of slots. */
 export const WAITING_FOR_PROVIDER_SLOT = "waiting_for_provider_slot";
+/** Prefix of a queued task's state reason while its project runs `max_concurrent_tasks` worker tasks. */
+export const WAITING_FOR_PROJECT_CAP = "waiting_for_project_cap";
+
+/** The state reason of a task held back by its project's `max_concurrent_tasks`. */
+export function projectCapReason(project: string, cap: number): string {
+  return `${WAITING_FOR_PROJECT_CAP}: project ${project} is at its limit of ${cap} running task${cap === 1 ? "" : "s"}`;
+}
 
 export class TaskStore {
   constructor(
@@ -333,7 +340,14 @@ export class TaskStore {
         const isWorker = !isSup && !isSubSup;
         if (isSup ? supSlots <= 0 : !isSubSup && slots <= 0) continue;
         const projectCap = isWorker ? limitsOf(row.project_id).maxConcurrent : undefined;
-        if (projectCap !== undefined && (perProject.get(row.project_id) ?? 0) >= projectCap) continue;
+        if (projectCap !== undefined && (perProject.get(row.project_id) ?? 0) >= projectCap) {
+          const reason = projectCapReason(row.project_id, projectCap);
+          if (row.state_reason !== reason) {
+            this.db.prepare("UPDATE tasks SET state_reason = ?, updated_at = ? WHERE id = ?").run(reason, now, row.id);
+            this.event(row.id, WAITING_FOR_PROJECT_CAP, { project: row.project_id, limit: projectCap, running: perProject.get(row.project_id) ?? 0 });
+          }
+          continue;
+        }
         const job = !isSup ? (spec.parentTaskId ?? null) : null;
         const agentCap = typeof limits.maxAgentsPerJob === "function" ? limits.maxAgentsPerJob(row.project_id) : limits.maxAgentsPerJob;
         if (job && agentCap !== undefined && (perJob.get(job) ?? 0) >= agentCap) continue;

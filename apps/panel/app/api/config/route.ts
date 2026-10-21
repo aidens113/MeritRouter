@@ -36,6 +36,14 @@ function setIn(obj: Record<string | number, unknown>, path: Path, value: unknown
 }
 
 /**
+ * Sections whose parsed value has a different shape from what the YAML holds, so their effective
+ * value cannot be written back: `providers` parses to `{ request_timeout_seconds, byId }`. When
+ * they are missing from the YAML, every field in them is optional (a provider entry needs only
+ * what the patch sets), so the missing ancestor starts empty.
+ */
+const NOT_ROUND_TRIPPABLE = new Set(["providers"]);
+
+/**
  * A field whose parent section is absent from the YAML (it runs on defaults) cannot be set alone:
  * `tiers: { T1: { max_score: 5 } }` would drop the other required tier fields. In that case write
  * the nearest missing ancestor with its effective values (defaults included) plus the change.
@@ -60,7 +68,7 @@ function expand(sy: Switchyard, patch: Patch[]): Patch[] {
     const key = JSON.stringify(anc);
     let entry = expanded.get(key);
     if (!entry) {
-      const base = getIn(sy.cfg, anc);
+      const base = NOT_ROUND_TRIPPABLE.has(String(anc[0])) ? {} : getIn(sy.cfg, anc);
       entry = { path: anc, value: base && typeof base === "object" ? structuredClone(base) : {} };
       expanded.set(key, entry);
       out.push(entry);

@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Builds a self-contained demo workspace for the panel in apps/panel/.demo/ (gitignored):
-// a config, a git fixture repository, manual models, and real task/request history produced by
+// a config with three projects (demo: the calculator service, with `core` and `app` repositories;
+// storefront, whose repository is also aliased `app`; legacy-billing, archived at the end), their
+// git fixture repositories, manual models, and real task/request history produced by
 // running tasks through Switchyard with a scripted in-process provider client (no network, no
 // quota). Every provider (built-in ones with fake keys, a custom keyless "lab" server, and the paid
 // Anthropic route) points at 127.0.0.1 on a closed port, as do the OpenRouter catalog and Hugging
@@ -55,14 +57,24 @@ const files = {
     'import { add } from "./app";\n\nexport function handle(query: Record<string, string>) {\n  const a = Number(query.a);\n  const b = Number(query.b);\n  if (Number.isNaN(a) || Number.isNaN(b)) throw new Error("bad input");\n  return { sum: add(a, b) };\n}\n',
   "README.md": "# Calculator service\n\nA tiny fixture repository used by the SwitchYard panel demo.\n",
 };
-for (const [rel, content] of Object.entries(files)) {
-  mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
-  writeFileSync(path.join(repo, rel), content);
+/** A git fixture repository with one commit. */
+function fixtureRepo(dir, contents) {
+  for (const [rel, content] of Object.entries(contents)) {
+    mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    writeFileSync(path.join(dir, rel), content);
+  }
+  const git = (...args) => execFileSync("git", args, { cwd: dir, stdio: "pipe" });
+  git("init", "-q", "-b", "main");
+  git("-c", "user.email=demo@example.com", "-c", "user.name=demo", "add", "-A");
+  git("-c", "user.email=demo@example.com", "-c", "user.name=demo", "commit", "-q", "-m", "init");
 }
-const git = (...args) => execFileSync("git", args, { cwd: repo, stdio: "pipe" });
-git("init", "-q", "-b", "main");
-git("-c", "user.email=demo@example.com", "-c", "user.name=demo", "add", "-A");
-git("-c", "user.email=demo@example.com", "-c", "user.name=demo", "commit", "-q", "-m", "init");
+fixtureRepo(repo, files);
+// Three projects (the panel's grid): the calculator service (two repositories, the `core` one
+// every recorded task works in, and a web front end aliased `app`), a storefront whose only
+// repository is also aliased `app` (aliases are per project), and an archived billing project.
+fixtureRepo(path.join(demo, "web"), { "index.html": "<!doctype html><title>Calculator</title>\n", "README.md": "# Calculator web front end\n" });
+fixtureRepo(path.join(demo, "storefront"), { "src/cart.ts": "export function total(items: Array<{ price: number; qty: number }>) {\n  return items.reduce((s, i) => s + i.price * i.qty, 0);\n}\n", "README.md": "# Storefront\n" });
+fixtureRepo(path.join(demo, "billing"), { "invoice.py": "def total(lines):\n    return sum(l['amount'] for l in lines)\n", "README.md": "# Legacy billing\n" });
 
 const checkedAt = new Date().toISOString();
 const ep = (o) => ({
@@ -216,12 +228,16 @@ const raw = {
   models: { file: "models.yaml" },
   // Enrichment sources are offline too: the demo never fetches the OpenRouter catalog or Hugging Face.
   discovery: { interval_minutes: 0, openrouter_models_url: `${OFFLINE}/openrouter-catalog/models`, huggingface_api_url: `${OFFLINE}/huggingface/api/models` },
-  repositories: { core: { path: "repo" } },
+  projects: {
+    demo: { name: "Calculator service", repositories: { core: { path: "repo" }, app: { path: "web" } } },
+    storefront: { name: "Storefront", repositories: { app: { path: "storefront" } }, team: { max_agents: 2 } },
+    "legacy-billing": { name: "Legacy billing", repositories: { billing: { path: "billing", writable: false } } },
+  },
   execution: { max_concurrent_tasks: 4, lease_seconds: 30 },
   scoring: { batch_window_ms: 50 },
   coding: { runner: "native" },
   // The brain lives inside the demo folder so seeding never touches ~/.switchyard/brain.
-  brain: { path: "brain", project: "demo", access_approver: "supervisor" },
+  brain: { path: "brain", project: "demo", access_approver: "supervisor", global_requires_approval: true },
   supervisor: { question_timeout_seconds: 86400 },
   team: { max_agents: 3 },
   // Paid routing is on with small budgets; the demo key is fake and only a fake client ever sees it.
@@ -307,6 +323,9 @@ const client = {
       }));
       return reply(JSON.stringify({ items }), s, { in: 600, out: 90 });
     }
+
+    // Independent reviews of supervisors' promotions to global knowledge (D9): every lesson passes.
+    if (user.includes("Promotion review: judge the lesson")) return promotionReviewTurn(req, s, user);
 
     // Prompt batches of summarize tasks (ids i1..iN).
     const batchIds = [...user.matchAll(/<item id="(i\d+)">/g)].map((m) => m[1]);
@@ -432,6 +451,25 @@ function auditTurn(s, pkg) {
   };
   const out = { summary: `Audit verdict: ${verdict.verdict}.`, findings: [{ description: `Audit verdict: ${verdict.verdict}`, evidenceRefs: ["inline"] }], criteria: [{ index: 0, status: "met", evidenceRefs: ["inline"] }], data: verdict };
   return reply(null, s, { toolCalls: [call("submit_result", out)], out: 220 });
+}
+
+/** A promotion review's answer: a passing verdict on the lesson against the rubric, as data. */
+function promotionReviewTurn(req, s, pkg) {
+  const field = (k) => new RegExp(`^${k}: (.+)$`, "m").exec(pkg)?.[1].trim() ?? "";
+  const ids = [...pkg.matchAll(/^- ([\w.-]+) \[verify: /gm)].map((m) => m[1]);
+  const verdict = {
+    verdict: "pass",
+    examinedRevision: field("examinedRevision"),
+    policyVersion: field("policyVersion"),
+    criteria: ids.map((id) => ({ id, outcome: "pass", evidenceRefs: ["inline"] })),
+    blockingFindings: [],
+    missingEvidence: [],
+    recommendedAction: "accept",
+  };
+  const criteria = (pkg.match(/^\s*\[\d+\]/gm) ?? []).length || 1;
+  const out = { summary: "The lesson holds beyond its project.", findings: [{ description: "Generic practice; names nothing of its project.", evidenceRefs: ["inline"] }], criteria: Array.from({ length: criteria }, (_, i) => ({ index: i, status: "met", evidenceRefs: ["inline"] })), data: verdict };
+  if (req.tools?.some((t) => t.function.name === "submit_result")) return reply(null, s, { toolCalls: [call("submit_result", out)], out: 220 });
+  return reply(JSON.stringify(out), s, { out: 220 });
 }
 
 const call = (name, args) => ({ id: `call_${++callNo}`, type: "function", function: { name, arguments: JSON.stringify(args) } });
@@ -583,6 +621,7 @@ const JOB_A = [
     calls: [
       call("brain_write", { path: "projects/demo/decisions/arithmetic-helpers.md", content: "# Decision: arithmetic helpers live in src/app.ts\n\nStatus: accepted\n\n## Context\n\nThe calculator service needs add, subtract, and multiply. `handle()` in src/server.ts only parses input.\n\n## Decision\n\n- Pure arithmetic helpers are exported from `src/app.ts`.\n- `src/server.ts` validates input and calls them; it holds no arithmetic itself.\n\n## Consequences\n\n- New operations are one small implement brief with `allowed_paths: src/app.ts`.\n" }),
       call("brain_promote_lesson", { title: "Verify integrated work on the job branch", body: "A worker's passing check proves its own worktree, not the integrated branch. After `integrate_task`, run the same check with `run_check` before recording the ledger entry.\n\n- Cheap: one command, no model request.\n- Catches cherry-pick conflicts resolved the wrong way.", sources: ["projects/demo/working/job-" + "JOBID" + ".md"] }),
+      call("brain_promote_lesson", { title: "Ask before changing what callers see on failure", body: "Status codes and error bodies are part of an interface. When a fix would change them, ask the person who owns the interface first, and record the answer where later briefs will find it.", sources: ["projects/demo/working/job-" + "JOBID" + ".md"] }),
     ],
   }),
   () => ({ text: "Recording the validated outcome in the ledger.", calls: [call("brain_append_ledger", { title: "Integrated multiply", changed: "src/app.ts on the job branch", why: "job goal", validation: "`" + multiplyCheck + "` -> exit 0", outcome: "Accepted", follow_up: "none" })] }),
@@ -735,7 +774,8 @@ const startWorker = () => {
 async function phase(hoursAgo, label, tasks, opts = {}) {
   offset = Math.round(hoursAgo * HOUR);
   scenario = opts.scenario ?? "ok";
-  const subs = await sy.submitTasks(tasks);
+  // A qualification purpose sends the tasks to the reserved `_qualification` project (no project named).
+  const subs = await sy.submitTasks(tasks, opts.purpose ? { purpose: opts.purpose } : { project: opts.project ?? "demo" });
   startWorker();
   const out = await sy.awaitResults(subs.map((s) => s.taskId), { timeoutSeconds: opts.timeout ?? 60 });
   const states = out.completed.map((r) => `${r.executionStatus}${r.acceptanceStatus !== "not_verified" ? `/${r.acceptanceStatus}` : ""}`);
@@ -865,6 +905,14 @@ await phase(3, "too large: returned to the supervisor (T4)", [
 await phase(1.5, "served-model mismatch (quarantine)", [summarize("Summarise the auth service log", { routing: { endpointId: "nvidia/meta/llama-3.3-70b-instruct" } })], { scenario: "policy" });
 await phase(0.5, "recent summaries", [summarize("Summarise the latest canary log"), inspect("Is add() covered by any validation?")]);
 
+// The other projects run their own work through the same worker.
+await phase(6, "storefront: summaries", [summarize("Summarise the checkout error log"), summarize("Summarise the payment provider webhook log")], { project: "storefront" });
+await phase(0.4, "storefront: recent summary", [summarize("Summarise the cart service log after the deploy")], { project: "storefront" });
+await phase(30, "legacy billing: summary (archived below)", [summarize("Summarise the month-end invoice run log")], { project: "legacy-billing" });
+// One qualification trial: it runs in the reserved `_qualification` project, never a user project,
+// and is viewed under /all/qualification (linked to an illustrative run below).
+const qualificationTrial = await phase(29, "qualification: one eval trial (reserved project)", [summarize("Summarise the qualification fixture's build log (eval trial)", { label: "completion-t1-1" })], { purpose: "qualification" });
+
 // Paid route: every free model is "cooling down", so the paid model serves (fake direct client).
 sy.vault.add({ provider: "anthropic", label: "demo card (fake key)", secret: "sk-ant-demo-NOT-A-REAL-KEY-7f3a", billingClass: "paid_postpaid", monthlyCapUsd: 10, expiresAt: Date.now() + 90 * 24 * HOUR });
 sy.vault.add({ provider: "anthropic", label: "prepaid credits (fake key)", secret: "sk-ant-demo-PREPAID-FAKE-91c2", billingClass: "paid_credits", prepaidBalanceUsd: 4 });
@@ -874,7 +922,7 @@ if (!directCalls.length) console.warn("  warning: the paid model was not used");
 // Standalone job: supervisor delegates, integrates, verifies, and records memory.
 offset = Math.round(2 * HOUR);
 scenario = "ok";
-const jobA = await sy.startJob({ goal: "Add multiply(a, b) to the calculator and integrate it onto a job branch.", repositories: ["core"], acceptanceCriteria: ["multiply is exported from src/app.ts on the job branch"], checks: [multiplyCheck], label: "add-multiply" });
+const jobA = await sy.startJob({ project: "demo", goal: "Add multiply(a, b) to the calculator and integrate it onto a job branch.", repositories: ["core"], acceptanceCriteria: ["multiply is exported from src/app.ts on the job branch"], checks: [multiplyCheck], label: "add-multiply" });
 jobAId = jobA.taskId;
 startWorker();
 const jobAOut = await sy.awaitResults([jobA.taskId], { timeoutSeconds: 180 });
@@ -883,7 +931,7 @@ console.log(`  ${"job: add multiply (finished)".padEnd(44)} ${ra ? `${ra.executi
 
 // A planned job: plan_work records a diamond task graph; two coding nodes contend for a file lease.
 offset = Math.round(1.9 * HOUR);
-const jobC = await sy.startJob({ goal: "Add divide(a, b) and modulo(a, b) to the calculator, planned as a task graph.", repositories: ["core"], acceptanceCriteria: ["divide and modulo are exported from src/app.ts"], label: "plan-divide-modulo" });
+const jobC = await sy.startJob({ project: "demo", goal: "Add divide(a, b) and modulo(a, b) to the calculator, planned as a task graph.", repositories: ["core"], acceptanceCriteria: ["divide and modulo are exported from src/app.ts"], label: "plan-divide-modulo" });
 const jobCOut = await sy.awaitResults([jobC.taskId], { timeoutSeconds: 240 });
 const rc = jobCOut.completed[0];
 const planC = insights.jobPlan(sy, jobC.taskId);
@@ -895,6 +943,23 @@ console.log(
 offset = Math.round(1.8 * HOUR);
 await insights.brainWrite(sy, "projects/demo/facts/runtime.md", "# Runtime facts\n\n- The calculator service runs on Node 22 behind the API gateway.\n- `GET /sum?a=&b=` is the only public route today.\n- Requests time out after 5 seconds at the gateway.\n");
 await insights.brainWrite(sy, "projects/demo/repos/core.md", "# core (calculator service)\n\n| Path | What it holds |\n| --- | --- |\n| `src/app.ts` | Pure arithmetic helpers |\n| `src/server.ts` | Input parsing and validation for `handle()` |\n\nTests: none yet. Add checks as `node -e` one-liners until a test runner exists.\n");
+await insights.brainWrite(sy, "projects/storefront/facts/checkout.md", "# Checkout facts\n\n- `total()` in `src/cart.ts` sums price times quantity; there are no discounts yet.\n- Prices are in cents, so totals are integers.\n", "storefront");
+// Storefront promotions to global/ (decision D9), for the project Brain page: a lesson that names
+// the project and its files is rejected by the project-specificity check and kept as a project
+// lesson; a generic one is approved by a person (its review task, if one started, is cancelled).
+{
+  const sfBrain = sy.brainFor("storefront");
+  const sfSupervisor = { kind: "agent", role: "supervisor", taskId: null, jobId: null, tier: "T3", grants: [] };
+  const sfActor = { agent: "supervisor", role: "supervisor", model: "cerebras/qwen-3-235b-a22b-instruct-2507" };
+  const facts = ["projects/storefront/facts/checkout.md"];
+  await sfBrain.promoteLesson(sfSupervisor, sfActor, "Storefront totals are in cents", "In storefront, `total()` in src/cart.ts returns cents, so the app repository never formats money itself.", facts);
+  const generic = await sfBrain.promoteLesson(sfSupervisor, sfActor, "Keep money in integer minor units", "Store and sum prices as integers of the smallest currency unit (cents, pence). Convert to a decimal string only when displaying. Floating-point sums drift and break equality checks in tests.", facts);
+  const pending = generic.id ? sfBrain.promotions.get(generic.id) : null;
+  if (pending?.review.task_id) sy.cancelTasks([pending.review.task_id], "storefront");
+  if (generic.id && (generic.status === "pending_review" || generic.status === "pending_approval")) await sy.decidePromotion("storefront", generic.id, true, "you", "Applies to any project that handles money.");
+  const sfPromotions = sy.promotions({ project: "storefront" });
+  console.log(`  ${"storefront: promotions to global/".padEnd(44)} ${sfPromotions.map((x) => x.status).join(", ") || "none"}`);
+}
 const decision = "projects/demo/decisions/arithmetic-helpers.md";
 if (sy.brain.exists(decision)) {
   const text = insights.brainRead(sy, decision).content;
@@ -909,14 +974,14 @@ if (repairedId) insights.decideTaskAcceptance(sy, repairedId, "accept", { kind: 
 // Job D: a reviewed change is integrated, confirmed by a job check, then undone (a false approval).
 offset = Math.round(1.7 * HOUR);
 scenario = "ok";
-const jobD = await sy.startJob({ goal: "Add power(a, b) to the calculator and integrate it onto a job branch.", repositories: ["core"], acceptanceCriteria: ["power is exported from src/app.ts on the job branch"], label: "add-power" });
+const jobD = await sy.startJob({ project: "demo", goal: "Add power(a, b) to the calculator and integrate it onto a job branch.", repositories: ["core"], acceptanceCriteria: ["power is exported from src/app.ts on the job branch"], label: "add-power" });
 const jobDOut = await sy.awaitResults([jobD.taskId], { timeoutSeconds: 180 });
 const rd = jobDOut.completed[0];
 console.log(`  ${"job: add power (integrated, then undone)".padEnd(44)} ${rd ? `${rd.executionStatus}/${rd.acceptanceStatus}` : "did not finish"}`);
 
 // The nested team job: parent -> sub-supervisor -> two workers, a redundant node, and the channel.
 offset = Math.round(1.65 * HOUR);
-const jobE = await sy.startJob({ goal: `Deliver mean(a, b) and range(a, b) ${TEAM_PARENT}, with a redundant survey.`, repositories: ["core"], acceptanceCriteria: ["mean and range are exported from src/app.ts on the job branch"], checks: [hasCheck("mean"), hasCheck("range")], label: "team-helpers" });
+const jobE = await sy.startJob({ project: "demo", goal: `Deliver mean(a, b) and range(a, b) ${TEAM_PARENT}, with a redundant survey.`, repositories: ["core"], acceptanceCriteria: ["mean and range are exported from src/app.ts on the job branch"], checks: [hasCheck("mean"), hasCheck("range")], label: "team-helpers" });
 const jobEOut = await sy.awaitResults([jobE.taskId], { timeoutSeconds: 300 });
 const re = jobEOut.completed[0];
 const teamE = insights.jobTeam(sy, jobE.taskId);
@@ -987,7 +1052,7 @@ for (const t of auditOf) {
 // A second job that pauses on a question for you. The worker is shut down while the supervisor
 // waits, so the job is left interrupted with the question unanswered.
 offset = 0;
-const jobB = await sy.startJob({ goal: "Make handle() reject requests with a missing a or b parameter.", repositories: ["core"], acceptanceCriteria: ["a missing parameter is rejected", "existing sums still work"], label: "reject-missing-params" });
+const jobB = await sy.startJob({ project: "demo", goal: "Make handle() reject requests with a missing a or b parameter.", repositories: ["core"], acceptanceCriteria: ["a missing parameter is rejected", "existing sums still work"], label: "reject-missing-params" });
 let asked = [];
 for (let i = 0; i < 300 && !asked.length; i++) {
   await new Promise((r) => setTimeout(r, 100));
@@ -1029,6 +1094,15 @@ qual.transaction(() => {
       });
     }
   }
+  // The real trial task above belongs to the first run (its eval and trial), so the Qualification
+  // page lists it with the model under test.
+  const trialTask = qualificationTrial.completed[0]?.taskId;
+  if (trialTask) {
+    const [endpointId] = plan[0];
+    qual
+      .prepare("INSERT INTO qualification_tasks (task_id, run_id, eval_id, trial, endpoint_id, fixture_path, evaluated) VALUES (?, ?, 'completion-t1-1', 1, ?, '(demo fixture)', 1)")
+      .run(trialTask, `qr_demo_${endpointId.replace(/[^a-z0-9]+/gi, "_")}`, endpointId);
+  }
 })();
 
 await sy.close();
@@ -1037,9 +1111,23 @@ await sy.close();
 // submitTasks() would kick the scheduler and run them in this process.
 offset = 0;
 const idle = new Switchyard(cfg, { providerClient, worker: false, now: clock });
-const store = (specs) => idle.tasks.submit(specs.map((x) => WorkerTaskSchema.parse(x)));
+const store = (specs, project = "demo") => idle.tasks.submit(specs.map((x) => WorkerTaskSchema.parse(x)), { project });
 const [queued] = store([summarize("Summarise the payments log (queued: no worker running)")]);
 store([summarize("Summarise the follow-up incident report", { id: "followup_after_payments", dependsOn: [queued.taskId] })]);
+// The storefront's job waits in its queue: no worker is running.
+store(
+  [
+    {
+      profile: "supervise",
+      label: "discount-codes",
+      goal: "Add a percentage discount code to total() in src/cart.ts and integrate it onto a job branch.",
+      repositoryAliases: ["app"],
+      constraints: { acceptanceCriteria: ["total() applies a valid discount code", "an unknown code is rejected"] },
+    },
+  ],
+  "storefront",
+);
+store([summarize("Summarise the abandoned-cart report (queued: no worker running)")], "storefront");
 const [interrupted] = store([inspect("List every exported function (interrupted when the worker stopped)")]);
 idle.db.prepare("UPDATE tasks SET state = 'interrupted', state_reason = 'worker lease expired', started_at = ?, run_count = 2, updated_at = ? WHERE id = ?").run(Date.now() - 20 * 60_000, Date.now(), interrupted.taskId);
 idle.tasks.event(interrupted.taskId, "interrupted", { previousOwner: "demo-worker" });
@@ -1098,6 +1186,29 @@ offset = 0;
 const revoked = idle.vault.add({ provider: "groq", label: "old key (revoked, fake)", secret: "gsk_demo-REVOKED-NOT-REAL-0d1e", billingClass: "free_tier" });
 idle.providers.keys.recordFailure(idle.providers.credentials().get(`vault:${revoked.id}`), new ProviderError("auth_invalid", "401 Invalid API Key (demo)", { provider: "groq", status: 401 }));
 idle.providers.keys.recordFailure(idle.providers.credentials().get("config:cerebras:literal:0"), new ProviderError("rate_limited", "429 Too Many Requests (demo)", { provider: "cerebras", status: 429, retryAfterMs: 45 * 60_000 }));
+// Global knowledge (D9): approve one of Job A's two promotions as a person (the other stays
+// waiting), add glossary terms, and add then revert a lesson so the Knowledge page shows a removal.
+for (let i = 0; i < 100 && idle.promotions({ status: "pending_review" }).length; i++) {
+  await idle.settlePromotions();
+  await new Promise((r) => setTimeout(r, 50));
+}
+const waitingLessons = idle.promotions({ status: "pending_approval" });
+if (waitingLessons.length < 2) console.warn(`warning: expected 2 promotions waiting for approval, found ${waitingLessons.length}`);
+const verifyLesson = waitingLessons.find((p) => p.title.startsWith("Verify integrated work"));
+if (verifyLesson) await insights.decideGlobalPromotion(idle, verifyLesson.project, verifyLesson.id, true, "you", "Holds for any repository with integration branches.");
+await insights.brainWrite(idle, "global/glossary.md", "# Glossary\n\nShared terms. Supervisors maintain this file.\n\n- **Job branch**: the branch a job's supervisor integrates workers' commits onto before you merge it.\n- **Integration check**: a command run on the job branch after integrating, not in a worker's worktree.\n- **Lease**: a time-limited claim on a file or repository that keeps two workers from editing it at once.\n");
+const handLesson = await idle.brainFor("storefront").promoteLesson({ kind: "human", name: "you" }, { agent: "human", role: "human" }, "Prefer feature flags over long-lived branches", "Merge small changes behind a flag instead of keeping a branch open for weeks.", []);
+await insights.revertGlobalEntry(idle, handLesson.path, "you", "Too broad: some teams ship from release branches by design.");
+// A supervisor's approved lesson reverted by a person: its promotion record becomes `reverted`
+// (who and why), shown on the storefront Brain page and in Knowledge's recent decisions.
+const moneyLesson = idle.promotions({ project: "storefront", status: "approved" }).find((p) => p.title.startsWith("Keep money in integer minor units"));
+if (moneyLesson?.global_path) {
+  const out = await insights.revertGlobalEntry(idle, moneyLesson.global_path, "you", "Duplicates the team's money-handling guide; keep one source.");
+  console.log(`  ${"storefront: approved lesson reverted".padEnd(44)} promotion ${out.promotionStatus ?? "has no record"}`);
+} else console.warn("  warning: no approved storefront lesson to revert");
+
+// The billing project is retired: archived, with its history kept.
+insights.archiveProject(idle, "legacy-billing");
 await idle.close();
 
 // The demo config samples 20% of passed results for audit (seeding forced its two audits instead).
