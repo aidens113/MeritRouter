@@ -1,7 +1,7 @@
 # Direct providers (remove FreeLLMAPI)
 
 Status: Active
-Status detail: P1-P3 implemented, verified, and merged 2026-10-20. Only a first live check with real provider keys remains (needs user approval; spends quota).
+Status detail: P1-P3 merged 2026-10-20. P4 (wider coverage incl. Ollama) in progress. A first live check with real keys remains (needs user approval).
 Created: 2026-10-19
 Last updated: 2026-10-20
 Owner: Senior supervisor agent
@@ -46,6 +46,15 @@ a real store, two workers scanning at once, the panel's client-side forms in a r
 - Under `preferred` paid policy a cooling paid endpoint moves behind other paid endpoints but
   not behind free ones (pre-existing ordering).
 - `refreshPaidPrices` uses the global `fetch`.
+
+**P4 (user, 2026-10-20): add Ollama and wider coverage.** Research:
+[research-coverage.md](./direct-providers/research-coverage.md) (official docs, 2026-10-20).
+Built-ins to add: ollama, ollama-cloud, lmstudio, llamacpp, deepseek, fireworks, deepinfra,
+nebius, scaleway, ovhcloud, zai, moonshot, vercel. Custom-provider examples: vLLM, LocalAI, Jan,
+KoboldCpp, text-generation-webui, SGLang, TGI, xAI, Alibaba, MiniMax, Venice, Novita, Hyperbolic,
+Chutes, Featherless, Baseten, AI21, SiliconFlow, Azure, Bedrock mantle. Excluded: Vertex (OAuth),
+Bedrock SigV4, Azure Entra-only, Perplexity (Agent API), Lambda (winding down), Kluster (ended),
+Inference.net (pivoted). `p4-coverage` dispatched 2026-10-20 on `feat/providers-p4`.
 
 **Next steps:** a first live check, only with the user's approval and budget: one free-tier key
 per provider the user has, `keys test`, `models scan`, and one small task, recording measured
@@ -260,6 +269,23 @@ llama.cpp, vLLM, LM Studio) is a custom provider.
   `src/core/service.ts` (only for item 6), `tests/providers-*.test.ts`,
   `tests/admin-keys.test.ts`, `tests/cli-keys.test.ts`.
 - Report to: docs/working/direct-providers/reports/p3-fixes.md
+
+### Brief: p4-coverage (P4; parallel with projects J1, separate branch)
+- Task: add the 13 built-ins from research-coverage.md with their registry facts and sources;
+  registry support they need: providers with a default local base URL and no key (ollama,
+  lmstudio, llamacpp; `OLLAMA_HOST` honoured), new model-list shapes (`ollama_tags`,
+  `lmstudio_native`, `deepinfra_list`, `ovh_catalog`), a concurrency limit kind distinct from rpm,
+  key-info shape for Ollama's `/api/balance`. Ollama discovery per research section 4 (`/api/tags`
+  + `/api/show` cached by digest: parameter count, context length with the effective `num_ctx`,
+  capabilities tools/vision, quantization; embedding-only excluded); never send `tool_choice` to
+  Ollama (enforce `required` locally). Custom-provider examples in the example config comments
+  and `docs/setup.md`; excluded list in `docs/decisions.md`. Panel Provider keys picker shows
+  the new providers (local ones with a base-URL field and "no key").
+- Owns: `src/providers/**`, `tests/providers-*.test.ts`, the `ProviderEntrySchema` and
+  `ProviderKeyConfigSchema` blocks of `src/config/schema.ts` only (J1 edits other parts),
+  `examples/switchyard.config.example.yaml` + regenerated presets, `docs/setup.md`,
+  `docs/decisions.md`, `apps/panel/components/client/provider-keys.tsx`.
+- Report to: docs/working/direct-providers/reports/p4-coverage.md
 
 ---
 

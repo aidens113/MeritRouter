@@ -39,7 +39,7 @@ global pages) shows all projects and their jobs.
 own project plus `global/`; build projects first, caching after; D9 (below) global knowledge is
 written only by supervisors and only when it is truly global-worthy.
 
-**Next steps:** J1 (`j1-core` first; then `j1-scheduling-brain` and `j1-surfaces` in parallel),
+**Next steps:** J1 (`j1-core` dispatched 2026-10-20; then `j1-scheduling-brain` and `j1-surfaces` in parallel),
 then J2 (panel), then J3 (operations, demo, docs). The settings-nav fix merged first (7443bf8).
 
 **Blockers:** none.
@@ -144,10 +144,30 @@ passing review lands with provenance); legacy config upgrades with all old rows 
 
 ## Worker Briefs
 
-Written at dispatch, after the user's go-ahead. Partition: `j1-core` owns `src/projects/**`,
-`src/config/**`, `src/storage/**`, `src/core/**`, `src/runners/**`, `src/context/**`; then
-`j1-scheduling-brain` (`src/storage/tasks.ts` claim, `src/core/scheduler.ts`, `src/brain/**`) and
-`j1-surfaces` (`src/cli*`, `src/mcp.ts`, `src/admin/**`) in parallel; J2 owns `apps/panel/**`.
+Branch/worktree: `feat/projects` at `D:/sy-wt/pj`. Partition: `j1-core` first; then
+`j1-scheduling-brain` and `j1-surfaces` in parallel; J2 owns `apps/panel/**`.
+
+### Brief: j1-core
+- Task: `src/projects/` (registry from `projects.<slug>` config plus the legacy single-project
+  shape per D3, zod schema, `ProjectContext` = global config overlaid with the project's
+  overrides, resolved repository paths); config schema `projects` section; one appended migration
+  (`projects` table; `project_id` on `tasks`, `job_state`, `sessions`, `brain_access_requests`,
+  `brain_grants`, `job_plans`, `events` (nullable), `model_requests`; repo aliases namespaced
+  `<project>/<alias>` in `tasks.writable_repo`, `workspaces.repo_alias`, `file_leases.repository`,
+  `merge_queue`; backfill existing rows to the legacy project); tasks carry their project from
+  submit; executor, runners, validate, context sources resolve the task's `ProjectContext`
+  instead of project fields on the global `cfg`; service keeps one `Brain` per project (built
+  from the project context; no `src/brain` edits); service API task/job/session/question/usage
+  calls take an optional project (reads: all when omitted; writes: required unless exactly one
+  project exists). CLI, MCP, admin, panel: minimal changes to compile and keep tests passing.
+- Owns: `src/projects/**`, `src/config/**`, `src/storage/**` (not the claim query's fairness,
+  which is j1-scheduling-brain's), `src/core/**`, `src/runners/**`, `src/context/**`,
+  `src/harness/**` (only for project context), minimal compile fixes elsewhere, new
+  `tests/projects.test.ts`, existing tests only where signatures change.
+- Done: two projects with the same repo alias run concurrently in one worker with no lease or
+  merge collision; a legacy config upgrades with every old row in its one project; a task's
+  runner sees only its project's repositories; full suite green.
+- Report to: docs/working/projects/reports/j1-core.md
 
 ---
 
