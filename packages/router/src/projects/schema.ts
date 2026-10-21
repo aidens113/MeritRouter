@@ -27,8 +27,47 @@ const overrideOf = (keys: readonly string[]) =>
 
 const MountSchema = z.object({ prefix: z.string().min(1), path: z.string().min(1), commit: z.boolean().default(false) }).strict();
 
+/**
+ * A project's share of the one worker and of the global budgets (decisions D5 and D7). Every
+ * field is optional; unset means no per-project limit. Global caps (`execution`, `allocation`,
+ * `paid.budgets`), provider slots, and leases always apply on top.
+ */
+export const ProjectLimitsSchema = z.object({
+  /** Fair-share weight when claiming tasks: a project of priority 2 is served twice as often as one of 1 while both have ready tasks. */
+  priority: z.number().positive().max(100).default(1),
+  /** Most worker tasks of this project running at once (supervisors are bounded by `supervisor.max_concurrent_jobs`). */
+  max_concurrent_tasks: z.number().int().positive().optional(),
+  /** Paid spend this project may use, in USD per rolling window, within the global `paid.budgets`. */
+  paid_budgets: z
+    .object({
+      per_day_usd: z.number().min(0).optional(),
+      per_week_usd: z.number().min(0).optional(),
+      per_month_usd: z.number().min(0).optional(),
+    })
+    .strict()
+    .optional(),
+  /** Fraction of the package allocation (`allocation.max_model_requests_per_hour`/`_per_day`) this project may use. */
+  request_share: z.number().gt(0).max(1).optional(),
+});
+export type ProjectLimits = z.infer<typeof ProjectLimitsSchema>;
+
+const NO_LIMITS: ProjectLimits = { priority: 1 };
+
+/**
+ * A project's limits read from the raw `projects.<slug>` entry (validated at load by
+ * `ProjectConfigSchema`). A project with no entry (the single-project shape, or rows of a
+ * project no longer configured) has no limits and priority 1.
+ */
+export function projectLimits(cfg: { projects: Record<string, unknown> }, slug: string): ProjectLimits {
+  const raw = cfg.projects[slug];
+  if (!raw || typeof raw !== "object") return NO_LIMITS;
+  const parsed = ProjectLimitsSchema.safeParse(raw);
+  return parsed.success ? parsed.data : NO_LIMITS;
+}
+
 export const ProjectConfigSchema = z
   .object({
+    ...ProjectLimitsSchema.shape,
     /** Display name (defaults to the slug). */
     name: z.string().min(1).max(80).optional(),
     /** Repositories by alias; users write the bare alias, SwitchYard keys it `<project>/<alias>` internally. */

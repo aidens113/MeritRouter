@@ -8,6 +8,7 @@ import { isTerminal } from "../core/task.js";
 import { acquireLease, conflictingLease, releaseLeases, writeGlobs } from "./file-leases.js";
 import { requiresAcceptedInputs } from "./plans.js";
 import { repoKey } from "../projects/context.js";
+import { FairClaimOrder, type ProjectClaimLimits } from "./fair-claim.js";
 
 export interface TaskRow {
   id: string;
@@ -64,6 +65,8 @@ export interface ClaimLimits {
   maxAgentsPerJob?: number | ((projectId: string) => number);
   /** Per-provider concurrency: a worker task starts only when a platform in its route plan has a free slot. */
   providerSlots?: ClaimAdmission;
+  /** A project's fair-share priority and worker-task cap (see `FairClaimOrder`); omitted: priority 1, no cap. */
+  projectLimits?: (projectId: string) => ProjectClaimLimits;
 }
 
 /**
@@ -255,6 +258,9 @@ export class TaskStore {
   /**
    * Resolve dependency gates, then claim up to `limit` runnable tasks under one lease owner.
    * Runs in a single IMMEDIATE transaction so two processes cannot claim the same task.
+   * Candidates are offered round-robin across projects, weighted by priority and oldest first
+   * within a project (`FairClaimOrder`); a project's `max_concurrent_tasks` and every global
+   * cap, provider-slot, and lease check apply to each one.
    */
   claim(owner: string, limits: ClaimLimits): StoredTask[] {
     return immediate(this.db, () => {
@@ -266,12 +272,21 @@ export class TaskStore {
       // worker slot: their parent waits on them, so either would deadlock a full system. They
       // count toward their parent job's agent cap instead (below).
       const runningRows = this.db
-        .prepare("SELECT profile, json_extract(spec_json, '$.parentTaskId') AS parent FROM tasks WHERE state IN ('running','cancel_requested') AND lease_expires_at > ?")
-        .all(now) as { profile: string; parent: string | null }[];
+        .prepare("SELECT profile, project_id, json_extract(spec_json, '$.parentTaskId') AS parent FROM tasks WHERE state IN ('running','cancel_requested') AND lease_expires_at > ?")
+        .all(now) as { profile: string; project_id: string; parent: string | null }[];
       const runningSup = runningRows.filter((r) => sup.has(r.profile) && !r.parent).length;
       const runningSubSup = runningRows.filter((r) => sup.has(r.profile) && r.parent).length;
       let slots = Math.min(limits.maxConcurrent - (runningRows.length - runningSup - runningSubSup), limits.limit ?? Number.MAX_SAFE_INTEGER);
       let supSlots = (limits.maxSupervisors ?? 0) - runningSup;
+      // Running worker tasks per project (a project's max_concurrent_tasks counts what `slots` counts).
+      const limitCache = new Map<string, ProjectClaimLimits>();
+      const limitsOf = (projectId: string): ProjectClaimLimits => {
+        let l = limitCache.get(projectId);
+        if (!l) limitCache.set(projectId, (l = limits.projectLimits?.(projectId) ?? { priority: 1 }));
+        return l;
+      };
+      const perProject = new Map<string, number>();
+      for (const r of runningRows) if (!sup.has(r.profile)) perProject.set(r.project_id, (perProject.get(r.project_id) ?? 0) + 1);
 
       const candidates = this.db
         .prepare(
@@ -310,11 +325,15 @@ export class TaskStore {
            next_attempt_at = NULL, updated_at = ?
          WHERE id = ?`,
       );
-      for (const row of candidates) {
+      const order = new FairClaimOrder(this.db, candidates, limitsOf);
+      for (let row = order.next(); row; row = order.next()) {
         const spec = JSON.parse(row.spec_json) as WorkerTask;
         const isSubSup = sup.has(row.profile) && !!spec.parentTaskId;
         const isSup = sup.has(row.profile) && !isSubSup;
+        const isWorker = !isSup && !isSubSup;
         if (isSup ? supSlots <= 0 : !isSubSup && slots <= 0) continue;
+        const projectCap = isWorker ? limitsOf(row.project_id).maxConcurrent : undefined;
+        if (projectCap !== undefined && (perProject.get(row.project_id) ?? 0) >= projectCap) continue;
         const job = !isSup ? (spec.parentTaskId ?? null) : null;
         const agentCap = typeof limits.maxAgentsPerJob === "function" ? limits.maxAgentsPerJob(row.project_id) : limits.maxAgentsPerJob;
         if (job && agentCap !== undefined && (perJob.get(job) ?? 0) >= agentCap) continue;
@@ -358,9 +377,12 @@ export class TaskStore {
         if (limits.providerSlots && !isSup && !isSubSup) limits.providerSlots.claimed(row, spec, owner);
         this.event(row.id, "claimed", { owner, run: row.run_count + 1 });
         claimed.push(this.get(row.id)!);
+        order.claimed(row);
+        if (isWorker) perProject.set(row.project_id, (perProject.get(row.project_id) ?? 0) + 1);
         if (isSup) supSlots--;
         else if (!isSubSup) slots--;
       }
+      order.save();
       return claimed;
     });
   }

@@ -22,10 +22,15 @@ export interface GrantContext {
   repos: string[];
 }
 
-/** Built-in defaults, overridable per role in config (roles.<role>.brain_grants). */
+/**
+ * Built-in defaults, overridable per role in config (roles.<role>.brain_grants). A project's
+ * agents see their own project and `global/` only (decision D4); another project's entries need
+ * an access request. Nothing here, in config, or in an approved request lets an agent write
+ * `global/`: that happens only through the gated promotion (`Brain.promoteLesson`).
+ */
 const DEFAULTS: Record<RoleName, Grant[]> = {
   supervisor: [
-    { pattern: "**", mode: "read" },
+    { pattern: "global/**", mode: "read" },
     { pattern: "projects/{project}/**", mode: "write" },
   ],
   summarizer: [],
@@ -62,14 +67,27 @@ export function defaultGrants(cfg: ResolvedConfig, role: RoleName, ctx: GrantCon
   return templates.flatMap((g) => substitute(g, ctx));
 }
 
+/**
+ * Paths agents may never change, whatever their grants: global knowledge (written only by the
+ * gated promotion) and each project's promotion records (written only by SwitchYard).
+ */
+export function systemManaged(path: string): boolean {
+  const p = path.toLowerCase();
+  return p === "global" || p.startsWith("global/") || /^projects\/[^/]+\/promotions(\/|$)/.test(p);
+}
+
 export function allows(principal: Principal, path: string, mode: BrainMode): boolean {
   if (principal.kind === "human") return true;
+  if (mode !== "read" && systemManaged(path)) return false;
   return principal.grants.some((g) => RANK[g.mode] >= RANK[mode] && picomatch(g.pattern, { dot: false, nocase: true })(path));
 }
 
 export function denial(principal: Principal, path: string, mode: BrainMode): string | null {
   if (allows(principal, path, mode)) return null;
   const who = principal.kind === "agent" ? `${principal.role}${principal.taskId ? ` ${principal.taskId}` : ""}` : "user";
+  if (mode !== "read" && systemManaged(path)) {
+    return `${who} cannot ${mode} ${path}: global knowledge is added only through brain_promote_lesson (supervisors), and promotion records only by SwitchYard.`;
+  }
   return `${who} has no ${mode} access to ${path}. Use brain_request_access(pattern, mode, reason) to ask for it.`;
 }
 
@@ -135,6 +153,7 @@ export class BrainAccess {
   /** File a request. Auto-approval rules apply immediately; otherwise it waits for the approver. */
   request(p: Principal, pattern: string, mode: BrainMode, reason: string): AccessRequest {
     if (p.kind !== "agent") throw new Error("only agents request access");
+    if (mode !== "read" && systemManaged(pattern.replace(/\\/g, "/").replace(/^\.?\/+/, ""))) throw new Error(`${mode} access to ${pattern} is never granted: supervisors add global knowledge with brain_promote_lesson`);
     const id = Number(
       this.db
         .prepare("INSERT INTO brain_access_requests (task_id, job_id, role, pattern, mode, reason, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)")

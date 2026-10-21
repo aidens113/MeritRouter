@@ -2,6 +2,7 @@ import type { Db } from "../storage/db.js";
 import type { ResolvedConfig } from "../config/load.js";
 import type { KeyVault, PaidKey } from "../providers/vault.js";
 import type { ProviderCredential } from "../providers/credentials.js";
+import type { ProjectLimits } from "../projects/schema.js";
 
 const DAY = 86_400_000;
 
@@ -71,6 +72,38 @@ export class PaidSpend {
         )
         .get(taskId) as { s: number }
     ).s;
+  }
+
+  /** Paid spend of one project's requests since `sinceMs` (attributed by `model_requests.project_id`). */
+  projectSpendSince(project: string, sinceMs: number): number {
+    return (
+      this.db
+        .prepare(
+          `SELECT COALESCE(SUM(COALESCE(p.actual_usd, p.reserved_usd)), 0) AS s
+             FROM paid_spend p JOIN model_requests r ON r.id = p.request_id WHERE r.project_id = ? AND p.created_at > ?`,
+        )
+        .get(project, sinceMs) as { s: number }
+    ).s;
+  }
+
+  /**
+   * A project's own paid windows (decision D7), inside the global ones. Returns a reason when the
+   * worst case would exceed one, else null; unset windows never deny.
+   */
+  projectDenial(project: string, budgets: ProjectLimits["paid_budgets"], worstUsd: number): string | null {
+    if (!budgets) return null;
+    const now = this.now();
+    const checks: Array<[string, number | undefined, number]> = [
+      ["daily", budgets.per_day_usd, now - DAY],
+      ["weekly", budgets.per_week_usd, now - 7 * DAY],
+      ["monthly", budgets.per_month_usd, now - 30 * DAY],
+    ];
+    for (const [name, limit, since] of checks) {
+      if (limit === undefined) continue;
+      const spent = this.projectSpendSince(project, since);
+      if (spent + worstUsd > limit) return `project ${project} ${name} paid budget: ${spent.toFixed(4)} spent + ${worstUsd.toFixed(4)} worst case exceeds ${limit}`;
+    }
+    return null;
   }
 
   /** Remaining headroom for a key: the smaller of its monthly cap and its prepaid balance. */

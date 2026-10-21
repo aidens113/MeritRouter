@@ -8,6 +8,7 @@ import { splitRepoKey } from "../projects/context.js";
 import { PlanStore, criticalPath, type CriticalPath, type JobPlan, type PlanDifficulty } from "../storage/plans.js";
 import { AWAITING_ACCEPTANCE, WAITING_FOR_FILE_LEASE, type StoredTask, type TaskRow } from "../storage/tasks.js";
 import { REDUNDANCY_SETTLED, REDUNDANCY_SKIPPED, REDUNDANCY_STARTED } from "../core/redundancy.js";
+import { contextOfTask } from "./projects.js";
 
 // A job's task graph for people and supervisors: the plan's nodes joined with the tasks they
 // were dispatched as, the critical path, the job's file leases, and why waiting nodes wait.
@@ -217,7 +218,7 @@ export function jobPlan(sy: Switchyard, jobId: string, opts: { version?: number 
   for (const c of children) if (c.spec.label) byLabel.set(c.spec.label, c);
   const labelOf = new Map(children.map((c) => [c.row.id, c.spec.label ?? null]));
   const running = children.filter((c) => c.spec.profile !== "supervise" && RUNNING.has(c.row.state)).length;
-  const maxAgents = maxAgentsPerJob(sy.cfg);
+  const maxAgents = maxAgentsPerJob(contextOfTask(sy, jobId));
   const leaseStore = new FileLeaseStore(sy.db);
   const leases: PlanLeaseView[] = leaseStore.forJob(jobId).map((l) => ({ ...l, taskLabel: labelOf.get(l.taskId) ?? null }));
 

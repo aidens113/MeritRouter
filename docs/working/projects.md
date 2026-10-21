@@ -45,8 +45,25 @@ insert triggers, namespaced repo lease/merge keys, project-aware executor/runner
 Accepted deviations: `workspaces.repo_alias`/`merge_queue.repo_alias` stay bare (task-keyed);
 idempotency keys stay install-unique; the schema default project slug stays `default`.
 
-**Next steps:** J1 (`j1-fairness`, `j1-brain`, `j1-surfaces` in parallel, dispatched 2026-10-20),
-then J2 (panel), then J3 (operations, demo, docs). The settings-nav fix merged first (7443bf8).
+**J1 done (2026-10-20), verified on `feat/projects`:** fair claiming (`src/storage/fair-claim.ts`;
+project fields `priority`, `max_concurrent_tasks`, `paid_budgets`, `request_share`); brain
+isolation D4 and gated global promotion D9 (`src/brain/promotion.ts`,
+`src/verification/promotion-review.ts`; promotions recorded under `projects/<p>/promotions/`);
+CLI `--project`/`SWITCHYARD_PROJECT`, `projects list|create|archive|unarchive`, `init --project`,
+per-project `doctor`; MCP `--project`, `--no-worker`, refuses to start when no project can be
+chosen; admin API for J2 (`projectsGrid`, `globalDashboard`, `projectOverview`,
+`globalSettings`/`projectSettings`/`patchProjectSettings`, `createProject`, promotions). Reports:
+[core](./projects/reports/j1-core.md), [fairness](./projects/reports/j1-fairness.md),
+[brain](./projects/reports/j1-brain.md), [surfaces](./projects/reports/j1-surfaces.md).
+
+**Carried into J2/J3:** per-project brain index (the root README lists every project and
+supervisors can no longer read it); panel brain search scoped to the project; a waiting reason
+for tasks held by a project cap; distinct denial reasons for project paid/share limits; promotions
+list and approval in the panel; `/api/config` `expand()` without a `providers:` section (P4
+follow-up); converted single-project configs keep their top-level brain mounts global; alias
+matching in D9 is strict (an `app` alias rejects "the app"); docs for D4/D9 and project fields.
+
+**Next steps:** J2 (panel), then J3 (operations, demo, docs).
 
 **Blockers:** none.
 
@@ -238,6 +255,17 @@ full suite at the end; failures only in another worker's files are re-run later 
 - Outcome: Accepted
 - Follow-up: j1-fairness, j1-brain, j1-surfaces. Note: writing a non-overlaid field through a
   `ProjectContext` writes the global config (by design of the proxy).
+
+### 2026-10-20 — j1-fairness, j1-brain, j1-surfaces (J1 complete)
+- Agent: three parallel workers; verified by supervisor
+- Changed: see the three reports; shared hunks in `core/service.ts` and `index.ts`.
+- Why: J1.
+- Validation: supervisor ran `pnpm -r typecheck` (router and panel Done), `pnpm -r build` (both
+  Done), `timeout 480 npx vitest run` (exit 0, `Tests 429 passed (429)`); manual CLI in a temp
+  dir: `init --project alpha`, `projects create beta` with the same `app` alias, `projects list`
+  showed both. Stopped two stale vitest processes left by j1-brain's early looping version.
+- Outcome: Accepted
+- Follow-up: J2; the carried items in Current State.
 
 ---
 

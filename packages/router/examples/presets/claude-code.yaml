@@ -118,9 +118,18 @@ qualification:
   min_trials: 6
   max_requests_per_day: 200
 
-repositories:
-  app:
-    path: ../my-app # replace with a real path
+# Projects: one install holds many. Each has its own repositories, brain folder
+# (brain/projects/<slug>/), jobs, tasks, and sessions; everything else in this file is global.
+# A project may also override brain (mounts, access_approver, auto_approve), verification, team
+# (max_agents, max_depth, ...), coding (allowed_commands, protected_paths), supervisor
+# (allowed_commands, branch_prefix), and roles. Add one with
+# `switchyard projects create <slug> --repo <alias>=<path>`, or in the panel.
+projects:
+  my-project:
+    name: My project
+    repositories:
+      app:
+        path: ../my-app # replace with a real path
 
 execution:
   max_concurrent_tasks: 2

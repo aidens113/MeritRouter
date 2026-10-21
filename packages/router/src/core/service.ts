@@ -22,6 +22,8 @@ import { PaidSpend } from "../paid/spend.js";
 import { SessionStore } from "../sessions/store.js";
 import { ContractStore, type StoredContract } from "../verification/contract.js";
 import { Auditor } from "../verification/audit.js";
+import { PROMOTION_REVIEW_PURPOSE, PromotionReviewer } from "../verification/promotion-review.js";
+import type { PromotionRecord, PromotionStatus } from "../brain/promotion.js";
 import type { AcceptanceDecisionInput, AcceptanceDecisionOutcome } from "../runners/types.js";
 import { parentImportance, recordAcceptanceDecision, verificationBudgetShortfall } from "./acceptance.js";
 import { paidEndpoints, paidFingerprint, refreshPaidPrices } from "../paid/catalog.js";
@@ -100,6 +102,8 @@ export class Switchyard {
   readonly qualifier: Qualifier;
   /** Audit sampling: background reviews of passed results, recorded for calibration only. */
   readonly auditor: Auditor;
+  /** The independent reviewer of supervisors' global promotions (decision D9). */
+  readonly promotionReviewer: PromotionReviewer;
   readonly vault: KeyVault;
   /** Providers: registry, credentials, key state, limits, client, health. */
   readonly providers: ProviderRuntime;
@@ -209,6 +213,8 @@ export class Switchyard {
       { cfg, db: this.db, tasks: this.tasks, artifacts: this.artifacts, admission: this.admission, catalog: this.catalog, router: this.router, contracts: this.contracts, submitTasks: (raw, o) => this.submitTasks(raw, o) },
       this.now,
     );
+    this.promotionReviewer = new PromotionReviewer({ cfg, tasks: this.tasks, catalog: this.catalog, router: this.router, admission: this.admission, submitTasks: (raw, o) => this.submitTasks(raw, o) });
+    this.events.on("settled", (id: string) => this.settlePromotionReview(id));
     this.scheduler = new Scheduler(
       cfg,
       this.tasks,
@@ -240,10 +246,41 @@ export class Switchyard {
     let b = this.brains.get(project);
     if (!b) {
       const ctx = this.projects.require(project);
-      b = { brain: new Brain(ctx, this.db, this.now), access: new BrainAccess(this.db, ctx, this.now) };
+      b = { brain: new Brain(ctx, this.db, this.now, { reviewer: () => this.promotionReviewer }), access: new BrainAccess(this.db, ctx, this.now) };
       this.brains.set(project, b);
     }
     return b;
+  }
+
+  /**
+   * Supervisors' promotions to global knowledge (decision D9), newest first: every project's, or
+   * one project's. Pending ones (`pending_review`, `pending_approval`) are what a person may decide.
+   */
+  promotions(opts: { project?: string; status?: PromotionStatus } = {}): PromotionRecord[] {
+    const slugs = opts.project ? [this.projectContext(opts.project).project.slug] : this.projects.slugs();
+    return slugs.flatMap((p) => this.brainFor(p).promotions.list(opts.status ? { status: opts.status } : {})).sort((a, b) => b.created_at.localeCompare(a.created_at));
+  }
+
+  /** Collect finished promotion reviews and retry waiting ones (also runs when a review task settles). */
+  async settlePromotions(project?: string): Promise<number> {
+    let n = 0;
+    for (const p of project ? [this.projectContext(project).project.slug] : this.projects.slugs()) n += await this.brainFor(p).promotions.settle();
+    return n;
+  }
+
+  /** A person approves or rejects a waiting promotion (`by` names them; a rejection needs a reason). */
+  async decidePromotion(project: string, id: string, approve: boolean, by: string, reason = ""): Promise<PromotionRecord> {
+    const brain = this.brainFor(this.projectContext(project).project.slug);
+    const who = { kind: "human" as const, name: by };
+    return approve ? brain.promotions.approve(who, id, reason || undefined) : brain.promotions.reject(who, id, reason);
+  }
+
+  /** When a promotion review task settles, move its project's promotions on. */
+  private settlePromotionReview(taskId: string): void {
+    const row = this.db.prepare("SELECT purpose, project_id FROM tasks WHERE id = ?").get(taskId) as { purpose: string; project_id: string } | undefined;
+    if (row?.purpose !== PROMOTION_REVIEW_PURPOSE) return;
+    // On a later turn of the event loop: settling may start another review task.
+    setTimeout(() => void this.settlePromotions(row.project_id || undefined).catch(() => undefined), 0).unref?.();
   }
 
   /** A task's project dependencies (its context, brain, brain access); throws for an unconfigured project. */

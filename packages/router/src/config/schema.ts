@@ -486,6 +486,8 @@ export const BrainConfigSchema = z
     access_approver: z.enum(["supervisor", "human", "auto"]).default("supervisor"),
     /** Requests matching these rules are approved without asking. */
     auto_approve: z.array(z.object({ pattern: z.string().min(1), mode: BrainModeSchema, min_tier: TierNameSchema.default("T1") }).strict()).default([]),
+    /** A supervisor's lesson that passed the global-knowledge review also waits for a person's approval. */
+    global_requires_approval: z.boolean().default(false),
   })
   .strict();
 export type BrainConfig = z.infer<typeof BrainConfigSchema>;

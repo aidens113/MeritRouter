@@ -2,14 +2,31 @@
 
 export const HELP = `switchyard - delegate bounded tasks to the models your provider keys can use
 
-Usage: switchyard <command> [options]   (global: --config <file>, --json)
+Usage: switchyard <command> [options]   (global: --config <file>, --project <slug>, --json)
+
+Projects (one install holds many; providers, models, routing, and budgets are global)
+  The project a command works in: --project, else SWITCHYARD_PROJECT, else the only project,
+  else the project whose repository contains the working directory; otherwise commands that
+  need one fail and list the projects. Lists (status, jobs, sessions, questions, usage, brain)
+  show every project when none can be chosen.
+  projects [list] [--all]       projects with repositories, running and queued jobs and tasks,
+                                last activity, and attention items (--all adds archived ones)
+  projects create <slug> [--name "<name>"] [--repo <alias>=<path> ...]
+                                add projects.<slug> to the config (repositories must exist and be
+                                git repositories) and create its brain folders; a single-project
+                                config is converted first (its repositories move under its slug)
+  projects archive|unarchive <slug>   hide a project (its settings, tasks, sessions, and brain
+                                are kept); refused while it has running or queued tasks
 
 Setup
-  init [dir] [--preset <name>]  write switchyard.config.yaml and models.yaml
+  init [dir] [--preset <name>] [--project <slug>] [--name "<name>"] [--repo <alias>=<path> ...]
+                                write switchyard.config.yaml (global settings plus a first
+                                project, default my-project) and models.yaml
                                 presets: claude-code (default), standalone-free,
                                 standalone-hybrid, standalone-paid
   doctor                        check config, each provider (keys, cooldowns, invalid keys,
-                                last model listing), secrets in the config, models, repositories
+                                last model listing), secrets in the config, models, and per
+                                project its repositories and brain folders (--project: one)
   models [--all]                list models with status and eligibility
   models scan                   list the models of every provider with a usable key, refresh
                                 free daily quotas and paid prices (exit 1 if nothing was listed)
@@ -19,7 +36,7 @@ Setup
   route <profile> <tier>        preview which models would serve a task type at a tier
 
 Tasks
-  worker                        run the worker loop until interrupted
+  worker                        run the worker loop for every project until interrupted
   submit <file|-> [--wait] [--timeout s] [--importance low|normal|high|critical] [--importance-reason "<why>"]
                                 submit task JSON (object or array); --importance fills in
                                 tasks that set none (high and critical need a reason)
@@ -73,7 +90,8 @@ Standalone jobs (a SwitchYard supervisor plans, delegates, verifies, integrates)
 Brain (shared knowledge) and attribution
   brain ls [prefix] | read <path> | search <query>
   brain requests | approve <id> [reason] | deny <id> [reason]
-  blame <repo-alias> <path> [--ref <branch>]   which agent and model wrote each line
+  blame <repo-alias> <path> [--ref <branch>]   which agent and model wrote each line (the
+                                alias is the project's)
 
 Qualification
   qualify <model-id> [--trials n]   run the private eval suite pinned to one model

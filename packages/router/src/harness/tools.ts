@@ -297,11 +297,20 @@ export function brainSupervisorTools(): HarnessTool[] {
       const r = await b.brain.write(b.principal(), b.actor, str(a.path, "path"), str(a.content, "content"));
       return `wrote ${r.path}`;
     }),
-    tool("brain_promote_lesson", "brain", "Promote a reusable lesson to global knowledge, citing its sources.", { title: { type: "string" }, body: { type: "string" }, sources: { type: "array", items: { type: "string" } } }, ["title", "body"], async (a, env) => {
-      const b = brainOf(env);
-      const r = await b.brain.promoteLesson(b.principal(), b.actor, str(a.title, "title"), str(a.body, "body"), Array.isArray(a.sources) ? a.sources.map(String) : []);
-      return `promoted to ${r.path}`;
-    }),
+    tool(
+      "brain_promote_lesson",
+      "brain",
+      "Propose a lesson for global knowledge, which every project's agents read. Only for lessons that hold beyond this project: name nothing of this project (its name, repositories, paths, files) and cite at least one source in this project's brain (projects/<project>/...). An independent reviewer on another model judges it; a rejected lesson is kept in this project's decisions/lessons/ with the reason.",
+      { title: { type: "string" }, body: { type: "string" }, sources: { type: "array", items: { type: "string" }, description: "Brain paths the lesson rests on, at least one in this project's brain" } },
+      ["title", "body", "sources"],
+      async (a, env) => {
+        const b = brainOf(env);
+        const r = await b.brain.promoteLesson(b.principal(), b.actor, str(a.title, "title"), str(a.body, "body"), Array.isArray(a.sources) ? a.sources.map(String) : []);
+        if (r.status === "approved") return `promoted to ${r.path}`;
+        if (r.status === "rejected") return `not promoted: ${r.reason ?? "rejected"}. Kept in the project as ${r.path}.`;
+        return `promotion ${r.id} is ${r.status.replace("_", " ")}${r.reason ? `: ${r.reason}` : ""}. Nothing is needed from you; it is decided without you.`;
+      },
+    ),
     tool("brain_compact", "brain", "Move older ledger entries of a working document to its archive.", { path: { type: "string" } }, [], async (a, env) => {
       const b = brainOf(env);
       const r = await b.brain.compact(b.principal(), b.actor, doc(env, a));

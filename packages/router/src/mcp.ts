@@ -1,25 +1,50 @@
 #!/usr/bin/env node
+import { parseArgs } from "node:util";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { loadConfig } from "./config/load.js";
 import { MODALITIES, PROFILE_NAMES, TIER_NAMES } from "./config/schema.js";
 import { Switchyard } from "./core/service.js";
-import { CHANNEL_KINDS, decideTaskAcceptance, routingPreview, jobChannel, jobDetail, jobMetrics, jobPlan, jobTeam, sessionDetail, sessionsView } from "./admin/insights.js";
+import { brainAccessRequests, CHANNEL_KINDS, decideTaskAcceptance, routingPreview, jobChannel, jobDetail, jobMetrics, jobPlan, jobTeam, selectableProjects, sessionDetail, sessionsView } from "./admin/insights.js";
 import { blame } from "./attribution/index.js";
 import type { Principal } from "./brain/access.js";
 import { SessionStatusSchema } from "./sessions/events.js";
+import { PROJECT_ENV, requireProject } from "./cli/project-select.js";
 
 /**
- * MCP stdio server for Claude Code. Runs the worker loop in-process; jobs continue only while
- * the session keeps this process alive (state is persisted incrementally and recovered on the
- * next start).
+ * MCP stdio server for Claude Code, serving one project of the install (decision D8 of
+ * docs/working/projects.md): `--project <slug>`, else SWITCHYARD_PROJECT, else the only project,
+ * else the project whose repository contains the working directory; with none, it refuses to
+ * start and lists the projects. Tools default to that project (and the brain tools work in its
+ * brain). It runs the worker loop in-process unless `--no-worker` (when a daemon already runs
+ * the worker for every project); in-process jobs continue only while the session keeps this
+ * process alive (state is persisted incrementally and recovered on the next start).
+ *
+ * Arguments: [--config <file>] [--project <slug>] [--no-worker]
  */
+function mcpArgs(argv: string[]): { config?: string; project?: string; worker: boolean } {
+  const { values } = parseArgs({ args: argv, strict: false, allowPositionals: true, options: { config: { type: "string" }, project: { type: "string" }, "no-worker": { type: "boolean", default: false } } });
+  const str = (v: unknown) => (typeof v === "string" && v ? v : undefined);
+  return { config: str(values.config), project: str(values.project), worker: values["no-worker"] !== true };
+}
+
 async function main(): Promise<void> {
-  const configArg = process.argv.indexOf("--config");
-  const cfg = loadConfig(configArg > 0 ? process.argv[configArg + 1] : undefined);
-  const sy = new Switchyard(cfg, { worker: true });
-  sy.recover();
+  const args = mcpArgs(process.argv.slice(2));
+  const cfg = loadConfig(args.config);
+  const sy = new Switchyard(cfg, { worker: args.worker });
+  let project: string;
+  try {
+    project = requireProject(selectableProjects(sy), { flag: args.project, env: process.env[PROJECT_ENV], cwd: process.cwd() }).slug;
+  } catch (err) {
+    await sy.close();
+    throw err;
+  }
+  // Recovery belongs to the process that runs the worker (the daemon, with --no-worker).
+  if (args.worker) sy.recover();
+  /** A tool's project: the one it names (which must exist), else this server's. */
+  const scope = (named: unknown): string => (typeof named === "string" && named ? sy.projects.require(named).project.slug : project);
+  const projectInput = { project: z.string().min(1).optional().describe(`Project slug; default: this server's project (${project}).`) };
 
   const server = new McpServer({ name: "switchyard", version: "0.1.0" });
   const json = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] });
@@ -37,11 +62,11 @@ async function main(): Promise<void> {
         "Criteria are strings (ids c1..cn) or { id, text, verify?: check|review|evidence, checks?: [commands from constraints.checks] }. " +
         "Optional importance (low|normal|high|critical; high and critical need importanceReason) and verification { atLeast?: basic|standard|deep|strict, addChecks? } pick how much evidence a result needs; they can only strengthen the configured policy. " +
         "A task whose total request budget cannot hold its verification reserve is refused with verification_budget_insufficient.",
-      inputSchema: { tasks: z.array(z.record(z.string(), z.unknown())).min(1).max(50) },
+      inputSchema: { tasks: z.array(z.record(z.string(), z.unknown())).min(1).max(50), ...projectInput },
     },
-    async ({ tasks }) => {
+    async ({ tasks, project: named }) => {
       try {
-        return json({ submitted: await sy.submitTasks(tasks) });
+        return json({ submitted: await sy.submitTasks(tasks, { project: scope(named) }) });
       } catch (err) {
         return fail(err);
       }
@@ -68,10 +93,16 @@ async function main(): Promise<void> {
     "get_task_status",
     {
       title: "Get task status",
-      description: "Current state, tier, request usage, and recent events for tasks (or the most recent tasks when no ids are given).",
-      inputSchema: { taskIds: z.array(z.string()).optional() },
+      description: "Current state, tier, request usage, and recent events for tasks of the project (or its most recent tasks when no ids are given); another project's task reads as unknown.",
+      inputSchema: { taskIds: z.array(z.string()).optional(), ...projectInput },
     },
-    async ({ taskIds }) => json(taskIds?.length ? sy.getStatus(taskIds) : sy.listTasks(undefined, 20)),
+    async ({ taskIds, project: named }) => {
+      try {
+        return json(taskIds?.length ? sy.getStatus(taskIds, scope(named)) : sy.listTasks(undefined, 20, scope(named)));
+      } catch (err) {
+        return fail(err);
+      }
+    },
   );
 
   server.registerTool(
@@ -91,7 +122,13 @@ async function main(): Promise<void> {
       description: "Persist cancellation; no further model requests are dispatched for these tasks.",
       inputSchema: { taskIds: z.array(z.string()).min(1) },
     },
-    async ({ taskIds }) => json(sy.cancelTasks(taskIds)),
+    async ({ taskIds }) => {
+      try {
+        return json(sy.cancelTasks(taskIds, project));
+      } catch (err) {
+        return fail(err);
+      }
+    },
   );
 
   server.registerTool(
@@ -105,7 +142,7 @@ async function main(): Promise<void> {
     },
     async ({ taskId }) => {
       try {
-        return json({ taskId, state: sy.resumeTask(taskId) });
+        return json({ taskId, state: sy.resumeTask(taskId, project) });
       } catch (err) {
         return fail(err);
       }
@@ -119,7 +156,7 @@ async function main(): Promise<void> {
   const acceptor = () => ({ kind: "supervisor" as const, id: `mcp:${server.server.getClientVersion()?.name ?? "client"}` });
   const decideResult = (taskId: string, decision: "accept" | "reject", reason: string | undefined) => {
     try {
-      return json(decideTaskAcceptance(sy, taskId, decision, acceptor(), reason?.trim() || null));
+      return json(decideTaskAcceptance(sy, taskId, decision, acceptor(), reason?.trim() || null, project));
     } catch (err) {
       return fail(err);
     }
@@ -178,10 +215,16 @@ async function main(): Promise<void> {
     "usage_summary",
     {
       title: "Usage summary",
-      description: "Tasks, physical model requests, tokens, and failures over a recent window.",
-      inputSchema: { hours: z.number().positive().max(24 * 31).optional() },
+      description: "Tasks, physical model requests, tokens, and failures of the project over a recent window.",
+      inputSchema: { hours: z.number().positive().max(24 * 31).optional(), ...projectInput },
     },
-    async ({ hours }) => json(sy.usage(Date.now() - (hours ?? 24) * 3_600_000)),
+    async ({ hours, project: named }) => {
+      try {
+        return json(sy.usage(Date.now() - (hours ?? 24) * 3_600_000, undefined, scope(named)));
+      } catch (err) {
+        return fail(err);
+      }
+    },
   );
 
   // ---------- jobs (standalone supervisor) ----------
@@ -190,11 +233,11 @@ async function main(): Promise<void> {
     {
       title: "Start a SwitchYard-supervised job",
       description: "Hand a whole goal to SwitchYard's own supervisor (models configured under supervisor), which plans, delegates, verifies, and integrates onto a job branch. Use when you want SwitchYard to run the job end to end instead of supervising tasks yourself.",
-      inputSchema: { goal: z.string().min(1), repositories: z.array(z.string()).min(1), acceptanceCriteria: z.array(z.string()).optional(), checks: z.array(z.string()).optional(), label: z.string().optional() },
+      inputSchema: { goal: z.string().min(1), repositories: z.array(z.string()).min(1), acceptanceCriteria: z.array(z.string()).optional(), checks: z.array(z.string()).optional(), label: z.string().optional(), ...projectInput },
     },
     async (a) => {
       try {
-        return json(await sy.startJob({ goal: a.goal, repositories: a.repositories, ...(a.acceptanceCriteria ? { acceptanceCriteria: a.acceptanceCriteria } : {}), ...(a.checks ? { checks: a.checks } : {}), ...(a.label ? { label: a.label } : {}) }));
+        return json(await sy.startJob({ goal: a.goal, project: scope(a.project), repositories: a.repositories, ...(a.acceptanceCriteria ? { acceptanceCriteria: a.acceptanceCriteria } : {}), ...(a.checks ? { checks: a.checks } : {}), ...(a.label ? { label: a.label } : {}) }));
       } catch (err) {
         return fail(err);
       }
@@ -290,10 +333,16 @@ async function main(): Promise<void> {
       }
     },
   );
-  server.registerTool("list_questions", { title: "Questions from supervisors", description: "Questions SwitchYard supervisors are waiting on.", inputSchema: {} }, async () => json(sy.questions()));
+  server.registerTool("list_questions", { title: "Questions from supervisors", description: "Questions SwitchYard supervisors of the project are waiting on.", inputSchema: { ...projectInput } }, async ({ project: named }) => {
+    try {
+      return json(sy.questions({ project: scope(named) }));
+    } catch (err) {
+      return fail(err);
+    }
+  });
   server.registerTool("answer_question", { title: "Answer a supervisor's question", description: "Answer a pending question so the job continues.", inputSchema: { id: z.number().int(), answer: z.string().min(1) } }, async ({ id, answer }) => {
     try {
-      sy.answerQuestion(id, answer, "claude-code");
+      sy.answerQuestion(id, answer, "claude-code", project);
       return json({ answered: id });
     } catch (err) {
       return fail(err);
@@ -308,8 +357,9 @@ async function main(): Promise<void> {
       description:
         "Agent sessions, newest first: one per model-driven run (each task run, retry, or escalation; each classification). " +
         "Each row has the role, agent label, task and job, status and stop reason, model request and tool call counts, and the last event seq. " +
-        "Filter by status (one or several), taskId, jobId, or parentSessionId (the sessions a session delegated).",
+        "Filter by status (one or several), taskId, jobId, or parentSessionId (the sessions a session delegated). Only the project's sessions are listed.",
       inputSchema: {
+        ...projectInput,
         status: z.union([SessionStatusSchema, z.array(SessionStatusSchema).min(1)]).optional(),
         taskId: z.string().min(1).optional(),
         jobId: z.string().min(1).optional(),
@@ -317,9 +367,9 @@ async function main(): Promise<void> {
         limit: z.number().int().positive().max(1000).optional(),
       },
     },
-    async ({ status, taskId, jobId, parentSessionId, limit }) => {
+    async ({ status, taskId, jobId, parentSessionId, limit, project: named }) => {
       try {
-        return json(sessionsView(sy, { ...(status ? { status } : {}), ...(taskId ? { taskId } : {}), ...(jobId ? { jobId } : {}), ...(parentSessionId ? { parentSessionId } : {}), limit: limit ?? 50 }));
+        return json(sessionsView(sy, { project: scope(named), ...(status ? { status } : {}), ...(taskId ? { taskId } : {}), ...(jobId ? { jobId } : {}), ...(parentSessionId ? { parentSessionId } : {}), limit: limit ?? 50 }));
       } catch (err) {
         return fail(err);
       }
@@ -360,54 +410,62 @@ async function main(): Promise<void> {
     },
     async ({ sessionId }) => {
       try {
-        return json({ sessionId, ...sy.resumeSession(sessionId) });
+        return json({ sessionId, ...sy.resumeSession(sessionId, project) });
       } catch (err) {
         return fail(err);
       }
     },
   );
 
-  // ---------- brain: Claude Code acts as a supervisor (reads everything, writes its project) ----------
+  // ---------- brain: Claude Code acts as the project's supervisor, in that project's brain ----------
+  // The effort (`claude-code`) is per project: its working documents live under projects/<slug>/.
   const effort = "claude-code";
-  const principal = (): Principal => sy.brainAccess.principalFor("supervisor", { project: sy.brain.project, effort, task: null, repos: Object.keys(cfg.repositoryPaths), jobId: null, tier: null });
+  const brain = sy.brainFor(project);
+  const access = sy.brainAccessFor(project);
+  const principal = (): Principal => access.principalFor("supervisor", { project: brain.project, effort, task: null, repos: Object.keys(sy.projectContext(project).repositoryPaths), jobId: null, tier: null });
   const actor = { agent: "supervisor:claude-code", role: "supervisor", model: "claude-code" };
   const brainTool = (name: string, description: string, inputSchema: Record<string, z.ZodTypeAny>, run: (a: Record<string, unknown>) => Promise<unknown> | unknown) =>
     server.registerTool(name, { title: name.replace(/_/g, " "), description, inputSchema }, async (a: Record<string, unknown>) => {
       try {
-        await sy.brain.ensure();
+        await brain.ensure();
         return json(await run(a));
       } catch (err) {
         return fail(err);
       }
     });
   brainTool("brain_search", "Search shared knowledge: working documents, decisions, lessons, worker reports.", { query: z.string(), prefix: z.string().optional() }, async (a) => {
-    await sy.brain.refreshIndex();
-    return sy.brain.search(principal(), String(a.query), { ...(a.prefix ? { prefix: String(a.prefix) } : {}), limit: 10 });
+    await brain.refreshIndex();
+    return brain.search(principal(), String(a.query), { ...(a.prefix ? { prefix: String(a.prefix) } : {}), limit: 10 });
   });
-  brainTool("brain_read", "Read a brain entry, or one section of it (e.g. 'Current State').", { path: z.string(), section: z.string().optional() }, (a) => sy.brain.read(principal(), String(a.path), a.section ? { section: String(a.section) } : {}));
-  brainTool("brain_list", "List brain entries under a prefix (index of working documents: README.md).", { prefix: z.string().optional() }, (a) => sy.brain.list(principal(), String(a.prefix ?? "")));
+  brainTool("brain_read", "Read a brain entry, or one section of it (e.g. 'Current State').", { path: z.string(), section: z.string().optional() }, (a) => brain.read(principal(), String(a.path), a.section ? { section: String(a.section) } : {}));
+  brainTool("brain_list", "List brain entries under a prefix (index of working documents: README.md).", { prefix: z.string().optional() }, (a) => brain.list(principal(), String(a.prefix ?? "")));
   brainTool("brain_start_working_doc", "Create a working document for an effort (header, Current State, briefs, ledger, open questions).", { effort: z.string(), title: z.string(), scope: z.string(), currentState: z.string() }, (a) =>
-    sy.brain.createWorkingDoc(principal(), actor, String(a.effort), { title: String(a.title), statusDetail: "Started from Claude Code", owner: actor.agent, scope: String(a.scope), currentState: String(a.currentState) }),
+    brain.createWorkingDoc(principal(), actor, String(a.effort), { title: String(a.title), statusDetail: "Started from Claude Code", owner: actor.agent, scope: String(a.scope), currentState: String(a.currentState) }),
   );
-  brainTool("brain_set_current_state", "Rewrite a working document's Current State (<= the configured line limit).", { path: z.string(), body: z.string() }, (a) => sy.brain.setCurrentState(principal(), actor, String(a.path), String(a.body)));
+  brainTool("brain_set_current_state", "Rewrite a working document's Current State (<= the configured line limit).", { path: z.string(), body: z.string() }, (a) => brain.setCurrentState(principal(), actor, String(a.path), String(a.body)));
   brainTool(
     "brain_append_ledger",
     "Append a Work Ledger entry; validation must be the exact command run and its observed result, or 'not validated' and why.",
     { path: z.string(), title: z.string(), changed: z.string(), why: z.string(), validation: z.string(), outcome: z.enum(["Accepted", "Partial", "Reverted", "Blocked"]), followUp: z.string() },
-    (a) => sy.brain.appendLedger(principal(), actor, String(a.path), { title: String(a.title), agent: actor.agent, changed: String(a.changed), why: String(a.why), validation: String(a.validation), outcome: a.outcome as "Accepted", followUp: String(a.followUp) }),
+    (a) => brain.appendLedger(principal(), actor, String(a.path), { title: String(a.title), agent: actor.agent, changed: String(a.changed), why: String(a.why), validation: String(a.validation), outcome: a.outcome as "Accepted", followUp: String(a.followUp) }),
   );
-  brainTool("brain_write", "Create or replace a note in your project (decisions/, facts/, repos/<alias>.md).", { path: z.string(), content: z.string() }, (a) => sy.brain.write(principal(), actor, String(a.path), String(a.content)));
-  brainTool("brain_promote_lesson", "Promote a reusable lesson to global knowledge.", { title: z.string(), body: z.string(), sources: z.array(z.string()).optional() }, (a) => sy.brain.promoteLesson(principal(), actor, String(a.title), String(a.body), (a.sources as string[] | undefined) ?? []));
-  brainTool("brain_access_requests", "Workers' pending requests for more brain access.", {}, () => sy.brainAccess.list({ status: "pending" }));
-  brainTool("brain_decide_request", "Approve or deny a worker's brain access request.", { id: z.number().int(), approve: z.boolean(), reason: z.string() }, (a) => sy.brainAccess.decide(Number(a.id), a.approve === true, actor.agent, String(a.reason)));
+  brainTool("brain_write", "Create or replace a note in your project (decisions/, facts/, repos/<alias>.md).", { path: z.string(), content: z.string() }, (a) => brain.write(principal(), actor, String(a.path), String(a.content)));
+  brainTool("brain_promote_lesson", "Promote a reusable lesson to global knowledge.", { title: z.string(), body: z.string(), sources: z.array(z.string()).optional() }, (a) => brain.promoteLesson(principal(), actor, String(a.title), String(a.body), (a.sources as string[] | undefined) ?? []));
+  brainTool("brain_access_requests", "Workers' pending requests for more brain access in this project.", {}, () => brainAccessRequests(sy, "pending", project));
+  brainTool("brain_decide_request", "Approve or deny a worker's brain access request (this project's only).", { id: z.number().int(), approve: z.boolean(), reason: z.string() }, (a) => {
+    const owner = (sy.db.prepare("SELECT project_id FROM brain_access_requests WHERE id = ?").get(Number(a.id)) as { project_id: string } | undefined)?.project_id;
+    if (owner !== undefined && owner !== "" && owner !== project) throw new Error(`unknown brain access request ${String(a.id)} in project ${project}`);
+    return access.decide(Number(a.id), a.approve === true, actor.agent, String(a.reason));
+  });
 
   server.registerTool(
     "blame",
-    { title: "Line attribution", description: "Which agent and model wrote each line of a file (SwitchYard commits carry Agent/Model trailers). Use a job branch as ref to inspect a SwitchYard job.", inputSchema: { repository: z.string(), path: z.string(), ref: z.string().optional() } },
-    async ({ repository, path: file, ref }) => {
-      const repo = cfg.repositoryPaths[repository];
-      if (!repo) return fail(new Error(`unknown repository ${repository}`));
+    { title: "Line attribution", description: "Which agent and model wrote each line of a file (SwitchYard commits carry Agent/Model trailers). Use a job branch as ref to inspect a SwitchYard job. The repository is an alias of the project.", inputSchema: { repository: z.string(), path: z.string(), ref: z.string().optional(), ...projectInput } },
+    async ({ repository, path: file, ref, project: named }) => {
       try {
+        const slug = scope(named);
+        const repo = sy.projectContext(slug).repositoryPaths[repository];
+        if (!repo) return fail(new Error(`unknown repository ${repository} in project ${slug}`));
         const lines = await blame(repo.path, file, ref ?? "HEAD");
         return json(lines.map((l) => ({ line: l.line, agent: l.agent ?? l.authorName, model: l.model, role: l.role, task: l.task, commit: l.commit.slice(0, 12), text: l.text })));
       } catch (err) {

@@ -7,7 +7,8 @@ import type { Db } from "../storage/db.js";
 import { git } from "../workspaces/git.js";
 import { isGitSegment } from "../context/repo-reader.js";
 import { blame, commitAs, type Actor, type BlameLine } from "../attribution/index.js";
-import { denial, type Principal } from "./access.js";
+import { denial, type Grant, type Principal } from "./access.js";
+import { GlobalPromotions, type ProjectScope, type PromotionOutcome, type PromotionReviewPort } from "./promotion.js";
 import {
   appendToSection,
   channelEntryIds,
@@ -83,6 +84,21 @@ export function kindOf(input: string): EntryKind {
 
 const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9_]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "note";
 
+export interface BrainOptions {
+  /** The independent reviewer of global promotions (a function: the service builds it after its brains). */
+  reviewer?: PromotionReviewPort | (() => PromotionReviewPort | null | undefined) | null;
+}
+
+/** The literal directory prefix a grant pattern can match under ('' when it can match anything). */
+function grantPrefix(pattern: string): string {
+  const cut = pattern.search(/[*?{}[\]!()+@]/);
+  if (cut < 0) return pattern;
+  const lit = pattern.slice(0, cut);
+  return lit.slice(0, lit.lastIndexOf("/") + 1);
+}
+
+const likeEscape = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+
 /**
  * Shared knowledge stored as markdown in a git repository. Agents reach it only through these
  * methods, which enforce scoped access and the working-document protocol, and commit every
@@ -93,17 +109,55 @@ export class Brain {
   private readonly mounts: Array<{ prefix: string; abs: string; commit: boolean }>;
   private chains = new Map<string, Promise<unknown>>();
   private ready: Promise<void> | null = null;
+  /** Gated promotion of lessons to `global/` (decision D9): records, review, approval. */
+  readonly promotions: GlobalPromotions;
 
   constructor(
     private readonly cfg: ResolvedConfig,
     private readonly db: Db,
     private readonly now: () => number = Date.now,
+    opts: BrainOptions = {},
   ) {
     const base = path.dirname(cfg.configPath);
     this.root = path.resolve(base, expandHome(cfg.brain.path));
     this.mounts = cfg.brain.mounts
       .map((m) => ({ prefix: normalizeBrainPath(m.prefix), abs: path.resolve(base, expandHome(m.path)), commit: m.commit }))
       .sort((a, b) => b.prefix.length - a.prefix.length);
+    const reviewer = opts.reviewer;
+    this.promotions = new GlobalPromotions({
+      scope: () => this.scope(),
+      exists: (rel) => this.exists(rel),
+      readText: (rel) => {
+        const r = this.resolve(rel);
+        return existsSync(r.abs) && statSync(r.abs).isFile() ? readFileSync(r.abs, "utf8") : null;
+      },
+      listDir: (rel) => {
+        const r = this.resolve(rel);
+        return existsSync(r.abs) && statSync(r.abs).isDirectory() ? readdirSync(r.abs).filter((n) => n.endsWith(".md") && !n.startsWith(".")) : [];
+      },
+      repoHas: (root, rel) => existsSync(path.join(root, ...rel.split("/"))),
+      write: (rel, content, actor, message) => this.writeFile(normalizeBrainPath(rel), content, actor, message),
+      requiresApproval: () => this.cfg.brain.global_requires_approval,
+      reviewer: () => (typeof reviewer === "function" ? (reviewer() ?? null) : (reviewer ?? null)),
+      error: (message, issues) => new BrainError(message, issues),
+      now: this.now,
+    });
+  }
+
+  /** The project this brain serves: its slug, name, and repositories (what a global lesson must not name). */
+  scope(): ProjectScope {
+    const info = (this.cfg as { project?: { slug: string; name: string } }).project;
+    return {
+      slug: this.project,
+      name: info?.name ?? this.project,
+      repositories: Object.entries(this.cfg.repositoryPaths).map(([alias, r]) => ({ alias, path: r.path })),
+    };
+  }
+
+  /** Paths this brain's project maintains in the shared index: everything except other projects' folders. */
+  private owns(rel: string): boolean {
+    const p = rel.toLowerCase();
+    return !p.startsWith("projects/") || p.startsWith(`projects/${this.project.toLowerCase()}/`);
   }
 
   get project(): string {
@@ -367,12 +421,15 @@ export class Brain {
     return this.write(p, actor, rel, typeof report === "string" ? report : formatReport(report), `Report ${path.posix.basename(rel, ".md")}`);
   }
 
-  /** Promote a lesson to global. Only supervisors and people may. */
-  async promoteLesson(p: Principal, actor: Actor, title: string, body: string, sources: string[]): Promise<{ path: string; commit: string | null }> {
+  /**
+   * Promote a lesson to global knowledge. Only supervisors and people may. A person's lesson is
+   * written at once; a supervisor's goes through the gates of decision D9 (see `GlobalPromotions`)
+   * and usually comes back pending review, or rejected and kept in the project with the reason.
+   */
+  async promoteLesson(p: Principal, actor: Actor, title: string, body: string, sources: string[]): Promise<PromotionOutcome> {
     if (p.kind === "agent" && p.role !== "supervisor") throw new BrainError("only supervisors promote lessons");
-    const rel = `global/lessons/${slugify(title)}.md`;
-    const text = `---\nkind: lesson\npromoted_by: ${actor.agent}\nsources: [${sources.map((s) => JSON.stringify(s)).join(", ")}]\n---\n\n# ${title}\n\n${body.trim()}\n`;
-    return this.writeFile(rel, text, actor, `Promote lesson: ${title}`);
+    await this.ensure();
+    return this.promotions.promote(p, actor, { title, body, sources });
   }
 
   /** Move ledger history to the archive, leaving a pointer (compaction). */
@@ -418,8 +475,11 @@ export class Brain {
     await this.ensure();
     const seen = new Set<string>();
     let changed = 0;
-    const known = new Map((this.db.prepare("SELECT path, mtime, size FROM brain_files").all() as Array<{ path: string; mtime: number; size: number }>).map((r) => [r.path, r]));
+    // The index is shared by every project's brain; each maintains its own folder, global/, and
+    // the root (another project's mounts are invisible here, so its rows are left alone).
+    const known = new Map((this.db.prepare("SELECT path, mtime, size FROM brain_files").all() as Array<{ path: string; mtime: number; size: number }>).filter((r) => this.owns(r.path)).map((r) => [r.path, r]));
     for (const e of this.list({ kind: "human" })) {
+      if (!this.owns(e.path)) continue;
       seen.add(e.path);
       const st = statSync(this.resolve(e.path).abs);
       const k = known.get(e.path);
@@ -432,14 +492,28 @@ export class Brain {
     return changed;
   }
 
-  search(p: Principal, query: string, opts: { prefix?: string; limit?: number } = {}): Array<{ path: string; title: string | null; kind: EntryKind; snippet: string }> {
+  /**
+   * Full-text search over what the caller may read. The query itself is restricted to the
+   * folders the caller's read grants can reach (an agent: its project and `global/`, plus granted
+   * paths), so other projects' entries never crowd out its results; every hit is then checked
+   * against the grants. A person sees everything, or with `scope: "project"` this brain's project,
+   * `global/`, and the root.
+   */
+  search(p: Principal, query: string, opts: { prefix?: string; limit?: number; scope?: "project" | "all" } = {}): Array<{ path: string; title: string | null; kind: EntryKind; snippet: string }> {
     const terms = query.match(/[\p{L}\p{N}_]+/gu)?.slice(0, 12) ?? [];
     if (!terms.length) return [];
     const match = terms.map((t) => `"${t}"`).join(" OR ");
     const prefix = opts.prefix ? normalizeBrainPath(opts.prefix) : "";
+    let prefixes: string[] | null = null;
+    if (p.kind === "agent") {
+      const reach = p.grants.map((g: Grant) => grantPrefix(g.pattern.replace(/\\/g, "/")));
+      prefixes = reach.includes("") ? null : [...new Set(reach)];
+      if (prefixes && !prefixes.length) return [];
+    } else if (opts.scope === "project") prefixes = [`projects/${this.project}/`, "global/"];
+    const scopeSql = prefixes ? ` AND (${prefixes.map(() => "path LIKE ? ESCAPE '\\'").join(" OR ")}${p.kind === "human" ? " OR path NOT LIKE '%/%'" : ""})` : "";
     const rows = this.db
-      .prepare(`SELECT path, title, snippet(brain_fts, 2, '[', ']', '…', 24) AS snippet FROM brain_fts WHERE brain_fts MATCH ? ORDER BY bm25(brain_fts) LIMIT ?`)
-      .all(match, (opts.limit ?? 10) * 5) as Array<{ path: string; title: string; snippet: string }>;
+      .prepare(`SELECT path, title, snippet(brain_fts, 2, '[', ']', '…', 24) AS snippet FROM brain_fts WHERE brain_fts MATCH ?${scopeSql} ORDER BY bm25(brain_fts) LIMIT ?`)
+      .all(match, ...(prefixes ?? []).map((x) => `${likeEscape(x)}%`), (opts.limit ?? 10) * 5) as Array<{ path: string; title: string; snippet: string }>;
     return rows
       .filter((r) => (!prefix || r.path.startsWith(prefix)) && denial(p, r.path, "read") === null)
       .slice(0, opts.limit ?? 10)

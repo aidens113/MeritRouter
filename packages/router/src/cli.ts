@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync, existsSync, copyFileSync, mkdirSync } from "node:fs";
+import { readFileSync, existsSync, copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,11 +9,11 @@ import { PROFILE_NAMES, TIER_NAMES, type ProfileName, type TierName } from "./co
 import { Switchyard } from "./core/service.js";
 import { createCodingRunner } from "./runners/coding/index.js";
 import { z } from "zod";
-import { brainAccessRequests, brainRead, brainSearch, brainTree, CHANNEL_KINDS, decideBrainAccess, decideTaskAcceptance, jobChannel, jobDetail, jobMetrics, jobPlan, jobsView, jobTeam, modelsView, routingPreview, sessionDetail, sessionsView } from "./admin/insights.js";
+import { brainAccessRequests, brainRead, brainSearch, brainTree, CHANNEL_KINDS, decideBrainAccess, decideTaskAcceptance, jobChannel, jobDetail, jobMetrics, jobPlan, jobsView, jobTeam, modelsView, routingPreview, selectableProjects, sessionDetail, sessionsView } from "./admin/insights.js";
 import { comparison, comparisons, planComparison, runComparison } from "./qualification/comparison.js";
 import { blame } from "./attribution/index.js";
 import { SwitchyardError } from "./core/errors.js";
-import { countFlag, statusFlag, withImportance } from "./cli/args.js";
+import { countFlag, repoFlags, statusFlag, withImportance } from "./cli/args.js";
 import { doctorChecks, doctorText } from "./cli/doctor.js";
 import { keysCommand } from "./cli/keys.js";
 import { HELP } from "./cli/help.js";
@@ -21,6 +21,8 @@ import { channelText, jobTeamLines } from "./cli/job-team-text.js";
 import { comparisonPlanText, comparisonsTable, comparisonText, metricsText } from "./cli/metrics-text.js";
 import { operationsCommand } from "./cli/operations.js";
 import { planText } from "./cli/plan-text.js";
+import { chooseProject, PROJECT_ENV, requireProject, type SelectOptions } from "./cli/project-select.js";
+import { initConfigText, projectsCommand } from "./cli/projects.js";
 import { sessionRows, sessionTimeline } from "./cli/session-text.js";
 import { out, table } from "./cli/terminal.js";
 import type { ScanSummary } from "./models/scanner.js";
@@ -54,6 +56,7 @@ async function main(): Promise<number> {
     allowPositionals: true,
     options: {
       config: { type: "string" },
+      project: { type: "string" },
       json: { type: "boolean", default: false },
       wait: { type: "boolean", default: false },
       all: { type: "boolean", default: false },
@@ -115,13 +118,17 @@ async function main(): Promise<number> {
     const preset = values.preset ?? "claude-code";
     const presetFile = path.join("presets", `${preset}.yaml`);
     if (!existsSync(path.join(examples, presetFile))) throw new SwitchyardError("usage", `unknown preset ${preset}; choose claude-code, standalone-free, standalone-hybrid, or standalone-paid`);
+    // A global config plus a first project (`--project`, default my-project) in the projects shape.
+    const slug = values.project ?? process.env[PROJECT_ENV] ?? "my-project";
+    const configText = initConfigText(readFileSync(path.join(examples, presetFile), "utf8"), { slug, ...(values.name ? { name: values.name } : {}), repositories: repoFlags(values.repo) });
     mkdirSync(dir, { recursive: true });
     for (const [src, dst] of [[presetFile, DEFAULT_CONFIG_NAME], ["models.example.yaml", "models.yaml"]] as const) {
       const target = path.join(dir, dst);
       if (existsSync(target)) out(`kept existing ${target}`, false);
       else {
-        copyFileSync(path.join(examples, src), target);
-        out(`wrote ${target}`, false);
+        if (src === presetFile) writeFileSync(target, configText);
+        else copyFileSync(path.join(examples, src), target);
+        out(`wrote ${target}${src === presetFile ? ` (first project: ${slug})` : ""}`, false);
       }
     }
     return 0;
@@ -134,11 +141,25 @@ async function main(): Promise<number> {
   const compareRun = cmd === "compare" && args[0] !== "list" && args[0] !== "show" && values.yes && !values["dry-run"];
   const worker = cmd === "worker" || (cmd === "submit" && values.wait) || compareRun;
   const sy = new Switchyard(cfg, { worker, coding: createCodingRunner(cfg) });
+  // The project a command works in: --project, then SWITCHYARD_PROJECT, then the only project,
+  // then the project whose repository contains the working directory (see cli/project-select.ts).
+  const explicit = values.project ?? process.env[PROJECT_ENV];
+  const select: SelectOptions = { flag: values.project, env: process.env[PROJECT_ENV], cwd: process.cwd() };
+  /** Writes and repository reads: a project is required (an error lists the projects). */
+  const project = () => requireProject(selectableProjects(sy), select).slug;
+  /** Lists: the chosen project, or every project when none can be chosen. */
+  const listScope = () => chooseProject(selectableProjects(sy), select)?.slug;
+  /** Commands on ids: guarded by a project only when one was named. */
+  const idScope = () => (explicit ? project() : undefined);
+  const multi = sy.projects.slugs().length > 1;
   try {
+    if (explicit && cmd !== "projects") project();
     switch (cmd) {
+      case "projects":
+        return await projectsCommand(sy, args, values, json, select);
       case "doctor": {
         // Reads stored state only: per-provider keys, health, and last listing; never calls a provider.
-        const checks = doctorChecks(sy);
+        const checks = doctorChecks(sy, explicit ? { projects: [project()] } : {});
         out(json ? checks : doctorText(checks), json);
         return checks.every((c) => c.ok) ? 0 : 1;
       }
@@ -215,7 +236,7 @@ async function main(): Promise<number> {
         const text = src === "-" ? readFileSync(0, "utf8") : readFileSync(src, "utf8");
         const parsed = JSON.parse(text) as unknown;
         const tasks = withImportance(Array.isArray(parsed) ? parsed : [parsed], values.importance, values["importance-reason"]);
-        const submitted = await sy.submitTasks(tasks);
+        const submitted = await sy.submitTasks(tasks, { project: project() });
         if (!values.wait) {
           out(json ? submitted : table(submitted.map((s) => ({ ...s }))), json);
           return 0;
@@ -225,8 +246,8 @@ async function main(): Promise<number> {
         return r.timedOut ? 2 : 0;
       }
       case "status": {
-        const rows = args.length ? sy.getStatus(args) : sy.listTasks(undefined, 30);
-        out(json ? rows : table(rows.map((s) => ("profile" in s ? { task: s.taskId, type: s.profile, tier: s.tier ?? "", state: s.state, requests: `${s.modelRequestsUsed}/${s.maxModelRequests}`, goal: s.goal } : { task: s.taskId, state: s.state }))), json);
+        const rows = args.length ? sy.getStatus(args, idScope()) : sy.listTasks(undefined, 30, listScope());
+        out(json ? rows : table(rows.map((s) => ("profile" in s ? { task: s.taskId, ...(multi ? { project: s.project } : {}), type: s.profile, tier: s.tier ?? "", state: s.state, requests: `${s.modelRequestsUsed}/${s.maxModelRequests}`, goal: s.goal } : { task: s.taskId, state: s.state }))), json);
         return 0;
       }
       case "await": {
@@ -238,21 +259,21 @@ async function main(): Promise<number> {
         out(sy.collectResults(args), true);
         return 0;
       case "cancel":
-        out(sy.cancelTasks(args), true);
+        out(sy.cancelTasks(args, idScope()), true);
         return 0;
       case "resume": {
         const id = args[0];
         if (!id) throw new SwitchyardError("usage", "usage: switchyard resume <session-id|task-id>");
         // A session id continues that session; anything else is a task id. Output is JSON, as before.
-        if (sy.sessions.get(id) || (id.startsWith("s_") && !sy.tasks.get(id))) out({ sessionId: id, ...sy.resumeSession(id) }, true);
-        else out({ taskId: id, state: sy.resumeTask(id) }, true);
+        if (sy.sessions.get(id) || (id.startsWith("s_") && !sy.tasks.get(id))) out({ sessionId: id, ...sy.resumeSession(id, idScope()) }, true);
+        else out({ taskId: id, state: sy.resumeTask(id, idScope()) }, true);
         return 0;
       }
       case "accept":
       case "reject": {
         const id = args[0];
         if (!id) throw new SwitchyardError("usage", `usage: switchyard ${cmd} <task id> ${cmd === "reject" ? "--reason" : "[--reason]"} "<why>"`);
-        const r = decideTaskAcceptance(sy, id, cmd, { kind: "human", id: cliActor() }, values.reason?.trim() || null);
+        const r = decideTaskAcceptance(sy, id, cmd, { kind: "human", id: cliActor() }, values.reason?.trim() || null, idScope());
         out(json ? r : `${r.taskId}: ${r.decision.decision} by ${r.decision.by.id}; acceptance ${r.acceptanceStatus}`, json);
         return 0;
       }
@@ -280,7 +301,7 @@ ${table(rows)}`, json);
       case "run": {
         const goal = args.join(" ").trim();
         if (!goal || !values.repo?.length) throw new SwitchyardError("usage", 'usage: switchyard run "<goal>" --repo <alias> [--repo ...] [--check "<command>"] [--criteria "<text>"] [--wait]');
-        const job = await sy.startJob({ goal, repositories: values.repo.flatMap((r) => r.split(",")), ...(values.check ? { checks: values.check } : {}), ...(values.criteria ? { acceptanceCriteria: values.criteria } : {}) });
+        const job = await sy.startJob({ goal, project: project(), repositories: values.repo.flatMap((r) => r.split(",")), ...(values.check ? { checks: values.check } : {}), ...(values.criteria ? { acceptanceCriteria: values.criteria } : {}) });
         if (!values.wait) {
           out(json ? job : `job ${job.taskId} ${job.state}. A worker runs it (switchyard worker, or the MCP server). Follow with: switchyard job ${job.taskId}`, json);
           return 0;
@@ -290,7 +311,7 @@ ${table(rows)}`, json);
         return r.timedOut ? 2 : 0;
       }
       case "jobs": {
-        const rows = jobsView(sy).map((j) => ({ job: j.taskId, state: j.state, questions: j.pendingQuestions || "", workers: `${j.children.filter((c) => c.state === "completed").length}/${j.children.length}`, branch: j.branches.map((b) => b.branch).join(", "), goal: j.goal.slice(0, 60) }));
+        const rows = jobsView(sy, 50, listScope()).map((j) => ({ job: j.taskId, ...(multi ? { project: j.project } : {}), state: j.state, questions: j.pendingQuestions || "", workers: `${j.children.filter((c) => c.state === "completed").length}/${j.children.length}`, branch: j.branches.map((b) => b.branch).join(", "), goal: j.goal.slice(0, 60) }));
         out(json ? rows : table(rows), json);
         return 0;
       }
@@ -370,35 +391,36 @@ the planned budget does not fit what is left of today's qualification allocation
         return 0;
       }
       case "questions": {
-        const rows = sy.questions().map((q) => ({ id: q.id, job: q.taskId, question: q.question, options: q.options?.join(" / ") ?? "" }));
+        const rows = sy.questions({ project: listScope() }).map((q) => ({ id: q.id, job: q.taskId, ...(multi ? { project: q.project } : {}), question: q.question, options: q.options?.join(" / ") ?? "" }));
         out(json ? rows : table(rows), json);
         return 0;
       }
       case "answer": {
-        sy.answerQuestion(Number(args[0]), args.slice(1).join(" "));
+        sy.answerQuestion(Number(args[0]), args.slice(1).join(" "), "user", idScope());
         out(`answered question ${args[0]}`, json);
         return 0;
       }
       case "brain": {
         const sub = args[0] ?? "ls";
         if (sub === "ls") {
-          const rows = (await brainTree(sy, args[1] ?? "")).map((e) => ({ path: e.path, kind: e.kind, status: e.status ?? "", lines: e.lines, title: e.title ?? "" }));
+          const rows = (await brainTree(sy, args[1] ?? "", listScope())).map((e) => ({ path: e.path, kind: e.kind, status: e.status ?? "", lines: e.lines, title: e.title ?? "" }));
           out(json ? rows : table(rows), json);
-        } else if (sub === "read") process.stdout.write(brainRead(sy, args[1] ?? "").content + "\n");
+        } else if (sub === "read") process.stdout.write(brainRead(sy, args[1] ?? "", listScope()).content + "\n");
         else if (sub === "search") {
-          const rows = (await brainSearch(sy, args.slice(1).join(" "))).map((h) => ({ path: h.path, kind: h.kind, snippet: h.snippet }));
+          const rows = (await brainSearch(sy, args.slice(1).join(" "), undefined, listScope())).map((h) => ({ path: h.path, kind: h.kind, snippet: h.snippet }));
           out(json ? rows : table(rows), json);
         } else if (sub === "requests") {
-          const rows = brainAccessRequests(sy, "pending").map((r) => ({ id: r.id, task: r.taskId ?? "", role: r.role, mode: r.mode, pattern: r.pattern, reason: r.reason }));
+          const rows = brainAccessRequests(sy, "pending", listScope()).map((r) => ({ id: r.id, task: r.taskId ?? "", role: r.role, mode: r.mode, pattern: r.pattern, reason: r.reason }));
           out(json ? rows : table(rows), json);
         } else if (sub === "approve" || sub === "deny") {
-          const r = decideBrainAccess(sy, Number(args[1]), sub === "approve", args.slice(2).join(" ") || `${sub}d by the user`);
+          const r = decideBrainAccess(sy, Number(args[1]), sub === "approve", args.slice(2).join(" ") || `${sub}d by the user`, idScope());
           out(`request ${r.id}: ${r.status}`, json);
         } else throw new SwitchyardError("usage", "usage: brain ls [prefix] | read <path> | search <query> | requests | approve|deny <id> [reason]");
         return 0;
       }
       case "blame": {
-        const repo = cfg.repositoryPaths[args[0] ?? ""];
+        // The alias is the project's (two projects may both have an `app`).
+        const repo = sy.projectContext(project()).repositoryPaths[args[0] ?? ""];
         if (!repo || !args[1]) throw new SwitchyardError("usage", "usage: switchyard blame <repo-alias> <path> [--ref <branch or commit>]");
         const lines = await blame(repo.path, args[1], values.ref ?? "HEAD");
         const rows = lines.map((l) => ({ line: l.line, agent: l.agent ?? l.authorName, model: l.model ?? "", role: l.role ?? "", commit: l.commit.slice(0, 10), text: l.text.slice(0, 80) }));
@@ -408,7 +430,7 @@ the planned budget does not fit what is left of today's qualification allocation
       case "sessions": {
         const status = statusFlag(values.status);
         const limit = countFlag("limit", values.limit, 1);
-        const list = sessionsView(sy, { ...(status ? { status } : {}), ...(values.task ? { taskId: values.task } : {}), ...(values.job ? { jobId: values.job } : {}), ...(limit ? { limit } : {}) });
+        const list = sessionsView(sy, { project: listScope(), ...(status ? { status } : {}), ...(values.task ? { taskId: values.task } : {}), ...(values.job ? { jobId: values.job } : {}), ...(limit ? { limit } : {}) });
         out(json ? list : table(sessionRows(list)), json);
         return 0;
       }
@@ -423,7 +445,7 @@ the planned budget does not fit what is left of today's qualification allocation
         return 0;
       }
       case "usage":
-        out(sy.usage(Date.now() - Number(values.hours ?? 24) * 3_600_000), true);
+        out(sy.usage(Date.now() - Number(values.hours ?? 24) * 3_600_000, undefined, listScope()), true);
         return 0;
       default:
         process.stderr.write(`unknown command ${cmd}\n\n${HELP}`);
