@@ -145,6 +145,27 @@ The panel's dashboard (`/all`) shows each project's running and waiting tasks, i
 and its requests and paid spend for 24 hours and 7 days. `switchyard daemon status` prints the
 queue and running counts per project.
 
+### Repository setup
+
+SwitchYard makes each configured repository folder a git repository with at least one commit
+(what it does to each kind of folder is in [setup.md](setup.md#projects)). It is idempotent and
+safe to run from several processes at once: a lock file in the system temp folder
+(`switchyard-prepare-<hash>.lock`, never inside the repository) serialises preparation of one
+folder, the state is read again under the lock, and a lock older than two minutes is taken over.
+A caller that waits a minute without getting the lock reports `busy` and the next run retries.
+
+Every preparation that did something or failed is a `repository_prepare` event (no task;
+`data: { project, alias, path, action, error?, message }`). A repeated identical failure is
+recorded once. The overview's notices and attention items are read from these events, plus a
+live check for a file in place of the folder.
+
+Errors and their fixes: `git_missing` (install git, restart), `not_a_folder` (choose a folder),
+`permission` (give your account write access), `inside_repository` (the folder holds files
+another repository tracks; use that repository's top folder), `too_broad` (a drive root or the
+home folder), `git_failed` (git's own message; a failing global hook, for example, since hooks
+are not skipped). The generic settings editor does not prepare when it changes a path; the next
+service reload or overview load does.
+
 ### Archiving a project
 
 `switchyard projects archive <slug>`, or Archive on the project's Settings page, hides a project:

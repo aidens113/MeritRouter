@@ -190,9 +190,11 @@ describe("CLI with projects", () => {
     expect(first.status, first.stderr).toBe(0);
     gitRepo(path.join(env.dir, "web"));
 
-    const bad = cli(["projects", "create", "shop", "--repo", "web=missing-folder"]);
+    // A missing folder would be created and set up with git; a file in its place is refused.
+    writeFileSync(path.join(env.dir, "a-file"), "x");
+    const bad = cli(["projects", "create", "shop", "--repo", "web=a-file"]);
     expect(bad.status).toBe(1);
-    expect(bad.stderr).toMatch(/does not exist or is not a folder/);
+    expect(bad.stderr).toMatch(/is a file, not a folder/);
     const dup = cli(["projects", "create", "demo"]);
     expect(dup.status).toBe(1);
     expect(dup.stderr).toMatch(/project demo already exists/);

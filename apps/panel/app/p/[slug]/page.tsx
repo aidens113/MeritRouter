@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CheckCircle2, CircleAlert, Cpu, FolderGit2, MessageCircleQuestion, Network, Play, TriangleAlert } from "lucide-react";
+import { CheckCircle2, CircleAlert, Cpu, FolderGit2, Info, MessageCircleQuestion, Network, Play, TriangleAlert } from "lucide-react";
 import { insights } from "switchyard-router";
 import { getSy } from "@/lib/sy";
 import { project } from "@/lib/project";
@@ -33,6 +33,11 @@ export default async function ProjectOverviewPage({ params }: { params: Promise<
   if (!r.sy) return <SetupScreen error={r.error} configPath={r.configPath} />;
   const sy = r.sy;
   const { slug } = await params;
+  const p0 = project(sy, slug);
+  // Set up this project's repositories first (create a missing folder, set up git, commit a first
+  // snapshot); a repository that is already a git repository with history is not touched. Only what
+  // SwitchYard cannot fix itself is left for the attention list.
+  if (!p0.archived) await sy.prepareRepositories({ projects: [p0.slug] }).catch(() => undefined);
   const p = project(sy, slug);
   const base = projectBase(p.slug);
   const ov = insights.projectOverview(sy, p.slug);
@@ -96,6 +101,18 @@ export default async function ProjectOverviewPage({ params }: { params: Promise<
           </>
         }
       />
+
+      {ov.notices.length ? (
+        <Callout tone="accent" icon={<Info size={16} />} title="Repositories set up">
+          <ul className="space-y-0.5">
+            {ov.notices.map((n) => (
+              <li key={n} className="break-words">
+                {n}
+              </li>
+            ))}
+          </ul>
+        </Callout>
+      ) : null}
 
       {ov.attention.length ? (
         <Card className="border-warn/40">
@@ -185,7 +202,7 @@ export default async function ProjectOverviewPage({ params }: { params: Promise<
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span className="font-mono text-[13px] text-ink">{repo.alias}</span>
                       {repo.writable ? <Badge>writable</Badge> : <Badge>read only</Badge>}
-                      {repo.exists ? null : <Badge tone="bad">missing</Badge>}
+                      {repo.exists ? null : <Badge tone="warn">not set up</Badge>}
                     </div>
                     <div className="break-all font-mono text-[11px] text-ink-3">{repo.path}</div>
                   </div>

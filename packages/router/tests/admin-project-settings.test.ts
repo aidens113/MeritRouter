@@ -108,12 +108,14 @@ describe("project settings (admin)", () => {
     expect(fileEntry("alpha").team).toBeUndefined();
   });
 
-  it("checks repository folders and reports errors by row and field", () => {
+  it("checks repository folders and reports errors by row and field", async () => {
     const s = setup();
-    expect(inspectRepositoryPath(s, "docs-repo")).toMatchObject({ isGit: true, problem: null, resolved: path.join(env!.dir, "docs-repo") });
-    expect(inspectRepositoryPath(s, "plain-folder")).toMatchObject({ exists: true, isGit: false, problem: expect.stringMatching(/not a git repository/) });
+    expect(inspectRepositoryPath(s, "docs-repo")).toMatchObject({ isGit: true, problem: null, hint: null, resolved: path.join(env!.dir, "docs-repo") });
+    // A folder without git, or no folder at all, is not a problem: saving prepares it.
+    expect(inspectRepositoryPath(s, "plain-folder")).toMatchObject({ exists: true, isGit: false, problem: null, hint: expect.stringMatching(/git will be set up/) });
+    expect(inspectRepositoryPath(s, "missing-folder")).toMatchObject({ exists: false, problem: null, hint: expect.stringMatching(/will be created/) });
 
-    const bad = saveProjectRepositories(s, "alpha", [
+    const bad = await saveProjectRepositories(s, "alpha", [
       { alias: "app", path: "alpha-app", writable: true },
       { alias: "app", path: "docs-repo", writable: true },
       { alias: "bad alias", path: "plain-folder", writable: true },
@@ -126,14 +128,16 @@ describe("project settings (admin)", () => {
     expect(bad.fieldErrors["repositories.0.path"]).toBeUndefined();
     expect(bad.fieldErrors["repositories.1.alias"]?.[0]).toMatch(/already used by row 1/);
     expect(bad.fieldErrors["repositories.2.alias"]?.[0]).toMatch(/letters, digits/);
-    expect(bad.fieldErrors["repositories.2.path"]?.[0]).toMatch(/not a git repository/);
-    expect(bad.fieldErrors["repositories.3.path"]?.[0]).toMatch(/does not exist/);
+    expect(bad.fieldErrors["repositories.2.path"]).toBeUndefined();
+    expect(bad.fieldErrors["repositories.3.path"]).toBeUndefined();
     expect(bad.fieldErrors["repositories.4.alias"]).toEqual(["enter an alias"]);
     expect(bad.fieldErrors["repositories.4.path"]).toEqual(["enter the repository's folder"]);
     expect(Object.keys(fileEntry("alpha").repositories as object)).toEqual(["app"]);
+    // A refused save prepares nothing.
+    expect(inspectRepositoryPath(s, "missing-folder").exists).toBe(false);
 
     // Add one, make the other read only; then remove the added one.
-    expect(saveProjectRepositories(s, "alpha", [
+    expect(await saveProjectRepositories(s, "alpha", [
       { alias: "app", path: "alpha-app", writable: false },
       { alias: "docs", path: "docs-repo", writable: true },
     ])).toEqual({ ok: true });
@@ -143,7 +147,7 @@ describe("project settings (admin)", () => {
       expect.objectContaining({ alias: "app", writable: false, isGit: true, problem: null }),
       expect.objectContaining({ alias: "docs", writable: true, isGit: true }),
     ]);
-    expect(saveProjectRepositories(s, "alpha", [{ alias: "app", path: "alpha-app", writable: true }])).toEqual({ ok: true });
+    expect(await saveProjectRepositories(s, "alpha", [{ alias: "app", path: "alpha-app", writable: true }])).toEqual({ ok: true });
     expect(fileEntry("alpha").repositories).toEqual({ app: { path: "alpha-app" } });
     expect(s.projects.get("alpha")!.repositoryPaths.docs).toBeUndefined();
     // Beta is untouched.

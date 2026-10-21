@@ -5,6 +5,8 @@ import type { Switchyard } from "../core/service.js";
 import { providerHealth } from "../providers/health.js";
 import { builtinProvider } from "../providers/registry.js";
 import { keyAvailability } from "./keys.js";
+import type { RepositoryPreparation } from "../projects/repository-setup.js";
+import { folderState, preparationHint } from "../workspaces/repository-prepare.js";
 import { stamp } from "./terminal.js";
 
 // `switchyard doctor`: configuration, provider keys (one check per provider), secrets held in the
@@ -150,19 +152,33 @@ export function literalSecretChecks(sy: Switchyard): DoctorCheck[] {
 }
 
 /**
- * Per project: each repository exists and is a git repository, and its brain folders exist
- * (missing folders are a warning: they are created when the project is created or first written;
- * a missing mount is a failure).
+ * Per project: each repository is a usable git repository, and its brain folders exist (missing
+ * folders are a warning: they are created when the project is created or first written; a missing
+ * mount is a failure). With `prepared` (the CLI prepares repositories before doctor runs), a
+ * repository SwitchYard just created or set up is ok with what was done, and one it could not set
+ * up fails with the fix; without it, a folder not set up yet is a warning saying what will happen.
  */
-export function projectChecks(sy: Switchyard, slug: string): DoctorCheck[] {
+export function projectChecks(sy: Switchyard, slug: string, prepared: RepositoryPreparation[] = []): DoctorCheck[] {
   const ctx = sy.projects.require(slug);
   const archived = sy.projects.rows().find((r) => r.id === slug)?.archivedAt != null;
   const checks: DoctorCheck[] = [];
   const repos = Object.entries(ctx.repositoryPaths);
   checks.push({ check: `project ${slug}`, ok: true, level: "ok", detail: `${ctx.project.name}${ctx.project.legacy ? " (single-project config)" : ""}${archived ? "; archived" : ""}; ${plural(repos.length, "repository")}` });
   for (const [alias, repo] of repos) {
-    const ok = existsSync(path.join(repo.path, ".git"));
-    checks.push({ check: `${slug} repo ${alias}`, ok, level: ok ? "ok" : "fail", detail: ok ? repo.path : `${repo.path}: missing or not a git repository` });
+    const check = `${slug} repo ${alias}`;
+    const prep = prepared.find((p) => p.project === slug && p.alias === alias)?.result;
+    if (prep && !prep.ok) {
+      checks.push({ check, ok: false, level: "fail", detail: prep.message });
+      continue;
+    }
+    if (prep?.ok && prep.action !== "unchanged") {
+      checks.push({ check, ok: true, level: "ok", detail: `${repo.path} (${prep.message.replace(/^SwitchYard /, "")})` });
+      continue;
+    }
+    const state = folderState(repo.path);
+    if (state === "repository" || state === "unknown") checks.push({ check, ok: true, level: "ok", detail: repo.path });
+    else if (state === "file") checks.push({ check, ok: false, level: "fail", detail: `${repo.path} is a file, not a folder: choose a folder in the project settings` });
+    else checks.push({ check, ok: true, level: "warn", detail: `${repo.path}: ${preparationHint(state)} when SwitchYard starts` });
   }
   const brain = sy.brainFor(slug);
   const dirs = ["working", "decisions"].map((d) => `projects/${slug}/${d}`);
@@ -183,8 +199,11 @@ export function projectChecks(sy: Switchyard, slug: string): DoctorCheck[] {
   return checks;
 }
 
-/** Every doctor check, in display order; `projects` limits the per-project checks (default: every project). */
-export function doctorChecks(sy: Switchyard, opts: { projects?: string[] } = {}): DoctorCheck[] {
+/**
+ * Every doctor check, in display order; `projects` limits the per-project checks (default: every
+ * project); `prepared` is what preparing the repositories just did (see `projectChecks`).
+ */
+export function doctorChecks(sy: Switchyard, opts: { projects?: string[]; prepared?: RepositoryPreparation[] } = {}): DoctorCheck[] {
   const cfg = sy.cfg;
   const checks: DoctorCheck[] = [{ check: "config", ok: true, level: "ok", detail: cfg.configPath }];
   const usable = sy.providers.credentials().list().filter((c) => c.unusableReason === null);
@@ -204,7 +223,7 @@ export function doctorChecks(sy: Switchyard, opts: { projects?: string[] } = {})
       checks.push({ check: `brain mount ${m.prefix}`, ok, level: ok ? "ok" : "fail", detail: ok ? abs : `${abs} does not exist` });
     }
   }
-  for (const slug of opts.projects ?? sy.projects.slugs()) checks.push(...projectChecks(sy, slug));
+  for (const slug of opts.projects ?? sy.projects.slugs()) checks.push(...projectChecks(sy, slug, opts.prepared));
   return checks;
 }
 

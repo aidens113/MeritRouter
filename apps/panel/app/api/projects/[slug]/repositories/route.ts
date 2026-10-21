@@ -8,7 +8,8 @@ type Ctx = { params: Promise<{ slug: string }> };
 
 /**
  * `?path=<folder>`: what the server finds there (resolved against the config file's folder:
- * exists, is a folder, is a git repository). Without `path`: the project's repositories.
+ * exists, is a folder, is a git repository) and what saving will do (`hint`: create the folder,
+ * set up git). Without `path`: the project's repositories.
  */
 export async function GET(req: Request, ctx: Ctx) {
   return handle(async (sy) => {
@@ -37,9 +38,9 @@ const Body = z.object({
 });
 
 /**
- * Replace the project's repositories (add, remove, change a folder or the writable flag). Every
- * folder must exist and be a git repository; problems come back keyed by row and field
- * (`fieldErrors["repositories.1.path"]`).
+ * Replace the project's repositories (add, remove, change a folder or the writable flag). Each
+ * folder is prepared first (created and set up with git as needed); what SwitchYard cannot fix
+ * comes back keyed by row and field (`fieldErrors["repositories.1.path"]`).
  */
 export async function PUT(req: Request, ctx: Ctx) {
   return handle(async (sy) => {
@@ -57,7 +58,7 @@ export async function PUT(req: Request, ctx: Ctx) {
       for (const i of parsed.error.issues) (fieldErrors[i.path.map(String).join(".") || "form"] ??= []).push(i.message);
       return json({ ok: false, error: "Check the highlighted fields.", fieldErrors }, 400);
     }
-    const r = insights.saveProjectRepositories(sy, slug, parsed.data.repositories);
+    const r = await insights.saveProjectRepositories(sy, slug, parsed.data.repositories);
     if (!r.ok) return json({ ok: false, error: r.fieldErrors.form?.join("; ") || "Not saved: check the highlighted fields.", errors: r.errors, fieldErrors: r.fieldErrors }, 400);
     return { repositories: insights.projectSettingsView(sy, slug).repositoryRows };
   });

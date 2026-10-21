@@ -27,6 +27,9 @@ function open(): Holder {
     // scheduler makes every kick a no-op; a real worker (MCP server or `switchyard worker`)
     // claims the work from the shared database instead.
     void (sy as unknown as { scheduler: { stop(): Promise<void> } }).scheduler.stop();
+    // Make every configured repository a usable git repository (created, set up with git, first
+    // snapshot committed, as needed); what was done shows on the project overview.
+    void sy.prepareRepositories().catch(() => undefined);
     return { sy, error: null, configPath, at: Date.now() };
   } catch (err) {
     return { sy: null, error: (err as Error).message, configPath, at: Date.now() };
@@ -42,8 +45,8 @@ export function getSy(): { sy: Switchyard; error: null; configPath: string } | {
     g[KEY] = h;
   }
   if (h.sy) {
-    // Pick up edits made by the CLI, a worker, or a text editor.
-    h.sy.reloadIfChanged();
+    // Pick up edits made by the CLI, a worker, or a text editor, and prepare repositories they added.
+    if (h.sy.reloadIfChanged().reloaded) void h.sy.prepareRepositories().catch(() => undefined);
     return { sy: h.sy, error: null, configPath: h.configPath };
   }
   return { sy: null, error: h.error ?? "unknown error", configPath: h.configPath };

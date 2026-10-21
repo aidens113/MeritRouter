@@ -211,6 +211,8 @@ export {
 export { createCodingRunner } from "./runners/coding/index.js";
 // Agent teams (T2): sub-jobs, the merge queue, the team channel, redundant execution.
 export { jobDepth, subJobSection, type SupervisorState, type IntegrationRepo } from "./harness/supervisor-tools.js";
+export { prepareRepository, folderState, preparationHint, DEFAULT_GITIGNORE, type PrepareResult, type PrepareAction, type PrepareErrorKind, type FolderState } from "./workspaces/repository-prepare.js";
+export { prepareProjectRepositories, repositoryNotices, repositoryProblems, REPOSITORY_PREPARE_EVENT, type RepositoryPreparation } from "./projects/repository-setup.js";
 export { MergeQueue, MERGE_STATES, ACTIVE_MERGE_STATES, MAX_MERGE_ATTEMPTS, type MergeItem, type MergeState, type MergeHooks, type MergeConflict, type MergeAcceptance } from "./workspaces/merge-queue.js";
 export {
   ChannelStore,

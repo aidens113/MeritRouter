@@ -270,6 +270,14 @@ switcher, per-project pages, and a global dashboard. Plan and phase reports:
 - **One daemon for every project.** `daemon`, `daemon start`, and `service` refuse `--project`
   rather than start per-project workers. `daemon status` reports per-project queues from the
   store.
+- **Repository folders are prepared, not refused** (user request, 2026-10-21). A missing folder,
+  a plain folder, and a repository with no commits are set up by SwitchYard (git init, a default
+  `.gitignore` for plain folders, a first commit as `SwitchYard <switchyard@localhost>`) instead
+  of blocking project creation or showing as attention. A repository with history is never
+  touched. Two folders are refused rather than prepared: one holding files another repository
+  tracks (a nested repository would split a monorepo package off; a parent that tracks nothing
+  there, such as a home folder someone ran `git init` in, is no reason to refuse) and a drive
+  root or the home folder (a snapshot would commit everything in it).
 - **Backups include the brain repository** as a git bundle (backup format 2). A restore refuses
   a brain with uncommitted changes even with `--force`, and moves a replaced brain aside. Brain
   mounts are listed in the manifest as not included.

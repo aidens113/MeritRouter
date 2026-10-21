@@ -231,7 +231,7 @@ describe("project settings guards", () => {
     const [t1] = await s.submitTasks([summarizeTask({ repositoryAliases: ["docs"] })], { project: "alpha" });
     const rows = [{ alias: "app", path: "alpha-app", writable: true }];
 
-    const r = saveProjectRepositories(s, "alpha", rows);
+    const r = await saveProjectRepositories(s, "alpha", rows);
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.fieldErrors.form).toEqual([`repository docs is used by 1 unfinished task (${t1!.taskId}); cancel them or let them finish before removing it`]);
@@ -241,24 +241,24 @@ describe("project settings guards", () => {
     const whole = saveProjectSettings(s, "alpha", [{ path: ["repositories"], value: { app: { path: "alpha-app" } } }]);
     expect(whole.ok).toBe(false);
     // Another project's alias of the same name, and an unused repository, are free to go.
-    expect(saveProjectRepositories(s, "beta", [{ alias: "app", path: "beta-app", writable: true }])).toEqual({ ok: true });
-    expect(saveProjectRepositories(s, "alpha", [{ alias: "docs", path: "alpha-docs", writable: true }])).toEqual({ ok: true });
+    expect(await saveProjectRepositories(s, "beta", [{ alias: "app", path: "beta-app", writable: true }])).toEqual({ ok: true });
+    expect(await saveProjectRepositories(s, "alpha", [{ alias: "docs", path: "alpha-docs", writable: true }])).toEqual({ ok: true });
 
     // Many tasks: the message names three and counts the rest.
     const more = await s.submitTasks(Array.from({ length: 6 }, (_, i) => summarizeTask({ goal: `g${i}`, repositoryAliases: ["docs"] })), { project: "alpha" });
-    const many = saveProjectRepositories(s, "alpha", []);
+    const many = await saveProjectRepositories(s, "alpha", []);
     expect(!many.ok && many.fieldErrors.form?.[0]).toMatch(/^repository docs is used by 7 unfinished tasks \([^)]+ and 4 more\)/);
 
     // An interrupted task can be resumed, so it still holds the repository.
     const ids = [t1!, ...more].map((m) => m.taskId);
     s.db.prepare("UPDATE tasks SET state = 'cancelled' WHERE id IN (" + ids.slice(1).map(() => "?").join(",") + ")").run(...ids.slice(1));
     s.db.prepare("UPDATE tasks SET state = 'interrupted' WHERE id = ?").run(ids[0]);
-    const interrupted = saveProjectRepositories(s, "alpha", []);
+    const interrupted = await saveProjectRepositories(s, "alpha", []);
     expect(!interrupted.ok && interrupted.fieldErrors.form?.[0]).toContain(`used by 1 unfinished task (${ids[0]})`);
 
     // Once they are done, it can be removed.
     s.db.prepare("UPDATE tasks SET state = 'cancelled' WHERE id IN (" + [t1!, ...more].map(() => "?").join(",") + ")").run(t1!.taskId, ...more.map((m) => m.taskId));
-    expect(saveProjectRepositories(s, "alpha", [])).toEqual({ ok: true });
+    expect(await saveProjectRepositories(s, "alpha", [])).toEqual({ ok: true });
   });
 
   it("refuses brain mounts whose folder does not exist, keyed by the mount's field", () => {

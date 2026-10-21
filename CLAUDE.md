@@ -24,7 +24,7 @@ branches, and pushing.
    [docs/decisions.md](docs/decisions.md) (provider facts, every design decision, FreeLLMAPI history),
    [docs/operations.md](docs/operations.md) (hard vs estimated limits, recovery).
 
-State at handoff (2026-10-20): all phases merged; 477 router tests pass; the panel builds. Nothing has
+State at handoff (2026-10-21): all phases merged, plus repository auto-setup; 490 router tests pass; the panel builds. Nothing has
 run against a live provider or OpenCode yet (no credentials in this environment).
 
 Dispatch workers through the `worker` agent; its definition carries the worker rules, so a brief

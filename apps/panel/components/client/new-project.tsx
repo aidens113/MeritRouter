@@ -7,7 +7,9 @@ import { buttonClass, cx } from "../ui";
 import { callApi } from "./actions";
 import { projectBase, SLUG_RE, slugify } from "@/lib/links";
 
-type Repo = { alias: string; path: string; writable: boolean };
+/** What the server finds at a folder and what creating the project will do there. */
+type RepoCheck = { resolved: string; isGit: boolean; hint: string | null; problem: string | null };
+type Repo = { alias: string; path: string; writable: boolean; check?: RepoCheck | null };
 type Mount = { prefix: string; path: string; commit: boolean };
 type FieldErrors = Record<string, string[]>;
 
@@ -36,9 +38,10 @@ function Field({ id, label, hint, errors, children }: { id: string; label: React
 }
 
 /**
- * Create a project: name, slug (derived from the name until you edit it), repositories (checked on
- * the server: each must exist and be a git repository), and optional brain mounts. The server
- * validates everything; its errors come back per field and show beside the input.
+ * Create a project: name, slug (derived from the name until you edit it), repositories (any
+ * folder: the server creates a missing one and sets up git; the hint under each folder says what
+ * it will do), and optional brain mounts. The server validates everything; its errors come back
+ * per field and show beside the input.
  */
 export function NewProjectForm({ configDir }: { configDir: string }) {
   const router = useRouter();
@@ -58,6 +61,23 @@ export function NewProjectForm({ configDir }: { configDir: string }) {
   const slugProblem = slug && !SLUG_RE.test(slug) ? "Not a valid slug: lower-case letters, digits, '.', '_', '-', starting with a letter or digit." : null;
 
   const setRepo = (i: number, patch: Partial<Repo>) => setRepos((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const checkRepo = async (i: number, p: string) => {
+    if (!p.trim()) return setRepo(i, { check: null });
+    const r = await callApi(`/api/projects?path=${encodeURIComponent(p.trim())}`, "GET");
+    if (r.ok) setRepos((rs) => rs.map((x, j) => (j === i && x.path === p ? { ...x, check: r.check as RepoCheck } : x)));
+  };
+  const repoHint = (r: Repo): ReactNode =>
+    r.check ? (
+      r.check.problem ? (
+        <span className="break-all text-warn-ink">{r.check.problem}</span>
+      ) : r.check.hint ? (
+        <span>
+          <span className="break-all">{r.check.resolved}</span>: {r.check.hint}
+        </span>
+      ) : (
+        <span className="break-all">git repository at {r.check.resolved}</span>
+      )
+    ) : undefined;
   const setMount = (i: number, patch: Partial<Mount>) => setMounts((ms) => ms.map((m, j) => (j === i ? { ...m, ...patch } : m)));
   const filled = <T,>(rows: T[], used: (x: T) => boolean) => rows.map((x, i) => [x, i] as const).filter(([x]) => used(x)).map(([, i]) => i);
   const repoUsed = (r: Repo) => Boolean(r.alias.trim() || r.path.trim());
@@ -152,7 +172,7 @@ export function NewProjectForm({ configDir }: { configDir: string }) {
       <fieldset className="space-y-3">
         <legend className="text-sm font-medium text-ink">Repositories</legend>
         <p className="text-xs text-ink-3">
-          Each needs an alias (how tasks name it) and its folder: absolute, or relative to <span className="break-all font-mono">{configDir}</span>. The folder must exist and be a git repository. Two projects may use the same alias.
+          Each needs an alias (how tasks name it) and its folder: absolute, or relative to <span className="break-all font-mono">{configDir}</span>. Any folder works: one that does not exist yet is created, and one without git is set up with git and its current files committed. Two projects may use the same alias.
         </p>
         {repos.map((r, i) => {
           const aliasId = `${uid}-repo-${i}-alias`;
@@ -164,8 +184,8 @@ export function NewProjectForm({ configDir }: { configDir: string }) {
               <Field id={aliasId} label={<span className="text-xs">Alias</span>} errors={fe(ak)}>
                 <input id={aliasId} value={r.alias} onChange={(e) => setRepo(i, { alias: e.target.value })} className={cx("field font-mono text-[13px]", invalid(ak) && "border-bad")} placeholder="app" spellCheck={false} aria-invalid={invalid(ak)} aria-describedby={describedBy(aliasId, ak)} />
               </Field>
-              <Field id={pathId} label={<span className="text-xs">Folder</span>} errors={fe(pk)}>
-                <input id={pathId} value={r.path} onChange={(e) => setRepo(i, { path: e.target.value })} className={cx("field font-mono text-[13px]", invalid(pk) && "border-bad")} placeholder="../my-app" spellCheck={false} aria-invalid={invalid(pk)} aria-describedby={describedBy(pathId, pk)} />
+              <Field id={pathId} label={<span className="text-xs">Folder</span>} hint={repoHint(r)} errors={fe(pk)}>
+                <input id={pathId} value={r.path} onChange={(e) => setRepo(i, { path: e.target.value, check: null })} onBlur={(e) => void checkRepo(i, e.target.value)} className={cx("field font-mono text-[13px]", invalid(pk) && "border-bad")} placeholder="../my-app" spellCheck={false} aria-invalid={invalid(pk)} aria-describedby={describedBy(pathId, pk)} />
               </Field>
               <div className="flex items-center gap-3 sm:pt-6">
                 <label className="flex items-center gap-1.5 text-xs text-ink-2">

@@ -1,14 +1,24 @@
 import path from "node:path";
 import { z } from "zod";
 import { insights, PROJECT_SLUG_RE, REPOSITORY_ALIAS_RE } from "switchyard-router";
-import { handle, json } from "@/lib/api";
+import { handle, HttpError, json } from "@/lib/api";
 import { switcherProjects } from "@/lib/project";
 
 export const dynamic = "force-dynamic";
 
-/** The live projects with their activity, for the project switcher. */
-export async function GET() {
-  return handle((sy) => ({ projects: switcherProjects(sy) }));
+/**
+ * The live projects with their activity, for the project switcher. `?path=<folder>`: what the
+ * server finds at a new project's repository folder and what creating the project will do there.
+ */
+export async function GET(req: Request) {
+  return handle((sy) => {
+    const p = new URL(req.url).searchParams.get("path");
+    if (p !== null) {
+      if (p.length > 1000) throw new HttpError(400, "path: at most 1000 characters");
+      return { check: insights.inspectRepositoryPath(sy, p) };
+    }
+    return { projects: switcherProjects(sy) };
+  });
 }
 
 const Body = z.object({
@@ -43,8 +53,9 @@ function add(errors: FieldErrors, key: string, msg: string) {
 }
 
 /**
- * Create a project: `projects.<slug>` in the global config (validated, backed up, reloaded by
- * running workers) and its brain folders. Every problem comes back keyed by field
+ * Create a project: its repository folders prepared (created and set up with git as needed),
+ * `projects.<slug>` in the global config (validated, backed up, reloaded by running workers), and
+ * its brain folders. Every problem comes back keyed by field
  * (`fieldErrors["repositories.0.path"]`), so the form shows it beside the input.
  */
 export async function POST(req: Request) {

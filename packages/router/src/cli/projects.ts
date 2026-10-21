@@ -53,6 +53,7 @@ export async function projectsCommand(sy: Switchyard, args: string[], values: Pr
         ? r
         : [
             `created project ${r.project.slug} (${r.project.repositories.length} repositor${r.project.repositories.length === 1 ? "y" : "ies"}) in ${sy.cfg.configPath}`,
+            ...r.prepared,
             ...(r.convertedLegacy ? [`the single-project config was converted: its repositories moved under projects.${r.convertedLegacy}`] : []),
             `work in it with --project ${r.project.slug}, or from inside one of its repositories`,
           ].join("\n"),
