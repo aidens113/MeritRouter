@@ -14,15 +14,17 @@ branches, and pushing.
    document you are working on. Every planned phase of
    [agent-sessions-and-teams.md](docs/working/agent-sessions-and-teams.md) (S1-S2, R1, T1-T3)
    and [importance-and-verification.md](docs/working/importance-and-verification.md) (V1-V3)
-   is done, and so is [direct-providers.md](docs/working/direct-providers.md) (P1-P3): users
-   enter provider keys in SwitchYard (panel or config), SwitchYard calls providers and
-   discovers models itself, and FreeLLMAPI is gone. Only a first live check with real keys
-   remains; it needs the user's approval and budget.
+   is done, and so are [direct-providers.md](docs/working/direct-providers.md) (P1-P4: keys
+   entered in SwitchYard, direct provider calls, Ollama and local servers) and
+   [projects.md](docs/working/projects.md) (J1-J3: one install, many projects, fair scheduling,
+   gated global knowledge, projects grid and global dashboard). **Next effort:**
+   [caching-and-continuity.md](docs/working/caching-and-continuity.md) (planned; start at C1).
+   A live check with real keys needs the user's approval and budget.
 2. Background when needed: [docs/roles.md](docs/roles.md) (runtime role model and brain),
    [docs/decisions.md](docs/decisions.md) (provider facts, every design decision, FreeLLMAPI history),
    [docs/operations.md](docs/operations.md) (hard vs estimated limits, recovery).
 
-State at handoff (2026-10-20): all phases merged; 395 router tests pass; the panel builds. Nothing has
+State at handoff (2026-10-20): all phases merged; 477 router tests pass; the panel builds. Nothing has
 run against a live provider or OpenCode yet (no credentials in this environment).
 
 Dispatch workers through the `worker` agent; its definition carries the worker rules, so a brief
@@ -42,7 +44,8 @@ committing.
     `admin/sessions.ts`, `admin/job-plans.ts`, `admin/job-team.ts`, `admin/calibration.ts`); `src/verification`
     contracts, review, calibration; `src/sessions` session logs and resume; `src/operations`
     backup, daemon, service install; `src/cli/` terminal formatting for `cli.ts`;
-    `src/gateway/capacity.ts` provider slots; `src/admin/job-metrics.ts` team metrics.
+    `src/gateway/capacity.ts` provider slots; `src/admin/job-metrics.ts` team metrics;
+    `src/projects` project registry and `ProjectContext`.
 - `apps/panel`: Next.js panel (`pnpm --filter switchyard-panel seed:demo` for demo data).
 - `docs/`: setup, roles, operations, decisions, working documents.
 

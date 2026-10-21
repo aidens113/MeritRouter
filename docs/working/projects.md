@@ -1,7 +1,7 @@
 # Projects (one install, many projects)
 
 Status: Active
-Status detail: Plan approved by the user 2026-10-20 (D2, D4 as recommended; projects before caching). J1 in progress.
+Status detail: J1-J3 done, verified, and merged to dev and main 2026-10-20. Remaining: live use with real providers; follow-ups in Current State.
 Created: 2026-10-20
 Last updated: 2026-10-20
 Owner: Senior supervisor agent
@@ -13,67 +13,41 @@ Related: [direct providers](./direct-providers.md), [roles](../roles.md), [opera
 
 ## Current State
 
-**Requirement (user, 2026-10-20):** the starting screen is a projects grid; creating a project
-takes the user to its panel; a project switcher sits top left. Knowledge base, jobs, and the rest
-are per project. Several projects run at once. A global dashboard (with Settings and the other
-global pages) shows all projects and their jobs.
+**Done (2026-10-20), merged to `dev` and `main`.** SwitchYard is project-based:
+- Projects live under `projects.<slug>` in the global config (D2); a single-project config is read
+  as one project (D3). Per-project data carries `project_id`; repository leases and merge locks
+  are namespaced per project (D6). Each task runs under its project's `ProjectContext`.
+- One worker serves every project with weighted round-robin claiming; optional per-project
+  `priority`, `max_concurrent_tasks`, `paid_budgets`, `request_share` (D5, D7) with their own
+  waiting and denial reasons.
+- Brain: agents read their project plus `global/` (D4); only supervisors promote to `global/`,
+  through a project-specificity check and an independent review on a different model, with
+  rejections kept in the project, provenance recorded, optional human approval, and revert (D9).
+  Each project has its own brain index.
+- CLI `--project` / `SWITCHYARD_PROJECT`, `projects list|create|archive|unarchive`,
+  `init --project`; MCP `--project`, `--no-worker`, refuses to start without a choosable project
+  (D8); one daemon/service for all projects; backups include the brain.
+- Panel: projects grid at `/`, create flow, switcher top left, project pages under `/p/<slug>`,
+  global pages under `/all` (dashboard, requests, models, routing, keys, qualification,
+  calibration, knowledge, settings); archived projects open only their settings.
+- Internal qualification work runs in the reserved project `_qualification`, viewed under
+  `/all/qualification`, never shown as a project.
+- Docs: `setup.md`, `operations.md`, `roles.md`, `decisions.md`, README.
 
-**What exists today (code map 2026-10-20, file:line evidence in the ledger entry):**
-- One config file = one storage directory = one SQLite DB = one brain project
-  (`config/load.ts:57`, `core/service.ts:117-123`). No table has a project column.
-- Global state (vault and master key, catalog, provider key state, rate-limit usage, AIMD slots,
-  breakers, paid spend, allocation) lives in that per-config DB, so two configs would each believe
-  they own the whole quota and paid budget.
-- `cfg` is threaded everywhere as the project context: `repositoryPaths`, `brain.project`/`mounts`,
-  `verification`, `team`, `coding.allowed_commands`/`protected_paths`,
-  `supervisor.allowed_commands`/`branch_prefix`, `roles`.
-- The brain repository is already multi-project on disk (`projects/<p>/...`, `global/...`), but a
-  `Brain` instance is bound to one project and supervisors read `**` (every project).
-- Claiming is FIFO across the store with global caps (`storage/tasks.ts:243-257`); no fairness.
-- Repo aliases are bare strings in `tasks.writable_repo`, `file_leases.repository`,
-  `merge_queue.lock_key`: two projects with an `app` alias would collide.
-- MCP: one process = one config = one in-process worker, fixed effort `claude-code`.
-- Panel: one global `Switchyard` from `SWITCHYARD_CONFIG`, flat 13-item nav, no project concept.
+**Not verified:** live providers; a real Claude Code client on the MCP; `service install` on real
+service managers; multi-process claiming and promotion settling; eval-goal comparisons in the
+panel (none in the demo); several client-side forms only exercised through their API routes.
 
-**User decisions (2026-10-20):** D2 project settings in the global config; D4 agents read their
-own project plus `global/`; build projects first, caching after; D9 (below) global knowledge is
-written only by supervisors and only when it is truly global-worthy.
+**Known flaky under full-suite load (pass alone and on rerun):** `projects-brain` end-to-end
+promotion review; `session-recording` classifier batching; `operations` daemon stop. Each waits
+on real timers; making them deterministic is a follow-up.
 
-**J1 progress:** `j1-core` done and verified (404 tests): `src/projects/`, `ProjectContext`
-(a proxy over the global config overlaying project fields), migration with `project_id` and
-insert triggers, namespaced repo lease/merge keys, project-aware executor/runners/service API.
-Accepted deviations: `workspaces.repo_alias`/`merge_queue.repo_alias` stay bare (task-keyed);
-idempotency keys stay install-unique; the schema default project slug stays `default`.
+**Follow-ups (minor):** the switcher shows an archived project's slug, not its name; the archived
+settings page's name field does not look read-only; a restore whose brain step fails leaves the
+store restored and the brain not; alias matching in D9 is strict (an `app` alias rejects
+"the app").
 
-**J1 done (2026-10-20), verified on `feat/projects`:** fair claiming (`src/storage/fair-claim.ts`;
-project fields `priority`, `max_concurrent_tasks`, `paid_budgets`, `request_share`); brain
-isolation D4 and gated global promotion D9 (`src/brain/promotion.ts`,
-`src/verification/promotion-review.ts`; promotions recorded under `projects/<p>/promotions/`);
-CLI `--project`/`SWITCHYARD_PROJECT`, `projects list|create|archive|unarchive`, `init --project`,
-per-project `doctor`; MCP `--project`, `--no-worker`, refuses to start when no project can be
-chosen; admin API for J2 (`projectsGrid`, `globalDashboard`, `projectOverview`,
-`globalSettings`/`projectSettings`/`patchProjectSettings`, `createProject`, promotions). Reports:
-[core](./projects/reports/j1-core.md), [fairness](./projects/reports/j1-fairness.md),
-[brain](./projects/reports/j1-brain.md), [surfaces](./projects/reports/j1-surfaces.md).
-
-**Carried into J2/J3:** per-project brain index (the root README lists every project and
-supervisors can no longer read it); panel brain search scoped to the project; a waiting reason
-for tasks held by a project cap; distinct denial reasons for project paid/share limits; promotions
-list and approval in the panel; `/api/config` `expand()` without a `providers:` section (P4
-follow-up); converted single-project configs keep their top-level brain mounts global; alias
-matching in D9 is strict (an `app` alias rejects "the app"); docs for D4/D9 and project fields.
-
-**J2 progress:** `j2-structure` done and verified (451 tests; grid, switcher, `/p/<slug>`, `/all`,
-redirects, create flow; screenshots checked). Decision: the global section lives under `/all/...`.
-
-**J2 core done (2026-10-20), verified:** `/all` dashboard, `/all/settings` global-only,
-`/all/knowledge` (provenance, approve/reject, revert); project settings with overrides and
-fairness fields; project Brain page with promotions and per-project index; router fixes
-(reserved internal project `_qualification` for qualification fixtures, per-project brain index,
-project-cap waiting reason, `project_paid_budget_exhausted` / `project_allocation_exhausted`).
-
-**Next steps:** `j2-followups` and `j3-ops-docs` in parallel (dispatched 2026-10-20); then merge
-to `dev` and `main`.
+**Next steps:** caching-and-continuity (C1, C2), then the live check with real keys.
 
 **Blockers:** none.
 
@@ -383,6 +357,22 @@ re-read before editing). Each runs its own tests while working and the full suit
   project settings checked; panel stopped.
 - Outcome: Accepted
 - Follow-up: `j2-followups`, `j3-ops-docs`.
+
+### 2026-10-20 — j2-followups, j3-ops-docs, supervisor fixes (effort complete)
+- Agent: two parallel workers; supervisor fixes
+- Changed: see the two reports. Supervisor: repository removal also blocked by interrupted and
+  other unfinished tasks (test extended); `init --project` names the project after its slug;
+  example config shows the per-project fields; presets regenerated.
+- Why: J2 follow-ups and J3.
+- Validation: `pnpm -r typecheck` (router and panel Done); `pnpm -r build` (both Done);
+  `npx vitest run` five full runs: `Tests 477 passed (477)` in three, one run failed only
+  `projects-brain` end-to-end review (passed in the next three), one failed only
+  `session-recording` classifier batching (known timing test); `init --project alpha` wrote
+  `name: alpha`; demo panel: `/`, `/all`, `/all/qualification`, `/all/knowledge`,
+  `/all/requests`, `/p/demo/jobs`, `/p/legacy-billing/settings` 200, `/p/legacy-billing` 404, no
+  `_qualification` project shown, a reverted entry shown; archived settings screenshot checked.
+- Outcome: Accepted
+- Follow-up: the follow-ups and flaky tests in Current State.
 
 ---
 
