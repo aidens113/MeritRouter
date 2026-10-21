@@ -40,7 +40,9 @@ panel (none in the demo); several client-side forms only exercised through their
 
 **Known flaky under full-suite load (pass alone and on rerun):** `projects-brain` end-to-end
 promotion review; `session-recording` classifier batching; `operations` daemon stop. Each waits
-on real timers; making them deterministic is a follow-up.
+on real timers; making them deterministic is a follow-up. Note: the J2/J3 validation runs shared
+the machine with two hung `projects-brain` vitest runs (26 processes, left by an early looping
+version of j1-brain and stopped at handoff), so the measured flake rate is likely overstated.
 
 **Follow-ups (minor):** the switcher shows an archived project's slug, not its name; the archived
 settings page's name field does not look read-only; a restore whose brain step fails leaves the
