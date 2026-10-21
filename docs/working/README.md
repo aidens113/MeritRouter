@@ -10,4 +10,6 @@ lines, worker briefs, append-only ledger with real validation, open questions).
 | [agent-working-doc-protocol.md](agent-working-doc-protocol.md) | Active | The protocol every working document follows (adopted from FluxIQ). |
 | [importance-and-verification.md](importance-and-verification.md) | Active | Task importance and verification policy: contracts, deterministic checks, independent reviewers, reserved verification budget. V1, V2, V3 done; live-model validation outstanding. |
 | [direct-providers.md](direct-providers.md) | Active | Call providers directly with keys entered in SwitchYard; automatic model discovery; FreeLLMAPI removed. P1-P3 done and merged 2026-10-20; only a live check with real keys remains. |
+| [projects.md](projects.md) | Active | One install, many projects: projects grid, switcher, per-project jobs/brain/sessions, fair scheduling, global dashboard. Planned 2026-10-20; waiting for go-ahead. |
+| [caching-and-continuity.md](caching-and-continuity.md) | Active | Provider prompt caching, model stickiness, cached-token pricing, truncation recovery, prefix-stable compaction. Planned 2026-10-20. |
 | [harness-roles-brain.md](harness-roles-brain.md) | Active | Harness, roles, brain, attribution, paid routes, presets, panel. Implemented; live provider checks outstanding. |
