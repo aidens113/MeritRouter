@@ -8,7 +8,8 @@ import { PROJECT_CODING_KEYS, PROJECT_SUPERVISOR_KEYS, PROJECT_TEAM_KEYS, Projec
 import { expandHome } from "../brain/brain.js";
 import { patchConfig, readConfigText } from "./config-edit.js";
 import { TERMINAL_STATES } from "../core/task.js";
-import { projectActivity, projectInfo } from "./projects.js";
+import { prepareRepositoryFolders, projectActivity, projectInfo } from "./projects.js";
+import { folderState, preparationHint, type FolderState } from "../workspaces/repository-prepare.js";
 
 // Settings split for the panel (decision D2): global sections (providers, models, routing,
 // budgets, profiles, execution, ...) vs one project's settings, which live under
@@ -222,26 +223,27 @@ export interface RepositoryPathCheck {
   resolved: string;
   exists: boolean;
   isDirectory: boolean;
+  /** The folder has `.git` (it may still have no commits; see `state`). */
   isGit: boolean;
-  /** Plain-language problem, or null when the folder is a git repository. */
+  state: FolderState;
+  /**
+   * What SwitchYard will do when the repository is saved (a missing folder is created and set up
+   * with git; a folder without git is set up and its files committed), or null when nothing is needed.
+   */
+  hint: string | null;
+  /** Plain-language problem SwitchYard cannot fix itself (no folder given, a file), or null. */
   problem: string | null;
 }
 
 export function inspectRepositoryPath(sy: Switchyard, input: string): RepositoryPathCheck {
   const trimmed = input.trim();
   const resolved = path.resolve(path.dirname(sy.cfg.configPath), trimmed || ".");
-  let exists = false;
-  let isDirectory = false;
-  try {
-    const st = statSync(resolved);
-    exists = true;
-    isDirectory = st.isDirectory();
-  } catch {
-    exists = false;
-  }
+  const state = folderState(resolved);
+  const exists = state !== "missing";
+  const isDirectory = exists && state !== "file";
   const isGit = isDirectory && existsSync(path.join(resolved, ".git"));
-  const problem = !trimmed ? "enter the repository's folder" : !exists ? `${resolved} does not exist` : !isDirectory ? `${resolved} is not a folder` : !isGit ? `${resolved} is not a git repository (no .git)` : null;
-  return { input, resolved, exists, isDirectory, isGit, problem };
+  const problem = !trimmed ? "enter the repository's folder" : state === "file" ? `${resolved} is a file, not a folder` : null;
+  return { input, resolved, exists, isDirectory, isGit, state, hint: problem ? null : preparationHint(state), problem };
 }
 
 export interface ProjectRepositoryInput {
@@ -261,7 +263,10 @@ function addError(errors: FieldErrors, key: string, msg: string): void {
 
 const flatErrors = (fe: FieldErrors) => Object.entries(fe).flatMap(([k, v]) => v.map((m) => (k === "form" ? m : `${k}: ${m}`)));
 
-/** Check a project's repository rows: aliases valid and unique, each folder an existing git repository. */
+/**
+ * Check a project's repository rows: aliases valid and unique, a folder given that is not a file.
+ * A folder that does not exist or has no git is fine: saving prepares it.
+ */
 export function validateProjectRepositories(sy: Switchyard, rows: ProjectRepositoryInput[]): FieldErrors {
   const errors: FieldErrors = {};
   const seen = new Map<string, number>();
@@ -278,11 +283,12 @@ export function validateProjectRepositories(sy: Switchyard, rows: ProjectReposit
 }
 
 /**
- * Replace a project's repositories with `rows` (add, remove, change folder or writable). Every
- * folder must exist and be a git repository; problems come back keyed by row and field. Other
- * entries of the file, and comments around them, are kept.
+ * Replace a project's repositories with `rows` (add, remove, change folder or writable). Each
+ * folder is prepared first (created, set up with git, first snapshot committed, as needed); what
+ * SwitchYard cannot fix comes back keyed by row and field. Other entries of the file, and
+ * comments around them, are kept.
  */
-export function saveProjectRepositories(sy: Switchyard, slug: string, rows: ProjectRepositoryInput[]): SettingsSaveResult {
+export async function saveProjectRepositories(sy: Switchyard, slug: string, rows: ProjectRepositoryInput[]): Promise<SettingsSaveResult> {
   if (!sy.projects.get(slug)) return { ok: false, errors: [`unknown project ${slug}`], fieldErrors: { form: [`unknown project ${slug}`] } };
   // A removed repository has no row left to mark, so its refusal is a form-level error.
   const current = Object.keys((projectSettings(sy, slug).raw.repositories ?? {}) as Record<string, unknown>);
@@ -290,6 +296,17 @@ export function saveProjectRepositories(sy: Switchyard, slug: string, rows: Proj
   const inUse = repositoryRemovalErrors(sy, slug, current.filter((a) => !keep.has(a))).map((e) => e.replace(/^repositories\.[^:]+: /, ""));
   if (inUse.length) return { ok: false, errors: inUse, fieldErrors: { form: inUse } };
   const fieldErrors = validateProjectRepositories(sy, rows);
+  if (Object.keys(fieldErrors).length) return { ok: false, errors: flatErrors(fieldErrors), fieldErrors };
+  const base = path.dirname(sy.cfg.configPath);
+  const { problems } = await prepareRepositoryFolders(
+    sy,
+    slug,
+    rows.map((r) => ({ alias: r.alias.trim(), path: path.resolve(base, r.path.trim()) })),
+  );
+  rows.forEach((r, i) => {
+    const p = problems.get(r.alias.trim());
+    if (p) addError(fieldErrors, `repositories.${i}.path`, p);
+  });
   if (Object.keys(fieldErrors).length) return { ok: false, errors: flatErrors(fieldErrors), fieldErrors };
   const patch: SettingsPatch = rows.length
     ? [
@@ -354,7 +371,7 @@ export interface ProjectSettingsView extends ProjectSettings {
   /** Running and queued tasks: archiving is refused while either is above zero. */
   activity: { runningTasks: number; queuedTasks: number };
   /** The repositories as written, each with what the server finds at its folder. */
-  repositoryRows: Array<ProjectRepositoryInput & { resolved: string; isGit: boolean; problem: string | null }>;
+  repositoryRows: Array<ProjectRepositoryInput & { resolved: string; isGit: boolean; hint: string | null; problem: string | null }>;
   /** Fair-share and budget fields as written (null = no per-project limit), with the global caps they divide. */
   limits: {
     priority: number | null;
@@ -408,7 +425,7 @@ export function projectSettingsView(sy: Switchyard, slug: string): ProjectSettin
     activity: { runningTasks: act.runningTasks, queuedTasks: act.queuedTasks },
     repositoryRows: Object.entries((raw.repositories ?? {}) as Record<string, { path: string; writable?: boolean }>).map(([alias, r]) => {
       const check = inspectRepositoryPath(sy, r.path);
-      return { alias, path: r.path, writable: r.writable !== false, resolved: check.resolved, isGit: check.isGit, problem: check.problem };
+      return { alias, path: r.path, writable: r.writable !== false, resolved: check.resolved, isGit: check.isGit, hint: check.hint, problem: check.problem };
     }),
     limits: {
       priority: legacy ? null : num(raw.priority),

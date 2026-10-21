@@ -3,7 +3,7 @@ import type { TaskState } from "../core/task.js";
 import type { UsageSummary } from "../storage/usage.js";
 import { QUALIFICATION_PROJECT } from "../qualification/registry.js";
 import { overview, workers, type Overview, type WorkerInfo } from "./insights.js";
-import { projectActivity, projectAttention, projectInfo, projectList, QUEUED_STATES, RUNNING_STATES, type ProjectCard, type ProjectSummary } from "./projects.js";
+import { projectActivity, projectAttention, projectInfo, projectList, projectNotices, QUEUED_STATES, RUNNING_STATES, type ProjectCard, type ProjectSummary } from "./projects.js";
 
 // The global dashboard (every project's jobs, queues, attention, usage, and spend) and one
 // project's overview. The install-wide `overview` (providers, keys, models) stays in insights.ts.
@@ -181,6 +181,8 @@ export interface ProjectOverview {
   activity: ReturnType<typeof projectActivity>;
   jobs: ActiveJob[];
   attention: string[];
+  /** Information, not problems: repositories SwitchYard recently created or set up with git. */
+  notices: string[];
   usage24h: UsageSummary;
   usage7d: UsageSummary;
   paidSpendUsd: { last24h: number; last7d: number };
@@ -198,6 +200,7 @@ export function projectOverview(sy: Switchyard, slug: string): ProjectOverview {
     activity: projectActivity(sy, slug),
     jobs: activeJobs(sy, slug),
     attention: projectAttention(sy, slug),
+    notices: projectNotices(sy, slug, now),
     usage24h: sy.usage(now - DAY, now, slug),
     usage7d: sy.usage(now - 7 * DAY, now, slug),
     paidSpendUsd: { last24h: paidSpendByProject(sy, now - DAY).get(slug) ?? 0, last7d: paidSpendByProject(sy, now - 7 * DAY).get(slug) ?? 0 },

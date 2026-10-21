@@ -38,6 +38,7 @@ import { TaskValidationError } from "./errors.js";
 import { validateTask } from "./validate.js";
 import { DELEGATED_BY_SESSION, Executor, type CodingRunner, type ProjectDeps } from "./executor.js";
 import { ProjectRegistry } from "../projects/registry.js";
+import { prepareProjectRepositories, type RepositoryPreparation } from "../projects/repository-setup.js";
 import type { ProjectContext } from "../projects/context.js";
 import { Scheduler } from "./scheduler.js";
 import { isTerminal, type TaskState, type WorkerResult, type WorkerTask } from "./task.js";
@@ -133,6 +134,8 @@ export class Switchyard {
   private discovering: Promise<DiscoveryRun | null> | null = null;
   private readonly probeBudget: ProbeBudget;
   private reloadTimer: NodeJS.Timeout | null = null;
+  private workerStarted = false;
+  private preparing: Promise<RepositoryPreparation[]> | null = null;
 
   constructor(
     readonly cfg: ResolvedConfig,
@@ -321,6 +324,10 @@ export class Switchyard {
   }
 
   private startWorker(pollIntervalMs?: number): void {
+    this.workerStarted = true;
+    // Every configured repository is made a usable git repository (created, initialised, or given a
+    // first snapshot as needed); failures are recorded and shown on the project overview.
+    void this.prepareRepositories().catch(() => undefined);
     this.scheduler.start(pollIntervalMs);
     this.reloadTimer = setInterval(() => this.reloadIfChanged(), 2000);
     this.reloadTimer.unref?.();
@@ -384,6 +391,8 @@ export class Switchyard {
       Object.assign(this.cfg, next);
       this.projects.refresh();
       this.tasks.event(null, "config_reloaded", { at: this.now() });
+      // A running service prepares repositories added or moved by the edit.
+      if (this.workerStarted) void this.prepareRepositories().catch(() => undefined);
       return { reloaded: true };
     } catch (err) {
       this.tasks.event(null, "config_reload_failed", { error: (err as Error).message });
@@ -712,9 +721,26 @@ export class Switchyard {
     return this.scheduler.busy;
   }
 
+  /**
+   * Prepare every project's configured repositories (or `projects`'), recording each preparation
+   * as a `repository_prepare` event. Runs at service start and after a config reload in a running
+   * service; one run at a time per instance (a call during a run starts after it).
+   */
+  async prepareRepositories(opts: { projects?: string[] } = {}): Promise<RepositoryPreparation[]> {
+    const prev = this.preparing ?? Promise.resolve([]);
+    const run = prev.catch(() => []).then(() => prepareProjectRepositories({ db: this.db, tasks: this.tasks, projects: this.projects }, opts));
+    this.preparing = run;
+    try {
+      return await run;
+    } finally {
+      if (this.preparing === run) this.preparing = null;
+    }
+  }
+
   async close(): Promise<void> {
     if (this.discoveryTimer) clearInterval(this.discoveryTimer);
     if (this.reloadTimer) clearInterval(this.reloadTimer);
+    await this.preparing?.catch(() => undefined);
     await this.discovering?.catch(() => undefined);
     await this.scheduler.stop();
     await this.executor.flush();

@@ -159,7 +159,10 @@ async function main(): Promise<number> {
         return await projectsCommand(sy, args, values, json, select);
       case "doctor": {
         // Reads stored state only: per-provider keys, health, and last listing; never calls a provider.
-        const checks = doctorChecks(sy, explicit ? { projects: [project()] } : {});
+        // Repositories are prepared first (created, set up with git), so only what SwitchYard cannot fix fails.
+        const projects = explicit ? [project()] : undefined;
+        const prepared = await sy.prepareRepositories(projects ? { projects } : {});
+        const checks = doctorChecks(sy, { ...(projects ? { projects } : {}), prepared });
         out(json ? checks : doctorText(checks), json);
         return checks.every((c) => c.ok) ? 0 : 1;
       }

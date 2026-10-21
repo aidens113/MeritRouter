@@ -2,7 +2,7 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { Archive, CheckCircle2, CircleAlert, Lock, Plus, Trash2 } from "lucide-react";
+import { Archive, CheckCircle2, CircleAlert, Info, Lock, Plus, Trash2 } from "lucide-react";
 import { ActionStatus, callApi, useAction } from "@/components/client/actions";
 import { blankRow, RowsEditor, type Column } from "@/components/client/settings-rows";
 import { Badge, buttonClass, Card, CardHeader, cx, Mono } from "@/components/ui";
@@ -130,10 +130,11 @@ export function GeneralCard({ slug, name, legacy, configPath, keyPath, activity,
 // ---------------------------------------------------------------------------------------------
 // Repositories: add, remove, writable, and a server-side folder check.
 
-type RepoRow = { alias: string; path: string; writable: boolean; isNew: boolean; check: { resolved: string; isGit: boolean; problem: string | null } | null };
+type RepoCheck = { resolved: string; isGit: boolean; hint: string | null; problem: string | null };
+type RepoRow = { alias: string; path: string; writable: boolean; isNew: boolean; check: RepoCheck | null };
 
-export function RepositoriesCard({ slug, rows: initialRows }: { slug: string; rows: Array<{ alias: string; path: string; writable: boolean; resolved: string; isGit: boolean; problem: string | null }> }) {
-  const initial = useMemo(() => initialRows.map((r) => ({ alias: r.alias, path: r.path, writable: r.writable, isNew: false, check: { resolved: r.resolved, isGit: r.isGit, problem: r.problem } })), [initialRows]);
+export function RepositoriesCard({ slug, rows: initialRows }: { slug: string; rows: Array<{ alias: string; path: string; writable: boolean } & RepoCheck> }) {
+  const initial = useMemo(() => initialRows.map((r) => ({ alias: r.alias, path: r.path, writable: r.writable, isNew: false, check: { resolved: r.resolved, isGit: r.isGit, hint: r.hint, problem: r.problem } })), [initialRows]);
   const [rows, setRows] = useState<RepoRow[]>(initial);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const { run, busy, error, message, setError } = useAction();
@@ -154,12 +155,21 @@ export function RepositoriesCard({ slug, rows: initialRows }: { slug: string; ro
       const fe = (r.fieldErrors as FieldErrors | undefined) ?? {};
       setFieldErrors(fe);
       if (Object.keys(fe).some((k) => k !== "form")) setError(fe.form?.join("; ") || "Not saved: check the highlighted rows.");
-    } else setRows((rs) => rs.map((x) => ({ ...x, isNew: false })));
+    } else {
+      // The save prepared the folders: show what the server finds there now.
+      const saved = (r.repositories as Array<{ alias: string } & RepoCheck> | undefined) ?? [];
+      setRows((rs) =>
+        rs.map((x) => {
+          const now = saved.find((y) => y.alias === x.alias.trim());
+          return { ...x, isNew: false, check: now ? { resolved: now.resolved, isGit: now.isGit, hint: now.hint, problem: now.problem } : x.check };
+        }),
+      );
+    }
   };
 
   return (
     <Card id="repositories">
-      <CardHeader title="Repositories" description="The repositories this project's workers read, and edit through isolated worktrees when writable. Tasks name them by alias, e.g. app:src/index.ts. Each folder must exist and be a git repository; the server checks it." />
+      <CardHeader title="Repositories" description="The repositories this project's workers read, and edit through isolated worktrees when writable. Tasks name them by alias, e.g. app:src/index.ts. Any folder works: one that does not exist yet is created, and one without git is set up with git when you save." />
       <div className="space-y-3 p-4">
         {rows.length === 0 ? <p className="text-sm text-ink-3">No repositories. Add one so inspect, analyze, review, and implement tasks can read code.</p> : null}
         {rows.map((r, i) => {
@@ -199,6 +209,13 @@ export function RepositoriesCard({ slug, rows: initialRows }: { slug: string; ro
                         <>
                           <CircleAlert size={12} className="mt-px shrink-0 text-warn-ink" aria-hidden />
                           <span className="break-all text-warn-ink">{r.check.problem}</span>
+                        </>
+                      ) : r.check.hint ? (
+                        <>
+                          <Info size={12} className="mt-px shrink-0 text-ink-3" aria-hidden />
+                          <span className="min-w-0 text-ink-3">
+                            <span className="break-all">{r.check.resolved}</span>: {r.check.hint}
+                          </span>
                         </>
                       ) : (
                         <>
