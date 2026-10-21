@@ -1,7 +1,7 @@
 # Direct providers (remove FreeLLMAPI)
 
 Status: Active
-Status detail: P1-P3 merged 2026-10-20. P4 (wider coverage incl. Ollama) in progress. A first live check with real keys remains (needs user approval).
+Status detail: P1-P4 merged 2026-10-20 (P4: Ollama, local servers, 9 more hosted providers). A first live check with real keys remains (needs user approval).
 Created: 2026-10-19
 Last updated: 2026-10-20
 Owner: Senior supervisor agent
@@ -54,7 +54,13 @@ nebius, scaleway, ovhcloud, zai, moonshot, vercel. Custom-provider examples: vLL
 KoboldCpp, text-generation-webui, SGLang, TGI, xAI, Alibaba, MiniMax, Venice, Novita, Hyperbolic,
 Chutes, Featherless, Baseten, AI21, SiliconFlow, Azure, Bedrock mantle. Excluded: Vertex (OAuth),
 Bedrock SigV4, Azure Entra-only, Perplexity (Agent API), Lambda (winding down), Kluster (ended),
-Inference.net (pivoted). `p4-coverage` dispatched 2026-10-20 on `feat/providers-p4`.
+Inference.net (pivoted). Done 2026-10-20 ([report](./direct-providers/reports/p4-coverage.md)).
+P4 follow-ups: the panel's `/api/config` `expand()` writes an invalid config when the YAML has no
+`providers:` section (fix in projects J2, which rewrites that route); `ollama: {no_key: true}`
+without `base_url` gives a confusing validation message; the panel hard-codes the three local
+server ids (the admin view should pass `local`/`keyPolicy`/default base URL from the registry);
+the catalog lacks a provider param source, quantization, and trained-maximum context fields;
+`gateway/direct.ts` should test `keyInfoShape === "openrouter_key"` for the free quota.
 
 **Next steps:** a first live check, only with the user's approval and budget: one free-tier key
 per provider the user has, `keys test`, `models scan`, and one small task, recording measured
@@ -408,6 +414,20 @@ llama.cpp, vLLM, LM Studio) is a custom provider.
   screenshot shows `anthropic` once in Provider health.
 - Outcome: Accepted
 - Follow-up: live check (Current State).
+
+### 2026-10-20 — p4-coverage (P4 complete)
+- Agent: worker p4-coverage; supervisor fixed two test fixtures
+- Changed: 13 built-ins in `src/providers/registry.ts`, `src/providers/local-servers.ts` (Ollama
+  native discovery), list shapes, keyless local credentials, `default_context_tokens`,
+  `tests/providers-coverage.test.ts`; example config comments and presets; `docs/setup.md` local
+  servers and custom providers; `docs/decisions.md` D11-D17 and exclusions; panel provider picker.
+  Supervisor: `tests/helpers.ts` `providerOfUrl` skips empty base URLs; `admin-keys` paid fixture
+  renamed from `deepinfra`.
+- Why: user asked for Ollama and wider provider coverage.
+- Validation: supervisor ran `pnpm -r typecheck` (router and panel Done), `pnpm -r build` (both
+  Done), `npx vitest run` (`Tests 415 passed (415)`). No live provider or local server contacted.
+- Outcome: Accepted
+- Follow-up: the P4 follow-ups in Current State; live check.
 
 ---
 
