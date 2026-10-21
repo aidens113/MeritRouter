@@ -157,6 +157,12 @@ projects:
     repositories:
       app:
         path: ../my-app # replace with a real path
+    # Optional, per project (unset = no per-project limit; global limits always apply):
+    # priority: 1                 # share of worker turns relative to other projects
+    # max_concurrent_tasks: 2     # running tasks of this project at once
+    # request_share: 0.5          # fraction of the allocation below this project may use
+    # paid_budgets: { per_day_usd: 1, per_week_usd: 5, per_month_usd: 15 }
+    # Add more projects here, in the panel (New project), or with `switchyard projects create`.
 
 execution:
   max_concurrent_tasks: 2

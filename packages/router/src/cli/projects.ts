@@ -88,7 +88,8 @@ export function initConfigText(presetText: string, opts: { slug: string; name?: 
     doc.delete("repositories");
     doc.setIn(["projects", opts.slug], doc.createNode({ repositories: repos }));
   }
-  if (opts.name) doc.setIn(["projects", opts.slug, "name"], opts.name);
+  // Without --name the display name is the slug, never the preset's placeholder.
+  doc.setIn(["projects", opts.slug, "name"], opts.name ?? opts.slug);
   if (opts.repositories && Object.keys(opts.repositories).length) doc.setIn(["projects", opts.slug, "repositories"], doc.createNode(opts.repositories));
   doc.setIn(["brain", "project"], opts.slug);
   return doc.toString();
