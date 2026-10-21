@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { Pause, Play, RefreshCw } from "lucide-react";
 import { buttonClass, cx } from "../ui";
+import { ConfirmDialog } from "./confirm-dialog";
 
 export interface ApiResult {
   ok: boolean;
@@ -143,10 +144,15 @@ export function ActionButton({
   );
 }
 
-/** Re-render server components every few seconds while the tab is visible. */
+/**
+ * Re-render server components every few seconds while the tab is visible. The status ("Live" or
+ * "Paused") and the control that changes it are separate elements, and pausing asks first: it
+ * only stops this page refreshing, never the tasks, jobs, or workers it shows.
+ */
 export function AutoRefresh({ seconds = 8 }: { seconds?: number }) {
   const router = useRouter();
   const [paused, setPaused] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => {
     if (paused) return;
@@ -159,16 +165,48 @@ export function AutoRefresh({ seconds = 8 }: { seconds?: number }) {
     };
   }, [paused, router, seconds]);
   return (
-    <button
-      type="button"
-      onClick={() => setPaused((p) => !p)}
-      className={buttonClass("ghost", true)}
-      title={paused ? "Live updates paused" : `Refreshes every ${seconds}s`}
-      aria-pressed={!paused}
-    >
-      {paused ? <Play size={12} aria-hidden /> : <span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-good opacity-60" /><span className="relative inline-flex h-2 w-2 rounded-full bg-good" /></span>}
-      {paused ? "Paused" : "Live"}
-      {paused ? null : <Pause size={12} className="opacity-50" aria-hidden />}
-    </button>
+    <div role="group" aria-label="Live page updates" className="inline-flex flex-wrap items-center gap-2">
+      <span
+        role="status"
+        aria-live="polite"
+        title={paused ? "This page is not refreshing" : `This page refreshes every ${seconds} seconds`}
+        className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink-2"
+      >
+        {paused ? (
+          <span className="inline-flex h-2 w-2 rounded-full bg-ink-3 opacity-60" aria-hidden />
+        ) : (
+          <span className="relative flex h-2 w-2" aria-hidden>
+            <span className="absolute inline-flex h-full w-full rounded-full bg-good opacity-60 motion-safe:animate-ping" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-good" />
+          </span>
+        )}
+        <span className={paused ? "text-ink-2" : "text-good-ink"}>{paused ? "Paused" : "Live"}</span>
+        <span className="font-normal text-ink-3">{paused ? " · not updating" : ` · updates every ${seconds}s`}</span>
+      </span>
+      <button
+        type="button"
+        className={buttonClass("secondary", true)}
+        onClick={() => {
+          if (paused) {
+            setPaused(false);
+            router.refresh();
+          } else {
+            setConfirming(true);
+          }
+        }}
+      >
+        {paused ? <Play size={12} aria-hidden /> : <Pause size={12} aria-hidden />}
+        {paused ? "Resume updates" : "Pause updates"}
+      </button>
+      <ConfirmDialog
+        open={confirming}
+        onClose={() => setConfirming(false)}
+        onConfirm={() => setPaused(true)}
+        title="Pause live updates?"
+        description="This page stops refreshing until you resume. Tasks, jobs, and workers keep running; this only affects what this page shows."
+        confirmLabel="Pause updates"
+        cancelLabel="Cancel"
+      />
+    </div>
   );
 }
