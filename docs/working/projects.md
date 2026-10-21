@@ -63,8 +63,10 @@ list and approval in the panel; `/api/config` `expand()` without a `providers:` 
 follow-up); converted single-project configs keep their top-level brain mounts global; alias
 matching in D9 is strict (an `app` alias rejects "the app"); docs for D4/D9 and project fields.
 
-**Next steps:** J2 (panel): `j2-structure` (dispatched 2026-10-20), then `j2-global` and
-`j2-project` in parallel; then J3 (operations, demo, docs). J1 merged to `dev` (7db1c5e).
+**J2 progress:** `j2-structure` done and verified (451 tests; grid, switcher, `/p/<slug>`, `/all`,
+redirects, create flow; screenshots checked). Decision: the global section lives under `/all/...`.
+
+**Next steps:** J2: `j2-global`, `j2-project`, `j2-router` in parallel (dispatched 2026-10-20); then J3 (operations, demo, docs). J1 merged to `dev` (7db1c5e).
 
 **Blockers:** none.
 
@@ -248,6 +250,50 @@ full suite at the end; failures only in another worker's files are re-run later 
 - Done: typecheck, build; demo seeded; every page 200 (old URLs redirect); screenshots of the
   grid, switcher open, create flow, a project overview, the global section; panel stopped.
 - Report to: docs/working/projects/reports/j2-structure.md
+
+### Brief: j2-global (J2; parallel with j2-project, j2-router)
+- Task: `/all` global dashboard (from `insights.globalDashboard`: every project's running and
+  queued jobs, queues, attention items with links into the project, usage and paid spend by
+  project, worker status, provider health); `/all/settings` shows only global sections
+  (project-level sections move to project settings); `/all/knowledge`: the global brain's
+  entries with provenance (project, supervisor and model, sources, reviewer verdict and model),
+  pending promotions awaiting a person (when `brain.global_requires_approval`) with approve and
+  reject, and revert of a global entry (a brain commit removing it, recorded).
+- Owns: `apps/panel/app/all/**` (not `all/keys`), new `apps/panel/app/api/promotions/**`,
+  `src/admin/dashboards.ts`, new `src/admin/promotions.ts`, its export line in
+  `src/admin/insights.ts`, new `tests/admin-promotions.test.ts`.
+- Report to: docs/working/projects/reports/j2-global.md
+
+### Brief: j2-project (J2; parallel)
+- Task: `/p/<slug>/settings` real: name, repositories (add, remove, writable, path check), brain
+  mounts and access, per-project overrides (verification, team, coding/supervisor allowed
+  commands, protected paths, branch prefix, roles) and the fairness fields (`priority`,
+  `max_concurrent_tasks`, `paid_budgets`, `request_share`), archive/unarchive; saving through
+  `insights.patchProjectSettings`. The project Brain page uses the per-project index (from
+  j2-router; fall back to the filtered tree until it lands) and lists this project's promotions
+  with status and reason.
+- Owns: `apps/panel/app/p/[slug]/settings/**`, `apps/panel/app/p/[slug]/brain/**`,
+  `apps/panel/app/api/projects/**`, `src/admin/project-settings.ts`, new
+  `tests/admin-project-settings.test.ts`.
+- Report to: docs/working/projects/reports/j2-project.md
+
+### Brief: j2-router (J2; parallel)
+- Task: qualification repositories in the projects layout (`src/qualification/registry.ts` adds
+  fixture repos to the global `repositoryPaths`, which a project context hides: make qualification
+  tasks run in a context that sees them, and audit every remaining reader of the global
+  `repositoryPaths`/`repositories`); a per-project brain index (`projects/<p>/README.md`,
+  regenerated like the root one; the root index lists only `global/` and project names; MCP
+  `brain_list` text updated); a waiting reason for tasks held by a project's
+  `max_concurrent_tasks`, shown where slot and lease waits are; distinct denial reasons for a
+  project's paid cap and request share (`project_paid_budget_exhausted`,
+  `project_allocation_exhausted`) through `core/errors.ts` and `core/disposition.ts`.
+- Owns: `src/qualification/**`, `src/brain/**`, `src/mcp.ts` (brain_list text only),
+  `src/core/errors.ts`, `src/core/disposition.ts`, `src/storage/tasks.ts`,
+  `src/storage/fair-claim.ts`, `src/admission/**`, new `tests/projects-router-fixes.test.ts`.
+- Report to: docs/working/projects/reports/j2-router.md
+
+Shared: `src/core/service.ts`, `src/index.ts`, `src/admin/insights.ts` (small separate hunks,
+re-read before editing). Each runs its own tests while working and the full suite at the end.
 
 ---
 
