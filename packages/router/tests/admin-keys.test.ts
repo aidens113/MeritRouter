@@ -38,7 +38,7 @@ function setup(config: Record<string, unknown> = {}, fake = groqFake()): { sy: S
         mistral: { keys: [{ api_key: "mistral-literal-secret-9999", billing_class: "paid_postpaid" }] },
         ...((config.providers as Record<string, unknown>) ?? {}),
       },
-      paid: { providers: { deepinfra: { kind: "openai_compatible", base_url: "https://api.deepinfra.example/v1/openai" } } },
+      paid: { providers: { acmepaid: { kind: "openai_compatible", base_url: "https://api.acmepaid.example/v1/openai" } } },
       ...Object.fromEntries(Object.entries(config).filter(([k]) => k !== "providers")),
     }),
     endpoints: [],
@@ -52,9 +52,9 @@ describe("provider keys view", () => {
     const { sy } = setup({ providers: { localai: { base_url: "http://127.0.0.1:9/v1", no_key: true } } });
     const v = insights.providerKeysView(sy);
     const ids = v.providers.map((p) => p.id);
-    for (const id of ["groq", "google", "cloudflare", "anthropic", "openai", "localai", "deepinfra"]) expect(ids).toContain(id);
+    for (const id of ["groq", "google", "cloudflare", "anthropic", "openai", "localai", "acmepaid"]) expect(ids).toContain(id);
     expect(v.providers.find((p) => p.id === "localai")).toMatchObject({ kind: "custom", noKey: true, inConfig: true });
-    expect(v.providers.find((p) => p.id === "deepinfra")).toMatchObject({ kind: "paid", inPaid: true, discoverable: false });
+    expect(v.providers.find((p) => p.id === "acmepaid")).toMatchObject({ kind: "paid", inPaid: true, discoverable: false });
     expect(v.providers.find((p) => p.id === "cloudflare")).toMatchObject({ kind: "builtin", needsAccountId: true, keys: [], health: null });
 
     const or = v.providers.find((p) => p.id === "openrouter")!.keys[0]!;
@@ -101,7 +101,7 @@ describe("adding, editing, and removing vault keys", () => {
     expect(groq).toMatchObject({ provider: "groq", source: "vault", editable: true, last4: "ABCD", status: "healthy", limits: { rpm: 30, rpd: null }, quotaGroup: "team" });
     expect(JSON.stringify(groq)).not.toContain("vault-secret");
     expect(insights.addProviderKey(sy, { provider: "lab", secret: "lab-secret-1234", billingClass: "free_tier" }).provider).toBe("lab");
-    expect(insights.addProviderKey(sy, { provider: "deepinfra", secret: "di-secret-5678", billingClass: "paid_credits", prepaidBalanceUsd: 5 })).toMatchObject({ prepaidBalanceUsd: 5, remainingBalanceUsd: 5 });
+    expect(insights.addProviderKey(sy, { provider: "acmepaid", secret: "di-secret-5678", billingClass: "paid_credits", prepaidBalanceUsd: 5 })).toMatchObject({ prepaidBalanceUsd: 5, remainingBalanceUsd: 5 });
     expect(() => insights.addProviderKey(sy, { provider: "nope", secret: "whatever-1234", billingClass: "free_tier" })).toThrow(/unknown provider nope/);
     expect(() => insights.addProviderKey(sy, { provider: "cloudflare", secret: "cf-secret-1234", billingClass: "free_tier" })).toThrow(/account id/);
     expect(insights.addProviderKey(sy, { provider: "cloudflare", secret: "cf-secret-1234", billingClass: "free_tier", accountId: "acct123" }).accountId).toBe("acct123");
@@ -175,7 +175,7 @@ describe("custom providers and per-provider scans", () => {
     expect(written.providers.lab).toEqual({ base_url: "http://127.0.0.1:9/v1", display_name: "Lab server" });
     expect(insights.providerKeysView(sy).providers.find((p) => p.id === "lab")).toMatchObject({ kind: "custom", displayName: "Lab server", baseUrl: "http://127.0.0.1:9/v1" });
     expect(() => insights.addCustomProvider(sy, { id: "groq", baseUrl: "http://127.0.0.1:9/v1" })).toThrow(/built-in/);
-    expect(() => insights.addCustomProvider(sy, { id: "deepinfra", baseUrl: "http://127.0.0.1:9/v1" })).toThrow(/paid provider/);
+    expect(() => insights.addCustomProvider(sy, { id: "acmepaid", baseUrl: "http://127.0.0.1:9/v1" })).toThrow(/paid provider/);
     expect(() => insights.addCustomProvider(sy, { id: "x", baseUrl: "file:///etc/passwd" })).toThrow(/http/);
 
     await expect(insights.scanProviderModels(sy, "lab")).rejects.toThrow(/no usable key/);
@@ -183,7 +183,7 @@ describe("custom providers and per-provider scans", () => {
     const scan = await insights.scanProviderModels(sy, "lab");
     expect(scan).toMatchObject({ provider: "lab", status: "listed", kept: 1, added: ["lab/local-model"], errors: [] });
     expect(insights.providerKeysView(sy).providers.find((p) => p.id === "lab")!.models).toMatchObject({ total: 1, free: 1 });
-    await expect(insights.scanProviderModels(sy, "deepinfra")).rejects.toThrow(/only a paid provider/);
+    await expect(insights.scanProviderModels(sy, "acmepaid")).rejects.toThrow(/only a paid provider/);
 
     expect(() => insights.removeCustomProvider(sy, "lab")).toThrow(/keys first/);
     insights.removeProviderKey(sy, k.vaultKeyId!);
