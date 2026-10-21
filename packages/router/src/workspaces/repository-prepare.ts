@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { mkdir, open, stat, unlink, utimes, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { git, GitError } from "./git.js";
@@ -12,7 +12,9 @@ import { git, GitError } from "./git.js";
 // initialised (with a default .gitignore when it has none) and its files committed as a first
 // snapshot; a repository without commits gets that snapshot; a repository with history is never
 // touched. What is left as an error is what SwitchYard cannot fix itself: git not installed, a
-// path that is a file, and permissions.
+// path that is a file, and permissions. Two folders are refused rather than prepared: one holding
+// files another git repository tracks (a monorepo package: a nested repository would split them
+// off), and a drive root or the home folder (a first snapshot would commit everything in it).
 
 const execFileAsync = promisify(execFile);
 
@@ -20,7 +22,7 @@ const execFileAsync = promisify(execFile);
 export type PrepareAction = "created" | "initialized" | "snapshot" | "unchanged";
 
 /** The problems preparation cannot fix itself. */
-export type PrepareErrorKind = "git_missing" | "not_a_folder" | "permission" | "busy" | "git_failed";
+export type PrepareErrorKind = "git_missing" | "not_a_folder" | "inside_repository" | "too_broad" | "permission" | "busy" | "git_failed";
 
 export type PrepareResult =
   | { ok: true; path: string; action: PrepareAction; /** A .gitignore was written (initialised folders without one). */ gitignore: boolean; message: string }
@@ -87,7 +89,11 @@ function failure(dir: string, error: PrepareErrorKind, detail = ""): PrepareResu
       ? "git is not installed or not on PATH. Install git (https://git-scm.com/downloads) and restart SwitchYard; the folder is set up automatically after that."
       : error === "not_a_folder"
         ? `${dir} is a file, not a folder. Choose a folder for this repository (a folder that does not exist yet is created).`
-        : error === "permission"
+        : error === "inside_repository"
+          ? `${dir} holds files tracked by the git repository ${detail}. Use ${detail} as the repository, or choose a folder outside it.`
+          : error === "too_broad"
+            ? `${dir} is ${detail}; SwitchYard will not commit everything in it. Choose the project's own folder.`
+            : error === "permission"
           ? `SwitchYard cannot write to ${dir} (permission denied). Give your user account write access to it, or choose a folder you own.`
           : error === "busy"
             ? `Another SwitchYard process is still setting up ${dir}. Try again in a minute.`
@@ -123,6 +129,25 @@ async function gitAvailable(): Promise<boolean> {
   } catch (err) {
     return (err as NodeJS.ErrnoException).code !== "ENOENT";
   }
+}
+
+/** Why a folder is too broad to snapshot (a drive root or the home folder), or null. */
+function tooBroad(dir: string): string | null {
+  if (path.parse(dir).root === dir) return "the root of a drive";
+  const norm = (p: string) => (process.platform === "win32" ? path.resolve(p).toLowerCase() : path.resolve(p));
+  return norm(dir) === norm(homedir()) ? "your home folder" : null;
+}
+
+/**
+ * The working tree of an enclosing git repository that tracks files in `dir` (a monorepo package,
+ * say), or null. An enclosing repository that tracks nothing there (a home folder someone ran
+ * `git init` in) is no reason to refuse: the new repository simply sits inside it.
+ */
+async function trackingRepository(dir: string): Promise<string | null> {
+  const tracked = await git(dir, ["ls-files", "-z", "--", "."], { allowExit: [128] }).catch(() => "");
+  if (!tracked) return null;
+  const top = (await git(dir, ["rev-parse", "--show-toplevel"], { allowExit: [128] }).catch(() => "")).trim();
+  return top ? path.resolve(top) : null;
 }
 
 /** True when HEAD resolves to a commit (git decides, under the lock). */
@@ -195,6 +220,12 @@ async function prepareLocked(dir: string): Promise<PrepareResult> {
   let state = folderState(dir);
   if (state === "repository") return done(dir, "unchanged", false);
   if (state === "file") return failure(dir, "not_a_folder");
+  const broad = state === "missing" ? null : tooBroad(dir);
+  if (broad) return failure(dir, "too_broad", broad);
+  if (state === "folder") {
+    const top = await trackingRepository(dir);
+    if (top) return failure(dir, "inside_repository", top);
+  }
   let created = false;
   if (state === "missing") {
     try {

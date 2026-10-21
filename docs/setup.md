@@ -73,17 +73,36 @@ projects:
 
 A slug is lower-case letters, digits, `.`, `_`, and `-`, starting with a letter or digit.
 
+**Repository folders are set up for you.** A repository's folder does not have to exist or be a
+git repository already. SwitchYard prepares it when the project is created, when its
+repositories are saved, when a worker, the MCP server, or the daemon starts or reloads the
+config, when the panel opens a project's overview, and before `switchyard doctor` checks it:
+- a missing folder is created, set up with git, and given an empty first commit;
+- a folder without git is set up with git, gets a default `.gitignore` if it has none
+  (`node_modules/`, `.env`, `.env.*`, `*.log`, `dist/`, `build/`, `.venv/`, `__pycache__/`,
+  `.DS_Store`), and its files are committed as a first snapshot;
+- a git repository with no commits gets that snapshot (without a `.gitignore`);
+- a repository with history is never touched.
+
+These commits are made as `SwitchYard <switchyard@localhost>`, so no git identity is needed. The
+project overview shows what was done for seven days. What SwitchYard cannot fix stays an
+attention item with the fix: git not installed, a file where the folder should be, no write
+permission, a folder holding files another repository tracks (a monorepo package: use the
+monorepo's top folder), and a drive root or your home folder (SwitchYard will not commit
+everything in it).
+
 **In the panel.**
 - `/` is the projects grid. Each card shows:
-  - the project's repositories, with a "missing" badge for a folder that is gone;
+  - the project's repositories, with a "not set up" badge for a folder that is not a git
+    repository yet;
   - its running and queued jobs and tasks;
   - its last activity;
   - an attention badge: questions, results awaiting a decision, brain requests, interrupted
-    tasks, missing repositories.
+    tasks, repositories SwitchYard could not set up.
 - **New project** (`/new`) takes a name, a slug (derived from the name until you edit it),
-  repositories, and optional brain mounts. The panel checks on the server that each folder
-  exists and is a git repository, then writes `projects.<slug>` into the config. You land on
-  the new project's page.
+  repositories, and optional brain mounts. Each folder is checked as you leave its field and
+  says what will happen to it; on create the folders are prepared (see above), then
+  `projects.<slug>` is written into the config. You land on the new project's page.
 - The **project switcher** at the top left shows the current project. It lists every live
   project with an activity dot (green while running, amber while queued, grey when idle), plus
   "All projects", "Projects grid", and "New project".
@@ -107,7 +126,7 @@ A slug is lower-case letters, digits, `.`, `_`, and `-`, starting with a letter 
 - `switchyard projects` lists the projects. `*` marks the selected one, and `--all` adds
   archived ones.
 - `switchyard projects create <slug> --name "<name>" --repo <alias>=<path>` adds a project. It
-  checks that each repository exists and is a git repository.
+  prepares each repository folder (see above) and prints what it did.
 - `switchyard projects archive|unarchive <slug>` archives a project or brings it back; see
   [operations.md](operations.md#archiving-a-project).
 - Commands that work inside one project take `--project <slug>`. Without the flag, SwitchYard

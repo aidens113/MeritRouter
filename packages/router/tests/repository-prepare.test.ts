@@ -169,6 +169,45 @@ describe("prepareRepository", () => {
     }
     expect(existsSync(path.join(dir!, "needs-git"))).toBe(false);
   });
+
+  it("refuses a folder holding another repository's tracked files, but nests under one that tracks nothing there", async () => {
+    const outer = temp();
+    git(outer, "init", "-q");
+    const sub = path.join(outer, "packages", "app");
+    mkdirSync(sub, { recursive: true });
+    writeFileSync(path.join(sub, "a.txt"), "a");
+    git(outer, "add", "-A");
+    git(outer, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "outer");
+    const r = await prepareRepository(sub);
+    expect(r).toMatchObject({ ok: false, error: "inside_repository" });
+    expect(!r.ok && r.message).toMatch(/holds files tracked by the git repository .*Use .* as the repository/);
+    expect(existsSync(path.join(sub, ".git"))).toBe(false);
+
+    const untracked = path.join(outer, "scratch");
+    mkdirSync(untracked);
+    writeFileSync(path.join(untracked, "b.txt"), "b");
+    expect(await prepareRepository(untracked)).toMatchObject({ ok: true, action: "initialized" });
+    expect(await prepareRepository(path.join(outer, "new", "app"))).toMatchObject({ ok: true, action: "created" });
+    expect(commits(outer)).toBe(1);
+  });
+
+  it("refuses to snapshot the home folder", async () => {
+    const fakeHome = temp();
+    writeFileSync(path.join(fakeHome, "notes.txt"), "x");
+    const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+    process.env.HOME = process.env.USERPROFILE = fakeHome;
+    try {
+      const r = await prepareRepository(fakeHome);
+      expect(r).toMatchObject({ ok: false, error: "too_broad" });
+      expect(!r.ok && r.message).toMatch(/is your home folder; SwitchYard will not commit everything/);
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+    expect(existsSync(path.join(fakeHome, ".git"))).toBe(false);
+  });
 });
 
 /** One project whose `app` repository is configured at `folder` (relative to the config). */

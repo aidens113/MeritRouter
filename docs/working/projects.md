@@ -49,18 +49,23 @@ settings page's name field does not look read-only; a restore whose brain step f
 store restored and the brain not; alias matching in D9 is strict (an `app` alias rejects
 "the app").
 
-**In progress, paused by the user (2026-10-21):** branch `feat/repo-autoprep`, worktree
-`D:/sy-wt/rp`, not merged. Two user requests: (1) project repositories are prepared automatically
-(missing folder created, git initialised with an initial commit, a default `.gitignore` for plain
-folders; runs on project/repository creation and at service start; the "missing or not a git
-repository" attention item replaced by an info notice); committed as unverified WIP (2d961a3),
-its worker was stopped before reporting. (2) The Live control is a status chip plus a separate
-"Pause updates" button with a confirmation dialog (`ConfirmDialog`); done and checked in Chrome
-(8ccb935). To finish: read `docs/working/reports/repo-autoprep.md` on that branch, run
-typecheck, build, the full suite, and a demo panel check, then merge to `dev` and `main`.
+**Added after J3 (2026-10-21, user requests, merged):**
+- Repository folders are prepared, not refused: a missing folder is created with git and an empty
+  first commit; a plain folder gets git, a default `.gitignore`, and a first snapshot; a
+  repository with no commits gets the snapshot; one with history is never touched. Runs on
+  project create, repository save, service start and reload, overview load, and `doctor`.
+  Refused: git missing, a file, permissions, a folder holding files another repository tracks,
+  and a drive root or the home folder. See `docs/working/reports/repo-autoprep.md`,
+  `setup.md#projects`, `operations.md` (Repository setup), `decisions.md`.
+- The panel's Live control is a status chip plus a separate "Pause updates" button with a
+  confirmation dialog (`docs/working/reports/live-control.md`).
 
-**Next steps:** finish `feat/repo-autoprep`; then caching-and-continuity (C1, C2); then the live
-check with real keys.
+**Follow-ups (repository setup):** the folder hint in the forms is a file-system check, so a
+monorepo subfolder reads "git will be set up" until save refuses it; permission errors, the lock
+timeout and stale-lock takeover, and a second process are untested; the generic settings editor
+does not prepare when it changes a path (the next reload or overview load does).
+
+**Next steps:** caching-and-continuity (C1, C2); then the live check with real keys.
 
 **Blockers:** none.
 
@@ -386,6 +391,23 @@ re-read before editing). Each runs its own tests while working and the full suit
   `_qualification` project shown, a reverted entry shown; archived settings screenshot checked.
 - Outcome: Accepted
 - Follow-up: the follow-ups and flaky tests in Current State.
+
+### 2026-10-21 — repo-autoprep and live-control (user requests)
+- Agent: two workers (stopped mid-session, resumed); supervisor review and fixes
+- Changed: see `reports/repo-autoprep.md` and `reports/live-control.md`. Supervisor: preparation
+  refuses a folder holding files another repository tracks (`inside_repository`) and a drive root
+  or the home folder (`too_broad`), with two tests. Found because the home folder on the dev
+  machine is an unborn git repository: a home-folder preparation would have snapshotted it, and a
+  blanket "inside any repository" rule would have refused every temp folder. Docs: setup,
+  operations, decisions.
+- Why: the user saw "Repository app is missing or not a git repository" for a new folder.
+- Validation: `pnpm -r typecheck` (router and panel Done); router and panel builds Done;
+  `npx vitest run` `Tests 490 passed (490)`; demo copy with a missing, a plain, and a monorepo
+  subfolder repository: the first two got SwitchYard commits (`.gitignore` + README tracked), the
+  subfolder got no `.git` and one attention item with a Fix link; `/`, `/new`, `/all`,
+  `/p/demo`, `/p/storefront/settings`, the repositories API 200; screenshots light desktop and
+  dark 390px (no horizontal overflow) checked; panel stopped, temp data and locks removed.
+- Outcome: Accepted
 
 ---
 
