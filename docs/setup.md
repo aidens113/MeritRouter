@@ -21,7 +21,7 @@ SWITCHYARD_CONFIG=$PWD/switchyard.config.yaml pnpm --filter switchyard-panel sta
 ```
 
 ```powershell
-$env:SWITCHYARD_CONFIG = "D:path	oswitchyard.config.yaml"   # use setx for persistence
+$env:SWITCHYARD_CONFIG = "D:\path	o\switchyard.config.yaml"   # use setx for persistence
 pnpm --filter switchyard-panel start
 ```
 
