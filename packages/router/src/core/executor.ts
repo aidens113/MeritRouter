@@ -73,6 +73,19 @@ export interface ExecutorDeps {
   contracts: ContractStore;
   /** Called after any task reaches a new state, to wake waiters. */
   onSettled: (taskId: string) => void;
+  /**
+   * A task's project: its configuration (a `ProjectContext`: the project's repositories, brain
+   * scope, and overrides), brain, and brain access. Throws for a project no longer configured.
+   * Absent: every task runs under the global `cfg`, `brain`, and `access`.
+   */
+  project?: (task: StoredTask) => ProjectDeps;
+}
+
+/** What differs per project in the executor's dependencies. */
+export interface ProjectDeps {
+  cfg: ResolvedConfig;
+  brain: Brain | null;
+  access: BrainAccess | null;
 }
 
 interface Routing {
@@ -97,9 +110,27 @@ export class Executor {
 
   constructor(private readonly d: ExecutorDeps) {}
 
+  /**
+   * The executor's dependencies as one task sees them: its project's configuration, brain, and
+   * brain access in place of the global ones. Throws when the task's project is not configured.
+   */
+  private depsFor(task: StoredTask): ExecutorDeps {
+    if (!this.d.project) return this.d;
+    return { ...this.d, ...this.d.project(task) };
+  }
+
+  /** `depsFor`, or null when the task's project is not configured (reports are then skipped). */
+  private tryDepsFor(task: StoredTask): ExecutorDeps | null {
+    try {
+      return this.depsFor(task);
+    } catch {
+      return null;
+    }
+  }
+
   /** Open the session for one run of a task (see `openRunSession`). */
   private openSession(task: StoredTask, plan: RoutePlan, previousSessionId?: string | null): SessionRecorder | null {
-    return openRunSession(this.d, task, plan, previousSessionId);
+    return openRunSession(this.depsFor(task), task, plan, previousSessionId);
   }
 
   /** End a run's session; a recording failure is logged, not thrown (see `endRunSession`). */
@@ -122,12 +153,14 @@ export class Executor {
     v: { contract: StoredContract | null; retry: RetryContext | null; repairCap?: number | null } = { contract: null, retry: null },
     resume: { plan: ResumePlan } | null = null,
   ): RunContext {
-    const budget = effectiveBudget(this.d.cfg, task.spec, plan.tier);
+    // Runners see the task's project: its repositories, brain scope, and policy overrides.
+    const d = this.depsFor(task);
+    const budget = effectiveBudget(d.cfg, task.spec, plan.tier);
     // A repair (or escalation) run draws on the repair reserve, on top of the execution cap.
-    const cap = v.repairCap ?? runCap(this.d.cfg, task.spec, plan.tier, v.contract);
+    const cap = v.repairCap ?? runCap(d.cfg, task.spec, plan.tier, v.contract);
     return {
-      cfg: this.d.cfg,
-      profile: this.d.cfg.profiles[task.spec.profile]!,
+      cfg: d.cfg,
+      profile: d.cfg.profiles[task.spec.profile]!,
       spec: task.spec,
       taskId: task.row.id,
       leaseOwner: this.d.owner,
@@ -144,8 +177,8 @@ export class Executor {
       tier: plan.tier,
       plan,
       attempts: routing.attempts,
-      brain: this.d.brain,
-      access: this.d.access,
+      brain: d.brain,
+      access: d.access,
       effort: effortFor(task.spec, task.row.id),
       jobId: jobIdFor(task),
       services: this.d.services,
@@ -188,7 +221,7 @@ export class Executor {
    */
   private contractFor(task: StoredTask, tier: TierName, classification: Prepared["classification"]): StoredContract | null {
     const c = ensureContract(
-      { cfg: this.d.cfg, tasks: this.d.tasks, contracts: this.d.contracts, requestsUsed: (id) => this.d.gate.admission.taskTotals(id).requests, now: this.d.now },
+      { cfg: this.depsFor(task).cfg, tasks: this.d.tasks, contracts: this.d.contracts, requestsUsed: (id) => this.d.gate.admission.taskTotals(id).requests, now: this.d.now },
       task,
       tier,
       classification,
@@ -227,7 +260,7 @@ export class Executor {
    */
   private async withUpstream(task: StoredTask): Promise<StoredTask> {
     try {
-      return await withUpstreamContext({ cfg: this.d.cfg, tasks: this.d.tasks, artifacts: this.d.artifacts }, task);
+      return await withUpstreamContext({ cfg: this.depsFor(task).cfg, tasks: this.d.tasks, artifacts: this.d.artifacts }, task);
     } catch (err) {
       this.d.tasks.event(task.row.id, "upstream_context_failed", { error: (err as Error).message });
       return task;
@@ -239,7 +272,7 @@ export class Executor {
     const requested = redundancyFor(this.d.db, task.spec);
     if (requested < 2) return null;
     const used = requestsUsed(this.d.gate, task.row.id).total;
-    const r = planRedundancy({ requested, mode, plan, contract, runCap: runCap(this.d.cfg, task.spec, plan.tier, contract), used, ...o });
+    const r = planRedundancy({ requested, mode, plan, contract, runCap: runCap(this.depsFor(task).cfg, task.spec, plan.tier, contract), used, ...o });
     if (r.kind === "skip") this.d.tasks.event(task.row.id, REDUNDANCY_SKIPPED, { reason: r.reason });
     if (r.kind === "refuse") this.d.tasks.event(task.row.id, REDUNDANCY_SKIPPED, { reason: r.reason, refused: true });
     return r.kind === "single" || r.kind === "skip" ? null : r;
@@ -255,7 +288,7 @@ export class Executor {
         const ctx = this.context(task, r.controller.signal, r.plan, routing, r.session, { contract, retry: null });
         return this.runMode({ ...ctx, budget: { ...ctx.budget, maxModelRequests: twin.cap } });
       },
-      verify: (r, outcome) => verifyWithReview(this.d, task, contract, mode, outcome, st, this.reviewRun(task, r.controller.signal, routing, r.session, contract, r.plan.tier, repairPossible(this.d.gate, task, contract, st, false))),
+      verify: (r, outcome) => verifyWithReview(this.depsFor(task), task, contract, mode, outcome, st, this.reviewRun(task, r.controller.signal, routing, r.session, contract, r.plan.tier, repairPossible(this.d.gate, task, contract, st, false))),
       end: (s, status, stopReason) => this.endSession(task, s, status, stopReason),
       endWithError: (s, err) => this.endForDisposition(task, s, this.classify(err, parent.signal, task)),
       event: (type, data) => this.d.tasks.event(task.row.id, type, data),
@@ -291,8 +324,10 @@ export class Executor {
       // Sessions of this task still running belong to a dead process: this one holds the lease now.
       this.d.sessions?.markDeadRunning((s) => s.taskId !== task.row.id);
       let prepared: Prepared;
+      let d: ExecutorDeps;
       try {
-        prepared = await this.d.router.prepare(task, this.d.owner);
+        d = this.depsFor(task);
+        prepared = await this.d.router.prepare(task, this.d.owner, d.cfg);
       } catch (err) {
         if (isSimulatedCrash(err)) {
           crashed = true;
@@ -322,7 +357,7 @@ export class Executor {
       // Only the first attempt resumes; an escalation always starts fresh.
       let resume: RunResume | null = null;
       try {
-        resume = resumeFor(this.d, task);
+        resume = resumeFor(d, task);
       } catch (err) {
         // An unreadable or already-claimed session: run fresh (linked to it) rather than not at all.
         this.d.tasks.event(task.row.id, "session_resume_failed", { error: (err as Error).message });
@@ -330,7 +365,7 @@ export class Executor {
       // Verification and the one retry span the task's runs: a run after an interruption
       // continues them (the same repair run, at its tier) instead of starting over.
       const exempt = mode === "supervisor" || forced || (task.row as typeof task.row & { purpose?: string }).purpose === "qualification";
-      const continued = continueRun(this.d, task, plan, prepared.inputModalities, { interruptedTier: () => interruptedTier(this.d.sessions, task, resume), exempt });
+      const continued = continueRun(d, task, plan, prepared.inputModalities, { interruptedTier: () => interruptedTier(this.d.sessions, task, resume), exempt });
       const st = continued.st;
       let retry: RetryContext | null = continued.retry;
       let repairing = continued.repairing;
@@ -387,7 +422,7 @@ export class Executor {
         } else if (contract) {
           try {
             const run = this.reviewRun(task, controller.signal, routing, session, contract, plan.tier, repairPossible(this.d.gate, task, contract, st, forced));
-            const v = await verifyWithReview(this.d, task, contract, mode, outcome, st, run);
+            const v = await verifyWithReview(d, task, contract, mode, outcome, st, run);
             outcome = v.outcome;
             verified = v.verified;
             settle = v.settle;
@@ -403,7 +438,7 @@ export class Executor {
           }
         }
         let result: RunnerResult = verified ? verified.result : { ...outcome.result, verificationStatus: "not_required" };
-        const planned = await planRetry(this.d, task, st, { mode, plan, inputModalities: prepared.inputModalities, outcome, result, verified, contract, escalatedFrom: routing.escalatedFrom, forced });
+        const planned = await planRetry(d, task, st, { mode, plan, inputModalities: prepared.inputModalities, outcome, result, verified, contract, escalatedFrom: routing.escalatedFrom, forced });
         if (planned) {
           retry = planned.retry;
           repairing = true;
@@ -456,7 +491,7 @@ export class Executor {
         const routing: Routing = { classification: null, tier: null, escalatedFrom: null, attempts: [] };
         this.routing.set(t.row.id, routing);
         try {
-          const p = await this.d.router.prepare(t, this.d.owner);
+          const p = await this.d.router.prepare(t, this.d.owner, this.depsFor(t).cfg);
           routing.classification = p.classification;
           if (!p.plan) this.tooDifficult(t, p);
           else {
@@ -520,7 +555,7 @@ export class Executor {
           const signal = this.controllers.get(t.row.id)?.signal ?? shared.signal;
           try {
             const run = this.reviewRun(t, signal, this.routing.get(t.row.id)!, session, contract, tier, false);
-            const v = await verifyWithReview(this.d, t, contract, this.d.cfg.profiles[t.spec.profile]!.mode, o, restoreRunState(this.d.tasks, t.row.id).st, run);
+            const v = await verifyWithReview(this.depsFor(t), t, contract, this.d.cfg.profiles[t.spec.profile]!.mode, o, restoreRunState(this.d.tasks, t.row.id).st, run);
             this.record(t, o.state, v.verified.decision.action === "repair" ? v.settle().result : v.verified.result);
           } catch (err) {
             if (isSimulatedCrash(err)) {
@@ -590,9 +625,10 @@ export class Executor {
     });
     const final = this.d.tasks.finish(task.row.id, this.d.owner, result, state);
     const mode = this.d.cfg.profiles[task.spec.profile]?.mode;
-    if (this.d.brain && mode && mode !== "supervisor" && final !== "running") {
+    const d = this.tryDepsFor(task);
+    if (d?.brain && mode && mode !== "supervisor" && final !== "running") {
       const p = writeWorkerReport(
-        { cfg: this.d.cfg, brain: this.d.brain, access: this.d.access, spec: task.spec, taskId: task.row.id, effort: effortFor(task.spec, task.row.id), jobId: task.spec.parentTaskId ?? null, tier: (r?.tier ?? null) as never },
+        { cfg: d.cfg, brain: d.brain, access: d.access, spec: task.spec, taskId: task.row.id, effort: effortFor(task.spec, task.row.id), jobId: task.spec.parentTaskId ?? null, tier: (r?.tier ?? null) as never },
         roleForProfile(task.spec.profile),
         runner,
         final,

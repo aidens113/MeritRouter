@@ -38,6 +38,8 @@ export class Scheduler {
      * has a free slot (see `ProviderSlotAdmission`); null claims without looking at providers.
      */
     private readonly providerSlots: ClaimAdmission | null = null,
+    /** A project's configuration (its `team.max_agents` override); null or unknown: the global one. */
+    private readonly projectConfig: ((slug: string) => ResolvedConfig | undefined) | null = null,
   ) {}
 
   start(intervalMs = 1000): void {
@@ -99,7 +101,7 @@ export class Scheduler {
           supervisorProfiles: Object.entries(this.cfg.profiles).filter(([, p]) => p?.mode === "supervisor").map(([n]) => n),
           maxSupervisors: this.cfg.supervisor.max_concurrent_jobs,
           supervisorTimeoutMs: this.cfg.supervisor.job_timeout_seconds * 1000,
-          maxAgentsPerJob: maxAgentsPerJob(this.cfg),
+          maxAgentsPerJob: this.projectConfig ? (slug: string) => maxAgentsPerJob(this.projectConfig?.(slug) ?? this.cfg) : maxAgentsPerJob(this.cfg),
           ...(this.providerSlots ? { providerSlots: this.providerSlots } : {}),
         });
         const taken = new Set<string>();
@@ -112,13 +114,13 @@ export class Scheduler {
             const companions = this.tasks.claimCompanions(
               this.owner,
               task,
-              (t: StoredTask) => !taken.has(t.row.id) && batchKey(t.spec) === key && !this.redundant(t),
+              (t: StoredTask) => !taken.has(t.row.id) && t.row.project_id === task.row.project_id && batchKey(t.spec) === key && !this.redundant(t),
               profile.batching.max_items - 1,
               leaseMs,
               defaultTimeoutMs,
             );
             // Claimed tasks that fit this batch join it instead of running alone.
-            const extra = claimed.filter((c) => !taken.has(c.row.id) && batchKey(c.spec) === key && !this.redundant(c)).slice(0, profile.batching.max_items - 1 - companions.length);
+            const extra = claimed.filter((c) => !taken.has(c.row.id) && c.row.project_id === task.row.project_id && batchKey(c.spec) === key && !this.redundant(c)).slice(0, profile.batching.max_items - 1 - companions.length);
             const members = [task, ...companions, ...extra];
             for (const m of members) taken.add(m.row.id);
             this.track(members.length > 1 ? this.executor.runBatch(members) : this.executor.runSingle(task));

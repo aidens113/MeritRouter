@@ -41,7 +41,7 @@ export interface AuditHost {
   catalog: Catalog;
   router: TaskRouter;
   contracts: ContractStore;
-  submitTasks: (raw: unknown[], opts: { purpose?: string }) => Promise<SubmitOutcome[]>;
+  submitTasks: (raw: unknown[], opts: { purpose?: string; project?: string }) => Promise<SubmitOutcome[]>;
 }
 
 export type AuditDecision = "sampled" | "not_sampled" | "not_eligible" | "skipped_capacity" | "skipped_no_reviewer" | "skipped_error";
@@ -219,7 +219,8 @@ export class Auditor {
             budget: { maxModelRequests: h.cfg.verification.audit_max_requests, maxPaidUsd: 0 },
           },
         ],
-        { purpose: "audit" },
+        // The audit runs in the audited task's project (its repositories).
+        { purpose: "audit", ...(t.row.project_id ? { project: t.row.project_id } : {}) },
       );
       h.db.prepare("UPDATE verification_audits SET audit_task_id = ?, status = 'running' WHERE task_id = ?").run(sub!.taskId, taskId);
       h.tasks.event(taskId, "audit_started", { auditTaskId: sub!.taskId, reviewer: pick.id, qualified, revision });

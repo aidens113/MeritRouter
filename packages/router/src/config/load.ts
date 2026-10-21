@@ -3,14 +3,20 @@ import path from "node:path";
 import YAML from "yaml";
 import { ConfigSchema, type ProfileConfig, type ProfileName, type RawConfig } from "./schema.js";
 import { ConfigError } from "../core/errors.js";
+import { resolveProjects, resolveRepositories, type ProjectsResolution } from "../projects/resolve.js";
 
 export interface ResolvedConfig extends RawConfig {
   /** Absolute path of the loaded config file. */
   configPath: string;
   /** Absolute storage directory. */
   storageDir: string;
-  /** Absolute repository paths keyed by alias. */
+  /**
+   * Absolute paths of the top-level (single-project) repositories keyed by alias. Task work reads
+   * its project's repositories from its `ProjectContext` instead (src/projects/context.ts).
+   */
   repositoryPaths: Record<string, { path: string; writable: boolean }>;
+  /** The projects this config defines (one, named `brain.project`, for a single-project config). */
+  projectResolution: ProjectsResolution;
   /** Absolute models YAML (manual endpoints and overrides), if configured. */
   modelsPath: string | null;
   /** Absolute rulebook YAML, if configured. */
@@ -39,10 +45,9 @@ export function parseConfig(raw: unknown, configPath: string): ResolvedConfig {
   const cfg = parsed.data;
   const baseDir = path.dirname(configPath);
 
-  const repositoryPaths: ResolvedConfig["repositoryPaths"] = {};
-  for (const [alias, repo] of Object.entries(cfg.repositories)) {
-    repositoryPaths[alias] = { path: path.resolve(baseDir, repo.path), writable: repo.writable };
-  }
+  const repositoryPaths = resolveRepositories(cfg.repositories, baseDir);
+  const projects = resolveProjects(cfg, baseDir);
+  if (projects.issues.length) throw new ConfigError(`invalid config ${configPath}:\n  ${formatIssues(projects.issues).join("\n  ")}`);
   for (const [name, profile] of Object.entries(cfg.profiles) as [ProfileName, ProfileConfig][]) {
     // Supervisors have their own (larger) request budget; the per-task cap applies to workers.
     if (profile.mode !== "supervisor" && profile.max_model_requests > cfg.execution.max_model_requests_per_task) {
@@ -56,6 +61,7 @@ export function parseConfig(raw: unknown, configPath: string): ResolvedConfig {
     configPath,
     storageDir: path.resolve(baseDir, cfg.storage.directory),
     repositoryPaths,
+    projectResolution: projects.resolution,
     modelsPath: cfg.models.file ? path.resolve(baseDir, cfg.models.file) : null,
     rulebookPath: cfg.scoring.rulebook_file ? path.resolve(baseDir, cfg.scoring.rulebook_file) : null,
   };

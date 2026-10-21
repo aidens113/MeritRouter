@@ -15,7 +15,6 @@ import { Scanner, type ScanSummary } from "../models/scanner.js";
 import { TaskRouter } from "../routing/router.js";
 import { ProviderSlotAdmission } from "../routing/claim-capacity.js";
 import { Qualifier } from "../qualification/runner.js";
-import { syncRepositoryRegistry } from "../qualification/registry.js";
 import { KeyVault } from "../providers/vault.js";
 import { Brain } from "../brain/brain.js";
 import { BrainAccess } from "../brain/access.js";
@@ -35,7 +34,9 @@ import { createCodingRunner } from "../runners/coding/index.js";
 import { SupervisorRunner } from "../runners/supervisor.js";
 import { TaskValidationError } from "./errors.js";
 import { validateTask } from "./validate.js";
-import { DELEGATED_BY_SESSION, Executor, type CodingRunner } from "./executor.js";
+import { DELEGATED_BY_SESSION, Executor, type CodingRunner, type ProjectDeps } from "./executor.js";
+import { ProjectRegistry } from "../projects/registry.js";
+import type { ProjectContext } from "../projects/context.js";
 import { Scheduler } from "./scheduler.js";
 import { isTerminal, type TaskState, type WorkerResult, type WorkerTask } from "./task.js";
 
@@ -55,6 +56,8 @@ export interface SwitchyardOptions {
 
 export interface TaskStatus {
   taskId: string;
+  /** The task's project slug. */
+  project: string;
   profile: ProfileName;
   purpose: string;
   state: TaskState;
@@ -79,6 +82,9 @@ export interface AwaitOutcome {
 
 const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
 
+/** Task purposes SwitchYard submits itself; without a named project they go to the primary one. */
+const SYSTEM_PURPOSES = new Set(["qualification", "comparison", "audit"]);
+
 /** Library entry point shared by the CLI, the MCP server, and the web panel. */
 export class Switchyard {
   readonly db: Db;
@@ -97,8 +103,13 @@ export class Switchyard {
   readonly vault: KeyVault;
   /** Providers: registry, credentials, key state, limits, client, health. */
   readonly providers: ProviderRuntime;
+  /** The projects of this install (`projects.<slug>`, or the single-project shape). */
+  readonly projects: ProjectRegistry;
+  /** The primary project's brain (see `brainFor` for any project). */
   readonly brain: Brain;
+  /** The primary project's brain access (see `brainAccessFor`). */
   readonly brainAccess: BrainAccess;
+  private readonly brains = new Map<string, { brain: Brain; access: BrainAccess }>();
   readonly spend: PaidSpend;
   /** Agent sessions: per-run event logs (transcript, model calls, tool journal). */
   readonly sessions: SessionStore;
@@ -126,8 +137,10 @@ export class Switchyard {
     this.sessions = new SessionStore(this.db, cfg.storageDir, this.now);
     this.contracts = new ContractStore(this.db);
     this.admission = new Admission(this.db, this.tasks, cfg, this.now);
-    this.brain = new Brain(cfg, this.db, this.now);
-    this.brainAccess = new BrainAccess(this.db, cfg, this.now);
+    this.projects = new ProjectRegistry(cfg);
+    this.projects.attach(this.db, this.now);
+    this.brain = this.brainFor(this.projects.primary.project.slug);
+    this.brainAccess = this.brainAccessFor(this.projects.primary.project.slug);
     this.vault = new KeyVault(this.db, cfg.storageDir, this.now);
     this.spend = new PaidSpend(this.db, cfg, this.vault, this.now);
     this.providers = new ProviderRuntime(cfg, this.db, this.vault, {
@@ -189,8 +202,8 @@ export class Switchyard {
         rejectTask: (id, input) => this.rejectTask(id, input),
       },
       onSettled: (id) => this.events.emit("settled", id),
+      project: (task) => this.projectDeps(task.row.project_id),
     });
-    syncRepositoryRegistry(this.db, cfg);
     this.qualifier = new Qualifier(this);
     this.auditor = new Auditor(
       { cfg, db: this.db, tasks: this.tasks, artifacts: this.artifacts, admission: this.admission, catalog: this.catalog, router: this.router, contracts: this.contracts, submitTasks: (raw, o) => this.submitTasks(raw, o) },
@@ -202,14 +215,67 @@ export class Switchyard {
       this.executor,
       this.owner,
       () => {
-        syncRepositoryRegistry(this.db, this.cfg);
+        this.projects.syncRuntimeRepositories();
         void this.qualifier.gradePending().catch(() => undefined);
         void this.auditor.sweep().catch(() => undefined);
       },
       this.sessions,
       new ProviderSlotAdmission(cfg, this.router, this.health.capacity, this.now),
+      (slug) => this.projects.get(slug),
     );
     if (opts.worker) this.startWorker(opts.pollIntervalMs);
+  }
+
+  /** A project's brain (one per project, over the shared brain repository). */
+  brainFor(project: string): Brain {
+    return this.projectBrain(project).brain;
+  }
+
+  /** A project's brain access (grants and requests scoped to that project's brain). */
+  brainAccessFor(project: string): BrainAccess {
+    return this.projectBrain(project).access;
+  }
+
+  private projectBrain(project: string): { brain: Brain; access: BrainAccess } {
+    let b = this.brains.get(project);
+    if (!b) {
+      const ctx = this.projects.require(project);
+      b = { brain: new Brain(ctx, this.db, this.now), access: new BrainAccess(this.db, ctx, this.now) };
+      this.brains.set(project, b);
+    }
+    return b;
+  }
+
+  /** A task's project dependencies (its context, brain, brain access); throws for an unconfigured project. */
+  private projectDeps(project: string): ProjectDeps {
+    const cfg = this.projectContext(project);
+    const b = this.projectBrain(cfg.project.slug);
+    return { cfg, brain: b.brain, access: b.access };
+  }
+
+  /**
+   * The context a project's tasks run under. A row without a project (written outside a service
+   * since this one started) belongs to the primary project, as at start (see `backfillProjects`).
+   */
+  projectContext(project: string): ProjectContext {
+    if (!project) return this.projects.primary;
+    const c = this.projects.get(project);
+    if (!c) throw new TaskValidationError(`project ${project} is not configured (configured: ${this.projects.slugs().join(", ")})`);
+    return c;
+  }
+
+  /** The context of a task's project. */
+  private contextOfTask(id: string): ProjectContext {
+    const project = this.tasks.projectOf(id);
+    if (project === null) throw new TaskValidationError(`unknown task ${id}`);
+    return this.projectContext(project);
+  }
+
+  /** Refuse an id-based write when the caller named a project the task is not in. */
+  private assertInProject(id: string, project: string | undefined): void {
+    if (!project) return;
+    const actual = this.tasks.projectOf(id);
+    if (actual !== null && actual !== project) throw new TaskValidationError(`task ${id} belongs to project ${actual}, not ${project}`);
   }
 
   private startWorker(pollIntervalMs?: number): void {
@@ -274,7 +340,7 @@ export class Switchyard {
       const next = parseConfig(readConfigFile(this.cfg.configPath), this.cfg.configPath);
       if (next.storageDir !== this.cfg.storageDir) throw new Error("storage.directory cannot change while running; restart instead");
       Object.assign(this.cfg, next);
-      syncRepositoryRegistry(this.db, this.cfg);
+      this.projects.refresh();
       this.tasks.event(null, "config_reloaded", { at: this.now() });
       return { reloaded: true };
     } catch (err) {
@@ -292,19 +358,51 @@ export class Switchyard {
   }
 
   /**
+   * The project a submission goes to: the named one; else the project of the job (parentTaskId)
+   * or dependency the tasks name; else, for SwitchYard's own purposes (qualification, audits,
+   * comparisons), the primary project; else the only project. With several projects and nothing
+   * to infer from, a project must be named.
+   */
+  private submissionProject(raw: unknown[], opts: { purpose?: string; project?: string }): ProjectContext {
+    const linked = new Set<string>();
+    for (const r of raw) {
+      if (!r || typeof r !== "object") continue;
+      const t = r as { parentTaskId?: unknown; dependsOn?: unknown };
+      const ids = [t.parentTaskId, ...(Array.isArray(t.dependsOn) ? t.dependsOn : [])].filter((x): x is string => typeof x === "string");
+      for (const id of ids) {
+        const p = this.tasks.projectOf(id);
+        if (p) linked.add(p);
+      }
+    }
+    if (opts.project) {
+      const ctx = this.projects.require(opts.project);
+      const other = [...linked].find((p) => p !== opts.project);
+      if (other) throw new TaskValidationError(`the tasks name a job or dependency in project ${other}, not ${opts.project}`);
+      return ctx;
+    }
+    if (linked.size > 1) throw new TaskValidationError(`the tasks name jobs or dependencies in several projects (${[...linked].join(", ")})`);
+    if (linked.size === 1) return this.projectContext([...linked][0]!);
+    if (opts.purpose && SYSTEM_PURPOSES.has(opts.purpose)) return this.projects.primary;
+    return this.projects.forWrite();
+  }
+
+  /**
    * Validate every task, then persist them atomically before acknowledging. `parentSessionId`
    * names the agent session delegating the tasks; their sessions record it as their parent.
+   * `project` names the tasks' project (see `submissionProject` for when it may be omitted);
+   * their repository aliases are that project's.
    */
-  async submitTasks(raw: unknown[], opts: { purpose?: string; parentSessionId?: string } = {}): Promise<SubmitOutcome[]> {
+  async submitTasks(raw: unknown[], opts: { purpose?: string; parentSessionId?: string; project?: string } = {}): Promise<SubmitOutcome[]> {
     if (!Array.isArray(raw) || raw.length === 0) throw new TaskValidationError("submit at least one task");
+    const project = this.submissionProject(raw, opts);
     const specs: WorkerTask[] = [];
     const errors: string[] = [];
-    syncRepositoryRegistry(this.db, this.cfg);
+    this.projects.syncRuntimeRepositories();
     const largestContext = this.largestContext();
     for (const [i, r] of raw.entries()) {
       try {
         specs.push(
-          await validateTask(this.cfg, r, this.artifacts, {
+          await validateTask(project, r, this.artifacts, {
             ...(largestContext !== undefined ? { largestContext } : {}),
             knownEndpoint: (id) => this.catalog.get(id) !== undefined,
           }),
@@ -315,11 +413,12 @@ export class Switchyard {
     }
     // A task whose verification policy cannot fit its request budget is refused now.
     if (!errors.length) specs.forEach((spec, i) => {
-      const shortfall = verificationBudgetShortfall(this.cfg, spec, parentImportance(this.tasks, this.contracts, spec));
+      const shortfall = verificationBudgetShortfall(project, spec, parentImportance(this.tasks, this.contracts, spec));
       if (shortfall) errors.push(`task[${i}]: ${shortfall}`);
     });
     if (errors.length) throw new TaskValidationError(errors.join("\n"), errors);
-    const outcomes = this.tasks.submit(specs);
+    const outcomes = this.tasks.submit(specs, { project: project.project.slug });
+    this.projects.touch(project.project.slug);
     if (opts.purpose && opts.purpose !== "work") {
       for (const o of outcomes) if (!o.deduplicated) this.db.prepare("UPDATE tasks SET purpose = ? WHERE id = ?").run(opts.purpose, o.taskId);
     }
@@ -331,10 +430,11 @@ export class Switchyard {
     return outcomes;
   }
 
-  getStatus(ids: string[]): Array<TaskStatus | { taskId: string; state: "unknown" }> {
+  /** Status of tasks by id; with `project`, a task of another project reads as unknown. */
+  getStatus(ids: string[], project?: string): Array<TaskStatus | { taskId: string; state: "unknown" }> {
     return ids.map((id) => {
       const t = this.tasks.get(id);
-      return t ? this.status(t) : { taskId: id, state: "unknown" as const };
+      return t && (!project || t.row.project_id === project) ? this.status(t) : { taskId: id, state: "unknown" as const };
     });
   }
 
@@ -358,6 +458,7 @@ export class Switchyard {
       );
     return {
       taskId: t.row.id,
+      project: t.row.project_id,
       profile: t.row.profile,
       purpose: row.purpose ?? "work",
       state: t.row.state,
@@ -374,8 +475,9 @@ export class Switchyard {
     };
   }
 
-  listTasks(states?: TaskState[], limit = 50): TaskStatus[] {
-    return this.tasks.list({ ...(states ? { states } : {}), limit }).map((t) => this.status(t));
+  /** Newest tasks first; `project` limits them to one project (all projects when omitted). */
+  listTasks(states?: TaskState[], limit = 50, project?: string): TaskStatus[] {
+    return this.tasks.list({ ...(states ? { states } : {}), limit, ...(project ? { project } : {}) }).map((t) => this.status(t));
   }
 
   /** Results for tasks that have reached a terminal (or interrupted) state. */
@@ -420,7 +522,9 @@ export class Switchyard {
     }
   }
 
-  cancelTasks(ids: string[]): Array<{ taskId: string; state: TaskState | "unknown" }> {
+  /** Cancel tasks; with `project`, a task of another project is refused. */
+  cancelTasks(ids: string[], project?: string): Array<{ taskId: string; state: TaskState | "unknown" }> {
+    for (const id of ids) this.assertInProject(id, project);
     const out = this.tasks.requestCancel(ids);
     for (const o of out) {
       if (o.state === "cancel_requested") this.executor.controllers.get(o.taskId)?.abort("cancel");
@@ -442,8 +546,11 @@ export class Switchyard {
     idempotencyKey?: string;
     maxModelRequests?: number;
     maxPaidUsd?: number;
+    /** The job's project (required when the install has several). */
+    project?: string;
   }): Promise<SubmitOutcome> {
     if (!this.cfg.profiles.supervise) throw new TaskValidationError("this configuration has no supervise task type; use a standalone preset or add profiles.supervise");
+    const project = this.projects.forWrite(input.project).project.slug;
     const [out] = await this.submitTasks([
       {
         profile: "supervise",
@@ -454,7 +561,7 @@ export class Switchyard {
         constraints: { acceptanceCriteria: input.acceptanceCriteria?.length ? input.acceptanceCriteria : ["The goal is achieved and the supervisor verified it"], ...(input.checks?.length ? { checks: input.checks } : {}) },
         ...(input.maxModelRequests || input.maxPaidUsd !== undefined ? { budget: { ...(input.maxModelRequests ? { maxModelRequests: input.maxModelRequests } : {}), ...(input.maxPaidUsd !== undefined ? { maxPaidUsd: input.maxPaidUsd } : {}) } } : {}),
       },
-    ]);
+    ], { project });
     return out!;
   }
 
@@ -469,30 +576,38 @@ export class Switchyard {
    * needs_supervisor ones need a reason, and with `verification.strict_acceptor: human` only a
    * human accepts a strict result. Throws a SwitchyardError with the refusal code.
    */
-  acceptTask(id: string, input: AcceptanceDecisionInput): AcceptanceDecisionOutcome {
-    const out = recordAcceptanceDecision({ cfg: this.cfg, tasks: this.tasks, contracts: this.contracts, now: this.now }, id, "accept", input);
+  acceptTask(id: string, input: AcceptanceDecisionInput, project?: string): AcceptanceDecisionOutcome {
+    this.assertInProject(id, project);
+    const out = recordAcceptanceDecision({ cfg: this.contextOfTask(id), tasks: this.tasks, contracts: this.contracts, now: this.now }, id, "accept", input);
     this.events.emit("settled", id);
     return out;
   }
 
   /** Reject a finished task's result (a reason is required); it becomes unmet. */
-  rejectTask(id: string, input: AcceptanceDecisionInput): AcceptanceDecisionOutcome {
-    const out = recordAcceptanceDecision({ cfg: this.cfg, tasks: this.tasks, contracts: this.contracts, now: this.now }, id, "reject", input);
+  rejectTask(id: string, input: AcceptanceDecisionInput, project?: string): AcceptanceDecisionOutcome {
+    this.assertInProject(id, project);
+    const out = recordAcceptanceDecision({ cfg: this.contextOfTask(id), tasks: this.tasks, contracts: this.contracts, now: this.now }, id, "reject", input);
     this.events.emit("settled", id);
     return out;
   }
 
-  /** Questions supervisors are waiting on. */
-  questions(opts: { pendingOnly?: boolean; taskId?: string } = {}): Array<{ id: number; taskId: string; question: string; options: string[] | null; answer: string | null; askedAt: number; answeredAt: number | null }> {
+  /** Questions supervisors are waiting on; `project` limits them to one project's jobs (all when omitted). */
+  questions(opts: { pendingOnly?: boolean; taskId?: string; project?: string } = {}): Array<{ id: number; taskId: string; project: string; question: string; options: string[] | null; answer: string | null; askedAt: number; answeredAt: number | null }> {
     const where: string[] = [];
     const args: unknown[] = [];
-    if (opts.pendingOnly ?? true) where.push("answer IS NULL");
-    if (opts.taskId) (where.push("task_id = ?"), args.push(opts.taskId));
-    const rows = this.db.prepare(`SELECT * FROM job_questions ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY id DESC LIMIT 100`).all(...args) as Array<{ id: number; task_id: string; question: string; options_json: string | null; answer: string | null; asked_at: number; answered_at: number | null }>;
-    return rows.map((r) => ({ id: r.id, taskId: r.task_id, question: r.question, options: r.options_json ? (JSON.parse(r.options_json) as string[]) : null, answer: r.answer, askedAt: r.asked_at, answeredAt: r.answered_at }));
+    if (opts.pendingOnly ?? true) where.push("q.answer IS NULL");
+    if (opts.taskId) (where.push("q.task_id = ?"), args.push(opts.taskId));
+    if (opts.project) (where.push("t.project_id = ?"), args.push(opts.project));
+    const rows = this.db.prepare(`SELECT q.*, t.project_id FROM job_questions q JOIN tasks t ON t.id = q.task_id ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY q.id DESC LIMIT 100`).all(...args) as Array<{ id: number; task_id: string; project_id: string; question: string; options_json: string | null; answer: string | null; asked_at: number; answered_at: number | null }>;
+    return rows.map((r) => ({ id: r.id, taskId: r.task_id, project: r.project_id, question: r.question, options: r.options_json ? (JSON.parse(r.options_json) as string[]) : null, answer: r.answer, askedAt: r.asked_at, answeredAt: r.answered_at }));
   }
 
-  answerQuestion(id: number, answer: string, by = "user"): void {
+  /** Answer a supervisor's question; with `project`, a question of another project's job is refused. */
+  answerQuestion(id: number, answer: string, by = "user", project?: string): void {
+    if (project) {
+      const q = this.db.prepare("SELECT task_id FROM job_questions WHERE id = ?").get(id) as { task_id: string } | undefined;
+      if (q) this.assertInProject(q.task_id, project);
+    }
     const r = this.db.prepare("UPDATE job_questions SET answer = ?, answered_by = ?, answered_at = ? WHERE id = ? AND answer IS NULL").run(answer, by, this.now(), id);
     if (r.changes === 0) throw new TaskValidationError(`question ${id} does not exist or was already answered`);
   }
@@ -501,7 +616,8 @@ export class Switchyard {
    * Re-queue an interrupted task. Agent-loop roles continue their latest interrupted session;
    * a coding task starts over in a fresh worktree (the old one stays as evidence).
    */
-  resumeTask(id: string): TaskState {
+  resumeTask(id: string, project?: string): TaskState {
+    this.assertInProject(id, project);
     const t = this.tasks.get(id);
     const coding = t ? this.cfg.profiles[t.spec.profile]?.mode === "coding" : false;
     const s = this.tasks.resume(id, coding ? { freshWorkspace: true } : {});
@@ -513,10 +629,11 @@ export class Switchyard {
    * Re-queue the task of an interrupted session so its next run continues that session (a
    * coding task in the same worktree). Completion and batch work re-runs fresh, linked to it.
    */
-  resumeSession(sessionId: string): { taskId: string; state: TaskState } {
+  resumeSession(sessionId: string, project?: string): { taskId: string; state: TaskState } {
     let s = this.sessions.get(sessionId);
     if (!s) throw new TaskValidationError(`unknown session ${sessionId}`);
     if (!s.taskId) throw new TaskValidationError(`session ${sessionId} belongs to no task`);
+    this.assertInProject(s.taskId, project);
     if (s.status === "running" && !this.tasks.leaseLive(s.taskId)) {
       // Left running by a process that died: settle the task and the session first.
       this.tasks.recoverExpiredLeases();
@@ -530,8 +647,9 @@ export class Switchyard {
     return { taskId, state };
   }
 
-  usage(sinceMs: number, untilMs?: number): UsageSummary {
-    return usageSummary(this.db, sinceMs, untilMs ?? this.now());
+  /** Usage in a window; `project` limits it to one project's tasks and requests (all when omitted). */
+  usage(sinceMs: number, untilMs?: number, project?: string): UsageSummary {
+    return usageSummary(this.db, sinceMs, untilMs ?? this.now(), project);
   }
 
   /**

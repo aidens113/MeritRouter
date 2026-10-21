@@ -5,6 +5,7 @@ import type { Db } from "../storage/db.js";
 import { immediate, newId } from "../storage/db.js";
 import { faultPoint, isSimulatedCrash } from "../core/faults.js";
 import { git } from "./git.js";
+import { repoKey } from "../projects/context.js";
 
 /**
  * The merge queue: how finished work reaches a job branch. Every integration (a coding task's
@@ -289,7 +290,9 @@ export class MergeQueue {
       }
       const id = newId("mq");
       const now = this.now();
-      const lockKey = `${i.repo}:${i.branch}`;
+      // One integration per branch of a project's repository (decision D6: <project>/<alias>).
+      const project = (this.db.prepare("SELECT project_id FROM tasks WHERE id = ?").get(i.jobId) as { project_id: string } | undefined)?.project_id ?? "";
+      const lockKey = `${repoKey(project, i.repo)}:${i.branch}`;
       this.db
         .prepare(
           `INSERT INTO merge_queue (id, job_id, task_id, kind, repo_alias, branch, lock_key, integration_worktree, source_worktree, source_base, source_head, commits_json, state, acceptance_json, created_at, updated_at)

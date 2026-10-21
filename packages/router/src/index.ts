@@ -1,6 +1,11 @@
 export { Switchyard, type SwitchyardOptions, type TaskStatus, type AwaitOutcome } from "./core/service.js";
 export { loadConfig, parseConfig, resolveConfigPath, CONFIG_ENV, DEFAULT_CONFIG_NAME, type ResolvedConfig } from "./config/load.js";
 export * from "./config/schema.js";
+export { ProjectConfigSchema, PROJECT_TEAM_KEYS, PROJECT_CODING_KEYS, PROJECT_SUPERVISOR_KEYS, type ProjectConfig } from "./projects/schema.js";
+export { resolveProjects, deepMerge, type ResolvedProject, type ProjectsResolution, type ProjectOverrides } from "./projects/resolve.js";
+export { projectContext, repoKey, splitRepoKey, type ProjectContext, type ProjectInfo } from "./projects/context.js";
+export { ProjectRegistry, type ProjectRow } from "./projects/registry.js";
+export { backfillProjects } from "./projects/backfill.js";
 export {
   WorkerTaskSchema,
   WorkerResultSchema,
