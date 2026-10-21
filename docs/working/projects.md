@@ -1,7 +1,7 @@
 # Projects (one install, many projects)
 
 Status: Active
-Status detail: Plan written 2026-10-20; waiting for the user's go-ahead before J1.
+Status detail: Plan approved by the user 2026-10-20 (D2, D4 as recommended; projects before caching). J1 in progress.
 Created: 2026-10-20
 Last updated: 2026-10-20
 Owner: Senior supervisor agent
@@ -35,11 +35,14 @@ global pages) shows all projects and their jobs.
 - MCP: one process = one config = one in-process worker, fixed effort `claude-code`.
 - Panel: one global `Switchyard` from `SWITCHYARD_CONFIG`, flat 13-item nav, no project concept.
 
-**Next steps:** user go-ahead, then J1 (`j1-core` first; then `j1-scheduling-brain` and
-`j1-surfaces` in parallel), then J2 (panel), then J3 (operations, demo, docs). The settings-nav
-fix (on `feat/settings-nav`) merges first because J2 rewrites the settings page.
+**User decisions (2026-10-20):** D2 project settings in the global config; D4 agents read their
+own project plus `global/`; build projects first, caching after; D9 (below) global knowledge is
+written only by supervisors and only when it is truly global-worthy.
 
-**Blockers:** user go-ahead on the decisions below (each has a recommended default).
+**Next steps:** J1 (`j1-core` first; then `j1-scheduling-brain` and `j1-surfaces` in parallel),
+then J2 (panel), then J3 (operations, demo, docs). The settings-nav fix merged first (7443bf8).
+
+**Blockers:** none.
 
 ---
 
@@ -67,6 +70,18 @@ fix (on `feat/settings-nav`) merges first because J2 rewrites the settings page.
   merge locks, and `writable_repo`; users keep writing the bare alias inside a project.
 - **D7. Budgets.** Paid budgets and allocation stay global; an optional per-project paid cap and
   request share are added in J1 as config fields (unset = no per-project limit).
+- **D9. Global knowledge (user, 2026-10-20).** Only supervisor agents (and people) may add to
+  `global/`; workers never can (no grant, and `promoteLesson` already refuses non-supervisors).
+  A supervisor's addition must be truly global-worthy, enforced in code, not by prompt text:
+  (a) a deterministic check rejects text naming the project's slug or name, its repository
+  aliases or paths, or file paths inside them, and requires at least one cited source in the
+  project's brain; (b) an independent reviewer (a different model from the supervisor's, through
+  the existing verification reviewer machinery) judges "applies beyond this project" against a
+  fixed rubric; (c) a rejected promotion is saved as a project lesson
+  (`projects/<p>/decisions/lessons/`) with the reason, so nothing is lost; (d) every global entry
+  records its project, supervisor, sources, and reviewer verdict, and the panel lists global
+  additions with a revert. Optional `brain.global_requires_approval` adds human approval in the
+  panel (default off).
 - **D8. MCP.** `mcp.js --project <slug>` (or `SWITCHYARD_PROJECT`, or inferred when the cwd is
   inside one of a project's repositories); `--no-worker` when the daemon already runs a worker.
   Brain effort becomes per project.
@@ -91,7 +106,9 @@ fix (on `feat/settings-nav`) merges first because J2 rewrites the settings page.
   CLI pass it; no project means "all" for reads and is an error for writes.
 - Scheduler: fair claim per D5; prompt batching never mixes projects.
 - Brain: one `Brain` per project over the same repository; `ensure()` creates a project's folders
-  when it is created; FTS index stays global with a project column for filtering.
+  when it is created; FTS index stays global with a project column for filtering. Default grants
+  per D4 (supervisor reads `projects/{project}/**` and `global/**`); global writes only through
+  the gated promotion of D9.
 - CLI: global `--project` flag (default: the only project, or the one whose repository contains
   the cwd); `projects list|create|archive`; `init` writes a global config plus a first project.
 - MCP: per D8.
@@ -117,7 +134,9 @@ fix (on `feat/settings-nav`) merges first because J2 rewrites the settings page.
 
 | Phase | Deliverable | Acceptance |
 | --- | --- | --- |
-| J1 | Router: projects area, config schema and legacy upgrade, migration, `ProjectContext` threaded through executor/runners/brain, fair scheduler, CLI `--project` and `projects`, MCP `--project`/`--no-worker` | Two projects with the same repo alias run concurrently in one worker with no lease or merge collision; fairness test (a 50-task backlog in A does not starve B); brain isolation test; legacy config upgrades with all old rows in the one project; full suite green |
+| J1 | Router: projects area, config schema and legacy upgrade, migration, `ProjectContext` threaded through executor/runners/brain, fair scheduler, CLI `--project` and `projects`, MCP `--project`/`--no-worker` | Two projects with the same repo alias run concurrently in one worker with no lease or merge collision; fairness test (a 50-task backlog in A does not starve B); brain isolation test; D9 tests (worker
+cannot write `global/`; a project-specific lesson is rejected to the project; a generic one with a
+passing review lands with provenance); legacy config upgrades with all old rows in the one project; full suite green |
 | J2 | Panel: projects grid, create flow, switcher, per-project routes, global dashboard, settings split, redirects | Demo seed with 3 projects; every page 200; screenshots of grid, switcher open, project overview, global dashboard, create flow |
 | J3 | Operations and docs: one daemon/service serves all projects, backup includes the brain, setup/operations/roles/decisions, presets | `init` → create two projects → worker runs both (manual run recorded); docs describe projects |
 
