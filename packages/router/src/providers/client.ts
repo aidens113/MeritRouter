@@ -53,7 +53,9 @@ export function createProviderClient(opts: ProviderClientOptions = {}): Provider
     async complete(req) {
       const p = req.provider;
       // Refuse locally, before any HTTP, what the provider would reject: nothing is consumed.
-      if (p.auth !== "none" && !req.credential.apiKey) throw new ProviderError("auth_invalid", `${p.id} needs an API key`, { provider: p.id, possiblyConsumed: false });
+      if (!p.baseUrl) throw new ProviderError("bad_request", `${p.id} has no base URL: set providers.${p.id}.base_url`, { provider: p.id, possiblyConsumed: false });
+      // A keyless credential on a provider whose keys are optional (a local server without auth) sends none.
+      if (p.auth !== "none" && !req.credential.apiKey && p.keyPolicy !== "optional") throw new ProviderError("auth_invalid", `${p.id} needs an API key`, { provider: p.id, possiblyConsumed: false });
       if (p.urlParams.includes("account_id") && !(req.credential.accountId ?? p.accountId)) {
         throw new ProviderError("bad_request", `${p.id} needs an account id (set account_id on the key or provider)`, { provider: p.id, possiblyConsumed: false });
       }

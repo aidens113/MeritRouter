@@ -42,7 +42,8 @@ export async function refreshFreeQuotas(runtime: ProviderRuntime, only: readonly
   const out = { refreshed: [] as string[], warnings: [] as string[] };
   for (const id of only) {
     const provider = runtime.provider(id);
-    if (!provider?.enabled || !provider.keyInfoUrl) continue;
+    // Only OpenRouter's key endpoint reports a free daily quota (Ollama's balance is probed separately).
+    if (!provider?.enabled || !provider.keyInfoUrl || provider.keyInfoShape !== "openrouter_key") continue;
     for (const cred of runtime.credentials().usable(id)) {
       try {
         const quota = await probeFreeDailyQuota({ provider, credential: runtime.credentials().requestCredential(cred.ref), fetch: runtime.fetch, now: runtime.now, ...(signal ? { signal } : {}) });
