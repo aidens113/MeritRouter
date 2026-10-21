@@ -16,9 +16,14 @@ Node 22.11 works; 22.12+ or 24 LTS is recommended.
 ## 2. Start the panel
 
 ```bash
-node packages/router/dist/cli.js init . --preset claude-code   # writes switchyard.config.yaml and models.yaml
+node packages/router/dist/cli.js init . --preset claude-code --project my-app --repo app=../my-app
 SWITCHYARD_CONFIG=$PWD/switchyard.config.yaml pnpm --filter switchyard-panel start   # http://127.0.0.1:4477
 ```
+
+`init` writes `switchyard.config.yaml` and `models.yaml`: one global config plus a first project.
+- `--project <slug>` names the project (default `my-project`, or `SWITCHYARD_PROJECT`).
+- `--name "<name>"` gives it a display name.
+- Each `--repo <alias>=<path>` replaces the preset's placeholder repository.
 
 ```powershell
 $env:SWITCHYARD_CONFIG = "D:\SwitchYardRouter\switchyard.config.yaml"   # use setx for persistence
@@ -36,6 +41,99 @@ pnpm --filter switchyard-panel start
 
 The panel binds to 127.0.0.1. Set `SWITCHYARD_PANEL_TOKEN` to require a login. Nothing else has
 to be installed or running: SwitchYard calls each provider's API itself.
+
+### Projects
+
+One install holds many projects. Each project has its own:
+- repositories;
+- brain folder (`projects/<slug>/` in the brain repository);
+- jobs, tasks, sessions, and teams;
+- optional overrides of verification, team policy, allowed commands, protected paths, branch
+  prefix, and roles.
+
+Everything else is global and shared: provider keys, models, routing, budgets, and the other
+settings. One worker runs every project at once and takes turns fairly between them (see
+[operations.md](operations.md#projects-fairness-and-limits)).
+
+Projects live in the config file under `projects.<slug>`:
+
+```yaml
+brain:
+  project: my-app            # the primary project: system tasks and rows from before projects
+projects:
+  my-app:
+    name: My app
+    repositories:
+      app: { path: ../my-app }
+  docs-site:
+    repositories:
+      web: { path: ../docs-site, writable: true }
+    priority: 2              # optional fairness and limit fields, see operations.md
+```
+
+A slug is lower-case letters, digits, `.`, `_`, and `-`, starting with a letter or digit.
+
+**In the panel.**
+- `/` is the projects grid. Each card shows:
+  - the project's repositories, with a "missing" badge for a folder that is gone;
+  - its running and queued jobs and tasks;
+  - its last activity;
+  - an attention badge: questions, results awaiting a decision, brain requests, interrupted
+    tasks, missing repositories.
+- **New project** (`/new`) takes a name, a slug (derived from the name until you edit it),
+  repositories, and optional brain mounts. The panel checks on the server that each folder
+  exists and is a git repository, then writes `projects.<slug>` into the config. You land on
+  the new project's page.
+- The **project switcher** at the top left shows the current project. It lists every live
+  project with an activity dot (green while running, amber while queued, grey when idle), plus
+  "All projects", "Projects grid", and "New project".
+- `/p/<slug>/...` holds one project's pages: Overview, Jobs, Teams, Tasks, Sessions, Requests,
+  Brain, and Settings.
+- `/all/...` holds the install-wide pages:
+  - the dashboard: every project's jobs and queues, attention items, and usage and paid spend
+    by project;
+  - Requests (every project);
+  - Models, Routing, Provider keys, Qualification, Calibration;
+  - Knowledge (global lessons; see [roles.md](roles.md#global-knowledge-d9));
+  - Settings (global sections only).
+- Old flat URLs still work:
+  - `/jobs`, `/tasks`, `/sessions`, `/teams`, `/requests`, and `/brain` go to the same page of
+    the project you used last, or to `/`;
+  - `/jobs/<id>`, `/tasks/<id>`, and `/sessions/<id>` go to that item's own project;
+  - `/models`, `/routing`, `/keys`, `/qualification`, `/calibration`, and `/settings` go to
+    `/all/...`.
+
+**On the command line.**
+- `switchyard projects` lists the projects. `*` marks the selected one, and `--all` adds
+  archived ones.
+- `switchyard projects create <slug> --name "<name>" --repo <alias>=<path>` adds a project. It
+  checks that each repository exists and is a git repository.
+- `switchyard projects archive|unarchive <slug>` archives a project or brings it back; see
+  [operations.md](operations.md#archiving-a-project).
+- Commands that work inside one project take `--project <slug>`. Without the flag, SwitchYard
+  picks the project in this order:
+  1. `SWITCHYARD_PROJECT`;
+  2. the only project that is not archived;
+  3. the project whose repository contains the current directory (the innermost one wins).
+- `submit`, `run`, and `blame` need a project. With several projects and no way to choose, they
+  stop and list them.
+- Listing commands (`status`, `jobs`, `questions`, `sessions`, `usage`, `brain`) show every
+  project when none is chosen.
+- `doctor` checks each project's repositories and brain folder, or only `--project`'s.
+- Install-wide commands ignore projects: `models`, `route`, `keys`, `qualify`, `compare`, and
+  `worker` (which serves every project). `backup`, `restore`, `daemon`, and `service` refuse
+  `--project`, because they cover the whole install.
+
+**Upgrading a single-project config.** A config with top-level `repositories` and no `projects`
+section keeps working unchanged:
+- It is read as one project named after `brain.project` (`default` when unset).
+- On first start, every existing task, job, session, brain request, and request record is given
+  that project.
+- The first `projects create`, from the CLI or the panel, converts the file: the top-level
+  `repositories` move under `projects.<brain.project>`.
+- Other top-level sections stay global after the conversion, including `brain.mounts`,
+  `verification`, and `team`. They then apply to every project. To keep a setting for the old
+  project only, move it under `projects.<slug>` yourself.
 
 ## 3. Add provider keys
 
@@ -157,11 +255,14 @@ Providers that cannot be added this way (OAuth or request signing, retired APIs)
 
 ## 3b. Configure and run
 
-Edit `switchyard.config.yaml` (or the panel's Settings):
+Edit `switchyard.config.yaml`, or use the panel: global settings are at `/all/settings`, a
+project's at `/p/<slug>/settings`.
 
-- `repositories`: the repositories workers may read (and, for `implement`, edit).
-- `brain.project` (and optionally `brain.path`, default `~/.switchyard/brain`, shared across
-  projects). Mount an existing `docs/working/` folder with `brain.mounts` if you have one.
+- `projects.<slug>.repositories`: the repositories that project's workers may read (and, for
+  `implement`, edit).
+- `brain.path` (default `~/.switchyard/brain`): one brain repository for every project. To mount
+  an existing `docs/working/` folder, use `projects.<slug>.brain.mounts` for one project or
+  `brain.mounts` for every project.
 - Standalone and paid presets: set the paid model id and **current prices** in `paid.models` and
   `supervisor.endpoints`, and add a paid key for that provider
   (`keys add anthropic --billing paid_credits --balance 20`).
@@ -186,12 +287,31 @@ Run from the project you want Claude to work in. Paths are examples. The server 
 `SWITCHYARD_CONFIG` (or pass `--config`).
 
 ```powershell
-claude mcp add --transport stdio --scope local switchyard -- node "D:/SwitchYardRouter/packages/router/dist/mcp.js" --config "D:/path/to/switchyard.config.yaml"
+claude mcp add --transport stdio --scope local switchyard -- node "D:/SwitchYardRouter/packages/router/dist/mcp.js" --config "D:/path/to/switchyard.config.yaml" --project my-app
 ```
 
 ```bash
-claude mcp add --transport stdio --scope local switchyard -- node /abs/SwitchYardRouter/packages/router/dist/mcp.js --config /abs/path/switchyard.config.yaml
+claude mcp add --transport stdio --scope local switchyard -- node /abs/SwitchYardRouter/packages/router/dist/mcp.js --config /abs/path/switchyard.config.yaml --project my-app
 ```
+
+One MCP server serves one project:
+- Its tools default to that project. A tool with a `project` input may name another one.
+- The brain tools work in that project's brain.
+
+The server picks its project in this order:
+1. `--project <slug>`;
+2. `SWITCHYARD_PROJECT`;
+3. the only project;
+4. the project whose repository contains Claude Code's working directory.
+
+If none of these picks a project, the server does not start: it exits with an error that lists
+the projects. A guessed default could write tasks and brain entries into the wrong project. So
+once an install has several projects, pass `--project` unless Claude Code always runs inside one
+of the project's repositories.
+
+Add `--no-worker` when a daemon or service already runs the worker (see below). The MCP server
+then only submits and reads, and leaves recovery to the daemon. Without the flag, the server
+runs a worker for every project in its own process, as before.
 
 Check with `claude mcp get switchyard` and `/mcp` inside Claude Code. Merge
 `packages/router/examples/CLAUDE.delegation.md` into the project's `CLAUDE.md`.
@@ -199,13 +319,20 @@ Check with `claude mcp get switchyard` and `/mcp` inside Claude Code. Merge
 This only adds tools. Claude Code keeps its own login and model; nothing intercepts native
 Claude requests.
 
-The MCP process runs the worker loop, so tasks run while the Claude Code session is open. For
-work that should continue after closing Claude, run `node packages/router/dist/cli.js worker`
-in a terminal; any number of processes can share the store. To keep a worker running across
-crashes and logins, use `switchyard daemon` (restarts the worker with backoff; logs under
-`.switchyard/logs/`) or install it as a user service with `switchyard service install`
-(systemd user unit, launchd agent, or a Windows scheduled task at logon; `--dry-run` prints the
-definition first, `service status` / `service uninstall` manage it).
+Without `--no-worker`, the MCP process runs the worker loop, so tasks run while the Claude Code
+session is open. For work that should continue after closing Claude, run
+`node packages/router/dist/cli.js worker` in a terminal; any number of processes can share the
+store. To keep a worker running across crashes and logins:
+- `switchyard daemon start` runs the daemon in the background. It restarts the worker with
+  backoff and logs under `.switchyard/logs/`. `daemon status` shows the daemon and each
+  project's queued and running tasks, and `daemon stop` stops it. `switchyard daemon` alone runs
+  it in the foreground.
+- `switchyard service install` installs the daemon as a user service: a systemd user unit, a
+  launchd agent, or a Windows scheduled task at logon. `--dry-run` prints the definition first,
+  and `service status` / `service uninstall` manage it.
+
+There is one daemon per install, and its one worker serves every project. Beside it, run each
+project's MCP server with `--no-worker`.
 
 ## 5. Coding workers
 
@@ -224,7 +351,7 @@ With a standalone preset, give SwitchYard a whole goal:
 
 ```bash
 node packages/router/dist/cli.js worker &                         # or keep the MCP server running
-node packages/router/dist/cli.js run "Add CSV export to the report page" --repo app --check "npm test"
+node packages/router/dist/cli.js run "Add CSV export to the report page" --project my-app --repo app --check "npm test"
 node packages/router/dist/cli.js job <id>                         # workers, branch, questions
 node packages/router/dist/cli.js answer <question-id> "use semicolons"
 git -C path/to/app merge --no-ff switchyard/job-<id>               # after you review the branch
@@ -237,8 +364,12 @@ pnpm --filter switchyard-router build
 SWITCHYARD_CONFIG=/path/to/switchyard.config.yaml pnpm --filter switchyard-panel start   # http://127.0.0.1:4477
 ```
 
-Models and why each is or is not used, routing previews and overrides, tasks, sessions, jobs,
-provider keys and their status, qualification, and every setting.
+The panel opens on the projects grid (see [Projects](#projects)).
+- Inside a project: its overview, jobs, teams, tasks, sessions, requests, brain (with its
+  promotions to global knowledge), and settings.
+- Under "All projects" (`/all`): the dashboard, every request, models and why each is or is not
+  used, routing previews and overrides, provider keys and their status, qualification,
+  calibration, global knowledge, and the global settings.
 
 ## 7. Qualify models (optional, uses your providers' quota)
 

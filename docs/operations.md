@@ -14,7 +14,9 @@
 | Brain access | Hard | Every brain read and write checked against role grants; workers write only their report |
 | Ledger integrity | Hard | Ledger entries are append-only and need a real validation record |
 | Deadlines, cancellation, lease ownership | Hard | Checked before every dispatch; late responses cannot complete a cancelled task |
-| One writer per repository | Hard | Claim transaction |
+| One writer per repository | Hard | Claim transaction (repositories are keyed `<project>/<alias>`, so projects never block each other) |
+| Fair share between projects (`priority`) and a project's running tasks (`max_concurrent_tasks`) | Hard | Claim transaction (`storage/fair-claim.ts`) |
+| A project's paid cap (`paid_budgets`) and request share (`request_share`) | Hard | The same reservation as the global budgets, after them |
 | Input/output token budgets | Estimated | ~3 chars/token at admission; reconciled when the provider reports usage |
 | Per-item tokens inside a prompt batch | Estimated | Proportional share, labelled `estimated` |
 | Provider calls, including a retry on the provider's next key | Hard | Each call is admitted and recorded before it is sent; attempts are exact |
@@ -91,6 +93,90 @@ characters; `switchyard doctor` adds one line per provider.
   `switchyard models scan`. Stored FreeLLMAPI-discovered models are deleted by the upgrade and come
   back from that scan.
 
+## Projects: fairness and limits
+
+One worker serves every project of an install. It takes turns between projects; the global caps
+(`execution.max_concurrent_tasks`, `allocation`, `paid.budgets`, provider slots, file leases)
+still apply on top of everything below. Every field is optional and set per project under
+`projects.<slug>` in the config or on the project's Settings page (Scheduling and budgets):
+
+```yaml
+projects:
+  my-app:
+    priority: 2                # > 0, at most 100, default 1
+    max_concurrent_tasks: 3    # whole number > 0; unset: no project cap
+    paid_budgets:              # USD per rolling window, inside the global paid.budgets
+      per_day_usd: 1
+      per_week_usd: 5
+      per_month_usd: 15
+    request_share: 0.5         # (0, 1]: share of allocation.max_model_requests_per_hour / _per_day
+```
+
+- **`priority`.** While several projects have ready tasks, the worker claims them in the ratio of
+  their priorities (stride scheduling), oldest task first within a project. Priorities 3 and 1
+  give three claims to one for every one to the other, whatever the length of either backlog: a
+  50-task backlog in one project does not hold back another project's single task. A project
+  that had nothing to run rejoins at the front of the rotation but banks no credit for the idle
+  time. The rotation is stored in the database, so it carries across restarts and across
+  processes sharing the store. Prompt batches never mix projects.
+- **`max_concurrent_tasks`.** At most this many of the project's worker tasks run at once. It
+  counts what `execution.max_concurrent_tasks` counts. Top-level supervisors are bounded by
+  `supervisor.max_concurrent_jobs` instead, and sub-supervisors by their job's `team.max_agents`.
+  A task held by the cap stays queued with the state reason
+  `waiting_for_project_cap: project <slug> is at its limit of N running tasks`. One
+  `waiting_for_project_cap` event is recorded while the reason holds. The wait appears in job
+  metrics as `project_cap` and in the plan graph as "waits for a slot". The next free slot
+  clears it.
+- **`paid_budgets`.** A cap on the project's paid spend per day, week, or month, inside the
+  global `paid.budgets`. Spend is counted from paid requests charged to the project's tasks.
+  When the cap is reached:
+  - the gate skips that paid model for the project's tasks (`project_paid_budget_exhausted`),
+    and the task falls back to free models; other projects keep paid routing;
+  - when every candidate was skipped only because of this cap (for example a task pinned to a
+    paid model), the task fails with `project_paid_budget_exhausted`, as a global
+    `paid_budget_exhausted` would.
+- **`request_share`.** A fraction of the package allocation. The project may make
+  `max(1, floor(cap * share))` model requests in each configured allocation window, counted from
+  the requests charged to it. Past that, admission refuses with `project_allocation_exhausted`
+  and a retry time, and the task waits for capacity until the window reopens, like a package
+  allocation denial. With no `allocation` configured, a share has no effect.
+
+The panel's dashboard (`/all`) shows each project's running and waiting tasks, its oldest wait,
+and its requests and paid spend for 24 hours and 7 days. `switchyard daemon status` prints the
+queue and running counts per project.
+
+### Archiving a project
+
+`switchyard projects archive <slug>`, or Archive on the project's Settings page, hides a project:
+- Archiving is refused while the project has running or queued tasks.
+- Nothing is deleted. The project's settings stay in the config, and its tasks, sessions, and
+  brain folder stay where they are.
+- An archived project is left off the projects grid's main list, the switcher, and the
+  dashboard. Its panel pages answer 404, except its Settings page, which shows the settings
+  read-only with Unarchive. The CLI and MCP never pick it implicitly.
+- `switchyard projects unarchive <slug>`, or Unarchive in the grid's "Archived projects" list or
+  on its Settings page, brings it back.
+
+The archived flag is kept in the store (`projects` table), not in the config file.
+
+### The reserved `_qualification` project
+
+Qualification runs (`switchyard qualify`) and comparison runs on the eval goals
+(`switchyard compare`) run in an internal project, `_qualification`:
+- It holds the fixture repositories those runs check out (`q-...`, `c-...`), so no user project
+  lists them.
+- Its supervisor working documents go to `projects/_qualification/` in the brain.
+- No user slug can collide with it: user slugs start with a letter or digit.
+- It never appears as a project in the grid, the switcher, `doctor`, the CLI's project choice, or
+  the panel's project API. Submitting into it by name is refused.
+- In the panel, its tasks, jobs, and sessions open under `/all/qualification` (read-only). An old
+  `/tasks/<id>`, `/jobs/<id>`, or `/sessions/<id>` link to them redirects there.
+- It has priority 1 and no project caps. The global caps and
+  `qualification.max_requests_per_day` still apply.
+
+A comparison on goals you supply (`compare --goals <file>`) uses your repositories, so it runs
+in the primary project (`brain.project`). Audits run in the audited task's project.
+
 ## Reading results
 
 - `executionStatus` says whether the run finished; `verificationStatus` says what verification
@@ -150,7 +236,7 @@ Verification is itself measured. Every reviewer verdict is recorded with its rev
 and qualification; what happens afterwards confirms or contradicts it: acceptance or rejection,
 integration onto a job branch, job checks after integration, and undo through attribution (an
 undone or later-failing result that passed is an escaped defect; a reviewer fail the supervisor
-overrules is a false rejection). The panel's Calibration page shows passed-verification vs
+overrules is a false rejection). The panel's Calibration page (`/all/calibration`) shows passed-verification vs
 subsequently-confirmed per level and per reviewer, with review cost per accepted task.
 
 - Cached verdicts (`verification.cache_verdicts`, default on): a decisive verdict is reused,
@@ -217,7 +303,7 @@ subsequently-confirmed per level and per reviewer, with review cost per accepted
 - **Metrics.** Per job (sub-jobs included), derived from stored data: wall-clock, parallelism
   over time (peak and mean), planned and actual critical path, requests and cost per completed
   task, verification share, and waiting time by reason. `switchyard metrics <job>`, MCP
-  `get_job_metrics`, the panel's Teams page and job pages.
+  `get_job_metrics`, a project's Teams page (`/p/<slug>/teams`) and job pages.
 - **Team vs single agent.** `switchyard compare` runs the same goals as a team job and as one
   agent with the same models and records both metric sets. It prints the plan and its request
   budget first, `--dry-run` stops there, and nothing runs without `--yes`; runs are capped and
@@ -279,7 +365,7 @@ item. A delegated task's session names the supervisor session that delegated it 
   `cancelled`.
 - Read them with `switchyard sessions [--status s] [--task id] [--job id]` and
   `switchyard session <id> [--after seq] [--limit n] [--json]`, the MCP tools `list_sessions` and
-  `get_session`, or the panel's Sessions page (also linked from task and job pages).
+  `get_session`, or a project's Sessions page (`/p/<slug>/sessions`, also linked from task and job pages).
 - External agents (OpenCode) run their tools inside their own process: their sessions record the
   model traffic through the policy gateway, not individual tool calls.
 - A resume appends a `resumed` event recording what was settled and the notice the agent got.
@@ -288,22 +374,83 @@ item. A delegated task's session names the supervisor session that delegated it 
 
 - Worktrees and agent homes are not deleted automatically. Remove old ones with
   `git worktree remove` in the source repository, then delete the folder.
-- Backups: `switchyard backup <dir>` takes a consistent snapshot while workers run (SQLite
-  online backup, then session logs and artifacts; never worktrees; the vault master key only with
-  `--include-master-key`). `switchyard restore <dir>` refuses while any task holds a live lease or
-  a daemon runs, refuses existing state without `--force`, and with `--force` moves the old state
-  to `.switchyard/pre-restore-<time>/`. Restored running tasks have their leases expired so the
-  next worker recovers them.
+- Backups: see [Backup and restore](#backup-and-restore).
 - Durability: `storage.durability: full` sets SQLite `synchronous=FULL` (survives power loss at
   some write cost); `normal` (default) can lose the last transactions on power loss but never
   corrupts. Session logs are fsynced per event either way.
 - Session logs are not pruned automatically.
 
+## Backup and restore
+
+A backup covers the whole install: every project's rows and the brain repository with every
+project's folder and `global/`. There is no per-project backup, so `backup` and `restore` refuse
+`--project`.
+
+`switchyard backup <dir>` writes a new directory while workers keep running:
+- `switchyard.db`: an online SQLite snapshot of the store, consistent while workers run.
+- The session logs and artifacts that the snapshot indexes.
+- `brain.bundle`: the brain repository as a git bundle of all its refs.
+  - Only committed history is in the bundle.
+  - Uncommitted brain changes are listed in the manifest (`brain.uncommitted`) and printed as a
+    warning. SwitchYard commits edits made outside it on its next brain write, so take the
+    backup after that, or commit them yourself.
+  - A brain that does not exist yet or has no commits is recorded as not included, with the
+    reason.
+- `manifest.json`, written last; a directory without it is an incomplete backup. Format 2 adds
+  the `brain` section; format 1 backups (store only) still restore.
+- The vault master key, only with `--include-master-key`.
+- Never included: worktrees, agent homes, qualification scratch, and logs.
+- Brain mounts are also never included. They are folders in other repositories, so the manifest
+  lists each one (prefix, path, and the project that adds it, or global) under
+  `brain.mountsNotIncluded`, and the CLI prints them. Back those repositories up themselves.
+
+`switchyard restore <dir> [--force]` restores the store and the brain into the configured
+storage directory and `brain.path`. Every refusal happens before anything is changed. A restore
+is refused:
+- while any task holds a live lease or a daemon runs;
+- when the brain has uncommitted changes, even with `--force`, so a restore never overwrites
+  uncommitted brain work (SwitchYard's lock file does not count);
+- over an existing store, or a brain with other history, unless `--force` is given.
+
+With `--force`:
+- the old store entries move to `.switchyard/pre-restore-<time>/`;
+- the old brain moves to `<brain>.pre-restore-<time>`, next to it.
+
+The restored brain is a fresh repository holding every ref of the bundle, with the backed-up
+branch checked out at the backed-up commit. A brain already at that commit is left alone.
+Restored running tasks have their leases expired, so the next worker recovers them. The command
+prints each brain mount that was not in the backup, so you can restore it from its own
+repository.
+
+## One daemon for every project
+
+An install runs one worker for all of its projects; there are no per-project daemons, services,
+or workers.
+- `switchyard daemon` (or `daemon run`) runs the worker in the foreground and restarts it with
+  backoff (`--max-restarts`, `--window`, `--max-delay`).
+- `switchyard daemon start` runs the same in the background. Its output goes to
+  `<storage>/logs/daemon.out`, its lifecycle to `daemon.log`, and the worker's output to
+  `worker.log`.
+- `switchyard daemon status` prints the daemon's process id and start time. Under it, a table
+  gives each project's queued and running tasks, read from the store. Internal or removed
+  projects appear when they have work, and archived projects are marked. It also works when no
+  daemon runs.
+- `switchyard daemon stop` asks the daemon to stop. The daemon gives its worker 30 s to stop,
+  then exits. If the daemon has not exited within `--timeout` seconds (default 45), its
+  process tree is ended; the worker's tasks are recovered on the next start.
+- `switchyard service install` registers the same daemon with the platform's service manager.
+- `daemon`, `daemon start`, and `service` take the global config and refuse `--project` with an
+  explanation. The daemon also does not pass a shell's `SWITCHYARD_PROJECT` on to its worker.
+- A second daemon for the same storage directory is refused.
+- MCP servers for individual projects run beside the daemon with `--no-worker`.
+
 ## The brain and attribution
 
-- The brain is a git repository (`brain.path`). `switchyard brain ls|read|search` or the panel's
-  Brain page browse it; every change is a commit under the writing agent, so `git log` and
-  `git blame` inside it show who (and which model) wrote what.
+- The brain is one git repository (`brain.path`) for every project: `projects/<slug>/` per
+  project and `global/` for knowledge shared by all of them (see [roles.md](roles.md#the-brain-shared-knowledge)).
+  `switchyard brain ls|read|search` (in the selected project, or every project when none is
+  chosen) and each project's Brain page browse it. Every change is a commit under the writing
+  agent, so `git log` and `git blame` inside it show who (and which model) wrote what.
 - Job branches live in your repositories as `switchyard/job-<id>`; integration worktrees under
   `.switchyard/worktrees/job-<id>-<alias>`. Review, then `git merge --no-ff` (not squash).
 - `switchyard blame <repo> <path> --ref <branch>` attributes lines to agents and models.
@@ -324,7 +471,9 @@ item. A delegated task's session names the supervisor session that delegated it 
 - Audio/video inputs are routed only to models that accept them; there is no transcription or
   frame-extraction preprocessing yet.
 - Tasks and jobs run only while a worker process is running (the MCP server stops with the
-  Claude session; run `switchyard worker`, `switchyard daemon`, or `switchyard service install`
-  for unattended work).
+  Claude session; run `switchyard worker`, `switchyard daemon start`, or
+  `switchyard service install` for unattended work, and the MCP servers with `--no-worker`).
+- Idempotency keys are unique per install, not per project: a key already used in one project
+  is refused in another.
 - Line attribution for external agents (OpenCode) is per model request, not per tool call, and can
   blur when the agent sends several requests at once.

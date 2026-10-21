@@ -7,11 +7,18 @@ control of which models run, what they may touch, what they spend, or what count
 - **Use it with Claude Code or on its own.** With Claude Code, Claude supervises through MCP
   tools. Standalone, SwitchYard runs its own supervisor on the models you choose (free or paid):
   it plans, delegates to workers, verifies, and integrates onto a job branch.
+- **Many projects, one install.** Each project has its own repositories, brain folder, jobs,
+  tasks, sessions, and settings overrides; keys, models, routing, and budgets are shared. One
+  worker (or one daemon) runs every project at once with fair turns, optional per-project caps,
+  paid budgets, and request shares. Start with `init --project <slug>`, add more with
+  `switchyard projects create` or the panel's projects grid. See [docs/setup.md](docs/setup.md#projects).
 - **Supervisor and worker roles with rules.** Charters (built out from FluxIQ's agent protocol)
   define each role; the harness enforces what code can: edit scope, commands, budgets, brain
   access. See [docs/roles.md](docs/roles.md).
 - **A shared brain.** Markdown working documents in git, shared by every agent and by you, with
-  scoped access and an access-request workflow.
+  scoped access and an access-request workflow. Each project's agents see only their project and
+  `global/`; supervisors add to `global/` only through a deterministic check and an independent
+  review.
 - **Every line attributed.** Commits carry the agent and model that wrote them; supervisors can
   undo any task, model, commit, or individual lines.
 - **Your keys, no other service.** Enter provider keys in the panel, with `switchyard keys add`,
@@ -35,8 +42,10 @@ control of which models run, what they may touch, what they spend, or what count
   and separate execution and acceptance statuses.
 - **Qualification.** A private eval suite with hidden tests measures each model per task family
   and tier.
-- **Web panel.** Models and why each is or isn't used, routing previews and manual overrides,
-  tasks, requests, provider keys, qualification, and every setting.
+- **Web panel.** Opens on a projects grid with a project switcher: each project's jobs, tasks,
+  sessions, brain, and settings; an all-projects dashboard; models and why each is or isn't used,
+  routing previews and manual overrides, requests, provider keys, qualification, global
+  knowledge, and every setting.
 
 ## Layout
 
@@ -46,15 +55,15 @@ control of which models run, what they may touch, what they spend, or what count
 | `apps/panel` | Next.js web panel |
 | `docs/setup.md` | Install, presets, configure, register with Claude Code, standalone jobs |
 | `docs/roles.md` | Supervisors, workers, choosing models per role, the brain, attribution |
-| `docs/operations.md` | Limits, provider keys, results, recovery, known limitations |
+| `docs/operations.md` | Limits, provider keys, project fairness and limits, results, recovery, backup, the daemon, known limitations |
 | `docs/decisions.md` | Design decisions, provider facts and sources, upgrade notes |
 
 ## Quick start
 
 ```bash
 pnpm install && pnpm -r build
-node packages/router/dist/cli.js init . --preset claude-code   # or standalone-free, standalone-hybrid, standalone-paid
-SWITCHYARD_NEW_KEY=gsk_... node packages/router/dist/cli.js keys add groq --billing free_tier   # or the panel's Provider keys page
+node packages/router/dist/cli.js init . --preset claude-code --project my-app --repo app=../my-app   # or standalone-free, standalone-hybrid, standalone-paid
+SWITCHYARD_NEW_KEY=gsk_... node packages/router/dist/cli.js keys add groq --billing free_tier   # or the panel's Provider keys page (/all/keys)
 node packages/router/dist/cli.js models scan
 node packages/router/dist/cli.js doctor
 ```

@@ -174,6 +174,106 @@ whether Z.ai and Moonshot serve `/models`, LM Studio's `key` as the chat model i
 - **`keys add` requires `--billing`**, and `keys list` lists config keys too, by ref.
 - **A 429 cools the key for every model of that provider** (FreeLLMAPI cooled per chain).
 
+## Projects (user decision, 2026-10-20)
+
+One install holds many projects. Each has its own repositories, brain folder, jobs, tasks,
+sessions, and teams. Providers, models, routing, budgets, and settings stay global. One worker
+runs every project at once. The user asked for a projects grid as the starting screen, a project
+switcher, per-project pages, and a global dashboard. Plan and phase reports:
+[docs/working/projects.md](working/projects.md).
+
+1. **D1. One install, one store.** Projects are rows in the existing database, not separate
+   databases. Shared state therefore stays shared: keys, catalog, usage, provider slots,
+   breakers, and paid spend. Per-project data carries a `project_id`, stamped by insert triggers
+   from the task. Separate databases would have let each project believe it owned the whole quota
+   and paid budget.
+2. **D2. Project settings live in the global config** under `projects.<slug>` (user decision).
+   A project has its name and repositories, plus brain mounts, access approver, and
+   auto-approve rules. It may override `verification`, `team` (`max_agents`, `max_depth`,
+   `child_budget_share`, `channel_*`), `coding` (`allowed_commands`, `protected_paths`),
+   `supervisor` (`allowed_commands`, `branch_prefix`), and `roles`. Any other key is refused.
+   Overrides are merged onto the global section and validated with its schema when the config
+   loads. The panel writes them through the same validated config writer, so every setting is
+   still editable in the panel or the file.
+3. **D3. Automatic upgrade.** A config with top-level `repositories` and no `projects` section is
+   read as one project named after `brain.project`. Every existing row is given that project at
+   each start; the backfill is idempotent. The first `projects create` converts the file:
+   top-level `repositories` move under `projects.<brain.project>`, and every other top-level
+   section stays global.
+4. **D4. Brain isolation** (user decision). A project's agents read `projects/<own>/**` and
+   `global/**` only. The supervisor's default read grant narrowed from `**` to those two.
+   Reaching another project goes through the existing access-request flow. Brain search is
+   limited to what the caller's grants reach, and each project's index refresh touches only its
+   own folder, `global/`, and the root. Each project has a generated index
+   (`projects/<p>/README.md`); the root index lists only `global/` and the project names.
+5. **D5. Fair claiming.** Claims rotate across projects that have ready tasks, oldest first
+   within a project, using stride scheduling weighted by `priority`. The rotation lives in the
+   store (`meta`), inside the claim transaction, so it holds across restarts and processes.
+   `max_concurrent_tasks` caps a project's running worker tasks, and a held task records
+   `waiting_for_project_cap`. Global caps and provider capacity still apply on top. Prompt
+   batches never mix projects.
+6. **D6. Repository keys are per project.** File leases, the merge lock, and
+   `tasks.writable_repo` use `<project>/<alias>`, so two projects with an `app` alias never block
+   each other. Users keep writing the bare alias inside a project.
+7. **D7. Budgets stay global, with optional per-project limits.** `paid_budgets` (USD per day,
+   week, month) and `request_share` (a fraction of the package allocation) are enforced in the
+   same reservation as the global limits. Each has its own denial reason:
+   - `project_paid_budget_exhausted` skips paid models for that project, which falls back to
+     free ones;
+   - `project_allocation_exhausted` defers the task to the window's reopening.
+8. **D8. MCP per project.** `mcp.js --project <slug>` chooses the project. Without the flag, the
+   server takes `SWITCHYARD_PROJECT`, then the only project, then the project whose repository
+   contains the working directory. `--no-worker` is for running beside a daemon. Brain tools
+   work in the server's project. The CLI uses the same selection order.
+9. **D9. Gated global knowledge** (user decision). Only supervisors and people add to `global/`,
+   and a supervisor's lesson must be worth sharing. Code enforces this, not prompt text:
+   - a deterministic check refuses the project's slug, name, repository aliases, paths, and
+     files inside its repositories, and requires a source in the project's brain;
+   - an independent reviewer on a free model from another family judges the lesson against a
+     fixed rubric, through a review task and the gate;
+   - a rejected lesson is kept in the project with the reason;
+   - every global entry records its project, supervisor, sources, and verdict;
+   - people can revert a global entry from `/all/knowledge`;
+   - `brain.global_requires_approval` adds a person's approval.
+
+   No agent grant can write `global/**` or `projects/*/promotions/**`.
+
+### Departures recorded during the build
+
+- **`workspaces.repo_alias` and `merge_queue.repo_alias` stay bare.** The plan namespaced every
+  alias column. These two rows are keyed by task, so they cannot collide across projects, and
+  five readers resolve them inside the task's own project. Only the cross-task keys are
+  namespaced: `tasks.writable_repo`, `file_leases.repository`, and `merge_queue.lock_key`.
+- **Idempotency keys are unique per install, not per project.** A key used in one project is
+  refused in another. Scoping it would need a table rebuild for a composite unique index.
+- **The global panel section lives under `/all/...`** (dashboard, requests, models, routing,
+  keys, qualification, calibration, knowledge, settings), not at the top level.
+  - The URL alone tells the shell its scope: `/p/<slug>` is a project, `/all` is every project,
+    and `/` and `/new` are home.
+  - Requests exist in both scopes (`/p/<slug>/requests` and `/all/requests`), so a top-level
+    `/requests` would be ambiguous.
+  - Old flat URLs redirect.
+- **Qualification runs in a reserved internal project, `_qualification`.** Qualification and
+  eval-goal comparison runs, with their fixture repositories, go there instead of the primary
+  project.
+  - Putting them in the primary project would have shown fixtures in a user project's
+    repositories, grid, `doctor`, MCP, and D9 check.
+  - The slug cannot collide, because user slugs start with a letter or digit.
+  - It is never listed, and users cannot submit into it.
+- **The MCP server fails fast.** When no project can be chosen, it exits with the list of
+  projects instead of starting with a guessed default or with tools that require `project`. A
+  wrong default would write tasks and brain entries into the wrong project.
+- **The legacy project slug defaults to `default`**, the schema default of `brain.project`, not
+  `my-project` as the plan said. `init` names the first project `my-project` unless `--project`
+  is given.
+- **The archived flag lives in the store's `projects` table**, not in the config file.
+- **One daemon for every project.** `daemon`, `daemon start`, and `service` refuse `--project`
+  rather than start per-project workers. `daemon status` reports per-project queues from the
+  store.
+- **Backups include the brain repository** as a git bundle (backup format 2). A restore refuses
+  a brain with uncommitted changes even with `--force`, and moves a replaced brain aside. Brain
+  mounts are listed in the manifest as not included.
+
 ## Departures from the plan
 
 1. **Per-model routing instead of per-profile pools.** The plan used one curated chain per profile
@@ -253,6 +353,7 @@ whether Z.ai and Moonshot serve `/models`, LM Studio's `key` as the chat model i
     agent on the same goals, with every comparison budgeted up front.
 20. **FreeLLMAPI removed; providers called directly** (user decision, 2026-10-19; done
     2026-10-20). See "Direct providers" above.
+21. **One install, many projects** (user decision, 2026-10-20). See "Projects" above.
 
 ## History: verified FreeLLMAPI behaviour (server v0.2.1, commit 0c456ea)
 

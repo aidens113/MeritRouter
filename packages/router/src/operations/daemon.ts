@@ -10,12 +10,18 @@ import { SwitchyardError } from "../core/errors.js";
  * with exponential backoff and a cap on restarts per window. When the cap is hit the daemon exits
  * non-zero so the service manager (systemd, launchd, Task Scheduler) applies its own policy.
  * Logs go to `<storage>/logs/`: `daemon.log` (lifecycle) and `worker.log` (the worker's output).
+ * One daemon per install (storage directory): its one worker serves every project, with fair
+ * claiming across them (storage/fair-claim.ts); there are no per-project daemons.
  */
 
 export const LOGS_DIR = "logs";
 export const DAEMON_LOG = "daemon.log";
 export const WORKER_LOG = "worker.log";
 export const DAEMON_LOCK = "daemon.pid";
+/** `switchyard daemon stop` writes this file; a running daemon sees it, stops its worker, and exits. */
+export const DAEMON_STOP = "daemon.stop";
+/** Output of a daemon started in the background by `switchyard daemon start`. */
+export const DAEMON_OUT = "daemon.out";
 const ROTATE_BYTES = 10 * 1024 * 1024;
 
 export const logsDirFor = (storageDir: string) => path.join(storageDir, LOGS_DIR);
@@ -90,6 +96,8 @@ export interface DaemonOptions {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   env?: NodeJS.ProcessEnv;
+  /** Poll for a stop request file (`<logs>/daemon.stop`) every this many ms (0: never). */
+  stopPollMs?: number;
 }
 
 export interface DaemonExit {
@@ -133,6 +141,17 @@ export class Daemon {
     this.workerLog = createWriteStream(path.join(this.opts.logsDir, WORKER_LOG), { flags: "a" });
     this.log(`daemon ${process.pid} started: ${[this.opts.command, ...this.opts.args].join(" ")}`);
     let lastExit: DaemonExit["lastExit"] = null;
+    const stopFile = path.join(this.opts.logsDir, DAEMON_STOP);
+    rmSync(stopFile, { force: true });
+    const pollMs = this.opts.stopPollMs ?? 500;
+    const poll = pollMs > 0
+      ? setInterval(() => {
+          if (!existsSync(stopFile)) return;
+          rmSync(stopFile, { force: true });
+          this.log("stop requested (daemon stop)");
+          void this.stop();
+        }, pollMs)
+      : null;
     try {
       while (!this.stopping) {
         const startedAt = this.now();
@@ -153,6 +172,7 @@ export class Daemon {
       this.log("daemon stopped");
       return { reason: "stopped", detail: "stop requested", starts: this.starts, lastExit };
     } finally {
+      if (poll) clearInterval(poll);
       await new Promise<void>((r) => (this.workerLog ? this.workerLog.end(r) : r()));
       this.workerLog = null;
     }
@@ -274,4 +294,16 @@ export function acquireDaemonLock(logsDir: string, configPath: string, pid = pro
     const now = readDaemonLock(logsDir);
     if (now?.pid === pid) rmSync(file, { force: true });
   };
+}
+
+/** Ask the daemon recorded under `logsDir` to stop (it polls for the request file). */
+export function requestDaemonStop(logsDir: string): void {
+  mkdirSync(logsDir, { recursive: true });
+  writeFileSync(path.join(logsDir, DAEMON_STOP), `${new Date().toISOString()} ${process.pid}
+`);
+}
+
+/** Whether a process id is still running. */
+export function processAlive(pid: number): boolean {
+  return isAlive(pid);
 }
