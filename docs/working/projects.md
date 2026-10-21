@@ -63,7 +63,8 @@ list and approval in the panel; `/api/config` `expand()` without a `providers:` 
 follow-up); converted single-project configs keep their top-level brain mounts global; alias
 matching in D9 is strict (an `app` alias rejects "the app"); docs for D4/D9 and project fields.
 
-**Next steps:** J2 (panel), then J3 (operations, demo, docs).
+**Next steps:** J2 (panel): `j2-structure` (dispatched 2026-10-20), then `j2-global` and
+`j2-project` in parallel; then J3 (operations, demo, docs). J1 merged to `dev` (7db1c5e).
 
 **Blockers:** none.
 
@@ -226,6 +227,27 @@ Branch/worktree: `feat/projects` at `D:/sy-wt/pj`. Partition: `j1-core` first; t
 Shared by all three: `src/core/service.ts` and `src/index.ts` (small separate hunks only;
 re-read immediately before editing). Each runs its own tests and typecheck while working and the
 full suite at the end; failures only in another worker's files are re-run later and reported.
+
+### Brief: j2-structure (J2 step 1)
+- Task: the panel's frame. `/` becomes the projects grid (cards from `insights.projectsGrid`:
+  name, repositories, running/queued jobs, last activity, attention badge) with "New project"
+  (name, slug derived and editable, repositories with a server-side path/git check, optional brain
+  mounts) via `insights.createProject`; creating one navigates to `/p/<slug>`. Project switcher
+  top left in the shell (replaces the brand link): current project or "All projects", every
+  project with a live-activity dot, "All projects", "New project"; the sidebar shows project pages
+  inside a project and global pages in "All projects". Move per-project pages under
+  `apps/panel/app/p/[slug]/` (overview, jobs, teams, tasks, sessions, requests, brain, settings
+  placeholder) passing the project to `insights.*`; global pages under `/all/` or top level (decide
+  and record): dashboard placeholder, requests, models, routing, keys, qualification,
+  calibration, settings. Old URLs (`/jobs`, `/tasks/...`, ...) redirect to the last-used project
+  (cookie) or `/`. The panel's `getSy()` stays one instance; a `project(slug)` helper 404s unknown
+  or archived projects. Fix `/api/config` `expand()` when the YAML has no `providers:` section.
+- Owns: `apps/panel/**` (pages, components, lib, api routes), `scripts/seed-demo.mjs` (seed 3
+  projects: two sharing an `app` alias, one archived), new admin functions only if J1's API lacks
+  something (record which).
+- Done: typecheck, build; demo seeded; every page 200 (old URLs redirect); screenshots of the
+  grid, switcher open, create flow, a project overview, the global section; panel stopped.
+- Report to: docs/working/projects/reports/j2-structure.md
 
 ---
 
