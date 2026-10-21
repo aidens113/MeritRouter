@@ -18,6 +18,23 @@ export const LAST_PROJECT_COOKIE = "sy_project";
 /** The install-wide section. */
 export const ALL = "/all";
 
+/**
+ * Where the reserved `_qualification` project's work is viewed (it is never a project page):
+ * `/all/qualification/tasks/<id>`, `/sessions/<id>`, and `/jobs/<id>` (a job's task view).
+ */
+export const QUALIFICATION_BASE = "/all/qualification";
+
+/** The reserved project qualification runs and eval comparisons work in (the router's QUALIFICATION_PROJECT). */
+export const QUALIFICATION_SLUG = "_qualification";
+
+/** Base path of an item's project pages: `/p/<slug>`, or the Qualification page for `_qualification`. */
+export function itemBase(project: string): string {
+  return project === QUALIFICATION_SLUG ? QUALIFICATION_BASE : projectBase(project);
+}
+
+/** Request header proxy.ts sets to the request's path (read by layouts). */
+export const PATH_HEADER = "x-switchyard-path";
+
 /** Base path of one project's pages, e.g. `/p/shop`. */
 export function projectBase(slug: string): string {
   return `/p/${encodeURIComponent(slug)}`;

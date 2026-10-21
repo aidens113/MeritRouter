@@ -87,6 +87,21 @@ export default async function AllProjectsPage() {
       u24: p.usage24h,
       u7: p.usage7d,
     })),
+    // Qualification runs and eval comparisons work in a reserved project that is not one of the projects.
+    ...(d.qualification.usage7d.requests || d.qualification.usage7d.tasksSubmitted || d.qualification.usage7d.paidSpendUsd
+      ? [
+          {
+            key: "__qualification",
+            label: (
+              <Link href="/all/qualification#work" className="text-accent-ink hover:underline">
+                Qualification and comparisons
+              </Link>
+            ),
+            u24: d.qualification.usage24h,
+            u7: d.qualification.usage7d,
+          },
+        ]
+      : []),
     ...(d.unattributed.usage7d.requests || d.unattributed.usage7d.paidSpendUsd ? [{ key: "__none", label: <span className="text-ink-2">No project (probes, scans)</span>, u24: d.unattributed.usage24h, u7: d.unattributed.usage7d }] : []),
   ];
   const max24 = Math.max(0, ...rows.map((x) => x.u24.requests));

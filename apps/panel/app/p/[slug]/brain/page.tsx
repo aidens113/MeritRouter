@@ -53,8 +53,8 @@ function inScope(sc: Sc, path: string): boolean {
 /** The project's own index (`projects/<slug>/README.md`), regenerated like the root one. */
 const projectIndexPath = (slug: string) => `projects/${slug}/README.md`;
 
-const PROMOTION_LABEL: Record<string, string> = { pending_review: "pending review", pending_approval: "pending approval", approved: "approved", rejected: "rejected" };
-const PROMOTION_TONE: Record<string, Tone> = { pending_review: "warn", pending_approval: "warn", approved: "good", rejected: "bad" };
+const PROMOTION_LABEL: Record<string, string> = { pending_review: "pending review", pending_approval: "pending approval", approved: "approved", rejected: "rejected", reverted: "reverted" };
+const PROMOTION_TONE: Record<string, Tone> = { pending_review: "warn", pending_approval: "warn", approved: "good", rejected: "bad", reverted: "serious" };
 
 /** The project another project's document belongs to, for a link to it. */
 function ownerOf(path: string): string | null {
@@ -487,10 +487,10 @@ function AccessRequests({ sc, requests, approver }: { sc: Sc; requests: ReturnTy
  * This project's promotions to `global/` (decision D9): a supervisor's lesson checked for
  * project-specific detail, judged by an independent reviewer, and (when the install asks for it)
  * approved by a person. Approved lessons link to their global entry; rejected ones to the project
- * lesson they were saved as.
+ * lesson they were saved as; reverted ones say who removed them from global/ and why.
  */
 function Promotions({ sc, promotions, error }: { sc: Sc; promotions: PromotionRecord[]; error: string | null }) {
-  const order: Record<string, number> = { pending_approval: 0, pending_review: 1, rejected: 2, approved: 3 };
+  const order: Record<string, number> = { pending_approval: 0, pending_review: 1, rejected: 2, approved: 3, reverted: 4 };
   const sorted = [...promotions].sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9) || b.created_at.localeCompare(a.created_at));
   const counts = Object.fromEntries(Object.keys(PROMOTION_LABEL).map((s) => [s, promotions.filter((x) => x.status === s).length]));
   return (
@@ -618,6 +618,25 @@ function PromotionOutcome({ sc, x }: { sc: Sc; x: PromotionRecord }) {
             <Link href={brainHref(sc.base, x.lesson_path)} className="font-mono text-accent-ink hover:underline">
               {x.lesson_path}
             </Link>
+          </p>
+        ) : null}
+      </div>
+    );
+  if (x.status === "reverted")
+    return (
+      <div className="space-y-1 text-sm">
+        <p className="text-ink-2">
+          <span className="font-medium text-serious-ink">Reverted:</span> removed from global knowledge{x.reverted_by ? ` by ${x.reverted_by}` : ""}
+          {x.reverted_at ? ` ${dateTime(Date.parse(x.reverted_at))}` : ""}
+          {x.revert_reason ? <>. Why: {x.revert_reason}</> : "."}
+        </p>
+        {x.global_path ? (
+          <p className="text-xs text-ink-3">
+            It was <Mono>{x.global_path}</Mono>; its text stays in the brain&apos;s history (
+            <Link href={`/all/knowledge#reverted`} className="text-accent-ink hover:underline">
+              removed entries
+            </Link>
+            ), and it is never written again.
           </p>
         ) : null}
       </div>

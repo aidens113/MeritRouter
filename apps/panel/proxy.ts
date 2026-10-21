@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { panelToken, safeEqual, sessionValue, SESSION_COOKIE } from "./lib/auth";
-import { LAST_PROJECT_COOKIE, SLUG_RE, slugOfPath } from "./lib/links";
+import { LAST_PROJECT_COOKIE, PATH_HEADER, SLUG_RE, slugOfPath } from "./lib/links";
 
 const OPEN = ["/login", "/api/login"];
 
@@ -24,7 +24,11 @@ async function gate(req: NextRequest): Promise<NextResponse | null> {
 export async function proxy(req: NextRequest) {
   const stopped = await gate(req);
   if (stopped) return stopped;
-  const res = NextResponse.next();
+  // The request's path, for layouts (they are not given it): app/p/[slug]/layout.tsx lets an
+  // archived project's settings page through and 404s its other pages. Always overwritten here.
+  const headers = new Headers(req.headers);
+  headers.set(PATH_HEADER, req.nextUrl.pathname);
+  const res = NextResponse.next({ request: { headers } });
   // Remember the project being opened, so the old project-less URLs (/jobs, /tasks, ...) can
   // redirect to it. The pages themselves 404 an unknown or archived slug, and the redirects check
   // the remembered slug again before using it.

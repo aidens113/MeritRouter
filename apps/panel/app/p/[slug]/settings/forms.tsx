@@ -24,7 +24,7 @@ function FieldError({ id, msgs }: { id: string; msgs: string[] | undefined }) {
 // ---------------------------------------------------------------------------------------------
 // General: name, read-only slug, archive.
 
-export function GeneralCard({ slug, name, legacy, configPath, keyPath, activity }: { slug: string; name: string; legacy: boolean; configPath: string; keyPath: string; activity: { runningTasks: number; queuedTasks: number } }) {
+export function GeneralCard({ slug, name, legacy, configPath, keyPath, activity, archived = false }: { slug: string; name: string; legacy: boolean; configPath: string; keyPath: string; activity: { runningTasks: number; queuedTasks: number }; archived?: boolean }) {
   const router = useRouter();
   const [draft, setDraft] = useState(name);
   const [nameError, setNameError] = useState<string[] | undefined>();
@@ -98,12 +98,13 @@ export function GeneralCard({ slug, name, legacy, configPath, keyPath, activity 
         <p className="max-w-2xl text-xs text-ink-3">
           Archiving takes the project off the grid, the switcher, and project pickers. Its settings, tasks, sessions, and brain are kept. Archived projects are listed at the bottom of the projects grid, where you can unarchive them. Archiving is refused while the project has running or queued tasks.
         </p>
-        {blocked ? (
+        {archived ? <p className="text-xs font-medium text-warn-ink">This project is archived. Unarchive it at the top of this page.</p> : null}
+        {blocked && !archived ? (
           <p className="text-xs text-warn-ink">
             Now: {activity.runningTasks} running and {activity.queuedTasks} queued task{activity.runningTasks + activity.queuedTasks === 1 ? "" : "s"}, so archiving will be refused until they finish or are cancelled.
           </p>
         ) : null}
-        {arming ? (
+        {archived ? null : arming ? (
           <div role="alertdialog" aria-labelledby="archive-confirm" className="flex flex-wrap items-center gap-2 rounded-lg border border-bad/40 bg-bad-soft px-3 py-2">
             <span id="archive-confirm" className="text-sm text-bad-ink">
               Archive <strong>{name}</strong>?
@@ -258,6 +259,7 @@ export function BrainCard({ slug, globalMounts, mounts, items, legacy }: { slug:
   const o = useOverrideRows(items);
   const { run, busy, error, message, setError } = useAction();
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
+  const [mountErrors, setMountErrors] = useState<Record<string, string>>({});
   const [rest, setRest] = useState<string[]>([]);
   const mountsDirty = JSON.stringify(rows) !== JSON.stringify(initialMounts);
   const dirty = o.dirtyIds.length + (mountsDirty ? 1 : 0);
@@ -265,6 +267,7 @@ export function BrainCard({ slug, globalMounts, mounts, items, legacy }: { slug:
   const save = async () => {
     const { patch, errors } = o.build();
     setRowErrors(errors);
+    setMountErrors({});
     setRest([]);
     if (mountsDirty) {
       const value: Mount[] = [];
@@ -279,9 +282,20 @@ export function BrainCard({ slug, globalMounts, mounts, items, legacy }: { slug:
     if (Object.keys(errors).length) return setError("Fix the highlighted settings.");
     const r = await run(settingsUrl(slug), "PATCH", { patch }, { success: "Saved. Running workers pick the change up automatically." });
     if (!r.ok) {
-      const m = errorsForRows(items, r.fieldErrors as FieldErrors | undefined);
+      // brain.mounts.<i>.<field> errors go under that mount's field (e.g. a folder that does not exist).
+      const fe = { ...((r.fieldErrors as FieldErrors | undefined) ?? {}) };
+      const byMount: Record<string, string> = {};
+      for (const k of Object.keys(fe)) {
+        const m = /^brain\.mounts\.(\d+)\.(\w+)$/.exec(k);
+        if (!m) continue;
+        byMount[`${m[1]}.${m[2]}`] = fe[k]!.join("; ");
+        delete fe[k];
+      }
+      setMountErrors(byMount);
+      const m = errorsForRows(items, fe);
       setRowErrors(m.byRow);
       setRest(m.rest);
+      if (Object.keys(byMount).length) setError("Not saved: check the highlighted mounts.");
     }
   };
 
@@ -291,7 +305,7 @@ export function BrainCard({ slug, globalMounts, mounts, items, legacy }: { slug:
       <div className="space-y-3 border-b border-line p-4">
         <h3 className="text-sm font-semibold text-ink">{legacy ? "Brain mounts" : "This project's mounts"}</h3>
         <p className="text-xs text-ink-3">Map a brain path prefix to an existing folder, for example a repository&apos;s docs/working, so agents read and write it as part of the brain.{legacy ? "" : " These are added to the install-wide mounts below."}</p>
-        <RowsEditor columns={MOUNT_COLUMNS} rows={rows} onChange={setRows} newRow={blankRow(MOUNT_COLUMNS, { prefix: `projects/${slug}/`, path: "", commit: false })} addLabel="Add mount" empty="No mounts of its own." />
+        <RowsEditor columns={MOUNT_COLUMNS} rows={rows} onChange={setRows} newRow={blankRow(MOUNT_COLUMNS, { prefix: `projects/${slug}/`, path: "", commit: false })} addLabel="Add mount" empty="No mounts of its own." errors={mountErrors} />
         {!legacy ? (
           <div className="text-xs text-ink-3">
             Install-wide mounts (every project, edited in Settings):{" "}
@@ -321,6 +335,7 @@ export function BrainCard({ slug, globalMounts, mounts, items, legacy }: { slug:
           setRows(initialMounts);
           o.reset();
           setRowErrors({});
+          setMountErrors({});
           setRest([]);
           setError(null);
         }}

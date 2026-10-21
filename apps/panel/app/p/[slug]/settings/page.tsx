@@ -1,9 +1,12 @@
 import Link from "next/link";
+import { Archive, ArchiveRestore } from "lucide-react";
 import { insights } from "switchyard-router";
 import { getSy } from "@/lib/sy";
 import { project } from "@/lib/project";
 import { SetupScreen } from "@/components/setup";
-import { Mono, PageHeader } from "@/components/ui";
+import { Callout, Mono, PageHeader } from "@/components/ui";
+import { ActionButton } from "@/components/client/actions";
+import { ago } from "@/lib/format";
 import { SectionNav } from "@/components/client/section-nav";
 import { metaFor, VERIFICATION_META, type OverrideItem } from "./fields";
 import { OverridesCard } from "./overrides";
@@ -30,11 +33,13 @@ const COMMAND_ORDER = ["coding.allowed_commands", "supervisor.allowed_commands",
  * One project's settings (decision D2): what lives under `projects.<slug>` in the global config.
  * Every override shows the install-wide value it inherits; saving goes through
  * `insights.saveProjectSettings` (`patchProjectSettings`), so the file stays the source of truth.
+ * An archived project's settings are shown read-only (the API refuses changes) with Unarchive;
+ * every other page of an archived project is a 404 (app/p/[slug]/layout.tsx).
  */
 export default async function ProjectSettingsPage({ params }: { params: Promise<{ slug: string }> }) {
   const r = getSy();
   if (!r.sy) return <SetupScreen error={r.error} configPath={r.configPath} />;
-  const p = project(r.sy, (await params).slug);
+  const p = project(r.sy, (await params).slug, { archived: true });
   const v = insights.projectSettingsView(r.sy, p.slug);
   // Plain objects only: these cross into client components.
   const items: OverrideItem[] = v.overrides.map((o) => ({ ...metaFor(o.id), id: o.id, path: o.path, global: o.global ?? null, overridden: o.overridden, override: o.override ?? null }));
@@ -66,11 +71,24 @@ export default async function ProjectSettingsPage({ params }: { params: Promise<
           </>
         }
       />
+      {v.archived ? (
+        <Callout tone="warn" icon={<Archive size={16} />} title={`${v.name} is archived${v.archivedAt ? ` (${ago(v.archivedAt, Date.now())})` : ""}`}>
+          <div className="space-y-3">
+            <p>
+              Its settings are shown read-only, and its other pages are closed. Its tasks, sessions, and brain are kept. Unarchive it to edit the settings and to bring it back to the projects grid, the switcher, and project pickers.
+            </p>
+            <ActionButton url={`/api/projects/${encodeURIComponent(p.slug)}`} method="PATCH" payload={{ archived: false }} variant="primary" small success="Unarchived: the settings can be edited again">
+              <ArchiveRestore size={13} aria-hidden /> Unarchive project
+            </ActionButton>
+          </div>
+        </Callout>
+      ) : null}
       <div className="space-y-4 xl:grid xl:grid-cols-[12rem_1fr] xl:gap-6 xl:space-y-0">
         <SectionNav label="Project settings sections" items={NAV} />
-        {/* Scroll margin clears the sticky top bar and section strip on narrow screens. */}
-        <div className="min-w-0 space-y-6 [&>section[id]]:scroll-mt-28 xl:[&>section[id]]:scroll-mt-6">
-          <GeneralCard slug={p.slug} name={v.name} legacy={v.legacy} configPath={v.configPath} keyPath={v.configKeyPath.join(".")} activity={v.activity} />
+        {/* Scroll margin clears the sticky top bar and section strip on narrow screens. A disabled
+            fieldset makes every control read-only while the project is archived. */}
+        <fieldset disabled={v.archived} aria-label={v.archived ? "Settings (read-only: the project is archived)" : undefined} className="m-0 min-w-0 space-y-6 border-0 p-0 [&>section[id]]:scroll-mt-28 xl:[&>section[id]]:scroll-mt-6">
+          <GeneralCard slug={p.slug} name={v.name} legacy={v.legacy} configPath={v.configPath} keyPath={v.configKeyPath.join(".")} activity={v.activity} archived={v.archived} />
           <RepositoriesCard slug={p.slug} rows={v.repositoryRows} />
           <BrainCard slug={p.slug} legacy={v.legacy} globalMounts={v.mounts.global} mounts={v.mounts.project} items={of("brain")} />
           <SchedulingCard slug={p.slug} legacy={v.legacy} limits={v.limits} />
@@ -92,7 +110,7 @@ export default async function ProjectSettingsPage({ params }: { params: Promise<
             locked={locked}
           />
           <OverridesCard id="roles" slug={p.slug} title="Roles and charters" description="Each role's charter, extra rules, and brain grants in this project. A role set here replaces the global entry for that role." items={of("roles")} locked={locked} />
-        </div>
+        </fieldset>
       </div>
     </div>
   );

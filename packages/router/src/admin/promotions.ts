@@ -1,9 +1,9 @@
-import { closeSync, existsSync, openSync, readFileSync, statSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
 import { z } from "zod";
-import { commitAs, parseTrailers, type Actor } from "../attribution/index.js";
-import { normalizeBrainPath } from "../brain/brain.js";
+import { parseTrailers } from "../attribution/index.js";
+import { BrainError, normalizeBrainPath } from "../brain/brain.js";
 import type { PromotionRecord, PromotionStatus } from "../brain/promotion.js";
 import { SwitchyardError } from "../core/errors.js";
 import type { Switchyard } from "../core/service.js";
@@ -250,6 +250,8 @@ export interface RevertOutcome {
   title: string;
   promotion: string | null;
   project: string | null;
+  /** The promotion record's status after the revert (`reverted`), or null when the entry has no record. */
+  promotionStatus: PromotionStatus | null;
 }
 
 /** Validate a path a person asked to revert: a markdown file under `global/`, not the glossary. */
@@ -266,43 +268,11 @@ function revertPath(input: string): string {
 }
 
 /**
- * Hold the brain repository's cross-process lock (the same lock file `Brain` writes take), so a
- * revert never interleaves with a promotion or another write.
- */
-async function withBrainLock<T>(repo: string, fn: () => Promise<T>): Promise<T> {
-  const lock = path.join(repo, ".switchyard-brain.lock");
-  const deadline = Date.now() + 15_000;
-  for (;;) {
-    try {
-      closeSync(openSync(lock, "wx"));
-      break;
-    } catch {
-      try {
-        if (Date.now() - statSync(lock).mtimeMs > 60_000) unlinkSync(lock);
-      } catch {
-        // the lock disappeared meanwhile
-      }
-      if (Date.now() > deadline) throw new SwitchyardError("usage", "the brain is locked by another process; try again");
-      await new Promise((r) => setTimeout(r, 50));
-    }
-  }
-  try {
-    return await fn();
-  } finally {
-    try {
-      unlinkSync(lock);
-    } catch {
-      // already removed
-    }
-  }
-}
-
-/**
- * Revert a global entry: one brain commit, made as a person, that removes the file. The commit
- * records who reverted it and why (trailers `Reverted-By`, `Revert-Reason`, and the entry's title,
- * promotion, and project), so the entry and its removal stay in the brain's history. The
- * promotion record (if any) is left as it was: it still names where the lesson went, so a settle
- * never writes it again.
+ * Revert a global entry: one brain commit, made as a person through `Brain.remove` (the brain's own
+ * lock and commit protocol), that removes the file. The commit records who reverted it and why
+ * (trailers `Reverted-By`, `Revert-Reason`, and the entry's title, promotion, and project), so the
+ * entry and its removal stay in the brain's history. The promotion record (if any) becomes
+ * `reverted` with who, when, and why; `settle()` never writes a reverted lesson again.
  */
 export async function revertGlobalEntry(sy: Switchyard, input: string, by: string, reason: string): Promise<RevertOutcome> {
   const rel = revertPath(input);
@@ -313,25 +283,38 @@ export async function revertGlobalEntry(sy: Switchyard, input: string, by: strin
   await brain.ensure();
   const r = brain.resolve(rel);
   if (!r.repo || !r.commit) throw new SwitchyardError("usage", `${rel} is not committed by SwitchYard (brain.commit is off, or its mount does not commit), so a revert could not be recorded`);
-  const repo = r.repo;
-  const out = await withBrainLock(repo, async () => {
-    if (!existsSync(r.abs)) throw new SwitchyardError("not_found", `${rel} does not exist (already reverted?)`);
-    const text = readFileSync(r.abs, "utf8");
-    const parsed = parseGlobalProvenance(text);
-    const title = (parsed.title ?? path.posix.basename(rel, ".md")).slice(0, 200);
-    const actor: Actor = { agent: "human", role: "human" };
-    // A file written outside SwitchYard and never committed is recorded first, so the revert removes a tracked file.
-    const tracked = (await git(repo, ["ls-files", "--", r.repoRel])).trim();
-    if (!tracked) await commitAs(repo, actor, "Record edits made outside SwitchYard", { paths: [r.repoRel] });
-    unlinkSync(r.abs);
-    const trailers: Record<string, string> = { [REVERT_TRAILERS.by]: who.slice(0, 200), [REVERT_TRAILERS.reason]: why.slice(0, 1000), [REVERT_TRAILERS.title]: title };
-    if (parsed.provenance?.promotion) trailers[REVERT_TRAILERS.promotion] = parsed.provenance.promotion;
-    if (parsed.provenance?.project) trailers[REVERT_TRAILERS.project] = parsed.provenance.project;
-    const commit = await commitAs(repo, actor, `Revert global entry ${rel}`.slice(0, 200), { paths: [r.repoRel], extraTrailers: trailers });
-    if (!commit) throw new SwitchyardError("usage", `removing ${rel} produced no commit`);
-    if (sy.cfg.brain.push) await git(repo, ["push", "-q"]).catch(() => undefined);
-    return { path: rel, commit, revertedBy: who, reason: why, title, promotion: parsed.provenance?.promotion ?? null, project: parsed.provenance?.project ?? null };
-  });
-  await brain.refreshIndex().catch(() => undefined);
-  return out;
+  if (!existsSync(r.abs)) throw new SwitchyardError("not_found", `${rel} does not exist (already reverted?)`);
+  let removed: { title: string; provenance: GlobalProvenance | null } = { title: path.posix.basename(rel, ".md"), provenance: null };
+  let res: { path: string; commit: string | null };
+  try {
+    res = await brain.remove({ kind: "human", name: who }, { agent: "human", role: "human" }, rel, why, {
+      message: `Revert global entry ${rel}`,
+      trailers: (text) => {
+        const parsed = parseGlobalProvenance(text);
+        removed = { title: (parsed.title ?? removed.title).slice(0, 200), provenance: parsed.provenance };
+        const t: Record<string, string> = { [REVERT_TRAILERS.by]: who.slice(0, 200), [REVERT_TRAILERS.reason]: why.slice(0, 1000), [REVERT_TRAILERS.title]: removed.title };
+        if (parsed.provenance?.promotion) t[REVERT_TRAILERS.promotion] = parsed.provenance.promotion;
+        if (parsed.provenance?.project) t[REVERT_TRAILERS.project] = parsed.provenance.project;
+        return t;
+      },
+    });
+  } catch (err) {
+    if (err instanceof BrainError) throw new SwitchyardError(existsSync(r.abs) ? "usage" : "not_found", err.message);
+    throw err;
+  }
+  if (!res.commit) throw new SwitchyardError("usage", `removing ${rel} produced no commit`);
+  const promotion = removed.provenance?.promotion ?? null;
+  const project = removed.provenance?.project ?? null;
+  return { path: rel, commit: res.commit, revertedBy: who, reason: why, title: removed.title, promotion, project, promotionStatus: await markPromotionReverted(sy, project, promotion, who, why) };
+}
+
+/**
+ * Mark the reverted lesson's promotion record `reverted`. Returns the record's status afterwards,
+ * or null when there is no record (a person's own lesson, or its project is no longer configured).
+ */
+async function markPromotionReverted(sy: Switchyard, project: string | null, id: string | null, who: string, why: string): Promise<PromotionStatus | null> {
+  if (!project || !id || !PROMOTION_ID_RE.test(id) || !sy.projects.context(project)) return null;
+  const promotions = sy.brainFor(project).promotions;
+  const marked = await promotions.markReverted(id, who, why);
+  return marked?.status ?? promotions.get(id)?.status ?? null;
 }

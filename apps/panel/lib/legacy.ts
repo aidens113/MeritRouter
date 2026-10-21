@@ -2,7 +2,7 @@ import "server-only";
 import { notFound, redirect } from "next/navigation";
 import { getSy } from "./sy";
 import { findProject, lastProject, sessionProject, taskProject } from "./project";
-import { projectBase } from "./links";
+import { projectBase, QUALIFICATION_BASE, QUALIFICATION_SLUG } from "./links";
 
 // Redirects for the URLs the panel had before projects. Global pages (/models, /routing, ...)
 // redirect permanently in next.config.ts; these handle the per-project ones.
@@ -23,11 +23,15 @@ export async function toLastProject(path: string, searchParams: SearchParams): P
   redirect(slug ? `${projectBase(slug)}${path}${query(await searchParams)}` : "/");
 }
 
-/** `/tasks/<id>`, `/jobs/<id>`, `/sessions/<id>`: the page in the project the task or session belongs to. */
+/**
+ * `/tasks/<id>`, `/jobs/<id>`, `/sessions/<id>`: the page in the project the task or session
+ * belongs to; qualification and comparison work goes to its view under /all/qualification.
+ */
 export async function toItemProject(kind: "tasks" | "jobs" | "sessions", id: string, searchParams: SearchParams): Promise<never> {
   const r = getSy();
   if (!r.sy) redirect("/");
   const slug = kind === "sessions" ? sessionProject(r.sy, id) : taskProject(r.sy, id);
+  if (slug === QUALIFICATION_SLUG) redirect(`${QUALIFICATION_BASE}/${kind}/${encodeURIComponent(id)}${query(await searchParams)}`);
   if (!slug || !findProject(r.sy, slug)) notFound();
   redirect(`${projectBase(slug)}/${kind}/${encodeURIComponent(id)}${query(await searchParams)}`);
 }

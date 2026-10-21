@@ -36,6 +36,8 @@ export default async function JobDetailPage({ params }: { params: Promise<{ slug
   const job = insights.jobDetail(sy, id);
   if (!job) notFound();
   const spec = sy.tasks.get(id)!.spec;
+  // The job's own project's repositories (the global map is empty when projects are configured).
+  const repoPaths = insights.contextOfTask(sy, id).repositoryPaths;
   const status = sy.getStatus([id])[0] as { stateReason?: string | null; maxModelRequests?: number; startedAt?: string | null };
   const live = !isTerminal(job.state);
   const pending = job.questions.filter((q) => q.answer === null);
@@ -219,7 +221,7 @@ export default async function JobDetailPage({ params }: { params: Promise<{ slug
                   <>
                     <CopyCommand command={`git merge --no-ff ${b.branch}`} />
                     <p className="text-xs text-ink-3">
-                      Run it in <Mono>{sy.cfg.repositoryPaths[b.alias]?.path ?? b.alias}</Mono> after reviewing <Mono>{`git log --stat ${b.baseSha.slice(0, 12)}..${b.branch}`}</Mono>. Integration worktree: <Mono>{b.worktree}</Mono>
+                      Run it in <Mono>{repoPaths[b.alias]?.path ?? b.alias}</Mono> after reviewing <Mono>{`git log --stat ${b.baseSha.slice(0, 12)}..${b.branch}`}</Mono>. Integration worktree: <Mono>{b.worktree}</Mono>
                     </p>
                   </>
                 )}

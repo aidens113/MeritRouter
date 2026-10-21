@@ -5,7 +5,9 @@ import { REPOSITORY_ALIAS_RE, ROLE_NAMES } from "../config/schema.js";
 import { SwitchyardError } from "../core/errors.js";
 import type { Switchyard } from "../core/service.js";
 import { PROJECT_CODING_KEYS, PROJECT_SUPERVISOR_KEYS, PROJECT_TEAM_KEYS, ProjectConfigSchema } from "../projects/schema.js";
+import { expandHome } from "../brain/brain.js";
 import { patchConfig, readConfigText } from "./config-edit.js";
+import { TERMINAL_STATES } from "../core/task.js";
 import { projectActivity, projectInfo } from "./projects.js";
 
 // Settings split for the panel (decision D2): global sections (providers, models, routing,
@@ -128,8 +130,85 @@ export function patchProjectSettings(sy: Switchyard, slug: string, patch: Settin
     if (ctx.project.legacy && head === "brain" && p.path.length === 1) errors.push("brain: set brain.<key> one key at a time in a single-project config (the brain section is global there)");
   }
   if (errors.length) return { ok: false, errors };
+  errors.push(...repositoryRemovalErrors(sy, slug, removedAliases(Object.keys(ctx.repositories), patch)), ...mountFolderErrors(sy, patch));
+  if (errors.length) return { ok: false, errors };
   const prefix: Array<string | number> = ctx.project.legacy ? [] : ["projects", slug];
   return patchConfig(sy, patch.map((p) => ({ path: [...prefix, ...p.path], value: p.value })));
+}
+
+/** The repository aliases a patch removes, given the project's current aliases (patches apply in order). */
+export function removedAliases(current: string[], patch: SettingsPatch): string[] {
+  const now = new Set(current);
+  for (const p of patch) {
+    if (p.path[0] !== "repositories") continue;
+    if (p.path.length === 1) {
+      const next = new Set(p.value && typeof p.value === "object" ? Object.keys(p.value) : []);
+      for (const a of [...now]) if (!next.has(a)) now.delete(a);
+      for (const a of next) now.add(a);
+    } else if (p.path.length === 2 && (p.value === null || p.value === undefined)) now.delete(String(p.path[1]));
+    else now.add(String(p.path[1]));
+  }
+  return current.filter((a) => !now.has(a));
+}
+
+/**
+ * Unfinished tasks of a project that name a repository alias (read or written): queued, running,
+ * waiting, and interrupted ones, since an interrupted task can be resumed.
+ */
+export function tasksUsingRepository(sy: Switchyard, slug: string, alias: string): string[] {
+  const states = [...TERMINAL_STATES];
+  const rows = sy.db
+    .prepare(
+      `SELECT id FROM tasks WHERE project_id = ? AND state NOT IN (${states.map(() => "?").join(",")})
+          AND (json_extract(spec_json, '$.writableRepository') = ? OR EXISTS (SELECT 1 FROM json_each(tasks.spec_json, '$.repositoryAliases') WHERE value = ?))
+        ORDER BY created_at`,
+    )
+    .all(slug, ...states, alias, alias) as Array<{ id: string }>;
+  return rows.map((r) => r.id);
+}
+
+/**
+ * Removing a repository is refused while unfinished tasks of the project use its alias: they
+ * would fail when they run or resume. Each message names the tasks (or, past five, how many).
+ */
+export function repositoryRemovalErrors(sy: Switchyard, slug: string, aliases: string[]): string[] {
+  return aliases.flatMap((alias) => {
+    const ids = tasksUsingRepository(sy, slug, alias);
+    if (!ids.length) return [];
+    const named = ids.length <= 5 ? ids.join(", ") : `${ids.slice(0, 3).join(", ")} and ${ids.length - 3} more`;
+    return [`repositories.${alias}: repository ${alias} is used by ${ids.length} unfinished task${ids.length === 1 ? "" : "s"} (${named}); cancel them or let them finish before removing it`];
+  });
+}
+
+/** The brain mounts a patch writes, each with the field it came from (`brain.mounts.<i>.path`). */
+function patchedMounts(patch: SettingsPatch): Array<{ field: string; path: unknown }> {
+  const out: Array<{ field: string; path: unknown }> = [];
+  const list = (v: unknown) => (Array.isArray(v) ? v : []).forEach((m, i) => out.push({ field: `brain.mounts.${i}.path`, path: (m as { path?: unknown } | null)?.path }));
+  for (const p of patch) {
+    if (p.path[0] !== "brain" || p.value === null || p.value === undefined) continue;
+    if (p.path.length === 1) list((p.value as { mounts?: unknown }).mounts);
+    else if (p.path[1] !== "mounts") continue;
+    else if (p.path.length === 2) list(p.value);
+    else if (p.path.length === 3) out.push({ field: `brain.mounts.${String(p.path[2])}.path`, path: (p.value as { path?: unknown }).path });
+    else if (p.path.length === 4 && p.path[3] === "path") out.push({ field: `brain.mounts.${String(p.path[2])}.path`, path: p.value });
+  }
+  return out;
+}
+
+/** Brain mount folders must exist when they are saved (relative paths resolve against the config file's folder). */
+export function mountFolderErrors(sy: Switchyard, patch: SettingsPatch): string[] {
+  const base = path.dirname(sy.cfg.configPath);
+  return patchedMounts(patch).flatMap(({ field, path: p }) => {
+    if (typeof p !== "string" || !p.trim()) return []; // the config schema reports a missing path
+    const abs = path.resolve(base, expandHome(p.trim()));
+    let dir = false;
+    try {
+      dir = statSync(abs).isDirectory();
+    } catch {
+      dir = false;
+    }
+    return dir ? [] : [`${field}: ${abs} does not exist or is not a folder; create it first`];
+  });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -205,10 +284,13 @@ export function validateProjectRepositories(sy: Switchyard, rows: ProjectReposit
  */
 export function saveProjectRepositories(sy: Switchyard, slug: string, rows: ProjectRepositoryInput[]): SettingsSaveResult {
   if (!sy.projects.get(slug)) return { ok: false, errors: [`unknown project ${slug}`], fieldErrors: { form: [`unknown project ${slug}`] } };
-  const fieldErrors = validateProjectRepositories(sy, rows);
-  if (Object.keys(fieldErrors).length) return { ok: false, errors: flatErrors(fieldErrors), fieldErrors };
+  // A removed repository has no row left to mark, so its refusal is a form-level error.
   const current = Object.keys((projectSettings(sy, slug).raw.repositories ?? {}) as Record<string, unknown>);
   const keep = new Set(rows.map((r) => r.alias.trim()));
+  const inUse = repositoryRemovalErrors(sy, slug, current.filter((a) => !keep.has(a))).map((e) => e.replace(/^repositories\.[^:]+: /, ""));
+  if (inUse.length) return { ok: false, errors: inUse, fieldErrors: { form: inUse } };
+  const fieldErrors = validateProjectRepositories(sy, rows);
+  if (Object.keys(fieldErrors).length) return { ok: false, errors: flatErrors(fieldErrors), fieldErrors };
   const patch: SettingsPatch = rows.length
     ? [
         ...current.filter((a) => !keep.has(a)).map((a) => ({ path: ["repositories", a], value: null })),

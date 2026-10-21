@@ -774,7 +774,8 @@ const startWorker = () => {
 async function phase(hoursAgo, label, tasks, opts = {}) {
   offset = Math.round(hoursAgo * HOUR);
   scenario = opts.scenario ?? "ok";
-  const subs = await sy.submitTasks(tasks, { project: opts.project ?? "demo" });
+  // A qualification purpose sends the tasks to the reserved `_qualification` project (no project named).
+  const subs = await sy.submitTasks(tasks, opts.purpose ? { purpose: opts.purpose } : { project: opts.project ?? "demo" });
   startWorker();
   const out = await sy.awaitResults(subs.map((s) => s.taskId), { timeoutSeconds: opts.timeout ?? 60 });
   const states = out.completed.map((r) => `${r.executionStatus}${r.acceptanceStatus !== "not_verified" ? `/${r.acceptanceStatus}` : ""}`);
@@ -908,6 +909,9 @@ await phase(0.5, "recent summaries", [summarize("Summarise the latest canary log
 await phase(6, "storefront: summaries", [summarize("Summarise the checkout error log"), summarize("Summarise the payment provider webhook log")], { project: "storefront" });
 await phase(0.4, "storefront: recent summary", [summarize("Summarise the cart service log after the deploy")], { project: "storefront" });
 await phase(30, "legacy billing: summary (archived below)", [summarize("Summarise the month-end invoice run log")], { project: "legacy-billing" });
+// One qualification trial: it runs in the reserved `_qualification` project, never a user project,
+// and is viewed under /all/qualification (linked to an illustrative run below).
+const qualificationTrial = await phase(29, "qualification: one eval trial (reserved project)", [summarize("Summarise the qualification fixture's build log (eval trial)", { label: "completion-t1-1" })], { purpose: "qualification" });
 
 // Paid route: every free model is "cooling down", so the paid model serves (fake direct client).
 sy.vault.add({ provider: "anthropic", label: "demo card (fake key)", secret: "sk-ant-demo-NOT-A-REAL-KEY-7f3a", billingClass: "paid_postpaid", monthlyCapUsd: 10, expiresAt: Date.now() + 90 * 24 * HOUR });
@@ -1090,6 +1094,15 @@ qual.transaction(() => {
       });
     }
   }
+  // The real trial task above belongs to the first run (its eval and trial), so the Qualification
+  // page lists it with the model under test.
+  const trialTask = qualificationTrial.completed[0]?.taskId;
+  if (trialTask) {
+    const [endpointId] = plan[0];
+    qual
+      .prepare("INSERT INTO qualification_tasks (task_id, run_id, eval_id, trial, endpoint_id, fixture_path, evaluated) VALUES (?, ?, 'completion-t1-1', 1, ?, '(demo fixture)', 1)")
+      .run(trialTask, `qr_demo_${endpointId.replace(/[^a-z0-9]+/gi, "_")}`, endpointId);
+  }
 })();
 
 await sy.close();
@@ -1186,6 +1199,13 @@ if (verifyLesson) await insights.decideGlobalPromotion(idle, verifyLesson.projec
 await insights.brainWrite(idle, "global/glossary.md", "# Glossary\n\nShared terms. Supervisors maintain this file.\n\n- **Job branch**: the branch a job's supervisor integrates workers' commits onto before you merge it.\n- **Integration check**: a command run on the job branch after integrating, not in a worker's worktree.\n- **Lease**: a time-limited claim on a file or repository that keeps two workers from editing it at once.\n");
 const handLesson = await idle.brainFor("storefront").promoteLesson({ kind: "human", name: "you" }, { agent: "human", role: "human" }, "Prefer feature flags over long-lived branches", "Merge small changes behind a flag instead of keeping a branch open for weeks.", []);
 await insights.revertGlobalEntry(idle, handLesson.path, "you", "Too broad: some teams ship from release branches by design.");
+// A supervisor's approved lesson reverted by a person: its promotion record becomes `reverted`
+// (who and why), shown on the storefront Brain page and in Knowledge's recent decisions.
+const moneyLesson = idle.promotions({ project: "storefront", status: "approved" }).find((p) => p.title.startsWith("Keep money in integer minor units"));
+if (moneyLesson?.global_path) {
+  const out = await insights.revertGlobalEntry(idle, moneyLesson.global_path, "you", "Duplicates the team's money-handling guide; keep one source.");
+  console.log(`  ${"storefront: approved lesson reverted".padEnd(44)} promotion ${out.promotionStatus ?? "has no record"}`);
+} else console.warn("  warning: no approved storefront lesson to revert");
 
 // The billing project is retired: archived, with its history kept.
 insights.archiveProject(idle, "legacy-billing");

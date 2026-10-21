@@ -178,7 +178,8 @@ describe("admin promotions: global knowledge for people (D9)", () => {
     expect(existsSync(path.join(root, ".switchyard-brain.lock"))).toBe(false);
 
     // One commit, made as a person, removing only that file, with who and why in its trailers.
-    expect(git(root, "rev-parse", "HEAD").trim()).toBe(out.commit);
+    // The revert commit, then the promotion record's update to `reverted` (projects-followups.test.ts covers that).
+    expect(git(root, "rev-parse", "HEAD~1").trim()).toBe(out.commit);
     expect(git(root, "show", "--name-status", "--format=", out.commit).trim()).toBe(`D\t${rel}`);
     const msg = git(root, "log", "-1", "--format=%an%n%B", out.commit);
     expect(msg).toMatch(/^human\n/);
@@ -198,7 +199,7 @@ describe("admin promotions: global knowledge for people (D9)", () => {
     expect(s.brain.search({ kind: "human" }, "jittered backoff").map((h) => h.path)).not.toContain(rel);
     await s.settlePromotions();
     expect(existsSync(path.join(root, rel))).toBe(false);
-    expect(s.brainFor("alpha").promotions.get(a)).toMatchObject({ status: "approved", global_path: rel });
+    expect(s.brainFor("alpha").promotions.get(a)).toMatchObject({ status: "reverted", global_path: rel });
     await expect(revertGlobalEntry(s, rel, "panel", "again")).rejects.toMatchObject({ code: "not_found" });
   });
 

@@ -1,35 +1,42 @@
 import "server-only";
 import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
-import { insights, PROJECT_SLUG_RE, type Switchyard } from "switchyard-router";
+import { insights, PROJECT_SLUG_RE, QUALIFICATION_PROJECT, type Switchyard } from "switchyard-router";
 import type { SwitcherProject } from "@/components/client/project-switcher";
-import { LAST_PROJECT_COOKIE, SLUG_RE } from "./links";
+import { LAST_PROJECT_COOKIE, QUALIFICATION_SLUG, SLUG_RE } from "./links";
 
 // Project scope for server components and route handlers. A project route reads exactly one
 // project: an unknown or archived slug is a 404, never a silent fall back to every project.
 
 export type ProjectSummary = insights.ProjectSummary;
 
+if (QUALIFICATION_SLUG !== QUALIFICATION_PROJECT) console.warn(`[panel] lib/links.ts QUALIFICATION_SLUG differs from the router's QUALIFICATION_PROJECT (${QUALIFICATION_PROJECT})`);
 if (SLUG_RE.source !== PROJECT_SLUG_RE.source) console.warn(`[panel] lib/links.ts SLUG_RE (${SLUG_RE.source}) differs from the router's PROJECT_SLUG_RE (${PROJECT_SLUG_RE.source})`);
 
-/** The live (not archived) project `slug`, or null when it is unknown, archived, or malformed. */
-export function findProject(sy: Switchyard, slug: string): ProjectSummary | null {
+/**
+ * The live (not archived) project `slug`, or null when it is unknown, archived, or malformed.
+ * `archived: true` also finds an archived project (its settings page, where it can be unarchived).
+ */
+export function findProject(sy: Switchyard, slug: string, opts: { archived?: boolean } = {}): ProjectSummary | null {
   if (!PROJECT_SLUG_RE.test(slug)) return null;
   try {
     const p = insights.projectInfo(sy, slug);
-    return p.archived ? null : p;
+    return p.archived && !opts.archived ? null : p;
   } catch (err) {
     if ((err as { code?: unknown }).code === "not_found") return null;
     throw err;
   }
 }
 
-/** The live project `slug`, or a 404 page. */
-export function project(sy: Switchyard, slug: string): ProjectSummary {
-  return findProject(sy, slug) ?? notFound();
+/** The live project `slug` (or an archived one with `archived: true`), or a 404 page. */
+export function project(sy: Switchyard, slug: string, opts: { archived?: boolean } = {}): ProjectSummary {
+  return findProject(sy, slug, opts) ?? notFound();
 }
 
-/** The project a task belongs to (its own, or the primary project for an unassigned row); null for an unknown task. */
+/**
+ * The project a task belongs to (its own, the primary project for an unassigned row, or
+ * `_qualification` for qualification and comparison work); null for an unknown task.
+ */
 export function taskProject(sy: Switchyard, taskId: string): string | null {
   if (!sy.tasks.get(taskId)) return null;
   return insights.contextOfTask(sy, taskId).project.slug;

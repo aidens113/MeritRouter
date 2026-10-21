@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { insights } from "switchyard-router";
-import { body, handle, json } from "@/lib/api";
+import { body, handle, HttpError, json } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +32,8 @@ const Body = z.object({
 export async function PATCH(req: Request, ctx: Ctx) {
   return handle(async (sy) => {
     const { slug } = await ctx.params;
-    insights.projectInfo(sy, slug); // 404 for an unknown project
+    // 404 for an unknown project; an archived project's settings are read-only.
+    if (insights.projectInfo(sy, slug).archived) throw new HttpError(409, `project ${slug} is archived: unarchive it to change its settings`);
     const { patch } = await body(req, Body);
     const r = insights.saveProjectSettings(sy, slug, patch.map((p) => ({ path: p.path, value: p.value ?? null })));
     if (!r.ok) return json({ ok: false, error: r.fieldErrors.form?.join("; ") || "Not saved: check the highlighted fields.", errors: r.errors, fieldErrors: r.fieldErrors }, 400);

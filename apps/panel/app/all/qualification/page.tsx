@@ -1,11 +1,14 @@
 import Link from "next/link";
-import { BadgeCheck, FlaskConical } from "lucide-react";
+import { BadgeCheck, FlaskConical, ListChecks } from "lucide-react";
 import { insights, TIER_NAMES, type Switchyard } from "switchyard-router";
 import { getSy } from "@/lib/sy";
 import { SetupScreen } from "@/components/setup";
 import { Badge, Callout, Card, CardHeader, cx, EmptyState, HelpTip, Mono, PageHeader, Stat } from "@/components/ui";
 import { ActionButton, AutoRefresh } from "@/components/client/actions";
-import { ago, dateTime, humanize, modelHref, num } from "@/lib/format";
+import { ComparisonsList } from "@/components/comparisons";
+import { TaskStateBadge } from "@/components/task-badges";
+import { ago, dateTime, humanize, modelHref, num, shortId } from "@/lib/format";
+import { QUALIFICATION_BASE, taskHref } from "@/lib/links";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Qualification" };
@@ -53,6 +56,10 @@ export default function QualificationPage() {
   const perRun = board.evals.reduce((s, e) => s + e.maxModelRequests, 0) * q.trials_per_task;
   const names = new Map(models.map((m) => [m.id, m.name]));
   const now = Date.now();
+  // The reserved `_qualification` project's work: eval trials and comparison runs on eval goals.
+  const work = insights.qualificationTasks(sy, { limit: 50 });
+  const comparisons = insights.qualificationComparisons(sy, { limit: 10 });
+  const taskLink = (id: string) => taskHref(QUALIFICATION_BASE, id);
 
   return (
     <div className="space-y-6">
@@ -197,6 +204,77 @@ export default function QualificationPage() {
           </div>
         ) : (
           <EmptyState title="No runs yet" />
+        )}
+      </Card>
+
+      <Card id="work">
+        <CardHeader
+          title="Qualification and comparison tasks"
+          description="The tasks qualification runs and comparisons on evaluation goals submitted, newest first. They run in a reserved internal project (never one of yours), so they are viewed here: open one for its result, requests, and sessions."
+        />
+        {work.length ? (
+          <div className="overflow-x-auto">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Submitted</th>
+                  <th>Kind</th>
+                  <th>Task</th>
+                  <th>Model under test</th>
+                  <th>State</th>
+                </tr>
+              </thead>
+              <tbody>
+                {work.map((t) => (
+                  <tr key={t.taskId}>
+                    <td className="whitespace-nowrap" title={dateTime(t.createdAt)}>
+                      {ago(t.createdAt, now)}
+                    </td>
+                    <td className="whitespace-nowrap text-xs">{t.purpose === "comparison" ? "Comparison run" : t.run ? `Eval ${t.run.evalId}, trial ${t.run.trial}` : "Qualification"}</td>
+                    <td className="max-w-[28rem]">
+                      <Link href={taskLink(t.taskId)} className="font-medium text-accent-ink hover:underline">
+                        {t.label ?? shortId(t.taskId, 18)}
+                      </Link>
+                      <div className="line-clamp-1 text-[11px] text-ink-3" title={t.goal}>
+                        {t.profile} · {t.goal}
+                      </div>
+                    </td>
+                    <td className="text-xs">
+                      {t.run ? (
+                        <Link href={modelHref(t.run.endpointId)} className="hover:underline">
+                          {names.get(t.run.endpointId) ?? t.run.endpointId}
+                        </Link>
+                      ) : (
+                        <span className="text-ink-3">–</span>
+                      )}
+                    </td>
+                    <td>
+                      <TaskStateBadge state={t.state} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <EmptyState icon={<ListChecks size={22} />} title="No qualification tasks yet">
+            Run qualification for a model above, or a comparison on evaluation goals with <Mono>switchyard compare</Mono>.
+          </EmptyState>
+        )}
+      </Card>
+
+      <Card id="comparisons">
+        <CardHeader
+          title="Team vs single agent on evaluation goals"
+          help="comparison"
+          description={`The same evaluation goals run as a team job and as one agent. Comparisons of your own goals run in a project and are on its Teams page. Comparisons share today's qualification allocation (${q.max_requests_per_day} requests).`}
+        />
+        {comparisons.length ? (
+          <ComparisonsList comparisons={comparisons} teamHref={taskLink} singleHref={taskLink} />
+        ) : (
+          <EmptyState icon={<FlaskConical size={22} />} title="No comparisons on evaluation goals">
+            See the planned request budget with <Mono>switchyard compare --dry-run</Mono>, then run it with <Mono>switchyard compare --yes</Mono>. Nothing runs on its own.
+          </EmptyState>
         )}
       </Card>
 

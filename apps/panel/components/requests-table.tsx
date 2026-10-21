@@ -4,7 +4,7 @@ import type { insights } from "switchyard-router";
 import { RequestStatusBadge, TierBadge } from "./task-badges";
 import { Badge, EmptyState } from "./ui";
 import { dateTime, duration, humanize, modelHref, num, shortDateTime, shortId } from "@/lib/format";
-import { projectBase, taskHref } from "@/lib/links";
+import { itemBase, QUALIFICATION_BASE, QUALIFICATION_SLUG, taskHref } from "@/lib/links";
 
 export type RequestRow = ReturnType<typeof insights.requestLog>[number];
 
@@ -23,7 +23,7 @@ export function purposeLabel(p: string): string {
 
 /**
  * `base` is the project path (`/p/<slug>`) task links start from; without it (a view across
- * projects) each row links into its own project.
+ * projects) each row links into its own project, and qualification work to /all/qualification.
  */
 export function RequestsTable({ rows, names, base, hideModel = false, empty }: { rows: RequestRow[]; names: Map<string, string>; base?: string; hideModel?: boolean; empty?: string }) {
   if (!rows.length) return <EmptyState title={empty ?? "No requests recorded"}>Requests appear here as workers call models through the gate.</EmptyState>;
@@ -96,8 +96,12 @@ export function RequestsTable({ rows, names, base, hideModel = false, empty }: {
               </td>
               {base === undefined ? (
                 <td className="whitespace-nowrap">
-                  {r.project ? (
-                    <Link href={projectBase(r.project)} className="font-mono text-xs text-accent-ink hover:underline">
+                  {r.project === QUALIFICATION_SLUG ? (
+                    <Link href={QUALIFICATION_BASE} className="text-xs text-accent-ink hover:underline" title="Qualification runs and eval comparisons (not a project)">
+                      qualification
+                    </Link>
+                  ) : r.project ? (
+                    <Link href={itemBase(r.project)} className="font-mono text-xs text-accent-ink hover:underline">
                       {r.project}
                     </Link>
                   ) : (
@@ -115,14 +119,14 @@ export function RequestsTable({ rows, names, base, hideModel = false, empty }: {
                 ) : null}
                 <div className="flex flex-col">
                   {r.taskIds.slice(0, r.taskIds.length > 2 ? 0 : 2).map((t) => (
-                    <Link key={t} href={taskHref(base ?? (r.project ? projectBase(r.project) : ""), t)} className="font-mono text-xs text-accent-ink hover:underline">
+                    <Link key={t} href={taskHref(base ?? (r.project ? itemBase(r.project) : ""), t)} className="font-mono text-xs text-accent-ink hover:underline">
                       {shortId(t, 14)}
                     </Link>
                   ))}
                   {r.taskIds.length > 2 ? (
                     <span className="mt-0.5 flex flex-wrap gap-1">
                       {r.taskIds.map((t) => (
-                        <Link key={t} href={taskHref(base ?? (r.project ? projectBase(r.project) : ""), t)} className="font-mono text-[11px] text-accent-ink hover:underline">
+                        <Link key={t} href={taskHref(base ?? (r.project ? itemBase(r.project) : ""), t)} className="font-mono text-[11px] text-accent-ink hover:underline">
                           {shortId(t, 8)}
                         </Link>
                       ))}

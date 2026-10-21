@@ -44,7 +44,7 @@ const Body = z.object({
 export async function PUT(req: Request, ctx: Ctx) {
   return handle(async (sy) => {
     const { slug } = await ctx.params;
-    insights.projectInfo(sy, slug);
+    if (insights.projectInfo(sy, slug).archived) throw new HttpError(409, `project ${slug} is archived: unarchive it to change its settings`);
     let raw: unknown;
     try {
       raw = await req.json();

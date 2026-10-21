@@ -83,7 +83,9 @@ export function Shell({ children, configPath, loginEnabled, projects }: { childr
   if (path === "/login") return <main className="min-h-screen">{children}</main>;
 
   const scope = scopeOf(path);
-  const items = scope.kind === "project" ? projectNav(scope.slug) : GLOBAL_NAV;
+  // A project missing from the live list is archived (its settings page is the only one that opens).
+  const archived = scope.kind === "project" && !projects.some((p) => p.slug === scope.slug);
+  const items = scope.kind === "project" ? projectNav(scope.slug).filter((i) => !archived || i.href.endsWith("/settings")) : GLOBAL_NAV;
   const nav = (
     <nav aria-label={scope.kind === "project" ? "Project" : "All projects"} className="flex flex-col gap-0.5">
       {scope.kind !== "project" ? <div className="px-3 pb-1 pt-1 text-[11px] font-medium uppercase tracking-wide text-ink-3">All projects</div> : null}

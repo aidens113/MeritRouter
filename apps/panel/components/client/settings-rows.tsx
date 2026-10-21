@@ -59,8 +59,11 @@ export function blankRow(cols: Column[], defaults: Record<string, unknown> = {})
   return toDraft(cols, defaults);
 }
 
-/** Controlled editor for a list of objects, each row a small grid of labelled fields. */
-export function RowsEditor({ columns, rows, onChange, newRow, addLabel, empty }: { columns: Column[]; rows: Draft[]; onChange: (r: Draft[]) => void; newRow: Draft; addLabel: string; empty: string }) {
+/**
+ * Controlled editor for a list of objects, each row a small grid of labelled fields. `errors`
+ * (keyed `<row index>.<column key>`) are shown under their text fields.
+ */
+export function RowsEditor({ columns, rows, onChange, newRow, addLabel, empty, errors = {} }: { columns: Column[]; rows: Draft[]; onChange: (r: Draft[]) => void; newRow: Draft; addLabel: string; empty: string; errors?: Record<string, string> }) {
   const set = (i: number, k: string, v: string | boolean | string[]) => onChange(rows.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
   return (
     <div className="space-y-3">
@@ -116,8 +119,15 @@ export function RowsEditor({ columns, rows, onChange, newRow, addLabel, empty }:
                         placeholder={c.placeholder}
                         inputMode={c.kind === "text" || c.kind === "optText" ? undefined : "decimal"}
                         className={cx("field mt-0.5", c.kind === "text" || c.kind === "optText" ? "font-mono text-[13px]" : "tabular")}
+                        aria-invalid={Boolean(errors[`${i}.${c.key}`])}
+                        aria-describedby={errors[`${i}.${c.key}`] ? `row-${i}-${c.key}-error` : undefined}
                       />
                     )}
+                    {errors[`${i}.${c.key}`] ? (
+                      <span id={`row-${i}-${c.key}-error`} role="alert" className="mt-1 block break-all text-xs text-bad-ink">
+                        {errors[`${i}.${c.key}`]}
+                      </span>
+                    ) : null}
                     {c.help ? <span className="mt-0.5 block text-[11px] leading-snug text-ink-3">{c.help}</span> : null}
                   </label>
                 )}

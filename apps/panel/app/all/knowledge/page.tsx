@@ -17,6 +17,7 @@ const STATUS: Record<string, { label: string; tone: Tone }> = {
   pending_approval: { label: "Waiting for you", tone: "warn" },
   approved: { label: "Approved", tone: "good" },
   rejected: { label: "Rejected", tone: "bad" },
+  reverted: { label: "Reverted", tone: "serious" },
 };
 
 const VERDICT_TONE: Record<string, Tone> = { pass: "good", fail: "bad", inconclusive: "warn" };
@@ -37,7 +38,9 @@ export default async function KnowledgePage() {
 
   const awaiting = promotions.filter((p) => p.awaitingPerson);
   const reviewing = promotions.filter((p) => p.status === "pending_review" && !p.awaitingPerson);
-  const decided = promotions.filter((p) => p.status === "approved" || p.status === "rejected").slice(0, 12);
+  const decided = promotions.filter((p) => p.status === "approved" || p.status === "rejected" || p.status === "reverted").slice(0, 12);
+  // Promotion records by project and id, so a removed entry shows its record's status.
+  const records = new Map(promotions.map((p) => [`${p.project}/${p.id}`, p]));
 
   /** A project name linking to its overview (plain text for an archived or unknown project). */
   const projectLink = (slug: string | null) =>
@@ -269,7 +272,7 @@ export default async function KnowledgePage() {
         </Card>
 
         <Card id="decided">
-          <CardHeader title="Recent decisions" description="The latest promotions that were approved or rejected, by a reviewer, the check, or a person." />
+          <CardHeader title="Recent decisions" description="The latest promotions that were approved, rejected (by a reviewer, the check, or a person), or approved and later reverted by a person." />
           {decided.length ? (
             <ul className="divide-y divide-line">
               {decided.map((p) => (
@@ -285,11 +288,18 @@ export default async function KnowledgePage() {
                   </div>
                   {p.status === "rejected" && p.reason ? <p className="line-clamp-3 text-xs text-ink-2">{p.reason}</p> : null}
                   {p.status === "rejected" && p.lesson_path ? <div className="text-xs text-ink-3">Kept in the project as {sourceLink(p.lesson_path)}</div> : null}
+                  {p.status === "reverted" ? (
+                    <p className="text-xs text-ink-2">
+                      Reverted{p.reverted_by ? ` by ${p.reverted_by}` : ""}
+                      {p.reverted_at ? <span className="text-ink-3" title={p.reverted_at}> {ago(ms(p.reverted_at), now)}</span> : null}
+                      {p.revert_reason ? <>: {p.revert_reason}</> : null}
+                    </p>
+                  ) : null}
                 </li>
               ))}
             </ul>
           ) : (
-            <EmptyState title="No decisions yet">Approved and rejected promotions appear here.</EmptyState>
+            <EmptyState title="No decisions yet">Approved, rejected, and reverted promotions appear here.</EmptyState>
           )}
         </Card>
       </div>
@@ -318,7 +328,7 @@ export default async function KnowledgePage() {
       ) : null}
 
       <Card id="reverted">
-        <CardHeader title="Removed entries" description="Global entries removed from the brain, newest first, from its git history: who removed each and why. The text is kept in the commit before the removal." />
+        <CardHeader title="Removed entries" description="Global entries removed from the brain, newest first, from its git history: who removed each and why. The text is kept in the commit before the removal. A reverted promotion's record says so, and its lesson is never written again." />
         {k.reverts.length ? (
           <ul className="divide-y divide-line">
             {k.reverts.map((x) => (
@@ -344,6 +354,15 @@ export default async function KnowledgePage() {
                   </span>
                   {x.project ? <span>From {projectLink(x.project)}</span> : null}
                   {x.promotion ? <span className="break-all">promotion {x.promotion}</span> : null}
+                  {x.promotion && x.project && records.get(`${x.project}/${x.promotion}`)?.status === "reverted" ? (
+                    live.has(x.project) ? (
+                      <Link href={`${projectBase(x.project)}/brain?view=promotions`} className="hover:underline">
+                        <Badge tone="serious">promotion reverted</Badge>
+                      </Link>
+                    ) : (
+                      <Badge tone="serious">promotion reverted</Badge>
+                    )
+                  ) : null}
                 </div>
               </li>
             ))}
