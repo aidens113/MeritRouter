@@ -36,3 +36,21 @@ export function withImportance(tasks: unknown[], importance: string | undefined,
     return { ...t, importance: level.data, ...(reason ? { importanceReason: reason } : {}) };
   });
 }
+
+/**
+ * `--repo <alias>=<path>` (or a bare `<path>`, whose folder name becomes the alias), for
+ * `projects create` and `init`. Paths are kept as written (relative to the config file's folder).
+ */
+export function repoFlags(values: string[] | undefined): Record<string, { path: string }> {
+  const out: Record<string, { path: string }> = {};
+  for (const v of values ?? []) {
+    const eq = v.indexOf("=");
+    if (eq === 0) throw new SwitchyardError("usage", `--repo takes <alias>=<path> or <path>, got ${JSON.stringify(v)}`);
+    const repoPath = (eq > 0 ? v.slice(eq + 1) : v).trim();
+    const alias = (eq > 0 ? v.slice(0, eq) : (repoPath.replace(/[\/]+$/, "").split(/[\/]/).pop() ?? "")).trim();
+    if (!alias || !repoPath) throw new SwitchyardError("usage", `--repo takes <alias>=<path> or <path>, got ${JSON.stringify(v)}`);
+    if (out[alias]) throw new SwitchyardError("usage", `--repo: alias ${alias} given twice`);
+    out[alias] = { path: repoPath };
+  }
+  return out;
+}

@@ -83,7 +83,11 @@ const DEFAULT_TIERS = {
   T3: { max_score: 11, min_total_parameters_b: 100, max_model_requests: 12, prefer: "most_capable" },
 } as const;
 
-const RepositorySchema = z.object({ path: z.string().min(1), writable: z.boolean().default(true) }).strict();
+export const RepositorySchema = z.object({ path: z.string().min(1), writable: z.boolean().default(true) }).strict();
+/** A repository alias as users write it (never contains `/`; see projects/context.ts for namespacing). */
+export const REPOSITORY_ALIAS_RE = /^[A-Za-z0-9._-]+$/;
+/** A project slug (also `brain.project`): lower case, no `/` or `:`. */
+export const PROJECT_SLUG_RE = /^[a-z0-9][a-z0-9._-]*$/;
 
 export const ROLE_NAMES = ["supervisor", "summarizer", "inspector", "analyst", "implementer", "reviewer", "classifier"] as const;
 export const RoleNameSchema = z.enum(ROLE_NAMES);
@@ -94,7 +98,7 @@ export type BrainMode = z.infer<typeof BrainModeSchema>;
 const BrainGrantSchema = z.object({ pattern: z.string().min(1), mode: BrainModeSchema }).strict();
 export type BrainGrantConfig = z.infer<typeof BrainGrantSchema>;
 
-const RoleSchema = z
+export const RoleSchema = z
   .object({
     /** Charter markdown file overriding the built-in one (relative to the config file). */
     charter_file: z.string().min(1).optional(),
@@ -470,6 +474,119 @@ export const VerificationConfigSchema = z
   });
 export type VerificationConfig = z.infer<typeof VerificationConfigSchema>;
 
+export const BrainConfigSchema = z
+  .object({
+    /** Brain repository directory (created and git-initialised when missing). `~` expands to home. */
+    path: z.string().min(1).default("~/.switchyard/brain"),
+    /**
+     * Project scope of a single-project config (brain/projects/<project>/): with no `projects`
+     * section, the config is read as one project of this name. With `projects`, it names the
+     * primary project (rows from before projects existed, system tasks) when it is one of them.
+     */
+    project: z.string().regex(PROJECT_SLUG_RE).default("default"),
+    /** Map brain path prefixes to existing folders (e.g. a repository's docs/working). */
+    /** commit: let SwitchYard commit into the mounted folder's repository (off: you commit). */
+    mounts: z.array(z.object({ prefix: z.string().min(1), path: z.string().min(1), commit: z.boolean().default(false) }).strict()).default([]),
+    commit: z.boolean().default(true),
+    /** Write each worker's report into its working document's reports/ folder. */
+    worker_reports: z.boolean().default(true),
+    /** Push the brain repository after commits (needs a configured remote). */
+    push: z.boolean().default(false),
+    current_state_max_lines: z.number().int().positive().default(150),
+    compact_at_lines: z.number().int().positive().default(800),
+    compact_at_ledger_entries: z.number().int().positive().default(20),
+    /** Who decides workers' requests for more brain access. */
+    access_approver: z.enum(["supervisor", "human", "auto"]).default("supervisor"),
+    /** Requests matching these rules are approved without asking. */
+    auto_approve: z.array(z.object({ pattern: z.string().min(1), mode: BrainModeSchema, min_tier: TierNameSchema.default("T1") }).strict()).default([]),
+    /** A supervisor's lesson that passed the global-knowledge review also waits for a person's approval. */
+    global_requires_approval: z.boolean().default(false),
+  })
+  .strict();
+export type BrainConfig = z.infer<typeof BrainConfigSchema>;
+
+export const SupervisorConfigSchema = z
+  .object({
+    /** Endpoint ids to use, in order. Empty: route like any T3 task (most capable). */
+    endpoints: z.array(z.string().min(1)).default([]),
+    paid_policy: PaidPolicySchema.default("never"),
+    max_concurrent_jobs: z.number().int().positive().default(1),
+    /** Alias of `team.max_agents` (which wins when both are set); see `maxAgentsPerJob`. */
+    max_workers_per_job: z.number().int().positive().optional(),
+    /** Wall-clock limit for one job. */
+    job_timeout_seconds: z.number().int().positive().default(14_400),
+    /** Commands the supervisor may run in its integration worktree (plus its briefs' checks). */
+    allowed_commands: z.array(z.string().min(1)).default([]),
+    /** Supervisors commit to switchyard/job-<id>; pushing is never automatic. */
+    branch_prefix: z.string().regex(/^[A-Za-z0-9._/-]+$/).default("switchyard/job-"),
+    /** How long ask_user waits for an answer before the job pauses as interrupted. */
+    question_timeout_seconds: z.number().int().positive().default(86_400),
+  })
+  .strict();
+export type SupervisorConfig = z.infer<typeof SupervisorConfigSchema>;
+
+export const TeamConfigSchema = z
+  .object({
+    /**
+     * Most tasks of one job running at once (default 8; `supervisor.max_workers_per_job` is an
+     * alias). Enforced by the scheduler; `execution.max_concurrent_tasks` still bounds
+     * everything, and tasks over the cap wait queued.
+     */
+    max_agents: z.number().int().positive().optional(),
+    /**
+     * Supervisor levels a job tree may have: a top-level job is depth 1, and a job may
+     * delegate a `supervise` sub-job only while its depth is below this (default 2: one
+     * level of sub-supervisors; 1 disables nesting).
+     */
+    max_depth: z.number().int().min(1).max(5).default(2),
+    /** Share of the parent's remaining request budget a sub-supervisor is given (and the parent loses while it runs). */
+    child_budget_share: z.number().gt(0).max(1).default(0.5),
+    /** Posts one worker task may make to its job's team channel. */
+    channel_max_posts_per_task: z.number().int().min(1).max(1000).default(10),
+    /** Posts a job's supervisor may make to its own job's team channel. */
+    channel_max_posts_per_supervisor: z.number().int().min(1).max(1000).default(40),
+    /**
+     * Longest team-channel post, in characters. At most 2000: the channel store's own limit
+     * (`CHANNEL_MAX_TEXT_CHARS` in storage/channel.ts).
+     */
+    channel_max_post_chars: z.number().int().min(100).max(2000).default(2000),
+    /**
+     * Per-provider concurrency (AIMD): at most this many model requests in flight per
+     * platform, across every task and process sharing the store. Off: no slot limit.
+     */
+    provider_concurrency_enabled: z.boolean().default(true),
+    /** Slots a platform starts with (and returns to when its state is unknown). */
+    provider_concurrency_start: z.number().int().min(1).max(64).default(2),
+    /** Consecutive successful requests on a platform that add one slot. */
+    provider_concurrency_increase_after: z.number().int().min(1).max(1000).default(5),
+    /** Most slots any platform grows to. */
+    provider_concurrency_max: z.number().int().min(1).max(256).default(8),
+    /**
+     * Confirmed per-platform ceilings (a provider's documented concurrent-request limit),
+     * below `provider_concurrency_max`.
+     */
+    provider_concurrency_limits: z.record(z.string().min(1), z.number().int().min(1).max(256)).default({}),
+  })
+  .strict();
+export type TeamConfig = z.infer<typeof TeamConfigSchema>;
+
+export const CodingConfigSchema = z
+  .object({
+    runner: z.enum(["native", "opencode", "command"]).default("native"),
+    /** Executable for the opencode runner, or the full command for the generic runner. */
+    command: z.string().min(1).default("opencode"),
+    /** Shell command patterns the coding agent may run (OpenCode permission syntax); everything else is denied. */
+    allowed_commands: z.array(z.string().min(1)).default([]),
+    /** Run even when the worktree contains its own agent config (opencode.json / .opencode). */
+    allow_repo_agent_config: z.boolean().default(false),
+    /** Stop the agent after this many consecutive denied model requests. */
+    max_denied_requests: z.number().int().positive().default(3),
+    /** Files whose modification blocks a "met" acceptance status (tests, evaluators). */
+    protected_paths: z.array(z.string()).default(["**/*.test.*", "**/*.spec.*", "**/test/**", "**/tests/**", "**/__tests__/**"]),
+  })
+  .strict();
+export type CodingConfig = z.infer<typeof CodingConfigSchema>;
+
 export const ConfigSchema = z
   .object({
     version: z.literal(1),
@@ -571,7 +688,14 @@ export const ConfigSchema = z
       })
       .strict()
       .prefault({}),
-    repositories: z.record(z.string().regex(/^[A-Za-z0-9._-]+$/), RepositorySchema).default({}),
+    /** Repositories of a single-project config (the legacy shape); with `projects`, they live under projects.<slug>.repositories. */
+    repositories: z.record(z.string().regex(REPOSITORY_ALIAS_RE), RepositorySchema).default({}),
+    /**
+     * Projects (one install, many projects): `projects.<slug>` holds a project's repositories,
+     * brain mounts, and overrides of project-scoped settings. Validated by
+     * `ProjectConfigSchema` (src/projects/schema.ts) when the config is parsed.
+     */
+    projects: z.record(z.string().regex(PROJECT_SLUG_RE), z.unknown()).default({}),
     execution: z
       .object({
         max_concurrent_tasks: z.number().int().positive().default(2),
@@ -639,113 +763,14 @@ export const ConfigSchema = z
       .strict()
       .prefault({}),
     /** Shared knowledge: a git repository of markdown working documents. */
-    brain: z
-      .object({
-        /** Brain repository directory (created and git-initialised when missing). `~` expands to home. */
-        path: z.string().min(1).default("~/.switchyard/brain"),
-        /** Project scope this config works in: brain/projects/<project>/. */
-        project: z.string().regex(/^[a-z0-9][a-z0-9._-]*$/).default("default"),
-        /** Map brain path prefixes to existing folders (e.g. a repository's docs/working). */
-        /** commit: let SwitchYard commit into the mounted folder's repository (off: you commit). */
-        mounts: z.array(z.object({ prefix: z.string().min(1), path: z.string().min(1), commit: z.boolean().default(false) }).strict()).default([]),
-        commit: z.boolean().default(true),
-        /** Write each worker's report into its working document's reports/ folder. */
-        worker_reports: z.boolean().default(true),
-        /** Push the brain repository after commits (needs a configured remote). */
-        push: z.boolean().default(false),
-        current_state_max_lines: z.number().int().positive().default(150),
-        compact_at_lines: z.number().int().positive().default(800),
-        compact_at_ledger_entries: z.number().int().positive().default(20),
-        /** Who decides workers' requests for more brain access. */
-        access_approver: z.enum(["supervisor", "human", "auto"]).default("supervisor"),
-        /** Requests matching these rules are approved without asking. */
-        auto_approve: z.array(z.object({ pattern: z.string().min(1), mode: BrainModeSchema, min_tier: TierNameSchema.default("T1") }).strict()).default([]),
-      })
-      .strict()
-      .prefault({}),
+    brain: BrainConfigSchema.prefault({}),
     /** Per-role charters and brain access. */
     roles: z.partialRecord(RoleNameSchema, RoleSchema).default({}),
     /** Standalone supervisor settings (used by the supervise task type). */
-    supervisor: z
-      .object({
-        /** Endpoint ids to use, in order. Empty: route like any T3 task (most capable). */
-        endpoints: z.array(z.string().min(1)).default([]),
-        paid_policy: PaidPolicySchema.default("never"),
-        max_concurrent_jobs: z.number().int().positive().default(1),
-        /** Alias of `team.max_agents` (which wins when both are set); see `maxAgentsPerJob`. */
-        max_workers_per_job: z.number().int().positive().optional(),
-        /** Wall-clock limit for one job. */
-        job_timeout_seconds: z.number().int().positive().default(14_400),
-        /** Commands the supervisor may run in its integration worktree (plus its briefs' checks). */
-        allowed_commands: z.array(z.string().min(1)).default([]),
-        /** Supervisors commit to switchyard/job-<id>; pushing is never automatic. */
-        branch_prefix: z.string().regex(/^[A-Za-z0-9._/-]+$/).default("switchyard/job-"),
-        /** How long ask_user waits for an answer before the job pauses as interrupted. */
-        question_timeout_seconds: z.number().int().positive().default(86_400),
-      })
-      .strict()
-      .prefault({}),
+    supervisor: SupervisorConfigSchema.prefault({}),
     /** Agent teams: how one job's task graph runs. */
-    team: z
-      .object({
-        /**
-         * Most tasks of one job running at once (default 8; `supervisor.max_workers_per_job` is an
-         * alias). Enforced by the scheduler; `execution.max_concurrent_tasks` still bounds
-         * everything, and tasks over the cap wait queued.
-         */
-        max_agents: z.number().int().positive().optional(),
-        /**
-         * Supervisor levels a job tree may have: a top-level job is depth 1, and a job may
-         * delegate a `supervise` sub-job only while its depth is below this (default 2: one
-         * level of sub-supervisors; 1 disables nesting).
-         */
-        max_depth: z.number().int().min(1).max(5).default(2),
-        /** Share of the parent's remaining request budget a sub-supervisor is given (and the parent loses while it runs). */
-        child_budget_share: z.number().gt(0).max(1).default(0.5),
-        /** Posts one worker task may make to its job's team channel. */
-        channel_max_posts_per_task: z.number().int().min(1).max(1000).default(10),
-        /** Posts a job's supervisor may make to its own job's team channel. */
-        channel_max_posts_per_supervisor: z.number().int().min(1).max(1000).default(40),
-        /**
-         * Longest team-channel post, in characters. At most 2000: the channel store's own limit
-         * (`CHANNEL_MAX_TEXT_CHARS` in storage/channel.ts).
-         */
-        channel_max_post_chars: z.number().int().min(100).max(2000).default(2000),
-        /**
-         * Per-provider concurrency (AIMD): at most this many model requests in flight per
-         * platform, across every task and process sharing the store. Off: no slot limit.
-         */
-        provider_concurrency_enabled: z.boolean().default(true),
-        /** Slots a platform starts with (and returns to when its state is unknown). */
-        provider_concurrency_start: z.number().int().min(1).max(64).default(2),
-        /** Consecutive successful requests on a platform that add one slot. */
-        provider_concurrency_increase_after: z.number().int().min(1).max(1000).default(5),
-        /** Most slots any platform grows to. */
-        provider_concurrency_max: z.number().int().min(1).max(256).default(8),
-        /**
-         * Confirmed per-platform ceilings (a provider's documented concurrent-request limit),
-         * below `provider_concurrency_max`.
-         */
-        provider_concurrency_limits: z.record(z.string().min(1), z.number().int().min(1).max(256)).default({}),
-      })
-      .strict()
-      .prefault({}),
-    coding: z
-      .object({
-        runner: z.enum(["native", "opencode", "command"]).default("native"),
-        /** Executable for the opencode runner, or the full command for the generic runner. */
-        command: z.string().min(1).default("opencode"),
-        /** Shell command patterns the coding agent may run (OpenCode permission syntax); everything else is denied. */
-        allowed_commands: z.array(z.string().min(1)).default([]),
-        /** Run even when the worktree contains its own agent config (opencode.json / .opencode). */
-        allow_repo_agent_config: z.boolean().default(false),
-        /** Stop the agent after this many consecutive denied model requests. */
-        max_denied_requests: z.number().int().positive().default(3),
-        /** Files whose modification blocks a "met" acceptance status (tests, evaluators). */
-        protected_paths: z.array(z.string()).default(["**/*.test.*", "**/*.spec.*", "**/test/**", "**/tests/**", "**/__tests__/**"]),
-      })
-      .strict()
-      .prefault({}),
+    team: TeamConfigSchema.prefault({}),
+    coding: CodingConfigSchema.prefault({}),
     /** Importance and verification policy: what evidence a result needs before it is accepted. */
     verification: VerificationConfigSchema.prefault({}),
     panel: z

@@ -8,7 +8,8 @@ import { keyAvailability } from "./keys.js";
 import { stamp } from "./terminal.js";
 
 // `switchyard doctor`: configuration, provider keys (one check per provider), secrets held in the
-// config file, models, and repositories. It reads only stored state and never calls a provider.
+// config file, models, and per project its repositories and brain folders. It reads only stored
+// state and never calls a provider.
 
 export type CheckLevel = "ok" | "warn" | "fail";
 
@@ -148,8 +149,42 @@ export function literalSecretChecks(sy: Switchyard): DoctorCheck[] {
   return [{ check: "secrets in config", ok: true, level: "warn", detail: `${sy.cfg.configPath} holds a literal api_key at ${found.join(", ")}: use api_key_env, or move the key to the encrypted vault (switchyard keys add)` }];
 }
 
-/** Every doctor check, in display order. */
-export function doctorChecks(sy: Switchyard): DoctorCheck[] {
+/**
+ * Per project: each repository exists and is a git repository, and its brain folders exist
+ * (missing folders are a warning: they are created when the project is created or first written;
+ * a missing mount is a failure).
+ */
+export function projectChecks(sy: Switchyard, slug: string): DoctorCheck[] {
+  const ctx = sy.projects.require(slug);
+  const archived = sy.projects.rows().find((r) => r.id === slug)?.archivedAt != null;
+  const checks: DoctorCheck[] = [];
+  const repos = Object.entries(ctx.repositoryPaths);
+  checks.push({ check: `project ${slug}`, ok: true, level: "ok", detail: `${ctx.project.name}${ctx.project.legacy ? " (single-project config)" : ""}${archived ? "; archived" : ""}; ${plural(repos.length, "repository")}` });
+  for (const [alias, repo] of repos) {
+    const ok = existsSync(path.join(repo.path, ".git"));
+    checks.push({ check: `${slug} repo ${alias}`, ok, level: ok ? "ok" : "fail", detail: ok ? repo.path : `${repo.path}: missing or not a git repository` });
+  }
+  const brain = sy.brainFor(slug);
+  const dirs = ["working", "decisions"].map((d) => `projects/${slug}/${d}`);
+  const missing = existsSync(brain.root) ? dirs.filter((d) => !existsSync(brain.resolve(d).abs)) : dirs;
+  checks.push(
+    missing.length
+      ? { check: `${slug} brain`, ok: true, level: "warn", detail: `${existsSync(brain.root) ? `missing ${missing.join(", ")}` : `no brain repository yet at ${brain.root}`}: created when the project is created or first written` }
+      : { check: `${slug} brain`, ok: true, level: "ok", detail: `${brain.root} (projects/${slug}/)` },
+  );
+  // Global mounts are checked once (see doctorChecks), except in a single-project config.
+  const isGlobal = (m: { prefix: string; path: string }) => sy.cfg.brain.mounts.some((g) => g.prefix === m.prefix && g.path === m.path);
+  for (const m of ctx.brain.mounts) {
+    if (!ctx.project.legacy && isGlobal(m)) continue;
+    const abs = brain.resolve(m.prefix).abs;
+    const ok = existsSync(abs);
+    checks.push({ check: `${slug} brain mount ${m.prefix}`, ok, level: ok ? "ok" : "fail", detail: ok ? abs : `${abs} does not exist` });
+  }
+  return checks;
+}
+
+/** Every doctor check, in display order; `projects` limits the per-project checks (default: every project). */
+export function doctorChecks(sy: Switchyard, opts: { projects?: string[] } = {}): DoctorCheck[] {
   const cfg = sy.cfg;
   const checks: DoctorCheck[] = [{ check: "config", ok: true, level: "ok", detail: cfg.configPath }];
   const usable = sy.providers.credentials().list().filter((c) => c.unusableReason === null);
@@ -162,10 +197,14 @@ export function doctorChecks(sy: Switchyard): DoctorCheck[] {
   const eps = sy.catalog.endpoints();
   const active = eps.filter((e) => e.status === "active").length;
   checks.push({ check: "models", ok: active > 0, level: active > 0 ? "ok" : "fail", detail: `${active} active of ${eps.length}${eps.length ? "" : ": run switchyard models scan once a key is added"}` });
-  for (const [alias, repo] of Object.entries(cfg.repositoryPaths)) {
-    const ok = existsSync(path.join(repo.path, ".git"));
-    checks.push({ check: `repo ${alias}`, ok, level: ok ? "ok" : "fail", detail: repo.path });
+  if (!sy.projects.primary.project.legacy) {
+    for (const m of sy.cfg.brain.mounts) {
+      const abs = sy.brain.resolve(m.prefix).abs;
+      const ok = existsSync(abs);
+      checks.push({ check: `brain mount ${m.prefix}`, ok, level: ok ? "ok" : "fail", detail: ok ? abs : `${abs} does not exist` });
+    }
   }
+  for (const slug of opts.projects ?? sy.projects.slugs()) checks.push(...projectChecks(sy, slug));
   return checks;
 }
 

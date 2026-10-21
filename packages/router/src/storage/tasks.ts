@@ -7,6 +7,8 @@ import type { TaskState, WorkerResult, WorkerTask } from "../core/task.js";
 import { isTerminal } from "../core/task.js";
 import { acquireLease, conflictingLease, releaseLeases, writeGlobs } from "./file-leases.js";
 import { requiresAcceptedInputs } from "./plans.js";
+import { repoKey } from "../projects/context.js";
+import { FairClaimOrder, type ProjectClaimLimits } from "./fair-claim.js";
 
 export interface TaskRow {
   id: string;
@@ -26,8 +28,11 @@ export interface TaskRow {
   run_count: number;
   cancel_requested: number;
   next_attempt_at: number | null;
+  /** `<project>/<alias>` (see `repoKey`); a bare alias only for rows written without a project. */
   writable_repo: string | null;
   result_json: string | null;
+  /** The task's project slug ('' only for rows written outside a service, until the next start). */
+  project_id: string;
 }
 
 export interface StoredTask {
@@ -53,10 +58,15 @@ export interface ClaimLimits {
   supervisorProfiles?: string[];
   maxSupervisors?: number;
   supervisorTimeoutMs?: number;
-  /** Most running tasks per job (`team.max_agents`); counts every task the job delegated, sub-supervisors included. */
-  maxAgentsPerJob?: number;
+  /**
+   * Most running tasks per job (`team.max_agents`); counts every task the job delegated,
+   * sub-supervisors included. A function receives the job's project (a project may override it).
+   */
+  maxAgentsPerJob?: number | ((projectId: string) => number);
   /** Per-provider concurrency: a worker task starts only when a platform in its route plan has a free slot. */
   providerSlots?: ClaimAdmission;
+  /** A project's fair-share priority and worker-task cap (see `FairClaimOrder`); omitted: priority 1, no cap. */
+  projectLimits?: (projectId: string) => ProjectClaimLimits;
 }
 
 /**
@@ -124,12 +134,22 @@ export class TaskStore {
     return ids.map((id) => this.get(id)).filter((t): t is StoredTask => t !== undefined);
   }
 
-  list(opts: { states?: TaskState[]; limit?: number } = {}): StoredTask[] {
-    const where = opts.states?.length ? `WHERE state IN (${opts.states.map(() => "?").join(",")})` : "";
+  /** Newest first; `project` limits the list to one project (all projects when omitted). */
+  list(opts: { states?: TaskState[]; limit?: number; project?: string } = {}): StoredTask[] {
+    const where: string[] = [];
+    const args: unknown[] = [];
+    if (opts.states?.length) (where.push(`state IN (${opts.states.map(() => "?").join(",")})`), args.push(...opts.states));
+    if (opts.project) (where.push("project_id = ?"), args.push(opts.project));
     const rows = this.db
-      .prepare(`SELECT * FROM tasks ${where} ORDER BY created_at DESC LIMIT ?`)
-      .all(...(opts.states ?? []), opts.limit ?? 200) as TaskRow[];
+      .prepare(`SELECT * FROM tasks ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY created_at DESC LIMIT ?`)
+      .all(...args, opts.limit ?? 200) as TaskRow[];
     return rows.map((r) => this.hydrate(r));
+  }
+
+  /** A task's project slug, or null for an unknown task. */
+  projectOf(id: string): string | null {
+    const row = this.db.prepare("SELECT project_id FROM tasks WHERE id = ?").get(id) as { project_id: string } | undefined;
+    return row ? row.project_id : null;
   }
 
   dependenciesOf(id: string): string[] {
@@ -140,9 +160,12 @@ export class TaskStore {
 
   /**
    * Persist tasks atomically before acknowledging. Idempotency keys return the existing task
-   * when the spec matches and reject reuse with a different spec.
+   * when the spec matches and reject reuse with a different spec (or from another project).
+   * `project` is the tasks' project ('' when written outside a service); a dependency on another
+   * project's task is refused.
    */
-  submit(specs: WorkerTask[]): SubmitOutcome[] {
+  submit(specs: WorkerTask[], opts: { project?: string } = {}): SubmitOutcome[] {
+    const project = opts.project ?? "";
     return immediate(this.db, () => {
       const now = this.now();
       const outcomes: SubmitOutcome[] = [];
@@ -153,9 +176,12 @@ export class TaskStore {
         const hash = specHash(spec);
         if (spec.idempotencyKey) {
           const existing = this.db
-            .prepare("SELECT id, state, spec_hash FROM tasks WHERE idempotency_key = ?")
-            .get(spec.idempotencyKey) as { id: string; state: TaskState; spec_hash: string } | undefined;
+            .prepare("SELECT id, state, spec_hash, project_id FROM tasks WHERE idempotency_key = ?")
+            .get(spec.idempotencyKey) as { id: string; state: TaskState; spec_hash: string; project_id: string } | undefined;
           if (existing) {
+            if (project && existing.project_id && existing.project_id !== project) {
+              throw new TaskValidationError(`idempotency key ${spec.idempotencyKey} was already used in project ${existing.project_id} (${existing.id})`);
+            }
             if (existing.spec_hash !== hash) {
               throw new TaskValidationError(
                 `idempotency key ${spec.idempotencyKey} was already used for a different task (${existing.id})`,
@@ -180,17 +206,18 @@ export class TaskStore {
         const deps = f.spec.dependsOn ?? [];
         for (const d of deps) {
           if (d === f.id) throw new TaskValidationError(`task ${f.id} depends on itself`);
-          if (!batchIds.has(d) && !this.db.prepare("SELECT 1 FROM tasks WHERE id = ?").get(d)) {
-            throw new TaskValidationError(`task ${f.id} depends on unknown task ${d}`);
-          }
+          if (batchIds.has(d)) continue;
+          const dep = this.db.prepare("SELECT project_id FROM tasks WHERE id = ?").get(d) as { project_id: string } | undefined;
+          if (!dep) throw new TaskValidationError(`task ${f.id} depends on unknown task ${d}`);
+          if (project && dep.project_id && dep.project_id !== project) throw new TaskValidationError(`task ${f.id} depends on ${d}, which belongs to project ${dep.project_id}`);
         }
         edges.set(f.id, deps);
       }
       assertAcyclic(edges, (id) => (edges.has(id) ? edges.get(id)! : this.dependenciesOf(id)));
 
       const insert = this.db.prepare(
-        `INSERT INTO tasks (id, idempotency_key, spec_hash, profile, spec_json, state, created_at, updated_at, writable_repo)
-         VALUES (@id, @key, @hash, @profile, @spec, @state, @now, @now, @writable)`,
+        `INSERT INTO tasks (id, idempotency_key, spec_hash, profile, spec_json, state, created_at, updated_at, writable_repo, project_id)
+         VALUES (@id, @key, @hash, @profile, @spec, @state, @now, @now, @writable, @project)`,
       );
       const insertDep = this.db.prepare("INSERT INTO task_deps (task_id, depends_on) VALUES (?, ?)");
       for (const f of fresh) {
@@ -203,7 +230,8 @@ export class TaskStore {
           spec: JSON.stringify(f.spec),
           state,
           now,
-          writable: f.spec.writableRepository ?? null,
+          writable: f.spec.writableRepository ? repoKey(project, f.spec.writableRepository) : null,
+          project,
         });
         for (const d of f.spec.dependsOn ?? []) insertDep.run(f.id, d);
         this.event(f.id, "submitted", { state });
@@ -230,6 +258,9 @@ export class TaskStore {
   /**
    * Resolve dependency gates, then claim up to `limit` runnable tasks under one lease owner.
    * Runs in a single IMMEDIATE transaction so two processes cannot claim the same task.
+   * Candidates are offered round-robin across projects, weighted by priority and oldest first
+   * within a project (`FairClaimOrder`); a project's `max_concurrent_tasks` and every global
+   * cap, provider-slot, and lease check apply to each one.
    */
   claim(owner: string, limits: ClaimLimits): StoredTask[] {
     return immediate(this.db, () => {
@@ -241,12 +272,21 @@ export class TaskStore {
       // worker slot: their parent waits on them, so either would deadlock a full system. They
       // count toward their parent job's agent cap instead (below).
       const runningRows = this.db
-        .prepare("SELECT profile, json_extract(spec_json, '$.parentTaskId') AS parent FROM tasks WHERE state IN ('running','cancel_requested') AND lease_expires_at > ?")
-        .all(now) as { profile: string; parent: string | null }[];
+        .prepare("SELECT profile, project_id, json_extract(spec_json, '$.parentTaskId') AS parent FROM tasks WHERE state IN ('running','cancel_requested') AND lease_expires_at > ?")
+        .all(now) as { profile: string; project_id: string; parent: string | null }[];
       const runningSup = runningRows.filter((r) => sup.has(r.profile) && !r.parent).length;
       const runningSubSup = runningRows.filter((r) => sup.has(r.profile) && r.parent).length;
       let slots = Math.min(limits.maxConcurrent - (runningRows.length - runningSup - runningSubSup), limits.limit ?? Number.MAX_SAFE_INTEGER);
       let supSlots = (limits.maxSupervisors ?? 0) - runningSup;
+      // Running worker tasks per project (a project's max_concurrent_tasks counts what `slots` counts).
+      const limitCache = new Map<string, ProjectClaimLimits>();
+      const limitsOf = (projectId: string): ProjectClaimLimits => {
+        let l = limitCache.get(projectId);
+        if (!l) limitCache.set(projectId, (l = limits.projectLimits?.(projectId) ?? { priority: 1 }));
+        return l;
+      };
+      const perProject = new Map<string, number>();
+      for (const r of runningRows) if (!sup.has(r.profile)) perProject.set(r.project_id, (perProject.get(r.project_id) ?? 0) + 1);
 
       const candidates = this.db
         .prepare(
@@ -285,13 +325,18 @@ export class TaskStore {
            next_attempt_at = NULL, updated_at = ?
          WHERE id = ?`,
       );
-      for (const row of candidates) {
+      const order = new FairClaimOrder(this.db, candidates, limitsOf);
+      for (let row = order.next(); row; row = order.next()) {
         const spec = JSON.parse(row.spec_json) as WorkerTask;
         const isSubSup = sup.has(row.profile) && !!spec.parentTaskId;
         const isSup = sup.has(row.profile) && !isSubSup;
+        const isWorker = !isSup && !isSubSup;
         if (isSup ? supSlots <= 0 : !isSubSup && slots <= 0) continue;
+        const projectCap = isWorker ? limitsOf(row.project_id).maxConcurrent : undefined;
+        if (projectCap !== undefined && (perProject.get(row.project_id) ?? 0) >= projectCap) continue;
         const job = !isSup ? (spec.parentTaskId ?? null) : null;
-        if (job && limits.maxAgentsPerJob !== undefined && (perJob.get(job) ?? 0) >= limits.maxAgentsPerJob) continue;
+        const agentCap = typeof limits.maxAgentsPerJob === "function" ? limits.maxAgentsPerJob(row.project_id) : limits.maxAgentsPerJob;
+        if (job && agentCap !== undefined && (perJob.get(job) ?? 0) >= agentCap) continue;
         // Provider slots: a worker starts only when a platform it can route to has room. A
         // supervisor never waits here (its workers may hold every slot; its requests are served
         // first at the gate instead).
@@ -332,16 +377,19 @@ export class TaskStore {
         if (limits.providerSlots && !isSup && !isSubSup) limits.providerSlots.claimed(row, spec, owner);
         this.event(row.id, "claimed", { owner, run: row.run_count + 1 });
         claimed.push(this.get(row.id)!);
+        order.claimed(row);
+        if (isWorker) perProject.set(row.project_id, (perProject.get(row.project_id) ?? 0) + 1);
         if (isSup) supSlots--;
         else if (!isSubSup) slots--;
       }
+      order.save();
       return claimed;
     });
   }
 
   /**
    * Claim queued tasks that can join `leader`'s prompt batch. Batch members share one
-   * execution slot, so the concurrency limit is not re-applied.
+   * execution slot, so the concurrency limit is not re-applied. A batch never mixes projects.
    */
   claimCompanions(
     owner: string,
@@ -356,11 +404,11 @@ export class TaskStore {
       const now = this.now();
       const rows = this.db
         .prepare(
-          `SELECT * FROM tasks WHERE cancel_requested = 0 AND profile = ? AND id != ?
+          `SELECT * FROM tasks WHERE cancel_requested = 0 AND profile = ? AND id != ? AND project_id = ?
              AND (state = 'queued' OR (state = 'waiting_for_capacity' AND COALESCE(next_attempt_at, 0) <= ?))
            ORDER BY created_at ASC`,
         )
-        .all(leader.row.profile, leader.row.id, now) as TaskRow[];
+        .all(leader.row.profile, leader.row.id, leader.row.project_id, now) as TaskRow[];
       const out: StoredTask[] = [];
       for (const row of rows) {
         if (out.length >= max) break;

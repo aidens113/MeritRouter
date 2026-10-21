@@ -47,9 +47,19 @@ function sessionViews(sy: Switchyard, records: SessionRecord[]): SessionView[] {
   }));
 }
 
-/** Sessions matching the filter, newest first. */
-export function sessionsView(sy: Switchyard, filter: SessionListFilter = {}): SessionView[] {
-  return sessionViews(sy, sy.sessions.list(filter));
+/** A session list filter, optionally limited to one project's sessions. */
+export interface SessionViewFilter extends SessionListFilter {
+  project?: string;
+}
+
+/** Sessions matching the filter, newest first; `project` limits them to one project's (all projects when omitted). */
+export function sessionsView(sy: Switchyard, filter: SessionViewFilter = {}): SessionView[] {
+  const { project, ...rest } = filter;
+  if (!project) return sessionViews(sy, sy.sessions.list(rest));
+  // The store has no project filter: read the newest sessions of the filter and keep this project's.
+  const limit = Math.min(rest.limit ?? 100, 1000);
+  const mine = new Set((sy.db.prepare("SELECT id FROM sessions WHERE project_id = ? ORDER BY created_at DESC LIMIT 5000").all(project) as Array<{ id: string }>).map((r) => r.id));
+  return sessionViews(sy, sy.sessions.list({ ...rest, limit: 1000 }).filter((r) => mine.has(r.id)).slice(0, limit));
 }
 
 /** One session with a page of its timeline (events after `afterSeq`), its children, and its task's other sessions. */

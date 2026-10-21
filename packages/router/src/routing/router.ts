@@ -124,13 +124,17 @@ export class TaskRouter {
     return row.n;
   }
 
-  async prepare(task: StoredTask, leaseOwner: string): Promise<Prepared> {
+  /**
+   * Classify a task and plan its route. `project` is the task's project context (its
+   * repositories and verification budget); routing itself (tiers, profiles, models) is global.
+   */
+  async prepare(task: StoredTask, leaseOwner: string, project: ResolvedConfig = this.cfg): Promise<Prepared> {
     await this.gate.health.refresh();
     const spec = task.spec;
     const profile = this.cfg.profiles[spec.profile]!;
     const inputModalities = this.inputModalities(task);
-    const sources = await loadSources(this.cfg, spec, this.artifacts);
-    const features = await measureFeatures(this.cfg, spec, sources, {
+    const sources = await loadSources(project, spec, this.artifacts);
+    const features = await measureFeatures(project, spec, sources, {
       failedRuns: this.failedRuns(task.row.id),
       attachmentModalities: inputModalities.filter((m) => m !== "text"),
     });
@@ -155,7 +159,7 @@ export class TaskRouter {
       const verdict = await this.classifier.classify({
         taskId: task.row.id,
         leaseOwner,
-        budget: effectiveBudget(this.cfg, spec, null),
+        budget: effectiveBudget(project, spec, null),
         spec,
         specHash: task.row.spec_hash,
         features,

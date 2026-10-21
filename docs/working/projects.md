@@ -39,8 +39,31 @@ global pages) shows all projects and their jobs.
 own project plus `global/`; build projects first, caching after; D9 (below) global knowledge is
 written only by supervisors and only when it is truly global-worthy.
 
-**Next steps:** J1 (`j1-core` dispatched 2026-10-20; then `j1-scheduling-brain` and `j1-surfaces` in parallel),
-then J2 (panel), then J3 (operations, demo, docs). The settings-nav fix merged first (7443bf8).
+**J1 progress:** `j1-core` done and verified (404 tests): `src/projects/`, `ProjectContext`
+(a proxy over the global config overlaying project fields), migration with `project_id` and
+insert triggers, namespaced repo lease/merge keys, project-aware executor/runners/service API.
+Accepted deviations: `workspaces.repo_alias`/`merge_queue.repo_alias` stay bare (task-keyed);
+idempotency keys stay install-unique; the schema default project slug stays `default`.
+
+**J1 done (2026-10-20), verified on `feat/projects`:** fair claiming (`src/storage/fair-claim.ts`;
+project fields `priority`, `max_concurrent_tasks`, `paid_budgets`, `request_share`); brain
+isolation D4 and gated global promotion D9 (`src/brain/promotion.ts`,
+`src/verification/promotion-review.ts`; promotions recorded under `projects/<p>/promotions/`);
+CLI `--project`/`SWITCHYARD_PROJECT`, `projects list|create|archive|unarchive`, `init --project`,
+per-project `doctor`; MCP `--project`, `--no-worker`, refuses to start when no project can be
+chosen; admin API for J2 (`projectsGrid`, `globalDashboard`, `projectOverview`,
+`globalSettings`/`projectSettings`/`patchProjectSettings`, `createProject`, promotions). Reports:
+[core](./projects/reports/j1-core.md), [fairness](./projects/reports/j1-fairness.md),
+[brain](./projects/reports/j1-brain.md), [surfaces](./projects/reports/j1-surfaces.md).
+
+**Carried into J2/J3:** per-project brain index (the root README lists every project and
+supervisors can no longer read it); panel brain search scoped to the project; a waiting reason
+for tasks held by a project cap; distinct denial reasons for project paid/share limits; promotions
+list and approval in the panel; `/api/config` `expand()` without a `providers:` section (P4
+follow-up); converted single-project configs keep their top-level brain mounts global; alias
+matching in D9 is strict (an `app` alias rejects "the app"); docs for D4/D9 and project fields.
+
+**Next steps:** J2 (panel), then J3 (operations, demo, docs).
 
 **Blockers:** none.
 
@@ -169,6 +192,41 @@ Branch/worktree: `feat/projects` at `D:/sy-wt/pj`. Partition: `j1-core` first; t
   runner sees only its project's repositories; full suite green.
 - Report to: docs/working/projects/reports/j1-core.md
 
+### Brief: j1-fairness (after j1-core; parallel with j1-brain, j1-surfaces)
+- Task: D5 fair claiming (round-robin across projects with ready tasks, oldest first within a
+  project; per-project `max_concurrent_tasks` and `priority` weight); prompt batching never mixes
+  projects; D7 optional per-project paid cap and request share enforced at admission; config
+  fields in `src/projects/schema.ts`.
+- Owns: claim code in `src/storage/tasks.ts`, `src/core/scheduler.ts`, `src/projects/schema.ts`,
+  `src/admission/**`, `src/paid/spend.ts`, new `tests/projects-fairness.test.ts`.
+- Report to: docs/working/projects/reports/j1-fairness.md
+
+### Brief: j1-brain (after j1-core; parallel)
+- Task: D4 default grants (supervisor reads `projects/{project}/**` + `global/**`, writes its
+  project); D9 gated global promotion (supervisor-only; deterministic project-specificity check;
+  independent reviewer on a different model via the verification reviewer machinery; rejection
+  saved as a project lesson with the reason; provenance front matter; optional
+  `brain.global_requires_approval`); brain FTS filtered by project; the supervisor tool that
+  promotes lessons uses the gate.
+- Owns: `src/brain/**`, `src/harness/supervisor-tools.ts` (promotion tool only),
+  `src/verification/**` (only to expose a reviewer call), new `tests/projects-brain.test.ts`.
+- Report to: docs/working/projects/reports/j1-brain.md
+
+### Brief: j1-surfaces (after j1-core; parallel)
+- Task: CLI global `--project` (default: the only project, else the one whose repository contains
+  the cwd, else an error listing projects), `projects list|create|archive`, `init` writes a
+  global config plus a first project, `doctor` per project; MCP `--project` /
+  `SWITCHYARD_PROJECT` / cwd inference, `--no-worker`, per-project brain effort; `src/admin/**`
+  functions take a project scope and global/per-project splits of overview, requests, settings
+  (the API J2 builds on).
+- Owns: `src/cli.ts`, `src/cli/**`, `src/mcp.ts`, `src/admin/**`, new
+  `tests/projects-surfaces.test.ts`.
+- Report to: docs/working/projects/reports/j1-surfaces.md
+
+Shared by all three: `src/core/service.ts` and `src/index.ts` (small separate hunks only;
+re-read immediately before editing). Each runs its own tests and typecheck while working and the
+full suite at the end; failures only in another worker's files are re-run later and reported.
+
 ---
 
 ## Work Ledger
@@ -183,6 +241,31 @@ Branch/worktree: `feat/projects` at `D:/sy-wt/pj`. Partition: `j1-core` first; t
   `apps/panel/components/client/shell.tsx:31-45`.
 - Outcome: Accepted
 - Follow-up: user go-ahead; J1.
+
+### 2026-10-20 — j1-core
+- Agent: worker j1-core; verified by supervisor
+- Changed: `src/projects/{schema,resolve,context,registry,backfill}.ts`; config schema/load;
+  migration (projects table, `project_id` columns, insert triggers); `storage/tasks.ts`, `usage.ts`;
+  `core/{service,executor,scheduler}.ts`; `routing/router.ts`; `workspaces/merge-queue.ts`;
+  `verification/audit.ts`; `admin/job-plans.ts`; `tests/projects.test.ts`. Details:
+  [report](./projects/reports/j1-core.md).
+- Why: J1 core.
+- Validation: supervisor ran `pnpm -r typecheck` (router and panel Done), `pnpm -r build` (both
+  Done), `npx vitest run` (`Tests 404 passed (404)`); checked slug and alias regexes exclude `/`.
+- Outcome: Accepted
+- Follow-up: j1-fairness, j1-brain, j1-surfaces. Note: writing a non-overlaid field through a
+  `ProjectContext` writes the global config (by design of the proxy).
+
+### 2026-10-20 — j1-fairness, j1-brain, j1-surfaces (J1 complete)
+- Agent: three parallel workers; verified by supervisor
+- Changed: see the three reports; shared hunks in `core/service.ts` and `index.ts`.
+- Why: J1.
+- Validation: supervisor ran `pnpm -r typecheck` (router and panel Done), `pnpm -r build` (both
+  Done), `timeout 480 npx vitest run` (exit 0, `Tests 429 passed (429)`); manual CLI in a temp
+  dir: `init --project alpha`, `projects create beta` with the same `app` alias, `projects list`
+  showed both. Stopped two stale vitest processes left by j1-brain's early looping version.
+- Outcome: Accepted
+- Follow-up: J2; the carried items in Current State.
 
 ---
 

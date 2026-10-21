@@ -647,4 +647,69 @@ export const MIGRATIONS: string[] = [
   CREATE INDEX paid_spend_created ON paid_spend(created_at);
   CREATE INDEX paid_spend_key ON paid_spend(key_ref, created_at);
   `,
+  `
+  -- Projects (J1): one install, many projects. Settings live in the config (projects.<slug>);
+  -- this table records each project's lifecycle. Per-project rows carry project_id ('' until
+  -- assigned: rows from before projects existed are given the primary project at start, see
+  -- projects/backfill.ts). Repository aliases in tasks.writable_repo, file_leases.repository,
+  -- and merge_queue.lock_key become <project>/<alias> there too.
+  CREATE TABLE projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    archived_at INTEGER,
+    last_active_at INTEGER
+  );
+  ALTER TABLE tasks ADD COLUMN project_id TEXT NOT NULL DEFAULT '';
+  CREATE INDEX tasks_project ON tasks(project_id, state, created_at);
+  ALTER TABLE job_state ADD COLUMN project_id TEXT NOT NULL DEFAULT '';
+  ALTER TABLE sessions ADD COLUMN project_id TEXT NOT NULL DEFAULT '';
+  CREATE INDEX sessions_project ON sessions(project_id, created_at);
+  ALTER TABLE brain_access_requests ADD COLUMN project_id TEXT NOT NULL DEFAULT '';
+  ALTER TABLE brain_grants ADD COLUMN project_id TEXT NOT NULL DEFAULT '';
+  ALTER TABLE job_plans ADD COLUMN project_id TEXT NOT NULL DEFAULT '';
+  -- NULL for global events (no task).
+  ALTER TABLE events ADD COLUMN project_id TEXT;
+  -- '' for requests charged to no task (discovery probes).
+  ALTER TABLE model_requests ADD COLUMN project_id TEXT NOT NULL DEFAULT '';
+  CREATE INDEX model_requests_project ON model_requests(project_id, reserved_at);
+
+  -- Rows hanging off a task take its project when written without one, whoever writes them.
+  CREATE TRIGGER sessions_project AFTER INSERT ON sessions WHEN NEW.project_id = '' AND NEW.task_id IS NOT NULL
+  BEGIN
+    UPDATE sessions SET project_id = COALESCE((SELECT project_id FROM tasks WHERE id = NEW.task_id), '') WHERE id = NEW.id;
+  END;
+  CREATE TRIGGER job_state_project AFTER INSERT ON job_state WHEN NEW.project_id = ''
+  BEGIN
+    UPDATE job_state SET project_id = COALESCE((SELECT project_id FROM tasks WHERE id = NEW.task_id), '') WHERE task_id = NEW.task_id;
+  END;
+  CREATE TRIGGER brain_access_requests_project AFTER INSERT ON brain_access_requests WHEN NEW.project_id = '' AND COALESCE(NEW.task_id, NEW.job_id) IS NOT NULL
+  BEGIN
+    UPDATE brain_access_requests SET project_id = COALESCE((SELECT project_id FROM tasks WHERE id = COALESCE(NEW.task_id, NEW.job_id)), '') WHERE id = NEW.id;
+  END;
+  CREATE TRIGGER brain_grants_project AFTER INSERT ON brain_grants WHEN NEW.project_id = ''
+  BEGIN
+    UPDATE brain_grants SET project_id = COALESCE((SELECT project_id FROM tasks WHERE id = NEW.task_id), '') WHERE id = NEW.id;
+  END;
+  CREATE TRIGGER events_project AFTER INSERT ON events WHEN NEW.project_id IS NULL AND NEW.task_id IS NOT NULL
+  BEGIN
+    UPDATE events SET project_id = (SELECT project_id FROM tasks WHERE id = NEW.task_id) WHERE id = NEW.id;
+  END;
+  CREATE TRIGGER request_charges_project AFTER INSERT ON request_charges
+  BEGIN
+    UPDATE model_requests SET project_id = COALESCE((SELECT project_id FROM tasks WHERE id = NEW.task_id), '') WHERE id = NEW.request_id AND project_id = '';
+  END;
+  -- Plan versions stay immutable; the one change allowed is stamping the project on a row without one.
+  DROP TRIGGER job_plans_immutable;
+  CREATE TRIGGER job_plans_immutable BEFORE UPDATE ON job_plans
+  WHEN NOT (OLD.project_id = '' AND NEW.job_id IS OLD.job_id AND NEW.version IS OLD.version AND NEW.plan_json IS OLD.plan_json
+    AND NEW.note IS OLD.note AND NEW.created_by IS OLD.created_by AND NEW.created_at IS OLD.created_at)
+  BEGIN
+    SELECT RAISE(ABORT, 'plan versions are immutable; record a new version');
+  END;
+  CREATE TRIGGER job_plans_project AFTER INSERT ON job_plans WHEN NEW.project_id = ''
+  BEGIN
+    UPDATE job_plans SET project_id = COALESCE((SELECT project_id FROM tasks WHERE id = NEW.job_id), '') WHERE job_id = NEW.job_id AND version = NEW.version;
+  END;
+  `,
 ];

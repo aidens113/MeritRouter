@@ -118,16 +118,21 @@ export interface UsageSummary {
   byGatewayModel: Array<{ gatewayModel: string; requests: number; failed: number }>;
 }
 
-/** Package-level totals: physical requests are counted once regardless of batch participants. */
-export function usageSummary(db: Db, sinceMs: number, untilMs = Date.now()): UsageSummary {
+/**
+ * Package-level totals: physical requests are counted once regardless of batch participants.
+ * `project` limits tasks and requests to one project (requests charged to no task are global).
+ */
+export function usageSummary(db: Db, sinceMs: number, untilMs = Date.now(), project?: string): UsageSummary {
+  const scope = project ? " AND project_id = ?" : "";
+  const args = (...a: unknown[]) => (project ? [...a, project] : a);
   const t = db
     .prepare(
       `SELECT COUNT(*) AS submitted,
               SUM(state = 'completed') AS completed,
               SUM(state IN ('failed','budget_exhausted')) AS failed
-         FROM tasks WHERE created_at > ? AND created_at <= ?`,
+         FROM tasks WHERE created_at > ? AND created_at <= ?${scope}`,
     )
-    .get(sinceMs, untilMs) as { submitted: number; completed: number | null; failed: number | null };
+    .get(...args(sinceMs, untilMs)) as { submitted: number; completed: number | null; failed: number | null };
   const r = db
     .prepare(
       `SELECT COUNT(*) AS n,
@@ -143,22 +148,22 @@ export function usageSummary(db: Db, sinceMs: number, untilMs = Date.now()): Usa
               SUM(usage_basis = 'provider_reported') AS reported,
               SUM(reported_cost_usd) AS cost,
               SUM(policy_violation IS NOT NULL) AS violations
-         FROM model_requests WHERE reserved_at > ? AND reserved_at <= ?`,
+         FROM model_requests WHERE reserved_at > ? AND reserved_at <= ?${scope}`,
     )
-    .get(sinceMs, untilMs) as Record<string, number | null>;
+    .get(...args(sinceMs, untilMs)) as Record<string, number | null>;
   const byEndpoint = db
     .prepare(
       `SELECT served_endpoint_id AS endpointId, COUNT(*) AS requests, COALESCE(SUM(input_tokens),0) AS inputTokens,
               COALESCE(SUM(output_tokens),0) AS outputTokens
-         FROM model_requests WHERE reserved_at > ? AND reserved_at <= ? GROUP BY served_endpoint_id ORDER BY requests DESC`,
+         FROM model_requests WHERE reserved_at > ? AND reserved_at <= ?${scope} GROUP BY served_endpoint_id ORDER BY requests DESC`,
     )
-    .all(sinceMs, untilMs) as UsageSummary["byEndpoint"];
+    .all(...args(sinceMs, untilMs)) as UsageSummary["byEndpoint"];
   const byGatewayModel = db
     .prepare(
       `SELECT gateway_model AS gatewayModel, COUNT(*) AS requests, SUM(status != 'succeeded') AS failed
-         FROM model_requests WHERE reserved_at > ? AND reserved_at <= ? GROUP BY gateway_model ORDER BY requests DESC`,
+         FROM model_requests WHERE reserved_at > ? AND reserved_at <= ?${scope} GROUP BY gateway_model ORDER BY requests DESC`,
     )
-    .all(sinceMs, untilMs) as UsageSummary["byGatewayModel"];
+    .all(...args(sinceMs, untilMs)) as UsageSummary["byGatewayModel"];
   const n = r.n ?? 0;
   const reported = r.reported ?? 0;
   return {

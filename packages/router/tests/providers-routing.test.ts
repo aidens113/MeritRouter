@@ -356,9 +356,10 @@ describe("store upgrade", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "switchyard-upgrade-"));
     try {
       // A store at the schema version before this migration, with rows the old gateway wrote.
+      const at = MIGRATIONS.findIndex((m) => m.includes("DROP TABLE IF EXISTS fl_key_billing"));
       const old = new Database(path.join(dir, DB_FILE));
-      for (const m of MIGRATIONS.slice(0, -1)) old.exec(m);
-      old.pragma(`user_version = ${MIGRATIONS.length - 1}`);
+      for (const m of MIGRATIONS.slice(0, at)) old.exec(m);
+      old.pragma(`user_version = ${at}`);
       old.prepare("INSERT INTO fl_key_billing (fl_key_id, platform, billing_class, updated_at) VALUES (7, 'openrouter', 'paid_postpaid', 1)").run();
       old.prepare("INSERT INTO pool_verifications (gateway_model, verified_at, ok, detail_json) VALUES ('sy-0123456789', 1, 1, '{}')").run();
       const row = old.prepare("INSERT INTO endpoints (id, data_json, first_seen_at, last_scanned_at) VALUES (?, ?, 1, 1)");

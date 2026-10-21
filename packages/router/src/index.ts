@@ -1,6 +1,12 @@
 export { Switchyard, type SwitchyardOptions, type TaskStatus, type AwaitOutcome } from "./core/service.js";
 export { loadConfig, parseConfig, resolveConfigPath, CONFIG_ENV, DEFAULT_CONFIG_NAME, type ResolvedConfig } from "./config/load.js";
 export * from "./config/schema.js";
+export { ProjectConfigSchema, PROJECT_TEAM_KEYS, PROJECT_CODING_KEYS, PROJECT_SUPERVISOR_KEYS, type ProjectConfig } from "./projects/schema.js";
+export { ProjectLimitsSchema, projectLimits, type ProjectLimits } from "./projects/schema.js";
+export { resolveProjects, deepMerge, type ResolvedProject, type ProjectsResolution, type ProjectOverrides } from "./projects/resolve.js";
+export { projectContext, repoKey, splitRepoKey, type ProjectContext, type ProjectInfo } from "./projects/context.js";
+export { ProjectRegistry, type ProjectRow } from "./projects/registry.js";
+export { backfillProjects } from "./projects/backfill.js";
 export {
   WorkerTaskSchema,
   WorkerResultSchema,
@@ -116,6 +122,9 @@ export {
   type VerdictPurpose,
 } from "./verification/calibration.js";
 export { Auditor, auditCapacityShortfall, auditSampled, type AuditDecision, type AuditHost, type AuditStart } from "./verification/audit.js";
+export { PROMOTION_RUBRIC, PROMOTION_RUBRIC_VERSION, PromotionReviewer } from "./verification/promotion-review.js";
+export { GlobalPromotions, PROMOTION_STATUSES, projectSpecificIssues, type PromotionOutcome, type PromotionRecord, type PromotionStatus, type PromotionReviewPort } from "./brain/promotion.js";
+export { systemManaged } from "./brain/access.js";
 export { REQUEST_PURPOSES, budgetInputFor, purposeCategory, verificationTotal, carvedRequests, carvesOf, childRequestBudget, type RequestPurpose, type BudgetCarve } from "./admission/admission.js";
 export { REVIEW_FAMILY, reviewerQualification } from "./qualification/stats.js";
 export { gradeReview, reviewEvalPackage } from "./qualification/runner.js";

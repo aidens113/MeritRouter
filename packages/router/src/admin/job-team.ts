@@ -5,6 +5,7 @@ import { carvedRequests, carvesOf, type BudgetCarve } from "../admission/admissi
 import { ACTIVE_MERGE_STATES, MergeQueue, type MergeItem, type MergeState } from "../workspaces/merge-queue.js";
 import { CHANNEL_KINDS, CHANNEL_READ_LIMIT, ChannelStore, type ChannelKind, type ChannelPost } from "../storage/channel.js";
 import type { StoredTask } from "../storage/tasks.js";
+import { contextOfTask } from "./projects.js";
 
 // A job's team (T2) for people and supervisor clients: the job tree (sub-supervisors with their
 // branches and carved budgets, and every worker under them), the merge queue of each job branch
@@ -372,7 +373,7 @@ export function jobTeam(sy: Switchyard, jobId: string, opts: { channelLimit?: nu
     parentLabel: parent?.spec.label ?? null,
     rootJobId: parents.at(-1)?.row.id ?? jobId,
     depth,
-    maxDepth: sy.cfg.team.max_depth,
+    maxDepth: contextOfTask(sy, jobId).team.max_depth,
     tree,
     subJobs: jobs.length - 1,
     queues: jobs.flatMap((j) => mergeQueueOf(sy, j.taskId)),

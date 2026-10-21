@@ -1,10 +1,20 @@
 import type { ResolvedConfig } from "../config/load.js";
 import { maxAgentsPerJob } from "../config/schema.js";
+import { projectLimits } from "../projects/schema.js";
 import type { ClaimAdmission, StoredTask, TaskStore } from "../storage/tasks.js";
 import { batchKey } from "../runners/batch.js";
 import { redundancyFor } from "../storage/plans.js";
 import type { Executor } from "./executor.js";
 import type { SessionStore } from "../sessions/store.js";
+
+/**
+ * A task's prompt-batch key scoped to its project, so tasks of two projects never share a batch;
+ * null when the task cannot join a batch (see `batchKey`).
+ */
+export function projectBatchKey(task: StoredTask): string | null {
+  const key = batchKey(task.spec);
+  return key === null ? null : JSON.stringify([task.row.project_id, key]);
+}
 
 /** Runs an interrupted task gets automatically (recovery, watchdog) before an operator must resume it. */
 export const MAX_AUTO_RESUMES = 3;
@@ -15,7 +25,10 @@ export const MAX_AUTO_RESUMES = 3;
  * ready task of a job's task graph is claimed at once, up to `team.max_agents` per job and
  * `execution.max_concurrent_tasks` in all; a coding task whose write globs overlap another
  * task's live file lease in the same repository waits (see `TaskStore.claim`), and a worker
- * task waits while every platform in its route plan is out of concurrency slots.
+ * task waits while every platform in its route plan is out of concurrency slots. Projects share
+ * the worker fairly: claims round-robin across projects with ready tasks, weighted by each
+ * project's `priority` and bounded by its `max_concurrent_tasks`, and a prompt batch never
+ * mixes projects.
  */
 export class Scheduler {
   private timer: NodeJS.Timeout | null = null;
@@ -38,6 +51,8 @@ export class Scheduler {
      * has a free slot (see `ProviderSlotAdmission`); null claims without looking at providers.
      */
     private readonly providerSlots: ClaimAdmission | null = null,
+    /** A project's configuration (its `team.max_agents` override); null or unknown: the global one. */
+    private readonly projectConfig: ((slug: string) => ResolvedConfig | undefined) | null = null,
   ) {}
 
   start(intervalMs = 1000): void {
@@ -99,26 +114,30 @@ export class Scheduler {
           supervisorProfiles: Object.entries(this.cfg.profiles).filter(([, p]) => p?.mode === "supervisor").map(([n]) => n),
           maxSupervisors: this.cfg.supervisor.max_concurrent_jobs,
           supervisorTimeoutMs: this.cfg.supervisor.job_timeout_seconds * 1000,
-          maxAgentsPerJob: maxAgentsPerJob(this.cfg),
+          maxAgentsPerJob: this.projectConfig ? (slug: string) => maxAgentsPerJob(this.projectConfig?.(slug) ?? this.cfg) : maxAgentsPerJob(this.cfg),
           ...(this.providerSlots ? { providerSlots: this.providerSlots } : {}),
+          projectLimits: (slug: string) => {
+            const l = projectLimits(this.cfg, slug);
+            return { priority: l.priority, maxConcurrent: l.max_concurrent_tasks };
+          },
         });
         const taken = new Set<string>();
         for (const task of claimed) {
           if (taken.has(task.row.id)) continue;
           taken.add(task.row.id);
           const profile = this.cfg.profiles[task.spec.profile]!;
-          const key = profile.mode === "completion" && profile.batching.enabled && !this.redundant(task) ? batchKey(task.spec) : null;
+          const key = profile.mode === "completion" && profile.batching.enabled && !this.redundant(task) ? projectBatchKey(task) : null;
           if (key) {
             const companions = this.tasks.claimCompanions(
               this.owner,
               task,
-              (t: StoredTask) => !taken.has(t.row.id) && batchKey(t.spec) === key && !this.redundant(t),
+              (t: StoredTask) => !taken.has(t.row.id) && projectBatchKey(t) === key && !this.redundant(t),
               profile.batching.max_items - 1,
               leaseMs,
               defaultTimeoutMs,
             );
             // Claimed tasks that fit this batch join it instead of running alone.
-            const extra = claimed.filter((c) => !taken.has(c.row.id) && batchKey(c.spec) === key && !this.redundant(c)).slice(0, profile.batching.max_items - 1 - companions.length);
+            const extra = claimed.filter((c) => !taken.has(c.row.id) && projectBatchKey(c) === key && !this.redundant(c)).slice(0, profile.batching.max_items - 1 - companions.length);
             const members = [task, ...companions, ...extra];
             for (const m of members) taken.add(m.row.id);
             this.track(members.length > 1 ? this.executor.runBatch(members) : this.executor.runSingle(task));

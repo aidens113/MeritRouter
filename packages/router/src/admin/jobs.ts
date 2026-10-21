@@ -1,10 +1,13 @@
 import type { Switchyard } from "../core/service.js";
 import type { TaskState, WorkerResult } from "../core/task.js";
+import { contextOfTask } from "./projects.js";
 
 // Standalone jobs (supervise tasks): state, delegated tasks, branches, questions, and transcript.
 
 export interface JobView {
   taskId: string;
+  /** The job's project. */
+  project: string;
   label: string | null;
   /** The job this one is a sub-job of (a sub-supervisor's parent job); null for a top-level job. */
   parentJobId: string | null;
@@ -49,7 +52,7 @@ function jobTurns(messages: TranscriptMessage[]): JobTurn[] {
 function jobRecord(sy: Switchyard, taskId: string, withTranscript: boolean): { sessionId: string | null; branches: JobView["branches"]; transcript: JobTurn[] } {
   const sessions = sy.sessions.forTask(taskId).filter((s) => s.role === "supervisor");
   const latest = sessions.at(-1) ?? null;
-  const prefix = sy.cfg.supervisor.branch_prefix;
+  const prefix = contextOfTask(sy, taskId).supervisor.branch_prefix;
   const workspace = [...sessions].reverse().find((s) => s.workspace?.repos.length)?.workspace ?? null;
   let branches: JobView["branches"] = (workspace?.repos ?? []).flatMap((r) => (r.baseCommit ? [{ alias: r.alias, branch: r.branch ?? `${prefix}${taskId}`, baseSha: r.baseCommit, worktree: r.worktree }] : []));
   // The transcript reads the whole session log, so list views skip it.
@@ -64,8 +67,9 @@ function jobRecord(sy: Switchyard, taskId: string, withTranscript: boolean): { s
   return { sessionId: latest?.id ?? null, branches, transcript };
 }
 
-export function jobsView(sy: Switchyard, limit = 50): JobView[] {
-  const rows = sy.db.prepare("SELECT id FROM tasks WHERE profile = 'supervise' ORDER BY created_at DESC LIMIT ?").all(limit) as { id: string }[];
+/** Jobs, newest first; `project` limits them to one project's (all projects when omitted). */
+export function jobsView(sy: Switchyard, limit = 50, project?: string): JobView[] {
+  const rows = sy.db.prepare(`SELECT id FROM tasks WHERE profile = 'supervise'${project ? " AND project_id = ?" : ""} ORDER BY created_at DESC LIMIT ?`).all(...(project ? [project] : []), limit) as { id: string }[];
   return rows.flatMap((r) => {
     const j = jobDetail(sy, r.id, { transcript: false });
     if (!j) return [];
@@ -86,6 +90,7 @@ export function jobDetail(sy: Switchyard, id: string, opts: { transcript?: boole
   const parent = t.spec.parentTaskId ? sy.tasks.get(t.spec.parentTaskId) : null;
   return {
     taskId: id,
+    project: t.row.project_id,
     label: t.spec.label ?? null,
     parentJobId: parent?.spec.profile === "supervise" ? parent.row.id : null,
     goal: t.spec.goal,
@@ -97,7 +102,7 @@ export function jobDetail(sy: Switchyard, id: string, opts: { transcript?: boole
     children,
     pendingQuestions: sy.questions({ taskId: id }).length,
     // A sub-job reports into its parent's working document (its own section there).
-    workingDoc: sy.brain.workingDocPath(t.spec.brain?.effort ?? `job-${id}`),
+    workingDoc: sy.brainFor(contextOfTask(sy, id).project.slug).workingDocPath(t.spec.brain?.effort ?? `job-${id}`),
     result: t.result,
     sessionId: rec.sessionId,
     transcript: rec.transcript,

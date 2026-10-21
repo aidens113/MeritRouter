@@ -8,6 +8,7 @@ import type { WorkerTask } from "../core/task.js";
 import { AdmissionDenied } from "../core/errors.js";
 import type { ChatResponse } from "../gateway/types.js";
 import { actualUsd, type PaidSpend, type SpendKey } from "../paid/spend.js";
+import { projectLimits } from "../projects/schema.js";
 
 /** Effective per-task limits: task budgets may narrow configured policy, never widen it. */
 export interface EffectiveBudget {
@@ -258,12 +259,41 @@ export class Admission {
     return (this.db.prepare("SELECT COUNT(*) AS n FROM model_requests WHERE reserved_at > ?").get(sinceMs) as { n: number }).n;
   }
 
-  /** Oldest request inside the window; capacity returns when it ages out. */
-  private windowReopensAt(windowMs: number, limit: number, now: number): number {
-    const row = this.db
-      .prepare("SELECT reserved_at FROM model_requests WHERE reserved_at > ? ORDER BY reserved_at DESC LIMIT 1 OFFSET ?")
-      .get(now - windowMs, limit - 1) as { reserved_at: number } | undefined;
+  /** Requests one project reserved since `sinceMs` (attributed by `model_requests.project_id`). */
+  projectCount(project: string, sinceMs: number): number {
+    return (this.db.prepare("SELECT COUNT(*) AS n FROM model_requests WHERE project_id = ? AND reserved_at > ?").get(project, sinceMs) as { n: number }).n;
+  }
+
+  /** Oldest request inside the window (of one project, when given); capacity returns when it ages out. */
+  private windowReopensAt(windowMs: number, limit: number, now: number, project?: string): number {
+    const row = (
+      project === undefined
+        ? this.db.prepare("SELECT reserved_at FROM model_requests WHERE reserved_at > ? ORDER BY reserved_at DESC LIMIT 1 OFFSET ?").get(now - windowMs, limit - 1)
+        : this.db.prepare("SELECT reserved_at FROM model_requests WHERE project_id = ? AND reserved_at > ? ORDER BY reserved_at DESC LIMIT 1 OFFSET ?").get(project, now - windowMs, limit - 1)
+    ) as { reserved_at: number } | undefined;
     return row ? row.reserved_at + windowMs + 1 : now;
+  }
+
+  /**
+   * A project's share of the package allocation (decision D7): with `request_share` set, the
+   * project may reserve at most that fraction (at least one request) of each configured window.
+   * Denied with the package reason, so the task waits for capacity like any allocation denial.
+   */
+  private projectShareDenial(project: string, share: number | undefined, now: number): AdmissionDenied | null {
+    if (share === undefined) return null;
+    const { max_model_requests_per_hour: perHour, max_model_requests_per_day: perDay } = this.cfg.allocation;
+    const windows: Array<[number | undefined, number, "hour" | "day", "package_hourly_allocation_exhausted" | "package_daily_allocation_exhausted"]> = [
+      [perHour, HOUR, "hour", "package_hourly_allocation_exhausted"],
+      [perDay, DAY, "day", "package_daily_allocation_exhausted"],
+    ];
+    for (const [cap, windowMs, unit, reason] of windows) {
+      if (cap === undefined) continue;
+      const allowed = Math.max(1, Math.floor(cap * share));
+      if (this.projectCount(project, now - windowMs) >= allowed) {
+        return new AdmissionDenied(reason, `project ${project} share of the package allocation (${allowed} of ${cap} requests/${unit}) reached`, this.windowReopensAt(windowMs, allowed, now, project));
+      }
+    }
+    return null;
   }
 
   /**
@@ -326,10 +356,18 @@ export class Admission {
         );
       }
 
+      // Per-project limits (D7). A batch never mixes projects, so the first participant names it.
+      const project = req.participants.length ? (this.tasks.projectOf(req.participants[0]!.taskId) ?? "") : "";
+      const limits = project ? projectLimits(this.cfg, project) : null;
+      const shareDenied = limits ? this.projectShareDenial(project, limits.request_share, now) : null;
+      if (shareDenied) throw shareDenied;
+
       if (req.paid) {
         const p = req.paid;
         const global = p.spend.globalDenial(p.worstCaseUsd);
         if (global) throw new AdmissionDenied("paid_budget_exhausted", global);
+        const own = limits ? p.spend.projectDenial(project, limits.paid_budgets, p.worstCaseUsd) : null;
+        if (own) throw new AdmissionDenied("paid_budget_exhausted", own);
         const key = p.key;
         if (!key.enabled) throw new AdmissionDenied("paid_budget_exhausted", `paid key ${key.label || key.ref} is not enabled`);
         const room = p.spend.keyHeadroom(key);

@@ -4,9 +4,11 @@ import type { Switchyard } from "../core/service.js";
 import { isTerminal, type TaskState } from "../core/task.js";
 import { UPSTREAM_CONTEXT_EVENT, UpstreamContextEventSchema, type BaseChoice } from "../context/upstream.js";
 import { FileLeaseStore, type FileLease } from "../storage/file-leases.js";
+import { splitRepoKey } from "../projects/context.js";
 import { PlanStore, criticalPath, type CriticalPath, type JobPlan, type PlanDifficulty } from "../storage/plans.js";
 import { AWAITING_ACCEPTANCE, WAITING_FOR_FILE_LEASE, type StoredTask, type TaskRow } from "../storage/tasks.js";
 import { REDUNDANCY_SETTLED, REDUNDANCY_SKIPPED, REDUNDANCY_STARTED } from "../core/redundancy.js";
+import { contextOfTask } from "./projects.js";
 
 // A job's task graph for people and supervisors: the plan's nodes joined with the tasks they
 // were dispatched as, the critical path, the job's file leases, and why waiting nodes wait.
@@ -216,7 +218,7 @@ export function jobPlan(sy: Switchyard, jobId: string, opts: { version?: number 
   for (const c of children) if (c.spec.label) byLabel.set(c.spec.label, c);
   const labelOf = new Map(children.map((c) => [c.row.id, c.spec.label ?? null]));
   const running = children.filter((c) => c.spec.profile !== "supervise" && RUNNING.has(c.row.state)).length;
-  const maxAgents = maxAgentsPerJob(sy.cfg);
+  const maxAgents = maxAgentsPerJob(contextOfTask(sy, jobId));
   const leaseStore = new FileLeaseStore(sy.db);
   const leases: PlanLeaseView[] = leaseStore.forJob(jobId).map((l) => ({ ...l, taskLabel: labelOf.get(l.taskId) ?? null }));
 
@@ -248,13 +250,16 @@ export function jobPlan(sy: Switchyard, jobId: string, opts: { version?: number 
       const holder = reason.slice(WAITING_FOR_FILE_LEASE.length + 1);
       const held = leases.filter((l) => l.taskId === holder && l.live).at(-1) ?? leases.filter((l) => l.taskId === holder).at(-1);
       const holderLabel = labelOf.get(holder) ?? null;
+      // Leases key repositories <project>/<alias>; the view shows the alias the user wrote.
+      const repoKeyOf = held?.repository ?? t.row.writable_repo;
+      const repository = repoKeyOf === null ? null : splitRepoKey(repoKeyOf).alias;
       return {
         kind: "file_lease",
         holderTaskId: holder,
         holderLabel,
-        repository: held?.repository ?? t.row.writable_repo,
+        repository,
         globs: held?.globs ?? [],
-        text: `waits for the file lease ${holderLabel ?? holder} holds${held ? ` on ${held.globs.join(", ")} in ${held.repository}` : ""}`,
+        text: `waits for the file lease ${holderLabel ?? holder} holds${held ? ` on ${held.globs.join(", ")} in ${repository}` : ""}`,
       };
     }
     if (running >= maxAgents) return { kind: "agent_cap", running, cap: maxAgents, text: `waits for a free agent slot (${running} of ${maxAgents} running)` };
