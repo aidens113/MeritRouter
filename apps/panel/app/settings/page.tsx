@@ -11,6 +11,7 @@ import { RolesForm, RowsForm, type Column, type RoleValue } from "@/components/c
 import { ActionButton } from "@/components/client/actions";
 import { YamlEditor } from "@/components/client/yaml-editor";
 import { RulebookEditor } from "@/components/client/rulebook-editor";
+import { SectionNav } from "@/components/client/section-nav";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Settings" };
@@ -46,7 +47,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           </>
         }
       />
-      <nav aria-label="Settings sections" className="flex flex-wrap gap-1 border-b border-line">
+      <nav aria-label="Settings views" className="flex flex-wrap gap-1 border-b border-line">
         {TABS.map((t) => (
           <Link key={t.id} href={t.id === "form" ? "/settings" : `/settings?tab=${t.id}`} aria-current={tab === t.id ? "page" : undefined} className={cx("-mb-px border-b-2 px-3 py-2 text-sm", tab === t.id ? "border-accent font-medium text-accent-ink" : "border-transparent text-ink-2 hover:text-ink")}>
             {t.label}
@@ -55,31 +56,25 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       </nav>
 
       {tab === "form" ? (
-        <div className="grid gap-6 xl:grid-cols-[12rem_1fr]">
-          <aside className="hidden xl:block">
-            <ul className="sticky top-6 space-y-0.5 text-sm">
-              {[
-                ...SECTIONS.map((s) => [s.id, s.title]),
-                ["repositories", "Repositories"],
-                ...profileSections.map((s) => [s.id, s.title.replace("Task type: ", "Type: ")]),
-                ["supervisor", "Supervisor (jobs)"],
-                ["paid", "Paid routing"],
-                ["paid-providers", "Paid providers"],
-                ["paid-models", "Paid models"],
-                ["brain", "Brain"],
-                ["brain-mounts", "Brain mounts"],
-                ["brain-auto-approve", "Auto-approve rules"],
-                ["roles", "Roles"],
-              ].map(([id, title]) => (
-                <li key={id}>
-                  <a href={`#${id}`} className="block rounded-md px-2 py-1 text-ink-2 hover:bg-surface-2 hover:text-ink">
-                    {title}
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </aside>
-          <div className="min-w-0 space-y-6">
+        <div className="space-y-4 xl:grid xl:grid-cols-[12rem_1fr] xl:gap-6 xl:space-y-0">
+          <SectionNav
+            label="Settings sections"
+            items={[
+              ...SECTIONS.map((s) => ({ id: s.id, title: s.title })),
+              { id: "repositories", title: "Repositories" },
+              ...profileSections.map((s) => ({ id: s.id, title: s.title.replace("Task type: ", "Type: ") })),
+              { id: "supervisor", title: "Supervisor (jobs)" },
+              { id: "paid", title: "Paid routing" },
+              { id: "paid-providers", title: "Paid providers" },
+              { id: "paid-models", title: "Paid models" },
+              { id: "brain", title: "Brain" },
+              { id: "brain-mounts", title: "Brain mounts" },
+              { id: "brain-auto-approve", title: "Auto-approve rules" },
+              { id: "roles", title: "Roles" },
+            ]}
+          />
+          {/* Scroll margin clears the sticky top bar and section strip on narrow screens. */}
+          <div className="min-w-0 space-y-6 [&>section[id]]:scroll-mt-28 xl:[&>section[id]]:scroll-mt-6">
             {SECTIONS.map((s) => (
               <SectionForm key={s.id} section={s} values={valuesFor(s)} />
             ))}
