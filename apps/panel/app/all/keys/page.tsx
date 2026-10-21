@@ -104,7 +104,7 @@ export default async function KeysPage() {
                   {p.baseUrl ? <span className="block break-all font-mono text-[11px]">{p.baseUrl}</span> : null}
                   <span className="block">
                     {p.models.total ? (
-                      <Link href={`/models?platform=${encodeURIComponent(p.models.platform)}`} className="text-accent-ink hover:underline">
+                      <Link href={`/all/models?platform=${encodeURIComponent(p.models.platform)}`} className="text-accent-ink hover:underline">
                         {p.models.total} model{p.models.total === 1 ? "" : "s"} found · {p.models.routable} routable{p.models.free ? ` · ${p.models.free} free` : ""}
                         {p.models.unavailable ? ` · ${p.models.unavailable} unavailable` : ""}
                       </Link>
@@ -142,7 +142,7 @@ export default async function KeysPage() {
           description={
             <>
               Keys that are not free tier, and models with a price, follow the paid policy and budgets in{" "}
-              <Link href="/settings#paid" className="text-accent-ink hover:underline">
+              <Link href="/all/settings#paid" className="text-accent-ink hover:underline">
                 Settings → Paid routing
               </Link>
               .

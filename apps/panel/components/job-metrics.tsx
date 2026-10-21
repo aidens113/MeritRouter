@@ -5,6 +5,7 @@ import { Card, CardHeader, EmptyState, HelpTip, Stat } from "@/components/ui";
 import { StackedBars, StepChart } from "@/components/client/charts";
 import { TaskStateBadge } from "@/components/task-badges";
 import { duration, humanize, shortId } from "@/lib/format";
+import { jobHref, taskHref } from "@/lib/links";
 
 // Team metrics for one job (or one agent's task): wall-clock, parallelism over time, critical
 // paths, requests and cost per completed task, verification share, and waiting time by reason.
@@ -41,7 +42,8 @@ export function ParallelismChart({ m, height = 200 }: { m: Metrics; height?: num
   );
 }
 
-export function JobMetricsCard({ m, title = "Team metrics", link = false }: { m: Metrics; title?: string; link?: boolean }) {
+/** `base` is the project path (`/p/<slug>`) links start from. */
+export function JobMetricsCard({ m, base, title = "Team metrics", link = false }: { m: Metrics; base: string; title?: string; link?: boolean }) {
   // Seconds with one decimal; waits under a twentieth of a second round to nothing and are left out.
   const reasons = Object.entries(m.waiting.byReason).filter(([, v]) => v >= 50);
   const purposes = Object.entries(m.requestsByPurpose).filter(([, n]) => n > 0);
@@ -55,7 +57,7 @@ export function JobMetricsCard({ m, title = "Team metrics", link = false }: { m:
           <>
             Derived from the job&apos;s task events, plan, and request ledger{m.kind === "team" ? "; sub-jobs and their tasks count here too" : "; one agent"}.{" "}
             {link ? (
-              <Link href={`/jobs/${encodeURIComponent(m.jobId)}`} className="text-accent-ink hover:underline">
+              <Link href={jobHref(base, m.jobId)} className="text-accent-ink hover:underline">
                 Open the job →
               </Link>
             ) : null}
@@ -119,7 +121,7 @@ export function JobMetricsCard({ m, title = "Team metrics", link = false }: { m:
                       return (
                         <tr key={a.taskId}>
                           <td className="max-w-[12rem]">
-                            <Link href={a.profile === "supervise" ? `/jobs/${encodeURIComponent(a.taskId)}` : `/tasks/${encodeURIComponent(a.taskId)}`} className="block truncate text-accent-ink hover:underline" title={a.taskId}>
+                            <Link href={a.profile === "supervise" ? jobHref(base, a.taskId) : taskHref(base, a.taskId)} className="block truncate text-accent-ink hover:underline" title={a.taskId}>
                               {a.label ?? shortId(a.taskId, 16)}
                             </Link>
                             <div className="text-[11px] text-ink-3">{a.profile}</div>
@@ -149,7 +151,7 @@ export function JobMetricsCard({ m, title = "Team metrics", link = false }: { m:
         {m.subJobs.length ? (
           <div>
             <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-3">Sub-jobs</h3>
-            <MetricsTable rows={m.subJobs} />
+            <MetricsTable rows={m.subJobs} base={base} />
           </div>
         ) : null}
       </div>
@@ -157,8 +159,8 @@ export function JobMetricsCard({ m, title = "Team metrics", link = false }: { m:
   );
 }
 
-/** Metric summaries, one row per job; `select` links rows to `/teams?job=<id>`. */
-export function MetricsTable({ rows, select, selected }: { rows: insights.JobMetricsSummary[]; select?: boolean; selected?: string | null }) {
+/** Metric summaries, one row per job; `select` links rows to `<base>/teams?job=<id>`. */
+export function MetricsTable({ rows, base, select, selected }: { rows: insights.JobMetricsSummary[]; base: string; select?: boolean; selected?: string | null }) {
   return (
     <div className="overflow-x-auto">
       <table className="data-table">
@@ -179,7 +181,7 @@ export function MetricsTable({ rows, select, selected }: { rows: insights.JobMet
           {rows.map((s) => (
             <tr key={s.jobId} className={selected === s.jobId ? "bg-accent-soft" : undefined}>
               <td className="max-w-[16rem]">
-                <Link href={select ? `/teams?job=${encodeURIComponent(s.jobId)}#metrics` : `/jobs/${encodeURIComponent(s.jobId)}`} className="block truncate font-medium text-accent-ink hover:underline" title={s.goal}>
+                <Link href={select ? `${base}/teams?job=${encodeURIComponent(s.jobId)}#metrics` : jobHref(base, s.jobId)} className="block truncate font-medium text-accent-ink hover:underline" title={s.goal}>
                   {s.label ?? shortId(s.jobId, 18)}
                 </Link>
                 <div className="truncate text-[11px] text-ink-3">{s.parentJobId ? `sub-job of ${shortId(s.parentJobId, 14)}` : s.goal}</div>

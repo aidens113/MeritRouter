@@ -112,7 +112,8 @@ export function planComparison(sy: Switchyard, input: { evalIds?: string[]; goal
     const dup = ids.find((id, i) => ids.indexOf(id) !== i);
     if (dup) throw new SwitchyardError("usage", `goal id ${dup} is used more than once`);
     goals = parsed.data.map((g) => {
-      if (!sy.cfg.repositoryPaths[g.repository]) throw new SwitchyardError("usage", `goal ${g.id}: unknown repository ${g.repository}`);
+      // Comparison runs are system work and land in the primary project: its repositories are the ones they can use.
+      if (!sy.projects.primary.repositoryPaths[g.repository]) throw new SwitchyardError("usage", `goal ${g.id}: unknown repository ${g.repository} in project ${sy.projects.primary.project.slug}`);
       if (!sy.cfg.profiles[g.profile]) throw new SwitchyardError("usage", `goal ${g.id}: the ${g.profile} task type is not configured`);
       const single = g.singleRequests ?? DEFAULT_SINGLE_REQUESTS;
       return { id: g.id, source: "supplied", goal: g.goal, profile: g.profile, acceptanceCriteria: g.acceptanceCriteria, allowedPaths: g.allowedPaths ?? null, checks: g.checks ?? [], repository: g.repository, fixture: null, singleRequests: single, teamRequests: teamCap(single, g.teamRequests) };

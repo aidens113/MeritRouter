@@ -5,6 +5,7 @@ import type { JobPlanView, PlanNodeView, PlanWait, insights } from "switchyard-r
 import { Badge, Card, CardHeader, HelpTip, Mono } from "./ui";
 import { AcceptanceBadge, ImportanceBadge, TASK_STATE_LABEL, TaskStateBadge, TierBadge } from "./task-badges";
 import { dateTime, humanize, shortId } from "@/lib/format";
+import { sessionHref, taskHref } from "@/lib/links";
 
 // The job page's plan view: the task graph (critical path highlighted), one row per node with its
 // waiting reason, and the job's file leases. Server-rendered from insights.jobPlan.
@@ -66,7 +67,7 @@ function layout(nodes: PlanNodeView[]) {
   return { pos, width: PAD * 2 + (depth + 1) * W + depth * COL_GAP, height: PAD * 2 + maxRows * H + (maxRows - 1) * ROW_GAP };
 }
 
-export function PlanGraph({ plan }: { plan: JobPlanView }) {
+export function PlanGraph({ plan, base }: { plan: JobPlanView; base: string }) {
   const { pos, width, height } = layout(plan.nodes);
   return (
     <svg role="img" aria-label={`Task graph with ${plan.nodes.length} nodes; critical path ${plan.criticalPath.labels.join(" to ")}`} width={width} height={height} viewBox={`0 0 ${width} ${height}`} className="block">
@@ -122,7 +123,7 @@ export function PlanGraph({ plan }: { plan: JobPlanView }) {
           </g>
         );
         return n.taskId ? (
-          <a key={n.label} href={`/tasks/${encodeURIComponent(n.taskId)}`}>
+          <a key={n.label} href={taskHref(base, n.taskId)}>
             {box}
           </a>
         ) : (
@@ -153,7 +154,8 @@ function WaitCell({ n }: { n: PlanNodeView }): ReactNode {
   );
 }
 
-export function PlanCard({ plan }: { plan: JobPlanView }) {
+/** `base` is the project path (`/p/<slug>`) links start from. */
+export function PlanCard({ plan, base }: { plan: JobPlanView; base: string }) {
   if (!plan.plan) return null;
   const live = plan.leases.filter((l) => l.live);
   const released = plan.leases.filter((l) => !l.live).reverse();
@@ -195,7 +197,7 @@ export function PlanCard({ plan }: { plan: JobPlanView }) {
         </span>
       </div>
       <div className="overflow-x-auto border-b border-line p-4">
-        <PlanGraph plan={plan} />
+        <PlanGraph plan={plan} base={base} />
         <p className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-ink-3">
           <span className="inline-flex items-center gap-1.5">
             <span className="inline-block h-0.5 w-5 rounded bg-accent" aria-hidden /> critical path
@@ -284,7 +286,7 @@ export function PlanCard({ plan }: { plan: JobPlanView }) {
                   </td>
                   <td>
                     {n.taskId ? (
-                      <Link href={`/tasks/${n.taskId}`} className="font-mono text-xs text-accent-ink hover:underline">
+                      <Link href={taskHref(base, n.taskId)} className="font-mono text-xs text-accent-ink hover:underline">
                         {shortId(n.taskId, 14)}
                       </Link>
                     ) : (
@@ -301,7 +303,7 @@ export function PlanCard({ plan }: { plan: JobPlanView }) {
           </tbody>
         </table>
       </div>
-      <Twins nodes={plan.nodes} />
+      <Twins nodes={plan.nodes} base={base} />
       <div className="space-y-2 border-t border-line p-4">
         <h3 className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-ink-3">
           File leases <HelpTip term="fileLease" />
@@ -363,7 +365,7 @@ const TWIN_STATUS: Record<insights.TwinRunsView["status"], { label: string; tone
 };
 
 /** Redundant nodes: each twin run with its endpoints, session, and whether it won or was superseded. */
-function Twins({ nodes }: { nodes: PlanNodeView[] }) {
+function Twins({ nodes, base }: { nodes: PlanNodeView[]; base: string }) {
   const twins = nodes.filter((n) => n.redundancy > 1);
   if (!twins.length) return null;
   return (
@@ -402,7 +404,7 @@ function Twins({ nodes }: { nodes: PlanNodeView[] }) {
                       ) : null}
                     </div>
                     {r.sessionId ? (
-                      <Link href={`/sessions/${encodeURIComponent(r.sessionId)}`} className="mt-1 inline-block font-mono text-accent-ink hover:underline">
+                      <Link href={sessionHref(base, r.sessionId)} className="mt-1 inline-block font-mono text-accent-ink hover:underline">
                         {shortId(r.sessionId, 18)}
                       </Link>
                     ) : null}

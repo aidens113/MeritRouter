@@ -1,15 +1,17 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { panelToken, safeEqual, sessionValue, SESSION_COOKIE } from "./lib/auth";
+import { LAST_PROJECT_COOKIE, SLUG_RE, slugOfPath } from "./lib/links";
 
 const OPEN = ["/login", "/api/login"];
 
-export async function proxy(req: NextRequest) {
+/** The sign-in gate: null lets the request through, otherwise the response that stops it. */
+async function gate(req: NextRequest): Promise<NextResponse | null> {
   const token = panelToken();
-  if (!token) return NextResponse.next();
+  if (!token) return null;
   const { pathname, search } = req.nextUrl;
-  if (OPEN.includes(pathname)) return NextResponse.next();
+  if (OPEN.includes(pathname)) return null;
   const cookie = req.cookies.get(SESSION_COOKIE)?.value ?? "";
-  if (cookie && safeEqual(cookie, await sessionValue(token))) return NextResponse.next();
+  if (cookie && safeEqual(cookie, await sessionValue(token))) return null;
   if (pathname.startsWith("/api/")) {
     return NextResponse.json({ ok: false, error: "Sign in required" }, { status: 401 });
   }
@@ -17,6 +19,20 @@ export async function proxy(req: NextRequest) {
   url.pathname = "/login";
   url.search = `?next=${encodeURIComponent(pathname + search)}`;
   return NextResponse.redirect(url);
+}
+
+export async function proxy(req: NextRequest) {
+  const stopped = await gate(req);
+  if (stopped) return stopped;
+  const res = NextResponse.next();
+  // Remember the project being opened, so the old project-less URLs (/jobs, /tasks, ...) can
+  // redirect to it. The pages themselves 404 an unknown or archived slug, and the redirects check
+  // the remembered slug again before using it.
+  const slug = slugOfPath(req.nextUrl.pathname);
+  if (slug && SLUG_RE.test(slug) && req.cookies.get(LAST_PROJECT_COOKIE)?.value !== slug) {
+    res.cookies.set(LAST_PROJECT_COOKIE, slug, { path: "/", sameSite: "lax", httpOnly: true, maxAge: 60 * 60 * 24 * 365 });
+  }
+  return res;
 }
 
 export const config = {

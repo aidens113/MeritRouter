@@ -422,9 +422,13 @@ export function summaryOf(m: JobMetrics): JobMetricsSummary {
   };
 }
 
-/** Metric summaries of the newest jobs (sub-jobs included), newest first. */
-export function teamMetrics(sy: Switchyard, opts: { limit?: number; now?: number } = {}): JobMetricsSummary[] {
-  const rows = sy.db.prepare("SELECT id FROM tasks WHERE profile = 'supervise' ORDER BY created_at DESC LIMIT ?").all(opts.limit ?? 50) as Array<{ id: string }>;
+/** Metric summaries of the newest jobs (sub-jobs included), newest first; `project` limits them to one project's jobs. */
+export function teamMetrics(sy: Switchyard, opts: { limit?: number; now?: number; project?: string } = {}): JobMetricsSummary[] {
+  const rows = (
+    opts.project
+      ? sy.db.prepare("SELECT id FROM tasks WHERE profile = 'supervise' AND project_id = ? ORDER BY created_at DESC LIMIT ?").all(opts.project, opts.limit ?? 50)
+      : sy.db.prepare("SELECT id FROM tasks WHERE profile = 'supervise' ORDER BY created_at DESC LIMIT ?").all(opts.limit ?? 50)
+  ) as Array<{ id: string }>;
   return rows.flatMap((r) => {
     const m = jobMetrics(sy, r.id, opts.now !== undefined ? { now: opts.now } : {});
     return m ? [summaryOf(m)] : [];

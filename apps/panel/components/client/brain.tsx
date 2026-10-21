@@ -6,7 +6,7 @@ import { ActionStatus, useAction } from "./actions";
 import { buttonClass } from "../ui";
 
 /** Edit a brain file in place. Saved as you; protocol errors from the server are listed inline. */
-export function BrainEditor({ path, initial, kind, maxCurrentState }: { path: string; initial: string; kind: string; maxCurrentState: number }) {
+export function BrainEditor({ project, path, initial, kind, maxCurrentState }: { project: string; path: string; initial: string; kind: string; maxCurrentState: number }) {
   const [text, setText] = useState(initial);
   const { run, busy, error, errors, message } = useAction();
   const dirty = text !== initial;
@@ -29,7 +29,7 @@ export function BrainEditor({ path, initial, kind, maxCurrentState }: { path: st
         aria-invalid={errors.length > 0}
       />
       <div className="flex flex-wrap items-start gap-3">
-        <button type="button" className={buttonClass("primary", true)} disabled={busy || !dirty} onClick={() => run("/api/brain", "PUT", { path, content: text }, { success: "Saved and committed as you." })}>
+        <button type="button" className={buttonClass("primary", true)} disabled={busy || !dirty} onClick={() => run("/api/brain", "PUT", { project, path, content: text }, { success: "Saved and committed as you." })}>
           <Save size={13} aria-hidden /> Save
         </button>
         {dirty ? (
@@ -57,10 +57,10 @@ export function BrainEditor({ path, initial, kind, maxCurrentState }: { path: st
 }
 
 /** Approve or deny one access request with a reason. */
-export function AccessDecision({ id }: { id: number }) {
+export function AccessDecision({ id, project }: { id: number; project: string }) {
   const [reason, setReason] = useState("");
   const { run, busy, error, message } = useAction();
-  const decide = (approve: boolean) => run(`/api/brain/access/${id}`, "POST", { approve, reason }, { success: approve ? "Approved" : "Denied" });
+  const decide = (approve: boolean) => run(`/api/brain/access/${id}`, "POST", { project, approve, reason }, { success: approve ? "Approved" : "Denied" });
   return (
     <div className="space-y-1.5">
       <div className="flex flex-wrap items-center gap-2">

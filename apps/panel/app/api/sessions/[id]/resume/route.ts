@@ -1,8 +1,12 @@
-import { handle, HttpError } from "@/lib/api";
+import { z } from "zod";
+import { body, handle, HttpError } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
 type Ctx = { params: Promise<{ id: string }> };
+
+/** Optional: the project the session must belong to (panel pages send theirs). */
+const Body = z.object({ project: z.string().trim().min(1).max(100).optional() });
 
 /**
  * Requeue the task of an interrupted session so its next run continues that session (a coding
@@ -10,14 +14,15 @@ type Ctx = { params: Promise<{ id: string }> };
  * never runs tasks (its scheduler is stopped): a worker, the MCP server or `switchyard worker`,
  * picks the task up on its next poll.
  */
-export async function POST(_req: Request, ctx: Ctx) {
+export async function POST(req: Request, ctx: Ctx) {
   return handle(async (sy) => {
     const id = decodeURIComponent((await ctx.params).id);
     if (!/^[A-Za-z0-9_-]{1,200}$/.test(id)) throw new HttpError(400, "id must be a session id");
+    const { project } = req.headers.get("content-type")?.includes("json") ? await body(req, Body) : { project: undefined };
     const s = sy.sessions.get(id);
     if (!s) throw new HttpError(404, `No session ${id}`);
     try {
-      return sy.resumeSession(id);
+      return sy.resumeSession(id, project);
     } catch (err) {
       // Refusals (not interrupted, task not interrupted, no task) are conflicts with the current state.
       const code = (err as { code?: unknown }).code;

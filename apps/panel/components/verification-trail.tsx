@@ -5,6 +5,7 @@ import type { insights } from "switchyard-router";
 import { Badge, cx, HelpTip, Mono, type Tone } from "./ui";
 import { ArtifactViewer } from "./client/artifact-viewer";
 import { dateTime, humanize, modelHref, shortId } from "@/lib/format";
+import { sessionHref } from "@/lib/links";
 
 type Trail = insights.TaskVerificationTrail;
 type Review = insights.ReviewView;
@@ -65,7 +66,7 @@ type Step =
  * review (reviewer, qualification, verdict, per-criterion outcomes, findings), targeted checks
  * a reviewer asked for, and the repair or escalation with the run that carried it out.
  */
-export function VerificationTrail({ trail, criteria, names }: { trail: Trail; criteria: Map<string, string>; names: Map<string, string> }) {
+export function VerificationTrail({ trail, criteria, names, base }: { trail: Trail; criteria: Map<string, string>; names: Map<string, string>; base: string }) {
   const steps: Step[] = [
     ...trail.raised.map((raised, i): Step => ({ kind: "raised", at: raised.at, order: i, raised })),
     ...trail.reviews.map((review, i): Step => ({ kind: "review", at: review.at, order: i, review })),
@@ -80,9 +81,9 @@ export function VerificationTrail({ trail, criteria, names }: { trail: Trail; cr
       {steps.map((s) => (
         <li key={`${s.kind}${s.order}`}>
           {s.kind === "review" ? (
-            <ReviewCard r={s.review} criteria={criteria} names={names} />
+            <ReviewCard r={s.review} criteria={criteria} names={names} base={base} />
           ) : s.kind === "retry" ? (
-            <RetryRow r={s.retry} />
+            <RetryRow r={s.retry} base={base} />
           ) : s.kind === "targeted" ? (
             <TargetedRow t={s.check} />
           ) : (
@@ -144,7 +145,7 @@ function TargetedRow({ t }: { t: insights.TargetedCheckView }) {
   );
 }
 
-function RetryRow({ r }: { r: insights.RetryView }) {
+function RetryRow({ r, base }: { r: insights.RetryView; base: string }) {
   const title =
     r.kind === "repair"
       ? `Repair${r.toTier !== r.fromTier ? ` at ${r.toTier} (escalated from ${r.fromTier})` : ` at ${r.toTier}`}`
@@ -165,7 +166,7 @@ function RetryRow({ r }: { r: insights.RetryView }) {
           </span>
         ) : null}
         {r.sessionId ? (
-          <Link href={`/sessions/${encodeURIComponent(r.sessionId)}`} className="inline-flex items-center gap-1 font-medium text-accent-ink hover:underline">
+          <Link href={sessionHref(base, r.sessionId)} className="inline-flex items-center gap-1 font-medium text-accent-ink hover:underline">
             {r.kind === "repair" ? "Repair" : "Retry"} run session <Mono>{shortId(r.sessionId, 14)}</Mono> <ArrowRight size={12} aria-hidden />
           </Link>
         ) : (
@@ -183,7 +184,7 @@ function RetryRow({ r }: { r: insights.RetryView }) {
   );
 }
 
-function ReviewCard({ r, criteria, names }: { r: Review; criteria: Map<string, string>; names: Map<string, string> }) {
+function ReviewCard({ r, criteria, names, base }: { r: Review; criteria: Map<string, string>; names: Map<string, string>; base: string }) {
   const unqualified = r.flags.includes("reviewer_unqualified");
   const otherFlags = r.flags.filter((f) => f !== "reviewer_unqualified");
   return (
@@ -233,7 +234,7 @@ function ReviewCard({ r, criteria, names }: { r: Review; criteria: Map<string, s
           ) : null}
           {r.score !== null ? <span>score {r.score} (recorded, never decisive)</span> : null}
           {r.sessionId ? (
-            <Link href={`/sessions/${encodeURIComponent(r.sessionId)}`} className="inline-flex items-center gap-1 text-accent-ink hover:underline">
+            <Link href={sessionHref(base, r.sessionId)} className="inline-flex items-center gap-1 text-accent-ink hover:underline">
               reviewer session <Mono>{shortId(r.sessionId, 14)}</Mono>
             </Link>
           ) : null}

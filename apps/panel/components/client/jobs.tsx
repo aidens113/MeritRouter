@@ -7,6 +7,7 @@ import { Check, Copy, MessageCircleQuestion, Play, Send } from "lucide-react";
 import { ActionStatus, useAction } from "./actions";
 import { LinesEditor } from "./lines-editor";
 import { buttonClass, cx, HelpTip } from "../ui";
+import { jobHref, projectBase } from "@/lib/links";
 
 export interface RepoOption {
   alias: string;
@@ -14,8 +15,8 @@ export interface RepoOption {
   path: string;
 }
 
-/** Form for starting a standalone job. The job is queued; a worker runs it. */
-export function NewJobForm({ repos, enabled }: { repos: RepoOption[]; enabled: boolean }) {
+/** Form for starting a standalone job in `project`. The job is queued; a worker runs it. */
+export function NewJobForm({ project, repos, enabled }: { project: string; repos: RepoOption[]; enabled: boolean }) {
   const router = useRouter();
   const [goal, setGoal] = useState("");
   const [label, setLabel] = useState("");
@@ -36,6 +37,7 @@ export function NewJobForm({ repos, enabled }: { repos: RepoOption[]; enabled: b
       "/api/jobs",
       "POST",
       {
+        project,
         goal,
         repositories: selected,
         acceptanceCriteria: criteria.map((c) => c.trim()).filter(Boolean),
@@ -47,7 +49,7 @@ export function NewJobForm({ repos, enabled }: { repos: RepoOption[]; enabled: b
       { success: "Job queued. A running worker will pick it up.", refresh: false },
     );
     const id = (r.job as { taskId?: string } | undefined)?.taskId;
-    if (r.ok && id) router.push(`/jobs/${id}`);
+    if (r.ok && id) router.push(jobHref(projectBase(project), id));
   };
 
   return (
@@ -80,7 +82,7 @@ export function NewJobForm({ repos, enabled }: { repos: RepoOption[]; enabled: b
             </div>
           ) : (
             <p className="mt-1 text-xs text-ink-3">
-              No repositories configured. Add one in <Link href="/settings#repositories" className="text-accent-ink hover:underline">Settings</Link>.
+              This project has no repositories. Add one in its <Link href={`${projectBase(project)}/settings`} className="text-accent-ink hover:underline">project settings</Link>.
             </p>
           )}
           <span className="mt-1 block text-xs text-ink-3">Writable repositories get their own job branch; your checkout is never touched.</span>
@@ -138,10 +140,10 @@ export interface QuestionView {
 }
 
 /** One pending question: options as buttons, or a free-text answer. */
-export function QuestionAnswer({ q }: { q: QuestionView }) {
+export function QuestionAnswer({ q, project }: { q: QuestionView; project: string }) {
   const [text, setText] = useState("");
   const { run, busy, error, message } = useAction();
-  const answer = (a: string) => run("/api/jobs/questions", "POST", { id: q.id, answer: a }, { success: "Answer sent. The supervisor continues within a second if it is running." });
+  const answer = (a: string) => run("/api/jobs/questions", "POST", { project, id: q.id, answer: a }, { success: "Answer sent. The supervisor continues within a second if it is running." });
   return (
     <div className="space-y-2">
       <p className="flex items-start gap-2 text-sm text-ink">

@@ -44,7 +44,7 @@ export default async function RoutingPage({ searchParams }: { searchParams: Prom
     modelMissing: !names.has(o.endpointId),
   }));
   const tiers = sy.cfg.tiers;
-  const href = (p: string, m: string[]) => `/routing?profile=${p}${m.join(",") !== "text" ? `&mods=${m.join(",")}` : ""}`;
+  const href = (p: string, m: string[]) => `/all/routing?profile=${p}${m.join(",") !== "text" ? `&mods=${m.join(",")}` : ""}`;
 
   return (
     <div className="space-y-6">

@@ -34,7 +34,7 @@ export default async function ModelDetailPage({ searchParams }: { searchParams: 
 
   return (
     <div className="space-y-6">
-      <Link href="/models" className="inline-flex items-center gap-1 text-sm text-ink-3 hover:text-ink">
+      <Link href="/all/models" className="inline-flex items-center gap-1 text-sm text-ink-3 hover:text-ink">
         <ArrowLeft size={14} aria-hidden /> All models
       </Link>
       <PageHeader
@@ -130,7 +130,7 @@ export default async function ModelDetailPage({ searchParams }: { searchParams: 
                   ) : (
                     <span key="av">
                       No: no usable key for {ep.route.provider}, or the provider no longer lists it.{" "}
-                      <Link href="/keys" className="text-accent-ink hover:underline">
+                      <Link href="/all/keys" className="text-accent-ink hover:underline">
                         Provider keys
                       </Link>
                     </span>
@@ -212,14 +212,14 @@ export default async function ModelDetailPage({ searchParams }: { searchParams: 
       </Card>
 
       <Card>
-        <CardHeader title="Qualification" help="qualification" description="Pass rate per task family and tier, with a 95% confidence interval. Results at harder tiers count for easier ones." actions={<Link href="/qualification" className="text-xs text-accent-ink hover:underline">Leaderboard →</Link>} />
+        <CardHeader title="Qualification" help="qualification" description="Pass rate per task family and tier, with a 95% confidence interval. Results at harder tiers count for easier ones." actions={<Link href="/all/qualification" className="text-xs text-accent-ink hover:underline">Leaderboard →</Link>} />
         <div className="p-4">
           <QualificationTable view={view} />
         </div>
       </Card>
 
       <Card>
-        <CardHeader title="Recent requests" actions={<Link href={`/requests?endpoint=${encodeURIComponent(ep.id)}`} className="text-xs text-accent-ink hover:underline">All requests for this model →</Link>} />
+        <CardHeader title="Recent requests" actions={<Link href={`/all/requests?endpoint=${encodeURIComponent(ep.id)}`} className="text-xs text-accent-ink hover:underline">All requests for this model →</Link>} />
         <RequestsTable rows={recent} names={names} hideModel empty="This model has not served any requests yet" />
       </Card>
     </div>

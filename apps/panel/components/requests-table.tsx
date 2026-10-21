@@ -4,6 +4,7 @@ import type { insights } from "switchyard-router";
 import { RequestStatusBadge, TierBadge } from "./task-badges";
 import { Badge, EmptyState } from "./ui";
 import { dateTime, duration, humanize, modelHref, num, shortDateTime, shortId } from "@/lib/format";
+import { projectBase, taskHref } from "@/lib/links";
 
 export type RequestRow = ReturnType<typeof insights.requestLog>[number];
 
@@ -20,7 +21,11 @@ export function purposeLabel(p: string): string {
   return PURPOSE[p] ?? humanize(p);
 }
 
-export function RequestsTable({ rows, names, hideModel = false, empty }: { rows: RequestRow[]; names: Map<string, string>; hideModel?: boolean; empty?: string }) {
+/**
+ * `base` is the project path (`/p/<slug>`) task links start from; without it (a view across
+ * projects) each row links into its own project.
+ */
+export function RequestsTable({ rows, names, base, hideModel = false, empty }: { rows: RequestRow[]; names: Map<string, string>; base?: string; hideModel?: boolean; empty?: string }) {
   if (!rows.length) return <EmptyState title={empty ?? "No requests recorded"}>Requests appear here as workers call models through the gate.</EmptyState>;
   return (
     <div className="overflow-x-auto">
@@ -39,6 +44,7 @@ export function RequestsTable({ rows, names, hideModel = false, empty }: { rows:
             <th className="text-right">Out</th>
             <th className="text-right">Cached</th>
             <th>Error / policy</th>
+            {base === undefined ? <th>Project</th> : null}
             <th>Tasks</th>
           </tr>
         </thead>
@@ -88,6 +94,19 @@ export function RequestsTable({ rows, names, hideModel = false, empty }: { rows:
                 {r.policyViolation ? <div className="mt-0.5 text-[11px] text-ink-3">{r.policyViolation.slice(0, 200)}</div> : null}
                 {!r.errorKind && !r.policyViolation ? <span className="text-ink-3">–</span> : null}
               </td>
+              {base === undefined ? (
+                <td className="whitespace-nowrap">
+                  {r.project ? (
+                    <Link href={projectBase(r.project)} className="font-mono text-xs text-accent-ink hover:underline">
+                      {r.project}
+                    </Link>
+                  ) : (
+                    <span className="text-xs text-ink-3" title="Charged to no task: a scan, probe, or qualification request">
+                      install
+                    </span>
+                  )}
+                </td>
+              ) : null}
               <td className="whitespace-nowrap">
                 {r.taskIds.length > 2 ? (
                   <span title={r.taskIds.join(", ")}>
@@ -96,14 +115,14 @@ export function RequestsTable({ rows, names, hideModel = false, empty }: { rows:
                 ) : null}
                 <div className="flex flex-col">
                   {r.taskIds.slice(0, r.taskIds.length > 2 ? 0 : 2).map((t) => (
-                    <Link key={t} href={`/tasks/${t}`} className="font-mono text-xs text-accent-ink hover:underline">
+                    <Link key={t} href={taskHref(base ?? (r.project ? projectBase(r.project) : ""), t)} className="font-mono text-xs text-accent-ink hover:underline">
                       {shortId(t, 14)}
                     </Link>
                   ))}
                   {r.taskIds.length > 2 ? (
                     <span className="mt-0.5 flex flex-wrap gap-1">
                       {r.taskIds.map((t) => (
-                        <Link key={t} href={`/tasks/${t}`} className="font-mono text-[11px] text-accent-ink hover:underline">
+                        <Link key={t} href={taskHref(base ?? (r.project ? projectBase(r.project) : ""), t)} className="font-mono text-[11px] text-accent-ink hover:underline">
                           {shortId(t, 8)}
                         </Link>
                       ))}

@@ -3,6 +3,7 @@ import YAML from "yaml";
 import { Network } from "lucide-react";
 import { insights, MODALITIES, ROLE_NAMES, RulebookSchema, type Rulebook } from "switchyard-router";
 import { getSy } from "@/lib/sy";
+import { projectBase } from "@/lib/links";
 import { BRAIN_SECTION, getIn, PAID_SECTION, PROFILE_FIELDS, PROFILE_HELP, ROLE_HELP, SECTIONS, SUPERVISE_PROFILE_DEFAULT, SUPERVISOR_SECTION, type Section } from "@/lib/settings-schema";
 import { SetupScreen } from "@/components/setup";
 import { Callout, Card, CardHeader, cx, Mono, PageHeader } from "@/components/ui";
@@ -27,6 +28,8 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   if (!r.sy) return <SetupScreen error={r.error} configPath={r.configPath} />;
   const sy = r.sy;
   const sp = await searchParams;
+  // With several projects, repositories live under projects.<slug> (each project's settings page).
+  const multiProject = insights.globalSettings(sy).multiProject;
   const tab = TABS.some((t) => t.id === sp.tab) ? (sp.tab as (typeof TABS)[number]["id"]) : "form";
   const cfg = sy.cfg as unknown as Record<string, unknown>;
   const valuesFor = (s: Section) => Object.fromEntries(s.fields.map((f) => [f.path.join("."), getIn(cfg, f.path) as string | number | boolean | string[] | null | undefined]));
@@ -49,7 +52,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       />
       <nav aria-label="Settings views" className="flex flex-wrap gap-1 border-b border-line">
         {TABS.map((t) => (
-          <Link key={t.id} href={t.id === "form" ? "/settings" : `/settings?tab=${t.id}`} aria-current={tab === t.id ? "page" : undefined} className={cx("-mb-px border-b-2 px-3 py-2 text-sm", tab === t.id ? "border-accent font-medium text-accent-ink" : "border-transparent text-ink-2 hover:text-ink")}>
+          <Link key={t.id} href={t.id === "form" ? "/all/settings" : `/all/settings?tab=${t.id}`} aria-current={tab === t.id ? "page" : undefined} className={cx("-mb-px border-b-2 px-3 py-2 text-sm", tab === t.id ? "border-accent font-medium text-accent-ink" : "border-transparent text-ink-2 hover:text-ink")}>
             {t.label}
           </Link>
         ))}
@@ -78,7 +81,23 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             {SECTIONS.map((s) => (
               <SectionForm key={s.id} section={s} values={valuesFor(s)} />
             ))}
-            <RepositoriesForm repos={Object.entries(sy.cfg.repositories).map(([alias, v]) => ({ alias, path: v.path, writable: v.writable, resolved: sy.cfg.repositoryPaths[alias]?.path ?? "" }))} />
+            {multiProject ? (
+              <Card id="repositories">
+                <CardHeader title="Repositories" description="Repositories belong to projects. Each project's settings page lists and edits its own." />
+                <div className="p-4 text-sm text-ink-2">
+                  {insights.projectList(sy).map((p, i) => (
+                    <span key={p.slug}>
+                      {i ? ", " : ""}
+                      <Link href={`${projectBase(p.slug)}/settings`} className="text-accent-ink hover:underline">
+                        {p.name}
+                      </Link>
+                    </span>
+                  ))}
+                </div>
+              </Card>
+            ) : (
+              <RepositoriesForm repos={Object.entries(sy.cfg.repositories).map(([alias, v]) => ({ alias, path: v.path, writable: v.writable, resolved: sy.cfg.repositoryPaths[alias]?.path ?? "" }))} />
+            )}
             {profileSections.map((s) => (
               <SectionForm key={s.id} section={s} values={valuesFor(s)} badge={sy.cfg.profiles[s.id.slice("profile-".length) as keyof typeof sy.cfg.profiles]?.mode} />
             ))}
