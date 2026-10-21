@@ -160,7 +160,8 @@ export class Qualifier {
         cpSync(path.join(this.suiteDir, e.fixture), repo, { recursive: true });
         await initRepo(repo);
         const alias = `q-${runId.slice(-8)}-${e.id}-${trial}`;
-        registerRepository(this.sy.db, this.sy.cfg, { alias, path: repo, writable: e.family === "coding", origin: `qualification:${runId}` });
+        // The fixture belongs to the qualification project, where the run's tasks go (by purpose).
+        registerRepository(this.sy.db, this.sy.projects.qualification, { alias, path: repo, writable: e.family === "coding", origin: `qualification:${runId}` });
         specs.push({
           evalId: e.id,
           trial,

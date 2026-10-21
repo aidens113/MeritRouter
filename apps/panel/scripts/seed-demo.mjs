@@ -237,7 +237,7 @@ const raw = {
   scoring: { batch_window_ms: 50 },
   coding: { runner: "native" },
   // The brain lives inside the demo folder so seeding never touches ~/.switchyard/brain.
-  brain: { path: "brain", project: "demo", access_approver: "supervisor" },
+  brain: { path: "brain", project: "demo", access_approver: "supervisor", global_requires_approval: true },
   supervisor: { question_timeout_seconds: 86400 },
   team: { max_agents: 3 },
   // Paid routing is on with small budgets; the demo key is fake and only a fake client ever sees it.
@@ -323,6 +323,9 @@ const client = {
       }));
       return reply(JSON.stringify({ items }), s, { in: 600, out: 90 });
     }
+
+    // Independent reviews of supervisors' promotions to global knowledge (D9): every lesson passes.
+    if (user.includes("Promotion review: judge the lesson")) return promotionReviewTurn(req, s, user);
 
     // Prompt batches of summarize tasks (ids i1..iN).
     const batchIds = [...user.matchAll(/<item id="(i\d+)">/g)].map((m) => m[1]);
@@ -448,6 +451,25 @@ function auditTurn(s, pkg) {
   };
   const out = { summary: `Audit verdict: ${verdict.verdict}.`, findings: [{ description: `Audit verdict: ${verdict.verdict}`, evidenceRefs: ["inline"] }], criteria: [{ index: 0, status: "met", evidenceRefs: ["inline"] }], data: verdict };
   return reply(null, s, { toolCalls: [call("submit_result", out)], out: 220 });
+}
+
+/** A promotion review's answer: a passing verdict on the lesson against the rubric, as data. */
+function promotionReviewTurn(req, s, pkg) {
+  const field = (k) => new RegExp(`^${k}: (.+)$`, "m").exec(pkg)?.[1].trim() ?? "";
+  const ids = [...pkg.matchAll(/^- ([\w.-]+) \[verify: /gm)].map((m) => m[1]);
+  const verdict = {
+    verdict: "pass",
+    examinedRevision: field("examinedRevision"),
+    policyVersion: field("policyVersion"),
+    criteria: ids.map((id) => ({ id, outcome: "pass", evidenceRefs: ["inline"] })),
+    blockingFindings: [],
+    missingEvidence: [],
+    recommendedAction: "accept",
+  };
+  const criteria = (pkg.match(/^\s*\[\d+\]/gm) ?? []).length || 1;
+  const out = { summary: "The lesson holds beyond its project.", findings: [{ description: "Generic practice; names nothing of its project.", evidenceRefs: ["inline"] }], criteria: Array.from({ length: criteria }, (_, i) => ({ index: i, status: "met", evidenceRefs: ["inline"] })), data: verdict };
+  if (req.tools?.some((t) => t.function.name === "submit_result")) return reply(null, s, { toolCalls: [call("submit_result", out)], out: 220 });
+  return reply(JSON.stringify(out), s, { out: 220 });
 }
 
 const call = (name, args) => ({ id: `call_${++callNo}`, type: "function", function: { name, arguments: JSON.stringify(args) } });
@@ -599,6 +621,7 @@ const JOB_A = [
     calls: [
       call("brain_write", { path: "projects/demo/decisions/arithmetic-helpers.md", content: "# Decision: arithmetic helpers live in src/app.ts\n\nStatus: accepted\n\n## Context\n\nThe calculator service needs add, subtract, and multiply. `handle()` in src/server.ts only parses input.\n\n## Decision\n\n- Pure arithmetic helpers are exported from `src/app.ts`.\n- `src/server.ts` validates input and calls them; it holds no arithmetic itself.\n\n## Consequences\n\n- New operations are one small implement brief with `allowed_paths: src/app.ts`.\n" }),
       call("brain_promote_lesson", { title: "Verify integrated work on the job branch", body: "A worker's passing check proves its own worktree, not the integrated branch. After `integrate_task`, run the same check with `run_check` before recording the ledger entry.\n\n- Cheap: one command, no model request.\n- Catches cherry-pick conflicts resolved the wrong way.", sources: ["projects/demo/working/job-" + "JOBID" + ".md"] }),
+      call("brain_promote_lesson", { title: "Ask before changing what callers see on failure", body: "Status codes and error bodies are part of an interface. When a fix would change them, ask the person who owns the interface first, and record the answer where later briefs will find it.", sources: ["projects/demo/working/job-" + "JOBID" + ".md"] }),
     ],
   }),
   () => ({ text: "Recording the validated outcome in the ledger.", calls: [call("brain_append_ledger", { title: "Integrated multiply", changed: "src/app.ts on the job branch", why: "job goal", validation: "`" + multiplyCheck + "` -> exit 0", outcome: "Accepted", follow_up: "none" })] }),
@@ -917,6 +940,22 @@ offset = Math.round(1.8 * HOUR);
 await insights.brainWrite(sy, "projects/demo/facts/runtime.md", "# Runtime facts\n\n- The calculator service runs on Node 22 behind the API gateway.\n- `GET /sum?a=&b=` is the only public route today.\n- Requests time out after 5 seconds at the gateway.\n");
 await insights.brainWrite(sy, "projects/demo/repos/core.md", "# core (calculator service)\n\n| Path | What it holds |\n| --- | --- |\n| `src/app.ts` | Pure arithmetic helpers |\n| `src/server.ts` | Input parsing and validation for `handle()` |\n\nTests: none yet. Add checks as `node -e` one-liners until a test runner exists.\n");
 await insights.brainWrite(sy, "projects/storefront/facts/checkout.md", "# Checkout facts\n\n- `total()` in `src/cart.ts` sums price times quantity; there are no discounts yet.\n- Prices are in cents, so totals are integers.\n", "storefront");
+// Storefront promotions to global/ (decision D9), for the project Brain page: a lesson that names
+// the project and its files is rejected by the project-specificity check and kept as a project
+// lesson; a generic one is approved by a person (its review task, if one started, is cancelled).
+{
+  const sfBrain = sy.brainFor("storefront");
+  const sfSupervisor = { kind: "agent", role: "supervisor", taskId: null, jobId: null, tier: "T3", grants: [] };
+  const sfActor = { agent: "supervisor", role: "supervisor", model: "cerebras/qwen-3-235b-a22b-instruct-2507" };
+  const facts = ["projects/storefront/facts/checkout.md"];
+  await sfBrain.promoteLesson(sfSupervisor, sfActor, "Storefront totals are in cents", "In storefront, `total()` in src/cart.ts returns cents, so the app repository never formats money itself.", facts);
+  const generic = await sfBrain.promoteLesson(sfSupervisor, sfActor, "Keep money in integer minor units", "Store and sum prices as integers of the smallest currency unit (cents, pence). Convert to a decimal string only when displaying. Floating-point sums drift and break equality checks in tests.", facts);
+  const pending = generic.id ? sfBrain.promotions.get(generic.id) : null;
+  if (pending?.review.task_id) sy.cancelTasks([pending.review.task_id], "storefront");
+  if (generic.id && (generic.status === "pending_review" || generic.status === "pending_approval")) await sy.decidePromotion("storefront", generic.id, true, "you", "Applies to any project that handles money.");
+  const sfPromotions = sy.promotions({ project: "storefront" });
+  console.log(`  ${"storefront: promotions to global/".padEnd(44)} ${sfPromotions.map((x) => x.status).join(", ") || "none"}`);
+}
 const decision = "projects/demo/decisions/arithmetic-helpers.md";
 if (sy.brain.exists(decision)) {
   const text = insights.brainRead(sy, decision).content;
@@ -1134,6 +1173,20 @@ offset = 0;
 const revoked = idle.vault.add({ provider: "groq", label: "old key (revoked, fake)", secret: "gsk_demo-REVOKED-NOT-REAL-0d1e", billingClass: "free_tier" });
 idle.providers.keys.recordFailure(idle.providers.credentials().get(`vault:${revoked.id}`), new ProviderError("auth_invalid", "401 Invalid API Key (demo)", { provider: "groq", status: 401 }));
 idle.providers.keys.recordFailure(idle.providers.credentials().get("config:cerebras:literal:0"), new ProviderError("rate_limited", "429 Too Many Requests (demo)", { provider: "cerebras", status: 429, retryAfterMs: 45 * 60_000 }));
+// Global knowledge (D9): approve one of Job A's two promotions as a person (the other stays
+// waiting), add glossary terms, and add then revert a lesson so the Knowledge page shows a removal.
+for (let i = 0; i < 100 && idle.promotions({ status: "pending_review" }).length; i++) {
+  await idle.settlePromotions();
+  await new Promise((r) => setTimeout(r, 50));
+}
+const waitingLessons = idle.promotions({ status: "pending_approval" });
+if (waitingLessons.length < 2) console.warn(`warning: expected 2 promotions waiting for approval, found ${waitingLessons.length}`);
+const verifyLesson = waitingLessons.find((p) => p.title.startsWith("Verify integrated work"));
+if (verifyLesson) await insights.decideGlobalPromotion(idle, verifyLesson.project, verifyLesson.id, true, "you", "Holds for any repository with integration branches.");
+await insights.brainWrite(idle, "global/glossary.md", "# Glossary\n\nShared terms. Supervisors maintain this file.\n\n- **Job branch**: the branch a job's supervisor integrates workers' commits onto before you merge it.\n- **Integration check**: a command run on the job branch after integrating, not in a worker's worktree.\n- **Lease**: a time-limited claim on a file or repository that keeps two workers from editing it at once.\n");
+const handLesson = await idle.brainFor("storefront").promoteLesson({ kind: "human", name: "you" }, { agent: "human", role: "human" }, "Prefer feature flags over long-lived branches", "Merge small changes behind a flag instead of keeping a branch open for weeks.", []);
+await insights.revertGlobalEntry(idle, handLesson.path, "you", "Too broad: some teams ship from release branches by design.");
+
 // The billing project is retired: archived, with its history kept.
 insights.archiveProject(idle, "legacy-billing");
 await idle.close();

@@ -90,8 +90,16 @@ function tasksByState(sy: Switchyard, project?: string): Record<string, number> 
   return Object.fromEntries(rows.map((r) => [r.state, r.n]));
 }
 
+/** Submission time of a project's oldest queued task (how long its queue has been waiting). */
+function oldestQueuedAt(sy: Switchyard, project: string): number | null {
+  const r = sy.db.prepare(`SELECT MIN(created_at) AS t FROM tasks WHERE project_id = ? AND state IN (${QUEUED_STATES.map(() => "?").join(",")})`).get(project, ...QUEUED_STATES) as { t: number | null };
+  return r.t ?? null;
+}
+
 export interface DashboardProject extends ProjectCard {
   tasksByState: Record<string, number>;
+  /** When the oldest of the project's queued tasks was submitted (null when nothing is queued). */
+  oldestQueuedAt: number | null;
   usage24h: ProjectUsage;
   usage7d: ProjectUsage;
 }
@@ -128,6 +136,7 @@ export async function globalDashboard(sy: Switchyard, opts: { includeArchived?: 
       attention: attentionItems.length,
       attentionItems,
       tasksByState: tasksByState(sy, p.slug),
+      oldestQueuedAt: oldestQueuedAt(sy, p.slug),
       usage24h: projectUsage(sy.usage(now - DAY, now, p.slug), paid1.get(p.slug) ?? 0),
       usage7d: projectUsage(sy.usage(now - 7 * DAY, now, p.slug), paid7.get(p.slug) ?? 0),
     };

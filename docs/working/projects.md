@@ -66,7 +66,14 @@ matching in D9 is strict (an `app` alias rejects "the app"); docs for D4/D9 and 
 **J2 progress:** `j2-structure` done and verified (451 tests; grid, switcher, `/p/<slug>`, `/all`,
 redirects, create flow; screenshots checked). Decision: the global section lives under `/all/...`.
 
-**Next steps:** J2: `j2-global`, `j2-project`, `j2-router` in parallel (dispatched 2026-10-20); then J3 (operations, demo, docs). J1 merged to `dev` (7db1c5e).
+**J2 core done (2026-10-20), verified:** `/all` dashboard, `/all/settings` global-only,
+`/all/knowledge` (provenance, approve/reject, revert); project settings with overrides and
+fairness fields; project Brain page with promotions and per-project index; router fixes
+(reserved internal project `_qualification` for qualification fixtures, per-project brain index,
+project-cap waiting reason, `project_paid_budget_exhausted` / `project_allocation_exhausted`).
+
+**Next steps:** `j2-followups` and `j3-ops-docs` in parallel (dispatched 2026-10-20); then merge
+to `dev` and `main`.
 
 **Blockers:** none.
 
@@ -295,6 +302,33 @@ full suite at the end; failures only in another worker's files are re-run later 
 Shared: `src/core/service.ts`, `src/index.ts`, `src/admin/insights.ts` (small separate hunks,
 re-read before editing). Each runs its own tests while working and the full suite at the end.
 
+### Brief: j2-followups (parallel with j3-ops-docs)
+- Task: `apps/panel/app/p/[slug]/jobs/[id]/page.tsx` reads the global repository map (empty with
+  projects): use the job's project. `_qualification` never appears as a project on `/all`,
+  `/all/requests`, or anywhere a user picks projects; qualification and comparison tasks and runs
+  are viewable under `/all/qualification` (task detail there; `/tasks/<id>` of a `_qualification`
+  task redirects there). `Brain.remove()` with the brain's lock protocol, and
+  `admin/promotions.ts` revert uses it (no copied lock code); a `reverted` promotion status set by
+  the revert and shown on the project Brain page and `/all/knowledge`. An archived project's
+  `/p/<slug>/settings` renders (read-only except Unarchive). Removing a repository is refused
+  while queued or running tasks use its alias; brain mount folders must exist when saved.
+- Owns: `apps/panel/**`, `src/brain/**`, `src/admin/**`, `src/projects/**`, new
+  `tests/projects-followups.test.ts`.
+- Report to: docs/working/projects/reports/j2-followups.md
+
+### Brief: j3-ops-docs (parallel with j2-followups)
+- Task: operations for many projects: one daemon/service runs one worker for every project
+  (`daemon`, `service install` take the global config; no per-project daemons); backup includes
+  the brain repository (a git bundle) as well as the store; restore covers it. Docs: `setup.md`
+  (projects from the first run: `init --project`, the grid, create, switcher, MCP `--project` /
+  `--no-worker`), `operations.md` (fairness fields, per-project limits and their denial reasons,
+  waiting reasons, archiving, backup of the brain), `roles.md` (D4 isolation, D9 gated global
+  knowledge, promotions), `decisions.md` (D1-D9 of this plan and the J deviations recorded in the
+  reports), README.
+- Owns: `src/operations/**`, `src/cli/operations.ts`, `docs/setup.md`, `docs/operations.md`,
+  `docs/roles.md`, `docs/decisions.md`, `README.md`, new `tests/projects-operations.test.ts`.
+- Report to: docs/working/projects/reports/j3-ops-docs.md
+
 ---
 
 ## Work Ledger
@@ -334,6 +368,21 @@ re-read before editing). Each runs its own tests while working and the full suit
   showed both. Stopped two stale vitest processes left by j1-brain's early looping version.
 - Outcome: Accepted
 - Follow-up: J2; the carried items in Current State.
+
+### 2026-10-20 — j2-structure, j2-global, j2-project, j2-router
+- Agent: four workers (structure first, then three in parallel); verified by supervisor
+- Changed: see the four reports under `projects/reports/`. Supervisor: a 90 s timeout on the
+  end-to-end promotion review test (its wait is 60 s; the suite default is 30 s).
+- Why: J2 panel and the router fixes it needed.
+- Validation: supervisor ran `pnpm -r typecheck` (both Done), `pnpm -r build` (both Done),
+  `timeout 540 npx vitest run` (`Tests 468 passed (468)`); reseeded the demo ("Demo ready"),
+  production panel on :4591: `/`, `/new`, `/p/demo/{,jobs,tasks,sessions,brain,settings}`,
+  `/p/storefront{,/settings}`, `/all/{,settings,knowledge,models,keys,requests,qualification}`
+  200; `/p/legacy-billing` (archived) 404; `/jobs` 307; `/models` 308; screenshots of the grid,
+  switcher (desktop and phone), project overview, create errors, `/all`, `/all/knowledge`,
+  project settings checked; panel stopped.
+- Outcome: Accepted
+- Follow-up: `j2-followups`, `j3-ops-docs`.
 
 ---
 

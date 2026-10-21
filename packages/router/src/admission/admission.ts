@@ -277,20 +277,21 @@ export class Admission {
   /**
    * A project's share of the package allocation (decision D7): with `request_share` set, the
    * project may reserve at most that fraction (at least one request) of each configured window.
-   * Denied with the package reason, so the task waits for capacity like any allocation denial.
+   * Denied with `project_allocation_exhausted` and the time the window reopens, so the task waits
+   * for capacity like a package allocation denial.
    */
   private projectShareDenial(project: string, share: number | undefined, now: number): AdmissionDenied | null {
     if (share === undefined) return null;
     const { max_model_requests_per_hour: perHour, max_model_requests_per_day: perDay } = this.cfg.allocation;
-    const windows: Array<[number | undefined, number, "hour" | "day", "package_hourly_allocation_exhausted" | "package_daily_allocation_exhausted"]> = [
-      [perHour, HOUR, "hour", "package_hourly_allocation_exhausted"],
-      [perDay, DAY, "day", "package_daily_allocation_exhausted"],
+    const windows: Array<[number | undefined, number, "hour" | "day"]> = [
+      [perHour, HOUR, "hour"],
+      [perDay, DAY, "day"],
     ];
-    for (const [cap, windowMs, unit, reason] of windows) {
+    for (const [cap, windowMs, unit] of windows) {
       if (cap === undefined) continue;
       const allowed = Math.max(1, Math.floor(cap * share));
       if (this.projectCount(project, now - windowMs) >= allowed) {
-        return new AdmissionDenied(reason, `project ${project} share of the package allocation (${allowed} of ${cap} requests/${unit}) reached`, this.windowReopensAt(windowMs, allowed, now, project));
+        return new AdmissionDenied("project_allocation_exhausted", `project ${project} share of the package allocation (${allowed} of ${cap} requests/${unit}) reached`, this.windowReopensAt(windowMs, allowed, now, project));
       }
     }
     return null;
@@ -367,7 +368,7 @@ export class Admission {
         const global = p.spend.globalDenial(p.worstCaseUsd);
         if (global) throw new AdmissionDenied("paid_budget_exhausted", global);
         const own = limits ? p.spend.projectDenial(project, limits.paid_budgets, p.worstCaseUsd) : null;
-        if (own) throw new AdmissionDenied("paid_budget_exhausted", own);
+        if (own) throw new AdmissionDenied("project_paid_budget_exhausted", own);
         const key = p.key;
         if (!key.enabled) throw new AdmissionDenied("paid_budget_exhausted", `paid key ${key.label || key.ref} is not enabled`);
         const room = p.spend.keyHeadroom(key);

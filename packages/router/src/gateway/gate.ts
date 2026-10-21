@@ -1,7 +1,7 @@
 import type { Db } from "../storage/db.js";
 import type { ResolvedConfig } from "../config/load.js";
 import { Admission, type Participant } from "../admission/admission.js";
-import { AdmissionDenied, GatewayError } from "../core/errors.js";
+import { AdmissionDenied, GatewayError, type AdmissionDenialReason } from "../core/errors.js";
 import type { ModelEndpoint } from "../models/catalog.js";
 import type { RoutePlan } from "../routing/select.js";
 import { fitsEndpoint } from "../routing/select.js";
@@ -29,6 +29,8 @@ export interface GateRequest {
 export interface GateAttempt {
   endpointId: string;
   outcome: string;
+  /** The admission denial behind a skipped endpoint (a paid budget), when there was one. */
+  denial?: AdmissionDenialReason;
 }
 
 export interface GateResponse {
@@ -315,7 +317,9 @@ export class Gate {
       const reasons = attempts.length ? attempts.map((a) => `${a.endpointId}: ${a.outcome}`) : ["no eligible model for this task type and tier"];
       const allTooLarge = attempts.length > 0 && attempts.every((a) => a.outcome.startsWith("skipped (too large)"));
       const paidOnly = attempts.length > 0 && attempts.every((a) => a.outcome.startsWith("skipped (paid budget)"));
-      throw Object.assign(new AdmissionDenied(allTooLarge ? "context_does_not_fit" : paidOnly ? "paid_budget_exhausted" : "no_eligible_endpoint", reasons.join("; ")), { attempts });
+      // Only a project's own paid cap stood in the way: say so (other projects may still route paid).
+      const projectPaid = paidOnly && attempts.every((a) => a.denial === "project_paid_budget_exhausted");
+      throw Object.assign(new AdmissionDenied(allTooLarge ? "context_does_not_fit" : projectPaid ? "project_paid_budget_exhausted" : paidOnly ? "paid_budget_exhausted" : "no_eligible_endpoint", reasons.join("; ")), { attempts });
     }
     throw Object.assign(lastCapacityError ?? new GatewayError("pool_exhausted", "all candidate models failed"), { attempts });
   }

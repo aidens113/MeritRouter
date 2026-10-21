@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { BookOpenText, FileText, Inbox, Search, ShieldQuestion } from "lucide-react";
-import { insights, type Switchyard } from "switchyard-router";
+import { BookOpenText, FileText, Inbox, Search, ShieldQuestion, Sparkles } from "lucide-react";
+import { insights, type PromotionRecord, type Switchyard } from "switchyard-router";
 import { getSy } from "@/lib/sy";
 import { project } from "@/lib/project";
 import { brainHref, jobHref, projectBase, taskHref } from "@/lib/links";
@@ -39,8 +39,8 @@ const TABS = [
   { id: "edit", label: "Edit" },
 ] as const;
 
-/** The project the page shows: its slug and its base path. */
-type Sc = { slug: string; base: string };
+/** The project the page shows: its slug, its base path, and its own index when the brain has one. */
+type Sc = { slug: string; base: string; index: string | null };
 
 /**
  * The documents a project's brain page lists: the project's own (`projects/<slug>/`), the
@@ -49,6 +49,12 @@ type Sc = { slug: string; base: string };
 function inScope(sc: Sc, path: string): boolean {
   return path.startsWith(`projects/${sc.slug}/`) || path.startsWith("global/") || !path.includes("/");
 }
+
+/** The project's own index (`projects/<slug>/README.md`), regenerated like the root one. */
+const projectIndexPath = (slug: string) => `projects/${slug}/README.md`;
+
+const PROMOTION_LABEL: Record<string, string> = { pending_review: "pending review", pending_approval: "pending approval", approved: "approved", rejected: "rejected" };
+const PROMOTION_TONE: Record<string, Tone> = { pending_review: "warn", pending_approval: "warn", approved: "good", rejected: "bad" };
 
 /** The project another project's document belongs to, for a link to it. */
 function ownerOf(path: string): string | null {
@@ -62,11 +68,11 @@ export default async function BrainPage({ params, searchParams }: { params: Prom
   if (!r.sy) return <SetupScreen error={r.error} configPath={r.configPath} />;
   const sy = r.sy;
   const p = project(sy, (await params).slug);
-  const sc: Sc = { slug: p.slug, base: projectBase(p.slug) };
+  const sc: Sc = { slug: p.slug, base: projectBase(p.slug), index: null };
   const brain = sy.brainFor(p.slug);
   const sp = await searchParams;
   const str = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : "");
-  const view = str("view") === "requests" ? "requests" : "docs";
+  const view = str("view") === "requests" ? "requests" : str("view") === "promotions" ? "promotions" : "docs";
   const q = str("q").trim();
 
   let entries: Entry[] = [];
@@ -76,9 +82,23 @@ export default async function BrainPage({ params, searchParams }: { params: Prom
   } catch (err) {
     brainError = (err as Error).message;
   }
+  // With a per-project index the tree lists it instead of the root index (which only names projects).
+  if (entries.some((e) => e.path === projectIndexPath(p.slug))) {
+    sc.index = projectIndexPath(p.slug);
+    entries = entries.filter((e) => e.path.includes("/"));
+  }
   const requests = insights.brainAccessRequests(sy, undefined, p.slug);
   const pending = requests.filter((x) => x.status === "pending");
-  const path = str("path") || (entries.some((e) => e.path === "README.md") ? "README.md" : (entries[0]?.path ?? ""));
+  let promotions: PromotionRecord[] = [];
+  let promotionsError: string | null = null;
+  try {
+    promotions = sy.promotions({ project: p.slug });
+  } catch (err) {
+    promotionsError = (err as Error).message;
+  }
+  const waiting = promotions.filter((x) => x.status === "pending_review" || x.status === "pending_approval");
+  const home = sc.index ?? (entries.some((e) => e.path === "README.md") ? "README.md" : (entries[0]?.path ?? ""));
+  const path = str("path") || home;
   const tab = TABS.some((t) => t.id === str("tab")) ? (str("tab") as (typeof TABS)[number]["id"]) : "view";
 
   return (
@@ -108,6 +128,9 @@ export default async function BrainPage({ params, searchParams }: { params: Prom
         <Link href={`${sc.base}/brain?view=requests`} aria-current={view === "requests" ? "page" : undefined} className={cx("-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm", view === "requests" ? "border-accent font-medium text-accent-ink" : "border-transparent text-ink-2 hover:text-ink")}>
           Access requests {pending.length ? <Badge tone="warn">{pending.length} pending</Badge> : null}
         </Link>
+        <Link href={`${sc.base}/brain?view=promotions`} aria-current={view === "promotions" ? "page" : undefined} className={cx("-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm", view === "promotions" ? "border-accent font-medium text-accent-ink" : "border-transparent text-ink-2 hover:text-ink")}>
+          Promotions {waiting.length ? <Badge tone="warn">{waiting.length} waiting</Badge> : promotions.length ? <Badge>{promotions.length}</Badge> : null}
+        </Link>
       </nav>
 
       {brainError ? (
@@ -117,7 +140,9 @@ export default async function BrainPage({ params, searchParams }: { params: Prom
       ) : null}
 
       {view === "requests" ? (
-        <AccessRequests sc={sc} requests={requests} approver={sy.cfg.brain.access_approver} />
+        <AccessRequests sc={sc} requests={requests} approver={sy.projects.get(p.slug)?.brain.access_approver ?? sy.cfg.brain.access_approver} />
+      ) : view === "promotions" ? (
+        <Promotions sc={sc} promotions={promotions} error={promotionsError} />
       ) : (
         <div className="grid gap-6 lg:grid-cols-[19rem_1fr]">
           <Card className="self-start lg:sticky lg:top-6">
@@ -145,7 +170,7 @@ export default async function BrainPage({ params, searchParams }: { params: Prom
 }
 
 function group(e: Entry, project: string): string {
-  if (e.kind === "index") return "Index";
+  if (e.kind === "index" || e.path === projectIndexPath(project)) return "Index";
   if (e.path.startsWith("global/lessons/")) return "Global · lessons";
   if (e.path.startsWith("global/")) return "Global";
   const m = /^projects\/([^/]+)\//.exec(e.path);
@@ -456,4 +481,156 @@ function AccessRequests({ sc, requests, approver }: { sc: Sc; requests: ReturnTy
       )}
     </Card>
   );
+}
+
+/**
+ * This project's promotions to `global/` (decision D9): a supervisor's lesson checked for
+ * project-specific detail, judged by an independent reviewer, and (when the install asks for it)
+ * approved by a person. Approved lessons link to their global entry; rejected ones to the project
+ * lesson they were saved as.
+ */
+function Promotions({ sc, promotions, error }: { sc: Sc; promotions: PromotionRecord[]; error: string | null }) {
+  const order: Record<string, number> = { pending_approval: 0, pending_review: 1, rejected: 2, approved: 3 };
+  const sorted = [...promotions].sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9) || b.created_at.localeCompare(a.created_at));
+  const counts = Object.fromEntries(Object.keys(PROMOTION_LABEL).map((s) => [s, promotions.filter((x) => x.status === s).length]));
+  return (
+    <Card>
+      <CardHeader
+        title="Promotions to global knowledge"
+        description={
+          <>
+            Lessons this project&apos;s supervisors proposed for <Mono>global/</Mono>, which every project&apos;s agents read. Each is checked for project-specific detail, then judged by an independent reviewer; a rejected lesson is kept as a project lesson with the reason.{" "}
+            {Object.entries(counts)
+              .filter(([, n]) => n)
+              .map(([s, n]) => `${n} ${PROMOTION_LABEL[s]}`)
+              .join(", ")}
+          </>
+        }
+        actions={
+          <Link href="/all/knowledge" className="text-xs text-accent-ink hover:underline">
+            Global knowledge →
+          </Link>
+        }
+      />
+      {error ? (
+        <div className="p-4 text-sm text-bad-ink">{error}</div>
+      ) : sorted.length === 0 ? (
+        <EmptyState icon={<Sparkles size={22} />} title="No promotions yet">
+          A supervisor proposes a lesson for every project when it learns something that applies beyond this one. It appears here with its review.
+        </EmptyState>
+      ) : (
+        <ul className="divide-y divide-line">
+          {sorted.map((x) => (
+            <li key={x.id} className="space-y-2 px-4 py-3">
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <Badge tone={PROMOTION_TONE[x.status] ?? "neutral"}>{PROMOTION_LABEL[x.status] ?? x.status}</Badge>
+                <span className="font-medium text-ink">{x.title}</span>
+              </div>
+              <PromotionOutcome sc={sc} x={x} />
+              <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-ink-3">
+                <span>proposed {dateTime(Date.parse(x.created_at))}</span>
+                <span>
+                  by {x.supervisor.agent}
+                  {x.supervisor.model ? <> · <span className="font-mono">{x.supervisor.model}</span></> : null}
+                </span>
+                {x.supervisor.job ? (
+                  <Link href={jobHref(sc.base, x.supervisor.job)} className="text-accent-ink hover:underline">
+                    job {shortId(x.supervisor.job, 16)}
+                  </Link>
+                ) : null}
+                {x.review.reviewer ? (
+                  <span>
+                    reviewed by {x.review.reviewer}
+                    {x.review.reviewer_model ? <> · <span className="font-mono">{x.review.reviewer_model}</span></> : null}
+                    {x.review.verdict ? ` (${x.review.verdict})` : ""}
+                  </span>
+                ) : x.review.attempts ? (
+                  <span>
+                    {x.review.attempts} review attempt{x.review.attempts === 1 ? "" : "s"}
+                  </span>
+                ) : null}
+                {x.decided_by ? <span>decided by {x.decided_by}{x.decided_at ? ` ${dateTime(Date.parse(x.decided_at))}` : ""}</span> : null}
+                <Link href={brainHref(sc.base, x.path)} className="text-accent-ink hover:underline">
+                  record
+                </Link>
+              </div>
+              {x.sources.length ? (
+                <details className="text-xs text-ink-3">
+                  <summary className="cursor-pointer hover:text-ink">
+                    {x.sources.length} source{x.sources.length === 1 ? "" : "s"}
+                  </summary>
+                  <ul className="mt-1 space-y-0.5 pl-4">
+                    {x.sources.map((s) => (
+                      <li key={s}>
+                        {inScope(sc, s) ? (
+                          <Link href={brainHref(sc.base, s)} className="font-mono text-accent-ink hover:underline">
+                            {s}
+                          </Link>
+                        ) : (
+                          <span className="font-mono">{s}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
+function PromotionOutcome({ sc, x }: { sc: Sc; x: PromotionRecord }) {
+  if (x.status === "approved")
+    return (
+      <p className="text-sm text-ink-2">
+        In global knowledge
+        {x.global_path ? (
+          <>
+            {" "}
+            as{" "}
+            <Link href={brainHref(sc.base, x.global_path)} className="font-mono text-[13px] text-accent-ink hover:underline">
+              {x.global_path}
+            </Link>
+          </>
+        ) : null}
+        .{x.reason ? <span className="text-ink-3"> Note: {x.reason}</span> : null}
+      </p>
+    );
+  if (x.status === "rejected")
+    return (
+      <div className="space-y-1 text-sm">
+        <p className="text-ink-2">
+          <span className="font-medium text-bad-ink">Not global:</span> {(x.reason ?? (x.review.reasons.join("; ") || "no reason recorded")).replace(/^not global knowledge: /i, "")}
+        </p>
+        {x.review.reasons.length && x.reason && !x.review.reasons.every((r) => x.reason!.includes(r)) ? (
+          <ul className="list-disc pl-5 text-xs text-ink-3">
+            {x.review.reasons.map((r) => (
+              <li key={r}>{r}</li>
+            ))}
+          </ul>
+        ) : null}
+        {x.lesson_path ? (
+          <p className="text-xs text-ink-3">
+            Kept as a project lesson:{" "}
+            <Link href={brainHref(sc.base, x.lesson_path)} className="font-mono text-accent-ink hover:underline">
+              {x.lesson_path}
+            </Link>
+          </p>
+        ) : null}
+      </div>
+    );
+  if (x.status === "pending_approval")
+    return (
+      <p className="text-sm text-ink-2">
+        The reviewer passed it; it waits for a person to approve it on{" "}
+        <Link href="/all/knowledge" className="text-accent-ink hover:underline">
+          Global knowledge
+        </Link>
+        .
+      </p>
+    );
+  return <p className="text-sm text-ink-2">{x.reason ? `Waiting: ${x.reason}` : "An independent reviewer is judging whether it applies beyond this project."}</p>;
 }

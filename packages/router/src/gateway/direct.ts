@@ -1,6 +1,6 @@
 import type { ResolvedConfig } from "../config/load.js";
 import type { Admission, Participant } from "../admission/admission.js";
-import { AdmissionDenied, GatewayError, type GatewayErrorKind } from "../core/errors.js";
+import { AdmissionDenied, GatewayError, PAID_BUDGET_DENIALS, type GatewayErrorKind } from "../core/errors.js";
 import type { ModelEndpoint } from "../models/catalog.js";
 import { freeKeyOnly, isPaid } from "../routing/select.js";
 import { worstCaseUsd, type PaidSpend } from "../paid/spend.js";
@@ -190,8 +190,8 @@ export async function requestDirect(
       } catch (err) {
         release();
         d.health.breakers.release(ep.providerId);
-        if (err instanceof AdmissionDenied && err.reason === "paid_budget_exhausted") {
-          attempts.push({ endpointId: ep.id, outcome: `skipped (paid budget): ${err.message}` });
+        if (err instanceof AdmissionDenied && PAID_BUDGET_DENIALS.has(err.reason)) {
+          attempts.push({ endpointId: ep.id, outcome: `skipped (paid budget): ${err.message}`, denial: err.reason });
           return lastKeyError ? { kind: "failed", error: lastKeyError } : { kind: "skip", resumeAt: null };
         }
         throw err;

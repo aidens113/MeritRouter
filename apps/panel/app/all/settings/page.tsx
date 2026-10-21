@@ -1,10 +1,10 @@
 import Link from "next/link";
 import YAML from "yaml";
-import { Network } from "lucide-react";
+import { Network, SlidersHorizontal } from "lucide-react";
 import { insights, MODALITIES, ROLE_NAMES, RulebookSchema, type Rulebook } from "switchyard-router";
 import { getSy } from "@/lib/sy";
 import { projectBase } from "@/lib/links";
-import { BRAIN_SECTION, getIn, PAID_SECTION, PROFILE_FIELDS, PROFILE_HELP, ROLE_HELP, SECTIONS, SUPERVISE_PROFILE_DEFAULT, SUPERVISOR_SECTION, type Section } from "@/lib/settings-schema";
+import { BRAIN_SECTION, type Field, getIn, PAID_SECTION, PROFILE_FIELDS, PROFILE_HELP, ROLE_HELP, SECTIONS, SUPERVISE_PROFILE_DEFAULT, SUPERVISOR_SECTION, type Section } from "@/lib/settings-schema";
 import { SetupScreen } from "@/components/setup";
 import { Callout, Card, CardHeader, cx, Mono, PageHeader } from "@/components/ui";
 import { RepositoriesForm, SectionForm } from "@/components/client/settings-form";
@@ -16,6 +16,14 @@ import { SectionNav } from "@/components/client/section-nav";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Settings" };
+
+/** Decision D9's human approval of global lessons (an install-wide brain setting). */
+const GLOBAL_APPROVAL_FIELD: Field = {
+  path: ["brain", "global_requires_approval"],
+  label: "Approve global lessons yourself",
+  kind: "bool",
+  help: "Supervisors' lessons that pass the project check and the independent review wait on the Knowledge page until you approve or reject them. Off: they are added at once, and you can revert them there.",
+};
 
 const TABS = [
   { id: "form", label: "Settings" },
@@ -33,6 +41,15 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   const tab = TABS.some((t) => t.id === sp.tab) ? (sp.tab as (typeof TABS)[number]["id"]) : "form";
   const cfg = sy.cfg as unknown as Record<string, unknown>;
   const valuesFor = (s: Section) => Object.fromEntries(s.fields.map((f) => [f.path.join("."), getIn(cfg, f.path) as string | number | boolean | string[] | null | undefined]));
+  // With several projects, project-level settings (repositories, the brain project, brain mounts and
+  // access, per-project overrides) live on each project's settings page; top-level brain mounts and
+  // auto-approve rules already in the file still apply to every project, so they stay editable here.
+  const projects = multiProject ? insights.projectList(sy) : [];
+  const brainSection: Section = multiProject
+    ? { ...BRAIN_SECTION, fields: [...BRAIN_SECTION.fields.filter((f) => !["brain.project", "brain.access_approver"].includes(f.path.join("."))), GLOBAL_APPROVAL_FIELD] }
+    : { ...BRAIN_SECTION, fields: [...BRAIN_SECTION.fields, GLOBAL_APPROVAL_FIELD] };
+  const showMounts = !multiProject || sy.cfg.brain.mounts.length > 0;
+  const showAutoApprove = !multiProject || sy.cfg.brain.auto_approve.length > 0;
   const profileSections: Section[] = Object.keys(sy.cfg.profiles).map((name) => ({
     id: `profile-${name}`,
     title: `Task type: ${name}`,
@@ -64,15 +81,15 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             label="Settings sections"
             items={[
               ...SECTIONS.map((s) => ({ id: s.id, title: s.title })),
-              { id: "repositories", title: "Repositories" },
+              multiProject ? { id: "repositories", title: "Project settings" } : { id: "repositories", title: "Repositories" },
               ...profileSections.map((s) => ({ id: s.id, title: s.title.replace("Task type: ", "Type: ") })),
               { id: "supervisor", title: "Supervisor (jobs)" },
               { id: "paid", title: "Paid routing" },
               { id: "paid-providers", title: "Paid providers" },
               { id: "paid-models", title: "Paid models" },
               { id: "brain", title: "Brain" },
-              { id: "brain-mounts", title: "Brain mounts" },
-              { id: "brain-auto-approve", title: "Auto-approve rules" },
+              ...(showMounts ? [{ id: "brain-mounts", title: "Brain mounts" }] : []),
+              ...(showAutoApprove ? [{ id: "brain-auto-approve", title: "Auto-approve rules" }] : []),
               { id: "roles", title: "Roles" },
             ]}
           />
@@ -83,17 +100,20 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             ))}
             {multiProject ? (
               <Card id="repositories">
-                <CardHeader title="Repositories" description="Repositories belong to projects. Each project's settings page lists and edits its own." />
-                <div className="p-4 text-sm text-ink-2">
-                  {insights.projectList(sy).map((p, i) => (
-                    <span key={p.slug}>
-                      {i ? ", " : ""}
-                      <Link href={`${projectBase(p.slug)}/settings`} className="text-accent-ink hover:underline">
-                        {p.name}
+                <CardHeader
+                  title="Project settings"
+                  description="This page holds settings shared by every project. Each project's own settings page holds its repositories, brain mounts and access rules, and its overrides of verification, team limits, allowed commands, protected paths, branch prefix, and roles. The values below are the defaults a project uses when it does not override them."
+                />
+                <ul className="flex flex-wrap gap-2 p-4 text-sm">
+                  {projects.map((p) => (
+                    <li key={p.slug}>
+                      <Link href={`${projectBase(p.slug)}/settings`} className="inline-flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-accent-ink hover:bg-surface-2">
+                        <SlidersHorizontal size={13} aria-hidden /> {p.name}
                       </Link>
-                    </span>
+                    </li>
                   ))}
-                </div>
+                  {projects.length ? null : <li className="text-ink-3">No live projects.</li>}
+                </ul>
               </Card>
             ) : (
               <RepositoriesForm repos={Object.entries(sy.cfg.repositories).map(([alias, v]) => ({ alias, path: v.path, writable: v.writable, resolved: sy.cfg.repositoryPaths[alias]?.path ?? "" }))} />
@@ -138,29 +158,33 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
               addLabel="Add model"
               empty="No paid models."
             />
-            <SectionForm section={BRAIN_SECTION} values={valuesFor(BRAIN_SECTION)} />
-            <RowsForm
-              id="brain-mounts"
-              title="Brain mounts"
-              description="Map a brain path prefix to an existing folder, for example a repository's docs/working, so agents read and write it as part of the brain."
-              path={["brain", "mounts"]}
-              columns={MOUNT_COLUMNS}
-              rows={sy.cfg.brain.mounts as unknown as Array<Record<string, unknown>>}
-              newRow={{ prefix: "", path: "", commit: false }}
-              addLabel="Add mount"
-              empty="No mounts: everything lives in the brain repository."
-            />
-            <RowsForm
-              id="brain-auto-approve"
-              title="Auto-approve rules"
-              description="Access requests matching a rule are approved without asking. The rule's access level must cover what is asked, and the worker's tier must be at least the minimum."
-              path={["brain", "auto_approve"]}
-              columns={AUTO_APPROVE_COLUMNS}
-              rows={sy.cfg.brain.auto_approve as unknown as Array<Record<string, unknown>>}
-              newRow={{ pattern: "", mode: "read", min_tier: "T1" }}
-              addLabel="Add rule"
-              empty="No auto-approve rules."
-            />
+            <SectionForm section={brainSection} values={valuesFor(brainSection)} />
+            {showMounts ? (
+              <RowsForm
+                id="brain-mounts"
+                title={multiProject ? "Brain mounts (every project)" : "Brain mounts"}
+                description={multiProject ? "Mounts set at the top of the file apply to every project. Add a project's own mounts on its settings page." : "Map a brain path prefix to an existing folder, for example a repository's docs/working, so agents read and write it as part of the brain."}
+                path={["brain", "mounts"]}
+                columns={MOUNT_COLUMNS}
+                rows={sy.cfg.brain.mounts as unknown as Array<Record<string, unknown>>}
+                newRow={{ prefix: "", path: "", commit: false }}
+                addLabel="Add mount"
+                empty="No mounts: everything lives in the brain repository."
+              />
+            ) : null}
+            {showAutoApprove ? (
+              <RowsForm
+                id="brain-auto-approve"
+                title={multiProject ? "Auto-approve rules (every project)" : "Auto-approve rules"}
+                description={multiProject ? "Rules set at the top of the file apply to every project. Add a project's own rules on its settings page." : "Access requests matching a rule are approved without asking. The rule's access level must cover what is asked, and the worker's tier must be at least the minimum."}
+                path={["brain", "auto_approve"]}
+                columns={AUTO_APPROVE_COLUMNS}
+                rows={sy.cfg.brain.auto_approve as unknown as Array<Record<string, unknown>>}
+                newRow={{ pattern: "", mode: "read", min_tier: "T1" }}
+                addLabel="Add rule"
+                empty="No auto-approve rules."
+              />
+            ) : null}
             <RolesForm roles={[...ROLE_NAMES]} values={sy.cfg.roles as Record<string, RoleValue | undefined>} help={ROLE_HELP} />
           </div>
         </div>

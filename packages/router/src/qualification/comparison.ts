@@ -112,7 +112,7 @@ export function planComparison(sy: Switchyard, input: { evalIds?: string[]; goal
     const dup = ids.find((id, i) => ids.indexOf(id) !== i);
     if (dup) throw new SwitchyardError("usage", `goal id ${dup} is used more than once`);
     goals = parsed.data.map((g) => {
-      // Comparison runs are system work and land in the primary project: its repositories are the ones they can use.
+      // A supplied goal runs in the primary project (see runOne): its repositories are the ones it can use.
       if (!sy.projects.primary.repositoryPaths[g.repository]) throw new SwitchyardError("usage", `goal ${g.id}: unknown repository ${g.repository} in project ${sy.projects.primary.project.slug}`);
       if (!sy.cfg.profiles[g.profile]) throw new SwitchyardError("usage", `goal ${g.id}: the ${g.profile} task type is not configured`);
       const single = g.singleRequests ?? DEFAULT_SINGLE_REQUESTS;
@@ -328,7 +328,7 @@ async function repositoryFor(sy: Switchyard, comparisonId: string, g: Comparison
   cpSync(g.fixture!, dir, { recursive: true });
   await initRepo(dir);
   const alias = `c-${comparisonId.slice(-8)}-${g.id}-${kind}`;
-  registerRepository(sy.db, sy.cfg, { alias, path: dir, writable: true, origin: `comparison:${comparisonId}` });
+  registerRepository(sy.db, sy.projects.qualification, { alias, path: dir, writable: true, origin: `comparison:${comparisonId}` });
   return alias;
 }
 
@@ -349,7 +349,9 @@ async function runOne(sy: Switchyard, comparisonId: string, g: ComparisonGoal, k
           constraints: { ...criteria, ...(g.allowedPaths ? { allowedPaths: g.allowedPaths } : {}) },
           budget: { maxModelRequests: cap },
         };
-  const [sub] = await sy.submitTasks([spec], { purpose: COMPARISON_PURPOSE });
+  // A supplied goal runs on a configured repository of the primary project, in that project; an
+  // eval goal's fixture copy belongs to the qualification project, where the run goes by purpose.
+  const [sub] = await sy.submitTasks([spec], { purpose: COMPARISON_PURPOSE, ...(g.repository ? { project: sy.projects.primary.project.slug } : {}) });
   const taskId = sub!.taskId;
   opts.onProgress?.(`${g.id}: ${kind} run ${taskId} started (cap ${cap} requests)`);
   const started = Date.now();

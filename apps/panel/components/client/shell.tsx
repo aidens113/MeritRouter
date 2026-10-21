@@ -25,6 +25,7 @@ import {
   UsersRound,
   X,
   LayoutGrid,
+  Library,
   type LucideIcon,
 } from "lucide-react";
 import { cx } from "../ui";
@@ -59,6 +60,7 @@ const GLOBAL_NAV: NavItem[] = [
   { href: `${ALL}/keys`, label: "Provider keys", icon: KeyRound },
   { href: `${ALL}/qualification`, label: "Qualification", icon: BadgeCheck },
   { href: `${ALL}/calibration`, label: "Calibration", icon: Scale },
+  { href: `${ALL}/knowledge`, label: "Knowledge", icon: Library },
   { href: `${ALL}/settings`, label: "Settings", icon: Settings },
 ];
 

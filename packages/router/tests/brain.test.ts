@@ -53,7 +53,9 @@ describe("brain: working documents in git", () => {
     const bl = await brain.blame(p);
     expect(bl[0]!.agent).toBe("supervisor:j1");
     expect(bl[0]!.model).toBe("paid:anthropic/x");
-    expect(readFileSync(path.join(brain.root, "README.md"), "utf8")).toContain("projects/demo/working/job-j1.md");
+    // The project's own index lists the document; the root index names projects, not their documents.
+    expect(readFileSync(path.join(brain.root, "projects/demo/README.md"), "utf8")).toContain("projects/demo/working/job-j1.md");
+    expect(readFileSync(path.join(brain.root, "README.md"), "utf8")).not.toContain("job-j1.md");
   });
 
   it("workers read what their brief grants and write only their own report", async () => {
