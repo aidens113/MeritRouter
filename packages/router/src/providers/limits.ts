@@ -259,14 +259,14 @@ export interface QuotaProbeOptions {
 }
 
 /**
- * Ask the provider's key-info endpoint (`keyInfoUrl`; only OpenRouter documents one) for the
+ * Ask the provider's key-info endpoint (`keyInfoUrl` with shape `openrouter_key`; OpenRouter) for the
  * key's free-model daily quota. Returns null when the response does not report it. Throws a
  * classified `ProviderError` on HTTP failure (401 for a bad key, for instance) and an `Error`
  * for a provider without a key-info endpoint.
  */
 export async function probeFreeDailyQuota(opts: QuotaProbeOptions): Promise<FreeDailyQuota | null> {
   const { provider } = opts;
-  if (!provider.keyInfoUrl) throw new Error(`provider ${provider.id} has no key-info endpoint`);
+  if (!provider.keyInfoUrl || provider.keyInfoShape !== "openrouter_key") throw new Error(`provider ${provider.id} has no key-info endpoint for a free daily quota`);
   const now = opts.now ?? Date.now;
   const fetchFn: FetchLike = opts.fetch ?? ((url, init) => fetch(url, init));
   const res = await requestJson(
@@ -290,4 +290,87 @@ export async function probeFreeDailyQuota(opts: QuotaProbeOptions): Promise<Free
   const remaining = q.remaining ?? (used !== null && limit !== null ? Math.max(0, limit - used) : null);
   const checkedAt = now();
   return { used, limit, remaining, resetAt: nextUtcMidnight(checkedAt), checkedAt };
+}
+
+/**
+ * An Ollama Cloud account's balance (`GET https://ollama.com/api/balance`, Bearer): the included
+ * plan allowance and its period, purchased credit, and on legacy plans the session and weekly
+ * allowances as percentages. Null where the response does not state a value.
+ */
+export interface OllamaBalance {
+  includedUsd: number | null;
+  allowanceUsd: number | null;
+  periodFrom: number | null;
+  periodUntil: number | null;
+  purchasedUsd: number | null;
+  sessionRemainingPct: number | null;
+  sessionResetsAt: number | null;
+  weeklyRemainingPct: number | null;
+  weeklyResetsAt: number | null;
+  checkedAt: number;
+}
+
+const BalanceNumber = z.number().finite().nullable().optional().catch(null);
+const BalanceTime = z.union([z.string(), z.number()]).nullable().optional().catch(null);
+const LegacyWindow = z.object({ remaining_percent: BalanceNumber, resets_at: BalanceTime }).loose().nullable().optional().catch(null);
+const OllamaBalanceSchema = z
+  .object({
+    included: z
+      .object({ balance_usd: BalanceNumber, allowance_usd: BalanceNumber, period: z.object({ from: BalanceTime, until: BalanceTime }).loose().nullable().optional().catch(null), session: LegacyWindow, weekly: LegacyWindow })
+      .loose()
+      .nullable()
+      .optional()
+      .catch(null),
+    purchased: z.object({ balance_usd: BalanceNumber }).loose().nullable().optional().catch(null),
+  })
+  .loose();
+
+/** A timestamp as epoch ms: ISO text, epoch seconds, or epoch ms; null when unreadable. */
+function epochMs(v: string | number | null | undefined): number | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "number") return Number.isFinite(v) ? (v >= 1e12 ? v : v * 1000) : null;
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? t : null;
+}
+
+/**
+ * Ask Ollama Cloud's balance endpoint (`keyInfoShape: ollama_balance`) for the account's
+ * remaining allowance. Returns null when the response states nothing usable. Throws a classified
+ * `ProviderError` on HTTP failure and an `Error` for a provider without this endpoint. Nothing
+ * stores or acts on the result yet: it is for display and for a later out-of-allowance check.
+ */
+export async function probeOllamaBalance(opts: QuotaProbeOptions): Promise<OllamaBalance | null> {
+  const { provider } = opts;
+  if (!provider.keyInfoUrl || provider.keyInfoShape !== "ollama_balance") throw new Error(`provider ${provider.id} has no balance endpoint`);
+  const now = opts.now ?? Date.now;
+  const fetchFn: FetchLike = opts.fetch ?? ((url, init) => fetch(url, init));
+  const res = await requestJson(
+    fetchFn,
+    {
+      provider: provider.id,
+      url: expandUrl(provider.keyInfoUrl, provider, opts.credential.accountId ?? provider.accountId),
+      headers: { accept: "application/json", ...requestHeaders(provider, opts.credential.apiKey) },
+      timeoutMs: opts.timeoutMs ?? 15_000,
+      ...(opts.signal ? { signal: opts.signal } : {}),
+      rateLimitHeaders: provider.rateLimitHeaders,
+    },
+    now,
+  );
+  const parsed = OllamaBalanceSchema.safeParse(res.json);
+  if (!parsed.success) return null;
+  const inc = parsed.data.included ?? null;
+  const out: OllamaBalance = {
+    includedUsd: inc?.balance_usd ?? null,
+    allowanceUsd: inc?.allowance_usd ?? null,
+    periodFrom: epochMs(inc?.period?.from),
+    periodUntil: epochMs(inc?.period?.until),
+    purchasedUsd: parsed.data.purchased?.balance_usd ?? null,
+    sessionRemainingPct: inc?.session?.remaining_percent ?? null,
+    sessionResetsAt: epochMs(inc?.session?.resets_at),
+    weeklyRemainingPct: inc?.weekly?.remaining_percent ?? null,
+    weeklyResetsAt: epochMs(inc?.weekly?.resets_at),
+    checkedAt: now(),
+  };
+  const { checkedAt: _checkedAt, ...values } = out;
+  return Object.values(values).every((v) => v === null) ? null : out;
 }

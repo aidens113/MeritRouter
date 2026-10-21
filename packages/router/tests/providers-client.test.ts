@@ -71,19 +71,23 @@ async function failure(p: Promise<unknown>): Promise<ProviderError> {
 
 describe("provider registry", () => {
   it("defines every researched built-in with a source and check date, and no GitHub Models", () => {
-    expect([...BUILTIN_PROVIDER_IDS].sort()).toEqual(["anthropic", "cerebras", "cloudflare", "cohere", "google", "groq", "huggingface", "mistral", "nvidia", "openai", "openrouter", "sambanova", "together"]);
+    const first = ["anthropic", "cerebras", "cloudflare", "cohere", "google", "groq", "huggingface", "mistral", "nvidia", "openai", "openrouter", "sambanova", "together"];
+    const coverage = ["deepinfra", "deepseek", "fireworks", "llamacpp", "lmstudio", "moonshot", "nebius", "ollama", "ollama-cloud", "ovhcloud", "scaleway", "vercel", "zai"];
+    expect([...BUILTIN_PROVIDER_IDS].sort()).toEqual([...first, ...coverage].sort());
     for (const p of providers().values()) {
       expect(p.sourceUrl).toMatch(/^(https:\/\/|docs\/working\/direct-providers\/research\.md#)/);
-      expect(p.checkedAt).toBe("2026-10-19");
+      expect(p.checkedAt).toBe(coverage.includes(p.id) ? "2026-10-20" : "2026-10-19");
       expect(p.baseUrl).not.toMatch(/\/$/);
     }
   });
 
   it("adds custom OpenAI-compatible providers (keyless local servers too) and applies built-in overrides", () => {
-    const all = providers({ ollama: { base_url: "http://localhost:11434/v1/", no_key: true }, openrouter: { headers: { "HTTP-Referer": "https://example.test" } } });
-    const ollama = all.get("ollama")!;
-    expect(ollama).toMatchObject({ builtIn: false, api: "openai_compatible", baseUrl: "http://localhost:11434/v1", auth: "none", noKey: true, tokenLimitParam: "max_tokens" });
+    const all = providers({ vllm: { base_url: "http://localhost:8000/v1/", no_key: true }, openrouter: { headers: { "HTTP-Referer": "https://example.test" } } });
+    expect(all.get("vllm")!).toMatchObject({ builtIn: false, api: "openai_compatible", baseUrl: "http://localhost:8000/v1", auth: "none", noKey: true, tokenLimitParam: "max_tokens" });
     expect(all.get("openrouter")!.extraHeaders).toEqual({ "HTTP-Referer": "https://example.test" });
+    // An existing `ollama` custom entry (base_url + no_key) now configures the built-in.
+    const ollama = providers({ ollama: { base_url: "http://localhost:11434/v1/", no_key: true } }).get("ollama")!;
+    expect(ollama).toMatchObject({ builtIn: true, baseUrl: "http://localhost:11434/v1", auth: "none", noKey: true, baseUrlSource: "config" });
   });
 });
 

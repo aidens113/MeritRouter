@@ -4,6 +4,7 @@ import { endpointIdFor, type EndpointOverride, type ModelEndpointInput } from ".
 import type { ProviderClient } from "./client.js";
 import type { ProviderCredential, ProviderCredentials } from "./credentials.js";
 import {
+  blankListedModel,
   dailyProbeBudget,
   enrichModel,
   huggingFaceParamLookup,
@@ -19,6 +20,7 @@ import {
   type ProbeBudget,
 } from "./enrich.js";
 import { isKeyFailure, ProviderError, type ProviderErrorKind } from "./errors.js";
+import { llamaCppDetails, ollamaDetails, parseLmStudioModels, parseOllamaTags, type DetailsIO } from "./local-servers.js";
 import { expandUrl, requestHeaders, type ModelListShape, type ResolvedProvider } from "./registry.js";
 import { requestJson, type FetchLike } from "./transport.js";
 
@@ -53,8 +55,15 @@ const OpenAiItemSchema = z.object({
   context_length: optPositiveInt,
   max_context_length: optPositiveInt,
   max_completion_tokens: optPositiveInt,
+  /** DeepSeek. */
+  max_output_tokens: optPositiveInt,
   capabilities: z.object({ completion_chat: optBool, function_calling: optBool, vision: optBool }).nullable().optional().catch(null),
   pricing: z.record(z.string(), z.unknown()).nullable().optional().catch(null),
+  /** Nebius `?verbose=true`. */
+  supported_features: optStrings,
+  quantization: optString,
+  /** llama.cpp: the loaded weights' parameter count and trained context. */
+  meta: z.object({ n_params: optPositiveInt, n_ctx_train: optPositiveInt }).nullable().optional().catch(null),
 });
 const GoogleItemSchema = z.object({
   name: z.string().min(1),
@@ -73,24 +82,52 @@ const CloudflareItemSchema = z.object({
   properties: z.array(z.object({ property_id: z.string(), value: z.unknown() })).nullable().optional().catch(null),
 });
 const AnthropicItemSchema = z.object({ id: z.string().min(1), display_name: optString, max_input_tokens: optPositiveInt, max_tokens: optPositiveInt });
+const DeepInfraItemSchema = z.object({
+  model_name: z.string().min(1),
+  type: optString,
+  description: optString,
+  pricing: z.record(z.string(), z.unknown()).nullable().optional().catch(null),
+  /** The context length (research-coverage.md). */
+  max_tokens: optPositiveInt,
+  quantization: optString,
+  deprecated: z.unknown().optional(),
+  replaced_by: optString,
+});
+/** One field of the OVHcloud catalog that may be a string or a list of strings. */
+const stringOrStrings = z
+  .union([z.string().transform((v) => [v]), z.array(z.string())])
+  .nullable()
+  .optional()
+  .catch(null);
+const OvhItemSchema = z.object({
+  id: z.string().min(1),
+  name: optString,
+  available: optBool,
+  category: optString,
+  tags: optStrings,
+  metadata: z
+    .object({
+      model_specs: z
+        .object({
+          capabilities: z.object({ input_modality: stringOrStrings, output_modality: stringOrStrings, function_calling: optBool, reasoning: optBool }).nullable().optional().catch(null),
+        })
+        .nullable()
+        .optional()
+        .catch(null),
+      usage_information: z.object({ pricing: z.unknown().optional() }).nullable().optional().catch(null),
+    })
+    .nullable()
+    .optional()
+    .catch(null),
+});
 
 /** Model types and id fragments that are not chat models (lists that report ids only). */
 const NON_CHAT_TYPES = new Set(["embedding", "embeddings", "image", "audio", "moderation", "rerank", "transcribe", "tts"]);
 const NON_CHAT_ID = /(^|[-_/.])(embed|embedding|whisper|tts|dall-e|moderation|rerank|transcribe)([-_/.]|$)|text-embedding/i;
+/** Free-text model types and categories (DeepInfra, OVHcloud) that are not chat models. Only excludes. */
+const NON_CHAT_TEXT = /embed|image|audio|speech|tts|asr|rerank|classif|moderation|transcri|text-to-|-to-image|fill-mask/i;
 
-const blank = (id: string): ListedModel => ({
-  id,
-  displayName: null,
-  description: null,
-  contextLimitTokens: null,
-  outputLimitTokens: null,
-  supportsTools: null,
-  supportsStructuredOutput: null,
-  inputModalities: null,
-  priceUsdPerMillion: null,
-  price: null,
-  huggingFaceId: null,
-});
+const blank = blankListedModel;
 
 /** Zero vs positive from a price object whose units the research does not state. */
 function priceClass(p: Record<string, unknown> | null | undefined): ListedModel["price"] {
@@ -128,7 +165,7 @@ function parseItems<T>(schema: z.ZodType<T>, items: unknown[], excluded: ListPag
 }
 
 /** Parse one page of a provider's model list. Throws when the envelope is not the documented shape. */
-export function parseModelListPage(shape: ModelListShape, body: unknown): ListPage {
+export function parseModelListPage(shape: ModelListShape, body: unknown, provider: Pick<ResolvedProvider, "id" | "defaultContextTokens"> = { id: "provider", defaultContextTokens: null }): ListPage {
   const excluded: ListPage["excluded"] = [];
   const models: ListedModel[] = [];
   const keep = (m: ListedModel, reason: string | null) => (reason ? excluded.push({ model: m.id, reason }) : models.push(m));
@@ -141,15 +178,20 @@ export function parseModelListPage(shape: ModelListShape, body: unknown): ListPa
       if (!env) fail();
       for (const it of parseItems(OpenAiItemSchema, env!.data, excluded)) {
         const caps = it.capabilities;
+        const features = it.supported_features?.map((f) => f.toLowerCase());
         const m: ListedModel = {
           ...blank(it.id),
           displayName: it.display_name ?? it.name ?? null,
           description: it.description ?? null,
           contextLimitTokens: it.context_window ?? it.context_length ?? it.max_context_length ?? null,
-          outputLimitTokens: it.max_completion_tokens ?? null,
-          supportsTools: caps?.function_calling ?? null,
+          outputLimitTokens: it.max_completion_tokens ?? it.max_output_tokens ?? null,
+          // A listed feature is evidence; an unlisted one is not evidence of absence.
+          supportsTools: caps?.function_calling ?? (features?.some((f) => f === "tools" || f === "function_calling" || f === "tool_calling") ? true : null),
           inputModalities: caps?.vision === true ? ["text", "image"] : caps?.vision === false ? ["text"] : null,
           price: priceClass(it.pricing),
+          quantization: it.quantization ?? null,
+          providerParams: it.meta?.n_params ? { totalB: it.meta.n_params / 1e9, exact: true, detail: `model list meta.n_params ${it.meta.n_params}` } : null,
+          maxContextTokens: it.meta?.n_ctx_train ?? null,
         };
         keep(
           m,
@@ -229,6 +271,57 @@ export function parseModelListPage(shape: ModelListShape, body: unknown): ListPa
       const more = info?.page && info.per_page && info.total_count !== undefined && info.page * info.per_page < info.total_count;
       return { models, excluded, next: more ? { page: String(info!.page! + 1) } : null };
     }
+    case "ollama_tags":
+      return { ...parseOllamaTags(body), next: null };
+    case "lmstudio_native":
+      return { ...parseLmStudioModels(body, provider), next: null };
+    case "deepinfra_list": {
+      if (!Array.isArray(body)) fail();
+      for (const it of parseItems(DeepInfraItemSchema, body as unknown[], excluded)) {
+        const deprecated = it.deprecated !== undefined && it.deprecated !== null && it.deprecated !== false && it.deprecated !== 0;
+        const m: ListedModel = { ...blank(it.model_name), description: it.description ?? null, contextLimitTokens: it.max_tokens ?? null, price: priceClass(it.pricing), quantization: it.quantization ?? null };
+        keep(
+          m,
+          deprecated
+            ? `deprecated${it.replaced_by ? ` (replaced by ${it.replaced_by})` : ""}`
+            : it.type && NON_CHAT_TEXT.test(it.type)
+              ? `not a chat model (type ${it.type})`
+              : NON_CHAT_ID.test(it.model_name)
+                ? "not a chat model (id)"
+                : null,
+        );
+      }
+      return { models, excluded, next: null };
+    }
+    case "ovh_catalog": {
+      if (!Array.isArray(body)) fail();
+      for (const it of parseItems(OvhItemSchema, body as unknown[], excluded)) {
+        const caps = it.metadata?.model_specs?.capabilities;
+        const input = caps?.input_modality?.map((x) => x.toLowerCase()) ?? null;
+        const output = caps?.output_modality?.map((x) => x.toLowerCase()) ?? null;
+        const pricing = it.metadata?.usage_information?.pricing;
+        const m: ListedModel = {
+          ...blank(it.id),
+          displayName: it.name ?? null,
+          supportsTools: caps?.function_calling ?? null,
+          inputModalities: input ? knownModalities(input) : null,
+          price: pricing && typeof pricing === "object" && !Array.isArray(pricing) ? priceClass(pricing as Record<string, unknown>) : null,
+        };
+        keep(
+          m,
+          it.available === false
+            ? "not available"
+            : output && !output.includes("text")
+              ? "does not output text"
+              : it.category && NON_CHAT_TEXT.test(it.category)
+                ? `not a chat model (category ${it.category})`
+                : NON_CHAT_ID.test(it.id)
+                  ? "not a chat model (id)"
+                  : null,
+        );
+      }
+      return { models, excluded, next: null };
+    }
   }
 }
 
@@ -236,19 +329,18 @@ export interface ProviderListing {
   models: ListedModel[];
   excluded: Array<{ model: string; reason: string }>;
   pages: number;
+  /** Things the listing could not do fully (a native list fell back to ids only, a details request failed). */
+  warnings: string[];
 }
 
-/** List every model on one provider with one credential, following continuation tokens. */
-export async function listProviderModels(
-  fetchFn: FetchLike,
-  provider: ResolvedProvider,
-  credential: { apiKey: string | null; accountId: string | null },
-  opts: { timeoutMs: number; now: () => number; signal?: AbortSignal },
-): Promise<ProviderListing> {
-  const base = expandUrl(provider.models.url, provider, credential.accountId);
-  const headers = { accept: "application/json", ...requestHeaders(provider, credential.apiKey, provider.auth === "none" ? "none" : (provider.models.auth ?? provider.auth)) };
+type ListOptions = { timeoutMs: number; now: () => number; signal?: AbortSignal };
+
+/** Read one list URL in one shape, following continuation tokens. Also returns the raw pages (for a details step). */
+async function listPages(fetchFn: FetchLike, provider: ResolvedProvider, template: string, shape: ModelListShape, headers: Record<string, string>, accountId: string | null, opts: ListOptions) {
+  const base = expandUrl(template, provider, accountId);
   const models: ListedModel[] = [];
   const excluded: ProviderListing["excluded"] = [];
+  const bodies: unknown[] = [];
   const seen = new Set<string>();
   const tokens = new Set<string>();
   let query: Record<string, string> | null = {};
@@ -259,11 +351,12 @@ export async function listProviderModels(
     const res = await requestJson(fetchFn, { provider: provider.id, url: url.toString(), headers, timeoutMs: opts.timeoutMs, rateLimitHeaders: provider.rateLimitHeaders, ...(opts.signal ? { signal: opts.signal } : {}) }, opts.now);
     let page: ListPage;
     try {
-      page = parseModelListPage(provider.models.shape, res.json);
+      page = parseModelListPage(shape, res.json, provider);
     } catch (err) {
       throw new ProviderError("server", `${provider.id}: ${(err as Error).message}`, { provider: provider.id, status: res.status, rateLimits: res.rateLimits });
     }
     pages++;
+    bodies.push(res.json);
     for (const m of page.models) {
       if (seen.has(m.id)) continue;
       seen.add(m.id);
@@ -274,7 +367,43 @@ export async function listProviderModels(
     query = token && !tokens.has(token) ? page.next : null;
     if (token) tokens.add(token);
   }
-  return { models, excluded, pages };
+  return { models, excluded, pages, bodies };
+}
+
+/**
+ * List every model on one provider with one credential, following continuation tokens. When a
+ * native list fails for a reason other than the key, the registry's OpenAI-shaped fallback list
+ * is read instead (ids only). Providers with a details step (Ollama `/api/show`, llama.cpp
+ * `/props`) refine the listed models after a native listing.
+ */
+export async function listProviderModels(fetchFn: FetchLike, provider: ResolvedProvider, credential: { apiKey: string | null; accountId: string | null }, opts: ListOptions): Promise<ProviderListing> {
+  const headers = { accept: "application/json", ...requestHeaders(provider, credential.apiKey, provider.auth === "none" ? "none" : (provider.models.auth ?? provider.auth)) };
+  const warnings: string[] = [];
+  let listed: Awaited<ReturnType<typeof listPages>>;
+  let fellBack = false;
+  try {
+    listed = await listPages(fetchFn, provider, provider.models.url, provider.models.shape, headers, credential.accountId, opts);
+  } catch (err) {
+    const fallback = provider.models.fallbackUrl;
+    if (!fallback || isKeyFailure(err) || (err instanceof ProviderError && err.reason === "aborted")) throw err;
+    try {
+      listed = await listPages(fetchFn, provider, fallback, "openai", headers, credential.accountId, opts);
+    } catch {
+      throw err;
+    }
+    fellBack = true;
+    warnings.push(`${provider.id}: the native model list failed (${(err as Error).message}); listed ${expandUrl(fallback, provider, credential.accountId)} instead, with ids only`);
+  }
+  let { models, excluded } = listed;
+  if (!fellBack && provider.models.details) {
+    // Details requests carry the chat auth (ollama.com needs the key); the list's own auth may be none.
+    const io: DetailsIO = { fetch: fetchFn, headers: { accept: "application/json", ...requestHeaders(provider, credential.apiKey) }, timeoutMs: opts.timeoutMs, now: opts.now, accountId: credential.accountId, ...(opts.signal ? { signal: opts.signal } : {}) };
+    const d = provider.models.details === "ollama_show" ? await ollamaDetails(provider, models, listed.bodies, io) : await llamaCppDetails(provider, models, io);
+    models = d.models;
+    excluded = [...excluded, ...d.excluded];
+    warnings.push(...d.warnings);
+  }
+  return { models, excluded, pages: listed.pages, warnings };
 }
 
 export interface DiscoveryOptions {
@@ -340,16 +469,20 @@ export interface DiscoveryResult {
  * On OpenRouter a free key only reaches free models, so priced models there are not usable.
  */
 export function freeStatus(
-  provider: ResolvedProvider,
+  provider: Pick<ResolvedProvider, "models" | "freeModelIds">,
   model: Pick<ListedModel, "id" | "price">,
   creds: readonly Pick<ProviderCredential, "billingClass">[],
 ): { value: boolean; usable: boolean; reason: string; basis?: "model" | "key" } {
   if (/:free$/.test(model.id)) return { value: true, usable: true, reason: "model id ends in :free", basis: "model" };
   if (model.price === "zero") return { value: true, usable: true, reason: "provider lists a price of 0", basis: "model" };
+  // Per-model free with no prices in the list (Z.ai): only the documented free models are free.
+  const freeIds = provider.freeModelIds ?? null;
+  if (freeIds?.some((id) => id.toLowerCase() === model.id.toLowerCase())) return { value: true, usable: true, reason: "documented free model", basis: "model" };
   const freeKey = creds.some((c) => c.billingClass === "free_tier");
-  const perModelFree = provider.models.shape === "openrouter";
-  if (freeKey && !(perModelFree && model.price === "positive")) return { value: true, usable: true, reason: "a free_tier key serves it", basis: "key" };
-  if (perModelFree && model.price === "positive" && creds.every((c) => c.billingClass === "free_tier")) return { value: false, usable: false, reason: "priced model; only free_tier keys" };
+  const perModelFree = provider.models.shape === "openrouter" || freeIds !== null;
+  const priced = model.price === "positive" || (freeIds !== null && model.price === null);
+  if (freeKey && !(perModelFree && priced)) return { value: true, usable: true, reason: "a free_tier key serves it", basis: "key" };
+  if (perModelFree && priced && creds.every((c) => c.billingClass === "free_tier")) return { value: false, usable: false, reason: freeIds !== null && model.price === null ? "not a documented free model; only free_tier keys" : "priced model; only free_tier keys" };
   return { value: false, usable: true, reason: freeKey ? "priced model" : "only paid or trial keys" };
 }
 
@@ -449,6 +582,7 @@ export async function discoverModels(opts: DiscoveryOptions): Promise<DiscoveryR
     report.credentialRef = used.ref;
     report.pages = listing.pages;
     report.excluded.push(...listing.excluded);
+    result.warnings.push(...listing.warnings);
 
     const rc = opts.credentials.requestCredential(used.ref);
     const probe = probing ? { run: toolProbe(opts.probeClient!, provider, { apiKey: rc.apiKey, accountId: rc.accountId ?? provider.accountId }, timeoutMs), budget } : null;

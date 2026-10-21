@@ -27,8 +27,12 @@ export function paidProviderAsDirect(name: string, cfg: PaidProviderConfig): Res
  * (`providers:`), plus each `paid.providers` entry. A paid entry named like a registry provider
  * uses the registry definition when it points at the same base URL, else its own.
  */
-export function routingProviders(section: Pick<ProvidersConfig, "byId">, paid: Readonly<Record<string, PaidProviderConfig>>): { providers: Map<string, ResolvedProvider>; fromPaid: Set<string> } {
-  const providers = resolveProviders(section);
+export function routingProviders(
+  section: Pick<ProvidersConfig, "byId">,
+  paid: Readonly<Record<string, PaidProviderConfig>>,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): { providers: Map<string, ResolvedProvider>; fromPaid: Set<string> } {
+  const providers = resolveProviders(section, env);
   const fromPaid = new Set<string>();
   for (const [name, p] of Object.entries(paid)) {
     const converted = paidProviderAsDirect(name, p);
@@ -85,8 +89,9 @@ export class ProviderRuntime {
     const section = this.cfg.providers;
     const paid = this.cfg.paid.providers;
     if (this.cache?.section !== section || this.cache.paid !== paid) {
-      const { providers, fromPaid } = routingProviders(section, paid);
-      this.cache = { section, paid, providers, fromPaid, credentials: new ProviderCredentials(providers, section, this.vault, this.opts.env ?? process.env, this.now) };
+      const env = this.opts.env ?? process.env;
+      const { providers, fromPaid } = routingProviders(section, paid, env);
+      this.cache = { section, paid, providers, fromPaid, credentials: new ProviderCredentials(providers, section, this.vault, env, this.now) };
     }
     return this.cache;
   }

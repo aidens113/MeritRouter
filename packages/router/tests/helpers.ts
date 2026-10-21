@@ -201,7 +201,7 @@ export type Handler = (req: ScriptedRequest, n: number, signal?: AbortSignal) =>
 
 /** The provider a request URL belongs to. */
 export function providerOfUrl(url: string): string {
-  const builtIn = BUILTIN_PROVIDERS.find((p) => !p.baseUrl.includes("{") && url.startsWith(p.baseUrl));
+  const builtIn = BUILTIN_PROVIDERS.find((p) => p.baseUrl !== "" && !p.baseUrl.includes("{") && url.startsWith(p.baseUrl));
   if (builtIn) return builtIn.id;
   const labels = new URL(url).hostname.split(".");
   return labels.length > 1 && labels[labels.length - 1] === "test" ? labels[labels.length - 2]! : labels[0]!;

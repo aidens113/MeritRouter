@@ -31,7 +31,39 @@ export interface ListedModel {
   /** Whether the list states a zero or a positive price (in any unit); null when it states none. */
   price: "zero" | "positive" | null;
   huggingFaceId: string | null;
+  /**
+   * A parameter count the server itself reports: exact (from the weights, e.g. Ollama's
+   * `general.parameter_count`, llama.cpp's `n_params`) or a rounded size label (`"8.0B"`).
+   */
+  providerParams?: { totalB: number; exact: boolean; detail: string } | null;
+  /**
+   * The model's trained maximum context when the context requests can use
+   * (`contextLimitTokens`, the server's effective context) is smaller or unknown.
+   */
+  maxContextTokens?: number | null;
+  /** Where `contextLimitTokens` and `outputLimitTokens` came from, when more than "the model list". */
+  contextDetail?: string | null;
+  outputDetail?: string | null;
+  /** Quantization the server reports (`Q4_K_M`, `F16`, ...). */
+  quantization?: string | null;
+  /** Things discovery should show about this model (a hosted model behind a local server, an assumed context). */
+  notes?: string[];
 }
+
+/** A listed model about which nothing but the id is known. */
+export const blankListedModel = (id: string): ListedModel => ({
+  id,
+  displayName: null,
+  description: null,
+  contextLimitTokens: null,
+  outputLimitTokens: null,
+  supportsTools: null,
+  supportsStructuredOutput: null,
+  inputModalities: null,
+  priceUsdPerMillion: null,
+  price: null,
+  huggingFaceId: null,
+});
 
 export type FieldSource = "provider" | "openrouter" | "huggingface" | "name" | "description" | "probe" | "override" | "unknown";
 export interface FieldProvenance {
@@ -50,6 +82,9 @@ export interface EnrichedModel {
   supportsTools: boolean | null;
   supportsStructuredOutput: boolean | null;
   inputModalities: Modality[] | null;
+  /** The trained maximum context, when it differs from the usable `contextLimitTokens` (local servers). */
+  maxContextTokens: number | null;
+  quantization: string | null;
   params: ResolvedParams & { confirmed: boolean };
   priceUsdPerMillion: ListedModel["priceUsdPerMillion"];
   price: ListedModel["price"];
@@ -274,7 +309,7 @@ function huggingFaceRepo(providerId: string, listed: ListedModel, or: ListedMode
 
 /** Enrich one listed model. `override` is the user's override for its endpoint id. */
 export async function enrichModel(providerId: string, listed: ListedModel, override: EndpointOverride | undefined, ctx: EnrichContext): Promise<EnrichedModel> {
-  const notes: string[] = [];
+  const notes: string[] = [...(listed.notes ?? [])];
   const m = ctx.openRouter ? matchOpenRouter(ctx.openRouter, providerId, listed.id) : null;
   // The OpenRouter provider's list is the catalog: its fields are provider metadata already.
   const or = m && providerId !== "openrouter" ? m.model : null;
@@ -283,8 +318,8 @@ export async function enrichModel(providerId: string, listed: ListedModel, overr
 
   const displayName = first<string>("a display name", [listed.displayName, "provider", "model list"], [or?.displayName, "openrouter", orTag("name")]);
   // Context and output limits differ between hosts: only the provider or an exact match counts.
-  let context = first<number>("the context limit", [listed.contextLimitTokens, "provider", "model list"], [exact?.contextLimitTokens, "openrouter", orTag("context length")]);
-  let output = first<number>("the output limit", [listed.outputLimitTokens, "provider", "model list"], [exact?.outputLimitTokens, "openrouter", orTag("max completion tokens")]);
+  let context = first<number>("the context limit", [listed.contextLimitTokens, "provider", listed.contextDetail ?? "model list"], [exact?.contextLimitTokens, "openrouter", orTag("context length")]);
+  let output = first<number>("the output limit", [listed.outputLimitTokens, "provider", listed.outputDetail ?? "model list"], [exact?.outputLimitTokens, "openrouter", orTag("max completion tokens")]);
   let modalities = first<Modality[]>("input modalities", [listed.inputModalities, "provider", "model list"], [exact?.inputModalities, "openrouter", orTag("input modalities")]);
   let tools = first<boolean>("tool support", [listed.supportsTools, "provider", "model list"], [or?.supportsTools, "openrouter", orTag("supported_parameters")]);
   let structured = first<boolean>("structured output support", [listed.supportsStructuredOutput, "provider", "model list"], [or?.supportsStructuredOutput, "openrouter", orTag("supported_parameters")]);
@@ -309,12 +344,22 @@ export async function enrichModel(providerId: string, listed: ListedModel, overr
         : { source: "huggingface", totalB: null, activeB: null, detail: `Hugging Face ${repo}: no parameter metadata (gated or missing)` },
     );
   }
+  // A rounded size label from the server counts as one more heuristic; an exact count wins outright.
+  const fromServer = listed.providerParams ?? null;
+  if (fromServer && !fromServer.exact) evidence.push({ source: "description", totalB: fromServer.totalB, activeB: null, detail: fromServer.detail });
   const resolved = resolveParams(evidence);
   let params: EnrichedModel["params"] = { ...resolved, confirmed: resolved.confidence === "exact" || resolved.confidence === "agreed" };
   let paramsProv: FieldProvenance =
     resolved.confidence === "unknown"
       ? unknown("a parameter count")
       : { source: resolved.source === "huggingface" ? "huggingface" : resolved.source === "description" ? "description" : "name", detail: `${resolved.confidence}: ${evidence.filter((e) => e.totalB !== null).map((e) => e.detail).join("; ")}` };
+  if (fromServer?.exact) {
+    // The served weights' own count. The catalog's evidence sources have no "provider" value, so
+    // it is stored as description evidence with an exact confidence and says where it came from.
+    const totalB = Math.round(fromServer.totalB * 10) / 10;
+    params = { totalParametersB: totalB, activeParametersB: resolved.activeParametersB, source: "description", confidence: "exact", evidence: [{ source: "description", totalB, activeB: null, detail: fromServer.detail }, ...evidence], confirmed: true };
+    paramsProv = { source: "provider", detail: `exact: ${fromServer.detail}` };
+  }
 
   // User overrides win over every discovered source.
   const ov = (field: string): FieldProvenance => ({ source: "override", detail: `user override of ${field}` });
@@ -357,6 +402,8 @@ export async function enrichModel(providerId: string, listed: ListedModel, overr
     supportsTools: tools.value,
     supportsStructuredOutput: structured.value,
     inputModalities: modalities.value,
+    maxContextTokens: listed.maxContextTokens ?? null,
+    quantization: listed.quantization ?? null,
     params,
     priceUsdPerMillion: listed.priceUsdPerMillion,
     price: listed.price,
