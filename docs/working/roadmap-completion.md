@@ -93,6 +93,16 @@ passing units reach dev/main. Documentation and source commit together.
 
 ## Work Ledger
 
+### Brief: external-runner-tools (next worker after project recovery)
+- Repository: isolated roadmap-external branch/worktree based on E1 checkpoint plus current dev; supervisor creates it.
+- Task: provide external OpenCode/command coding agents the declared run_check and request_more_budget capabilities, with the same code-enforced checks/limits/decision behavior as native agents. Inspect official adapter/source contracts before integration; never claim arbitrary command agents use a tool automatically.
+- Required reads: budget-control Current State; runners/coding, policy gateway, harness/budget-tools and check tool, native loop budget growth, existing MCP transport/tool patterns, session journals and relevant tests.
+- Owns: runners/coding/** after E1 freeze; harness/budget-tools.ts/check tool extraction if required (not supervisor-tools.ts or integration-tools.ts); new gateway external-task tool bridge; admission budget helpers only if required; focused external-tool/coding tests and own report. Ask before changing core/service, executor, exports/config/CLI or other public/shared files.
+- Runtime boundary: loopback task-scoped authenticated bridge, current lease/task/lifecycle validation, only declared commands and bounded per-task check count; no provider secrets. No cross-task budget decisions, arbitrary commands or scope bypass. Journal real calls/results/charges and close listeners on every exit.
+- Integration: use OpenCode's documented configuration/MCP mechanism and bounded command-agent connection metadata/context; preserve existing config overrides/provider gateway. Approved budget must reach subsequent external model requests, with paid caps unchanged and no extra requests during the wait.
+- Acceptance: real temporary external fixture process invokes checks and budget tool, supervisor/human approval and denial, stale/foreign token/task rejection, command refusal/check-run cap, cleanup, approved continuation past old cap. Include command and OpenCode config generation tests. No real models or user install.
+- Report: roadmap-completion/reports/external-runner-tools.md. No commits/push/shared docs. Root independently verifies and integrates.
+
 ### 2026-10-22 - Execution started
 - Agent: supervisor
 - Changed: created this execution plan from the consolidated audit and existing Labs design.
