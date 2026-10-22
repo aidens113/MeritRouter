@@ -112,8 +112,12 @@ export function extractErrorBody(json: unknown): ErrorBody | null {
 }
 
 const POLICY = /content[ _-]?policy|content[ _-]?filter|moderation|flagged|safety|responsible[ _-]?ai/i;
-/** A refusal of one model by the key's plan, not of the key (checked before treating a 402 as credits). */
-const NOT_IN_PLAN = /not included in your (?:free )?(?:usage|plan)|not (?:available|included) (?:on|in|with) your (?:current )?plan|requires? a (?:paid|pro|higher) (?:plan|tier|subscription)|upgrade (?:your plan )?to (?:use|access) this model/i;
+/**
+ * A refusal of one model for this key, not of the key: outside its plan, or not yet released to
+ * it (Ollama Cloud: 403 "This model is currently being rolled out and is not yet available to
+ * you"). Checked before a 402 is read as credits and a 403 as an invalid key.
+ */
+const NOT_IN_PLAN = /not included in your (?:free )?(?:usage|plan)|not (?:available|included) (?:on|in|with) your (?:current )?plan|requires? a (?:paid|pro|higher) (?:plan|tier|subscription)|upgrade (?:your plan )?to (?:use|access) this model|being rolled out|not yet available to you/i;
 const CREDITS = /enforced_spend_limit|spend[ _-]?limit|insufficient_quota|insufficient[ _-]?credits|out of credits|credit balance/i;
 
 function parseJson(text: string): unknown {

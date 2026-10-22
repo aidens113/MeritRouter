@@ -324,6 +324,11 @@ describe("error classification", () => {
     expect(await status(403, { error: { message: "Input was flagged by moderation", code: 403 } })).toMatchObject({ reason: "policy", kind: "policy_violation", retryable: false });
     expect(await status(400, { error: { message: "violates our content policy" } })).toMatchObject({ reason: "policy" });
     expect(await status(402, { error: { message: "pay up" } })).toMatchObject({ reason: "out_of_credits", kind: "pool_exhausted", retryable: false });
+    // One model refused for this key (Ollama Cloud's words, 2026-10-21), not the key itself.
+    const outsidePlan = "this model is not included in your free usage, add usage credits to pay as you go: https://ollama.com/settings or upgrade for included usage: https://ollama.com/upgrade.";
+    expect(await status(402, { error: { message: outsidePlan, type: "api_error" } })).toMatchObject({ reason: "not_in_plan", kind: "pool_exhausted", retryable: false });
+    const rollingOut = "This model is currently being rolled out and is not yet available to you. Please check back later.";
+    expect(await status(403, { error: { message: rollingOut, type: "api_error" } })).toMatchObject({ reason: "not_in_plan", kind: "pool_exhausted" });
     expect(await status(429, { error: { message: "You exceeded your current quota", type: "insufficient_quota" } })).toMatchObject({ reason: "out_of_credits" });
     expect(await status(404, { error: { message: "model not found" } })).toMatchObject({ reason: "unknown_model", kind: "unknown_model" });
     expect(await status(400, { error: { message: "bad field" } })).toMatchObject({ reason: "bad_request", retryable: false, possiblyConsumed: false });
