@@ -52,12 +52,34 @@ export interface GatewayTelemetry {
   headers: Record<string, string>;
 }
 
+/** One source a provider cited for web content in its answer (untrusted data). */
+export interface WebCitation {
+  url: string;
+  title: string | null;
+  /** The cited passage, when the provider returns one (shortened). */
+  text: string | null;
+}
+
+/**
+ * Web search the provider ran inside this request (native web search). Present only when the
+ * request had it on (or the model always searches). The answer is web-derived content.
+ */
+export interface NativeWebSearchOutcome {
+  via: string;
+  alwaysOn: boolean;
+  /** Searches run: as the provider reported them, or assumed (one per request) when it reports none. */
+  requests: number;
+  requestsBasis: "provider_reported" | "assumed";
+  citations: WebCitation[];
+}
+
 export interface ChatResponse {
   message: { content: string | null; tool_calls?: ChatToolCall[] };
   finishReason: string | null;
   usage: NormalizedUsage;
   telemetry: GatewayTelemetry;
   httpStatus: number;
+  webSearch?: NativeWebSearchOutcome;
 }
 
 export interface ProviderStatus {

@@ -426,7 +426,8 @@ export class Admission {
              served_provider = @servedProvider, provider_attempts = @attempts, attempts_exact = @attemptsExact,
              input_tokens = @inputTokens, output_tokens = @outputTokens, cached_input_tokens = @cached, reasoning_tokens = @reasoning,
              usage_basis = @basis, reported_cost_usd = @cost, http_status = @http, error_kind = @errorKind, error_message = @errorMessage,
-             cache_hit = @cacheHit, policy_violation = @violation, telemetry_json = @telemetry
+             cache_hit = @cacheHit, policy_violation = @violation, telemetry_json = @telemetry,
+             native_web_search = @nativeSearch, web_search_requests = @searches, web_citations_json = @citations
            WHERE id = @id`,
         )
         .run({
@@ -450,6 +451,10 @@ export class Admission {
           cacheHit: t?.cacheHit === null || t?.cacheHit === undefined ? null : t.cacheHit ? 1 : 0,
           violation: outcome.kind === "succeeded" ? (outcome.policyViolation ?? null) : null,
           telemetry: t ? JSON.stringify(t.headers) : null,
+          // Native web search: how it ran, the searches (reported or assumed), and the cited sources as evidence.
+          nativeSearch: resp?.webSearch ? `${resp.webSearch.via}${resp.webSearch.requestsBasis === "assumed" ? " (count assumed)" : ""}` : null,
+          searches: resp?.webSearch?.requests ?? null,
+          citations: resp?.webSearch?.citations.length ? JSON.stringify(resp.webSearch.citations) : null,
         });
 
       if (res.paid) {
@@ -461,7 +466,7 @@ export class Admission {
             cost = usage.reportedCostUsd;
             basis = "provider_reported";
           } else if (usage?.inputTokens != null && usage.outputTokens != null) {
-            cost = actualUsd(usage.inputTokens, usage.outputTokens, p.price, usage.cachedInputTokens ?? 0);
+            cost = actualUsd(usage.inputTokens, usage.outputTokens, p.price, usage.cachedInputTokens ?? 0, resp?.webSearch?.requests ?? 0);
             basis = "computed";
           } else {
             // No billed usage reported: keep the worst case rather than an estimate.

@@ -85,6 +85,12 @@ export const WorkerTaskSchema = z
       .object({
         difficulty: z.enum(["T1", "T2", "T3", "T4"]).optional(),
         tags: TagsSchema.partial().optional(),
+        /**
+         * true: the task needs the web, so models whose provider searches inside the call are
+         * preferred and their search is turned on; false: the task must not touch the web, so
+         * models that always search are never chosen. Unset: neither.
+         */
+        web: z.boolean().optional(),
       })
       .strict()
       .optional(),
@@ -217,6 +223,8 @@ export const UsageSchema = z
     estimatedCostUsd: z.number().min(0).nullable(),
     /** Web searches and page fetches the task made (web_search, web_fetch). Results stored before this field read as 0. */
     webRequests: z.number().int().min(0).default(0),
+    /** Searches providers ran inside the task's model calls (native web search), as reported or assumed. Older results read as 0. */
+    nativeWebSearches: z.number().int().min(0).default(0),
   })
   .strict();
 export type Usage = z.infer<typeof UsageSchema>;
@@ -396,5 +404,6 @@ export function emptyUsage(): Usage {
     reportedCostUsd: null,
     estimatedCostUsd: null,
     webRequests: 0,
+    nativeWebSearches: 0,
   };
 }

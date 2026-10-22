@@ -19,6 +19,7 @@ export default async function ModelsPage({ searchParams }: { searchParams: Promi
   const rows = views.map((v) => toRow(sy, v, keyed));
   const sp = await searchParams;
   const platform = typeof sp.platform === "string" ? sp.platform : "";
+  const web = typeof sp.web === "string" && ["any", "optional", "always_on", "none"].includes(sp.web) ? sp.web : "";
   return (
     <div>
       <PageHeader
@@ -35,7 +36,7 @@ export default async function ModelsPage({ searchParams }: { searchParams: Promi
         }
       />
       <Card className="p-4">
-        <ModelsTable rows={rows} profiles={Object.keys(sy.cfg.profiles)} modalities={[...MODALITIES]} initialPlatform={platform} />
+        <ModelsTable rows={rows} profiles={Object.keys(sy.cfg.profiles)} modalities={[...MODALITIES]} initialPlatform={platform} initialWebSearch={web} />
       </Card>
     </div>
   );

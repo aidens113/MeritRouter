@@ -733,6 +733,7 @@ export function syntheticResult(
       reportedCostUsd: null,
       estimatedCostUsd: null,
       webRequests: 0,
+      nativeWebSearches: 0,
     },
     servedEndpoints: [],
     classification: null,

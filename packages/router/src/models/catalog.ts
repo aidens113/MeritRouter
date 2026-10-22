@@ -29,6 +29,49 @@ export const EndpointRouteSchema = z
 export type EndpointRoute = z.infer<typeof EndpointRouteSchema>;
 
 /**
+ * How a provider is asked to search the web inside the model call (decision D9 of the web-search
+ * working document): `openrouter_plugin` (OpenRouter's `plugins: [{id: "web"}]`, the same as the
+ * `:online` suffix), `openai_web_search_options` (Chat Completions `web_search_options`),
+ * `anthropic_server_tool` (the Messages API `web_search` server tool), or `always_on` (the model
+ * searches on every request and nothing is sent to turn it on).
+ */
+export const NATIVE_WEB_SEARCH_VIAS = ["openrouter_plugin", "openai_web_search_options", "anthropic_server_tool", "always_on"] as const;
+export const NativeWebSearchViaSchema = z.enum(NATIVE_WEB_SEARCH_VIAS);
+export type NativeWebSearchVia = z.infer<typeof NativeWebSearchViaSchema>;
+
+/**
+ * An endpoint's built-in web search, with provenance. `usdPerSearch` null means the price is
+ * unknown: it counts as paid, an optional search is never enabled, and an `always_on` model is
+ * not routed until an override states the price.
+ */
+export const NativeWebSearchSchema = z
+  .object({
+    via: NativeWebSearchViaSchema,
+    /** OpenRouter plugin engine: `native` (the model's own provider searches) or `exa`. */
+    engine: z.enum(["native", "exa"]).optional(),
+    usdPerSearch: z.number().min(0).nullable(),
+    /** Where the price came from (a model list field, a documented fact, an override). */
+    priceDetail: z.string().optional(),
+    /** registry: a documented fact; discovery: the provider's model metadata; override or manual: the user. */
+    source: z.enum(["registry", "discovery", "override", "manual"]),
+    detail: z.string(),
+    sourceUrl: z.string().optional(),
+    checkedAt: z.string().optional(),
+  })
+  .strict();
+export type NativeWebSearch = z.infer<typeof NativeWebSearchSchema>;
+
+/** The user's statement of an endpoint's native web search (models file or panel); null in an override removes it. */
+export const NativeWebSearchOverrideSchema = z
+  .object({
+    via: NativeWebSearchViaSchema,
+    engine: z.enum(["native", "exa"]).optional(),
+    usdPerSearch: z.number().min(0).nullable(),
+    note: z.string().optional(),
+  })
+  .strict();
+
+/**
  * Package-owned endpoint record. An endpoint is one model served by one provider; its id is
  * `<provider>/<model_id>`. Without a `route`, requests go to provider `providerId` for model
  * `gatewayModelId`.
@@ -64,6 +107,8 @@ export const ModelEndpointSchema = z
     /** Null when no source reports it: unknown support is excluded from work that needs it, never guessed. */
     supportsTools: z.boolean().nullable(),
     supportsStructuredOutput: z.boolean().nullable(),
+    /** Web search inside the model call; absent or null: none known. */
+    nativeWebSearch: NativeWebSearchSchema.nullable().optional(),
     pricing: z
       .object({
         inputUsdPerMillion: z.number().min(0).nullable(),
@@ -124,6 +169,8 @@ export const EndpointOverrideSchema = z
     inputModalities: z.array(ModalitySchema).optional(),
     supportsTools: z.boolean().optional(),
     supportsStructuredOutput: z.boolean().optional(),
+    /** Set the endpoint's native web search (price included); null: the endpoint has none. */
+    nativeWebSearch: NativeWebSearchOverrideSchema.nullable().optional(),
     quotaScopeIds: z.array(z.string()).optional(),
     note: z.string().optional(),
   })
@@ -177,6 +224,11 @@ function applyOverride(ep: BaseEndpoint, o: EndpointOverride | undefined): { ep:
   if (o.inputModalities) next.inputModalities = o.inputModalities;
   if (o.supportsTools !== undefined) next.supportsTools = o.supportsTools;
   if (o.supportsStructuredOutput !== undefined) next.supportsStructuredOutput = o.supportsStructuredOutput;
+  if (o.nativeWebSearch !== undefined) {
+    const n = o.nativeWebSearch;
+    next.nativeWebSearch =
+      n === null ? null : { via: n.via, ...(n.engine ? { engine: n.engine } : {}), usdPerSearch: n.usdPerSearch, priceDetail: "override", source: "override", detail: n.note ?? "user override" };
+  }
   if (o.quotaScopeIds) next.quotaScopeIds = o.quotaScopeIds;
   if (o.note) next.notes = o.note;
   return o.forceStatus ? { ep: next, forceStatus: o.forceStatus } : { ep: next };

@@ -686,6 +686,26 @@ export const WebConfigSchema = z
     max_results: z.number().int().min(1).max(10).default(5),
     /** Characters of a fetched page returned inline; a longer page returns an excerpt and its artifact ref. */
     page_excerpt_chars: z.number().int().min(1000).max(14_000).default(10_000),
+    /**
+     * Web search inside the model call (models whose provider searches during the request). A
+     * task with `hints.web: true` prefers such models and has the search turned on; a priced
+     * search is paid (paid routing and budgets apply). Models that always search are never
+     * routed for `hints.web: false`.
+     */
+    native: z
+      .object({
+        /** Turn on optional native search for tasks that need the web. Always-on models search regardless. */
+        enabled: z.boolean().default(true),
+        /**
+         * Most searches one model request may make: sent as the cap where the provider takes one
+         * (Anthropic `max_uses`) and used for the worst-case cost reserved before a paid request.
+         */
+        max_searches_per_request: z.number().int().min(1).max(20).default(5),
+        /** Results per search where the provider takes a count (OpenRouter's web plugin). */
+        max_results: z.number().int().min(1).max(25).default(5),
+      })
+      .strict()
+      .prefault({}),
   })
   .strict();
 export type WebConfig = z.infer<typeof WebConfigSchema>;

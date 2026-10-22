@@ -40,6 +40,9 @@ export const TaskArgumentSchema = open({
   verification: open({ atLeast: VerificationLevelSchema.optional(), addChecks: strings.optional() }).optional(),
   dependsOn: strings.optional().describe("Task ids that must finish first."),
   label: z.string().optional().describe("Short agent label (lowercase, digits, hyphens)."),
-  hints: open({ difficulty: z.enum(["T1", "T2", "T3", "T4"]).optional() }).optional(),
+  hints: open({
+    difficulty: z.enum(["T1", "T2", "T3", "T4"]).optional(),
+    web: z.boolean().optional().describe("true: needs the web (models that search inside the call are preferred); false: must not touch the web."),
+  }).optional(),
   routing: open({ tier: TierNameSchema.optional(), endpointId: z.string().optional() }).optional(),
 });

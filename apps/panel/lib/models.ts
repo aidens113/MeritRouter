@@ -32,6 +32,8 @@ export interface ModelRow {
   eligibleProfiles: string[];
   eligibleCells: number;
   supportsTools: boolean | null;
+  /** Web search inside the model call (null: none known). */
+  nativeWebSearch: { via: string; usdPerSearch: number | null; source: string; detail: string; priceDetail?: string | undefined } | null;
 }
 
 export function isFree(ep: ModelView["endpoint"]): boolean {
@@ -76,5 +78,8 @@ export function toRow(sy: Switchyard, v: ModelView, keyed: Set<string> = keyedPr
     eligibleProfiles: [...new Set(v.eligibility.filter((c) => c.eligible).map((c) => c.profile))],
     eligibleCells: v.eligibility.filter((c) => c.eligible).length,
     supportsTools: ep.supportsTools,
+    nativeWebSearch: ep.nativeWebSearch
+      ? { via: ep.nativeWebSearch.via, usdPerSearch: ep.nativeWebSearch.usdPerSearch, source: ep.nativeWebSearch.source, detail: ep.nativeWebSearch.detail, priceDetail: ep.nativeWebSearch.priceDetail }
+      : null,
   };
 }

@@ -20,6 +20,7 @@ import {
   type ProbeBudget,
 } from "./enrich.js";
 import { isKeyFailure, ProviderError, type ProviderErrorKind } from "./errors.js";
+import { detectNativeWebSearch } from "./native-search.js";
 import { llamaCppDetails, ollamaDetails, parseLmStudioModels, parseOllamaTags, type DetailsIO } from "./local-servers.js";
 import { expandUrl, requestHeaders, type ModelListShape, type ResolvedProvider } from "./registry.js";
 import { requestJson, type FetchLike } from "./transport.js";
@@ -81,7 +82,18 @@ const CloudflareItemSchema = z.object({
   task: z.object({ name: optString }).nullable().optional().catch(null),
   properties: z.array(z.object({ property_id: z.string(), value: z.unknown() })).nullable().optional().catch(null),
 });
-const AnthropicItemSchema = z.object({ id: z.string().min(1), display_name: optString, max_input_tokens: optPositiveInt, max_tokens: optPositiveInt });
+const AnthropicItemSchema = z.object({
+  id: z.string().min(1),
+  display_name: optString,
+  max_input_tokens: optPositiveInt,
+  max_tokens: optPositiveInt,
+  /** `server_tools.web_search.supported`: the model accepts at least one web search tool version (models overview, 2026-10-21). */
+  capabilities: z
+    .object({ server_tools: z.object({ web_search: z.object({ supported: optBool }).nullable().optional().catch(null) }).nullable().optional().catch(null) })
+    .nullable()
+    .optional()
+    .catch(null),
+});
 const DeepInfraItemSchema = z.object({
   model_name: z.string().min(1),
   type: optString,
@@ -221,7 +233,17 @@ export function parseModelListPage(shape: ModelListShape, body: unknown, provide
     case "anthropic": {
       const env = PageSchemas.data.safeParse(body).data ?? fail();
       for (const it of parseItems(AnthropicItemSchema, env.data, excluded)) {
-        keep({ ...blank(it.id), displayName: it.display_name ?? null, contextLimitTokens: it.max_input_tokens ?? null, outputLimitTokens: it.max_tokens ?? null }, null);
+        const ws = it.capabilities?.server_tools?.web_search?.supported;
+        keep(
+          {
+            ...blank(it.id),
+            displayName: it.display_name ?? null,
+            contextLimitTokens: it.max_input_tokens ?? null,
+            outputLimitTokens: it.max_tokens ?? null,
+            ...(typeof ws === "boolean" ? { webSearch: { supported: ws, usdPerSearch: null, usdPerRequest: null, detail: "Anthropic models API capabilities.server_tools.web_search.supported" } } : {}),
+          },
+          null,
+        );
       }
       return { models, excluded, next: env.has_more && env.last_id ? { after_id: env.last_id } : null };
     }
@@ -510,6 +532,7 @@ function toEndpoint(provider: ResolvedProvider, e: EnrichedModel, free: { value:
     // Unknown support is stored as null: routing excludes it from work that needs it.
     supportsTools: e.supportsTools,
     supportsStructuredOutput: e.supportsStructuredOutput,
+    nativeWebSearch: detectNativeWebSearch(provider.id, e.modelId, e.webSearch),
     pricing: {
       inputUsdPerMillion: freeValue ? 0 : (usd?.input ?? null),
       outputUsdPerMillion: freeValue ? 0 : (usd?.output ?? null),

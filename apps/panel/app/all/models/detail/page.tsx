@@ -6,7 +6,8 @@ import { insights, MODALITIES, TIER_NAMES } from "switchyard-router";
 import { getSy } from "@/lib/sy";
 import { isFree, keyedProviders, reachable, type ModelView } from "@/lib/models";
 import { SetupScreen } from "@/components/setup";
-import { Modalities, ProvenanceBadge, StatusBadge, statusKey } from "@/components/model-badges";
+import { Modalities, ProvenanceBadge, StatusBadge, statusKey, WEB_SEARCH_VIA_LABEL, WebSearchBadge, webSearchPrice } from "@/components/model-badges";
+import type { ModelEndpoint } from "switchyard-router";
 import { RequestsTable } from "@/components/requests-table";
 import { Badge, Callout, Card, CardHeader, cx, EmptyState, HelpTip, KeyValue, Mono, PageHeader, Stat } from "@/components/ui";
 import { ActionButton } from "@/components/client/actions";
@@ -44,6 +45,7 @@ export default async function ModelDetailPage({ searchParams }: { searchParams: 
             <StatusBadge status={st} />
             {view.override ? <Badge tone="accent">Overrides active</Badge> : null}
             <Badge>{ep.providerId}</Badge>
+            <WebSearchBadge info={ep.nativeWebSearch ?? null} />
             <Mono>{ep.id}</Mono>
           </span>
         }
@@ -101,6 +103,7 @@ export default async function ModelDetailPage({ searchParams }: { searchParams: 
                 ],
                 ["Tool calling", ep.supportsTools === null ? "Unknown (cannot do repository work until set)" : ep.supportsTools ? "Yes" : "No (cannot do repository work)"],
                 ["Structured output", ep.supportsStructuredOutput === null ? "Unknown" : ep.supportsStructuredOutput ? "Yes" : "No"],
+                ["Web search in the call", <WebSearchFact key="w" info={ep.nativeWebSearch ?? null} />],
                 [
                   "Price",
                   <span key="p" className="flex flex-wrap items-center gap-2">
@@ -228,6 +231,29 @@ export default async function ModelDetailPage({ searchParams }: { searchParams: 
         <RequestsTable rows={recent} names={names} hideModel empty="This model has not served any requests yet" />
       </Card>
     </div>
+  );
+}
+
+/** How the provider searches the web inside the call, its price, and where that fact came from. */
+function WebSearchFact({ info }: { info: ModelEndpoint["nativeWebSearch"] | null }) {
+  if (!info) return <span className="text-ink-3">None known (tasks that need the web use the agents&apos; own web tools)</span>;
+  const always = info.via === "always_on";
+  return (
+    <span className="space-y-1">
+      <span className="flex flex-wrap items-center gap-2">
+        <WebSearchBadge info={info} />
+        <span>{always ? "Searches on every request: answers are untrusted web content; never used for tasks marked hints.web: false." : `Turned on for tasks that need the web (hints.web: true) via ${WEB_SEARCH_VIA_LABEL[info.via] ?? info.via}.`}</span>
+      </span>
+      <span className="block text-xs text-ink-3">
+        {webSearchPrice(info)}
+        {info.priceDetail ? ` (${info.priceDetail})` : ""} · source: {info.source} ({info.detail}){info.checkedAt ? ` · checked ${info.checkedAt}` : ""}
+      </span>
+      {info.sourceUrl ? (
+        <a href={info.sourceUrl} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 break-all text-xs text-accent-ink hover:underline">
+          {info.sourceUrl} <ExternalLink size={12} aria-hidden />
+        </a>
+      ) : null}
+    </span>
   );
 }
 

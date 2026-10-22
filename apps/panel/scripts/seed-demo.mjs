@@ -203,6 +203,39 @@ const endpoints = [
     pricing: { inputUsdPerMillion: 2, outputUsdPerMillion: 8, freeVerified: false, source: "manual" },
     notes: "Paid model; listed for comparison only.",
   }),
+  // Native web search (decision D9): one model whose search is turned on for tasks that need the
+  // web, and one that searches on every request. Both are priced, so they serve only paid requests.
+  ep({
+    providerId: "openrouter",
+    gatewayModelId: "anthropic/claude-haiku-4.5",
+    displayName: "Claude Haiku 4.5 (OpenRouter)",
+    totalParametersB: null,
+    activeParametersB: null,
+    ignoreSizeFloor: true,
+    params: { source: "unknown", confidence: "unknown", confirmed: false, evidence: [] },
+    contextLimitTokens: 200000,
+    outputLimitTokens: 16000,
+    outputLimitSource: "provider",
+    pricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 5, freeVerified: false, source: "openrouter_price" },
+    nativeWebSearch: { via: "openrouter_plugin", engine: "native", usdPerSearch: 0.01, priceDetail: "OpenRouter pricing.web_search (USD per web search)", source: "discovery", detail: "OpenRouter supported_parameters includes web_search_options", sourceUrl: "https://openrouter.ai/docs/api/api-reference/models/get-models", checkedAt: "2026-10-21" },
+    sourceUrls: ["https://openrouter.ai/anthropic/claude-haiku-4.5"],
+  }),
+  ep({
+    providerId: "openrouter",
+    gatewayModelId: "perplexity/sonar",
+    displayName: "Perplexity Sonar",
+    totalParametersB: null,
+    activeParametersB: null,
+    ignoreSizeFloor: true,
+    params: { source: "unknown", confidence: "unknown", confirmed: false, evidence: [] },
+    contextLimitTokens: 127000,
+    outputLimitTokens: 8000,
+    outputLimitSource: "provider",
+    supportsTools: false,
+    pricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 1, freeVerified: false, source: "openrouter_price" },
+    nativeWebSearch: { via: "always_on", usdPerSearch: 0.005, priceDetail: "OpenRouter pricing.request (one search per request assumed)", source: "registry", detail: "OpenRouter: Perplexity models search natively by default; SwitchYard never sends the switch that turns it off", sourceUrl: "https://openrouter.ai/docs/guides/features/web-search", checkedAt: "2026-10-21" },
+    sourceUrls: ["https://openrouter.ai/perplexity/sonar"],
+  }),
 ];
 
 writeFileSync(

@@ -4,19 +4,35 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Search, SlidersHorizontal, Wrench } from "lucide-react";
 import type { ModelRow } from "@/lib/models";
-import { Modalities, ProvenanceBadge, StatusBadge, STATUS_LABEL, type StatusKey } from "../model-badges";
+import { Modalities, ProvenanceBadge, StatusBadge, STATUS_LABEL, WebSearchBadge, type StatusKey } from "../model-badges";
 import { Badge, EmptyState, HelpTip, cx } from "../ui";
 import { modelHref, params, pct, tokens } from "@/lib/format";
 
 const STATUSES: StatusKey[] = ["active", "pending_confirmation", "quarantined", "disabled", "removed"];
 
-export function ModelsTable({ rows, profiles, modalities, initialPlatform = "" }: { rows: ModelRow[]; profiles: string[]; modalities: string[]; initialPlatform?: string }) {
+const WEB_SEARCH_FILTERS: Array<[string, string]> = [
+  ["any", "searches the web"],
+  ["optional", "on for web tasks"],
+  ["always_on", "searches always"],
+  ["none", "no web search"],
+];
+
+function matchesWebSearch(r: ModelRow, filter: string): boolean {
+  const n = r.nativeWebSearch;
+  if (filter === "none") return n === null;
+  if (filter === "any") return n !== null;
+  if (filter === "always_on") return n?.via === "always_on";
+  return n !== null && n.via !== "always_on";
+}
+
+export function ModelsTable({ rows, profiles, modalities, initialPlatform = "", initialWebSearch = "" }: { rows: ModelRow[]; profiles: string[]; modalities: string[]; initialPlatform?: string; initialWebSearch?: string }) {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<string>("");
   const [platform, setPlatform] = useState(initialPlatform);
   const [modality, setModality] = useState("");
   const [eligibleFor, setEligibleFor] = useState("");
   const [overridesOnly, setOverridesOnly] = useState(false);
+  const [webSearch, setWebSearch] = useState(initialWebSearch);
   const platforms = useMemo(() => [...new Set(rows.map((r) => r.providerId))].sort(), [rows]);
   const counts = useMemo(() => Object.fromEntries(STATUSES.map((s) => [s, rows.filter((r) => r.status === s).length])), [rows]);
 
@@ -26,13 +42,14 @@ export function ModelsTable({ rows, profiles, modalities, initialPlatform = "" }
     if (modality && !r.modalities.includes(modality)) return false;
     if (eligibleFor === "__none" ? r.eligibleCells > 0 : eligibleFor && !r.eligibleProfiles.includes(eligibleFor)) return false;
     if (overridesOnly && r.overrideFields.length === 0) return false;
+    if (webSearch && !matchesWebSearch(r, webSearch)) return false;
     if (q) {
       const hay = `${r.name} ${r.id} ${r.headline}`.toLowerCase();
       if (!q.toLowerCase().split(/\s+/).every((w) => hay.includes(w))) return false;
     }
     return true;
   });
-  const filtered = Boolean(q || status || platform || modality || eligibleFor || overridesOnly);
+  const filtered = Boolean(q || status || platform || modality || eligibleFor || overridesOnly || webSearch);
 
   return (
     <div>
@@ -51,6 +68,7 @@ export function ModelsTable({ rows, profiles, modalities, initialPlatform = "" }
         <Select label="Platform" value={platform} onChange={setPlatform} options={platforms.map((p) => [p, p])} />
         <Select label="Reads" value={modality} onChange={setModality} options={modalities.map((m) => [m, m])} />
         <Select label="Eligible for" value={eligibleFor} onChange={setEligibleFor} options={[...profiles.map((p) => [p, p] as [string, string]), ["__none", "nothing (unused)"]]} />
+        <Select label="Web search" value={webSearch} onChange={setWebSearch} options={WEB_SEARCH_FILTERS} />
         <label className="flex items-center gap-1.5 text-sm text-ink-2">
           <input type="checkbox" checked={overridesOnly} onChange={(e) => setOverridesOnly(e.target.checked)} /> With overrides
         </label>
@@ -65,6 +83,7 @@ export function ModelsTable({ rows, profiles, modalities, initialPlatform = "" }
               setModality("");
               setEligibleFor("");
               setOverridesOnly(false);
+              setWebSearch("");
             }}
           >
             Clear filters
@@ -113,6 +132,7 @@ export function ModelsTable({ rows, profiles, modalities, initialPlatform = "" }
                     <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-ink-3">
                       <Badge>{r.providerId}</Badge>
                       <span className="break-all font-mono">{r.gatewayModelId}</span>
+                      <WebSearchBadge info={r.nativeWebSearch} />
                     </div>
                     <p className={cx("mt-1 text-xs", r.eligibleCells ? "text-ink-2" : "text-ink-3")}>{r.headline}</p>
                   </td>

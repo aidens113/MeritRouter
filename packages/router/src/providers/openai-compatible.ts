@@ -5,6 +5,7 @@ import { auditHeaders } from "./rate-limits.js";
 import { chatUrl, requestHeaders, type ResolvedProvider } from "./registry.js";
 import { requestJson, type FetchLike } from "./transport.js";
 import type { ProviderRequest, ProviderResponse } from "./client.js";
+import { openAiCitations, openAiSearchFields, reportedSearches, searchOutcome } from "./native-search.js";
 
 /**
  * Extra OpenAI request parameters a caller may pass in `ProviderRequest.params`. Anything else
@@ -28,7 +29,7 @@ function mapMessages(p: ResolvedProvider, messages: ChatMessage[]): unknown[] {
 }
 
 /** Build the chat-completions body with the provider's rules applied. Exported for tests and probes. */
-export function buildOpenAiBody(p: ResolvedProvider, req: Pick<ProviderRequest, "model" | "chat" | "params" | "cacheKey">): Record<string, unknown> {
+export function buildOpenAiBody(p: ResolvedProvider, req: Pick<ProviderRequest, "model" | "chat" | "params" | "cacheKey" | "webSearch">): Record<string, unknown> {
   const { chat } = req;
   const body: Record<string, unknown> = { model: req.model, messages: mapMessages(p, chat.messages), stream: false, [p.tokenLimitParam]: chat.max_tokens };
   if (chat.temperature !== undefined) body.temperature = p.temperatureMax !== null ? Math.min(chat.temperature, p.temperatureMax) : chat.temperature;
@@ -47,7 +48,8 @@ export function buildOpenAiBody(p: ResolvedProvider, req: Pick<ProviderRequest, 
   }
   // One key per conversation routes its requests to the same cache (only where documented).
   if (p.promptCache === "prompt_cache_key" && req.cacheKey) body.prompt_cache_key = req.cacheKey;
-  return { ...body, ...p.bodyExtras };
+  // Native web search: the provider's own switch (OpenRouter's web plugin, web_search_options).
+  return { ...body, ...openAiSearchFields(req.webSearch), ...p.bodyExtras };
 }
 
 export async function completeOpenAiCompatible(fetchFn: FetchLike, req: ProviderRequest, now: () => number): Promise<ProviderResponse> {
@@ -78,5 +80,6 @@ export async function completeOpenAiCompatible(fetchFn: FetchLike, req: Provider
     telemetry: { servedModel: typeof json.model === "string" ? json.model : null, servedProvider: p.id, providerAttempts: 1, providerAttemptsExact: true, cacheHit: normalized.cachedInputTokens === null ? null : normalized.cachedInputTokens > 0, headers: auditHeaders(res.headers) },
     httpStatus: res.status,
     rateLimits: res.rateLimits,
+    ...(req.webSearch ? { webSearch: searchOutcome(req.webSearch, reportedSearches(usage), openAiCitations(choice.message)) } : {}),
   };
 }

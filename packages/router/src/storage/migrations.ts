@@ -759,4 +759,11 @@ export const MIGRATIONS: string[] = [
     updated_at INTEGER NOT NULL
   );
   `,
+  // Native web search inside model calls: how the request searched (the via, and whether the
+  // count was assumed), the searches run, and the sources the provider cited (JSON).
+  `
+  ALTER TABLE model_requests ADD COLUMN native_web_search TEXT;
+  ALTER TABLE model_requests ADD COLUMN web_search_requests INTEGER;
+  ALTER TABLE model_requests ADD COLUMN web_citations_json TEXT;
+  `,
 ];

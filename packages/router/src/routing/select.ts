@@ -1,6 +1,7 @@
 import type { ResolvedConfig } from "../config/load.js";
 import type { Modality, PaidPolicy, ProfileName, TierName } from "../config/schema.js";
 import type { ModelEndpoint, RoutingOverride } from "../models/catalog.js";
+import { alwaysSearches, nativeSearchUse, type NativeSearchUse } from "./native-search.js";
 
 export interface RouteRequirements {
   profile: ProfileName;
@@ -26,6 +27,11 @@ export interface RouteRequirements {
    * qualified reviewers are ranked first.
    */
   reviewer?: ReviewerQualificationRequirement;
+  /**
+   * The task's `hints.web`: true prefers models whose provider searches inside the call (and
+   * turns that search on); false excludes models that always search. Unset: neither.
+   */
+  web?: boolean;
 }
 
 export interface ReviewerQualificationRequirement {
@@ -68,9 +74,23 @@ export function freeKeyOnly(ep: Pick<ModelEndpoint, "pricing" | "route">): boole
   return ep.pricing.freeBasis === "key" || !/:free$/.test(ep.route.model);
 }
 
-export function paidPolicyFor(cfg: ResolvedConfig, req: RouteRequirements): PaidPolicy {
+export function paidPolicyFor(cfg: ResolvedConfig, req: Pick<RouteRequirements, "paidPolicy" | "tier">): PaidPolicy {
   if (!cfg.paid.enabled) return "never";
   return req.paidPolicy ?? cfg.paid.tiers[req.tier];
+}
+
+/** The native search one request to `ep` runs under this plan (null: none). */
+export function planSearch(ep: Pick<ModelEndpoint, "nativeWebSearch">, cfg: ResolvedConfig, plan: Pick<RoutePlan, "web" | "paidPolicy" | "tier">): NativeSearchUse | null {
+  const policy = plan.paidPolicy ?? paidPolicyFor(cfg, { tier: plan.tier });
+  return nativeSearchUse(ep, cfg, { web: plan.web, paidAllowed: cfg.paid.enabled && policy !== "never" });
+}
+
+/**
+ * A request to `ep` under this plan costs money: the model is priced, or the native search it
+ * runs is (a positive or unknown price per search).
+ */
+export function requestPaid(ep: Pick<ModelEndpoint, "pricing" | "nativeWebSearch">, cfg: ResolvedConfig, plan: Pick<RoutePlan, "web" | "paidPolicy" | "tier">): boolean {
+  return isPaid(ep) || (planSearch(ep, cfg, plan)?.charged ?? false);
 }
 
 export interface QualificationLookup {
@@ -112,6 +132,10 @@ export interface RoutePlan {
   /** Set when a force override applies; only forced models are candidates. */
   forced: boolean;
   belowFloorEndpoints: Set<string>;
+  /** The task's `hints.web` (see `RouteRequirements.web`); unset in plans built elsewhere. */
+  web?: boolean | null;
+  /** The paid policy the plan was built under (decides whether a priced native search may run). */
+  paidPolicy?: PaidPolicy;
 }
 
 function overrideApplies(o: RoutingOverride, profile: ProfileName, tier: TierName): boolean {
@@ -138,11 +162,16 @@ export function endpointExclusions(
   if (ep.totalParametersB !== null && ep.totalParametersB < floor && !opts.allowBelowFloor && !ep.ignoreSizeFloor) {
     reasons.push(`${ep.totalParametersB}B is below the ${floor}B floor for ${req.profile}/${req.tier}`);
   }
-  if (isPaid(ep)) {
+  // A model that searches on every request: its answers are web content, and a priced search makes every request paid.
+  const always = alwaysSearches(ep);
+  if (always && req.web === false) reasons.push("searches the web on every request (always_on); this task must not touch the web (hints.web: false)");
+  const searchCharged = always && ep.nativeWebSearch!.usdPerSearch !== 0;
+  if (isPaid(ep) || searchCharged) {
     const policy = paidPolicyFor(cfg, req);
-    if (!cfg.paid.enabled) reasons.push("paid routing is disabled (paid.enabled)");
+    if (!cfg.paid.enabled) reasons.push(isPaid(ep) ? "paid routing is disabled (paid.enabled)" : "paid routing is disabled (paid.enabled) and its web search on every request is priced");
     else if (policy === "never") reasons.push(`paid models are not allowed for ${req.tier} (paid.tiers.${req.tier} = never)`);
-    if (ep.pricing.inputUsdPerMillion === null || ep.pricing.outputUsdPerMillion === null) reasons.push("price unknown: set it in paid.models or a pricing_url");
+    if (isPaid(ep) && (ep.pricing.inputUsdPerMillion === null || ep.pricing.outputUsdPerMillion === null)) reasons.push("price unknown: set it in paid.models or a pricing_url");
+    if (searchCharged && ep.nativeWebSearch!.usdPerSearch === null) reasons.push("web search price unknown (it searches on every request): set nativeWebSearch.usdPerSearch in an override");
   }
   const ageDays = (opts.now.getTime() - Date.parse(ep.checkedAt)) / 86_400_000;
   if (!Number.isFinite(ageDays) || ageDays > cfg.models.max_metadata_age_days) {
@@ -233,8 +262,12 @@ export function planRoute(
   // Reviewers: qualified first (preferred mode), then another model family, then another platform.
   const independence = (e: { ep: ModelEndpoint; ex: CandidateExplanation }) =>
     (req.reviewer && !e.ex.qualification?.qualified ? 4 : 0) + (families.has(modelFamily(e.ep)) ? 2 : 0) + (providers.has(e.ep.providerId) ? 1 : 0);
-  // Paid models go after free ones unless the policy prefers them.
-  const paidRank = (ep: ModelEndpoint) => (isPaid(ep) ? (policy === "preferred" ? 0 : 1) : policy === "preferred" ? 1 : 0);
+  const searchPlan = { web: req.web ?? null, paidPolicy: policy, tier: req.tier };
+  // Paid requests (a priced model, or a priced native search) go after free ones unless the policy prefers them.
+  const paidRank = (ep: ModelEndpoint) => (requestPaid(ep, cfg, searchPlan) ? (policy === "preferred" ? 0 : 1) : policy === "preferred" ? 1 : 0);
+  // A task that needs the web prefers models that search inside the call (with the search on under
+  // this plan); any other task takes a model that searches on every request only after the rest.
+  const webRank = (ep: ModelEndpoint) => (req.web === true ? (planSearch(ep, cfg, searchPlan) ? 0 : 1) : alwaysSearches(ep) ? 1 : 0);
   eligible.sort((a, b) => {
     const pa = forced ? 0 : preferIds.indexOf(a.ep.id);
     const pb = forced ? 0 : preferIds.indexOf(b.ep.id);
@@ -243,6 +276,9 @@ export function planRoute(
     const ra = paidRank(a.ep);
     const rb = paidRank(b.ep);
     if (ra !== rb) return ra - rb;
+    const wa = webRank(a.ep);
+    const wb = webRank(b.ep);
+    if (wa !== wb) return wa - wb;
     const ia = independence(a);
     const ib = independence(b);
     if (ia !== ib) return ia - ib;
@@ -271,6 +307,8 @@ export function planRoute(
     explanations,
     forced,
     belowFloorEndpoints: belowFloor,
+    web: req.web ?? null,
+    paidPolicy: policy,
   };
 }
 

@@ -20,7 +20,8 @@ import { DEFAULT_RULEBOOK, RulebookSchema } from "../scoring/rulebook.js";
 import type { Classification } from "../scoring/score.js";
 import type { UsageSummary } from "../storage/usage.js";
 import type { ArtifactRow } from "../storage/artifacts.js";
-import type { ProviderStatus } from "../gateway/types.js";
+import type { ProviderStatus, WebCitation } from "../gateway/types.js";
+import { z } from "zod";
 import { readBreakerRecords, type BreakerRecord, type BreakerSettings } from "../gateway/breaker.js";
 
 const DAY = 86_400_000;
@@ -254,9 +255,27 @@ export interface RequestRow {
   errorMessage: string | null;
   policyViolation: string | null;
   routeNote: string | null;
+  /** How the provider searched the web inside this request (the via; "(count assumed)" when it reported no count), or null. */
+  nativeWebSearch: string | null;
+  webSearchRequests: number | null;
+  /** Sources the provider cited (untrusted web data). */
+  webCitations: WebCitation[];
   taskIds: string[];
   /** The project the request was charged to ('' for none: probes, scans). */
   project: string;
+}
+
+const CitationsSchema = z.array(z.object({ url: z.string(), title: z.string().nullable(), text: z.string().nullable() }));
+
+/** Stored citations (a JSON column); anything malformed reads as none. */
+function parseCitations(raw: unknown): WebCitation[] {
+  if (typeof raw !== "string" || !raw) return [];
+  try {
+    const r = CitationsSchema.safeParse(JSON.parse(raw));
+    return r.success ? r.data : [];
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -305,6 +324,9 @@ export function requestLog(sy: Switchyard, opts: { limit?: number; endpointId?: 
     errorMessage: (r.error_message as string | null) ?? null,
     policyViolation: (r.policy_violation as string | null) ?? null,
     routeNote: (r.route_note as string | null) ?? null,
+    nativeWebSearch: (r.native_web_search as string | null) ?? null,
+    webSearchRequests: (r.web_search_requests as number | null) ?? null,
+    webCitations: parseCitations(r.web_citations_json),
     taskIds: r.task_ids ? String(r.task_ids).split(",") : [],
     project: String(r.project_id ?? ""),
   }));

@@ -4,6 +4,7 @@ import { auditHeaders } from "./rate-limits.js";
 import { chatUrl, requestHeaders } from "./registry.js";
 import { requestJson, type FetchLike } from "./transport.js";
 import type { ProviderRequest, ProviderResponse } from "./client.js";
+import { anthropicCitations, anthropicSearchTool, reportedSearches, searchOutcome } from "./native-search.js";
 
 type AnthropicBlock = (
   | { type: "text"; text: string }
@@ -63,7 +64,7 @@ export function toAnthropic(messages: ChatMessage[]): { system: string; messages
  * newest message (turns only append, so the next request reads everything before it from the
  * cache). A prefix shorter than the model's minimum is simply not cached; the API does not fail.
  */
-export function buildAnthropicBody(req: Pick<ProviderRequest, "model" | "chat" | "provider">): Record<string, unknown> {
+export function buildAnthropicBody(req: Pick<ProviderRequest, "model" | "chat" | "provider" | "webSearch">): Record<string, unknown> {
   const conv = toAnthropic(req.chat.messages);
   const cache = req.provider.promptCache === "cache_control";
   const tools: Array<Record<string, unknown>> | undefined = req.chat.tools?.map((t) => ({ name: t.function.name, description: t.function.description, input_schema: t.function.parameters }));
@@ -85,13 +86,15 @@ export function buildAnthropicBody(req: Pick<ProviderRequest, "model" | "chat" |
       last.content[i] = { ...last.content[i]!, cache_control: EPHEMERAL };
     }
   }
+  // Native web search: the server tool goes first, so the cache breakpoint stays on the last client tool.
+  const server = anthropicSearchTool(req.webSearch);
   return {
     model: req.model,
     max_tokens: req.chat.max_tokens,
     ...(system !== undefined ? { system } : {}),
     messages: conv.messages,
     ...(req.chat.temperature !== undefined ? { temperature: req.chat.temperature } : {}),
-    ...(tools?.length ? { tools, ...(mapped !== null ? { tool_choice: { type: mapped } } : {}) } : {}),
+    ...(tools?.length ? { tools: [...(server ? [server] : []), ...tools], ...(mapped !== null ? { tool_choice: { type: mapped } } : {}) } : server ? { tools: [server] } : {}),
   };
 }
 
@@ -129,5 +132,6 @@ export async function completeAnthropic(fetchFn: FetchLike, req: ProviderRequest
     telemetry: { servedModel: typeof json.model === "string" ? json.model : null, servedProvider: p.id, providerAttempts: 1, providerAttemptsExact: true, cacheHit: typeof u.input_tokens === "number" ? cacheRead > 0 : null, headers: auditHeaders(res.headers) },
     httpStatus: res.status,
     rateLimits: res.rateLimits,
+    ...(req.webSearch ? { webSearch: searchOutcome(req.webSearch, reportedSearches(json.usage), anthropicCitations(json.content)) } : {}),
   };
 }

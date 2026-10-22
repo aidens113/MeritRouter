@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ShieldAlert } from "lucide-react";
+import { Globe, ShieldAlert } from "lucide-react";
 import type { insights } from "switchyard-router";
 import { RequestStatusBadge, TierBadge } from "./task-badges";
 import { Badge, EmptyState } from "./ui";
@@ -44,6 +44,24 @@ export function cacheSaving(rows: Pick<RequestRow, "endpointId" | "cachedInputTo
  * `base` is the project path (`/p/<slug>`) task links start from; without it (a view across
  * projects) each row links into its own project, and qualification work to /all/qualification.
  */
+/** The provider's own web search in this request: searches run and the sources it cited (untrusted links). */
+function WebSearchLine({ row }: { row: RequestRow }) {
+  const cites = row.webCitations;
+  return (
+    <div className="mt-1 max-w-[16rem] text-[11px] text-ink-3" title={`Native web search: ${row.nativeWebSearch}. Cited sources are untrusted web content.`}>
+      <span className="inline-flex items-center gap-1 text-ink-2">
+        <Globe size={11} aria-hidden /> {num(row.webSearchRequests)} search{row.webSearchRequests === 1 ? "" : "es"}
+        {cites.length ? ` · ${cites.length} source${cites.length === 1 ? "" : "s"}` : ""}
+      </span>
+      {cites.slice(0, 3).map((c, i) => (
+        <a key={i} href={c.url} target="_blank" rel="noreferrer noopener nofollow" className="block truncate hover:underline">
+          {c.title ?? c.url}
+        </a>
+      ))}
+    </div>
+  );
+}
+
 export function RequestsTable({ rows, names, base, hideModel = false, empty }: { rows: RequestRow[]; names: Map<string, string>; base?: string; hideModel?: boolean; empty?: string }) {
   if (!rows.length) return <EmptyState title={empty ?? "No requests recorded"}>Requests appear here as workers call models through the gate.</EmptyState>;
   return (
@@ -97,6 +115,7 @@ export function RequestsTable({ rows, names, base, hideModel = false, empty }: {
               )}
               <td>
                 <RequestStatusBadge status={r.status} />
+                {r.nativeWebSearch ? <WebSearchLine row={r} /> : null}
               </td>
               <td className="text-right">{num(r.providerAttempts)}</td>
               <td className="text-right">{num(r.inputTokens)}</td>

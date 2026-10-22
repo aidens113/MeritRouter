@@ -5,6 +5,7 @@ import { completeOpenAiCompatible } from "./openai-compatible.js";
 import type { RateLimitSnapshot } from "./rate-limits.js";
 import type { ResolvedProvider } from "./registry.js";
 import { maskProviderError } from "./secret-masking.js";
+import type { NativeSearchRequest } from "./native-search.js";
 import type { FetchLike } from "./transport.js";
 
 /** The secret and account for one request. `apiKey` is null only for keyless (local) providers. */
@@ -27,6 +28,11 @@ export interface ProviderRequest {
    * the provider's `promptCache` is `prompt_cache_key`; ignored elsewhere.
    */
   cacheKey?: string;
+  /**
+   * Native web search for this request (see `native-search.ts`): the provider's switch is sent
+   * (none for an always-on model) and the response carries search counts and citations.
+   */
+  webSearch?: NativeSearchRequest;
   timeoutMs: number;
   signal?: AbortSignal;
 }

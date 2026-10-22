@@ -62,6 +62,7 @@ export function buildMcpServer({ sy, cfg, project }: McpContext): McpServer {
         "Profiles: summarize (completion over supplied context), inspect/analyze/review (read-only repository investigation), implement (bounded edits in an isolated worktree). " +
         "Each task needs goal and constraints.acceptanceCriteria; pass context.fileRefs as '<alias>:<path>[#Lstart-Lend]' so workers load files themselves. " +
         "Optional hints.difficulty (T1-T4) skips the difficulty classifier; routing.tier sets a minimum tier. " +
+        "Optional hints.web: true when the task needs the web (models whose provider searches inside the call are preferred; a priced search is paid), false when it must not touch the web. " +
         "Criteria are strings (ids c1..cn) or { id, text, verify?: check|review|evidence, checks?: [commands from constraints.checks] }. " +
         "Optional importance (low|normal|high|critical; high and critical need importanceReason) and verification { atLeast?: basic|standard|deep|strict, addChecks? } pick how much evidence a result needs; they can only strengthen the configured policy. " +
         "A task whose total request budget cannot hold its verification reserve is refused with verification_budget_insufficient.",

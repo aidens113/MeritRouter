@@ -310,6 +310,19 @@ project's at `/p/<slug>/settings`.
   install-wide) limit use; `web.enabled: false` turns it all off. `doctor` shows each backend's
   state. See [operations.md](operations.md#web-search-and-fetch) for health, caps, and safety.
 
+- Web search inside the model call (`web.native`): some models search the web as part of the
+  request (OpenRouter models whose list says `web_search_options`, Anthropic models with the web
+  search tool, and models that always search, such as OpenRouter's Perplexity models and OpenAI's
+  search models). A scan finds them; the Models page marks them ("Web search", "Searches always")
+  and filters on them. A task submitted with `hints: { web: true }` (or delegated with
+  `web: true`) prefers them and has their search turned on; `hints: { web: false }` keeps
+  always-searching models away. A priced search is paid: it needs paid routing, a paid key, and
+  room in `paid.budgets`. `web.native.enabled: false` stops turning search on (always-searching
+  models still search), `web.native.max_searches_per_request` (5) caps searches per request
+  (Anthropic `max_uses`) and sizes the reserved worst case, `web.native.max_results` (5) is the
+  OpenRouter plugin's results per search. Correct a model in an override:
+  `nativeWebSearch: { via: always_on, usdPerSearch: 0.005 }`, or `nativeWebSearch: null`.
+
 Then:
 
 ```bash

@@ -15,6 +15,7 @@ interface ChargeRow {
   reported_cost_usd: number | null;
   served_endpoint_id: string | null;
   usage_basis: string | null;
+  web_search_requests: number | null;
   kind: string;
   execution_id: string;
   participants: number;
@@ -28,7 +29,7 @@ export function taskUsage(db: Db, catalog: { endpoints(): ModelEndpoint[] }, tas
   const rows = db
     .prepare(
       `SELECT c.request_id, c.input_tokens, c.output_tokens, c.tokens_exact, r.status, r.provider_attempts, r.attempts_exact,
-              r.cached_input_tokens, r.reported_cost_usd, r.served_endpoint_id, r.usage_basis, e.kind, e.id AS execution_id,
+              r.cached_input_tokens, r.reported_cost_usd, r.served_endpoint_id, r.usage_basis, r.web_search_requests, e.kind, e.id AS execution_id,
               (SELECT COUNT(*) FROM request_charges c2 WHERE c2.request_id = c.request_id) AS participants
          FROM request_charges c
          JOIN model_requests r ON r.id = c.request_id
@@ -51,6 +52,7 @@ export function taskUsage(db: Db, catalog: { endpoints(): ModelEndpoint[] }, tas
     reportedCostUsd: null,
     estimatedCostUsd: null,
     webRequests: (db.prepare("SELECT COUNT(DISTINCT call_id) AS n FROM web_requests WHERE task_id = ?").get(taskId) as { n: number }).n,
+    nativeWebSearches: 0,
   };
   if (rows.length === 0) return { usage, servedEndpoints: [] };
 
@@ -84,14 +86,17 @@ export function taskUsage(db: Db, catalog: { endpoints(): ModelEndpoint[] }, tas
       uncached += Math.max(0, r.input_tokens - r.cached_input_tokens);
     }
     if (r.reported_cost_usd !== null) reportedCost = (reportedCost ?? 0) + r.reported_cost_usd / r.participants;
+    const searches = r.web_search_requests ?? 0;
+    usage.nativeWebSearches += searches;
     if (r.served_endpoint_id) {
       served.add(r.served_endpoint_id);
       const ep = catalog.endpoints().find((e) => e.id === r.served_endpoint_id);
       const pin = ep?.pricing.inputUsdPerMillion;
       const pout = ep?.pricing.outputUsdPerMillion;
       if (!ep || pin === null || pin === undefined || pout === null || pout === undefined) estCostKnown = false;
-      // A batch share's cached tokens are unknown: it is priced as ordinary input.
-      else estCost += actualUsd(r.input_tokens, r.output_tokens, endpointPrice(ep.pricing), r.participants > 1 ? 0 : (r.cached_input_tokens ?? 0));
+      else if (searches > 0 && (ep.nativeWebSearch?.usdPerSearch ?? null) === null) estCostKnown = false;
+      // A batch share's cached tokens are unknown: it is priced as ordinary input. Native searches are added at the endpoint's search price.
+      else estCost += actualUsd(r.input_tokens, r.output_tokens, { ...endpointPrice(ep.pricing), ...(searches > 0 ? { perSearch: ep.nativeWebSearch!.usdPerSearch } : {}) }, r.participants > 1 ? 0 : (r.cached_input_tokens ?? 0), searches);
     } else if (r.status !== "failed") {
       estCostKnown = false;
     }
