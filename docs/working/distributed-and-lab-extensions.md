@@ -42,13 +42,15 @@ is [reviewed](distributed-and-lab-extensions/reports/hydrated-browser-plan.md): 
 do not prove before-contact denial of every transport. Pipe/capability H1 independently passed26/26 (1.12s) and is merged locally; no accepted network isolation adapter exists on this Windows host, so hydrated
 runtime cannot yet be enabled. No OS services/firewall/Docker activation authorized. Read-only follow-up found a usable Ubuntu
 WSL2 host: root unshare --net true succeeded; Linux Node/Chrome fixture tools remain absent.
-Native Linux isolation helper prerequisite is active without host configuration changes; ordinary-user/runtime acceptance remains open.
+Native Linux helper95907bd is merged after independent38/38 (5.63s), including17 native cases.
+Ordinary-user mount-policy investigation is active; browser/runtime acceptance remains open.
 
-Next R2 request-admission-protocol is implemented and under final review after the accepted
-local lifecycle merge. It carries strict LeaseRef into Gate/batch/classifier, durable request
-reserve/intent/settle receipts and conservative local transport holds. Its worker owns the next
-appended migration exclusively; root owns project purge/exports and combined acceptance.
-Compose engine-contract work owns only new pure port/schema/builder files, no migration.
+R2 request-admission-protocol2b22160 is merged with migration30 after independent38/38 and
+final classifier15/15. It carries strict LeaseRef into Gate/batch/classifier, durable request
+reserve/intent/settle receipts and conservative local transport holds. Root project blockers/
+private purge4/4 and combined project/Lab deletion12/12 pass. Frozen1525960 full acceptance is
+active; named manual test-fixture integration proceeds separately. Pure Compose Engine plans
+are merged; Compose journal worker exclusively owns next appended migration31.
 PostgreSQL, policy/key/session/tool/Git ports and actual two-host acceptance remain open.
 
 The current store is the synchronous better-sqlite3 Database type. Raw prepared statements,
