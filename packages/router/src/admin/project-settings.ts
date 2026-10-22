@@ -1,4 +1,6 @@
 import { existsSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { homedir } from "node:os";
 import path from "node:path";
 import YAML from "yaml";
 import { REPOSITORY_ALIAS_RE, ROLE_NAMES } from "../config/schema.js";
@@ -242,7 +244,18 @@ export function inspectRepositoryPath(sy: Switchyard, input: string): Repository
   const exists = state !== "missing";
   const isDirectory = exists && state !== "file";
   const isGit = isDirectory && existsSync(path.join(resolved, ".git"));
-  const problem = !trimmed ? "enter the repository's folder" : state === "file" ? `${resolved} is a file, not a folder` : null;
+  let problem = !trimmed ? "enter the repository's folder" : state === "file" ? `${resolved} is a file, not a folder` : null;
+  const samePath = (a: string, b: string) => process.platform === "win32" ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b);
+  if (!problem && (samePath(resolved, path.parse(resolved).root) || samePath(resolved, homedir()))) problem = `${resolved} is a drive root or your home folder; choose the project's own folder`;
+  if (!problem && state === "folder") {
+    try {
+      const options = { cwd: resolved, encoding: "utf8" as const, windowsHide: true, timeout: 3000, stdio: ["ignore", "pipe", "pipe"] as ["ignore", "pipe", "pipe"] };
+      const root = execFileSync("git", ["rev-parse", "--show-toplevel"], options).trim();
+      if (root && !samePath(root, resolved) && execFileSync("git", ["ls-files", "-z", "--", "."], options).length) problem = `${resolved} holds files tracked by the enclosing repository ${root}; use that repository's root or a folder outside it`;
+    } catch {
+      // Save performs the authoritative Git/permission check; inspection never mutates a folder.
+    }
+  }
   return { input, resolved, exists, isDirectory, isGit, state, hint: problem ? null : preparationHint(state), problem };
 }
 
