@@ -5,7 +5,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import YAML from "yaml";
 import type { Switchyard } from "../src/core/service.js";
-import { archiveProject, deleteProject, previewProjectDeletion } from "../src/admin/insights.js";
+import { archiveProject, deleteProject, previewProjectDeletion, requestDetail } from "../src/admin/insights.js";
 import { backfillProjects } from "../src/projects/backfill.js";
 import { purgeProjectRows } from "../src/projects/deletion.js";
 import { ensurePanel, panelBuildStale, panelStopFile, turnPanelOff } from "../src/operations/panel.js";
@@ -56,6 +56,25 @@ async function runIn(project: string, goal: string): Promise<string> {
 const count = (sql: string, ...args: unknown[]) => sy!.db.prepare(sql).pluck().get(...args) as number;
 
 describe("deleting a project", () => {
+  it("purges private owned and mixed captures before anonymizing accounting, without removing another project's history", async () => {
+    env = makeProjects({ alpha: repoOf("alpha"), beta: repoOf("beta") });
+    sy = open(env, client(), { worker: true });
+    const alpha = await runIn("alpha", "Alpha private input"), beta = await runIn("beta", "Beta private input");
+    const requestFor = (task: string) => sy!.db.prepare("SELECT request_id FROM request_charges WHERE task_id=?").pluck().get(task) as string;
+    const alphaRequest = requestFor(alpha), betaRequest = requestFor(beta);
+    expect(requestDetail(sy, betaRequest, "beta")!.capture?.availability).toBe("complete");
+    expect(requestDetail(sy, betaRequest, "alpha")).toBeNull();
+    // Historical mixed payload ownership persists even after current charge rows change.
+    const scope = JSON.stringify(["alpha", "beta"]);
+    sy.db.prepare("UPDATE request_captures SET scope_json=?,bytes=bytes+? WHERE request_id=?").run(scope, Buffer.byteLength(scope)-Buffer.byteLength(JSON.stringify(["alpha"])), alphaRequest);
+    expect((await previewProjectDeletion(sy, "beta")).removes.join(" ")).toContain("2 private model request captures");
+    await deleteProject(sy, "beta", { confirm: "beta" });
+    expect(count("SELECT COUNT(*) FROM request_captures WHERE request_id IN (?,?)", alphaRequest, betaRequest)).toBe(0);
+    expect(count("SELECT COUNT(*) FROM model_requests WHERE id IN (?,?)", alphaRequest, betaRequest)).toBe(2);
+    expect(count("SELECT COUNT(*) FROM tasks WHERE id=?", alpha)).toBe(1);
+    expect(sy.gate.captures.read(betaRequest, { project: null })?.availability).toBe("unavailable");
+    expect(sy.db.pragma("foreign_key_check")).toEqual([]);
+  });
   it("keeps task Lab recovery records until cleanup is proven, then purges dependent rows", async () => {
     env = makeProjects({ alpha: repoOf("alpha"), beta: repoOf("beta") });
     sy = open(env, client(), { worker: true });

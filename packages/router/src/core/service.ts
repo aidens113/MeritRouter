@@ -7,7 +7,7 @@ import { statSync } from "node:fs";
 import { loadConfig, parseConfig, readConfigFile, type ResolvedConfig } from "../config/load.js";
 import type { ProfileName, TierName } from "../config/schema.js";
 import { immediate, openDatabase, type Db } from "../storage/db.js";
-import { TaskStore, type StoredTask, type SubmitOutcome } from "../storage/tasks.js";
+import { TaskStore, canonicalJson, type StoredTask, type SubmitOutcome } from "../storage/tasks.js";
 import { ArtifactStore } from "../storage/artifacts.js";
 import { usageSummary, type UsageSummary } from "../storage/usage.js";
 import { Admission, effectiveBudget } from "../admission/admission.js";
@@ -45,6 +45,9 @@ import { retainedLabConfigErrors } from "../projects/lab-config-guard.js";
 import { LabManager } from "../labs/lab.js";
 import { LabNameSchema } from "../labs/recipe.js";
 import { taskLabSelectionIssues } from "./task-lab-validation.js";
+import { taskLabAuthority, taskLabEvidenceProblem } from "../runners/coding/task-lab.js";
+import { SwitchyardError } from "./errors.js";
+import { ProjectConfigSchema } from "../projects/schema.js";
 import { prepareProjectRepositories, type RepositoryPreparation } from "../projects/repository-setup.js";
 import type { ProjectContext } from "../projects/context.js";
 import { Scheduler } from "./scheduler.js";
@@ -248,6 +251,10 @@ export class Switchyard {
       project: (task) => this.projectDeps(task.row.project_id),
       web: this.web,
       labs: this.labs,
+      ensureLabsSupervisor: async () => {
+        const { ensureLabSupervisor } = await import("../operations/lab-supervisor.js");
+        await ensureLabSupervisor(this);
+      },
     });
     this.qualifier = new Qualifier(this);
     this.auditor = new Auditor(
@@ -714,7 +721,40 @@ export class Switchyard {
    */
   acceptTask(id: string, input: AcceptanceDecisionInput, project?: string): AcceptanceDecisionOutcome {
     this.assertInProject(id, project);
-    const out = recordAcceptanceDecision({ cfg: this.contextOfTask(id), tasks: this.tasks, contracts: this.contracts, now: this.now }, id, "accept", input);
+    const task = this.tasks.get(id);
+    const evidence = task?.result?.taskLab;
+    const authority = task?.spec.constraints.labChecks?.length ? taskLabAuthority(this.labs, id, evidence) : null;
+    if (task?.spec.constraints.labChecks?.length) {
+      // A human/reviewer decision cannot waive exact, current runtime-check evidence.
+      // Bounded Git inspection happens before the acceptance writer's DB transaction.
+      const problem = taskLabEvidenceProblem(task.spec, evidence, authority);
+      if (problem) throw new SwitchyardError("acceptance_refused", problem);
+    }
+    const beforeAccept = (current: StoredTask) => {
+      if (!task?.spec.constraints.labChecks?.length) return;
+      if (!authority || current.row.run_count !== task.row.run_count || current.row.project_id !== task.row.project_id
+        || canonicalJson(current.spec) !== canonicalJson(task.spec) || canonicalJson(current.result) !== canonicalJson(task.result)
+        || canonicalJson(this.labs.taskAttempts.store.get(authority.attempt.id)) !== canonicalJson(authority.attempt)
+        || canonicalJson(this.labs.taskAttempts.store.lab(authority.attempt.id)) !== canonicalJson(authority.request)
+        || canonicalJson(this.labs.store.byId(authority.lab.id)) !== canonicalJson(authority.lab)) {
+        throw new SwitchyardError("acceptance_refused", "Task Lab authority changed during acceptance; inspect and retry");
+      }
+      const fresh = new ProjectRegistry(loadConfig(this.cfg.configPath)).get(current.row.project_id);
+      if (!fresh || fresh.storageDir !== this.cfg.storageDir || taskLabSelectionIssues(fresh, current.spec).length
+        || canonicalJson(Object.keys(fresh.repositoryPaths).filter(alias => current.spec.repositoryAliases.includes(alias))) !== canonicalJson(authority.attempt.repositories.map(repo => repo.alias))
+        || authority.attempt.repositories.some(repo => fresh.repositoryPaths[repo.alias]?.path !== repo.sourcePath)
+        || canonicalJson(ProjectConfigSchema.parse(fresh.projects[current.row.project_id]).lab) !== canonicalJson(authority.request.recipe)) {
+        throw new SwitchyardError("acceptance_refused", "Task Lab authorization or recipe changed during acceptance");
+      }
+      const lab = authority.lab.id;
+      if (this.db.prepare("SELECT 1 FROM task_lab_operations WHERE attempt_id=? AND state IN ('pending','running') LIMIT 1").get(authority.attempt.id)
+        || this.db.prepare("SELECT 1 FROM lab_ports WHERE lab_id=? LIMIT 1").get(lab)
+        || this.db.prepare("SELECT 1 FROM lab_attempt_processes WHERE lab_id=? AND state!='stopped' LIMIT 1").get(lab)
+        || this.db.prepare("SELECT 1 FROM lab_services WHERE lab_id=? AND (state!='stopped' OR pid IS NOT NULL OR token IS NOT NULL) LIMIT 1").get(lab)) {
+        throw new SwitchyardError("acceptance_refused", "Task Lab resources changed during acceptance");
+      }
+    };
+    const out = recordAcceptanceDecision({ cfg: this.contextOfTask(id), tasks: this.tasks, contracts: this.contracts, now: this.now, beforeAccept }, id, "accept", input);
     this.events.emit("settled", id);
     return out;
   }

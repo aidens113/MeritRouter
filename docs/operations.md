@@ -592,6 +592,19 @@ this absence. Mixed-project or unprovable participant scope withholds the transc
 Reads and displayed text are capped and shortened data is marked; arbitrary artifact bodies or
 repository files are not opened to populate the request page.
 
+Future admitted model requests also retain a private normalized capture keyed by the physical
+request ID, including tool definitions and observed response/tool calls. Each credential retry
+or fallback gets its own capture. It records selected-endpoint inputs, not raw HTTP headers,
+credentials or exact provider wire serialization. Image locators are omitted; private user/model
+text can itself contain secrets. Capture failures never authorize another provider call or
+change accounting. Cancellation and task authority are rechecked after capture writes.
+Internal capture defaults are seven days, 1MiB per record (512KiB input,256KiB output),128MiB per
+project,512MiB globally and10,000 rows; bounded eviction can remove payloads earlier. Missing,
+partial, expired and unavailable captures are identified. These limits currently have no panel
+editor. Project deletion purges private owned/shared payloads before anonymizing accounting;
+retained model-request/spend rows do not retain those payloads. Historical journal evidence is
+displayed separately and is not backfilled with invented inputs.
+
 - The power button at the top of the panel, beside the project switcher, turns the panel off
   after a confirmation: `POST /api/panel/stop` writes `<storage>/panel.stopped`, answers, and the
   panel process exits; the page then shows "Panel turned off". Agents and workers keep running.
@@ -740,6 +753,30 @@ the request. These checks are not an OS sandbox for human-authored commands. Lin
 support exists, but this acceptance used Windows fixtures. Browser/ephemeral/Compose extensions
 and multi-host PostgreSQL remain separate work; they are not implied by the Labs UI.
 
+### Task-owned runtime checks
+
+Human configuration can enable command checks for individual coding tasks with
+`projects.<slug>.labs.ephemeral: { enabled: true, checks: [health] }`, where `health` is already
+declared in that project's Lab recipe. Tasks opt in with `constraints.labChecks: ["health"]`;
+supervisor delegation tools use `lab_checks`. Only isolated coding profiles qualify, and the
+selection cannot widen repository scope or choose arbitrary commands. Recipe edits preserve
+this policy. Browser task checks remain unavailable pending durable browser recovery.
+
+SwitchYard pins all task repository heads before dispatch, including read-only context, and
+starts the dedicated Labs supervisor before waiting for runtime checks. The coding runner
+queues work rather than executing the service queue itself. The result's separate `taskLab`
+evidence binds the exact attempt/commit/tree/patch, declared recipe and checked heads. Cleanup
+must stop owned processes and release ports before a pass; ambiguous ownership retains proof
+and refuses acceptance. Human acceptance cannot waive this required check or revoked policy.
+
+Integration uses that exact winning source even if the latest-workspace pointer differs.
+Conflicts preserve the checked source and redelegate with the required checks; they do not
+silently rebase checked commits. Dependent opted-in tasks keep their submitted base pins, so
+tasks requiring newly integrated upstream code must be submitted or redelegated on that base.
+Stopped attempts retain branch/artifact evidence under retention policy; unresolved cleanup
+blocks project deletion. This is local SQLite/Git/process verification, not multi-host fencing
+or an operating-system sandbox.
+
 ### Declared static browser checks
 
 A recipe check can use `kind: browser`, `mode: static`, a declared HTTP `service`, an absolute
@@ -753,8 +790,8 @@ Evidence records every repository head, assertion outcomes and bounded private s
 metadata. Reuse requires all recorded heads and clean repositories to match. Trusted callers
 can retrieve a screenshot through the scoped manager API with size/hash verification; images
 are not automatically sent to models and pixel redaction is not claimed. Browser/profile cleanup
-runs on timeout/cancel. These controls are not an OS network sandbox: JavaScript/hydrated checks,
-ephemeral task Labs and Compose remain separate unfinished work.
+runs on timeout/cancel. These controls are not an OS network sandbox. Hydrated checks, task-owned
+browser recovery and Compose runtime remain separate unfinished work.
 
 ### Awaited request accounting
 

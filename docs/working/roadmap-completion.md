@@ -10,6 +10,14 @@ Related: [handoff](handoff.md), [labs](labs.md), [budget-control](budget-control
 
 ## Current State
 
+Local integrated capture/caller checkpoints now pass router typecheck/build, panel typecheck
+and49 focused tests (75.81s), including human acceptance, forged proof refusal and cleanup
+queued between inspection/write. Dedicated service startup passed an actual separate Labs
+supervisor test (14.22s); fixture supervisor stopped. Project purge integration passes7 tests
+(10.49s), including owned/mixed private capture removal while billing and other tasks remain.
+Normalized capture panel production acceptance and scoped immediate task-Lab prune are pending.
+Request-only release candidate is being rebuilt/revalidated separately from these larger units.
+
 Request-evidence UI3da30cf is merged locally: supervisor independently passed39 focused tests
 (10.34s) and production browser harness on demo4497, eight desktop/phone light/dark screenshots,
 actual navigation/scoped404/related links, zero model calls/browser exceptions; captures viewed.

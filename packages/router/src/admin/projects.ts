@@ -355,6 +355,7 @@ export async function previewProjectDeletion(sy: Switchyard, slug: string): Prom
       `Its settings: projects.${slug} in the config (the previous file is kept as a .bak).`,
       `${plural(counts.tasks, "task")} (${counts.jobs} of them ${counts.jobs === 1 ? "a job" : "jobs"}) with their results, plans, questions, and team channels.`,
       `${plural(counts.sessions, "session")} with ${counts.sessions === 1 ? "its log" : "their logs"}, and ${plural(counts.artifacts, "artifact")}.`,
+      `${plural(fp.requestCaptures.captures, "private model request capture")} (${fp.requestCaptures.bytes.toLocaleString()} bytes), including shared payloads containing this project's data. Accounting history stays.`,
       `${plural(counts.worktrees, "worktree")} SwitchYard made for its tasks (their branches stay).`,
       `Its brain folder projects/${slug}/ (${plural(counts.brainEntries, "file")}), removed in one brain commit.`,
     ],

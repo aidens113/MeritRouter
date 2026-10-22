@@ -1,6 +1,7 @@
 import { scopedSessionTimeline } from "./session-project-scope.js";
 import { z } from "zod";
 import { requestEvidence, type RequestEvidence } from "./request-evidence.js";
+import { requestCapture } from "./request-capture.js";
 import type { WebCitation } from "../gateway/types.js";
 import { parseCitations } from "./request-citations.js";
 import { existsSync } from "node:fs";
@@ -308,6 +309,7 @@ export async function agentDetail(sy: Switchyard, project: string, rawId: string
 // ---------- requests ----------
 
 export interface RequestDetail extends EntityRequest {
+  capture: ReturnType<typeof requestCapture>;
   evidence: RequestEvidence | null;
   webCitations: WebCitation[];
   attempts: number | null;
@@ -349,6 +351,7 @@ export function requestDetail(sy: Switchyard, id: string, project?: string): Req
     ...base,
     taskIds: charges.map(c => c.taskId),
     evidence,
+    capture: requestCapture(sy, id, { project: String(r.project_id) || null }),
     webCitations: evidence?.payloadScopeExclusive ? parseCitations(r.web_citations_json) : [],
     attempts: (r.provider_attempts as number | null) ?? null,
     attemptsExact: r.attempts_exact === null || r.attempts_exact === undefined ? null : Number(r.attempts_exact) === 1,

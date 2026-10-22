@@ -15,6 +15,8 @@ export { ReserveRequestDTOSchema, ReservationDTOSchema, RequestOutcomeDTOSchema,
 export { QueueClaimSchema, QueueCompanionsSchema, TaskAttemptSchema, StoredTaskDTOSchema, QueueTasksSchema, type TaskQueue, type QueueClaim, type QueueCompanions, type TaskAttempt, type StoredTaskDTO } from "./storage/task-queue.js";
 export { ensureLabSupervisor, LabSupervisorLease, type LabSupervisorState } from "./operations/lab-supervisor.js";
 export { type LabRunContext } from "./labs/binding.js";
+export { RequestCaptureViewSchema, type RequestCaptureView } from "./gateway/request-capture.js";
+export { TaskLabEvidenceSchema, type TaskLabEvidence } from "./labs/task-attempt-schema.js";
 export { LabOperationInputSchema, type LabOperationInput, type LabOperation } from "./labs/control.js";
 export { LabHttpInputSchema, type LabHttpInput, type LabHttpResult } from "./labs/http.js";
 export { LabPromotionInputSchema, LabPromotionResultSchema, type LabPromotionInput, type LabPromotionResult } from "./labs/promotion.js";

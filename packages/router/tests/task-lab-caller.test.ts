@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFileSync, writeFileSync, statSync, utimesSync } from 'node:fs';
@@ -15,6 +15,7 @@ import { prepareWorkspace } from '../src/runners/coding/finish.js';
 import { createCodingRunner } from '../src/runners/coding/index.js';
 import { taskLabAuthority, taskLabEvidenceProblem } from '../src/runners/coding/task-lab.js';
 import { WorkerTaskSchema } from '../src/core/task.js';
+import { LabSupervisorLease } from '../src/operations/lab-supervisor.js';
 import { baseConfig, makeEnv, open, reply, goodOutput, servedFor, ScriptedClient, type Env } from './helpers.js';
 let env: Env | undefined, sy: Switchyard | undefined;
 let timer: ReturnType<typeof setInterval> | undefined, draining: Promise<void> | undefined;
@@ -26,6 +27,13 @@ afterEach(async () => {
   timer = undefined;
   await draining;
   if (sy) {
+    const lease = new LabSupervisorLease(sy.db, sy.cfg.configPath);
+    if (lease.read()) {
+      lease.requestStop();
+      const deadline = Date.now() + 45000;
+      while (lease.read() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
+      expect(lease.read(), 'owned dedicated Labs supervisor must stop before fixture removal').toBeNull();
+    }
     for (const request of sy.labs.taskAttempts.store.all()) {
       if (request.phase !== 'pruned')
         await sy.labs.taskAttempts.runner.stop(sy.labs.taskAttempts.store.get(request.attemptId));
@@ -48,7 +56,7 @@ const call = (name: string, args: unknown) => [{
       name, arguments: JSON.stringify(args)
     }
   }];
-function setup(mode: 'native' | 'command') {
+function setup(mode: 'native' | 'command', dedicated = false) {
   env = makeEnv({
     config: baseConfig({
       repositories: {}, brain: {
@@ -98,7 +106,7 @@ function setup(mode: 'native' | 'command') {
   sy = open(env, client, {
     worker: true, coding: { run: ctx => {
         captured = ctx;
-        return coding.run({
+        return coding.run(dedicated ? ctx : {
           ...ctx, ensureLabsSupervisor: async () => {
             ensures++;
           }
@@ -106,7 +114,7 @@ function setup(mode: 'native' | 'command') {
       } }
   });
   // Only this explicit fixture supervisor drains the durable queue. Runner startup merely signals readiness.
-  timer = setInterval(() => {
+  if (!dedicated) timer = setInterval(() => {
     if (!draining)
       draining = sy!.labs.processControls().catch(error => {
         supervisorError = error;
@@ -131,6 +139,15 @@ async function run(checks = ['health'], dependsOn: string[] = []) {
     id, result, spec: sy!.tasks.get(id)!.spec
   };
 }
+it('starts the dedicated service supervisor through the public coding service without runner queue draining', async () => {
+  setup('native', true);
+  const { id, result } = await run();
+  expect(timer).toBeUndefined();
+  expect(result.taskLab?.status, JSON.stringify(result.findings)).toBe('passed');
+  expect(result.taskLab?.cleanup).toBe('complete');
+  expect(new LabSupervisorLease(sy!.db, sy!.cfg.configPath).read()).toMatchObject({ ready: true, stopRequested: false });
+  expect(sy!.acceptTask(id, { by: { kind: 'human', id: 'fixture' }, reason: 'Dedicated supervisor result verified' }).acceptanceStatus).toBe('met');
+}, 120000);
 it.each(['native', 'command'] as const)('runs %s coding through immutable queued Lab checks and fresh durable acceptance', async (mode) => {
   const fixture = setup(mode), before = execFileSync('git', ['rev-parse', 'HEAD'], {
     cwd: env!.repo, encoding: 'utf8'
@@ -158,6 +175,25 @@ it.each(['native', 'command'] as const)('runs %s coding through immutable queued
     ...result.taskLab!, patchDigest: 'a'.repeat(64)
   }, authority)).not.toBeNull();
   expect(taskLabEvidenceProblem(spec, result.taskLab, null)).not.toBeNull();
+  // The public human acceptance path must revalidate evidence and fence its write.
+  expect(sy!.acceptTask(id, { by: { kind: 'human', id: 'fixture' }, reason: 'Independent fixture review' }).acceptanceStatus).toBe('met');
+  const stored = sy!.tasks.get(id)!;
+  sy!.db.prepare('UPDATE tasks SET result_json=? WHERE id=?').run(JSON.stringify({ ...stored.result!, taskLab: { ...stored.result!.taskLab!, patchDigest: 'f'.repeat(64) } }), id);
+  expect(() => sy!.acceptTask(id, { by: { kind: 'human', id: 'fixture' }, reason: 'Cannot waive forged proof' })).toThrow(/Lab/);
+  sy!.db.prepare('UPDATE tasks SET result_json=? WHERE id=?').run(JSON.stringify(stored.result), id);
+  const updateResult = sy!.tasks.updateResult.bind(sy!.tasks);
+  const raced = vi.spyOn(sy!.tasks, 'updateResult').mockImplementationOnce((taskId, update) => {
+    const now = Date.now();
+    sy!.db.prepare("INSERT INTO task_lab_operations(id,attempt_id,kind,state,created_at,updated_at) VALUES('accept-race',?,'cleanup','pending',?,?)").run(authority!.attempt.id, now, now);
+    return updateResult(taskId, update);
+  });
+  try {
+    expect(() => sy!.acceptTask(id, { by: { kind: 'human', id: 'fixture' }, reason: 'Must fence cleanup queued after inspection' })).toThrow(/Lab/);
+    expect(sy!.tasks.get(id)!.result).toEqual(stored.result);
+  } finally {
+    raced.mockRestore();
+    sy!.db.prepare("DELETE FROM task_lab_operations WHERE id='accept-race'").run();
+  }
   expect(taskLabEvidenceProblem(WorkerTaskSchema.parse({
     ...spec, constraints: {
       ...spec.constraints, labChecks: undefined

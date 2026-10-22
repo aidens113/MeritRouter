@@ -3,6 +3,8 @@ import path from "node:path";
 import { SwitchyardError } from "../core/errors.js";
 import { immediate, type Db } from "../storage/db.js";
 import { git } from "../workspaces/git.js";
+import { RequestCaptures } from "../storage/request-captures.js";
+import { z } from "zod";
 
 // Deleting a project (the mechanics; `admin/projects.ts` checks, confirms, and edits the config):
 // what a project leaves in the store and on disk, and removing it. Its per-project rows, session
@@ -33,6 +35,8 @@ export interface ProjectFootprint {
   /** Kept: model requests recorded for the project, and those with paid spend. */
   requests: number;
   paidRequests: number;
+  /** Private payloads are removed, including mixed-project payloads containing this project. */
+  requestCaptures: { captures: number; bytes: number };
 }
 
 const ids = (taskIds: string[]) => JSON.stringify(taskIds);
@@ -77,6 +81,7 @@ export async function projectFootprint(db: Db, storageDir: string, slug: string,
     worktrees: await projectWorktrees(storageDir, taskIds, [...repositories, ...sources]),
     requests,
     paidRequests,
+    requestCaptures: z.object({ captures: z.number().int().nonnegative(), bytes: z.number().int().nonnegative() }).parse(db.prepare("SELECT COUNT(*) AS captures,COALESCE(SUM(bytes),0) AS bytes FROM request_captures WHERE project_id=@slug OR EXISTS(SELECT 1 FROM json_each(scope_json) WHERE value=@slug)").get({ slug })),
   };
 }
 
@@ -126,6 +131,10 @@ export function purgeProjectRows(db: Db, slug: string, activeStates: readonly st
     if (active) throw new SwitchyardError("usage", `project ${slug} has ${active} running or queued task(s); cancel them or let them finish before deleting it`);
     const p = { slug, ids: ids(db.prepare("SELECT id FROM tasks WHERE project_id = ?").pluck().all(slug) as string[]) };
     const run = (sql: string) => db.prepare(sql).run(p).changes;
+    if (db.prepare(`SELECT 1 FROM task_workspace_attempts WHERE task_id IN ${IN_TASKS} AND project_id!=@slug LIMIT 1`).get(p)
+      || db.prepare(`SELECT 1 FROM lab_teams t JOIN labs l ON l.id=t.lab_id WHERE t.root_job_id IN ${IN_TASKS} AND l.project_id!=@slug LIMIT 1`).get(p)) {
+      throw new SwitchyardError("usage", "Project cleanup cannot prove exclusive Lab ownership; recovery evidence was retained");
+    }
     // Private runtime ownership records may only go after their resources were proved removed.
     // In particular, removing a task must not orphan a recoverable task-Lab process intent.
     if (db.prepare("SELECT 1 FROM labs WHERE project_id=? AND state!='destroyed' LIMIT 1").get(slug)
@@ -135,13 +144,16 @@ export function purgeProjectRows(db: Db, slug: string, activeStates: readonly st
       || db.prepare("SELECT 1 FROM lab_operations WHERE project_id=? AND state IN ('pending','running') LIMIT 1").get(slug)) {
       throw new SwitchyardError("usage", `project ${slug} still has Lab resources or pending cleanup; finish owned Lab cleanup before deleting it`);
     }
+    // Payloads include private participant scope; purge before charges/tasks are removed or
+    // accounting rows are anonymized, including any historical mixed-project capture.
+    new RequestCaptures(db).purgeProject(slug);
     const attempts = `(SELECT id FROM task_workspace_attempts WHERE task_id IN ${IN_TASKS})`;
     const labs = "(SELECT id FROM labs WHERE project_id=@slug)";
     run(`DELETE FROM lab_attempt_processes WHERE attempt_id IN ${attempts}`);
     run(`DELETE FROM task_lab_operations WHERE attempt_id IN ${attempts}`);
     run(`DELETE FROM lab_task_attempts WHERE attempt_id IN ${attempts}`);
     run(`DELETE FROM task_workspace_attempts WHERE task_id IN ${IN_TASKS}`);
-    run(`DELETE FROM lab_teams WHERE lab_id IN ${labs} OR root_job_id IN ${IN_TASKS}`);
+    run(`DELETE FROM lab_teams WHERE lab_id IN ${labs}`);
     run(`DELETE FROM lab_operations WHERE lab_id IN ${labs} OR project_id=@slug`);
     for (const table of ["lab_ports", "lab_services", "lab_checks", "lab_events", "lab_promotions"]) run(`DELETE FROM ${table} WHERE lab_id IN ${labs}`);
     run("DELETE FROM labs WHERE project_id=@slug");
