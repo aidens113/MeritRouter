@@ -284,7 +284,8 @@ describe("session insights", () => {
 
     const detail = sessionDetail(s, parent.id)!;
     expect(detail.session.id).toBe(parent.id);
-    expect(detail.children.map((c) => c.id)).toEqual([a.id, b.id]);
+    // A taskless legacy parent has no authoritative project; do not infer child scope.
+    expect(detail.children).toEqual([]);
     expect(detail.taskSessions).toEqual([]);
 
     const bd = sessionDetail(s, b.id, { afterSeq: 1 })!;

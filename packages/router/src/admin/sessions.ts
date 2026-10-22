@@ -1,3 +1,4 @@
+import { scopedSessionTimeline, SESSION_SCOPE_UNAVAILABLE } from "./session-project-scope.js";
 import type { Switchyard } from "../core/service.js";
 import type { TaskState } from "../core/task.js";
 import type { SessionEventsPage, SessionListFilter, SessionRecord } from "../sessions/store.js";
@@ -19,6 +20,7 @@ export interface SessionView extends SessionRecord {
 
 export interface SessionDetail extends Omit<SessionEventsPage, "sessionId"> {
   session: SessionView;
+  timelineUnavailable: string | null;
   /** Sessions this session spawned (delegated work), oldest first. */
   children: SessionView[];
   /** Every session of the same task (retries and escalations), oldest first. */
@@ -63,17 +65,29 @@ export function sessionsView(sy: Switchyard, filter: SessionViewFilter = {}): Se
 }
 
 /** One session with a page of its timeline (events after `afterSeq`), its children, and its task's other sessions. */
-export function sessionDetail(sy: Switchyard, id: string, opts: { afterSeq?: number; limit?: number } = {}): SessionDetail | null {
-  const page = sy.sessions.events(id, opts);
+export function sessionDetail(sy: Switchyard, id: string, opts: { afterSeq?: number; limit?: number; project?: string } = {}): SessionDetail | null {
+  const owner = sy.db.prepare("SELECT project_id FROM sessions WHERE id=?").get(id) as {project_id:string}|undefined;
+  if (!owner || (opts.project !== undefined && owner.project_id !== opts.project)) return null;
+  const project = owner.project_id;
   const rec = sy.sessions.get(id);
-  if (!page || !rec) return null;
-  const { sessionId: _sessionId, ...rest } = page;
-  const children = sy.sessions.list({ parentSessionId: id, limit: 1000 }).reverse();
+  if (!rec) return null;
+  const events = scopedSessionTimeline(sy,id,project);
+  const sameProject = (r: SessionRecord) => (sy.db.prepare("SELECT project_id FROM sessions WHERE id=?").get(r.id) as {project_id:string}|undefined)?.project_id === project && (!r.taskId || (sy.db.prepare("SELECT project_id FROM tasks WHERE id=?").get(r.taskId) as {project_id:string}|undefined)?.project_id === project);
+  const taskInProject = (id: string | null) => id !== null && (sy.db.prepare("SELECT project_id FROM tasks WHERE id=?").get(id) as {project_id:string}|undefined)?.project_id === project;
+  const sessionInProject = (id: string | null) => id !== null && (sy.db.prepare("SELECT project_id FROM sessions WHERE id=?").get(id) as {project_id:string}|undefined)?.project_id === project;
+  const safeRecord = (r: SessionRecord, payload = false): SessionRecord => ({...r,
+    taskId:taskInProject(r.taskId) ? r.taskId : null,
+    parentSessionId:sessionInProject(r.parentSessionId) ? r.parentSessionId : null,
+    previousSessionId:sessionInProject(r.previousSessionId) ? r.previousSessionId : null,
+    jobId:taskInProject(r.jobId) ? r.jobId : null, logPath:"", workspace:payload ? r.workspace : null,
+    stopReason:payload ? r.stopReason : null, agentLabel:payload ? r.agentLabel : r.role});
+  const selected = events ? events.filter(e=>e.seq > (opts.afterSeq ?? 0)).slice(0,Math.max(1,Math.min(10_000,opts.limit ?? 1000))) : [];
   return {
-    ...rest,
-    session: sessionViews(sy, [rec])[0]!,
-    children: sessionViews(sy, children),
-    taskSessions: rec.taskId ? sessionViews(sy, sy.sessions.forTask(rec.taskId)) : [],
+    events:selected, corrupt:[], hasMore:events ? selected.length < events.filter(e=>e.seq > (opts.afterSeq ?? 0)).length : false, lastSeq:rec.lastSeq,
+    timelineUnavailable:events ? null : SESSION_SCOPE_UNAVAILABLE,
+    session:sessionViews(sy,[safeRecord(rec,events !== null)])[0]!,
+    children:sessionViews(sy,sy.sessions.list({parentSessionId:id,limit:1000}).reverse().filter(sameProject).map(r=>safeRecord(r))),
+    taskSessions:rec.taskId ? sessionViews(sy,sy.sessions.forTask(rec.taskId).filter(sameProject).map(r=>safeRecord(r))) : [],
   };
 }
 

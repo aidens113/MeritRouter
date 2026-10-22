@@ -1,3 +1,4 @@
+import { scopedSessionTimeline } from "./session-project-scope.js";
 import { z } from "zod";
 import { requestEvidence, type RequestEvidence } from "./request-evidence.js";
 import type { WebCitation } from "../gateway/types.js";
@@ -374,8 +375,19 @@ export function requestDetail(sy: Switchyard, id: string, project?: string): Req
 export function sessionRequests(sy: Switchyard, sessionId: string): EntityRequest[] {
   const s = sy.sessions.get(sessionId);
   if (!s) return [];
-  const ids = sessionRequestIds(sy, s);
-  return requestRows(sy, ids, new Map(ids.map((i) => [i, sessionId])));
+  const owner = sy.db.prepare("SELECT project_id FROM sessions WHERE id=?").get(sessionId) as {project_id:string}|undefined;
+  const timeline = owner ? scopedSessionTimeline(sy,sessionId,owner.project_id) : null;
+  if (!timeline) return [];
+  const ids = new Set(timeline.flatMap(e=>e.type === "model_response" ? [e.data.requestId] : []));
+  const executions = [...new Set(timeline.flatMap(e=>e.type === "model_request" || e.type === "model_error" ? [e.data.executionId] : []))];
+  if (executions.length && s.taskId) {
+    const failed = sy.db.prepare(`SELECT DISTINCT r.id FROM model_requests r JOIN request_charges c ON c.request_id=r.id
+      WHERE c.task_id=? AND r.project_id=? AND r.status!='succeeded' AND r.reserved_at>=? AND r.reserved_at<=?
+      AND r.execution_id IN (${executions.map(()=>"?").join(",")}) LIMIT 1000`).all(s.taskId,owner!.project_id,s.createdAt,s.endedAt ?? Date.now(),...executions) as Array<{id:string}>;
+    for (const row of failed) ids.add(row.id);
+  }
+  const list = [...ids];
+  return requestRows(sy, list, new Map(list.map((i) => [i, sessionId])));
 }
 
 // ---------- commits and repositories ----------

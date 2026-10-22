@@ -1,0 +1,41 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { appendFileSync } from "node:fs";
+import { sessionDetail } from "../src/admin/sessions.js";
+import { sessionRequests } from "../src/admin/entities.js";
+import { baseConfig, makeEnv, open, reply, ScriptedClient, summarizeTask, type Env } from "./helpers.js";
+import type { Switchyard } from "../src/core/service.js";
+let env: Env | undefined, sy: Switchyard | undefined;
+afterEach(async()=>{await sy?.close();sy=undefined;env?.cleanup();env=undefined;vi.restoreAllMocks();});
+async function fixture(mixed=false, failed=false){
+ env=makeEnv({config:baseConfig({ repositories: {}, brain: { project: "alpha", path: "brain" }, projects: { alpha: { repositories: { core: { path: "repo" } } }, beta: { repositories: { core: { path: "repo" } } } } }) });
+ sy=open(env,new ScriptedClient(()=>reply("{}")));
+ const [a]=await sy.submitTasks([summarizeTask({idempotencyKey:"a"})],{project:"alpha"});
+ const [b]=await sy.submitTasks([summarizeTask({idempotencyKey:"b"})],{project:mixed?"beta":"alpha"});
+ sy.db.prepare("INSERT INTO executions(id,kind,profile,status,created_at) VALUES ('exec-scope','batch','summarize','completed',1)").run();
+ for(const id of [a!.taskId,b!.taskId])sy.db.prepare("INSERT INTO execution_members(execution_id,task_id,item_id) VALUES ('exec-scope',?,?)").run(id,id);
+ sy.db.prepare("INSERT INTO model_requests(id,execution_id,purpose,gateway_model,status,reserved_at,est_input_tokens,reserved_output_tokens,project_id) VALUES ('req-scope','exec-scope','classification','fake/model',?,1,10,10,'alpha')").run(failed?'failed':'succeeded');
+ for(const id of [a!.taskId,b!.taskId])sy.db.prepare("INSERT INTO request_charges(request_id,task_id,input_tokens,output_tokens) VALUES ('req-scope',?,1,1)").run(id);
+ const rec=sy.sessions.create({taskId:a!.taskId,role:"classifier",agentLabel:"classifier:safe"});
+ rec.note("shared classification request",{executionId:"exec-scope",members:[a!.taskId,b!.taskId].map(taskId=>({taskId,itemId:taskId}))});
+ rec.syncMessages([{role:"user",content:mixed?'FOREIGN SECRET GOAL':'same project input'}]);
+ rec.modelRequest({executionId:'exec-scope',purpose:'classification',chat:{messages:[],max_tokens:100}});
+ if(failed)rec.append('model_error',{executionId:'exec-scope',message:'FOREIGN ERROR',code:null,status:null,attempts:[]});
+ else rec.append('model_response',{requestId:'req-scope',endpointId:'fake/model',content:'reply',toolCalls:[],finishReason:'stop',usage:{inputTokens:1,outputTokens:1,cachedInputTokens:null,reasoningTokens:null,reportedCostUsd:null,basis:'provider_reported'},servedModel:null,servedProvider:null,attempts:[],estimatedInputTokens:1});
+ rec.end('completed','fixture');
+ return {s:sy,rec,a:a!.taskId,b:b!.taskId};
+}
+describe('historical session project scope',()=>{
+ it('keeps same-project shared classification and page navigation usable',async()=>{const f=await fixture();const d=sessionDetail(f.s,f.rec.id,{limit:2,project:'alpha'})!;expect(d.timelineUnavailable).toBeNull();expect(d.events).toHaveLength(2);expect(d.hasMore).toBe(true);expect(sessionDetail(f.s,f.rec.id,{afterSeq:2})!.events.some(e=>e.type==='model_response')).toBe(true);expect(sessionRequests(f.s,f.rec.id)).toHaveLength(1);});
+ it.each([false,true])('withholds mixed complete and failed execution before any page, failed=%s',async failed=>{const f=await fixture(true,failed);for(const afterSeq of [0,2,999]){const d=sessionDetail(f.s,f.rec.id,{afterSeq})!;expect(d.timelineUnavailable).toContain('scope');expect(d.events).toEqual([]);expect(d.corrupt).toEqual([]);expect(d.session.workspace).toBeNull();expect(JSON.stringify(d)).not.toContain('FOREIGN');}expect(sessionRequests(f.s,f.rec.id)).toEqual([]);});
+ it('checks wrong-project entry before accessing session store/logs',async()=>{const f=await fixture();const get=vi.spyOn(f.s.sessions,'get');expect(sessionDetail(f.s,f.rec.id,{project:'beta'})).toBeNull();expect(get).not.toHaveBeenCalled();});
+ it('refuses dangling execution members and unknown requests',async()=>{const f=await fixture();f.s.db.pragma('foreign_keys = OFF');f.s.db.prepare('DELETE FROM tasks WHERE id=?').run(f.b);expect(sessionDetail(f.s,f.rec.id)!.events).toEqual([]);});
+ it('refuses corrupt historical prefix even when requesting only later events',async()=>{const f=await fixture();appendFileSync(f.rec.logPath,'{"private":"FOREIGN CORRUPT"');const d=sessionDetail(f.s,f.rec.id,{afterSeq:3})!;expect(d.events).toEqual([]);expect(JSON.stringify(d)).not.toContain('FOREIGN');});
+ it('refuses missing failed execution authority without requiring a response',async()=>{const f=await fixture(false,true);f.s.db.prepare("DELETE FROM request_charges WHERE request_id='req-scope'").run();f.s.db.prepare("DELETE FROM model_requests WHERE id='req-scope'").run();f.s.db.prepare("DELETE FROM execution_members WHERE execution_id='exec-scope'").run();expect(sessionDetail(f.s,f.rec.id,{afterSeq:2})!.events).toEqual([]);});
+ it('refuses an oversized complete journal without corrupt excerpts',async()=>{const f=await fixture();appendFileSync(f.rec.logPath,' '.repeat(8*1024*1024));const d=sessionDetail(f.s,f.rec.id)!;expect(d.timelineUnavailable).toBeTruthy();expect(d.corrupt).toEqual([]);});
+ it('does not expose a foreign task label through an inconsistent session owner row',async()=>{const f=await fixture(true);f.s.db.prepare("UPDATE sessions SET task_id=? WHERE id=?").run(f.b,f.rec.id);const d=sessionDetail(f.s,f.rec.id)!;expect(d.session.taskId).toBeNull();expect(d.session.taskLabel).toBeNull();expect(d.events).toEqual([]);});
+ it('retains original mixed cohort denial after foreign task and membership deletion',async()=>{const f=await fixture(true);f.s.db.prepare("DELETE FROM request_charges WHERE task_id=?").run(f.b);f.s.db.prepare("DELETE FROM execution_members WHERE task_id=?").run(f.b);f.s.db.pragma('foreign_keys = OFF');f.s.db.prepare("DELETE FROM tasks WHERE id=?").run(f.b);expect(sessionDetail(f.s,f.rec.id)!.events).toEqual([]);expect(sessionRequests(f.s,f.rec.id)).toEqual([]);});
+ it('refuses legacy batches with missing original member proof',async()=>{const f=await fixture();const fs=await import('node:fs');const lines=fs.readFileSync(f.rec.logPath,'utf8').trim().split('\n').map(l=>JSON.parse(l));const kept=lines.filter(e=>e.type!=='note').map((e,i)=>({...e,seq:i+1}));fs.writeFileSync(f.rec.logPath,kept.map(e=>JSON.stringify(e)).join('\n')+'\n');f.s.db.prepare('UPDATE sessions SET last_seq=? WHERE id=?').run(kept.length,f.rec.id);expect(sessionDetail(f.s,f.rec.id)!.events).toEqual([]);});
+ it('refuses a response recorded against another project',async()=>{const f=await fixture();f.s.db.prepare("UPDATE model_requests SET project_id='beta' WHERE id='req-scope'").run();expect(sessionDetail(f.s,f.rec.id)!.events).toEqual([]);});
+ it('preserves safe same-project failed-attempt accounting',async()=>{const f=await fixture(false,true);f.s.db.prepare("UPDATE model_requests SET reserved_at=? WHERE id='req-scope'").run(f.s.sessions.get(f.rec.id)!.createdAt);expect(sessionDetail(f.s,f.rec.id)!.timelineUnavailable).toBeNull();expect(sessionRequests(f.s,f.rec.id).map(r=>r.id)).toEqual(['req-scope']);});
+ it('filters foreign children and task-session links',async()=>{const f=await fixture(true);f.s.sessions.create({taskId:f.b,parentSessionId:f.rec.id,role:'implementer',agentLabel:'FOREIGN CHILD'});const d=sessionDetail(f.s,f.rec.id)!;expect(d.children).toEqual([]);expect(JSON.stringify(d)).not.toContain('FOREIGN');});
+});
