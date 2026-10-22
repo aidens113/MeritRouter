@@ -84,6 +84,7 @@ async function assertReadOnlyHeads(manager: LabManager, project: string, status:
 export async function promoteLab(manager: LabManager, project: string, name: string, raw: LabPromotionInput, actions: PromotionActions): Promise<LabPromotionResult> {
   const input = LabPromotionInputSchema.parse(raw);
   const status = manager.status(project, name);
+  if(status.lab.kind!=="retained")throw new SwitchyardError("lab_scope_denied","task-owned Labs cannot be promoted");
   const policy = ProjectConfigSchema.parse(manager.options.cfg.projects[project] ?? {}).labs.promotion;
   if (policy === "supervisor" && input.by === "auto")
     throw new SwitchyardError("lab_promotion_policy", "this project requires a supervisor or person to promote");

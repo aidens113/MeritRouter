@@ -28,6 +28,8 @@ export async function pruneTaskWorktrees(db: Db, storageDir: string, days: numbe
   for (const raw of db.prepare("SELECT task_id,source_path,repo_alias FROM workspaces ").all()) {
     const row = Row.parse(raw);
     const task = tasks.get(row.task_id);
+    if(db.prepare("SELECT 1 FROM task_workspace_attempts a JOIN lab_task_attempts l ON l.attempt_id=a.id WHERE a.task_id=? AND l.phase NOT IN ('retained','pruned')").get(row.task_id))continue;
+    if(db.prepare("SELECT 1 FROM merge_queue WHERE task_id=? AND state IN ('queued','integrating','picked')").get(row.task_id))continue;
     if (!task || !TERMINAL.has(task.row.state) || task.row.finished_at === null || task.row.finished_at > cutoff)
       continue;
     let parent = task.spec.parentTaskId;

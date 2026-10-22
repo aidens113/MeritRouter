@@ -52,6 +52,7 @@ export class LabControl {
     const parsed = LabOperationInputSchema.parse(input);
     z.string().min(1).max(200).parse(by);
     const lab = this.store.get(project, name);
+    if(lab?.kind==="task_attempt")throw new SwitchyardError("lab_scope_denied","public controls cannot mutate a task-owned Lab");
     if (parsed.kind !== "create" && (!lab || lab.state === "destroyed"))
       throw new SwitchyardError("not_found", "unknown lab");
     if (parsed.kind === "create" && lab)
