@@ -10,6 +10,15 @@ Related: [handoff](handoff.md), [labs](labs.md), [budget-control](budget-control
 
 ## Current State
 
+Request-only candidate5c9deaa full bounded run measured779/783 (88files,362.95s): three
+old session-surface fixtures lacked durable task/execution authority and one actual-worker
+fixture cleanup encountered Windows EBUSY. No green full-suite claim. Updated fixtures now
+record real authority and terminal tasks, retaining privacy refusals; focused session scope/
+CLI/MCP/actual workers21/21 passed29.93s. Frozen full serial rerun is pending. Existing accepted
+4477 remains unchanged. Normalized capture demo production browser passed12 screenshots,
+request/tool/input/output DOM and scoped routes, zero model calls/browser exceptions; supervisor
+viewed phone dark and desktop light captures. Future capture backend is not in this release.
+
 Local integrated capture/caller checkpoints now pass router typecheck/build, panel typecheck
 and49 focused tests (75.81s), including human acceptance, forged proof refusal and cleanup
 queued between inspection/write. Dedicated service startup passed an actual separate Labs

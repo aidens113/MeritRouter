@@ -27,13 +27,13 @@ L5 claim; task browser recovery is absent.
 Compose validationce4a257 independently passed10/10; runtime is disabled. Engine mutation,
 durable container ownership and real-engine acceptance remain open. Browser hydration design
 is [reviewed](distributed-and-lab-extensions/reports/hydrated-browser-plan.md): flags/CDP alone
-do not prove before-contact denial of every transport. New-file-only pipe/capability H1 is
-assigned; no accepted network isolation adapter exists on this Windows host, so hydrated
+do not prove before-contact denial of every transport. Pipe/capability H1 independently passed26/26 (1.12s) and is merged locally; no accepted network isolation adapter exists on this Windows host, so hydrated
 runtime cannot yet be enabled. No OS services/firewall/Docker activation authorized.
 
 The next R2 task-lifecycle port is active in roadmap-labs after caller freeze. It must add a
 captured task incarnation because explicit task IDs can be deleted/recreated with reset
-run_count. Worker owns stores/executor/scheduler/watchdog/minimal service and one appended
+run_count. Worker owns stores/executor/scheduler/watchdog/minimal service, new core/task-run-leases.ts
+coordinator extraction and one appended
 receipt migration; root must not edit these files concurrently. Gate/tool/session/Git fencing
 are separate later units. PostgreSQL and real two-host acceptance are not implemented.
 
@@ -121,7 +121,7 @@ not a reason to stop the independently runnable core work. No service was instal
 - Tier: isolated roadmap-labs new feature branch from root integratedb766516 or newer; caller source already frozen/independently accepted.
 - Read: Current State and reports/task-lease-fence-plan.md, especially first implementation contract and exact serial partition.
 - Own: new storage/task-leases.ts + sqlite-task-leases.ts; storage/tasks.ts; task-queue.ts/sqlite-task-queue.ts only necessary identity plumbing.
-- Own: core/executor.ts, watchdog.ts, scheduler.ts; runners/types.ts; minimal service.ts lifecycle wiring/drain/async variants only. Preserve root acceptance guard/startup callbacks.
+- Own: core/executor.ts, new core/task-run-leases.ts coordinator, watchdog.ts, scheduler.ts; runners/types.ts; minimal service.ts lifecycle wiring/drain/async variants only. Preserve root acceptance guard/startup callbacks.
 - Own ONE append migration for durable operation receipts after current request_captures migration; no other worker owns migrations now.
 - Own new task-leases/executor-task-leases tests + fixture; existing scheduler/queue tests only for meaningful contract drift; report reports/async-task-lifecycle.md.
 - Implement default awaited SQLite renew/finish/interrupt/defer/recover/cancel port with strict data DTOs and explicit applied/replayed/stale/expired receipts, not merely unused exported adapters.
