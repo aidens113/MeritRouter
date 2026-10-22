@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { z } from "zod";
+import { QUALIFICATION_PROJECT } from "../qualification/registry.js";
 import type { ResolvedConfig } from "../config/load.js";
 import type { Db } from "../storage/db.js";
 import type { Gate, GateAttempt, GateResponse } from "../gateway/gate.js";
@@ -21,6 +24,7 @@ export interface ClassifierVerdict {
 }
 
 interface Pending {
+  project: string;
   taskId: string;
   leaseOwner: string;
   budget: EffectiveBudget;
@@ -29,6 +33,9 @@ interface Pending {
   features: TaskFeatures;
   resolve: (v: ClassifierVerdict | null) => void;
 }
+
+const ProjectRow = z.object({ project_id: z.string().min(1), registered_project: z.string().nullable(), archived_at: z.number().int().nullable() });
+const Verdict = z.object({ tags: TagsSchema, confidence: z.number().min(0).max(1), rationale: z.string().max(500), suggestedTier: z.string().nullable() }).strict();
 
 const SYSTEM = `You classify software tasks for routing. You never solve them.
 For each item, choose exactly one value per single-choice group and any number (possibly none) for multi-choice groups:
@@ -52,7 +59,7 @@ sample of scope: ${f.scopeSample.slice(0, 12).join(", ") || "(none)"}
 
 /**
  * Difficulty classifier. Sees only task metadata (goal, criteria, scope summary), never file
- * contents, and batches concurrent requests into one model call. Results are cached by spec.
+ * contents, and batches concurrent requests within one project into a model call. Verdict caches are project-scoped.
  */
 export class Classifier {
   private queue: Pending[] = [];
@@ -85,31 +92,68 @@ export class Classifier {
     }
   }
 
-  cached(specHash: string): ClassifierVerdict | null {
-    if (!this.cfg.scoring.cache) return null;
-    const row = this.db.prepare("SELECT data_json FROM classifications WHERE spec_hash = ? AND rulebook_version = ?").get(specHash, this.rulebookFingerprint) as
-      | { data_json: string }
-      | undefined;
-    return row ? (JSON.parse(row.data_json) as ClassifierVerdict) : null;
+  /** Stored task identity is authoritative; unassigned/deleted projects cannot borrow cfg's project. */
+  private projectFor(taskId: string): string | null {
+    const parsed = ProjectRow.safeParse(this.db.prepare(
+      "SELECT t.project_id, p.id AS registered_project, p.archived_at FROM tasks t LEFT JOIN projects p ON p.id = t.project_id WHERE t.id = ?",
+    ).get(taskId));
+    if (!parsed.success) return null;
+    const row = parsed.data;
+    // Qualification is an intentional internal project, without a public projects lifecycle row.
+    if (row.project_id === QUALIFICATION_PROJECT) return row.project_id;
+    if (row.registered_project !== row.project_id || row.archived_at !== null || !this.cfg.projectResolution.projects.some(p => p.slug === row.project_id)) return null;
+    return row.project_id;
   }
 
-  classify(item: Omit<Pending, "resolve">): Promise<ClassifierVerdict | null> {
-    const hit = this.cached(item.specHash);
+  private cacheKey(project: string, specHash: string): string {
+    return `classifier-project-v1:${createHash("sha256").update(JSON.stringify([project, specHash])).digest("hex")}`;
+  }
+
+  private cached(specHash: string, project: string): ClassifierVerdict | null {
+    if (!this.cfg.scoring.cache) return null;
+    const row = this.db.prepare("SELECT data_json FROM classifications WHERE spec_hash = ? AND rulebook_version = ?").get(this.cacheKey(project, specHash), this.rulebookFingerprint) as
+      | { data_json: string }
+      | undefined;
+    if (!row) return null;
+    try { const parsed = Verdict.safeParse(JSON.parse(row.data_json)); return parsed.success ? parsed.data : null; }
+    catch { return null; }
+  }
+
+  classify(item: Omit<Pending, "resolve" | "project">): Promise<ClassifierVerdict | null> {
+    const project = this.projectFor(item.taskId);
+    if (project === null) return Promise.resolve(null);
+    const hit = this.cached(item.specHash, project);
     if (hit) return Promise.resolve(hit);
     return new Promise((resolve) => {
-      this.queue.push({ ...item, resolve });
-      if (this.queue.length >= this.cfg.scoring.max_batch) void this.flush();
+      this.queue.push({ ...item, project, resolve });
+      if (this.queue.filter(p => p.project === project).length >= this.cfg.scoring.max_batch) void this.flush(project);
       else this.timer ??= setTimeout(() => void this.flush(), this.cfg.scoring.batch_window_ms);
     });
   }
 
-  private async flush(): Promise<void> {
+  private async flush(project = this.queue[0]?.project): Promise<void> {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
-    const batch = this.queue.splice(0, this.cfg.scoring.max_batch);
-    if (batch.length === 0) return;
+    const chosen: Pending[] = [], remaining: Pending[] = [];
+    for (const pending of this.queue) {
+      (pending.project === project && chosen.length < this.cfg.scoring.max_batch ? chosen : remaining).push(pending);
+    }
+    this.queue = remaining;
     if (this.queue.length) this.timer = setTimeout(() => void this.flush(), 0);
+    try {
+      const batch = chosen.filter(pending => {
+        if (this.projectFor(pending.taskId) === pending.project) return true;
+        pending.resolve(null);
+        return false;
+      });
+      if (batch.length) await this.dispatchBatch(batch);
+    } catch {
+      // Timer-triggered policy/storage failures must not leak rejections or strand callers.
+      for (const pending of chosen) pending.resolve(null);
+    }
+  }
 
+  private async dispatchBatch(batch: Pending[]): Promise<void> {
     const ids = batch.map((_, i) => `c${i + 1}`);
     const plan = this.planFor();
     const executionId = this.gate.admission.createExecution(batch.length > 1 ? "batch" : "task", plan.profile, batch.map((p, i) => ({ taskId: p.taskId, itemId: ids[i]! })));
@@ -143,6 +187,7 @@ export class Classifier {
       }
       let res: GateResponse;
       try {
+        if (batch.some(p => this.projectFor(p.taskId) !== p.project)) throw new Error("classifier participant project changed before dispatch");
         res = await this.gate.request({
           plan,
           executionId,
@@ -176,12 +221,12 @@ export class Classifier {
       this.gate.admission.finishExecution(executionId, "failed", { error: failure });
     }
     batch.forEach((p, i) => {
-      const v = parsed.get(ids[i]!) ?? null;
+      const v = this.projectFor(p.taskId) === p.project ? (parsed.get(ids[i]!) ?? null) : null;
       this.endSession(sessions[i] ?? null, v, failure);
       if (v && this.cfg.scoring.cache) {
         this.db
           .prepare("INSERT OR REPLACE INTO classifications (spec_hash, rulebook_version, data_json, created_at) VALUES (?, ?, ?, ?)")
-          .run(p.specHash, this.rulebookFingerprint, JSON.stringify(v), this.now());
+          .run(this.cacheKey(p.project, p.specHash), this.rulebookFingerprint, JSON.stringify(v), this.now());
       }
       p.resolve(v);
     });
