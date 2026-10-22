@@ -10,6 +10,12 @@ Related: [handoff](handoff.md), [labs](labs.md), [budget-control](budget-control
 
 ## Current State
 
+Accepted/pushed request release663626d:783/783 tests (88files,943.08s), final recursive
+build/typecheck and both production request/session browser harnesses pass. Authorized actual
+panel update follows. Local async lifecycle19268e7 independently50/50 (16.67s); root
+receipt purge/tombstones + task-Lab project deletion10/10 (25.68s), no complete R2 claim.
+Compose partial known-resource proof independently80/80; runtime still disabled.
+
 Request-only candidate8ea5b43 passes recursive typecheck and both production demo browser
 harnesses:8 request captures +8 historical-session captures, scoped routes/APIs/navigation,
 zero provider calls/browser exceptions and owned processes stopped. Supervisor viewed current

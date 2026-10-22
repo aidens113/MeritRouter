@@ -146,6 +146,9 @@ export function purgeProjectRows(db: Db, slug: string, activeStates: readonly st
     }
     // Payloads include private participant scope; purge before charges/tasks are removed or
     // accounting rows are anonymized, including any historical mixed-project capture.
+    // Remove private operation receipts before task identity is deleted; retain hash-only
+    // retry tombstones so delayed old requests cannot recreate purged scoped payloads.
+    db.prepare("DELETE FROM task_lease_operations WHERE id IN (SELECT operation_id FROM task_lease_operation_projects WHERE project_id=?)").run(slug);
     new RequestCaptures(db).purgeProject(slug);
     const attempts = `(SELECT id FROM task_workspace_attempts WHERE task_id IN ${IN_TASKS})`;
     const labs = "(SELECT id FROM labs WHERE project_id=@slug)";

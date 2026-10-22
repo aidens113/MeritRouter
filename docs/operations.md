@@ -551,6 +551,12 @@ not enable PostgreSQL or multiple hosts.
 - Provider keys: see [Provider keys](#provider-keys) for cooling, invalid, and out-of-credits keys.
 - Tasks waiting for capacity (`waiting_for_capacity`) retry automatically until their deadline.
 
+### Awaited task lifecycle
+
+Default SQLite workers await generation-bound renew, finish, interrupt, defer, recovery and supervisor cancellation receipts. Captured identity includes task insertion incarnation, owner, run count and project, so task-ID reuse cannot grant an old worker authority. The existing synchronous control APIs remain local compatibility facades. Shutdown drains pending async controls and receipt work before closing storage.
+
+Task-operation IDs have a seven-day retry window. Conflicting reuse refuses; project deletion purges private receipt metadata while retaining bounded hash-only retry tombstones until expiry. This is a local task lifecycle boundary. Provider admission, external side effects, session/Git fencing and PostgreSQL/multi-host operation require their separate contracts and acceptance.
+
 ## Agent sessions
 
 Every model-driven run is an agent session: each run of a task (a recovery re-run or a tier

@@ -62,6 +62,8 @@ describe("deleting a project", () => {
     const alpha = await runIn("alpha", "Alpha private input"), beta = await runIn("beta", "Beta private input");
     const requestFor = (task: string) => sy!.db.prepare("SELECT request_id FROM request_charges WHERE task_id=?").pluck().get(task) as string;
     const alphaRequest = requestFor(alpha), betaRequest = requestFor(beta);
+    const betaReceipts=sy.db.prepare("SELECT operation_id FROM task_lease_operation_projects WHERE project_id='beta'").pluck().all() as string[];
+    expect(betaReceipts.length).toBeGreaterThan(0);
     expect(requestDetail(sy, betaRequest, "beta")!.capture?.availability).toBe("complete");
     expect(requestDetail(sy, betaRequest, "alpha")).toBeNull();
     // Historical mixed payload ownership persists even after current charge rows change.
@@ -70,6 +72,11 @@ describe("deleting a project", () => {
     expect((await previewProjectDeletion(sy, "beta")).removes.join(" ")).toContain("2 private model request captures");
     await deleteProject(sy, "beta", { confirm: "beta" });
     expect(count("SELECT COUNT(*) FROM request_captures WHERE request_id IN (?,?)", alphaRequest, betaRequest)).toBe(0);
+    for (const id of betaReceipts) {
+      expect(count("SELECT COUNT(*) FROM task_lease_operations WHERE id=?",id)).toBe(0);
+      expect(count("SELECT COUNT(*) FROM task_lease_operation_keys WHERE id=?",id)).toBe(1);
+    }
+    expect(count("SELECT COUNT(*) FROM task_lease_operation_projects WHERE project_id='beta'")).toBe(0);
     expect(count("SELECT COUNT(*) FROM model_requests WHERE id IN (?,?)", alphaRequest, betaRequest)).toBe(2);
     expect(count("SELECT COUNT(*) FROM tasks WHERE id=?", alpha)).toBe(1);
     expect(sy.gate.captures.read(betaRequest, { project: null })?.availability).toBe("unavailable");
