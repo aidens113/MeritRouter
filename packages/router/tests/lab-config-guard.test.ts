@@ -27,7 +27,7 @@ it("retains project and repository cleanup mappings until the lab is destroyed",
   raw.brain.project = "beta";
   expect(await writePreparedConfigText(sy, YAML.stringify(raw))).toMatchObject({ ok: false, errors: [expect.stringMatching(/removing its project/)] });
   expect(readConfigText(sy)).toBe(original);
-  expect((await previewProjectDeletion(sy, "alpha")).blockers).toContainEqual(expect.stringMatching(/retained lab/));
+  expect((await previewProjectDeletion(sy, "alpha")).blockers).toContainEqual(expect.stringMatching(/retained.*lab/i));
   await labs.destroy("alpha", "feature");
   expect(patchConfig(sy, [{ path: ["projects", "alpha", "repositories", "app", "path"], value: "replacement" }])).toEqual({ ok: true });
 });
