@@ -15,7 +15,8 @@ export type LabSupervisorState = z.infer<typeof State>;
 
 /** Explicit human actions may start service supervision without executing model work. */
 export async function ensureLabSupervisor(sy: Switchyard, cliPath?: string): Promise<void> {
-  cliPath ??= [process.env.SWITCHYARD_ROUTER_CLI, fileURLToPath(new URL("../cli.js", import.meta.url)), path.resolve(process.cwd(), "../dist/cli.js"), path.resolve(process.cwd(), "../../packages/router/dist/cli.js")].find((candidate): candidate is string => !!candidate && existsSync(candidate));
+  const moduleCli = fileURLToPath(new URL("../cli.js", import.meta.url));
+  cliPath ??= [process.env.SWITCHYARD_ROUTER_CLI, path.resolve(process.cwd(), "../dist/cli.js"), path.resolve(process.cwd(), "../../packages/router/dist/cli.js"), ...(path.basename(moduleCli) === "cli.js" ? [moduleCli] : [])].find((candidate): candidate is string => !!candidate && existsSync(candidate));
   const lease = new LabSupervisorLease(sy.db, sy.cfg.configPath);
   const previous = lease.read();
   if (previous && previous.expiresAt > Date.now() && path.resolve(previous.configPath) !== path.resolve(sy.cfg.configPath)) throw new SwitchyardError("conflict", "Labs supervisor uses a different configuration for this storage directory");

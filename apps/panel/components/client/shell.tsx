@@ -23,6 +23,7 @@ import {
   X,
   LayoutGrid,
   Library,
+  FlaskConical,
   type LucideIcon,
 } from "lucide-react";
 import { cx, Mono } from "../ui";
@@ -44,6 +45,7 @@ function projectNav(slug: string): NavItem[] {
     { href: b, label: "Overview", icon: LayoutDashboard, exact: true },
     { href: `${b}/jobs`, label: "Jobs", icon: Network, also: [`${b}/teams`] },
     { href: `${b}/tasks`, label: "Tasks", icon: ListChecks, also: [`${b}/agents`, `${b}/sessions`, `${b}/requests`] },
+    { href: `${b}/labs`, label: "Labs", icon: FlaskConical },
     { href: `${b}/repos`, label: "Code", icon: GitBranch },
     { href: `${b}/brain`, label: "Brain", icon: BookOpenText },
     { href: `${b}/settings`, label: "Project settings", icon: SlidersHorizontal },

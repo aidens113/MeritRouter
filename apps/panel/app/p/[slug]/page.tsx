@@ -47,6 +47,7 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
   const p = project(sy, slug);
   const base = projectBase(p.slug);
   const ov = insights.projectOverview(sy, p.slug);
+  const labs = insights.labsListView(sy, p.slug);
   const budgetPending = insights.budgetRequestsView(sy, { project: p.slug, status: "pending", limit: 1000 });
   const now = Date.now();
   // Re-bucket on our side: the library's SQL bucket expression can return raw timestamps when
@@ -95,7 +96,7 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
     <div className="space-y-6">
       <PageHeader
         title={p.name}
-        live={["tasks", "jobs", "requests", "sessions", "workers", "brain", "budget"]}
+        live={["tasks", "jobs", "requests", "sessions", "workers", "brain", "budget", "labs"]}
         description={
           <>
             What this project is doing now, what it used in the last 24 hours, and what needs you. Project <Mono>{p.slug}</Mono>
@@ -164,7 +165,7 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
       </div>
       {budgetPending.length ? <BudgetRequestsCard requests={budgetPending} pendingOnly /> : null}
       <Tabs items={[{ "id": "overview", "label": "Overview" }, { "id": "activity", "label": "Activity" }, { "id": "usage", "label": "Usage" }]} active={tab} path={base} label="Page sections" anchors={{}} />
-      {tab === "overview" ? <div className="space-y-6"><div className="grid gap-6 xl:grid-cols-[2fr_1fr]">
+      {tab === "overview" ? <div className="space-y-6"><Card><CardHeader title="Labs" description="Isolated branches and runtimes for this project." actions={<Link href={`${base}/labs`} className="text-xs text-accent-ink hover:underline">Open labs</Link>} /><div className="flex flex-wrap gap-3 p-4">{labs.labs.length ? labs.labs.map(l => <Link key={l.name} href={`${base}/labs/${encodeURIComponent(l.name)}`} className="text-sm text-accent-ink hover:underline">{l.name} / {l.status?.lab.state ?? "queued"}</Link>) : <p className="text-sm text-ink-3">No labs yet.</p>}</div></Card><div className="grid gap-6 xl:grid-cols-[2fr_1fr]">
         <Card>
           <CardHeader title="Running and queued jobs" description="This project's top-level jobs that have not finished, newest first." actions={<Link className="text-xs text-accent-ink hover:underline" href={`${base}/jobs`}>All jobs →</Link>} />
           {ov.jobs.length ? (

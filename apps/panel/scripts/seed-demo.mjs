@@ -306,6 +306,14 @@ const raw = {
     supervise: { mode: "supervisor", tools: "supervisor", min_total_parameters_b: 100, max_model_requests: 30, max_output_tokens: 4000, classify: "never", min_tier: "T3" },
   },
 };
+// Labs use real isolated fixture processes, never provider calls or the user's ports/data.
+raw.labs = { port_range: [56200, 56300], max_active: 4, idle_stop_minutes: 30 };
+raw.projects.demo.lab = {
+  ports: ["web"], data: ["db"], env: { PORT: "{port.web}", DATA_DIR: "{lab.data.db}" },
+  services: { web: { repo: "core", command: `node -e "require('node:http').createServer((req,res)=>res.end('demo lab')).listen(Number(process.env.PORT),'127.0.0.1',()=>console.log('Demo lab ready'))"`, ready: { http: "http://127.0.0.1:{port.web}/" } } },
+  checks: { health: { repo: "core", command: `node -e "fetch('http://127.0.0.1:'+process.env.PORT).then(r=>{if(!r.ok)process.exit(1);console.log('Lab health passed')}).catch(()=>process.exit(1))"` } },
+};
+raw.projects.demo.labs = { promotion: "manual" };
 const configPath = path.join(demo, "switchyard.config.yaml");
 writeFileSync(
   configPath,
@@ -1304,6 +1312,26 @@ if (moneyLesson?.global_path) {
   const out = await insights.revertGlobalEntry(idle, moneyLesson.global_path, "you", "Duplicates the team's money-handling guide; keep one source.");
   console.log(`  ${"storefront: approved lesson reverted".padEnd(44)} promotion ${out.promotionStatus ?? "has no record"}`);
 } else console.warn("  warning: no approved storefront lesson to revert");
+
+// Two genuine fixture labs retain branches, logs, check evidence and queued-control history.
+// They finish stopped: seeding never leaves a service or supervisor behind.
+const fixtureLabs = ["calculator-preview", "validation-fix"];
+try {
+  for (const name of fixtureLabs) await idle.labs.create("demo", name, { goal: name === "calculator-preview" ? "Preview the calculator API in isolation" : "Verify the input-validation fix before review" });
+  for (const name of fixtureLabs) idle.labs.requestControl("demo", name, { kind: "start" }, "human:demo");
+  await idle.labs.processControls();
+  for (const name of fixtureLabs) idle.labs.requestControl("demo", name, { kind: "check", name: "health" }, "human:demo");
+  await idle.labs.processControls();
+  for (const name of fixtureLabs) {
+    const status = idle.labs.publicStatus("demo", name);
+    expectFixture(status.lab.state === "running" && status.checks.some(c => c.name === "health" && c.exitCode === 0), `lab ${name} runs and passes its real health check`);
+  }
+  idle.labs.requestControl("demo", fixtureLabs[0], { kind: "promote", by: "human", reason: "Reviewed the isolated preview and its revision-bound health check." }, "human:demo");
+  await idle.labs.processControls();
+} finally {
+  for (const name of fixtureLabs) if (idle.labs.list("demo").some(l => l.name === name)) await idle.labs.stop("demo", name);
+}
+console.log("  Labs: two real fixture labs, health checks and logs retained; services stopped");
 
 // The billing project is retired: archived, with its history kept.
 insights.archiveProject(idle, "legacy-billing");

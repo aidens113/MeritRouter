@@ -5,7 +5,8 @@ import { insights } from "switchyard-router";
 import { getSy } from "@/lib/sy";
 import { project } from "@/lib/project";
 import { SetupScreen } from "@/components/setup";
-import { Callout, Mono } from "@/components/ui";
+import { LabRecipeEditor } from "@/components/client/lab-recipe";
+import { Card, CardHeader, Callout, Mono } from "@/components/ui";
 import { PageHeader } from "@/components/page-header";
 import { ActionButton } from "@/components/client/actions";
 import { ago } from "@/lib/format";
@@ -27,6 +28,7 @@ const NAV = [
   { id: "team", title: "Team policy" },
   { id: "commands", title: "Commands and paths" },
   { id: "roles", title: "Roles and charters" },
+  { id: "labs", title: "Lab recipe" },
   { id: "danger", title: "Danger zone" },
 ];
 
@@ -42,12 +44,13 @@ const COMMAND_ORDER = ["coding.allowed_commands", "supervisor.allowed_commands",
  * the end deletes the project, archived or not (components/client/delete-project.tsx).
  */
 export default async function ProjectSettingsPage({ params, searchParams }: { params: Promise<{ slug: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  const tab = pickTab(await searchParams, ["general", "scheduling", "policy", "danger"]);
-  const sectionTab = (id: string) => ["general", "repositories", "brain"].includes(id) ? "general" : id === "scheduling" ? "scheduling" : id === "danger" ? "danger" : "policy";
+  const tab = pickTab(await searchParams, ["general", "scheduling", "policy", "labs", "danger"]);
+  const sectionTab = (id: string) => ["general", "repositories", "brain"].includes(id) ? "general" : id === "scheduling" ? "scheduling" : id === "danger" ? "danger" : id === "labs" ? "labs" : "policy";
   const r = getSy();
   if (!r.sy) return <SetupScreen error={r.error} configPath={r.configPath} />;
   const p = project(r.sy, (await params).slug, { archived: true });
   const v = insights.projectSettingsView(r.sy, p.slug);
+  const labs = insights.labRecipeView(r.sy, p.slug);
   // Plain objects only: these cross into client components.
   const items: OverrideItem[] = v.overrides.map((o) => ({ ...metaFor(o.id), id: o.id, path: o.path, global: o.global ?? null, overridden: o.overridden, override: o.override ?? null }));
   const of = (section: string) => items.filter((i) => i.id.startsWith(`${section}.`));
@@ -90,7 +93,7 @@ export default async function ProjectSettingsPage({ params, searchParams }: { pa
           </div>
         </Callout>
       ) : null}
-      <Tabs items={[{ id: "general", label: "General" }, { id: "scheduling", label: "Scheduling" }, { id: "policy", label: "Policy" }, { id: "danger", label: "Danger zone" }]} active={tab} path={`/p/${encodeURIComponent(p.slug)}/settings`} label="Project settings" anchors={Object.fromEntries(NAV.map(s => [s.id, sectionTab(s.id)]))} />
+      <Tabs items={[{ id: "general", label: "General" }, { id: "scheduling", label: "Scheduling" }, { id: "policy", label: "Policy" }, { id: "labs", label: "Labs" }, { id: "danger", label: "Danger zone" }]} active={tab} path={`/p/${encodeURIComponent(p.slug)}/settings`} label="Project settings" anchors={Object.fromEntries(NAV.map(s => [s.id, sectionTab(s.id)]))} />
       <div className="space-y-4 xl:grid xl:grid-cols-[12rem_1fr] xl:gap-6 xl:space-y-0">
         <SectionNav label="Project settings sections" items={NAV.filter(s => sectionTab(s.id) === tab)} />
         {/* Scroll margin clears the sticky top bar and section strip on narrow screens. A disabled
@@ -100,6 +103,7 @@ export default async function ProjectSettingsPage({ params, searchParams }: { pa
             {tab === "general" ? <><GeneralCard slug={p.slug} name={v.name} legacy={v.legacy} configPath={v.configPath} keyPath={v.configKeyPath.join(".")} activity={v.activity} archived={v.archived} /></> : null}
             {tab === "general" ? <><RepositoriesCard slug={p.slug} rows={v.repositoryRows} /></> : null}
             {tab === "general" ? <><BrainCard slug={p.slug} legacy={v.legacy} globalMounts={v.mounts.global} mounts={v.mounts.project} items={of("brain")} /></> : null}
+            {tab === "labs" ? <Card id="labs"><CardHeader title="Lab recipe" description="Human-authored runtime configuration for this project. Existing labs retain their snapshot." /><div className="p-4">{labs.legacy ? <p className="mb-3 text-sm text-ink-3">Saving a recipe enables Labs for this project. Its repository settings move into this same project; global settings and project identity are preserved.</p> : null}<LabRecipeEditor project={p.slug} {...labs} /></div></Card> : null}
             {tab === "scheduling" ? <><SchedulingCard slug={p.slug} legacy={v.legacy} limits={v.limits} /></> : null}
             {tab === "policy" ? <><OverridesCard
               id="verification"
