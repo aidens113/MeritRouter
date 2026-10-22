@@ -46,7 +46,8 @@ committing.
     contracts, review, calibration; `src/sessions` session logs and resume; `src/operations`
     backup, daemon, service install; `src/cli/` terminal formatting for `cli.ts`;
     `src/gateway/capacity.ts` provider slots; `src/admin/job-metrics.ts` team metrics;
-    `src/projects` project registry and `ProjectContext`.
+    `src/projects` project registry and `ProjectContext`; `src/mcp` MCP tools and transports
+    (stdio, Streamable HTTP); `src/web` web search backends (pool), SSRF-guarded fetch, ledger.
 - `apps/panel`: Next.js panel (`pnpm --filter switchyard-panel seed:demo` for demo data).
 - `docs/`: setup, roles, operations, decisions, working documents.
 

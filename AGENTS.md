@@ -181,7 +181,7 @@ The binding rules for this repository:
   (`core`, `config`, `gateway`, `providers`, `paid`, `routing`, `scoring`, `models`,
   `admission`, `storage`, `context`, `harness`, `runners`, `brain`,
   `attribution`, `qualification`, `workspaces`, `admin`, `roles`,
-  `verification`, `sessions`, `operations`). Put a file
+  `verification`, `sessions`, `operations`, `projects`, `mcp`, `web`). Put a file
   in the area that owns its concern; create a new area only for a new
   concern. The panel's data access goes through `src/admin/insights.ts` (and the `src/admin/`
   files it re-exports) and
