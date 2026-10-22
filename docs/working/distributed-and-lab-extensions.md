@@ -10,6 +10,14 @@ Related: [roadmap completion](roadmap-completion.md), [Labs](labs.md), [sessions
 
 ## Current State
 
+Task-attempt lifecycle82ef6bd is merged locally after independent14/14 recovery/source tests
+(105.32s). Supervisor follow-up adds opt-in validation, authorization recheck under insertion
+lock, all-alias source pins, configured default-cwd ordering, configured junction spelling and
+independent retained-control responsiveness. New validation6/6, affected contract9/9 and actual
+concurrent-control1/1 pass; router typecheck/build pass. Caller/verification/integration and
+safe project deletion are still missing: this is a local prerequisite, not complete L5.
+Compose validationce4a257 independently passes10/10; runtime remains disabled.
+
 L1-L4 integration is active under roadmap-completion.md. L5 and R2 were explicitly deferred in
 their original plans; the current build request keeps them open. This document scopes their
 prerequisites rather than treating them as delivered. Initial static-render browser checks

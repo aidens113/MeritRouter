@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from "vitest";
 import path from "node:path";
-import { writeFileSync, readFileSync, existsSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync, symlinkSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -68,6 +68,24 @@ async function prepare(id: string, value = id): Promise<{
   await manager!.taskAttempts.submit(handle, { commit, tree, patchDigest: digest });
   return { handle, input, worktree: workspace.worktreePath, commit, tree, digest };
 }
+it('keeps configured junction spelling while proving physical repository identity', async () => {
+  const m = setup(), link = path.join(env!.dir, 'configured-repository');
+  symlinkSync(env!.repo, link, process.platform === 'win32' ? 'junction' : 'dir');
+  m.options.project('alpha').repositoryPaths.app!.path = link;
+  const a = await prepare('linked-source'), op = m.taskAttempts.requestCheck(a.handle, { checks: ['health'] });
+  await m.processControls();
+  const result = await m.taskAttempts.wait(a.handle, op.id);
+  expect(result.status).toBe('passed');
+  expect(m.store.byId(result.labId)!.repositories[0]!.source).toBe(link);
+  expect(m.status('alpha', m.store.byId(result.labId)!.name).lab.id).toBe(result.labId);
+}, 60000);
+it('does not let task alias order redefine the human recipe default command repository', async () => {
+  const m = setup(), a = await prepare('default-repository');
+  const cfg = m.options.project('alpha');
+  cfg.repositoryPaths = { outside: { path: env!.repo, writable: false }, ...cfg.repositoryPaths };
+  expect(() => m.taskAttempts.requestCheck(a.handle, { checks: ['health'] })).toThrow(/configured default repository/);
+  expect(m.store.list()).toHaveLength(0);
+});
 it('runs two real isolated attempts with exact source heads, distinct resources and retained evidence, without mutating source or target', async () => {
   const m = setup(), a = await prepare('first'), b = await prepare('second'), target = (await git(env!.repo, ['rev-parse', 'HEAD'])).trim();
   const oa = m.taskAttempts.requestCheck(a.handle, { checks: ['health'] }), ob = m.taskAttempts.requestCheck(b.handle, { checks: ['health'] });
@@ -95,6 +113,18 @@ it('runs two real isolated attempts with exact source heads, distinct resources 
   await expect(m.promote('alpha', la.name, { by: 'human' })).rejects.toThrow(/task Labs/);
   expect(() => m.requestControl('alpha', la.name, { kind: 'destroy' })).toThrow(/task-owned/);
 }, 120000);
+it('drains retained controls while an independent task check is still active', async () => {
+  const m = setup(), a = await prepare('independent-control');
+  m.taskAttempts.requestCheck(a.handle, { checks: ['slow'] });
+  const op = m.requestControl('alpha', 'retained-control', { kind: 'create' });
+  const pending = m.processControls();
+  try {
+    const until = Date.now() + 20000;
+    while (Date.now() < until && m.operation('alpha', 'retained-control', op.id)?.state !== 'completed') await new Promise(r => setTimeout(r, 30));
+    expect(m.operation('alpha', 'retained-control', op.id)?.state).toBe('completed');
+    expect(m.taskAttempts.store.lab(a.handle.id)?.phase).not.toBe('retained');
+  } finally { await pending; }
+}, 60000);
 it('requires persisted execution/session, exact physical source, generation and attributed immutable tree', async () => {
   const m = setup(), a = await prepare('scoped');
   await expect(m.taskAttempts.register({ ...a.input, executionId: 'forged' })).rejects.toThrow(/membership/);

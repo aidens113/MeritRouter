@@ -161,8 +161,7 @@ export class LabManager {
   async processControls(): Promise<void> {
     if (this.closed)
       return;
-    await this.taskAttempts.process();
-    await this.controls.processAll();
+    await Promise.all([this.taskAttempts.process(), this.controls.processAll()]);
   }
   private assertRetained(project: string, name: string): void {
     if (this.require(project, name).kind !== "retained")

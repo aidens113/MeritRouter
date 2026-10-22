@@ -87,6 +87,19 @@ passing units reach dev/main. Documentation and source commit together.
 
 ## Worker Briefs
 
+### Brief: classifier-project-isolation
+- Repository: `.claude/worktrees/roadmap-process`, branch `feat/classifier-project-isolation`, baseline002865d. Previous queue acceptance completed753/753 and is pushed dev/main8d22596; tree available for this new unit.
+- Task: prevent classifier prompt batching and cached rationale reuse across projects, a prerequisite found during richer request-detail evidence work.
+- Required reads: Current State here; scoring/classifier.ts, score/rulebook caller types and existing scoring/projects tests; own request-capture-plan finding. Inspect actual policy flow before editing.
+- Owns: scoring/classifier.ts; new tests/classifier-project-scope.test.ts; necessary narrowly affected scoring.test.ts assertions only; own roadmap-completion/reports/classifier-project-isolation.md.
+- Must not touch: core/config/storage/migrations/gateway/admission/runners/Labs/panel/admin/public exports/manifests/shared docs. No commits/push, live providers/user data/services. Ask before cross-boundary source changes.
+- Authority: derive project from persisted tasks row at enqueue BEFORE cache lookup. Never infer project from alias/current cfg. Missing/deleted/empty rows fail closed or isolate per-task with no cross-project cache; document exact choice compatible with supported unassigned flows.
+- Batch partition: one physical classifier request contains participants/goals from one project only; preserve same-project batching/per-item token limits/cancellation and per-participant accounting/contract behavior. Each queued item retains captured authoritative project identity; recheck if task ownership/project changes before dispatch if relevant.
+- Cache partition: namespace deterministic cache key by authoritative project+existing specHash/rulebook so identical specs in different projects cannot reuse rationale. No migration/new backend; don't trust old unscoped cache entries. Preserve same-project cache hits/version invalidation and no fabricated task identity.
+- Acceptance: two projects enqueue simultaneously (including identical aliases/spec hashes) produce separate payloads/journals/accounting; each payload excludes other goals. Same project still batches and caches. Cross-project prior cache cannot hit; malformed/missing/deleted task/project cases safe. Use actual task rows/fake Gate/provider fixtures.
+- Run focused new+scoring/projects fairness/provider checks, router typecheck/build; report exact results and freeze for independent review. Do not claim this rewrites historical mixed journals or completes request capture/R2.
+- Report to: docs/working/roadmap-completion/reports/classifier-project-isolation.md.
+
 ### Brief: request-capture-plan
 - Repository: frozen `.claude/worktrees/roadmap-process`, source418b106; report-only while full suite runs. Do not edit source or generated builds.
 - Task: design bounded normalized per-request input/response capture for future calls lacking session journals (classifier/direct/fallback), supporting user's richer model-request page. Existing historical missing payload cannot be invented.

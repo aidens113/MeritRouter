@@ -76,6 +76,12 @@ export function resolveProjects(cfg: RawConfig, baseDir: string): { resolution: 
       continue;
     }
     const p = parsed.data;
+    if (p.labs.ephemeral.enabled) {
+      if (!p.lab) issues.push({ path: ["projects", slug, "labs", "ephemeral"], message: "enabled task Labs require a project Lab recipe" });
+      for (const name of p.labs.ephemeral.checks) if (!p.lab || !Object.hasOwn(p.lab.checks, name)) {
+        issues.push({ path: ["projects", slug, "labs", "ephemeral", "checks"], message: `unknown declared Lab check ${name}` });
+      }
+    }
     if (p.lab) {
       try {
         validateRecipe(p.lab, Object.keys(p.repositories));

@@ -80,8 +80,10 @@ export class TaskAttemptSource {
       const expectedHead = repo.alias === input.writableAlias ? (await git(input.sourceWorktree, ["rev-parse", "HEAD"])).trim() : spec.context.baseCommits?.[repo.alias] ?? (await git(configured.path, ["rev-parse", "HEAD"])).trim();
       if (repo.head !== expectedHead)
         throw new SwitchyardError("lab_scope_denied", "attempt head is not the task source snapshot");
-      repositories.push({ ...repo, sourcePath: realpathSync(configured.path), commonDirectory: common });
+      repositories.push({ ...repo, sourcePath: path.resolve(configured.path), commonDirectory: common });
     }
+    const configuredOrder = Object.keys(cfg.repositoryPaths);
+    repositories.sort((a, b) => configuredOrder.indexOf(a.alias) - configuredOrder.indexOf(b.alias));
     const writable = repositories.find(r => r.alias === input.writableAlias);
     if (!writable || !cfg.repositoryPaths[input.writableAlias]?.writable || await taskCommonDirectory(input.sourceWorktree) !== writable.commonDirectory || owned.baseCommit !== writable.baseCommit)
       throw new SwitchyardError("lab_scope_denied", "workspace Git/base identity differs from task provenance");

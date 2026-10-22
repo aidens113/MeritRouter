@@ -4,7 +4,7 @@ import { WebAccess, type PageTransport, type Resolver } from "../web/index.js";
 import { hostname } from "node:os";
 import { randomBytes } from "node:crypto";
 import { statSync } from "node:fs";
-import { parseConfig, readConfigFile, type ResolvedConfig } from "../config/load.js";
+import { loadConfig, parseConfig, readConfigFile, type ResolvedConfig } from "../config/load.js";
 import type { ProfileName, TierName } from "../config/schema.js";
 import { immediate, openDatabase, type Db } from "../storage/db.js";
 import { TaskStore, type StoredTask, type SubmitOutcome } from "../storage/tasks.js";
@@ -44,6 +44,7 @@ import { ProjectRegistry } from "../projects/registry.js";
 import { retainedLabConfigErrors } from "../projects/lab-config-guard.js";
 import { LabManager } from "../labs/lab.js";
 import { LabNameSchema } from "../labs/recipe.js";
+import { taskLabSelectionIssues } from "./task-lab-validation.js";
 import { prepareProjectRepositories, type RepositoryPreparation } from "../projects/repository-setup.js";
 import type { ProjectContext } from "../projects/context.js";
 import { Scheduler } from "./scheduler.js";
@@ -519,6 +520,15 @@ export class Switchyard {
     });
     if (errors.length) throw new TaskValidationError(errors.join("\n"), errors);
     const outcomes = immediate(this.db, () => {
+      if (specs.some(spec => spec.constraints.labChecks?.length)) {
+        // Read by content under the config writer lock; a rapid revocation may share an mtime.
+        const current = new ProjectRegistry(loadConfig(this.cfg.configPath)).get(project.project.slug);
+        if (!current) throw new TaskValidationError("the task Lab project is no longer configured");
+        for (const spec of specs) {
+          const problems = taskLabSelectionIssues(current, spec);
+          if (problems.length) throw new TaskValidationError(problems.join("; "), problems);
+        }
+      }
       // Explicit external authority is checked at insertion, under the config writer's DB lock.
       // Validation above awaits filesystem work; a human may revoke policy while it is running.
       const scoped = specs.filter(spec => spec.supervisionScope !== undefined);

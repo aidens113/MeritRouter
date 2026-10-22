@@ -7,6 +7,7 @@ import type { ArtifactStore } from "../storage/artifacts.js";
 import { isGitRepo, resolveCommit } from "../workspaces/git.js";
 import { loadSources } from "../context/sources.js";
 import { estimateTokens } from "../gateway/types.js";
+import { taskLabSelectionIssues } from "./task-lab-validation.js";
 
 const ajv = new Ajv({ strict: true, allErrors: true });
 
@@ -34,6 +35,7 @@ export async function validateTask(
   const issues: string[] = [];
   const profile = cfg.profiles[spec.profile];
   if (!profile) throw new TaskValidationError(`profile ${spec.profile} is not configured`);
+  issues.push(...taskLabSelectionIssues(cfg, spec));
 
   for (const alias of spec.repositoryAliases) {
     const repo = cfg.repositoryPaths[alias];
@@ -65,6 +67,16 @@ export async function validateTask(
     issues.push("budget.maxPaidUsd > 0 requested but paid routing is disabled by configuration");
   }
 
+  if (spec.constraints.labChecks?.length && !issues.length) {
+    const configuredOrder = Object.keys(cfg.repositoryPaths);
+    spec.repositoryAliases.sort((a, b) => configuredOrder.indexOf(a) - configuredOrder.indexOf(b));
+    spec.context.baseCommits = { ...spec.context.baseCommits };
+    // Persist all source heads before dispatch, including read-only context repositories.
+    for (const alias of spec.repositoryAliases) if (!spec.context.baseCommits[alias]) {
+      try { spec.context.baseCommits[alias] = await resolveCommit(cfg.repositoryPaths[alias]!.path, "HEAD"); }
+      catch { issues.push(`cannot pin the source commit for Lab repository ${alias}`); }
+    }
+  }
   for (const [alias, sha] of Object.entries(spec.context.baseCommits ?? {})) {
     const repo = cfg.repositoryPaths[alias];
     if (!repo || !spec.repositoryAliases.includes(alias)) {

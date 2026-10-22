@@ -59,6 +59,13 @@ export class TaskLabLifecycle {
     if (!project.lab)
       throw new SwitchyardError("lab_not_configured", "project has no Lab recipe");
     const recipe = validateRecipe(project.lab, record.repositories.map(r => r.alias));
+    const needsDefault = recipe.setup.some(step => typeof step === "string") || checks.some(name => {
+      const check = recipe.checks[name];
+      return typeof check === "string" || (check && !("kind" in check) && !check.repo);
+    });
+    const defaultAlias = Object.keys(this.manager.options.project(record.project).repositoryPaths)[0];
+    if (needsDefault && record.repositories[0]?.alias !== defaultAlias)
+      throw new SwitchyardError("lab_scope_denied", "task scope must include the recipe's configured default repository");
     for (const name of checks) {
       const check = recipe.checks[name];
       if (!check)

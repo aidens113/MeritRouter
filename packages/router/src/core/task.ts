@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { CheckNameSchema, ImportanceSchema, ProfileNameSchema, TierNameSchema, VerificationLevelSchema } from "../config/schema.js";
 import { TagsSchema } from "../scoring/rulebook.js";
+import { LabNameSchema } from "../labs/recipe.js";
 
 /**
  * File reference: `<alias>:<relative/path>` with an optional `#L<start>-L<end>` range.
@@ -53,6 +54,8 @@ export const WorkerTaskSchema = z
         outputSchema: z.record(z.string(), z.unknown()).optional(),
         /** Supervisor-supplied acceptance commands run in the task worktree (coding tasks). */
         checks: z.array(z.string().min(1)).max(10).optional(),
+        /** Human-approved named checks in a separate Lab for this coding attempt. */
+        labChecks: z.array(LabNameSchema).min(1).max(10).refine(names => new Set(names).size === names.length, "Lab check names must be unique").optional(),
       })
       .strict(),
     /** How much the result matters (default verification.default_importance). Raises verification only. */

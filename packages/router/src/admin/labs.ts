@@ -119,7 +119,9 @@ export async function saveLabRecipe(sy: Switchyard, project: string, input: unkn
   let recipe: ReturnType<typeof validateRecipe>;
   try { recipe = validateRecipe({ ...b.recipe, env }, p.repositories.map(r => r.alias)); }
   catch (error) { throw new SwitchyardError("config_invalid", (error as Error).message); }
-  const policy = { promotion: b.promotion, ...(b.maxActive === null ? {} : { max_active: b.maxActive }) };
+  const policy = { ...projectConfig(sy, project).labs, promotion: b.promotion };
+  if (b.maxActive === null) delete policy.max_active;
+  else policy.max_active = b.maxActive;
   let result: Awaited<ReturnType<typeof writePreparedConfigText>>;
   if (p.legacy) {
     // One explicit human save converts only this project's repositories and enables its recipe.
