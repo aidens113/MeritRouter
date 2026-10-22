@@ -26,7 +26,11 @@ checks10/10 (25.68s), including private receipt purge/tombstones, coding worktre
 branch retention and dirty/active Lab refusal. Async lifecycle19268e7 independently50/50
 (16.67s): captured task insertion incarnation/run identity, awaited mutations, replay receipts,
 strict companion claims, deadline/ancestry checks and shutdown drains. Public contracts and
-operations guidance updated. Combined full acceptance/package of these local units is pending.
+operations guidance updated. Combined baseline run:998 passed/3 failed (102files,666.41s).
+Legitimate T4 stored-row validation fixed and unchanged paid/queue18/18 pass; retained-Lab
+wording assertion updated and1/1 pass; Windows CLI-worker fixture cleanup EBUSY did not recur
+on independent1/1 recheck. Recovery receipts still require bounded maintenance retention
+before acceptance; worker active. Combined full acceptance/package remains pending.
 
 Normalized future request capture is implemented locally with bounded private SQLite payloads,
 project-scoped purge and normalized input/tool/response UI. Supervisor29 capture checks plus
@@ -36,8 +40,11 @@ desktop images viewed. This backend/migration is excluded from the request-only 
 Compose C1 read-only validation and C2 full/known-resource proof are local prerequisites:
 independent10/10 and80/80 tests. Runtime remains disabled. Durable original creation receipts,
 engine transport/journal, retained/task integration and actual disposable-engine acceptance
-remain open. Browser pipe/capability H1 independently26/26; hydrated JS remains unavailable
-without an accepted native isolation adapter. These prerequisites do not close L5.
+remain open. Pure sealed Engine request plans independently38/38 pass, still no transport.
+Browser pipe/capability H1 independently26/26; hydrated JS remains unavailable
+without an accepted native isolation adapter. Usable Ubuntu WSL2 bwrap/Python substrate was
+investigated; gated helper prerequisite is active without OS changes or runtime availability.
+These prerequisites do not close L5.
 
 Next R2 unit is strict captured-generation request admission/dispatch/settlement and observed
 local transport capacity; see distributed-and-lab-extensions.md and its admission plan. Remote
