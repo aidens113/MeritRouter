@@ -579,6 +579,12 @@ item. A delegated task's session names the supervisor session that delegated it 
   connection explicitly. OpenCode receives the remote MCP configuration inline.
 - A resume appends a `resumed` event recording what was settled and the notice the agent got.
 
+### Historical request evidence
+
+Model request detail pages show bounded historical session evidence: reconstructed input messages and request parameters, recorded model responses, correlated tool calls and successful recorded file edits. Related task files, artifacts and commit links are displayed separately because a task can span several requests. This journal projection is not the provider's serialized HTTP body; old, missing, failed or incomplete journals can explicitly report unavailable evidence.
+
+Historical request/session payloads require complete same-project task and execution ownership, including the original recorded membership of shared batches. Unknown, deleted, corrupt, oversized or mixed-project scope withholds transcript content while retaining safe metadata and accounting. Classification batches and caches are partitioned by authoritative project for future requests. These checks do not claim arbitrary model text is free of secrets.
+
 ## The web panel: turning it off, and rebuilding it
 
 Model request detail includes bounded recorded messages, parameters, responses and tool actions
@@ -777,6 +783,8 @@ Stopped attempts retain branch/artifact evidence under retention policy; unresol
 blocks project deletion. This is local SQLite/Git/process verification, not multi-host fencing
 or an operating-system sandbox.
 
+Confirmed project deletion also attempts immediate removal of stopped task verification Labs. It bypasses retention age only: terminal same-project task ancestry, no active operations/processes/ports, and unchanged clean registered Git resources are still required. A refusal preserves configuration, tasks and recovery evidence; retained human-created Labs must still be destroyed first. Coding branches and configured repository folders remain.
+
 ### Declared static browser checks
 
 A recipe check can use `kind: browser`, `mode: static`, a declared HTTP `service`, an absolute
@@ -846,7 +854,4 @@ acceptance remain outstanding.
 - Line attribution for external agents (OpenCode) is per model request, not per tool call, and can
   blur when the agent sends several requests at once.
 
-Confirmed project deletion also attempts immediate removal of stopped task verification Labs. It bypasses retention age only: terminal same-project task ancestry, no active operations/processes/ports, and unchanged clean registered Git resources are still required. A refusal preserves configuration, tasks and recovery evidence; retained human-created Labs must still be destroyed first. Coding branches and configured repository folders remain.
-Model request detail pages show bounded historical session evidence: reconstructed input messages and request parameters, recorded model responses, correlated tool calls and successful recorded file edits. Related task files, artifacts and commit links are displayed separately because a task can span several requests. This journal projection is not the provider's serialized HTTP body; old, missing, failed or incomplete journals can explicitly report unavailable evidence.
 
-Historical request/session payloads require complete same-project task and execution ownership, including the original recorded membership of shared batches. Unknown, deleted, corrupt, oversized or mixed-project scope withholds transcript content while retaining safe metadata and accounting. Classification batches and caches are partitioned by authoritative project for future requests. These checks do not claim arbitrary model text is free of secrets.
