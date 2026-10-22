@@ -41,7 +41,7 @@ it("confirmed project deletion immediately removes owned stopped task Labs and p
   const f=await retained(); expect(await sy!.labs.taskAttempts.prune()).toEqual([]);
   const preview=await previewProjectDeletion(sy!,"beta"); expect(preview.blockers).toEqual([]); expect(preview.removes.join(" ")).toContain("Stopped task verification Labs");
   const result=await deleteProject(sy!,"beta",{confirm:"beta"}); expect(result.problems).toEqual([]);
-  expect(existsSync(f.lab.root)).toBe(false); expect(sy!.tasks.get(f.taskId)).toBeUndefined();
+  expect(existsSync(f.lab.root)).toBe(false); expect(existsSync(f.source)).toBe(false); expect(sy!.tasks.get(f.taskId)).toBeUndefined();
   expect(sy!.db.prepare("SELECT 1 FROM task_lab_operations").get()).toBeUndefined();
   expect(existsSync(env!.repo)).toBe(true); expect((await git(env!.repo,["show-ref","--verify",`refs/heads/${f.lab.repositories[0]!.branch}`])).trim()).toContain(f.commit);
   expect(sy!.db.pragma("foreign_key_check")).toEqual([]);
