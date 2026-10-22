@@ -35,9 +35,12 @@ model-history link404 reproduced and fix underway (current exact reported URL re
 L2/L3 is now merged at002515e; supervisor20/20 focused tests pass. Historical model links
 fixed atb5d0723; Team metrics hint selectors are scoped to their own trigger at9e23fb6.
 Integrated typecheck passes; first full run686/691 exposed an MCP schema portability defect,
-stale tool-count expectations and an external session-note prefix regression. Repairs are
-underway; no passing full-suite claim. L4 production acceptance is active. L5 static browser
-checks have a bounded isolated worker brief; R2 async storage inventory is active.
+stale tool-count expectations and an external session-note prefix regression. Repairs6a77c4a
+pass the frozen repeat691/691(77files,393.07s). L4 production acceptance is active and exposed
+a Next-bundled CLI launcher path defect plus partial-create status handling; repairs remain
+in its isolated tree. L5 static browser checks have a bounded isolated worker brief; hydrated
+JS checks remain separate. R2 storage inventory found81 direct SQLite consumers; the first
+actual async Gate request-accounting migration is dispatched, PostgreSQL remains disabled.
 Whole integrated checks and push remain pending. No whole-roadmap completion claim.
 
 ## Execution phases

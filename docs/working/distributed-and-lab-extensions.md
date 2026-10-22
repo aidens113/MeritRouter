@@ -12,13 +12,17 @@ Related: [roadmap completion](roadmap-completion.md), [Labs](labs.md), [sessions
 
 L1-L4 integration is active under roadmap-completion.md. L5 and R2 were explicitly deferred in
 their original plans; the current build request keeps them open. This document scopes their
-prerequisites rather than treating them as delivered.
+prerequisites rather than treating them as delivered. Isolated implementation now covers an
+initial static-render browser-check unit (scripts disabled; not hydrated app acceptance) and
+the first async Gate request-accounting boundary. Neither is accepted or merged yet.
 
 The current store is the synchronous better-sqlite3 Database type. Raw prepared statements,
 transactions and SQLite expressions reach beyond storage into admission, routing, admin,
 sessions and Labs. A PostgreSQL connection substituted into openDatabase would not preserve
 these contracts. Filesystem session logs, Git brains/workspaces and local provider capacity
 also need explicit host ownership; a shared database alone does not supply multi-host safety.
+The concrete [storage inventory](roadmap-completion/reports/distributed-storage-inventory.md)
+maps81 direct SQLite consumers in24 areas and the required atomic transaction boundaries.
 
 Environment inspection: Docker CLI exists, but the Linux engine pipe is absent; docker info
 fails. No psql/postgres executable was discovered. These are unverified acceptance dependencies,
@@ -75,6 +79,17 @@ not a reason to stop the independently runnable core work. No service was instal
    A two-process SQLite test is useful E7 evidence, but is not two-host PostgreSQL acceptance.
 
 ## Worker Briefs
+
+### Brief: request-ledger
+- Repository: `.claude/worktrees/roadmap-process`, branch `feat/roadmap-request-ledger`, baseline6a77c4a. Source dependencies reconciled by supervisor; isolated from root/panel/browser work.
+- Task: implement the report's first integrated async request-accounting slice. Read own distributed-storage-inventory report and Current State above; preserve single atomic SQLite accounting and synchronous compatibility facade.
+- Owns: new admission/request-ledger.ts and sqlite-request-ledger.ts; admission/admission.ts; gateway/direct.ts and gate.ts; necessary core/service.ts wiring; new request-ledger and gate-request-ledger tests; own report `distributed-and-lab-extensions/reports/request-ledger.md`.
+- Must not touch: Labs, panel, CLI, schemas/config/migrations, package manifests/lock, paid math or public exports/shared docs. Ask if boundaries need expanding. No commits/push, provider calls, installation/services, or user data.
+- Contract: validated data-only DTOs (no PaidSpend/Db/functions/secret credentials), awaitable reserve/reconcile used by the actual default routed Gate path, not unused scaffolding. Retain one shared SQLite transaction implementation for sync facade and async adapter; do not duplicate budget/price math.
+- Preserve commit-before-provider, await settlement before return/fallback; abort during reserve never dispatches afterward. Settlement failure after possible consumption is persistence uncertainty and must not trigger another endpoint/paid call. Preserve paid/participant atomicity and conservative unknown billing.
+- Scope: SQLite remains the only enabled backend; no PG selector/driver or multi-host claim. This is prerequisite one, not R2 completion. Check actual latest accounting changes after merge rather than using older inventory assumptions.
+- Acceptance: delayed/rejecting ledger at Gate proves ordering/no-network-before-reserve/no-fallback-before-settlement/cancellation; actual default service task persists unchanged rows; rollback no partial request/participant/paid rows; batch/paid/uncertain/mismatch cases. Run focused existing admission/paid/cache/provider/budget/process checks plus router typecheck/build. Report exact checks/limits and freeze.
+- Structure: keep transaction extraction by concern; diagnose >800-line files before any split. Worker only writes owned source and own report; supervisor integrates authored docs/exports and independently verifies.
 
 ### Brief: labs-browser
 - Repository: `.claude/worktrees/roadmap-labs`, branch `feat/roadmap-labs-browser`, baseline e99da6b; isolated from ongoing core/panel acceptance.
