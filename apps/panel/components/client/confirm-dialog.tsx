@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
 import { buttonClass } from "../ui";
 
@@ -9,14 +9,18 @@ export interface ConfirmDialogProps {
   open: boolean;
   /** Called when the dialog closes for any reason: Cancel, Esc, a backdrop click, or after a confirm. */
   onClose: () => void;
-  /** Called when the person confirms. The dialog waits for a returned promise, then closes. */
-  onConfirm: () => void | Promise<void>;
+  /** Called when the person confirms. The dialog waits for a returned promise, then closes, unless it returns false (say, a failed request whose error the dialog shows). */
+  onConfirm: () => void | boolean | Promise<void | boolean>;
   title: string;
-  description: string;
+  description: ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
-  /** "danger" styles the confirm button for destructive actions. */
-  tone?: "default" | "danger";
+  /** "danger" styles the confirm button for destructive actions; "destructive" makes it solid red (a final, irreversible step). */
+  tone?: "default" | "danger" | "destructive";
+  /** Extra content under the description (lists, an input). */
+  children?: ReactNode;
+  /** Keeps the confirm button disabled (say, until a typed confirmation matches). */
+  confirmDisabled?: boolean;
 }
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -26,7 +30,7 @@ const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select
  * page is inert while it is open. Focus starts on Cancel, Tab cycles inside the dialog, Esc and a
  * backdrop click cancel, and focus returns to whatever opened it.
  */
-export function ConfirmDialog({ open, onClose, onConfirm, title, description, confirmLabel = "Confirm", cancelLabel = "Cancel", tone = "default" }: ConfirmDialogProps) {
+export function ConfirmDialog({ open, onClose, onConfirm, title, description, confirmLabel = "Confirm", cancelLabel = "Cancel", tone = "default", children, confirmDisabled = false }: ConfirmDialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const returnTo = useRef<HTMLElement | null>(null);
@@ -61,13 +65,15 @@ export function ConfirmDialog({ open, onClose, onConfirm, title, description, co
   };
 
   const confirm = async () => {
+    if (confirmDisabled) return;
     setBusy(true);
+    let keepOpen = false;
     try {
-      await onConfirm();
+      keepOpen = (await onConfirm()) === false;
     } finally {
       setBusy(false);
     }
-    onClose();
+    if (!keepOpen) onClose();
   };
 
   // Keep Tab and Shift+Tab inside the dialog (the browser would otherwise move to its own chrome).
@@ -120,12 +126,13 @@ export function ConfirmDialog({ open, onClose, onConfirm, title, description, co
         <p id={descId} className="mt-2 text-sm leading-relaxed text-ink-2">
           {description}
         </p>
+        {children ? <div className="mt-3 text-sm text-ink-2">{children}</div> : null}
       </div>
       <div className="flex flex-wrap justify-end gap-2 rounded-b-xl border-t border-line bg-surface-2 px-5 py-3">
         <button ref={cancelRef} type="button" autoFocus className={buttonClass("secondary")} onClick={cancel} disabled={busy}>
           {cancelLabel}
         </button>
-        <button type="button" className={buttonClass(tone === "danger" ? "danger" : "primary")} onClick={confirm} disabled={busy}>
+        <button type="button" className={buttonClass(tone === "default" ? "primary" : tone)} onClick={confirm} disabled={busy || confirmDisabled}>
           {busy ? <RefreshCw size={14} className="animate-spin" aria-hidden /> : null}
           {confirmLabel}
         </button>

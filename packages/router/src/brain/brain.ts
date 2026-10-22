@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync, openSync, closeSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, openSync, closeSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { ResolvedConfig } from "../config/load.js";
@@ -500,6 +500,61 @@ export class Brain {
       return { path: r.rel, commit, text };
     };
     return r.repo ? this.locked(r.repo, doRemove) : doRemove();
+  }
+
+  /** Files under another project's folder (`projects/<slug>/`) in the shared brain repository, for a deletion preview. */
+  projectFolderFiles(slug: string): number {
+    const dir = this.projectFolder(slug);
+    if (!existsSync(dir)) return 0;
+    let n = 0;
+    const walk = (d: string) => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        if (e.isDirectory()) walk(path.join(d, e.name));
+        else n++;
+      }
+    };
+    walk(dir);
+    return n;
+  }
+
+  private projectFolder(slug: string): string {
+    if (!/^[a-z0-9][a-z0-9._-]*$/.test(slug) || slug.includes("..")) throw new BrainError(`not a project slug: ${JSON.stringify(slug)}`);
+    return path.join(this.root, "projects", slug);
+  }
+
+  /**
+   * Remove a deleted project's folder (`projects/<slug>/`) from the shared brain repository: one
+   * commit under the repository lock, after adopting outside edits (so the removed text stays in
+   * the history), then drop its rows from the search index and regenerate the root index (which
+   * no longer names it once the config has dropped the project). Called on a remaining project's
+   * brain; never on the folder's own project. Mounts outside the brain repository are not touched.
+   */
+  async removeProjectFolder(slug: string, actor: Actor, reason: string): Promise<{ files: number; commit: string | null }> {
+    if (slug.toLowerCase() === this.project.toLowerCase()) throw new BrainError(`a project's brain cannot remove its own folder (${slug})`);
+    const dir = this.projectFolder(slug);
+    await this.ensure();
+    const rel = `projects/${slug}`;
+    const out = await this.locked(this.root, async () => {
+      const files = this.projectFolderFiles(slug);
+      if (!existsSync(dir)) return { files: 0, commit: null };
+      const commits = this.cfg.brain.commit && existsSync(path.join(this.root, ".git"));
+      if (commits) await this.adoptExternalEdits(this.root);
+      rmSync(dir, { recursive: true, force: true });
+      let commit: string | null = null;
+      if (commits) {
+        const tracked = (await git(this.root, ["ls-files", "--", rel])).trim().length > 0;
+        if (tracked) {
+          commit = await commitAs(this.root, actor, `Remove project ${slug}`.slice(0, 200), { paths: [rel], extraTrailers: { "Removed-By": actor.agent.slice(0, 200), "Remove-Reason": reason.trim().replace(/\s+/g, " ").slice(0, 1000) } });
+          if (this.cfg.brain.push && commit) await git(this.root, ["push", "-q"]).catch(() => undefined);
+        }
+      }
+      return { files, commit };
+    });
+    const like = `${likeEscape(`${rel}/`)}%`;
+    this.db.prepare("DELETE FROM brain_fts WHERE path LIKE ? ESCAPE '\\'").run(like);
+    this.db.prepare("DELETE FROM brain_files WHERE path LIKE ? ESCAPE '\\'").run(like);
+    await this.writeFile("README.md", this.renderIndex(this.list({ kind: "human" })), actor, "Regenerate brain index");
+    return out;
   }
 
   // ---------- index and search ----------

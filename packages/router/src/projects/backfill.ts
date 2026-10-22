@@ -22,8 +22,9 @@ export function backfillProjects(db: Db, primary: string): { tasks: number } {
     run(`UPDATE brain_grants SET project_id = ${taskProject("brain_grants.task_id")} WHERE project_id = ''`, primary);
     run(`UPDATE job_plans SET project_id = ${taskProject("job_plans.job_id")} WHERE project_id = ''`, primary);
     run("UPDATE events SET project_id = (SELECT t.project_id FROM tasks t WHERE t.id = events.task_id) WHERE (project_id IS NULL OR project_id = '') AND task_id IS NOT NULL");
-    // Requests charged to a task take its project; requests charged to none (probes) stay global ('').
-    run("UPDATE model_requests SET project_id = (SELECT t.project_id FROM request_charges c JOIN tasks t ON t.id = c.task_id WHERE c.request_id = model_requests.id LIMIT 1) WHERE project_id = '' AND EXISTS (SELECT 1 FROM request_charges c WHERE c.request_id = model_requests.id)");
+    // Requests charged to a task take its project; requests charged to none (probes) stay global
+    // (''), and so do requests of a deleted project (their charges name tasks that are gone).
+    run("UPDATE model_requests SET project_id = (SELECT t.project_id FROM request_charges c JOIN tasks t ON t.id = c.task_id WHERE c.request_id = model_requests.id LIMIT 1) WHERE project_id = '' AND EXISTS (SELECT 1 FROM request_charges c JOIN tasks t ON t.id = c.task_id WHERE c.request_id = model_requests.id)");
     return { tasks };
   });
 }
