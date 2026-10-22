@@ -115,6 +115,26 @@ not a reason to stop the independently runnable core work. No service was instal
 
 ## Worker Briefs
 
+### Brief: compose-journal (link_completion)
+- Tier isolated roadmap-labs new feature branch from root named baseline, C3 journal prerequisite; runtime unavailable.
+- Read Current State, compose-journal-plan and pure engine/ownership reports and named existing C1/C2 contracts.
+- Own NEW labs/compose-journal-schema.ts, compose-journal.ts, sqlite-compose-journal.ts, compose-run.ts; named new tests/fake engine and killed-owner fixtures; reports/compose-journal.md.
+- One appended migration ONLY AFTER root explicitly releases admission migration and names updated baseline. Until then no migrations or source dispatch.
+- No Engine builder/client/proof, Labs manager/services/config/schema/public exports/shared docs edits. Engine port API is stable; no real transport/engine/OS/provider/user data.
+- Strict bounded zod stored/request/response DTOs: immutable project/Lab/task insertion incarnation/generation/original identity, separate renewable current owner fence, exact operation ID+digest replay.
+- Capture complete sealed approval and independently trusted engine profile; caller inputs are not host attestation. Default capability remains unavailable.
+- Durable prepared/issued intent before any injected effect call; no transaction across I/O. Original validated create full-ID receipt committed before dependent create/start.
+- Issued create with no committed ID quarantines; no labels/name/discovery adoption, retry/replacement generation or implicit uncertainty TTL. Preserve paths/ports/private proof.
+- Container creation requires committed original network receipt and exact original network plan digest. Recorded identity stays immutable when current ownership renews.
+- Require fresh current fence before each effect and final receipt/publication; late response may preserve original evidence but cannot mutate newer generation. Failed commit/ACK never reissues effects.
+- Start only after full cohort IDs committed; injectable independent C2 proof required before exact-ID mutation. No raw plan/JSON boolean serves as proof capability.
+- Exact-ID stop/remove reconciles acknowledged/uncertain outcomes conservatively; network removal requires known original proof and empty endpoints. 404 is observation, never unconditional resource release.
+- Track/drain operations/renewal/effect/receipt persistence before close; final persistence grace independent of cancelled effect signal. No DB callbacks after close.
+- Bound unresolved generations/effects/observations/diagnostics and terminal receipts per plan; refuse overflow, never evict uncertain proof. Secret-bearing private data stays out of public fixed codes/counts.
+- Scoped purge refuses unresolved effects/resources and preserves anti-replay tombstones. Expired cleanup must make bounded progress even when admission fails, with explicit nested transaction semantics.
+- Tests real SQLite and independent killed fake owner at before-issue/after-issue/after-response/before-commit/ACK-loss windows; no effect-before-intent, stale owner, conflict replay, daemon mismatch, partial quarantine, close/persist failure, bounds/private purge.
+- Partial C2 proof now exists; use original full approval, never fabricate subset. Retained/task runtime endpoints/readiness/physical filesystem containment remain later units.
+- Freeze then focused tests/router typecheck/build; report exact failures/limits. No commits/pushes/shared edits. Root integration and actual engine acceptance remain required.
 ### Brief: task-recovery-retention (link_completion)
 - Tier: isolated roadmap-labs new feature branch from root named baseline after Engine source commit; focused pre-release lifecycle fix.
 - Read Current State and own async-task-lifecycle report. Root confirmed idle runTick creates a7day recovery receipt every1s:100k cap reached in27h46m40s. Not deployed to user.
@@ -470,3 +490,5 @@ not a reason to stop the independently runnable core work. No service was instal
 - Refreshed e3abcb5 production demo acceptance passed: warning-free actual fixture seed; request browser12 screenshots and historical-session browser8 screenshots, exact route/API privacy/legacy/navigation checks, zero browser exceptions/new provider requests. Viewed normalized desktop input, phone recorded action and blocked-session desktop screenshots. Owned4497/9373 listeners absent after harness cleanup. Logs TEMP/switchyard-local-integration-refresh-{seed,request-browser,session-browser}.log. Actual user installation untouched.
 
 - Recovery retention943a74a merged after supervisor independent10/10 (67.41s), including172,801-call two-day simulation (63.23s) retaining301 keys/receipts. Reviewed prefix/kind window, ordinary headroom, nested transaction refusal and independent500-row GC. Worker52/52 separately recorded. Root exported new helper/constants and authored operational bounds/legacy limitations; full combined acceptance remains pending.
+
+- Root public recovery exports/router typecheck pass; existing lifecycle integration42/42 passed13.75s. Independent request protocol/ledger/classifier/capacity38/38 passed23.65s; review found classifier endSession could still mask persistence uncertainty, returned for scoped hardening before merge. Linux helper independently38/38 passed5.94s; cleanup PID1 authority review fix pending. No admission/helper completion claim yet.
