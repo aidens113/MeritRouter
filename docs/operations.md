@@ -845,3 +845,5 @@ acceptance remain outstanding.
   is refused in another.
 - Line attribution for external agents (OpenCode) is per model request, not per tool call, and can
   blur when the agent sends several requests at once.
+
+Confirmed project deletion also attempts immediate removal of stopped task verification Labs. It bypasses retention age only: terminal same-project task ancestry, no active operations/processes/ports, and unchanged clean registered Git resources are still required. A refusal preserves configuration, tasks and recovery evidence; retained human-created Labs must still be destroyed first. Coding branches and configured repository folders remain.

@@ -24,7 +24,9 @@ and49 focused tests (75.81s), including human acceptance, forged proof refusal a
 queued between inspection/write. Dedicated service startup passed an actual separate Labs
 supervisor test (14.22s); fixture supervisor stopped. Project purge integration passes7 tests
 (10.49s), including owned/mixed private capture removal while billing and other tasks remain.
-Normalized capture panel production acceptance and scoped immediate task-Lab prune are pending.
+Normalized capture panel production browser acceptance passed12 captures. Scoped task-Lab
+prune4a239ab independently passed11/11 (65.19s); confirmed deletion integration passed9/9
+(22.84s), including actual stopped Lab removal and dirty-resource refusal preserving config.
 Request-only release candidate is being rebuilt/revalidated separately from these larger units.
 
 Request-evidence UI3da30cf is merged locally: supervisor independently passed39 focused tests

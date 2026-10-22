@@ -321,9 +321,9 @@ export interface ProjectDeletionResult {
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /** Why a project cannot be deleted now: running or queued tasks, the last live project, or the single-project config. */
-function deletionBlockers(sy: Switchyard, info: ProjectSummary): string[] {
+function deletionBlockers(sy: Switchyard, info: ProjectSummary, allowTaskPrune = false): string[] {
   const out: string[] = [];
-  const labs = sy.db.prepare("SELECT count(*) AS n FROM labs WHERE project_id = ? AND state != 'destroyed'").get(info.slug) as { n: number };
+  const labs = sy.db.prepare("SELECT count(*) AS n FROM labs WHERE project_id = ? AND state != 'destroyed' AND (?=0 OR kind!='task_attempt')").get(info.slug, allowTaskPrune ? 1 : 0) as { n: number };
   if (labs.n) out.push(`it has ${labs.n} retained lab(s); destroy them first so their owned processes and worktrees can be cleaned up`);
   const a = projectActivity(sy, info.slug);
   if (a.runningTasks + a.queuedTasks > 0) out.push(`it has ${a.runningTasks} running and ${a.queuedTasks} queued task(s); cancel them or let them finish first`);
@@ -356,6 +356,7 @@ export async function previewProjectDeletion(sy: Switchyard, slug: string): Prom
       `${plural(counts.tasks, "task")} (${counts.jobs} of them ${counts.jobs === 1 ? "a job" : "jobs"}) with their results, plans, questions, and team channels.`,
       `${plural(counts.sessions, "session")} with ${counts.sessions === 1 ? "its log" : "their logs"}, and ${plural(counts.artifacts, "artifact")}.`,
       `${plural(fp.requestCaptures.captures, "private model request capture")} (${fp.requestCaptures.bytes.toLocaleString()} bytes), including shared payloads containing this project's data. Accounting history stays.`,
+      "Stopped task verification Labs are removed only after terminal-task, resource ownership and clean Git identity checks; unresolved cleanup blocks deletion.",
       `${plural(counts.worktrees, "worktree")} SwitchYard made for its tasks (their branches stay).`,
       `Its brain folder projects/${slug}/ (${plural(counts.brainEntries, "file")}), removed in one brain commit.`,
     ],
@@ -364,7 +365,7 @@ export async function previewProjectDeletion(sy: Switchyard, slug: string): Prom
       `${plural(fp.requests, "model request")} (${fp.paidRequests} paid), with their charges and spend, for accounting; they no longer belong to a project.`,
       "The brain's history: the removed folder stays in its git log.",
     ],
-    blockers: deletionBlockers(sy, info),
+    blockers: deletionBlockers(sy, info, true),
   };
 }
 
@@ -379,7 +380,7 @@ export async function previewProjectDeletion(sy: Switchyard, slug: string): Prom
 export async function deleteProject(sy: Switchyard, slug: string, opts: { confirm: string }): Promise<ProjectDeletionResult> {
   const info = projectInfo(sy, slug);
   if (opts.confirm !== slug) throw new SwitchyardError("usage", `type the project's slug to confirm: expected ${JSON.stringify(slug)}, got ${JSON.stringify(opts.confirm)}`);
-  const blockers = deletionBlockers(sy, info);
+  const blockers = deletionBlockers(sy, info, true);
   if (blockers.length) throw new SwitchyardError("usage", `project ${slug} cannot be deleted: ${blockers.join("; ")}`);
 
   // The config without the project, validated before anything is removed.
@@ -395,6 +396,12 @@ export async function deleteProject(sy: Switchyard, slug: string, opts: { confir
   const valid = validateConfigText(text, sy.cfg.configPath);
   if (!valid.ok) throw new SwitchyardError("config_invalid", `the config without projects.${slug} does not validate:\n  ${valid.errors.join("\n  ")}`);
 
+  // Confirmed deletion may bypass retention age, never positive ownership checks.
+  // Validate config first; the prune keeps recovery proof on any partial refusal.
+  const cleanup = await sy.labs.taskAttempts.pruneProject(slug);
+  if (cleanup.blocked) throw new SwitchyardError("usage", `project ${slug} has ${cleanup.blocked} task Lab cleanup(s) that could not be proved safe; recovery evidence was retained`);
+  const afterCleanup = deletionBlockers(sy, projectInfo(sy, slug));
+  if (afterCleanup.length) throw new SwitchyardError("usage", `project ${slug} cannot be deleted: ${afterCleanup.join("; ")}`);
   const fp = await footprintOf(sy, sy.projects.get(slug)!);
   const brainEntries = sy.brain.projectFolderFiles(slug);
   let configWritten = false;

@@ -20,7 +20,8 @@ all-alias pin/default-cwd/physical identity fixes, nonblocking service monitorin
 and public human acceptance/write fencing. Supervisor independently verified14 lifecycle tests,
 8 caller/verification tests,49 integrated checks and7 project-purge checks; actual dedicated
 Labs supervisor service startup passed14.22s and fixture stopped. Router typecheck/build and
-panel typecheck pass. Scoped immediate project prune is active in roadmap-process; complete
+panel typecheck pass. Scoped immediate project prune4a239ab independently passed11/11 (65.19s); root confirmed
+delete integration9/9 (22.84s) passed actual resource cleanup and dirty refusal. Complete
 combined acceptance/package and updated production panel acceptance remain pending. No complete
 L5 claim; task browser recovery is absent.
 
