@@ -20,7 +20,20 @@ function reserve(projects: string[] = []) {
   });
   sy!.tasks.claim("owner", { maxConcurrent: 20, maxWritersPerRepo: 1, leaseMs: 60000, defaultTimeoutMs: 60000 });
   const executionId = sy!.admission.createExecution(names.length > 1 ? "batch" : "task", "summarize", names.map(taskId => ({ taskId, itemId: taskId })));
-  return sy!.admission.reserve({ executionId, profile: "summarize", purpose: "fixture", gatewayModel: "fixture/model", endpointId: "fixture/model", tier: "T1", estInputTokens: 10, reservedOutputTokens: 10, participants: names.map(taskId => ({ taskId, leaseOwner: "owner", budget: { maxModelRequests: 10, maxInputTokens: null, maxOutputTokens: null, maxPaidUsd: null }, estInputTokens: 10, reservedOutputTokens: 10 })) });
+  const request = { executionId, profile: "summarize" as const, purpose: "fixture", gatewayModel: "fixture/model", endpointId: "fixture/model", tier: "T1", estInputTokens: 10, reservedOutputTokens: 10, participants: names.map(taskId => ({ taskId, leaseOwner: "owner", budget: { maxModelRequests: 10, maxInputTokens: null, maxOutputTokens: null, maxPaidUsd: null }, estInputTokens: 10, reservedOutputTokens: 10 })) };
+  if (new Set(projects).size > 1) {
+    // Modern admission must refuse this cohort. Seed only historical accounting
+    // rows to exercise capture privacy/purge for data predating that enforcement.
+    expect(() => sy!.admission.reserve(request)).toThrow("different projects");
+    const requestId = "historical-mixed-request";
+    sy!.db.transaction(() => {
+      sy!.db.prepare("INSERT INTO model_requests(id,execution_id,purpose,gateway_model,status,reserved_at,est_input_tokens,reserved_output_tokens,project_id) VALUES (?,?,'fixture','fixture/model','succeeded',?,10,10,?)").run(requestId, executionId, Date.now(), projects[0]!);
+      const charge = sy!.db.prepare("INSERT INTO request_charges(request_id,task_id,input_tokens,output_tokens,tokens_exact) VALUES (?,?,10,10,0)");
+      for (const taskId of names) charge.run(requestId, taskId);
+    })();
+    return { ...request, requestId };
+  }
+  return sy!.admission.reserve(request);
 }
 const input = (text = "private fixture") => projectCaptureInput("fixture/model", { messages: [{ role: "user", content: text }], max_tokens: 10 });
 
