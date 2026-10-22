@@ -14,6 +14,7 @@ import { runAgentLoop, type TerminalTool } from "../harness/loop.js";
 import type { ResumeInput } from "../harness/resume.js";
 import type { ResumeToolRef } from "../sessions/events.js";
 import { artifactTool, brainReadTools, brainSupervisorTools, commandTool, editTools, repoTools, type HarnessEnv, type HarnessTool } from "../harness/tools.js";
+import { webTools } from "../harness/web-tools.js";
 import { ensureCarves, jobDepth, mergeHooks, subJobSection, supervisorTools, type IntegrationRepo, type SupervisorState } from "../harness/supervisor-tools.js";
 import { MergeQueue, type MergeItem } from "../workspaces/merge-queue.js";
 import { newId } from "../storage/db.js";
@@ -204,6 +205,7 @@ export class SupervisorRunner implements CodingRunner {
       ...(primary ? editTools() : []),
       ...(env.commands ? [commandTool(patterns)] : []),
       artifactTool(),
+      ...webTools(),
       // A sub-job rewrites its own section (brain_set_job_section), never the parent's Current State.
       ...(brain ? [...brainReadTools(), ...brainSupervisorTools().filter((t) => !docSection || !["brain_set_current_state", "brain_compact"].includes(t.def.function.name))] : []),
       // Integration and undo commit on the job branch: record the new head after each.

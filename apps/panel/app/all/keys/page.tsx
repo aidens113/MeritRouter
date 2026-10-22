@@ -1,13 +1,14 @@
 import Link from "next/link";
-import { CreditCard, KeyRound, Power, Radar } from "lucide-react";
-import { insights } from "switchyard-router";
+import { CreditCard, Globe, KeyRound, Power, Radar } from "lucide-react";
+import { insights, WEB_BACKEND_NAMES } from "switchyard-router";
 import { getSy } from "@/lib/sy";
 import { SetupScreen } from "@/components/setup";
 import { Badge, Callout, Card, CardHeader, cx, Mono, PageHeader, type Tone } from "@/components/ui";
 import { ActionButton } from "@/components/client/actions";
 import { AddKeyForm, KeyRow, ProviderActions, type ProviderOption } from "@/components/client/provider-keys";
+import { AddSearchKeyForm } from "@/components/client/search-keys";
 import { usd } from "@/lib/billing";
-import { ago, modelHref } from "@/lib/format";
+import { ago, dateTime, modelHref } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Provider keys" };
@@ -20,6 +21,23 @@ const HEALTH: Record<string, { label: string; tone: Tone }> = {
 };
 
 const KIND: Record<insights.ProviderKind, string> = { builtin: "built-in", custom: "custom", paid: "paid provider", missing: "not configured" };
+
+const WEB_STATE: Record<insights.WebBackendStatus, { label: string; tone: Tone }> = {
+  healthy: { label: "Healthy", tone: "good" },
+  cooling: { label: "Cooling down", tone: "warn" },
+  invalid: { label: "Invalid key", tone: "bad" },
+  out_of_credits: { label: "Out of credits", tone: "serious" },
+  capped: { label: "At its cap", tone: "warn" },
+  unconfigured: { label: "No key", tone: "neutral" },
+  builtin: { label: "Built in", tone: "good" },
+};
+
+const KEY_STATE: Record<insights.WebKeyView["state"], { label: string; tone: Tone }> = {
+  ok: { label: "ok", tone: "good" },
+  cooling: { label: "cooling", tone: "warn" },
+  invalid: { label: "invalid", tone: "bad" },
+  out_of_credits: { label: "out of credits", tone: "serious" },
+};
 
 const POLICY_LABEL: Record<string, string> = { never: "never", on_free_exhaustion: "on free exhaustion", preferred: "preferred", premium: "premium" };
 
@@ -34,6 +52,7 @@ export default async function KeysPage() {
   const sy = r.sy;
   const view = insights.providerKeysView(sy);
   const paid = insights.paidSummary(sy);
+  const web = insights.webSearchView(sy, { recent: 0 });
   const now = Date.now();
   const names = new Map(sy.catalog.endpoints().map((e) => [e.id, e.displayName ?? e.gatewayModelId]));
   const shown = view.providers.filter((p) => p.keys.length || p.inConfig || p.inPaid);
@@ -130,6 +149,130 @@ export default async function KeysPage() {
           </Card>
         );
       })}
+
+      <Card id="web-search">
+        <CardHeader
+          title={
+            <span className="flex flex-wrap items-center gap-2">
+              <Globe size={15} aria-hidden /> Web search backends
+              {web.status.on ? <Badge tone="good">On · {web.status.strategy}</Badge> : <Badge>Web search off</Badge>}
+            </span>
+          }
+          description={
+            <>
+              Every backend with a key serves agents&apos; <Mono>web_search</Mono>, like model providers: a backend that fails is skipped within the same call, then cools down or is marked. Tavily, Brave, and Exa keys are for web search only, never chat; an <Mono>ollama-cloud</Mono> provider key also gives Ollama&apos;s web search and fetch. Order, strategy, and caps are in{" "}
+              <Link href="/all/settings#web" className="text-accent-ink hover:underline">
+                Settings → Web search
+              </Link>
+              .
+            </>
+          }
+        />
+        <div className="space-y-4 p-4">
+          {!web.status.on ? <p className="text-sm text-ink-2">{web.status.reason}</p> : null}
+          {web.status.warnings.map((w) => (
+            <p key={w} className="text-sm text-warn-ink">
+              {w}
+            </p>
+          ))}
+          <div className="overflow-x-auto">
+            <table className="data-table tabular">
+              <thead>
+                <tr>
+                  <th>Backend</th>
+                  <th>State</th>
+                  <th className="text-right">Today</th>
+                  <th className="text-right">This month</th>
+                  <th>Keys</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...web.status.search, ...web.status.fetch.filter((f) => f.backend === "builtin")].map((v) => {
+                  const st = WEB_STATE[v.status];
+                  return (
+                    <tr key={v.backend}>
+                      <td>
+                        <span className="font-medium text-ink">{WEB_BACKEND_NAMES[v.backend]}</span> <Mono>{v.backend}</Mono>
+                        {v.backend === "builtin" ? <div className="text-xs text-ink-3">page fetch only</div> : null}
+                      </td>
+                      <td>
+                        <Badge tone={st.tone}>
+                          {st.label}
+                          {v.until ? ` until ${dateTime(v.until)}` : ""}
+                        </Badge>
+                        {v.status === "unconfigured" && v.missing ? <div className="text-xs text-ink-3">{v.missing}</div> : null}
+                      </td>
+                      <td className="text-right">
+                        {v.requestsToday}
+                        {v.cap.perDay !== null ? <span className="text-ink-3"> / {v.cap.perDay}</span> : null}
+                      </td>
+                      <td className="text-right">
+                        {v.requestsThisMonth}
+                        {v.cap.perMonth !== null ? <span className="text-ink-3"> / {v.cap.perMonth}</span> : null}
+                      </td>
+                      <td>
+                        {v.keys.length ? (
+                          <ul className="space-y-0.5 text-xs">
+                            {v.keys.map((k) => (
+                              <li key={k.ref} className="flex flex-wrap items-center gap-1.5">
+                                <Mono>{k.ref}</Mono>
+                                {k.last4 ? <Mono>…{k.last4}</Mono> : null}
+                                <Badge tone={KEY_STATE[k.state].tone}>
+                                  {KEY_STATE[k.state].label}
+                                  {k.until && !k.available ? ` until ${dateTime(k.until)}` : ""}
+                                </Badge>
+                                {k.lastError && k.state !== "ok" ? <span className="text-ink-3" title={k.lastError}>{k.lastError.slice(0, 80)}</span> : null}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <span className="text-xs text-ink-3">{v.backend === "builtin" ? "no key needed" : "none"}</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {web.services.map((svc) => (
+            <div key={svc.id} className="rounded-lg border border-line">
+              <div className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
+                <span className="font-medium text-ink">{svc.displayName} keys</span>
+                <Mono>{svc.id}</Mono>
+                <span className="text-xs text-ink-3">{svc.note}</span>
+                <a href={svc.docsUrl} target="_blank" rel="noreferrer" className="ml-auto text-xs text-accent-ink hover:underline">
+                  API docs
+                </a>
+              </div>
+              {svc.keys.length ? (
+                <ul className="divide-y divide-line border-t border-line">
+                  {svc.keys.map((k) => (
+                    <li key={k.ref} className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
+                      <span className="text-ink">{k.label}</span>
+                      <Mono>{k.ref}</Mono>
+                      {k.last4 ? <Mono>…{k.last4}</Mono> : null}
+                      {k.unusableReason ? <Badge tone="warn">{k.unusableReason}</Badge> : <Badge tone="good">enabled</Badge>}
+                      {k.source === "config" ? <Badge>from the config file</Badge> : null}
+                      {k.id !== null && k.unusableReason !== "removed" ? (
+                        <span className="ml-auto flex flex-wrap gap-2">
+                          <ActionButton url={`/api/web-search/keys/${k.id}`} method="PATCH" payload={{ enabled: !k.enabled }} small success={k.enabled ? "Disabled" : "Enabled (its cooldown or invalid mark was cleared)"}>
+                            {k.enabled ? "Disable" : "Enable"}
+                          </ActionButton>
+                          <ActionButton url={`/api/web-search/keys/${k.id}`} method="DELETE" small variant="ghost" confirm="Remove this key?" success="Removed">
+                            Remove
+                          </ActionButton>
+                        </span>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ))}
+          <AddSearchKeyForm services={web.services.map((s) => ({ id: s.id, displayName: s.displayName, signupUrl: s.signupUrl, note: s.note }))} />
+        </div>
+      </Card>
 
       <Card id="paid">
         <CardHeader

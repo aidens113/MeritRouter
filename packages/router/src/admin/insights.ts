@@ -518,6 +518,8 @@ export function addRoutingOverride(sy: Switchyard, o: RoutingOverride): number {
 
 // Provider keys (vault and config), key tests, custom providers, and paid spend.
 export * from "./provider-keys.js";
+// Web search: backend status, search-service keys, recent web requests.
+export * from "./web-search.js";
 
 // ---------- qualification ----------
 

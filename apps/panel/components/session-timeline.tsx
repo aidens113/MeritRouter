@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { Bot, CircleAlert, CornerDownRight, Cpu, Flag, FolderGit2, MessageSquare, Play, RotateCcw, Send, StickyNote, User, Wrench } from "lucide-react";
+import { Bot, CircleAlert, CornerDownRight, Cpu, Flag, FolderGit2, Globe, MessageSquare, Play, RotateCcw, Send, StickyNote, User, Wrench } from "lucide-react";
 import type { SessionEvent } from "switchyard-router";
 import { Badge, cx, Mono, type Tone } from "./ui";
 import { SessionStatusBadge } from "./sessions-table";
@@ -23,6 +23,9 @@ const TYPE_LABEL: Record<SessionEvent["type"], string> = {
   ended: "Ended",
   resumed: "Resumed",
 };
+
+/** Tools that read the public web (results are untrusted data, counted against web budgets). */
+const WEB_TOOLS = new Set(["web_search", "web_fetch"]);
 
 const SIDE_EFFECT: Record<string, { label: string; tone: Tone; title: string }> = {
   none: { label: "no side effects", tone: "neutral", title: "Changes nothing outside the session" },
@@ -189,8 +192,13 @@ function EventBody({
       return (
         <div className="rounded-lg border border-line">
           <div className="flex flex-wrap items-center gap-2 px-3 py-1.5 text-xs">
-            <Wrench size={12} className="text-ink-3" aria-hidden />
+            {WEB_TOOLS.has(d.name) ? <Globe size={12} className="text-accent-ink" aria-hidden /> : <Wrench size={12} className="text-ink-3" aria-hidden />}
             <span className="font-mono font-medium text-ink">{d.name}</span>
+            {WEB_TOOLS.has(d.name) ? (
+              <Badge tone="accent" title="Reads the public web; what comes back is untrusted data and counts against the web request budgets">
+                web
+              </Badge>
+            ) : null}
             <Badge tone={se.tone} title={se.title}>
               {se.label}
             </Badge>

@@ -1,4 +1,5 @@
 import type { Db } from "../storage/db.js";
+import { isSearchService } from "../web/services.js";
 import type { ResolvedConfig } from "../config/load.js";
 import type { KeyVault, PaidKey } from "../providers/vault.js";
 import type { ProviderCredential } from "../providers/credentials.js";
@@ -150,7 +151,10 @@ export class PaidSpend {
       week: round(this.windowSpend(now - 7 * DAY)),
       month: round(this.windowSpend(now - 30 * DAY)),
       budgets: { perDayUsd: b.per_day_usd ?? null, perWeekUsd: b.per_week_usd, perMonthUsd: b.per_month_usd ?? null },
-      keys: this.vault.list().map((k) => {
+      keys: this.vault
+        .list()
+        .filter((k) => !isSearchService(k.provider))
+        .map((k) => {
         const ref = `vault:${k.id}`;
         return {
           ...k,

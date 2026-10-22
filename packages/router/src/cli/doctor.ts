@@ -9,6 +9,8 @@ import { panelBuildCheck } from "../operations/panel.js";
 import type { RepositoryPreparation } from "../projects/repository-setup.js";
 import { folderState, preparationHint } from "../workspaces/repository-prepare.js";
 import { stamp } from "./terminal.js";
+import { webBackendText, webStatusText } from "../admin/web-search.js";
+import { SEARCH_SERVICE_IDS } from "../web/services.js";
 
 // `switchyard doctor`: configuration, provider keys (one check per provider), secrets held in the
 // config file, models, and per project its repositories and brain folders. It reads only stored
@@ -148,6 +150,7 @@ export function literalSecretChecks(sy: Switchyard): DoctorCheck[] {
   for (const [id, entry] of Object.entries(sy.cfg.providers.byId)) {
     for (const [n, k] of entry.keys.entries()) if (k.api_key !== undefined) found.push(`providers.${id}.keys[${n}]${k.label ? ` (${k.label})` : ""}`);
   }
+  for (const id of SEARCH_SERVICE_IDS) if (sy.cfg.web.search[id]?.api_key !== undefined) found.push(`web.search.${id}`);
   if (!found.length) return [];
   return [{ check: "secrets in config", ok: true, level: "warn", detail: `${sy.cfg.configPath} holds a literal api_key at ${found.join(", ")}: use api_key_env, or move the key to the encrypted vault (switchyard keys add)` }];
 }
@@ -224,11 +227,31 @@ export function doctorChecks(sy: Switchyard, opts: { projects?: string[]; prepar
       checks.push({ check: `brain mount ${m.prefix}`, ok, level: ok ? "ok" : "fail", detail: ok ? abs : `${abs} does not exist` });
     }
   }
+  checks.push(...webChecks(sy));
   // A panel build older than the router's: the panel bundles the router, so it shows old behaviour until rebuilt.
   const panel = panelBuildCheck();
   checks.push({ check: "panel build", ok: panel.ok, level: panel.ok ? "ok" : "warn", detail: panel.ok ? panel.detail : `${panel.detail} (pnpm -r build, then restart the panel)` });
   for (const slug of opts.projects ?? sy.projects.slugs()) checks.push(...projectChecks(sy, slug, opts.prepared));
   return checks;
+}
+
+/**
+ * Web search for agents: the backend pool and fetch chain with each backend's state, or how to
+ * turn it on. Off (by choice or for lack of any key) is not a failure; a backend named in the
+ * config without a key is a warning (it is skipped), and so is a pool where no backend can serve
+ * right now.
+ */
+export function webChecks(sy: Switchyard): DoctorCheck[] {
+  const s = sy.web.status();
+  const out: DoctorCheck[] = [];
+  if (!sy.cfg.web.enabled) out.push({ check: "web search", ok: true, level: "ok", detail: "off (web.enabled: false)" });
+  else if (!s.on) out.push({ check: "web search", ok: true, level: "ok", detail: `off: ${s.reason}. To give agents web search, add an ollama-cloud key (switchyard keys add ollama-cloud), a Tavily, Brave, or Exa key (switchyard keys add tavily, or the panel's Provider keys page), or web.search.searxng.base_url` });
+  else {
+    const serving = s.search.some((v) => v.status === "healthy");
+    out.push({ check: "web search", ok: true, level: serving ? "ok" : "warn", detail: serving ? webStatusText(s) : `no search backend can serve now: ${s.search.filter((v) => v.configured).map(webBackendText).join("; ")}` });
+  }
+  for (const w of s.warnings) out.push({ check: "web search backend", ok: true, level: "warn", detail: w });
+  return out;
 }
 
 /** Doctor's terminal text: one line per check, details never truncated. */

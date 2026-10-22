@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
-import { ArrowLeft, CheckCircle2, CircleDashed, CircleX, Terminal } from "lucide-react";
+import { ArrowLeft, CheckCircle2, CircleDashed, CircleX, Globe, Terminal } from "lucide-react";
 import { insights, isTerminal, type Classification, type Switchyard, type VerificationRecord } from "switchyard-router";
 import { jobHref, taskHref } from "@/lib/links";
 import type { DetailScope } from "@/components/detail-scope";
@@ -60,6 +60,7 @@ export function TaskDetailView({ sy, taskId, scope }: { sy: Switchyard; taskId: 
   const verified = new Map((d.verification?.criteria ?? []).map((c) => [c.id, c]));
   const live = !isTerminal(st.state);
   const sessions = insights.sessionsView(sy, { taskId: st.taskId });
+  const webRequests = insights.taskWebRequests(sy, st.taskId);
 
   return (
     <div className="space-y-6">
@@ -252,6 +253,7 @@ export function TaskDetailView({ sy, taskId, scope }: { sy: Switchyard; taskId: 
                   ...(res.scopeViolation?.length ? ([["Out of scope", <span key="sv" className="flex flex-wrap gap-1 text-bad-ink">{res.scopeViolation.map((p) => <Mono key={p}>{p}</Mono>)}</span>]] as Array<[string, ReactNode]>) : []),
                   ...(res.protectedPathsChanged?.length ? ([["Protected paths", <span key="pp" className="flex flex-wrap gap-1">{res.protectedPathsChanged.map((p) => <Mono key={p}>{p}</Mono>)}</span>]] as Array<[string, ReactNode]>) : []),
                   ["Model requests", num(res.usage.modelRequests)],
+                  ...(res.usage.webRequests ? ([["Web requests", `${num(res.usage.webRequests)} (searches and page fetches)`]] as Array<[string, ReactNode]>) : []),
                   ["Provider attempts", `${num(res.usage.providerAttempts)}${res.usage.providerAttemptsExact ? "" : " (reported, not exact)"}`],
                   ["Tokens", `${res.usage.uncachedInputTokens !== null && res.usage.uncachedInputTokens !== undefined ? `${num(res.usage.uncachedInputTokens)} new in · ` : ""}${num(res.usage.outputTokens)} out · ${num(res.usage.inputTokens)} in with ${num(res.usage.cachedInputTokens ?? 0)} cached${res.usage.cachedInputTokens && res.usage.inputTokens ? ` (${pct(res.usage.cachedInputTokens, res.usage.inputTokens)})` : ""}`],
                   ["Token basis", res.usage.batchId ? `${humanize(res.usage.tokenUsageBasis)} (share of batch ${res.usage.batchId})` : humanize(res.usage.tokenUsageBasis)],
@@ -317,6 +319,57 @@ export function TaskDetailView({ sy, taskId, scope }: { sy: Switchyard; taskId: 
         <CardHeader title="Model requests for this task" />
         <RequestsTable rows={d.requests} names={names} base={base} empty="No model requests were made for this task" />
       </Card>
+
+      {webRequests.length ? (
+        <Card id="web-requests">
+          <CardHeader
+            title={
+              <span className="flex items-center gap-2">
+                <Globe size={15} aria-hidden /> Web requests
+              </span>
+            }
+            description={`Searches and page fetches this task made: ${new Set(webRequests.map((w) => w.callId)).size} of ${sy.cfg.web.max_requests_per_task} calls allowed per task. One row per attempt: a call whose backend failed moved on to the next backend, and the row marked "answered" is the backend that served it. What came back was given to the agent as untrusted data.`}
+          />
+          <div className="overflow-x-auto">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Kind</th>
+                  <th>Backend (key)</th>
+                  <th>Query or URL</th>
+                  <th>Outcome</th>
+                </tr>
+              </thead>
+              <tbody>
+                {webRequests.map((w) => (
+                  <tr key={w.id}>
+                    <td className="whitespace-nowrap tabular">{dateTime(w.startedAt)}</td>
+                    <td>{w.kind === "search" ? "search" : "fetch"}</td>
+                    <td>
+                      <Mono>{w.backend}</Mono>
+                      {w.keyRef && w.keyRef !== w.backend ? <div className="font-mono text-[11px] text-ink-3">{w.keyRef}</div> : null}
+                    </td>
+                    <td className="max-w-[28rem] break-all font-mono text-xs">{w.target}</td>
+                    <td>
+                      {w.status === "ok" ? (
+                        <Badge tone="good">answered · {w.kind === "search" ? `${w.results ?? 0} result${w.results === 1 ? "" : "s"}` : w.bytes !== null ? `${num(w.bytes)} bytes` : "ok"}</Badge>
+                      ) : w.status === "error" ? (
+                        <span className="text-xs text-bad-ink">
+                          {w.errorKind ? `${w.errorKind.replace("_", " ")}: ` : ""}
+                          {w.error}
+                        </span>
+                      ) : (
+                        <Badge tone="accent">running</Badge>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader

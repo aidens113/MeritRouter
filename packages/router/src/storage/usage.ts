@@ -50,6 +50,7 @@ export function taskUsage(db: Db, catalog: { endpoints(): ModelEndpoint[] }, tas
     uncachedInputTokens: null,
     reportedCostUsd: null,
     estimatedCostUsd: null,
+    webRequests: (db.prepare("SELECT COUNT(DISTINCT call_id) AS n FROM web_requests WHERE task_id = ?").get(taskId) as { n: number }).n,
   };
   if (rows.length === 0) return { usage, servedEndpoints: [] };
 

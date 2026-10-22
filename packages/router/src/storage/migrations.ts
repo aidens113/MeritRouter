@@ -717,4 +717,46 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE provider_key_state ADD COLUMN plan_refusals_json TEXT;
   `,
+  // Agents' web searches and page fetches: one row per attempt on a backend (`call_id` groups the
+  // attempts of one tool call), for the per-task and per-day budgets, per-backend caps, task usage,
+  // and the panel; and each web backend key's health (cooldowns, invalid, out of credits).
+  `
+  CREATE TABLE web_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    call_id TEXT NOT NULL,
+    task_id TEXT,
+    project_id TEXT NOT NULL DEFAULT '',
+    session_id TEXT,
+    kind TEXT NOT NULL,
+    backend TEXT NOT NULL,
+    key_ref TEXT,
+    target TEXT NOT NULL,
+    status TEXT NOT NULL,
+    error_kind TEXT,
+    results INTEGER,
+    bytes INTEGER,
+    error TEXT,
+    started_at INTEGER NOT NULL,
+    finished_at INTEGER
+  );
+  CREATE INDEX web_requests_task ON web_requests(task_id, started_at);
+  CREATE INDEX web_requests_started ON web_requests(started_at);
+  CREATE INDEX web_requests_backend ON web_requests(backend, started_at);
+  CREATE INDEX web_requests_call ON web_requests(call_id);
+  CREATE TRIGGER web_requests_project AFTER INSERT ON web_requests WHEN NEW.project_id = '' AND NEW.task_id IS NOT NULL
+  BEGIN
+    UPDATE web_requests SET project_id = COALESCE((SELECT project_id FROM tasks WHERE id = NEW.task_id), '') WHERE id = NEW.id;
+  END;
+  CREATE TABLE web_backend_state (
+    ref TEXT PRIMARY KEY,
+    backend TEXT NOT NULL,
+    status TEXT NOT NULL,
+    until INTEGER,
+    failures INTEGER NOT NULL DEFAULT 0,
+    last_used_at INTEGER,
+    last_error TEXT,
+    secret_fp TEXT,
+    updated_at INTEGER NOT NULL
+  );
+  `,
 ];

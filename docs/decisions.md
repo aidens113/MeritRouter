@@ -243,6 +243,65 @@ how to get one instead of failing (see the packaging question in the working doc
   budget); if nothing that large is available the loop compacts to the fallback budget and
   retries.
 
+## Web search and fetch for agents (W1-W2, 2026-10-21)
+
+**Backend facts (each service's own documentation, fetched 2026-10-21).**
+- Ollama (https://docs.ollama.com/capabilities/web-search): `POST https://ollama.com/api/web_search`
+  `{query, max_results}` (default 5, max 10) returns `{results: [{title, url, content}]}`;
+  `POST https://ollama.com/api/web_fetch` `{url}` returns `{title, content, links}`; both take
+  `Authorization: Bearer <Ollama API key>`. SwitchYard calls them on the `ollama-cloud`
+  provider's server root, so a `base_url` override moves them too.
+- Tavily (https://docs.tavily.com/documentation/api-reference/endpoint/search):
+  `POST https://api.tavily.com/search`, `Authorization: Bearer <key>`, body `{query, max_results
+  (0-20, default 10), search_depth (basic default)}`; results `[{title, url, content, score, ...}]`.
+- Brave (https://api-dashboard.search.brave.com/app/documentation/web-search/get-started):
+  `GET https://api.search.brave.com/res/v1/web/search?q=&count=` (count max 20, default 20),
+  header `X-Subscription-Token: <key>`; results under `web.results[]` with `title`, `url`,
+  `description` (which can carry `<strong>` markup: stripped).
+- Exa (https://exa.ai/docs/reference/search, redirected from docs.exa.ai):
+  `POST https://api.exa.ai/search`, `x-api-key` (or Bearer), body `{query, numResults (1-100,
+  default 10), contents: {highlights | text}}`; results `[{title, url, text, highlights, summary,
+  ...}]`. SwitchYard asks for highlights.
+- SearXNG (https://docs.searxng.org/dev/search_api.html): `GET /search?q=&format=json`; the json
+  format must be enabled in the instance's `settings.yml` (otherwise 403). The page does not
+  document the result fields; `results[].title/url/content` come from the instance's JSON output
+  as commonly consumed (not verified against SearXNG source here), and SwitchYard parses them
+  defensively (missing fields become empty, non-http URLs are dropped).
+- Free allowances (Tavily credits, Brave's monthly credit, Exa's credit) are third-party
+  summaries and change: they are shown as notes only, never enforced as facts.
+
+**Decisions (from `docs/working/web-search.md` D1-D7, revised by the user on 2026-10-21).**
+The first build chose one backend (`web.search.backend`); the user rejected that: web search
+must use every configured backend the way SwitchYard treats model providers. Now:
+`web.search.backends` is an ordered pool (`auto` = ollama, tavily, brave, exa, searxng, each
+when it has a key); `web.search.strategy` is `spread` (least recently used healthy backend first,
+so free allowances add up; default) or `fallback` (in order); a failed attempt moves on to the
+next backend within the same tool call, each backend at most once, and the tool output names the
+backend that answered. Each backend key has persisted health in `web_backend_state` with the
+provider rules (429/5xx cooldown from the backend's wait or 30 s doubling to 15 minutes,
+401/403 invalid, 402 or a spend message out of credits rechecked after 6 hours, cleared by a new
+secret or re-enable); several keys per backend rotate. Optional per-backend caps
+(`web.search.limits.<backend>.per_day|per_month`, counted from `web_requests`; no built-in
+numbers). Fetch is a chain, `web.fetch.backends` default `[builtin, ollama]`: builtin first
+(free), ollama when builtin fails or refuses the content; a URL the SSRF guard refused never
+reaches any backend (`SsrfRefusal` stops the chain). A named backend without a key is skipped
+with a doctor warning; the tools are off only when no backend at all has a key (or
+`web.enabled: false`). Budgets per task and per UTC day count tool calls (`call_id`), reserved
+transactionally on the first attempt; caps count attempts. Search-service keys share the vault
+under the service id but are filtered out of model credentials; keys are never logged (errors
+are masked). Results are wrapped as untrusted data, never in system prompts; nothing is added
+to the MCP server. `providers.tavily` (and brave, exa) is refused by the config schema with a
+pointer to `web.search.<service>`.
+
+**Departures and details.** Every fetched page (not only long ones) is stored as an artifact, so
+it is citable evidence; only pages over `web.page_excerpt_chars` are returned as an excerpt.
+Search results are stored as an artifact as well. Each backend is tried once per call (another
+key of the same backend is used on the next call, not within the call). A 400-class answer other
+than 401/402/403/429 moves the call on without marking the backend. Ollama's cap counts its
+searches and fetches together (one account). Web tools are journaled with side effect `read`, so
+a resumed session re-runs an interrupted web call (counting it again). OpenCode and command
+coding runners have no web tools (only SwitchYard's own harness does).
+
 ## Projects (user decision, 2026-10-20)
 
 One install holds many projects. Each has its own repositories, brain folder, jobs, tasks,

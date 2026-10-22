@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { WebAccess, type PageTransport, type Resolver } from "../web/index.js";
 import { hostname } from "node:os";
 import { randomBytes } from "node:crypto";
 import { statSync } from "node:fs";
@@ -51,6 +52,10 @@ export interface SwitchyardOptions {
   providerClient?: ProviderClient;
   /** Fetch for providers and their discovery (tests use a fake provider). */
   providerFetch?: FetchLike;
+  /** Fetch for the web search and fetch APIs (tests use a fake). */
+  webFetch?: FetchLike;
+  /** The built-in page fetch's transport and DNS resolver (tests use fakes). */
+  webPage?: { transport?: PageTransport; resolve?: Resolver };
   now?: () => number;
   /** Run the in-process worker loop (MCP server and `switchyard worker`). */
   worker?: boolean;
@@ -113,6 +118,8 @@ export class Switchyard {
   readonly vault: KeyVault;
   /** Providers: registry, credentials, key state, limits, client, health. */
   readonly providers: ProviderRuntime;
+  /** Agents' web search and fetch: backends, budgets, and the request record. */
+  readonly web: WebAccess;
   /** The projects of this install (`projects.<slug>`, or the single-project shape). */
   readonly projects: ProjectRegistry;
   /** The primary project's brain (see `brainFor` for any project); follows the primary after a config reload or a deletion. */
@@ -160,6 +167,15 @@ export class Switchyard {
     this.providers = new ProviderRuntime(cfg, this.db, this.vault, {
       client: opts.providerClient ?? createProviderClient({ ...(opts.providerFetch ? { fetch: opts.providerFetch } : {}), now: this.now }),
       ...(opts.providerFetch ? { fetch: opts.providerFetch } : {}),
+      now: this.now,
+    });
+    this.web = new WebAccess({
+      cfg,
+      db: this.db,
+      providers: this.providers,
+      ...(opts.webFetch ? { fetch: opts.webFetch } : {}),
+      ...(opts.webPage ? { page: opts.webPage } : {}),
+      event: (taskId, type, data) => this.tasks.event(taskId, type, data),
       now: this.now,
     });
     this.probeBudget = dailyProbeBudget(cfg.discovery.max_probe_requests_per_day, this.now);
@@ -217,6 +233,7 @@ export class Switchyard {
       },
       onSettled: (id) => this.events.emit("settled", id),
       project: (task) => this.projectDeps(task.row.project_id),
+      web: this.web,
     });
     this.qualifier = new Qualifier(this);
     this.auditor = new Auditor(

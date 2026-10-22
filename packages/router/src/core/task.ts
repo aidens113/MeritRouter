@@ -215,6 +215,8 @@ export const UsageSchema = z
     uncachedInputTokens: z.number().int().min(0).nullable().default(null),
     reportedCostUsd: z.number().min(0).nullable(),
     estimatedCostUsd: z.number().min(0).nullable(),
+    /** Web searches and page fetches the task made (web_search, web_fetch). Results stored before this field read as 0. */
+    webRequests: z.number().int().min(0).default(0),
   })
   .strict();
 export type Usage = z.infer<typeof UsageSchema>;
@@ -393,5 +395,6 @@ export function emptyUsage(): Usage {
     uncachedInputTokens: null,
     reportedCostUsd: null,
     estimatedCostUsd: null,
+    webRequests: 0,
   };
 }

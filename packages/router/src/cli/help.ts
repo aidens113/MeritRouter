@@ -85,6 +85,9 @@ Provider keys (stored encrypted in the vault; keys under providers in the config
                                 never the command line; --test lists its models first and
                                 stores the key only if that works; the provider's models are
                                 then listed for routing (--no-scan skips it, e.g. offline)
+  keys add tavily|brave|exa [--label x]
+                                a web search key for agents' web_search (never used for chat;
+                                no billing class, no model listing); keys list shows it too
   keys test [provider|id|ref]   list the models each key can use (a rejected key is marked
                                 invalid; nothing is added to the catalog: run models scan)
   keys enable|disable|remove <id>   vault keys (config keys are changed in the config file)

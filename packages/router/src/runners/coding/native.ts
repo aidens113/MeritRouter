@@ -9,6 +9,7 @@ import { planLimits } from "../../routing/select.js";
 import { charterFor } from "../../roles/index.js";
 import { commitAs } from "../../attribution/index.js";
 import { runAgentLoop } from "../../harness/loop.js";
+import { webTools } from "../../harness/web-tools.js";
 import { artifactTool, brainReadTools, commandTool, editTools, repoTools, type HarnessEnv, type HarnessTool } from "../../harness/tools.js";
 import { brainContext, submitResultTool, workerActor, workerBrainEnv } from "../../harness/worker.js";
 import type { RunContext, RunOutcome } from "../types.js";
@@ -48,7 +49,7 @@ export class NativeCodingRunner implements CodingRunner {
       edits: new Set(),
       ...(brain ? { brain } : {}),
     };
-    const tools: HarnessTool[] = [...repoTools(spec.repositoryAliases), ...editTools(), ...(patterns.length ? [commandTool(patterns)] : []), artifactTool(), ...(brain ? brainReadTools() : [])];
+    const tools: HarnessTool[] = [...repoTools(spec.repositoryAliases), ...editTools(), ...(patterns.length ? [commandTool(patterns)] : []), artifactTool(), ...(brain ? brainReadTools() : []), ...webTools()];
     const limits = planLimits(ctx.plan, ctx.cfg.routing.max_endpoint_fallbacks);
     // Never ask for more output than the candidate models can produce (coding defaults high).
     const maxTokens = Math.min(ctx.profile.max_output_tokens, spec.budget?.maxOutputTokens ?? Infinity, limits.outputLimitTokens || Infinity);

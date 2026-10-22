@@ -12,6 +12,7 @@ import type { Brain } from "../brain/brain.js";
 import type { BrainAccess } from "../brain/access.js";
 import type { SessionRecorder } from "../sessions/recorder.js";
 import type { AcceptanceContract } from "../verification/contract.js";
+import type { WebAccess } from "../web/access.js";
 
 /** Who decides a result and why (see `Switchyard.acceptTask`). */
 export interface AcceptanceDecisionInput {
@@ -91,6 +92,8 @@ export interface RunContext {
    * the plan to apply before the next model request. Null for a fresh run.
    */
   resume: { plan: ResumePlan } | null;
+  /** Agents' web search and fetch (absent or null: no web tools for this run). */
+  web?: WebAccess | null;
 }
 
 /**

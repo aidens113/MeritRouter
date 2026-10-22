@@ -225,6 +225,33 @@ export const SUPERVISOR_SECTION: Section = {
   ],
 };
 
+export const WEB_SECTION: Section = {
+  id: "web",
+  title: "Web search",
+  description: "Lets agents search the web and read pages (web_search, web_fetch). Every configured search backend serves, like model providers: a failing backend is skipped within the same call, cooled down, or marked. Results are untrusted data, budgets are enforced in code, and local or private addresses are never fetched. Search-service keys are added on the Provider keys page.",
+  fields: [
+    f("web.enabled", "Web access on", "bool", "Master switch. Off: no agent gets web_search or web_fetch."),
+    f("web.search.backends", "Search backends", "list", "The pool, in order: ollama, tavily, brave, exa, searxng, or auto (every backend not listed, in that order). Backends without a key are skipped; a backend you name here without a key gets a doctor warning.", { placeholder: "auto" }),
+    f("web.search.strategy", "Strategy", "enum", "Which backend a search starts at. Either way a failing backend is skipped within the same call.", {
+      options: ["spread", "fallback"],
+      optionHelp: {
+        spread: "Spread: start at the least recently used healthy backend, so the free allowances of every backend add up.",
+        fallback: "Fallback: start at the first backend in the list; later ones serve only when it fails, cools down, or is capped.",
+      },
+    }),
+    f("web.search.searxng.base_url", "SearXNG instance", "optText", "URL of a SearXNG instance. Its settings.yml must allow the json format.", { placeholder: "https://searx.example.org" }),
+    f("web.fetch.backends", "Page fetch chain", "list", "In order: builtin (SwitchYard's own fetch, free; http(s) only, every address checked against local and private ranges, also after each redirect) and ollama (Ollama's web_fetch with an ollama-cloud key). The next one is tried when one fails; a URL the guard refused is never sent anywhere.", { placeholder: "builtin" }),
+    f("web.roles", "Roles with web access", "list", "Roles that get web_search and web_fetch: supervisor, inspector, analyst, implementer, reviewer. Summarize tasks never have tools.", { placeholder: "analyst" }),
+    f("web.max_requests_per_task", "Web calls per task", "int", "web_search and web_fetch calls one task may make (a call that moves on to a second backend counts once). Past it, the tool tells the agent to continue with what it has.", { min: 0, unit: "calls" }),
+    f("web.max_requests_per_day", "Web calls per day", "int", "Calls the whole install may make per UTC day.", { min: 0, unit: "calls" }),
+    f("web.max_results", "Results per search", "int", "Most results one search returns.", { min: 1, max: 10 }),
+    f("web.page_excerpt_chars", "Page excerpt", "int", "Characters of a page returned inline; a longer page is stored as an artifact and returned as an excerpt plus its reference.", { min: 1000, max: 14000, unit: "characters" }),
+    f("web.fetch.timeout_seconds", "Request timeout", "int", "Longest one search or page fetch attempt may take.", { min: 1, max: 120, unit: "seconds" }),
+    f("web.fetch.max_bytes", "Largest page", "int", "Most bytes of a page body read (after decompression).", { min: 10000, max: 20000000, unit: "bytes" }),
+    f("web.fetch.max_redirects", "Redirects followed", "int", "Most redirects the built-in fetch follows; each target is checked again.", { min: 0, max: 10 }),
+  ],
+};
+
 /** Defaults for adding the supervise task type from the panel (mirrors the standalone preset). */
 export const SUPERVISE_PROFILE_DEFAULT = {
   mode: "supervisor",

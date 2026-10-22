@@ -316,7 +316,11 @@ export function updateProviderKey(sy: Switchyard, id: number, patch: KeyPatch): 
   const p = KeyPatchSchema.parse(patch);
   if (p.accountId !== undefined) keyProvider(sy, current.provider, p.accountId);
   sy.vault.update(id, p);
-  if (p.secret !== undefined || p.enabled === true) sy.providers.keys.clear(`vault:${id}`);
+  if (p.secret !== undefined || p.enabled === true) {
+    sy.providers.keys.clear(`vault:${id}`);
+    // An ollama-cloud key also serves web search: clear its web health too.
+    sy.web.clearProviderKey(`vault:${id}`);
+  }
   return providerKeyView(sy, `vault:${id}`)!;
 }
 

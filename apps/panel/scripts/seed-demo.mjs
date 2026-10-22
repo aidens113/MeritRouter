@@ -23,7 +23,10 @@
 // every job's metrics come from the stored runs themselves. Agent sessions (and
 // their event logs) come from those runs themselves; only the interrupted task's session, which
 // never ran, is recorded by hand (through the same store calls a worker makes, including one
-// resume), so it shows a `resumed` event and the Resume action.
+// resume), so it shows a `resumed` event and the Resume action. Web search is on through a pool of a
+// fake Tavily key and a SearXNG instance at the same closed local port; one inspection searches
+// (Tavily answers 429 and cools down, SearXNG answers) and fetches a page through fake web
+// transports (no request leaves the machine), so tasks, sessions, and the keys page show web calls.
 //
 //   pnpm --filter switchyard-router build
 //   pnpm --filter switchyard-panel seed:demo
@@ -239,6 +242,9 @@ const raw = {
   // The brain lives inside the demo folder so seeding never touches ~/.switchyard/brain.
   brain: { path: "brain", project: "demo", access_approver: "supervisor", global_requires_approval: true },
   supervisor: { question_timeout_seconds: 86400 },
+  // Agents' web search: a pool of a (fake) Tavily key and a SearXNG instance, both on the closed
+  // port; the seed answers them in-process. Tavily answers 429, so the call moves on to SearXNG.
+  web: { search: { tavily: { api_key: "demo-tavily-NOT-A-REAL-KEY", base_url: `${OFFLINE}/tavily` }, searxng: { base_url: `${OFFLINE}/searxng` } } },
   team: { max_agents: 3 },
   // Paid routing is on with small budgets; the demo key is fake and only a fake client ever sees it.
   paid: {
@@ -345,6 +351,21 @@ const client = {
     // Background audits: a review task that returns its verdict as data.
     if (user.includes("Audit: review the submitted work")) return auditTurn(s, user);
 
+    // Web research: search, read the first result, then submit citing the stored page.
+    if (WEB_GOAL.test(user) && req.tools?.some((t) => t.function.name === "web_search")) {
+      const tools = req.messages.filter((m) => m.role === "tool");
+      const tc = (name, args) => ({ toolCalls: [{ id: `call_${callNo}`, type: "function", function: { name, arguments: JSON.stringify(args) } }], out: 40 });
+      if (tools.length === 0) return reply(null, s, tc("web_search", { query: "JavaScript Number('') empty string returns 0", max_results: 3 }));
+      if (tools.length === 1) return reply("The first result is the reference page; reading it.", s, tc("web_fetch", { url: "https://docs.example.org/javascript/number" }));
+      const ref = /ref: (artifact:\S+)/.exec(textOf(tools[1]))?.[1] ?? "inline";
+      const out = {
+        summary: "The language reference confirms Number('') is 0 (an empty string converts to zero), which is why handle() accepts a missing parameter as 0.",
+        findings: [{ description: "Number('') returns 0, not NaN, per the fetched reference page.", evidenceRefs: [ref] }],
+        criteria: [{ index: 0, status: "met", evidenceRefs: [ref] }],
+      };
+      return reply(null, s, tc("submit_result", out));
+    }
+
     // Read-only investigations: read a file first, then submit_result citing it.
     if (req.tools?.length) {
       const toolTurns = req.messages.filter((m) => m.role === "tool").length;
@@ -389,6 +410,9 @@ const client = {
     return reply(JSON.stringify(result(1, "inline", "The log reports ERROR: boom at step 3, after the connection pool was exhausted.")), s);
   },
 };
+
+// The inspection that researches on the web (web_search, then web_fetch).
+const WEB_GOAL = /what the web says/;
 
 // The answer a reviewer fails once (it conflates a missing b with an empty one), then passes repaired.
 const MISSING_B = /missing b parameter/;
@@ -764,7 +788,28 @@ const providerClient = {
   },
 };
 
-sy = new Switchyard(cfg, { providerClient, now: clock, pollIntervalMs: 40 });
+// Fake web: the SearXNG instance answers searches, and the built-in page fetch gets a public
+// address and a reference page, all in-process.
+const webFetch = async (url) =>
+  url.includes("/tavily/")
+    ? new Response(JSON.stringify({ detail: { error: "Rate limit exceeded (demo)" } }), { status: 429, headers: { "content-type": "application/json", "retry-after": "7200" } })
+    : new Response(
+    JSON.stringify({
+      query: new URL(url).searchParams.get("q"),
+      results: [
+        { title: "Number() - JavaScript reference", url: "https://docs.example.org/javascript/number", content: "Number('') returns 0; Number(undefined) returns NaN.", engine: "demo" },
+        { title: "Type conversion pitfalls", url: "https://blog.example.org/type-conversion", content: "Empty strings convert to 0 in numeric contexts.", engine: "demo" },
+      ],
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+const REFERENCE_PAGE = "<html><head><title>Number() - JavaScript reference</title></head><body><h1>Number()</h1><p>Number(value) converts value to a number.</p><h2>Strings</h2><ul><li>Number('42') is 42</li><li>Number('') is 0: an empty or whitespace-only string converts to zero</li><li>Number('abc') is NaN</li></ul><p>Number(undefined) is NaN; Number(null) is 0.</p><p>See <a href=\"/javascript/parseFloat\">parseFloat()</a> for parsing prefixes.</p></body></html>";
+const webPage = {
+  resolve: async () => ["93.184.216.34"],
+  transport: async () => ({ status: 200, headers: { "content-type": "text/html; charset=utf-8" }, body: Buffer.from(REFERENCE_PAGE), truncated: false }),
+};
+
+sy = new Switchyard(cfg, { providerClient, now: clock, pollIntervalMs: 40, webFetch, webPage });
 const started = { v: false };
 const startWorker = () => {
   if (!started.v) sy.startWorker(40);
@@ -903,6 +948,7 @@ await phase(3, "too large: returned to the supervisor (T4)", [
   }),
 ]);
 await phase(1.5, "served-model mismatch (quarantine)", [summarize("Summarise the auth service log", { routing: { endpointId: "nvidia/meta/llama-3.3-70b-instruct" } })], { scenario: "policy" });
+await phase(0.8, "web research (search, then fetch)", [inspect("Check what the web says about Number('') returning 0")]);
 await phase(0.5, "recent summaries", [summarize("Summarise the latest canary log"), inspect("Is add() covered by any validation?")]);
 
 // The other projects run their own work through the same worker.
