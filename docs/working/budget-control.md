@@ -61,6 +61,14 @@ when the task starts. Workers already ask supervisors for brain access (`brain_r
 - **D5. Recorded everywhere:** every request and decision is an event and a row
   (`budget_requests`), visible in the job's channel, the task page, and the session timeline.
   Granted requests count in the contract's budget history.
+- **D7. Supervisors delegate implementation (user concern 2026-10-21: "the supervisor is doing a
+  ton of the work").** `supervisor.implementation: delegate | allowed` (default `delegate`). Under
+  `delegate` the supervisor's edit tools are limited, in code, to coordination files: the working
+  documents in the brain, files its briefs name as shared interfaces or docs (for example
+  `INTERFACES.md`, `README.md`), and conflict fixes during integration; any other edit is refused
+  with "delegate it". When a worker fails or runs out, the supervisor re-delegates (with more
+  budget, a narrower brief, or after a dependency lands) instead of writing the code itself; the
+  charter says so. `allowed` keeps today's behaviour for small jobs.
 - **D6. Paid spend is unchanged.** Extra requests never raise the dollar budgets; a paid request
   still needs paid headroom.
 
@@ -80,7 +88,9 @@ when the task starts. Workers already ask supervisors for brain access (`brain_r
 ### Brief: budget-control-b1
 - Repository: this repository; your own worktree on branch `feat/budget-control`; run
   `pnpm install --frozen-lockfile` first.
-- Task: Phase B1 exactly as the Decisions describe. Reuse the brain access-request pattern for the
+- Task: Phase B1 exactly as the Decisions describe, including D7 (supervisor edit limits and the
+  re-delegation charter rules; test: under `delegate` a supervisor edit to src/ is refused while an
+  INTERFACES.md edit and an integration conflict fix are allowed). Reuse the brain access-request pattern for the
   request/decision flow. Budgets are enforced in code (admission and the contract), never by
   prompt text alone.
 - Required reads: this document; `AGENTS.md`; `src/admission/admission.ts`, `src/verification/contract*.ts`,
