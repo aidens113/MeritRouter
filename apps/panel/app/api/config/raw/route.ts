@@ -10,8 +10,8 @@ const Body = z.object({ text: z.string().max(1_000_000), save: z.boolean().defau
 export async function POST(req: Request) {
   return handle(async (sy) => {
     const { text, save } = await body(req, Body);
-    const v = save ? insights.writeConfigText(sy, text) : insights.validateConfigText(text, sy.cfg.configPath);
-    if (!v.ok) throw new HttpError(400, save ? "Not saved: the YAML is invalid." : "The YAML is invalid.", v.errors);
+    const v = save ? await insights.writePreparedConfigText(sy, text) : insights.validateConfigText(text, sy.cfg.configPath);
+    if (!v.ok) throw new HttpError(400, save ? "Not saved: validation or repository setup failed." : "The YAML is invalid.", v.errors);
     return { valid: true, saved: save };
   });
 }

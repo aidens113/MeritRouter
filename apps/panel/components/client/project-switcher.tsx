@@ -14,6 +14,8 @@ export interface SwitcherProject {
   live: boolean;
   queued: boolean;
   attention: number;
+  /** Archived metadata identifies the current settings page but never appears in the picker. */
+  archived?: boolean;
 }
 
 /** Where the person is: inside a project, the install-wide section, or the projects grid. */
@@ -96,8 +98,9 @@ export function ProjectSwitcher({ scope, initial }: { scope: Scope; initial: Swi
   }, [open, close]);
 
   const current = scope.kind === "project" ? projects.find((p) => p.slug === scope.slug) : undefined;
+  const available = projects.filter(p => !p.archived);
   const title = scope.kind === "project" ? (current?.name ?? scope.slug) : scope.kind === "all" ? "All projects" : "SwitchYard";
-  const subtitle = scope.kind === "project" ? scope.slug : scope.kind === "all" ? "Install-wide pages" : "Projects";
+  const subtitle = scope.kind === "project" ? `${scope.slug}${current?.archived ? " · archived" : ""}` : scope.kind === "all" ? "Install-wide pages" : "Projects";
 
   const openMenu = (focus: "first" | "last" | "current") => {
     const r = button.current?.getBoundingClientRect();
@@ -158,7 +161,7 @@ export function ProjectSwitcher({ scope, initial }: { scope: Scope; initial: Swi
         <span className="min-w-0 flex-1 leading-tight">
           <span className="flex items-center gap-1.5">
             <span className="truncate text-sm font-semibold text-ink">{title}</span>
-            {current ? <ActivityDot p={current} /> : null}
+            {current && !current.archived ? <ActivityDot p={current} /> : null}
           </span>
           <span className="block truncate font-mono text-[11px] text-ink-3">{subtitle}</span>
         </span>
@@ -177,8 +180,8 @@ export function ProjectSwitcher({ scope, initial }: { scope: Scope; initial: Swi
         >
           <div className="px-2.5 pb-1 pt-1.5 text-[11px] font-medium uppercase tracking-wide text-ink-3">Projects</div>
           <div className="max-h-[50vh] overflow-y-auto p-px">
-            {projects.length ? (
-              projects.map((p) => {
+            {available.length ? (
+              available.map((p) => {
                 const here = scope.kind === "project" && scope.slug === p.slug;
                 return (
                   <Link

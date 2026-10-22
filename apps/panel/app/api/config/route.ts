@@ -84,8 +84,8 @@ export async function POST(req: Request) {
     const { patch } = await body(req, Body);
     if (patch.some((p) => p.path[0] === "storage")) throw new HttpError(400, "storage.directory cannot change while SwitchYard is running; edit the YAML and restart", ["storage.directory: cannot change while running"]);
     if (patch.some((p) => p.path[0] === "version")) throw new HttpError(400, "version cannot be edited");
-    const r = insights.patchConfig(sy, expand(sy, patch));
-    if (!r.ok) throw new HttpError(400, "The config was not saved because it would be invalid.", r.errors);
+    const r = await insights.patchPreparedConfig(sy, expand(sy, patch));
+    if (!r.ok) throw new HttpError(400, "The config was not saved: validation or repository setup failed.", r.errors);
     return { saved: true };
   });
 }

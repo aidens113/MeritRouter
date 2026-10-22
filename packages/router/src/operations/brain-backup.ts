@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, renameSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmdirSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import type { ResolvedConfig } from "../config/load.js";
@@ -167,32 +167,74 @@ export function planBrainRestore(manifest: BrainManifest | null | undefined, bac
   return { action: "replace", brainPath: target };
 }
 
-/** Carry out a plan from `planBrainRestore`: a fresh repository with every ref of the bundle, HEAD checked out. */
-export function restoreBrain(plan: BrainRestorePlan, manifest: BrainManifest | null | undefined, backupDir: string, now = Date.now()): BrainRestoreResult {
-  if (plan.action === "skip" || plan.action === "same") return { action: plan.action, brainPath: plan.brainPath, detail: plan.detail, previousMovedTo: null, commit: plan.action === "same" ? (manifest?.commit ?? null) : null };
+/** Verified replacement prepared without moving the live brain. */
+export interface StagedBrainRestore { path: string | null; commit: string | null }
+
+/** Remove only this restore's generated staging directory; cleanup cannot undo a committed restore. */
+export function discardStagedBrainRestore(staged: StagedBrainRestore): void {
+  if (staged.path && existsSync(staged.path)) {
+    try { rmSync(staged.path, { recursive: true, force: true }); } catch { /* Retain a locked staging directory for later cleanup. */ }
+  }
+}
+
+/** Build and verify the complete replacement before either half of the install is moved. */
+export function stageBrainRestore(plan: BrainRestorePlan, manifest: BrainManifest | null | undefined, backupDir: string): StagedBrainRestore {
+  if (plan.action === "skip" || plan.action === "same") return { path: null, commit: plan.action === "same" ? (manifest?.commit ?? null) : null };
   const m = manifest!;
+  mkdirSync(path.dirname(plan.brainPath), { recursive: true });
+  const staging = mkdtempSync(`${plan.brainPath}.restore-`);
+  const staged: StagedBrainRestore = { path: staging, commit: null };
+  try {
+    git(staging, ["init", "-q", "-b", m.head ?? "main"]);
+    git(staging, ["config", "core.autocrlf", "false"]);
+    git(staging, ["fetch", "-q", "--update-head-ok", path.join(path.resolve(backupDir), m.bundle!), "+refs/*:refs/*"]);
+    if (m.head) {
+      git(staging, ["symbolic-ref", "HEAD", `refs/heads/${m.head}`]);
+      git(staging, ["reset", "-q", "--hard", m.commit!]);
+    } else git(staging, ["checkout", "-q", "-f", "--detach", m.commit!]);
+    staged.commit = tryGit(staging, ["rev-parse", "--verify", "-q", "HEAD"]);
+    if (!staged.commit || staged.commit !== m.commit) throw new SwitchyardError("internal", `restored brain HEAD ${staged.commit ?? "(none)"} does not match the backup's ${m.commit}`);
+    return staged;
+  } catch (error) {
+    discardStagedBrainRestore(staged);
+    throw error;
+  }
+}
+
+/** Swap a verified brain into place; any failed swap restores the previous repository. */
+export function restoreBrain(plan: BrainRestorePlan, manifest: BrainManifest | null | undefined, backupDir: string, now = Date.now(), prepared?: StagedBrainRestore): BrainRestoreResult {
+  if (plan.action === "skip" || plan.action === "same") return { action: plan.action, brainPath: plan.brainPath, detail: plan.detail, previousMovedTo: null, commit: plan.action === "same" ? (manifest?.commit ?? null) : null };
+  const staged = prepared ?? stageBrainRestore(plan, manifest, backupDir);
   const target = plan.brainPath;
   let previousMovedTo: string | null = null;
-  if (plan.action === "replace") {
-    previousMovedTo = `${target}.pre-restore-${new Date(now).toISOString().replace(/[:.]/g, "-")}`;
-    try {
-      renameSync(target, previousMovedTo);
-    } catch (err) {
-      throw new SwitchyardError("conflict", `cannot move the brain at ${target} aside (${(err as Error).message}); is a SwitchYard process (worker, MCP server, panel) or an editor still using it?`);
+  let removedEmpty = false;
+  try {
+    if (plan.action === "replace") {
+      const base = `${target}.pre-restore-${new Date(now).toISOString().replace(/[:.]/g, "-")}`;
+      let previous = base;
+      for (let suffix = 1; existsSync(previous); suffix++) previous = `${base}-${suffix}`;
+      renameSync(target, previous);
+      previousMovedTo = previous;
+    } else if (existsSync(target)) {
+      // Atomic rmdir refuses if another writer has added files since planning.
+      rmdirSync(target);
+      removedEmpty = true;
     }
+    renameSync(staged.path!, target);
+  } catch (error) {
+    try {
+      if (previousMovedTo) {
+        if (existsSync(target)) throw new Error(`the target ${target} was occupied meanwhile`);
+        renameSync(previousMovedTo, target);
+      } else if (removedEmpty) mkdirSync(target);
+    } catch (rollback) {
+      throw new SwitchyardError("conflict", `brain restore failed (${(error as Error).message}); rollback failed (${(rollback as Error).message}). Previous brain remains at ${previousMovedTo ?? target}; recover it before restarting`);
+    }
+    throw new SwitchyardError("conflict", `brain restore failed (${(error as Error).message}); previous brain was preserved`);
+  } finally {
+    discardStagedBrainRestore(staged);
   }
-  mkdirSync(target, { recursive: true });
-  const branch = m.head ?? "main";
-  const bundle = path.join(path.resolve(backupDir), m.bundle!);
-  git(target, ["init", "-q", "-b", branch]);
-  git(target, ["config", "core.autocrlf", "false"]);
-  git(target, ["fetch", "-q", "--update-head-ok", bundle, "+refs/*:refs/*"]);
-  if (m.head) {
-    git(target, ["symbolic-ref", "HEAD", `refs/heads/${m.head}`]);
-    git(target, ["reset", "-q", "--hard", m.commit!]);
-  } else git(target, ["checkout", "-q", "-f", "--detach", m.commit!]);
-  const commit = tryGit(target, ["rev-parse", "--verify", "-q", "HEAD"]);
-  if (!commit || commit !== m.commit) throw new SwitchyardError("internal", `restored brain HEAD ${commit ?? "(none)"} does not match the backup's ${m.commit}`);
-  const detail = `restored the brain (${m.commits} commit(s), ${m.head ?? "detached"} at ${commit.slice(0, 12)}) into ${target}`;
-  return { action: plan.action, brainPath: target, detail, previousMovedTo, commit };
+  const m = manifest!;
+  const detail = `restored the brain (${m.commits} commit(s), ${m.head ?? "detached"} at ${staged.commit!.slice(0, 12)}) into ${target}`;
+  return { action: plan.action, brainPath: target, detail, previousMovedTo, commit: staged.commit };
 }

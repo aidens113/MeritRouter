@@ -3,6 +3,9 @@ import YAML from "yaml";
 import { ConfigSchema } from "../config/schema.js";
 import { formatIssues, parseConfig } from "../config/load.js";
 import type { Switchyard } from "../core/service.js";
+import { ProjectRegistry } from "../projects/registry.js";
+import { recordPreparation } from "../projects/repository-setup.js";
+import { prepareRepository } from "../workspaces/repository-prepare.js";
 
 /**
  * Editing the config file from the panel: validate, back up the previous file, write, and let
@@ -49,4 +52,35 @@ export function patchConfig(sy: Switchyard, patch: Array<{ path: Array<string | 
     else doc.setIn(p.path, p.value);
   }
   return writeConfigText(sy, doc.toString());
+}
+
+/** Generic panel saves prepare changed/new repository paths before acknowledging the config. */
+export async function writePreparedConfigText(sy: Switchyard, text: string): Promise<{ ok: true } | { ok: false; errors: string[] }> {
+  const validation = validateConfigText(text, sy.cfg.configPath);
+  if (!validation.ok) return validation;
+  const original = readConfigText(sy);
+  const candidate = new ProjectRegistry(parseConfig(YAML.parse(text), sy.cfg.configPath));
+  const errors: string[] = [];
+  for (const project of candidate.list()) {
+    const previous = sy.projects.get(project.project.slug);
+    for (const [alias, repository] of Object.entries(project.repositoryPaths)) {
+      if (previous?.repositoryPaths[alias]?.path === repository.path) continue;
+      const result = await prepareRepository(repository.path);
+      recordPreparation(sy.db, sy.tasks, { project: project.project.slug, alias, result });
+      if (!result.ok) errors.push(`projects.${project.project.slug}.repositories.${alias}.path: ${result.message}`);
+    }
+  }
+  if (errors.length) return { ok: false, errors };
+  if (readConfigText(sy) !== original) return { ok: false, errors: ["The config changed while repository folders were being prepared; reload it and retry your edit."] };
+  return writeConfigText(sy, text);
+}
+
+/** The async generic settings patch path; synchronous internal config editing stays compatible. */
+export async function patchPreparedConfig(sy: Switchyard, patch: Array<{ path: Array<string | number>; value: unknown }>): Promise<{ ok: true } | { ok: false; errors: string[] }> {
+  const doc = YAML.parseDocument(readConfigText(sy));
+  for (const item of patch) {
+    if (item.value === undefined || item.value === null) doc.deleteIn(item.path);
+    else doc.setIn(item.path, item.value);
+  }
+  return writePreparedConfigText(sy, doc.toString());
 }
