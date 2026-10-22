@@ -36,12 +36,17 @@ const gateResponse = (content: string | null, toolCalls?: ChatResponse["message"
 });
 
 /**
- * Two sessions recorded directly through the store (runners do not record yet):
+ * Two sessions recorded directly through the store with authoritative task/execution membership:
  * a completed analyst session with a tool call, and a failed delegated child with a model error.
  */
 async function seed(e: Env): Promise<{ root: string; child: string; rootEvents: number }> {
   const sy = open(e, new ScriptedClient(() => reply("unused")));
   try {
+    sy.tasks.submit([WorkerTaskSchema.parse(summarizeTask({ id: "t_root", label: undefined })), WorkerTaskSchema.parse(summarizeTask({ id: "t_child", label: undefined }))]);
+    sy.tasks.submit([WorkerTaskSchema.parse(summarizeTask({ id: "j_1", label: undefined }))]);
+    sy.db.prepare("UPDATE tasks SET state='completed' WHERE id IN ('t_root','t_child','j_1')").run();
+    authorizeExecution(sy, "exec_1", "t_root", true);
+    authorizeExecution(sy, "exec_2", "t_child");
     const root = sy.sessions.create({ taskId: "t_root", jobId: "j_1", role: "analyst", agentLabel: "analyst-1", profile: "analyze", tier: "T2" });
     const messages: ChatMessage[] = [
       { role: "system", content: "charter text" },
@@ -63,6 +68,16 @@ async function seed(e: Env): Promise<{ root: string; child: string; rootEvents: 
     return { root: root.id, child: child.id, rootEvents: root.lastSeq };
   } finally {
     await sy.close();
+  }
+}
+
+/** Timeline disclosure requires the same durable authority recorded by real runners. */
+function authorizeExecution(sy: ReturnType<typeof open>, execution: string, taskId: string, response = false): void {
+  sy.db.prepare("INSERT INTO executions(id,kind,profile,status,created_at) VALUES (?,'task','summarize','completed',1)").run(execution);
+  sy.db.prepare("INSERT INTO execution_members(execution_id,task_id,item_id) VALUES (?,?,?)").run(execution, taskId, taskId);
+  if (response) {
+    sy.db.prepare("INSERT INTO model_requests(id,execution_id,purpose,gateway_model,status,reserved_at,est_input_tokens,reserved_output_tokens,project_id) VALUES ('req_1',?,'runner',?,'succeeded',1,42,500,'demo')").run(execution, EP);
+    sy.db.prepare("INSERT INTO request_charges(request_id,task_id,input_tokens,output_tokens) VALUES ('req_1',?,42,50)").run(taskId);
   }
 }
 
@@ -132,7 +147,7 @@ describe("session CLI", () => {
     expect(row(9)).toMatch(/ended\s+completed\s+submitted/);
     expect(out).not.toContain("more events");
     expect(out).toContain("delegated sessions:");
-    expect(out).toContain(`  ${child} implementer-1 (implementer) failed: gateway_rate_limited`);
+    expect(out).toContain(`  ${child} implementer (implementer) failed`);
 
     // The failed child shows the model error with its code and status.
     const c = cli(env, "session", child).stdout;
@@ -218,6 +233,7 @@ async function seedInterrupted(e: Env): Promise<{ resumed: string; stale: string
   const sy = open(e, new ScriptedClient(() => reply("unused")));
   try {
     const taskId = interruptedTask(sy, "resume-me");
+    authorizeExecution(sy, "exec_r", taskId, true);
     const stale = sy.sessions.create({ taskId, role: "summarizer", agentLabel: "summarizer:old", profile: "summarize", tier: "T1" });
     stale.end("interrupted", "shutdown");
     const rec = sy.sessions.create({ taskId, role: "inspector", agentLabel: "inspector:resume-me", profile: "summarize", tier: "T1" });
