@@ -1,7 +1,7 @@
 # Panel v2 supervisor validation — 2026-10-22
 
 ## Outcome
-U1-U3 implemented and independently verified. No live provider calls; all checks used temp
+Core U1-U3 behavior was independently verified by the checks below; full requirement completion was not established. The 2026-10-22 completion audit reopened gaps listed in the working document Current State. No live provider calls; all checks used temp
 router fixtures or apps/panel/.demo with fake provider/web transports. The user's install and
 port 4477 were not used for testing or restarted.
 

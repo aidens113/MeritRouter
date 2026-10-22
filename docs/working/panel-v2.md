@@ -1,7 +1,7 @@
 # Panel v2: live data and a calmer layout
 
-Status: Complete
-Status detail: U1-U3 delivered and demo-validated 2026-10-22; merged into dev at 672a697.
+Status: Active
+Status detail: Core U1-U3 merged at 672a697; completion audit reopened unmet plan details and acceptance coverage on 2026-10-22.
 Created: 2026-10-21
 Last updated: 2026-10-22
 Owner: Senior supervisor agent
@@ -14,7 +14,7 @@ Related: [budget-control](./budget-control.md), [labs](./labs.md), [projects](./
 
 ## Current State
 
-**Delivered 2026-10-22:** U1 scoped server-sent live events, reconnect/resume cursors and pause;
+**Core implementation delivered 2026-10-22 (not full plan completion):** U1 scoped server-sent live events, reconnect/resume cursors and pause;
 U2 shared headers, grouped navigation, query-addressable tabs, disclosures and mobile summaries;
 U3 agent, repository, commit and request pages (including qualification and unassigned requests),
 with related-entity links on task, job, session and model details. Old section anchors select
@@ -40,9 +40,29 @@ scoped history rather than exposing shared-brain diffs through repository pages.
 The demo seed reported fixture-level brain-lock/integration/promotion warnings; those do not
 establish live team correctness. No real provider calls or user install tests were run.
 
-**Next:** budget-control B2, then a separately budgeted live team check. Labs, R2 and packaging
-remain governed by the handoff's existing constraints.
+**Completion audit, 2026-10-22:** the previous Complete status overstated the evidence. Passing
+603 tests and the selected route/browser checks establish those behaviors, not every D3-D6
+requirement. Confirmed remaining work:
 
+1. Finish D6 in the brain document view: history/blame commit hashes must link to a project-scoped
+   commit view, and the selected document needs related-entity navigation. Enforce project/global
+   document visibility in the service before exposing shared-brain commit content; do not simply
+   alias the whole shared brain into the code repository viewer. Add cross-project denial tests.
+2. Complete the map's recent-agent summary in project Activity. Review plan/team surfaces against
+   the map's promised task/agent links, then inventory named entities in timelines and blame.
+   The existing source review is not an exhaustive D6 link audit.
+3. Complete U1 browser acceptance for independently inserted model requests and brain commits,
+   beyond the verified task-state mutation. Inventory D5's pre-existing data/anchors against
+   the tabbed UI; five sampled anchor mappings do not prove every datum is within two clicks.
+4. Reproduce the demo seed warnings in isolation and trace the brain index.lock collision,
+   missing nested integrations/rebase and missing pending promotions. Their cause is not yet
+   established; do not label them harmless or claim that seeded team behavior is verified.
+5. Re-run affected tests and production demo browser checks after fixes; only then mark the full
+   effort Complete. Preserve the existing passing acceptance evidence as historical evidence.
+
+**Next:** close these Panel v2 gaps before treating budget-control B2 as the next completed
+phase. B2, live team/provider checks, Labs, R2 and packaging remain outside the delivered unit;
+retain their existing authorization and open-question constraints.
 ---
 ## Decisions (recommended defaults; the user may override)
 
@@ -180,6 +200,14 @@ remain governed by the handoff's existing constraints.
 - Validation: final `pnpm -r typecheck` and `pnpm -r build` passed; `npx vitest run --maxWorkers=2` passed 603/603 in 59 files. Final production-demo crawl: 492 checks, zero unexpected failures; old anchors, SSE reset/resume, direct entity links and light/dark desktop/phone screenshots verified. Live DOM update 865 ms, idle refreshes 0; pause/resume, restart and state preservation passed.
 - Outcome: Accepted
 - Follow-up: B2 next. Merge into dev: 672a697; final narrow admin-live rerun passed 16/16 after confirming dev was current. Push state is recorded by Git refs. Temporary demo/browser servers stopped. Automatic approval review blocked deletion of both the unregistered baseline directory and generated demo fixtures (only "blocked by policy" supplied); neither is committed.
+
+### 2026-10-22 — Completion claim corrected after user challenge
+- Agent: supervisor (Codex)
+- Changed: status and Current State reopened; index/handoff and validation outcome corrected.
+- Why: the full plan was not complete despite passing tests and selected acceptance checks. Brain commit navigation/Related, Activity's recent agents, broader U1/D5/D6 coverage and seed failures remain.
+- Validation: read panel-v2 decisions and map against brain/page.tsx, project overview and worker reports; confirmed plaintext brain commit hashes, no brain RelatedPanel, and omitted Activity agent summary. Broader pending work confirmed in budget-control, labs and handoff. No code changed or tests rerun.
+- Outcome: Partial
+- Follow-up: execute the numbered remaining work in Current State; do not equate test counts with requirement completeness.
 
 ## Open Questions
 

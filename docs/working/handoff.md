@@ -6,8 +6,8 @@ own working document with decisions, phases, ledger, and reports.
 
 ## Repository state
 
-- Panel v2 U1-U3 (merge 672a697) is the latest completed coherent unit. Final checks: 603 router tests, recursive typecheck and build, and demo browser acceptance. See its working document for integration/push status.
-- Panel v2 U1-U3 completed and demo-validated 2026-10-22 (603 router tests); see its working document and supervisor validation report.
+- Panel v2 core implementation (merge 672a697) is merged; its full plan remains Active after the completion audit. Final checks: 603 router tests, recursive typecheck and build, and demo browser acceptance. See its working document for integration/push status.
+- Panel v2 selected demo acceptance passed (603 router tests); the working document now explicitly lists remaining requirements and validation gaps.
 - Agent worktrees live under `.claude/worktrees/` (excluded from git locally).
 
 ## The user's live install (off limits to tests; use temp configs and `seed:demo`)
@@ -37,7 +37,7 @@ own working document with decisions, phases, ledger, and reports.
 | Web search | [web-search.md](web-search.md) | W1-W3 done: backend pool (Ollama, Tavily, Brave, Exa, SearXNG), SSRF-guarded fetch, budgets; native search in model calls (OpenRouter, Anthropic, OpenAI) priced as paid. Live-checked on Ollama only |
 | Caching and continuity | [caching-and-continuity.md](caching-and-continuity.md) | C1-C2 done: cache hints, endpoint stickiness, cached pricing, truncation recovery, prefix-stable compaction. Not checked live |
 | Budget control | [budget-control.md](budget-control.md) | B1 done and merged (job request pool, `max_requests` on briefs, `request_more_budget` and decisions, delegate-only supervisors, `run_check` for implementers). B2 (panel UI for requests and pools) not started. Never run against a live job yet |
-| Panel v2 | [panel-v2.md](panel-v2.md) | Complete: U1 scoped live events, U2 tabs/disclosures/grouped navigation, U3 linked entity pages; demo browser acceptance and 603 router tests passed |
+| Panel v2 | [panel-v2.md](panel-v2.md) | Core U1-U3 merged, 603 tests and selected demo checks pass; reopened incomplete plan details and acceptance coverage (see Current State) |
 | Labs | [labs.md](labs.md) | Planned (L1-L5); waiting on the user's answers to four questions about FluxIQ's lanes (or "use the defaults") |
 | Projects | [projects.md](projects.md) | Done (J1-J3) plus deletion, repository auto-setup, panel power button |
 | R2 (Postgres, several hosts) | [agent-sessions-and-teams.md](agent-sessions-and-teams.md) | Parked; the user has not answered whether to do it |
@@ -45,7 +45,7 @@ own working document with decisions, phases, ledger, and reports.
 
 ## What to do next (in order, each needs the user's go-ahead where noted)
 
-1. Panel v2 is complete; its working document records final acceptance and merge.
+1. Close the reopened Panel v2 gaps listed in its Current State before claiming full plan completion.
 2. Budget control B2 (panel for budget requests) is next (same files).
 3. A live team job on the user's install to exercise budget control, `run_check`, and the
    delegate-only supervisor (spends free Ollama quota: state the budget first).
