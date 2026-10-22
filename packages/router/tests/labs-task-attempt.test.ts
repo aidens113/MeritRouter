@@ -79,6 +79,17 @@ it('keeps configured junction spelling while proving physical repository identit
   expect(m.store.byId(result.labId)!.repositories[0]!.source).toBe(link);
   expect(m.status('alpha', m.store.byId(result.labId)!.name).lab.id).toBe(result.labId);
 }, 60000);
+it('returns the service monitor tick while a tracked task check is still in progress', async () => {
+  const m = setup(), a = await prepare('responsive-monitor');
+  const op = m.taskAttempts.requestCheck(a.handle, { checks: ['slow'] });
+  const before = Date.now();
+  await m.tick();
+  expect(Date.now() - before).toBeLessThan(2000);
+  expect((db!.prepare('SELECT state FROM task_lab_operations WHERE id=?').get(op.id) as {state:string}).state).not.toBe('completed');
+  const result = await m.taskAttempts.wait(a.handle, op.id);
+  expect(result.status).not.toBe('passed');
+  expect(result.cleanup).toBe('complete');
+}, 60000);
 it('does not let task alias order redefine the human recipe default command repository', async () => {
   const m = setup(), a = await prepare('default-repository');
   const cfg = m.options.project('alpha');

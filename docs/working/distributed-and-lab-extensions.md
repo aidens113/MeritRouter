@@ -220,6 +220,12 @@ not a reason to stop the independently runnable core work. No service was instal
 
 ## Work Ledger
 
+### 2026-10-22 - Task runtime monitoring responsiveness
+- Agent: supervisor.
+- Changed: task operations use one tracked nonblocking drain from the Lab monitor tick; retained controls and service monitoring continue independently. Close awaits the drain and aborts owned active work.
+- Validation: actual fixture runtime test passes1/1 (16.11s), tick returned under2s while declared slow check remained active; failed check later cleaned resources completely. Existing actual retained-control responsiveness test passed separately. Complete combined suite still pending caller integration.
+- Outcome: Partial; local lifecycle fix only. Project purge now refuses unresolved cleanup/process/operation evidence and deletes completed dependent rows in FK order; six project deletion tests passed8.72s.
+
 ### 2026-10-22 — Async queue accepted
 - Agent: supervisor.
 - Changed: accepted418b106 plus public validated DTO exports at6754a11. Default Scheduler uses awaited claim/companion port; no PostgreSQL claim.

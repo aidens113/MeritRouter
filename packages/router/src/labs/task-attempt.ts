@@ -23,6 +23,7 @@ export class TaskLabLifecycle {
   private readonly active = new Map<string, AbortController>();
   private readonly work = new Set<Promise<void>>();
   private closed = false;
+  private drain: Promise<void> | null = null;
   constructor(readonly manager: LabManager, barrier?: (phase: string, row: TaskProcessRecord) => Promise<void>) {
     this.source = new TaskAttemptSource(manager);
     this.processes = new TaskAttemptProcesses(manager.options.db, manager.options.storageDir, barrier, (id) => this.assertRunning(id));
@@ -129,8 +130,10 @@ export class TaskLabLifecycle {
     if (this.closed)
       return;
     await this.recover();
+    if (this.closed) return;
     const ids = z.array(z.object({ id: z.string() })).parse(this.store.db.prepare("SELECT id FROM task_lab_operations WHERE state='pending' ORDER BY created_at LIMIT 20").all());
     await Promise.all(ids.map(async ({ id }) => {
+      if (this.closed) return;
       const op = immediate(this.store.db, () => {
         const row = Operation.parse(this.store.db.prepare("SELECT * FROM task_lab_operations WHERE id=?").get(id));
         if (row.state !== "pending" || this.store.db.prepare("SELECT 1 FROM task_lab_operations WHERE attempt_id=? AND state='running' AND lease_until>?").get(row.attempt_id, Date.now()))
@@ -149,6 +152,13 @@ export class TaskLabLifecycle {
         this.work.delete(work);
       }
     }));
+  }
+  /** Start one tracked drain without blocking the retained-service monitoring tick. */
+  schedule(): void {
+    if (this.closed || this.drain) return;
+    this.drain = this.process().catch(() => {
+      // Durable queued/leased rows remain available for the next recovery pass.
+    }).finally(() => { this.drain = null; });
   }
   private quarantine(attemptId: string): void {
     const request = this.store.lab(attemptId);
@@ -286,6 +296,7 @@ export class TaskLabLifecycle {
     this.closed = true;
     for (const controller of this.active.values())
       controller.abort("manager closed");
+    await this.drain;
     await Promise.allSettled([...this.work]);
   }
 }

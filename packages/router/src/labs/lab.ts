@@ -616,7 +616,8 @@ export class LabManager {
     this.ticking = true;
     try {
       this.reloadConfig();
-      await this.processControls();
+      this.taskAttempts.schedule();
+      await this.controls.processAll();
       this.options.db.prepare("UPDATE lab_services SET owner_until=? WHERE owner_id=? AND state IN ('running','starting','backoff')").run(Date.now() + 60000, this.owner);
       if (Date.now() - this.lastRetention > 3600000) {
         await this.pruneTaskWorktrees();
