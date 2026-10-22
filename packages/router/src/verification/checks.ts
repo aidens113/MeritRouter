@@ -1,10 +1,11 @@
+import { taskLabEvidenceProblem, type TaskLabAuthority } from "../runners/coding/task-lab.js";
 import type { ProfileMode } from "../config/schema.js";
 import { checkEvidenceRef, type EvidenceUniverse, type WorkerOutput } from "../core/worker-output.js";
 import { ARTIFACT_REF_RE, FILE_REF_RE, type CheckOutcome, type CriterionOutcome, type CriterionVerify, type WorkerResult } from "../core/task.js";
 import type { AcceptanceContract } from "./contract.js";
 
 /** The deterministic checks this version implements. Any other required name is not_implemented. */
-export const NAMED_CHECKS = ["output_contract", "evidence_provenance", "scope", "protected_paths", "declared_checks", "criterion_evidence"] as const;
+export const NAMED_CHECKS = ["output_contract", "evidence_provenance", "scope", "protected_paths", "declared_checks", "criterion_evidence", "ephemeral_lab_checks"] as const;
 export type NamedCheck = (typeof NAMED_CHECKS)[number];
 
 /** Exit codes meaning the command could not run at all: not executable, not found (sh), not found (cmd.exe). */
@@ -22,10 +23,11 @@ export type CheckRecord = WorkerResult["checks"][number];
 
 /** The parts of a runner result the checks read. */
 export type CheckedResult = Pick<WorkerResult, "executionStatus" | "stopReason" | "findings" | "checks" | "unresolvedCriteria" | "artifactRefs" | "patchRefs"> &
-  Partial<Pick<WorkerResult, "data" | "changedPaths" | "scopeViolation" | "protectedPathsChanged">>;
+  Partial<Pick<WorkerResult, "data" | "changedPaths" | "scopeViolation" | "protectedPathsChanged" | "taskLab">>;
 
 export interface CheckSubject {
   contract: AcceptanceContract;
+  taskLabAuthority?: TaskLabAuthority | null;
   mode: ProfileMode;
   /** Required named checks (the re-evaluated list); defaults to the contract's. */
   requiredChecks?: string[];
@@ -171,6 +173,14 @@ export function runNamedChecks(s: CheckSubject): CheckReport {
     else if (by("not_run").length) add("declared_checks", "not_run", detail);
     else add("declared_checks", "passed", detail);
   }
+
+  if (s.contract.declaredLabChecks.length) {
+    const problem = taskLabEvidenceProblem({ id:s.contract.taskId, profile:s.contract.profile, goal:s.contract.goal, repositoryAliases:s.contract.scope.repositoryAliases, writableRepository:s.contract.scope.writableRepository??undefined, context:{baseCommits:s.contract.scope.baseCommits}, constraints:{acceptanceCriteria:s.contract.criteria.map(c=>c.text),labChecks:s.contract.declaredLabChecks}},r.taskLab,s.taskLabAuthority??null);
+    // This mandatory deterministic gate is a defect, so reviewers cannot turn missing evidence into a pass.
+    add("ephemeral_lab_checks", problem ? "failed" : "passed", problem??"Declared task Lab checks passed on every immutable head and stopped resources");
+  }
+
+  if (!s.contract.declaredLabChecks.length && required.has("ephemeral_lab_checks")) add("ephemeral_lab_checks", "not_applicable", "the task declares no Lab checks");
 
   // criterion_evidence: each criterion by its verify kind.
   const crit: CriterionResult[] = s.contract.criteria.map((c) => {

@@ -48,6 +48,7 @@ export const TaskArgumentSchema = open({
       .describe("Strings (ids c1..cn) or { id, text, verify?, checks? }."),
     allowedPaths: strings.optional().describe("Coding tasks: paths the worker may change."),
     checks: strings.optional().describe("Commands run in the task worktree to verify a coding result."),
+    labChecks: strings.optional().describe("Declared human-authorized command Lab check names; creates an isolated task-attempt Lab before acceptance."),
   }),
   importance: ImportanceSchema.optional(),
   importanceReason: z.string().optional().describe("Required for high and critical."),

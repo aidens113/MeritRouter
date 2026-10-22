@@ -85,6 +85,7 @@ export interface ExecutorDeps {
   /** Agents' web search and fetch, shared by every project (absent: no web tools). */
   web?: WebAccess | null;
   labs?: LabManager;
+  ensureLabsSupervisor?: () => Promise<void>;
 }
 
 /** What differs per project in the executor's dependencies. */
@@ -174,6 +175,10 @@ export class Executor {
       spec: task.spec,
       taskId: task.row.id,
       leaseOwner: this.d.owner,
+      claimedRunCount: task.row.run_count,
+      taskProject: task.row.project_id || d.cfg.brain.project,
+      taskLabs: d.labs,
+      ensureLabsSupervisor: d.ensureLabsSupervisor,
       // The contract's allocation keeps the review (and, on the first run, repair) reserves free.
       budget: { ...budget, maxModelRequests: cap },
       contract: v.contract?.contract ?? null,
@@ -238,7 +243,13 @@ export class Executor {
       tier,
       classification,
     );
-    if (c.ok) return c.stored;
+    if (c.ok) {
+      if (JSON.stringify(c.stored.contract.declaredLabChecks) !== JSON.stringify(task.spec.constraints.labChecks ?? [])) {
+        this.record(task, "failed", contractShortfall(task.spec, "Stored task Lab check selection differs from the submitted task"));
+        return null;
+      }
+      return c.stored;
+    }
     this.record(task, "failed", contractShortfall(task.spec, c.message));
     return null;
   }
@@ -272,7 +283,9 @@ export class Executor {
    */
   private async withUpstream(task: StoredTask): Promise<StoredTask> {
     try {
-      return await withUpstreamContext({ cfg: this.depsFor(task).cfg, tasks: this.d.tasks, artifacts: this.d.artifacts }, task);
+      const contextual = await withUpstreamContext({ cfg: this.depsFor(task).cfg, tasks: this.d.tasks, artifacts: this.d.artifacts }, task);
+      if (task.spec.constraints.labChecks?.length) return { ...contextual, spec: { ...contextual.spec, context: { ...contextual.spec.context, baseCommits: task.spec.context.baseCommits } } };
+      return contextual;
     } catch (err) {
       this.d.tasks.event(task.row.id, "upstream_context_failed", { error: (err as Error).message });
       return task;

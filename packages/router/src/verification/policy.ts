@@ -188,6 +188,7 @@ export function reevaluateOnResult(policy: VerificationConfig, contract: Accepta
   const newRules = ev.rulesMatched.filter((r) => !c.rulesMatched.includes(r));
   const checks = [...c.requiredChecks];
   const resolved = resolveLevel(policy, level);
+  if (contract.declaredLabChecks.length && !checks.includes("ephemeral_lab_checks")) checks.push("ephemeral_lab_checks");
   for (const x of [...resolved.checks, ...ev.checks]) if (!checks.includes(x)) checks.push(x);
   const raised = level !== c.level || importance !== contract.importance.level || checks.length !== c.requiredChecks.length;
   // Review and acceptance never weaken below the contract's even if the policy changed since.

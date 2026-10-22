@@ -136,6 +136,8 @@ export interface MergeConflict {
 
 /** What the queue calls back into: the job's acceptance, events, checks, and re-delegation. */
 export interface MergeHooks {
+  validateSource?: (item: MergeItem) => Promise<void>;
+  allowRebase?: (item: MergeItem) => boolean;
   /** Committer identity for picks and rebases (authors are kept). */
   committer: { name: string; email: string };
   /** Record the acceptance an item was enqueued with; throw to refuse (the picks are rolled back). Must be idempotent. */
@@ -452,8 +454,9 @@ export class MergeQueue {
 
   private async pickAndFinish(item: MergeItem, hooks: MergeHooks): Promise<MergeItem> {
     try {
+      await hooks.validateSource?.(item);
       let r = await this.pick(item, hooks);
-      if (!r.ok && !item.rebased && item.sourceWorktree && existsSync(item.sourceWorktree) && (await isClean(item.sourceWorktree))) {
+      if (!r.ok && (hooks.allowRebase?.(item) ?? true) && !item.rebased && item.sourceWorktree && existsSync(item.sourceWorktree) && (await isClean(item.sourceWorktree))) {
         const rb = await this.rebase(item, hooks);
         if (rb.ok) {
           const dropped = item.commits.length - rb.commits.length;
@@ -547,6 +550,14 @@ export class MergeQueue {
 
   /** The commits are on the branch: record the acceptance, the integration, and the job checks. */
   private async finish(item: MergeItem, hooks: MergeHooks): Promise<MergeItem> {
+    try {
+      await hooks.validateSource?.(item);
+    } catch (error) {
+      await this.restore(item);
+      const refused = this.update(item.id, { state: "refused", detail: { ...item.detail, error: (error as Error).message.slice(0, 500) } });
+      this.event(refused, "merge_refused", { error: refused.detail.error });
+      return refused;
+    }
     if (item.acceptance && hooks.accept) {
       try {
         hooks.accept(item);

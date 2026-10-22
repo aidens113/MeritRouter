@@ -1,3 +1,4 @@
+import type { LabManager } from "../labs/lab.js";
 import type { LabRunContext } from "../labs/binding.js";
 import type { ResolvedConfig } from "../config/load.js";
 import type { ProfileConfig } from "../config/schema.js";
@@ -64,6 +65,11 @@ export interface RunContext {
   spec: WorkerTask;
   taskId: string;
   leaseOwner: string;
+  /** Immutable generation captured from the executor claim, never re-read by opted-in runners. */
+  claimedRunCount?: number;
+  taskProject?: string;
+  taskLabs?: LabManager;
+  ensureLabsSupervisor?: () => Promise<void>;
   budget: EffectiveBudget;
   gate: Gate;
   tasks: TaskStore;
