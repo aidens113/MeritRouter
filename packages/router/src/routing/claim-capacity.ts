@@ -85,6 +85,6 @@ export class ProviderSlotAdmission implements ClaimAdmission {
   claimed(row: TaskRow, _spec: WorkerTask, owner: string): void {
     const platform = this.chosen.get(row.id);
     this.chosen.delete(row.id);
-    if (platform) this.capacity.recordClaim(row.id, owner, platform);
+    if (platform) this.capacity.recordClaim(row.id, owner, platform, { taskId: row.id, owner, runCount: row.run_count + 1, incarnation: row.lease_incarnation, project: row.project_id });
   }
 }

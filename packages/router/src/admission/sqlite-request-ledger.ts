@@ -1,3 +1,4 @@
+import { RequestReceipts } from "./request-receipts.js";
 import type { Db } from "../storage/db.js";
 import { immediate, newId } from "../storage/db.js";
 import type { TaskStore } from "../storage/tasks.js";
@@ -35,6 +36,8 @@ export class SqliteRequestAccounting {
       if (status !== "active") throw new AdmissionDenied("task_not_active", `task ${p.taskId} is not running`, undefined, p.taskId);
       const deadline = (this.db.prepare("SELECT deadline_at FROM tasks WHERE id = ?").get(p.taskId) as { deadline_at: number | null }).deadline_at;
       if (deadline !== null && now >= deadline) throw new AdmissionDenied("deadline_exceeded", `task ${p.taskId} passed its deadline`, undefined, p.taskId);
+      if (p.lease && !this.tasks.dispatchable(p.lease.taskId, p.lease.owner, p.lease.runCount, p.lease.incarnation, p.lease.project))
+        throw new AdmissionDenied("lease_lost", "captured participant generation no longer authorizes dispatch", undefined, p.taskId);
     }
   }
 
@@ -46,6 +49,8 @@ export class SqliteRequestAccounting {
     return immediate(this.db, () => {
       const now = this.now();
       this.assertDispatch(req.participants);
+      const projects = new Set(req.participants.map(p => this.tasks.projectOf(p.taskId)));
+      if (projects.size > 1) throw new AdmissionDenied("task_not_active", "request participants belong to different projects");
       for (const p of req.participants) {
         const used = this.reads.taskTotals(p.taskId);
         // A job's budget also covers what its sub-supervisors and worker tasks hold (one pool).
@@ -117,7 +122,7 @@ export class SqliteRequestAccounting {
           }
         }
       }
-      const requestId = newId("r");
+      const requestId = req.requestId ?? newId("r");
       this.db
         .prepare(
           `INSERT INTO model_requests (id, execution_id, purpose, gateway_model, endpoint_id, tier, route_note, status, reserved_at, est_input_tokens, reserved_output_tokens)
@@ -125,9 +130,9 @@ export class SqliteRequestAccounting {
         )
         .run(requestId, req.executionId, req.purpose, req.gatewayModel, req.endpointId, req.tier, req.routeNote ?? null, now, req.estInputTokens, req.reservedOutputTokens);
       const charge = this.db.prepare(
-        "INSERT INTO request_charges (request_id, task_id, input_tokens, output_tokens, tokens_exact) VALUES (?, ?, ?, ?, 0)",
+        "INSERT INTO request_charges (request_id, task_id, input_tokens, output_tokens, tokens_exact,lease_incarnation,run_count) VALUES (?, ?, ?, ?, 0,?,?)",
       );
-      for (const p of req.participants) charge.run(requestId, p.taskId, p.estInputTokens, p.reservedOutputTokens);
+      for (const p of req.participants) charge.run(requestId, p.taskId, p.estInputTokens, p.reservedOutputTokens, p.lease?.incarnation ?? null, p.lease?.runCount ?? null);
       if (req.paid) req.paid.spend.record(requestId, req.paid.key.ref, req.paid.provider, req.endpointId ?? "", req.paid.worstCaseUsd);
       return {
         requestId,
@@ -233,10 +238,10 @@ export class SqliteRequestAccounting {
       const inTotal = usage.inputTokens ?? res.participants.reduce((s, p) => s + p.estInputTokens, 0);
       const outTotal = usage.outputTokens ?? res.participants.reduce((s, p) => s + p.reservedOutputTokens, 0);
       const update = this.db.prepare(
-        "UPDATE request_charges SET input_tokens = ?, output_tokens = ?, tokens_exact = ? WHERE request_id = ? AND task_id = ?",
+        "UPDATE request_charges SET input_tokens = ?, output_tokens = ?, tokens_exact = ? WHERE request_id = ? AND task_id = ? AND (? IS NULL OR lease_incarnation = ?)",
       );
       if (res.participants.length === 1) {
-        update.run(inTotal, outTotal, 1, res.requestId, res.participants[0]!.taskId);
+        update.run(inTotal, outTotal, 1, res.requestId, res.participants[0]!.taskId, res.participants[0]!.lease?.incarnation ?? null, res.participants[0]!.lease?.incarnation ?? null);
         return;
       }
       const estIn = res.participants.reduce((s, p) => s + p.estInputTokens, 0) || 1;
@@ -248,6 +253,7 @@ export class SqliteRequestAccounting {
           0,
           res.requestId,
           p.taskId,
+          p.lease?.incarnation ?? null, p.lease?.incarnation ?? null,
         );
       }
     });
@@ -256,20 +262,29 @@ export class SqliteRequestAccounting {
 
 /** SQLite remains synchronous internally; the routed runtime consumes this awaited port. */
 export class SqliteRequestLedger implements RequestLedger {
-  constructor(private readonly admission: Pick<Admission, "reserve" | "reconcile">, private readonly spend: PaidSpend) {}
-
+  readonly receipts: RequestReceipts;
+  constructor(private readonly admission: Admission, private readonly spend: PaidSpend) {
+    this.receipts = new RequestReceipts(admission.db, () => admission.serverNow());
+  }
   async reserve(input: ReserveRequestDTO): Promise<ReservationDTO> {
     const parsed = ReserveRequestDTOSchema.parse(input);
-    const { paid: inputPaid, ...inputData } = parsed;
-    const result = this.admission.reserve({ ...inputData, ...(inputPaid ? { paid: { ...inputPaid, spend: this.spend } } : {}) });
-    const { paid, ...data } = result;
-    const paidData = paid ? { key: paid.key, provider: paid.provider, worstCaseUsd: paid.worstCaseUsd, price: paid.price } : undefined;
-    return ReservationDTOSchema.parse({ ...data, ...(paidData ? { paid: paidData } : {}) });
+    return this.receipts.reserve(parsed, () => {
+      const { paid, payloadDigest, keyRef, providerReservationId, slot, ...data } = parsed;
+      const result = this.admission.reserve({ ...data, ...(paid ? { paid: { ...paid, spend: this.spend } } : {}) });
+      const { paid: charged, ...bound } = result;
+      return { ...bound, ...(charged ? { paid: { key: charged.key, provider: charged.provider, worstCaseUsd: charged.worstCaseUsd, price: charged.price } } : {}) };
+    });
   }
-
+  async beginDispatch(reservation: ReservationDTO, dispatchId: string) {
+    return this.receipts.beginDispatch(reservation, dispatchId, participants => this.admission.assertDispatch(participants));
+  }
   async reconcile(reservation: ReservationDTO, outcome: RequestOutcomeDTO): Promise<void> {
-    const parsed = ReservationDTOSchema.parse(reservation);
-    const { paid, ...data } = parsed;
-    this.admission.reconcile({ ...data, ...(paid ? { paid: { ...paid, spend: this.spend } } : {}) }, RequestOutcomeDTOSchema.parse(outcome));
+    const parsed = RequestOutcomeDTOSchema.parse(outcome);
+    this.receipts.reconcile(reservation, parsed, bound => {
+      const { paid, ...data } = bound;
+      this.admission.reconcile({ ...data, ...(paid ? { paid: { ...paid, spend: this.spend } } : {}) }, parsed);
+    });
   }
+  async receipt(requestId: string) { return this.receipts.receipt(requestId); }
+  async drain(): Promise<void> {}
 }

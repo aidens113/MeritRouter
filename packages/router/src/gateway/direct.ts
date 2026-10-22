@@ -1,7 +1,10 @@
+import { createHash } from "node:crypto";
+import { canonicalJson } from "../storage/tasks.js";
+import { newId } from "../storage/db.js";
 import { projectCaptureInput, projectCaptureOutput, type CaptureOutputProjection, type RequestCaptureStore } from "./request-capture.js";
 import type { ResolvedConfig } from "../config/load.js";
 import type { Participant } from "../admission/admission.js";
-import { RequestOutcomeDTOSchema, ReservationDTOSchema, ReserveRequestDTOSchema, RequestPersistenceError, type RequestLedger, type ReservationDTO, type RequestOutcomeDTO } from "../admission/request-ledger.js";
+import { requestAttemptId, RequestOutcomeDTOSchema, ReservationDTOSchema, ReserveRequestDTOSchema, RequestPersistenceError, type ReserveRequestDTO, type RequestLedger, type ReservationDTO, type RequestOutcomeDTO } from "../admission/request-ledger.js";
 import { AdmissionDenied, GatewayError, PAID_BUDGET_DENIALS, type GatewayErrorKind } from "../core/errors.js";
 import type { ModelEndpoint } from "../models/catalog.js";
 import { freeKeyOnly, isPaid, planSearch } from "../routing/select.js";
@@ -70,7 +73,7 @@ export interface DirectDeps {
   cfg: ResolvedConfig;
   ledger: RequestLedger;
   captures: RequestCaptureStore;
-  assertDispatch(participants: Participant[]): void;
+  assertDispatch(participants: Participant[], reservation?: ReservationDTO, dispatchId?: string): void;
   health: ProviderHealth;
   direct: DirectRuntime;
 }
@@ -108,7 +111,7 @@ export async function requestDirect(
   attempts: GateAttempt[],
   admit: (ep: ModelEndpoint) => SlotHandle | null,
 ): Promise<DirectOutcome> {
-  const route = ep.route as { kind: "direct"; provider: string; model: string };
+  const route = { ...ep.route } as { kind: "direct"; provider: string; model: string };
   const rt = d.direct.providers;
   const provider = rt.provider(route.provider);
   if (!provider || !provider.enabled) {
@@ -186,8 +189,12 @@ export async function requestDirect(
         continue;
       }
       let reservation: ReservationDTO;
+      const requestId = requestAttemptId(rt.now());
       try {
         reservation = ReservationDTOSchema.parse(await d.ledger.reserve(ReserveRequestDTOSchema.parse({
+          requestId, payloadDigest: createHash("sha256").update(canonicalJson({ model: route.model, chat, search, cacheKey: req.cacheKey ?? null })).digest("hex"),
+          keyRef: cred.ref, providerReservationId: sel.reservation?.id ?? null,
+          slot: { id: slot.id, nonce: slot.nonce ?? "" },
           executionId: req.executionId,
           profile: req.plan.profile,
           purpose: req.purpose,
@@ -197,7 +204,7 @@ export async function requestDirect(
           routeNote: `${paid ? "paid" : "free"} via ${cred.label} (${cred.billingClass})${paid ? `; worst case $${worst.toFixed(4)}` : ""}${req.plan.belowFloorEndpoints.has(ep.id) ? "; forced below size floor" : ""}${search ? `; native web search (${search.via})` : ""}`,
           estInputTokens: estInput,
           reservedOutputTokens: req.chat.max_tokens,
-          participants,
+          participants: participants as ReserveRequestDTO["participants"],
           ...(spendKey ? { paid: { key: spendKey, provider: route.provider, worstCaseUsd: worst, price } } : {}),
         })));
       } catch (err) {
@@ -207,9 +214,10 @@ export async function requestDirect(
           attempts.push({ endpointId: ep.id, outcome: `skipped (paid budget): ${err.message}`, denial: err.reason });
           return lastKeyError ? { kind: "failed", error: lastKeyError } : { kind: "skip", resumeAt: null };
         }
-        throw err instanceof AdmissionDenied ? err : new RequestPersistenceError("reserve", null, err);
+        throw err instanceof AdmissionDenied ? err : new RequestPersistenceError("reserve", requestId, err);
       }
 
+      if (reservation.disposition !== "fresh") throw new RequestPersistenceError("reserve", requestId, new Error("replayed reservation never authorizes another provider call"));
       // Capture is observational: its errors never enter provider classification/retry logic.
       const observe = async (write: () => Promise<void>) => { try { await write(); } catch { /* private capture unavailable; accounting/provider policy is unchanged */ } };
       const webSearch = search ? { via: search.via, alwaysOn: search.alwaysOn, maxUses: search.maxUses, maxResults: search.maxResults } : undefined;
@@ -239,13 +247,28 @@ export async function requestDirect(
         throw Object.assign(new GatewayError("aborted", "aborted before provider dispatch", undefined, undefined, false), { attempts });
       }
 
-      // No await between this SQLite authority check and invoking the provider client.
-      try { d.assertDispatch(participants); }
+      const dispatchId = newId("dispatch");
+      try {
+        const intent = await d.ledger.beginDispatch(reservation, dispatchId);
+        if (intent.disposition !== "fresh") throw new Error("replayed dispatch never authorizes another provider call");
+      } catch (error) {
+        if (error instanceof AdmissionDenied) {
+          notDispatched = true; release(); d.health.breakers.release(ep.providerId);
+          await reconcile({ kind: "failed", errorKind: error.reason, errorMessage: error.message });
+          throw error;
+        }
+        throw new RequestPersistenceError("dispatch", requestId, error);
+      }
+      // No await between this exact SQLite guard and invoking the provider client.
+      try {
+        if (req.signal?.aborted) throw new AdmissionDenied("cancel_requested", "request aborted before provider dispatch");
+        d.assertDispatch(participants, reservation, dispatchId);
+      }
       catch (error) {
         notDispatched = true;
         release();
         d.health.breakers.release(ep.providerId);
-        if (!(error instanceof AdmissionDenied)) throw new RequestPersistenceError("reserve", reservation.requestId, error);
+        if (!(error instanceof AdmissionDenied)) throw new RequestPersistenceError("dispatch", reservation.requestId, error);
         await reconcile({ kind: "failed", errorKind: error.reason, errorMessage: error.message });
         throw error;
       }
@@ -305,6 +328,9 @@ export async function requestDirect(
       attempts.push({ endpointId: ep.id, outcome: "succeeded" });
       return { kind: "ok", requestId: reservation.requestId, response: chatResponse };
     }
+  } catch (error) {
+    if (slot && error instanceof RequestPersistenceError) d.health.capacity.quarantine(slot);
+    throw error;
   } finally {
     if (slot) d.health.capacity.release(slot);
   }
@@ -331,7 +357,7 @@ export function probeClient(d: Omit<DirectDeps, "ledger" | "captures" | "assertD
         if (sel.reservation) rt.limits.release(sel.reservation);
         throw new ProviderError("policy", `circuit open for ${provider.id}`, { provider: provider.id, possiblyConsumed: false });
       }
-      const holder = { id: `probe-${cred.ref}-${rt.now()}`, taskIds: [], leaseOwner: null, priority: 0 as const, since: null };
+      const holder = { id: newId("probe"), taskIds: [], leases: [], leaseOwner: null, priority: 0 as const, since: null };
       const slot = d.health.capacity.tryAcquire(holder, provider.id);
       if ("full" in slot) {
         d.health.breakers.release(provider.id);

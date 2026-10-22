@@ -1,3 +1,4 @@
+import { capturedLease } from "../src/storage/task-leases.js";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Switchyard } from "../src/core/service.js";
 import type { ChatRequest } from "../src/gateway/types.js";
@@ -329,7 +330,7 @@ describe("gate", () => {
         plan,
         executionId,
         purpose: "tool_loop",
-        participants: [{ taskId, leaseOwner: "w1", budget: effectiveBudget(env!.cfg, t.spec) }],
+        participants: [{ taskId, lease: capturedLease(sy!.tasks.get(taskId)!), leaseOwner: "w1", budget: effectiveBudget(env!.cfg, t.spec) }],
         chat: { messages: [{ role: "user", content: "hello" }], max_tokens: 100 },
       });
     };
@@ -369,7 +370,7 @@ describe("gate", () => {
         plan,
         executionId: sy!.gate.admission.createExecution("task", "inspect", [{ taskId, itemId: "1" }]),
         purpose: "tool_loop",
-        participants: [{ taskId, leaseOwner: "w1", budget: effectiveBudget(env!.cfg, sy!.tasks.get(taskId)!.spec) }],
+        participants: [{ taskId, lease: capturedLease(sy!.tasks.get(taskId)!), leaseOwner: "w1", budget: effectiveBudget(env!.cfg, sy!.tasks.get(taskId)!.spec) }],
         chat: { messages: [{ role: "user", content: "hello" }], max_tokens: 100 },
       });
     const first = ask(out[0]!.taskId);

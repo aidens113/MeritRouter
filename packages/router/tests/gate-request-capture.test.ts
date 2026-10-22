@@ -1,3 +1,4 @@
+import { capturedLease } from "../src/storage/task-leases.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createCodingRunner } from "../src/runners/coding/index.js";
@@ -86,7 +87,8 @@ it.each(["abort", "lease", "deadline"])("revalidates %s after delayed capture be
   const { request, client } = setup(true);
   sy!.tasks.submit([WorkerTaskSchema.parse(summarizeTask({ id: "captured" }))], { project: "demo" });
   sy!.tasks.claim("owner", { maxConcurrent: 1, maxWritersPerRepo: 1, leaseMs: 60000, defaultTimeoutMs: 60000 });
-  request.participants = [{ taskId: "captured", leaseOwner: "owner", budget: { maxModelRequests: 4, maxInputTokens: null, maxOutputTokens: null, maxPaidUsd: 1 } }];
+  request.participants = [{ taskId: "captured", lease: capturedLease(sy!.tasks.get("captured")!), leaseOwner: "owner", budget: { maxModelRequests: 4, maxInputTokens: null, maxOutputTokens: null, maxPaidUsd: 1 } }];
+  request.executionId = sy!.admission.createExecution("task", "summarize", [{ taskId: "captured", itemId: "1" }]);
   const entered = barrier(), blocked = barrier(); const begin = sy!.gate.captures.begin.bind(sy!.gate.captures);
   vi.spyOn(sy!.gate.captures, "begin").mockImplementation(async (...args) => { await begin(...args); entered.release(); await blocked.promise; });
   const controller = new AbortController();
@@ -127,7 +129,7 @@ it("captures one shared classifier payload per admitted request, without duplica
   sy!.tasks.submit(specs, { project: "demo" });
   sy!.tasks.claim("owner", { maxConcurrent: 2, maxWritersPerRepo: 1, leaseMs: 60000, defaultTimeoutMs: 60000 });
   const features = { mode: "completion" as const, linesInScope: 10, linesApproximate: false, contextTokens: 10, repositories: 0, acceptanceCriteria: 1, checksRequired: false, outputSchema: false, retryAfterFailure: false, inputModalities: ["text" as const], scopeSample: [] };
-  const values = await Promise.all(specs.map(spec => sy!.router.classifier.classify({ taskId: spec.id!, leaseOwner: "owner", budget: { maxModelRequests: 4, maxInputTokens: null, maxOutputTokens: null, maxPaidUsd: null }, spec, specHash: sy!.tasks.get(spec.id!)!.row.spec_hash, features })));
+  const values = await Promise.all(specs.map(spec => sy!.router.classifier.classify({ taskId: spec.id!, lease: capturedLease(sy!.tasks.get(spec.id!)!), leaseOwner: "owner", budget: { maxModelRequests: 4, maxInputTokens: null, maxOutputTokens: null, maxPaidUsd: null }, spec, specHash: sy!.tasks.get(spec.id!)!.row.spec_hash, features })));
   expect(values.every(Boolean)).toBe(true); expect(client.requests).toHaveLength(1); expect(rows()).toHaveLength(1);
   const capture = sy!.gate.captures.read(rows()[0]!.id, { project: "demo" })!;
   expect(capture.availability).toBe("complete"); expect(capture.input!.messages[0]!.content).toContain("You classify");

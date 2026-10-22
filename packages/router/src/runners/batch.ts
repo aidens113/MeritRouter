@@ -169,7 +169,7 @@ async function runChunk(chunk: Item[], done: Done): Promise<void> {
     try {
       res = await ask(
         { ...requestContext, session: null },
-        { ...request, participants: pending.map((p) => ({ taskId: p.ctx.taskId, leaseOwner: p.ctx.leaseOwner, budget: p.ctx.budget, weight: p.estTokens })) },
+        { ...request, participants: pending.map((p) => ({ taskId: p.ctx.taskId, leaseOwner: p.ctx.leaseOwner, lease: p.ctx.taskLease, budget: p.ctx.budget, weight: p.estTokens })) },
       );
     } catch (err) {
       const attempts = (err as { attempts?: GateAttempt[] }).attempts;

@@ -1,3 +1,4 @@
+import { capturedLease } from "../src/storage/task-leases.js";
 import { afterEach, expect, it, vi } from "vitest";
 import Database from "better-sqlite3";
 import type { Switchyard } from "../src/core/service.js";
@@ -155,7 +156,8 @@ it.each([
   const { client, request } = setup({ paid: true });
   sy!.tasks.submit([WorkerTaskSchema.parse(summarizeTask({ id: "dispatch-task" }))]);
   sy!.tasks.claim("dispatch-owner", { maxConcurrent: 1, maxWritersPerRepo: 1, leaseMs: 60000, defaultTimeoutMs: 60000 });
-  request.participants = [{ taskId: "dispatch-task", leaseOwner: "dispatch-owner", budget: { maxModelRequests: 4, maxInputTokens: null, maxOutputTokens: null, maxPaidUsd: 1 } }];
+  request.participants = [{ taskId: "dispatch-task", lease: capturedLease(sy!.tasks.get("dispatch-task")!), leaseOwner: "dispatch-owner", budget: { maxModelRequests: 4, maxInputTokens: null, maxOutputTokens: null, maxPaidUsd: 1 } }];
+  request.executionId = sy!.admission.createExecution("task", "summarize", [{ taskId: "dispatch-task", itemId: "1" }]);
   const entered = barrier(), blocked = barrier();
   const reserve = sy!.gate.ledger.reserve.bind(sy!.gate.ledger);
   const spy = vi.spyOn(sy!.gate.ledger, "reserve").mockImplementation(async input => {

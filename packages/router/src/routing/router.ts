@@ -1,3 +1,5 @@
+import { capturedLease, type LeaseRef } from "../storage/task-leases.js";
+import { AdmissionDenied } from "../core/errors.js";
 import type { ResolvedConfig } from "../config/load.js";
 import type { Modality, PaidPolicy, ProfileName, TierName } from "../config/schema.js";
 import type { Db } from "../storage/db.js";
@@ -134,12 +136,23 @@ export class TaskRouter {
     return row.n;
   }
 
+  private assertLease(lease: LeaseRef): void {
+    if (!this.gate.admission.tasks.dispatchable(lease.taskId, lease.owner, lease.runCount, lease.incarnation, lease.project)) throw new AdmissionDenied("lease_lost", "router captured task generation lost");
+  }
+  private recordClassification(lease: LeaseRef, tier: string, classification: Classification): void {
+    this.assertLease(lease);
+    const changed = this.db.prepare("UPDATE tasks SET tier=?,classification_json=? WHERE id=? AND lease_owner=? AND run_count=? AND lease_incarnation=? AND project_id=? AND state='running' AND cancel_requested=0 AND lease_expires_at>? AND (deadline_at IS NULL OR deadline_at>?)").run(tier, JSON.stringify(classification), lease.taskId, lease.owner, lease.runCount, lease.incarnation, lease.project, this.gate.admission.serverNow(), this.gate.admission.serverNow());
+    if (!changed.changes) throw new AdmissionDenied("lease_lost", "classification generation changed");
+  }
   /**
    * Classify a task and plan its route. `project` is the task's project context (its
    * repositories and verification budget); routing itself (tiers, profiles, models) is global.
    */
   async prepare(task: StoredTask, leaseOwner: string, project: ResolvedConfig = this.cfg): Promise<Prepared> {
+    const lease = capturedLease(task);
+    if (lease.owner !== leaseOwner) throw new AdmissionDenied("lease_lost", "router captured lease owner disagrees");
     await this.gate.health.refresh();
+    this.assertLease(lease);
     const spec = task.spec;
     const profile = this.cfg.profiles[spec.profile]!;
     const inputModalities = this.inputModalities(task);
@@ -157,7 +170,7 @@ export class TaskRouter {
       classification = decide(this.cfg, this.rulebook, spec, features, { ...base, basis: "forced", tags: null });
       classification.tier = "T3";
       classification.rejectReason = null;
-      this.db.prepare("UPDATE tasks SET tier = ?, classification_json = ? WHERE id = ?").run("T3", JSON.stringify(classification), task.row.id);
+      this.recordClassification(lease, "T3", classification);
       const chosen: RoutingOverride[] = this.cfg.supervisor.endpoints.map((endpointId) => ({ profile: spec.profile, tier: null, kind: "force", endpointId, allowBelowFloor: true, enabled: true }));
       return { classification, plan: this.plan(spec.profile, "T3", inputModalities, spec.routing?.endpointId, false, this.cfg.supervisor.paid_policy, chosen, spec.hints?.web), inputModalities };
     }
@@ -168,7 +181,7 @@ export class TaskRouter {
     } else if (profile.classify === "always" || (profile.classify === "auto" && classifierCouldMatter(this.cfg, this.rulebook, detScore))) {
       const verdict = await this.classifier.classify({
         taskId: task.row.id,
-        leaseOwner,
+        leaseOwner, lease,
         budget: effectiveBudget(project, spec, null),
         spec,
         specHash: task.row.spec_hash,
@@ -197,7 +210,7 @@ export class TaskRouter {
       classification = decide(this.cfg, this.rulebook, spec, features, { ...base, basis: "rules", tags: null });
     }
 
-    this.db.prepare("UPDATE tasks SET tier = ?, classification_json = ? WHERE id = ?").run(classification.tier, JSON.stringify(classification), task.row.id);
+    this.recordClassification(lease, classification.tier, classification);
     if (classification.tier === "T4") {
       // Premium: T4 work goes to paid models (at T3 limits) instead of back to the supervisor.
       if (this.cfg.paid.enabled && this.cfg.paid.tiers.T4 === "premium" && !classification.rejectReason?.includes("clarification")) {

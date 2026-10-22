@@ -1,3 +1,4 @@
+import type { LeaseRef } from "../storage/task-leases.js";
 import type { Db } from "../storage/db.js";
 import { immediate, newId } from "../storage/db.js";
 import type { TaskStore } from "../storage/tasks.js";
@@ -159,6 +160,7 @@ export function purposeCategory(purpose: string): RequestPurpose {
 }
 
 export interface Participant {
+  lease?: LeaseRef;
   taskId: string;
   leaseOwner: string;
   budget: EffectiveBudget;
@@ -167,6 +169,7 @@ export interface Participant {
 }
 
 export interface ReservationRequest {
+  requestId?: string;
   executionId: string;
   profile: ProfileName;
   purpose: string;
@@ -203,8 +206,8 @@ const DAY = 24 * HOUR;
 export class Admission {
   private readonly accounting: SqliteRequestAccounting;
   constructor(
-    private readonly db: Db,
-    private readonly tasks: TaskStore,
+    readonly db: Db,
+    readonly tasks: TaskStore,
     private readonly cfg: ResolvedConfig,
     private readonly now: () => number = Date.now,
   ) {
@@ -215,6 +218,8 @@ export class Admission {
       projectShareDenial: (project, share, at) => this.projectShareDenial(project, share, at),
     });
   }
+
+  serverNow(): number { return this.now(); }
 
   createExecution(kind: "task" | "batch", profile: ProfileName, members: Array<{ taskId: string; itemId: string }>, retryOf?: string): string {
     const id = newId(kind === "batch" ? "b" : "x");

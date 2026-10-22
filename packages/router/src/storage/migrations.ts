@@ -912,4 +912,23 @@ export const MIGRATIONS: string[] = [
   CREATE INDEX task_lease_operation_projects_scope ON task_lease_operation_projects(project_id,operation_id);
   `,
 
+  // Generation-bound request protocol; private bindings are purgeable, opaque keys prevent replay resurrection.
+  `
+  CREATE TABLE request_protocol_keys(id TEXT PRIMARY KEY, expires_at INTEGER NOT NULL);
+  CREATE TABLE request_protocol(
+    request_id TEXT PRIMARY KEY REFERENCES request_protocol_keys(id), fingerprint TEXT NOT NULL,
+    binding_json TEXT NOT NULL CHECK(length(CAST(binding_json AS BLOB))<=262144),
+    reservation_json TEXT NOT NULL CHECK(length(CAST(reservation_json AS BLOB))<=262144),
+    state TEXT NOT NULL CHECK(state IN ('reserved','dispatch_intent','settled')),
+    dispatch_id TEXT, outcome_digest TEXT, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL
+  );
+  CREATE TABLE request_protocol_projects(request_id TEXT NOT NULL REFERENCES request_protocol(request_id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL, PRIMARY KEY(request_id,project_id));
+  CREATE INDEX request_protocol_scope ON request_protocol_projects(project_id,request_id);
+  ALTER TABLE provider_slots ADD COLUMN lease_json TEXT;
+  ALTER TABLE provider_slots ADD COLUMN nonce TEXT;
+  ALTER TABLE provider_slots ADD COLUMN uncertain INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE request_charges ADD COLUMN lease_incarnation TEXT;
+  ALTER TABLE request_charges ADD COLUMN run_count INTEGER;
+  `,
 ];
