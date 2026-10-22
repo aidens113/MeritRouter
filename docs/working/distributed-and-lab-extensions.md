@@ -103,6 +103,25 @@ not a reason to stop the independently runnable core work. No service was instal
 
 ## Worker Briefs
 
+### Brief: async-task-lifecycle (link_completion)
+- Tier: isolated roadmap-labs new feature branch from root integratedb766516 or newer; caller source already frozen/independently accepted.
+- Read: Current State and reports/task-lease-fence-plan.md, especially first implementation contract and exact serial partition.
+- Own: new storage/task-leases.ts + sqlite-task-leases.ts; storage/tasks.ts; task-queue.ts/sqlite-task-queue.ts only necessary identity plumbing.
+- Own: core/executor.ts, watchdog.ts, scheduler.ts; runners/types.ts; minimal service.ts lifecycle wiring/drain/async variants only. Preserve root acceptance guard/startup callbacks.
+- Own ONE append migration for durable operation receipts after current request_captures migration; no other worker owns migrations now.
+- Own new task-leases/executor-task-leases tests + fixture; existing scheduler/queue tests only for meaningful contract drift; report reports/async-task-lifecycle.md.
+- Implement default awaited SQLite renew/finish/interrupt/defer/recover/cancel port with strict data DTOs and explicit applied/replayed/stale/expired receipts, not merely unused exported adapters.
+- Capture immutable identity once from claimed receipt before await; same-owner older generation cannot renew/settle/defer/interrupt current run. Audit task-ID deletion/reuse before final identity design; send finding early if run_count resets can collide.
+- Mutation + idempotent operation receipt commit in one immediate transaction. Reuse operation ID/digest to reconcile lost acknowledgements; conflicting reuse rejected. No new provider retry on persistence error.
+- Renew serializes per lease and never resurrects expiry; task TTL from adapter config/server time. Stop/flush drains pending renew/recovery/settlement before DB/resources close.
+- Only applied/replayed own finish triggers report/settled hooks once. Stale receipts cannot write brain reports or abort a newer local controller. Recovery selects/CASes exact expired generations; preserve startup/tick distinctions.
+- Human/logical task cancellation remains scoped control; supervisor actor lease + ancestry checked. Async cancellation receipt carries observed generation; don't abort task-ID-only newer controller after await.
+- Keep existing public synchronous SQLite TaskStore/service APIs for CLI/MCP/panel compatibility; add awaited variants and default worker usage without changing their sync return types.
+- No Gate/admission/provider-capacity/session/tool/Git backend migration in this unit; preserve capture/accounting and selected task-Lab evidence. Explicitly no end-to-end R2/PG/two-host claim.
+- Project deletion must purge private operation receipts safely; expose required integration contract to root instead of editing projects/deletion.ts. Bound receipt payload/retention behavior; no silent unbounded retry loops.
+- Test real adapters and delayed fake ports: same-owner takeover, expiry, lost commit receipt/replay/conflict, cancel-vs-resume, renewal serialization, startup/tick, all finish dispositions, batch members, close ordering and no stale reports.
+- Temp/fake providers only; no user4477, live keys/paid, service installs or PG enablement. Freeze before typecheck/build/focused tests, report exact checks/limits/cleanup; no commits/shared docs.
+
 ### Brief: browser-pipe-prerequisite (seed_repair)
 - Tier: isolated roadmap-team feature branch; H0 approved for typed/bounded H1 prerequisite only, not hydrated enablement or OS installation.
 - Read: Current State and own hydrated-browser-plan.md; existing browser-protocol.ts as compatibility reference.
