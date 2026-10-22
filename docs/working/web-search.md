@@ -120,6 +120,32 @@ shapes were checked against their docs.
   panel stopped afterwards.
 - Report to: docs/working/reports/web-search-w1.md
 
+### Brief: web-search-w3
+- Repository: this repository; your own worktree on branch `feat/native-search`; run
+  `pnpm install --frozen-lockfile` first.
+- Task: Phase W3 exactly as decision D9 describes: detect endpoints whose provider searches the
+  web inside the API call, record it with provenance, enable it per provider in requests for
+  tasks that need the web, price it into paid spend (unknown price counts as paid), mark
+  `always_on` models, record reported search counts and citations, and show it in the panel
+  (model badge, filter, detail). Before coding each provider's switch, verify it in that
+  provider's current official documentation (request field, response fields for counts and
+  citations, price) and record URL and date in `docs/decisions.md`: OpenRouter (web plugin and
+  `:online`, `supported_parameters`), OpenAI chat completions `web_search_options`, Anthropic
+  server web search tool, Gemini grounding (whether the OpenAI-compatible endpoint supports it),
+  Perplexity Sonar and Groq compound (always on). Skip any whose docs you cannot confirm and say so.
+- Required reads: this document; `AGENTS.md`; `src/providers/registry.ts`, `src/providers/discovery.ts`,
+  `src/providers/enrich.ts`, `src/models/catalog.ts`, `src/routing/select.ts`, `src/gateway/direct.ts`,
+  `src/providers/{openai-compatible,anthropic}.ts`, `src/paid/spend.ts`, `src/core/task.ts` (hints).
+- Owns: `packages/router/src/**`, `packages/router/tests/**`, `packages/router/examples/**`
+  (regenerate presets with the script), `apps/panel/**`, `docs/setup.md`, `docs/operations.md`,
+  `docs/decisions.md`, `docs/working/reports/web-search-w3.md`.
+- Must not touch: this document; other working documents; `AGENTS.md`; `CLAUDE.md`.
+- No live provider calls. The user's install (D:\SwitchYard, panel on 4477) is off limits.
+- Definition of done: the W3 acceptance tests in Phases; `pnpm -r typecheck`; full router suite;
+  `pnpm -r build`; demo panel on a spare port (never 4477) with screenshots of the model badge and
+  filter; panel stopped afterwards.
+- Report to: docs/working/reports/web-search-w3.md
+
 ---
 
 ## Work Ledger
