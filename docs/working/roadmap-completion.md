@@ -21,40 +21,42 @@ panel on spare ports. Real credentials/environment checks remain explicitly dist
 from completed code. Previously deferred R2/L5 require their architecture/acceptance design
 before implementation; they are tracked below rather than silently omitted.
 
-**Checkpoint:** provider routing/registry/quarantine accepted and pushed at 7a1873f (624 tests,
-recursive typecheck/build and demo browser acceptance). E1 checkpoint5704654 and Labs L1
-checkpoint33630ee merged locally into roadmap-core; supervisor focused tests 5/5 and 8/8.
-Project recovery and packaging merged locally and independently tested (19 focused tests,
-outside-checkout native/CLI/MCP/panel/setup smoke). Accountingec92e74 independently27/27,
-external bridge6fc8d60 independently5/5 and merged locally. Service supervisor real-process
-start/reuse/stop keeps queued model work untouched. Root b9da590 wires pending L2 APIs;
-L2/L3 and panel work active; Windows process identity/orphan cleanup is receiving final tests.
-Durable integration mutex190e98b independently5/5 and deletion races4d9099c independently9/9
-are merged locally. Reported blank Verification source fixed pending browser acceptance;
-model-history link404 reproduced and fix underway (current exact reported URL reads200).
-L2/L3 is now merged at002515e; supervisor20/20 focused tests pass. Historical model links
-fixed atb5d0723; Team metrics hint selectors are scoped to their own trigger at9e23fb6.
-Integrated typecheck passes; first full run686/691 exposed an MCP schema portability defect,
-stale tool-count expectations and an external session-note prefix regression. Repairs6a77c4a
-pass the frozen repeat691/691(77files,393.07s). L4 production acceptance is active and exposed
-a Next-bundled CLI launcher path defect plus partial-create status handling; repairs remain
-in its isolated tree. L5 static browser checks have a bounded isolated worker brief; hydrated
-JS checks remain separate. R2 storage inventory found81 direct SQLite consumers; the first
-actual async Gate request-accounting migration is dispatched, PostgreSQL remains disabled.
-Whole integrated checks and push remain pending. No whole-roadmap completion claim.
+**Accepted integrated source e0aad08:** E1 correctness, Labs L1-L4, package discovery/setup/
+bundled panel, external task tools, cache/catalog accounting, provider follow-ups, project
+restore/deletion/config safety and process-race fixes. Supervisor frozen checks701/701
+(78files,422.38s), recursive typecheck and isolated recursive build pass. Independent production
+Labs lifecycle/API/live/browser, legacy migration and model navigation pass. Verification with
+no metadata renders explanations; hovering the Team metrics section opens0 hints, one trigger
+opens1, keyboard focus/closing work. Historical model links and catalog-only refresh pass.
+
+Fresh tarball51,561,351bytes/2489entries installs outside checkout (QiBFVy); native SQLite,
+CLI discovery/init/setup, MCP40tools,8 production panel/API routes and stylesheet, detached
+setup start/reuse/stop pass with checkout reads forbidden. Owned fixtures are stopped. This
+coherent unit is ready for dev/main; previously only provider7a1873f was pushed. Actual user
+panel4477 and MCP processes were not restarted or used for tests; no deployed-fix claim.
+
+**Continuing:** L5 static-render browser checks are frozen in their isolated tree pending root
+review/repetition/all-heads evidence reuse integration. Hydrated JS, ephemeral task Labs and
+Compose remain open. R2 inventory found81 SQLite consumers; first async Gate accounting slice
+is receiving post-reservation lease/deadline revalidation. PostgreSQL/multi-host is not enabled.
+User additionally clarified MCP final-supervisor dispatch must default OFF, while bounded
+sub-supervisors remain available. That setting/guard/UI work is active under
+[external-supervisor-guidance](external-supervisor-guidance.md); obsolete guidance-enable
+toggle semantics were rejected. No whole-roadmap completion claim.
 
 ## Execution phases
 
 | Phase | Work and acceptance | Dependencies/state |
 | --- | --- | --- |
-| E1 | Reproduce/fix sub-job scope propagation, batch result preservation and external context; meaningful regressions | Merged locally, focused checks pass; full integrated checks pending |
-| E2 | Labs L1 schema/store/lifecycle/ports/process supervisor/checks/CLI; two running fixture labs, restart/adoption/idle/destroy | Core/service/CLI local; final process identity hardening in L2 tree |
-| E3 | Labs L2/L3 job/tools/brain/charters plus promotion/refresh/overlap/conflict handling; scoped fixture job and competing promotions | Final worker acceptance in progress |
-| E4 | Labs L4 panel/settings/demo/docs; production pages/API/screenshots | Draft complete, pending E3 merge and production acceptance |
-| E5 | npm config discovery/setup/bundled panel; pack and install outside checkout, CLI/MCP/panel smoke checks | Independent smoke passes; fresh integrated package pending, no publishing |
-| E6 | External runner checks/budget tools; provider quarantine/order/metadata/pricing; project/restore fixes | Merged locally/independently checked; provider unit pushed |
-| E7 | Concurrent-process/crash/CLI/MCP acceptance, caching/verification edge cases, performance measurements | Process/deletion fixes and baseline measurements accepted locally; integrated remeasurement pending |
-| E8 | Design/implement explicitly future L5 and R2 as bounded follow-on phases; browser/ephemeral/Compose checks and two-host queue acceptance | Architecture review after E2/E3; no silent completion claim |
+| E1 | Sub-job scope, partial batch results, external context | Accepted in integrated701-test unit |
+| E2 | Labs L1 lifecycle/ports/process ownership/CLI | Accepted Windows fixture/process evidence |
+| E3 | Labs L2/L3 tools/brain/team binding/promotion/refresh | Accepted focused20 and full integration |
+| E4 | Labs L4 panel/settings/demo and reported UI regressions | Accepted independent production browser/API/screenshots |
+| E5 | Config discovery/setup/bundled panel/package | Fresh isolated install passes; no publication or cross-platform install claim |
+| E6 | External tools, accounting, providers, restore/config/project fixes | Accepted fake-provider/process/production checks; live-provider limits remain |
+| E7 | Concurrent processes/crash/CLI/MCP/deletion/performance | Measured and passing integrated; no real-provider throughput claim |
+| E8 | Remaining L5 and R2 phases | Static browser and first async ledger isolated; JS/ephemeral/Compose/PostgreSQL still open |
+| E9 | User-requested configurable MCP final-supervisor ownership | Corrected default false + bounded sub-supervisors; implementation active |
 
 For each phase the supervisor reviews diffs, runs relevant tests then recursive typecheck/build
 and full router suite for integrated code. Panel work additionally uses seeded demo production
@@ -240,6 +242,13 @@ passing units reach dev/main. Documentation and source commit together.
 - Findings: independent model-navigation initially lacked its required production server (fixture invocation corrected); then timed out on catalog-only title refresh. Root live regression19/19(9.03s) passes after narrow catalog-version repair; full browser repetition pending.
 - Outcome: Partial
 - Follow-up: merge L4, fix API project-slug parity, repeat model browser against final production build, integrated full checks/package. New external supervision feature separately active.
+
+### 2026-10-22 - Labs/core/package coherent acceptance
+- Agent: supervisor
+- Changed: integrated L4b4039ae, catalog-version39c966d, partial-status9e06031 and project-slug paritye0aad08; updated authored Labs operations/setup/current state and user-corrected final-supervisor plan.
+- Validation: frozen e0aad08 full701/701(78files,422.38s); recursive typecheck and isolated recursive build pass. Independent final production Labs/Verification/hover-focus/live/API18captures, legacy migration and model navigation all pass; no browser exceptions. Fresh npm tarball51,561,351bytes/2489entries; outside install QiBFVy native/CLI/MCP40/panel8routes+CSS/setup launch/reuse/stop passes with checkout reads forbidden.
+- Outcome: Accepted for coherent E1-L4/package/correctness unit
+- Follow-up: push dev/main under standing authorization, then continue E8/E9. User4477 untouched; future static browser/ledger/policy code not part of this acceptance. Earlier failed runs and repairs remain recorded above.
 
 ## Open Questions
 

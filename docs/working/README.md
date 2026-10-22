@@ -7,7 +7,7 @@ lines, worker briefs, append-only ledger with real validation, open questions).
 | Document | Status | Scope |
 | --- | --- | --- |
 | [roadmap-completion.md](roadmap-completion.md) | Active | User-authorized execution of the remaining audit: correctness, Labs, packaging, provider/project follow-ups and acceptance. |
-| [external-supervisor-guidance.md](external-supervisor-guidance.md) | Active | Default Claude/Codex supervisor responsibility, practical delegation and final review/testing; configurable in UI and via explicit MCP request. |
+| [external-supervisor-guidance.md](external-supervisor-guidance.md) | Active | MCP final project-supervisor dispatch defaults off; bounded sub-supervisors remain available, configurable in UI/by explicit request. |
 | [distributed-and-lab-extensions.md](distributed-and-lab-extensions.md) | Active | Follow-on L5 browser/ephemeral/Compose and R2 PostgreSQL/multi-host architecture and acceptance prerequisites; not implemented. |
 | [handoff.md](handoff.md) | Active | **Start here:** the state of every effort, the user's live install, and what to do next (2026-10-22). |
 | [agent-sessions-and-teams.md](agent-sessions-and-teams.md) | Active | Durable resumable agent sessions, failure resilience, coordinated agent teams. S1-S2, R1, T1-T3 done; live validation outstanding, R2 deferred. |
@@ -18,7 +18,7 @@ lines, worker briefs, append-only ledger with real validation, open questions).
 | [caching-and-continuity.md](caching-and-continuity.md) | Active | Provider prompt caching, model stickiness, cached-token pricing, truncation recovery, prefix-stable compaction. C1-C2 done and merged 2026-10-21; live check outstanding. |
 | [budget-control.md](budget-control.md) | Active | Supervisor-set request budgets for delegated tasks, and workers asking their supervisor for more. B1 and B2 implemented and accepted; panel requests/pools verified in demo. Real-provider/transport checks remain. |
 | [panel-v2.md](panel-v2.md) | Complete | U1-U3 plus reopened completion audit accepted: scoped brain/entity links, Activity, repaired seed, live browser checks, 622 tests. |
-| [labs.md](labs.md) | Active | Labs (lanes): isolated, runnable copies of a project per feature, each with its own branch, ports, data, and supervised services, where a team builds and tests; gated promotion into the target branch. Planned 2026-10-21; open questions for the user. |
+| [labs.md](labs.md) | Active | L1-L4 accepted: isolated feature branches/data/ports/services, team tools, checked promotion and panel. L5 extensions remain active. |
 | [web-search.md](web-search.md) | Active | Web search and page fetching for agents: pluggable backends (Ollama, Tavily, Brave, Exa, SearXNG), SSRF-guarded fetch, budgets, untrusted-content handling. Planned 2026-10-21. |
 | [live-validation.md](live-validation.md) | Active | First runs against real providers and Claude Code: findings, fixes, open items (Ollama Cloud, Tetris job, panel auto-start). Started 2026-10-21. |
 | [harness-roles-brain.md](harness-roles-brain.md) | Active | Harness, roles, brain, attribution, paid routes, presets, panel. Implemented; live provider checks outstanding. |

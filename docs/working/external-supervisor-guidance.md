@@ -10,17 +10,46 @@ Related: [roadmap completion](roadmap-completion.md), [roles](../roles.md)
 
 ## Current State
 
-The user explicitly requests that Claude/Codex connecting to SwitchYard act as the supervising
-agent by default: own intended project completion, delegate as much practical work as possible,
-review the integrated results, test them and iterate on defects. The default must be changeable
-from the panel and by asking the connected model. Current MCP instructions describe the panel
-but do not establish this end-to-end responsibility. This feature is not implemented yet.
+The user clarified that the switch controls dispatch of SwitchYard's FINAL project supervisor,
+not whether external workflow guidance is enabled. Authoritative default:
+`client_supervision.dispatch_final_supervisor: false`. Claude/Codex retains final responsibility;
+bounded SwitchYard sub-supervisors remain available. Turning it on permits an explicitly scoped
+SwitchYard project supervisor over MCP. The earlier enabled/disabled-guidance implementation
+and acceptance are superseded and must not be integrated as satisfying this request.
 
 This adds workflow guidance, not technical enforcement over another host application's agent.
 Existing authorization, budgets, verification, containment and explicit user instructions retain
 their authority. Disabling the guidance does not alter internal supervisor charters or limits.
 
-## Plan and acceptance
+## Corrected plan and acceptance
+
+1. Replace unreleased `enabled` with `dispatch_final_supervisor`, default false. Keep optional
+   bounded custom instructions. Effective MCP guidance always states who owns final completion:
+   external client when off; internal project supervisor allowed when on. UI and setter/read
+   tools use this exact role distinction, not an ambiguous supervision on/off toggle.
+2. Persist optional `supervisionScope: subtask|project` in WorkerTaskSchema. A bounded externally
+   delegated supervisor can be a persisted root (no internal parent); parentTaskId alone cannot
+   classify final ownership. MCP start_job and submit_tasks accept this scope, default subtask;
+   explicit project dispatch is refused while the setting is false, including raw task bypass.
+   Classify supervisors by configured profile.mode, not just profile name. Children can never
+   declare project scope; validate persisted parent/project and supervisor identity.
+3. MCP start_job passes scope through service.startJob into its persisted task. The supervisor
+   runner treats subtask scope as bounded delegation to the external owner, whose final review,
+   integration/tests and project completion remain outstanding after finish_job. A completed
+   bounded job is never represented as final project acceptance. Return scope/final owner in
+   MCP dispatch responses, preserving existing fields. Prompt text describes role; validated
+   dispatch guards enforce the structured project/subtask choice. Semantic goal breadth cannot
+   be proven from prose and is not claimed as a security boundary.
+4. Enforce current policy for MCP resume_task/resume_session too: explicit subtask and real
+   internal children remain resumable; a legacy root supervisor without scope is project scope
+   for this guard. Do not alter/cancel already running jobs or change CLI/panel standalone job
+   defaults. Keep once-on-policy-change feedback for existing connections.
+5. Test default project dispatch denial with no task/row mutation, bounded supervisor permitted,
+   raw submit_tasks/custom supervisor-mode profile bypass rejected, bogus/cross-project parent
+   refused, project dispatch enabled via UI and explicit setter, persisted scope and bounded
+   runner instructions, resume guards. Repeat actual stdio/HTTP and multiline UI/browser checks.
+
+## Superseded initial interpretation (history only)
 
 1. Add validated install-wide `client_supervision` settings: `enabled` defaults true and
    `instructions` defaults empty (bounded human customization). Existing configs need no edit.
@@ -41,6 +70,14 @@ their authority. Disabling the guidance does not alter internal supervisor chart
    integrated typecheck/build/tests required. No real model/provider requests or user config.
 
 ## Worker Briefs
+
+### Brief amendment: corrected dispatch ownership
+- User correction above supersedes earlier enabled/disabled semantics, implementation and tests. Use corrected plan as authoritative; continue in the same isolated client-supervision WT.
+- Ownership expands to core/task.ts (optional supervisionScope), core/service.ts (startJob scope only) and runners/supervisor.ts (bounded role text only). Supervisor coordinated service.ts ownership with ledger worker: its close patch is frozen; do not alter close/accounting. Root integrates ledger before this unit. Do not edit Labs check reuse predicate; root owns that separate hunk.
+- Own MCP dispatch/resume guards, config/UI/schema/new tests/report; no broad runtime permission changes. Update current unit tests rather than claiming the obsolete toggle acceptance applies.
+- No internal parent is required for an external client's bounded delegation. Explicit persisted scope plus MCP guards distinguish final authority; do not block every root supervisor and thereby disable all delegation. Parent fields must name a real same-project supervisor if present.
+- `get_supervision_policy`/`set_supervision_policy` retain names; setter accepts dispatch_final_supervisor and optional instructions plus reason. Default scope for new MCP supervisor tasks is subtask; project scope requires policy on. Off/on guidance must accurately state final owner and allow sub-supervisors in both cases.
+- Freeze after corrected focused tests/typecheck/build and actual MCP/UI browser acceptance. Root owns shared docs/public exports/integration. No commits/push, real install/provider calls.
 
 ### Brief: client-supervision
 - Repository: `.claude/worktrees/roadmap-team`, new branch `feat/client-supervision` from current integrated core; supervisor prepares it before dispatch. Separate from frozen L4 acceptance tree.

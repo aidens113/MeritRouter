@@ -681,6 +681,45 @@ or workers.
 - A second daemon for the same storage directory is refused.
 - MCP servers for individual projects run beside the daemon with `--no-worker`.
 
+## Labs: isolated services and checked promotion
+
+A project's Labs page creates retained feature labs from its human-authored recipe. Configure
+the recipe under Project settings → Labs; command definitions are editable, while environment
+values stay private and are preserved on save. Existing labs keep their recipe snapshot. A
+single-project configuration is migrated under its existing project identity on explicit save.
+
+Each lab owns repository branches/worktrees, data directories and allocated loopback ports.
+The default active limit counts every retained lab, including stopped/failed labs. Destroy
+stops proven-owned services and removes clean owned worktrees/data, refuses dirty worktrees,
+and preserves branches. Retained labs prevent removing their project or repository mappings.
+
+Lifecycle controls enqueue persisted operations. Creation/start/check/restart/stop/refresh/
+promotion outcomes remain visible on the detail page, along with bounded checks and logs.
+Inspect promotion evidence loads exact checked revisions, conflict paths and manual Git
+instructions on demand; a completed control request can still contain a failed promotion.
+Services never start from page reads, and these controls do not start a model worker.
+
+`switchyard labs serve` owns a renewable install-wide service-supervision lease. Explicit
+CLI/panel controls can start it independently of task execution. `labs supervisor-start`,
+`supervisor-status` and `supervisor-stop` manage that owner; they take the install configuration
+and reject project selection. Per-lab commands take `--project`: `labs list`, `create`, `status`,
+`start`, `stop`, `restart`, `check`, `logs`, `refresh`, `promote`, `operations` and `destroy`.
+The CLI prints the queued operation ID before its bounded wait. Destroy requires confirmation.
+
+Lab-bound jobs use the lab's integration branches and persistent brain lane; only one root
+team can own a lab while work remains active. Native/external task tools expose declared
+checks, bounded logs, verified service HTTP and scoped lifecycle controls. Refresh/promotion
+serialize physical target repositories, run declared checks on exact heads and revalidate
+before changing targets. Manual promotion returns instructions and leaves targets untouched;
+configured supervisor/automatic policies may advance writable targets after those checks.
+
+Services must remain foreground processes. Windows process ownership checks use birth/command
+identity and retained tree evidence; ambiguous orphan ownership blocks destructive cleanup.
+HTTP access requires positive ownership of the declared loopback listener before and after
+the request. These checks are not an OS sandbox for human-authored commands. Linux process
+support exists, but this acceptance used Windows fixtures. Browser/ephemeral/Compose extensions
+and multi-host PostgreSQL remain separate work; they are not implied by the Labs UI.
+
 ## The brain and attribution
 
 - The brain is one git repository (`brain.path`) for every project: `projects/<slug>/` per
@@ -702,9 +741,9 @@ or workers.
 
 ## Known limitations
 
-- Live behaviour against real providers and OpenCode has not been exercised yet (no credentials
-  were available during development). Every policy path is covered by tests with fake providers
-  behind an injectable HTTP fetch and a scripted coding agent. Still to confirm live: rate-limit
+- Ollama Cloud discovery, free calls and web search have recorded live evidence. Other provider
+  and installed OpenCode behavior remains unverified; policy regressions use fake providers
+  behind an injectable HTTP fetch and scripted coding agents. Still to confirm live: rate-limit
   header formats (OpenRouter reset, SambaNova `-day`, Anthropic periods), OpenAI
   `insufficient_quota` as out of credits, Cloudflare and Cohere list pagination, Anthropic model
   `capabilities`, and the shape of OpenRouter's `/api/v1/key`.

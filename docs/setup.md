@@ -545,7 +545,10 @@ The sidebar groups Teams under Jobs; Agents, Sessions and Requests under Tasks; 
 and commits under Code. Agent pages show their tasks, sessions, models, requests and attributed
 changes. Task, session, job, model and request details link to related entities.
 - Inside a project: its overview, jobs, teams, tasks, sessions, requests, brain (with its
-  promotions to global knowledge), and settings.
+  promotions to global knowledge), Labs, and settings. Project settings → Labs edits the
+  human-authored recipe; the Labs page queues lifecycle controls and displays operation/check
+  evidence. Creating/starting a lab does not start model work. Choose a ready lab in the new-job
+  form to bind its team to that isolated environment. See [Labs operations](operations.md#labs-isolated-services-and-checked-promotion).
 - Under "All projects" (`/all`): the dashboard, every request, models and why each is or is not
   used, routing previews and overrides, provider keys and their status, qualification,
   calibration, global knowledge, and the global settings.
