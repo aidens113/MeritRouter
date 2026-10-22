@@ -2,7 +2,7 @@ import { z } from "zod";
 import { insights } from "switchyard-router";
 import { body, handle, HttpError } from "@/lib/api";
 export const dynamic = "force-dynamic";
-const Project = z.string().regex(/^[a-z0-9][a-z0-9-]*$/);
+const Project = z.string().regex(/^[a-z0-9][a-z0-9._-]*$/);
 const Create = z.object({ name: z.string().regex(/^[a-z0-9][a-z0-9-]{0,40}$/), goal: z.string().max(16000).default("") }).strict();
 export async function GET(req: Request) {
   return handle(sy => {

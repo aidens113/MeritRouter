@@ -63,6 +63,9 @@ try {
   await request(`/api/labs/calculator-preview?project=storefront&operationId=${encodeURIComponent(promotionOp.id)}`, "GET", undefined, 404);
 
   await request("/api/labs/calculator-preview?project=storefront", "GET", undefined, 404);
+  // Dots/underscores are valid project slug characters; unknown projects still fail by scope.
+  await request("/api/labs?project=missing_project.name", "GET", undefined, 404);
+  await request("/api/labs/calculator-preview?project=missing_project.name", "GET", undefined, 404);
   await request("/api/labs/calculator-preview?project=storefront", "POST", { action: "stop" }, 404);
   await request("/api/labs/calculator-preview?project=demo", "POST", { action: "promote", reason: "" }, 400);
   await request("/api/labs/new-fixture?project=legacy-billing", "POST", { action: "create" }, 409);
