@@ -29,8 +29,9 @@ strict companion claims, deadline/ancestry checks and shutdown drains. Public co
 operations guidance updated. Combined baseline run:998 passed/3 failed (102files,666.41s).
 Legitimate T4 stored-row validation fixed and unchanged paid/queue18/18 pass; retained-Lab
 wording assertion updated and1/1 pass; Windows CLI-worker fixture cleanup EBUSY did not recur
-on independent1/1 recheck. Recovery receipts still require bounded maintenance retention
-before acceptance; worker active. Combined full acceptance/package remains pending.
+on independent1/1 recheck. Recovery retention943a74a independently10/10 passed67.41s with
+two-day cadence301 receipts; public exports/typecheck and lifecycle42/42 passed13.75s.
+Combined full acceptance/package remains pending.
 
 Normalized future request capture is implemented locally with bounded private SQLite payloads,
 project-scoped purge and normalized input/tool/response UI. Supervisor29 capture checks plus
@@ -40,14 +41,19 @@ desktop images viewed. This backend/migration is excluded from the request-only 
 Compose C1 read-only validation and C2 full/known-resource proof are local prerequisites:
 independent10/10 and80/80 tests. Runtime remains disabled. Durable original creation receipts,
 engine transport, retained/task integration and actual disposable-engine acceptance
-remain open. Pure sealed Engine request plans independently38/38 pass, still no transport.`nCompose journal/coordinator implementation now active, exclusively owns next migration31.
+remain open. Pure sealed Engine request plans independently38/38 pass, still no transport.
+Compose journal/coordinator implementation now active, exclusively owns next migration31.
 Browser pipe/capability H1 independently26/26; hydrated JS remains unavailable
 without an accepted native isolation adapter. Usable Ubuntu WSL2 bwrap/Python substrate was
-investigated; gated helper95907bd independently38/38 passed5.63s including17 native cases.`nOrdinary-user observer investigation is active; no runtime availability.
+investigated; gated helper95907bd independently38/38 passed5.63s including17 native cases.
+Ordinary-user observer investigation is active; no runtime availability.
 These prerequisites do not close L5.
 
-Next R2 unit is strict captured-generation request admission/dispatch/settlement and observed
-local transport capacity; see distributed-and-lab-extensions.md and its admission plan. Remote
+Captured-generation request admission/dispatch/settlement2b22160 is merged locally after
+independent38/38 plus final classifier15/15. Root project request barriers4/4 and project/Lab
+deletion12/12 passed; scoped private purge preserves accounting and consumed IDs. Full suite
+on frozen1525960 now active in isolated acceptance tree; manual fixture integration separate.
+Remote
 policy/key/session/tool/Git authority, PostgreSQL and real two-host acceptance remain open.
 No real provider quota/paid routing, engine activation or OS service installation authorized.
 User requested continuous execution, not another audit-only stopping point.
