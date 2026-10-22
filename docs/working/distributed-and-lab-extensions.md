@@ -39,12 +39,12 @@ is [reviewed](distributed-and-lab-extensions/reports/hydrated-browser-plan.md): 
 do not prove before-contact denial of every transport. Pipe/capability H1 independently passed26/26 (1.12s) and is merged locally; no accepted network isolation adapter exists on this Windows host, so hydrated
 runtime cannot yet be enabled. No OS services/firewall/Docker activation authorized.
 
-The next R2 task-lifecycle port is active in roadmap-labs after caller freeze. It must add a
-captured task incarnation because explicit task IDs can be deleted/recreated with reset
-run_count. Worker owns stores/executor/scheduler/watchdog/minimal service, new core/task-run-leases.ts
-coordinator extraction and one appended
-receipt migration; root must not edit these files concurrently. Gate/tool/session/Git fencing
-are separate later units. PostgreSQL and real two-host acceptance are not implemented.
+Next R2 request-admission-protocol is ready for serial source dispatch after the accepted
+local lifecycle merge. It carries strict LeaseRef into Gate/batch/classifier, durable request
+reserve/intent/settle receipts and conservative local transport holds. Its worker owns the next
+appended migration exclusively; root owns project purge/exports and combined acceptance.
+Compose engine-contract work owns only new pure port/schema/builder files, no migration.
+PostgreSQL, policy/key/session/tool/Git ports and actual two-host acceptance remain open.
 
 The current store is the synchronous better-sqlite3 Database type. Raw prepared statements,
 transactions and SQLite expressions reach beyond storage into admission, routing, admin,
@@ -109,6 +109,21 @@ not a reason to stop the independently runnable core work. No service was instal
    A two-process SQLite test is useful E7 evidence, but is not two-host PostgreSQL acceptance.
 
 ## Worker Briefs
+
+### Brief: compose-engine-contract (link_completion)
+- Tier: fresh isolated roadmap-labs branch from root baseline named at dispatch; bounded C3 prerequisite, runtime unavailable.
+- Read Current State, compose-journal-plan.md, C1/C2/partial proof contracts and reports. Typed local Engine API selected for eventual transport; no actual client/runtime in this unit.
+- Own only NEW labs/compose-engine-schema.ts + compose-engine.ts (named private builder split allowed), new engine-contract tests and reports/compose-engine-contract.md.
+- No existing source/client/recipe/proof/manager/services/config/public export/shared doc changes. NO migration/SQLite journal; admission worker owns next migration.
+- Define strict bounded private engine effect/request/response DTOs and injected port for original create receipts, exact-ID inspect/start/stop/remove and same-engine404 observations. Unknown transport outcomes explicit; no implicit retry/discovery adoption.
+- Pure builder derives versioned closed request plans from original full sealed approval + trusted accepted profile/current creation identity; no arbitrary caller Engine JSON/URLs/argv or TCP/context fallback.
+- Preserve full argv/entrypoint/default-CMD/env/multiline/dollar/bind/publication/hardening semantics and C2 labels/image-config distinction; reject unrepresentable or unsupported input rather than reinterpret.
+- Network/container creation uses explicit original intent/nonce/request identity. Network ID must be committed before a container plan references it; plans are not mutation permission or durable receipts.
+- No client that actually connects; real transport/journal/host profile/capability remain unavailable. Fake trusted inputs are unit fixtures, never accepted host baseline.
+- Private plans may contain env/paths/argv; safe diagnostics/results contain fixed codes/counts only, no body/IDs/raw errors. Bound before hashing/serialization; reject accessors/cycles/deep/oversized inputs.
+- Test exact canonical API bodies, committed network requirement, original identity/seal mismatch, image/argv/env fidelity, subset refusal, malformed/bounds/secret sentinels and no arbitrary endpoint/operation.
+- Verify uncertain Engine fields from primary official schema, record links. No Docker/API probes, OS/providers/user data or runtime support claim.
+- Freeze then focused tests/router typecheck/build, report exact limitations/dependencies. No commits/push; ask before expanding ownership.
 
 ### Brief: compose-partial-proof (seed_repair)
 - Tier: isolated roadmap-team after frozen C2/journal design; pure bounded prerequisite, no engine/runtime activation.
