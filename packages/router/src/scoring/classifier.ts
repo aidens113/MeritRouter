@@ -122,7 +122,8 @@ export class Classifier {
           { role: "system", content: SYSTEM },
           { role: "user", content: batch.map((p, i) => describe(ids[i]!, p)).join("\n\n") },
         ],
-        max_tokens: 200 * batch.length + 100,
+        // Room for models that reason before answering (live: 300 tokens cut a reply off mid-JSON).
+        max_tokens: 600 * batch.length + 400,
         temperature: 0,
         response_format: { type: "json_object" },
       };
