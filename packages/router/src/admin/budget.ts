@@ -47,7 +47,7 @@ export type BudgetDecider = { kind: "human"; id: string } | { kind: "external"; 
 export function decideBudgetRequest(sy: Switchyard, id: number, input: { approve: boolean; grant?: number | null; reason: string; by: BudgetDecider }, project?: string): BudgetRequest {
   const store = new BudgetRequests(sy.db);
   const req = store.get(id);
-  if (!req || (project !== undefined && req.project !== "" && req.project !== project)) throw new SwitchyardError("not_found", `unknown budget request ${id}${project ? ` in project ${project}` : ""}`);
+  if (!req || (project !== undefined && req.project !== project)) throw new SwitchyardError("not_found", `unknown budget request ${id}${project ? ` in project ${project}` : ""}`);
   if (input.by.kind === "external" && req.approver === "human") throw new SwitchyardError("human_decision_required", `budget request ${id} is decided by a person (team.budget_approver: human): switchyard budget approve|deny ${id}, or the panel`);
   if (!input.reason.trim()) throw new SwitchyardError("reason_required", "say why");
   return store.decide(id, { approve: input.approve, grant: input.grant ?? null, by: `${input.by.kind}:${input.by.id}`, reason: input.reason, cfg: cfgOf(sy, req.taskId) });

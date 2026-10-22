@@ -148,6 +148,9 @@ export class Switchyard {
   private reloadTimer: NodeJS.Timeout | null = null;
   private workerStarted = false;
   private preparing: Promise<RepositoryPreparation[]> | null = null;
+  private closing = false;
+  private readonly promotionTimers = new Set<NodeJS.Timeout>();
+  private readonly promotionSettles = new Set<Promise<number>>();
 
   constructor(
     readonly cfg: ResolvedConfig,
@@ -291,9 +294,15 @@ export class Switchyard {
 
   /** Collect finished promotion reviews and retry waiting ones (also runs when a review task settles). */
   async settlePromotions(project?: string): Promise<number> {
-    let n = 0;
-    for (const p of project ? [this.projectContext(project).project.slug] : this.projects.slugs()) n += await this.brainFor(p).promotions.settle();
-    return n;
+    if (this.closing) return 0;
+    const run = (async () => {
+      let n = 0;
+      for (const p of project ? [this.projectContext(project).project.slug] : this.projects.slugs()) n += await this.brainFor(p).promotions.settle();
+      return n;
+    })();
+    this.promotionSettles.add(run);
+    try { return await run; }
+    finally { this.promotionSettles.delete(run); }
   }
 
   /** A person approves or rejects a waiting promotion (`by` names them; a rejection needs a reason). */
@@ -305,10 +314,16 @@ export class Switchyard {
 
   /** When a promotion review task settles, move its project's promotions on. */
   private settlePromotionReview(taskId: string): void {
+    if (this.closing) return;
     const row = this.db.prepare("SELECT purpose, project_id FROM tasks WHERE id = ?").get(taskId) as { purpose: string; project_id: string } | undefined;
     if (row?.purpose !== PROMOTION_REVIEW_PURPOSE) return;
     // On a later turn of the event loop: settling may start another review task.
-    setTimeout(() => void this.settlePromotions(row.project_id || undefined).catch(() => undefined), 0).unref?.();
+    const timer = setTimeout(() => {
+      this.promotionTimers.delete(timer);
+      if (!this.closing) void this.settlePromotions(row.project_id || undefined).catch(() => undefined);
+    }, 0);
+    this.promotionTimers.add(timer);
+    timer.unref?.();
   }
 
   /** A task's project dependencies (its context, brain, brain access); throws for an unconfigured project. */
@@ -753,12 +768,17 @@ export class Switchyard {
   }
 
   async close(): Promise<void> {
+    this.closing = true;
+    for (const timer of this.promotionTimers) clearTimeout(timer);
+    this.promotionTimers.clear();
     if (this.discoveryTimer) clearInterval(this.discoveryTimer);
     if (this.reloadTimer) clearInterval(this.reloadTimer);
     await this.preparing?.catch(() => undefined);
     await this.discovering?.catch(() => undefined);
     await this.scheduler.stop();
     await this.executor.flush();
+    // Review settlement owns brain writes and Git children independently of executor reports.
+    await Promise.allSettled([...this.promotionSettles]);
     this.db.close();
   }
 }

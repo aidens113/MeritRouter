@@ -3,6 +3,9 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
+import { BudgetRequests } from "../src/admission/budget-requests.js";
+import { recordGrant } from "../src/admission/job-pool.js";
+import { WorkerTaskSchema } from "../src/core/task.js";
 import type { Switchyard } from "../src/core/service.js";
 import {
   agentDetail,
@@ -75,6 +78,34 @@ function step(s: Switchyard, cursor: LiveCursor): { topics: string[]; cursor: Li
 }
 
 describe("live change watcher", () => {
+  it("watches scoped budget requests, same-timestamp decisions and released grants", () => {
+    env = twoProjects();
+    sy = open(env, new ScriptedClient(() => reply("{}")), { worker: false });
+    sy.tasks.submit([WorkerTaskSchema.parse({ id: "budget_a", profile: "inspect", goal: "inspect", repositoryAliases: ["app"], constraints: { acceptanceCriteria: ["done"] } })], { project: "alpha" });
+    let alpha = liveCursor(sy, "alpha");
+    const beta = liveCursor(sy, "beta");
+    const store = new BudgetRequests(sy.db, () => 100);
+    const r = store.file({ taskId: "budget_a", jobId: null, role: "inspector", requests: 2, reason: "more files", used: 1, cap: 2, approver: "human" });
+    let result = liveChanges(sy, alpha);
+    expect(result.topics).toContain("budget");
+    expect(result.topics).toContain("tasks:*");
+    expect(liveChanges(sy, beta).topics).not.toContain("budget");
+    alpha = result.cursor;
+    // An older row decision without advancing any timestamp still refreshes budget views.
+    sy.db.prepare("UPDATE budget_requests SET status = 'denied', decided_at = 100 WHERE id = ?").run(r.id);
+    result = liveChanges(sy, alpha);
+    expect(result.topics).toContain("budget");
+    alpha = result.cursor;
+    recordGrant(sy.db, { taskId: "budget_a", jobId: "unstarted-job", requests: 4, source: "supervisor" }, 100);
+    result = liveChanges(sy, alpha);
+    expect(result.topics).toContain("budget");
+    alpha = result.cursor;
+    sy.cancelTasks(["budget_a"]);
+    result = liveChanges(sy, alpha);
+    expect(result.topics).toContain("budget");
+    expect(liveChanges(sy, result.cursor).topics).toEqual([]);
+  });
+
   it("detects mutable settings updates that preserve counts, timestamps and key lengths", () => {
     env = twoProjects();
     sy = open(env, new ScriptedClient(() => reply("{}")));

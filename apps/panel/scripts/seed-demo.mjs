@@ -32,15 +32,22 @@
 //   pnpm --filter switchyard-panel seed:demo
 //   SWITCHYARD_CONFIG=.demo/switchyard.config.yaml pnpm --filter switchyard-panel dev
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
-import { GatewayError, ProviderError, Switchyard, WorkerTaskSchema, insights, parseConfig, planComparison, runComparison } from "switchyard-router";
+import { BudgetRequests, GatewayError, ProviderError, Switchyard, WorkerTaskSchema, insights, parseConfig, planComparison, runComparison } from "switchyard-router";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const demo = path.resolve(here, "..", ".demo");
 const HOUR = 3_600_000;
+const fixtureFailures = [];
+const expectFixture = (condition, message) => {
+  if (!condition) {
+    fixtureFailures.push(message);
+    console.error(`  fixture failed: ${message}`);
+  }
+};
 
 // ---------- workspace ----------
 try {
@@ -378,7 +385,8 @@ const client = {
     // Standalone job supervisors (scripted per job, keyed on the goal in the brief).
     if (sys.startsWith("# Supervisor charter")) return supervisorTurn(req, s);
     // SwitchYard's native coding worker: edit, then submit.
-    if (req.tools?.some((t) => t.function.name === "replace_in_file")) return codingTurn(req, s, user);
+    // The final budgeted request exposes only submit_result; keep the coding script then too.
+    if (req.tools?.some((t) => t.function.name === "replace_in_file") || sys.includes("# Implementer")) return codingTurn(req, s, user);
     // Independent reviewers: one verdict per review, decided by the task's goal.
     if (req.tools?.some((t) => t.function.name === "submit_verdict")) return reviewerTurn(s, user);
     // Background audits: a review task that returns its verdict as data.
@@ -612,8 +620,9 @@ function subJobTurn(req) {
         call("brain_set_job_section", { body: "Delegated mean and range (both edit src/app.ts; range waits for mean's lease)." }),
         call("delegate", {
           tasks: [
-            { label: "mean", profile: "implement", goal: `${SUB_WORKER} Add mean(a, b) to src/app.ts next to add().`, acceptance_criteria: ["mean is exported from src/app.ts"], allowed_paths: ["src/app.ts"], checks: [hasCheck("mean")], difficulty: "T2" },
-            { label: "range", profile: "implement", goal: `${SUB_WORKER} Add range(a, b) to src/app.ts next to add().`, acceptance_criteria: ["range is exported from src/app.ts"], allowed_paths: ["src/app.ts"], checks: [hasCheck("range")], difficulty: "T2" },
+            // Exact scripted turns fit the carved sub-job pool (including its supervisor reserve).
+            { label: "mean", profile: "implement", max_requests: 2, goal: `${SUB_WORKER} Add mean(a, b) to src/app.ts next to add().`, acceptance_criteria: ["mean is exported from src/app.ts"], allowed_paths: ["src/app.ts"], checks: [hasCheck("mean")], difficulty: "T2" },
+            { label: "range", profile: "implement", max_requests: 3, goal: `${SUB_WORKER} Add range(a, b) to src/app.ts next to add().`, acceptance_criteria: ["range is exported from src/app.ts"], allowed_paths: ["src/app.ts"], checks: [hasCheck("range")], difficulty: "T2" },
           ],
         }),
       ],
@@ -1069,7 +1078,9 @@ const rebasedE = teamE?.queues.flatMap((q) => q.items).filter((i) => i.rebased).
 console.log(
   `  ${"job: nested team (sub-job, queue, channel)".padEnd(44)} ${re ? `${re.executionStatus}/${re.acceptanceStatus}` : "did not finish"}; ${teamE?.subJobs ?? 0} sub-job, ${teamE?.queues.reduce((a, q) => a + q.items.length, 0) ?? 0} integrations (${rebasedE} rebased), ${teamE?.channel.total ?? 0} posts, survey twins ${twinsE?.status ?? "none"}`,
 );
-if (!rebasedE) console.warn("  warning: no integration of the nested job was rebased");
+expectFixture(re?.executionStatus === "completed" && re?.acceptanceStatus === "met", "the nested job must deliver both helpers with passing checks");
+expectFixture((teamE?.queues.reduce((a, q) => a + q.items.filter((i) => i.state === "integrated").length, 0) ?? 0) >= 3, "the nested job must integrate both workers and their sub-job");
+expectFixture(rebasedE > 0, "an integration of the nested job must be rebased");
 if (twinsE?.status !== "verified") console.warn(`  warning: the redundant survey ended ${twinsE?.status ?? "without twins"}${twinsE?.reason ? ` (${twinsE.reason})` : ""}`);
 
 // One recorded comparison: the same goal as a team job and as a single agent, metrics for both.
@@ -1191,6 +1202,14 @@ await sy.close();
 offset = 0;
 const idle = new Switchyard(cfg, { providerClient, worker: false, now: clock });
 const store = (specs, project = "demo") => idle.tasks.submit(specs.map((x) => WorkerTaskSchema.parse(x)), { project });
+// Budget decisions are genuine pending records on idle tasks, like the queued fixtures below.
+// No scheduler runs: these examples reserve grants without spending model requests.
+const [budgetJob] = store([{ profile: "supervise", label: "budget-review", goal: "Review the team's requests for more budget.", budget: { maxModelRequests: 30 }, constraints: { acceptanceCriteria: ["Each budget request has a recorded human decision"] } }]);
+for (const [label, requests] of [["budget-approve-example", 3], ["budget-deny-example", 2]]) {
+  const [child] = store([{ ...summarize("Finish the incident summary after a budget decision"), label, parentTaskId: budgetJob.taskId, budget: { maxModelRequests: 2 } }]);
+  idle.db.prepare("INSERT INTO task_request_grants (task_id, job_id, requests, source, created_at) VALUES (?, ?, 2, 'supervisor', ?)").run(child.taskId, budgetJob.taskId, Date.now());
+  new BudgetRequests(idle.db).file({ taskId: child.taskId, jobId: budgetJob.taskId, role: "summarizer", requests, reason: "Additional context needs a bounded follow-up pass (demo).", used: 0, cap: 2, approver: "human" });
+}
 const [queued] = store([summarize("Summarise the payments log (queued: no worker running)")]);
 store([summarize("Summarise the follow-up incident report", { id: "followup_after_payments", dependsOn: [queued.taskId] })]);
 // The storefront's job waits in its queue: no worker is running.
@@ -1272,7 +1291,7 @@ for (let i = 0; i < 100 && idle.promotions({ status: "pending_review" }).length;
   await new Promise((r) => setTimeout(r, 50));
 }
 const waitingLessons = idle.promotions({ status: "pending_approval" });
-if (waitingLessons.length < 2) console.warn(`warning: expected 2 promotions waiting for approval, found ${waitingLessons.length}`);
+expectFixture(waitingLessons.length === 2, `expected 2 promotions waiting for approval, found ${waitingLessons.length}`);
 const verifyLesson = waitingLessons.find((p) => p.title.startsWith("Verify integrated work"));
 if (verifyLesson) await insights.decideGlobalPromotion(idle, verifyLesson.project, verifyLesson.id, true, "you", "Holds for any repository with integration branches.");
 await insights.brainWrite(idle, "global/glossary.md", "# Glossary\n\nShared terms. Supervisors maintain this file.\n\n- **Job branch**: the branch a job's supervisor integrates workers' commits onto before you merge it.\n- **Integration check**: a command run on the job branch after integrating, not in a worker's worktree.\n- **Lease**: a time-limited claim on a file or repository that keeps two workers from editing it at once.\n");
@@ -1300,4 +1319,10 @@ writeFileSync(
 console.log(
   `\nDemo ready. Start the panel against it with:\n  SWITCHYARD_CONFIG="${configPath}" pnpm --filter switchyard-panel dev\n(a relative SWITCHYARD_CONFIG resolves against apps/panel, e.g. SWITCHYARD_CONFIG=.demo/switchyard.config.yaml)`,
 );
-if (!existsSync(path.join(demo, ".switchyard"))) process.exitCode = 1;
+for (const name of readdirSync(path.join(demo, ".switchyard", "sessions"))) {
+  if (!name.endsWith(".jsonl")) continue;
+  const log = readFileSync(path.join(demo, ".switchyard", "sessions", name), "utf8");
+  expectFixture(!/index\.lock|brain is locked by another process/.test(log), `brain/git lock failure in session ${name}`);
+}
+if (fixtureFailures.length) console.error(`Demo fixture validation failed: ${fixtureFailures.length} expectation(s).`);
+if (!existsSync(path.join(demo, ".switchyard")) || fixtureFailures.length) process.exitCode = 1;

@@ -1,9 +1,9 @@
 # Budget control: supervisor-set budgets and requests for more
 
 Status: Active
-Status detail: B1 done and merged 2026-10-22 (7f8d2df); B2 (panel) not started; not yet run live.
+Status detail: B1 and B2 done; panel acceptance passes; real-provider job/CLI/MCP transport validation remains outstanding.
 Created: 2026-10-21
-Last updated: 2026-10-21
+Last updated: 2026-10-22
 Owner: Senior supervisor agent
 Scope: Per-task request budgets are set by the supervisor that delegates (with a configured
 default), and a worker that runs low asks its supervisor for more instead of stopping.
@@ -42,7 +42,19 @@ branch, 587 passed, `pnpm -r build` and typecheck pass on dev.
 **Not verified:** a live job; the CLI `budget` command run; MCP budget tools over a transport;
 OpenCode/command runners lack the new tools; `**/*.md` coordination paths may be wider than wanted.
 
-**Next steps:** B2 after panel v2 lands; a live team job.
+**Done (B2, 901161a; integrated 6927dba):** pending requests on job/task/project/install pages,
+approve/deny with reasons and partial grants, job pool/held/reserve/available totals, task grants
+and extras, and live budget invalidation. Scoped decisions reject unassigned/cross-project
+requests rather than treating empty scope as a wildcard. Demo seeds two genuine pending human
+requests without running a scheduler.
+
+**Verified:** supervisor production browser approval (partial grant 1), denial, required reason,
+wrong-project 404, invalid reason 400, over-pool/stale 409, independent budget live refresh with
+open history retained, task Usage extras, phone/desktop light/dark screenshots and 200 pages.
+Full integrated suite 622/622, recursive typecheck and build pass. Worker report:
+[panel-b2.md](budget-control/reports/panel-b2.md). Acceptance details also in Panel v2 validation.
+
+**Next steps:** real-provider team job; CLI/MCP budget transport checks. B2 implementation is complete.
 
 **Blockers:** none.
 
@@ -119,6 +131,16 @@ OpenCode/command runners lack the new tools; `**/*.md` coordination paths may be
 
 ---
 
+### Brief: budget-panel-b2
+- Repository: D:/SwitchYardRouter/.claude/worktrees/budget-panel, feat/budget-panel. Isolated worktree because supervisor validates Panel v2 concurrently. Install frozen/offline.
+- Task: Implement B2: pending budget requests with human approve/deny, reasons and optional partial grants; job pool used/granted/held/available; per-task grants/extras. Expose pending requests in project and install attention views. Reuse existing insights budget APIs; library enforcement remains authoritative.
+- Required reads: this doc Current State/Decisions/Phases; admin/budget.ts and admission/budget-requests.ts; panel API handle/body, actions patterns, job/task/overview components. Public budget APIs are stable.
+- Owns: new panel components/budget-requests.tsx, client/budget-decision.tsx (or clearly named budget files); new app/api/budget/requests/[id]/route.ts; job detail, task-detail, project overview and install dashboard integration; admin/budget.ts; admin/live.ts + tests/admin-live.test.ts for budget topics; new tests/admin-budget-panel.test.ts; report below.
+- Must not touch: seed-demo.mjs (supervisor adds fixtures after seed repair); brain files, link components, shared docs, export files. No commits/push. Do not edit root checkout.
+- Requirements: zod bodies/IDs; strict project scope including unassigned requests; fail stale/finished/pool-exhausted decisions as actionable 409/400, not 500. Test project denial and budget invariants. Live budget changes must refresh subscribed views. Accessible controls and phone layout; pending count navigates to decisions.
+- Definition of done: B2 core UI/API implemented, focused tests and builds/typecheck observed; supervisor seeds pending requests and validates browser approve/deny/caps after integration. Report exact commands and unresolved risks.
+- Report to: docs/working/budget-control/reports/panel-b2.md in your worktree.
+
 ## Work Ledger
 
 ### 2026-10-21 — Plan written
@@ -130,6 +152,13 @@ OpenCode/command runners lack the new tools; `**/*.md` coordination paths may be
 - Outcome: Accepted
 
 ---
+
+### 2026-10-22 - B2 accepted
+- Agent: supervisor; worker link_completion.
+- Changed: panel budget decisions, pool/task grant summaries, attention views, scoped API, budget live topic and demo requests; operations documentation updated.
+- Validation: supervisor full integrated suite 622/622, recursive typecheck/build, demo seed exit 0. Browser partial approve/deny, reason validation, scope/pool/stale responses, independent budget live refresh and task extras; desktop/phone light/dark captures inspected. See Panel v2 validation for artifacts.
+- Outcome: Accepted for B2. No real-provider job or CLI/MCP transport claim.
+- Follow-up: dev/main integration with Panel v2; live team/transport checks remain separately listed.
 
 ## Open Questions
 

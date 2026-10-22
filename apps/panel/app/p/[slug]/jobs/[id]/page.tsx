@@ -1,3 +1,4 @@
+import { BudgetRequestsCard, JobBudgetCard } from "@/components/budget-requests";
 import { ShowAllRows } from "@/components/client/show-all";
 import { RelatedPanel } from "@/components/related";
 import { AgentLink, CommitLink, ModelLink, RequestLink, TaskLink } from "@/components/entity-links";
@@ -56,9 +57,13 @@ export default async function JobDetailPage({ params, searchParams }: { params: 
   const team = insights.jobTeam(sy, id)!;
   const metrics = insights.jobMetrics(sy, id);
   const related = await insights.taskRelated(sy, id);
+  const budget = insights.jobBudget(sy, id);
+  const budgetPending = insights.budgetRequestsView(sy, { jobId: id, project: p.slug, status: "pending", limit: 1000 });
+  const budgetHistory = insights.budgetRequestsView(sy, { jobId: id, project: p.slug }).filter((r) => r.status !== "pending");
   const requests = insights.requestLog(sy, { taskId: id, project: p.slug, limit: 100 });
 
   const tab = pickTab(sp, ["overview", "plan", "team", "changes", "checks", "channel", "sessions"]);
+  const recovery = tab === "plan" ? await insights.planRecovery(sy, id) : undefined;
   return (
     <div className="space-y-6">
       <Link href={`${base}/jobs`} className="inline-flex items-center gap-1 text-sm text-ink-3 hover:text-ink">
@@ -66,7 +71,7 @@ export default async function JobDetailPage({ params, searchParams }: { params: 
       </Link>
       <PageHeader
         title={job.label ? `Job: ${job.label}` : "Job"}
-        live={[`jobs:${job.taskId}`, `tasks:${job.taskId}`]}
+        live={[`jobs:${job.taskId}`, `tasks:${job.taskId}`, "budget", "requests"]}
         description={
           <span className="flex flex-wrap items-center gap-2">
             <TaskStateBadge state={job.state} />
@@ -81,6 +86,7 @@ export default async function JobDetailPage({ params, searchParams }: { params: 
                 {team.subJobs} sub-job{team.subJobs === 1 ? "" : "s"}
               </Badge>
             ) : null}
+            {budgetPending.length ? <a href="#budget-requests" className="text-xs font-medium text-warn-ink hover:underline">{budgetPending.length} budget requests pending</a> : null}
             <Mono>{job.taskId}</Mono>
           </span>
         }
@@ -146,6 +152,7 @@ export default async function JobDetailPage({ params, searchParams }: { params: 
         <Stat label="Agents" value={metrics?.tasks.agents ?? 0} />
         <Stat label="Elapsed" value={metrics?.wallClockMs == null ? "Not started" : duration(metrics.wallClockMs)} />
       </div>
+      {budgetPending.length ? <BudgetRequestsCard requests={budgetPending} pendingOnly /> : null}
       <Disclosure summary="Related agents, sessions and work"><RelatedPanel groups={[
         { label: "Jobs", items: (related?.ancestors ?? []).map(j => ({ key: j.jobId, node: <TaskLink base={base} id={j.jobId} label={j.label} job /> })) },
         { label: "Agents", items: (related?.agents ?? []).map(a => ({ key: a.id, node: <AgentLink base={base} agent={a.id} /> })) },
@@ -158,8 +165,8 @@ export default async function JobDetailPage({ params, searchParams }: { params: 
         { label: "Child tasks", items: (related?.children ?? []).map(t => ({ key: t.taskId, node: <TaskLink base={base} id={t.taskId} label={t.label} /> })) }
       ]} />
       </Disclosure>
-      <Tabs items={[{ "id": "overview", "label": "Overview" }, { "id": "plan", "label": "Plan" }, { "id": "team", "label": "Team" }, { "id": "changes", "label": "Changes" }, { "id": "checks", "label": "Checks" }, { "id": "channel", "label": "Channel" }, { "id": "sessions", "label": "Sessions" }]} active={tab} path={jobHref(base, id)} label="Page sections" anchors={{ "plan": "plan", "team": "team", "metrics": "team", "merge-queue": "changes", "channel": "channel" }} />
-      {tab === "overview" ? <div className="space-y-6"><div className="grid gap-6 xl:grid-cols-[3fr_2fr]">
+      <Tabs items={[{ "id": "overview", "label": "Overview" }, { "id": "plan", "label": "Plan" }, { "id": "team", "label": "Team" }, { "id": "changes", "label": "Changes" }, { "id": "checks", "label": "Checks" }, { "id": "channel", "label": "Channel" }, { "id": "sessions", "label": "Sessions" }]} active={tab} path={jobHref(base, id)} label="Page sections" anchors={{ "plan": "plan", "team": "team", "metrics": "team", "merge-queue": "changes", "channel": "channel", "request-pool": "overview", "budget-history": "overview" }} />
+      {tab === "overview" ? <div className="space-y-6">{budget ? <JobBudgetCard budget={budget} base={base} /> : null}{budgetHistory.length ? <BudgetRequestsCard requests={budgetHistory} id="budget-history" /> : null}<div className="grid gap-6 xl:grid-cols-[3fr_2fr]">
         <Card>
           <CardHeader title="Goal" />
           <div className="space-y-4 p-4 text-sm">
@@ -196,7 +203,7 @@ export default async function JobDetailPage({ params, searchParams }: { params: 
                 ["Started", dateTime(status.startedAt ?? null)],
                 ["Finished", dateTime(job.finishedAt)],
                 ["Supervisor requests", `${job.modelRequestsUsed}${status.maxModelRequests && Number.isFinite(status.maxModelRequests) ? ` of ${status.maxModelRequests} allowed` : ""}`],
-                ["Repositories", spec.repositoryAliases.join(", ")],
+                ["Repositories", <span key="repos">{spec.repositoryAliases.map((alias, i) => <span key={alias}>{i ? ", " : ""}<Link href={`${base}/repos/${encodeURIComponent(alias)}`} className="text-accent-ink hover:underline">{alias}</Link></span>)}</span>],
                 ...(spec.budget?.maxPaidUsd !== undefined ? ([["Paid cap", `$${spec.budget.maxPaidUsd}`]] as Array<[string, ReactNode]>) : []),
                 [
                   <span key="wd" className="inline-flex items-center gap-1">
@@ -267,7 +274,7 @@ export default async function JobDetailPage({ params, searchParams }: { params: 
             </div>
           </Card>
         ) : null}</div> : null}
-      {tab === "plan" ? <div className="space-y-6">{plan?.plan ? <PlanCard plan={plan} base={base} /> : null}</div> : null}
+      {tab === "plan" ? <div className="space-y-6">{plan?.plan ? <PlanCard plan={plan} base={base} recovery={recovery} /> : null}</div> : null}
       {tab === "team" ? <div className="space-y-6">{team.subJobs || team.parentJobId ? <TeamCard team={team} base={base} /> : null}
         <Card>
           <CardHeader title="Worker tasks" description={plan?.plan ? "Every task the supervisor dispatched, planned or not. Each has its own page with requests, artifacts, and checks." : "Tasks the supervisor delegated. Each has its own page with requests, artifacts, and checks."} />
@@ -315,9 +322,9 @@ export default async function JobDetailPage({ params, searchParams }: { params: 
               <div key={b.alias} className="space-y-2">
                 <div className="flex flex-wrap items-center gap-2 text-sm">
                   <GitBranch size={14} className="text-ink-3" aria-hidden />
-                  <span className="font-medium text-ink">{b.alias}</span>
+                  <Link href={`${base}/repos/${encodeURIComponent(b.alias)}`} className="font-medium text-accent-ink hover:underline">{b.alias}</Link>
                   <Mono>{b.branch}</Mono>
-                  <span className="text-xs text-ink-3">based on {b.baseSha.slice(0, 12)}</span>
+                  <span className="text-xs text-ink-3">based on <CommitLink base={base} repository={b.alias} sha={b.baseSha} /></span>
                 </div>
                 {team.parentJobId ? (
                   <p className="text-xs text-ink-3">
@@ -356,7 +363,7 @@ export default async function JobDetailPage({ params, searchParams }: { params: 
         />
         <SessionsTable rows={sessions} base={base} empty="No sessions recorded for this job" />
       </Card>
-        <Disclosure summary="Supervisor transcript"><Card>
+        <Disclosure summary="Supervisor transcript" defaultOpen><Card>
           <CardHeader
             title="Supervisor transcript"
             help="supervisor"

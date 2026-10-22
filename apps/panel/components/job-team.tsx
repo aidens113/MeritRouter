@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { GitBranch, GitMerge, MessagesSquare, Network, Quote, Wrench } from "lucide-react";
-import type { insights } from "switchyard-router";
+import { getSy } from "@/lib/sy";
+import { insights } from "switchyard-router";
 import { Badge, Card, CardHeader, Mono, type Tone } from "./ui";
 import { AcceptanceBadge, TaskStateBadge } from "./task-badges";
 import { dateTime, humanize, shortId } from "@/lib/format";
@@ -35,6 +36,8 @@ function Budget({ b }: { b: NonNullable<TreeNode["budget"]> }) {
 }
 
 function TreeRow({ n, self, base }: { n: TreeNode; self: boolean; base: string }) {
+  const sy = getSy().sy;
+  const agents = sy ? [...new Set(insights.sessionsView(sy, { taskId: n.taskId, limit: 1000 }).map((s) => s.agentLabel))] : [];
   const href = n.kind === "job" ? jobHref(base, n.taskId) : taskHref(base, n.taskId);
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 py-1.5">
@@ -49,6 +52,7 @@ function TreeRow({ n, self, base }: { n: TreeNode; self: boolean; base: string }
         )}
         <span className="text-xs text-ink-3">{n.kind === "job" ? (self ? "this job" : "sub-supervisor") : n.profile}</span>
       </span>
+      {agents.map((agent) => <AgentLink key={agent} base={base} agent={agent} />)}
       <TaskStateBadge state={n.state} />
       {n.acceptance ? <AcceptanceBadge status={n.acceptance} /> : null}
       {n.kind === "job" ? <Badge tone="accent">level {n.depth}</Badge> : null}
@@ -124,7 +128,7 @@ export function MergeQueueCard({ team, base }: { team: Team; base: string }) {
           <div key={`${q.jobId}:${q.repo}:${q.branch}`} className="min-w-0">
             <div className="flex flex-wrap items-center gap-2 px-4 pt-3 text-sm">
               <GitMerge size={14} className="text-ink-3" aria-hidden />
-              <span className="font-medium text-ink">{q.repo}</span>
+              <Link href={`${base}/repos/${encodeURIComponent(q.repo)}`} className="font-medium text-accent-ink hover:underline">{q.repo}</Link>
               <Mono className="break-all">{q.branch}</Mono>
               {q.jobId !== team.jobId ? (
                 <span className="text-xs text-ink-3">

@@ -26,7 +26,7 @@ export default async function AgentPage({ params, searchParams }: { params: Prom
   const rows = tab === "tasks" ? a.tasks.map(t => <div key={t.taskId}><TaskLink base={base} id={t.taskId} label={t.label} /> <span className="text-ink-3">{t.state}</span></div>)
     : tab === "sessions" ? a.sessions.map(s => <div key={s.id}><Link className="text-accent-ink hover:underline" href={sessionHref(base, s.id)}>{s.id}</Link> · {s.status} · {dateTime(s.createdAt)}</div>)
     : tab === "models" ? a.models.map(m => <div key={m.endpointId}><ModelLink id={m.endpointId} name={m.servedModel} /> · {m.requests} requests · {m.inputTokens + m.outputTokens} tokens · ${m.costUsd.toFixed(4)}</div>)
-    : tab === "requests" ? a.requests.map(q => <div key={q.id}><RequestLink base={base} id={q.id} /> · {q.status} · {q.servedModel ?? q.endpointId} · {dateTime(q.reservedAt)}</div>)
+    : tab === "requests" ? a.requests.map(q => <div key={q.id}><RequestLink base={base} id={q.id} /> · {q.status} · {q.endpointId ? <ModelLink id={q.endpointId} name={q.servedModel} /> : q.servedModel ?? "Unknown"} · {dateTime(q.reservedAt)}</div>)
     : a.commits.map(c => <div key={`${c.repository}:${c.commit}`}><CommitLink base={base} repository={c.repository} sha={c.commit} /> {c.subject} <span className="text-ink-3">+{c.added} −{c.removed}</span></div>);
   return <div className="space-y-4">
     <PageHeader title={a.agent.label} description={a.agent.role} live={["sessions", "tasks", "requests", "brain"]} back={{ href: `${base}/agents`, label: "Agents" }} />

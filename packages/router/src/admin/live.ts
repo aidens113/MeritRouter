@@ -17,7 +17,7 @@ import type { Switchyard } from "../core/service.js";
  */
 
 /** Topics a page can subscribe to. Install-wide ones (keys, models, config, projects, workers) change in every scope. */
-export const LIVE_TOPICS = ["tasks", "jobs", "sessions", "requests", "events", "brain", "keys", "web", "models", "config", "projects", "workers"] as const;
+export const LIVE_TOPICS = ["tasks", "jobs", "sessions", "requests", "events", "brain", "keys", "web", "models", "config", "projects", "workers", "budget"] as const;
 export type LiveTopic = (typeof LIVE_TOPICS)[number];
 
 /** `all` (every project) or one project's slug. */
@@ -127,6 +127,22 @@ const SOURCES: Record<string, Source & { topic: LiveTopic }> = {
         ...jobAncestors(db, tasks),
       ];
     },
+  },
+  budget: {
+    topic: "budget",
+    mark: ({ db, project }) => {
+      const s = scoped(project);
+      const t = scoped(project, "t.project_id");
+      // Budget decisions can update an older row within the same millisecond. Pool holds also
+      // change when a task finishes, a grant/carve changes, or a request is charged.
+      return [digest([
+        db.prepare(`SELECT * FROM budget_requests WHERE ${s.sql} ORDER BY id`).all(...s.args),
+        db.prepare(`SELECT g.*, t.state FROM task_request_grants g JOIN tasks t ON t.id = g.task_id WHERE ${t.sql} ORDER BY g.task_id`).all(...t.args),
+        db.prepare(`SELECT g.*, t.state FROM job_budget_carves g JOIN tasks t ON t.id = g.child_task_id WHERE ${t.sql} ORDER BY g.child_task_id`).all(...t.args),
+        db.prepare(`SELECT c.* FROM request_charges c JOIN tasks t ON t.id = c.task_id WHERE ${t.sql} ORDER BY c.rowid`).all(...t.args),
+      ])];
+    },
+    topics: () => ["budget", "tasks:*", "jobs:*"],
   },
   requests: {
     topic: "requests",

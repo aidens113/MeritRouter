@@ -6,8 +6,7 @@ own working document with decisions, phases, ledger, and reports.
 
 ## Repository state
 
-- Panel v2 core implementation (merge 672a697) is merged; its full plan remains Active after the completion audit. Final checks: 603 router tests, recursive typecheck and build, and demo browser acceptance. See its working document for integration/push status.
-- Panel v2 selected demo acceptance passed (603 router tests); the working document now explicitly lists remaining requirements and validation gaps.
+- Panel v2 U1-U3 and completion follow-up accepted; B2 budget UI implemented and accepted alongside it. Final supervisor checks: 622 tests, recursive typecheck/build, warning-free demo seed, 581 route checks, 40 anchors and independent live task/request/brain/budget DOM updates. See working documents and Git refs for integration state.
 - Agent worktrees live under `.claude/worktrees/` (excluded from git locally).
 
 ## The user's live install (off limits to tests; use temp configs and `seed:demo`)
@@ -36,8 +35,8 @@ own working document with decisions, phases, ledger, and reports.
 | Live validation and fixes | [live-validation.md](live-validation.md) | Ongoing record of live runs (Tetris, Pomodoro, Facebook clone) and every fix they led to; open follow-ups listed there |
 | Web search | [web-search.md](web-search.md) | W1-W3 done: backend pool (Ollama, Tavily, Brave, Exa, SearXNG), SSRF-guarded fetch, budgets; native search in model calls (OpenRouter, Anthropic, OpenAI) priced as paid. Live-checked on Ollama only |
 | Caching and continuity | [caching-and-continuity.md](caching-and-continuity.md) | C1-C2 done: cache hints, endpoint stickiness, cached pricing, truncation recovery, prefix-stable compaction. Not checked live |
-| Budget control | [budget-control.md](budget-control.md) | B1 done and merged (job request pool, `max_requests` on briefs, `request_more_budget` and decisions, delegate-only supervisors, `run_check` for implementers). B2 (panel UI for requests and pools) not started. Never run against a live job yet |
-| Panel v2 | [panel-v2.md](panel-v2.md) | Core U1-U3 merged, 603 tests and selected demo checks pass; reopened incomplete plan details and acceptance coverage (see Current State) |
+| Budget control | [budget-control.md](budget-control.md) | B1 done and merged (job request pool, `max_requests` on briefs, `request_more_budget` and decisions, delegate-only supervisors, `run_check` for implementers). B2 panel requests, approve/deny, pools and task grants accepted (622 integrated tests plus production demo/browser checks). Never run against a live job yet |
+| Panel v2 | [panel-v2.md](panel-v2.md) | Complete: U1-U3 plus scoped brain navigation, Activity/link audit, repaired seed and full follow-up acceptance; 622 tests and production browser checks pass |
 | Labs | [labs.md](labs.md) | Planned (L1-L5); waiting on the user's answers to four questions about FluxIQ's lanes (or "use the defaults") |
 | Projects | [projects.md](projects.md) | Done (J1-J3) plus deletion, repository auto-setup, panel power button |
 | R2 (Postgres, several hosts) | [agent-sessions-and-teams.md](agent-sessions-and-teams.md) | Parked; the user has not answered whether to do it |

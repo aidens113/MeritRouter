@@ -101,7 +101,7 @@ export default async function JobsPage({ params }: { params: Promise<{ slug: str
                           {j.label ?? shortId(j.taskId, 18)}
                         </Link>
                         {j.label ? <div className="font-mono text-[11px] text-ink-3">{shortId(j.taskId, 18)}</div> : null}
-                        {j.parentJobId ? <div className="text-[11px] text-ink-3">sub-job of {jobs.find((x) => x.taskId === j.parentJobId)?.label ?? shortId(j.parentJobId, 14)}</div> : null}
+                        {j.parentJobId ? <div className="text-[11px] text-ink-3">sub-job of <Link href={jobHref(base, j.parentJobId)} className="text-accent-ink hover:underline">{jobs.find((x) => x.taskId === j.parentJobId)?.label ?? shortId(j.parentJobId, 14)}</Link></div> : null}
                       </td>
                       <td>
                         <div className="flex flex-col items-start gap-1">

@@ -71,6 +71,12 @@ describe("job plan view", () => {
     // A task the supervisor delegated without the plan.
     sy.tasks.submit([child("adhoc")]);
 
+    // Links use stored session identities, including retries and distinct roles.
+    sy.sessions.create({ taskId: "t_scan", jobId: JOB, role: "inspector", agentLabel: "inspector:scan" });
+    sy.sessions.create({ taskId: "t_scan", jobId: JOB, role: "inspector", agentLabel: "inspector:scan" });
+    sy.sessions.create({ taskId: "t_scan", jobId: JOB, role: "implementer", agentLabel: "implementer:repair" });
+    sy.sessions.create({ taskId: "t_adhoc", jobId: JOB, role: "inspector", agentLabel: "inspector:unrelated" });
+
     // One agent per job: scan runs; notes waits for the agent cap; the rest wait on dependencies.
     expect(sy.tasks.claim("w", { ...LIMITS, maxAgentsPerJob: 1 }).map((t) => t.row.id)).toEqual(["t_scan"]);
     let p = jobPlan(sy, JOB)!;
@@ -83,6 +89,8 @@ describe("job plan view", () => {
     expect(Object.fromEntries(p.nodes.map((n) => [n.label, n.depth]))).toEqual({ scan: 0, divide: 1, modulo: 1, check: 2, notes: 0 });
     expect(p.maxAgents).toBe(1);
     expect(p.running).toBe(1);
+    expect(p.nodes.find((n) => n.label === "scan")?.agents).toEqual(["inspector:scan", "implementer:repair"]);
+    expect(p.nodes.find((n) => n.label === "notes")?.agents).toEqual([]);
     const at = (label: string) => p.nodes.find((n) => n.label === label)!;
     expect(at("scan")).toMatchObject({ taskId: "t_scan", state: "running", difficulty: "T1", waiting: null });
     expect(at("notes").waiting).toMatchObject({ kind: "agent_cap", running: 1, cap: 1 });

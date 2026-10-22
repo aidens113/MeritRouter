@@ -640,6 +640,9 @@ export function brainHistory(sy: Switchyard, path: string, project?: string) {
   return brainOf(sy, project).history(path);
 }
 
+export { brainCommitDetail, brainDocumentBlame, brainDocumentHistory, brainDocumentRelated, brainDocumentVisible, type BrainCommitDetail, type BrainHistoryEntry } from "./brain-entities.js";
+export * from "./plan-recovery.js";
+
 export function brainBlame(sy: Switchyard, path: string, project?: string) {
   return brainOf(sy, project).blame(path);
 }

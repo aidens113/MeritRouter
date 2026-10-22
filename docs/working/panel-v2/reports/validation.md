@@ -1,7 +1,7 @@
 # Panel v2 supervisor validation — 2026-10-22
 
 ## Outcome
-Core U1-U3 behavior was independently verified by the checks below; full requirement completion was not established. The 2026-10-22 completion audit reopened gaps listed in the working document Current State. No live provider calls; all checks used temp
+U1-U3 and the reopened completion gaps are accepted after the follow-up checks at the end. Earlier checks below remain historical; their limitations prompted the additional work. No live provider calls; all checks used temp
 router fixtures or apps/panel/.demo with fake provider/web transports. The user's install and
 port 4477 were not used for testing or restarted.
 
@@ -43,3 +43,41 @@ The baseline server was stopped and its worktree unregistered. Removing its left
 `D:/SwitchYardPanelBaseline` directory was rejected by automatic approval review with only
 "blocked by policy" supplied; it remains as an unregistered temporary directory.
 The temporary demo server and headless Chrome were stopped. Automatic approval review also rejected deletion of the generated apps/panel/.demo fixture directory with only "blocked by policy" supplied; it remains gitignored. Final merge is recorded in the working ledger.
+
+## Completion follow-up, 2026-10-22 (accepted)
+
+- Root independently seeded the repaired demo: exit 0, no fixture warnings; nested team met,
+  three integrations including one rebase, four channel posts, verified survey twins; promotion
+  count assertions passed. Scripted providers only, no real quota or user install access.
+- D5/D6 baseline inventory: all literal section titles and IDs retained across nine dense pages;
+  dynamic settings schemas/renderers unchanged from e00dfd5. See remaining-audit.md for the map.
+  Fixed the discovered third-click transcript wrapper and structured repository/job/model links.
+- Expanded headless browser anchor check: 40 old hashes/query combinations selected their
+  expected tab, including generated profile/provider IDs and every project policy section.
+- Durable `pnpm --filter switchyard-panel validate:live` passed after adding Brain's missing live
+  subscription: task 905 ms, independent new request 735 ms, brain commit 1222 ms; document marker
+  preserved, open disclosure retained, zero idle refreshes over 2500 ms, zero browser exceptions.
+- B2 browser actions: required reason; partial approval of one request; denial; wrong-project 404,
+  malformed reason 400, over-pool 409 and repeated decision 409. Five screenshots captured.
+  A harness selector initially looked for settled history under the pending card; corrected to
+  budget-history and verified stored decisions and task extras on a separate pass.
+- Initial default-parallel suite: 611/612, one Windows EBUSY deleting a brain directory after
+  close. Traced unowned deferred promotion writes; close now cancels queued callbacks and drains
+  active settlement. Four deterministic lifecycle regressions cover direct/deferred work,
+  cancelled callbacks and retries remaining queued after scheduler stop.
+- A route crawl found copied README ancestry incorrectly listed private sibling hashes (dead
+  links). Copy statuses now advance the tracked path and stop at scope boundaries; native Git
+  tests cover private copies and visible own-project copies. Final rebuilt crawl is pending.
+- Intermediate integrated suite: 616/616 before the shutdown/copy follow-ups. Final full suite,
+  production screenshots and route crawl are in progress; completion is not yet asserted here.
+
+Artifacts remain under `%TEMP%/switchyard-panel-v2-validation/`: build-accepted.log,
+tests-accepted.log, live-accepted.log, anchors-completion.json, crawl-accepted.json and
+completion-shots/. Earlier evidence above remains historical and retains its limitations.
+
+### Final supervisor acceptance
+- Final frozen router suite: **622/622 tests, 63 files, 308.77 s**, including four service-close and nine scoped brain-history tests. Recursive typecheck and build pass. A final CSS-only blame-width fix was rebuilt and rechecked with typecheck and four viewport captures.
+- Rebuilt production crawl: **581 checks, zero failures**. Copied README history links now resolve; invalid aliases, unknown/cross-project entities and unknown live scope return 404.
+- **64** page captures, **28** focused captures, **4** final blame captures (desktop/phone, light/dark): zero document overflow and browser exceptions. Supervisor inspected representative brain commit/history/blame, plan, changes, workspace, Activity agents, budget pool/grants and pending/settled decision views.
+- Budget DOM refresh observed independently by changing only a demo decision row: appeared within 2500 ms, preserving the document marker and open history. Stored decision reason restored afterward. Approval/denial validation changed only genuine demo requests.
+- Final temporary panel/browser processes stopped. No real provider calls, paid quota, user config/state changes or test artifacts committed. Previously blocked fixture/baseline directory cleanup remains recorded above; generated demo/evidence are untracked.
