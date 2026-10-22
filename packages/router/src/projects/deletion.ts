@@ -148,6 +148,8 @@ export function purgeProjectRows(db: Db, slug: string, activeStates: readonly st
     run(`DELETE FROM job_plans WHERE project_id = @slug OR job_id IN ${IN_TASKS}`);
     run(`DELETE FROM file_leases WHERE task_id IN ${IN_TASKS} OR job_id IN ${IN_TASKS}`);
     run(`DELETE FROM job_budget_carves WHERE child_task_id IN ${IN_TASKS} OR parent_task_id IN ${IN_TASKS}`);
+    run(`DELETE FROM task_request_grants WHERE task_id IN ${IN_TASKS} OR job_id IN ${IN_TASKS}`);
+    run(`DELETE FROM budget_requests WHERE project_id = @slug OR task_id IN ${IN_TASKS}`);
     run(`DELETE FROM merge_queue WHERE task_id IN ${IN_TASKS} OR job_id IN ${IN_TASKS}`);
     // Channel posts are append-only for agents; deleting the whole project removes its jobs' posts.
     const guard = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'job_channel_no_delete'").pluck().get() as string | undefined;

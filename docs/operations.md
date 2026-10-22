@@ -6,6 +6,10 @@
 | --- | --- | --- |
 | Model requests per task (`maxModelRequests`), including fallbacks, classification, repairs, and every coding-agent call | Hard | Atomic reservation before dispatch (`admission.ts`) |
 | Package allocation per hour/day | Hard | Same reservation |
+| A job's request pool: the supervisor's own requests plus what its delegated tasks and sub-supervisors hold | Hard | Same reservation (`heldRequests`); grants checked against the pool when briefs are dispatched and requests for more are approved (`admission/budget-requests.ts`) |
+| Requests for more per task, and the run cap an approval raises | Hard | `request_more_budget` (`team.max_budget_requests_per_task`); the executor adds approved extras to every later run |
+| Supervisor edits under `supervisor.implementation: delegate` | Hard | The edit tools refuse everything but coordination files (`harness/coordination-edits.ts`) |
+| Implementers' own check runs (`run_check`) | Hard | Only the task's declared checks, exactly as declared; `coding.max_check_runs_per_task` per task |
 | Only verified-free, eligible models (unless paid policy allows); one model per request; served model must match | Hard | Route plan, gate |
 | Size floors, modalities, tool support, metadata age | Hard | Route plan |
 | Paid spend | Hard | Worst-case cost reserved per request against global, per-key, prepaid-balance, and per-task budgets before dispatch; settled to billed cost |
@@ -421,6 +425,33 @@ changes rarely.
   whose globs overlap a live lease in the same repository waits (`waiting_for_file_lease`).
 - **Capacity.** `team.max_agents` (default 8; `supervisor.max_workers_per_job` is an older alias)
   caps running tasks per job; `execution.max_concurrent_tasks` bounds everything.
+- **Request budgets (one pool per job).** Each task a supervisor delegates holds a grant from the
+  job's budget while it is open: the brief's `max_requests` (its `budget.maxModelRequests`), else
+  `team.default_task_requests`, else its tier's execution cap. A finished task holds what it used;
+  the rest returns. A brief that does not fit (budget minus the supervisor's requests, open holds,
+  and `team.supervisor_reserve_requests`, default 4) is refused with the number available, and the
+  supervisor's own next request is refused when it would eat into what its tasks hold. Size the
+  supervise profile's `max_model_requests` for the team it runs (the presets use 1000).
+- **Requests for more.** A worker running low calls `request_more_budget(requests, reason)` and
+  waits (no model requests; exempt from the watchdog) up to `team.budget_request_wait_seconds`
+  (300). `team.budget_approver` decides who answers: `supervisor` (the job's supervisor:
+  `await_tasks` returns early and it calls `decide_budget_request`; a top-level task's MCP client
+  uses the MCP tools `budget_requests` and `decide_budget_request`), `auto` (up to
+  `team.auto_grant_max` per request while the pool has room), or `human`. From a terminal:
+  `switchyard budget list [--status ...] [--job <id>]`, `switchyard budget approve <id> [--grant N]
+  [--reason ...]`, `switchyard budget deny <id> [--reason ...]`. A request whose task finished
+  expires; an interrupted wait leaves it pending, and an approval then applies to the resumed run.
+  Paid budgets never grow with extra requests.
+- **Supervisors delegate implementation.** With `supervisor.implementation: delegate` (default),
+  a supervisor's `write_file` / `replace_in_file` / `delete_file` succeed only on paths matching
+  `supervisor.coordination_paths` (`**/*.md`, `docs/**`), files its briefs listed in
+  `shared_files`, and files of this job's integrations that ended in conflict; anything else is
+  refused with "delegate it". Set `allowed` to let a supervisor edit freely.
+- **Implementers run their declared checks.** A native coding task with `constraints.checks` gets
+  `run_check`: only those commands, exactly as declared, in its worktree with the environment,
+  timeout, and shell of the post-submission checks; each run's log is a `check_log` artifact and a
+  `worker_check_run` event. At most `coding.max_check_runs_per_task` (20) runs per task; the
+  results are informational, the post-submission checks still decide acceptance.
 - **Sub-supervisors.** A supervisor may hand a sub-goal to a child supervisor (`delegate` or a
   `plan_work` node with profile `supervise`) while the job tree is shallower than
   `team.max_depth` (2). The child works on `switchyard/job-<child>` forked from the parent's job

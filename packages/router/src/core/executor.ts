@@ -10,6 +10,7 @@ import type { Catalog } from "../models/catalog.js";
 import type { TaskRouter, Prepared } from "../routing/router.js";
 import type { RoutePlan } from "../routing/select.js";
 import { effectiveBudget } from "../admission/admission.js";
+import { extraRequests } from "../admission/job-pool.js";
 import { criterionTexts, WorkerResultSchema, type TaskState, type WorkerResult } from "./task.js";
 import { restoreRunState } from "./retry-state.js";
 import { baseResult, type RetryContext, type RunContext, type RunOutcome, type RunnerResult } from "../runners/types.js";
@@ -159,8 +160,9 @@ export class Executor {
     // Runners see the task's project: its repositories, brain scope, and policy overrides.
     const d = this.depsFor(task);
     const budget = effectiveBudget(d.cfg, task.spec, plan.tier);
-    // A repair (or escalation) run draws on the repair reserve, on top of the execution cap.
-    const cap = v.repairCap ?? runCap(d.cfg, task.spec, plan.tier, v.contract);
+    // A repair (or escalation) run draws on the repair reserve, on top of the execution cap. A
+    // first run also gets every request its approved requests for more granted (budget control D3).
+    const cap = v.repairCap ?? runCap(d.cfg, task.spec, plan.tier, v.contract) + extraRequests(this.d.db, task.row.id);
     return {
       cfg: d.cfg,
       profile: d.cfg.profiles[task.spec.profile]!,

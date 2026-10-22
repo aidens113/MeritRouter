@@ -10,11 +10,11 @@ import { BrainModeSchema, REPOSITORY_ALIAS_RE, RepositorySchema, RoleNameSchema,
  */
 
 /** Keys of `team` a project may override (provider concurrency stays global). */
-export const PROJECT_TEAM_KEYS = ["max_agents", "max_depth", "child_budget_share", "channel_max_posts_per_task", "channel_max_posts_per_supervisor", "channel_max_post_chars"] as const;
+export const PROJECT_TEAM_KEYS = ["max_agents", "max_depth", "child_budget_share", "channel_max_posts_per_task", "channel_max_posts_per_supervisor", "channel_max_post_chars", "default_task_requests", "supervisor_reserve_requests", "budget_approver", "budget_request_wait_seconds", "max_budget_requests_per_task", "auto_grant_max"] as const;
 /** Keys of `coding` a project may override. */
-export const PROJECT_CODING_KEYS = ["allowed_commands", "protected_paths"] as const;
+export const PROJECT_CODING_KEYS = ["allowed_commands", "protected_paths", "max_check_runs_per_task"] as const;
 /** Keys of `supervisor` a project may override. */
-export const PROJECT_SUPERVISOR_KEYS = ["allowed_commands", "branch_prefix"] as const;
+export const PROJECT_SUPERVISOR_KEYS = ["allowed_commands", "branch_prefix", "implementation", "coordination_paths"] as const;
 
 /** An override: only the listed keys, values validated after merging (see `resolveProjects`). */
 const overrideOf = (keys: readonly string[]) =>

@@ -9,10 +9,11 @@ import { PROFILE_NAMES, TIER_NAMES, type ProfileName, type TierName } from "./co
 import { Switchyard } from "./core/service.js";
 import { createCodingRunner } from "./runners/coding/index.js";
 import { z } from "zod";
-import { brainAccessRequests, brainRead, brainSearch, brainTree, CHANNEL_KINDS, decideBrainAccess, decideTaskAcceptance, jobChannel, jobDetail, jobMetrics, jobPlan, jobsView, jobTeam, modelsView, routingPreview, selectableProjects, sessionDetail, sessionsView } from "./admin/insights.js";
+import { brainAccessRequests, brainRead, brainSearch, brainTree, budgetRequestsView, CHANNEL_KINDS, decideBrainAccess, decideBudgetRequest, decideTaskAcceptance, jobChannel, jobDetail, jobMetrics, jobPlan, jobsView, jobTeam, modelsView, routingPreview, selectableProjects, sessionDetail, sessionsView } from "./admin/insights.js";
 import { comparison, comparisons, planComparison, runComparison } from "./qualification/comparison.js";
 import { blame } from "./attribution/index.js";
 import { SwitchyardError } from "./core/errors.js";
+import { BUDGET_REQUEST_STATUSES, type BudgetRequestStatus } from "./admission/budget-requests.js";
 import { countFlag, repoFlags, statusFlag, withImportance } from "./cli/args.js";
 import { doctorChecks, doctorText } from "./cli/doctor.js";
 import { keysCommand } from "./cli/keys.js";
@@ -92,6 +93,7 @@ async function main(): Promise<number> {
       after: { type: "string" },
       limit: { type: "string" },
       reason: { type: "string" },
+      grant: { type: "string" },
       importance: { type: "string" },
       "importance-reason": { type: "string" },
       force: { type: "boolean", default: false },
@@ -448,6 +450,23 @@ the planned budget does not fit what is left of today's qualification allocation
           const r = decideBrainAccess(sy, Number(args[1]), sub === "approve", args.slice(2).join(" ") || `${sub}d by the user`, idScope());
           out(`request ${r.id}: ${r.status}`, json);
         } else throw new SwitchyardError("usage", "usage: brain ls [prefix] | read <path> | search <query> | requests | approve|deny <id> [reason]");
+        return 0;
+      }
+      case "budget": {
+        const sub = args[0] ?? "list";
+        if (sub === "list") {
+          const status = values.status === "all" ? undefined : ((values.status ?? "pending") as BudgetRequestStatus);
+          if (status && !(BUDGET_REQUEST_STATUSES as readonly string[]).includes(status)) throw new SwitchyardError("usage", `--status is one of ${BUDGET_REQUEST_STATUSES.join(", ")}, or all`);
+          const reqs = budgetRequestsView(sy, { ...(status ? { status } : {}), ...(values.job ? { jobId: values.job } : {}), ...(listScope() ? { project: listScope()! } : {}) });
+          const rows = reqs.map((r) => ({ id: r.id, task: r.label, job: r.jobId ?? "", status: r.status, asks: r.requests, used: `${r.used}/${r.cap}`, approver: r.approver, granted: r.granted || "", pool: r.pool ? `${r.pool.available} of ${r.pool.cap}` : "", reason: r.reason.slice(0, 60) }));
+          out(json ? reqs : table(rows), json);
+        } else if (sub === "approve" || sub === "deny") {
+          const id = Number(args[1]);
+          if (!Number.isInteger(id) || id < 1) throw new SwitchyardError("usage", `usage: switchyard budget ${sub} <id> ${sub === "approve" ? "[--grant N] " : ""}[--reason "<why>"]`);
+          const grant = values.grant !== undefined ? Number(values.grant) : null;
+          const r = decideBudgetRequest(sy, id, { approve: sub === "approve", grant, reason: values.reason?.trim() || args.slice(2).join(" ") || `${sub === "approve" ? "approved" : "denied"} by the user`, by: { kind: "human", id: cliActor() } }, idScope());
+          out(json ? r : `budget request ${r.id}: ${r.status}${r.status === "approved" ? ` (+${r.granted} requests for ${r.taskId})` : ""}`, json);
+        } else throw new SwitchyardError("usage", "usage: switchyard budget list [--status pending|approved|denied|expired|all] [--job <id>] | approve <id> [--grant N] [--reason ...] | deny <id> [--reason ...]");
         return 0;
       }
       case "blame": {

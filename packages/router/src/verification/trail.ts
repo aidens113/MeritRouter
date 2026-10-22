@@ -50,12 +50,27 @@ export interface RaisedLevelView {
   reserveAdjustment: { from: number; to: number; fromUnallocated: number; wanted: number } | null;
 }
 
+/** Requests granted on top of the task's budget by an approved request for more (budget control). */
+export interface BudgetGrantView {
+  at: number;
+  /** The `budget_requests` row. */
+  requestId: number;
+  granted: number;
+  /** Every request granted so far, this one included. */
+  extraTotal: number;
+  by: string | null;
+  /** The contract's total plus every grant so far (null when the task has no contract). */
+  contractTotal: number | null;
+}
+
 export interface TaskVerificationTrail {
   /** Oldest first: the result's record, or (while the task runs) the reviews recorded so far. */
   reviews: ReviewView[];
   retries: RetryView[];
   targetedChecks: TargetedCheckView[];
   raised: RaisedLevelView[];
+  /** The contract's budget history: grants from approved requests for more, oldest first. */
+  budgetGrants: BudgetGrantView[];
   /** Model requests charged to the task, by purpose (admission accounting). */
   requestsByPurpose: Record<RequestPurpose, number>;
 }
@@ -65,6 +80,7 @@ const QualityRepairEventSchema = z.object({ startFrom: z.string().nullable().opt
 const TargetedCheckEventSchema = z.object({ commands: z.array(z.string()), ran: z.array(z.object({ command: z.string(), exitCode: z.number().nullable() })), note: z.string() });
 const RecordedAtSchema = z.object({ record: z.object({ attempt: z.number() }) });
 const ReserveSchema = z.object({ from: z.number(), to: z.number(), fromUnallocated: z.number(), wanted: z.number() });
+const BudgetGrantedSchema = z.object({ id: z.number().int(), granted: z.number().int(), extraTotal: z.number().int(), by: z.string().nullable().optional(), contractTotal: z.number().int().optional() });
 const RaisedEventSchema = z.object({ from: z.string(), to: z.string(), tier: z.string().optional(), newRules: z.array(z.string()).optional(), reserveAdjustment: z.object({ review: ReserveSchema }).optional() });
 
 export interface TrailDeps {
@@ -97,7 +113,13 @@ export function verificationTrail(d: TrailDeps, id: string, verification: Verifi
   const retries: RetryView[] = [];
   const targetedChecks: TargetedCheckView[] = [];
   const raised: RaisedLevelView[] = [];
+  const budgetGrants: BudgetGrantView[] = [];
   for (const e of events) {
+    if (e.type === "budget_granted") {
+      const g = BudgetGrantedSchema.safeParse(e.data);
+      if (g.success) budgetGrants.push({ at: e.ts, requestId: g.data.id, granted: g.data.granted, extraTotal: g.data.extraTotal, by: g.data.by ?? null, contractTotal: g.data.contractTotal ?? null });
+      continue;
+    }
     if (e.type === RETRY_STARTED) {
       const r = RetryStartedSchema.safeParse(e.data);
       if (!r.success) continue;
@@ -125,5 +147,5 @@ export function verificationTrail(d: TrailDeps, id: string, verification: Verifi
       if (v.success) raised.push({ at: e.ts, from: v.data.from, to: v.data.to, tier: v.data.tier ?? null, newRules: v.data.newRules ?? [], reserveAdjustment: v.data.reserveAdjustment?.review ?? null });
     }
   }
-  return { reviews, retries, targetedChecks, raised, requestsByPurpose: d.admission.taskTotalsByPurpose(id) };
+  return { reviews, retries, targetedChecks, raised, budgetGrants, requestsByPurpose: d.admission.taskTotalsByPurpose(id) };
 }
