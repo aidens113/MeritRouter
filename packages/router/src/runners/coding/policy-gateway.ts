@@ -90,6 +90,12 @@ export async function startPolicyGateway(
   const stats = { admitted: 0, denied: 0, lastDenial: null as string | null, lastServed: null as { endpointId: string; requestId: string } | null };
   let serial = Promise.resolve();
   let consecutiveDenied = 0;
+  let closing = false;
+  const lifetime = new AbortController();
+  const gatewayCtx: RunContext = { ...ctx, signal: AbortSignal.any([ctx.signal, lifetime.signal]),
+    get budget() { return ctx.budget; },
+  };
+  const inFlight = new Set<Promise<void>>();
   const model = "worker";
   // Never more output than the candidate models can produce (coding task types default high).
   const maxOutput = Math.min(ctx.profile.max_output_tokens, ctx.spec.budget?.maxOutputTokens ?? Infinity, planLimits(ctx.plan, ctx.cfg.routing.max_endpoint_fallbacks).outputLimitTokens || Infinity);
@@ -101,7 +107,8 @@ export async function startPolicyGateway(
   };
 
   const server: Server = createServer((req, res) => {
-    void (async () => {
+    const run = (async () => {
+      if (closing) return sendJson(res, 503, { error: { message: "task gateway closed" } });
       if (!authorized(req)) return sendJson(res, 401, { error: { message: "invalid job token", type: "authentication_error" } });
       const url = (req.url ?? "").replace(/\?.*$/, "").replace(/\/+$/, "");
       if (req.method === "GET" && url.endsWith("/models")) {
@@ -124,7 +131,8 @@ export async function startPolicyGateway(
         const snap = serial.then(() => opts.beforeRequest?.(stats.lastServed));
         serial = snap.catch(() => undefined);
         await snap;
-        const { response, endpoint, requestId } = await ask(ctx, {
+        if (closing) return sendJson(res, 503, { error: { message: "task gateway closed" } });
+        const { response, endpoint, requestId } = await ask(gatewayCtx, {
           executionId,
           purpose: "runner",
           chat: {
@@ -161,6 +169,7 @@ export async function startPolicyGateway(
           usage,
         });
       } catch (err) {
+        if (closing) return;
         stats.denied++;
         consecutiveDenied++;
         stats.lastDenial = (err as Error).message;
@@ -176,9 +185,11 @@ export async function startPolicyGateway(
         if (ge?.kind === "policy_violation") opts.onStop("policy_violation");
         return sendJson(res, status, { error: { message: (err as Error).message, type: ge?.kind ?? "error" } }, ge?.retryAfterMs ? { "retry-after": String(Math.ceil(ge.retryAfterMs / 1000)) } : {});
       }
-    })().catch((err) => {
+    })();
+    const handled = run.catch((err) => {
       if (!res.headersSent) sendJson(res, 500, { error: { message: (err as Error).message } });
-    });
+    }).finally(() => inFlight.delete(handled));
+    inFlight.add(handled);
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
@@ -187,6 +198,13 @@ export async function startPolicyGateway(
     token,
     model,
     stats,
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    close: async () => {
+      closing = true;
+      lifetime.abort("task gateway closed");
+      const closed = new Promise<void>(resolve => server.close(() => resolve()));
+      server.closeAllConnections();
+      await Promise.allSettled([...inFlight]);
+      await closed;
+    },
   };
 }
