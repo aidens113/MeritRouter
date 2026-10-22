@@ -4,8 +4,9 @@ import { insights } from "switchyard-router";
 import { getSy } from "@/lib/sy";
 import { projectBase } from "@/lib/links";
 import { SetupScreen } from "@/components/setup";
-import { Badge, buttonClass, Card, EmptyState, PageHeader } from "@/components/ui";
-import { ActionButton, AutoRefresh } from "@/components/client/actions";
+import { Badge, buttonClass, Card, EmptyState } from "@/components/ui";
+import { PageHeader } from "@/components/page-header";
+import { ActionButton } from "@/components/client/actions";
 import { ago, dateTime } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -98,10 +99,10 @@ export default async function ProjectsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Projects"
+        live={["projects", "tasks", "jobs", "workers", "brain"]}
         description="Each project has its own repositories, jobs, tasks, sessions, and knowledge. Providers, models, routing, and budgets are shared by all of them."
         actions={
           <>
-            {busy ? <AutoRefresh seconds={8} /> : null}
             <Link href="/new" className={buttonClass("primary")}>
               <Plus size={15} aria-hidden /> New project
             </Link>

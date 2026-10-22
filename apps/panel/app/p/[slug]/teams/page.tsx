@@ -5,8 +5,8 @@ import { getSy } from "@/lib/sy";
 import { project, taskProject } from "@/lib/project";
 import { projectBase, taskHref } from "@/lib/links";
 import { SetupScreen } from "@/components/setup";
-import { Card, CardHeader, EmptyState, Mono, PageHeader, Stat } from "@/components/ui";
-import { AutoRefresh } from "@/components/client/actions";
+import { Card, CardHeader, EmptyState, Mono, Stat } from "@/components/ui";
+import { PageHeader } from "@/components/page-header";
 import { JobMetricsCard, MetricsTable } from "@/components/job-metrics";
 import { ComparisonsList } from "@/components/comparisons";
 import { dateTime, shortId } from "@/lib/format";
@@ -43,7 +43,7 @@ export default async function TeamsPage({ params, searchParams }: { params: Prom
       <PageHeader
         title="Teams"
         description="How jobs ran as teams: how many agents worked at once, what the critical path cost, what each finished task took in requests and money, and why tasks waited. Comparisons run the same goals as a team and as a single agent."
-        actions={live ? <AutoRefresh seconds={5} /> : null}
+        live={["jobs", "tasks"]}
       />
 
       {rows.length === 0 ? (

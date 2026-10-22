@@ -4,10 +4,10 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import {
-  Activity,
   BadgeCheck,
   Boxes,
   BookOpenText,
+  GitBranch,
   KeyRound,
   LayoutDashboard,
   ListChecks,
@@ -17,13 +17,9 @@ import {
   Moon,
   Network,
   Power,
-  Route,
-  Scale,
-  ScrollText,
   Settings,
   SlidersHorizontal,
   Sun,
-  UsersRound,
   X,
   LayoutGrid,
   Library,
@@ -35,34 +31,32 @@ import { ALL, projectBase, slugOfPath } from "@/lib/links";
 import { ProjectSwitcher, type Scope, type SwitcherProject } from "./project-switcher";
 import { ConfirmDialog } from "./confirm-dialog";
 import { callApi } from "./actions";
+import { LiveProvider } from "./live";
+import { GroupTabs } from "../group-tabs";
 
-type NavItem = { href: string; label: string; icon: LucideIcon; exact?: boolean };
+/** `also`: other paths whose pages belong to this entry (they share its tab strip, components/group-tabs.tsx). */
+type NavItem = { href: string; label: string; icon: LucideIcon; exact?: boolean; also?: string[] };
 
-/** Inside a project: that project's pages. */
+/** Inside a project: that project's pages (Teams sits under Jobs; Agents, Sessions, Requests under Tasks). */
 function projectNav(slug: string): NavItem[] {
   const b = projectBase(slug);
   return [
     { href: b, label: "Overview", icon: LayoutDashboard, exact: true },
-    { href: `${b}/jobs`, label: "Jobs", icon: Network },
-    { href: `${b}/teams`, label: "Teams", icon: UsersRound },
-    { href: `${b}/tasks`, label: "Tasks", icon: ListChecks },
-    { href: `${b}/sessions`, label: "Sessions", icon: ScrollText },
-    { href: `${b}/requests`, label: "Requests", icon: Activity },
+    { href: `${b}/jobs`, label: "Jobs", icon: Network, also: [`${b}/teams`] },
+    { href: `${b}/tasks`, label: "Tasks", icon: ListChecks, also: [`${b}/agents`, `${b}/sessions`, `${b}/requests`] },
+    { href: `${b}/repos`, label: "Code", icon: GitBranch },
     { href: `${b}/brain`, label: "Brain", icon: BookOpenText },
     { href: `${b}/settings`, label: "Project settings", icon: SlidersHorizontal },
   ];
 }
 
-/** "All projects" and the projects grid: the install-wide pages. */
+/** "All projects" and the projects grid: the install-wide pages (Requests under Dashboard, Routing under Models, Calibration under Quality). */
 const GLOBAL_NAV: NavItem[] = [
   { href: "/", label: "Projects", icon: LayoutGrid, exact: true },
-  { href: ALL, label: "Dashboard", icon: LayoutDashboard, exact: true },
-  { href: `${ALL}/requests`, label: "Requests", icon: Activity },
-  { href: `${ALL}/models`, label: "Models", icon: Boxes },
-  { href: `${ALL}/routing`, label: "Routing", icon: Route },
+  { href: ALL, label: "Dashboard", icon: LayoutDashboard, exact: true, also: [`${ALL}/requests`] },
+  { href: `${ALL}/models`, label: "Models", icon: Boxes, also: [`${ALL}/routing`] },
   { href: `${ALL}/keys`, label: "Provider keys", icon: KeyRound },
-  { href: `${ALL}/qualification`, label: "Qualification", icon: BadgeCheck },
-  { href: `${ALL}/calibration`, label: "Calibration", icon: Scale },
+  { href: `${ALL}/qualification`, label: "Quality", icon: BadgeCheck, also: [`${ALL}/calibration`] },
   { href: `${ALL}/knowledge`, label: "Knowledge", icon: Library },
   { href: `${ALL}/settings`, label: "Settings", icon: Settings },
 ];
@@ -75,9 +69,22 @@ function scopeOf(path: string): Scope {
 }
 
 function isActive(path: string, item: NavItem) {
-  return item.exact ? path === item.href : path === item.href || path.startsWith(`${item.href}/`);
+  const under = (href: string) => path === href || path.startsWith(`${href}/`);
+  return (item.exact ? path === item.href : under(item.href)) || (item.also ?? []).some(under);
 }
 
+function sectionTabs(path: string, scope: Scope) {
+  if (scope.kind === "project") {
+    const base = projectBase(scope.slug);
+    const section = path.slice(base.length).split("/")[1] ?? "";
+    if (section === "jobs" || section === "teams") return <GroupTabs group="jobs" active={section} base={base} />;
+    if (["tasks", "agents", "sessions", "requests"].includes(section)) return <GroupTabs group="work" active={section} base={base} />;
+  }
+  if (path === ALL || path.startsWith(`${ALL}/requests`)) return <GroupTabs group="dashboard" active={path === ALL ? "dashboard" : "requests"} />;
+  if (path.startsWith(`${ALL}/models`) || path === `${ALL}/routing`) return <GroupTabs group="models" active={path === `${ALL}/routing` ? "routing" : "models"} />;
+  if (path.startsWith(`${ALL}/qualification`) || path === `${ALL}/calibration`) return <GroupTabs group="quality" active={path === `${ALL}/calibration` ? "calibration" : "qualification"} />;
+  return null;
+}
 export function Shell({ children, configPath, loginEnabled, projects }: { children: ReactNode; configPath: string; loginEnabled: boolean; projects: SwitcherProject[] }) {
   const path = usePathname();
   const [open, setOpen] = useState(false);
@@ -185,7 +192,10 @@ export function Shell({ children, configPath, loginEnabled, projects }: { childr
       </div>
 
       <main className="min-w-0 px-4 py-6 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-[1400px]">{children}</div>
+        <div className="mx-auto max-w-[1400px]">
+          {/* One live connection per tab, scoped to the project being viewed (or every project). */}
+          <LiveProvider scope={scope.kind === "project" ? scope.slug : "all"}>{sectionTabs(path, scope)}{children}</LiveProvider>
+        </div>
       </main>
 
       <ConfirmDialog

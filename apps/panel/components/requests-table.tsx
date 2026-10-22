@@ -4,7 +4,7 @@ import type { insights } from "switchyard-router";
 import { RequestStatusBadge, TierBadge } from "./task-badges";
 import { Badge, EmptyState } from "./ui";
 import { dateTime, duration, humanize, modelHref, num, pct, shortDateTime, shortId } from "@/lib/format";
-import { itemBase, QUALIFICATION_BASE, QUALIFICATION_SLUG, taskHref } from "@/lib/links";
+import { itemBase, projectBase, QUALIFICATION_BASE, QUALIFICATION_SLUG, requestHref, taskHref } from "@/lib/links";
 
 export type RequestRow = ReturnType<typeof insights.requestLog>[number];
 
@@ -93,7 +93,9 @@ export function RequestsTable({ rows, names, base, hideModel = false, empty }: {
           {rows.map((r) => (
             <tr key={r.id}>
               <td className="whitespace-nowrap">
-                <div title={dateTime(r.reservedAt)}>{shortDateTime(r.reservedAt)}</div>
+                <Link href={requestHref(r.project && r.project !== QUALIFICATION_SLUG ? projectBase(r.project) : "", r.id)} className="text-accent-ink hover:underline" title={`${dateTime(r.reservedAt)}: open request ${r.id}`}>
+                  {shortDateTime(r.reservedAt)}
+                </Link>
                 <div className="text-[11px] text-ink-3">{r.finishedAt ? duration(r.finishedAt - r.reservedAt) : "in flight"}</div>
               </td>
               <td className="whitespace-nowrap">{purposeLabel(r.purpose)}</td>

@@ -22,6 +22,7 @@ import type { UsageSummary } from "../storage/usage.js";
 import type { ArtifactRow } from "../storage/artifacts.js";
 import type { ProviderStatus, WebCitation } from "../gateway/types.js";
 import { z } from "zod";
+import { parseCitations } from "./request-citations.js";
 import { readBreakerRecords, type BreakerRecord, type BreakerSettings } from "../gateway/breaker.js";
 
 const DAY = 86_400_000;
@@ -263,19 +264,6 @@ export interface RequestRow {
   taskIds: string[];
   /** The project the request was charged to ('' for none: probes, scans). */
   project: string;
-}
-
-const CitationsSchema = z.array(z.object({ url: z.string(), title: z.string().nullable(), text: z.string().nullable() }));
-
-/** Stored citations (a JSON column); anything malformed reads as none. */
-function parseCitations(raw: unknown): WebCitation[] {
-  if (typeof raw !== "string" || !raw) return [];
-  try {
-    const r = CitationsSchema.safeParse(JSON.parse(raw));
-    return r.success ? r.data : [];
-  } catch {
-    return [];
-  }
 }
 
 /**
@@ -619,6 +607,10 @@ export * from "./budget.js";
 export { comparisons, comparison, type ComparisonRecord, type ComparisonResult, type ComparisonRunRecord, type MetricsSnapshot } from "../qualification/comparison.js";
 // The reserved `_qualification` project's tasks and eval comparisons (the panel's /all/qualification).
 export * from "./qualification-work.js";
+// Live updates: the change watcher behind the panel's /api/live stream.
+export * from "./live.js";
+// Entity pages: agents, requests, commits and repositories, and what a task or model connects to.
+export * from "./entities.js";
 
 // ---------- brain (for people: full access, edits committed as `human`) ----------
 // Every function takes an optional project: its brain (one per project over the shared brain

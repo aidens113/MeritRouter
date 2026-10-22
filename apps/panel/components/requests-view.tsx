@@ -1,8 +1,8 @@
 import type { Switchyard } from "switchyard-router";
 import { insights } from "switchyard-router";
 import { cacheSaving, purposeLabel, RequestsTable } from "@/components/requests-table";
-import { Card, HelpTip, PageHeader, Stat } from "@/components/ui";
-import { AutoRefresh } from "@/components/client/actions";
+import { Card, HelpTip, Stat } from "@/components/ui";
+import { PageHeader } from "@/components/page-header";
 import { UrlFilters } from "@/components/client/url-filters";
 import { compact, num, pct } from "@/lib/format";
 import { projectBase } from "@/lib/links";
@@ -48,7 +48,7 @@ export function RequestsView({ sy, project, sp }: { sy: Switchyard; project: { s
             {project ? `Every physical model request this project's tasks made at SwitchYard's gate, newest first.` : "Every physical model request admitted at SwitchYard's gate, from every project (and requests charged to no task, such as scans and probes), newest first."} A batched request answers several tasks at once and is counted once. <HelpTip term="requests" />
           </>
         }
-        actions={<AutoRefresh seconds={8} />}
+        live={["requests"]}
       />
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat label="Requests shown" value={num(rows.length)} sub={`newest ${limit} matching the filters`} />

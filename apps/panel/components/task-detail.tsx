@@ -1,15 +1,20 @@
+import { RelatedPanel } from "@/components/related";
+import { AgentLink, CommitLink, ModelLink, RequestLink, TaskLink } from "@/components/entity-links";
+import { Tabs, pickTab } from "@/components/tabs";
+import { Disclosure } from "@/components/disclosure";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { ArrowLeft, CheckCircle2, CircleDashed, CircleX, Globe, Terminal } from "lucide-react";
 import { insights, isTerminal, type Classification, type Switchyard, type VerificationRecord } from "switchyard-router";
-import { jobHref, taskHref } from "@/lib/links";
+import { brainHref, sessionHref, jobHref, taskHref } from "@/lib/links";
 import type { DetailScope } from "@/components/detail-scope";
 import { RequestsTable } from "@/components/requests-table";
 import { SessionsTable } from "@/components/sessions-table";
 import { AcceptanceBadge, ImportanceBadge, OutcomeBadge, TaskStateBadge, TierBadge, VerificationBadge } from "@/components/task-badges";
-import { Badge, Callout, Card, CardHeader, cx, EmptyState, HelpTip, KeyValue, Mono, PageHeader } from "@/components/ui";
-import { ActionButton, AutoRefresh } from "@/components/client/actions";
+import { Badge, Callout, Card, CardHeader, cx, EmptyState, HelpTip, KeyValue, Mono } from "@/components/ui";
+import { PageHeader } from "@/components/page-header";
+import { ActionButton } from "@/components/client/actions";
 import { ArtifactViewer } from "@/components/client/artifact-viewer";
 import { RequestsByPurpose, TrailHeading, VerificationTrail } from "@/components/verification-trail";
 import { AcceptanceActions } from "@/components/client/acceptance";
@@ -47,8 +52,9 @@ const BASIS: Record<string, string> = {
  * artifacts, requests, sessions, and timeline. The caller has checked that the task belongs to
  * `scope.project`.
  */
-export function TaskDetailView({ sy, taskId, scope }: { sy: Switchyard; taskId: string; scope: DetailScope }) {
+export async function TaskDetailView({ sy, taskId, scope, sp = {} }: { sy: Switchyard; taskId: string; scope: DetailScope; sp?: Record<string, string | string[] | undefined> }) {
   const base = scope.base;
+  const related = await insights.taskRelated(sy, taskId);
   const d = insights.taskDetail(sy, taskId);
   if (!d || d.status.state === "unknown") notFound();
 
@@ -62,6 +68,7 @@ export function TaskDetailView({ sy, taskId, scope }: { sy: Switchyard; taskId: 
   const sessions = insights.sessionsView(sy, { taskId: st.taskId });
   const webRequests = insights.taskWebRequests(sy, st.taskId);
 
+  const tab = pickTab(sp, ["result", "verification", "routing", "usage", "sessions"]);
   return (
     <div className="space-y-6">
       <Link href={scope.back.href} className="inline-flex items-center gap-1 text-sm text-ink-3 hover:text-ink">
@@ -69,6 +76,7 @@ export function TaskDetailView({ sy, taskId, scope }: { sy: Switchyard; taskId: 
       </Link>
       <PageHeader
         title={`${st.profile} task`}
+        live={[`tasks:${st.taskId}`]}
         description={
           <span className="flex flex-wrap items-center gap-2">
             <TaskStateBadge state={st.state} />
@@ -81,7 +89,6 @@ export function TaskDetailView({ sy, taskId, scope }: { sy: Switchyard; taskId: 
         }
         actions={
           <>
-            {live ? <AutoRefresh seconds={5} /> : null}
             {scope.actions && st.state === "interrupted" ? (
               <ActionButton url="/api/tasks/resume" payload={{ project: scope.project, id: st.taskId }} variant="primary" success="Requeued: a running worker will pick it up">
                 Resume
@@ -95,7 +102,6 @@ export function TaskDetailView({ sy, taskId, scope }: { sy: Switchyard; taskId: 
           </>
         }
       />
-
       {scope.lists && (st.profile === "supervise" || d.spec.parentTaskId) ? (
         <Callout tone="accent" title={st.profile === "supervise" ? "This task is a job" : "Part of a job"}>
           {st.profile === "supervise" ? "Its questions, branches, worker tasks, and supervisor transcript are on the " : "It was delegated by a job's supervisor. See the "}
@@ -105,13 +111,11 @@ export function TaskDetailView({ sy, taskId, scope }: { sy: Switchyard; taskId: 
           .
         </Callout>
       ) : null}
-
       {st.stateReason && st.state !== "completed" ? (
         <Callout tone={st.state === "failed" || st.state === "budget_exhausted" ? "bad" : st.state === "interrupted" ? "serious" : "warn"} title={stateTitle(st.state)}>
           {humanize(st.stateReason)}
         </Callout>
       ) : null}
-
       {d.acceptance.awaitingDecision && res ? (
         <Callout tone="warn" title="This result needs a decision">
           <div className="space-y-3">
@@ -136,62 +140,65 @@ export function TaskDetailView({ sy, taskId, scope }: { sy: Switchyard; taskId: 
           </div>
         </Callout>
       ) : null}
-
-      <div className="grid gap-6 xl:grid-cols-[3fr_2fr]">
-        <Card>
-          <CardHeader title="Goal and acceptance criteria" />
-          <div className="space-y-4 p-4 text-sm">
-            <p className="whitespace-pre-wrap text-ink">{d.spec.goal}</p>
-            <ol className="space-y-1.5">
-              {d.criteria.map((c, i) => {
-                const v = verified.get(c.id);
-                const open = v ? OPEN_OUTCOMES.includes(v.outcome) : unresolvedIds ? unresolvedIds.has(c.id) : [...unresolved].some((u) => u.includes(c.text) || u.startsWith(`[${i}]`));
-                const good = v ? v.outcome === "passed" : res?.acceptanceStatus === "met";
-                const label = v ? (CRITERION_OUTCOME[v.outcome] ?? v.outcome.replace(/_/g, " ")) : res?.acceptanceStatus === "met" ? "met, verified by checks" : "worker reports met (not verified)";
-                return (
-                  <li key={c.id} className="flex items-start gap-2">
-                    {!res || v?.outcome === "pending_review" ? (
-                      <CircleDashed size={15} className="mt-0.5 shrink-0 text-ink-3" aria-label="pending" />
-                    ) : open ? (
-                      <CircleX size={15} className="mt-0.5 shrink-0 text-bad-ink" aria-label="unresolved" />
-                    ) : (
-                      <CheckCircle2 size={15} className={cx("mt-0.5 shrink-0", good ? "text-good-ink" : "text-accent-ink")} aria-label={label} />
-                    )}
-                    <span className="text-ink-2">
-                      <span className="mr-1 font-mono text-[11px] text-ink-3">{c.id}</span>
-                      {c.text}
-                      <span className="ml-1 text-[11px] text-ink-3">· verified by {c.verify === "check" ? (c.checks.length ? c.checks.join(", ") : "checks") : c.verify}</span>
-                      {res && !open ? <span className="ml-1 text-[11px] text-ink-3">· {label}</span> : null}
-                      {res && open ? <span className="ml-1 text-[11px] text-bad-ink">· {v ? label : "unresolved"}</span> : null}
-                    </span>
-                  </li>
-                );
-              })}
-            </ol>
-            <KeyValue
-              items={[
-                ["Created", dateTime(st.createdAt)],
-                ["Started", dateTime(st.startedAt)],
-                ["Finished", dateTime(st.finishedAt)],
-                ["Model requests", `${st.modelRequestsUsed} of ${Number.isFinite(st.maxModelRequests) ? st.maxModelRequests : "unlimited"} allowed`],
-                ...(d.spec.repositoryAliases.length ? ([["Repositories", d.spec.repositoryAliases.join(", ") + (d.spec.writableRepository ? ` (writes ${d.spec.writableRepository})` : "")]] as Array<[string, ReactNode]>) : []),
-                ...(d.spec.context.fileRefs?.length ? ([["Files given", <span key="f" className="flex flex-wrap gap-1">{d.spec.context.fileRefs.map((f) => <Mono key={f}>{f}</Mono>)}</span>]] as Array<[string, ReactNode]>) : []),
-                ...(d.spec.constraints.allowedPaths?.length ? ([["May edit", d.spec.constraints.allowedPaths.join(", ")]] as Array<[string, ReactNode]>) : []),
-                ...(st.dependsOn.length ? ([["Runs after", <span key="d" className="flex flex-wrap gap-1">{st.dependsOn.map((x) => <Link key={x} href={taskHref(base, x)} className="font-mono text-xs text-accent-ink hover:underline">{x}</Link>)}</span>]] as Array<[string, ReactNode]>) : []),
-                ...(d.spec.hints?.difficulty ? ([["Supervisor hint", `difficulty ${d.spec.hints.difficulty}`]] as Array<[string, ReactNode]>) : []),
-                ...(d.spec.routing?.endpointId ? ([["Pinned model", <Link key="p" href={modelHref(d.spec.routing.endpointId)} className="text-accent-ink hover:underline">{names.get(d.spec.routing.endpointId) ?? d.spec.routing.endpointId}</Link>]] as Array<[string, ReactNode]>) : []),
-              ]}
-            />
-          </div>
-        </Card>
-
-        <Card>
-          <CardHeader title="Difficulty score" help="tier" description="How the rulebook scored this task. Points add up; the total picks the tier." />
-          <div className="p-4">{d.classification ? <ClassificationView c={d.classification} sy={sy} profile={st.profile} /> : <p className="text-sm text-ink-3">Not scored yet. Scoring happens when a worker picks the task up.</p>}</div>
-        </Card>
-      </div>
-
-      {res ? (
+      <Card>
+        <CardHeader title="Goal and acceptance criteria" />
+        <div className="space-y-4 p-4 text-sm">
+          <p className="whitespace-pre-wrap text-ink">{d.spec.goal}</p>
+          <ol className="space-y-1.5">
+            {d.criteria.map((c, i) => {
+              const v = verified.get(c.id);
+              const open = v ? OPEN_OUTCOMES.includes(v.outcome) : unresolvedIds ? unresolvedIds.has(c.id) : [...unresolved].some((u) => u.includes(c.text) || u.startsWith(`[${i}]`));
+              const good = v ? v.outcome === "passed" : res?.acceptanceStatus === "met";
+              const label = v ? (CRITERION_OUTCOME[v.outcome] ?? v.outcome.replace(/_/g, " ")) : res?.acceptanceStatus === "met" ? "met, verified by checks" : "worker reports met (not verified)";
+              return (
+                <li key={c.id} className="flex items-start gap-2">
+                  {!res || v?.outcome === "pending_review" ? (
+                    <CircleDashed size={15} className="mt-0.5 shrink-0 text-ink-3" aria-label="pending" />
+                  ) : open ? (
+                    <CircleX size={15} className="mt-0.5 shrink-0 text-bad-ink" aria-label="unresolved" />
+                  ) : (
+                    <CheckCircle2 size={15} className={cx("mt-0.5 shrink-0", good ? "text-good-ink" : "text-accent-ink")} aria-label={label} />
+                  )}
+                  <span className="text-ink-2">
+                    <span className="mr-1 font-mono text-[11px] text-ink-3">{c.id}</span>
+                    {c.text}
+                    <span className="ml-1 text-[11px] text-ink-3">· verified by {c.verify === "check" ? (c.checks.length ? c.checks.join(", ") : "checks") : c.verify}</span>
+                    {res && !open ? <span className="ml-1 text-[11px] text-ink-3">· {label}</span> : null}
+                    {res && open ? <span className="ml-1 text-[11px] text-bad-ink">· {v ? label : "unresolved"}</span> : null}
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
+          <KeyValue
+            items={[
+              ["Created", dateTime(st.createdAt)],
+              ["Started", dateTime(st.startedAt)],
+              ["Finished", dateTime(st.finishedAt)],
+              ["Model requests", `${st.modelRequestsUsed} of ${Number.isFinite(st.maxModelRequests) ? st.maxModelRequests : "unlimited"} allowed`],
+              ...(d.spec.repositoryAliases.length ? ([["Repositories", d.spec.repositoryAliases.join(", ") + (d.spec.writableRepository ? ` (writes ${d.spec.writableRepository})` : "")]] as Array<[string, ReactNode]>) : []),
+              ...(d.spec.context.fileRefs?.length ? ([["Files given", <span key="f" className="flex flex-wrap gap-1">{d.spec.context.fileRefs.map((f) => <Mono key={f}>{f}</Mono>)}</span>]] as Array<[string, ReactNode]>) : []),
+              ...(d.spec.constraints.allowedPaths?.length ? ([["May edit", d.spec.constraints.allowedPaths.join(", ")]] as Array<[string, ReactNode]>) : []),
+              ...(st.dependsOn.length ? ([["Runs after", <span key="d" className="flex flex-wrap gap-1">{st.dependsOn.map((x) => <Link key={x} href={taskHref(base, x)} className="font-mono text-xs text-accent-ink hover:underline">{x}</Link>)}</span>]] as Array<[string, ReactNode]>) : []),
+              ...(d.spec.hints?.difficulty ? ([["Supervisor hint", `difficulty ${d.spec.hints.difficulty}`]] as Array<[string, ReactNode]>) : []),
+              ...(d.spec.routing?.endpointId ? ([["Pinned model", <Link key="p" href={modelHref(d.spec.routing.endpointId)} className="text-accent-ink hover:underline">{names.get(d.spec.routing.endpointId) ?? d.spec.routing.endpointId}</Link>]] as Array<[string, ReactNode]>) : []),
+            ]}
+          />
+        </div>
+      </Card>
+      <RelatedPanel groups={[
+        { label: "Jobs", items: (related?.ancestors ?? []).map(j => ({ key: j.jobId, node: <TaskLink base={base} id={j.jobId} label={j.label} job /> })) },
+        { label: "Agents", items: (related?.agents ?? []).map(a => ({ key: a.id, node: <AgentLink base={base} agent={a.id} /> })) },
+        { label: "Sessions", items: sessions.map(s => ({ key: s.id, node: <Link href={sessionHref(base, s.id)} className="font-mono text-xs text-accent-ink hover:underline">{s.id}</Link> })) },
+        { label: "Models", items: (related?.models ?? []).filter(m => m.endpointId).map(m => ({ key: m.endpointId, node: <ModelLink id={m.endpointId} /> })) },
+        { label: "Requests", items: d.requests.map(r => ({ key: r.id, node: <RequestLink base={base} id={r.id} /> })) },
+        { label: "Commits", items: (related?.commits ?? []).map(c => ({ key: c.repository + c.commit, node: <CommitLink base={base} repository={c.repository} sha={c.commit} />, meta: c.subject })) },
+        { label: "Brain reports", items: (related?.reports ?? []).map(p => ({ key: p, node: <Link href={brainHref(base, p)} className="text-accent-ink hover:underline">{p}</Link> })) },
+        { label: "Dependencies", items: (related?.dependsOn ?? []).map(id => ({ key: id, node: <TaskLink base={base} id={id} /> })) },
+        { label: "Child tasks", items: (related?.children ?? []).map(t => ({ key: t.taskId, node: <TaskLink base={base} id={t.taskId} label={t.label} /> })) }
+      ]} />
+      <Tabs items={[{ "id": "result", "label": "Result" }, { "id": "verification", "label": "Verification" }, { "id": "routing", "label": "Routing" }, { "id": "usage", "label": "Usage" }, { "id": "sessions", "label": "Sessions" }]} active={tab} path={taskHref(base, st.taskId)} label="Page sections" anchors={{ "web-requests": "usage" }} />
+      {tab === "result" ? <div className="space-y-6">{res ? (
         <Card>
           <CardHeader title="Result" description={`Stopped because: ${humanize(res.stopReason)}`} />
           <div className="grid gap-6 p-4 lg:grid-cols-[3fr_2fr]">
@@ -275,103 +282,102 @@ export function TaskDetailView({ sy, taskId, scope }: { sy: Switchyard; taskId: 
                   ...(Object.keys(res.baseCommits).length ? ([["Base commits", <span key="b" className="flex flex-col gap-0.5">{Object.entries(res.baseCommits).map(([a, c]) => <Mono key={a}>{`${a}@${c.slice(0, 12)}`}</Mono>)}</span>]] as Array<[string, ReactNode]>) : []),
                 ]}
               />
-              {res.routing ? (
-                <div>
-                  <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-ink-3">Models tried</h3>
-                  <p className="mb-2 text-xs text-ink-2">
-                    Ran at <strong>{res.routing.tier}</strong>
-                    {res.routing.escalatedFrom ? ` after escalating from ${res.routing.escalatedFrom}` : ""}. <HelpTip term="fallback" />
-                  </p>
-                  <ol className="space-y-1">
-                    {res.routing.attempts.map((a, i) => (
-                      <li key={i} className="flex items-start gap-2 text-xs">
-                        <span className="tabular mt-0.5 w-4 shrink-0 text-ink-3">{i + 1}.</span>
-                        <span className="min-w-0">
-                          <Link href={modelHref(a.endpointId)} className="font-medium text-ink hover:underline">
-                            {names.get(a.endpointId) ?? a.endpointId}
-                          </Link>{" "}
-                          <Badge tone={a.outcome === "succeeded" ? "good" : a.outcome.startsWith("skipped") ? "neutral" : "bad"}>{humanize(a.outcome).slice(0, 80)}</Badge>
-                        </span>
-                      </li>
-                    ))}
-                  </ol>
-                </div>
-              ) : null}
+
             </div>
           </div>
         </Card>
       ) : null}
-
-      <ContractAndVerification d={d} names={names} base={base} />
-
-      <Card>
-        <CardHeader title="Artifacts"description="Files the task produced: patches (with their base commit), model responses, check logs, and context manifests." />
-        <div className="space-y-2 p-4">
-          {d.artifacts.length ? (
-            d.artifacts.map((a) => <ArtifactViewer key={a.id} refId={`artifact:${a.id}`} kind={a.kind} label={a.label} bytes={a.bytes} mediaType={a.media_type} defaultOpen={a.kind === "patch"} />)
-          ) : (
-            <p className="text-sm text-ink-3">No artifacts yet.</p>
-          )}
+        <Card>
+          <CardHeader title="Artifacts" description="Files the task produced: patches (with their base commit), model responses, check logs, and context manifests." />
+          <div className="space-y-2 p-4">
+            {d.artifacts.length ? (
+              d.artifacts.map((a) => <ArtifactViewer key={a.id} refId={`artifact:${a.id}`} kind={a.kind} label={a.label} bytes={a.bytes} mediaType={a.media_type} defaultOpen={a.kind === "patch"} />)
+            ) : (
+              <p className="text-sm text-ink-3">No artifacts yet.</p>
+            )}
+          </div>
+        </Card></div> : null}
+      {tab === "verification" ? <div className="space-y-6"><ContractAndVerification d={d} names={names} base={base} /></div> : null}
+      {tab === "routing" ? <div className="space-y-6">{res ? <Card><CardHeader title="Models tried" /><div className="p-4">{res.routing ? (
+        <div>
+          <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-ink-3">Models tried</h3>
+          <p className="mb-2 text-xs text-ink-2">
+            Ran at <strong>{res.routing.tier}</strong>
+            {res.routing.escalatedFrom ? ` after escalating from ${res.routing.escalatedFrom}` : ""}. <HelpTip term="fallback" />
+          </p>
+          <ol className="space-y-1">
+            {res.routing.attempts.map((a, i) => (
+              <li key={i} className="flex items-start gap-2 text-xs">
+                <span className="tabular mt-0.5 w-4 shrink-0 text-ink-3">{i + 1}.</span>
+                <span className="min-w-0">
+                  <Link href={modelHref(a.endpointId)} className="font-medium text-ink hover:underline">
+                    {names.get(a.endpointId) ?? a.endpointId}
+                  </Link>{" "}
+                  <Badge tone={a.outcome === "succeeded" ? "good" : a.outcome.startsWith("skipped") ? "neutral" : "bad"}>{humanize(a.outcome).slice(0, 80)}</Badge>
+                </span>
+              </li>
+            ))}
+          </ol>
         </div>
-      </Card>
-
-      <Card>
+      ) : null}</div></Card> : null}<Card>
+          <CardHeader title="Difficulty score" help="tier" description="How the rulebook scored this task. Points add up; the total picks the tier." />
+          <div className="p-4">{d.classification ? <ClassificationView c={d.classification} sy={sy} profile={st.profile} /> : <p className="text-sm text-ink-3">Not scored yet. Scoring happens when a worker picks the task up.</p>}</div>
+        </Card></div> : null}
+      {tab === "usage" ? <div className="space-y-6"><Card>
         <CardHeader title="Model requests for this task" />
         <RequestsTable rows={d.requests} names={names} base={base} empty="No model requests were made for this task" />
       </Card>
-
-      {webRequests.length ? (
-        <Card id="web-requests">
-          <CardHeader
-            title={
-              <span className="flex items-center gap-2">
-                <Globe size={15} aria-hidden /> Web requests
-              </span>
-            }
-            description={`Searches and page fetches this task made: ${new Set(webRequests.map((w) => w.callId)).size} of ${sy.cfg.web.max_requests_per_task} calls allowed per task. One row per attempt: a call whose backend failed moved on to the next backend, and the row marked "answered" is the backend that served it. What came back was given to the agent as untrusted data.`}
-          />
-          <div className="overflow-x-auto">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>When</th>
-                  <th>Kind</th>
-                  <th>Backend (key)</th>
-                  <th>Query or URL</th>
-                  <th>Outcome</th>
-                </tr>
-              </thead>
-              <tbody>
-                {webRequests.map((w) => (
-                  <tr key={w.id}>
-                    <td className="whitespace-nowrap tabular">{dateTime(w.startedAt)}</td>
-                    <td>{w.kind === "search" ? "search" : "fetch"}</td>
-                    <td>
-                      <Mono>{w.backend}</Mono>
-                      {w.keyRef && w.keyRef !== w.backend ? <div className="font-mono text-[11px] text-ink-3">{w.keyRef}</div> : null}
-                    </td>
-                    <td className="max-w-[28rem] break-all font-mono text-xs">{w.target}</td>
-                    <td>
-                      {w.status === "ok" ? (
-                        <Badge tone="good">answered · {w.kind === "search" ? `${w.results ?? 0} result${w.results === 1 ? "" : "s"}` : w.bytes !== null ? `${num(w.bytes)} bytes` : "ok"}</Badge>
-                      ) : w.status === "error" ? (
-                        <span className="text-xs text-bad-ink">
-                          {w.errorKind ? `${w.errorKind.replace("_", " ")}: ` : ""}
-                          {w.error}
-                        </span>
-                      ) : (
-                        <Badge tone="accent">running</Badge>
-                      )}
-                    </td>
+        {webRequests.length ? (
+          <Card id="web-requests">
+            <CardHeader
+              title={
+                <span className="flex items-center gap-2">
+                  <Globe size={15} aria-hidden /> Web requests
+                </span>
+              }
+              description={`Searches and page fetches this task made: ${new Set(webRequests.map((w) => w.callId)).size} of ${sy.cfg.web.max_requests_per_task} calls allowed per task. One row per attempt: a call whose backend failed moved on to the next backend, and the row marked "answered" is the backend that served it. What came back was given to the agent as untrusted data.`}
+            />
+            <div className="overflow-x-auto">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>When</th>
+                    <th>Kind</th>
+                    <th>Backend (key)</th>
+                    <th>Query or URL</th>
+                    <th>Outcome</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      ) : null}
-
-      <Card>
+                </thead>
+                <tbody>
+                  {webRequests.map((w) => (
+                    <tr key={w.id}>
+                      <td className="whitespace-nowrap tabular">{dateTime(w.startedAt)}</td>
+                      <td>{w.kind === "search" ? "search" : "fetch"}</td>
+                      <td>
+                        <Mono>{w.backend}</Mono>
+                        {w.keyRef && w.keyRef !== w.backend ? <div className="font-mono text-[11px] text-ink-3">{w.keyRef}</div> : null}
+                      </td>
+                      <td className="max-w-[28rem] break-all font-mono text-xs">{w.target}</td>
+                      <td>
+                        {w.status === "ok" ? (
+                          <Badge tone="good">answered · {w.kind === "search" ? `${w.results ?? 0} result${w.results === 1 ? "" : "s"}` : w.bytes !== null ? `${num(w.bytes)} bytes` : "ok"}</Badge>
+                        ) : w.status === "error" ? (
+                          <span className="text-xs text-bad-ink">
+                            {w.errorKind ? `${w.errorKind.replace("_", " ")}: ` : ""}
+                            {w.error}
+                          </span>
+                        ) : (
+                          <Badge tone="accent">running</Badge>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        ) : null}</div> : null}
+      {tab === "sessions" ? <div className="space-y-6"><Card>
         <CardHeader
           title="Agent sessions"
           help="session"
@@ -386,23 +392,22 @@ export function TaskDetailView({ sy, taskId, scope }: { sy: Switchyard; taskId: 
         />
         <SessionsTable rows={sessions} base={base} hideTask empty="No sessions recorded for this task" />
       </Card>
-
-      <Card>
-        <CardHeader title="Timeline" />
-        <ol className="relative space-y-3 p-4 pl-8">
-          <span className="absolute bottom-4 left-[1.15rem] top-4 w-px bg-line" aria-hidden />
-          {d.events.map((e, i) => (
-            <li key={i} className="relative text-sm">
-              <span className={cx("absolute -left-[1.1rem] top-1.5 h-2.5 w-2.5 rounded-full ring-2 ring-surface", eventTone(e.type))} aria-hidden />
-              <div className="flex flex-wrap items-baseline gap-x-2">
-                <span className="font-medium text-ink">{humanize(e.type)}</span>
-                <span className="tabular text-xs text-ink-3">{dateTime(e.ts)}</span>
-              </div>
-              {e.data ? <div className="mt-0.5 break-words font-mono text-[11px] text-ink-3">{describeEvent(e.data)}</div> : null}
-            </li>
-          ))}
-        </ol>
-      </Card>
+        <Disclosure summary="Task timeline"><Card>
+          <CardHeader title="Timeline" />
+          <ol className="relative space-y-3 p-4 pl-8">
+            <span className="absolute bottom-4 left-[1.15rem] top-4 w-px bg-line" aria-hidden />
+            {d.events.map((e, i) => (
+              <li key={i} className="relative text-sm">
+                <span className={cx("absolute -left-[1.1rem] top-1.5 h-2.5 w-2.5 rounded-full ring-2 ring-surface", eventTone(e.type))} aria-hidden />
+                <div className="flex flex-wrap items-baseline gap-x-2">
+                  <span className="font-medium text-ink">{humanize(e.type)}</span>
+                  <span className="tabular text-xs text-ink-3">{dateTime(e.ts)}</span>
+                </div>
+                {e.data ? <div className="mt-0.5 break-words font-mono text-[11px] text-ink-3">{describeEvent(e.data)}</div> : null}
+              </li>
+            ))}
+          </ol>
+        </Card></Disclosure></div> : null}
     </div>
   );
 }
@@ -490,13 +495,13 @@ function ClassificationView({ c, sy, profile }: { c: Classification; sy: Switchy
           ...(c.classifierRationale ? ([["Classifier said", c.classifierRationale]] as Array<[string, ReactNode]>) : []),
           ...(c.tags
             ? ([
-                [
-                  "Tags",
-                  <span key="t" className="flex flex-wrap gap-1">
-                    {Object.entries(c.tags).flatMap(([g, v]) => (Array.isArray(v) ? v : [v]).filter(Boolean).map((x) => <Badge key={`${g}${x}`}>{`${g}: ${humanize(String(x))}`}</Badge>))}
-                  </span>,
-                ],
-              ] as Array<[string, ReactNode]>)
+              [
+                "Tags",
+                <span key="t" className="flex flex-wrap gap-1">
+                  {Object.entries(c.tags).flatMap(([g, v]) => (Array.isArray(v) ? v : [v]).filter(Boolean).map((x) => <Badge key={`${g}${x}`}>{`${g}: ${humanize(String(x))}`}</Badge>))}
+                </span>,
+              ],
+            ] as Array<[string, ReactNode]>)
             : []),
           ["Task type minimum", `${profile} tasks start at ${sy.cfg.profiles[profile as keyof typeof sy.cfg.profiles]?.min_tier ?? "T1"}`],
         ]}

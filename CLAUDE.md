@@ -26,7 +26,7 @@ branches, and pushing.
    [docs/operations.md](docs/operations.md) (hard vs estimated limits, recovery).
 
 State at handoff (2026-10-22): see [docs/working/handoff.md](docs/working/handoff.md). Web search, caching,
-and budget control are merged (587 router tests); panel v2 is unfinished on `feat/panel-v2`.
+and budget control are merged; panel v2 U1-U3 is complete and demo-validated (603 router tests). Budget control B2 is next.
 
 Dispatch workers through the `worker` agent; its definition carries the worker rules, so a brief
 holds only the task. Run independent workers in parallel and verify their claims before

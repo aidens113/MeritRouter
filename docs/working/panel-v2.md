@@ -1,9 +1,9 @@
 # Panel v2: live data and a calmer layout
 
-Status: Active
-Status detail: Stopped by the user 2026-10-22 mid-way; unfinished work on feat/panel-v2 (f24b9ae), unverified.
+Status: Complete
+Status detail: U1-U3 implemented and demo-validated 2026-10-22; final integration checks and merge recorded below.
 Created: 2026-10-21
-Last updated: 2026-10-21
+Last updated: 2026-10-22
 Owner: Senior supervisor agent
 Scope: Push changes to the panel as they happen instead of re-rendering on a timer, and
 restructure pages so they show summaries first and details behind tabs and disclosures.
@@ -14,30 +14,36 @@ Related: [budget-control](./budget-control.md), [labs](./labs.md), [projects](./
 
 ## Current State
 
-**User requests (2026-10-21):** "The panel should have live updating for data, not just be static
-and on refresh." "The UI is fundamentally good, but there is way too much information on one page,
-too many tabs, and everything is shown immediately. More tab structures."
+**Delivered 2026-10-22:** U1 scoped server-sent live events, reconnect/resume cursors and pause;
+U2 shared headers, grouped navigation, query-addressable tabs, disclosures and mobile summaries;
+U3 agent, repository, commit and request pages (including qualification and unassigned requests),
+with related-entity links on task, job, session and model details. Old section anchors select
+their tabs. The supervisor merged current dev into feat/panel-v2 before completing the work.
 
-**What exists:** 38 pages under `apps/panel/app` (project pages under `/p/<slug>`, install-wide
-under `/all`, redirects from old flat URLs). "Live" is `AutoRefresh` (`components/client/actions.tsx`):
-`router.refresh()` every 8 s on 10 pages, with a pause button. The densest pages render every
-section at once: job detail (473 lines), install dashboard (457), project overview (296).
+**Verified:** `pnpm -r typecheck`; `npx vitest run --maxWorkers=2` (603/603, 59 files);
+production builds; demo HTTP crawl (492 checks, zero unexpected failures); browser live updates
+(865 ms, no idle refresh, pause/resume and server restart recovery, scroll/disclosure state kept);
+malformed cursor reset and resumed changes; five old-anchor mappings; a delegated coding task's
+direct job/agent/session/model/request/commit links. Desktop and phone, light and dark screenshots
+were inspected. See [supervisor validation](panel-v2/reports/validation.md) for exact evidence.
 
-**Stopped (2026-10-22, at the user's request):** worker panel-v2 was stopped mid-task; its work is
-committed as WIP on `feat/panel-v2` (`f24b9ae`, pushed), not merged, not browser-checked. Present:
-`/api/live` server-sent change events (`apps/panel/lib/live-hub.ts`, `app/api/live`), a client
-`LiveProvider` (`components/client/live.tsx`), shared `PageHeader`, `Tabs`, `Disclosure`,
-`ShowAll`, `RelatedPanel`, entity links, and restructured pages under `/p/<slug>` and `/all`;
-the information-architecture map (sidebar groups, entity URLs, page by page) is in
-`docs/working/reports/panel-v2.md` on that branch. Missing: U3's new pages (agents, repos, commits,
-requests), the acceptance checks, screenshots. Panel typecheck passes on the branch.
+**Review fixes:** timestamp/older-row change detection, all configured brain roots, bounded
+cursors, watcher resets; inherited repository aliases return 404; URL-decoded agent identities;
+validated request citations; paid cost fallback; bounded-history labels; grouped sidebar pages
+have a shared sibling-navigation strip. Workers' reports were independently verified.
 
-**Next steps:** merge dev into `feat/panel-v2`, finish U2 and U3 to the map, validate, merge.
+**Limits:** live fingerprints scan mutable rows after database writes (quiet checks avoid those
+scans); large-store performance is unbenchmarked. Some tab data is still queried eagerly.
+Agent request usage covers 60 recent session logs; commits are capped at 200 (repository 50).
+Archived project routes intentionally return 404 until unarchived. Brain commit hashes stay in
+scoped history rather than exposing shared-brain diffs through repository pages.
+The demo seed reported fixture-level brain-lock/integration/promotion warnings; those do not
+establish live team correctness. No real provider calls or user install tests were run.
 
-**Blockers:** none.
+**Next:** budget-control B2, then a separately budgeted live team check. Labs, R2 and packaging
+remain governed by the handoff's existing constraints.
 
 ---
-
 ## Decisions (recommended defaults; the user may override)
 
 - **D1. Changes are pushed.** A Server-Sent Events route (`/api/live`, scoped to a project or `all`)
@@ -112,6 +118,37 @@ requests), the acceptance checks, screenshots. Panel typecheck passes on the bra
 
 ---
 
+
+
+---
+
+### Brief: panel-layout-resume
+- Repository: D:/SwitchYardRouter, feat/panel-v2, shared checkout.
+- Task: Finish U2 tabs, disclosures and anchor mappings to the existing architecture map.
+- Required reads: Current State; docs/working/reports/panel-v2.md; owned pages.
+- Owns: apps/panel/app/all/**/page.tsx; project overview, job detail and project settings pages; components/task-detail.tsx and session-detail.tsx.
+- Must not touch: router, new entity routes, shared working docs; no commits.
+- Definition of done: map implemented; supervisor validates build, scope and browser.
+- Report to: docs/working/panel-v2/reports/layout.md
+
+### Brief: panel-entities-resume
+- Repository: D:/SwitchYardRouter, feat/panel-v2, shared checkout.
+- Task: Finish U3 entity pages using existing public insights.
+- Required reads: Current State; architecture map; admin/entities.ts; link components.
+- Owns: new agent, repository, commit and request routes; entity-links.tsx; related.tsx; lib/links.ts; request-detail.tsx and new qualification request route.
+- Must not touch: existing dense pages, router, shared working docs; no commits.
+- Definition of done: scoped entity routes, citations and related links; supervisor validates.
+- Report to: docs/working/panel-v2/reports/entities.md
+
+### Brief: panel-live-resume
+- Repository: D:/SwitchYardRouter, feat/panel-v2, shared checkout.
+- Task: Review/fix U1 timestamp collisions, scope, cursor and reconnect behavior with regressions.
+- Required reads: Current State; router live watcher and focused tests; SSE hub/route/client.
+- Owns: admin/live.ts; tests/admin-live.test.ts; panel lib/live-hub.ts, api/live/route.ts, components/client/live.tsx.
+- Must not touch: other source files, shared working docs; no commits.
+- Definition of done: focused tests pass; report limitations; supervisor runs browser acceptance.
+- Report to: docs/working/panel-v2/reports/live.md
+
 ## Work Ledger
 
 ### 2026-10-21 — Plan written
@@ -123,6 +160,26 @@ requests), the acceptance checks, screenshots. Panel typecheck passes on the bra
 - Outcome: Accepted
 
 ---
+
+
+
+---
+
+### 2026-10-22 — Resume and integrate Panel v2
+- Agent: supervisor (Codex)
+- Changed: merged dev into feat/panel-v2; assigned layout, entity routes and live correctness by file; added citations and identity links.
+- Why: continue Claude's unfinished panel effort per the handoff.
+- Validation: `pnpm -r typecheck` passed. First `npx vitest run`: 598 passed, 5 failed (timeouts/Windows cleanup locks), 1 worker-reporting timeout under concurrent build/seed load. Full rerun and browser acceptance pending.
+- Outcome: Partial
+- Follow-up: finish review fixes, clean checks, demo acceptance and merge. Interrupted build/seed outputs were unavailable after turn interruption; rerunning with retained log files.
+
+### 2026-10-22 — U1-U3 acceptance complete
+- Agent: supervisor (Codex), workers panel-layout-resume, panel-entities-resume, panel-live-resume
+- Changed: live watcher and client; dense layouts/group navigation; entity routes and related links; setup, index and handoff documentation. Details: reports/validation.md under this effort.
+- Why: finish the interrupted Panel v2 plan and verify the worker claims independently.
+- Validation: final `pnpm -r typecheck` and `pnpm -r build` passed; `npx vitest run --maxWorkers=2` passed 603/603 in 59 files. Final production-demo crawl: 492 checks, zero unexpected failures; old anchors, SSE reset/resume, direct entity links and light/dark desktop/phone screenshots verified. Live DOM update 865 ms, idle refreshes 0; pause/resume, restart and state preservation passed.
+- Outcome: Accepted
+- Follow-up: merge/push dev and fast-forward main; B2 next. Temporary demo/browser servers stopped. Automatic approval review blocked deletion of both the unregistered baseline directory and generated demo fixtures (only "blocked by policy" supplied); neither is committed.
 
 ## Open Questions
 

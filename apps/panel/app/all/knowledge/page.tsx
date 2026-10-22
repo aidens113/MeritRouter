@@ -5,7 +5,8 @@ import { getSy } from "@/lib/sy";
 import { ALL, brainHref, projectBase } from "@/lib/links";
 import { SetupScreen } from "@/components/setup";
 import { Markdown } from "@/components/markdown";
-import { Badge, Callout, Card, CardHeader, EmptyState, Mono, PageHeader, type Tone } from "@/components/ui";
+import { Badge, Callout, Card, CardHeader, EmptyState, Mono, type Tone } from "@/components/ui";
+import { PageHeader } from "@/components/page-header";
 import { ago, dateTime, shortId } from "@/lib/format";
 import { PromotionDecision, RevertEntry } from "./actions";
 

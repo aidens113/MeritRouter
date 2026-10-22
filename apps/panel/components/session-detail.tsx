@@ -1,12 +1,18 @@
+import { RelatedPanel } from "@/components/related";
+import { AgentLink, CommitLink, ModelLink, RequestLink, TaskLink } from "@/components/entity-links";
+import { Tabs, pickTab } from "@/components/tabs";
+import { Disclosure } from "@/components/disclosure";
 import Link from "next/link";
+
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { ArrowLeft, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, FileWarning } from "lucide-react";
 import { insights, type SessionEvent, type Switchyard } from "switchyard-router";
 import { jobHref, sessionHref } from "@/lib/links";
 import type { DetailScope } from "@/components/detail-scope";
-import { buttonClass, Callout, Card, CardHeader, cx, KeyValue, Mono, PageHeader, Stat } from "@/components/ui";
-import { ActionButton, AutoRefresh } from "@/components/client/actions";
+import { buttonClass, Callout, Card, CardHeader, cx, KeyValue, Mono, Stat } from "@/components/ui";
+import { PageHeader } from "@/components/page-header";
+import { ActionButton } from "@/components/client/actions";
 import { roleLabel, SessionStatusBadge, SessionsTable, sessionTaskHref } from "@/components/sessions-table";
 import { SessionTimeline } from "@/components/session-timeline";
 import { dateTime, duration, humanize, num } from "@/lib/format";
@@ -32,6 +38,7 @@ export function SessionDetailView({ sy, id, sp, scope }: { sy: Switchyard; id: s
   const s = d.session;
   const running = s.status === "running";
   const now = Date.now();
+  const requests = insights.sessionRequests(sy, s.id);
 
   // Outcomes for intents on this page that were written after it (only when the page is cut off).
   const laterOutcomes = new Map<number, Outcome>();
@@ -85,6 +92,7 @@ export function SessionDetailView({ sy, id, sp, scope }: { sy: Switchyard; id: s
     </nav>
   ) : null;
 
+  const tab = pickTab(sp, ["timeline", "details", "requests"]);
   return (
     <div className="space-y-6">
       <Link href={scope.back.href} className="inline-flex items-center gap-1 text-sm text-ink-3 hover:text-ink">
@@ -92,6 +100,7 @@ export function SessionDetailView({ sy, id, sp, scope }: { sy: Switchyard; id: s
       </Link>
       <PageHeader
         title={`${roleLabel(s.role)} session`}
+        live={[`sessions:${s.id}`]}
         description={
           <span className="flex flex-wrap items-center gap-2">
             <SessionStatusBadge status={s.status} />
@@ -100,16 +109,13 @@ export function SessionDetailView({ sy, id, sp, scope }: { sy: Switchyard; id: s
           </span>
         }
         actions={
-          running ? (
-            <AutoRefresh seconds={4} />
-          ) : scope.actions && s.resumable ? (
+          !running && scope.actions && s.resumable ? (
             <ActionButton url={`/api/sessions/${encodeURIComponent(s.id)}/resume`} payload={{ project: scope.project }} variant="primary" success="Requeued: a running worker continues this session where it stopped">
               Resume session
             </ActionButton>
           ) : null
         }
       />
-
       {s.status === "interrupted" || s.status === "failed" || s.status === "cancelled" ? (
         <Callout tone={s.status === "failed" ? "bad" : s.status === "interrupted" ? "serious" : "neutral"} title={s.status === "failed" ? "This session failed" : s.status === "interrupted" ? "This session stopped before it finished" : "This session was cancelled"}>
           {s.stopReason ? `${humanize(s.stopReason).replace(/\.?$/, ".")} ` : ""}
@@ -131,7 +137,6 @@ export function SessionDetailView({ sy, id, sp, scope }: { sy: Switchyard; id: s
           ) : null}
         </Callout>
       ) : null}
-
       {d.corrupt.length ? (
         <Callout tone="warn" icon={<FileWarning size={16} />} title={`${d.corrupt.length} unreadable log line${d.corrupt.length === 1 ? "" : "s"} skipped`}>
           <ul className="mt-1 space-y-0.5 font-mono text-[11px]">
@@ -143,21 +148,44 @@ export function SessionDetailView({ sy, id, sp, scope }: { sy: Switchyard; id: s
           </ul>
         </Callout>
       ) : null}
-
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label={running ? "Active so far" : "Duration"} value={duration(s.durationMs)} sub={s.endedAt ? `ended ${dateTime(s.endedAt)}` : `last event ${dateTime(s.updatedAt)}`} />
         <Stat label="Model requests" value={num(s.modelRequests)} sub="requests sent through the gate" />
         <Stat label="Tool calls" value={num(s.toolCalls)} sub={unanswered > 0 && !d.hasMore && after === 0 ? `${unanswered} without an outcome` : "intents written before each call"} tone={unanswered > 0 && !running && !d.hasMore && after === 0 ? "warn" : undefined} />
         <Stat label="Events" value={num(s.lastSeq)} sub="lines in the session log" />
       </div>
-
-      <div className="grid gap-6 xl:grid-cols-[3fr_2fr]">
+      <RelatedPanel groups={[
+        { label: "Task", items: s.taskId ? [{ key: s.taskId, node: <TaskLink base={base} id={s.taskId} label={s.taskLabel} job={s.profile === "supervise"} /> }] : [] },
+        { label: "Job", items: s.jobId ? [{ key: s.jobId, node: <TaskLink base={base} id={s.jobId} job /> }] : [] },
+        { label: "Agent", items: [{ key: s.agentLabel, node: <AgentLink base={base} agent={s.agentLabel} /> }] },
+        { label: "Related runs", items: [s.parentSessionId, s.previousSessionId, next?.id].filter((id): id is string => !!id).map(id => ({ key: id, node: <Link href={sessionHref(base, id)} className="font-mono text-xs text-accent-ink hover:underline">{id}</Link> })) },
+        { label: "Requests", items: requests.map(r => ({ key: r.id, node: <RequestLink base={base} id={r.id} /> })) },
+        { label: "Models", items: [...new Set(requests.map(r => r.endpointId).filter((id): id is string => !!id))].map(id => ({ key: id, node: <ModelLink id={id} /> })) }
+      ]} />
+      <Tabs items={[{ "id": "timeline", "label": "Timeline" }, { "id": "details", "label": "Details" }, { "id": "requests", "label": "Requests" }]} active={tab} path={self} label="Page sections" keep={{ after: typeof sp.after === "string" ? sp.after : undefined, limit: typeof sp.limit === "string" ? sp.limit : undefined }} anchors={{}} />
+      {tab === "timeline" ? <div className="space-y-6"><Card>
+        <CardHeader
+          title="Event log"
+          help="toolJournal"
+          description="Everything the session wrote, in order. Each tool call shows its intent (written before it ran) with its outcome (written after). Open an event to see the raw record."
+          actions={pager}
+        />
+        <div className="p-4">
+          {d.events.length ? (
+            <SessionTimeline events={d.events} startedAt={s.createdAt} running={running} laterOutcomes={laterOutcomes} pageHref={pageHref} />
+          ) : (
+            <p className="text-sm text-ink-3">{after > 0 ? "No events after this point." : "The log has no readable events."}</p>
+          )}
+        </div>
+        {pager ? <div className="flex justify-end border-t border-line px-4 py-3">{pager}</div> : null}
+      </Card></div> : null}
+      {tab === "details" ? <div className="space-y-6"><div className="grid gap-6 xl:grid-cols-[3fr_2fr]">
         <Card>
           <CardHeader title="Details" help="session" />
           <div className="p-4">
             <KeyValue
               items={[
-                ["Agent", <Mono key="a">{s.agentLabel}</Mono>],
+                ["Agent", <AgentLink key="a" base={base} agent={s.agentLabel} />],
                 ["Role", roleLabel(s.role)],
                 [
                   "Task",
@@ -172,13 +200,13 @@ export function SessionDetailView({ sy, id, sp, scope }: { sy: Switchyard; id: s
                 ],
                 ...(s.jobId && s.jobId !== s.taskId
                   ? ([
-                      [
-                        "Job",
-                        <Link key="j" href={jobHref(base, s.jobId)} className="font-mono text-xs text-accent-ink hover:underline">
-                          {s.jobId}
-                        </Link>,
-                      ],
-                    ] as Array<[string, ReactNode]>)
+                    [
+                      "Job",
+                      <Link key="j" href={jobHref(base, s.jobId)} className="font-mono text-xs text-accent-ink hover:underline">
+                        {s.jobId}
+                      </Link>,
+                    ],
+                  ] as Array<[string, ReactNode]>)
                   : []),
                 [
                   "Spawned by",
@@ -192,29 +220,29 @@ export function SessionDetailView({ sy, id, sp, scope }: { sy: Switchyard; id: s
                 ],
                 ...(s.previousSessionId
                   ? ([
-                      [
-                        "Previous run",
-                        <span key="prev" className="inline-flex flex-wrap items-center gap-2">
-                          <Link href={sessionHref(base, s.previousSessionId)} className="font-mono text-xs text-accent-ink hover:underline">
-                            {s.previousSessionId}
-                          </Link>
-                          {previous ? <SessionStatusBadge status={previous.status} /> : null}
-                        </span>,
-                      ],
-                    ] as Array<[string, ReactNode]>)
+                    [
+                      "Previous run",
+                      <span key="prev" className="inline-flex flex-wrap items-center gap-2">
+                        <Link href={sessionHref(base, s.previousSessionId)} className="font-mono text-xs text-accent-ink hover:underline">
+                          {s.previousSessionId}
+                        </Link>
+                        {previous ? <SessionStatusBadge status={previous.status} /> : null}
+                      </span>,
+                    ],
+                  ] as Array<[string, ReactNode]>)
                   : []),
                 ...(next
                   ? ([
-                      [
-                        "Next run",
-                        <span key="next" className="inline-flex flex-wrap items-center gap-2">
-                          <Link href={sessionHref(base, next.id)} className="font-mono text-xs text-accent-ink hover:underline">
-                            {next.id}
-                          </Link>
-                          <SessionStatusBadge status={next.status} />
-                        </span>,
-                      ],
-                    ] as Array<[string, ReactNode]>)
+                    [
+                      "Next run",
+                      <span key="next" className="inline-flex flex-wrap items-center gap-2">
+                        <Link href={sessionHref(base, next.id)} className="font-mono text-xs text-accent-ink hover:underline">
+                          {next.id}
+                        </Link>
+                        <SessionStatusBadge status={next.status} />
+                      </span>,
+                    ],
+                  ] as Array<[string, ReactNode]>)
                   : []),
                 ["Started", dateTime(s.createdAt)],
                 ["Ended", s.endedAt ? dateTime(s.endedAt) : running ? "still running" : "–"],
@@ -268,30 +296,13 @@ export function SessionDetailView({ sy, id, sp, scope }: { sy: Switchyard; id: s
           ) : null}
         </div>
       </div>
-
-      {d.children.length ? (
-        <Card>
-          <CardHeader title="Spawned sessions" description="Sessions this agent started by delegating work, oldest first." />
-          <SessionsTable rows={d.children} base={base} now={now} />
-        </Card>
-      ) : null}
-
-      <Card>
-        <CardHeader
-          title="Event log"
-          help="toolJournal"
-          description="Everything the session wrote, in order. Each tool call shows its intent (written before it ran) with its outcome (written after). Open an event to see the raw record."
-          actions={pager}
-        />
-        <div className="p-4">
-          {d.events.length ? (
-            <SessionTimeline events={d.events} startedAt={s.createdAt} running={running} laterOutcomes={laterOutcomes} pageHref={pageHref} />
-          ) : (
-            <p className="text-sm text-ink-3">{after > 0 ? "No events after this point." : "The log has no readable events."}</p>
-          )}
-        </div>
-        {pager ? <div className="flex justify-end border-t border-line px-4 py-3">{pager}</div> : null}
-      </Card>
+        {d.children.length ? (
+          <Card>
+            <CardHeader title="Spawned sessions" description="Sessions this agent started by delegating work, oldest first." />
+            <SessionsTable rows={d.children} base={base} now={now} />
+          </Card>
+        ) : null}</div> : null}
+      {tab === "requests" ? <div className="space-y-6"><Card><CardHeader title="Model requests" /><div className="overflow-x-auto"><table className="data-table"><thead><tr><th>Request</th><th>Model</th><th>Status</th><th>Time</th></tr></thead><tbody>{requests.map(r => <tr key={r.id}><td><Link className="font-mono text-xs text-accent-ink hover:underline" href={"/requests/" + encodeURIComponent(r.id)}>{r.id}</Link></td><td>{r.endpointId ? <Link className="text-accent-ink hover:underline" href={"/all/models/detail?id=" + encodeURIComponent(r.endpointId)}>{r.servedModel ?? r.endpointId}</Link> : "�"}</td><td>{r.status}</td><td>{dateTime(r.reservedAt)}</td></tr>)}</tbody></table>{!requests.length ? <p className="p-4 text-sm text-ink-3">No requests recorded for this session.</p> : null}</div></Card></div> : null}
     </div>
   );
 }

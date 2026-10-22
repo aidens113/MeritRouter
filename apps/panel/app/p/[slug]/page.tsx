@@ -1,3 +1,5 @@
+import { Tabs, pickTab } from "@/components/tabs";
+import { Disclosure } from "@/components/disclosure";
 import Link from "next/link";
 import { CheckCircle2, CircleAlert, Cpu, FolderGit2, Info, MessageCircleQuestion, Network, Play, TriangleAlert } from "lucide-react";
 import { insights } from "switchyard-router";
@@ -5,8 +7,8 @@ import { getSy } from "@/lib/sy";
 import { project } from "@/lib/project";
 import { jobHref, projectBase } from "@/lib/links";
 import { SetupScreen } from "@/components/setup";
-import { Badge, buttonClass, Callout, Card, CardHeader, EmptyState, Mono, PageHeader, Stat } from "@/components/ui";
-import { AutoRefresh } from "@/components/client/actions";
+import { Badge, buttonClass, Callout, Card, CardHeader, EmptyState, Mono, Stat } from "@/components/ui";
+import { PageHeader } from "@/components/page-header";
 import { StackedBars, StackedColumns, type Series } from "@/components/client/charts";
 import { ago, compact, dateTime, num, pct, shortId } from "@/lib/format";
 import { TASK_STATE_LABEL, TaskStateBadge } from "@/components/task-badges";
@@ -28,7 +30,8 @@ function attentionLink(base: string, text: string, onlyJob: string | null): { hr
   return null;
 }
 
-export default async function ProjectOverviewPage({ params }: { params: Promise<{ slug: string }> }) {
+export default async function ProjectOverviewPage({ params, searchParams }: { params: Promise<{ slug: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const sp = await searchParams;
   const r = getSy();
   if (!r.sy) return <SetupScreen error={r.error} configPath={r.configPath} />;
   const sy = r.sy;
@@ -82,10 +85,12 @@ export default async function ProjectOverviewPage({ params }: { params: Promise<
   const asking = [...new Set(sy.questions({ pendingOnly: true, project: p.slug }).map((q) => q.taskId))];
   const onlyJob = asking.length === 1 ? asking[0]! : null;
 
+  const tab = pickTab(sp, ["overview", "activity", "usage"]);
   return (
     <div className="space-y-6">
       <PageHeader
         title={p.name}
+        live={["tasks", "jobs", "requests", "sessions", "workers", "brain"]}
         description={
           <>
             What this project is doing now, what it used in the last 24 hours, and what needs you. Project <Mono>{p.slug}</Mono>
@@ -94,14 +99,12 @@ export default async function ProjectOverviewPage({ params }: { params: Promise<
         }
         actions={
           <>
-            <AutoRefresh seconds={8} />
             <Link href={`${base}/jobs#new`} className={buttonClass("primary", true)}>
               <Play size={13} aria-hidden /> New job
             </Link>
           </>
         }
       />
-
       {ov.notices.length ? (
         <Callout tone="accent" icon={<Info size={16} />} title="Repositories set up">
           <ul className="space-y-0.5">
@@ -113,7 +116,6 @@ export default async function ProjectOverviewPage({ params }: { params: Promise<
           </ul>
         </Callout>
       ) : null}
-
       {ov.attention.length ? (
         <Card className="border-warn/40">
           <div className="flex items-center gap-2 border-b border-line px-4 py-3 text-sm font-semibold text-ink">
@@ -142,7 +144,6 @@ export default async function ProjectOverviewPage({ params }: { params: Promise<
           No questions, decisions, access requests, or interrupted tasks in this project, and every repository is in place.
         </Callout>
       )}
-
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat label="Jobs" value={`${num(ov.activity.runningJobs)} running`} sub={`${num(ov.activity.queuedJobs)} queued · ${num(ov.activity.runningTasks)} tasks running, ${num(ov.activity.queuedTasks)} queued`} />
         <Stat label="Model requests (24h)" help="requests" value={compact(u.modelRequests)} sub={`${compact(ov.usage7d.modelRequests)} in the last 7 days`} />
@@ -155,8 +156,8 @@ export default async function ProjectOverviewPage({ params }: { params: Promise<
         <Stat label="Tasks (24h)" value={`${num(u.logicalTasks.completed)} done`} sub={`${num(u.logicalTasks.failed)} failed · ${num(u.logicalTasks.other)} other · ${num(u.logicalTasks.submitted)} submitted`} tone={u.logicalTasks.failed > u.logicalTasks.completed ? "bad" : undefined} />
         <Stat label="Paid spend (24h)" value={usd(ov.paidSpendUsd.last24h)} sub={`${usd(ov.paidSpendUsd.last7d)} in the last 7 days · ${compact(u.uncachedInputTokens + u.outputTokens)} new tokens today${u.cachedInputTokens ? ` (+${compact(u.cachedInputTokens)} cached)` : ""}`} />
       </div>
-
-      <div className="grid gap-6 xl:grid-cols-[2fr_1fr]">
+      <Tabs items={[{ "id": "overview", "label": "Overview" }, { "id": "activity", "label": "Activity" }, { "id": "usage", "label": "Usage" }]} active={tab} path={base} label="Page sections" anchors={{}} />
+      {tab === "overview" ? <div className="space-y-6"><div className="grid gap-6 xl:grid-cols-[2fr_1fr]">
         <Card>
           <CardHeader title="Running and queued jobs" description="This project's top-level jobs that have not finished, newest first." actions={<Link className="text-xs text-accent-ink hover:underline" href={`${base}/jobs`}>All jobs →</Link>} />
           {ov.jobs.length ? (
@@ -200,7 +201,7 @@ export default async function ProjectOverviewPage({ params }: { params: Promise<
                   <FolderGit2 size={15} className="mt-0.5 shrink-0 text-ink-3" aria-hidden />
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="font-mono text-[13px] text-ink">{repo.alias}</span>
+                      <Link href={`${base}/repos/${encodeURIComponent(repo.alias)}`} className="font-mono text-[13px] text-accent-ink hover:underline">{repo.alias}</Link>
                       {repo.writable ? <Badge>writable</Badge> : <Badge>read only</Badge>}
                       {repo.exists ? null : <Badge tone="warn">not set up</Badge>}
                     </div>
@@ -213,9 +214,8 @@ export default async function ProjectOverviewPage({ params }: { params: Promise<
             <EmptyState title="No repositories">Tasks in this project can only work on text you give them until you add one.</EmptyState>
           )}
         </Card>
-      </div>
-
-      <div className="grid gap-6 xl:grid-cols-[2fr_1fr]">
+      </div></div> : null}
+      {tab === "usage" ? <div className="space-y-6"><div className="grid gap-6 xl:grid-cols-[2fr_1fr]">
         <Card>
           <CardHeader title="Requests over the last 24 hours" description="This project's physical model requests per hour, stacked by the model that was targeted." help="requests" actions={<Link className="text-xs text-accent-ink hover:underline" href={`${base}/requests`}>Request log →</Link>} />
           <div className="p-4">
@@ -245,9 +245,8 @@ export default async function ProjectOverviewPage({ params }: { params: Promise<
             )}
           </div>
         </Card>
-      </div>
-
-      <Card>
+      </div></div> : null}
+      {tab === "activity" ? <div className="space-y-6"><Card>
         <CardHeader title="Worker" help="worker" description="Workers serve every project at once, sharing capacity fairly." />
         <div className="grid gap-4 p-4 text-sm md:grid-cols-2">
           <div className="space-y-2">
@@ -290,7 +289,7 @@ export default async function ProjectOverviewPage({ params }: { params: Promise<
             )}
           </div>
         </div>
-      </Card>
+      </Card></div> : null}
     </div>
   );
 }

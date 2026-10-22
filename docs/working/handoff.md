@@ -6,11 +6,8 @@ own working document with decisions, phases, ledger, and reports.
 
 ## Repository state
 
-- `dev` and `main` hold everything finished (last merge: budget control, `7f8d2df`).
-  `pnpm -r typecheck` and `pnpm -r build` pass on `dev`; the router suite passed 587 tests on the
-  merged budget-control branch.
-- `feat/panel-v2` (pushed) holds unfinished, unverified panel work (`f24b9ae`); see Panel v2 below.
-  It is not merged. Its worktree may still exist at `.claude/worktrees/agent-a443248d6e5862bf6`.
+- Panel v2 U1-U3 is the latest completed coherent unit. Final checks: 603 router tests, recursive typecheck and build, and demo browser acceptance. See its working document for integration/push status.
+- Panel v2 U1-U3 completed and demo-validated 2026-10-22 (603 router tests); see its working document and supervisor validation report.
 - Agent worktrees live under `.claude/worktrees/` (excluded from git locally).
 
 ## The user's live install (off limits to tests; use temp configs and `seed:demo`)
@@ -40,7 +37,7 @@ own working document with decisions, phases, ledger, and reports.
 | Web search | [web-search.md](web-search.md) | W1-W3 done: backend pool (Ollama, Tavily, Brave, Exa, SearXNG), SSRF-guarded fetch, budgets; native search in model calls (OpenRouter, Anthropic, OpenAI) priced as paid. Live-checked on Ollama only |
 | Caching and continuity | [caching-and-continuity.md](caching-and-continuity.md) | C1-C2 done: cache hints, endpoint stickiness, cached pricing, truncation recovery, prefix-stable compaction. Not checked live |
 | Budget control | [budget-control.md](budget-control.md) | B1 done and merged (job request pool, `max_requests` on briefs, `request_more_budget` and decisions, delegate-only supervisors, `run_check` for implementers). B2 (panel UI for requests and pools) not started. Never run against a live job yet |
-| Panel v2 | [panel-v2.md](panel-v2.md) | Stopped mid-way by the user. U1 (server-sent live updates) appears built; U2 (calmer layout: tabs, disclosures, grouped sidebar) partly done; U3 (entity pages: agents, repositories, commits, requests, Related panels) not started. On `feat/panel-v2`, unverified |
+| Panel v2 | [panel-v2.md](panel-v2.md) | Complete: U1 scoped live events, U2 tabs/disclosures/grouped navigation, U3 linked entity pages; demo browser acceptance and 603 router tests passed |
 | Labs | [labs.md](labs.md) | Planned (L1-L5); waiting on the user's answers to four questions about FluxIQ's lanes (or "use the defaults") |
 | Projects | [projects.md](projects.md) | Done (J1-J3) plus deletion, repository auto-setup, panel power button |
 | R2 (Postgres, several hosts) | [agent-sessions-and-teams.md](agent-sessions-and-teams.md) | Parked; the user has not answered whether to do it |
@@ -48,10 +45,8 @@ own working document with decisions, phases, ledger, and reports.
 
 ## What to do next (in order, each needs the user's go-ahead where noted)
 
-1. Panel v2: merge `dev` into `feat/panel-v2`, finish U2 and U3 against the map in
-   `docs/working/reports/panel-v2.md` (on that branch), then the panel validation in `AGENTS.md`
-   (demo data on a spare port, screenshots desktop and phone, light and dark).
-2. Budget control B2 (panel for budget requests) once panel v2 has landed (same files).
+1. Panel v2 is complete; its working document records final acceptance and merge.
+2. Budget control B2 (panel for budget requests) is next (same files).
 3. A live team job on the user's install to exercise budget control, `run_check`, and the
    delegate-only supervisor (spends free Ollama quota: state the budget first).
 4. The job page's plan should show "failed; finished by the supervisor" for segments the supervisor
