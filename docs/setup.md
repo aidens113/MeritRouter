@@ -285,6 +285,14 @@ project's at `/p/<slug>/settings`.
 - Standalone and paid presets: set the paid model id and **current prices** in `paid.models` and
   `supervisor.endpoints`, and add a paid key for that provider
   (`keys add anthropic --billing paid_credits --balance 20`).
+- Prompt caching: `routing.sticky_endpoints` (default true) keeps a conversation on the model
+  that served its last turn while it is healthy, so the provider's prompt cache keeps working;
+  it never moves a paid model ahead of a free one. `providers.<id>.prompt_cache:
+  cache_control | prompt_cache_key | none` says how to ask a provider to cache the prompt prefix
+  (Anthropic uses `cache_control`, OpenAI and OpenRouter `prompt_cache_key`, every other provider
+  `none` unless set). `paid.models[].cached_input_usd_per_million` prices input served from the
+  cache; without it the price comes from `pricing_url` (`input_cache_read`), or cached input is
+  priced as ordinary input.
 
 Then:
 

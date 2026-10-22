@@ -45,13 +45,27 @@ minimax-m3.1-flash, nemotron-3-super, gpt-oss:120b (all >= 100B), gemma4:31b,
 nemotron-3-nano:30b, gpt-oss:20b, nemotron-3-ultra (context unreported, so unused). Refused (402):
 12 others. mistral-large-4: 403 rolling out. Plans change: SwitchYard rechecks a refusal after a day.
 
+**Added 2026-10-21 (user requests, merged):**
+- d735298: plan-refused models were shown as "quarantined" (a served-model violation); they now
+  read "Not available with your keys" and only real violations quarantine.
+- Panel power button and off switch: `<storage>/panel.stopped`; background checks leave a panel
+  the user turned off stopped; `switchyard panel` and the MCP `panel` tool force a start; a new
+  MCP session clears the marker but respects `panel.auto_start`.
+- Project deletion behind two dialogs (counts, then type the slug); CLI `projects delete --confirm`.
+  Request and spend rows are kept, unlinked; their per-task charges are deleted with the tasks so
+  foreign keys hold (the worker's version suspended foreign keys; changed in review).
+- MCP for Codex and ChatGPT: `switchyard mcp`, Streamable HTTP (`--http`, token off loopback, token
+  also accepted as `/mcp/<token>` because ChatGPT cannot send headers). Codex verified with a temp
+  `CODEX_HOME` (34 tools over stdio and HTTP); ChatGPT itself not tried (needs a tunnel).
+- The panel build bundles the router (Turbopack follows the pnpm workspace link), so a router
+  change needs `pnpm -r build`; `ensurePanel` and `doctor` now warn when the panel build is older.
+
 **Open:**
-- Packaging for npm (user question): no `switchyard mcp` command, no default config location,
-  the panel is not in the package, no one-step Claude setup. Needs a plan before caching.
-- The supervisor did all the work itself rather than delegating; fine for a small job, untested
-  for larger ones on free models.
-- The failed first job left branch `switchyard/job-t_0mviuljha00e255d946d0` and its worktree.
-- Line clearing in the Tetris game was reviewed in code, not exercised in the browser.
+- Packaging for npm: `switchyard mcp` now exists; still no default config location, the panel is
+  not in the package, and no one-step setup.
+- R2 (Postgres, several hosts): parked; the user was asked whether to do it.
+- Deleting a project while another process runs against the store is untested.
+- The supervisor did all the work itself rather than delegating; delegation untested live.
 
 **Next steps:** a delegation-heavy live job; the packaging plan; then caching-and-continuity.
 
@@ -133,6 +147,15 @@ nemotron-3-nano:30b, gpt-oss:20b, nemotron-3-ultra (context unreported, so unuse
 - Validation: `pnpm -r typecheck` (router and panel Done); `npx vitest run` `Tests 495 passed
   (495)`; panel build checked in a separate worktree for f26f932; live: model scan, plan probe,
   Tetris job completed, game played headlessly, `switchyard panel` started the real panel.
+- Outcome: Accepted
+
+### 2026-10-21 — quarantine fix, panel controls, project deletion, MCP clients
+- Agent: workers projects-delete-panel-power and mcp-openai-clients; supervisor fixes
+- Changed: see Current State and merges 0bbaaf4, 02cb358.
+- Why: user requests (quarantine display, deletable projects, panel power, ChatGPT/Codex).
+- Validation: both packages typecheck; `npx vitest run` `Tests 524 passed (524)`; worker panel checks
+  on demo ports 4591 with screenshots (reviewed); Codex `mcp list`/`get` with a temp CODEX_HOME;
+  live panel models page: 0 "Quarantined", 28 "Not available with your keys".
 - Outcome: Accepted
 
 ---

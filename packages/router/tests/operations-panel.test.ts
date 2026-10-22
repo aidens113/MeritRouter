@@ -126,6 +126,15 @@ describe("ensurePanel", () => {
     expect(existsSync(panelStopFile(env.cfg))).toBe(false);
   });
 
+  it("a new agent session (resume) forgets a power-off but still respects panel.auto_start off", async () => {
+    env = envOnPort(await freePort(), false);
+    const app = fakePanel();
+    markPanelStopped(env.cfg);
+    expect(await ensurePanel(env.cfg, { resume: true })).toMatchObject({ state: "disabled" });
+    expect(existsSync(panelStopFile(env.cfg))).toBe(false);
+    expect(existsSync(path.join(app, "started.json"))).toBe(false);
+  });
+
   it("does nothing when panel.auto_start is off", async () => {
     env = envOnPort(await freePort(), false);
     const app = fakePanel();

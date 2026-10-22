@@ -17,15 +17,16 @@ branches, and pushing.
    is done, and so are [direct-providers.md](docs/working/direct-providers.md) (P1-P4: keys
    entered in SwitchYard, direct provider calls, Ollama and local servers) and
    [projects.md](docs/working/projects.md) (J1-J3: one install, many projects, fair scheduling,
-   gated global knowledge, projects grid and global dashboard). **Next effort:**
-   [caching-and-continuity.md](docs/working/caching-and-continuity.md) (planned; start at C1).
-   A live check with real keys needs the user's approval and budget.
+   gated global knowledge, projects grid and global dashboard), and
+   [caching-and-continuity.md](docs/working/caching-and-continuity.md) (C1-C2). Live use started
+   2026-10-21: see [live-validation.md](docs/working/live-validation.md) for findings and open
+   items (npm packaging, R2 parked).
 2. Background when needed: [docs/roles.md](docs/roles.md) (runtime role model and brain),
    [docs/decisions.md](docs/decisions.md) (provider facts, every design decision, FreeLLMAPI history),
    [docs/operations.md](docs/operations.md) (hard vs estimated limits, recovery).
 
-State at handoff (2026-10-21): all phases merged, plus repository auto-setup; 490 router tests pass; the panel builds. Nothing has
-run against a live provider or OpenCode yet (no credentials in this environment).
+State at handoff (2026-10-21): all phases merged, including caching; 524 router tests pass; the panel builds.
+The user's install runs against Ollama Cloud (free plan); OpenCode and paid providers are untested live.
 
 Dispatch workers through the `worker` agent; its definition carries the worker rules, so a brief
 holds only the task. Run independent workers in parallel and verify their claims before

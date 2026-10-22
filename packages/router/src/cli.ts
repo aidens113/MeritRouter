@@ -84,6 +84,8 @@ async function main(): Promise<number> {
       "account-id": { type: "string" },
       test: { type: "boolean", default: false },
       "no-scan": { type: "boolean", default: false },
+      // projects delete <slug> --confirm <slug>
+      confirm: { type: "string" },
       status: { type: "string" },
       task: { type: "string" },
       job: { type: "string" },

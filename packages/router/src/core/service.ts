@@ -115,10 +115,14 @@ export class Switchyard {
   readonly providers: ProviderRuntime;
   /** The projects of this install (`projects.<slug>`, or the single-project shape). */
   readonly projects: ProjectRegistry;
-  /** The primary project's brain (see `brainFor` for any project). */
-  readonly brain: Brain;
+  /** The primary project's brain (see `brainFor` for any project); follows the primary after a config reload or a deletion. */
+  get brain(): Brain {
+    return this.brainFor(this.projects.primary.project.slug);
+  }
   /** The primary project's brain access (see `brainAccessFor`). */
-  readonly brainAccess: BrainAccess;
+  get brainAccess(): BrainAccess {
+    return this.brainAccessFor(this.projects.primary.project.slug);
+  }
   private readonly brains = new Map<string, { brain: Brain; access: BrainAccess }>();
   readonly spend: PaidSpend;
   /** Agent sessions: per-run event logs (transcript, model calls, tool journal). */
@@ -151,8 +155,6 @@ export class Switchyard {
     this.admission = new Admission(this.db, this.tasks, cfg, this.now);
     this.projects = new ProjectRegistry(cfg);
     this.projects.attach(this.db, this.now);
-    this.brain = this.brainFor(this.projects.primary.project.slug);
-    this.brainAccess = this.brainAccessFor(this.projects.primary.project.slug);
     this.vault = new KeyVault(this.db, cfg.storageDir, this.now);
     this.spend = new PaidSpend(this.db, cfg, this.vault, this.now);
     this.providers = new ProviderRuntime(cfg, this.db, this.vault, {

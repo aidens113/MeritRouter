@@ -15,6 +15,11 @@ Projects (one install holds many; providers, models, routing, and budgets are gl
                                 add projects.<slug> to the config (each repository folder is created
                                 or set up with git as needed) and create its brain folders; a single-project
                                 config is converted first (its repositories move under its slug)
+  projects delete <slug> --confirm <slug>   delete a project: its settings, tasks, sessions,
+                                SwitchYard worktrees, and brain folder (repositories, branches,
+                                and request and spend history stay); refused while it has running
+                                or queued tasks, and for the last project; without --confirm it
+                                prints what would be removed
   projects archive|unarchive <slug>   hide a project (its settings, tasks, sessions, and brain
                                 are kept); refused while it has running or queued tasks
 

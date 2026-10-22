@@ -133,6 +133,7 @@ routing:
   max_endpoint_fallbacks: 3
   escalate_on_failure: true
   respect_provider_cooldowns: true
+  sticky_endpoints: true # keep a conversation on the model that served its last turn (prompt cache reuse)
 
 scoring:
   # rulebook_file: rulebook.yaml   # omit to use the built-in rulebook

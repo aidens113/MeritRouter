@@ -1,9 +1,9 @@
 # Prompt caching and conversation continuity
 
 Status: Active
-Status detail: Plan written 2026-10-20 from a code investigation; not started.
+Status detail: C1 and C2 done and merged 2026-10-21; live checks against providers outstanding.
 Created: 2026-10-20
-Last updated: 2026-10-20
+Last updated: 2026-10-21
 Owner: Senior supervisor agent
 Scope: Use provider prompt caching, keep a conversation on one model while it is healthy, price cached tokens correctly, recover from truncated responses, and compact context without breaking the cached prefix.
 Paired document: none
@@ -34,8 +34,19 @@ Related: [direct providers](./direct-providers.md), [projects](./projects.md), [
   only.
 - Deferred tasks resume from the session log on whatever model the new plan picks (works).
 
-**Next steps:** after the user's go-ahead, C1 then C2 (C1 and the projects work J1 touch
-different files except `src/harness/loop.ts`; schedule C1's loop changes after J1 merges).
+**Done (2026-10-21, merged as 61fc7ca):** C1 and C2 (see `reports/caching-c1-c2.md`): cache hints
+per provider (`promptCache`; Anthropic `cache_control` on the last tool, system prompt, and
+newest message; `prompt_cache_key` = task id for OpenAI and OpenRouter), endpoint stickiness
+(`routing.sticky_endpoints`; never paid ahead of free), cached-input pricing with provenance,
+truncation recovery, prefix-stable compaction (`harness/compaction.ts`), and the panel's cached
+share and saving.
+
+**Not verified:** live providers honouring the breakpoints and cache key; Anthropic's cache-write
+premium (1.25x) is not modelled, so settled cost runs slightly low; the saving figure with real
+cached prices. Note: the input budget follows the serving model's context, so on a 1M-context
+model compaction rarely runs and requests grow (cheap where the provider caches).
+
+**Next steps:** a live check on a provider that reports cache use (Ollama Cloud does).
 
 **Blockers:** none.
 
@@ -116,6 +127,16 @@ different files except `src/harness/loop.ts`; schedule C1's loop changes after J
   `storage/usage.ts:84`, `core/disposition.ts:41-79`, `sessions/resume.ts:145-311`.
 - Outcome: Accepted
 - Follow-up: user go-ahead; C1.
+
+### 2026-10-21 — C1 and C2 implemented
+- Agent: worker caching-c1-c2; supervisor review and merge
+- Changed: see the report and the merge commit 61fc7ca; supervisor added setup and operations text,
+  `routing.sticky_endpoints` in the example config, and regenerated the presets.
+- Why: user asked to implement every unfinished plan.
+- Validation: worker: 16 caching tests, `pnpm -r build`, demo panel on 4593. Supervisor: reviewed
+  gate stickiness and loop recovery; merged dev `npx vitest run` `Tests 524 passed (524)`, both
+  packages typecheck.
+- Outcome: Accepted
 
 ---
 

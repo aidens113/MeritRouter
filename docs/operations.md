@@ -304,6 +304,16 @@ subsequently-confirmed per level and per reviewer, with review cost per accepted
   change acceptance and are skipped when the request allocation is tight or tasks are waiting
   for capacity.
 
+### Truncated replies and compaction
+
+A reply cut off at the output limit gets one continuation request on the same model, and the two
+parts are joined; a cut-short tool call gets one retry of the turn with a larger output
+allowance, or on another model. Both count against the task's request budget. While a model
+keeps serving a conversation (`routing.sticky_endpoints`), its own context sets the input budget.
+Compaction runs only when the conversation exceeds that budget: it replaces the oldest whole
+turns with one summary of their tool calls, down to half the budget, so the cached prefix
+changes rarely.
+
 ## Teams: plans, leases, and capacity
 
 - **Plans.** A supervisor's `plan_work` records the job's decomposition as an immutable,

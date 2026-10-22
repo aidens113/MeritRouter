@@ -136,7 +136,7 @@ export function panelBuildCheck(): { ok: boolean; detail: string } {
  * start, which also clears the marker and starts it even with `panel.auto_start` off). Never
  * throws: the result says what happened.
  */
-export async function ensurePanel(cfg: ResolvedConfig, opts: { waitMs?: number; force?: boolean } = {}): Promise<PanelStatus> {
+export async function ensurePanel(cfg: ResolvedConfig, opts: { waitMs?: number; force?: boolean; resume?: boolean } = {}): Promise<PanelStatus> {
   const url = panelUrl(cfg);
   const warned = (st: PanelStatus): PanelStatus => {
     const app = findPanelApp();
@@ -144,7 +144,8 @@ export async function ensurePanel(cfg: ResolvedConfig, opts: { waitMs?: number; 
     return warning ? { ...st, detail: `${st.detail}; warning: ${warning}`, warning } : st;
   };
   if (await panelListening(cfg.panel.port)) return warned({ state: "running", url, detail: `the panel is running at ${url}` });
-  if (opts.force) rmSync(panelStopFile(cfg), { force: true });
+  // resume (a new agent session): forget a power-off, but keep panel.auto_start's say.
+  if (opts.force || opts.resume) rmSync(panelStopFile(cfg), { force: true });
   else if (existsSync(panelStopFile(cfg))) return { state: "stopped", url, detail: `the panel was turned off from its power button; switchyard panel or a new agent session starts it again` };
   if (!cfg.panel.auto_start && !opts.force) return { state: "disabled", url, detail: `nothing answers at ${url} and panel.auto_start is off: start it with switchyard panel` };
   const app = findPanelApp();

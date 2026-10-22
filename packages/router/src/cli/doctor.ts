@@ -5,6 +5,7 @@ import type { Switchyard } from "../core/service.js";
 import { providerHealth } from "../providers/health.js";
 import { builtinProvider } from "../providers/registry.js";
 import { keyAvailability } from "./keys.js";
+import { panelBuildCheck } from "../operations/panel.js";
 import type { RepositoryPreparation } from "../projects/repository-setup.js";
 import { folderState, preparationHint } from "../workspaces/repository-prepare.js";
 import { stamp } from "./terminal.js";
@@ -223,6 +224,9 @@ export function doctorChecks(sy: Switchyard, opts: { projects?: string[]; prepar
       checks.push({ check: `brain mount ${m.prefix}`, ok, level: ok ? "ok" : "fail", detail: ok ? abs : `${abs} does not exist` });
     }
   }
+  // A panel build older than the router's: the panel bundles the router, so it shows old behaviour until rebuilt.
+  const panel = panelBuildCheck();
+  checks.push({ check: "panel build", ok: panel.ok, level: panel.ok ? "ok" : "warn", detail: panel.ok ? panel.detail : `${panel.detail} (pnpm -r build, then restart the panel)` });
   for (const slug of opts.projects ?? sy.projects.slugs()) checks.push(...projectChecks(sy, slug, opts.prepared));
   return checks;
 }
