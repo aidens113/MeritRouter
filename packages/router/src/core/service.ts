@@ -793,6 +793,7 @@ export class Switchyard {
 
   async close(): Promise<void> {
     this.closing = true;
+    const gateDrained = this.gate.close();
     for (const timer of this.promotionTimers) clearTimeout(timer);
     this.promotionTimers.clear();
     if (this.discoveryTimer) clearInterval(this.discoveryTimer);
@@ -804,6 +805,7 @@ export class Switchyard {
     await this.labs.close();
     // Review settlement owns brain writes and Git children independently of executor reports.
     await Promise.allSettled([...this.promotionSettles]);
+    await gateDrained;
     this.db.close();
   }
 }
