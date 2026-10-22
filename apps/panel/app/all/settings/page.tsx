@@ -1,10 +1,10 @@
 import Link from "next/link";
 import YAML from "yaml";
-import { Network, SlidersHorizontal } from "lucide-react";
-import { insights, MODALITIES, ROLE_NAMES, RulebookSchema, type Rulebook } from "switchyard-router";
+import { Globe, Network, SlidersHorizontal } from "lucide-react";
+import { insights, MODALITIES, ROLE_NAMES, RulebookSchema, WEB_SEARCH_BACKENDS, type Rulebook } from "switchyard-router";
 import { getSy } from "@/lib/sy";
 import { projectBase } from "@/lib/links";
-import { BRAIN_SECTION, type Field, getIn, PAID_SECTION, PROFILE_FIELDS, PROFILE_HELP, ROLE_HELP, SECTIONS, SUPERVISE_PROFILE_DEFAULT, SUPERVISOR_SECTION, type Section } from "@/lib/settings-schema";
+import { BRAIN_SECTION, type Field, getIn, PAID_SECTION, PROFILE_FIELDS, PROFILE_HELP, ROLE_HELP, SECTIONS, SUPERVISE_PROFILE_DEFAULT, SUPERVISOR_SECTION, type Section, WEB_SECTION } from "@/lib/settings-schema";
 import { SetupScreen } from "@/components/setup";
 import { Callout, Card, CardHeader, cx, Mono, PageHeader } from "@/components/ui";
 import { RepositoriesForm, SectionForm } from "@/components/client/settings-form";
@@ -84,6 +84,8 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
               multiProject ? { id: "repositories", title: "Project settings" } : { id: "repositories", title: "Repositories" },
               ...profileSections.map((s) => ({ id: s.id, title: s.title.replace("Task type: ", "Type: ") })),
               { id: "supervisor", title: "Supervisor (jobs)" },
+              { id: "web", title: "Web search" },
+              { id: "web-limits", title: "Web search caps" },
               { id: "paid", title: "Paid routing" },
               { id: "paid-providers", title: "Paid providers" },
               { id: "paid-models", title: "Paid models" },
@@ -134,6 +136,20 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
               </Callout>
             ) : null}
             <SectionForm section={SUPERVISOR_SECTION} values={valuesFor(SUPERVISOR_SECTION)} />
+            <WebStatus sy={sy} />
+            <SectionForm section={WEB_SECTION} values={valuesFor(WEB_SECTION)} badge={sy.web.status().on ? "on" : "off"} />
+            <RowsForm
+              id="web-limits"
+              title="Web search caps"
+              description="Optional caps per search backend, counted from SwitchYard's own record of web requests (for ollama, page fetches count too). A backend at its cap is skipped until its UTC day or month resets. Set them to your plan's allowance: SwitchYard has no built-in numbers."
+              path={["web", "search", "limits"]}
+              keyField="backend"
+              columns={WEB_LIMIT_COLUMNS}
+              rows={Object.entries(sy.cfg.web.search.limits).map(([backend, l]) => ({ backend, ...l }))}
+              newRow={{ backend: "tavily" }}
+              addLabel="Add cap"
+              empty="No caps: backends are used until they report a limit (then they cool down)."
+            />
             <SectionForm section={PAID_SECTION} values={valuesFor(PAID_SECTION)} badge={sy.cfg.paid.enabled ? "on" : "off"} />
             <RowsForm
               id="paid-providers"
@@ -202,6 +218,39 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   );
 }
 
+/** Agents' web search now: the backend pool and its state, or how to turn it on. */
+function WebStatus({ sy }: { sy: import("switchyard-router").Switchyard }) {
+  const s = insights.webSearchView(sy, { recent: 0 }).status;
+  return (
+    <Callout tone={s.on ? "good" : "accent"} icon={<Globe size={16} />} title={s.on ? `Web search is on (${s.strategy})` : "Web search is off"}>
+      {s.on ? (
+        <p>
+          {insights.webStatusText(s)}. Backend states and keys are on the{" "}
+          <Link href="/all/keys#web-search" className="text-accent-ink hover:underline">
+            Provider keys page
+          </Link>
+          .
+        </p>
+      ) : (
+        <p>
+          {s.reason}. To turn it on, add an <Mono>ollama-cloud</Mono> key or a Tavily, Brave, or Exa key on the{" "}
+          <Link href="/all/keys#web-search" className="text-accent-ink hover:underline">
+            Provider keys page
+          </Link>
+          , or set a SearXNG instance below.
+        </p>
+      )}
+      {s.warnings.length ? (
+        <ul className="mt-1 list-disc pl-4">
+          {s.warnings.map((w) => (
+            <li key={w}>{w}</li>
+          ))}
+        </ul>
+      ) : null}
+    </Callout>
+  );
+}
+
 function RulebookTab({ sy }: { sy: import("switchyard-router").Switchyard }) {
   const rb = insights.rulebookText(sy);
   let parsed: Rulebook | null = null;
@@ -264,6 +313,12 @@ function modelColumns(providers: string[]): Column[] {
     { key: "ignore_size_floor", label: "Exempt from size floors", kind: "bool", help: "Lets an unsized model serve where a floor applies." },
   ];
 }
+
+const WEB_LIMIT_COLUMNS: Column[] = [
+  { key: "backend", label: "Backend", kind: "select", options: [...WEB_SEARCH_BACKENDS] },
+  { key: "per_day", label: "Per UTC day", kind: "optNumber", placeholder: "no cap", help: "Whole number of requests." },
+  { key: "per_month", label: "Per UTC month", kind: "optNumber", placeholder: "no cap", help: "Whole number of requests." },
+];
 
 const MOUNT_COLUMNS: Column[] = [
   { key: "prefix", label: "Brain prefix", kind: "text", placeholder: "projects/demo/working" },

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { webTools } from "../harness/web-tools.js";
 import { z } from "zod";
 import type { ResolvedConfig } from "../config/load.js";
 import type { ProfileName, TierName } from "../config/schema.js";
@@ -278,7 +279,7 @@ export async function runReviewSession(i: ReviewSessionInput): Promise<ReviewSes
   const { ctx } = i;
   const universe = evidenceUniverse(i.given);
   const env: HarnessEnv = { ctx, role: "reviewer", readers: i.readers, universe, allowArtifacts: true, edits: new Set() };
-  const tools: HarnessTool[] = [...(i.readers.size ? repoTools([...i.readers.keys()]) : []), artifactTool()];
+  const tools: HarnessTool[] = [...(i.readers.size ? repoTools([...i.readers.keys()]) : []), artifactTool(), ...webTools()];
   const maxTokens = Math.min(ctx.profile.max_output_tokens, 4000);
   const limits = planLimits(ctx.plan, ctx.cfg.routing.max_endpoint_fallbacks);
   const inputBudget = Math.max(2000, limits.contextLimitTokens - maxTokens - estimateTokens([], [...tools.map((t) => t.def), SUBMIT_VERDICT_DEF]) - 500);

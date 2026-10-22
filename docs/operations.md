@@ -94,6 +94,69 @@ characters; `switchyard doctor` adds one line per provider.
   `switchyard models scan`. Stored FreeLLMAPI-discovered models are deleted by the upgrade and come
   back from that scan.
 
+## Web search and fetch
+
+Agents (the roles in `web.roles`) get two tools while web access is on (`web.enabled`) and at
+least one search backend has a key: `web_search(query, max_results <= 10)` and `web_fetch(url)`.
+With no backend at all the tools are not offered, so no agent sees a tool that can only fail.
+
+- **A pool, like model providers.** `web.search.backends` lists the search backends in order;
+  `auto` stands for every backend not named elsewhere in the list, in the order ollama, tavily,
+  brave, exa, searxng. Backends without a key (or SearXNG without `base_url`) are skipped; one
+  named explicitly without a key gets a doctor warning, never turns the tools off.
+  `web.search.strategy: spread` (default) starts each call at the least recently used healthy
+  backend, so free allowances add up; `fallback` starts at the first. Either way a backend that
+  fails is skipped within the same tool call (each backend at most once), and the tool output
+  says which backend answered and which failed before it. Several keys of one backend rotate
+  (least recently used first; an `ollama-cloud` backend uses every usable `ollama-cloud` key).
+- **Health per key, kept in the store** (`web_backend_state`, so every process sees it): a 429,
+  5xx, timeout, or dropped connection cools the key for the wait the backend named
+  (`retry-after`), else 30 s doubling with consecutive failures up to 15 minutes; 401/403 marks it
+  invalid; 402 or a spend message marks it out of credits, rechecked after 6 hours. A success
+  clears it. A new secret (under the same env var or vault entry), re-enabling the key (panel,
+  `keys enable`), or removing it clears the mark. A backend is "cooling", "invalid", or "out of
+  credits" when none of its keys can be tried; when nothing in the pool can serve, the tool error
+  lists each backend and when it is back.
+- **Caps (optional).** `web.search.limits.<backend>: { per_day, per_month }` caps attempts on a
+  backend per UTC day and month, counted from SwitchYard's own record (for ollama, page fetches
+  count too). A capped backend is skipped until its window resets. SwitchYard has no built-in
+  allowance numbers: set your plan's.
+- **Fetch chain.** `web.fetch.backends` (default `[builtin, ollama]`): SwitchYard's own fetch
+  first (free), then Ollama's `web_fetch` when the built-in fetch fails (an HTTP error, a
+  timeout, too many redirects) or refuses the content (not a text page). A URL the SSRF guard
+  refuses is never sent to any backend.
+- **Budgets (hard, in code).** The first attempt of every web tool call is recorded in
+  `web_requests` in one write transaction that checks `web.max_requests_per_task` (default 12) and
+  `web.max_requests_per_day` (default 300 per UTC day, install-wide, across processes). Both count
+  tool calls (a call that moved on to a second backend counts once). Past either, the tool returns
+  an error telling the agent to continue with what it has; the refused call is not sent and not
+  recorded. Paid search plans are capped only by these limits and the per-backend caps, not by
+  `paid.budgets`.
+- **What is recorded.** Each attempt is a row in `web_requests` (backend, key ref, outcome, error
+  kind, results or bytes); each call is one `web_request` event on the task with its attempts,
+  and a tool call in the session log. Task usage carries `webRequests` (calls); the task page
+  lists every attempt and marks the one that answered; the Provider keys page shows each backend's
+  state and its requests today and this month; the session timeline marks web tools.
+- **Untrusted content.** Results and pages come back only as tool results, wrapped in a
+  `<web_content ... trust="untrusted">` block that says it is data, not instructions; a page
+  cannot close that block early. Nothing from the web goes into a system prompt. Each search
+  and each page is stored as an artifact the agent can cite as evidence; a page longer than
+  `web.page_excerpt_chars` (10,000) is returned as an excerpt plus that artifact's ref.
+- **SSRF protection.** Only `http` and `https`; URLs with credentials, local host names
+  (`localhost`, `*.local`, `*.internal`, metadata names), and hosts that are or resolve to
+  loopback, private (10/8, 172.16/12, 192.168/16), carrier-grade NAT, link-local (including
+  169.254.169.254), unique-local IPv6, multicast, or documentation addresses are refused. The
+  built-in fetch checks the address again at connection time (so DNS rebinding cannot slip
+  through) and on every redirect (at most `web.fetch.max_redirects`, 5). Timeout
+  `web.fetch.timeout_seconds` (15), body cap `web.fetch.max_bytes` (2 MB after decompression);
+  only text content types are read, HTML is reduced to text. A SearXNG instance you configure
+  may be local: it is your own server.
+- **Keys.** Search keys live in the encrypted vault under the service id and never appear among
+  model credentials, routing, or `paid` spend; error messages are masked so a key never reaches
+  a log, an event, or the model.
+- **Not in the MCP server.** Claude Code, Codex, and ChatGPT have their own web search; the MCP
+  tools are unchanged.
+
 ## Projects: fairness and limits
 
 One worker serves every project of an install. It takes turns between projects; the global caps

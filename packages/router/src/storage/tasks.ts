@@ -732,6 +732,7 @@ export function syntheticResult(
       uncachedInputTokens: null,
       reportedCostUsd: null,
       estimatedCostUsd: null,
+      webRequests: 0,
     },
     servedEndpoints: [],
     classification: null,

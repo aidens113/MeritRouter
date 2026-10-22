@@ -232,3 +232,5 @@ export { REDUNDANCY_STARTED, REDUNDANCY_SKIPPED, REDUNDANCY_SETTLED, SUPERSEDED,
 export { WATCHDOG_CHECK_RUNNING_TOOLS, WATCHDOG_EXEMPT_TOOLS, WATCHDOG_MARGIN_MS, watchdogVerdict, type WatchdogVerdict, type SessionProgress } from "./core/watchdog.js";
 export { commitsMatching, commitsOfTasks, type CommitInfo } from "./attribution/index.js";
 export { markPanelStopped, panelStopFile, turnPanelOff } from "./operations/panel.js";
+export * from "./web/index.js";
+export { webTools } from "./harness/web-tools.js";

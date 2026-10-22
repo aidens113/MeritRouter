@@ -2,6 +2,7 @@ import { z } from "zod";
 import { TAG_GROUPS } from "../scoring/rulebook.js";
 import { BillingClassSchema } from "../providers/vault.js";
 import { BUILTIN_PROVIDER_IDS } from "../providers/registry.js";
+import { SEARCH_SERVICE_IDS, WEB_FETCH_BACKENDS, WEB_SEARCH_BACKEND_SETTINGS, WEB_SEARCH_BACKENDS, WEB_SEARCH_STRATEGIES } from "../web/services.js";
 
 export const PROFILE_NAMES = ["summarize", "inspect", "analyze", "implement", "review", "supervise"] as const;
 export const ProfileNameSchema = z.enum(PROFILE_NAMES);
@@ -241,6 +242,10 @@ export const ProvidersSectionSchema = z.record(z.string(), z.unknown()).transfor
     if (id === "request_timeout_seconds") continue;
     if (!PROVIDER_ID.test(id)) {
       ctx.addIssue({ code: "custom", message: `provider id must match ${PROVIDER_ID}`, path: [id] });
+      continue;
+    }
+    if ((SEARCH_SERVICE_IDS as readonly string[]).includes(id)) {
+      ctx.addIssue({ code: "custom", message: `${id} is a web search service, not a model provider: put its key under web.search.${id} (api_key_env), or add it with switchyard keys add ${id}`, path: [id] });
       continue;
     }
     const parsed = ProviderEntrySchema.safeParse(value ?? {});
@@ -602,6 +607,89 @@ export const CodingConfigSchema = z
   .strict();
 export type CodingConfig = z.infer<typeof CodingConfigSchema>;
 
+/** A search service's key in config (`web.search.<service>`); keys can also live in the vault. */
+const SearchServiceConfigSchema = z
+  .object({
+    api_key_env: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).optional(),
+    /** A literal key puts a secret in the file; prefer api_key_env or the vault. */
+    api_key: z.string().min(1).optional(),
+    /** Overrides the service's API root (a proxy). */
+    base_url: z.string().url().optional(),
+  })
+  .strict()
+  .refine((s) => !(s.api_key_env !== undefined && s.api_key !== undefined), { message: "set at most one of api_key_env or api_key" });
+
+/** Default roles that get web_search and web_fetch (summarize tasks never have tools). */
+export const DEFAULT_WEB_ROLES: RoleName[] = ["supervisor", "analyst", "reviewer", "implementer", "inspector"];
+
+export const WebConfigSchema = z
+  .object({
+    /** Master switch for agents' web_search and web_fetch. */
+    enabled: z.boolean().default(true),
+    search: z
+      .object({
+        /**
+         * The search backend pool, in order. `auto` stands for every backend not listed
+         * elsewhere, in the order ollama, tavily, brave, exa, searxng. Backends without a key
+         * (or SearXNG without base_url) are skipped. Empty: no web search.
+         */
+        backends: z
+          .array(z.enum(WEB_SEARCH_BACKEND_SETTINGS))
+          .default(["auto"])
+          .refine((l) => new Set(l).size === l.length, { message: "list each backend once" }),
+        /** spread: start at the least recently used healthy backend (free allowances add up); fallback: start at the first. */
+        strategy: z.enum(WEB_SEARCH_STRATEGIES).default("spread"),
+        /**
+         * Optional caps per backend, counted from the web request record (searches and, for
+         * ollama, fetches). A capped backend is skipped until its UTC day or month resets. No
+         * built-in numbers: providers' allowances change, set your own.
+         */
+        limits: z
+          .partialRecord(
+            z.enum(WEB_SEARCH_BACKENDS),
+            z.object({ per_day: z.number().int().positive().optional(), per_month: z.number().int().positive().optional() }).strict(),
+          )
+          .default({}),
+        tavily: SearchServiceConfigSchema.optional(),
+        brave: SearchServiceConfigSchema.optional(),
+        exa: SearchServiceConfigSchema.optional(),
+        /** A SearXNG instance (self-hosted, no key); its settings.yml must enable the json format. */
+        searxng: z.object({ base_url: z.string().url().optional() }).strict().optional(),
+      })
+      .strict()
+      .prefault({}),
+    fetch: z
+      .object({
+        /**
+         * The fetch chain, in order: builtin (SwitchYard's own SSRF-guarded fetch, free) and
+         * ollama (Ollama's web_fetch, with an ollama-cloud key). A URL the SSRF guard refuses is
+         * never sent to any backend.
+         */
+        backends: z
+          .array(z.enum(WEB_FETCH_BACKENDS))
+          .default(["builtin", "ollama"])
+          .refine((l) => new Set(l).size === l.length, { message: "list each backend once" }),
+        timeout_seconds: z.number().int().min(1).max(120).default(15),
+        /** Most bytes of a page body read (after decompression). */
+        max_bytes: z.number().int().min(10_000).max(20_000_000).default(2_000_000),
+        max_redirects: z.number().int().min(0).max(10).default(5),
+      })
+      .strict()
+      .prefault({}),
+    /** Roles given web_search and web_fetch. */
+    roles: z.array(RoleNameSchema).default(DEFAULT_WEB_ROLES),
+    /** Web requests (searches and fetches) one task may make. */
+    max_requests_per_task: z.number().int().min(0).default(12),
+    /** Web requests the whole install may make per UTC day. */
+    max_requests_per_day: z.number().int().min(0).default(300),
+    /** Most results one search returns (each backend allows at least 10). */
+    max_results: z.number().int().min(1).max(10).default(5),
+    /** Characters of a fetched page returned inline; a longer page returns an excerpt and its artifact ref. */
+    page_excerpt_chars: z.number().int().min(1000).max(14_000).default(10_000),
+  })
+  .strict();
+export type WebConfig = z.infer<typeof WebConfigSchema>;
+
 export const ConfigSchema = z
   .object({
     version: z.literal(1),
@@ -794,6 +882,8 @@ export const ConfigSchema = z
     coding: CodingConfigSchema.prefault({}),
     /** Importance and verification policy: what evidence a result needs before it is accepted. */
     verification: VerificationConfigSchema.prefault({}),
+    /** Agents' web search and page fetch: backends, roles, budgets. */
+    web: WebConfigSchema.prefault({}),
     panel: z
       .object({
         port: z.number().int().positive().default(4477),

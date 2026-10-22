@@ -2,6 +2,7 @@ import type { ProvidersConfig } from "../config/schema.js";
 import type { RequestCredential } from "./client.js";
 import type { ResolvedProvider } from "./registry.js";
 import type { BillingClass, KeyLimits, KeyVault } from "./vault.js";
+import { isSearchService } from "../web/services.js";
 
 /**
  * One provider key as routing sees it, whatever its source: the encrypted vault (keys added in
@@ -95,7 +96,8 @@ export class ProviderCredentials {
   private vaultKeys(providerId?: string): ProviderCredential[] {
     if (!this.vault) return [];
     const now = this.now();
-    return this.vault.list(providerId).map((k) => ({
+    // Search-service keys (Tavily, Brave, Exa) share the vault but are never model credentials.
+    return this.vault.list(providerId).filter((k) => !isSearchService(k.provider)).map((k) => ({
       ref: `vault:${k.id}`,
       source: "vault" as const,
       provider: k.provider,

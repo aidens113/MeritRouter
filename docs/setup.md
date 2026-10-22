@@ -294,6 +294,22 @@ project's at `/p/<slug>/settings`.
   cache; without it the price comes from `pricing_url` (`input_cache_read`), or cached input is
   priced as ordinary input.
 
+- Web search for agents (`web`): supervisors and workers get `web_search` and `web_fetch` as
+  soon as any search backend has a key. Every configured backend serves, the way model providers
+  do: an `ollama-cloud` provider key (Ollama's web search and web fetch), Tavily, Brave, and Exa
+  keys, and a SearXNG instance (`web.search.searxng.base_url`; its `settings.yml` must allow the
+  `json` format). Add search keys in the panel (Provider keys, "Web search backends") or with
+  `SWITCHYARD_NEW_KEY=... switchyard keys add tavily` (also `brave`, `exa`; several keys per
+  service rotate); in the config use `web.search.tavily.api_key_env`. Search keys are never used
+  for chat. `web.search.backends` (default `[auto]`: ollama, tavily, brave, exa, searxng) is the
+  pool's order; `web.search.strategy: spread` (default) spreads calls across backends so their
+  free allowances add up, `fallback` uses the first until it fails. Optional caps per backend:
+  `web.search.limits.tavily: { per_day: 30, per_month: 1000 }` (your plan's numbers; there are
+  no built-in ones). `web.fetch.backends` (default `[builtin, ollama]`) is the page fetch chain.
+  `web.roles`, `web.max_requests_per_task` (12) and `web.max_requests_per_day` (300,
+  install-wide) limit use; `web.enabled: false` turns it all off. `doctor` shows each backend's
+  state. See [operations.md](operations.md#web-search-and-fetch) for health, caps, and safety.
+
 Then:
 
 ```bash

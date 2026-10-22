@@ -1,4 +1,5 @@
 import type { ResolvedConfig } from "../config/load.js";
+import type { WebAccess } from "../web/access.js";
 import { TIER_NAMES, type ProfileMode, type TierName } from "../config/schema.js";
 import type { Db } from "../storage/db.js";
 import type { ArtifactStore } from "../storage/artifacts.js";
@@ -79,6 +80,8 @@ export interface ExecutorDeps {
    * Absent: every task runs under the global `cfg`, `brain`, and `access`.
    */
   project?: (task: StoredTask) => ProjectDeps;
+  /** Agents' web search and fetch, shared by every project (absent: no web tools). */
+  web?: WebAccess | null;
 }
 
 /** What differs per project in the executor's dependencies. */
@@ -184,6 +187,7 @@ export class Executor {
       services: this.d.services,
       session,
       resume,
+      web: this.d.web ?? null,
     };
   }
 

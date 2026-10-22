@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type { Switchyard } from "../core/service.js";
 import { keyScanText, scanAfterKeyChange } from "../admin/provider-keys.js";
+import { addSearchKey, searchKeys } from "../admin/web-search.js";
+import { isSearchService } from "../web/services.js";
 
 import { SwitchyardError } from "../core/errors.js";
 import type { ProviderErrorKind } from "../providers/errors.js";
@@ -258,8 +260,31 @@ const USAGE = "usage: keys list [provider] | add <provider> --billing <class> [o
 export async function keysCommand(sy: Switchyard, args: string[], flags: KeysFlags, json: boolean): Promise<number> {
   const sub = args[0] ?? "list";
   if (sub === "list") {
-    const rows = keyRows(sy, args[1]);
+    // Search-service keys (Tavily, Brave, Exa) are listed after the model provider keys.
+    const only = args[1] !== undefined && isSearchService(args[1]) ? args[1] : undefined;
+    const search: KeyRow[] = (args[1] === undefined || only ? searchKeys(sy, only) : []).map((k) => ({
+      ref: k.ref,
+      provider: k.service,
+      label: k.label,
+      source: k.source,
+      billingClass: "free_tier",
+      enabled: k.enabled,
+      last4: k.last4,
+      status: k.unusableReason ? "unusable" : "available",
+      until: null,
+      detail: k.unusableReason ? k.unusableReason : "web search service",
+      vaultKeyId: k.id,
+      apiKeyEnv: k.source === "config" && k.id === null && k.ref.includes(":env:") ? k.label : null,
+    }));
+    const rows = [...(only ? [] : keyRows(sy, args[1])), ...search];
     out(json ? rows : table(rows.map((r) => ({ ref: r.ref, provider: r.provider, label: r.label, billing: r.billingClass, key: r.last4 ? `...${r.last4}` : "", status: statusText(r), detail: r.detail ?? "" }))), json);
+    return 0;
+  }
+  if (sub === "add" && args[1] !== undefined && isSearchService(args[1])) {
+    // A web search service: no billing class, no model listing; used by web_search only.
+    const secret = await newSecret(args[1]);
+    const k = addSearchKey(sy, { service: args[1], secret, label: flags.label ?? "" });
+    out(json ? { added: k } : `added web search key ${k.ref} for ${args[1]} (...${k.last4}); it joins the web search pool when web.search.backends includes auto or ${args[1]}`, json);
     return 0;
   }
   if (sub === "add") {
@@ -299,7 +324,14 @@ export async function keysCommand(sy: Switchyard, args: string[], flags: KeysFla
     }
     sy.vault.update(id, { enabled: sub === "enable" });
     // Re-enabling is the user saying the key is fixed: clear any invalid or cooling state.
-    if (sub === "enable") sy.providers.keys.clear(`vault:${id}`);
+    if (sub === "enable") {
+      sy.providers.keys.clear(`vault:${id}`);
+      const k = sy.vault.get(id);
+      if (k) {
+        sy.web.clearProviderKey(`vault:${id}`);
+        sy.web.clearSearchKey(k.provider, id);
+      }
+    }
     out(json ? { ref: `vault:${id}`, enabled: sub === "enable" } : `key vault:${id} ${sub}d`, json);
     return 0;
   }
