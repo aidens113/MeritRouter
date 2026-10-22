@@ -13,8 +13,9 @@ Related: [roadmap completion](roadmap-completion.md), [Labs](labs.md), [sessions
 Request-only release663626d is now pushed to dev/main after783/783 (88files,943.08s),
 recursive typecheck/build and production browser acceptance. Authorized4477 update completed:
 accepted663626d rebuilt at root, livePID24040 and populated recorded exchange verified; config unchanged.
-Local async task lifecycle19268e7 is merged (acceptance blocked by idle recovery retention cap
-until recovery retention is fixed; legitimate T4 stored-row validation is corrected locally): supervisor independently50/50 (16.67s), plus
+Local async task lifecycle19268e7 is merged, with legitimate T4 stored-row fix48c1da9
+(unchanged paid/queue18/18) and idle recovery retention943a74a (supervisor10/10,67.41s,
+two-day cadence301 retained receipts). Prior lifecycle independently50/50 (16.67s), plus
 root scoped receipt purge/tombstone + task-Lab deletion10/10 (25.68s). Public lease DTO exports
 and authored operations guidance are added; complete combined acceptance/package remains pending.
 Compose known-resource proofcff80fa independently80/80 (862ms) and is merged locally.
@@ -41,9 +42,9 @@ is [reviewed](distributed-and-lab-extensions/reports/hydrated-browser-plan.md): 
 do not prove before-contact denial of every transport. Pipe/capability H1 independently passed26/26 (1.12s) and is merged locally; no accepted network isolation adapter exists on this Windows host, so hydrated
 runtime cannot yet be enabled. No OS services/firewall/Docker activation authorized. Read-only follow-up found a usable Ubuntu
 WSL2 host: root unshare --net true succeeded; Linux Node/Chrome fixture tools remain absent.
-Native Linux isolation investigation is active without host configuration changes.
+Native Linux isolation helper prerequisite is active without host configuration changes; ordinary-user/runtime acceptance remains open.
 
-Next R2 request-admission-protocol is ready for serial source dispatch after the accepted
+Next R2 request-admission-protocol is implemented and under final review after the accepted
 local lifecycle merge. It carries strict LeaseRef into Gate/batch/classifier, durable request
 reserve/intent/settle receipts and conservative local transport holds. Its worker owns the next
 appended migration exclusively; root owns project purge/exports and combined acceptance.
