@@ -536,7 +536,9 @@ changes rarely.
   Routing ranks open providers last and the gate skips them; when every candidate is open the
   task waits for capacity instead of failing. `insights.providerHealth` shows the state.
 - A model whose provider reports serving a different model than the one requested is quarantined
-  (the response is discarded). Nothing lifts the quarantine yet; see Known limitations.
+  (the response is discarded). In the model's Controls tab, record a reason to acknowledge that
+  violation and permit retries. The original request evidence remains; any later mismatch
+  quarantines the endpoint again. This acknowledgement does not change key-plan refusals.
 - Provider keys: see [Provider keys](#provider-keys) for cooling, invalid, and out-of-credits keys.
 - Tasks waiting for capacity (`waiting_for_capacity`) retry automatically until their deadline.
 
@@ -683,8 +685,8 @@ or workers.
   header formats (OpenRouter reset, SambaNova `-day`, Anthropic periods), OpenAI
   `insufficient_quota` as out of credits, Cloudflare and Cohere list pagination, Anthropic model
   `capabilities`, and the shape of OpenRouter's `/api/v1/key`.
-- A served-model quarantine never lifts yet: a release rule (a later discovery, or a panel
-  action) is still to come.
+- Quarantine acknowledgements permit retries without independently proving the provider is
+  fixed; the next response still passes served-model validation.
 - OpenCode's JSON event format is undocumented; its output is stored as evidence, not parsed.
 - Paid routes have not been exercised against real providers yet; prices are yours to keep
   current (OpenRouter prices are fetched when `pricing_url` is set).

@@ -56,6 +56,9 @@ describe("provider keys view", () => {
     expect(v.providers.find((p) => p.id === "localai")).toMatchObject({ kind: "custom", noKey: true, inConfig: true });
     expect(v.providers.find((p) => p.id === "acmepaid")).toMatchObject({ kind: "paid", inPaid: true, discoverable: false });
     expect(v.providers.find((p) => p.id === "cloudflare")).toMatchObject({ kind: "builtin", needsAccountId: true, keys: [], health: null });
+    expect(v.providers.find((p) => p.id === "ollama")).toMatchObject({ local: true, keyPolicy: "none", defaultBaseUrl: "http://127.0.0.1:11434/v1", baseUrlEnv: "OLLAMA_HOST" });
+    expect(v.providers.find((p) => p.id === "llamacpp")).toMatchObject({ local: true, keyPolicy: "optional", defaultBaseUrl: null });
+    expect(v.providers.find((p) => p.id === "groq")).toMatchObject({ local: false, keyPolicy: "required" });
 
     const or = v.providers.find((p) => p.id === "openrouter")!.keys[0]!;
     expect(or).toMatchObject({ source: "config", editable: false, origin: "providers.openrouter.keys[0]", secretSource: "environment variable SY_TEST_OPENROUTER_KEY", status: "unusable" });

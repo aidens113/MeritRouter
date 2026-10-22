@@ -252,7 +252,9 @@ const SOURCES: Record<string, Source & { topic: LiveTopic }> = {
       const scans = db.prepare("SELECT MAX(id) AS m, MAX(finished_at) AS f FROM scans").get() as { m: number | null; f: number | null };
       const eo = db.prepare("SELECT COUNT(*) AS n, MAX(updated_at) AS m FROM endpoint_overrides").get() as { n: number; m: number | null };
       const ro = db.prepare("SELECT COUNT(*) AS n, MAX(id) AS m, SUM(enabled) AS e FROM routing_overrides").get() as { n: number; m: number | null; e: number | null };
-      return [eps.n, num(eps.m), num(scans.m), num(scans.f), eo.n, num(eo.m), ro.n, num(ro.m), num(ro.e)];
+      const quarantine = db.prepare("SELECT id, endpoint_id, policy_violation FROM model_requests WHERE policy_violation IS NOT NULL ORDER BY rowid").all();
+      const acknowledgements = db.prepare("SELECT key, value FROM meta WHERE key LIKE 'quarantine_ack:%' ORDER BY key").all();
+      return [eps.n, num(eps.m), num(scans.m), num(scans.f), eo.n, num(eo.m), ro.n, num(ro.m), num(ro.e), digest([quarantine, acknowledgements])];
     },
     topics: () => ["models"],
   },
@@ -357,7 +359,7 @@ const MUTABLE_TABLES: Record<string, string[]> = {
 };
 const GLOBAL_MUTABLE_TABLES: Record<string, string[]> = {
   keys: ["provider_key_state", "paid_keys", "paid_spend", "web_backend_state"],
-  models: ["endpoints", "endpoint_overrides", "routing_overrides", "scans"],
+  models: ["endpoints", "endpoint_overrides", "routing_overrides", "scans", "model_requests", "meta"],
   projects: ["projects"], brainAccess: ["brain_files"],
 };
 const digest = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex");

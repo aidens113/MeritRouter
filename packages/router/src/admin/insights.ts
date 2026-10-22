@@ -1,4 +1,5 @@
 import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+export { acknowledgeModelQuarantine } from "./quarantine.js";
 import path from "node:path";
 import YAML from "yaml";
 import { MODALITIES, PROFILE_NAMES, TIER_NAMES, type Importance, type Modality, type ProfileName, type TierName } from "../config/schema.js";

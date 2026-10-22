@@ -14,6 +14,7 @@ import { requestPaid, stickyOrder } from "../routing/select.js";
 import type { ProviderClient } from "../providers/client.js";
 import { probeClient, requestDirect, type DirectRuntime } from "./direct.js";
 import { NOT_IN_PLAN_RECHECK_MS } from "../providers/keys.js";
+import { quarantineReason } from "./quarantine.js";
 
 export type { DirectRuntime } from "./direct.js";
 
@@ -240,13 +241,10 @@ export class Gate {
 
   /**
    * A served-model violation quarantines the endpoint: the provider answered with a different
-   * model than requested. It stays blocked (nothing lifts the quarantine yet, a known gap).
+   * model than requested. An explicit acknowledgement permits a retry, never a later violation.
    */
   quarantined(ep: ModelEndpoint): string | null {
-    const row = this.db
-      .prepare("SELECT policy_violation FROM model_requests WHERE endpoint_id = ? AND policy_violation IS NOT NULL ORDER BY reserved_at DESC LIMIT 1")
-      .get(ep.id) as { policy_violation: string } | undefined;
-    return row ? `quarantined after a policy violation: ${row.policy_violation}` : null;
+    return quarantineReason(this.db, ep.id);
   }
 
   /**

@@ -273,6 +273,11 @@ export function planRoute(
     const pb = forced ? 0 : preferIds.indexOf(b.ep.id);
     if ((pa >= 0) !== (pb >= 0)) return pa >= 0 ? -1 : 1;
     if (pa >= 0 && pb >= 0 && pa !== pb) return pa - pb;
+    // Availability precedes policy preference: preferring paid must not wait on a cooling
+    // paid provider while a healthy free provider can serve the task immediately.
+    const ca = a.ex.circuitOpenUntil !== null ? 2 : a.ex.coolingDownUntil !== null ? 1 : 0;
+    const cb = b.ex.circuitOpenUntil !== null ? 2 : b.ex.coolingDownUntil !== null ? 1 : 0;
+    if (ca !== cb) return ca - cb;
     const ra = paidRank(a.ep);
     const rb = paidRank(b.ep);
     if (ra !== rb) return ra - rb;
@@ -282,9 +287,6 @@ export function planRoute(
     const ia = independence(a);
     const ib = independence(b);
     if (ia !== ib) return ia - ib;
-    const ca = a.ex.circuitOpenUntil !== null ? 2 : a.ex.coolingDownUntil !== null ? 1 : 0;
-    const cb = b.ex.circuitOpenUntil !== null ? 2 : b.ex.coolingDownUntil !== null ? 1 : 0;
-    if (ca !== cb) return ca - cb;
     const sa = a.ep.totalParametersB ?? (a.ep.ignoreSizeFloor ? 1e6 : 0);
     const sb = b.ep.totalParametersB ?? (b.ep.ignoreSizeFloor ? 1e6 : 0);
     if (prefer === "smallest_sufficient") {

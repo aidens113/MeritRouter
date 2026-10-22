@@ -143,7 +143,7 @@ export async function requestDirect(
         exclude: tried,
         model: route.model,
         modelLimits: ep.rateLimits ?? null,
-        freeQuota: provider.keyInfoUrl !== null && /:free$/.test(route.model),
+        freeQuota: provider.keyInfoShape === "openrouter_key" && /:free$/.test(route.model),
         limits: rt.limits,
       });
       if (!sel.credential) {

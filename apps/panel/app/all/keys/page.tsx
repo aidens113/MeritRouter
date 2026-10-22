@@ -62,7 +62,7 @@ export default async function KeysPage({ searchParams }: { searchParams: Promise
   const shown = view.providers.filter((p) => p.keys.length || p.inConfig || p.inPaid);
   const options: ProviderOption[] = view.providers
     .filter((p) => p.kind !== "missing")
-    .map((p) => ({ id: p.id, displayName: p.displayName, kind: p.kind, needsAccountId: p.needsAccountId, noKey: p.noKey, accountId: p.accountId }))
+    .map((p) => ({ id: p.id, displayName: p.displayName, kind: p.kind, needsAccountId: p.needsAccountId, noKey: p.noKey, accountId: p.accountId, local: p.local, keyPolicy: p.keyPolicy, defaultBaseUrl: p.defaultBaseUrl, baseUrlEnv: p.baseUrlEnv }))
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
   const windows: Array<{ label: string; spent: number; budget: number | null }> = [
     { label: "24 hours", spent: paid.day, budget: paid.budgets.perDayUsd },
@@ -74,6 +74,7 @@ export default async function KeysPage({ searchParams }: { searchParams: Promise
   return (
     <div className="space-y-6">
       <PageHeader
+        live={["keys", "models", "web", "requests"]}
         title="Provider keys"
         description="Keys SwitchYard uses to call each provider directly. Several keys per provider are rotated; a key that is rate limited cools down while the next one serves. Secrets are never shown again after you add them."
         actions={

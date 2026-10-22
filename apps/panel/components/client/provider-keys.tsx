@@ -18,22 +18,16 @@ export interface ProviderOption {
   kind: insights.ProviderKind;
   needsAccountId: boolean;
   noKey: boolean;
+  local: boolean;
+  keyPolicy: "required" | "optional" | "none";
+  defaultBaseUrl: string | null;
+  baseUrlEnv: string | null;
   accountId: string | null;
 }
 
 const CUSTOM = "__custom";
 
-/**
- * Built-in local servers (mirrors the registry's `local` providers in
- * packages/router/src/providers/registry.ts): set up by writing `providers.<id>` to the config
- * with an optional base URL; they take no key (Ollama never; LM Studio and llama.cpp only when
- * their own authentication is turned on).
- */
-const LOCAL_SERVERS: Record<string, { defaultUrl: string | null; keys: "none" | "optional"; hint: string }> = {
-  ollama: { defaultUrl: "http://127.0.0.1:11434/v1", keys: "none", hint: "Empty uses OLLAMA_HOST if set, else 127.0.0.1:11434." },
-  lmstudio: { defaultUrl: "http://localhost:1234/v1", keys: "optional", hint: "Start the server in LM Studio's Developer tab. Empty uses localhost:1234." },
-  llamacpp: { defaultUrl: null, keys: "optional", hint: "Required: llama-server's port differs between releases (9931 or 8080)." },
-};
+interface LocalServerOption { defaultUrl: string | null; keys: ProviderOption["keyPolicy"]; hint: string }
 const LIMITS = ["rpm", "rpd", "tpm", "tpd"] as const;
 const LIMIT_LABEL: Record<(typeof LIMITS)[number], string> = { rpm: "Requests / minute", rpd: "Requests / day", tpm: "Tokens / minute", tpd: "Tokens / day" };
 
@@ -129,10 +123,10 @@ export function AddKeyForm({ providers, billingClasses }: { providers: ProviderO
   const [testing, setTesting] = useState(false);
   const { run, busy, error, errors, message, setError, setMessage } = useAction();
   const p = providers.find((x) => x.id === provider) ?? null;
-  const local = p && p.kind === "builtin" ? (LOCAL_SERVERS[p.id] ?? null) : null;
-  const takesKeys = providers.filter((x) => !x.noKey && !(x.kind === "builtin" && LOCAL_SERVERS[x.id]));
+  const local: LocalServerOption | null = p?.local ? { defaultUrl: p.defaultBaseUrl, keys: p.keyPolicy, hint: p.baseUrlEnv ? `Empty uses ${p.baseUrlEnv} when set, then the registry default.` : p.defaultBaseUrl ? "Empty uses the registry default address." : "Enter the address where your server is listening." } : null;
+  const takesKeys = providers.filter((x) => !x.noKey && !x.local);
   const groups: Array<[string, ProviderOption[]]> = [
-    ["Local servers (no key)", providers.filter((x) => x.kind === "builtin" && LOCAL_SERVERS[x.id])],
+    ["Local servers", providers.filter((x) => x.local)],
     ["Built-in providers", takesKeys.filter((x) => x.kind === "builtin")],
     ["Custom providers (from the config)", takesKeys.filter((x) => x.kind === "custom")],
     ["Paid providers (Settings)", takesKeys.filter((x) => x.kind === "paid")],
@@ -262,7 +256,7 @@ export function AddKeyForm({ providers, billingClasses }: { providers: ProviderO
  * given) through the config API, and optionally store a token for a server whose authentication
  * is turned on. No key is needed otherwise; models are found with Find models on its card.
  */
-function LocalServerForm({ provider, local, select }: { provider: ProviderOption; local: (typeof LOCAL_SERVERS)[string]; select: ReactNode }) {
+function LocalServerForm({ provider, local, select }: { provider: ProviderOption; local: LocalServerOption; select: ReactNode }) {
   const [baseUrl, setBaseUrl] = useState("");
   const [token, setToken] = useState("");
   const { run, busy, error, errors, message, setError, setMessage } = useAction();

@@ -4,6 +4,7 @@ import path from "node:path";
 import type { Switchyard } from "../src/core/service.js";
 import { toAnthropic } from "../src/providers/anthropic.js";
 import { GatewayError } from "../src/core/errors.js";
+import { planRoute } from "../src/routing/select.js";
 import type { ChatResponse } from "../src/gateway/types.js";
 import { baseConfig, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, summarizeTask, type Env, type ScriptedRequest } from "./helpers.js";
 
@@ -61,6 +62,15 @@ describe("vault", () => {
 });
 
 describe("paid routing policy", () => {
+  it("uses a healthy free route before a preferred paid route that is cooling or circuit-open", () => {
+    env = makeEnv({ config: paidCfg() });
+    sy = open(env, new ScriptedClient(() => reply("{}")));
+    sy.vault.add({ provider: "acme", secret: "fake-paid-key" });
+    for (const unavailable of [{ status: "rate_limited", resumeAt: Date.now() + 60_000 }, { status: "healthy", resumeAt: null, circuitOpenUntil: Date.now() + 60_000 }]) {
+      const plan = planRoute(sy.cfg, sy.catalog.endpoints(), [], { profile: "summarize", tier: "T1", inputModalities: ["text"], needsStructuredOutput: false, paidPolicy: "preferred" }, { now: new Date(), qualification: () => null, health: platform => platform === "acme" || platform === "paid:acme" ? unavailable : undefined });
+      expect(plan.candidates.map(c => c.id)).toEqual(["openrouter/vendor/big-a:free", PAID_ID]);
+    }
+  });
   it("paid models wait behind free ones on_free_exhaustion, lead when preferred, and are excluded when never", async () => {
     env = makeEnv({ config: paidCfg() });
     sy = open(env, new ScriptedClient(() => reply("{}")));
