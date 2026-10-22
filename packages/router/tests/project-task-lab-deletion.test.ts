@@ -54,3 +54,12 @@ it("dirty task Lab blocks deletion with config and recovery evidence retained",a
   expect(readFileSync(path.join(f.lab.repositories[0]!.worktree,"value.txt"),"utf8")).toBe("private uncommitted change");
 },60000);
 
+
+it("preview and confirmation refuse an unresolved active task Lab before cleanup",async()=>{
+  const f=await retained(),original=readFileSync(env!.cfg.configPath,"utf8");
+  sy!.db.prepare("UPDATE labs SET state='running' WHERE id=?").run(f.lab.id);
+  expect((await previewProjectDeletion(sy!,"beta")).blockers.join(" ")).toContain("unresolved lab");
+  await expect(deleteProject(sy!,"beta",{confirm:"beta"})).rejects.toThrow("finish owned task-Lab cleanup");
+  expect(readFileSync(env!.cfg.configPath,"utf8")).toBe(original); expect(existsSync(f.lab.root)).toBe(true);
+  sy!.db.prepare("UPDATE labs SET state='stopped' WHERE id=?").run(f.lab.id);
+},60000);
