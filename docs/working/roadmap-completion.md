@@ -233,6 +233,14 @@ passing units reach dev/main. Documentation and source commit together.
 - Outcome: Partial
 - Follow-up: L4 production/browser report pending supervisor repetition; rebuild and full suite with L4/partial-status fix before push. New user request for configurable external supervisor guidance tracked separately.
 
+### 2026-10-22 - Independent panel acceptance and catalog watcher regression
+- Agent: supervisor
+- Changed: restore explicit catalog-version mark while retaining narrow meta invalidation; the earlier global-meta optimization missed catalog.bump-only changes.
+- Validation: independent frozen L4 admin8/8; real production Labs lifecycle/API/browser run passed with18 screenshots, actual hover/focus/Verification assertions, promotion instructions, zero model-request delta; legacy migration production API passed. Owned processes1888/23396/8240/2456/23272/20336 verified absent. Screenshots detail/light, recipe/phone/dark and Team metrics focused inspected.
+- Findings: independent model-navigation initially lacked its required production server (fixture invocation corrected); then timed out on catalog-only title refresh. Root live regression19/19(9.03s) passes after narrow catalog-version repair; full browser repetition pending.
+- Outcome: Partial
+- Follow-up: merge L4, fix API project-slug parity, repeat model browser against final production build, integrated full checks/package. New external supervision feature separately active.
+
 ## Open Questions
 
 - No implementation choice blocks initial work. Documented defaults apply. Real-provider and externally installed-service validation depends on credentials/budget/environment authorization; code completion must not be reported as that evidence.
