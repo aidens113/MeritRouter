@@ -35,14 +35,16 @@ setup start/reuse/stop pass with checkout reads forbidden. Owned fixtures are st
 coherent unit was pushed to dev/main at77914fc (remote heads verified equal). Actual user
 panel4477 and MCP processes were not restarted or used for tests; no deployed-fix claim.
 
-**Continuing:** L5 static-render browser checks are frozen in their isolated tree pending root
-review/repetition/all-heads evidence reuse integration. Hydrated JS, ephemeral task Labs and
-Compose remain open. R2 inventory found81 SQLite consumers; first async Gate accounting slice
-is receiving post-reservation lease/deadline revalidation. PostgreSQL/multi-host is not enabled.
+**Continuing:** static-render browser checks, all-heads evidence reuse and first async Gate
+accounting boundary are merged locally after independent8 browser/17 ledger tests. Hydrated
+JS, ephemeral task Labs and Compose remain open. R2 inventory found81 SQLite consumers;
+PostgreSQL/multi-host is not enabled. Ephemeral integration plan records attempt identity,
+exact commit/tree evidence and durable auxiliary-process recovery prerequisites.
 User additionally clarified MCP final-supervisor dispatch must default OFF, while bounded
-sub-supervisors remain available. That setting/guard/UI work is active under
+sub-supervisors remain available. That setting/guard/UI work is merged locally under
 [external-supervisor-guidance](external-supervisor-guidance.md); obsolete guidance-enable
-toggle semantics were rejected. No whole-roadmap completion claim.
+toggle semantics were rejected. Independent13 policy tests and actual production UI/MCP
+acceptance pass; final combined checks/build/browser/package remain. No whole-roadmap completion claim.
 
 ## Execution phases
 
@@ -256,6 +258,13 @@ passing units reach dev/main. Documentation and source commit together.
 - Validation: supervisor browser8/8(131.52s) actual Chrome; ledger17/17(6.08s) including post-reservation persisted lease/cancel/deadline refusal; final-check reuse + scripted Lab2/2(13.19s). User-corrected final-supervisor policy independently13/13(9.62s) plus prior actual UI/MCP browser run and inspected desktop/phone screenshots; policy not integrated yet.
 - Outcome: Partial for next extension/policy unit
 - Follow-up: integrate policy and final commit-time revocation guard, full checks/build/browser/package. Static checks do not close JS/hydration, ephemeral/Compose or PostgreSQL. External user requested default final dispatch OFF with sub-supervisors allowed.
+
+### 2026-10-22 - Corrected policy integrated; next combined checks start
+- Agent: supervisor
+- Changed: merged corrected policy5b4725a with ledger/static-browser units; optional supervisionScope persists bounded/project ownership, current permission rechecked before insertion, scopes/resumes validated. Authored roles/setup/operations updated. Public ledger/browser schemas and whole-environment evidence reuse exposed.
+- Validation: independently policy13/13 plus corrected actual production browser/MCP save/reload and inspected4captures; scripted Lab + evidence2/2. First combined router build caught nullable unavailable heads in reuse-helper type; corrected to fail closed on null, added regression and router build passes.
+- Outcome: Partial
+- Follow-up: freeze for combined recursive typecheck/build and full suite; repeat production policy/Labs/model browser and fresh package before push. Accepted base remains dev/main77914fc.
 
 ## Open Questions
 

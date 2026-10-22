@@ -13,12 +13,12 @@ import { LabNameSchema, substitute } from "./recipe.js";
 export const LabCheckResultSchema = z.object({ id: z.string(), name: z.string(), repository: z.string(), revision: z.string().regex(/^[a-f0-9]{40,64}$/), exitCode: z.number().int().nullable(), stdout: z.string(), stderr: z.string(), killed: z.string().nullable(), durationMs: z.number(), createdAt: z.number(), browser: BrowserEvidenceSchema.optional() });
 export type LabCheckResult = z.infer<typeof LabCheckResultSchema>;
 /** Browser evidence covers the whole environment, including repositories other than its service. */
-export function labCheckMatchesHeads(check: Pick<LabCheckResult, "repository" | "revision" | "browser">, heads: Record<string, string>): boolean {
+export function labCheckMatchesHeads(check: Pick<LabCheckResult, "repository" | "revision" | "browser">, heads: Record<string, string | null>): boolean {
   if (check.revision !== heads[check.repository]) return false;
   if (!check.browser) return true;
   const checked = check.browser.heads;
   return Object.keys(checked).length === Object.keys(heads).length
-    && Object.entries(heads).every(([alias, head]) => checked[alias] === head);
+    && Object.entries(heads).every(([alias, head]) => head !== null && checked[alias] === head);
 }
 export async function runLabCheck(store: LabsStore, lab: LabRecord, name: string, timeoutSeconds: number, signal?: AbortSignal, manager?: LabManager): Promise<LabCheckResult> {
   LabNameSchema.parse(name);
