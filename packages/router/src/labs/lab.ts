@@ -323,9 +323,15 @@ export class LabManager {
   status(project: string, name: string): LabStatus {
     const lab = this.require(project, name);
     const urls: Record<string, string> = {};
+    const values = labValues(lab);
     for (const [service, recipe] of Object.entries(lab.recipe.services)) {
-      if (recipe.ready && "http" in recipe.ready)
-        urls[service] = substitute(recipe.ready.http, labValues(lab));
+      if (recipe.ready && "http" in recipe.ready) {
+        // Creation is persisted before ports/worktrees exist; a failed creation can retain
+        // that partial record for recovery. Report its state without inventing an endpoint.
+        const unresolved = [...recipe.ready.http.matchAll(/\{(port\.[^{}]+|lab\.[^{}]+|repo\.[^{}]+)\}/g)].some(match => values[match[1]!] === undefined);
+        if (unresolved && (lab.state === "creating" || lab.state === "failed")) continue;
+        urls[service] = substitute(recipe.ready.http, values);
+      }
     }
     return { lab, services: this.store.services(lab.id), checks: labChecks(this.store, lab.id), urls, heads: Object.fromEntries(lab.repositories.map(r => [r.alias, worktreeHead(r.worktree)])) };
   }

@@ -226,6 +226,13 @@ passing units reach dev/main. Documentation and source commit together.
 - Outcome: Partial
 - Follow-up: repeat full suite before push; L4 production/browser acceptance active in isolated tree. L5 static-render browser checks and concrete R2 persistence inventory dispatched with written briefs; neither completes its full future phase.
 
+### 2026-10-22 - Frozen integrated checks pass; partial Lab status repaired
+- Agent: supervisor
+- Changed: status omits an endpoint whose declared placeholders are not yet allocated during creating/failed creation; normal states retain strict substitution. This preserves readable recovery evidence instead of throwing while the durable create operation runs.
+- Validation: frozen6a77c4a full suite691/691(77files,393.07s), recursive typecheck and router build pass. Subsequent partial-status regression initially caught a wrongly scoped fixture root (corrected); focused labs-service2/2(4.44s) pass for creating/failed/stopped and normal team binding.
+- Outcome: Partial
+- Follow-up: L4 production/browser report pending supervisor repetition; rebuild and full suite with L4/partial-status fix before push. New user request for configurable external supervisor guidance tracked separately.
+
 ## Open Questions
 
 - No implementation choice blocks initial work. Documented defaults apply. Real-provider and externally installed-service validation depends on credentials/budget/environment authorization; code completion must not be reported as that evidence.
