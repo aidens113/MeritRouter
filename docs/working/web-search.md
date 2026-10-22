@@ -1,7 +1,7 @@
 # Web search and fetch for agents
 
 Status: Active
-Status detail: W1-W2 with the backend pool done and merged 2026-10-21 (live-checked on Ollama); W3 next.
+Status detail: W1-W3 done and merged 2026-10-21; W1-W2 live-checked on Ollama; W3 not called live.
 Created: 2026-10-21
 Last updated: 2026-10-21
 Owner: Senior supervisor agent
@@ -37,7 +37,16 @@ docs.ollama.com answered by the built-in fetch (10055 chars), and `http://169.25
 before any request. Tavily, Brave, Exa, and SearXNG were not called live (no keys); their request
 shapes were checked against their docs.
 
-**Next steps:** W3 (native web search in model calls).
+**W3 done (merged 486752b, 2026-10-21):** native search for OpenRouter (web plugin, priced from
+`pricing.web_search`; `perplexity/*` always on), Anthropic (server tool), OpenAI search models
+(always on). Skipped with reasons in decisions.md: Gemini grounding (not on the OpenAI-compatible
+endpoint), Perplexity as a provider, Groq compound (deprecated). Not verified live: whether
+OpenRouter's reported cost includes the plugin's charge, the plugin's search count, OpenAI's
+search price row ($25/1000 recorded), Anthropic `pause_turn`. Decision kept: with no hint an
+always-on model may serve a task, ranked last (D9).
+
+**Next steps:** live checks when the user adds an OpenRouter or Anthropic key; keys for other
+search backends to exercise the pool live.
 
 **Blockers:** none.
 
@@ -168,6 +177,15 @@ shapes were checked against their docs.
 - Validation: worker: 32 web tests; supervisor: `npx vitest run` `Tests 559 passed (559)`, both
   packages typecheck and build; live: search via ollama, fetch via builtin, metadata URL refused;
   doctor reports the pool healthy.
+- Outcome: Accepted
+
+### 2026-10-21 — W3 merged
+- Agent: worker web-search-w3; supervisor review and merge
+- Changed: see `reports/web-search-w3.md`; merge 486752b.
+- Why: user asked to detect and use models that search the web inside the API call.
+- Validation: worker: 11 native-search tests, demo panel 4593 with screenshots; supervisor: reviewed
+  the gating (`routing/native-search.ts`), `npx vitest run` `Tests 570 passed (570)`, both packages
+  typecheck and build, live routes on the user's install unchanged, panel pages 200.
 - Outcome: Accepted
 
 ---
