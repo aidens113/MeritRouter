@@ -101,6 +101,18 @@ not a reason to stop the independently runnable core work. No service was instal
 
 ## Worker Briefs
 
+### Brief: distributed-admission-plan (brain_completion)
+- Tier: isolated roadmap-process new branch after frozen prune review; bounded read-only design, no implementation.
+- Read: Current State, distributed-storage-inventory.md and task-lease-fence-plan.md reports, current Gate/admission/provider capacity implementations and async ledger contracts as needed.
+- Own only reports/distributed-admission-plan.md; no source/tests/migrations/shared documents/runtime/user data changes.
+- Goal: exact next R2 backend boundary after async task lifecycle, focused on Gate reservation/admission/provider capacity and generation revocation before physical provider dispatch.
+- Inventory synchronous SQL crossing this boundary; identify transaction authority, await/replay semantics, immutable captured task incarnation/project, global/task/project/provider budgets and idempotency.
+- Distinguish observational capture from authoritative mutations; preserve no duplicate provider calls on lost persistence ACK and purge privacy.
+- Specify one bounded first implementation unit, file partition and compatibility facades, public schemas, close/drain semantics and meaningful fake/delayed/SQLite tests.
+- Identify what must remain a separate later unit (sessions/tools/Git/shared provider state/PG) instead of claiming a shared SQLite proof establishes multi-host behavior.
+- Consult primary official source only if a library/backend fact is uncertain; no actual providers, engines or service installs.
+- Report concrete decisions, blockers, risks and <=40line next worker brief; no commit/push. Ask before expanding ownership.
+
 ### Brief: compose-resource-proof (seed_repair)
 - Tier: isolated roadmap-team new feature branch; bounded C2 prerequisite, no engine/runtime enablement.
 - Read: Current State, compose-services-plan.md + compose-validation.md, frozen compose-recipe.ts/client.ts contracts.
