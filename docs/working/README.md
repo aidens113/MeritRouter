@@ -6,6 +6,7 @@ lines, worker briefs, append-only ledger with real validation, open questions).
 
 | Document | Status | Scope |
 | --- | --- | --- |
+| [handoff.md](handoff.md) | Active | **Start here:** the state of every effort, the user's live install, and what to do next (2026-10-22). |
 | [agent-sessions-and-teams.md](agent-sessions-and-teams.md) | Active | Durable resumable agent sessions, failure resilience, coordinated agent teams. S1-S2, R1, T1-T3 done; live validation outstanding, R2 deferred. |
 | [agent-working-doc-protocol.md](agent-working-doc-protocol.md) | Active | The protocol every working document follows (adopted from FluxIQ). |
 | [importance-and-verification.md](importance-and-verification.md) | Active | Task importance and verification policy: contracts, deterministic checks, independent reviewers, reserved verification budget. V1, V2, V3 done; live-model validation outstanding. |

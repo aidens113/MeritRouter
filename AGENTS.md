@@ -24,7 +24,8 @@ confirms the result itself before treating it as done.
 What you read depends on your role. Context is a budget; do not spend it on
 documents your task will not use.
 
-**Senior supervisor agent.** Read this file and `CLAUDE.md`. Before touching
+**Senior supervisor agent.** Read this file and `CLAUDE.md`, then the current
+[handoff](docs/working/handoff.md). Before touching
 work already in progress, read the [working document index](docs/working/README.md),
 then the `Current State` section of the relevant document. Read
 [Code Structure](#code-structure) before creating, moving, or splitting source

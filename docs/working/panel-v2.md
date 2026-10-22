@@ -1,7 +1,7 @@
 # Panel v2: live data and a calmer layout
 
 Status: Active
-Status detail: Plan written 2026-10-21 at the user's request; U1-U2 dispatched.
+Status detail: Stopped by the user 2026-10-22 mid-way; unfinished work on feat/panel-v2 (f24b9ae), unverified.
 Created: 2026-10-21
 Last updated: 2026-10-21
 Owner: Senior supervisor agent
@@ -23,7 +23,16 @@ under `/all`, redirects from old flat URLs). "Live" is `AutoRefresh` (`component
 `router.refresh()` every 8 s on 10 pages, with a pause button. The densest pages render every
 section at once: job detail (473 lines), install dashboard (457), project overview (296).
 
-**Next steps:** U1 then U2 (worker panel-v2).
+**Stopped (2026-10-22, at the user's request):** worker panel-v2 was stopped mid-task; its work is
+committed as WIP on `feat/panel-v2` (`f24b9ae`, pushed), not merged, not browser-checked. Present:
+`/api/live` server-sent change events (`apps/panel/lib/live-hub.ts`, `app/api/live`), a client
+`LiveProvider` (`components/client/live.tsx`), shared `PageHeader`, `Tabs`, `Disclosure`,
+`ShowAll`, `RelatedPanel`, entity links, and restructured pages under `/p/<slug>` and `/all`;
+the information-architecture map (sidebar groups, entity URLs, page by page) is in
+`docs/working/reports/panel-v2.md` on that branch. Missing: U3's new pages (agents, repos, commits,
+requests), the acceptance checks, screenshots. Panel typecheck passes on the branch.
+
+**Next steps:** merge dev into `feat/panel-v2`, finish U2 and U3 to the map, validate, merge.
 
 **Blockers:** none.
 
