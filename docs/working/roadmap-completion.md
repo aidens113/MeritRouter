@@ -55,7 +55,13 @@ file-partitioned briefs. No whole-roadmap completion claim. After explicit user 
 accepted9682e92 was built and panel4477 restarted; live read-only browser confirms new default-OFF
 setting, exact MiniMax model URL and Verification explanation. Config hash unchanged. Existing
 MCP remains running its prior in-memory code until its client reconnects/restarts the server.
-Facebook clone8082 is also running for the user by explicit request; preserve its existing data.
+User subsequently requested clone removal:8082 stopped, project/session/artifact/worktree/brain
+resources removed via supported API, repository moved to Recycle Bin after automatic permanent
+recursive deletion rejection. No clone exists at its old path. Wait for the user's future fresh
+Next.js/Node.js build prompt after router readiness; do not recreate it now.
+The user additionally requested richer model-request detail (recorded inputs/response/tools and
+changed-file context). That isolated UI/projection unit is assigned below; exact per-call evidence
+must be distinguished from related task-wide changes and unavailable historical payloads.
 
 ## Execution phases
 
@@ -77,6 +83,34 @@ HTTP/API routes and headless Chrome desktop/phone light/dark captures. Only comp
 passing units reach dev/main. Documentation and source commit together.
 
 ## Worker Briefs
+
+### Brief: request-capture-plan
+- Repository: frozen `.claude/worktrees/roadmap-process`, source418b106; report-only while full suite runs. Do not edit source or generated builds.
+- Task: design bounded normalized per-request input/response capture for future calls lacking session journals (classifier/direct/fallback), supporting user's richer model-request page. Existing historical missing payload cannot be invented.
+- Required reads: Current State here; gateway/direct.ts/gate.ts, admission/request-ledger.ts/sqlite-request-ledger.ts, scoring/classifier.ts, storage/artifacts.ts, config/runtime lifetime and sessions journal contracts only as needed.
+- Owns: only docs/working/roadmap-completion/reports/request-capture-plan.md; no source/shared docs/tests/build/commits/services/user data/provider calls.
+- Define exact requestId/endpoint/project/task attribution, normalized Gate input versus serialized provider body distinction, output/tool calls/failure/uncertain states. Capture all free/paid endpoint attempts once reserved; no capture before admission that invents nonexistent provider call. Probe behavior must be explicit.
+- Propose strict zod DTO/private storage API with whole-record byte/count/content bounds and truncation/omission metadata; no HTTP auth headers, provider keys/vault/env, unsafe image/link autoload or arbitrary filesystem paths. Preserve model content safely and don't pretend redaction patterns can find arbitrary embedded secrets.
+- Specify append-only migration after task-Lab ownership freeze or justified durable private artifact+metadata design; retention/deletion/project accounting behavior, crash uncertainty, awaited write ordering, capture-failure semantics that cannot cause paid fallback/duplicate spend. No unbounded raw HTTP body retention.
+- Output executable first implementation brief with exact files/interfaces/tests and backend projection DTO seed_repair can consume. Own all normal Gate call paths (classifier/native/external/batch/fallback/direct), list genuinely unsupported probe paths. No full-capture claim from session reconstruction alone.
+- Acceptance proposal must verify fake free/paid/classifier/batch/fallback, exact different payloads under repeated executionId, failures/cancel, oversized content, no keys/header leaks, project scope and safe unavailable historical behavior. No live requests.
+- Report to: docs/working/roadmap-completion/reports/request-capture-plan.md. Source findings vs designs/verified behavior clearly separated.
+
+### Brief: request-evidence-panel
+- Repository: `.claude/worktrees/roadmap-team`, branch `feat/request-evidence-panel`, baselinea4de66c; isolated from lifecycle/root caller/queue acceptance.
+- Task: user says model-request detail is basically blank and wants recorded request data, changed files and useful evidence. Implement a substantially richer page using durable records, preserving scope/privacy and truthful attribution.
+- Required reads: Current State here; components/request-detail.tsx and request routes; admin/entities.ts requestDetail/sessionRequestIds; sessions/events.ts/recorder.ts/store.ts; existing session/artifact/commit admin projections as needed. Trace actual data before choosing correlation.
+- Owns: new admin/request-evidence.ts (additional specifically named request projection files if concern/size requires), necessary admin/entities.ts request-only hunk and insights.ts export; panel components/request-detail.tsx, new request-only components; request detail routes only if necessary; own new tests/admin-request-evidence.test.ts; demo fixtures/harness apps/panel/scripts/validate-request-evidence.mjs and narrowly seed-demo.mjs if needed; own report roadmap-completion/reports/request-evidence-panel.md.
+- Must not touch: core/config/Labs/storage/admission/gateway/runners/sessions recording/runtime, migrations, manifests/lock, public index, unrelated panel/layout/shared docs. Ask before expanding. No commits/push, providers, actual4477/user config/project mutations. All tests use temp/demo.
+- Evidence contract: exact model_response.requestId anchors successful exchange. Replay message indices/truncation/rewrite AS OF its preceding model_request boundary, capped by messageCount; show roles/content/tool names+args/response and recorded maxTokens/temperature/toolChoice/responseFormat. Do not show final-session transcript as the earlier request input or correlate multiple retries by executionId alone.
+- Failures/fallback/direct/external requests may lack exact wire payload or response; render explicit unavailable explanations. A logical Gate call may have several endpoint attempts; never label pre-provider transcript the exact serialized HTTP/provider body. No invented files, prompt, output or payload history.
+- Changes: show positively correlated tool outcomes/files where recorded; related task/result/patch/commit evidence may be displayed clearly as task/execution context, not changes caused by this individual provider request. No broad Git blame to one call, no arbitrary paths from model tool args read from disk. Include links to relevant task/session/artifacts/commits with correct project scope.
+- Boundaries: zod untrusted stored/journal inputs; bounded files/events/messages/content/tools/log bytes, tolerant malformed/missing/truncated logs with visible partial-data status. Reuse existing redaction/private credential policy; never provider auth headers/key vault/env or unbounded raw artifact/disk reads. Escape all model text, no raw HTML execution. Don't grow catch-all entities.ts beyond concern; new projection owns exchange replay.
+- UX: request/response, parameters, tools/actions, related changed files/evidence and existing usage/accounting; useful visible summaries rather than empty disclosures. Handle read-only historical data. Phone/desktop light/dark, long content bounded/expandable without horizontal page overflow.
+- Acceptance: actual journal fixtures with rewritten transcript, repeated executionId, fallback/missing response, batched tasks, cross-project denial, malformed/truncated/missing/bounded logs, untrusted content and changed-file attribution. Meaningful projection tests plus existing affected entity/session tests.
+- Browser: build router/panel, seed demo, production spare port4497/CDP9373 only, request every touched route, actual Chrome screenshots desktop/phone light/dark, client navigation and 0model requests. Stop owned processes; no .next mutation while own tests/server read it.
+- First report concrete data availability/correlation decision before implementation; then proceed within scope. Definition of done: focused tests/router typecheck/build + production panel acceptance, exact limits, freeze for independent supervisor review. Report which historical data cannot be reconstructed.
+- Report to: docs/working/roadmap-completion/reports/request-evidence-panel.md.
 
 ### Brief: distributed-storage-inventory
 - Repository: `.claude/worktrees/roadmap-process`; read-only source investigation while integrated root acceptance runs. Existing uncommitted supervisor config files must remain untouched.
