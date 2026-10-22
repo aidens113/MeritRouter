@@ -11,10 +11,12 @@ describe("Linux browser fixture launch prerequisite",()=>{
  it("has no extra release authority",()=>{expect(LinuxBrowserFixtureReleaseSchema.safeParse({op:"release",generation:"1".repeat(32),nonce:"2".repeat(64),argv:["sh"]}).success).toBe(false);});
 });
 const native=process.env.SWITCHYARD_TEST_LINUX_HELPER==="1";
-it.skipIf(!native)("runs owned installed Linux namespace/helper fixtures",()=>{
+it.skipIf(!native).each(["root","ordinary"])("runs owned installed Linux namespace/helper fixtures as %s",mode=>{
  const root=path.resolve(".");
  const linux=(p:string)=>process.platform==="win32"?"/mnt/"+p[0]!.toLowerCase()+p.slice(2).replaceAll("\\","/"):p;
  const args=["-I","-B",linux(path.join(root,"tests/fixtures/browser-linux-helper-fixture.py")),linux(path.join(root,"src/labs/browser-linux-helper.py"))];
- const result=process.platform==="win32"?spawnSync("wsl.exe",["-d","Ubuntu","--","/usr/bin/python3.10",...args],{encoding:"utf8",timeout:45000,maxBuffer:100000}):spawnSync("/usr/bin/python3.10",args,{encoding:"utf8",timeout:45000,maxBuffer:100000});
- expect(result.status,result.stdout+result.stderr).toBe(0);expect(result.error).toBeUndefined();expect(result.stdout).toContain('"failures": 0');expect(result.stdout).toContain('"errors": 0');
+ const executable=mode==="ordinary"?"/usr/bin/setpriv":"/usr/bin/python3.10";
+ const commandArgs=mode==="ordinary"?["--reuid","65534","--regid","65534","--clear-groups","/usr/bin/python3.10",...args]:args;
+ const result=process.platform==="win32"?spawnSync("wsl.exe",["-d","Ubuntu","--",executable,...commandArgs],{encoding:"utf8",timeout:45000,maxBuffer:100000}):spawnSync(executable,commandArgs,{encoding:"utf8",timeout:45000,maxBuffer:100000});
+ expect(result.status,result.stdout+result.stderr).toBe(0);expect(result.error).toBeUndefined();expect(result.stdout).toContain('"failures": 0');expect(result.stdout).toContain('"errors": 0');expect(result.stdout).toContain('"ownerUid": '+(mode==="root"?0:65534));
 },50000);
