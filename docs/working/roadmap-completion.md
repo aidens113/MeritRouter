@@ -32,7 +32,7 @@ opens1, keyboard focus/closing work. Historical model links and catalog-only ref
 Fresh tarball51,561,351bytes/2489entries installs outside checkout (QiBFVy); native SQLite,
 CLI discovery/init/setup, MCP40tools,8 production panel/API routes and stylesheet, detached
 setup start/reuse/stop pass with checkout reads forbidden. Owned fixtures are stopped. This
-coherent unit is ready for dev/main; previously only provider7a1873f was pushed. Actual user
+coherent unit was pushed to dev/main at77914fc (remote heads verified equal). Actual user
 panel4477 and MCP processes were not restarted or used for tests; no deployed-fix claim.
 
 **Continuing:** L5 static-render browser checks are frozen in their isolated tree pending root
@@ -249,6 +249,13 @@ passing units reach dev/main. Documentation and source commit together.
 - Validation: frozen e0aad08 full701/701(78files,422.38s); recursive typecheck and isolated recursive build pass. Independent final production Labs/Verification/hover-focus/live/API18captures, legacy migration and model navigation all pass; no browser exceptions. Fresh npm tarball51,561,351bytes/2489entries; outside install QiBFVy native/CLI/MCP40/panel8routes+CSS/setup launch/reuse/stop passes with checkout reads forbidden.
 - Outcome: Accepted for coherent E1-L4/package/correctness unit
 - Follow-up: push dev/main under standing authorization, then continue E8/E9. User4477 untouched; future static browser/ledger/policy code not part of this acceptance. Earlier failed runs and repairs remain recorded above.
+
+### 2026-10-22 - Accepted unit pushed; extension reviews continue
+- Agent: supervisor
+- Changed: merged accepted roadmap unit to dev and fast-forwarded main; both remote heads verified77914fc. No user process restarted. Merged async ledger0178ba7 and static browserb82be18 locally after independent review; added whole-environment browser-head reuse check and public validated contracts.
+- Validation: supervisor browser8/8(131.52s) actual Chrome; ledger17/17(6.08s) including post-reservation persisted lease/cancel/deadline refusal; final-check reuse + scripted Lab2/2(13.19s). User-corrected final-supervisor policy independently13/13(9.62s) plus prior actual UI/MCP browser run and inspected desktop/phone screenshots; policy not integrated yet.
+- Outcome: Partial for next extension/policy unit
+- Follow-up: integrate policy and final commit-time revocation guard, full checks/build/browser/package. Static checks do not close JS/hydration, ephemeral/Compose or PostgreSQL. External user requested default final dispatch OFF with sub-supervisors allowed.
 
 ## Open Questions
 

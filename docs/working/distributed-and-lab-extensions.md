@@ -12,9 +12,11 @@ Related: [roadmap completion](roadmap-completion.md), [Labs](labs.md), [sessions
 
 L1-L4 integration is active under roadmap-completion.md. L5 and R2 were explicitly deferred in
 their original plans; the current build request keeps them open. This document scopes their
-prerequisites rather than treating them as delivered. Isolated implementation now covers an
-initial static-render browser-check unit (scripts disabled; not hydrated app acceptance) and
-the first async Gate request-accounting boundary. Neither is accepted or merged yet.
+prerequisites rather than treating them as delivered. Initial static-render browser checks
+(scripts disabled; not hydrated app acceptance) and the first async Gate accounting boundary
+are now merged locally after independent8/8 actual Chrome and17/17 ledger tests. Whole-head
+evidence reuse is integrated; full combined acceptance remains pending. Ephemeral-task plan
+is [recorded separately](distributed-and-lab-extensions/reports/ephemeral-lab-plan.md).
 
 The current store is the synchronous better-sqlite3 Database type. Raw prepared statements,
 transactions and SQLite expressions reach beyond storage into admission, routing, admin,
@@ -79,6 +81,15 @@ not a reason to stop the independently runnable core work. No service was instal
    A two-process SQLite test is useful E7 evidence, but is not two-host PostgreSQL acceptance.
 
 ## Worker Briefs
+
+### Brief: ephemeral-lab-integration-plan
+- Repository: root read-only source at77914fc; browser WT stays frozen under supervisor tests. Report only at `docs/working/distributed-and-lab-extensions/reports/ephemeral-lab-plan.md` in root.
+- Task: inspect actual task attempt/workspace/finish/verification/integration pipeline and Lab ownership APIs; produce executable L5 ephemeral-task-lab plan with exact interfaces and file partitions. Read Current State/L5 sequence above; browser unit report in its WT for new checks/artifact fields.
+- Owns: only own report. No code/shared docs/branches/generated files/commits/services/provider calls/user data. No modifications to the frozen browser tree.
+- Required decisions: opt-in declared checks contract and configuration/task validation; exact immutable task-attempt heads/owned source; isolated branch/data/ports; coding output-to-verification hook before integration; cancellation/timeout/kill recovery teardown; retained evidence vs destroy/retention; promotion exclusion and no shared Lab-team claim conflicts.
+- Preserve task allowedPaths, provider budgets, attribution, normal jobs and Labs. No arbitrary model commands or new authority from prompt text. Stored task-attempt ownership must fence cleanup and keep another attempt's worktree untouched.
+- Output exact new schemas/migration needs, signatures, primary owned files and affected caller tests. Distinguish designs from implementation/verification. Include actual killed-owner fixture acceptance. Do not silently substitute reusing one shared feature Lab for per-attempt isolation.
+- Return bounded first implementation brief recommendation; supervisor independently reviews, writes next brief and dispatches after current browser source is accepted/frozen.
 
 ### Brief: request-ledger
 - Repository: `.claude/worktrees/roadmap-process`, branch `feat/roadmap-request-ledger`, baseline6a77c4a. Source dependencies reconciled by supervisor; isolated from root/panel/browser work.
