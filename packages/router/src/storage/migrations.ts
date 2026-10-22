@@ -875,4 +875,18 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX lab_attempt_processes_lab ON lab_attempt_processes(lab_id,state);
   `,
+  // Private bounded normalized Gate payloads; accounting history remains independent.
+  `
+  CREATE TABLE request_captures (
+    request_id TEXT PRIMARY KEY REFERENCES model_requests(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL, scope_json TEXT NOT NULL CHECK(length(CAST(scope_json AS BLOB)) <= 65536),
+    payload_json TEXT CHECK(payload_json IS NULL OR length(CAST(payload_json AS BLOB)) <= 1048576),
+    bytes INTEGER NOT NULL CHECK(bytes >= 0 AND bytes <= 1048576),
+    phase TEXT NOT NULL CHECK(phase IN ('reserved','dispatch_intent','not_dispatched')),
+    unavailable_reason TEXT, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL
+  );
+  CREATE INDEX request_captures_expiry ON request_captures(expires_at,request_id);
+  CREATE INDEX request_captures_project ON request_captures(project_id,created_at);
+  `,
+
 ];

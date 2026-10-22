@@ -1,6 +1,8 @@
 import type { Db } from "../storage/db.js";
 import type { ResolvedConfig } from "../config/load.js";
 import { Admission, type Participant } from "../admission/admission.js";
+import { RequestCaptures } from "../storage/request-captures.js";
+import type { RequestCaptureStore } from "./request-capture.js";
 import type { RequestLedger } from "../admission/request-ledger.js";
 import { SqliteRequestLedger } from "../admission/sqlite-request-ledger.js";
 import { AdmissionDenied, GatewayError, type AdmissionDenialReason } from "../core/errors.js";
@@ -181,6 +183,7 @@ export class Gate {
   private closing = false;
   private readonly inFlight = new Set<Promise<GateResponse>>();
   readonly ledger: RequestLedger;
+  readonly captures: RequestCaptureStore;
   constructor(
     private readonly db: Db,
     private readonly cfg: ResolvedConfig,
@@ -189,8 +192,10 @@ export class Gate {
     /** Providers (free and paid), their keys, and the spend ledger. */
     readonly direct: DirectRuntime,
     ledger?: RequestLedger,
+    captures?: RequestCaptureStore,
   ) {
     this.ledger = ledger ?? new SqliteRequestLedger(admission, direct.spend);
+    this.captures = captures ?? new RequestCaptures(db, () => direct.providers.now());
     // Settings are read live (a config reload mutates cfg in place); state is mirrored to meta.
     health.breakers.attach(db, () => cfg.routing.circuit_breaker);
     // A request slot older than every attempt's timeout belongs to a request that is gone.
@@ -363,7 +368,7 @@ export class Gate {
         attempts.push({ endpointId: ep.id, outcome: `skipped: ${q}` });
         continue;
       }
-      const r = await requestDirect({ cfg: this.cfg, ledger: this.ledger, assertDispatch: participants => this.admission.assertDispatch(participants), health: this.health, direct: this.direct }, ep, req, participants, estInput, attempts, (e) => this.admit(e, holder, attempts, full, admitted));
+      const r = await requestDirect({ cfg: this.cfg, ledger: this.ledger, captures: this.captures, assertDispatch: participants => this.admission.assertDispatch(participants), health: this.health, direct: this.direct }, ep, req, participants, estInput, attempts, (e) => this.admit(e, holder, attempts, full, admitted));
       if (r.kind === "skip") {
         if (r.resumeAt !== null) keyRetryAt = Math.min(keyRetryAt ?? r.resumeAt, r.resumeAt);
         continue;
