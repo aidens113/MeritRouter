@@ -74,3 +74,21 @@ export const ComposeResourceProofInputSchema=z.object({
  containersJson:z.string().max(2*1024*1024),networkJson:z.string().max(1024*1024),
 }).strict();
 export const ComposeResourceProofResultSchema=z.object({state:z.enum(["verified","quarantine"]),code:z.enum(["exact_resources_match","invalid_input","identity_mismatch","resource_ids_uncommitted","approval_mismatch","image_mismatch","config_mismatch","mount_mismatch","port_mismatch","network_mismatch"]),containerCount:z.number().int().min(0).max(100),runtimeEnabled:z.literal(false)}).strict();
+
+// Creation identity is immutable across owner-fence renewal; current identity still checks that fence.
+const CreationIdentity=ComposeResourceIdentitySchema.omit({fence:true});
+const ReceiptBase=z.object({operationId:z.string().min(1).max(200),kind:z.enum(["network","container"]),service:Name.nullable(),requestSha256:Sha,creation:CreationIdentity,engine:ComposeCapabilitiesSchema}).strict();
+export const ComposeResourceCreationReceiptSchema=z.discriminatedUnion("state",[
+ ReceiptBase.extend({state:z.literal("issued"),resourceId:z.null()}),
+ ReceiptBase.extend({state:z.literal("committed"),resourceId:ComposeFullResourceIdSchema}),
+]);
+export const ComposeKnownResourceProofInputSchema=z.object({
+ journal:z.object({identity:ComposeResourceIdentitySchema,engine:ComposeCapabilitiesSchema,runState:z.enum(["provisioning","uncertain","complete"]),receipts:z.array(ComposeResourceCreationReceiptSchema).max(202)}).strict(),
+ current:ComposeResourceIdentitySchema,observedEngine:ComposeCapabilitiesSchema,approval:ComposeResourceApprovalSchema,
+ selection:z.object({services:z.array(Name).max(100),networkPurpose:z.enum(["inspect","remove"])}).strict(),
+ containersJson:z.string().max(2*1024*1024),networkJson:z.string().max(1024*1024),
+}).strict();
+export const ComposeKnownResourceProofResultSchema=z.object({
+ state:z.enum(["verified_known","quarantine"]),code:ComposeResourceProofResultSchema.shape.code,containerCount:z.number().int().min(0).max(100),
+ scope:z.literal("known_resources_only"),generationCompleteness:z.literal("not_proved"),readiness:z.literal("not_proved"),runDisposition:z.literal("unchanged"),authority:z.literal("none"),runtimeEnabled:z.literal(false),
+}).strict();
