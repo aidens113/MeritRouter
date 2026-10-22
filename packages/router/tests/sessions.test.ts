@@ -1,15 +1,17 @@
+import { capturedLease } from "../src/storage/task-leases.js";
+import { WorkerTaskSchema } from "../src/core/task.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { Switchyard } from "../src/core/service.js";
 import type { ChatMessage } from "../src/gateway/types.js";
-import type { GateResponse } from "../src/gateway/gate.js";
+import type { GateRequest, GateResponse } from "../src/gateway/gate.js";
 import type { ModelEndpoint } from "../src/models/catalog.js";
 import { GatewayError } from "../src/core/errors.js";
 import { ask, type RunContext } from "../src/runners/types.js";
 import { SessionEventSchema, TOOL_OUTPUT_CAP_BYTES, type SessionEvent } from "../src/sessions/events.js";
 import { sessionDetail, sessionsView } from "../src/admin/insights.js";
-import { makeEnv, open, reply, ScriptedClient, type Env } from "./helpers.js";
+import { makeEnv, open, reply, ScriptedClient, summarizeTask, type Env } from "./helpers.js";
 
 let env: Env | undefined;
 let sy: Switchyard | undefined;
@@ -219,14 +221,24 @@ describe("session store", () => {
 
 describe("ask() with a session", () => {
   function ctxWith(s: Switchyard, request: () => Promise<GateResponse>): RunContext {
+    s.tasks.submit([WorkerTaskSchema.parse(summarizeTask({ id: "t_1" }))]);
+    s.tasks.claim("owner", { maxConcurrent: 1, maxWritersPerRepo: 1, leaseMs: 60000, defaultTimeoutMs: 60000 });
+    const taskLease = capturedLease(s.tasks.get("t_1")!);
     return {
       taskId: "t_1",
       leaseOwner: "owner",
+      taskLease,
+      tasks: s.tasks,
+      taskProject: taskLease.project,
+      claimedRunCount: taskLease.runCount,
       budget: {},
       plan: {},
       signal: new AbortController().signal,
       attempts: [],
-      gate: { request },
+      gate: { request: (input: GateRequest) => {
+        expect(input.participants).toEqual([expect.objectContaining({ taskId: "t_1", leaseOwner: "owner", lease: taskLease })]);
+        return request();
+      } },
       session: s.sessions.create({ taskId: "t_1", role: "summarizer", agentLabel: "sum" }),
     } as unknown as RunContext;
   }
