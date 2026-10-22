@@ -10,6 +10,13 @@ Related: [handoff](handoff.md), [labs](labs.md), [budget-control](budget-control
 
 ## Current State
 
+Request-only release candidate8ea5b43 includes project-isolated classification and bounded
+historical request/session evidence. Recursive typecheck/build and production demo request+
+historical-session browser checks pass (16 screenshots); full serial regression passed783/783
+in88files (943.08s). Final recursive typecheck/build and both browser harnesses pass. See [release acceptance](roadmap-completion/reports/request-page-release-acceptance.md).
+This candidate excludes local task-Lab/capture/Compose/R2 work, which remains in feature branches.
+Actual4477 has not loaded this request-page update yet; authorized restart follows acceptance.
+
 Baseline dev/main e9a0726: Panel v2 and budget B1/B2 accepted; 622 tests passed. The user's
 "ok BUILD IT THEN" authorizes implementing the remaining audit, rather than another audit-only
 turn. Use documented defaults: feature labs, four active, isolated data, manual promotion;
