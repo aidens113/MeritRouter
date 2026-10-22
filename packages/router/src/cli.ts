@@ -25,6 +25,8 @@ import { planText } from "./cli/plan-text.js";
 import { chooseProject, PROJECT_ENV, requireProject, type SelectOptions } from "./cli/project-select.js";
 import { projectsCommand } from "./cli/projects.js";
 import { initializeConfig } from "./cli/setup.js";
+import { ensureLabSupervisor, serveLabs, stopLabSupervisor } from "./cli/lab-supervisor.js";
+import { LabSupervisorLease } from "./operations/lab-supervisor.js";
 import { sessionRows, sessionTimeline } from "./cli/session-text.js";
 import { out, table } from "./cli/terminal.js";
 import { ensurePanel, revivePanel } from "./operations/panel.js";
@@ -177,6 +179,15 @@ async function main(): Promise<number> {
     switch (cmd) {
       case "projects":
         return await projectsCommand(sy, args, values, json, select);
+      case "labs": {
+        const action = args[0] ?? "list";
+        if (action === "serve") { await serveLabs(sy); return 0; }
+        if (action === "supervisor-start") { await ensureLabSupervisor(sy, CLI_PATH); out({ running: true }, json); return 0; }
+        if (action === "supervisor-stop") { out({ stopped: await stopLabSupervisor(sy) }, json); return 0; }
+        if (action === "supervisor-status") { out(new LabSupervisorLease(sy.db, cfg.configPath).read(), true); return 0; }
+        if (action === "list") { out(sy.labs.list(listScope()), true); return 0; }
+        throw new SwitchyardError("usage", "labs: list, serve, supervisor-start, supervisor-stop, supervisor-status (lifecycle controls are being integrated)");
+      }
       case "panel": {
         // Start the panel now, even when panel.auto_start is off or it was turned off (the user asked for it).
         const p = await ensurePanel(cfg, { force: true });

@@ -40,6 +40,8 @@ import { TaskValidationError } from "./errors.js";
 import { validateTask } from "./validate.js";
 import { DELEGATED_BY_SESSION, Executor, type CodingRunner, type ProjectDeps } from "./executor.js";
 import { ProjectRegistry } from "../projects/registry.js";
+import { retainedLabConfigErrors } from "../projects/lab-config-guard.js";
+import { LabManager } from "../labs/lab.js";
 import { prepareProjectRepositories, type RepositoryPreparation } from "../projects/repository-setup.js";
 import type { ProjectContext } from "../projects/context.js";
 import { Scheduler } from "./scheduler.js";
@@ -60,6 +62,8 @@ export interface SwitchyardOptions {
   now?: () => number;
   /** Run the in-process worker loop (MCP server and `switchyard worker`). */
   worker?: boolean;
+  /** Supervise lab services independently of model workers; off for ordinary API instances. */
+  labsMonitor?: boolean;
   pollIntervalMs?: number;
 }
 
@@ -123,6 +127,7 @@ export class Switchyard {
   readonly web: WebAccess;
   /** The projects of this install (`projects.<slug>`, or the single-project shape). */
   readonly projects: ProjectRegistry;
+  readonly labs: LabManager;
   /** The primary project's brain (see `brainFor` for any project); follows the primary after a config reload or a deletion. */
   get brain(): Brain {
     return this.brainFor(this.projects.primary.project.slug);
@@ -166,6 +171,7 @@ export class Switchyard {
     this.admission = new Admission(this.db, this.tasks, cfg, this.now);
     this.projects = new ProjectRegistry(cfg);
     this.projects.attach(this.db, this.now);
+    this.labs = new LabManager({ db: this.db, storageDir: cfg.storageDir, cfg, project: slug => this.projectContext(slug), monitor: opts.labsMonitor === true });
     this.vault = new KeyVault(this.db, cfg.storageDir, this.now);
     this.spend = new PaidSpend(this.db, cfg, this.vault, this.now);
     this.providers = new ProviderRuntime(cfg, this.db, this.vault, {
@@ -423,6 +429,8 @@ export class Switchyard {
     try {
       const next = parseConfig(readConfigFile(this.cfg.configPath), this.cfg.configPath);
       if (next.storageDir !== this.cfg.storageDir) throw new Error("storage.directory cannot change while running; restart instead");
+      const labErrors = retainedLabConfigErrors(this.db, next);
+      if (labErrors.length) throw new Error(labErrors.join("; "));
       Object.assign(this.cfg, next);
       this.projects.refresh();
       this.tasks.event(null, "config_reloaded", { at: this.now() });
@@ -777,6 +785,7 @@ export class Switchyard {
     await this.discovering?.catch(() => undefined);
     await this.scheduler.stop();
     await this.executor.flush();
+    await this.labs.close();
     // Review settlement owns brain writes and Git children independently of executor reports.
     await Promise.allSettled([...this.promotionSettles]);
     this.db.close();

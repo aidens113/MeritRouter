@@ -101,6 +101,24 @@ passing units reach dev/main. Documentation and source commit together.
 - Contract: preserve null/unknown distinctions and existing rows; configured/verified write prices only. Authoritative provider-reported cost wins. Paid reservations must bound writes, not only ordinary input/read; unknown write pricing must fail closed or disable cache creation with a demonstrably enforced wire boundary. Send proposed unknown-price policy to root before implementation.
 - Acceptance: fake Anthropic creation/read/ordinary usage normalization and persistence, actual configured cost/reservation safety, unknown-price boundary, backwards compatibility; provider provenance/quantization/context retained. Narrow tests/typecheck, exact report and limits.
 
+### Brief: labs-panel
+- Repository: isolated roadmap-labs-panel worktree/branch; supervisor supplies current service and L2/L3 APIs before implementation validation.
+- Task: E4/L4 project-scoped Labs list/detail/editor/settings, create/start/stop/restart/check/logs/refresh/promotion controls and lab choice for new jobs; clear ownership/queued-operation state and meaningful failures. Preserve archived-project read-only policy and live page refresh.
+- Required reads: labs.md Current State/L4; root roadmap Current State; LabManager publicStatus/control API and recipe schema; existing project routes/forms/admin insights and live subscriptions.
+- Owns: new admin/labs.ts, panel Labs pages/components and api/labs/**; project navigation Labs entry, job creation form/API lab selection; project settings recipe/editor section; demo seed Labs fixtures. Own tests/report labs-panel.md. Root alone owns admin/insights.ts, admin/live.ts, service/executor/CLI and shared docs.
+- Boundaries: data through public router/admin facade; no service tokens, raw env, secret commands or unscoped project lookup in API/UI. Recipe commands remain human config, model tools cannot author them. Models/services never auto-run on page load; route writes enqueue to existing Labs supervisor after explicit human action. Coordinate launcher public API with root; do not launch model worker.
+- Initial step: inspect and report intended files/API contract; wait for supervisor dependency merge before edits relying on missing APIs. Do independent UI/design work while dependencies integrate; no fake success flags or generated-dist source substitutes.
+- Acceptance: focused tests, production router+panel build, demo pages/API plus desktop/phone light/dark screenshots (root independently verifies). Create two fixture labs, logs/check/control queue/promotion reason/denied cross-project controls, archived read-only, no token exposure. No user data/providers/OS install/commits/push/shared docs.
+- Report: roadmap-completion/reports/labs-panel.md, list exact checks and remaining limits.
+
+### Brief: process-acceptance
+- Repository: isolated roadmap-process worktree, feat/roadmap-process from current core checkpoint.
+- Task: E7 independent real-OS-process fake-provider acceptance for queue claims/leases/recovery/provider slots/integration serialization and CLI/MCP budgets/transports. Reuse existing meaningful fixtures; add missing regressions rather than mirror implementation.
+- Owns: new tests/process-acceptance*.test.ts, own fixtures under tests/fixtures/process-acceptance, report process-acceptance.md. Read affected source only for reproductions. No source edits without root scope amendment, no shared docs/commits/push.
+- Boundaries: temp configurations/stores/repos/brains, fake provider HTTP servers only. Never real credentials/4477/userinstall/paid routes/public service installations. All spawned services/listeners/processes stopped in finally; verify owned process before kill. No repository-wide validation in another worker's tree.
+- Acceptance: competing independent worker processes do not double claim or exceed provider slots; killed owner recovery/resume preserves durable attribution/session records without automatic coding replay; competing integrations serialize. Real CLI and MCP budget approvals/denials/accounting and HTTP/stdio schema refusals. Record exact commands/measurements and distinguish missing acceptance from actual defects.
+- Follow-up: report reproduction and suggested bounded file ownership to root for any source fix; don't silently weaken assertions or call hard-kill persistence verified from caught exceptions. Keep test duration bounded; no live quota.
+
 ## Work Ledger
 
 ### Brief: external-runner-tools (next worker after project recovery)
@@ -140,6 +158,14 @@ passing units reach dev/main. Documentation and source commit together.
 - Validation: targeted60/60; live18/18; final frozen full suite624/624(63files,328.83s); recursive typecheck/build pass; final panel rebuild pass. Demo API400/404/409, UI retry preserves evidence; independent682ms refresh retains document marker. Four desktop/phone light/dark captures inspected; no overflow/exceptions; demo acknowledgement restored and services stopped.
 - Outcome: Accepted for bounded provider unit; remaining E6 accounting/catalog work stays open.
 - Follow-up: merge/push unit; independent E1/L1 verification running before integration. Report provider-followups.md records discarded overlapping run and fixture corrections.
+
+### 2026-10-22 - Core checkpoints and independent package acceptance
+- Agent: supervisor
+- Changed: merged E1 5704654, L1 33630ee, project recovery 04fd8c5 and packaging 6cfa823 locally into roadmap-core. Added missing prepared-config public exports; retained-Lab config/deletion guards in progress. Labs L2/L3 and external tools dispatched; accounting brief extended narrowly to providers/anthropic.ts, enrich.ts, discovery.ts and gateway/direct.ts.
+- Validation: independent E1 5/5 and Labs 8/8; independent existing-tarball outside-checkout smoke passed native SQLite, CLI discovery/init/setup, MCP36 tools/usage_summary, eight panel/API pages plus stylesheet, detached setup launch and shutdown. No checkout runtime reads, live quota or user install changes. Root focused project/package checks running; no integrated acceptance claim yet.
+- Decision: unknown paid Anthropic cache-write price disables all cache markers at the wire boundary; native server search also disables paid caching until an internal-token reservation bound exists. Configured ordinary/read/write maximum bounds known prompt-only writes. Provider-reported cost remains authoritative; worker to verify with fake wire tests and primary documentation.
+- Outcome: Partial
+- Follow-up: finish project/browser guards, Labs service/CLI integration and accounting/external reports; integrated full checks and fresh package needed before push. Provider unit alone already pushed to dev/main at7a1873f.
 
 ## Open Questions
 

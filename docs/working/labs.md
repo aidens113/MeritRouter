@@ -1,9 +1,9 @@
 # Labs: parallel, isolated, runnable lanes for agent teams
 
 Status: Active
-Status detail: Plan written 2026-10-21 at the user's request; not started.
+Status detail: L1 core checkpoint implemented and independently tested; L2/L3 and service/CLI integration active under roadmap-completion.md.
 Created: 2026-10-21
-Last updated: 2026-10-21
+Last updated: 2026-10-22
 Owner: Senior supervisor agent
 Scope: Make labs (lanes) a native part of SwitchYard: each lab is an isolated, runnable copy of a
 project on its own branch, with its own ports, data, and running services, where an agent team
@@ -31,7 +31,19 @@ assumptions about FluxIQ are listed under Open Questions for the user to correct
   tree); no ports, per-branch data, long-running services, readiness checks, or process
   supervision; no cleanup of old worktrees (`Worktrees.remove()` has no caller).
 
-**Next steps:** the user answers the Open Questions (or accepts the defaults); then L1.
+**Implementation update 2026-10-22:** the user's remaining-roadmap build request authorizes
+the documented defaults. L1 core checkpoint33630ee is merged locally into roadmap-core:
+validated recipe/config/store, owned worktrees/data/ports, supervised services, checks,
+refresh, adoption, idle teardown and retained task-worktree pruning. Supervisor independently
+ran eight focused tests with real isolated fixture processes. CLI/service/public API integration
+is underway; L2/L3 is assigned in an isolated worktree. This does not complete L1 acceptance,
+L2-L4 or the later L5 work. Current execution evidence is in [roadmap-completion](roadmap-completion.md).
+
+Limits: max_active counts all retained, non-destroyed labs, including stopped/failed labs;
+destroy preserves branches and refuses dirty worktrees. Per-lab recipes are snapshots.
+Process/listener verification is tested on Windows; cross-platform acceptance remains separate.
+
+**Next steps:** finish service/CLI and team/promotion integration, then panel and broad acceptance.
 
 **Blockers:** none.
 
