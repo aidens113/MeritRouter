@@ -294,7 +294,7 @@ describe("anthropic adapter", () => {
     expect(call.url).toBe("https://api.anthropic.com/v1/messages");
     expect(call.headers).toMatchObject({ "x-api-key": "sk-test-key-1234", "anthropic-version": "2023-06-01" });
     expect(call.headers).not.toHaveProperty("authorization");
-    expect(call.body).toMatchObject({ model: "claude-x", max_tokens: 20, system: "be brief", tool_choice: { type: "any" }, tools: [{ name: "read", input_schema: tool.function.parameters }] });
+    expect(call.body).toMatchObject({ model: "claude-x", max_tokens: 20, system: [{ type: "text", text: "be brief" }], tool_choice: { type: "any" }, tools: [{ name: "read", input_schema: tool.function.parameters }] });
     expect(res.message.tool_calls).toEqual([{ id: "tu1", type: "function", function: { name: "read", arguments: '{"path":"a"}' } }]);
     expect(res).toMatchObject({ finishReason: "tool_calls", usage: { inputTokens: 15, outputTokens: 4, cachedInputTokens: 5 }, telemetry: { servedProvider: "anthropic", servedModel: "claude-x" } });
     expect(res.rateLimits.windows).toEqual([

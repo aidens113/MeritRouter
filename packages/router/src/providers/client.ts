@@ -22,6 +22,11 @@ export interface ProviderRequest {
   chat: Omit<ChatRequest, "model">;
   /** Extra OpenAI parameters (`seed`, `top_p`, ...): filtered and renamed by the provider's rules. */
   params?: Record<string, unknown>;
+  /**
+   * A stable id for the conversation this request continues. Sent as `prompt_cache_key` where
+   * the provider's `promptCache` is `prompt_cache_key`; ignored elsewhere.
+   */
+  cacheKey?: string;
   timeoutMs: number;
   signal?: AbortSignal;
 }

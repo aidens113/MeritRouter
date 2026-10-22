@@ -36,6 +36,12 @@ export type ModelDetails = "ollama_show" | "llamacpp_props";
 export type KeyPolicy = "required" | "optional" | "none";
 /** Shape of the key-info endpoint: OpenRouter's `/key` (free daily quota) or Ollama's `/api/balance`. */
 export type KeyInfoShape = "openrouter_key" | "ollama_balance";
+/**
+ * How a provider is asked to cache the prompt prefix: `cache_control` (Anthropic Messages API
+ * breakpoints), `prompt_cache_key` (an OpenAI-style routing key per conversation), or `none`
+ * (only the provider's automatic prefix caching can apply).
+ */
+export type PromptCacheStyle = "cache_control" | "prompt_cache_key" | "none";
 /** Who a provider's quota belongs to: each key, the project a key is in, or the account. */
 export type QuotaScope = "key" | "project" | "account";
 
@@ -126,6 +132,8 @@ export interface ProviderDefinition {
   temperatureMax: number | null;
   /** Fields always added to the request body. */
   bodyExtras: Readonly<Record<string, unknown>>;
+  /** The documented way to ask for prompt caching (see `PromptCacheStyle`). */
+  promptCache: PromptCacheStyle;
   rateLimitHeaders: RateLimitHeaderSpec;
   quotaScope: QuotaScope;
   /** Documented concurrency limiting (DeepSeek, DeepInfra, Ollama Cloud plans); null when none is documented. */
@@ -179,6 +187,7 @@ function openAiCompatible(def: Pick<ProviderDefinition, "id" | "displayName" | "
     imagesBase64Only: false,
     temperatureMax: null,
     bodyExtras: {},
+    promptCache: "none",
     rateLimitHeaders: NO_HEADERS,
     quotaScope: "key",
     concurrency: null,
@@ -231,6 +240,8 @@ export const BUILTIN_PROVIDERS: readonly ProviderDefinition[] = [
     keyInfoShape: "openrouter_key",
     // Report the billed cost and never fall back to another (possibly pricier) model.
     bodyExtras: { usage: { include: true }, provider: { allow_fallbacks: false } },
+    // OpenRouter takes prompt_cache_key as its sticky routing key (openrouter.ai/docs/features/prompt-caching, 2026-10-21).
+    promptCache: "prompt_cache_key",
     rateLimitHeaders: { family: "openrouter", requestsPeriod: "unknown", tokensPeriod: "unknown" },
     quirks: ["unsupported parameters are silently ignored: gate on the model's supported_parameters", "HTTP 200 may carry an error body", "402 means out of credits (limit_source)", "free models are :free or $0; free daily quota via GET /key"],
     sourceUrl: "https://openrouter.ai/docs/api/api-reference/models/get-models",
@@ -308,6 +319,7 @@ export const BUILTIN_PROVIDERS: readonly ProviderDefinition[] = [
     extraHeaders: { "anthropic-version": "2023-06-01" },
     models: listSpec("{base}/models", "anthropic"),
     toolChoice: { auto: "auto", none: "none", required: "any" },
+    promptCache: "cache_control",
     rateLimitHeaders: { family: "anthropic", requestsPeriod: "unknown", tokensPeriod: "unknown" },
     quirks: ["no free tier", "spend-cap 429 (enforced_spend_limit_reached) has no retry-after and is not retried", "OpenAI compatibility is not production-ready; the native Messages API is used"],
   },
@@ -316,6 +328,8 @@ export const BUILTIN_PROVIDERS: readonly ProviderDefinition[] = [
     displayName: "OpenAI",
     baseUrl: "https://api.openai.com/v1",
     tokenLimitParam: "max_completion_tokens",
+    // Chat Completions takes prompt_cache_key (openai-node ChatCompletionCreateParamsBase, 2026-10-21).
+    promptCache: "prompt_cache_key",
     rateLimitHeaders: { family: "openai", requestsPeriod: "unknown", tokensPeriod: "unknown" },
     quirks: ["model list reports ids only", "Retry-After on 429 and 503"],
     sourceUrl: `${RESEARCH}#openai-paid`,
@@ -672,6 +686,7 @@ function applyEntry(def: ProviderDefinition, entry: ProviderEntryConfig | undefi
     keyInfoUrl: def.keyInfoUrl === null ? null : moved(def.keyInfoUrl),
     tokenLimitParam: entry?.token_limit_param ?? def.tokenLimitParam,
     rateLimitHeaders: entry?.rate_limit_headers ? { family: entry.rate_limit_headers, requestsPeriod: "unknown", tokensPeriod: "unknown" } : def.rateLimitHeaders,
+    promptCache: entry?.prompt_cache ?? def.promptCache,
     builtIn,
     enabled: entry?.enabled ?? true,
     noKey,

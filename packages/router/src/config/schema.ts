@@ -133,6 +133,8 @@ export const PaidModelSchema = z
     /** Prices in USD per million tokens. Leave unset to fetch (pricing_url) or to keep the model unusable. */
     input_usd_per_million: z.number().positive().optional(),
     output_usd_per_million: z.number().positive().optional(),
+    /** Price of input served from the provider's prompt cache; unset: fetched (pricing_url) or priced as ordinary input. */
+    cached_input_usd_per_million: z.number().min(0).optional(),
     context_limit_tokens: z.number().int().positive(),
     output_limit_tokens: z.number().int().positive(),
     input_modalities: z.array(ModalitySchema).default(["text"]),
@@ -205,6 +207,12 @@ export const ProviderEntrySchema = z
     models_path: z.string().min(1).optional(),
     token_limit_param: z.enum(["max_tokens", "max_completion_tokens"]).optional(),
     rate_limit_headers: z.enum(["openai", "openrouter", "anthropic", "none"]).optional(),
+    /**
+     * How to ask this provider to cache the prompt prefix, replacing the registry's choice:
+     * `cache_control` (Anthropic breakpoints), `prompt_cache_key` (OpenAI-style key), or `none`.
+     * Custom providers default to `none`.
+     */
+    prompt_cache: z.enum(["cache_control", "prompt_cache_key", "none"]).optional(),
     keys: z.array(ProviderKeyConfigSchema).default([]),
     ...ProviderLimitFields,
   })
@@ -646,6 +654,12 @@ export const ConfigSchema = z
         escalate_on_failure: z.boolean().default(true),
         /** Rank providers whose every key is cooling down last (from key state and rate-limit headers). */
         respect_provider_cooldowns: z.boolean().default(true),
+        /**
+         * Keep a conversation on the model that served its last turn while that model stays
+         * healthy and eligible, so the provider's prompt cache keeps working. Never moves a paid
+         * model ahead of a free one.
+         */
+        sticky_endpoints: z.boolean().default(true),
         /**
          * Per-provider circuit breaker: after `failure_threshold` consecutive provider or
          * transport failures (5xx, timeouts, connection errors, 429s outside a reported

@@ -1,6 +1,6 @@
 import type { Switchyard } from "switchyard-router";
 import { insights } from "switchyard-router";
-import { purposeLabel, RequestsTable } from "@/components/requests-table";
+import { cacheSaving, purposeLabel, RequestsTable } from "@/components/requests-table";
 import { Card, HelpTip, PageHeader, Stat } from "@/components/ui";
 import { AutoRefresh } from "@/components/client/actions";
 import { UrlFilters } from "@/components/client/url-filters";
@@ -36,6 +36,7 @@ export function RequestsView({ sy, project, sp }: { sy: Switchyard; project: { s
   // Cached input was read again from the provider's prompt cache: it is not new work.
   const tokCached = rows.reduce((s, x) => s + (x.cachedInputTokens ?? 0), 0);
   const tokOut = rows.reduce((s, x) => s + (x.outputTokens ?? 0), 0);
+  const saving = cacheSaving(rows, new Map(eps.map((e) => [e.id, e.pricing])));
   const violations = rows.filter((x) => x.policyViolation).length;
 
   return (
@@ -49,10 +50,15 @@ export function RequestsView({ sy, project, sp }: { sy: Switchyard; project: { s
         }
         actions={<AutoRefresh seconds={8} />}
       />
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat label="Requests shown" value={num(rows.length)} sub={`newest ${limit} matching the filters`} />
         <Stat label="Succeeded" value={rows.length ? pct(ok, rows.length) : "–"} sub={`${num(rows.length - ok)} failed or uncertain`} />
         <Stat label="New tokens" value={compact(tokIn - tokCached + tokOut)} sub={`${compact(tokIn - tokCached)} in · ${compact(tokOut)} out · ${compact(tokCached)} cached · ${compact(tokIn + tokOut)} with cached`} />
+        <Stat
+          label="Prompt cache"
+          value={tokIn ? pct(tokCached, tokIn) : "–"}
+          sub={`of input read from the provider's cache · ${saving.known ? `saved $${saving.usd.toFixed(4)} at cached prices` : "saving unknown (no cached price)"}`}
+        />
         <Stat label="Policy violations" value={num(violations)} tone={violations ? "bad" : undefined} sub="served by a different model than routed" />
       </div>
       <Card>

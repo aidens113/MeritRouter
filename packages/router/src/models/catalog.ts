@@ -68,6 +68,13 @@ export const ModelEndpointSchema = z
       .object({
         inputUsdPerMillion: z.number().min(0).nullable(),
         outputUsdPerMillion: z.number().min(0).nullable(),
+        /**
+         * Price of input tokens the provider serves from its prompt cache. Unset or null: cached
+         * input is priced as ordinary input (never guessed).
+         */
+        cachedInputUsdPerMillion: z.number().min(0).nullable().optional(),
+        /** Where `cachedInputUsdPerMillion` came from (a model list, paid.models, an override). */
+        cachedInputSource: z.string().optional(),
         freeVerified: z.boolean(),
         source: z.string().default("manual"),
         /**
@@ -110,6 +117,8 @@ export const EndpointOverrideSchema = z
     forceStatus: z.enum(["active", "disabled"]).optional(),
     deniedProfiles: z.array(ProfileNameSchema).optional(),
     freeVerified: z.boolean().optional(),
+    /** USD per million cached input tokens (null clears it: cached input at the input price). */
+    cachedInputUsdPerMillion: z.number().min(0).nullable().optional(),
     contextLimitTokens: z.number().int().positive().optional(),
     outputLimitTokens: z.number().int().positive().optional(),
     inputModalities: z.array(ModalitySchema).optional(),
@@ -159,6 +168,7 @@ function applyOverride(ep: BaseEndpoint, o: EndpointOverride | undefined): { ep:
   if (o.confirmParams) next.params.confirmed = true;
   if (o.deniedProfiles) next.deniedProfiles = o.deniedProfiles;
   if (o.freeVerified !== undefined) next.pricing = { ...next.pricing, freeVerified: o.freeVerified, source: "override" };
+  if (o.cachedInputUsdPerMillion !== undefined) next.pricing = { ...next.pricing, cachedInputUsdPerMillion: o.cachedInputUsdPerMillion, cachedInputSource: "override" };
   if (o.contextLimitTokens !== undefined) next.contextLimitTokens = o.contextLimitTokens;
   if (o.outputLimitTokens !== undefined) {
     next.outputLimitTokens = o.outputLimitTokens;

@@ -10,7 +10,7 @@ import { estimateTokens } from "./types.js";
 import { CircuitBreakers, countsAsProviderFailure } from "./breaker.js";
 import { ProviderCapacity, SLOT_POLL_MS, type SlotHandle, type SlotHolder } from "./capacity.js";
 import { newId } from "../storage/db.js";
-import { isPaid } from "../routing/select.js";
+import { isPaid, stickyOrder } from "../routing/select.js";
 import type { ProviderClient } from "../providers/client.js";
 import { probeClient, requestDirect, type DirectRuntime } from "./direct.js";
 import { NOT_IN_PLAN_RECHECK_MS } from "../providers/keys.js";
@@ -25,6 +25,15 @@ export interface GateRequest {
   participants: Array<Omit<Participant, "estInputTokens" | "reservedOutputTokens"> & { weight?: number }>;
   chat: Omit<ChatRequest, "model">;
   signal?: AbortSignal;
+  /**
+   * The endpoint that served this conversation's last turn: tried first while it is healthy
+   * (breaker closed, not cooling down, not excluded) and still a candidate (see `stickyOrder`).
+   */
+  preferEndpointId?: string | null;
+  /** Endpoints this request must not use (a retry after one cut a tool call short). */
+  avoidEndpointIds?: readonly string[];
+  /** A stable conversation id, sent as `prompt_cache_key` where the provider takes one. */
+  cacheKey?: string;
 }
 
 export interface GateAttempt {
@@ -188,6 +197,25 @@ export class Gate {
     return probeClient({ cfg: this.cfg, health: this.health, direct: this.direct });
   }
 
+  /**
+   * Whether a sticky endpoint may go first: its platform's breaker is closed, it is not cooling
+   * down, and the gate does not exclude it. Key availability and context fit are checked when
+   * it is tried; a skip there falls through to the normal order.
+   */
+  private stickyHealthy(ep: ModelEndpoint): boolean {
+    if (this.health.breakers.blockedUntil(ep.providerId) !== null) return false;
+    const h = this.health.lookup(ep.providerId);
+    if (h?.status === "rate_limited" && (h.resumeAt === null || h.resumeAt > this.health.breakers.now())) return false;
+    return this.excluded(ep) === null;
+  }
+
+  /** The candidates in the order this request tries them (stickiness and exclusions applied). */
+  private candidatesFor(req: GateRequest): ModelEndpoint[] {
+    const avoid = new Set(req.avoidEndpointIds ?? []);
+    const list = avoid.size ? req.plan.candidates.filter((c) => !avoid.has(c.id)) : req.plan.candidates;
+    return this.cfg.routing.sticky_endpoints ? stickyOrder(list, req.preferEndpointId, (ep) => this.stickyHealthy(ep)) : list;
+  }
+
   /** Supervisors and independent reviewers are served before waiting workers. */
   private priorityOf(req: GateRequest): 0 | 1 {
     if (req.purpose === "supervisor" || req.purpose === "verification") return 1;
@@ -301,7 +329,7 @@ export class Gate {
       reservedOutputTokens: Math.ceil((req.chat.max_tokens * (p.weight ?? 1)) / totalWeight),
     }));
 
-    for (const ep of req.plan.candidates) {
+    for (const ep of this.candidatesFor(req)) {
       const paid = isPaid(ep);
       // Free and paid attempts are limited separately: free fallbacks never use up paid slots.
       if (paid ? dispatchedPaid >= this.cfg.paid.max_paid_attempts : dispatched >= this.cfg.routing.max_endpoint_fallbacks) continue;

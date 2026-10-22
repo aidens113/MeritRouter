@@ -1,6 +1,7 @@
 import type { Db } from "./db.js";
 import type { ModelEndpoint } from "../models/catalog.js";
 import type { Usage } from "../core/task.js";
+import { actualUsd, endpointPrice } from "../paid/spend.js";
 
 interface ChargeRow {
   request_id: string;
@@ -87,8 +88,9 @@ export function taskUsage(db: Db, catalog: { endpoints(): ModelEndpoint[] }, tas
       const ep = catalog.endpoints().find((e) => e.id === r.served_endpoint_id);
       const pin = ep?.pricing.inputUsdPerMillion;
       const pout = ep?.pricing.outputUsdPerMillion;
-      if (pin === null || pin === undefined || pout === null || pout === undefined) estCostKnown = false;
-      else estCost += (r.input_tokens * pin + r.output_tokens * pout) / 1_000_000;
+      if (!ep || pin === null || pin === undefined || pout === null || pout === undefined) estCostKnown = false;
+      // A batch share's cached tokens are unknown: it is priced as ordinary input.
+      else estCost += actualUsd(r.input_tokens, r.output_tokens, endpointPrice(ep.pricing), r.participants > 1 ? 0 : (r.cached_input_tokens ?? 0));
     } else if (r.status !== "failed") {
       estCostKnown = false;
     }

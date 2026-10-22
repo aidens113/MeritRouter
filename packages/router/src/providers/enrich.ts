@@ -27,7 +27,7 @@ export interface ListedModel {
   supportsStructuredOutput: boolean | null;
   inputModalities: Modality[] | null;
   /** USD per million tokens, only when the list states prices in known units (OpenRouter). */
-  priceUsdPerMillion: { input: number | null; output: number | null } | null;
+  priceUsdPerMillion: { input: number | null; output: number | null; cachedInput?: number | null } | null;
   /** Whether the list states a zero or a positive price (in any unit); null when it states none. */
   price: "zero" | "positive" | null;
   huggingFaceId: string | null;
@@ -122,7 +122,7 @@ export const OpenRouterModelSchema = z.object({
   hugging_face_id: optString,
   context_length: optPositiveInt,
   architecture: z.object({ input_modalities: optStrings, output_modalities: optStrings }).nullable().optional().catch(null),
-  pricing: z.object({ prompt: priceValue, completion: priceValue }).nullable().optional().catch(null),
+  pricing: z.object({ prompt: priceValue, completion: priceValue, input_cache_read: priceValue }).nullable().optional().catch(null),
   top_provider: z.object({ context_length: optPositiveInt, max_completion_tokens: optPositiveInt }).nullable().optional().catch(null),
   supported_parameters: optStrings,
 });
@@ -132,6 +132,7 @@ export type OpenRouterModel = z.infer<typeof OpenRouterModelSchema>;
 export function listedFromOpenRouter(m: OpenRouterModel): ListedModel {
   const input = priceNumber(m.pricing?.prompt);
   const output = priceNumber(m.pricing?.completion);
+  const cachedInput = priceNumber(m.pricing?.input_cache_read);
   const params = m.supported_parameters;
   return {
     id: m.id,
@@ -142,7 +143,8 @@ export function listedFromOpenRouter(m: OpenRouterModel): ListedModel {
     supportsTools: params ? params.includes("tools") : null,
     supportsStructuredOutput: params ? params.includes("response_format") || params.includes("structured_outputs") : null,
     inputModalities: knownModalities(m.architecture?.input_modalities),
-    priceUsdPerMillion: input === null && output === null ? null : { input: input === null ? null : input * 1e6, output: output === null ? null : output * 1e6 },
+    priceUsdPerMillion:
+      input === null && output === null ? null : { input: input === null ? null : input * 1e6, output: output === null ? null : output * 1e6, ...(cachedInput !== null ? { cachedInput: cachedInput * 1e6 } : {}) },
     price: input === null || output === null ? null : input === 0 && output === 0 ? "zero" : "positive",
     huggingFaceId: m.hugging_face_id || null,
   };

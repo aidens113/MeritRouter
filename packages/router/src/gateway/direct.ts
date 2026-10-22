@@ -3,7 +3,7 @@ import type { Admission, Participant } from "../admission/admission.js";
 import { AdmissionDenied, GatewayError, PAID_BUDGET_DENIALS, type GatewayErrorKind } from "../core/errors.js";
 import type { ModelEndpoint } from "../models/catalog.js";
 import { freeKeyOnly, isPaid } from "../routing/select.js";
-import { worstCaseUsd, type PaidSpend } from "../paid/spend.js";
+import { endpointPrice, worstCaseUsd, type PaidSpend } from "../paid/spend.js";
 import type { ProviderClient, ProviderRequest, ProviderResponse, RequestCredential } from "../providers/client.js";
 import type { ProviderCredential } from "../providers/credentials.js";
 import { ProviderError, type ProviderErrorKind } from "../providers/errors.js";
@@ -111,7 +111,7 @@ export async function requestDirect(
     return { kind: "skip", resumeAt: null };
   }
   const paid = isPaid(ep);
-  const price = { in: ep.pricing.inputUsdPerMillion ?? Infinity, out: ep.pricing.outputUsdPerMillion ?? Infinity };
+  const price = endpointPrice(ep.pricing);
   const worst = paid ? worstCaseUsd(estInput, req.chat.max_tokens, price) : 0;
   const creds = rt.credentials().list(provider.id);
   const usable = creds.filter((c) => c.unusableReason === null);
@@ -202,7 +202,7 @@ export async function requestDirect(
 
       let response: ProviderResponse;
       try {
-        const call: ProviderRequest = { provider, credential, model: route.model, chat, timeoutMs, ...(req.signal ? { signal: req.signal } : {}) };
+        const call: ProviderRequest = { provider, credential, model: route.model, chat, timeoutMs, ...(req.signal ? { signal: req.signal } : {}), ...(req.cacheKey ? { cacheKey: req.cacheKey } : {}) };
         response = await rt.client.complete(call);
       } catch (err) {
         const pe = asProviderError(err, provider.id, !!req.signal?.aborted);

@@ -190,6 +190,59 @@ exits. The MCP server's instructions carry the URL and a `panel` tool starts it 
 panel ships with a repository checkout, so an npm install has none yet: `ensurePanel` reports
 how to get one instead of failing (see the packaging question in the working documents).
 
+## Prompt caching and conversation continuity (C1-C2, 2026-10-21)
+
+**Provider facts (fetched 2026-10-21).**
+- Anthropic Messages API: at most **4** `cache_control` breakpoints per request; render order
+  is tools, system, messages, and a breakpoint caches everything before it. The minimum
+  cacheable prefix depends on the model (512 tokens on the newest models, 1024 on Sonnet 4.x and
+  Opus 4.8, 2048 on Opus 4.7 and Haiku 3.5, 4096 on Opus 4.5/4.6 and Haiku 4.5); a shorter prefix
+  is silently not cached (no error). Cache reads cost about 0.1x the input price, writes 1.25x
+  (5-minute lifetime). Each breakpoint looks back at most 20 block positions for an earlier
+  entry. Usage reports `cache_read_input_tokens` and `cache_creation_input_tokens` apart from
+  `input_tokens`. Source: Anthropic prompt-caching documentation (via the claude-api reference).
+- OpenAI: Chat Completions accepts `prompt_cache_key` (openai-node `ChatCompletionCreateParamsBase`,
+  "used by OpenAI to cache responses for similar requests"); cached tokens are
+  `usage.prompt_tokens_details.cached_tokens`; older models want about 15 requests per minute
+  per key and prefix (developers.openai.com prompt-caching guide).
+- OpenRouter: accepts `prompt_cache_key` as its sticky routing key; reports
+  `prompt_tokens_details.cached_tokens`; its model list prices `input_cache_read` and
+  `input_cache_write` in USD per token (openrouter.ai/docs/features/prompt-caching and the
+  models guide).
+- Ollama Cloud reports `prompt_tokens_details.cached_tokens` (90% cached on a live supervisor
+  job, 2026-10-21).
+
+**Decisions.**
+- Hints go only where documented: the registry's `promptCache` is `cache_control` for
+  Anthropic, `prompt_cache_key` for OpenAI and OpenRouter, `none` elsewhere (custom providers
+  included); `providers.<id>.prompt_cache` overrides it. Anthropic requests carry three
+  breakpoints: the last tool, the system prompt, and the last block of the newest message. The
+  cache key is the task id. Gemini's explicit context caching stays out (implicit caching
+  applies through its OpenAI endpoint).
+- Stickiness (`routing.sticky_endpoints`, default on): the gate tries the endpoint that served
+  the conversation's last turn first while its breaker is closed, it is not cooling down, and
+  the gate does not exclude it; a skip for keys or context falls through to the normal order.
+  It never moves a paid endpoint ahead of a free one. A resumed session prefers the endpoint of
+  its last recorded response (`ResumePlan.lastEndpointId`).
+- Pricing: `pricing.cachedInputUsdPerMillion` (with `cachedInputSource`) comes from OpenRouter's
+  `input_cache_read`, a paid provider's `pricing_url`, `paid.models[].cached_input_usd_per_million`,
+  or a catalog override. Settled paid spend and task cost price cached tokens at it; without it
+  cached input costs the input price. The worst-case reservation stays at the full input price.
+  Known gap: Anthropic cache writes (1.25x) are counted as ordinary input. `cacheHit` is
+  `cachedInputTokens > 0`, null when the provider reports no usage.
+- Truncation: a plain reply cut off at the output limit gets one continuation request ("continue
+  exactly where you stopped") on the sticky endpoint and the two parts are joined in the
+  transcript; a cut-short tool call (unparseable arguments, or an empty reply) retries the turn
+  once with twice the output allowance where the endpoint's output limit and context allow,
+  otherwise on another candidate; when no endpoint can take the retry the truncated reply is
+  kept. Both are ordinary requests counted against the task's budget.
+- Compaction (`harness/compaction.ts`) runs only when the conversation exceeds its budget, and
+  then cuts it to half the budget by replacing the oldest whole turns with one summary message
+  that lists their tool calls, so the prefix changes rarely and tool calls stay paired with
+  their results. The budget follows the serving endpoint's context (never below the fallback
+  budget); if nothing that large is available the loop compacts to the fallback budget and
+  retries.
+
 ## Projects (user decision, 2026-10-20)
 
 One install holds many projects. Each has its own repositories, brain folder, jobs, tasks,

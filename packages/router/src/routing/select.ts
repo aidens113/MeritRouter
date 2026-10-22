@@ -274,6 +274,22 @@ export function planRoute(
   };
 }
 
+/**
+ * Endpoint stickiness: the candidates with `preferId` (the endpoint that served the
+ * conversation's last turn) moved to the front, so the provider's prompt cache keeps serving the
+ * prefix. The order is unchanged when that endpoint is not a candidate, is not `healthy`, or is
+ * paid while a free candidate ranks ahead of it (stickiness never spends money).
+ */
+export function stickyOrder(candidates: ModelEndpoint[], preferId: string | null | undefined, healthy: (ep: ModelEndpoint) => boolean): ModelEndpoint[] {
+  if (!preferId) return candidates;
+  const i = candidates.findIndex((c) => c.id === preferId);
+  if (i <= 0) return candidates;
+  const ep = candidates[i]!;
+  if (isPaid(ep) && candidates.slice(0, i).some((c) => !isPaid(c))) return candidates;
+  if (!healthy(ep)) return candidates;
+  return [ep, ...candidates.slice(0, i), ...candidates.slice(i + 1)];
+}
+
 /** Request-size fit for one endpoint. */
 export function fitsEndpoint(ep: ModelEndpoint, inputTokens: number, outputTokens: number): string | null {
   if (ep.outputLimitTokens !== null && outputTokens > ep.outputLimitTokens) return `output ${outputTokens} exceeds ${ep.outputLimitTokens}`;
