@@ -39,11 +39,11 @@ desktop images viewed. This backend/migration is excluded from the request-only 
 
 Compose C1 read-only validation and C2 full/known-resource proof are local prerequisites:
 independent10/10 and80/80 tests. Runtime remains disabled. Durable original creation receipts,
-engine transport/journal, retained/task integration and actual disposable-engine acceptance
-remain open. Pure sealed Engine request plans independently38/38 pass, still no transport.
+engine transport, retained/task integration and actual disposable-engine acceptance
+remain open. Pure sealed Engine request plans independently38/38 pass, still no transport.`nCompose journal/coordinator implementation now active, exclusively owns next migration31.
 Browser pipe/capability H1 independently26/26; hydrated JS remains unavailable
 without an accepted native isolation adapter. Usable Ubuntu WSL2 bwrap/Python substrate was
-investigated; gated helper prerequisite is active without OS changes or runtime availability.
+investigated; gated helper95907bd independently38/38 passed5.63s including17 native cases.`nOrdinary-user observer investigation is active; no runtime availability.
 These prerequisites do not close L5.
 
 Next R2 unit is strict captured-generation request admission/dispatch/settlement and observed
