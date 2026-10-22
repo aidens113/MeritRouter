@@ -75,6 +75,19 @@ ran out of budget). Served at http://127.0.0.1:8081. Fixes from what the session
 - Still seen: models ask for a `bash` tool (none offered without `coding.allowed_commands`); the
   difficulty classifier's 300-token reply is cut off on small models (it falls back to defaults).
 
+**Facebook clone (2026-10-21, project `facebook-clone`):** team job t_0mvj17lbebb112697ce31; workers did
+store/auth, frontend, README; posts, friends, server failed on the old caps and the supervisor wrote
+them. 45 tests passed but a browser run found two integration bugs between agents' parts (signup
+started no session; the frontend read `likes` as an array while the API returns a count), each
+fixed by a SwitchYard implement task (accepted after supervisor review, merged). Served at
+http://127.0.0.1:8082. SwitchYard fixes from this run: request caps raised in presets and the
+user's config (7537187), stall nudge and repeat note, path aliases, bare file refs; brain index
+links (25cb632); classifier failure never escalates to T4, classifier output 600/item (82e0cb7);
+review reserves raised (deep 12, strict 16; a deep review had a 2-request cap and no verdict).
+Follow-up: the job page's plan shows segments as failed even when the supervisor finished them
+itself; show "failed; finished by the supervisor" when the supervisor later changed the segment's
+paths on the job branch (after the panel-v2 and budget-control merges).
+
 **Open:**
 - Packaging for npm: `switchyard mcp` now exists; still no default config location, the panel is
   not in the package, and no one-step setup.
