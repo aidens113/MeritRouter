@@ -1,3 +1,5 @@
+import { LeaseRefSchema } from "../storage/task-leases.js";
+import { RequestReceipts } from "../admission/request-receipts.js";
 import type { Db } from "../storage/db.js";
 import type { ResolvedConfig } from "../config/load.js";
 import { Admission, type Participant } from "../admission/admission.js";
@@ -291,6 +293,11 @@ export class Gate {
    */
   async request(req: GateRequest): Promise<GateResponse> {
     if (this.closing) throw new Error("model request gate is closed");
+    req = { ...req, chat: structuredClone(req.chat), participants: req.participants.map(p => {
+      const lease = Object.freeze(LeaseRefSchema.parse(p.lease));
+      if (p.taskId !== lease.taskId || p.leaseOwner !== lease.owner) throw new Error("participant fields disagree with captured lease");
+      return { ...p, lease, budget: { ...p.budget } };
+    }) };
     // Register before invoking even a synchronously executing adapter/hook (it may close).
     const run = Promise.resolve().then(() => this.performRequest(req));
     this.inFlight.add(run);
@@ -302,10 +309,11 @@ export class Gate {
   async close(): Promise<void> {
     this.closing = true;
     await Promise.allSettled([...this.inFlight]);
+    await this.ledger.drain();
   }
 
   private async performRequest(req: GateRequest): Promise<GateResponse> {
-    const holder: SlotHolder = { id: newId("h"), taskIds: req.participants.map((p) => p.taskId), leaseOwner: req.participants[0]?.leaseOwner ?? null, priority: this.priorityOf(req), since: null };
+    const holder: SlotHolder = { id: newId("h"), taskIds: req.participants.map((p) => p.taskId), leases: req.participants.map(p => LeaseRefSchema.parse(p.lease)), leaseOwner: req.participants[0]?.leaseOwner ?? null, priority: this.priorityOf(req), since: null };
     const started = Date.now();
     const maxWaitMs = this.cfg.providers.request_timeout_seconds * 1000;
     try {
@@ -347,7 +355,7 @@ export class Gate {
 
     const totalWeight = req.participants.reduce((s, p) => s + (p.weight ?? 1), 0);
     const participants: Participant[] = req.participants.map((p) => ({
-      taskId: p.taskId,
+      taskId: p.taskId, lease: LeaseRefSchema.parse(p.lease),
       leaseOwner: p.leaseOwner,
       budget: p.budget,
       estInputTokens: Math.ceil((estInput * (p.weight ?? 1)) / totalWeight),
@@ -368,7 +376,10 @@ export class Gate {
         attempts.push({ endpointId: ep.id, outcome: `skipped: ${q}` });
         continue;
       }
-      const r = await requestDirect({ cfg: this.cfg, ledger: this.ledger, captures: this.captures, assertDispatch: participants => this.admission.assertDispatch(participants), health: this.health, direct: this.direct }, ep, req, participants, estInput, attempts, (e) => this.admit(e, holder, attempts, full, admitted));
+      const r = await requestDirect({ cfg: this.cfg, ledger: this.ledger, captures: this.captures, assertDispatch: (participants, reservation, dispatchId) => {
+        this.admission.assertDispatch(participants);
+        if (reservation && dispatchId) new RequestReceipts(this.db).assertDispatch(reservation, dispatchId);
+      }, health: this.health, direct: this.direct }, ep, req, participants, estInput, attempts, (e) => this.admit(e, holder, attempts, full, admitted));
       if (r.kind === "skip") {
         if (r.resumeAt !== null) keyRetryAt = Math.min(keyRetryAt ?? r.resumeAt, r.resumeAt);
         continue;

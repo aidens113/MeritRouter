@@ -1,3 +1,4 @@
+import { RequestPersistenceError } from "../admission/request-ledger.js";
 import { AdmissionDenied } from "../core/errors.js";
 import type { LeaseRef } from "../storage/task-leases.js";
 import type { LabManager } from "../labs/lab.js";
@@ -130,13 +131,14 @@ export async function ask(ctx: RunContext, req: Omit<GateRequest, "plan" | "part
       ...req,
       ...(ctx.purpose ? { purpose: ctx.purpose } : {}),
       plan: ctx.plan,
-      participants: req.participants ?? [{ taskId: ctx.taskId, leaseOwner: ctx.leaseOwner, budget: ctx.budget }],
+      participants: req.participants ?? [{ taskId: ctx.taskId, leaseOwner: ctx.leaseOwner, lease: ctx.taskLease, budget: ctx.budget }],
       signal: ctx.signal,
     });
   } catch (err) {
     const attempts = (err as { attempts?: GateAttempt[] }).attempts;
     if (attempts) ctx.attempts.push(...attempts);
-    session?.modelError({ executionId: req.executionId, error: err, ...(attempts ? { attempts } : {}) });
+    try { session?.modelError({ executionId: req.executionId, error: err, ...(attempts ? { attempts } : {}) }); }
+    catch (recording) { if (!(err instanceof RequestPersistenceError)) throw recording; }
     throw err;
   }
   ctx.attempts.push(...res.attempts);

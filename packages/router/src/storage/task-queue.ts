@@ -15,7 +15,7 @@ export type QueueCompanions = z.infer<typeof QueueCompanionsSchema>;
 export const StoredTaskDTOSchema = z.object({
   row: z.object({
     id: z.string().min(1), idempotency_key: z.string().nullable(), spec_hash: z.string(),
-    tier: TierNameSchema.nullable(), classification_json: z.string().nullable(), purpose: z.string(),
+    tier: z.union([TierNameSchema, z.literal("T4")]).nullable(), classification_json: z.string().nullable(), purpose: z.string(),
     profile: ProfileNameSchema, spec_json: z.string(), state: z.enum(TASK_STATES), state_reason: z.string().nullable(),
     created_at: timestamp, updated_at: timestamp, started_at: timestamp.nullable(), deadline_at: timestamp.nullable(),
     finished_at: timestamp.nullable(), lease_owner: z.string().nullable(), lease_expires_at: timestamp.nullable(),

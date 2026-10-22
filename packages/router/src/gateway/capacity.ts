@@ -1,3 +1,4 @@
+import { LeaseRefSchema, type LeaseRef } from "../storage/task-leases.js";
 import { z } from "zod";
 import { immediate, newId, type Db } from "../storage/db.js";
 
@@ -88,6 +89,7 @@ export function afterThrottle(r: ConcurrencyRecord, reason: ThrottleReason, now:
 
 /** A gate request that holds or waits for slots (one per `Gate.request` call). */
 export interface SlotHolder {
+  leases?: readonly LeaseRef[];
   id: string;
   /** Participants; the first one's task lease keeps the hold alive. */
   taskIds: string[];
@@ -100,6 +102,7 @@ export interface SlotHolder {
 
 /** A held slot: one in-flight request on one platform. */
 export interface SlotHandle {
+  nonce?: string;
   id: string | null;
   platform: string;
   /** The platform's AIMD generation when the slot was taken. */
@@ -128,9 +131,11 @@ export interface PlatformUsage {
 }
 
 /** A row counts while its task holds a live lease (and, per kind, while it is fresh). */
-const LIVE_SQL = `t.state IN ('running','cancel_requested') AND t.lease_expires_at > @now
+const LIVE_SQL = `((s.nonce IS NOT NULL OR s.lease_json IS NOT NULL) AND s.kind='request') OR (
+  t.state IN ('running','cancel_requested') AND t.lease_expires_at > @now
   AND (s.lease_owner IS NULL OR s.lease_owner = t.lease_owner)
-  AND ((s.kind = 'request' AND s.since > @requestCut) OR (s.kind = 'claim' AND s.since > @claimCut) OR (s.kind = 'wait' AND s.seen_at > @waitCut))`;
+  AND (s.lease_json IS NULL OR (json_extract(s.lease_json,'$[0].runCount')=t.run_count AND json_extract(s.lease_json,'$[0].incarnation')=t.lease_incarnation AND json_extract(s.lease_json,'$[0].project')=t.project_id))
+  AND ((s.kind='request' AND s.since>@requestCut) OR (s.kind='claim' AND s.since>@claimCut) OR (s.kind='wait' AND s.seen_at>@waitCut)))`;
 
 /**
  * Per-provider concurrency. Every platform has a number of slots (AIMD: start at
@@ -252,13 +257,13 @@ export class ProviderCapacity {
   /** Delete rows that no longer count (their task's lease is gone, or they went stale). */
   private purge(): void {
     this.db!
-      .prepare(`DELETE FROM provider_slots WHERE id IN (SELECT s.id FROM provider_slots s LEFT JOIN tasks t ON t.id = s.task_id WHERE t.id IS NULL OR NOT (${LIVE_SQL}))`)
+      .prepare(`DELETE FROM provider_slots WHERE id IN (SELECT s.id FROM provider_slots s LEFT JOIN tasks t ON t.id = s.task_id WHERE NOT COALESCE((${LIVE_SQL}),0))`)
       .run(this.cuts());
   }
 
   private count(platform: string, kind: "request" | "claim" | "wait", extra = "", params: Record<string, unknown> = {}): number {
     return (
-      this.db!.prepare(`SELECT COUNT(*) AS n FROM provider_slots s JOIN tasks t ON t.id = s.task_id WHERE s.platform = @platform AND s.kind = @kind AND ${LIVE_SQL} ${extra}`).get({
+      this.db!.prepare(`SELECT COUNT(*) AS n FROM provider_slots s LEFT JOIN tasks t ON t.id = s.task_id WHERE s.platform = @platform AND s.kind = @kind AND (${LIVE_SQL}) ${extra}`).get({
         ...this.cuts(),
         platform,
         kind,
@@ -299,14 +304,20 @@ export class ProviderCapacity {
         since: holder.since ?? Number.MAX_SAFE_INTEGER,
       });
       if (ahead >= r.limit - held) return { full: true, platform, held, limit: r.limit, ahead } as SlotsFull;
-      const id = newId("slot");
+      const id = newId("slot"), nonce = holder.leases === undefined ? undefined : newId("nonce");
+      const leases = holder.leases === undefined ? null : JSON.stringify(z.array(LeaseRefSchema).max(256).parse(holder.leases));
       this.db!
-        .prepare("INSERT INTO provider_slots (id, platform, kind, holder, task_id, lease_owner, priority, since, seen_at) VALUES (?, ?, 'request', ?, ?, ?, ?, ?, ?)")
-        .run(id, platform, holder.id, holder.taskIds[0] ?? "", holder.leaseOwner, holder.priority, now, now);
+        .prepare("INSERT INTO provider_slots (id, platform, kind, holder, task_id, lease_owner, priority, since, seen_at,lease_json,nonce) VALUES (?, ?, 'request', ?, ?, ?, ?, ?, ?,?,?)")
+        .run(id, platform, holder.id, holder.taskIds[0] ?? "", holder.leaseOwner, holder.priority, now, now, leases, nonce ?? null);
       this.db!.prepare("DELETE FROM provider_slots WHERE kind = 'wait' AND holder = ?").run(holder.id);
-      const del = this.db!.prepare("DELETE FROM provider_slots WHERE kind = 'claim' AND task_id = ?");
-      for (const t of holder.taskIds) del.run(t);
-      return { id, platform, generation: r.generation };
+      if (holder.leases !== undefined) {
+        const del = this.db!.prepare("DELETE FROM provider_slots WHERE kind='claim' AND task_id=? AND lease_owner=? AND json_extract(lease_json,'$[0].runCount')=? AND json_extract(lease_json,'$[0].incarnation')=? AND json_extract(lease_json,'$[0].project')=?");
+        for (const lease of holder.leases) del.run(lease.taskId, lease.owner, lease.runCount, lease.incarnation, lease.project);
+      } else {
+        const del = this.db!.prepare("DELETE FROM provider_slots WHERE kind='claim' AND task_id=? AND lease_json IS NULL");
+        for (const t of holder.taskIds) del.run(t);
+      }
+      return { id, platform, generation: r.generation, ...(nonce ? { nonce } : {}) };
     });
   }
 
@@ -314,11 +325,16 @@ export class ProviderCapacity {
   release(handle: SlotHandle): void {
     if (!handle.id || !this.db) return;
     try {
-      this.db.prepare("DELETE FROM provider_slots WHERE id = ?").run(handle.id);
+      this.db.prepare("DELETE FROM provider_slots WHERE id=? AND uncertain=0 AND ((nonce IS NULL AND ? IS NULL) OR nonce=?)").run(handle.id, handle.nonce ?? null, handle.nonce ?? null);
     } catch {
       // database closed: the row stops counting with the task lease
     }
     this.wake();
+  }
+
+  /** Persistence uncertainty retains the exact local transport hold for explicit reconciliation. */
+  quarantine(handle: SlotHandle): void {
+    if (handle.id && handle.nonce && this.db) this.db.prepare("UPDATE provider_slots SET uncertain=1 WHERE id=? AND nonce=?").run(handle.id, handle.nonce);
   }
 
   /** Register (or refresh) the holder's place in the queue of each full platform. */
@@ -331,8 +347,8 @@ export class ProviderCapacity {
         const updated = this.db!.prepare("UPDATE provider_slots SET seen_at = ? WHERE kind = 'wait' AND holder = ? AND platform = ?").run(now, holder.id, platform);
         if (updated.changes) continue;
         this.db!
-          .prepare("INSERT INTO provider_slots (id, platform, kind, holder, task_id, lease_owner, priority, since, seen_at) VALUES (?, ?, 'wait', ?, ?, ?, ?, ?, ?)")
-          .run(newId("slot"), platform, holder.id, holder.taskIds[0]!, holder.leaseOwner, holder.priority, holder.since!, now);
+          .prepare("INSERT INTO provider_slots (id, platform, kind, holder, task_id, lease_owner, priority, since, seen_at,lease_json) VALUES (?, ?, 'wait', ?, ?, ?, ?, ?, ?,?)")
+          .run(newId("slot"), platform, holder.id, holder.taskIds[0]!, holder.leaseOwner, holder.priority, holder.since!, now, holder.leases === undefined ? null : JSON.stringify(holder.leases));
       }
     });
   }
@@ -341,7 +357,7 @@ export class ProviderCapacity {
   leave(holder: SlotHolder): void {
     if (!this.db) return;
     try {
-      const n = this.db.prepare("DELETE FROM provider_slots WHERE holder = ? AND kind IN ('wait', 'request')").run(holder.id).changes;
+      const n = this.db.prepare("DELETE FROM provider_slots WHERE holder=? AND uncertain=0 AND (kind='wait' OR (kind='request' AND nonce IS NULL AND lease_json IS NULL))").run(holder.id).changes;
       if (n) this.wake();
     } catch {
       // database closed
@@ -389,12 +405,12 @@ export class ProviderCapacity {
   }
 
   /** The scheduler started a task on this platform: it holds a claim until its first request. */
-  recordClaim(taskId: string, leaseOwner: string, platform: string): void {
+  recordClaim(taskId: string, leaseOwner: string, platform: string, lease?: LeaseRef): void {
     if (!this.enabled) return;
     const now = this.now();
     this.db!
-      .prepare("INSERT INTO provider_slots (id, platform, kind, holder, task_id, lease_owner, priority, since, seen_at) VALUES (?, ?, 'claim', ?, ?, ?, 0, ?, ?)")
-      .run(newId("slot"), platform, taskId, taskId, leaseOwner, now, now);
+      .prepare("INSERT INTO provider_slots (id, platform, kind, holder, task_id, lease_owner, priority, since, seen_at,lease_json) VALUES (?, ?, 'claim', ?, ?, ?, 0, ?, ?,?)")
+      .run(newId("slot"), platform, taskId, taskId, leaseOwner, now, now, lease ? JSON.stringify([LeaseRefSchema.parse(lease)]) : null);
   }
 }
 
@@ -417,7 +433,7 @@ export function readConcurrencyRecords(db: Db): ConcurrencyRecord[] {
 export function liveSlotCounts(db: Db, now: number): Array<{ platform: string; kind: "request" | "claim" | "wait"; n: number }> {
   return db
     .prepare(
-      `SELECT s.platform AS platform, s.kind AS kind, COUNT(*) AS n FROM provider_slots s JOIN tasks t ON t.id = s.task_id
+      `SELECT s.platform AS platform, s.kind AS kind, COUNT(*) AS n FROM provider_slots s LEFT JOIN tasks t ON t.id = s.task_id
         WHERE ${LIVE_SQL} GROUP BY s.platform, s.kind ORDER BY s.platform, s.kind`,
     )
     .all({ now, requestCut: 0, claimCut: now - CLAIM_HOLD_MS, waitCut: now - WAIT_STALE_MS }) as Array<{ platform: string; kind: "request" | "claim" | "wait"; n: number }>;

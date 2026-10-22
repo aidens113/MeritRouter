@@ -1,3 +1,6 @@
+import { RequestPersistenceError } from "../admission/request-ledger.js";
+import { LeaseRefSchema, type LeaseRef } from "../storage/task-leases.js";
+import { TaskStore } from "../storage/tasks.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { QUALIFICATION_PROJECT } from "../qualification/registry.js";
@@ -27,11 +30,13 @@ interface Pending {
   project: string;
   taskId: string;
   leaseOwner: string;
+  lease?: LeaseRef;
   budget: EffectiveBudget;
   spec: WorkerTask;
   specHash: string;
   features: TaskFeatures;
   resolve: (v: ClassifierVerdict | null) => void;
+  reject: (error: unknown) => void;
 }
 
 const ProjectRow = z.object({ project_id: z.string().min(1), registered_project: z.string().nullable(), archived_at: z.number().int().nullable() });
@@ -119,13 +124,19 @@ export class Classifier {
     catch { return null; }
   }
 
-  classify(item: Omit<Pending, "resolve" | "project">): Promise<ClassifierVerdict | null> {
+  private active(item: Pick<Pending, "taskId" | "leaseOwner" | "lease">): boolean {
+    const lease = LeaseRefSchema.safeParse(item.lease);
+    return lease.success && lease.data.taskId === item.taskId && lease.data.owner === item.leaseOwner && !!new TaskStore(this.db, this.now).dispatchable(lease.data.taskId, lease.data.owner, lease.data.runCount, lease.data.incarnation, lease.data.project);
+  }
+  classify(item: Omit<Pending, "resolve" | "reject" | "project">): Promise<ClassifierVerdict | null> {
+    if (!this.active(item)) return Promise.resolve(null);
+    item = { ...item, lease: Object.freeze(LeaseRefSchema.parse(item.lease)), budget: { ...item.budget } };
     const project = this.projectFor(item.taskId);
     if (project === null) return Promise.resolve(null);
     const hit = this.cached(item.specHash, project);
     if (hit) return Promise.resolve(hit);
-    return new Promise((resolve) => {
-      this.queue.push({ ...item, project, resolve });
+    return new Promise((resolve, reject) => {
+      this.queue.push({ ...item, project, resolve, reject });
       if (this.queue.filter(p => p.project === project).length >= this.cfg.scoring.max_batch) void this.flush(project);
       else this.timer ??= setTimeout(() => void this.flush(), this.cfg.scoring.batch_window_ms);
     });
@@ -141,15 +152,14 @@ export class Classifier {
     this.queue = remaining;
     if (this.queue.length) this.timer = setTimeout(() => void this.flush(), 0);
     try {
-      const batch = chosen.filter(pending => {
-        if (this.projectFor(pending.taskId) === pending.project) return true;
-        pending.resolve(null);
-        return false;
-      });
+      // Preserve all-or-nothing admission: dropping one cancelled member must not
+      // silently turn the original shared request into a partial paid/model call.
+      const batch = chosen.every(p => this.active(p) && this.projectFor(p.taskId) === p.project) ? chosen : [];
+      if (!batch.length) for (const pending of chosen) pending.resolve(null);
       if (batch.length) await this.dispatchBatch(batch);
-    } catch {
-      // Timer-triggered policy/storage failures must not leak rejections or strand callers.
-      for (const pending of chosen) pending.resolve(null);
+    } catch (error) {
+      // Persistence uncertainty must reach the caller, never turn into another model call.
+      for (const pending of chosen) error instanceof RequestPersistenceError ? pending.reject(error) : pending.resolve(null);
     }
   }
 
@@ -160,6 +170,7 @@ export class Classifier {
     let parsed: Map<string, ClassifierVerdict> = new Map();
     const sessions: SessionRecorder[] = [];
     let failure: string | null = null;
+    let persistence: RequestPersistenceError | null = null;
     try {
       const chat: Omit<ChatRequest, "model"> = {
         messages: [
@@ -187,17 +198,20 @@ export class Classifier {
       }
       let res: GateResponse;
       try {
-        if (batch.some(p => this.projectFor(p.taskId) !== p.project)) throw new Error("classifier participant project changed before dispatch");
+        if (batch.some(p => !this.active(p) || this.projectFor(p.taskId) !== p.project)) throw new Error("classifier participant project changed before dispatch");
         res = await this.gate.request({
           plan,
           executionId,
           purpose: "classification",
-          participants: batch.map((p) => ({ taskId: p.taskId, leaseOwner: p.leaseOwner, budget: p.budget })),
+          participants: batch.map((p) => ({ taskId: p.taskId, leaseOwner: p.leaseOwner, lease: p.lease, budget: p.budget })),
           chat,
         });
       } catch (err) {
         const attempts = (err as { attempts?: GateAttempt[] }).attempts;
-        for (const s of sessions) s.modelError({ executionId, error: err, ...(attempts ? { attempts } : {}) });
+        for (const s of sessions) {
+          try { s.modelError({ executionId, error: err, ...(attempts ? { attempts } : {}) }); }
+          catch (recording) { if (!(err instanceof RequestPersistenceError)) throw recording; }
+        }
         throw err;
       }
       for (const s of sessions) s.modelResponse(res);
@@ -218,17 +232,25 @@ export class Classifier {
     } catch (err) {
       parsed = new Map();
       failure = (err as Error).message;
-      this.gate.admission.finishExecution(executionId, "failed", { error: failure });
+      persistence = err instanceof RequestPersistenceError ? err : null;
+      try { this.gate.admission.finishExecution(executionId, "failed", { error: failure }); }
+      catch (recording) { throw persistence ?? recording; }
     }
-    batch.forEach((p, i) => {
-      const v = this.projectFor(p.taskId) === p.project ? (parsed.get(ids[i]!) ?? null) : null;
-      this.endSession(sessions[i] ?? null, v, failure);
-      if (v && this.cfg.scoring.cache) {
-        this.db
-          .prepare("INSERT OR REPLACE INTO classifications (spec_hash, rulebook_version, data_json, created_at) VALUES (?, ?, ?, ?)")
-          .run(this.cacheKey(p.project, p.specHash), this.rulebookFingerprint, JSON.stringify(v), this.now());
-      }
-      p.resolve(v);
-    });
+    try {
+      batch.forEach((p, i) => {
+        const v = this.active(p) && this.projectFor(p.taskId) === p.project ? (parsed.get(ids[i]!) ?? null) : null;
+        this.endSession(sessions[i] ?? null, v, failure);
+        if (v && this.cfg.scoring.cache) {
+          this.db
+            .prepare("INSERT OR REPLACE INTO classifications (spec_hash, rulebook_version, data_json, created_at) VALUES (?, ?, ?, ?)")
+            .run(this.cacheKey(p.project, p.specHash), this.rulebookFingerprint, JSON.stringify(v), this.now());
+        }
+        if (!persistence) p.resolve(v);
+      });
+    } catch (finalization) {
+      // Recording, cache or authority checks must not mask uncertain accounting.
+      throw persistence ?? finalization;
+    }
+    if (persistence) throw persistence;
   }
 }

@@ -1,12 +1,15 @@
-import { afterEach, expect, it } from "vitest";
+import { RequestPersistenceError } from "../src/admission/request-ledger.js";
+import { capturedLease } from "../src/storage/task-leases.js";
+import { afterEach, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
+import { SessionRecorder } from "../src/sessions/recorder.js";
 import { Classifier } from "../src/scoring/classifier.js";
 import type { Switchyard } from "../src/core/service.js";
 import { WorkerTaskSchema } from "../src/core/task.js";
 import type { TaskFeatures } from "../src/scoring/score.js";
 import { baseConfig, endpoint, makeEnv, open, reply, ScriptedClient, summarizeTask, type Env } from "./helpers.js";
 let env: Env | undefined, sy: Switchyard | undefined;
-afterEach(async () => { await sy?.close(); sy = undefined; env?.cleanup(); env = undefined; });
+afterEach(async () => { vi.restoreAllMocks(); await sy?.close(); sy = undefined; env?.cleanup(); env = undefined; });
 const features: TaskFeatures = { mode: "completion", linesInScope: 10, linesApproximate: false, contextTokens: 30, repositories: 1, acceptanceCriteria: 1, checksRequired: false, outputSchema: false, retryAfterFailure: false, inputModalities: ["text"], scopeSample: ["core:src/app.ts"] };
 const tags = { kind: "locate", reasoning: "lookup", novelty: "existing_pattern", risk: [], environment: [], ambiguity: "low" };
 function setup(onRequest?: () => void) {
@@ -25,7 +28,7 @@ function item(id: string, project: string, goal = id) {
   sy!.tasks.submit([WorkerTaskSchema.parse(summarizeTask({ id, goal, repositoryAliases: ["core"] }))], { project });
   sy!.tasks.claim("scope-owner", { maxConcurrent: 20, maxWritersPerRepo: 1, leaseMs: 60000, defaultTimeoutMs: 60000 });
   const task = sy!.tasks.get(id)!;
-  return { taskId: id, leaseOwner: "scope-owner", budget: { maxModelRequests: 4, maxInputTokens: null, maxOutputTokens: null, maxPaidUsd: null }, spec: task.spec, specHash: task.row.spec_hash, features };
+  return { taskId: id, lease: capturedLease(task), leaseOwner: "scope-owner", budget: { maxModelRequests: 4, maxInputTokens: null, maxOutputTokens: null, maxPaidUsd: null }, spec: task.spec, specHash: task.row.spec_hash, features };
 }
 
 it("partitions simultaneous projects into distinct prompts, journals and physical charges", async () => {
@@ -117,4 +120,59 @@ it("retains admission cancellation semantics with no partially charged same-proj
   expect(client.requests).toHaveLength(0);
   expect(sy!.db.prepare("SELECT * FROM model_requests").all()).toEqual([]);
   expect(sy!.db.prepare("SELECT * FROM request_charges").all()).toEqual([]);
+});
+
+it("does not publish or cache a late verdict for a replaced same-owner generation", async () => {
+  const { classifier, client } = setup(() => { sy!.db.prepare("UPDATE tasks SET run_count=run_count+1 WHERE id='generation'").run(); });
+  const a = item("generation", "alpha");
+  expect(await classifier.classify(a)).toBeNull();
+  expect(client.requests).toHaveLength(1);
+  expect(sy!.db.prepare('SELECT COUNT(*) FROM classifications').pluck().get()).toBe(0);
+});
+
+it.each(['reserve', 'reconcile'])('propagates classifier %s persistence uncertainty instead of converting to a fallback verdict', async stage => {
+  const { classifier, client } = setup(), a = item('persist-classifier', 'alpha');
+  if (stage === 'reserve') {
+    const reserve = sy!.gate.ledger.reserve.bind(sy!.gate.ledger);
+    vi.spyOn(sy!.gate.ledger, 'reserve').mockImplementation(async input => { await reserve(input); throw new Error('lost reserve ACK'); });
+  } else {
+    const reconcile = sy!.gate.ledger.reconcile.bind(sy!.gate.ledger);
+    vi.spyOn(sy!.gate.ledger, 'reconcile').mockImplementation(async (...args) => { await reconcile(...args); throw new Error('lost reconcile ACK'); });
+  }
+  await expect(classifier.classify(a)).rejects.toBeInstanceOf(RequestPersistenceError);
+  expect(client.requests).toHaveLength(stage === 'reserve' ? 0 : 1);
+  expect(sy!.db.prepare('SELECT COUNT(*) FROM model_requests').pluck().get()).toBe(1);
+  expect(sy!.db.prepare('SELECT COUNT(*) FROM classifications').pluck().get()).toBe(0);
+});
+
+
+it.each([
+  ['reserve', 'finalizer'], ['reconcile', 'finalizer'],
+  ['reserve', 'recorder'], ['reconcile', 'recorder'],
+] as const)('preserves %s uncertainty when session %s fails during finalization', async (stage, failure) => {
+  const { classifier, client } = setup(), a = item('persist-finalizer', 'alpha');
+  let original: unknown;
+  const request = sy!.gate.request.bind(sy!.gate);
+  vi.spyOn(sy!.gate, 'request').mockImplementation(async input => {
+    try { return await request(input); }
+    catch (error) { original = error; throw error; }
+  });
+  if (stage === 'reserve') {
+    const reserve = sy!.gate.ledger.reserve.bind(sy!.gate.ledger);
+    vi.spyOn(sy!.gate.ledger, 'reserve').mockImplementation(async input => { await reserve(input); throw new Error('lost reserve ACK'); });
+  } else {
+    const reconcile = sy!.gate.ledger.reconcile.bind(sy!.gate.ledger);
+    vi.spyOn(sy!.gate.ledger, 'reconcile').mockImplementation(async (...args) => { await reconcile(...args); throw new Error('lost settle ACK'); });
+  }
+  if (failure === 'finalizer') {
+    vi.spyOn(classifier as unknown as { endSession: () => void }, 'endSession').mockImplementation(() => { throw new Error('finalization failed'); });
+  } else {
+    vi.spyOn(SessionRecorder.prototype, 'end').mockImplementation(() => { throw new Error('recorder end failed'); });
+  }
+  const observed = await classifier.classify(a).catch(error => error);
+  expect(observed).toBe(original);
+  expect(original).toBeInstanceOf(RequestPersistenceError);
+  // The precise Gate error, including request identity/stage, survives publication.
+  expect(client.requests).toHaveLength(stage === 'reserve' ? 0 : 1);
+  expect(sy!.db.prepare('SELECT COUNT(*) FROM classifications').pluck().get()).toBe(0);
 });
