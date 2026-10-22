@@ -101,6 +101,22 @@ not a reason to stop the independently runnable core work. No service was instal
 
 ## Worker Briefs
 
+### Brief: compose-resource-proof (seed_repair)
+- Tier: isolated roadmap-team new feature branch; bounded C2 prerequisite, no engine/runtime enablement.
+- Read: Current State, compose-services-plan.md + compose-validation.md, frozen compose-recipe.ts/client.ts contracts.
+- Own only new labs/compose-ownership.ts (split into named new schema file if necessary), new compose-ownership tests and reports/compose-resource-proof.md.
+- No existing source/schema/client/recipe/service/Lab/HTTP/browser/panel/config/public exports/migrations/shared-doc edits. R2 worker owns migrations.
+- Goal: strict bounded Docker inspect projection and pure positive container/network proof against an immutable journal identity; source for later durable Compose lifecycle integration.
+- Require full exact engine resource IDs already committed in journal, same trusted engine identity/endpoint, generation/run/install/spec/nonce metadata and exact expected config. Labels/names alone are never destructive authority.
+- Creation response loss/missing journal IDs returns quarantine/unavailable even if labels match. Never adopt or delete discovered resources just by name/label/Compose project.
+- Validate actual container image ID against inspected approved image ID (manifest digest and config image ID are distinct); declared command/user/env hash/bind paths/ports/network/resource/security settings must match strict expected subset.
+- Refuse extra/anonymous/named mounts, host namespaces/privilege/capabilities, unexpected network attachments/publications and ambiguous identity. Reuse frozen canonical recipe policy, don't silently introduce a broader supported subset.
+- Runtime raw JSON validated/bounded; private proof fields never returned in public status/errors. No env values, host paths, credentials or raw inspect errors in safe DTO.
+- Primary official Docker inspect/API docs for uncertain fields, record exact URLs/provenance. No actual Docker commands/engine activation/probes/providers/user data.
+- Tests: exact full-ID positive, engine/run/nonce/generation mismatch, forged/colliding labels/no committed IDs, changed image/mount/ports/security/network, malformed/oversize input and safe diagnostic sentinel exclusion.
+- This is a pure prerequisite, not durable intent storage, CLI mutations, container lifecycle or actual-engine acceptance. Keep runtime disabled. No sandbox/hostile-daemon claim.
+- Freeze, router typecheck/build/focused tests, own report exact files/evidence/limits; no commits/push. Ask before expanding source ownership.
+
 ### Brief: async-task-lifecycle (link_completion)
 - Tier: isolated roadmap-labs new feature branch from root integratedb766516 or newer; caller source already frozen/independently accepted.
 - Read: Current State and reports/task-lease-fence-plan.md, especially first implementation contract and exact serial partition.
