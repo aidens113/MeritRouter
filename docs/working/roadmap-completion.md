@@ -15,7 +15,8 @@ historical request/session evidence. Recursive typecheck/build and production de
 historical-session browser checks pass (16 screenshots); full serial regression passed783/783
 in88files (943.08s). Final recursive typecheck/build and both browser harnesses pass. See [release acceptance](roadmap-completion/reports/request-page-release-acceptance.md).
 This candidate excludes local task-Lab/capture/Compose/R2 work, which remains in feature branches.
-Actual4477 has not loaded this request-page update yet; authorized restart follows acceptance.
+Actual4477 now serves accepted663626d asPID24040. Root build and read-only live browser
+checks passed, including populated recorded input on an existing request; config hash unchanged.
 
 Baseline dev/main e9a0726: Panel v2 and budget B1/B2 accepted; 622 tests passed. The user's
 "ok BUILD IT THEN" authorizes implementing the remaining audit, rather than another audit-only

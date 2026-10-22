@@ -10,7 +10,10 @@ own working document with decisions, phases, ledger, and reports.
   production request and historical-session browser acceptance (16 screenshots, scoped route/API
   checks). Includes classifier project partition, rich historical request details and session
   scope privacy. See roadmap-completion/reports/request-page-release-acceptance.md. Panel
-  deployment is authorized and pending; existing MCP process still requires client reconnect.
+  deployment completed: accepted663626d rebuilt at root and4477 restarted asPID24040. Read-only
+  live model/request browser checks passed, populated exchange viewed, config unchanged
+  (SHA256AF4F6543B85F12321E79A9799107D7AEC012F56C65CB6A741E8ED5E2297D72A0). Existing MCP
+  process still requires client reconnect.
   Task-Lab/capture/Compose and distributed lifecycle units remain in separate local branches.
 
 - Async default queue claim/companion prerequisite accepted after753 tests/85files (542.28s),
