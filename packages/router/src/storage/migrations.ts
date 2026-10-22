@@ -712,4 +712,9 @@ export const MIGRATIONS: string[] = [
     UPDATE job_plans SET project_id = COALESCE((SELECT project_id FROM tasks WHERE id = NEW.job_id), '') WHERE job_id = NEW.job_id AND version = NEW.version;
   END;
   `,
+  // Models a key's plan refused (Ollama Cloud's free plan answers 402 for models outside it):
+  // skipped for that key while the key keeps serving the rest.
+  `
+  ALTER TABLE provider_key_state ADD COLUMN plan_refusals_json TEXT;
+  `,
 ];

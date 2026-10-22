@@ -49,6 +49,8 @@ const STATUS: Record<NonNullable<KeyAvailability["reason"]>, KeyStatus> = {
   excluded: "available",
   auth_invalid: "invalid",
   out_of_credits: "out_of_credits",
+  // One model refused by the key's plan; the key itself serves the rest.
+  not_in_plan: "available",
   cooling: "cooling",
   exhausted: "exhausted",
   free_quota: "free_quota",

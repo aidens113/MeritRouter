@@ -34,14 +34,21 @@ export interface KeyState {
   rateLimits: RateLimitSnapshot | null;
   /** The last free daily quota probe (OpenRouter). */
   quota: FreeDailyQuota | null;
+  /** Models this key's plan refused (`not_in_plan`), by provider model id: when, and the provider's words. */
+  planRefusals: Record<string, PlanRefusal>;
   selectedSeq: number;
   updatedAt: number;
+}
+
+export interface PlanRefusal {
+  at: number;
+  message: string;
 }
 
 /** A key by ref, or the credential itself (which also records its provider and last four). */
 export type KeyRef = string | Pick<ProviderCredential, "ref" | "provider" | "last4">;
 
-export type KeyBlockReason = "unusable" | "excluded" | "auth_invalid" | "out_of_credits" | "cooling" | "exhausted" | "free_quota" | "limit";
+export type KeyBlockReason = "unusable" | "excluded" | "auth_invalid" | "out_of_credits" | "not_in_plan" | "cooling" | "exhausted" | "free_quota" | "limit";
 
 export interface KeyAvailability {
   ref: string;
@@ -75,6 +82,8 @@ export type KeySelection =
 
 /** How long an out-of-credits key rests before one request may check it again. */
 export const OUT_OF_CREDITS_RECHECK_MS = 6 * 3_600_000;
+/** How long a model the key's plan refused is skipped for that key before one request checks again. */
+export const NOT_IN_PLAN_RECHECK_MS = 24 * 3_600_000;
 /** Cooldown after a 429 that named no wait; doubles with consecutive failures up to the max. */
 export const DEFAULT_COOLDOWN_MS = 30_000;
 export const MAX_DEFAULT_COOLDOWN_MS = 15 * MINUTE_MS;
@@ -91,6 +100,7 @@ const WindowSchema = z
 const SnapshotSchema = z
   .object({ family: z.enum(["openai", "openrouter", "anthropic", "none"]), observedAt: z.number(), retryAfterMs: z.number().nullable(), windows: z.array(WindowSchema) })
   .strict();
+const PlanRefusalsSchema = z.record(z.string(), z.object({ at: z.number(), message: z.string() }));
 
 interface StateRow {
   ref: string;
@@ -105,6 +115,7 @@ interface StateRow {
   last_success_at: number | null;
   rate_limits_json: string | null;
   quota_json: string | null;
+  plan_refusals_json: string | null;
   selected_seq: number;
   updated_at: number;
 }
@@ -133,6 +144,7 @@ function fromRow(r: StateRow): KeyState {
     lastSuccessAt: r.last_success_at,
     rateLimits: parseStored(SnapshotSchema, r.rate_limits_json) as RateLimitSnapshot | null,
     quota: parseStored(FreeDailyQuotaSchema, r.quota_json),
+    planRefusals: parseStored(PlanRefusalsSchema, r.plan_refusals_json) ?? {},
     selectedSeq: r.selected_seq,
     updatedAt: r.updated_at,
   };
@@ -212,12 +224,21 @@ export class ProviderKeys {
   /**
    * The key's request failed. `rate_limited` cools the key (the provider's wait, else a doubling
    * default); `auth_invalid` (401/403) and `out_of_credits` (402, spend caps) disable it;
-   * `server`, `timeout`, and `transport` only count a failure. Bad requests, unknown models,
+   * `server`, `timeout`, and `transport` only count a failure. `not_in_plan` records the refused
+   * `model` on the key (skipped for it, the key stays usable). Bad requests, unknown models,
    * policy refusals, and aborts say nothing about the key and are ignored.
    */
-  recordFailure(key: KeyRef, err: ProviderError): void {
+  recordFailure(key: KeyRef, err: ProviderError, model: string | null = null): void {
     const ref = typeof key === "string" ? key : key.ref;
     const last4 = typeof key === "string" ? undefined : key.last4 || undefined;
+    if (err.reason === "not_in_plan") {
+      if (!model) return;
+      immediate(this.db, () => {
+        const refusals = { ...(this.get(ref)?.planRefusals ?? {}), [model]: { at: this.now(), message: err.message.slice(0, 500) } };
+        this.upsert(key, { plan_refusals_json: JSON.stringify(refusals) });
+      });
+      return;
+    }
     if (!["rate_limited", "auth_invalid", "out_of_credits", "server", "timeout", "transport"].includes(err.reason)) return;
     immediate(this.db, () => {
       const now = this.now();
@@ -243,9 +264,9 @@ export class ProviderKeys {
     immediate(this.db, () => this.upsert(key, { quota_json: JSON.stringify(quota) }));
   }
 
-  /** Clear a disable and cooldown (the user fixed or re-enabled the key). */
+  /** Clear a disable, cooldown, and plan refusals (the user fixed, re-keyed, or re-enabled the key). */
   clear(ref: string): void {
-    this.db.prepare("UPDATE provider_key_state SET disabled_reason = NULL, disabled_at = NULL, cooldown_until = NULL, consecutive_failures = 0, updated_at = ? WHERE ref = ?").run(this.now(), ref);
+    this.db.prepare("UPDATE provider_key_state SET disabled_reason = NULL, disabled_at = NULL, cooldown_until = NULL, consecutive_failures = 0, plan_refusals_json = NULL, updated_at = ? WHERE ref = ?").run(this.now(), ref);
   }
 
   /** Drop all state for a key (it was removed). */
@@ -272,6 +293,8 @@ export class ProviderKeys {
         if (recheck > now) return res("out_of_credits", recheck, state.lastError);
       }
     }
+    const refused = opts.model ? state?.planRefusals[opts.model] : undefined;
+    if (refused && refused.at + NOT_IN_PLAN_RECHECK_MS > now) return res("not_in_plan", refused.at + NOT_IN_PLAN_RECHECK_MS, refused.message);
     if (state?.cooldownUntil && state.cooldownUntil > now) return res("cooling", state.cooldownUntil, state.lastError);
     const exhausted = snapshotBlockedUntil(state?.rateLimits ?? null, tokens, now);
     if (exhausted) return res("exhausted", exhausted.until, exhausted.detail);

@@ -110,6 +110,7 @@ function keyStatus(cred: ProviderCredential, a: Pick<KeyAvailability, "reason"> 
   if (cred.unusableReason) return "unusable";
   switch (a?.reason ?? null) {
     case null:
+    case "not_in_plan": // one model refused by the key's plan; the key serves the rest
       return "healthy";
     case "cooling":
       return "cooling";

@@ -104,6 +104,37 @@ describe("direct free requests", () => {
     expect(fake.chats().map((c) => c.key)).toEqual([KEY_A, KEY_B, KEY_B]);
   });
 
+  it("a model the key's plan refuses (402, Ollama Cloud's words) is skipped for that key; the key keeps serving other models", async () => {
+    const oneKey = acmeCfg({ keys: [{ label: "a", api_key: KEY_A, billing_class: "free_tier" }] });
+    env = makeEnv({ config: oneKey, endpoints: [directEndpoint("acme", "plan-only", { totalParametersB: 120 }), directEndpoint("acme", "in-plan", { totalParametersB: 400 })] });
+    const refusal = "this model is not included in your free usage, add usage credits to pay as you go: https://ollama.com/settings or upgrade for included usage. Try gemma4:31b-cloud, which is in the Free plan.";
+    const fake = new FakeProvider((call) => (call.body?.model === "plan-only" ? providerJson({ error: refusal }, 402) : providerChat(String(call.body?.model))));
+    sy = open(env, fake, { worker: true });
+    const [first] = await sy.submitTasks([summarizeTask()]);
+    const r1 = (await sy.awaitResults([first!.taskId], { timeoutSeconds: 10 })).completed[0]!;
+    expect(r1.executionStatus).toBe("completed");
+    expect(r1.routing!.attempts.map((a) => [a.endpointId, a.outcome])).toEqual([
+      ["acme/plan-only", "pool_exhausted"],
+      ["acme/in-plan", "succeeded"],
+    ]);
+    // The key is not disabled or cooling; only the refused model is remembered on it.
+    const a = sy.providers.keys.get(REF_A)!;
+    expect(a).toMatchObject({ disabledReason: null, cooldownUntil: null });
+    expect(a.planRefusals["plan-only"]!.message).toMatch(/not in this key's plan/);
+    expect(sy.health.breakers.get("acme").failures).toBe(0);
+
+    // The next task skips the refused model without a request.
+    const [second] = await sy.submitTasks([summarizeTask({ goal: "Summarise the log again" })]);
+    const r2 = (await sy.awaitResults([second!.taskId], { timeoutSeconds: 10 })).completed[0]!;
+    expect(r2.routing!.attempts[0]).toMatchObject({ endpointId: "acme/plan-only", outcome: expect.stringMatching(/^skipped: no acme key available \(.*not_in_plan/) });
+    expect(r2.servedEndpoints).toEqual(["acme/in-plan"]);
+    expect(fake.chats().map((c) => c.body?.model)).toEqual(["plan-only", "in-plan", "in-plan"]);
+
+    // Re-keying or re-enabling the key forgets its refusals.
+    sy.providers.keys.clear(REF_A);
+    expect(sy.providers.keys.get(REF_A)!.planRefusals).toEqual({});
+  });
+
   it("a configured limit blocks the provider until its window passes, then the deferred task resumes", async () => {
     let offset = 0;
     const now = () => Date.now() + offset;

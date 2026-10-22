@@ -29,8 +29,11 @@ export interface DirectRuntime {
 /** Gateway errors after which trying the next ranked model is reasonable. */
 export const FALLBACK_KINDS = new Set<GatewayErrorKind>(["rate_limited", "pool_exhausted", "server", "timeout", "transport", "bad_request"]);
 
-/** Failures that say something about the key, not the provider or the request: try another key. */
-const KEY_LEVEL = new Set<ProviderErrorKind>(["rate_limited", "auth_invalid", "out_of_credits"]);
+/**
+ * Failures that say something about the key, not the provider or the request: try another key
+ * (`not_in_plan`: another key's plan may include the model; with none, the gate tries the next model).
+ */
+const KEY_LEVEL = new Set<ProviderErrorKind>(["rate_limited", "auth_invalid", "out_of_credits", "not_in_plan"]);
 
 const REASON_OF: Record<GatewayErrorKind, ProviderErrorKind> = {
   rate_limited: "rate_limited",
@@ -203,7 +206,7 @@ export async function requestDirect(
         response = await rt.client.complete(call);
       } catch (err) {
         const pe = asProviderError(err, provider.id, !!req.signal?.aborted);
-        rt.keys.recordFailure(cred, pe);
+        rt.keys.recordFailure(cred, pe, route.model);
         if (sel.reservation) {
           if (pe.possiblyConsumed) rt.limits.settle(sel.reservation, estTokens);
           else release();
@@ -279,7 +282,7 @@ export function probeClient(d: Omit<DirectDeps, "admission">): Pick<ProviderClie
       } catch (err) {
         const pe = asProviderError(err, provider.id, !!req.signal?.aborted);
         // A priced model refusing a free key says nothing about the key's credits.
-        if (pe.reason !== "out_of_credits") rt.keys.recordFailure(cred, pe);
+        if (pe.reason !== "out_of_credits") rt.keys.recordFailure(cred, pe, req.model);
         if (sel.reservation) {
           if (pe.possiblyConsumed) rt.limits.settle(sel.reservation, req.chat.max_tokens);
           else rt.limits.release(sel.reservation);

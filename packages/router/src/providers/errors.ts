@@ -6,17 +6,21 @@ import { cooldownMs, type RateLimitSnapshot } from "./rate-limits.js";
  * - `rate_limited`: this key is cooling down (`retryAfterMs`); another key may serve.
  * - `auth_invalid`: the key is wrong, revoked, or lacks access; disable it.
  * - `out_of_credits`: 402, or a spend cap; not retryable on this key.
+ * - `not_in_plan`: this key's plan does not include the model (Ollama Cloud's free plan answers
+ *   402 for models outside it); the key still serves other models, so the model is skipped for
+ *   this key and routing moves to the next model.
  * - `policy`: the provider refused the content (moderation, safety).
  * - `server`, `timeout`, `transport`: the provider failed; retry elsewhere.
  * - `bad_request`, `unknown_model`: the request or model id is wrong; do not retry as is.
  * - `aborted`: the caller cancelled.
  */
-export type ProviderErrorKind = "rate_limited" | "auth_invalid" | "out_of_credits" | "policy" | "server" | "timeout" | "transport" | "bad_request" | "unknown_model" | "aborted";
+export type ProviderErrorKind = "rate_limited" | "auth_invalid" | "out_of_credits" | "not_in_plan" | "policy" | "server" | "timeout" | "transport" | "bad_request" | "unknown_model" | "aborted";
 
 const GATEWAY_KIND: Record<ProviderErrorKind, GatewayErrorKind> = {
   rate_limited: "rate_limited",
   auth_invalid: "auth",
   out_of_credits: "pool_exhausted",
+  not_in_plan: "pool_exhausted",
   policy: "policy_violation",
   server: "server",
   timeout: "timeout",
@@ -30,6 +34,7 @@ const RETRYABLE: Record<ProviderErrorKind, boolean> = {
   rate_limited: true,
   auth_invalid: false,
   out_of_credits: false,
+  not_in_plan: false,
   policy: false,
   server: true,
   timeout: true,
@@ -107,6 +112,8 @@ export function extractErrorBody(json: unknown): ErrorBody | null {
 }
 
 const POLICY = /content[ _-]?policy|content[ _-]?filter|moderation|flagged|safety|responsible[ _-]?ai/i;
+/** A refusal of one model by the key's plan, not of the key (checked before treating a 402 as credits). */
+const NOT_IN_PLAN = /not included in your (?:free )?(?:usage|plan)|not (?:available|included) (?:on|in|with) your (?:current )?plan|requires? a (?:paid|pro|higher) (?:plan|tier|subscription)|upgrade (?:your plan )?to (?:use|access) this model/i;
 const CREDITS = /enforced_spend_limit|spend[ _-]?limit|insufficient_quota|insufficient[ _-]?credits|out of credits|credit balance/i;
 
 function parseJson(text: string): unknown {
@@ -129,6 +136,7 @@ export function classifyProviderError(provider: string, status: number, bodyText
   const base = { provider, status: opts.httpStatus ?? status, providerCode: body?.code ?? null, rateLimits };
   // A 200 that carries an error may have run (and billed) before failing.
   const consumed = opts.httpStatus !== undefined && opts.httpStatus < 400 ? { possiblyConsumed: status >= 500 } : {};
+  if ((status === 402 || status === 403) && NOT_IN_PLAN.test(haystack)) return new ProviderError("not_in_plan", `${msg} (model not in this key's plan)`, { ...base, ...consumed });
   if (status === 402) return new ProviderError("out_of_credits", `${msg} (out of credits)`, { ...base, ...consumed });
   if (status === 451 || ((status === 400 || status === 403) && POLICY.test(haystack))) return new ProviderError("policy", msg, { ...base, ...consumed });
   if (status === 401 || status === 403) return new ProviderError("auth_invalid", msg, { ...base, ...consumed });
