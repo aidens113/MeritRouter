@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { homedir } from "node:os";
 import YAML from "yaml";
 import { ConfigSchema, type ProfileConfig, type ProfileName, type RawConfig } from "./schema.js";
 import { ConfigError } from "../core/errors.js";
@@ -26,13 +27,30 @@ export interface ResolvedConfig extends RawConfig {
 export const CONFIG_ENV = "SWITCHYARD_CONFIG";
 export const DEFAULT_CONFIG_NAME = "switchyard.config.yaml";
 
+/** The application directory used when no project-local config exists. */
+export function defaultConfigDirectory(env: NodeJS.ProcessEnv = process.env, home = homedir(), platform = process.platform): string {
+  if (env.SWITCHYARD_HOME) return path.resolve(env.SWITCHYARD_HOME);
+  if (platform === "win32") return path.resolve(env.LOCALAPPDATA || path.join(home, "AppData", "Local"), "SwitchYard");
+  if (platform === "darwin") return path.resolve(home, "Library", "Application Support", "SwitchYard");
+  return path.resolve(env.XDG_CONFIG_HOME || path.join(home, ".config"), "switchyard");
+}
+
 /**
- * Resolve the config path explicitly: an argument, then SWITCHYARD_CONFIG, then
- * ./switchyard.config.yaml. Relative paths inside the file resolve against its directory.
+ * Explicit argument, SWITCHYARD_CONFIG, nearest ancestor config, then the user config.
+ * Relative paths inside the file always resolve against that file's directory.
  */
 export function resolveConfigPath(explicit?: string, cwd = process.cwd()): string {
-  const candidate = explicit ?? process.env[CONFIG_ENV] ?? path.join(cwd, DEFAULT_CONFIG_NAME);
-  return path.resolve(cwd, candidate);
+  const chosen = explicit ?? process.env[CONFIG_ENV];
+  if (chosen !== undefined) return path.resolve(cwd, chosen);
+  let dir = path.resolve(cwd);
+  for (;;) {
+    const local = path.join(dir, DEFAULT_CONFIG_NAME);
+    if (existsSync(local)) return local;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return path.join(defaultConfigDirectory(), DEFAULT_CONFIG_NAME);
 }
 
 export function formatIssues(issues: Array<{ path: PropertyKey[]; message: string }>): string[] {
@@ -69,7 +87,7 @@ export function parseConfig(raw: unknown, configPath: string): ResolvedConfig {
 
 export function readConfigFile(configPath: string): unknown {
   if (!existsSync(configPath)) {
-    throw new ConfigError(`config not found at ${configPath}; pass --config, set ${CONFIG_ENV}, or create ${DEFAULT_CONFIG_NAME}`);
+    throw new ConfigError(`config not found at ${configPath}; pass --config, set ${CONFIG_ENV}, or run switchyard setup`);
   }
   try {
     return YAML.parse(readFileSync(configPath, "utf8"));
