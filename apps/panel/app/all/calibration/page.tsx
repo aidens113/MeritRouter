@@ -3,8 +3,8 @@ import { Scale } from "lucide-react";
 import { insights } from "switchyard-router";
 import { getSy } from "@/lib/sy";
 import { SetupScreen } from "@/components/setup";
-import { Badge, Card, CardHeader, cx, EmptyState, PageHeader, Stat, type Tone } from "@/components/ui";
-import { AutoRefresh } from "@/components/client/actions";
+import { Badge, Card, CardHeader, cx, EmptyState, Stat, type Tone } from "@/components/ui";
+import { PageHeader } from "@/components/page-header";
 import { UrlFilters } from "@/components/client/url-filters";
 import { ago, dateTime, humanize, modelHref, num, pct, shortId } from "@/lib/format";
 
@@ -73,7 +73,7 @@ export default async function CalibrationPage({ searchParams }: { searchParams: 
         // No HelpTip at the end of this text: wrapped near the right edge, its (invisible) popover
         // widens the page. The "Verified vs confirmed" card carries it (short enough not to wrap at phone width).
         description="How far verification can be trusted: each reviewer's verdicts, and every result that passed verification, set against what happened to it afterwards (accepted or rejected, integrated, job checks on the branch, undone through attribution)."
-        actions={<AutoRefresh seconds={15} />}
+        live={["tasks", "jobs"]}
       />
       <div className="flex flex-wrap items-center gap-3">
         <UrlFilters values={{ days: daysParam }} fields={[{ name: "days", label: "Window", kind: "select", options: [["7", "Last 7 days"], ["90", "Last 90 days"]], anyLabel: "Last 30 days" }]} />

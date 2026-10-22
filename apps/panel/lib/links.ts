@@ -49,6 +49,23 @@ export const taskHref = (base: string, id: string) => `${base}/tasks/${encodeURI
 export const jobHref = (base: string, id: string) => `${base}/jobs/${encodeURIComponent(id)}`;
 export const sessionHref = (base: string, id: string) => `${base}/sessions/${encodeURIComponent(id)}`;
 export const brainHref = (base: string, path: string) => `${base}/brain?path=${encodeURIComponent(path)}`;
+/** A model request's page (`/requests/<id>` in views that span projects redirects to its project). */
+export const requestHref = (base: string, id: string) => `${base}/requests/${encodeURIComponent(id)}`;
+
+/**
+ * Entity pages that exist only under a project (`/p/<slug>`): an agent (`<role>:<label>`), a
+ * repository, and a commit. Null under another base (the Qualification page), where they are shown
+ * as text instead of a link.
+ */
+export function agentHref(base: string, agent: string): string | null {
+  return base.startsWith("/p/") ? `${base}/agents/${encodeURIComponent(agent)}` : null;
+}
+export function repoHref(base: string, alias: string): string | null {
+  return base.startsWith("/p/") ? `${base}/repos/${encodeURIComponent(alias)}` : null;
+}
+export function commitHref(base: string, alias: string, sha: string): string | null {
+  return base.startsWith("/p/") ? `${base}/repos/${encodeURIComponent(alias)}/commits/${encodeURIComponent(sha)}` : null;
+}
 
 /** The slug in a `/p/<slug>/...` path, or null outside a project. */
 export function slugOfPath(path: string): string | null {

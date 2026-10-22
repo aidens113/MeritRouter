@@ -5,8 +5,8 @@ import { getSy } from "@/lib/sy";
 import { project } from "@/lib/project";
 import { jobHref, projectBase, sessionHref, taskHref } from "@/lib/links";
 import { SetupScreen } from "@/components/setup";
-import { Callout, Card, EmptyState, HelpTip, Mono, PageHeader, Stat } from "@/components/ui";
-import { AutoRefresh } from "@/components/client/actions";
+import { Callout, Card, EmptyState, HelpTip, Mono, Stat } from "@/components/ui";
+import { PageHeader } from "@/components/page-header";
 import { UrlFilters } from "@/components/client/url-filters";
 import { ROLE_LABEL, SESSION_STATUS_LABEL, SessionsTable } from "@/components/sessions-table";
 import { shortId } from "@/lib/format";
@@ -77,7 +77,7 @@ export default async function SessionsPage({ params, searchParams }: { params: P
             Every agent run, whatever its role: classifier calls, worker attempts at a task, and supervisors. Each session keeps a durable event log of its messages, model requests, and tool calls, so you can see exactly what it did. <HelpTip term="session" />
           </>
         }
-        actions={running ? <AutoRefresh seconds={5} /> : null}
+        live={["sessions"]}
       />
 
       <div className="grid gap-3 sm:grid-cols-3">

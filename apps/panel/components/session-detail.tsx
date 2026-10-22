@@ -5,8 +5,9 @@ import { ArrowLeft, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, File
 import { insights, type SessionEvent, type Switchyard } from "switchyard-router";
 import { jobHref, sessionHref } from "@/lib/links";
 import type { DetailScope } from "@/components/detail-scope";
-import { buttonClass, Callout, Card, CardHeader, cx, KeyValue, Mono, PageHeader, Stat } from "@/components/ui";
-import { ActionButton, AutoRefresh } from "@/components/client/actions";
+import { buttonClass, Callout, Card, CardHeader, cx, KeyValue, Mono, Stat } from "@/components/ui";
+import { PageHeader } from "@/components/page-header";
+import { ActionButton } from "@/components/client/actions";
 import { roleLabel, SessionStatusBadge, SessionsTable, sessionTaskHref } from "@/components/sessions-table";
 import { SessionTimeline } from "@/components/session-timeline";
 import { dateTime, duration, humanize, num } from "@/lib/format";
@@ -92,6 +93,7 @@ export function SessionDetailView({ sy, id, sp, scope }: { sy: Switchyard; id: s
       </Link>
       <PageHeader
         title={`${roleLabel(s.role)} session`}
+        live={[`sessions:${s.id}`]}
         description={
           <span className="flex flex-wrap items-center gap-2">
             <SessionStatusBadge status={s.status} />
@@ -100,9 +102,7 @@ export function SessionDetailView({ sy, id, sp, scope }: { sy: Switchyard; id: s
           </span>
         }
         actions={
-          running ? (
-            <AutoRefresh seconds={4} />
-          ) : scope.actions && s.resumable ? (
+          !running && scope.actions && s.resumable ? (
             <ActionButton url={`/api/sessions/${encodeURIComponent(s.id)}/resume`} payload={{ project: scope.project }} variant="primary" success="Requeued: a running worker continues this session where it stopped">
               Resume session
             </ActionButton>

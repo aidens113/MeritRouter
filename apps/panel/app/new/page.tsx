@@ -3,7 +3,8 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { getSy } from "@/lib/sy";
 import { SetupScreen } from "@/components/setup";
-import { Card, Mono, PageHeader } from "@/components/ui";
+import { Card, Mono } from "@/components/ui";
+import { PageHeader } from "@/components/page-header";
 import { NewProjectForm } from "@/components/client/new-project";
 
 export const dynamic = "force-dynamic";

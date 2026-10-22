@@ -3,7 +3,8 @@ import { insights, MODALITIES } from "switchyard-router";
 import { getSy } from "@/lib/sy";
 import { keyedProviders, toRow } from "@/lib/models";
 import { SetupScreen } from "@/components/setup";
-import { Card, Mono, PageHeader } from "@/components/ui";
+import { Card, Mono } from "@/components/ui";
+import { PageHeader } from "@/components/page-header";
 import { ActionButton } from "@/components/client/actions";
 import { ModelsTable } from "@/components/client/models-table";
 

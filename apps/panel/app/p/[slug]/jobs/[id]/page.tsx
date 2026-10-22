@@ -12,8 +12,9 @@ import { SessionsTable } from "@/components/sessions-table";
 import { PlanCard } from "@/components/job-plan";
 import { ChannelCard, MergeQueueCard, TeamCard } from "@/components/job-team";
 import { JobMetricsCard } from "@/components/job-metrics";
-import { Badge, Callout, Card, CardHeader, cx, EmptyState, HelpTip, KeyValue, Mono, PageHeader } from "@/components/ui";
-import { ActionButton, AutoRefresh } from "@/components/client/actions";
+import { Badge, Callout, Card, CardHeader, cx, EmptyState, HelpTip, KeyValue, Mono } from "@/components/ui";
+import { PageHeader } from "@/components/page-header";
+import { ActionButton } from "@/components/client/actions";
 import { ArtifactViewer } from "@/components/client/artifact-viewer";
 import { CopyCommand, QuestionAnswer } from "@/components/client/jobs";
 import { dateTime, humanize, shortId } from "@/lib/format";
@@ -56,6 +57,7 @@ export default async function JobDetailPage({ params }: { params: Promise<{ slug
       </Link>
       <PageHeader
         title={job.label ? `Job: ${job.label}` : "Job"}
+        live={[`jobs:${job.taskId}`, `tasks:${job.taskId}`]}
         description={
           <span className="flex flex-wrap items-center gap-2">
             <TaskStateBadge state={job.state} />
@@ -75,7 +77,6 @@ export default async function JobDetailPage({ params }: { params: Promise<{ slug
         }
         actions={
           <>
-            {live && job.state !== "interrupted" ? <AutoRefresh seconds={4} /> : null}
             {job.state === "interrupted" ? (
               <ActionButton url="/api/tasks/resume" payload={{ project: p.slug, id: job.taskId }} variant="primary" success="Requeued: a running worker resumes the supervisor where it stopped">
                 Resume job

@@ -5,8 +5,8 @@ import { getSy } from "@/lib/sy";
 import { project } from "@/lib/project";
 import { jobHref, projectBase } from "@/lib/links";
 import { SetupScreen } from "@/components/setup";
-import { Badge, buttonClass, Callout, Card, CardHeader, EmptyState, Mono, PageHeader, Stat } from "@/components/ui";
-import { AutoRefresh } from "@/components/client/actions";
+import { Badge, buttonClass, Callout, Card, CardHeader, EmptyState, Mono, Stat } from "@/components/ui";
+import { PageHeader } from "@/components/page-header";
 import { StackedBars, StackedColumns, type Series } from "@/components/client/charts";
 import { ago, compact, dateTime, num, pct, shortId } from "@/lib/format";
 import { TASK_STATE_LABEL, TaskStateBadge } from "@/components/task-badges";
@@ -86,6 +86,7 @@ export default async function ProjectOverviewPage({ params }: { params: Promise<
     <div className="space-y-6">
       <PageHeader
         title={p.name}
+        live={["tasks", "jobs", "requests", "sessions", "workers", "brain"]}
         description={
           <>
             What this project is doing now, what it used in the last 24 hours, and what needs you. Project <Mono>{p.slug}</Mono>
@@ -94,7 +95,6 @@ export default async function ProjectOverviewPage({ params }: { params: Promise<
         }
         actions={
           <>
-            <AutoRefresh seconds={8} />
             <Link href={`${base}/jobs#new`} className={buttonClass("primary", true)}>
               <Play size={13} aria-hidden /> New job
             </Link>

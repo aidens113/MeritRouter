@@ -5,8 +5,8 @@ import { insights } from "switchyard-router";
 import { getSy } from "@/lib/sy";
 import { ALL, jobHref, projectBase } from "@/lib/links";
 import { SetupScreen } from "@/components/setup";
-import { Badge, Callout, Card, CardHeader, EmptyState, Mono, PageHeader, Stat } from "@/components/ui";
-import { AutoRefresh } from "@/components/client/actions";
+import { Badge, Callout, Card, CardHeader, EmptyState, Mono, Stat } from "@/components/ui";
+import { PageHeader } from "@/components/page-header";
 import { TaskStateBadge } from "@/components/task-badges";
 import { ago, compact, dateTime, num, pct, shortId } from "@/lib/format";
 import { usd } from "@/components/job-metrics";
@@ -118,7 +118,7 @@ export default async function AllProjectsPage() {
       <PageHeader
         title="All projects"
         description="Every project's jobs, queues, and usage on this install, and what needs you. The pages in the sidebar (models, routing, provider keys, knowledge, settings) are shared by all projects."
-        actions={<AutoRefresh seconds={10} />}
+        live={["tasks", "jobs", "requests", "workers", "keys", "brain", "projects"]}
       />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">

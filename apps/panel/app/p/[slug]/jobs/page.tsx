@@ -5,8 +5,8 @@ import { getSy } from "@/lib/sy";
 import { project } from "@/lib/project";
 import { jobHref, projectBase } from "@/lib/links";
 import { SetupScreen } from "@/components/setup";
-import { Badge, Callout, Card, CardHeader, cx, EmptyState, HelpTip, Mono, PageHeader } from "@/components/ui";
-import { AutoRefresh } from "@/components/client/actions";
+import { Badge, Callout, Card, CardHeader, cx, EmptyState, HelpTip, Mono } from "@/components/ui";
+import { PageHeader } from "@/components/page-header";
 import { NewJobForm } from "@/components/client/jobs";
 import { ACCEPTANCE_LABEL, TaskStateBadge } from "@/components/task-badges";
 import { ago, dateTime, shortId } from "@/lib/format";
@@ -36,7 +36,7 @@ export default async function JobsPage({ params }: { params: Promise<{ slug: str
             This project's standalone work, run by a SwitchYard supervisor: it plans, delegates tasks to workers, verifies them, and commits the result to a job branch for you to review. <HelpTip term="job" />
           </>
         }
-        actions={live ? <AutoRefresh seconds={5} /> : null}
+        live={["jobs", "tasks"]}
       />
 
       {waiting ? (

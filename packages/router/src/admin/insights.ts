@@ -618,6 +618,10 @@ export * from "./promotions.js";
 export { comparisons, comparison, type ComparisonRecord, type ComparisonResult, type ComparisonRunRecord, type MetricsSnapshot } from "../qualification/comparison.js";
 // The reserved `_qualification` project's tasks and eval comparisons (the panel's /all/qualification).
 export * from "./qualification-work.js";
+// Live updates: the change watcher behind the panel's /api/live stream.
+export * from "./live.js";
+// Entity pages: agents, requests, commits and repositories, and what a task or model connects to.
+export * from "./entities.js";
 
 // ---------- brain (for people: full access, edits committed as `human`) ----------
 // Every function takes an optional project: its brain (one per project over the shared brain

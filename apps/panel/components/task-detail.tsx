@@ -8,8 +8,9 @@ import type { DetailScope } from "@/components/detail-scope";
 import { RequestsTable } from "@/components/requests-table";
 import { SessionsTable } from "@/components/sessions-table";
 import { AcceptanceBadge, ImportanceBadge, OutcomeBadge, TaskStateBadge, TierBadge, VerificationBadge } from "@/components/task-badges";
-import { Badge, Callout, Card, CardHeader, cx, EmptyState, HelpTip, KeyValue, Mono, PageHeader } from "@/components/ui";
-import { ActionButton, AutoRefresh } from "@/components/client/actions";
+import { Badge, Callout, Card, CardHeader, cx, EmptyState, HelpTip, KeyValue, Mono } from "@/components/ui";
+import { PageHeader } from "@/components/page-header";
+import { ActionButton } from "@/components/client/actions";
 import { ArtifactViewer } from "@/components/client/artifact-viewer";
 import { RequestsByPurpose, TrailHeading, VerificationTrail } from "@/components/verification-trail";
 import { AcceptanceActions } from "@/components/client/acceptance";
@@ -69,6 +70,7 @@ export function TaskDetailView({ sy, taskId, scope }: { sy: Switchyard; taskId: 
       </Link>
       <PageHeader
         title={`${st.profile} task`}
+        live={[`tasks:${st.taskId}`]}
         description={
           <span className="flex flex-wrap items-center gap-2">
             <TaskStateBadge state={st.state} />
@@ -81,7 +83,6 @@ export function TaskDetailView({ sy, taskId, scope }: { sy: Switchyard; taskId: 
         }
         actions={
           <>
-            {live ? <AutoRefresh seconds={5} /> : null}
             {scope.actions && st.state === "interrupted" ? (
               <ActionButton url="/api/tasks/resume" payload={{ project: scope.project, id: st.taskId }} variant="primary" success="Requeued: a running worker will pick it up">
                 Resume

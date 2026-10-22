@@ -49,18 +49,6 @@ export function CardHeader({ title, help, description, actions }: { title: React
   );
 }
 
-export function PageHeader({ title, description, actions }: { title: string; description?: ReactNode; actions?: ReactNode }) {
-  return (
-    <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
-      <div className="min-w-0">
-        <h1 className="text-xl font-semibold tracking-tight text-ink">{title}</h1>
-        {description ? <p className="mt-1 max-w-3xl text-sm text-ink-2">{description}</p> : null}
-      </div>
-      {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
-    </header>
-  );
-}
-
 // The help popover keeps itself inside the viewport, which needs a little client code.
 export { HelpTip };
 

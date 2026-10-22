@@ -3,8 +3,9 @@ import { BadgeCheck, FlaskConical, ListChecks } from "lucide-react";
 import { insights, TIER_NAMES, type Switchyard } from "switchyard-router";
 import { getSy } from "@/lib/sy";
 import { SetupScreen } from "@/components/setup";
-import { Badge, Callout, Card, CardHeader, cx, EmptyState, HelpTip, Mono, PageHeader, Stat } from "@/components/ui";
-import { ActionButton, AutoRefresh } from "@/components/client/actions";
+import { Badge, Callout, Card, CardHeader, cx, EmptyState, HelpTip, Mono, Stat } from "@/components/ui";
+import { PageHeader } from "@/components/page-header";
+import { ActionButton } from "@/components/client/actions";
 import { ComparisonsList } from "@/components/comparisons";
 import { TaskStateBadge } from "@/components/task-badges";
 import { ago, dateTime, humanize, modelHref, num, shortId } from "@/lib/format";
@@ -66,7 +67,7 @@ export default function QualificationPage() {
       <PageHeader
         title="Qualification"
         description="Short evaluation tasks measure how often each model gets work right, per task family and tier. Routing can require a model to qualify before it serves real work."
-        actions={<AutoRefresh seconds={10} />}
+        live={["tasks", "models"]}
       />
       <Callout tone="warn" icon={<FlaskConical size={16} />} title="Qualification uses your free quota">
         Each run sends real requests to the model's provider with your keys ({perRun ? `up to ${perRun} per model with the current suite` : "a few dozen per model"}), capped at {q.max_requests_per_day} qualification requests per day. Runs execute only while a worker is active.

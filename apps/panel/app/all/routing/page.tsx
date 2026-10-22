@@ -3,7 +3,8 @@ import { Clock, Pin, Star, TriangleAlert } from "lucide-react";
 import { insights, MODALITIES, TIER_NAMES, type Modality, type ProfileName, type TierName } from "switchyard-router";
 import { getSy } from "@/lib/sy";
 import { SetupScreen } from "@/components/setup";
-import { Badge, Card, CardHeader, cx, EmptyState, HelpTip, Mono, PageHeader } from "@/components/ui";
+import { Badge, Card, CardHeader, cx, EmptyState, HelpTip, Mono } from "@/components/ui";
+import { PageHeader } from "@/components/page-header";
 import { AddOverrideForm, OverridesList, type OverrideRow } from "@/components/client/routing-overrides";
 import { ago, modelHref, params } from "@/lib/format";
 

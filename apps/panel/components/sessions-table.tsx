@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { insights } from "switchyard-router";
 import { Badge, EmptyState, type Tone } from "./ui";
+import { AgentLink } from "./entity-links";
 import { ago, dateTime, duration, humanize, shortId } from "@/lib/format";
 import { jobHref, sessionHref, taskHref } from "@/lib/links";
 
@@ -74,14 +75,16 @@ export function SessionsTable({ rows, base, now = Date.now(), hideTask = false, 
                   <div className="text-[11px] text-ink-3">{s.status === "running" ? `last event at +${duration(s.durationMs)}` : `took ${duration(s.durationMs)}`}</div>
                 </td>
                 <td className="whitespace-nowrap">
-                  <Link href={sessionHref(base, s.id)} className="font-medium text-accent-ink hover:underline">
+                  <Link href={sessionHref(base, s.id)} className="font-medium text-accent-ink hover:underline" title={`Session ${s.id}`}>
                     {roleLabel(s.role)}
                   </Link>
                   <span className="ml-1.5 text-xs text-ink-3">
                     {s.profile ?? ""}
                     {s.tier ? ` · ${s.tier}` : ""}
                   </span>
-                  <div className="font-mono text-[11px] text-ink-3">{shortId(s.id, 22)}</div>
+                  <div>
+                    <AgentLink base={base} agent={s.agentLabel} className="text-[11px]" />
+                  </div>
                 </td>
                 <td>
                   <SessionStatusBadge status={s.status} />

@@ -5,8 +5,9 @@ import { getSy } from "@/lib/sy";
 import { project } from "@/lib/project";
 import { projectBase, taskHref } from "@/lib/links";
 import { SetupScreen } from "@/components/setup";
-import { Card, cx, EmptyState, HelpTip, Mono, PageHeader } from "@/components/ui";
-import { ActionButton, AutoRefresh } from "@/components/client/actions";
+import { Card, cx, EmptyState, HelpTip, Mono } from "@/components/ui";
+import { PageHeader } from "@/components/page-header";
+import { ActionButton } from "@/components/client/actions";
 import { UrlFilters } from "@/components/client/url-filters";
 import { TASK_STATE_LABEL, TaskStateBadge, TierBadge } from "@/components/task-badges";
 import { ago, dateTime, shortId } from "@/lib/format";
@@ -44,7 +45,7 @@ export default async function TasksPage({ params, searchParams }: { params: Prom
       <PageHeader
         title="Tasks"
         description="This project's delegated work: its type, difficulty tier, how many model requests it used against its budget, and how it ended."
-        actions={<AutoRefresh seconds={6} />}
+        live={["tasks"]}
       />
       <Card>
         <div className="border-b border-line px-4 py-3">
