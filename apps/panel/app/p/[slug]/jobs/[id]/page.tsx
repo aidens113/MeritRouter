@@ -59,6 +59,7 @@ export default async function JobDetailPage({ params, searchParams }: { params: 
   const requests = insights.requestLog(sy, { taskId: id, project: p.slug, limit: 100 });
 
   const tab = pickTab(sp, ["overview", "plan", "team", "changes", "checks", "channel", "sessions"]);
+  const recovery = tab === "plan" ? await insights.planRecovery(sy, id) : undefined;
   return (
     <div className="space-y-6">
       <Link href={`${base}/jobs`} className="inline-flex items-center gap-1 text-sm text-ink-3 hover:text-ink">
@@ -267,7 +268,7 @@ export default async function JobDetailPage({ params, searchParams }: { params: 
             </div>
           </Card>
         ) : null}</div> : null}
-      {tab === "plan" ? <div className="space-y-6">{plan?.plan ? <PlanCard plan={plan} base={base} /> : null}</div> : null}
+      {tab === "plan" ? <div className="space-y-6">{plan?.plan ? <PlanCard plan={plan} base={base} recovery={recovery} /> : null}</div> : null}
       {tab === "team" ? <div className="space-y-6">{team.subJobs || team.parentJobId ? <TeamCard team={team} base={base} /> : null}
         <Card>
           <CardHeader title="Worker tasks" description={plan?.plan ? "Every task the supervisor dispatched, planned or not. Each has its own page with requests, artifacts, and checks." : "Tasks the supervisor delegated. Each has its own page with requests, artifacts, and checks."} />

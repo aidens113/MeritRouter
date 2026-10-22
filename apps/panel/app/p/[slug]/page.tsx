@@ -12,6 +12,8 @@ import { PageHeader } from "@/components/page-header";
 import { StackedBars, StackedColumns, type Series } from "@/components/client/charts";
 import { ago, compact, dateTime, num, pct, shortId } from "@/lib/format";
 import { TASK_STATE_LABEL, TaskStateBadge } from "@/components/task-badges";
+import { AgentLink } from "@/components/entity-links";
+import { SessionStatusBadge } from "@/components/sessions-table";
 import { usd } from "@/components/job-metrics";
 
 export const dynamic = "force-dynamic";
@@ -86,6 +88,7 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
   const onlyJob = asking.length === 1 ? asking[0]! : null;
 
   const tab = pickTab(sp, ["overview", "activity", "usage"]);
+  const recentAgents = tab === "activity" ? insights.agentsView(sy, { project: p.slug, limit: 5 }) : [];
   return (
     <div className="space-y-6">
       <PageHeader
@@ -289,6 +292,9 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
             )}
           </div>
         </div>
+      </Card><Card>
+        <CardHeader title="Recent agents" description="The five most recently active agents in this project." actions={<Link href={`${base}/agents`} className="text-xs text-accent-ink hover:underline">All agents</Link>} />
+        {recentAgents.length ? <ul className="divide-y divide-line">{recentAgents.map((a) => <li key={a.id} className="flex flex-wrap items-center gap-3 px-4 py-2.5 text-sm"><AgentLink base={base} agent={a.id} /><SessionStatusBadge status={a.lastStatus} /><span className="text-xs text-ink-3">{num(a.tasks)} tasks; {num(a.sessions)} sessions; active {ago(a.lastAt, now)}</span></li>)}</ul> : <EmptyState title="No agents yet">Agents appear after a session starts in this project.</EmptyState>}
       </Card></div> : null}
     </div>
   );

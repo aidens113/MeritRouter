@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Bot, CircleAlert, CornerDownRight, Cpu, Flag, FolderGit2, Globe, MessageSquare, Play, RotateCcw, Send, StickyNote, User, Wrench } from "lucide-react";
+import { AgentLink, CommitLink, RequestLink, TaskLink } from "./entity-links";
+import { repoHref } from "@/lib/links";
 import type { SessionEvent } from "switchyard-router";
 import { Badge, cx, Mono, type Tone } from "./ui";
 import { SessionStatusBadge } from "./sessions-table";
@@ -109,12 +111,13 @@ function EventBody({
   running: boolean;
   pageHref: (seq: number) => string;
 }) {
+  const base = pageHref(1).split("/sessions/")[0]!;
   switch (e.type) {
     case "started": {
       const d = e.data;
       return (
         <p className="text-sm text-ink-2">
-          Opened as <strong className="font-medium text-ink">{d.role}</strong> <Mono>{d.agentLabel}</Mono>
+          Opened as <AgentLink base={base} agent={d.agentLabel} />{d.taskId ? <>; task <TaskLink base={base} id={d.taskId} /></> : null}{d.jobId ? <>; job <TaskLink base={base} id={d.jobId} job /></> : null}
           {d.profile ? ` for a ${d.profile} task` : ""}
           {d.tier ? ` at ${d.tier}` : ""}.
         </p>
@@ -156,7 +159,7 @@ function EventBody({
             </span>
             {d.finishReason ? <Badge>{humanize(d.finishReason)}</Badge> : null}
             {fellBack ? <Badge tone="warn" title={d.attempts.map((a) => `${a.endpointId}: ${a.outcome}`).join("\n")}>after {d.attempts.length - 1} fallback{d.attempts.length > 2 ? "s" : ""}</Badge> : null}
-            <span className="font-mono text-[11px] text-ink-3">{d.requestId}</span>
+            <RequestLink base={base} id={d.requestId} />
           </div>
           {d.content?.trim() ? <LongText text={d.content} /> : null}
           {d.toolCalls.length ? (
@@ -280,10 +283,10 @@ function EventBody({
         <ul className="space-y-1 text-xs text-ink-2">
           {e.data.repos.map((r) => (
             <li key={r.alias} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-              <span className="font-medium text-ink">{r.alias}</span>
+              {repoHref(base, r.alias) ? <Link href={repoHref(base, r.alias)!} className="font-medium text-accent-ink hover:underline">{r.alias}</Link> : <span>{r.alias}</span>}
               {r.branch ? <Mono>{r.branch}</Mono> : null}
-              <span>base {r.baseCommit ? r.baseCommit.slice(0, 12) : "–"}</span>
-              <span>head {r.head ? r.head.slice(0, 12) : "no commit yet"}</span>
+              <span>base {r.baseCommit ? <CommitLink base={base} repository={r.alias} sha={r.baseCommit} /> : "–"}</span>
+              <span>head {r.head ? <CommitLink base={base} repository={r.alias} sha={r.head} /> : "no commit yet"}</span>
               <span className="break-all font-mono text-[11px] text-ink-3">{r.worktree}</span>
             </li>
           ))}

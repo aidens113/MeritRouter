@@ -44,6 +44,8 @@ export interface PlanNodeView {
   taskId: string | null;
   state: TaskState | "not_dispatched";
   stateReason: string | null;
+  /** Attribution identities from this task's recorded sessions; never inferred from its label. */
+  agents: string[];
   /** The tier the task was classified at. */
   tier: string | null;
   acceptanceStatus: string | null;
@@ -288,6 +290,7 @@ export function jobPlan(sy: Switchyard, jobId: string, opts: { version?: number 
       taskId: t?.row.id ?? null,
       state: t?.row.state ?? "not_dispatched",
       stateReason: row?.state_reason ?? null,
+      agents: t ? [...new Set(sy.sessions.forTask(t.row.id).map((s) => s.agentLabel))] : [],
       tier: row?.tier ?? null,
       acceptanceStatus: t?.result?.acceptanceStatus ?? null,
       verificationStatus: t?.result?.verificationStatus ?? null,

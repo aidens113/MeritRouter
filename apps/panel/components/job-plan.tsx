@@ -1,10 +1,11 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Copy, Hourglass, Lock, ShieldCheck, Users } from "lucide-react";
-import type { JobPlanView, PlanNodeView, PlanWait, insights } from "switchyard-router";
+import { insights, type JobPlanView, type PlanNodeView, type PlanWait } from "switchyard-router";
 import { Badge, Card, CardHeader, HelpTip, Mono } from "./ui";
 import { AcceptanceBadge, ImportanceBadge, TASK_STATE_LABEL, TaskStateBadge, TierBadge } from "./task-badges";
 import { dateTime, humanize, shortId } from "@/lib/format";
+import { AgentLink, CommitLink, ModelLink, TaskLink } from "./entity-links";
 import { sessionHref, taskHref } from "@/lib/links";
 
 // The job page's plan view: the task graph (critical path highlighted), one row per node with its
@@ -134,7 +135,7 @@ export function PlanGraph({ plan, base }: { plan: JobPlanView; base: string }) {
   );
 }
 
-function WaitCell({ n }: { n: PlanNodeView }): ReactNode {
+function WaitCell({ n, base, plan }: { n: PlanNodeView; base: string; plan: JobPlanView }): ReactNode {
   const w = n.waiting;
   const icon = w?.kind === "file_lease" ? <Lock size={12} aria-hidden /> : w?.kind === "acceptance" ? <ShieldCheck size={12} aria-hidden /> : w?.kind === "agent_cap" ? <Users size={12} aria-hidden /> : <Hourglass size={12} aria-hidden />;
   return (
@@ -142,7 +143,7 @@ function WaitCell({ n }: { n: PlanNodeView }): ReactNode {
       {w ? (
         <span className={w.kind === "file_lease" || w.kind === "acceptance" ? "inline-flex items-start gap-1 text-warn-ink" : "inline-flex items-start gap-1 text-ink-2"}>
           <span className="mt-0.5 shrink-0">{icon}</span>
-          {w.text}
+          {w.kind === "file_lease" ? <span>Waits for the file lease <TaskLink base={base} id={w.holderTaskId} label={w.holderLabel} /> holds{w.repository ? ` in ${w.repository} on ${w.globs.join(", ")}` : ""}</span> : w.kind === "acceptance" ? <span>Waits for acceptance of {w.taskIds.map((id, i) => <span key={id}>{i ? ", " : ""}<TaskLink base={base} id={id} label={w.on[i]} /></span>)}</span> : w.kind === "dependencies" ? <span>Waits for {w.on.map((label, i) => { const id = plan.nodes.find((x) => x.label === label)?.taskId ?? plan.otherTasks.find((x) => x.label === label)?.taskId; return <span key={label}>{i ? ", " : ""}{id ? <TaskLink base={base} id={id} label={label} /> : label}</span>; })} to finish</span> : w.text}
         </span>
       ) : n.state === "not_dispatched" ? (
         <span className="text-ink-3">not dispatched</span>
@@ -155,7 +156,7 @@ function WaitCell({ n }: { n: PlanNodeView }): ReactNode {
 }
 
 /** `base` is the project path (`/p/<slug>`) links start from. */
-export function PlanCard({ plan, base }: { plan: JobPlanView; base: string }) {
+export function PlanCard({ plan, base, recovery }: { plan: JobPlanView; base: string; recovery?: insights.PlanRecoveryView }) {
   if (!plan.plan) return null;
   const live = plan.leases.filter((l) => l.live);
   const released = plan.leases.filter((l) => !l.live).reverse();
@@ -168,7 +169,7 @@ export function PlanCard({ plan, base }: { plan: JobPlanView; base: string }) {
         description={
           <>
             Version {v.version} of {plan.versions.length}, recorded {dateTime(v.createdAt)}
-            {v.createdBy ? ` by ${v.createdBy}` : ""}
+            {v.createdBy ? <> by {insights.parseAgentId(v.createdBy) ? <AgentLink base={base} agent={v.createdBy} /> : v.createdBy}</> : ""}
             {v.note ? `: ${v.note}` : "."}
           </>
         }
@@ -181,7 +182,7 @@ export function PlanCard({ plan, base }: { plan: JobPlanView; base: string }) {
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-line px-4 py-2.5 text-sm">
         <span className="inline-flex flex-wrap items-center gap-1.5">
           <span className="text-ink-3">Critical path</span> <HelpTip term="criticalPath" />
-          <span className="font-medium text-accent-ink">{plan.criticalPath.labels.join(" → ") || "–"}</span>
+          <span className="font-medium text-accent-ink">{plan.criticalPath.labels.length ? plan.criticalPath.labels.map((label, i) => { const id = plan.nodes.find((n) => n.label === label)?.taskId; return <span key={label}>{i ? " / " : ""}{id ? <TaskLink base={base} id={id} label={label} /> : label}</span>; }) : "–"}</span>
           <span className="text-xs text-ink-3">(estimated cost {plan.criticalPath.cost})</span>
         </span>
         <span className="inline-flex items-center gap-1.5">
@@ -236,7 +237,7 @@ export function PlanCard({ plan, base }: { plan: JobPlanView; base: string }) {
                   <td>
                     <span className="inline-flex items-center gap-1.5 font-medium text-ink">
                       {n.onCriticalPath ? <span className="inline-block h-2 w-2 rounded-full bg-accent" title="On the critical path" aria-label="On the critical path" /> : null}
-                      {n.label}
+                      {n.taskId ? <TaskLink base={base} id={n.taskId} label={n.label} /> : n.label}
                       {n.redundancy > 1 ? (
                         <Badge tone="accent" icon={<Copy size={10} aria-hidden />} title="Redundant node: its first attempt runs twice on different models; the first verified result wins">
                           ×{n.redundancy}
@@ -251,7 +252,7 @@ export function PlanCard({ plan, base }: { plan: JobPlanView; base: string }) {
                     {n.profile}
                     {n.allowedPaths?.length ? <div className="font-mono text-[11px] text-ink-3">{n.allowedPaths.join(", ")}</div> : null}
                   </td>
-                  <td className="text-xs">{n.dependsOn.length ? n.dependsOn.join(", ") : <span className="text-ink-3">–</span>}</td>
+                  <td className="text-xs">{n.dependsOn.length ? n.dependsOn.map((label, i) => { const dep = plan.nodes.find((x) => x.label === label); const other = plan.otherTasks.find((x) => x.label === label); const id = dep?.taskId ?? other?.taskId; return <span key={label}>{i ? ", " : ""}{id ? <TaskLink base={base} id={id} label={label} /> : label}</span>; }) : <span className="text-ink-3">–</span>}</td>
                   <td>
                     <span className="inline-flex items-center gap-1">
                       <TierBadge tier={n.difficulty} />
@@ -279,10 +280,11 @@ export function PlanCard({ plan, base }: { plan: JobPlanView; base: string }) {
                     <div className="flex flex-col items-start gap-1">
                       {n.state === "not_dispatched" ? <Badge>not dispatched</Badge> : <TaskStateBadge state={n.state} />}
                       {n.acceptanceStatus ? <AcceptanceBadge status={n.acceptanceStatus} /> : null}
+                      {recovery?.evidence.filter((e) => e.taskId === n.taskId).map((e) => <div key={e.commit} className="max-w-56 space-y-1 text-xs" title="The recorded supervisor changed this segment's scoped paths on the job branch after the failure. This does not independently verify completion; the original task failure and acceptance remain unchanged."><span className="text-warn-ink">failed; finished by the supervisor</span><div><CommitLink base={base} repository={e.repository} sha={e.commit} /> <AgentLink base={base} agent={e.agent} /></div><div className="text-ink-3">Later changes: {e.paths.join(", ")}</div></div>)}
                     </div>
                   </td>
                   <td className="min-w-[11rem]">
-                    <WaitCell n={n} />
+                    <WaitCell n={n} base={base} plan={plan} />
                   </td>
                   <td>
                     {n.taskId ? (
@@ -292,6 +294,7 @@ export function PlanCard({ plan, base }: { plan: JobPlanView; base: string }) {
                     ) : (
                       <span className="text-xs text-ink-3">–</span>
                     )}
+                    {n.agents.map((agent) => <div key={agent}><AgentLink base={base} agent={agent} /></div>)}
                     {n.upstream ? (
                       <div className="text-[11px] text-ink-3" title={`Upstream results given to this node: ${n.upstream.artifactRef}`}>
                         given upstream results
@@ -303,6 +306,7 @@ export function PlanCard({ plan, base }: { plan: JobPlanView; base: string }) {
           </tbody>
         </table>
       </div>
+      {recovery && plan.nodes.some((n) => n.state === "failed" || n.state === "budget_exhausted") ? <div className="space-y-1 border-t border-line px-4 py-2 text-xs text-ink-3"><p>Supervisor recovery annotations show later scoped changes, not independent verification. The latest {recovery.commitLimit} non-merge commits per recorded job branch are inspected; absent annotations do not establish that no recovery happened.</p>{recovery.errors.length ? <details><summary className="cursor-pointer text-warn-ink">Recovery history incomplete ({recovery.errors.length})</summary><ul>{recovery.errors.map((error, i) => <li key={i}>{error}</li>)}</ul></details> : null}</div> : null}
       <Twins nodes={plan.nodes} base={base} />
       <div className="space-y-2 border-t border-line p-4">
         <h3 className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-ink-3">
@@ -319,7 +323,7 @@ export function PlanCard({ plan, base }: { plan: JobPlanView; base: string }) {
                 ) : (
                   <Badge>released{l.releaseReason ? `: ${humanize(l.releaseReason).toLowerCase()}` : ""}</Badge>
                 )}
-                <span className="font-medium text-ink">{l.taskLabel ?? shortId(l.taskId, 16)}</span>
+                <TaskLink base={base} id={l.taskId} label={l.taskLabel} />
                 <Mono>{l.globs.join(", ")}</Mono>
                 <span className="text-xs text-ink-3">
                   in {l.repository} · from {dateTime(l.acquiredAt)}
@@ -339,7 +343,7 @@ export function PlanCard({ plan, base }: { plan: JobPlanView; base: string }) {
             {[...plan.versions].reverse().map((pv) => (
               <li key={pv.version}>
                 v{pv.version} · {pv.nodes} node{pv.nodes === 1 ? "" : "s"} · {dateTime(pv.createdAt)}
-                {pv.createdBy ? ` · ${pv.createdBy}` : ""}
+                {pv.createdBy ? <>; {insights.parseAgentId(pv.createdBy) ? <AgentLink base={base} agent={pv.createdBy} /> : pv.createdBy}</> : ""}
                 {pv.note ? ` · ${pv.note}` : ""}
               </li>
             ))}
@@ -378,7 +382,7 @@ function Twins({ nodes, base }: { nodes: PlanNodeView[]; base: string }) {
         return (
           <div key={n.label} className="space-y-1.5">
             <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="font-medium text-ink">{n.label}</span>
+              {n.taskId ? <TaskLink base={base} id={n.taskId} label={n.label} /> : <span className="font-medium text-ink">{n.label}</span>}
               {st ? <Badge tone={st.tone}>{st.label}</Badge> : <Badge>not started</Badge>}
               {n.twins?.cap ? <span className="text-xs text-ink-3">shared cap {n.twins.cap} requests</span> : null}
               {n.twins?.reason ? <span className="text-xs text-ink-3">{n.twins.reason}</span> : null}
@@ -395,11 +399,11 @@ function Twins({ nodes, base }: { nodes: PlanNodeView[]; base: string }) {
                       {r.verification ? <span className="text-ink-3">verification {r.verification}</span> : null}
                     </div>
                     <div className="mt-1 break-all text-ink-3">
-                      endpoints: <span className="font-mono text-ink-2">{r.endpoints.join(", ") || "–"}</span>
+                      endpoints: <span className="font-mono text-ink-2">{r.endpoints.length ? r.endpoints.map((id, i) => <span key={id}>{i ? ", " : ""}<ModelLink id={id} /></span>) : "–"}</span>
                       {r.servedEndpoints.length ? (
                         <>
                           {" "}
-                          · served by <span className="font-mono text-ink-2">{r.servedEndpoints.join(", ")}</span>
+                          · served by <span className="font-mono text-ink-2">{r.servedEndpoints.map((id, i) => <span key={id}>{i ? ", " : ""}<ModelLink id={id} /></span>)}</span>
                         </>
                       ) : null}
                     </div>

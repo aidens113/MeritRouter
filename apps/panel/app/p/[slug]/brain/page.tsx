@@ -7,6 +7,7 @@ import { brainHref, jobHref, projectBase, taskHref } from "@/lib/links";
 import { SetupScreen } from "@/components/setup";
 import { Badge, Callout, Card, CardHeader, cx, EmptyState, HelpTip, Mono, type Tone } from "@/components/ui";
 import { PageHeader } from "@/components/page-header";
+import { RelatedPanel } from "@/components/related";
 import { AgentLink, ModelLink, TaskLink } from "@/components/entity-links";
 import { Markdown } from "@/components/markdown";
 import { AccessDecision, BrainEditor } from "@/components/client/brain";
@@ -17,7 +18,7 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Brain" };
 
 type Entry = Awaited<ReturnType<typeof insights.brainTree>>[number];
-type BlameLine = Awaited<ReturnType<typeof insights.brainBlame>>[number];
+type BlameLine = Awaited<ReturnType<typeof insights.brainDocumentBlame>>[number];
 
 const KIND_LABEL: Record<string, string> = {
   working_doc: "working doc",
@@ -49,8 +50,10 @@ type Sc = { slug: string; base: string; index: string | null };
  * install-wide `global/` documents its agents read too (decision D4), and the root index.
  */
 function inScope(sc: Sc, path: string): boolean {
-  return path.startsWith(`projects/${sc.slug}/`) || path.startsWith("global/") || !path.includes("/");
+  return insights.brainDocumentVisible(sc.slug, path);
 }
+
+const brainCommitHref = (slug: string, path: string, hash: string) => `${projectBase(slug)}/brain/commits/${encodeURIComponent(hash)}?path=${encodeURIComponent(path)}`;
 
 /** The project's own index (`projects/<slug>/README.md`), regenerated like the root one. */
 const projectIndexPath = (slug: string) => `projects/${slug}/README.md`;
@@ -303,9 +306,13 @@ async function DocPanel({ sc, sy, path, tab, entries }: { sc: Sc; sy: Switchyard
     error = (err as Error).message;
   }
   const entry = entries.find((e) => e.path === path);
+  const history = doc ? await insights.brainDocumentHistory(sy, sc.slug, path) : [];
+  const related = doc ? await insights.brainDocumentRelated(sy, sc.slug, path) : { tasks: [], jobs: [] };
+  const agents = [...new Set(history.map(h => h.agent).filter((id): id is string => !!id))];
+  const models = [...new Set(history.map(h => h.model).filter((id): id is string => !!id))];
   const href = (t: string) => `${brainHref(sc.base, path)}${t === "view" ? "" : `&tab=${t}`}`;
   return (
-    <Card>
+    <div className="space-y-6"><Card>
       <div className="border-b border-line px-4 pt-3">
         <div className="flex flex-wrap items-center gap-2">
           <FileText size={15} className="text-ink-3" aria-hidden />
@@ -331,7 +338,7 @@ async function DocPanel({ sc, sy, path, tab, entries }: { sc: Sc; sy: Switchyard
         {error || !doc ? (
           <p className="text-sm text-bad-ink">{error ?? "Not found"}</p>
         ) : tab === "history" ? (
-          <History sy={sy} slug={sc.slug} path={path} />
+          <History rows={history} slug={sc.slug} path={path} />
         ) : tab === "blame" ? (
           <Blame sy={sy} slug={sc.slug} path={path} />
         ) : tab === "edit" ? (
@@ -353,11 +360,18 @@ async function DocPanel({ sc, sy, path, tab, entries }: { sc: Sc; sy: Switchyard
         )}
       </div>
     </Card>
+    {doc ? <RelatedPanel groups={[
+      { label: "Project", items: [{ key: sc.slug, node: <Link href={sc.base} className="text-accent-ink hover:underline">{sc.slug}</Link> }] },
+      { label: "Commits", items: history.map(h => ({ key: h.commit, node: <Link href={brainCommitHref(sc.slug, path, h.commit)} className="font-mono text-accent-ink hover:underline">{h.commit.slice(0, 10)}</Link> })), more: { href: href("history"), label: "Document history" }, empty: "No recorded commits" },
+      { label: "Agents", items: agents.map(agent => ({ key: agent, node: <AgentLink base={sc.base} agent={agent} /> })) },
+      { label: "Models", items: models.map(id => ({ key: id, node: <ModelLink id={id} /> })) },
+      { label: "Tasks", items: related.tasks.map(id => ({ key: id, node: <TaskLink base={sc.base} id={id} /> })) },
+      { label: "Jobs", items: related.jobs.map(id => ({ key: id, node: <Link href={jobHref(sc.base, id)} className="text-accent-ink hover:underline">{shortId(id)}</Link> })) },
+    ]} /> : null}</div>
   );
 }
 
-async function History({ sy, slug, path }: { sy: Switchyard; slug: string; path: string }) {
-  const rows = await insights.brainHistory(sy, path, slug);
+function History({ rows, slug, path }: { rows: Awaited<ReturnType<typeof insights.brainDocumentHistory>>; slug: string; path: string }) {
   if (!rows.length) return <p className="text-sm text-ink-3">No commits recorded for this file. Files in mounted folders without <Mono>commit: true</Mono> are committed by you, not SwitchYard.</p>;
   return (
     <div className="overflow-x-auto">
@@ -374,7 +388,7 @@ async function History({ sy, slug, path }: { sy: Switchyard; slug: string; path:
         <tbody>
           {rows.map((h) => (
             <tr key={h.commit}>
-              <td className="font-mono text-xs text-ink-2">{h.commit.slice(0, 10)}</td>
+              <td className="font-mono text-xs text-ink-2"><Link href={brainCommitHref(slug, path, h.commit)} className="text-accent-ink hover:underline">{h.commit.slice(0, 10)}</Link></td>
               <td className="whitespace-nowrap text-xs">{dateTime(h.date)}</td>
               <td className="text-xs">{h.agent ? <AgentLink base={projectBase(slug)} agent={h.agent} /> : <span className="text-ink-3">unknown</span>}</td>
               <td className="font-mono text-[11px] text-ink-2">{h.model ? <ModelLink id={h.model} /> : <span className="font-sans text-ink-3">–</span>}</td>
@@ -390,7 +404,7 @@ async function History({ sy, slug, path }: { sy: Switchyard; slug: string; path:
 async function Blame({ sy, slug, path }: { sy: Switchyard; slug: string; path: string }) {
   let lines: BlameLine[] = [];
   try {
-    lines = await insights.brainBlame(sy, path, slug);
+    lines = await insights.brainDocumentBlame(sy, slug, path);
   } catch (err) {
     return <p className="text-sm text-ink-3">{(err as Error).message}</p>;
   }
@@ -413,10 +427,10 @@ async function Blame({ sy, slug, path }: { sy: Switchyard; slug: string; path: s
               const k = keyOf(l);
               const prev = i > 0 ? keyOf(lines[i - 1]!) + lines[i - 1]!.commit : null;
               const first = prev !== k + l.commit;
-              const tip = l.uncommitted ? "Not committed yet" : `${l.agent ?? l.authorName} · role ${l.role ?? "?"} · model ${l.model ?? "?"} · commit ${l.commit.slice(0, 10)} · ${dateTime(l.date)}${l.task ? ` · task ${l.task}` : ""}`;
+              const tip = l.uncommitted ? "Not committed yet" : !l.commit ? "Earlier attribution is outside this project's visible history" : `${l.agent ?? l.authorName} · role ${l.role ?? "?"} · model ${l.model ?? "?"} · commit ${l.commit.slice(0, 10)} · ${dateTime(l.date)}${l.task ? ` · task ${l.task}` : ""}`;
               return (
                 <tr key={i} title={tip} className="group hover:bg-surface-2">
-                  <td className="w-44 max-w-44 truncate border-r border-line px-2 py-0.5 font-sans text-[11px] text-ink-3" style={{ borderLeft: `4px solid ${color.get(k)}` }}>{first ? <>{l.agent ? <AgentLink base={projectBase(slug)} agent={l.agent} /> : l.authorName} · {l.commit.slice(0, 7)}{l.task ? <> · <TaskLink base={projectBase(slug)} id={l.task} /></> : null}</> : ""}</td>
+                  <td className="w-44 max-w-44 truncate border-r border-line px-2 py-0.5 font-sans text-[11px] text-ink-3" style={{ borderLeft: `4px solid ${color.get(k)}` }}>{first ? <>{l.agent ? <AgentLink base={projectBase(slug)} agent={l.agent} /> : l.authorName} · {l.uncommitted ? "uncommitted" : !l.commit ? "earlier history" : <Link href={brainCommitHref(slug, path, l.commit)} className="text-accent-ink hover:underline">{l.commit.slice(0, 7)}</Link>}{l.task ? <> · <TaskLink base={projectBase(slug)} id={l.task} /></> : null}</> : ""}</td>
                   <td className="w-10 select-none px-2 py-0.5 text-right text-ink-3">{l.line}</td>
                   <td className="whitespace-pre-wrap px-2 py-0.5 text-ink [overflow-wrap:anywhere]">{l.text || " "}</td>
                 </tr>

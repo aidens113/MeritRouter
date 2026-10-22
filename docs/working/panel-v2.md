@@ -60,6 +60,8 @@ requirement. Confirmed remaining work:
 5. Re-run affected tests and production demo browser checks after fixes; only then mark the full
    effort Complete. Preserve the existing passing acceptance evidence as historical evidence.
 
+**Resumed:** brain-navigation and link-completion workers own disjoint shared files; seed repair runs in an isolated worktree. Supervisor owns acceptance inventory, browser request/brain propagation checks, integration and B2 after Panel v2 closure.
+
 **Next:** close these Panel v2 gaps before treating budget-control B2 as the next completed
 phase. B2, live team/provider checks, Labs, R2 and packaging remain outside the delivered unit;
 retain their existing authorization and open-question constraints.
@@ -169,6 +171,33 @@ retain their existing authorization and open-question constraints.
 - Definition of done: focused tests pass; report limitations; supervisor runs browser acceptance.
 - Report to: docs/working/panel-v2/reports/live.md
 
+### Brief: brain-navigation-completion
+- Repository: D:/SwitchYardRouter, feat/panel-completion, shared checkout.
+- Task: Close Current State item 1: scoped brain commit pages, linked history/blame commits and Related navigation for selected documents. Service must restrict all returned commit content to visible project/global documents; test cross-project denial and mixed commits.
+- Required reads: Current State, D5/D6, existing brain page, admin brain helpers, attribution git and brain access interfaces.
+- Owns: new packages/router/src/admin/brain-entities.ts; new tests/admin-brain-entities.test.ts; apps/panel/app/p/[slug]/brain/**; export lines in admin/insights.ts and src/index.ts; docs/working/panel-v2/reports/brain-completion.md.
+- Must not touch: src/brain/**, seed script, other panels, shared working docs; no commits.
+- Definition of done: document related links and scoped commit detail exist; meaningful denial tests pass. No broad builds while shared tree changes.
+- Report to: docs/working/panel-v2/reports/brain-completion.md
+
+### Brief: panel-link-completion
+- Repository: D:/SwitchYardRouter, feat/panel-completion, shared checkout.
+- Task: Close Current State item 2: recent-agent Activity summary, planned task/agent links on plan/team surfaces, and entity links in session timeline. Also implement handoff's failed-but-finished-by-supervisor plan annotation only from reliable stored/git evidence; add regression coverage or report missing prerequisites precisely.
+- Required reads: Current State and architecture map; project overview, job-plan/team and session-timeline components; admin/job-plans.ts and sessions public data.
+- Owns: apps/panel/app/p/[slug]/page.tsx; components/job-plan.tsx, job-team.tsx, session-timeline.tsx; packages/router/src/admin/job-plans.ts; tests/team-surface.test.ts; new tests/admin-panel-links.test.ts if needed; report below.
+- Must not touch: other files, brain UI/service, seed/runtime brain, shared docs. No commits or broad builds.
+- Definition of done: audit owned rendered entity names, implement links and Activity summary; regression-test evidence-based annotation. Report unhandled surfaces precisely.
+- Report to: docs/working/panel-v2/reports/link-completion.md
+
+### Brief: seed-brain-repair
+- Repository: D:/SwitchYardRouter/.claude/worktrees/seed-repair, feat/demo-brain-repair; isolated worktree for run/fix/re-run.
+- Task: Reproduce and fix demo seed brain index.lock, missing nested integrations/rebase and missing pending promotions. Trace causes; do not suppress warnings or fabricate successful rows. New budget semantics may require explicit fake-script grants. No real providers.
+- Required reads: root working doc Current State; seed script, brain git mutation code; budget request/pool contracts as needed. Install with pnpm install --frozen-lockfile --offline.
+- Owns: apps/panel/scripts/seed-demo.mjs; packages/router/src/brain/**; src/workspaces/git.ts only if root cause lives there; relevant brain/team/seed regression tests, excluding admin-brain-entities.test.ts and team-surface.test.ts; report below.
+- Must not touch: other source, root shared checkout, other working docs. Never user install, no commits/push. All services stopped after tests.
+- Definition of done: isolated seed exits 0 with expected integrations/rebase/promotions and no brain lock error; meaningful root-cause tests; report exact outputs and unresolved failures.
+- Report to: docs/working/panel-v2/reports/seed-repair.md in your worktree (supervisor integrates).
+
 ## Work Ledger
 
 ### 2026-10-21 — Plan written
@@ -208,6 +237,13 @@ retain their existing authorization and open-question constraints.
 - Validation: read panel-v2 decisions and map against brain/page.tsx, project overview and worker reports; confirmed plaintext brain commit hashes, no brain RelatedPanel, and omitted Activity agent summary. Broader pending work confirmed in budget-control, labs and handoff. No code changed or tests rerun.
 - Outcome: Partial
 - Follow-up: execute the numbered remaining work in Current State; do not equate test counts with requirement completeness.
+
+### 2026-10-22 — Scoped navigation and links integrated, acceptance pending
+- Agent: supervisor; brain-navigation-completion and panel-link-completion
+- Changed: scoped brain history/blame/commit views and Related; Activity agents; plan/team/timeline links; evidence-backed supervisor plan annotation; durable validate:live browser script.
+- Validation: supervisor ran 13/13 targeted tests across admin-brain-entities, admin-plan-recovery, team-surface. Router build caught a picomatch callback typing/argument bug; wrapped matcher, added same-commit unrelated-file regression, router build and recovery rerun 1/1 pass. Browser and full-suite integration remain pending.
+- Outcome: Partial
+- Follow-up: integrate isolated brain/seed fix; verify all browser requirements. B2 implementation may proceed in its own isolated worktree while this tree is validated.
 
 ## Open Questions
 
