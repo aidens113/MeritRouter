@@ -1,5 +1,5 @@
 import path from "node:path";
-import { mkdirSync, writeFileSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync, readFileSync, rmSync, readdirSync } from "node:fs";
 import { z } from "zod";
 import type { LabManager } from "./lab.js";
 import { LabRecordSchema, type LabRecord } from "./store.js";
@@ -12,6 +12,7 @@ import { labOwnedPath } from "./paths.js";
 import { labEnvironment, labValues } from "./environment.js";
 import { inspectLabListeners } from "./process-ownership.js";
 import { LabCheckResultSchema, type LabCheckResult } from "./checks.js";
+import { TaskLabPruneRefusal } from "./task-attempt-prune.js";
 import { TaskAttemptProcesses } from "./task-attempt-processes.js";
 import { TaskAttemptSource, taskCommonDirectory, assertRegisteredTaskWorktree, taskHash } from "./task-attempt-source.js";
 import { TaskLabEvidenceSchema, type TaskAttemptRecord, type TaskLabRecord, type TaskLabEvidence } from "./task-attempt-schema.js";
@@ -275,25 +276,120 @@ export class TaskAttemptRunner {
     this.store.save(request);
     return request.result;
   }
-  async prune(request: TaskLabRecord, attempt: TaskAttemptRecord) {
-    const lab = this.manager.store.byId(request.labId!)!;
-    this.assertLab(lab, attempt);
-    await this.processes.stopAll(lab.id);
-    for (const repo of lab.repositories)
-      if (existsSync(repo.worktree) && (await dirtyPaths(repo.worktree)).length)
-        throw new Error("dirty task Lab retained");
-    for (const repo of lab.repositories)
-      if (existsSync(repo.worktree)) {
-        labOwnedPath(this.manager.options.storageDir, repo.worktree);
-        if (await taskCommonDirectory(repo.source) !== attempt.repositories.find(r => r.alias === repo.alias)!.commonDirectory)
-          throw new Error("task repository physical identity changed before prune");
-        await assertRegisteredTaskWorktree(repo.source, repo.worktree);
-        await git(repo.source, ["worktree", "remove", repo.worktree]);
+  private assertPruneContents(lab: LabRecord): void {
+    if (!existsSync(lab.root)) return;
+    const expected = new Set(lab.repositories.map(r => path.resolve(r.worktree, ".git")));
+    const pending = [{ directory: lab.root, depth: 0 }], deadline = Date.now() + 1000;
+    let entries = 0;
+    while (pending.length) {
+      const { directory, depth } = pending.pop()!;
+      if (depth > 64 || Date.now() > deadline)
+        throw new TaskLabPruneRefusal("Prune blocked: inspect oversized/deep Lab contents manually before retry (scan limit: 20,000 entries, depth 64, one second)");
+      // labOwnedPath rejects changed ancestor junctions; never follow entries that are links.
+      labOwnedPath(this.manager.options.storageDir, directory);
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        if (++entries > 20000 || Date.now() > deadline)
+          throw new TaskLabPruneRefusal("Prune blocked: inspect oversized Lab contents manually before retry (scan limit: 20,000 entries, depth 64, one second)");
+        const target = path.join(directory, entry.name);
+        if (entry.name.toLowerCase() === ".git") {
+          if (expected.has(path.resolve(target)) && entry.isFile()) continue;
+          throw new TaskLabPruneRefusal("Prune blocked: unexpected nested Git metadata; preserve or move the foreign repository/worktree before retry");
+        }
+        // Root-owned dependency links/junctions are unlinked by rmSync, never traversed.
+        // Exact root/ancestor/expected worktree links are independently refused.
+        if (entry.isSymbolicLink()) continue;
+        if (!entry.isDirectory() && !entry.isFile())
+          throw new TaskLabPruneRefusal("Prune blocked: special Lab resource; inspect and preserve its ownership before retry");
+        if (entry.isDirectory()) pending.push({ directory: target, depth: depth + 1 });
       }
+    }
+  }
+  private async assertPruneRegistrations(lab: LabRecord, attempt: TaskAttemptRecord, assert: () => void): Promise<void> {
+    const expected = new Set(lab.repositories.map(r => path.resolve(r.worktree))), seen = new Set<string>();
+    for (const repo of attempt.repositories) {
+      if (seen.has(repo.commonDirectory)) continue;
+      seen.add(repo.commonDirectory);
+      if (await taskCommonDirectory(repo.sourcePath) !== repo.commonDirectory)
+        throw new Error("task source common directory changed");
+      assert();
+      const registrations = await git(repo.sourcePath, ["worktree", "list", "--porcelain", "-z"]);
+      assert();
+      for (const field of registrations.split("\0")) {
+        if (!field.startsWith("worktree ")) continue;
+        const target = path.resolve(field.slice(9)), relative = path.relative(path.resolve(lab.root), target);
+        if ((relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative))) && !expected.has(target))
+          throw new TaskLabPruneRefusal("Prune blocked: unexpected nested registered Git worktree; preserve or move its registration and files before retry");
+      }
+    }
+  }
+  async prune(request: TaskLabRecord, attempt: TaskAttemptRecord, fence: { assert(): void; resume: boolean; verified(): void }) {
+    const lab = this.manager.store.byId(request.labId!)!;
+    fence.assert();
+    this.assertLab(lab, attempt);
+    if (lab.repositories.length !== attempt.repositories.length)
+      throw new Error("incomplete task Lab repository identity");
+    await this.assertPruneRegistrations(lab, attempt, fence.assert);
+    // Prove every repository before the first removal. A durable verified intent is
+    // required to accept resources missing after an interrupted removal.
+    for (const repo of lab.repositories) {
+      labOwnedPath(this.manager.options.storageDir, repo.worktree);
+      if (await taskCommonDirectory(repo.source) !== attempt.repositories.find(r => r.alias === repo.alias)!.commonDirectory)
+        throw new Error("task repository physical identity changed before prune");
+      fence.assert();
+      if (!existsSync(repo.worktree)) {
+        if (!fence.resume) throw new Error("task worktree missing without removal proof");
+        // A missing path with a lingering Git registration is ambiguous, retain it.
+        const registered = await git(repo.source, ["worktree", "list", "--porcelain", "-z"]);
+        fence.assert();
+        if (registered.split("\0").some(part => part.startsWith("worktree ") && path.resolve(part.slice(9)) === path.resolve(repo.worktree)))
+          throw new Error("missing task worktree still registered");
+        continue;
+      }
+      await assertRegisteredTaskWorktree(repo.source, repo.worktree);
+      fence.assert();
+      if (await taskCommonDirectory(repo.worktree) !== attempt.repositories.find(r => r.alias === repo.alias)!.commonDirectory)
+        throw new Error("task worktree physical identity changed");
+      fence.assert();
+      if ((await git(repo.worktree, ["symbolic-ref", "--quiet", "HEAD"])).trim() !== `refs/heads/${repo.branch}`)
+        throw new Error("task worktree branch changed");
+      fence.assert();
+      if ((await git(repo.worktree, ["rev-parse", "HEAD"])).trim() !== repo.base)
+        throw new Error("task worktree head changed");
+      fence.assert();
+      if ((await dirtyPaths(repo.worktree)).length) throw new Error("dirty task Lab retained");
+      fence.assert();
+    }
+    this.assertPruneContents(lab);
+    fence.verified();
+    for (const repo of lab.repositories) {
+      if (!existsSync(repo.worktree)) continue;
+      // Recheck paths and registration immediately before each destructive action.
+      labOwnedPath(this.manager.options.storageDir, repo.worktree);
+      await assertRegisteredTaskWorktree(repo.source, repo.worktree);
+      fence.assert();
+      if (await taskCommonDirectory(repo.source) !== attempt.repositories.find(r => r.alias === repo.alias)!.commonDirectory
+        || await taskCommonDirectory(repo.worktree) !== attempt.repositories.find(r => r.alias === repo.alias)!.commonDirectory
+        || (await git(repo.worktree, ["symbolic-ref", "--quiet", "HEAD"])).trim() !== `refs/heads/${repo.branch}`
+        || (await git(repo.worktree, ["rev-parse", "HEAD"])).trim() !== repo.base)
+        throw new Error("task repository identity changed before removal");
+      await this.assertPruneRegistrations(lab, attempt, fence.assert);
+      this.assertPruneContents(lab);
+      fence.assert();
+      await git(repo.source, ["worktree", "remove", repo.worktree]);
+      fence.assert();
+    }
+    await this.assertPruneRegistrations(lab, attempt, fence.assert);
+    this.assertPruneContents(lab);
+    fence.assert();
     rmSync(labOwnedPath(this.manager.options.storageDir, lab.root), { recursive: true, force: true });
-    lab.state = "destroyed";
-    this.manager.store.save(lab);
-    request.phase = "pruned";
-    this.store.save(request);
+    fence.assert();
+    immediate(this.store.db, () => {
+      fence.assert();
+      lab.state = "destroyed";
+      this.manager.store.save(lab);
+      request.phase = "pruned";
+      request.cleanupError = null;
+      this.store.save(request);
+    });
   }
 }

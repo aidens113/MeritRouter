@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { LabManager } from "./lab.js";
 import { ProjectConfigSchema } from "../projects/schema.js";
-import { WorkerTaskSchema } from "../core/task.js";
+import { TaskAttemptPruner, TASK_PRUNE_OPERATION } from "./task-attempt-prune.js";
 import { immediate, newId } from "../storage/db.js";
 import { SwitchyardError } from "../core/errors.js";
 import { LabNameSchema, validateRecipe } from "./recipe.js";
@@ -21,7 +21,7 @@ export class TaskLabLifecycle {
   readonly processes: TaskAttemptProcesses;
   readonly runner: TaskAttemptRunner;
   private readonly active = new Map<string, AbortController>();
-  private readonly work = new Set<Promise<void>>();
+  private readonly work = new Set<Promise<unknown>>();
   private closed = false;
   private drain: Promise<void> | null = null;
   constructor(readonly manager: LabManager, barrier?: (phase: string, row: TaskProcessRecord) => Promise<void>) {
@@ -212,6 +212,9 @@ export class TaskLabLifecycle {
     for (const request of this.store.all()) {
       if (request.phase === "pruned" || this.active.has(request.attemptId))
         continue;
+      // A prune has its own immutable removal intent. Ordinary stop cannot adopt it.
+      // A fresh fenced prune retries an expired intent; retain its proof in the meantime.
+      this.store.db.prepare("UPDATE task_lab_operations SET state='failed',lease_until=0,updated_at=? WHERE attempt_id=? AND error=? AND state='running' AND lease_until<=?").run(Date.now(), request.attemptId, TASK_PRUNE_OPERATION, Date.now());
       const stale = this.store.db.prepare("SELECT 1 FROM task_lab_operations WHERE attempt_id=? AND state='running' AND lease_until<=?").get(request.attemptId, Date.now());
       const pending = this.store.db.prepare("SELECT 1 FROM task_lab_operations WHERE attempt_id=? AND kind='cleanup' AND state='pending'").get(request.attemptId);
       if (request.phase === "retained" && !stale && !pending)
@@ -255,42 +258,20 @@ export class TaskLabLifecycle {
       }
     }
   }
+  private async runPrune(project?: string, now = Date.now()) {
+    if (this.closed) return { removed: [] as string[], blocked: 0 };
+    const work = new TaskAttemptPruner(this.manager, this.source, this.runner, () => !this.closed).run(project, now);
+    this.work.add(work);
+    try { return await work; }
+    finally { this.work.delete(work); }
+  }
   async prune(now = Date.now()): Promise<string[]> {
-    const removed: string[] = [];
-    for (const request of this.store.all()) {
-      if (request.phase !== "retained" || request.updatedAt > now - this.manager.services.config.keep_task_worktrees_days * 86400000 || !request.labId)
-        continue;
-      if (this.store.db.prepare("SELECT 1 FROM task_lab_operations WHERE attempt_id=? AND state IN ('pending','running')").get(request.attemptId))
-        continue;
-      const attempt = this.store.get(request.attemptId);
-      let current: string | undefined = attempt.taskId, ended = true;
-      const seen = new Set<string>();
-      while (current) {
-        if (seen.has(current)) {
-          ended = false;
-          break;
-        }
-        seen.add(current);
-        const row = z.object({ state: z.string(), spec_json: z.string() }).optional().parse(this.store.db.prepare("SELECT state,spec_json FROM tasks WHERE id=?").get(current));
-        if (!row || !["completed", "failed", "cancelled", "budget_exhausted"].includes(row.state)) {
-          ended = false;
-          break;
-        }
-        current = WorkerTaskSchema.parse(JSON.parse(row.spec_json)).parentTaskId;
-      }
-      if (!ended)
-        continue;
-      if (this.store.db.prepare("SELECT 1 FROM merge_queue WHERE task_id=? AND state IN ('queued','integrating','picked')").get(attempt.taskId))
-        continue;
-      try {
-        await this.runner.prune(request, attempt);
-        removed.push(request.labId);
-      }
-      catch {
-        continue;
-      }
-    }
-    return removed;
+    return (await this.runPrune(undefined, now)).removed;
+  }
+  /** Internal confirmed-project-deletion cleanup; never relaxes task Lab ownership. */
+  async pruneProject(project: string): Promise<{ removed: string[]; blocked: number }> {
+    if (this.closed) throw new SwitchyardError("unavailable", "Task Lab lifecycle is closed; project cleanup is unavailable");
+    return this.runPrune(z.string().min(1).parse(project));
   }
   async close() {
     this.closed = true;
