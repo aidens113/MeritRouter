@@ -316,6 +316,8 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 /** Why a project cannot be deleted now: running or queued tasks, the last live project, or the single-project config. */
 function deletionBlockers(sy: Switchyard, info: ProjectSummary): string[] {
   const out: string[] = [];
+  const labs = sy.db.prepare("SELECT count(*) AS n FROM labs WHERE project_id = ? AND state != 'destroyed'").get(info.slug) as { n: number };
+  if (labs.n) out.push(`it has ${labs.n} retained lab(s); destroy them first so their owned processes and worktrees can be cleaned up`);
   const a = projectActivity(sy, info.slug);
   if (a.runningTasks + a.queuedTasks > 0) out.push(`it has ${a.runningTasks} running and ${a.queuedTasks} queued task(s); cancel them or let them finish first`);
   if (info.legacy) out.push("it is the single-project config itself; an install needs at least one project");

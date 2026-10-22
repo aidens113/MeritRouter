@@ -197,6 +197,7 @@ export async function ensurePanel(cfg: ResolvedConfig, opts: { waitMs?: number; 
         env: {
           ...process.env,
           SWITCHYARD_CONFIG: cfg.configPath,
+          SWITCHYARD_ROUTER_CLI: path.join(routerBuildDir(), "cli.js"),
           ...(app.runtimeModules ? { NODE_PATH: [app.runtimeModules, process.env.NODE_PATH].filter(Boolean).join(path.delimiter) } : {}),
         },
       });

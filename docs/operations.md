@@ -630,6 +630,12 @@ With `--force`:
 - the old store entries move to `.switchyard/pre-restore-<time>/`;
 - the old brain moves to `<brain>.pre-restore-<time>`, next to it.
 
+Replacement store files are copied and migrated in staging, and the brain bundle is fetched
+and its HEAD verified, before live entries move. If a final swap fails, restore returns both
+original halves to their prior paths. If an external lock prevents rollback, the error gives
+the retained recovery paths; recover them before restarting. This handles operational errors;
+it is not an atomic transaction across both directories during abrupt machine or process death.
+
 The restored brain is a fresh repository holding every ref of the bundle, with the backed-up
 branch checked out at the backed-up commit. A brain already at that commit is left alone.
 Restored running tasks have their leases expired, so the next worker recovers them. The command

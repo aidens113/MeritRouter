@@ -6,6 +6,7 @@ import type { Switchyard } from "../core/service.js";
 import { ProjectRegistry } from "../projects/registry.js";
 import { recordPreparation } from "../projects/repository-setup.js";
 import { prepareRepository } from "../workspaces/repository-prepare.js";
+import { retainedLabConfigErrors } from "../projects/lab-config-guard.js";
 
 /**
  * Editing the config file from the panel: validate, back up the previous file, write, and let
@@ -38,6 +39,8 @@ export function validateConfigText(text: string, configPath: string): { ok: true
 export function writeConfigText(sy: Switchyard, text: string): { ok: true } | { ok: false; errors: string[] } {
   const v = validateConfigText(text, sy.cfg.configPath);
   if (!v.ok) return v;
+  const labErrors = retainedLabConfigErrors(sy.db, parseConfig(YAML.parse(text), sy.cfg.configPath));
+  if (labErrors.length) return { ok: false, errors: labErrors };
   copyFileSync(sy.cfg.configPath, `${sy.cfg.configPath}.bak`);
   writeFileSync(sy.cfg.configPath, text);
   sy.reloadIfChanged();
@@ -58,6 +61,8 @@ export function patchConfig(sy: Switchyard, patch: Array<{ path: Array<string | 
 export async function writePreparedConfigText(sy: Switchyard, text: string): Promise<{ ok: true } | { ok: false; errors: string[] }> {
   const validation = validateConfigText(text, sy.cfg.configPath);
   if (!validation.ok) return validation;
+  const labErrors = retainedLabConfigErrors(sy.db, parseConfig(YAML.parse(text), sy.cfg.configPath));
+  if (labErrors.length) return { ok: false, errors: labErrors };
   const original = readConfigText(sy);
   const candidate = new ProjectRegistry(parseConfig(YAML.parse(text), sy.cfg.configPath));
   const errors: string[] = [];

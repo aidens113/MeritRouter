@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { ModelEndpointSchema } from "../src/models/catalog.js";
 import { ProvidersSectionSchema } from "../src/config/schema.js";
 import {
   OLLAMA_MIN_DEFAULT_CONTEXT,
@@ -263,7 +264,8 @@ describe("Ollama discovery", () => {
     const llama = byId.get("ollama/llama3.1:8b")!;
     // num_ctx wins over the trained maximum; the output is bounded by that context.
     expect(llama.endpoint).toMatchObject({ gatewayModelId: "llama3.1:8b", route: { kind: "direct", provider: "ollama", model: "llama3.1:8b" }, contextLimitTokens: 8192, outputLimitTokens: 8192, supportsTools: true, supportsStructuredOutput: true, inputModalities: ["text"], totalParametersB: 8, pricing: { freeVerified: true } });
-    expect(llama.endpoint.params).toMatchObject({ confidence: "exact", confirmed: true });
+    expect(llama.endpoint.params).toMatchObject({ source: "provider", confidence: "exact", confirmed: true, evidence: expect.arrayContaining([expect.objectContaining({ source: "provider" })]) });
+    expect(ModelEndpointSchema.parse(JSON.parse(JSON.stringify(llama.endpoint)))).toMatchObject({ quantization: "Q4_K_M", maxContextTokens: 131072, contextDetail: expect.stringContaining("num_ctx"), params: { source: "provider" } });
     expect(llama.enriched).toMatchObject({ maxContextTokens: 131072, quantization: "Q4_K_M" });
     expect(llama.enriched.provenance.contextLimitTokens).toEqual({ source: "provider", detail: "num_ctx 8192 in the model's parameters (/api/show)" });
     expect(llama.enriched.provenance.parameters.source).toBe("provider");
@@ -435,6 +437,7 @@ describe("keyless local providers", () => {
     const r = await discoverModels({ providers, credentials, config: DISCOVERY, fetch: fetchFn, now, only: ["llamacpp"], openRouter: openRouterCatalog([]), huggingFaceTotal: async () => null });
     expect(r.endpoints[0]!.endpoint).toMatchObject({ id: "llamacpp/qwen2.5-7b-instruct", contextLimitTokens: 8192, outputLimitTokens: 8192, totalParametersB: 7.6 });
     expect(r.endpoints[0]!.enriched).toMatchObject({ maxContextTokens: 32768 });
+    expect(r.endpoints[0]!.endpoint).toMatchObject({ maxContextTokens: 32768, params: { source: "provider" } });
     expect(provider("llamacpp").baseUrlSource).toBe("config");
   });
 

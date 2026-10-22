@@ -113,23 +113,26 @@ export async function completeAnthropic(fetchFn: FetchLike, req: ProviderRequest
   const calls: ChatToolCall[] = blocks
     .filter((b): b is { type: "tool_use"; id: string; name: string; input: unknown } => b.type === "tool_use")
     .map((b) => ({ id: b.id, type: "function", function: { name: b.name, arguments: JSON.stringify(b.input ?? {}) } }));
-  const u = (json.usage ?? {}) as Record<string, number | undefined>;
-  const cacheRead = u.cache_read_input_tokens ?? 0;
-  const cacheWrite = u.cache_creation_input_tokens ?? 0;
+  const u = (json.usage ?? {}) as Record<string, unknown>;
+  const tokens = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.round(value) : null;
+  const ordinary = tokens(u.input_tokens);
+  const cacheRead = tokens(u.cache_read_input_tokens);
+  const cacheWrite = tokens(u.cache_creation_input_tokens);
   const stop = json.stop_reason === "tool_use" ? "tool_calls" : json.stop_reason === "max_tokens" ? "length" : "stop";
   return {
     message: { content: text || null, ...(calls.length ? { tool_calls: calls } : {}) },
     finishReason: stop,
     usage: {
       // Anthropic's input_tokens excludes cache reads and writes; the total is their sum.
-      inputTokens: typeof u.input_tokens === "number" ? u.input_tokens + cacheRead + cacheWrite : null,
-      outputTokens: typeof u.output_tokens === "number" ? u.output_tokens : null,
-      cachedInputTokens: cacheRead || null,
+      inputTokens: ordinary === null ? null : ordinary + (cacheRead ?? 0) + (cacheWrite ?? 0),
+      outputTokens: tokens(u.output_tokens),
+      cachedInputTokens: cacheRead,
+      cacheCreationInputTokens: cacheWrite,
       reasoningTokens: null,
       reportedCostUsd: null,
-      basis: typeof u.input_tokens === "number" ? "provider_reported" : "unknown",
+      basis: ordinary !== null ? "provider_reported" : "unknown",
     },
-    telemetry: { servedModel: typeof json.model === "string" ? json.model : null, servedProvider: p.id, providerAttempts: 1, providerAttemptsExact: true, cacheHit: typeof u.input_tokens === "number" ? cacheRead > 0 : null, headers: auditHeaders(res.headers) },
+    telemetry: { servedModel: typeof json.model === "string" ? json.model : null, servedProvider: p.id, providerAttempts: 1, providerAttemptsExact: true, cacheHit: ordinary !== null ? (cacheRead ?? 0) > 0 : null, headers: auditHeaders(res.headers) },
     httpStatus: res.status,
     rateLimits: res.rateLimits,
     ...(req.webSearch ? { webSearch: searchOutcome(req.webSearch, reportedSearches(json.usage), anthropicCitations(json.content)) } : {}),
