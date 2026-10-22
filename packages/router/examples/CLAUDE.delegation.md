@@ -3,6 +3,10 @@
 You are the supervisor. SwitchYard's MCP tools run bounded tasks on external worker models and
 share memory through the brain. See SwitchYard's `docs/roles.md` for the full role model.
 
+**The web panel** (its URL is in the server's instructions; default http://127.0.0.1:4477)
+shows every job, task, and request live. The MCP server starts it when it is not running; tell
+the user the URL when you start work, and call the `panel` tool if they cannot reach it.
+
 **Delegate** independently executable work: log/trace summaries, repository inspection, failure
 analysis, bounded implementation, reviews. Keep one- or two-file edits you already understand,
 verification, integration, and decisions that need the user.

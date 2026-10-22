@@ -24,6 +24,9 @@ Setup
                                 project, default my-project) and models.yaml
                                 presets: claude-code (default), standalone-free,
                                 standalone-hybrid, standalone-paid
+  panel                         start the web panel (http://127.0.0.1:<panel.port>) unless it is
+                                already running; the MCP server and worker also start it
+                                (panel.auto_start)
   doctor                        check config, each provider (keys, cooldowns, invalid keys,
                                 last model listing), secrets in the config, models, and per
                                 project its repositories and brain folders (--project: one)

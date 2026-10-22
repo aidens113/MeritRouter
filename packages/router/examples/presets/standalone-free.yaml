@@ -208,6 +208,7 @@ coding:
 
 panel:
   port: 4477
+  auto_start: true # the MCP server and workers start the panel when nothing answers on the port
   token_env: SWITCHYARD_PANEL_TOKEN
 
 profiles:

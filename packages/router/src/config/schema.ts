@@ -776,6 +776,8 @@ export const ConfigSchema = z
     panel: z
       .object({
         port: z.number().int().positive().default(4477),
+        /** Start the panel when the MCP server or a worker starts and nothing answers on the port. */
+        auto_start: z.boolean().default(true),
         /** Env var holding a login token for the panel; unset means localhost-only, no login. */
         token_env: z.string().min(1).default("SWITCHYARD_PANEL_TOKEN"),
       })

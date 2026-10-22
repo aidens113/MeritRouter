@@ -11,6 +11,7 @@ import { blame } from "./attribution/index.js";
 import type { Principal } from "./brain/access.js";
 import { SessionStatusSchema } from "./sessions/events.js";
 import { PROJECT_ENV, requireProject } from "./cli/project-select.js";
+import { ensurePanel, panelUrl } from "./operations/panel.js";
 
 /**
  * MCP stdio server for Claude Code, serving one project of the install (decision D8 of
@@ -19,7 +20,8 @@ import { PROJECT_ENV, requireProject } from "./cli/project-select.js";
  * start and lists the projects. Tools default to that project (and the brain tools work in its
  * brain). It runs the worker loop in-process unless `--no-worker` (when a daemon already runs
  * the worker for every project); in-process jobs continue only while the session keeps this
- * process alive (state is persisted incrementally and recovered on the next start).
+ * process alive (state is persisted incrementally and recovered on the next start). It keeps the
+ * web panel reachable while it runs (`panel.auto_start`; see operations/panel.ts).
  *
  * Arguments: [--config <file>] [--project <slug>] [--no-worker]
  */
@@ -42,13 +44,42 @@ async function main(): Promise<void> {
   }
   // Recovery belongs to the process that runs the worker (the daemon, with --no-worker).
   if (args.worker) sy.recover();
+  // The panel stays reachable while agents use this server: started now if nothing answers, and
+  // checked again every minute (a closed panel comes back). Never blocks the MCP handshake.
+  const keepPanel = () => void ensurePanel(cfg).then((p) => p.state !== "running" && process.stderr.write(`switchyard mcp: ${p.detail}\n`));
+  keepPanel();
+  const panelTimer = setInterval(keepPanel, 60_000);
+  panelTimer.unref();
   /** A tool's project: the one it names (which must exist), else this server's. */
   const scope = (named: unknown): string => (typeof named === "string" && named ? sy.projects.require(named).project.slug : project);
   const projectInput = { project: z.string().min(1).optional().describe(`Project slug; default: this server's project (${project}).`) };
 
-  const server = new McpServer({ name: "switchyard", version: "0.1.0" });
+  const server = new McpServer(
+    { name: "switchyard", version: "0.1.0" },
+    {
+      instructions:
+        `SwitchYard's web panel (${panelUrl(cfg)}) shows every job, task, session, and model request live; this server starts it when it is not running. ` +
+        "Tell the user that URL when you start a job or submit tasks, and call the panel tool if they cannot reach it.",
+    },
+  );
   const json = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] });
   const fail = (err: unknown) => ({ isError: true, content: [{ type: "text" as const, text: (err as Error).message ?? String(err) }] });
+
+  server.registerTool(
+    "panel",
+    {
+      title: "Web panel",
+      description: "Make sure SwitchYard's web panel is running (it is started when nothing answers on its port) and return its URL and state.",
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        return json(await ensurePanel(cfg));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
 
   server.registerTool(
     "submit_tasks",

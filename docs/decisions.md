@@ -179,6 +179,17 @@ whether Z.ai and Moonshot serve `/models`, LM Studio's `key` as the chat model i
 - **`keys add` requires `--billing`**, and `keys list` lists config keys too, by ref.
 - **A 429 cools the key for every model of that provider** (FreeLLMAPI cooled per chain).
 
+## The panel starts itself (user request, 2026-10-21)
+
+The panel must be reachable whenever agents use SwitchYard, without anyone remembering to start
+it. It is enforced in code, not in prompt text: the MCP server and `switchyard worker` check
+`panel.port` on 127.0.0.1 at start (the MCP server again every minute) and start the built
+panel detached when nothing answers (`panel.auto_start`, default on; tests turn it off). It
+runs as its own process so it outlives the session; a second starter cannot bind the port and
+exits. The MCP server's instructions carry the URL and a `panel` tool starts it on request. The
+panel ships with a repository checkout, so an npm install has none yet: `ensurePanel` reports
+how to get one instead of failing (see the packaging question in the working documents).
+
 ## Projects (user decision, 2026-10-20)
 
 One install holds many projects. Each has its own repositories, brain folder, jobs, tasks,

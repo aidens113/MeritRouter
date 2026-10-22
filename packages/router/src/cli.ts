@@ -25,6 +25,7 @@ import { chooseProject, PROJECT_ENV, requireProject, type SelectOptions } from "
 import { initConfigText, projectsCommand } from "./cli/projects.js";
 import { sessionRows, sessionTimeline } from "./cli/session-text.js";
 import { out, table } from "./cli/terminal.js";
+import { ensurePanel } from "./operations/panel.js";
 import type { ScanSummary } from "./models/scanner.js";
 
 // The `switchyard` command: argument parsing and dispatch. Terminal rendering lives in src/cli/.
@@ -158,6 +159,12 @@ async function main(): Promise<number> {
     switch (cmd) {
       case "projects":
         return await projectsCommand(sy, args, values, json, select);
+      case "panel": {
+        // Start the panel now even when panel.auto_start is off (the user asked for it).
+        const p = await ensurePanel({ ...cfg, panel: { ...cfg.panel, auto_start: true } });
+        out(json ? p : p.detail, json);
+        return p.state === "running" || p.state === "started" ? 0 : 1;
+      }
       case "doctor": {
         // Reads stored state only: per-provider keys, health, and last listing; never calls a provider.
         // Repositories are prepared first (created, set up with git), so only what SwitchYard cannot fix fails.
@@ -226,6 +233,8 @@ async function main(): Promise<number> {
       case "worker": {
         sy.recover();
         out(`worker ${sy.owner} running; Ctrl+C to stop`, false);
+        // Agents' work is watched in the panel: start it if nothing answers (panel.auto_start).
+        void ensurePanel(cfg).then((p) => out(p.detail, false));
         // The service's timers are unref'd; this ref'd timer keeps the worker alive until a signal.
         const keepAlive = setInterval(() => undefined, 60_000);
         await new Promise<void>((resolve) => {

@@ -49,6 +49,8 @@ export function baseConfig(overrides: Record<string, unknown> = {}) {
     models: { file: "models.yaml" },
     // Scheduled discovery is off in tests; `scan()` runs it on demand.
     discovery: { interval_minutes: 0 },
+    // Tests never start the web panel.
+    panel: { auto_start: false },
     repositories: { core: { path: "repo" } },
     execution: { max_concurrent_tasks: 4, lease_seconds: 30 },
     scoring: { batch_window_ms: 50 },

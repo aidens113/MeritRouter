@@ -385,6 +385,13 @@ pnpm --filter switchyard-router build
 SWITCHYARD_CONFIG=/path/to/switchyard.config.yaml pnpm --filter switchyard-panel start   # http://127.0.0.1:4477
 ```
 
+You rarely start it by hand: while the MCP server or `switchyard worker` runs, SwitchYard
+starts the panel when nothing answers on `panel.port` and checks again every minute
+(`panel.auto_start`, default on). It runs detached on 127.0.0.1, outlives the session that
+started it, and logs to `<storage>/logs/panel.log`. `switchyard panel` starts it on demand, and
+the MCP server's `panel` tool does the same for Claude, whose server instructions carry the URL.
+It needs the built panel from this repository checkout (`pnpm -r build`).
+
 The panel opens on the projects grid (see [Projects](#projects)).
 - Inside a project: its overview, jobs, teams, tasks, sessions, requests, brain (with its
   promotions to global knowledge), and settings.
