@@ -13,7 +13,9 @@ import { SessionStatusSchema } from "../sessions/events.js";
 import { ensurePanel, panelUrl, revivePanel } from "../operations/panel.js";
 import type { LabManager } from "../labs/lab.js";
 import { LabOperationInputSchema } from "../labs/control.js";
-import { LabOperationArgumentSchema, TaskArgumentSchema } from "./schemas.js";
+import { clientSupervisionFeedback, scopedMcpTasks, guardMcpResume, supervisionDispatch } from "./client-supervision.js";
+import { supervisionPolicy, setSupervisionPolicy } from "../admin/client-supervision.js";
+import { LabOperationArgumentSchema, TaskArgumentSchema, SupervisionPolicyArgumentShape } from "./schemas.js";
 
 /** What every connection's server shares: the service, its config, and the project it serves. */
 export interface McpContext {
@@ -29,12 +31,13 @@ export function buildMcpServer({ sy, cfg, project }: McpContext): McpServer {
   const scope = (named: unknown): string => (typeof named === "string" && named ? sy.projects.require(named).project.slug : project);
   const projectInput = { project: z.string().min(1).optional().describe(`Project slug; default: this server's project (${project}).`) };
 
+  const guidance = clientSupervisionFeedback(sy);
   const server = new McpServer(
     { name: "switchyard", version: "0.1.0" },
     {
       instructions:
         `SwitchYard's web panel (${panelUrl(cfg)}) shows every job, task, session, and model request live; this server starts it when it is not running. ` +
-        "Tell the user that URL when you start a job or submit tasks, and call the panel tool if they cannot reach it.",
+        "Tell the user that URL when you start a job or submit tasks, and call the panel tool if they cannot reach it.\n\n" + guidance.instructions,
     },
   );
   // Any tool call means agents are using SwitchYard: a panel the user turned off comes back
@@ -42,12 +45,21 @@ export function buildMcpServer({ sy, cfg, project }: McpContext): McpServer {
   // tool registered below does it.
   const register = server.registerTool.bind(server) as unknown as (name: string, def: unknown, handler: (...args: unknown[]) => unknown) => unknown;
   (server as unknown as { registerTool: typeof register }).registerTool = (name, def, handler) =>
-    register(name, def, (...args: unknown[]) => {
+    register(name, def, async (...args: unknown[]) => {
       void revivePanel(cfg);
-      return handler(...args);
+      let update: string | null = null;
+      try { update = guidance.changed(); } catch { /* Invalid external config must not break unrelated tool calls. */ }
+      const result = await handler(...args);
+      if (name === "set_supervision_policy" && !(result as { isError?: boolean }).isError) { guidance.acknowledge(); return result; }
+      if (!update) return result;
+      const response = result as { content: unknown[] };
+      return { ...response, content: [...response.content, { type: "text", text: update }] };
     });
   const json = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] });
   const fail = (err: unknown) => ({ isError: true, content: [{ type: "text" as const, text: (err as Error).message ?? String(err) }] });
+
+  server.registerTool("get_supervision_policy", { title: "External client supervision policy", description: "Read current Claude/Codex outer-supervisor workflow guidance; separate from internal job supervisors and permissions.", inputSchema: {} }, async () => { try { return json(supervisionPolicy(sy)); } catch (err) { return fail(err); } });
+  server.registerTool("set_supervision_policy", { title: "Change external client supervision guidance", description: "Only on explicit user request: permit or forbid final project-supervisor dispatch, or customize external Claude/Codex workflow guidance. Requires a reason. Grants no new permissions; do not self-change this policy to bypass user instructions.", inputSchema: SupervisionPolicyArgumentShape }, async input => { try { return json(setSupervisionPolicy(sy, input)); } catch (err) { return fail(err); } });
 
   server.registerTool(
     "panel",
@@ -82,7 +94,9 @@ export function buildMcpServer({ sy, cfg, project }: McpContext): McpServer {
     },
     async ({ tasks, project: named }) => {
       try {
-        return json({ submitted: await sy.submitTasks(tasks, { project: scope(named) }) });
+        const p = scope(named); const scoped = scopedMcpTasks(sy, p, tasks);
+        const submitted = await sy.submitTasks(scoped, { project: p });
+        return json({ submitted: submitted.map((out, i) => ({ ...out, ...(sy.projectContext(p).profiles[scoped[i]!.profile]?.mode === "supervisor" ? supervisionDispatch(scoped[i]!) : {}) })) });
       } catch (err) {
         return fail(err);
       }
@@ -158,6 +172,7 @@ export function buildMcpServer({ sy, cfg, project }: McpContext): McpServer {
     },
     async ({ taskId }) => {
       try {
+        guardMcpResume(sy, project, taskId);
         return json({ taskId, state: sy.resumeTask(taskId, project) });
       } catch (err) {
         return fail(err);
@@ -289,13 +304,15 @@ export function buildMcpServer({ sy, cfg, project }: McpContext): McpServer {
   server.registerTool(
     "start_job",
     {
-      title: "Start a SwitchYard-supervised job",
-      description: "Hand a whole goal to SwitchYard's own supervisor (models configured under supervisor), which plans, delegates, verifies, and integrates onto a job branch. Use when you want SwitchYard to run the job end to end instead of supervising tasks yourself.",
-      inputSchema: { goal: z.string().min(1), repositories: z.array(z.string()).min(1), acceptanceCriteria: z.array(z.string()).optional(), checks: z.array(z.string()).optional(), label: z.string().optional(), lab: z.string().optional(), ...projectInput },
+      title: "Delegate a bounded SwitchYard-supervised job",
+      description: "Hand a whole goal to SwitchYard's own supervisor (models configured under supervisor), which plans, delegates, verifies, and integrates onto a job branch. Use when you want SwitchYard to manage job execution. Default supervisionScope subtask keeps Claude/Codex responsible for final project review, testing and completion. Explicit project scope requires dispatch_final_supervisor permission.",
+      inputSchema: { supervisionScope: z.enum(["subtask", "project"]).optional(), goal: z.string().min(1), repositories: z.array(z.string()).min(1), acceptanceCriteria: z.array(z.string()).optional(), checks: z.array(z.string()).optional(), label: z.string().optional(), lab: z.string().optional(), ...projectInput },
     },
     async (a) => {
       try {
-        return json(await sy.startJob({ goal: a.goal, project: scope(a.project), repositories: a.repositories, ...(a.lab ? {lab:a.lab} : {}), ...(a.acceptanceCriteria ? { acceptanceCriteria: a.acceptanceCriteria } : {}), ...(a.checks ? { checks: a.checks } : {}), ...(a.label ? { label: a.label } : {}) }));
+        const supervisionScope = a.supervisionScope ?? "subtask";
+        scopedMcpTasks(sy, scope(a.project), [{ profile: "supervise", goal: a.goal, supervisionScope, constraints: { acceptanceCriteria: a.acceptanceCriteria?.length ? a.acceptanceCriteria : ["Bounded delegated goal achieved"] } }]);
+        return json({ ...await sy.startJob({ supervisionScope, goal: a.goal, project: scope(a.project), repositories: a.repositories, ...(a.lab ? {lab:a.lab} : {}), ...(a.acceptanceCriteria ? { acceptanceCriteria: a.acceptanceCriteria } : {}), ...(a.checks ? { checks: a.checks } : {}), ...(a.label ? { label: a.label } : {}) }), ...supervisionDispatch({ supervisionScope }) });
       } catch (err) {
         return fail(err);
       }
@@ -468,6 +485,9 @@ export function buildMcpServer({ sy, cfg, project }: McpContext): McpServer {
     },
     async ({ sessionId }) => {
       try {
+        const session = sy.sessions.get(sessionId);
+        if (!session || !session.taskId) throw new Error(`unknown session ${sessionId}`);
+        guardMcpResume(sy, project, session.taskId);
         return json({ sessionId, ...sy.resumeSession(sessionId, project) });
       } catch (err) {
         return fail(err);
