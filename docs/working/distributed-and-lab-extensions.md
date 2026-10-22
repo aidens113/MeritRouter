@@ -103,6 +103,22 @@ not a reason to stop the independently runnable core work. No service was instal
 
 ## Worker Briefs
 
+### Brief: task-lab-project-prune (next available worker; not dispatched yet)
+- Tier: isolated feature tree based on root74f818b or newer, never mutate active validation tree.
+- Read: Current State, lifecycle report, task-attempt.ts/runner.ts and scoped prune invariants.
+- Goal: explicit confirmed project deletion can prune its stopped terminal task Labs immediately, without waiting retention or permitting public mutation/promotion of task Labs.
+- Own: labs/task-attempt.ts and task-attempt-runner.ts; new named scoped prune helper if needed; new task-prune tests/fixture only.
+- Root owns admin/projects.ts and projects/deletion.ts integration, service, captures, public exports and shared docs. No migrations (capture worker owns), no caller/helper edits.
+- Expose `pruneProject(project:string):Promise<{removed:string[];blocked:number}>` (final signature coordinate first). Strict scope from authoritative project/task/attempt rows, never global prune with a future timestamp.
+- Only retained/stopped, complete cleanup, terminal task+ancestry, no queued integration or pending/live operation/process/port/service ownership. Keep source coding worktrees/branches and other projects.
+- Acquire a durable exclusive cleanup operation generation under immediate before awaits; reuse existing cleanup operation kind if possible, no new migration. Renew only unexpired owned lease.
+- Before each destructive action verify live cleanup generation + exact Lab/attempt/root/registered Git common-dir/branch identity. Fail closed on foreign PID/path/dirty tree/lease loss, retain proof/reservations.
+- Process lifetime cleanup is owned by dedicated Labs supervisor or explicitly safe terminal operation, never API task-check execution. No concurrent prune/tick race or untracked background delete.
+- On crash partially removed resources must remain recoverable; recovery must not invent success, remove foreign resources or delete task rows before proof. No generic labels/path prefixes as sole ownership proof.
+- Test immediate scoped prune at normal7day retention, another project's live resources survive, dirty/foreign proof refusal, same-attempt concurrent operation refusal, lease loss and retry/recovery.
+- Actual temp Git/worktrees/fake processes only. No user data4477/Docker/providers. Freeze, router typecheck/build + focused tests and report; no commits/shared-doc edits.
+- Report: docs/working/distributed-and-lab-extensions/reports/task-lab-project-prune.md. Public task Lab start/promote/check remain refused.
+
 ### Brief: task-lab-caller (link_completion)
 - Tier: isolated feature worktree roadmap-labs; start from root feat/roadmap-task-integration checkpoint011b318 or newer.
 - Read: Current State, own lifecycle report, task-attempt-schema.ts; inspect owned caller files as needed.
