@@ -1,3 +1,4 @@
+import { projectCaptureInput, projectCaptureOutput, type CaptureOutputProjection, type RequestCaptureStore } from "./request-capture.js";
 import type { ResolvedConfig } from "../config/load.js";
 import type { Participant } from "../admission/admission.js";
 import { RequestOutcomeDTOSchema, ReservationDTOSchema, ReserveRequestDTOSchema, RequestPersistenceError, type RequestLedger, type ReservationDTO, type RequestOutcomeDTO } from "../admission/request-ledger.js";
@@ -68,6 +69,7 @@ export function asProviderError(err: unknown, provider: string, aborted: boolean
 export interface DirectDeps {
   cfg: ResolvedConfig;
   ledger: RequestLedger;
+  captures: RequestCaptureStore;
   assertDispatch(participants: Participant[]): void;
   health: ProviderHealth;
   direct: DirectRuntime;
@@ -208,13 +210,29 @@ export async function requestDirect(
         throw err instanceof AdmissionDenied ? err : new RequestPersistenceError("reserve", null, err);
       }
 
+      // Capture is observational: its errors never enter provider classification/retry logic.
+      const observe = async (write: () => Promise<void>) => { try { await write(); } catch { /* private capture unavailable; accounting/provider policy is unchanged */ } };
+      const webSearch = search ? { via: search.via, alwaysOn: search.alwaysOn, maxUses: search.maxUses, maxResults: search.maxResults } : undefined;
+      await observe(() => d.captures.begin(reservation.requestId, projectCaptureInput(route.model, chat, webSearch), reservation.participants.map(p => p.taskId)));
+      await observe(() => d.captures.dispatched(reservation.requestId));
+      let output: CaptureOutputProjection | undefined;
+      let notDispatched = false;
       const reconcile = async (outcome: RequestOutcomeDTO) => {
         try { await d.ledger.reconcile(reservation, RequestOutcomeDTOSchema.parse(outcome)); }
         catch (error) { throw new RequestPersistenceError("reconcile", reservation.requestId, error); }
+        finally {
+          await observe(() => d.captures.complete(reservation.requestId, {
+            kind: outcome.kind, httpStatus: outcome.kind === "succeeded" ? outcome.response.httpStatus : (outcome.httpStatus ?? null),
+            errorKind: outcome.kind === "succeeded" ? null : outcome.errorKind,
+            possiblyConsumed: outcome.kind === "succeeded" ? true : outcome.kind === "uncertain",
+            policyViolation: outcome.kind === "succeeded" && !!outcome.policyViolation,
+          }, output, notDispatched));
+        }
       };
       // An async reserve may commit before cancellation arrives. Keep its audit row, return
       // definitely-unsent quota/billing, and never send a provider request after the abort.
       if (req.signal?.aborted) {
+        notDispatched = true;
         release();
         d.health.breakers.release(ep.providerId);
         await reconcile({ kind: "failed", errorKind: "aborted", errorMessage: "aborted after reservation, before provider dispatch" });
@@ -224,6 +242,7 @@ export async function requestDirect(
       // No await between this SQLite authority check and invoking the provider client.
       try { d.assertDispatch(participants); }
       catch (error) {
+        notDispatched = true;
         release();
         d.health.breakers.release(ep.providerId);
         if (!(error instanceof AdmissionDenied)) throw new RequestPersistenceError("reserve", reservation.requestId, error);
@@ -265,6 +284,7 @@ export async function requestDirect(
         throw Object.assign(pe, { attempts });
       }
 
+      try { output = projectCaptureOutput(response); } catch { /* capture projection cannot alter response/accounting */ }
       const { rateLimits, ...chatResponse } = response;
       // A client that reports nothing about the search still searched: count it as assumed.
       if (search && !chatResponse.webSearch) chatResponse.webSearch = searchOutcome({ via: search.via, alwaysOn: search.alwaysOn, maxUses: search.maxUses, maxResults: search.maxResults }, null, []);
@@ -298,7 +318,7 @@ export async function requestDirect(
  * before any HTTP (the probe then reports unknown). A probe belongs to no task, so it is not
  * admission-charged and its slot row does not count against tasks' slots.
  */
-export function probeClient(d: Omit<DirectDeps, "ledger" | "assertDispatch">): Pick<ProviderClient, "complete"> {
+export function probeClient(d: Omit<DirectDeps, "ledger" | "captures" | "assertDispatch">): Pick<ProviderClient, "complete"> {
   const rt = d.direct.providers;
   return {
     async complete(req) {
