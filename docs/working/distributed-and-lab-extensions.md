@@ -103,6 +103,27 @@ not a reason to stop the independently runnable core work. No service was instal
 
 ## Worker Briefs
 
+### Brief: request-admission-protocol (brain_completion)
+- Tier: isolated roadmap-process feature branch, ONLY after root merges frozen async-task-lifecycle and names baseline; do not begin source work before dispatch.
+- Read Current State, own distributed-admission-plan.md and accepted lifecycle strict LeaseRef/companion contracts.
+- Goal: real default SQLite Gate reserve/dispatch-intent/settle uses immutable captured generations and durable idempotent receipts.
+- Own admission/{admission,request-ledger,sqlite-request-ledger}.ts, new named request-receipts helper if needed; gateway/{gate,direct,capacity}.ts.
+- Own routing/{router,claim-capacity}.ts; scoring/classifier.ts; runners/{types,batch}.ts. Ask before any core/task-store/queue signature change.
+- Own one appended migration AFTER lifecycle receipt migration only after root explicitly grants exclusive migration ownership.
+- Own new protocol/fence/lifetime tests, proportional named affected fixtures and own report; no other source/shared docs.
+- Root owns projects/deletion.ts blockers/purge, service/public exports and authored/shared docs. Send hooks/schema purge contract before implementation.
+- Task participants MUST carry strict captured LeaseRef; never synthesize from current row. Preserve all batch/classifier participants and fence stale metadata/cache writes.
+- Explicit taskless participants=[] public Gate compatibility remains with existing package/accounting/key protections. Separate free-tier probes retain existing limits/slots/breaker, no task/package-ledger claim. Sync Admission facades stay explicit.
+- Stable physical-attempt requestId allocated before await for each key/endpoint; immutable validated digest/binding, atomic reserve+receipt, duplicate replay never sends.
+- Authoritative dispatch intent is distinct from observational capture. Fresh intent plus final synchronous exact SQLite guard after all awaits immediately precedes provider invocation; replay/lost ACK never authorize another call.
+- Reconcile original persisted binding once, replay same outcome harmlessly, reject conflicts, preserve unknown paid-cost accounting. No fallback/provider retry on persistence uncertainty.
+- Preserve actual grants/repair/reviewer/twin allowances and existing budget math; no naive effectiveBudget clamp or remote policy-authority claim.
+- Exact-generation claim/wait release; observed local in-flight request holds survive task expiry, no stale task-ID deletion. Ambiguous crash/transport completion is conservative, not proof remote processing/billing stopped.
+- Receipts/private project scope/tombstones bounded; project purge must refuse unresolved holds and prevent delayed replay resurrecting purged private records.
+- Track/drain every authoritative await and renewal before DB close. No detached retries, global taskless bypass or silent backend enablement.
+- Test actual fake-provider service paths, same-owner takeover/ID reuse, delayed/lost ACK/replay, late original billing, capacity expiry, grants, purge privacy and close ordering.
+- No PG/provider-policy extraction/services/engine/provider quota/user data. Freeze before typecheck/build/tests; report exact limits/cleanup; no commits.
+
 ### Brief: compose-journal-plan (seed_repair)
 - Tier: isolated roadmap-team after C2 freeze; read-only design of next durable runtime unit.
 - Read Current State, compose-services-plan.md, C1/C2 own reports and relevant Lab operation/store/supervisor contracts; inspect minimal necessary lifecycle code.
