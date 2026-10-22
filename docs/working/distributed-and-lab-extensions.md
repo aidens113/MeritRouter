@@ -129,6 +129,18 @@ not a reason to stop the independently runnable core work. No service was instal
 - Root owns index exports/operations docs/purge integration; send added API constants/helper names. No real provider quota/engine/user data.
 - Freeze source before router typecheck/build/serial focused checks, own report exact evidence/limits. No commits or pushes.
 
+### Brief: linux-browser-helper (seed_repair)
+- Tier isolated roadmap-team new feature branch from supervisor named baseline; native prerequisite only.
+- Read Current State, own reviewed linux-browser-isolation-plan report and H1/hydrated design contracts.
+- Own only new labs/browser-linux-plan.ts, browser-linux-helper.py, optional browser-linux-proof.ts, named new helper fixtures/tests and reports/linux-browser-helper.md.
+- No existing source/public exports/config/schema/migration/runtime registration/shared docs changes. No Chrome/downloads/engines/services/host changes.
+- Implement report H1L-a: closed bounded fixed launch DTO, pinned trusted executable/helper identity and exact FD/environment/mount plan. No free-form model authority.
+- Python trusted monitor and inner stage: exact nonce framed release, fail-closed EOF/deadline, independent pidfd/birth/namespace/caps/NNP proof; metadata never substitutes for kernel observations.
+- Installed approved non-setuid bwrap uses explicit namespaces/private root/zero caps; reject unsupported hosts rather than fall back. Handle FD socketpairs explicitly.
+- Short bounded actual Ubuntu namespace child fixtures allowed, all exact-owned and cleaned; no arbitrary browser workload or accepted lease until later resource containment/adapter acceptance.
+- Test protocol corruption, stale generations, inherited FD/socket/env refusal, owner/helper death at gated phases, descendants and ambiguous teardown preservation. Gate must prevent executable launch on premature death.
+- No user data/config and no distro termination. Record ordinary-user and resource-limit limitations honestly if substrate prevents proof.
+- Freeze before focused tests/router typecheck/build; own report exact results/limitations. No commits/pushes/shared edits.
 ### Brief: linux-browser-isolation-plan (seed_repair)
 - Tier: isolated roadmap-team report-only design against newly discovered Ubuntu WSL host, not runtime enablement.
 - Read Current State, hydrated-browser-plan.md/H1 reports and browser isolation/pipe/process/network/check contracts as needed.
@@ -447,3 +459,5 @@ not a reason to stop the independently runnable core work. No service was instal
 - Owner: supervisor. Select concrete PostgreSQL and object-store deployment fixtures during R2 implementation; availability is not yet verified. No user installation or paid infrastructure is assumed.
 
 - Supervisor validation: unchanged paid T4 failed on baseline c3110a0 because StoredTaskDTO rejected persisted T4. Expanded that stored tier union to include T4; unchanged paid and queue tests now18/18 pass (12.24s), log TEMP/switchyard-t4-row-schema-supervisor.log. Recovery retention brief is ready; full acceptance remains blocked pending its fix.
+
+- Combined c3110a0 baseline suite:998 passed/3 failed across102files (666.41s). Failures: confirmed T4 DTO defect (fixed48c1da9), retained-Lab blocker wording expectation, and Windows EBUSY test-fixture brain cleanup after CLI-worker assertions. Not accepted. Log TEMP/switchyard-local-integration-full-supervisor.log. Reviewed native Linux plan merged; helper prerequisite brief assigned without runtime enablement.
