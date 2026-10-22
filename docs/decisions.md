@@ -616,3 +616,10 @@ not documentation. Paths are relative to `server/src/`.
 | Health | `GET /v1/providers` (unified key): per-platform status, cooldown resume time. | Route ordering moved cooling-down platforms to the end. |
 | Decision routing | Optional `decision` strategy sends messages to a separate decision model to reorder the active chain. | Documented risk; it could not add chain members. Kept off. |
 | Catalog | Models and limits come from a signed catalog downloaded from its author's service (`api.freellmapi.co`) plus some `/models` discovery. | Its provider base URLs were a cross-check for the direct-provider registry. |
+
+
+### Compose image and command identity (2026-10-22)
+
+Container image proof retains the approved manifest reference and the separately inspected image configuration ID. Docker's [manifest example](https://docs.docker.com/reference/cli/docker/manifest/) shows a manifest digest and a distinct config descriptor digest; equating those identities would reject valid configurations or check the wrong object. Our pure ownership verifier compares actual container Image to the approved image config ID and requires that approved inspection to include the manifest reference. This is a source-backed contract, not actual-engine acceptance.
+
+Effective argv also includes approved image defaults: a non-null Compose entrypoint suppresses the image's default command unless the recipe supplies its own command, per [Compose entrypoint](https://docs.docker.com/reference/compose-file/services/#entrypoint). Independently obtained image and engine baseline facts must be sealed before provisioning; candidate inspect data cannot attest its own baseline. Runtime remains disabled pending durable ownership and actual-engine checks.

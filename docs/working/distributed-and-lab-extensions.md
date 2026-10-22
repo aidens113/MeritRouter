@@ -25,8 +25,9 @@ delete integration9/9 (22.84s) passed actual resource cleanup and dirty refusal.
 combined acceptance/package and updated production panel acceptance remain pending. No complete
 L5 claim; task browser recovery is absent.
 
-Compose validationce4a257 independently passed10/10; runtime is disabled. Engine mutation,
-durable container ownership and real-engine acceptance remain open. Browser hydration design
+Compose validationce4a257 independently passed10/10; immutable full-ID resource proof181d18e
+independently passed51/51 (648ms). Both are local prerequisites; runtime is disabled. Engine
+mutation, durable container ownership and real-engine acceptance remain open. Browser hydration design
 is [reviewed](distributed-and-lab-extensions/reports/hydrated-browser-plan.md): flags/CDP alone
 do not prove before-contact denial of every transport. Pipe/capability H1 independently passed26/26 (1.12s) and is merged locally; no accepted network isolation adapter exists on this Windows host, so hydrated
 runtime cannot yet be enabled. No OS services/firewall/Docker activation authorized.
@@ -101,6 +102,19 @@ not a reason to stop the independently runnable core work. No service was instal
    A two-process SQLite test is useful E7 evidence, but is not two-host PostgreSQL acceptance.
 
 ## Worker Briefs
+
+### Brief: compose-journal-plan (seed_repair)
+- Tier: isolated roadmap-team after C2 freeze; read-only design of next durable runtime unit.
+- Read Current State, compose-services-plan.md, C1/C2 own reports and relevant Lab operation/store/supervisor contracts; inspect minimal necessary lifecycle code.
+- Own only reports/compose-journal-plan.md. No source/tests/migrations/shared documents/engine commands/user data edits.
+- Specify the next concrete implementation with durable pre-launch intent, immutable trusted preparation/image/default baseline, complete resource IDs, engine+generation fencing and safe terminal recovery.
+- Creation-response loss without committed IDs must quarantine; labels/names cannot grant adoption or destructive permission. Preserve journal/private evidence until exact resources are proved gone.
+- Identify actual CLI argv/JSON protocol and containment/lifetime of creation commands; collision/partial-create/error/kill windows must be explicit.
+- Fit retained and task Labs, process/port/service ownership and project deletion without cross-project or source-worktree authority expansion; no application container readiness inferred from proof DTO.
+- Partition named files and one future appended migration AFTER async task-lifecycle receipt migration (worker currently owns migrations). Propose strict bounded private storage/retention/purge and async port close/drain.
+- Provide fake-CLI/SQLite killed-owner/replay tests plus independent actual-engine matrix; no mocks-as-engine claim or Docker activation recommendation implicit in code completion.
+- Record unresolved trusted engine baseline acquisition and Desktop normalization dependencies explicitly. No fallback from unsupported inspection to guessed defaults.
+- Return concrete <=40line implementation brief plus decisions/risks/compatibility. No commit/push; ask before expanding ownership.
 
 ### Brief: distributed-admission-plan (brain_completion)
 - Tier: isolated roadmap-process new branch after frozen prune review; bounded read-only design, no implementation.
