@@ -577,6 +577,24 @@ switcher, per-project pages, and a global dashboard. Plan and phase reports:
     2026-10-20). See "Direct providers" above.
 21. **One install, many projects** (user decision, 2026-10-20). See "Projects" above.
 
+## Compose adapter prerequisites (documentation verified 2026-10-22)
+
+These are verified CLI contracts for the planned adapter, not evidence of running-engine support.
+[Compose config](https://docs.docker.com/reference/cli/docker/compose/config/) merges files,
+resolves interpolation and renders a canonical model; JSON output is supported. Validate authored
+imports before invoking it, then validate the resolved model and snapshot the approved input.
+[Compose create](https://docs.docker.com/reference/cli/docker/compose/create/) supports no-build
+and pull-never policy. Initial support uses human-approved preloaded digest images; builds and
+ambient interpolation are outside that first contract.
+
+[Compose down](https://docs.docker.com/reference/cli/docker/compose/down/) removes project
+containers/networks and has additional resource-removal options. SwitchYard's proposed recovery
+instead journals exact immutable resource IDs and proves ownership before each destructive call.
+Name/label discovery alone cannot authorize removal after replacement or an ambiguous lost response.
+Unproven resources remain quarantined. A trusted local engine is a prerequisite; Docker-admin
+peers and hostile-image/kernel containment are outside the stated boundary. Actual disposable-engine
+acceptance remains required; no engine or containers were started during this investigation.
+
 ## History: verified FreeLLMAPI behaviour (server v0.2.1, commit 0c456ea)
 
 FreeLLMAPI was removed on 2026-10-20 (see Direct providers). None of this applies to the current

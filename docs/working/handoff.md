@@ -15,6 +15,20 @@ own working document with decisions, phases, ledger, and reports.
 
 ## The user's live install (off limits to tests; use temp configs and `seed:demo`)
 
+On2026-10-22 the user explicitly authorized rebuilding/restarting their panel. Accepted9682e92
+was built and panel4477 restarted (PID6288). Read-only live browser checks confirmed default-OFF
+final-supervisor setting, exact reported model link and populated Verification explanation;
+config SHA256 remained97D0B30CA734B1CEDC595AAF1727C28B5617450B0C2309F4942D37AED941CB60.
+Existing MCP process was not restarted. User briefly requested Facebook clone running for viewing,
+then explicitly requested complete removal before a future fresh Next.js/Node.js build test.
+Stopped verified serverPID12580; supported project deletion removed10 tasks,16 sessions,
+38 artifacts,10 worktrees and9 brain files without problems. Billing/request audit and brain Git
+history remain per deletion contract. Automatic approval review rejected permanent recursive
+repository deletion as blocked by policy; safer Recycle Bin removal succeeded. Repository path
+D:/SwitchYardProjects/facebook-clone is absent and8082 is not listening. Do not recreate it yet;
+user wants a readiness update when router changes are complete, then will issue the fresh build.
+Leave authorized panel4477 running. Automated tests still use temp/demo data, never user projects.
+
 - Config `D:\SwitchYard\switchyard.config.yaml`, store `D:\SwitchYard\.switchyard\`, brain
   `C:\Users\mrjoh\.switchyard\brain`. One Ollama Cloud key (free plan) in the vault.
 - Request caps raised for free models (T1 20, T2 60, T3 100, 150 per task attempt, 300 total,

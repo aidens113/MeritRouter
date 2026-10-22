@@ -22,8 +22,12 @@ L1-L4 and the earlier panel fixes are accepted and pushed at77914fc. The next lo
 at6d61b8e has passed recursive typecheck/build, production policy/model/Labs/legacy browser
 checks and an outside-checkout install smoke; the complete router suite passed734/734 tests
 in83 files (484.47s). Static browser and async Gate accounting prerequisites are accepted.
-Task-Lab lifecycle unit1 and the default async queue-claim boundary are assigned to isolated,
-file-partitioned workers below. Compose-services investigation is report-only in a third tree.
+Task-Lab lifecycle unit1 remains active in its isolated tree. The default async queue-claim
+boundary418b106 is merged locally after supervisor review and20/20 independent tests, including
+real separate CLI workers (6 unique claims/provider peak1). Full frozen queue acceptance passed
+753/753 tests in85 files (542.28s); recursive typecheck and isolated recursive build passed.
+Compose design is recorded in its report; a new-file-only validation/read-only CLI prerequisite
+is assigned in a third tree. Runtime Compose integration and actual-engine acceptance remain open.
 Caller wiring for task-Lab verification follows lifecycle contract freeze; no ephemeral-task,
 Compose or PostgreSQL/multi-host completion is claimed.
 
@@ -160,7 +164,45 @@ not a reason to stop the independently runnable core work. No service was instal
 - Output exact proposed schemas/migration/API changes, file partitions after task-Lab lifecycle freezes, fake-CLI acceptance and actual two-isolated-Lab engine acceptance. Note currently unavailable engine is unverified acceptance dependency, not proof of support.
 - Definition of done: report actionable enough to implement without rediscovery, concrete bounded first brief, no runtime changes or engine starts. Include commands/reads observed, missing dependencies and user-facing limitations.
 
+### Brief: compose-validation
+- Repository: `.claude/worktrees/roadmap-team`, branch `feat/roadmap-compose-validation`, baseline9682e92; independent new files only while task-Lab lifecycle owns existing Labs/migrations.
+- Task: implement C1 strict authored/canonical Compose validation and a bounded injected read-only config/image-inspect CLI adapter. Produce a validated generation plan, not runtime Compose dispatch/support.
+- Required reads: Current State here and own compose-services-plan report; use verified official references for external CLI semantics.
+- Owns: new labs/compose-recipe.ts and compose-client.ts (additional specifically named compose validation files only if size needs it); tests/labs-compose-validation.test.ts and fixtures/compose/**; own report distributed-and-lab-extensions/reports/compose-validation.md.
+- Must not touch: existing recipe/services/lab/store/process/http/browser/migrations/config/core/panel/public exports/manifests/lock/shared docs. No commits/push, real engine/containers/install/providers/user data. Do not merge active lifecycle changes.
+- Human authority: approved digest-pinned preloaded images, explicit private env and owned bind sources/ports. No model-authored authority. Initial scope rejects builds, secrets, named/anonymous volumes, remote engines and unknown features; inspect image VOLUME before accepting a plan.
+- Boundaries: zod every input/resolved config/stored-plan/CLI response; validate imports before normalization, fixed argv/minimal env/controlled interpolation/private snapshotted manifest, realpath+ancestor ownership proof. No shell or mutating Docker verb reachable. No public/wildcard ports, privileged/host namespaces or foreign mounts. Browser endpoint ownership is unresolved C2 dependency, not assumed.
+- CLI adapter: only config JSON and typed image inspection, injectable fake executable; bounded bytes/time/cancel, private scratch cleanup and sanitized errors. Engine identity/capability can be a validated prerequisite DTO if exact remote semantics cannot be proven here. No raw canonical config/environment in public output.
+- Acceptance: safe fixture normalized deterministically; imports/unsafe fields/foreign or symlink paths/public ports/image VOLUME/malformed or oversized output/capability mismatch refuse; cancellation and Windows argv/path cases. Assert no mutating verb ever executes. Existing command recipes unchanged.
+- Record exact tests/typecheck/build, limitations and next durable journal integration contract; freeze for supervisor independent verification. Do not claim C1 completes Compose/L5 or actual engine acceptance.
+- Report to: docs/working/distributed-and-lab-extensions/reports/compose-validation.md.
+
+### Brief: task-lease-fence-plan
+- Repository: frozen `.claude/worktrees/roadmap-process`, source418b106; report-only investigation while task-Lab and Compose implementations run separately.
+- Task: design executable next R2 unit for async renew/finish/recovery/cancel and immutable task-attempt generation propagation. Inspect actual callers and propose a bounded serial file partition; do not change source.
+- Required reads: Current State here, own distributed storage inventory/task-queue report; storage/tasks.ts, core/executor.ts/scheduler.ts, runners/types.ts, Gate/admission participants and actual generation/lease callers as needed.
+- Owns: only docs/working/distributed-and-lab-extensions/reports/task-lease-fence-plan.md. No shared docs/source/tests/commits/build/services/provider/user data changes.
+- Determine exact current stale-owner failure windows with source references; distinguish source inference from reproduced failures. A stale attempt must never renew/finish/change another run when owner string is reused; cancellation/recovery must retain intended terminal/interrupted semantics.
+- Proposed LeaseRef must carry captured immutable taskId/owner/runCount (or justified durable generation), not read current run from DB on behalf of old context. Trace initial run, repair/twin, resume, classifier, batch, provider slots, reservation/settlement, session journal and integration.
+- Define validated async DTOs and atomic authoritative policy/CAS checks preserving SQLite compatibility/fairness/caps and server-time expiry semantics. No callbacks or SQL handles crossing port, no PG-by-process wrapper, no enabled second backend while sync dependencies remain.
+- Resolve async executor heartbeat/error/shutdown lifetimes, claim-to-context capture, stale provider receipt reconciliation versus new-generation task mutation, and exact idempotency behavior. Paid uncertainty must not cause duplicate spend or release a newer reservation.
+- Output concrete API changes, exact owned files/tests, integration order with pending task-Lab caller changes, bounded first implementation brief and acceptance fixtures. No scope expansion into session/object/host backends; list dependencies clearly.
+- Definition of done: actionable report with focused actual-code evidence, safe ordering and failure tests; no feature/fencing/PG completion claim. State any unresolved architecture choice that needs supervisor decision.
+
 ## Work Ledger
+
+### 2026-10-22 — Async queue accepted
+- Agent: supervisor.
+- Changed: accepted418b106 plus public validated DTO exports at6754a11. Default Scheduler uses awaited claim/companion port; no PostgreSQL claim.
+- Validation: independent20 focused tests including actual separate CLI workers; full753/753 in85files (542.28s), recursive typecheck and isolated recursive build. No source edits during checks; only later docs/export publication differs from tested queue tree. Existing paid/verification/browser/process regressions pass.
+- Outcome: Accepted coherent queue prerequisite. Renew/finish/recovery/session/Git APIs remain synchronous; next task-Lab/Compose/request-page work is separate and not included in this unit.
+
+### 2026-10-22 — Queue prerequisite and authorized user operations
+- Agent: supervisor.
+- Changed: integrated async default scheduler claim/companion boundary418b106 after source review; public data contracts exported. Next generation-fence report assigned separately. Compose plan reviewed; bounded validation prerequisite assigned, runtime integration remains open.
+- Validation: independent20/20 queue/scheduler/actual separate CLI worker checks (7.15s), recursive typecheck pass. Full85-file router acceptance running in frozen queue tree; no claims from pending results. Lifecycle worker's actual kill tests are worker claims pending independent supervisor review.
+- User operations: explicit approval granted panel rebuild/restart; accepted9682e92 built and served4477, config unchanged, actual model/settings/Verification browser checks passed. User then requested clone deletion: project resources removed via supported API without problems, server stopped, remaining repository moved to Recycle Bin after automatic permanent-delete rejection. No new clone build yet.
+- Outcome: Partial. Continue task-Lab lifecycle hardening/integration, Compose validation and remaining R2 contracts; no complete roadmap claim.
 
 ### 2026-10-22 - Follow-on prerequisites inspected
 - Agent: supervisor

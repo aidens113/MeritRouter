@@ -42,8 +42,11 @@ model navigation, Labs18screenshots and legacy recipe API checks. Viewed desktop
 Fresh tarball53,308,449bytes/2522entries installs outside checkout (hrAtm3): native SQLite,
 CLI, MCP42tools,8 panel/API routes/CSS and setup start/reuse/stop pass; owned processes closed.
 
-**Continuing:** Hydrated
-JS, ephemeral task Labs and Compose remain open. R2 inventory found81 SQLite consumers;
+The async queue claim prerequisite418b106/public exports6754a11 is also accepted:753/753 tests,
+85files,542.28s, recursive typecheck and isolated recursive build passed. Claims/companions await
+validated data-only receipts; renew/finish/session/Git migration remains separate.
+
+**Continuing:** Hydrated JS, ephemeral task Labs and Compose remain open. R2 inventory found81 SQLite consumers;
 PostgreSQL/multi-host is not enabled. Ephemeral integration plan records attempt identity,
 exact commit/tree evidence and durable auxiliary-process recovery prerequisites.
 User additionally clarified MCP final-supervisor dispatch must default OFF, while bounded
@@ -51,7 +54,11 @@ sub-supervisors remain available. That setting/guard/UI work is merged locally u
 [external-supervisor-guidance](external-supervisor-guidance.md); obsolete guidance-enable
 toggle semantics were rejected. The corrected feature is accepted in the combined checks above.
 Task-Lab lifecycle, async queue claim implementation and Compose design are dispatched under
-file-partitioned briefs. No whole-roadmap completion claim; actual4477/MCP remain unchanged.
+file-partitioned briefs. No whole-roadmap completion claim. After explicit user approval,
+accepted9682e92 was built and panel4477 restarted; live read-only browser confirms new default-OFF
+setting, exact MiniMax model URL and Verification explanation. Config hash unchanged. Existing
+MCP remains running its prior in-memory code until its client reconnects/restarts the server.
+Facebook clone8082 is also running for the user by explicit request; preserve its existing data.
 
 ## Execution phases
 
