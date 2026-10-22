@@ -10,6 +10,14 @@ Related: [handoff](handoff.md), [labs](labs.md), [budget-control](budget-control
 
 ## Current State
 
+Request-only candidate8ea5b43 passes recursive typecheck and both production demo browser
+harnesses:8 request captures +8 historical-session captures, scoped routes/APIs/navigation,
+zero provider calls/browser exceptions and owned processes stopped. Supervisor viewed current
+phone action and desktop privacy-warning images. Full serial783-test run remains pending;
+its previously failing session-surface cases now pass. Actual4477 still serves prior accepted
+buildPID6288. Pre-update current config hashAF4F6543B85F12321E79A9799107D7AEC012F56C65CB6A741E8ED5E2297D72A0
+was read only; earlier recorded hash predates supported clone deletion/config changes.
+
 Request-only candidate5c9deaa full bounded run measured779/783 (88files,362.95s): three
 old session-surface fixtures lacked durable task/execution authority and one actual-worker
 fixture cleanup encountered Windows EBUSY. No green full-suite claim. Updated fixtures now
