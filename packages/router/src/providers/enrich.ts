@@ -5,6 +5,7 @@ import { parseParamsFromDescription, parseParamsFromName, resolveParams, type Re
 import type { ProviderClient, RequestCredential } from "./client.js";
 import { ProviderError } from "./errors.js";
 import type { ResolvedProvider } from "./registry.js";
+import type { ListedWebSearch } from "./native-search.js";
 import { requestJson, type FetchLike } from "./transport.js";
 
 /**
@@ -48,6 +49,8 @@ export interface ListedModel {
   quantization?: string | null;
   /** Things discovery should show about this model (a hosted model behind a local server, an assumed context). */
   notes?: string[];
+  /** What the list says about web search inside the call (OpenRouter `supported_parameters`, Anthropic `capabilities`). */
+  webSearch?: ListedWebSearch | null;
 }
 
 /** A listed model about which nothing but the id is known. */
@@ -95,6 +98,8 @@ export interface EnrichedModel {
   provenance: Record<EnrichedField, FieldProvenance>;
   /** Things worth showing (probe skipped for budget, probe failed, ...). */
   notes: string[];
+  /** The provider's own list on web search inside the call (never taken from a catalog match). */
+  webSearch: ListedWebSearch | null;
 }
 
 // ---- lenient field parsers: a bad or missing value is unknown (null), never an error ----
@@ -122,7 +127,8 @@ export const OpenRouterModelSchema = z.object({
   hugging_face_id: optString,
   context_length: optPositiveInt,
   architecture: z.object({ input_modalities: optStrings, output_modalities: optStrings }).nullable().optional().catch(null),
-  pricing: z.object({ prompt: priceValue, completion: priceValue, input_cache_read: priceValue }).nullable().optional().catch(null),
+  /** USD per token (prompt, completion, input_cache_read), per request (request), per web search (web_search). */
+  pricing: z.object({ prompt: priceValue, completion: priceValue, input_cache_read: priceValue, request: priceValue, web_search: priceValue }).nullable().optional().catch(null),
   top_provider: z.object({ context_length: optPositiveInt, max_completion_tokens: optPositiveInt }).nullable().optional().catch(null),
   supported_parameters: optStrings,
 });
@@ -147,6 +153,13 @@ export function listedFromOpenRouter(m: OpenRouterModel): ListedModel {
       input === null && output === null ? null : { input: input === null ? null : input * 1e6, output: output === null ? null : output * 1e6, ...(cachedInput !== null ? { cachedInput: cachedInput * 1e6 } : {}) },
     price: input === null || output === null ? null : input === 0 && output === 0 ? "zero" : "positive",
     huggingFaceId: m.hugging_face_id || null,
+    // supported_parameters lists web_search_options for models with native search (models API reference, 2026-10-21).
+    webSearch: {
+      supported: params ? params.includes("web_search_options") : false,
+      usdPerSearch: priceNumber(m.pricing?.web_search),
+      usdPerRequest: priceNumber(m.pricing?.request),
+      detail: "OpenRouter supported_parameters includes web_search_options",
+    },
   };
 }
 
@@ -423,5 +436,6 @@ export async function enrichModel(providerId: string, listed: ListedModel, overr
       pricing: pricingProv,
     },
     notes,
+    webSearch: listed.webSearch ?? null,
   };
 }

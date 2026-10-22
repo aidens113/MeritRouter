@@ -10,7 +10,7 @@ import { estimateTokens } from "./types.js";
 import { CircuitBreakers, countsAsProviderFailure } from "./breaker.js";
 import { ProviderCapacity, SLOT_POLL_MS, type SlotHandle, type SlotHolder } from "./capacity.js";
 import { newId } from "../storage/db.js";
-import { isPaid, stickyOrder } from "../routing/select.js";
+import { requestPaid, stickyOrder } from "../routing/select.js";
 import type { ProviderClient } from "../providers/client.js";
 import { probeClient, requestDirect, type DirectRuntime } from "./direct.js";
 import { NOT_IN_PLAN_RECHECK_MS } from "../providers/keys.js";
@@ -330,7 +330,7 @@ export class Gate {
     }));
 
     for (const ep of this.candidatesFor(req)) {
-      const paid = isPaid(ep);
+      const paid = requestPaid(ep, this.cfg, req.plan);
       // Free and paid attempts are limited separately: free fallbacks never use up paid slots.
       if (paid ? dispatchedPaid >= this.cfg.paid.max_paid_attempts : dispatched >= this.cfg.routing.max_endpoint_fallbacks) continue;
       const misfit = fitsEndpoint(ep, estInput, req.chat.max_tokens);

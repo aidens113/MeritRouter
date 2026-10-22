@@ -2,10 +2,11 @@ import type { ResolvedConfig } from "../config/load.js";
 import type { Admission, Participant } from "../admission/admission.js";
 import { AdmissionDenied, GatewayError, PAID_BUDGET_DENIALS, type GatewayErrorKind } from "../core/errors.js";
 import type { ModelEndpoint } from "../models/catalog.js";
-import { freeKeyOnly, isPaid } from "../routing/select.js";
+import { freeKeyOnly, isPaid, planSearch } from "../routing/select.js";
 import { endpointPrice, worstCaseUsd, type PaidSpend } from "../paid/spend.js";
 import type { ProviderClient, ProviderRequest, ProviderResponse, RequestCredential } from "../providers/client.js";
 import type { ProviderCredential } from "../providers/credentials.js";
+import { searchOutcome } from "../providers/native-search.js";
 import { ProviderError, type ProviderErrorKind } from "../providers/errors.js";
 import type { ProviderRuntime } from "../providers/runtime.js";
 import type { ChatRequest, ChatResponse } from "./types.js";
@@ -110,9 +111,11 @@ export async function requestDirect(
     attempts.push({ endpointId: ep.id, outcome: `skipped: provider ${route.provider} is ${provider ? "disabled" : "not configured"}` });
     return { kind: "skip", resumeAt: null };
   }
-  const paid = isPaid(ep);
-  const price = endpointPrice(ep.pricing);
-  const worst = paid ? worstCaseUsd(estInput, req.chat.max_tokens, price) : 0;
+  // Native web search under this plan: an always-on model, or a web task's optional search.
+  const search = planSearch(ep, d.cfg, req.plan);
+  const paid = isPaid(ep) || (search?.charged ?? false);
+  const price = { ...endpointPrice(ep.pricing), ...(search ? { perSearch: search.usdPerSearch } : {}) };
+  const worst = paid ? worstCaseUsd(estInput, req.chat.max_tokens, price, search?.charged ? search.maxSearches : 0) : 0;
   const creds = rt.credentials().list(provider.id);
   const usable = creds.filter((c) => c.unusableReason === null);
   const ineligible = ineligibleKeys(ep, usable, d.direct.spend, paid, worst);
@@ -184,7 +187,7 @@ export async function requestDirect(
           gatewayModel: `direct:${provider.id}/${route.model}`,
           endpointId: ep.id,
           tier: req.plan.tier,
-          routeNote: `${paid ? "paid" : "free"} via ${cred.label} (${cred.billingClass})${paid ? `; worst case $${worst.toFixed(4)}` : ""}${req.plan.belowFloorEndpoints.has(ep.id) ? "; forced below size floor" : ""}`,
+          routeNote: `${paid ? "paid" : "free"} via ${cred.label} (${cred.billingClass})${paid ? `; worst case $${worst.toFixed(4)}` : ""}${req.plan.belowFloorEndpoints.has(ep.id) ? "; forced below size floor" : ""}${search ? `; native web search (${search.via})` : ""}`,
           estInputTokens: estInput,
           reservedOutputTokens: req.chat.max_tokens,
           participants,
@@ -202,7 +205,17 @@ export async function requestDirect(
 
       let response: ProviderResponse;
       try {
-        const call: ProviderRequest = { provider, credential, model: route.model, chat, timeoutMs, ...(req.signal ? { signal: req.signal } : {}), ...(req.cacheKey ? { cacheKey: req.cacheKey } : {}) };
+        const webSearch = search ? { via: search.via, alwaysOn: search.alwaysOn, maxUses: search.maxUses, maxResults: search.maxResults, ...(search.engine ? { engine: search.engine } : {}) } : null;
+        const call: ProviderRequest = {
+          provider,
+          credential,
+          model: route.model,
+          chat,
+          timeoutMs,
+          ...(req.signal ? { signal: req.signal } : {}),
+          ...(req.cacheKey ? { cacheKey: req.cacheKey } : {}),
+          ...(webSearch ? { webSearch } : {}),
+        };
         response = await rt.client.complete(call);
       } catch (err) {
         const pe = asProviderError(err, provider.id, !!req.signal?.aborted);
@@ -225,6 +238,8 @@ export async function requestDirect(
       }
 
       const { rateLimits, ...chatResponse } = response;
+      // A client that reports nothing about the search still searched: count it as assumed.
+      if (search && !chatResponse.webSearch) chatResponse.webSearch = searchOutcome({ via: search.via, alwaysOn: search.alwaysOn, maxUses: search.maxUses, maxResults: search.maxResults }, null, []);
       rt.keys.recordSuccess(cred, rateLimits.windows.length ? rateLimits : null);
       if (sel.reservation) rt.limits.settle(sel.reservation, (chatResponse.usage.inputTokens ?? estInput) + (chatResponse.usage.outputTokens ?? req.chat.max_tokens));
       d.health.recordOutcome(ep.providerId, null, slot.generation);

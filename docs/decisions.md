@@ -302,6 +302,82 @@ searches and fetches together (one account). Web tools are journaled with side e
 a resumed session re-runs an interrupted web call (counting it again). OpenCode and command
 coding runners have no web tools (only SwitchYard's own harness does).
 
+## Native web search in model calls (W3, 2026-10-21)
+
+**Provider facts (each provider's own documentation, fetched 2026-10-21).**
+- OpenRouter (https://openrouter.ai/docs/guides/features/web-search): the web plugin is
+  `plugins: [{id: "web", engine?, max_results?, search_prompt?}]`; the `:online` model suffix "is
+  exactly equivalent" to it. Without `engine`, native search is used for OpenAI, Anthropic,
+  Google, Perplexity, and SpaceXAI models that support it, Exa otherwise. Exa costs $0.007 per
+  request (10 results included, $0.001 per extra result); native search is the provider's price
+  passed through. Citations come back as `message.annotations[]` of type `url_citation`
+  (`url_citation.url, title, content, start_index, end_index`). The guide points to an
+  `openrouter:web_search` server tool (https://openrouter.ai/docs/guides/features/server-tools/web-search)
+  whose response reports `usage.server_tool_use.web_search_requests`. The models API
+  (https://openrouter.ai/docs/api/api-reference/models/get-models) documents
+  `pricing.web_search` ("Price in USD per web search"), `pricing.request` (USD per request), and
+  `web_search_options` among the `supported_parameters` values.
+- OpenAI (https://developers.openai.com/api/docs/guides/tools-web-search, redirected from
+  platform.openai.com): in Chat Completions, web search runs through search models
+  (`gpt-5-search-api`, and the deprecated `gpt-4o-search-preview`, `gpt-4o-mini-search-preview`),
+  which "always search before responding"; citations are `message.annotations` of type
+  `url_citation`. Pricing (https://developers.openai.com/api/docs/pricing): web search $10 per 1k
+  calls (and for preview on reasoning models), $25 per 1k calls for preview on non-reasoning
+  models; the page does not say which row a Chat Completions search model pays. The page did not
+  render the `web_search_options` field shape; SwitchYard sends `web_search_options: {}` only where
+  an override names that switch.
+- Anthropic (https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool,
+  redirected from docs.anthropic.com): the server tool `{type: "web_search_20250305", name:
+  "web_search", max_uses?, allowed_domains?, blocked_domains?, user_location?}` (later versions add
+  dynamic filtering through code execution and default `allowed_callers` to it; the basic version
+  calls directly). Responses carry `server_tool_use` and `web_search_tool_result` blocks, text
+  blocks with `citations[]` of type `web_search_result_location` (`url, title, cited_text,
+  encrypted_index`), and `usage.server_tool_use.web_search_requests`. $10 per 1,000 searches plus
+  tokens; a failed search is not billed; an administrator can disable it (400). Long turns may
+  stop with `pause_turn`. The models API reports `capabilities.server_tools.web_search.supported`
+  (https://platform.claude.com/docs/en/models/overview).
+- Not used, and why. Gemini grounding: the OpenAI-compatible endpoint (which SwitchYard's `google`
+  provider uses) documents `tools: [{google_search: {}}]` in `extra_body` only for an image model
+  (https://ai.google.dev/gemini-api/docs/openai); native grounding
+  (https://ai.google.dev/gemini-api/docs/google-search, $14 per 1,000 search queries after 5,000
+  free per month on Gemini 3) needs the native API, which SwitchYard does not call. Perplexity
+  Sonar as a provider: its docs now describe the Agent API as Sonar's successor and no longer
+  document the Sonar chat endpoint, and Perplexity is not a built-in provider. Groq compound
+  (`groq/compound`, `groq/compound-mini`): deprecated on 2026-09-21, requests return errors
+  (https://console.groq.com/docs/compound).
+
+**Decisions (D9 of `docs/working/web-search.md`).** Each endpoint may carry `nativeWebSearch`:
+`via` (`openrouter_plugin`, `openai_web_search_options`, `anthropic_server_tool`, `always_on`),
+an OpenRouter `engine`, `usdPerSearch` (null: unknown), and provenance (`source` registry,
+discovery, override, or manual; `detail`; `sourceUrl`; `checkedAt`). Discovery sets it from the
+provider's own metadata (OpenRouter `supported_parameters` containing `web_search_options`, priced
+from `pricing.web_search`; Anthropic `capabilities.server_tools.web_search.supported`, priced at
+$10 per 1,000) and from documented facts (OpenAI search models on OpenAI or OpenRouter: always on;
+OpenRouter's `perplexity/*`: always on, priced from `pricing.web_search` or else
+`pricing.request`). A catalog match on another host never carries web search over. Overrides
+(`nativeWebSearch: {via, usdPerSearch, engine?, note?}`, or null to remove) win.
+A task's `hints.web` (MCP `submit_tasks`, a supervisor's `delegate`/`plan_work` `web` field)
+drives it: `true` turns optional native search on and ranks endpoints with it on first (after the
+paid-versus-free order); `false` excludes `always_on` endpoints; unset ranks `always_on`
+endpoints last. Optional search is turned on only with `web.native.enabled`, at a known price,
+and (when priced) only where paid routing is allowed for the request; otherwise the endpoint
+serves without it. A priced search makes the request paid (paid keys only, worst case reserved,
+paid budgets): the worst case adds `web.native.max_searches_per_request` searches (one for the
+OpenRouter plugin, which runs once per request). An `always_on` endpoint with a priced search is a
+paid model; with an unknown price it is not routed. Spend settles to the provider-reported cost
+(OpenRouter `usage.cost`) when there is one, else tokens plus searches at the endpoint's price;
+searches are the reported `web_search_requests`, or assumed (one for the plugin and always-on
+models; one for Anthropic when it cited sources). Each request records `native_web_search`, the
+count, and up to 50 citations (`web_citations_json`, http(s) URLs only, shortened) as evidence;
+task usage adds `nativeWebSearches`. The OpenRouter plugin is sent with an explicit `engine`
+(`native` for discovered models) rather than rewriting model ids to `:online`, so served-model
+checks keep working.
+
+**Not verified.** No live call was made. Whether OpenRouter's `usage.cost` includes plugin search
+charges, whether the plugin reports `server_tool_use`, and the exact price row for OpenAI search
+models (the higher one, $25 per 1k, is recorded) are unconfirmed. An Anthropic `pause_turn` stop
+is read as a normal stop (the partial answer is not continued).
+
 ## Projects (user decision, 2026-10-20)
 
 One install holds many projects. Each has its own repositories, brain folder, jobs, tasks,

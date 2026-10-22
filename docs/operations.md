@@ -157,6 +157,31 @@ With no backend at all the tools are not offered, so no agent sees a tool that c
 - **Not in the MCP server.** Claude Code, Codex, and ChatGPT have their own web search; the MCP
   tools are unchanged.
 
+### Web search inside model calls (native)
+
+Some providers search the web during the model request itself. An endpoint's `nativeWebSearch`
+says how (`openrouter_plugin`, `anthropic_server_tool`, `openai_web_search_options`, or
+`always_on`), its price per search, and where that came from (scan metadata, a documented fact,
+or your override); the model page shows it with its source link.
+
+- **When it runs.** An always-on model searches on every request. Any other is turned on only
+  for a task with `hints.web: true`, while `web.native.enabled` (default on), at a known price,
+  and, if the price is above zero, where paid routing is allowed for that request; otherwise
+  the model serves without searching and the agent's own `web_search` tool remains.
+- **Routing.** `hints.web: true` ranks models with search on ahead of the rest (free before paid
+  still comes first); `hints.web: false` excludes always-on models; otherwise always-on models
+  rank last. Their answers are web-derived and untrusted, like any model output.
+- **Money (hard, in code).** A priced search makes the request paid: free_tier keys cannot serve
+  it, the worst case (tokens plus `web.native.max_searches_per_request` searches, or one for the
+  OpenRouter plugin) is reserved against `paid.budgets`, key caps, and the task's `maxPaidUsd`,
+  and spend settles to the provider's reported cost or to tokens plus searches. An unknown price
+  counts as paid and is never reserved: optional search stays off, and an always-on model with
+  an unknown price is not routed until an override sets `usdPerSearch`.
+- **What is recorded.** Each request row keeps the via (marked "count assumed" when the provider
+  reported no count), the searches, and up to 50 cited sources (`web_citations_json`); the
+  requests table shows them, task usage adds `nativeWebSearches`, and the route note says
+  "native web search".
+
 ## Projects: fairness and limits
 
 One worker serves every project of an install. It takes turns between projects; the global caps

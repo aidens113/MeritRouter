@@ -1,5 +1,5 @@
 import type { ComponentType, ReactNode } from "react";
-import { AudioLines, Ban, CircleCheck, CircleDashed, FileText, Image as ImageIcon, ShieldAlert, Trash2, TriangleAlert, Type, Video } from "lucide-react";
+import { AudioLines, Ban, CircleCheck, CircleDashed, FileText, Globe, Image as ImageIcon, ShieldAlert, Trash2, TriangleAlert, Type, Video } from "lucide-react";
 import type { ModelEndpoint } from "switchyard-router";
 import { Badge, type Tone } from "./ui";
 
@@ -29,6 +29,36 @@ export function StatusBadge({ status, title }: { status: StatusKey; title?: stri
   return (
     <Badge tone={m.tone} icon={m.icon} {...(title ? { title } : {})}>
       {STATUS_LABEL[status]}
+    </Badge>
+  );
+}
+
+/** An endpoint's native web search as the panel shows it (null: none known). */
+export type WebSearchInfo = { via: string; usdPerSearch: number | null; source: string; detail: string; priceDetail?: string | undefined } | null;
+
+export const WEB_SEARCH_VIA_LABEL: Record<string, string> = {
+  openrouter_plugin: "OpenRouter web plugin",
+  openai_web_search_options: "web_search_options",
+  anthropic_server_tool: "Anthropic web search tool",
+  always_on: "always on",
+};
+
+export function webSearchPrice(n: NonNullable<WebSearchInfo>): string {
+  return n.usdPerSearch === null ? "price unknown (counts as paid)" : n.usdPerSearch === 0 ? "free" : `$${n.usdPerSearch} per search`;
+}
+
+/**
+ * A model whose provider searches the web inside the request: "Searches always" for a model that
+ * searches on every request (its answers are web content), "Web search" for one that searches
+ * when a task needs the web.
+ */
+export function WebSearchBadge({ info }: { info: WebSearchInfo }) {
+  if (!info) return null;
+  const always = info.via === "always_on";
+  const title = `${always ? "Searches the web on every request: its answers are untrusted web content, and it is never used for tasks that must not touch the web." : `Searches the web inside the call (${WEB_SEARCH_VIA_LABEL[info.via] ?? info.via}) when a task needs the web.`} ${webSearchPrice(info)}. Source: ${info.source} (${info.detail}).`;
+  return (
+    <Badge tone={always ? "warn" : "accent"} icon={<Globe size={11} aria-hidden />} title={title}>
+      {always ? "Searches always" : "Web search"}
     </Badge>
   );
 }

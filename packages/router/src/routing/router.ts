@@ -46,13 +46,23 @@ export class TaskRouter {
     this.classifier = new Classifier(cfg, db, gate, this.fingerprint, () => this.classificationPlan(), now);
   }
 
-  plan(profile: ProfileName, tier: TierName, inputModalities: Modality[], forcedEndpointId?: string, skipQualification = false, paidPolicy?: PaidPolicy, extraOverrides: RoutingOverride[] = []): RoutePlan {
+  /** `web` is the task's `hints.web` (native web search: preferred when true, always-on models excluded when false). */
+  plan(profile: ProfileName, tier: TierName, inputModalities: Modality[], forcedEndpointId?: string, skipQualification = false, paidPolicy?: PaidPolicy, extraOverrides: RoutingOverride[] = [], web?: boolean): RoutePlan {
     return planRoute(
       this.cfg,
       this.catalog.endpoints(),
       // Qualification runs measure one model in isolation: routing overrides do not apply.
       skipQualification ? [] : [...this.catalog.routingOverrides(), ...extraOverrides],
-      { profile, tier, inputModalities, needsStructuredOutput: false, skipQualification, ...(forcedEndpointId ? { forcedEndpointId } : {}), ...(paidPolicy ? { paidPolicy } : {}) },
+      {
+        profile,
+        tier,
+        inputModalities,
+        needsStructuredOutput: false,
+        skipQualification,
+        ...(forcedEndpointId ? { forcedEndpointId } : {}),
+        ...(paidPolicy ? { paidPolicy } : {}),
+        ...(web !== undefined ? { web } : {}),
+      },
       {
         now: new Date(this.now()),
         qualification: qualificationLookup(this.db, this.cfg),
@@ -149,7 +159,7 @@ export class TaskRouter {
       classification.rejectReason = null;
       this.db.prepare("UPDATE tasks SET tier = ?, classification_json = ? WHERE id = ?").run("T3", JSON.stringify(classification), task.row.id);
       const chosen: RoutingOverride[] = this.cfg.supervisor.endpoints.map((endpointId) => ({ profile: spec.profile, tier: null, kind: "force", endpointId, allowBelowFloor: true, enabled: true }));
-      return { classification, plan: this.plan(spec.profile, "T3", inputModalities, spec.routing?.endpointId, false, this.cfg.supervisor.paid_policy, chosen), inputModalities };
+      return { classification, plan: this.plan(spec.profile, "T3", inputModalities, spec.routing?.endpointId, false, this.cfg.supervisor.paid_policy, chosen, spec.hints?.web), inputModalities };
     }
     if (spec.routing?.tier || spec.routing?.endpointId) {
       classification = decide(this.cfg, this.rulebook, spec, features, { ...base, basis: "forced", tags: spec.hints?.tags ?? null });
@@ -189,12 +199,12 @@ export class TaskRouter {
     if (classification.tier === "T4") {
       // Premium: T4 work goes to paid models (at T3 limits) instead of back to the supervisor.
       if (this.cfg.paid.enabled && this.cfg.paid.tiers.T4 === "premium" && !classification.rejectReason?.includes("clarification")) {
-        const plan = this.plan(spec.profile, "T3", inputModalities, spec.routing?.endpointId, false, "premium");
+        const plan = this.plan(spec.profile, "T3", inputModalities, spec.routing?.endpointId, false, "premium", [], spec.hints?.web);
         if (plan.candidates.length) return { classification, plan, inputModalities };
       }
       return { classification, plan: null, inputModalities };
     }
     const qualifying = (task.row as typeof task.row & { purpose?: string }).purpose === "qualification";
-    return { classification, plan: this.plan(spec.profile, classification.tier, inputModalities, spec.routing?.endpointId, qualifying), inputModalities };
+    return { classification, plan: this.plan(spec.profile, classification.tier, inputModalities, spec.routing?.endpointId, qualifying, undefined, [], spec.hints?.web), inputModalities };
   }
 }
