@@ -1,0 +1,30 @@
+# Report: task-queue-port
+
+## Status
+Complete and frozen for supervisor review on feat/roadmap-queue-port from6d61b8e, isolated roadmap-process worktree. No commits or shared-doc edits.
+
+## Contract and design
+TaskQueue.claim({owner}):Promise<StoredTaskDTO[]> and claimCompanions({owner,leader:{taskId,runCount},excludeTaskIds}):Promise<StoredTaskDTO[]> use strict validated JSON-only task/spec/result/row receipts. Nullable SQLite fields and numeric flags are explicit. Adapter privately owns configuration, project/job limits, provider policy, redundancy and batch compatibility; requests cannot supply limits or predicates. Existing TaskStore claim/companion IMMEDIATE transactions remain the single policy implementation. Receipt validation occurs within the adapter transaction to roll back malformed stored data.
+
+Default Scheduler constructs this adapter; existing constructor/caller methods remain compatible. One tracked tick promise serializes queue operations and repeated kicks. Stop fences dispatch immediately, aborts running executors, drains the tick/claim/companion promise and interrupts returned undispatched attempts before returning. Persisted owner/run_count/live/cancel/deadline authority is re-read before dispatch. Receipt-loss errors inventory owned attempts before/after the operation and interrupt only fresh attempts, preserving earlier dispatched attempts. Interrupt's optional expectedRunCount fences cleanup against a newer attempt. This is local SQLite authority, not a new distributed generation protocol.
+
+## Validation
+- New queue + async scheduler tests: final 19/19 passed (5.29s). Subsequent source hardening uses one persisted row read for all dispatch checks; final queue/scheduler plus CLI worker check passed20/20 (8.14s). Covers strict requests/JSON receipts and nullable numeric rows; rollback of task/fairness/provider-hook writes when stored receipt fails validation; adapter-owned config/provider policy; same-project/max-items/per-item-token isolation; redundant plan leader/member exclusion; actual default service task/accounting and close draining a pending claim; serialized ticks; pending claim/companion stop with zero executor starts; owner/expiry/cancel/deadline/run-count mutation; rejection after claim/companion commit preserving an older dispatched attempt; timer rejection handled fail-closed; coding file-lease cleanup and wrong-attempt interrupt refusal.
+- Existing execution, projects-fairness, providers-limits, team-graph, team-integration, service-close tests:58/58 passed (31.16s, maxWorkers=2). This run preceded final local dispatch/inventory validation hardening; all new cases were rerun afterward. Confirms fairness, batching boundaries, provider and writer/file admission, dependency/team behavior and promotion shutdown.
+- Actual independent CLI workers process fixture passed against rebuilt dist:6 tasks each claimed once, shared provider concurrency ceiling1. Uses an isolated fake HTTP provider and temporary stores, not live quota.
+- Router typecheck and router build passed; git diff --check passed (normal CRLF conversion warnings only). No repo-wide or panel validation.
+
+## Integration files and compatibility
+Own source: new storage/task-queue.ts and storage/sqlite-task-queue.ts, storage/tasks.ts, core/scheduler.ts. Own tests: task-queue.test.ts and scheduler-async.test.ts. Own report: this file. core/service.ts needed no change: its existing Scheduler constructor now creates the SQLite queue by default, and existing close already awaits Scheduler.stop. No Lab/migration overlap. The modified shared design brief belongs to supervisor and was not edited.
+
+Existing TaskStore synchronous claim/claimCompanions remain unchanged. interrupt adds optional expectedRunCount; legacy callers keep existing semantics. New dispatchable checks state/cancel/owner/run_count/lease expiry/deadline from one persisted row. Scheduler retains constructor compatibility and start/kick/tick/recover/stop/busy; optional queue injection is the final constructor parameter. Stop blocks start while draining; explicit later start remains possible. Queue errors halt the loop and remove its worker heartbeat; timer-driven errors have a rejection handler. Direct tick callers observe rejection.
+
+Optional export names for supervisor consideration: TaskQueue, QueueClaim, QueueCompanions, TaskAttempt, StoredTaskDTO; QueueClaimSchema, QueueCompanionsSchema, TaskAttemptSchema, StoredTaskDTOSchema, QueueTasksSchema. SqliteTaskQueue need not be public. projectBatchKey remains re-exported from scheduler for compatibility.
+
+## Local failure/ownership model
+Before each serialized queue operation, Scheduler inventories current owner/run-count pairs. On error (including commit with lost receipt or receipt validation failure) it interrupts only newly observed pairs; prior dispatched attempts are in the baseline and survive. Successful receipts must match exactly those new pairs. Returned undispatched attempts are separately tracked until dispatch or fenced interruption. Cleanup uses current owner and expected run-count in an IMMEDIATE transaction; it cannot interrupt a foreign owner's or newer returned attempt. This relies on the existing process-unique owner and local SQLite authority; it is intentionally not remote rollback inference, remote retry, host coordination or distributed fencing.
+
+Strict row schema includes the actual SQLite tier/classification_json/purpose columns as well as the TaskRow interface fields. Stored task and result content are validated with existing schemas. Result receipts contain only JSON data; a DB/callback or executable policy never crosses the interface.
+
+## Limits
+Only claim and companion claim move behind the async port. Synchronous recovery, renewals, finish/interrupt, watchdog, worker liveness SQL, lease inspection/dispatch checks, sessions and queue-error local inventory remain SQLite operations. No PostgreSQL selection/adapter, host registration, migrations, Labs/executor/provider math changes, real providers, user stores or installs.
