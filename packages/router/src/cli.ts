@@ -160,8 +160,8 @@ async function main(): Promise<number> {
       case "projects":
         return await projectsCommand(sy, args, values, json, select);
       case "panel": {
-        // Start the panel now even when panel.auto_start is off (the user asked for it).
-        const p = await ensurePanel({ ...cfg, panel: { ...cfg.panel, auto_start: true } });
+        // Start the panel now, even when panel.auto_start is off or it was turned off (the user asked for it).
+        const p = await ensurePanel(cfg, { force: true });
         out(json ? p : p.detail, json);
         return p.state === "running" || p.state === "started" ? 0 : 1;
       }

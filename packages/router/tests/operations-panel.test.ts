@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { ensurePanel, findPanelApp, PANEL_DIR_ENV, panelListening } from "../src/operations/panel.js";
+import { ensurePanel, findPanelApp, markPanelStopped, PANEL_DIR_ENV, panelListening, panelStopFile } from "../src/operations/panel.js";
 import { baseConfig, makeEnv, type Env } from "./helpers.js";
 
 // The panel stays reachable while agents use SwitchYard: ensurePanel starts it (detached) when
@@ -96,6 +96,34 @@ describe("ensurePanel", () => {
     expect(await panelListening(port)).toBe(true);
     // A second call finds it running.
     expect((await ensurePanel(env.cfg)).state).toBe("running");
+  });
+
+  it("leaves a panel the user turned off stopped until an explicit start, which clears the marker", async () => {
+    const port = await freePort();
+    env = envOnPort(port, true);
+    const app = fakePanel();
+    markPanelStopped(env.cfg);
+    expect(await ensurePanel(env.cfg)).toMatchObject({ state: "stopped", detail: expect.stringMatching(/turned off from its power button/) });
+    expect(existsSync(path.join(app, "started.json"))).toBe(false);
+    const r = await ensurePanel(env.cfg, { force: true, waitMs: 10_000 });
+    const started = JSON.parse(readFileSync(path.join(app, "started.json"), "utf8")) as { pid: number };
+    cleanups.push(async () => {
+      try {
+        process.kill(started.pid);
+      } catch {
+        // already gone
+      }
+      for (let i = 0; i < 50; i++) {
+        try {
+          process.kill(started.pid, 0);
+        } catch {
+          return;
+        }
+        await new Promise((res) => setTimeout(res, 100));
+      }
+    });
+    expect(r.state).toBe("started");
+    expect(existsSync(panelStopFile(env.cfg))).toBe(false);
   });
 
   it("does nothing when panel.auto_start is off", async () => {

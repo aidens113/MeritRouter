@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,13 +11,26 @@ import { logsDirFor } from "./daemon.js";
 // checks again every minute. It runs as its own detached process (`next start` on 127.0.0.1), so
 // it outlives the session that started it; two processes starting it at once is harmless (the
 // second cannot bind the port and exits). Its output goes to `<storage>/logs/panel.log`.
+//
+// Turning the panel off (its power button) leaves a marker, `<storage>/panel.stopped`: background
+// checks then leave it off. An explicit start (`force`: `switchyard panel`, a new MCP session,
+// the MCP `panel` tool) clears the marker and starts it again.
 
 /** Overrides where the built panel app lives (default: `apps/panel` of the checkout this package runs from). */
 export const PANEL_DIR_ENV = "SWITCHYARD_PANEL_DIR";
 /** How long a start waits for the panel to answer before reporting it as still starting. */
 const START_WAIT_MS = 20_000;
 
-export type PanelState = "running" | "started" | "starting" | "disabled" | "unavailable";
+export type PanelState = "running" | "started" | "starting" | "stopped" | "disabled" | "unavailable";
+
+/** The marker the power button leaves: background checks do not restart a panel the user turned off. */
+export const panelStopFile = (cfg: Pick<ResolvedConfig, "storageDir">): string => path.join(cfg.storageDir, "panel.stopped");
+
+/** Record that the user turned the panel off (call before the panel process exits). */
+export function markPanelStopped(cfg: Pick<ResolvedConfig, "storageDir">, by = "the panel's power button"): void {
+  mkdirSync(cfg.storageDir, { recursive: true });
+  writeFileSync(panelStopFile(cfg), JSON.stringify({ at: new Date().toISOString(), by }));
+}
 
 export interface PanelStatus {
   state: PanelState;
@@ -55,12 +68,16 @@ export function findPanelApp(): { dir: string; nextBin: string } | { problem: st
 
 /**
  * Make sure the panel answers on `panel.port`: start it (detached) when nothing does and
- * `panel.auto_start` is on. Never throws: the result says what happened.
+ * `panel.auto_start` is on. A panel the user turned off stays off unless `force` (an explicit
+ * start, which also clears the marker and starts it even with `panel.auto_start` off). Never
+ * throws: the result says what happened.
  */
-export async function ensurePanel(cfg: ResolvedConfig, opts: { waitMs?: number } = {}): Promise<PanelStatus> {
+export async function ensurePanel(cfg: ResolvedConfig, opts: { waitMs?: number; force?: boolean } = {}): Promise<PanelStatus> {
   const url = panelUrl(cfg);
   if (await panelListening(cfg.panel.port)) return { state: "running", url, detail: `the panel is running at ${url}` };
-  if (!cfg.panel.auto_start) return { state: "disabled", url, detail: `nothing answers at ${url} and panel.auto_start is off: start it with switchyard panel` };
+  if (opts.force) rmSync(panelStopFile(cfg), { force: true });
+  else if (existsSync(panelStopFile(cfg))) return { state: "stopped", url, detail: `the panel was turned off from its power button; switchyard panel or a new agent session starts it again` };
+  if (!cfg.panel.auto_start && !opts.force) return { state: "disabled", url, detail: `nothing answers at ${url} and panel.auto_start is off: start it with switchyard panel` };
   const app = findPanelApp();
   if ("problem" in app) return { state: "unavailable", url, detail: `the panel cannot start: ${app.problem}` };
   let logFile: string;

@@ -45,10 +45,11 @@ async function main(): Promise<void> {
   // Recovery belongs to the process that runs the worker (the daemon, with --no-worker).
   if (args.worker) sy.recover();
   // The panel stays reachable while agents use this server: started now if nothing answers, and
-  // checked again every minute (a closed panel comes back). Never blocks the MCP handshake.
-  const keepPanel = () => void ensurePanel(cfg).then((p) => p.state !== "running" && process.stderr.write(`switchyard mcp: ${p.detail}\n`));
-  keepPanel();
-  const panelTimer = setInterval(keepPanel, 60_000);
+  // checked again every minute (a crashed panel comes back; one the user turned off stays off).
+  // Never blocks the MCP handshake. A new session turns a panel the user switched off back on (force); the minute checks respect it.
+  const keepPanel = (force: boolean) => void ensurePanel(cfg, { force }).then((p) => p.state !== "running" && p.state !== "stopped" && process.stderr.write(`switchyard mcp: ${p.detail}\n`));
+  keepPanel(true);
+  const panelTimer = setInterval(() => keepPanel(false), 60_000);
   panelTimer.unref();
   /** A tool's project: the one it names (which must exist), else this server's. */
   const scope = (named: unknown): string => (typeof named === "string" && named ? sy.projects.require(named).project.slug : project);
@@ -74,7 +75,7 @@ async function main(): Promise<void> {
     },
     async () => {
       try {
-        return json(await ensurePanel(cfg));
+        return json(await ensurePanel(cfg, { force: true }));
       } catch (err) {
         return fail(err);
       }
