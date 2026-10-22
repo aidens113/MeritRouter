@@ -1,3 +1,4 @@
+import type { TaskLabAuthority } from "../runners/coding/task-lab.js";
 import type { ResolvedConfig } from "../config/load.js";
 import { TIER_NAMES, type Importance, type ProfileMode, type TierName, type VerificationConfig } from "../config/schema.js";
 import { budgetInputFor, effectiveBudget, verificationTotal } from "../admission/admission.js";
@@ -147,6 +148,7 @@ export interface VerifiedOutcome {
 
 /** What the review phase adds to a verification (see verification/review.ts). */
 export interface VerifyOptions {
+  taskLabAuthority?: TaskLabAuthority | null;
   /** The tier the run actually ran at (escalation or repair); the level can only rise. */
   tier?: TierName;
   /** The latest review verdict, when a review ran. */
@@ -180,6 +182,7 @@ export function verifyOutcome(policy: VerificationConfig, stored: StoredContract
     universe: ev.universe ?? null,
     selfReport: ev.output ? selfReportFromOutput(ev.output, contract) : null,
     review: opts.review?.criteria ?? null,
+    taskLabAuthority: opts.taskLabAuthority,
   });
   const decision = decide({
     policy,
@@ -232,6 +235,8 @@ export function failureContext(artifacts: ArtifactStore, fromTier: TierName, rea
 }
 
 export interface DecisionDeps {
+  /** Synchronous metadata fence under the result update transaction; must not wait or inspect Git. */
+  beforeAccept?: (task: StoredTask) => void;
   cfg: ResolvedConfig;
   tasks: TaskStore;
   contracts: ContractStore;
@@ -247,6 +252,7 @@ export function recordAcceptanceDecision(d: DecisionDeps, id: string, decision: 
   return d.tasks.updateResult(id, (t) => {
     if (!t.result || !isTerminal(t.row.state)) throw new TaskValidationError(`task ${id} has not finished (${t.row.state})`);
     if (decision === "accept" && t.row.state !== "completed") throw new TaskValidationError(`task ${id} ended ${t.row.state}; only a completed task can be accepted`);
+    if (decision === "accept") d.beforeAccept?.(t);
     const stored = d.contracts.get(id);
     // A level raised on the result (for example to strict) governs, not only the contract's.
     const raisedToSupervisor = t.result.verification ? resolveLevel(d.cfg.verification, t.result.verification.level).acceptance === "supervisor" : false;

@@ -1,3 +1,4 @@
+import { taskLabAuthority,taskLabEvidenceProblem } from "../runners/coding/task-lab.js";
 import { LabCheckResultSchema } from "../labs/checks.js";
 import { z } from "zod";
 import { existsSync } from "node:fs";
@@ -80,6 +81,14 @@ function integrationGate(s: SupervisorState, id: string, t: TaskView, a: Record<
 /** Checks run after the gate that need the item's commits: the verified revision, and who may accept a strict result. */
 async function integrationGateAfter(s: SupervisorState, id: string, t: TaskView, target: IntegrationTarget, acceptance: { reason: string } | null): Promise<void> {
   const r = t.result!;
+  if (t.spec.constraints.labChecks?.length) {
+    const authority = s.ctx.taskLabs ? taskLabAuthority(s.ctx.taskLabs, id, r.taskLab) : null;
+    const problem = taskLabEvidenceProblem(t.spec, r.taskLab, authority);
+    if (problem) throw new Error(`refused: ${problem}`);
+    if (target.sourceWorktree !== authority!.attempt.sourceWorktree || target.head !== authority!.attempt.submittedCommit) {
+      throw new Error("refused: integration source is not the checked winning attempt");
+    }
+  }
   // Checks are bound to the tree they ran on: a worktree changed since then is not what was verified.
   const verifiedTree = r.checks.map((c) => c.revision).find((x): x is string => typeof x === "string");
   if (target.kind === "task" && verifiedTree && target.sourceWorktree) {
@@ -110,6 +119,15 @@ async function integrationTargets(s: SupervisorState, seam: IntegrationSeam, id:
     if (!out.length) throw new Error(`${id} has no job branch to integrate in ${typeof repository === "string" && repository ? repository : "this job's writable repositories"}`);
     return out;
   }
+  if (t.spec.constraints.labChecks?.length) {
+    const authority = s.ctx.taskLabs ? taskLabAuthority(s.ctx.taskLabs, id, t.result?.taskLab) : null;
+    const problem = taskLabEvidenceProblem(t.spec, t.result?.taskLab, authority);
+    if (problem) throw new Error(`refused: ${problem}`);
+    const source = authority!.attempt;
+    const repo = seam.repoFor(source.writableAlias);
+    const base = source.repositories.find(r => r.alias === source.writableAlias)!.baseCommit;
+    return [{ repo, kind: "task", sourceWorktree: source.sourceWorktree, base, head: source.submittedCommit!, commits: await commitsOf(source.sourceWorktree, base, source.submittedCommit!) }];
+  }
   const ws = s.db.prepare("SELECT worktree_path, base_sha, repo_alias FROM workspaces WHERE task_id = ?").get(id) as { worktree_path: string; base_sha: string; repo_alias: string } | undefined;
   if (!ws) throw new Error("task has no worktree (not a coding task?)");
   const repo = seam.repoFor(ws.repo_alias);
@@ -130,6 +148,7 @@ function redelegationBrief(t: TaskView, item: MergeItem, files: string[], stage:
     ...(spec.writableRepository ? { writable_repository: spec.writableRepository } : {}),
     ...(spec.constraints.allowedPaths ? { allowed_paths: spec.constraints.allowedPaths } : {}),
     ...(spec.constraints.checks ? { checks: spec.constraints.checks } : {}),
+    ...(spec.constraints.labChecks ? { lab_checks: spec.constraints.labChecks } : {}),
     ...(spec.context.fileRefs ? { file_refs: spec.context.fileRefs } : {}),
     ...(spec.hints?.difficulty ? { difficulty: spec.hints.difficulty } : {}),
     ...(spec.importance ? { importance: spec.importance } : {}),
@@ -146,6 +165,19 @@ export function integrationHooks(s: SupervisorState, env: HarnessEnv, seam: Inte
   const jobId = s.ctx.taskId;
   const svc = s.ctx.services!;
   return {
+    allowRebase: item => !svc.getTask(item.taskId)?.spec.constraints.labChecks?.length,
+    validateSource: async item => {
+      const task = svc.getTask(item.taskId);
+      if (!task?.spec.constraints.labChecks?.length) return;
+      const authority = s.ctx.taskLabs ? taskLabAuthority(s.ctx.taskLabs, item.taskId, task.result?.taskLab) : null;
+      const problem = taskLabEvidenceProblem(task.spec, task.result?.taskLab, authority);
+      if (problem) throw new Error(`refused: ${problem}`);
+      const source = authority!.attempt;
+      const base = source.repositories.find(repo => repo.alias === source.writableAlias)!.baseCommit;
+      if (item.sourceHead !== source.submittedCommit || item.sourceBase !== base || item.sourceWorktree !== source.sourceWorktree) {
+        throw new Error("refused: merge queue source differs from checked winning attempt");
+      }
+    },
     committer: { name: s.actor.agent, email: `${s.actor.agent.replace(/[^A-Za-z0-9._-]+/g, ".")}@switchyard.local` },
     accept: (item) => {
       // Idempotent: a recovered item whose acceptance was already recorded is not accepted twice.
@@ -207,7 +239,7 @@ function describeMerge(s: SupervisorState, item: MergeItem): string {
     }
     case "redelegated": {
       const label = [...s.children.entries()].find(([, v]) => v === item.redelegatedTo)?.[0] ?? item.redelegatedTo;
-      return `conflict integrating ${item.taskId}; nothing was changed and no acceptance was recorded. Conflicting files: ${files(conflict)}. Rebasing it onto the job branch conflicted too, so it was re-delegated once as ${label} (${item.redelegatedTo}) based on the current job branch; await it and integrate that task instead.`;
+      return `conflict integrating ${item.taskId}; nothing was changed and no acceptance was recorded. Conflicting files: ${files(conflict)}. Its checked source was preserved and it was re-delegated once as ${label} (${item.redelegatedTo}) based on the current job branch; await it and integrate that task instead.`;
     }
     case "conflict":
       return `conflict integrating ${item.taskId}; nothing was changed and no acceptance was recorded. Conflicting files: ${files(conflict)}.${conflict?.stage === "rebase" ? " Rebasing it onto the job branch conflicted too." : ""} Re-delegate based on the current job branch, or edit the files yourself. (${(conflict?.message ?? "").slice(0, 200)})`;
@@ -284,7 +316,7 @@ export function integrationTools(s: SupervisorState, seam: IntegrationSeam): Har
         function: {
           name: "integrate_task",
           description:
-            "Integrate a finished coding task's commits, or a finished sub-job's branch, onto the job branch through the job's merge queue: one integration per branch at a time, commits cherry-picked one by one so per-line attribution is kept, and the job checks run after each. When a pick conflicts, the work is rebased onto the branch head in its own worktree and picked again; if that conflicts too, it is re-delegated once on the current branch (the result says which task to integrate instead) and nothing changes. Calling it again for an integrated task picks nothing twice. Refused for unmet results and for patches with out-of-scope edits. A result that is not_verified or needs_supervisor needs accept: true with a reason (judged against the job's goal and the brief; recorded as your acceptance once the integration succeeds); patches that changed tests or evaluator files also need accept_test_changes: true after you reviewed them.",
+            "Integrate a finished coding task's commits, or a finished sub-job's branch, onto the job branch through the job's merge queue: one integration per branch at a time, commits cherry-picked one by one so per-line attribution is kept, and the job checks run after each. When a pick conflicts, ordinary work may be rebased once; tasks with required Lab checks preserve their checked source and are re-delegated with those checks on the current branch. A conflict that cannot be resolved is re-delegated once (the result says which task to integrate instead). Calling it again for an integrated task picks nothing twice. Refused for unmet results and for patches with out-of-scope edits. A result that is not_verified or needs_supervisor needs accept: true with a reason (judged against the job's goal and the brief; recorded as your acceptance once the integration succeeds); patches that changed tests or evaluator files also need accept_test_changes: true after you reviewed them.",
           parameters: {
             type: "object",
             properties: { task_id: { type: "string" }, accept: { type: "boolean" }, reason: { type: "string" }, accept_test_changes: { type: "boolean" }, repository: { type: "string", description: "sub-jobs: only this repository's branch (default: all)" } },

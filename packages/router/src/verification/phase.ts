@@ -1,3 +1,5 @@
+import { taskLabAuthority } from "../runners/coding/task-lab.js";
+import type { LabManager } from "../labs/lab.js";
 import type { ResolvedConfig } from "../config/load.js";
 import type { ProfileMode, ProfileName, TierName } from "../config/schema.js";
 import type { Db } from "../storage/db.js";
@@ -27,6 +29,7 @@ import { carryOverRetryContext, repairRetryContext, runTargetedChecks, submitted
  */
 
 export interface PhaseDeps {
+  labs?: LabManager;
   cfg: ResolvedConfig;
   db: Db;
   gate: Gate;
@@ -92,8 +95,8 @@ export function repairPossible(gate: Gate, task: StoredTask, contract: StoredCon
 }
 
 /** Verify one outcome against the contract; a level raised by the actual change (or tier) is recorded once. */
-export function verifyRecorded(d: Pick<PhaseDeps, "cfg" | "tasks">, task: StoredTask, contract: StoredContract, mode: ProfileMode, outcome: RunOutcome, qualityRetriesUsed: number, opts: VerifyOptions = {}, announce = true): VerifiedOutcome {
-  const v = verifyOutcome(d.cfg.verification, contract, mode, outcome, qualityRetriesUsed, opts);
+export function verifyRecorded(d: Pick<PhaseDeps, "cfg" | "tasks" | "labs">, task: StoredTask, contract: StoredContract, mode: ProfileMode, outcome: RunOutcome, qualityRetriesUsed: number, opts: VerifyOptions = {}, announce = true): VerifiedOutcome {
+  const v = verifyOutcome(d.cfg.verification, contract, mode, outcome, qualityRetriesUsed, { ...opts, taskLabAuthority: task.spec.constraints.labChecks?.length && d.labs ? taskLabAuthority(d.labs,task.row.id,outcome.result.taskLab) : null });
   const re = v.reevaluation;
   if (re.raised && announce) {
     // A raised level that needs more review than the contract reserved draws it from the room under the ceiling.

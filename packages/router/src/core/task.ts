@@ -1,3 +1,4 @@
+import { TaskLabEvidenceSchema } from "../labs/task-attempt-schema.js";
 import { z } from "zod";
 import { CheckNameSchema, ImportanceSchema, ProfileNameSchema, TierNameSchema, VerificationLevelSchema } from "../config/schema.js";
 import { TagsSchema } from "../scoring/rulebook.js";
@@ -352,6 +353,7 @@ export const WorkerResultSchema = z
     data: z.unknown().optional(),
     artifactRefs: z.array(z.string()),
     patchRefs: z.array(z.string()),
+    taskLab: TaskLabEvidenceSchema.optional(),
     baseCommits: z.record(z.string(), z.string()),
     checks: z.array(
       z

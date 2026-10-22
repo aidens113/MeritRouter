@@ -1,3 +1,5 @@
+import { runTaskLabChecks } from "./task-lab.js";
+import type { TaskLabEvidence } from "../../labs/task-attempt-schema.js";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
@@ -21,7 +23,8 @@ export async function prepareWorkspace(ctx: RunContext): Promise<{ ws: Workspace
   const alias = ctx.spec.writableRepository!;
   const repo = ctx.cfg.repositoryPaths[alias]!;
   const worktrees = new Worktrees(ctx.tasks.db, path.join(ctx.cfg.storageDir, "worktrees"), ctx.now);
-  const runNo = ctx.tasks.get(ctx.taskId)!.row.run_count;
+  const runNo = ctx.spec.constraints.labChecks?.length ? ctx.claimedRunCount : (ctx.claimedRunCount ?? ctx.tasks.get(ctx.taskId)!.row.run_count);
+  if (runNo === undefined) throw new Error("task Lab workspace requires its captured claim generation");
   // A quality repair continues from the submitted revision; the diff is still taken against the base.
   const start = ctx.retry?.startFrom?.alias === alias ? ctx.retry.startFrom.commit : null;
   const ws = await worktrees.prepare({ taskId: ctx.taskId, run: runNo, alias, sourcePath: repo.path, ...(ctx.spec.context.baseCommits?.[alias] ? { baseCommit: ctx.spec.context.baseCommits[alias] } : {}), ...(start ? { startCommit: start } : {}) });
@@ -112,17 +115,29 @@ export async function finishCoding(
       checks.push({ command, exitCode: r.killed ? null : r.exitCode, logRef, revision, ...(artifactDigest ? { artifactDigest } : {}) });
     }
   }
+  let taskLab: TaskLabEvidence | undefined;
+  const artifactRefs = [...o.artifactRefs];
+  if (spec.constraints.labChecks?.length && !ctx.signal.aborted && o.state === "completed" && changes.changed.length && !changes.outOfScope.length && checks.every(check => check.exitCode === 0) && revision && artifactDigest) {
+    try {
+      taskLab = await runTaskLabChecks(ctx, o.ws, o.executionId, revision, artifactDigest);
+      artifactRefs.push(ctx.artifacts.writeJson({ taskId: ctx.taskId, executionId: o.executionId, kind: "task_lab", label: "Task attempt Lab evidence", value: taskLab }));
+    } catch {
+      findings.push({ description: "Required task Lab checks did not complete; the result cannot be accepted or integrated.", evidenceRefs: [] });
+    }
+  }
   o.worktrees.setStatus(ctx.taskId, "collected");
 
-  const checksPassed = checks.length > 0 && checks.every((c) => c.exitCode === 0);
+  const labRequired = !!spec.constraints.labChecks?.length;
+  const labPassed = taskLab?.status === "passed" && taskLab.cleanup === "complete";
+  const checksPassed = (checks.length > 0 || labPassed) && checks.every((c) => c.exitCode === 0);
   const anyCheckFailed = checks.some((c) => c.exitCode !== 0);
   const acceptance =
-    changes.outOfScope.length || anyCheckFailed || changes.changed.length === 0
+    changes.outOfScope.length || anyCheckFailed || (labRequired && !labPassed) || changes.changed.length === 0
       ? "unmet"
       : checksPassed && !changes.protectedChanged.length && (spec.constraints.checks?.length ?? 0) === checks.length
         ? "met"
         : "not_verified";
-  const state: RunOutcome["state"] = aborted ? (ctx.signal.reason === "cancel" ? "cancelled" : "interrupted") : o.state;
+  const state: RunOutcome["state"] = ctx.signal.aborted ? (ctx.signal.reason === "cancel" ? "cancelled" : "interrupted") : o.state;
   // Per criterion: a check-verified criterion is resolved when its own checks passed on this
   // revision; anything else is unresolved until someone verifies it.
   const unresolved =
@@ -139,7 +154,8 @@ export async function finishCoding(
       stopReason: o.stopReason,
       summary: `${changes.changed.length} file(s) changed in an isolated worktree based on ${o.ws.baseSha.slice(0, 12)}. Checks: ${checks.length ? checks.map((c) => `${c.command} -> ${c.exitCode}`).join("; ") : "none run"}.${o.summaryLead ? `\n${o.summaryLead}` : ""}`,
       findings,
-      artifactRefs: o.artifactRefs,
+      artifactRefs,
+      ...(taskLab ? { taskLab } : {}),
       patchRefs: patchRef ? [patchRef] : [],
       baseCommits: { [alias]: o.ws.baseSha },
       checks,

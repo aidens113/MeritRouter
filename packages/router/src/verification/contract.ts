@@ -63,6 +63,7 @@ export const AcceptanceContractSchema = z
       .strict(),
     /** constraints.checks: the commands declared_checks requires. */
     declaredChecks: z.array(z.string()),
+    declaredLabChecks: z.array(z.string()).max(10).default([]),
     hasOutputSchema: z.boolean(),
     importance: z
       .object({
@@ -284,6 +285,7 @@ export function compileContract(input: CompileInput): CompileResult {
       baseCommits: spec.context.baseCommits ?? {},
     },
     declaredChecks: spec.constraints.checks ?? [],
+    declaredLabChecks: spec.constraints.labChecks ?? [],
     hasOutputSchema: spec.constraints.outputSchema !== undefined,
     importance: {
       level: evaluation.importance.importance,
@@ -296,7 +298,7 @@ export function compileContract(input: CompileInput): CompileResult {
       level: evaluation.level,
       matrixLevel: evaluation.matrixLevel,
       rulesMatched: evaluation.rulesMatched,
-      requiredChecks: evaluation.checks,
+      requiredChecks: [...new Set([...evaluation.checks, ...(spec.constraints.labChecks?.length ? ["ephemeral_lab_checks"] : [])])],
       review: evaluation.review,
       acceptance: evaluation.acceptance,
       strictAcceptor: policy.strict_acceptor,

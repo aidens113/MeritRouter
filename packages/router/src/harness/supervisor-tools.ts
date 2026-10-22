@@ -165,6 +165,7 @@ function briefProperties(allowSupervise: boolean): Record<string, unknown> {
     allowed_paths: { type: "array", items: { type: "string" } },
     must_not_touch: { type: "array", items: { type: "string" } },
     checks: { type: "array", items: { type: "string" } },
+    lab_checks: { type: "array", items: { type: "string" }, description: "Declared human-authorized task Lab check names" },
     difficulty: { type: "string", enum: ["T1", "T2", "T3", "T4"] },
     web: { type: "boolean", description: "true: the task needs current web information (models that search the web inside the call are preferred); false: it must not touch the web" },
     importance: { type: "string", enum: [...IMPORTANCE_LEVELS], description: "how much the result matters (default normal); raises verification, never difficulty" },
@@ -326,7 +327,7 @@ async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, un
         repositoryAliases: repos,
         ...(writable ? { writableRepository: writable } : {}),
         context: { ...(it.file_refs ? { fileRefs: it.file_refs } : {}), ...(artifactRefs.length ? { artifactRefs } : {}), baseCommits },
-        constraints: { acceptanceCriteria: it.acceptance_criteria, ...(paths ? { allowedPaths: paths } : {}), ...(checks.length ? { checks } : {}) },
+        constraints: { acceptanceCriteria: it.acceptance_criteria, ...(paths ? { allowedPaths: paths } : {}), ...(checks.length ? { checks } : {}), ...(it.lab_checks ? { labChecks: it.lab_checks } : {}) },
         ...((it.difficulty && !sub) || typeof it.web === "boolean" ? { hints: { ...(it.difficulty && !sub ? { difficulty: it.difficulty } : {}), ...(typeof it.web === "boolean" ? { web: it.web } : {}) } } : {}),
         ...(it.importance ? { importance: it.importance } : {}),
         ...(it.importance_reason ? { importanceReason: it.importance_reason } : {}),
@@ -405,7 +406,7 @@ async function staffNodes(s: SupervisorState, items: Array<Record<string, unknow
       repositoryAliases: repos,
       ...(writable ? { writableRepository: writable } : {}),
       context: { ...(it.file_refs ? { fileRefs: it.file_refs } : {}) },
-      constraints: { acceptanceCriteria: it.acceptance_criteria, ...(it.allowed_paths ? { allowedPaths: it.allowed_paths } : {}), ...(it.checks ? { checks: it.checks } : {}) },
+      constraints: { acceptanceCriteria: it.acceptance_criteria, ...(it.allowed_paths ? { allowedPaths: it.allowed_paths } : {}), ...(it.checks ? { checks: it.checks } : {}), ...(it.lab_checks ? { labChecks: it.lab_checks } : {}) },
     } as WorkerTaskInput;
     const staffed = await rulebookTier(s.ctx.cfg, brief, s.ctx.artifacts);
     if (!staffed) continue;
