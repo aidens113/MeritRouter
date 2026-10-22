@@ -1,3 +1,4 @@
+import { BudgetRequestsCard } from "@/components/budget-requests";
 import { Tabs, pickTab } from "@/components/tabs";
 import { Disclosure } from "@/components/disclosure";
 import Link from "next/link";
@@ -46,6 +47,7 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
   const p = project(sy, slug);
   const base = projectBase(p.slug);
   const ov = insights.projectOverview(sy, p.slug);
+  const budgetPending = insights.budgetRequestsView(sy, { project: p.slug, status: "pending", limit: 1000 });
   const now = Date.now();
   // Re-bucket on our side: the library's SQL bucket expression can return raw timestamps when
   // the bucket size is bound as a float, so align every point to its hour here.
@@ -93,7 +95,7 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
     <div className="space-y-6">
       <PageHeader
         title={p.name}
-        live={["tasks", "jobs", "requests", "sessions", "workers", "brain"]}
+        live={["tasks", "jobs", "requests", "sessions", "workers", "brain", "budget"]}
         description={
           <>
             What this project is doing now, what it used in the last 24 hours, and what needs you. Project <Mono>{p.slug}</Mono>
@@ -119,13 +121,14 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
           </ul>
         </Callout>
       ) : null}
-      {ov.attention.length ? (
+      {ov.attention.length || budgetPending.length ? (
         <Card className="border-warn/40">
           <div className="flex items-center gap-2 border-b border-line px-4 py-3 text-sm font-semibold text-ink">
             <TriangleAlert size={16} className="text-warn-ink" aria-hidden /> Needs your attention
-            <Badge tone="warn">{ov.attention.length}</Badge>
+            <Badge tone="warn">{ov.attention.length + (budgetPending.length ? 1 : 0)}</Badge>
           </div>
           <ul className="divide-y divide-line">
+            {budgetPending.length ? <li className="px-4 py-2.5 text-sm"><Link href="#budget-requests" className="font-medium text-warn-ink hover:underline">{budgetPending.length} budget requests await a decision</Link></li> : null}
             {ov.attention.map((a) => {
               const act = attentionLink(base, a, onlyJob);
               return (
@@ -159,6 +162,7 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
         <Stat label="Tasks (24h)" value={`${num(u.logicalTasks.completed)} done`} sub={`${num(u.logicalTasks.failed)} failed · ${num(u.logicalTasks.other)} other · ${num(u.logicalTasks.submitted)} submitted`} tone={u.logicalTasks.failed > u.logicalTasks.completed ? "bad" : undefined} />
         <Stat label="Paid spend (24h)" value={usd(ov.paidSpendUsd.last24h)} sub={`${usd(ov.paidSpendUsd.last7d)} in the last 7 days · ${compact(u.uncachedInputTokens + u.outputTokens)} new tokens today${u.cachedInputTokens ? ` (+${compact(u.cachedInputTokens)} cached)` : ""}`} />
       </div>
+      {budgetPending.length ? <BudgetRequestsCard requests={budgetPending} pendingOnly /> : null}
       <Tabs items={[{ "id": "overview", "label": "Overview" }, { "id": "activity", "label": "Activity" }, { "id": "usage", "label": "Usage" }]} active={tab} path={base} label="Page sections" anchors={{}} />
       {tab === "overview" ? <div className="space-y-6"><div className="grid gap-6 xl:grid-cols-[2fr_1fr]">
         <Card>
