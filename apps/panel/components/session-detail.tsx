@@ -33,7 +33,7 @@ export function SessionDetailView({ sy, id, sp, scope }: { sy: Switchyard; id: s
   const rawLimit = typeof sp.limit === "string" ? Number(sp.limit) : PAGE;
   const limit = Number.isInteger(rawLimit) ? Math.min(1000, Math.max(20, rawLimit)) : PAGE;
 
-  const d = insights.sessionDetail(sy, id, { afterSeq: after, limit });
+  const d = insights.sessionDetail(sy, id, { afterSeq: after, limit, project: scope.project });
   if (!d) notFound();
   const s = d.session;
   const running = s.status === "running";
@@ -47,7 +47,7 @@ export function SessionDetailView({ sy, id, sp, scope }: { sy: Switchyard; id: s
     const outcomesOnPage = new Set(d.events.flatMap((e) => (e.type === "tool_outcome" ? [e.data.intentSeq] : [])));
     const open = new Set(d.events.flatMap((e) => (e.type === "tool_intent" && !outcomesOnPage.has(e.seq) ? [e.seq] : [])));
     if (open.size) {
-      const rest = insights.sessionDetail(sy, id, { afterSeq: lastOnPage, limit: 10_000 });
+      const rest = insights.sessionDetail(sy, id, { afterSeq: lastOnPage, limit: 10_000, project: scope.project });
       for (const e of rest?.events ?? []) if (e.type === "tool_outcome" && open.has(e.data.intentSeq)) laterOutcomes.set(e.data.intentSeq, e);
     }
   }
@@ -162,6 +162,7 @@ export function SessionDetailView({ sy, id, sp, scope }: { sy: Switchyard; id: s
         { label: "Requests", items: requests.map(r => ({ key: r.id, node: <RequestLink base={base} id={r.id} /> })) },
         { label: "Models", items: [...new Set(requests.map(r => r.endpointId).filter((id): id is string => !!id))].map(id => ({ key: id, node: <ModelLink id={id} /> })) }
       ]} />
+      {d.timelineUnavailable ? <Callout tone="warn" title="Historical timeline unavailable">{d.timelineUnavailable}</Callout> : null}
       <Tabs items={[{ "id": "timeline", "label": "Timeline" }, { "id": "details", "label": "Details" }, { "id": "requests", "label": "Requests" }]} active={tab} path={self} label="Page sections" keep={{ after: typeof sp.after === "string" ? sp.after : undefined, limit: typeof sp.limit === "string" ? sp.limit : undefined }} anchors={{}} />
       {tab === "timeline" ? <div className="space-y-6"><Card>
         <CardHeader
