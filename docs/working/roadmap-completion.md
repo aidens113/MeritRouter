@@ -10,102 +10,44 @@ Related: [handoff](handoff.md), [labs](labs.md), [budget-control](budget-control
 
 ## Current State
 
-Accepted/pushed request release663626d:783/783 tests (88files,943.08s), final recursive
-build/typecheck and both production request/session browser harnesses pass. Authorized actual
-panel update follows. Local async lifecycle19268e7 independently50/50 (16.67s); root
-receipt purge/tombstones + task-Lab project deletion10/10 (25.68s), no complete R2 claim.
-Compose partial known-resource proof independently80/80; runtime still disabled.
+Accepted/pushed dev/main663626d includes rich historical request inputs/parameters/responses,
+correlated tool actions/file edits, related task/session/commit links, authoritative classifier
+project partition and historical session scope privacy. Full783/783 tests in88files (943.08s),
+recursive typecheck/build and production request + historical-session browser acceptance pass
+(16 screenshots). See [release acceptance](roadmap-completion/reports/request-page-release-acceptance.md).
+Actual4477 still serves prior accepted buildPID6288; authorized update/restart is next.
+Existing MCP process is still old in memory and needs client reconnect separately.
 
-Request-only candidate8ea5b43 passes recursive typecheck and both production demo browser
-harnesses:8 request captures +8 historical-session captures, scoped routes/APIs/navigation,
-zero provider calls/browser exceptions and owned processes stopped. Supervisor viewed current
-phone action and desktop privacy-warning images. Full serial783-test run remains pending;
-its previously failing session-surface cases now pass. Actual4477 still serves prior accepted
-buildPID6288. Pre-update current config hashAF4F6543B85F12321E79A9799107D7AEC012F56C65CB6A741E8ED5E2297D72A0
-was read only; earlier recorded hash predates supported clone deletion/config changes.
+Local feature branch includes task-Lab lifecycle/caller, captured all-alias source proof,
+nonblocking monitoring, human acceptance and dedicated supervisor startup. Scoped safe prune
+independently11/11 (65.19s), actual dedicated startup14.22s and confirmed project deletion
+checks10/10 (25.68s), including private receipt purge/tombstones, coding worktree removal,
+branch retention and dirty/active Lab refusal. Async lifecycle19268e7 independently50/50
+(16.67s): captured task insertion incarnation/run identity, awaited mutations, replay receipts,
+strict companion claims, deadline/ancestry checks and shutdown drains. Public contracts and
+operations guidance updated. Combined full acceptance/package of these local units is pending.
 
-Request-only candidate5c9deaa full bounded run measured779/783 (88files,362.95s): three
-old session-surface fixtures lacked durable task/execution authority and one actual-worker
-fixture cleanup encountered Windows EBUSY. No green full-suite claim. Updated fixtures now
-record real authority and terminal tasks, retaining privacy refusals; focused session scope/
-CLI/MCP/actual workers21/21 passed29.93s. Frozen full serial rerun is pending. Existing accepted
-4477 remains unchanged. Normalized capture demo production browser passed12 screenshots,
-request/tool/input/output DOM and scoped routes, zero model calls/browser exceptions; supervisor
-viewed phone dark and desktop light captures. Future capture backend is not in this release.
+Normalized future request capture is implemented locally with bounded private SQLite payloads,
+project-scoped purge and normalized input/tool/response UI. Supervisor29 capture checks plus
+49 integrated and7 purge checks passed; production demo browser12 captures passed, phone and
+desktop images viewed. This backend/migration is excluded from the request-only release.
 
-Local integrated capture/caller checkpoints now pass router typecheck/build, panel typecheck
-and49 focused tests (75.81s), including human acceptance, forged proof refusal and cleanup
-queued between inspection/write. Dedicated service startup passed an actual separate Labs
-supervisor test (14.22s); fixture supervisor stopped. Project purge integration passes7 tests
-(10.49s), including owned/mixed private capture removal while billing and other tasks remain.
-Normalized capture panel production browser acceptance passed12 captures. Scoped task-Lab
-prune4a239ab independently passed11/11 (65.19s); confirmed deletion integration passed9/9
-(22.84s), including actual stopped Lab removal and dirty-resource refusal preserving config.
-Request-only release candidate is being rebuilt/revalidated separately from these larger units.
+Compose C1 read-only validation and C2 full/known-resource proof are local prerequisites:
+independent10/10 and80/80 tests. Runtime remains disabled. Durable original creation receipts,
+engine transport/journal, retained/task integration and actual disposable-engine acceptance
+remain open. Browser pipe/capability H1 independently26/26; hydrated JS remains unavailable
+without an accepted native isolation adapter. These prerequisites do not close L5.
 
-Request-evidence UI3da30cf is merged locally: supervisor independently passed39 focused tests
-(10.34s) and production browser harness on demo4497, eight desktop/phone light/dark screenshots,
-actual navigation/scoped404/related links, zero model calls/browser exceptions; captures viewed.
-Classifier06a154a partitions future batches/cache by authoritative project (independent14 tests).
-Historical session transcript scope repair and bounded normalized future Gate capture are assigned.
-Neither richer request page nor these new prerequisites is deployed to4477 yet. Task-Lab caller
-integration is active; source/auth/process prerequisites are local only, not a complete feature.
+Next R2 unit is strict captured-generation request admission/dispatch/settlement and observed
+local transport capacity; see distributed-and-lab-extensions.md and its admission plan. Remote
+policy/key/session/tool/Git authority, PostgreSQL and real two-host acceptance remain open.
+No real provider quota/paid routing, engine activation or OS service installation authorized.
+User requested continuous execution, not another audit-only stopping point.
 
-Baseline dev/main e9a0726: Panel v2 and budget B1/B2 accepted; 622 tests passed. The user's
-"ok BUILD IT THEN" authorizes implementing the remaining audit, rather than another audit-only
-turn. Use documented defaults: feature labs, four active, isolated data, manual promotion;
-package the panel with the CLI. Work is sequential where file ownership overlaps.
-
-No live provider quota, paid routing, npm publication, user-install mutation or OS service
-installation is implied. Build and validate with fake providers, temporary installs and demo
-panel on spare ports. Real credentials/environment checks remain explicitly distinguishable
-from completed code. Previously deferred R2/L5 require their architecture/acceptance design
-before implementation; they are tracked below rather than silently omitted.
-
-**Accepted integrated source e0aad08:** E1 correctness, Labs L1-L4, package discovery/setup/
-bundled panel, external task tools, cache/catalog accounting, provider follow-ups, project
-restore/deletion/config safety and process-race fixes. Supervisor frozen checks701/701
-(78files,422.38s), recursive typecheck and isolated recursive build pass. Independent production
-Labs lifecycle/API/live/browser, legacy migration and model navigation pass. Verification with
-no metadata renders explanations; hovering the Team metrics section opens0 hints, one trigger
-opens1, keyboard focus/closing work. Historical model links and catalog-only refresh pass.
-
-Fresh tarball51,561,351bytes/2489entries installs outside checkout (QiBFVy); native SQLite,
-CLI discovery/init/setup, MCP40tools,8 production panel/API routes and stylesheet, detached
-setup start/reuse/stop pass with checkout reads forbidden. Owned fixtures are stopped. This
-coherent unit was pushed to dev/main at77914fc (remote heads verified equal). Actual user
-panel4477 and MCP processes were not restarted or used for tests; no deployed-fix claim.
-
-**Next accepted source6d61b8e:** static-render browser checks, all-heads evidence reuse and
-first async Gate accounting boundary, plus corrected MCP final-supervisor dispatch. Supervisor
-observed734/734 tests in83files (484.47s), recursive typecheck/build, production policy UI/MCP,
-model navigation, Labs18screenshots and legacy recipe API checks. Viewed desktop/phone captures.
-Fresh tarball53,308,449bytes/2522entries installs outside checkout (hrAtm3): native SQLite,
-CLI, MCP42tools,8 panel/API routes/CSS and setup start/reuse/stop pass; owned processes closed.
-
-The async queue claim prerequisite418b106/public exports6754a11 is also accepted:753/753 tests,
-85files,542.28s, recursive typecheck and isolated recursive build passed. Claims/companions await
-validated data-only receipts; renew/finish/session/Git migration remains separate.
-
-**Continuing:** Hydrated JS, ephemeral task Labs and Compose remain open. R2 inventory found81 SQLite consumers;
-PostgreSQL/multi-host is not enabled. Ephemeral integration plan records attempt identity,
-exact commit/tree evidence and durable auxiliary-process recovery prerequisites.
-User additionally clarified MCP final-supervisor dispatch must default OFF, while bounded
-sub-supervisors remain available. That setting/guard/UI work is merged locally under
-[external-supervisor-guidance](external-supervisor-guidance.md); obsolete guidance-enable
-toggle semantics were rejected. The corrected feature is accepted in the combined checks above.
-Task-Lab lifecycle, async queue claim implementation and Compose design are dispatched under
-file-partitioned briefs. No whole-roadmap completion claim. After explicit user approval,
-accepted9682e92 was built and panel4477 restarted; live read-only browser confirms new default-OFF
-setting, exact MiniMax model URL and Verification explanation. Config hash unchanged. Existing
-MCP remains running its prior in-memory code until its client reconnects/restarts the server.
-User subsequently requested clone removal:8082 stopped, project/session/artifact/worktree/brain
-resources removed via supported API, repository moved to Recycle Bin after automatic permanent
-recursive deletion rejection. No clone exists at its old path. Wait for the user's future fresh
-Next.js/Node.js build prompt after router readiness; do not recreate it now.
-The user additionally requested richer model-request detail (recorded inputs/response/tools and
-changed-file context). That isolated UI/projection unit is assigned below; exact per-call evidence
-must be distinguished from related task-wide changes and unavailable historical payloads.
+User authorized panel management for this session. Facebook clone project resources were
+removed through supported deletion; server stopped and repository moved to Recycle Bin after
+permanent deletion was automatically blocked. Accounting/brain Git audit remains per contract.
+Do not recreate it yet: user will issue the fresh build test after router changes are ready.
 
 ## Execution phases
 

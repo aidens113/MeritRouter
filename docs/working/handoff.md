@@ -6,6 +6,13 @@ own working document with decisions, phases, ledger, and reports.
 
 ## Repository state
 
+- Request evidence release accepted:783/783 tests in88files (943.08s), recursive typecheck/build,
+  production request and historical-session browser acceptance (16 screenshots, scoped route/API
+  checks). Includes classifier project partition, rich historical request details and session
+  scope privacy. See roadmap-completion/reports/request-page-release-acceptance.md. Panel
+  deployment is authorized and pending; existing MCP process still requires client reconnect.
+  Task-Lab/capture/Compose and distributed lifecycle units remain in separate local branches.
+
 - Async default queue claim/companion prerequisite accepted after753 tests/85files (542.28s),
   recursive typecheck/build. R2 renew/finish/session/Git and actual PostgreSQL remain open.
   Richer request-detail inputs/response/tools/files projection is newly active, separate from
