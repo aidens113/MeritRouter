@@ -1,9 +1,13 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { makeEnv, summarizeTask, type Env } from "./helpers.js";
+
+/** The panel tool forces a start: point it at a folder with no panel app so a test never launches one. */
+const NO_PANEL = path.join(tmpdir(), "switchyard-no-panel-app");
 
 const dist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "dist");
 const server = path.join(dist, "mcp.js");
@@ -40,7 +44,7 @@ describe("MCP server", () => {
   it("exposes the task tools and persists submissions before acknowledging", async () => {
     env = makeEnv();
     client = new Client({ name: "test", version: "1" });
-    await client.connect(new StdioClientTransport({ command: process.execPath, args: [server, "--config", env.cfg.configPath], env: { PATH: process.env.PATH ?? "" } }));
+    await client.connect(new StdioClientTransport({ command: process.execPath, args: [server, "--config", env.cfg.configPath], env: { PATH: process.env.PATH ?? "", SWITCHYARD_PANEL_DIR: NO_PANEL } }));
     const listed = (await client.listTools()).tools;
     // Every input schema suits OpenAI clients (Codex, ChatGPT): portable keywords only, typed
     // nodes, and open objects that say additionalProperties: true. Empty inputs are objects.
@@ -55,7 +59,7 @@ describe("MCP server", () => {
 
     // The test config turns panel.auto_start off: the panel tool reports that and starts nothing.
     const panel = await client.callTool({ name: "panel", arguments: {} });
-    expect(JSON.parse((panel.content as Array<{ text: string }>)[0]!.text)).toMatchObject({ state: expect.stringMatching(/^(disabled|running)$/) });
+    expect(JSON.parse((panel.content as Array<{ text: string }>)[0]!.text)).toMatchObject({ state: "unavailable", detail: expect.stringMatching(/no panel app at/) });
     const info = client.getInstructions();
     expect(info).toMatch(/web panel \(http:\/\/127\.0\.0\.1:\d+\)/);
 
@@ -105,7 +109,7 @@ describe("MCP server", () => {
   it("runs as `switchyard mcp` on stdio, so an installed package needs no dist path", async () => {
     env = makeEnv();
     client = new Client({ name: "test", version: "1" });
-    await client.connect(new StdioClientTransport({ command: process.execPath, args: [path.join(dist, "cli.js"), "mcp", "--config", env.cfg.configPath, "--no-worker"], env: { PATH: process.env.PATH ?? "" } }));
+    await client.connect(new StdioClientTransport({ command: process.execPath, args: [path.join(dist, "cli.js"), "mcp", "--config", env.cfg.configPath, "--no-worker"], env: { PATH: process.env.PATH ?? "", SWITCHYARD_PANEL_DIR: NO_PANEL } }));
     const names = (await client.listTools()).tools.map((t) => t.name);
     expect(names).toContain("submit_tasks");
     expect(names).toHaveLength(34);
