@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import { AdmissionDenied, GatewayError } from "../../core/errors.js";
 import type { ChatMessage, ChatTool, ChatToolCall, ContentPart } from "../../gateway/types.js";
 import { ask, type RunContext } from "../types.js";
+import { planLimits } from "../../routing/select.js";
 
 export interface PolicyGateway {
   baseUrl: string;
@@ -90,7 +91,8 @@ export async function startPolicyGateway(
   let serial = Promise.resolve();
   let consecutiveDenied = 0;
   const model = "worker";
-  const maxOutput = Math.min(ctx.profile.max_output_tokens, ctx.spec.budget?.maxOutputTokens ?? Infinity);
+  // Never more output than the candidate models can produce (coding task types default high).
+  const maxOutput = Math.min(ctx.profile.max_output_tokens, ctx.spec.budget?.maxOutputTokens ?? Infinity, planLimits(ctx.plan, ctx.cfg.routing.max_endpoint_fallbacks).outputLimitTokens || Infinity);
 
   const authorized = (req: IncomingMessage) => {
     const h = req.headers.authorization ?? "";

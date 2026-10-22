@@ -138,7 +138,9 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
       res = await ask(env.ctx, {
         executionId: o.executionId,
         purpose: o.purpose ?? "agent_loop",
-        chat: { messages, max_tokens: pending?.maxTokens ?? o.maxTokens, temperature: 0.2, tools: defs, tool_choice: remaining === 1 ? "required" : "auto" },
+        // The final request offers only the terminal tool: a model told to submit still called
+        // other tools (live 2026-10-21), and some providers ignore tool_choice.
+        chat: { messages, max_tokens: pending?.maxTokens ?? o.maxTokens, temperature: 0.2, tools: remaining === 1 ? [o.terminal.def] : defs, tool_choice: remaining === 1 ? "required" : "auto" },
         preferEndpointId: sticky,
         cacheKey,
         ...(pending?.avoid.length ? { avoidEndpointIds: pending.avoid } : {}),

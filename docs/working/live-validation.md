@@ -60,6 +60,21 @@ nemotron-3-nano:30b, gpt-oss:20b, nemotron-3-ultra (context unreported, so unuse
 - The panel build bundles the router (Turbopack follows the pnpm workspace link), so a router
   change needs `pnpm -r build`; `ensurePanel` and `doctor` now warn when the panel build is older.
 
+**Pomodoro team job (2026-10-21, project `pomodoro`, `D:\SwitchYardProjects\pomodoro`):** first
+live delegation. The supervisor (`beam`) planned 4 implementer tasks and a review; only the README
+task succeeded (timer, tasks, review ran out of requests after escalating; the UI task failed on
+its dependency), so the supervisor wrote the modules itself; 17 `node:test` tests pass. It left a
+stray `EOF` line at the end of `app.js` (a ReferenceError in the browser) that the declared checks
+could not catch; a follow-up implement task fixed it (accepted by the supervisor after its review
+ran out of budget). Served at http://127.0.0.1:8081. Fixes from what the sessions showed:
+- 347f068: empty listings say plainly that the directory is empty (models re-listed up to 5 times);
+  an escalation after a spent budget starts from the unfinished work (a 199-line module had been
+  lost); coding task types default to 16000 output tokens, capped by the models' output limits.
+- d53fa57: the final request offers only the terminal tool (a reviewer kept exploring instead of
+  submitting its verdict; Ollama ignores tool_choice).
+- Still seen: models ask for a `bash` tool (none offered without `coding.allowed_commands`); the
+  difficulty classifier's 300-token reply is cut off on small models (it falls back to defaults).
+
 **Open:**
 - Packaging for npm: `switchyard mcp` now exists; still no default config location, the panel is
   not in the package, and no one-step setup.

@@ -70,7 +70,11 @@ export function repoTools(aliases: string[]): HarnessTool[] {
   return [
     tool("list_files", "read", "List files in a repository directory (git-tracked and untracked-not-ignored).", { alias, dir: { type: "string" }, glob: { type: "string" } }, ["alias"], async (a, env) => {
       const r = await reader(env, a.alias).listFiles(String(a.dir ?? ""), typeof a.glob === "string" ? a.glob : undefined);
-      return cap(`${r.files.join("\n")}${r.truncated ? "\n[more files not shown; narrow dir or glob]" : ""}`) || "(no files)";
+      if (r.files.length) return cap(`${r.files.join("\n")}${r.truncated ? "\n[more files not shown; narrow dir or glob]" : ""}`);
+      // Said plainly: models otherwise read an empty listing as an error and list again and again.
+      const where = String(a.dir ?? "").replace(/^\.?\/?$/, "") || "the repository root";
+      const filter = typeof a.glob === "string" && a.glob && a.glob !== "*" && a.glob !== "**/*" ? ` matching ${a.glob}` : "";
+      return `No files${filter} in ${where}. This is a complete answer, not an error: ${filter ? "nothing matches" : "it is empty (a task that edits creates files with write_file)"}.`;
     }),
     tool("read_file", "read", "Read a file with numbered lines. Use line ranges for large files.", { alias, path: { type: "string" }, start_line: { type: "integer" }, end_line: { type: "integer" } }, ["alias", "path"], async (a, env) => {
       const r = reader(env, a.alias);

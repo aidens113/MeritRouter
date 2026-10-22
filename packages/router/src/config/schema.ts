@@ -24,6 +24,10 @@ export type ProfileMode = z.infer<typeof ProfileModeSchema>;
 export const ToolPolicySchema = z.enum(["none", "repository_read", "repository_read_and_artifacts", "scoped_edit_and_checks", "supervisor"]);
 export type ToolPolicy = z.infer<typeof ToolPolicySchema>;
 
+/** Default output tokens per request for coding task types, and for every other task type. */
+export const CODING_OUTPUT_TOKENS = 16000;
+export const DEFAULT_OUTPUT_TOKENS = 4000;
+
 const ProfileSchema = z
   .object({
     mode: ProfileModeSchema,
@@ -31,7 +35,8 @@ const ProfileSchema = z
     min_total_parameters_b: z.number().positive().default(30),
     max_model_requests: z.number().int().positive().default(1),
     max_input_tokens: z.number().int().positive().optional(),
-    max_output_tokens: z.number().int().positive().default(4000),
+    /** Output tokens reserved per request; default 16000 for coding task types (whole files), 4000 otherwise. */
+    max_output_tokens: z.number().int().positive().optional(),
     tools: ToolPolicySchema.default("none"),
     workspace: z.enum(["none", "isolated_worktree"]).default("none"),
     requires_structured_output: z.boolean().default(false),
@@ -62,7 +67,9 @@ const ProfileSchema = z
     if ((p.mode === "supervisor") !== (p.tools === "supervisor")) {
       ctx.addIssue({ code: "custom", message: "supervisor mode and the supervisor tool policy go together" });
     }
-  });
+  })
+  // A coding agent writes whole files in one reply: 4000 tokens cut them off (live check 2026-10-21).
+  .transform((p) => ({ ...p, max_output_tokens: p.max_output_tokens ?? (p.mode === "coding" ? CODING_OUTPUT_TOKENS : DEFAULT_OUTPUT_TOKENS) }));
 export type ProfileConfig = z.infer<typeof ProfileSchema>;
 
 const TierSchema = z
