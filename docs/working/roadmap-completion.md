@@ -42,8 +42,11 @@ model navigation, Labs18screenshots and legacy recipe API checks. Viewed desktop
 Fresh tarball53,308,449bytes/2522entries installs outside checkout (hrAtm3): native SQLite,
 CLI, MCP42tools,8 panel/API routes/CSS and setup start/reuse/stop pass; owned processes closed.
 
-**Continuing:** Hydrated
-JS, ephemeral task Labs and Compose remain open. R2 inventory found81 SQLite consumers;
+The async queue claim prerequisite418b106/public exports6754a11 is also accepted:753/753 tests,
+85files,542.28s, recursive typecheck and isolated recursive build passed. Claims/companions await
+validated data-only receipts; renew/finish/session/Git migration remains separate.
+
+**Continuing:** Hydrated JS, ephemeral task Labs and Compose remain open. R2 inventory found81 SQLite consumers;
 PostgreSQL/multi-host is not enabled. Ephemeral integration plan records attempt identity,
 exact commit/tree evidence and durable auxiliary-process recovery prerequisites.
 User additionally clarified MCP final-supervisor dispatch must default OFF, while bounded
