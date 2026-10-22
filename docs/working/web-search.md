@@ -1,7 +1,7 @@
 # Web search and fetch for agents
 
 Status: Active
-Status detail: Plan written 2026-10-21 at the user's request; W1 dispatched.
+Status detail: W1-W2 with the backend pool done and merged 2026-10-21 (live-checked on Ollama); W3 next.
 Created: 2026-10-21
 Last updated: 2026-10-21
 Owner: Senior supervisor agent
@@ -31,7 +31,13 @@ backend pool with spread or fallback selection, per-backend health, key rotation
 per-backend caps (sent to worker web-search-w1 as a rework); (2) detect and use models whose
 provider searches the web inside the API call (phase W3).
 
-**Next steps:** W1/W2 with the pool rework (worker web-search-w1), then W3.
+**Done (merged af9ef4b, 2026-10-21):** W1-W2 with the backend pool (see `reports/web-search-w1.md`).
+Live on the user's install: a search through the pool answered by ollama (3 results), a fetch of
+docs.ollama.com answered by the built-in fetch (10055 chars), and `http://169.254.169.254/` refused
+before any request. Tavily, Brave, Exa, and SearXNG were not called live (no keys); their request
+shapes were checked against their docs.
+
+**Next steps:** W3 (native web search in model calls).
 
 **Blockers:** none.
 
@@ -126,6 +132,17 @@ provider searches the web inside the API call (phase W3).
   harness tool list in `src/harness/tools.ts`, `src/harness/supervisor-tools.ts`.
 - Outcome: Accepted
 - Follow-up: W1/W2 by worker web-search-w1.
+
+### 2026-10-21 — W1-W2 and the backend pool merged
+- Agent: worker web-search-w1 (two rounds); supervisor review, merge, and live check
+- Changed: see the report; merge af9ef4b; supervisor: AGENTS.md and CLAUDE.md list the web area;
+  tests use panel port 9 and a missing panel folder (47494ad) after the MCP test launched the
+  real panel during a run with the user's panel stopped.
+- Why: user asked for web search, then for every provider to be used.
+- Validation: worker: 32 web tests; supervisor: `npx vitest run` `Tests 559 passed (559)`, both
+  packages typecheck and build; live: search via ollama, fetch via builtin, metadata URL refused;
+  doctor reports the pool healthy.
+- Outcome: Accepted
 
 ---
 
