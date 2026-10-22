@@ -49,8 +49,9 @@ export class NativeCodingRunner implements CodingRunner {
       ...(brain ? { brain } : {}),
     };
     const tools: HarnessTool[] = [...repoTools(spec.repositoryAliases), ...editTools(), ...(patterns.length ? [commandTool(patterns)] : []), artifactTool(), ...(brain ? brainReadTools() : [])];
-    const maxTokens = Math.min(ctx.profile.max_output_tokens, spec.budget?.maxOutputTokens ?? Infinity);
     const limits = planLimits(ctx.plan, ctx.cfg.routing.max_endpoint_fallbacks);
+    // Never ask for more output than the candidate models can produce (coding defaults high).
+    const maxTokens = Math.min(ctx.profile.max_output_tokens, spec.budget?.maxOutputTokens ?? Infinity, limits.outputLimitTokens || Infinity);
     const inputBudget = Math.max(2000, limits.contextLimitTokens - maxTokens - estimateTokens([], tools.map((t) => t.def)) - 500);
     const checks = spec.constraints.checks?.length ? `\nChecks that will be run after you finish:\n${spec.constraints.checks.map((c) => `- ${c}`).join("\n")}` : "";
     const fresh: ChatMessage[] = [

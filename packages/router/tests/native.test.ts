@@ -114,4 +114,45 @@ describe("native coding worker", () => {
     expect(report).toMatch(/^# Report: add-subtract/);
     expect(report).toMatch(/## Not verified/);
   }, 90_000);
+
+  it("an escalation after a spent budget continues the unfinished work; an empty listing says so plainly", async () => {
+    env = makeEnv({ config: baseConfig({ coding: { runner: "native" } }) });
+    const NOTE = "previous attempt's unfinished work";
+    const client = new ScriptedClient((req) => {
+      const s = servedFor(sy!, req);
+      const n = toolCount(req);
+      const continuing = req.messages.some((m) => m.role === "user" && typeof m.content === "string" && m.content.includes(NOTE));
+      if (!continuing) {
+        // First attempt: write a file, then keep looking around until its budget (T2: 8) is spent.
+        if (n === 0) return reply(null, { ...s, toolCalls: call("write_file", { path: "src/sub.ts", content: "export const subtract = (a: number, b: number) => a - b;\n" }) });
+        return reply(null, { ...s, toolCalls: call("list_files", { alias: "core", dir: "src", glob: "*.nothing" }) });
+      }
+      if (n === 0) return reply(null, { ...s, toolCalls: call("read_file", { alias: "core", path: "src/sub.ts" }) });
+      return reply(null, { ...s, toolCalls: submit() });
+    });
+    sy = open(env, client, { worker: true, coding: createCodingRunner(env.cfg) });
+    const [sub] = await sy.submitTasks([task({ constraints: { acceptanceCriteria: ["subtract exists"], allowedPaths: ["src/**"] } })]);
+    const r = (await sy.awaitResults([sub!.taskId], { timeoutSeconds: 60 })).completed[0]!;
+    expect(r.routing).toMatchObject({ tier: "T3", escalatedFrom: "T2" });
+
+    // The empty listing is a plain, complete answer (models otherwise list again and again).
+    const listing = client.requests.flatMap((q) => q.messages).find((m) => m.role === "tool" && String(m.content).startsWith("No files"));
+    expect(String(listing?.content)).toMatch(/^No files matching \*\.nothing in src\. This is a complete answer, not an error: nothing matches\.$/);
+
+    // The escalated run was told about the unfinished work and found the first attempt's file.
+    const second = client.requests.filter((q) => q.messages.some((m) => m.role === "user" && String(m.content).includes(NOTE)));
+    expect(second.length).toBeGreaterThan(0);
+    expect(String(second[0]!.messages.find((m) => m.role === "user" && String(m.content).includes(NOTE))!.content)).toMatch(/changed: src\/sub\.ts/);
+    const readBack = second.flatMap((q) => q.messages).find((m) => m.role === "tool" && String(m.content).includes("a - b"));
+    expect(readBack).toBeDefined();
+    expect(readFileSync(path.join(worktreeOf(sub!.taskId), "src/sub.ts"), "utf8")).toContain("a - b");
+  }, 90_000);
+
+  it("coding task types default to a larger output allowance than other task types", () => {
+    env = makeEnv({ config: baseConfig() });
+    // The test config sets no max_output_tokens for implement or inspect, and 2000 for summarize.
+    expect(env.cfg.profiles.implement!.max_output_tokens).toBe(16000);
+    expect(env.cfg.profiles.inspect!.max_output_tokens).toBe(4000);
+    expect(env.cfg.profiles.summarize!.max_output_tokens).toBe(2000);
+  });
 });

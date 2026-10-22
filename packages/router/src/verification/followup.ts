@@ -49,6 +49,42 @@ export async function submittedRevisionStart(db: Db, task: StoredTask, revision:
 }
 
 /**
+ * The commit an escalated coding run starts from when the previous attempt ran out of requests:
+ * that attempt's worktree HEAD, its uncommitted edits committed first, when it moved past the
+ * base. Without this the escalation started from an empty worktree and redid (or lost) the work.
+ * Null when there is no worktree or nothing was written.
+ */
+export async function unfinishedWorkStart(db: Db, task: StoredTask): Promise<{ alias: string; commit: string; files: string[] } | null> {
+  const ws = workspaceOf(db, task.row.id);
+  if (!ws) return null;
+  try {
+    if ((await git(ws.worktree_path, ["status", "--porcelain"])).trim()) {
+      await git(ws.worktree_path, ["add", "-A"]);
+      await commitAs(ws.worktree_path, { agent: agentLabel("implementer", task.spec.label ?? task.row.id), role: "tool", model: null, task: task.row.id, job: task.spec.parentTaskId ?? null }, "implementer: unfinished work before escalation");
+    }
+    const head = (await git(ws.worktree_path, ["rev-parse", "HEAD"])).trim();
+    if (head === ws.base_sha) return null;
+    const files = (await git(ws.worktree_path, ["diff", "--name-only", ws.base_sha, head])).split(/\r?\n/).filter(Boolean);
+    return files.length ? { alias: ws.repo_alias, commit: head, files } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** An escalation's retry context when it continues the previous attempt's unfinished work. */
+export function carryOverRetryContext(base: RetryContext, carried: { alias: string; commit: string; files: string[] }): RetryContext {
+  const shown = carried.files.slice(0, 12).join(", ") + (carried.files.length > 12 ? `, and ${carried.files.length - 12} more` : "");
+  return {
+    ...base,
+    verificationReasons: [
+      ...base.verificationReasons,
+      `Your workspace already contains the previous attempt's unfinished work (commit ${carried.commit.slice(0, 12)}; changed: ${shown}). Read those files and continue from them; do not start over.`,
+    ],
+    startFrom: { alias: carried.alias, commit: carried.commit },
+  };
+}
+
+/**
  * The repair's retry context: the failure context plus the reviewer's findings and failed
  * criteria (data about the previous attempt, never instructions), and where the work resumes.
  */

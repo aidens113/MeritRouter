@@ -15,7 +15,7 @@ import { restoreRunState, retryStarted, RETRY_STARTED, REVIEW_RECORDED, type Ver
 import { repairCap, reviewReserveAdjustment, type StoredContract } from "./contract.js";
 import type { ReviewPhaseResult } from "./review.js";
 import { calibratedReview } from "./calibration.js";
-import { repairRetryContext, runTargetedChecks, submittedRevisionStart, targetedCheckAllowed } from "./followup.js";
+import { carryOverRetryContext, repairRetryContext, runTargetedChecks, submittedRevisionStart, targetedCheckAllowed, unfinishedWorkStart } from "./followup.js";
 
 /**
  * The verification phase of a task run, as the executor drives it: continue the verification
@@ -242,8 +242,10 @@ export async function planRetry(d: Pick<PhaseDeps, "cfg" | "db" | "gate" | "rout
   if (repairTier !== plan.tier) d.tasks.event(task.row.id, "escalated", { from: plan.tier, to: repairTier, reason });
   const lastReview = st.reviews.at(-1) ?? null;
   const startFrom = quality && i.mode === "coding" ? await submittedRevisionStart(d.db, task, outcome.evidence?.revision ?? null) : null;
+  // A coding run that ran out of requests hands its unfinished work to the escalation.
+  const carried = execFailure === "budget_exhausted" && i.mode === "coding" ? await unfinishedWorkStart(d.db, task) : null;
   const baseRetry = failureContext(d.artifacts, plan.tier, reason, result);
-  const retry = quality ? repairRetryContext(baseRetry, lastReview, startFrom) : baseRetry;
+  const retry = quality ? repairRetryContext(baseRetry, lastReview, startFrom) : carried ? carryOverRetryContext(baseRetry, carried) : baseRetry;
   // Durable before the retry runs: a run after an interruption continues it, never repeats it.
   d.tasks.event(task.row.id, RETRY_STARTED, retryStarted(plan.tier, repairTier, reason, retry));
   if (quality) d.tasks.event(task.row.id, "quality_repair", { fromTier: plan.tier, toTier: repairTier, startFrom: startFrom?.commit ?? null, review: lastReview?.verdict ?? null, reasons: result.verification?.reasons.slice(0, 5) ?? [] });
