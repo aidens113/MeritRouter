@@ -37,7 +37,7 @@ it("starts and stops a real Labs supervisor without executing queued model work"
   const db = openDatabase(env.cfg.storageDir);
   databases.push(db);
   const tasks = new TaskStore(db);
-  const [submitted] = tasks.submit([{ profile: "summarize", goal: "Remain queued while only Labs supervision runs", repositoryAliases: [] }]);
+  const [submitted] = tasks.submit([{ profile: "summarize", goal: "Remain queued while only Labs supervision runs", repositoryAliases: [], context: {}, constraints: { acceptanceCriteria: ["Remain queued"] } }]);
   const cli = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
   const execute = promisify(execFile);
   const command = (action: string) => execute(process.execPath, [cli, "labs", action, "--config", env!.cfg.configPath, "--json"], { windowsHide: true, timeout: 45_000 });

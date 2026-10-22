@@ -15,19 +15,22 @@ export function worktreeHead(worktree: string): string | null {
     try {
       common = path.resolve(gitdir, readFileSync(path.join(gitdir, "commondir"), "utf8").trim());
     }
-    catch { }
+    catch {
+    }
     try {
       const sha = readFileSync(path.join(common, ref), "utf8").trim();
       if (/^[a-f0-9]{40,64}$/.test(sha))
         return sha;
     }
-    catch { }
+    catch {
+    }
     for (const line of readFileSync(path.join(common, "packed-refs"), "utf8").split(/\r?\n/)) {
       const [sha, name] = line.split(" ");
       if (name === ref && sha && /^[a-f0-9]{40,64}$/.test(sha))
         return sha;
     }
   }
-  catch { }
+  catch {
+  }
   return null;
 }

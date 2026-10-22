@@ -36,3 +36,6 @@ verification, integration, and decisions that need the user.
 
 **Whole jobs**: `start_job` hands a goal to SwitchYard's own supervisor; follow it with
 `job_status` and answer its questions with `answer_question`.
+
+
+For long-lived local environments, create a named lab and run `labs serve` before starting a job with its `lab` field. The root team and all delegated tasks inherit that lab; only one active root team may own it. Read the lab lane document and scoped status/logs/check tools. Promote through the configured manual/supervisor policy after exact-revision checks; never merge a stale check result or change target branches with a worker shell command.

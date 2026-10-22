@@ -1,3 +1,5 @@
+import { redactLabText } from "../src/labs/public-status.js";
+import { ProjectConfigSchema } from "../src/projects/schema.js";
 import { PaidModelSchema } from "../src/config/schema.js";
 import { Worktrees } from "../src/workspaces/worktree.js";
 import { TaskStore } from "../src/storage/tasks.js";
@@ -7,13 +9,13 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { promisify } from "node:util";
-import { execFile } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { openDatabase, type Db } from "../src/storage/db.js";
 import { ProjectRegistry } from "../src/projects/registry.js";
 import { LabManager } from "../src/labs/lab.js";
 import { LabRecipeSchema, LabsConfigSchema, validateRecipe } from "../src/labs/recipe.js";
-import { processAlive, processOwnership, stopOwnedProcess } from "../src/labs/process-ownership.js";
+import { captureOwnedProcessTree, HOST_MARKER, ownedWindowsProcessTree, processAlive, processOwnership, stopOwnedProcess } from "../src/labs/process-ownership.js";
 import { portAvailable } from "../src/labs/ports.js";
 import { baseConfig, commitAll, makeEnv, type Env } from "./helpers.js";
 const exec = promisify(execFile);
@@ -35,7 +37,8 @@ afterEach(async () => {
     try {
       await m.close();
     }
-    catch { }
+    catch {
+    }
   }
   managers.length = 0;
   db?.close();
@@ -243,4 +246,188 @@ describe('lab lifecycle with real isolated fixture processes', () => {
     await manager.destroy('alpha', 'dirty');
     await manager.destroy('alpha', 'public');
   }, 30000);
+});
+describe("lab integration and promotion", () => {
+  it("queues creation without an API instance taking service ownership, then runs declared check on exact head", async () => {
+    const manager = setup();
+    const op = manager.requestControl("alpha", "queued", { kind: "create" }, "fixture");
+    expect(manager.operation("beta", "queued", op.id)).toBeNull();
+    expect(manager.store.get("alpha", "queued")).toBeNull();
+    await manager.processControls();
+    expect(manager.operation("alpha", "queued", op.id)?.state).toBe("completed");
+    const start = manager.requestControl("alpha", "queued", { kind: "start" }, "fixture");
+    await manager.processControls();
+    expect(manager.operation("alpha", "queued", start.id)?.state).toBe("completed");
+    const response = await manager.http("alpha", "queued", { service: "web" });
+    expect(response.status).toBe(200);
+    expect(response.body).toContain('queued');
+    await expect(manager.http("alpha", "queued", { service: "web", path: "//127.0.0.1:1/" })).rejects.toThrow();
+    await expect(manager.http("alpha", "queued", { service: "web", headers: { host: "example.com" } })).rejects.toThrow();
+    const checked = await manager.check("alpha", "queued", "health");
+    expect(checked.revision).toBe(manager.status("alpha", "queued").heads.app);
+    expect(checked.exitCode).toBe(0);
+    const serialized = JSON.stringify(manager.publicStatus("alpha", "queued"));
+    expect(serialized).not.toContain('owner_id');
+    expect(serialized).not.toContain('token');
+    expect(manager.publicOperations("alpha", "queued")).toHaveLength(2);
+    expect(JSON.stringify(manager.publicOperations("alpha", "queued"))).not.toContain('token');
+    await manager.stop("alpha", "queued");
+    await expect(manager.http("alpha", "queued", { service: "web" })).rejects.toThrow(/running/);
+  }, 30000);
+  it("requires a persisted supervisor root team, inherits scope and previews lab-only context", async () => {
+    const manager = setup();
+    env!.cfg.profiles.supervise = { ...env!.cfg.profiles.implement!, mode: "supervisor", tools: "supervisor" };
+    const created = await manager.create("alpha", "team");
+    const tasks = new TaskStore(db!);
+    const root = WorkerTaskSchema.parse({ id: "lab-root", profile: "supervise", lab: "team", goal: "test", repositoryAliases: ["app"], constraints: { acceptanceCriteria: ["done"] } });
+    tasks.submit([root], { project: "alpha" });
+    const bound = manager.bindTask("alpha", "lab-root", root, tasks);
+    expect(bound?.rootJobId).toBe("lab-root");
+    expect(manager.configuration("alpha", "team").repositoryPaths.app?.path).toBe(created.lab.repositories[0]!.worktree);
+    const child = WorkerTaskSchema.parse({ ...root, id: "lab-child", profile: "inspect", parentTaskId: "lab-root" });
+    tasks.submit([child], { project: "alpha" });
+    expect(manager.bindTask("alpha", "lab-child", child, tasks)?.rootJobId).toBe("lab-root");
+    const escape = WorkerTaskSchema.parse({ ...child, id: "lab-escape", lab: undefined });
+    tasks.submit([escape], { project: "alpha" });
+    expect(() => manager.bindTask("alpha", "lab-escape", escape, tasks)).toThrow(/escape/);
+    const competitor = WorkerTaskSchema.parse({ ...root, id: "lab-other" });
+    tasks.submit([competitor], { project: "alpha" });
+    expect(() => manager.bindTask("alpha", "lab-other", competitor, tasks)).toThrow(/already/);
+  });
+  it("manual promotion checks an exact candidate without changing target", async () => {
+    const manager = setup();
+    const lab = await manager.create("alpha", "candidate");
+    const repo = lab.lab.repositories[0]!;
+    const target = execFileSync("git", ["rev-parse", "HEAD"], { cwd: env!.repo, encoding: "utf8" }).trim();
+    writeFileSync(path.join(repo.worktree, "candidate.txt"), "candidate");
+    commitAll(repo.worktree);
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo.worktree, encoding: "utf8" }).trim();
+    const result = await manager.promote("alpha", "candidate", { by: "human" });
+    expect(result.state).toBe("prepared");
+    expect(result.heads.app).toBe(head);
+    expect(result.checks[0]?.revision).toBe(head);
+    expect(result.commands.length).toBeGreaterThan(0);
+    expect(execFileSync("git", ["rev-parse", "HEAD"], { cwd: env!.repo, encoding: "utf8" }).trim()).toBe(target);
+  }, 30000);
+});
+describe("lab coordination boundaries", () => {
+  it("routes another controller's restart to the existing owner and refuses foreign rebound HTTP", async () => {
+    const manager = setup();
+    await manager.create("alpha", "owned");
+    await manager.start("alpha", "owned");
+    const other = new LabManager({ ...manager.options, monitor: false });
+    managers.push(other);
+    const original = manager.status("alpha", "owned").services[0]!;
+    const op = other.requestControl("alpha", "owned", { kind: "restart", service: "web" }, "fixture-other");
+    await other.processControls();
+    expect(other.operation("alpha", "owned", op.id)?.state).toBe("pending");
+    await manager.processControls();
+    expect(other.operation("alpha", "owned", op.id)?.state).toBe("completed");
+    const restarted = manager.status("alpha", "owned").services[0]!;
+    expect(restarted.pid).not.toBe(original.pid);
+    expect(restarted.owner_id).toBe(manager.owner);
+    expect(other.publicStatus("alpha", "owned").ownership).toBe("other");
+    await manager.stop("alpha", "owned");
+    const { createServer } = await import("node:http");
+    let hits = 0;
+    const server = createServer((_req, res) => {
+      hits++;
+      res.end("foreign");
+    });
+    await new Promise<void>(resolve => server.listen(manager.status("alpha", "owned").lab.ports.web!, "127.0.0.1", resolve));
+    try {
+      await expect(other.http("alpha", "owned", { service: "web" })).rejects.toThrow(/running/);
+      expect(hits).toBe(0);
+    }
+    finally {
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  }, 30000);
+  it("serializes targets, detects overlap and leaves the second conflicting lab intact", async () => {
+    const manager = setup();
+    writeFileSync(path.join(env!.repo, "shared.txt"), "base\n");
+    commitAll(env!.repo);
+    env!.cfg.projects.alpha = { ...ProjectConfigSchema.parse(env!.cfg.projects.alpha), labs: { promotion: "supervisor" } };
+    const first = await manager.create("alpha", "first"), second = await manager.create("alpha", "second");
+    for (const [lab, text] of [[first, "one\n"], [second, "two\n"]] as const) {
+      writeFileSync(path.join(lab.lab.repositories[0]!.worktree, "shared.txt"), text);
+      commitAll(lab.lab.repositories[0]!.worktree);
+    }
+    expect((await manager.coordination("alpha", "first")).overlaps.length).toBeGreaterThan(0);
+    const firstResult = await manager.promote("alpha", "first", { by: "supervisor" });
+    expect(firstResult.state).toBe("promoted");
+    const secondResult = await manager.promote("alpha", "second", { by: "supervisor" });
+    expect(secondResult.state).toBe("conflict");
+    expect(secondResult.conflicts.app).toContain("shared.txt");
+    expect(readFileSync(path.join(env!.repo, "shared.txt"), "utf8").replace(/\r\n/g, "\n")).toBe("one\n");
+    expect(readFileSync(path.join(second.lab.repositories[0]!.worktree, "shared.txt"), "utf8")).toContain("<<<<<<<");
+  }, 30000);
+});
+it("redacts short configured environment values and expired ownership nonces", async () => {
+  const manager = setup();
+  await manager.create("alpha", "redaction");
+  const status = manager.status("alpha", "redaction");
+  status.lab.env = { SECRET: "abc" };
+  status.lab.recipe.env = { SECRET: "abc" };
+  expect(redactLabText(status, "abc " + "f".repeat(48))).toBe("[redacted] [redacted]");
+});
+it("excludes older unrelated processes whose parent PID was reused and rejects changed root identity", () => {
+  const token = "a".repeat(48);
+  const rows = [{ ProcessId: 100, ParentProcessId: 1, CreatedTicks: "1000", CommandLine: `node ${HOST_MARKER} --sy-lab-token=${token}` }, { ProcessId: 200, ParentProcessId: 100, CreatedTicks: "900", CommandLine: "unrelated older panel" }, { ProcessId: 300, ParentProcessId: 200, CreatedTicks: "950", CommandLine: "unrelated child" }, { ProcessId: 400, ParentProcessId: 100, CreatedTicks: "1001", CommandLine: "owned service" }, { ProcessId: 500, ParentProcessId: 400, CreatedTicks: "1002", CommandLine: "owned child" }];
+  expect(ownedWindowsProcessTree(rows, 100, token).map(row => row.ProcessId)).toEqual([100, 400, 500]);
+  expect(() => ownedWindowsProcessTree(rows, 100, "b".repeat(48))).toThrow(/ownership changed/);
+});
+it.skipIf(process.platform !== "win32")("retains orphan ownership evidence and refuses destroy until every known process is gone", async () => {
+  const manager = setup();
+  const created = await manager.create("alpha", "orphan-proof");
+  const token = "c".repeat(48);
+  const child = spawn(process.execPath, ["-e", `// ${HOST_MARKER}\nsetInterval(()=>{},1000)`, "--", `--sy-lab-token=${token}`], { stdio: "ignore", windowsHide: true });
+  child.unref();
+  const pid = child.pid!;
+  const proof = path.join(created.lab.root, "logs", "web.process-tree.json");
+  const fakePid = 2000000000;
+  try {
+    await waitFor(async () => await processOwnership(pid, token) === "owned");
+    await captureOwnedProcessTree(pid, token, proof);
+    const captured = JSON.parse(readFileSync(proof, "utf8")) as {
+      rows: Array<{
+        ProcessId: number;
+        ParentProcessId: number;
+        CreatedTicks: string;
+        CommandLine: string;
+      }>;
+    };
+    writeFileSync(proof, JSON.stringify({ pid: fakePid, token, rows: [{ ProcessId: fakePid, ParentProcessId: 1, CreatedTicks: "1", CommandLine: `${HOST_MARKER} --sy-lab-token=${token}` }, ...captured.rows.map(row => ({ ...row, ParentProcessId: fakePid }))] }));
+    manager.store.saveService({ lab_id: created.lab.id, name: "web", state: "failed", pid: fakePid, token, log_path: path.join(created.lab.root, "logs", "web.log"), restart_count: 0, next_restart: null, started_at: Date.now(), owner_id: manager.owner, owner_until: 0 });
+    await expect(manager.destroy("alpha", "orphan-proof")).rejects.toThrow(/live processes/);
+    expect(existsSync(proof)).toBe(true);
+    expect(existsSync(created.lab.repositories[0]!.worktree)).toBe(true);
+    expect(manager.status("alpha", "orphan-proof").services[0]!.pid).toBe(fakePid);
+    expect(processAlive(pid)).toBe(true);
+  }
+  finally {
+    await stopOwnedProcess(pid, token);
+  }
+  await manager.destroy("alpha", "orphan-proof");
+  expect(existsSync(created.lab.root)).toBe(false);
+}, 30000);
+it("keeps raw lifecycle failure commands out of waiting clients and public operations", async () => {
+  const manager = setup();
+  await manager.create("alpha", "failure");
+  const op = manager.requestControl("alpha", "failure", { kind: "check", name: "health" });
+  db!.prepare("UPDATE lab_operations SET state='failed',error_code='fixture_failure',error_message=? WHERE id=?").run("private command secret-value", op.id);
+  await expect(manager.waitOperation("alpha", "failure", op.id)).rejects.toThrow(/inspect its status/);
+  expect(JSON.stringify(manager.publicOperation("alpha", "failure", op.id))).not.toContain("secret-value");
+});
+it("refuses to promote committed changes in a configured read-only repository", async () => {
+  const manager = setup();
+  const context = manager.options.project("alpha");
+  context.repositoryPaths.app!.writable = false;
+  const created = await manager.create("alpha", "read-only");
+  const repo = created.lab.repositories[0]!;
+  const target = execFileSync("git", ["rev-parse", "HEAD"], { cwd: env!.repo, encoding: "utf8" }).trim();
+  writeFileSync(path.join(repo.worktree, "readonly-change.txt"), "unauthorized lab change");
+  commitAll(repo.worktree);
+  await expect(manager.promote("alpha", "read-only", { by: "human" })).rejects.toThrow(/read-only repository/);
+  expect(execFileSync("git", ["rev-parse", "HEAD"], { cwd: env!.repo, encoding: "utf8" }).trim()).toBe(target);
 });

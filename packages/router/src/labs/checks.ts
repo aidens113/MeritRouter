@@ -23,7 +23,6 @@ export async function runLabCheck(store: LabsStore, lab: LabRecord, name: string
   const revision = (await git(repo.worktree, ["rev-parse", "HEAD"])).trim();
   const result = await runProcess(substitute(typeof check === "string" ? check : check.command, labValues(lab)), [], { cwd: repo.worktree, env: labEnvironment(lab), timeoutMs: timeoutSeconds * 1000, shell: true, signal });
   const record = LabCheckResultSchema.parse({ id: newId("lc"), name, repository: repo.alias, revision, ...result, createdAt: Date.now() });
-  // The check cannot certify edits that occurred concurrently with its command.
   if ((await git(repo.worktree, ["rev-parse", "HEAD"])).trim() !== revision || (await dirtyPaths(repo.worktree)).length) {
     record.exitCode = 1;
     record.killed = "revision_changed";
