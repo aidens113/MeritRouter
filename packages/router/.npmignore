@@ -1,0 +1,5 @@
+# Runtime assets are selected by package.json files. Never ship build caches or host dependencies.
+panel/.next/cache/
+panel/.next/dev/
+panel/.next/types/
+panel/**/node_modules/

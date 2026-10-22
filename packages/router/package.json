@@ -17,7 +17,13 @@
   "files": [
     "dist",
     "examples",
-    "evals"
+    "evals",
+    "charters",
+    "panel/.next",
+    "panel/package.json",
+    "panel/next.config.mjs",
+    "panel/public",
+    "panel/runtime-modules"
   ],
   "engines": {
     "node": ">=22.11.0"
@@ -25,7 +31,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsc -p tsconfig.build.json && vitest run"
+    "test": "tsc -p tsconfig.build.json && vitest run",
+    "package:build": "node scripts/package-build.mjs",
+    "prepack": "node scripts/package-build.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
@@ -33,7 +41,12 @@
     "better-sqlite3": "~12.11.1",
     "picomatch": "^4.0.3",
     "yaml": "^2.9.1",
-    "zod": "^4.6.7"
+    "zod": "^4.6.7",
+    "next": "16.4.2",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "lucide-react": "^1.59.0",
+    "server-only": "^0.0.1"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",
