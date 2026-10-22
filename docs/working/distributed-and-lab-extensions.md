@@ -12,9 +12,20 @@ Related: [roadmap completion](roadmap-completion.md), [Labs](labs.md), [sessions
 
 L1-L4 integration is active under roadmap-completion.md. L5 and R2 were explicitly deferred in
 their original plans; the current build request keeps them open. This document scopes their
-prerequisites rather than treating them as delivered. Isolated implementation now covers an
-initial static-render browser-check unit (scripts disabled; not hydrated app acceptance) and
-the first async Gate request-accounting boundary. Neither is accepted or merged yet.
+prerequisites rather than treating them as delivered. Initial static-render browser checks
+(scripts disabled; not hydrated app acceptance) and the first async Gate accounting boundary
+are now merged locally after independent8/8 actual Chrome and17/17 ledger tests. Whole-head
+evidence reuse is integrated; full combined acceptance remains pending. Ephemeral-task plan
+is [recorded separately](distributed-and-lab-extensions/reports/ephemeral-lab-plan.md).
+
+L1-L4 and the earlier panel fixes are accepted and pushed at77914fc. The next local unit
+at6d61b8e has passed recursive typecheck/build, production policy/model/Labs/legacy browser
+checks and an outside-checkout install smoke; the complete router suite passed734/734 tests
+in83 files (484.47s). Static browser and async Gate accounting prerequisites are accepted.
+Task-Lab lifecycle unit1 and the default async queue-claim boundary are assigned to isolated,
+file-partitioned workers below. Compose-services investigation is report-only in a third tree.
+Caller wiring for task-Lab verification follows lifecycle contract freeze; no ephemeral-task,
+Compose or PostgreSQL/multi-host completion is claimed.
 
 The current store is the synchronous better-sqlite3 Database type. Raw prepared statements,
 transactions and SQLite expressions reach beyond storage into admission, routing, admin,
@@ -80,6 +91,15 @@ not a reason to stop the independently runnable core work. No service was instal
 
 ## Worker Briefs
 
+### Brief: ephemeral-lab-integration-plan
+- Repository: root read-only source at77914fc; browser WT stays frozen under supervisor tests. Report only at `docs/working/distributed-and-lab-extensions/reports/ephemeral-lab-plan.md` in root.
+- Task: inspect actual task attempt/workspace/finish/verification/integration pipeline and Lab ownership APIs; produce executable L5 ephemeral-task-lab plan with exact interfaces and file partitions. Read Current State/L5 sequence above; browser unit report in its WT for new checks/artifact fields.
+- Owns: only own report. No code/shared docs/branches/generated files/commits/services/provider calls/user data. No modifications to the frozen browser tree.
+- Required decisions: opt-in declared checks contract and configuration/task validation; exact immutable task-attempt heads/owned source; isolated branch/data/ports; coding output-to-verification hook before integration; cancellation/timeout/kill recovery teardown; retained evidence vs destroy/retention; promotion exclusion and no shared Lab-team claim conflicts.
+- Preserve task allowedPaths, provider budgets, attribution, normal jobs and Labs. No arbitrary model commands or new authority from prompt text. Stored task-attempt ownership must fence cleanup and keep another attempt's worktree untouched.
+- Output exact new schemas/migration needs, signatures, primary owned files and affected caller tests. Distinguish designs from implementation/verification. Include actual killed-owner fixture acceptance. Do not silently substitute reusing one shared feature Lab for per-attempt isolation.
+- Return bounded first implementation brief recommendation; supervisor independently reviews, writes next brief and dispatches after current browser source is accepted/frozen.
+
 ### Brief: request-ledger
 - Repository: `.claude/worktrees/roadmap-process`, branch `feat/roadmap-request-ledger`, baseline6a77c4a. Source dependencies reconciled by supervisor; isolated from root/panel/browser work.
 - Task: implement the report's first integrated async request-accounting slice. Read own distributed-storage-inventory report and Current State above; preserve single atomic SQLite accounting and synchronous compatibility facade.
@@ -101,6 +121,44 @@ not a reason to stop the independently runnable core work. No service was instal
 - Capture exact checked heads, bounded screenshot artifact references plus console/page errors; redact configured secrets, avoid model-visible host paths/commands. Cleanup owned Chrome/profile/listeners on timeout/cancel/error. Keep raw pixels outside public status/logs.
 - Acceptance: actual installed Chrome isolated fixture pass/assertion failure; foreign port rebound, cross-origin redirect/subresource denial; bounded output/screenshots and cancellation cleanup; existing Lab check tests. Record any browser containment limitation candidly and do not silently widen trust.
 - Verification: own narrow tests/typecheck in this isolated tree, report exact results, then freeze for supervisor review. Do not run Next build. Worker never edits this brief/current state/ledger.
+
+### Brief: task-lab-lifecycle
+- Repository: `.claude/worktrees/roadmap-labs`, branch `feat/roadmap-task-labs`, baseline6d61b8e. Isolated from combined root/panel acceptance.
+- Task: implement unit1 of own ephemeral-lab-plan report: durable task-attempt identity, isolated exact-head Lab lifecycle/queued checks/teardown/retention, and auxiliary process ownership recovery. Caller/verification wiring is a subsequent serial unit; do not claim ephemeral task integration complete now.
+- Required reads: Current State and own report's schemas/APIs/teardown/file partitions/acceptance. Existing static browser and awaited accounting are merged; preserve their contracts.
+- Owns: new named labs/task-attempt*.ts modules; labs/store.ts, lab.ts, control.ts, services.ts, promotion.ts, binding.ts, retention.ts, recipe.ts; browser-process/check and command setup/check registration hooks; append storage/migrations.ts only; new task-attempt tests/fixtures and own report `distributed-and-lab-extensions/reports/task-lab-lifecycle.md`.
+- Must not touch: core service/executor/task, workspaces/task store, runners/coding/verification/harness, admission/gateway, panel/admin/CLI/public exports/config schema/project schema/shared docs or packages. Send stable handle/queue/evidence API early; root owns integration boundaries and preserves new ephemeral config through recipe UI later.
+- Enforce persisted attempt UUID+task project/lease/run_count identity, not latest task workspace pointer. Verify immutable attributed commit/tree/all-repo heads and physical Git/worktree ownership before creating separate services; never run from/delete the worker source or target checkout.
+- Retained-vs-task kind must be validated/migrated with legacy compatibility. Public retained-Lab mutation/promotion/team binding must refuse task Labs at actual boundaries. Stopped safely retained task evidence releases active capacity/ports; cleanup_blocked retains ownership/reservations and refuses success/prune.
+- Auxiliary setup/check/browser children require durable spawn intent+nonce and dormant-until-registration launch; recover spawn-before-PID persistence without broad PID kills. Validate birth/command/marker, retain ambiguity, and terminate known owned children before root removal. Do not claim killed-owner cleanup from finally blocks.
+- Execute lifecycle through current Labs serve owner with task-aware cancellation/deadline/generation polling; no model worker auto-start. Public model control bodies cannot forge internal attempt operations. Browser pixels/artifact hashes remain private/bounded and retained after normal teardown.
+- Acceptance: two real isolated attempt services/checks/data/ports, exact-head and cross-project/foreign-source refusals, normal failure/cancel/timeout, actual killed owner at declared barriers (including auxiliary and spawn-registration window), repeat recovery and foreign listener survival, capacity/retention/promotion exclusions. Fake providers/temp installs only, no user data/4477. Existing lifecycle/browser regression proportional; typecheck/build then freeze.
+- Structure: attempt concern goes in named modules, diagnose lab.ts growth and do not dump all logic there. No commits/push/shared-doc edits. Report limitations; command-only checkpoint may reject browser attempts until durable recovery is actually verified, never silently accept without evidence.
+
+### Brief: task-queue-port
+- Repository: `.claude/worktrees/roadmap-process`, branch `feat/roadmap-queue-port`, baseline6d61b8e; isolated from supervisor acceptance and task-Lab lifecycle worker.
+- Task: implement the next exercised async SQLite queue boundary: default Scheduler must await data-only queue claims/companion claims, preserving existing atomic claim policy and sync TaskStore compatibility. This prerequisite is not distributed/PG completion.
+- Required reads: Current State of this document; own distributed-storage-inventory report's queue contracts; storage/tasks.ts, fair-claim.ts, file-leases.ts, core/scheduler.ts and actual constructor/caller tests as needed.
+- Owns: new storage/task-queue.ts and sqlite-task-queue.ts; storage/tasks.ts if shared core extraction necessary; core/scheduler.ts and minimal core/service.ts wiring; new task-queue/scheduler async tests; own report distributed-and-lab-extensions/reports/task-queue-port.md.
+- Must not touch: migrations (owned by Lab worker), Labs/workspaces/runners/executor/admission/gateway/config/project schemas, panel/CLI/index, manifests/lock, shared docs. Ask before expanding scope; no commits/push, installations, live provider calls, user data or services.
+- Contract: validated DTO requests/results, no Db/JS callbacks or predicates crossing the port. SQLite adapter privately owns actual policy dependencies (project/provider limits, redundancy/batch compatibility); use current effective config and single shared TaskStore transaction logic. Do not move authoritative limits to caller snapshots or duplicate admission math.
+- Claim compatibility: retain fairness, job/project/provider/global/writer/file caps, deadlines, profile modes, prompt batching and redundancy isolation. A companion cannot escape the existing same-project batch/cap rules.
+- Await safety: serialize tick operations; track pending claim/companion promises; stop waits for pending queue operations, dispatches zero new executors after shutdown, and releases or safely interrupts exactly its newly acquired leases. Fail closed on queue errors; no unhandled timer rejection or premature DB close. Avoid executing a stale lease after delayed await; recheck persisted validity immediately before dispatch.
+- Keep synchronous recovery/renew/finish compatibility for this bounded unit; explicitly list unmigrated operations. Do not introduce PG selection, host registration or claim generation semantics without a reviewed next contract.
+- First send supervisor concrete DTO signatures and shutdown/companion strategy after inspection, then implement within scope. If no data-only policy-safe adapter is possible within these files, report exact blocker instead of shipping callback-bearing scaffolding.
+- Definition of done: actual default service Scheduler uses port; delayed/rejected claim and companion fixtures prove serialization, shutdown drain/no post-stop dispatch, errors fail closed, no lost owned lease; existing fairness/batching/provider/writer/process tests pass. Run router build/typecheck and focused tests, record exact results, freeze for independent supervisor review.
+- Report to: docs/working/distributed-and-lab-extensions/reports/task-queue-port.md; distinguish implemented SQLite async prerequisite from remaining R2 work.
+
+### Brief: compose-services-plan
+- Repository: `.claude/worktrees/roadmap-team`, accepted source baseline5b4725a contains browser checks; read-only source investigation. Isolated from active lifecycle/queue work.
+- Task: produce executable L5 Compose-services design and bounded implementation brief for later integration. Current work is planning only; do not install/start Docker, containers or services.
+- Required reads: Current State/L5 sequence here, labs/recipe.ts, services.ts, process.ts, ports.ts, store.ts, lifecycle ownership/recovery files as needed. Source is frozen in your tree; don't merge/rebuild.
+- Owns: only own report docs/working/distributed-and-lab-extensions/reports/compose-services-plan.md. No shared docs/source/tests/config/package edits; no commits/push or user data/provider calls.
+- Must define: command-vs-compose recipe union/backward compatibility; unique persisted project/generation labels; resolved-config validation before effects; allowed lab worktree/data mounts only; no host network/privileged/public ports/foreign writable mounts; image/build/secret/environment authority stays human-declared and private.
+- Trace durable create/start/readiness/restart/adopt/stop/destroy and hard-kill recovery. Persist command intent before engine calls; verify current inspect ownership before stop/down. Explicitly handle foreign project/name collision, lost engine response, partial container/network/volume creation, stale incarnation, unavailable engine and bounded cleanup.
+- No broad compose command passthrough or model-authored Docker config. Separate actual host-engine security properties from assumptions; never treat labels alone as authority if forged or stale. Identify immutable engine/container ID+generation proof.
+- Output exact proposed schemas/migration/API changes, file partitions after task-Lab lifecycle freezes, fake-CLI acceptance and actual two-isolated-Lab engine acceptance. Note currently unavailable engine is unverified acceptance dependency, not proof of support.
+- Definition of done: report actionable enough to implement without rediscovery, concrete bounded first brief, no runtime changes or engine starts. Include commands/reads observed, missing dependencies and user-facing limitations.
 
 ## Work Ledger
 

@@ -15,6 +15,7 @@ import type { ResumeInput } from "../harness/resume.js";
 import type { ResumeToolRef } from "../sessions/events.js";
 import { artifactTool, brainReadTools, brainSupervisorTools, commandTool, editTools, repoTools, type HarnessEnv, type HarnessTool } from "../harness/tools.js";
 import { labHarnessTools } from "../labs/tools.js";
+import { labCheckMatchesHeads } from "../labs/checks.js";
 import { webTools } from "../harness/web-tools.js";
 import { ensureCarves, jobDepth, mergeHooks, subJobSection, supervisorTools, type IntegrationRepo, type SupervisorState } from "../harness/supervisor-tools.js";
 import { coordinationGuard, sharedFilesOf } from "../harness/coordination-edits.js";
@@ -304,6 +305,7 @@ export class SupervisorRunner implements CodingRunner {
       } catch {
         cs = ""; // a sub-job section that could not be written
       }
+      const boundedNote = spec.supervisionScope === "subtask" ? "\n- Bounded delegated subtask: Claude/Codex (or your internal parent supervisor) owns final project review, integration, tests and completion. finish_job completes only this bounded goal; never claim final project acceptance." : "";
       const subNote = isSubJob
         ? `\n- Sub-job of job ${spec.parentTaskId} (supervisor level ${depth} of at most ${ctx.cfg.team.max_depth}): your branches fork from the parent job's branches; the parent integrates them when you finish, so finish with everything you want delivered integrated on your branch\n- Your section of the parent's working document: "${docSection}" (rewrite your status with brain_set_job_section; the parent's Current State is not yours)`
         : depth < ctx.cfg.team.max_depth
@@ -312,7 +314,7 @@ export class SupervisorRunner implements CodingRunner {
       messages = [
         {
           role: "system",
-          content: `${charterFor(ctx.cfg, "supervisor")}\n\n## This job\n- Job id: ${ctx.taskId}\n- Working document: brain:${brain?.workingDoc ?? "(brain disabled)"}\n- Repositories:\n${repoNotes || "- none writable (read-only job)"}\n- Model request budget: ${ctx.budget.maxModelRequests} (await_tasks costs none). It is the job's pool: each task you delegate holds its budget (max_requests, default ${ctx.cfg.team.default_task_requests ?? "its tier's cap"}) from it while open, and approved requests for more come out of it\n- ${ctx.cfg.supervisor.implementation === "delegate" ? `Implementation: delegate. Your edit tools change only coordination files (${ctx.cfg.supervisor.coordination_paths.join(", ")}, files your briefs name in shared_files, and files of an integration conflict you fix); delegate every other change, and re-delegate when a worker fails or runs out` : "Implementation: allowed. You may edit files in your integration worktree, but prefer delegating"}\n- Tasks of this job running at once (team.max_agents): ${maxAgentsPerJob(ctx.cfg)}; more wait queued${subNote}\n\nEnd with finish_job.`,
+          content: `${charterFor(ctx.cfg, "supervisor")}\n\n## This job\n- Job id: ${ctx.taskId}\n- Working document: brain:${brain?.workingDoc ?? "(brain disabled)"}\n- Repositories:\n${repoNotes || "- none writable (read-only job)"}\n- Model request budget: ${ctx.budget.maxModelRequests} (await_tasks costs none). It is the job's pool: each task you delegate holds its budget (max_requests, default ${ctx.cfg.team.default_task_requests ?? "its tier's cap"}) from it while open, and approved requests for more come out of it\n- ${ctx.cfg.supervisor.implementation === "delegate" ? `Implementation: delegate. Your edit tools change only coordination files (${ctx.cfg.supervisor.coordination_paths.join(", ")}, files your briefs name in shared_files, and files of an integration conflict you fix); delegate every other change, and re-delegate when a worker fails or runs out` : "Implementation: allowed. You may edit files in your integration worktree, but prefer delegating"}\n- Tasks of this job running at once (team.max_agents): ${maxAgentsPerJob(ctx.cfg)}; more wait queued${subNote}${boundedNote}\n\nEnd with finish_job.`,
         },
         {
           role: "user",
@@ -370,9 +372,10 @@ export class SupervisorRunner implements CodingRunner {
     if(ctx.lab && ctx.lab.rootJobId===ctx.taskId){
       const status=ctx.lab.manager.status(ctx.lab.project,ctx.lab.name);
       for(const name of Object.keys(status.lab.recipe.checks)){
-        const result=status.checks.find(check=>check.name===name&&check.revision===status.heads[check.repository]);
+        const result=status.checks.find(check=>check.name===name&&labCheckMatchesHeads(check,status.heads));
         const repo=status.lab.repositories.find(repo=>repo.alias===result?.repository);
-        const clean=repo && !(await dirtyPaths(repo.worktree)).length;
+        const checkedRepos=result?.browser?status.lab.repositories:repo?[repo]:[];
+        const clean=repo && (await Promise.all(checkedRepos.map(item=>dirtyPaths(item.worktree)))).every(paths=>paths.length===0);
         const logRef=ctx.artifacts.write({taskId:ctx.taskId,executionId,kind:"check_log",label:`lab:${name}`,content:ctx.lab.manager.redact(ctx.lab.project,ctx.lab.name,result?`revision ${result.revision}\nexit ${result.exitCode}\n${result.stdout}\n${result.stderr}`:"No check result exists for this candidate revision."),extension:".log"});
         checks.push({command:`lab:${name}`,exitCode:result&&clean&&!result.killed?result.exitCode:null,logRef,revision:result?.revision??null});
       }

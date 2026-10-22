@@ -720,6 +720,33 @@ the request. These checks are not an OS sandbox for human-authored commands. Lin
 support exists, but this acceptance used Windows fixtures. Browser/ephemeral/Compose extensions
 and multi-host PostgreSQL remain separate work; they are not implied by the Labs UI.
 
+### Declared static browser checks
+
+A recipe check can use `kind: browser`, `mode: static`, a declared HTTP `service`, an absolute
+human-configured Chromium `executable`, and bounded assertions (`exists`, `text_contains`,
+`title_contains`). Viewport, timeout, resource count/bytes and screenshot bytes are limited.
+Models choose only a declared check name. The browser runs offline with scripts disabled;
+an owned broker supplies only positively verified service-origin resources and refuses redirects
+and foreign resources. A script/hydration-dependent assertion fails instead of claiming success.
+
+Evidence records every repository head, assertion outcomes and bounded private screenshot
+metadata. Reuse requires all recorded heads and clean repositories to match. Trusted callers
+can retrieve a screenshot through the scoped manager API with size/hash verification; images
+are not automatically sent to models and pixel redaction is not claimed. Browser/profile cleanup
+runs on timeout/cancel. These controls are not an OS network sandbox: JavaScript/hydrated checks,
+ephemeral task Labs and Compose remain separate unfinished work.
+
+### Awaited request accounting
+
+Normal Gate calls await a data-only request-ledger port before dispatch and before returning or
+falling back. SQLite's existing synchronous API and atomic request/participant/paid transaction
+remain the default implementation. After a pending reservation resolves, lease ownership,
+expiry, cancellation and deadline are checked again before HTTP. A definitely-unsent attempt is
+recorded with no paid bill; uncertain outcome persistence never triggers another provider spend.
+Shutdown drains these calls before closing SQLite. This is an async interface migration, not a
+PostgreSQL backend: distributed claims, fencing, journals, artifact storage and two-host
+acceptance remain outstanding.
+
 ## The brain and attribution
 
 - The brain is one git repository (`brain.path`) for every project: `projects/<slug>/` per

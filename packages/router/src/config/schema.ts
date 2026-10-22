@@ -743,6 +743,12 @@ export const WebConfigSchema = z
   .strict();
 export type WebConfig = z.infer<typeof WebConfigSchema>;
 
+/** Advice for the connected outer MCP client; grants no permissions. */
+export const ClientSupervisionSchema = z.object({
+  dispatch_final_supervisor: z.boolean().default(false),
+  instructions: z.string().trim().max(8000).default(""),
+}).strict();
+
 export const ConfigSchema = z
   .object({
     version: z.literal(1),
@@ -934,6 +940,7 @@ export const ConfigSchema = z
     team: TeamConfigSchema.prefault({}),
     coding: CodingConfigSchema.prefault({}),
     labs: LabsConfigSchema.prefault({}),
+    client_supervision: ClientSupervisionSchema.prefault({}),
     /** Importance and verification policy: what evidence a result needs before it is accepted. */
     verification: VerificationConfigSchema.prefault({}),
     /** Agents' web search and page fetch: backends, roles, budgets. */

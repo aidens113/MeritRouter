@@ -70,6 +70,8 @@ export const WorkerTaskSchema = z
     dependsOn: z.array(z.string().min(1)).optional(),
     /** The supervising job (a supervise task) that dispatched this task. */
     parentTaskId: z.string().min(1).optional(),
+    /** Explicit authority of an externally delegated supervisor; absent legacy roots are project scope. */
+    supervisionScope: z.enum(["subtask", "project"]).optional(),
     /** The project-scoped isolated lab inherited by all tasks in a team. */
     lab: z.string().regex(/^[a-z0-9][a-z0-9-]{0,40}$/).optional(),
     /** Short agent label used for the report file and commit identity. */

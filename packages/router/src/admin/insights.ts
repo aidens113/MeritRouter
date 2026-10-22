@@ -675,3 +675,5 @@ export function decideBrainAccess(sy: Switchyard, id: number, approve: boolean, 
   const access = owner && sy.projects.get(owner) ? sy.brainAccessFor(owner) : sy.brainAccess;
   return access.decide(id, approve, "human", reason);
 }
+
+export * from "./client-supervision.js";

@@ -1,5 +1,6 @@
 import type { ResolvedConfig } from "../config/load.js";
-import type { Admission, Participant } from "../admission/admission.js";
+import type { Participant } from "../admission/admission.js";
+import { RequestOutcomeDTOSchema, ReservationDTOSchema, ReserveRequestDTOSchema, RequestPersistenceError, type RequestLedger, type ReservationDTO, type RequestOutcomeDTO } from "../admission/request-ledger.js";
 import { AdmissionDenied, GatewayError, PAID_BUDGET_DENIALS, type GatewayErrorKind } from "../core/errors.js";
 import type { ModelEndpoint } from "../models/catalog.js";
 import { freeKeyOnly, isPaid, planSearch } from "../routing/select.js";
@@ -66,7 +67,8 @@ export function asProviderError(err: unknown, provider: string, aborted: boolean
 
 export interface DirectDeps {
   cfg: ResolvedConfig;
-  admission: Admission;
+  ledger: RequestLedger;
+  assertDispatch(participants: Participant[]): void;
   health: ProviderHealth;
   direct: DirectRuntime;
 }
@@ -181,9 +183,9 @@ export async function requestDirect(
         release();
         continue;
       }
-      let reservation: ReturnType<Admission["reserve"]>;
+      let reservation: ReservationDTO;
       try {
-        reservation = d.admission.reserve({
+        reservation = ReservationDTOSchema.parse(await d.ledger.reserve(ReserveRequestDTOSchema.parse({
           executionId: req.executionId,
           profile: req.plan.profile,
           purpose: req.purpose,
@@ -194,8 +196,8 @@ export async function requestDirect(
           estInputTokens: estInput,
           reservedOutputTokens: req.chat.max_tokens,
           participants,
-          ...(spendKey ? { paid: { spend: d.direct.spend, key: spendKey, provider: route.provider, worstCaseUsd: worst, price } } : {}),
-        });
+          ...(spendKey ? { paid: { key: spendKey, provider: route.provider, worstCaseUsd: worst, price } } : {}),
+        })));
       } catch (err) {
         release();
         d.health.breakers.release(ep.providerId);
@@ -203,7 +205,30 @@ export async function requestDirect(
           attempts.push({ endpointId: ep.id, outcome: `skipped (paid budget): ${err.message}`, denial: err.reason });
           return lastKeyError ? { kind: "failed", error: lastKeyError } : { kind: "skip", resumeAt: null };
         }
-        throw err;
+        throw err instanceof AdmissionDenied ? err : new RequestPersistenceError("reserve", null, err);
+      }
+
+      const reconcile = async (outcome: RequestOutcomeDTO) => {
+        try { await d.ledger.reconcile(reservation, RequestOutcomeDTOSchema.parse(outcome)); }
+        catch (error) { throw new RequestPersistenceError("reconcile", reservation.requestId, error); }
+      };
+      // An async reserve may commit before cancellation arrives. Keep its audit row, return
+      // definitely-unsent quota/billing, and never send a provider request after the abort.
+      if (req.signal?.aborted) {
+        release();
+        d.health.breakers.release(ep.providerId);
+        await reconcile({ kind: "failed", errorKind: "aborted", errorMessage: "aborted after reservation, before provider dispatch" });
+        throw Object.assign(new GatewayError("aborted", "aborted before provider dispatch", undefined, undefined, false), { attempts });
+      }
+
+      // No await between this SQLite authority check and invoking the provider client.
+      try { d.assertDispatch(participants); }
+      catch (error) {
+        release();
+        d.health.breakers.release(ep.providerId);
+        if (!(error instanceof AdmissionDenied)) throw new RequestPersistenceError("reserve", reservation.requestId, error);
+        await reconcile({ kind: "failed", errorKind: error.reason, errorMessage: error.message });
+        throw error;
       }
 
       let response: ProviderResponse;
@@ -229,7 +254,7 @@ export async function requestDirect(
         }
         const keyLevel = KEY_LEVEL.has(pe.reason);
         d.health.recordOutcome(ep.providerId, pe, slot.generation, { keyLevel });
-        d.admission.reconcile(reservation, { kind: pe.possiblyConsumed ? "uncertain" : "failed", ...(pe.status !== undefined ? { httpStatus: pe.status } : {}), errorKind: pe.kind, errorMessage: pe.message });
+        await reconcile({ kind: pe.possiblyConsumed ? "uncertain" : "failed", ...(pe.status !== undefined ? { httpStatus: pe.status } : {}), errorKind: pe.kind, errorMessage: pe.message });
         attempts.push({ endpointId: ep.id, outcome: pe.kind });
         if (pe.reason === "aborted") throw Object.assign(pe, { attempts });
         if (keyLevel) {
@@ -252,7 +277,7 @@ export async function requestDirect(
         ? `provider ${provider.id} reported ${chatResponse.usage.cacheCreationInputTokens} cache creation tokens despite disabled prompt caching` : undefined;
       const violation = unexpectedWrite ?? (
         served && served !== route.model && !served.startsWith(`${route.model}-`) && !served.endsWith(`/${route.model}`) ? `requested ${route.model} but ${provider.id} served ${served}` : undefined);
-      d.admission.reconcile(reservation, { kind: "succeeded", response: chatResponse, servedEndpointId: violation ? null : ep.id, ...(violation ? { policyViolation: violation } : {}) });
+      await reconcile({ kind: "succeeded", response: chatResponse, servedEndpointId: violation ? null : ep.id, ...(violation ? { policyViolation: violation } : {}) });
       if (violation) {
         attempts.push({ endpointId: ep.id, outcome: "policy_violation" });
         throw Object.assign(new GatewayError("policy_violation", `${violation}; response discarded and ${ep.id} quarantined`), { attempts });
@@ -273,7 +298,7 @@ export async function requestDirect(
  * before any HTTP (the probe then reports unknown). A probe belongs to no task, so it is not
  * admission-charged and its slot row does not count against tasks' slots.
  */
-export function probeClient(d: Omit<DirectDeps, "admission">): Pick<ProviderClient, "complete"> {
+export function probeClient(d: Omit<DirectDeps, "ledger" | "assertDispatch">): Pick<ProviderClient, "complete"> {
   const rt = d.direct.providers;
   return {
     async complete(req) {

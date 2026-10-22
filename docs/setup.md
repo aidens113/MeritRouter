@@ -361,6 +361,12 @@ panel's Scan button does the same as `models scan` for every provider; a running
 
 ## 4. Connect an MCP client (Claude Code, Codex, ChatGPT)
 
+The connected client is the final project supervisor by default and receives instructions to
+delegate bounded work, review/integrate the results, test and iterate. SwitchYard can run bounded
+sub-supervisors without taking that final role. Settings → General → Claude/Codex supervision
+controls permission to dispatch a SwitchYard final project supervisor; it starts off. You can
+also explicitly ask the model to change it through the policy tool. See [supervisor ownership](roles.md#who-supervises).
+
 `switchyard mcp` is SwitchYard's MCP server. It is the same as `node
 packages/router/dist/cli.js mcp`, or `node packages/router/dist/mcp.js` for older registrations.
 The server reads `SWITCHYARD_CONFIG`, or you pass `--config`. Paths below are examples. Use

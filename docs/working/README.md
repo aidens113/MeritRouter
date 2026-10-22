@@ -7,7 +7,7 @@ lines, worker briefs, append-only ledger with real validation, open questions).
 | Document | Status | Scope |
 | --- | --- | --- |
 | [roadmap-completion.md](roadmap-completion.md) | Active | User-authorized execution of the remaining audit: correctness, Labs, packaging, provider/project follow-ups and acceptance. |
-| [external-supervisor-guidance.md](external-supervisor-guidance.md) | Active | MCP final project-supervisor dispatch defaults off; bounded sub-supervisors remain available, configurable in UI/by explicit request. |
+| [external-supervisor-guidance.md](external-supervisor-guidance.md) | Complete | Accepted default-OFF MCP final supervisor permission, bounded sub-supervisors, UI/explicit-request controls;734-test integrated acceptance. |
 | [distributed-and-lab-extensions.md](distributed-and-lab-extensions.md) | Active | Follow-on L5 browser/ephemeral/Compose and R2 PostgreSQL/multi-host architecture and acceptance prerequisites; not implemented. |
 | [handoff.md](handoff.md) | Active | **Start here:** the state of every effort, the user's live install, and what to do next (2026-10-22). |
 | [agent-sessions-and-teams.md](agent-sessions-and-teams.md) | Active | Durable resumable agent sessions, failure resilience, coordinated agent teams. S1-S2, R1, T1-T3 done; live validation outstanding, R2 deferred. |

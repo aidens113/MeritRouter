@@ -32,17 +32,26 @@ opens1, keyboard focus/closing work. Historical model links and catalog-only ref
 Fresh tarball51,561,351bytes/2489entries installs outside checkout (QiBFVy); native SQLite,
 CLI discovery/init/setup, MCP40tools,8 production panel/API routes and stylesheet, detached
 setup start/reuse/stop pass with checkout reads forbidden. Owned fixtures are stopped. This
-coherent unit is ready for dev/main; previously only provider7a1873f was pushed. Actual user
+coherent unit was pushed to dev/main at77914fc (remote heads verified equal). Actual user
 panel4477 and MCP processes were not restarted or used for tests; no deployed-fix claim.
 
-**Continuing:** L5 static-render browser checks are frozen in their isolated tree pending root
-review/repetition/all-heads evidence reuse integration. Hydrated JS, ephemeral task Labs and
-Compose remain open. R2 inventory found81 SQLite consumers; first async Gate accounting slice
-is receiving post-reservation lease/deadline revalidation. PostgreSQL/multi-host is not enabled.
+**Next accepted source6d61b8e:** static-render browser checks, all-heads evidence reuse and
+first async Gate accounting boundary, plus corrected MCP final-supervisor dispatch. Supervisor
+observed734/734 tests in83files (484.47s), recursive typecheck/build, production policy UI/MCP,
+model navigation, Labs18screenshots and legacy recipe API checks. Viewed desktop/phone captures.
+Fresh tarball53,308,449bytes/2522entries installs outside checkout (hrAtm3): native SQLite,
+CLI, MCP42tools,8 panel/API routes/CSS and setup start/reuse/stop pass; owned processes closed.
+
+**Continuing:** Hydrated
+JS, ephemeral task Labs and Compose remain open. R2 inventory found81 SQLite consumers;
+PostgreSQL/multi-host is not enabled. Ephemeral integration plan records attempt identity,
+exact commit/tree evidence and durable auxiliary-process recovery prerequisites.
 User additionally clarified MCP final-supervisor dispatch must default OFF, while bounded
-sub-supervisors remain available. That setting/guard/UI work is active under
+sub-supervisors remain available. That setting/guard/UI work is merged locally under
 [external-supervisor-guidance](external-supervisor-guidance.md); obsolete guidance-enable
-toggle semantics were rejected. No whole-roadmap completion claim.
+toggle semantics were rejected. The corrected feature is accepted in the combined checks above.
+Task-Lab lifecycle, async queue claim implementation and Compose design are dispatched under
+file-partitioned briefs. No whole-roadmap completion claim; actual4477/MCP remain unchanged.
 
 ## Execution phases
 
@@ -55,8 +64,8 @@ toggle semantics were rejected. No whole-roadmap completion claim.
 | E5 | Config discovery/setup/bundled panel/package | Fresh isolated install passes; no publication or cross-platform install claim |
 | E6 | External tools, accounting, providers, restore/config/project fixes | Accepted fake-provider/process/production checks; live-provider limits remain |
 | E7 | Concurrent processes/crash/CLI/MCP/deletion/performance | Measured and passing integrated; no real-provider throughput claim |
-| E8 | Remaining L5 and R2 phases | Static browser and first async ledger isolated; JS/ephemeral/Compose/PostgreSQL still open |
-| E9 | User-requested configurable MCP final-supervisor ownership | Corrected default false + bounded sub-supervisors; implementation active |
+| E8 | Remaining L5 and R2 phases | Static browser/first async ledger accepted; JS/ephemeral/Compose/PostgreSQL still open |
+| E9 | User-requested configurable MCP final-supervisor ownership | Accepted default false + bounded sub-supervisors, dispatch/resume guards and UI |
 
 For each phase the supervisor reviews diffs, runs relevant tests then recursive typecheck/build
 and full router suite for integrated code. Panel work additionally uses seeded demo production
@@ -166,6 +175,13 @@ passing units reach dev/main. Documentation and source commit together.
 
 ## Work Ledger
 
+### Acceptance ledger: 2026-10-22 — browser, ledger and client supervision
+- Agent: supervisor.
+- Changed: accepted source6d61b8e with bounded static browser checks, fail-closed all-repository evidence reuse, awaited default Gate request accounting, corrected final-supervisor ownership setting/guards/UI.
+- Validation:734/734 tests,83files,484.47s; recursive typecheck/build; actual production policy/model/Labs/legacy API/browser checks;18 Labs and4 policy screenshots, desktop/phone light/dark; fresh package53,308,449bytes/2522entries installed at temporary hrAtm3 with checkout reads forbidden, native/CLI/MCP42/panel8routes+CSS/setup lifecycle passed and processes closed.
+- Outcome: Accepted coherent unit; no full-roadmap or user-install deployment claim.
+- Follow-up: isolated task-Lab lifecycle and queue-claim workers implement next prerequisites; Compose worker writes executable design. Hydrated JS, full ephemeral integration, Compose and PostgreSQL/two-host acceptance remain open.
+
 ### Brief: external-runner-tools (next worker after project recovery)
 - Repository: isolated roadmap-external branch/worktree based on E1 checkpoint plus current dev; supervisor creates it.
 - Task: provide external OpenCode/command coding agents the declared run_check and request_more_budget capabilities, with the same code-enforced checks/limits/decision behavior as native agents. Inspect official adapter/source contracts before integration; never claim arbitrary command agents use a tool automatically.
@@ -249,6 +265,20 @@ passing units reach dev/main. Documentation and source commit together.
 - Validation: frozen e0aad08 full701/701(78files,422.38s); recursive typecheck and isolated recursive build pass. Independent final production Labs/Verification/hover-focus/live/API18captures, legacy migration and model navigation all pass; no browser exceptions. Fresh npm tarball51,561,351bytes/2489entries; outside install QiBFVy native/CLI/MCP40/panel8routes+CSS/setup launch/reuse/stop passes with checkout reads forbidden.
 - Outcome: Accepted for coherent E1-L4/package/correctness unit
 - Follow-up: push dev/main under standing authorization, then continue E8/E9. User4477 untouched; future static browser/ledger/policy code not part of this acceptance. Earlier failed runs and repairs remain recorded above.
+
+### 2026-10-22 - Accepted unit pushed; extension reviews continue
+- Agent: supervisor
+- Changed: merged accepted roadmap unit to dev and fast-forwarded main; both remote heads verified77914fc. No user process restarted. Merged async ledger0178ba7 and static browserb82be18 locally after independent review; added whole-environment browser-head reuse check and public validated contracts.
+- Validation: supervisor browser8/8(131.52s) actual Chrome; ledger17/17(6.08s) including post-reservation persisted lease/cancel/deadline refusal; final-check reuse + scripted Lab2/2(13.19s). User-corrected final-supervisor policy independently13/13(9.62s) plus prior actual UI/MCP browser run and inspected desktop/phone screenshots; policy not integrated yet.
+- Outcome: Partial for next extension/policy unit
+- Follow-up: integrate policy and final commit-time revocation guard, full checks/build/browser/package. Static checks do not close JS/hydration, ephemeral/Compose or PostgreSQL. External user requested default final dispatch OFF with sub-supervisors allowed.
+
+### 2026-10-22 - Corrected policy integrated; next combined checks start
+- Agent: supervisor
+- Changed: merged corrected policy5b4725a with ledger/static-browser units; optional supervisionScope persists bounded/project ownership, current permission rechecked before insertion, scopes/resumes validated. Authored roles/setup/operations updated. Public ledger/browser schemas and whole-environment evidence reuse exposed.
+- Validation: independently policy13/13 plus corrected actual production browser/MCP save/reload and inspected4captures; scripted Lab + evidence2/2. First combined router build caught nullable unavailable heads in reuse-helper type; corrected to fail closed on null, added regression and router build passes.
+- Outcome: Partial
+- Follow-up: freeze for combined recursive typecheck/build and full suite; repeat production policy/Labs/model browser and fresh package before push. Accepted base remains dev/main77914fc.
 
 ## Open Questions
 

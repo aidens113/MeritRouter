@@ -1,3 +1,4 @@
+import { readClientSupervision } from "../config/client-supervision.js";
 import { EventEmitter } from "node:events";
 import { WebAccess, type PageTransport, type Resolver } from "../web/index.js";
 import { hostname } from "node:os";
@@ -518,6 +519,23 @@ export class Switchyard {
     });
     if (errors.length) throw new TaskValidationError(errors.join("\n"), errors);
     const outcomes = immediate(this.db, () => {
+      // Explicit external authority is checked at insertion, under the config writer's DB lock.
+      // Validation above awaits filesystem work; a human may revoke policy while it is running.
+      const scoped = specs.filter(spec => spec.supervisionScope !== undefined);
+      if (scoped.length) {
+        this.reloadIfChanged();
+        const current = this.projectContext(project.project.slug);
+        const policy = readClientSupervision(this.cfg.configPath);
+        for (const spec of scoped) {
+          if (current.profiles[spec.profile]?.mode !== "supervisor") throw new TaskValidationError("supervisionScope applies only to supervisor-mode tasks");
+          if (spec.parentTaskId) {
+            const parent = this.tasks.get(spec.parentTaskId);
+            if (!parent || parent.row.project_id !== project.project.slug || current.profiles[parent.spec.profile]?.mode !== "supervisor") throw new TaskValidationError("parentTaskId must name a real same-project supervisor");
+            if (spec.supervisionScope === "project") throw new TaskValidationError("A child task cannot declare project supervision scope");
+          }
+          if (spec.supervisionScope === "project" && !policy.dispatch_final_supervisor) throw new TaskValidationError("Dispatching a final project supervisor is disabled; use bounded subtask supervision");
+        }
+      }
       const submitted = this.tasks.submit(specs, { project: project.project.slug });
       for (const outcome of submitted) {
         if (outcome.deduplicated) continue;
@@ -642,6 +660,7 @@ export class Switchyard {
    */
   async startJob(input: {
     goal: string;
+    supervisionScope?: "subtask" | "project";
     repositories: string[];
     acceptanceCriteria?: string[];
     checks?: string[];
@@ -659,6 +678,7 @@ export class Switchyard {
     const [out] = await this.submitTasks([
       {
         profile: "supervise",
+        ...(input.supervisionScope ? { supervisionScope: input.supervisionScope } : {}),
         goal: input.goal,
         repositoryAliases: input.repositories,
         ...(input.lab ? { lab: input.lab } : {}),
@@ -793,6 +813,7 @@ export class Switchyard {
 
   async close(): Promise<void> {
     this.closing = true;
+    const gateDrained = this.gate.close();
     for (const timer of this.promotionTimers) clearTimeout(timer);
     this.promotionTimers.clear();
     if (this.discoveryTimer) clearInterval(this.discoveryTimer);
@@ -804,6 +825,7 @@ export class Switchyard {
     await this.labs.close();
     // Review settlement owns brain writes and Git children independently of executor reports.
     await Promise.allSettled([...this.promotionSettles]);
+    await gateDrained;
     this.db.close();
   }
 }
