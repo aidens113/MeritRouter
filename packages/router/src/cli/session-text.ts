@@ -51,7 +51,7 @@ function eventSummary(e: SessionEvent): string {
     }
     case "model_response": {
       const d = e.data;
-      const head = [d.finishReason ?? "?", `in ${d.usage.inputTokens ?? "?"} / out ${d.usage.outputTokens ?? "?"} tok`, d.attempts.length > 1 ? `${d.attempts.length} attempts` : ""].filter(Boolean).join(", ");
+      const head = [d.finishReason ?? "?", `in ${d.usage.inputTokens ?? "?"}${d.usage.cachedInputTokens ? ` (${d.usage.cachedInputTokens} cached)` : ""} / out ${d.usage.outputTokens ?? "?"} tok`, d.attempts.length > 1 ? `${d.attempts.length} attempts` : ""].filter(Boolean).join(", ");
       const body = d.toolCalls.length ? `-> ${d.toolCalls.map((c) => c.function.name).join(", ")}` : (d.content ?? "");
       return body ? `${head}: ${body}` : head;
     }

@@ -253,7 +253,7 @@ export function TaskDetailView({ sy, taskId, scope }: { sy: Switchyard; taskId: 
                   ...(res.protectedPathsChanged?.length ? ([["Protected paths", <span key="pp" className="flex flex-wrap gap-1">{res.protectedPathsChanged.map((p) => <Mono key={p}>{p}</Mono>)}</span>]] as Array<[string, ReactNode]>) : []),
                   ["Model requests", num(res.usage.modelRequests)],
                   ["Provider attempts", `${num(res.usage.providerAttempts)}${res.usage.providerAttemptsExact ? "" : " (reported, not exact)"}`],
-                  ["Tokens", `${num(res.usage.inputTokens)} in · ${num(res.usage.outputTokens)} out${res.usage.cachedInputTokens ? ` · ${num(res.usage.cachedInputTokens)} cached` : ""}`],
+                  ["Tokens", `${res.usage.uncachedInputTokens !== null && res.usage.uncachedInputTokens !== undefined ? `${num(res.usage.uncachedInputTokens)} new in · ` : ""}${num(res.usage.outputTokens)} out · ${num(res.usage.inputTokens)} in with ${num(res.usage.cachedInputTokens ?? 0)} cached`],
                   ["Token basis", res.usage.batchId ? `${humanize(res.usage.tokenUsageBasis)} (share of batch ${res.usage.batchId})` : humanize(res.usage.tokenUsageBasis)],
                   ["Cost", res.usage.estimatedCostUsd === 0 ? "Free" : res.usage.estimatedCostUsd === null ? "unknown" : `$${res.usage.estimatedCostUsd}`],
                   [

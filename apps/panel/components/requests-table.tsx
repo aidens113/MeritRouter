@@ -40,9 +40,13 @@ export function RequestsTable({ rows, names, base, hideModel = false, empty }: {
             <th className="text-right" title="Upstream provider attempts reported by the gateway (never exact)">
               Attempts
             </th>
-            <th className="text-right">Tokens in</th>
+            <th className="text-right" title="Every input token the provider read, cached ones included">
+              Tokens in
+            </th>
             <th className="text-right">Out</th>
-            <th className="text-right">Cached</th>
+            <th className="text-right" title="Of the input, how much the provider served from its prompt cache">
+              Cached
+            </th>
             <th>Error / policy</th>
             {base === undefined ? <th>Project</th> : null}
             <th>Tasks</th>

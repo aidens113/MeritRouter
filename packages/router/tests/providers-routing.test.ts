@@ -8,7 +8,7 @@ import { MIGRATIONS } from "../src/storage/migrations.js";
 import { DB_FILE, openDatabase } from "../src/storage/db.js";
 import { Catalog } from "../src/models/catalog.js";
 import { ProviderError } from "../src/providers/errors.js";
-import { baseConfig, directEndpoint, endpoint, FakeProvider, makeEnv, open, providerChat, providerJson, providerModels, summarizeTask, type Env } from "./helpers.js";
+import { baseConfig, directEndpoint, endpoint, FakeProvider, goodOutput, makeEnv, open, providerChat, providerJson, providerModels, summarizeTask, type Env } from "./helpers.js";
 
 let env: Env | undefined;
 let sy: Switchyard | undefined;
@@ -136,6 +136,33 @@ describe("direct free requests", () => {
     // Re-keying or re-enabling the key forgets its refusals.
     sy.providers.keys.clear(REF_A);
     expect(sy.providers.keys.get(REF_A)!.planRefusals).toEqual({});
+  });
+
+  it("counts new input apart from input served from the provider's cache, and keeps the total with cached", async () => {
+    env = makeEnv({ config: acmeCfg(), endpoints: [directEndpoint("acme", "big-free")] });
+    // Two requests: the first reads 1000 new tokens; the second rereads them from cache plus 200 new.
+    const answers = [
+      { prompt_tokens: 1000, completion_tokens: 50 },
+      { prompt_tokens: 1200, completion_tokens: 60, prompt_tokens_details: { cached_tokens: 1000 } },
+    ];
+    let n = 0;
+    const fake = new FakeProvider((call) => {
+      const usage = answers[Math.min(n++, answers.length - 1)];
+      return providerJson({ id: "c", model: String(call.body?.model), choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify(goodOutput()) }, finish_reason: "stop" }], usage });
+    });
+    sy = open(env, fake, { worker: true });
+    const before = Date.now() - 1;
+    const [a] = await sy.submitTasks([summarizeTask()]);
+    const ra = (await sy.awaitResults([a!.taskId], { timeoutSeconds: 10 })).completed[0]!;
+    const [b] = await sy.submitTasks([summarizeTask({ goal: "Summarise the log again" })]);
+    const rb = (await sy.awaitResults([b!.taskId], { timeoutSeconds: 10 })).completed[0]!;
+    // No cache reported: unknown (null), and all of its input counts as new.
+    expect(ra.usage).toMatchObject({ inputTokens: 1000, cachedInputTokens: null, uncachedInputTokens: 1000, outputTokens: 50 });
+    expect(rb.usage).toMatchObject({ inputTokens: 1200, cachedInputTokens: 1000, uncachedInputTokens: 200, outputTokens: 60 });
+
+    const s = sy.usage(before, Date.now() + 1);
+    expect(s).toMatchObject({ inputTokens: 2200, cachedInputTokens: 1000, uncachedInputTokens: 1200, outputTokens: 110 });
+    expect(s.byEndpoint.find((e) => e.endpointId === "acme/big-free")).toMatchObject({ inputTokens: 2200, cachedInputTokens: 1000, uncachedInputTokens: 1200 });
   });
 
   it("a configured limit blocks the provider until its window passes, then the deferred task resumes", async () => {

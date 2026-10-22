@@ -33,6 +33,8 @@ export function RequestsView({ sy, project, sp }: { sy: Switchyard; project: { s
   const purposes = [...new Set(insights.requestLog(sy, { limit: 1000, ...scope }).map((x) => x.purpose))].sort();
   const ok = rows.filter((x) => x.status === "succeeded").length;
   const tokIn = rows.reduce((s, x) => s + (x.inputTokens ?? 0), 0);
+  // Cached input was read again from the provider's prompt cache: it is not new work.
+  const tokCached = rows.reduce((s, x) => s + (x.cachedInputTokens ?? 0), 0);
   const tokOut = rows.reduce((s, x) => s + (x.outputTokens ?? 0), 0);
   const violations = rows.filter((x) => x.policyViolation).length;
 
@@ -50,7 +52,7 @@ export function RequestsView({ sy, project, sp }: { sy: Switchyard; project: { s
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Requests shown" value={num(rows.length)} sub={`newest ${limit} matching the filters`} />
         <Stat label="Succeeded" value={rows.length ? pct(ok, rows.length) : "–"} sub={`${num(rows.length - ok)} failed or uncertain`} />
-        <Stat label="Tokens" value={compact(tokIn + tokOut)} sub={`${compact(tokIn)} in · ${compact(tokOut)} out`} />
+        <Stat label="New tokens" value={compact(tokIn - tokCached + tokOut)} sub={`${compact(tokIn - tokCached)} in · ${compact(tokOut)} out · ${compact(tokCached)} cached · ${compact(tokIn + tokOut)} with cached`} />
         <Stat label="Policy violations" value={num(violations)} tone={violations ? "bad" : undefined} sub="served by a different model than routed" />
       </div>
       <Card>

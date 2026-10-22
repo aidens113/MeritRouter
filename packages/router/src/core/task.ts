@@ -203,9 +203,16 @@ export const UsageSchema = z
     providerAttemptsExact: z.boolean(),
     tokenUsageBasis: z.enum(["provider_reported", "estimated", "unknown"]),
     batchId: z.string().nullable(),
+    /** Every input token the provider read, cached ones included. */
     inputTokens: z.number().int().min(0).nullable(),
     outputTokens: z.number().int().min(0).nullable(),
+    /** Input tokens the provider served from its prompt cache (null when not reported). */
     cachedInputTokens: z.number().int().min(0).nullable(),
+    /**
+     * New input: input minus cached, per request; a request whose cache is unknown (or a batch
+     * share) counts all of its input. Results stored before this field read as null.
+     */
+    uncachedInputTokens: z.number().int().min(0).nullable().default(null),
     reportedCostUsd: z.number().min(0).nullable(),
     estimatedCostUsd: z.number().min(0).nullable(),
   })
@@ -383,6 +390,7 @@ export function emptyUsage(): Usage {
     inputTokens: null,
     outputTokens: null,
     cachedInputTokens: null,
+    uncachedInputTokens: null,
     reportedCostUsd: null,
     estimatedCostUsd: null,
   };

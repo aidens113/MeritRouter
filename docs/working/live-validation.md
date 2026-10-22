@@ -33,7 +33,10 @@ from git locally (`.git/info/exclude`): the `claude mcp add --scope local` entry
   first Tetris job failed because the key was disabled for six hours).
 - 398f29f: routing leaves out a model every usable key's plan refused (preview and requests).
 - 04a5616: status showed a supervisor's tier cap (12) instead of its profile cap (60): "14/12".
-- (this commit) panel auto-start: the MCP server and `switchyard worker` start the panel when
+- Token accounting (user request): new input (input minus cached) is reported beside the total
+  with cached, per task, in usage summaries, the panel, and the CLI. The Tetris job read 143k
+  input tokens, 128k of them from Ollama's cache.
+- 1ba099c panel auto-start: the MCP server and `switchyard worker` start the panel when
   nothing answers on `panel.port`; `switchyard panel`; MCP `panel` tool; URL in the server's
   instructions.
 

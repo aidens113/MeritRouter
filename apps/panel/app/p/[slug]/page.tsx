@@ -153,7 +153,7 @@ export default async function ProjectOverviewPage({ params }: { params: Promise<
           sub={u.modelRequests ? `${num(u.failedRequests)} failed · ${num(u.uncertainRequests)} uncertain` : "No requests yet"}
         />
         <Stat label="Tasks (24h)" value={`${num(u.logicalTasks.completed)} done`} sub={`${num(u.logicalTasks.failed)} failed · ${num(u.logicalTasks.other)} other · ${num(u.logicalTasks.submitted)} submitted`} tone={u.logicalTasks.failed > u.logicalTasks.completed ? "bad" : undefined} />
-        <Stat label="Paid spend (24h)" value={usd(ov.paidSpendUsd.last24h)} sub={`${usd(ov.paidSpendUsd.last7d)} in the last 7 days · ${compact(u.inputTokens + u.outputTokens)} tokens today`} />
+        <Stat label="Paid spend (24h)" value={usd(ov.paidSpendUsd.last24h)} sub={`${usd(ov.paidSpendUsd.last7d)} in the last 7 days · ${compact(u.uncachedInputTokens + u.outputTokens)} new tokens today${u.cachedInputTokens ? ` (+${compact(u.cachedInputTokens)} cached)` : ""}`} />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[2fr_1fr]">

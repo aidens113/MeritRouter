@@ -210,6 +210,14 @@ in the primary project (`brain.project`). Audits run in the audited task's proje
 - `artifactRefs` / `patchRefs` point at files under `.switchyard/artifacts/`
   (`switchyard artifact <ref>`). Patches include the base commit in `baseCommits`; apply them
   with `git apply` after checking the base.
+- **Tokens.** `usage.inputTokens` is every input token the provider read, cached ones included;
+  `cachedInputTokens` is the part served from its prompt cache (null when not reported);
+  `uncachedInputTokens` is the new input (each request's input minus its cached tokens, all of
+  it when the cache is unknown). A conversation rereads its whole history on every request, so
+  with caching most input is cached (Ollama Cloud reported 90% on a supervisor job). The panel's
+  token figures are new input plus output, with cached input and the total beside them; the
+  request log lists each request's full input and its cached part. Configured token limits on
+  keys (`tpm`, `tpd`) still count the full input, as most providers do.
 
 ## Verification
 

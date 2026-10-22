@@ -729,6 +729,7 @@ export function syntheticResult(
       inputTokens: null,
       outputTokens: null,
       cachedInputTokens: null,
+      uncachedInputTokens: null,
       reportedCostUsd: null,
       estimatedCostUsd: null,
     },

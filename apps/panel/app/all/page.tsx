@@ -48,6 +48,11 @@ function Bar({ value, max, label }: { value: number; max: number; label: string 
 
 const FOOT = { borderTop: "1px solid var(--line)", borderBottom: 0 } as const;
 
+/** Hover text for a new-token count: the parts, and the total with cached input. */
+function tokenTitle(u: insights.ProjectUsage): string {
+  return `${num(u.uncachedInputTokens)} new input + ${num(u.outputTokens)} output; ${num(u.cachedInputTokens)} more input served from cache (${num(u.inputTokens + u.outputTokens)} with cached)`;
+}
+
 export default async function AllProjectsPage() {
   const r = getSy();
   if (!r.sy) return <SetupScreen error={r.error} configPath={r.configPath} />;
@@ -285,7 +290,9 @@ export default async function AllProjectsPage() {
                 <th>Requests (24h)</th>
                 <th>Requests (7 days)</th>
                 <th className="text-right">Failed (24h)</th>
-                <th className="text-right">Tokens (24h)</th>
+                <th className="text-right" title="New input plus output; cached input is in each cell's hover text">
+                  New tokens (24h)
+                </th>
                 <th className="text-right">Paid (24h)</th>
                 <th className="text-right">Paid (7 days)</th>
               </tr>
@@ -309,7 +316,9 @@ export default async function AllProjectsPage() {
                       <span className="text-ink-3">–</span>
                     )}
                   </td>
-                  <td className="tabular text-right text-xs">{compact(x.u24.inputTokens + x.u24.outputTokens)}</td>
+                  <td className="tabular text-right text-xs" title={tokenTitle(x.u24)}>
+                    {compact(x.u24.uncachedInputTokens + x.u24.outputTokens)}
+                  </td>
                   <td className="tabular text-right text-xs">{usd(x.u24.paidSpendUsd)}</td>
                   <td className="tabular text-right text-xs">{usd(x.u7.paidSpendUsd)}</td>
                 </tr>
@@ -327,8 +336,8 @@ export default async function AllProjectsPage() {
                 <td style={FOOT} className="tabular text-right text-xs">
                   {num(d.totals.usage24h.failedRequests)}
                 </td>
-                <td style={FOOT} className="tabular text-right text-xs">
-                  {compact(d.totals.usage24h.inputTokens + d.totals.usage24h.outputTokens)}
+                <td style={FOOT} className="tabular text-right text-xs" title={tokenTitle(d.totals.usage24h)}>
+                  {compact(d.totals.usage24h.uncachedInputTokens + d.totals.usage24h.outputTokens)}
                 </td>
                 <td style={FOOT} className="tabular text-right text-xs">
                   {usd(d.totals.usage24h.paidSpendUsd)}

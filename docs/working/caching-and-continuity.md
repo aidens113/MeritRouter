@@ -19,8 +19,10 @@ Related: [direct providers](./direct-providers.md), [projects](./projects.md), [
 - The agent loop is mostly prefix-stable: tools and system/user prompts are built once, turns only
   append, no timestamps. Breaks: `compact()` rewrites old tool outputs in place to an elision stub
   before any request once over budget; the final turn switches `tool_choice` to `required`.
-- `cachedInputTokens` is recorded per request, per session, per task, and summed in usage, but
-  cost uses only input and output prices; `cacheHit` is hard-coded `false`.
+- `cachedInputTokens` is recorded per request, per session, per task, and summed in usage, and
+  (2026-10-21) `uncachedInputTokens` (new input) beside it; the panel's token figures are new
+  input plus output. Cost still uses only input and output prices; `cacheHit` is hard-coded
+  `false`.
 - Requests are non-streaming; a failed request is retried whole on the next key, then the next
   endpoint (up to `routing.max_endpoint_fallbacks` free plus `paid.max_paid_attempts` paid). There
   is no partial output to hand over.

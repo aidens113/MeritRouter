@@ -26,7 +26,12 @@ export interface ActiveJob {
 export interface ProjectUsage {
   requests: number;
   failedRequests: number;
+  /** Every input token read, cached ones included. */
   inputTokens: number;
+  /** Of those, served from the provider's prompt cache. */
+  cachedInputTokens: number;
+  /** New input: input minus cached (all of a request's input when its cache is unknown). */
+  uncachedInputTokens: number;
   outputTokens: number;
   tasksSubmitted: number;
   tasksCompleted: number;
@@ -66,6 +71,8 @@ function projectUsage(s: UsageSummary, paid: number): ProjectUsage {
     requests: s.modelRequests,
     failedRequests: s.failedRequests,
     inputTokens: s.inputTokens,
+    cachedInputTokens: s.cachedInputTokens,
+    uncachedInputTokens: s.uncachedInputTokens,
     outputTokens: s.outputTokens,
     tasksSubmitted: s.logicalTasks.submitted,
     tasksCompleted: s.logicalTasks.completed,
@@ -79,11 +86,13 @@ function projectUsage(s: UsageSummary, paid: number): ProjectUsage {
 function unattributedUsage(sy: Switchyard, sinceMs: number, paid: number): ProjectUsage {
   const r = sy.db
     .prepare(
-      `SELECT COUNT(*) AS n, SUM(status = 'failed') AS failed, COALESCE(SUM(input_tokens),0) AS inTok, COALESCE(SUM(output_tokens),0) AS outTok, SUM(reported_cost_usd) AS cost
+      `SELECT COUNT(*) AS n, SUM(status = 'failed') AS failed, COALESCE(SUM(input_tokens),0) AS inTok,
+              COALESCE(SUM(cached_input_tokens),0) AS cachedTok, COALESCE(SUM(MAX(0, input_tokens - COALESCE(cached_input_tokens, 0))),0) AS newTok,
+              COALESCE(SUM(output_tokens),0) AS outTok, SUM(reported_cost_usd) AS cost
          FROM model_requests WHERE reserved_at > ? AND project_id = ''`,
     )
-    .get(sinceMs) as { n: number; failed: number | null; inTok: number; outTok: number; cost: number | null };
-  return { requests: r.n, failedRequests: r.failed ?? 0, inputTokens: r.inTok, outputTokens: r.outTok, tasksSubmitted: 0, tasksCompleted: 0, tasksFailed: 0, reportedCostUsd: r.cost, paidSpendUsd: paid };
+    .get(sinceMs) as { n: number; failed: number | null; inTok: number; cachedTok: number; newTok: number; outTok: number; cost: number | null };
+  return { requests: r.n, failedRequests: r.failed ?? 0, inputTokens: r.inTok, cachedInputTokens: r.cachedTok, uncachedInputTokens: r.newTok, outputTokens: r.outTok, tasksSubmitted: 0, tasksCompleted: 0, tasksFailed: 0, reportedCostUsd: r.cost, paidSpendUsd: paid };
 }
 
 function tasksByState(sy: Switchyard, project?: string): Record<string, number> {
@@ -149,7 +158,7 @@ export async function globalDashboard(sy: Switchyard, opts: { includeArchived?: 
     const all = [...projects.map((p) => p[k]), ...rest];
     const add = (f: keyof ProjectUsage) => all.reduce((n, u) => n + ((u[f] as number | null) ?? 0), 0);
     const reported = all.some((u) => u.reportedCostUsd !== null);
-    return { requests: add("requests"), failedRequests: add("failedRequests"), inputTokens: add("inputTokens"), outputTokens: add("outputTokens"), tasksSubmitted: add("tasksSubmitted"), tasksCompleted: add("tasksCompleted"), tasksFailed: add("tasksFailed"), reportedCostUsd: reported ? add("reportedCostUsd") : null, paidSpendUsd: add("paidSpendUsd") };
+    return { requests: add("requests"), failedRequests: add("failedRequests"), inputTokens: add("inputTokens"), cachedInputTokens: add("cachedInputTokens"), uncachedInputTokens: add("uncachedInputTokens"), outputTokens: add("outputTokens"), tasksSubmitted: add("tasksSubmitted"), tasksCompleted: add("tasksCompleted"), tasksFailed: add("tasksFailed"), reportedCostUsd: reported ? add("reportedCostUsd") : null, paidSpendUsd: add("paidSpendUsd") };
   };
   const unattributed = { usage24h: unattributedUsage(sy, now - DAY, paid1.get("") ?? 0), usage7d: unattributedUsage(sy, now - 7 * DAY, paid7.get("") ?? 0) };
   const q = QUALIFICATION_PROJECT;
