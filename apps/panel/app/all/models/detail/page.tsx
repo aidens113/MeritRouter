@@ -18,6 +18,7 @@ import { Badge, Callout, Card, CardHeader, cx, EmptyState, HelpTip, KeyValue, Mo
 import { PageHeader } from "@/components/page-header";
 import { ActionButton } from "@/components/client/actions";
 import { OverrideEditor } from "@/components/client/override-editor";
+import { QuarantineControl } from "@/components/client/quarantine-control";
 import { ago, compact, dateTime, duration, num, params, pct, tokens } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -47,6 +48,7 @@ export default async function ModelDetailPage({ searchParams }: { searchParams: 
         <ArrowLeft size={14} aria-hidden /> All models
       </Link>
       <PageHeader
+        live={["models", "keys", "requests", "config"]}
         title={ep.displayName ?? ep.gatewayModelId}
         description={
           <span className="flex flex-wrap items-center gap-2">
@@ -214,6 +216,7 @@ export default async function ModelDetailPage({ searchParams }: { searchParams: 
       {tab === "controls" ? <div className="space-y-6"><Card id="controls">
         <CardHeader title="Controls" help="override" description="Corrections you make here sit on top of discovered data and survive rescans." />
         <div className="p-4">
+          {view.quarantined ? <QuarantineControl id={ep.id} /> : null}
           <OverrideEditor
             id={ep.id}
             current={view.override}

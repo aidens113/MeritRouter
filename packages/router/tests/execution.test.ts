@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { acknowledgeModelQuarantine } from "../src/admin/quarantine.js";
 import { GatewayError } from "../src/core/errors.js";
 import { Admission } from "../src/admission/admission.js";
 import { openDatabase } from "../src/storage/db.js";
@@ -128,6 +129,17 @@ describe("routing fallback and policy", () => {
     const r2 = (await sy.awaitResults([sub2!.taskId], { timeoutSeconds: 10 })).completed[0]!;
     expect(r2.stopReason).toMatch(/no_eligible_endpoint/);
     expect(client.requests).toHaveLength(1);
+    const endpointId = "openrouter/vendor/big-a:free";
+    expect(() => acknowledgeModelQuarantine(sy!, endpointId, { actor: "human:test", reason: " " })).toThrow();
+    expect(sy.gate.quarantined(sy.catalog.get(endpointId)!)).toMatch(/quarantined/);
+    const ack = acknowledgeModelQuarantine(sy, endpointId, { actor: "human:test", reason: "Provider configuration corrected; permit one retry" });
+    expect(sy.gate.quarantined(sy.catalog.get(endpointId)!)).toBeNull();
+    expect(sy.db.prepare("SELECT policy_violation FROM model_requests WHERE id = ?").get(ack.requestId)).toMatchObject({ policy_violation: expect.any(String) });
+    expect(() => acknowledgeModelQuarantine(sy!, endpointId, { actor: "human:test", reason: "stale" })).toThrow(/no pending quarantine/);
+    const [retry] = await sy.submitTasks([summarizeTask({ goal: "retry after acknowledgement" })]);
+    await sy.awaitResults([retry!.taskId], { timeoutSeconds: 10 });
+    expect(client.requests).toHaveLength(2);
+    expect(sy.gate.quarantined(sy.catalog.get(endpointId)!)).toMatch(/quarantined/);
   });
 });
 
