@@ -1,4 +1,6 @@
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { hostname } from "node:os";
 import path from "node:path";
 import { z } from "zod";
 import type { Db } from "../storage/db.js";
@@ -160,8 +162,15 @@ export interface EnqueueInput {
   acceptance: MergeAcceptance | null;
 }
 
-/** In-process serialisation per job branch (the database state guards against other processes). */
+/** Local ordering complements the durable physical-branch mutex below. */
 const chains = new Map<string, Promise<unknown>>();
+const processInstance = randomUUID();
+const BranchOwnerSchema = z.object({
+  nonce: z.string().uuid(), host: z.string().min(1), pid: z.number().int().positive(), instance: z.string().uuid(),
+  owner: z.string().min(1), heartbeat: z.number().finite(), jobId: z.string(),
+  leaseOwner: z.string().nullable(), runCount: z.number().int().nonnegative().nullable(),
+}).strict();
+type BranchOwner = z.infer<typeof BranchOwnerSchema>;
 function serial<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const prev = chains.get(key) ?? Promise.resolve();
   const next = prev.then(fn, fn);
@@ -225,6 +234,57 @@ export class MergeQueue {
     readonly owner: string,
     private readonly now: () => number = Date.now,
   ) {}
+
+  /** Physical Git identity, so different aliases/projects cannot bypass a branch lock. */
+  private async branchKey(item: MergeItem): Promise<string> {
+    const common = (await git(item.integrationWorktree, ["rev-parse", "--git-common-dir"])).trim();
+    const physical = realpathSync(path.resolve(item.integrationWorktree, common));
+    const canonical = process.platform === "win32" ? physical.toLowerCase() : physical;
+    return `merge-branch:${createHash("sha256").update(JSON.stringify([canonical, item.branch])).digest("hex")}`;
+  }
+
+  /**
+   * SQLite mutex covers Git operations AND checks in every process. A differing queue owner
+   * is not evidence of death. Only an absent local OS process permits takeover; remote,
+   * malformed and PID-reuse ambiguity remain busy, regardless of heartbeat/lease age.
+   */
+  private async withBranch<T>(item: MergeItem, fn: (key: string) => Promise<T>): Promise<T> {
+    const key = await this.branchKey(item);
+    const task = this.db.prepare("SELECT lease_owner, run_count FROM tasks WHERE id = ?").get(item.jobId) as { lease_owner: string | null; run_count: number } | undefined;
+    const mine: BranchOwner = { nonce: randomUUID(), host: hostname(), pid: process.pid, instance: processInstance, owner: this.owner,
+      heartbeat: Date.now(), jobId: item.jobId, leaseOwner: task?.lease_owner ?? null, runCount: task?.run_count ?? null };
+    const deadline = Date.now() + 30_000;
+    for (;;) {
+      const acquired = immediate(this.db, () => {
+        const row = this.db.prepare("SELECT value FROM meta WHERE key = ?").get(key) as { value: string } | undefined;
+        if (row) {
+          let parsed: ReturnType<typeof BranchOwnerSchema.safeParse>;
+          try { parsed = BranchOwnerSchema.safeParse(JSON.parse(row.value)); } catch { return false; }
+          if (!parsed.success || parsed.data.host !== mine.host) return false;
+          try { process.kill(parsed.data.pid, 0); return false; }
+          catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") return false; }
+        }
+        this.db.prepare("INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, JSON.stringify(mine));
+        return true;
+      });
+      if (acquired) break;
+      if (Date.now() >= deadline) throw new Error(`integration branch busy: ownership is live or cannot be proven abandoned (${item.branch})`);
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    const updateOwned = (release: boolean) => immediate(this.db, () => {
+      const row = this.db.prepare("SELECT value FROM meta WHERE key = ?").get(key) as { value: string } | undefined;
+      if (!row) return;
+      let current: BranchOwner;
+      try { current = BranchOwnerSchema.parse(JSON.parse(row.value)); } catch { return; }
+      if (current.nonce !== mine.nonce) return;
+      if (release) this.db.prepare("DELETE FROM meta WHERE key = ? AND value = ?").run(key, row.value);
+      else this.db.prepare("UPDATE meta SET value = ? WHERE key = ? AND value = ?").run(JSON.stringify({ ...current, heartbeat: Date.now() }), key, row.value);
+    });
+    const heartbeat = setInterval(() => { try { updateOwned(false); } catch { /* never expire a mutex on heartbeat failure */ } }, 1000);
+    heartbeat.unref?.();
+    try { return await fn(key); }
+    finally { clearInterval(heartbeat); updateOwned(true); }
+  }
 
   get(id: string): MergeItem | null {
     const r = this.db.prepare("SELECT * FROM merge_queue WHERE id = ?").get(id) as Row | undefined;
@@ -314,14 +374,18 @@ export class MergeQueue {
   run(id: string, hooks: MergeHooks): Promise<MergeItem> {
     const first = this.get(id);
     if (!first) return Promise.reject(new Error(`unknown merge queue item ${id}`));
-    return serial(first.lockKey, async () => {
-      const stale = (this.db.prepare("SELECT * FROM merge_queue WHERE lock_key = ? AND state IN ('integrating','picked') AND id != ? AND (owner IS NULL OR owner != ?) ORDER BY created_at").all(first.lockKey, id, this.owner) as Row[]).map(toItem);
-      for (const s of stale) await this.recoverItem(s, hooks);
+    return serial(first.lockKey, () => this.withBranch(first, async key => {
+      const stale = (this.db.prepare("SELECT * FROM merge_queue WHERE branch = ? AND state IN ('integrating','picked') AND id != ? ORDER BY created_at").all(first.branch, id) as Row[]).map(toItem);
+      for (const s of stale) {
+        if (!existsSync(s.integrationWorktree)) {
+          if (s.lockKey === first.lockKey) await this.recoverItem(s, hooks);
+        } else if (await this.branchKey(s) === key) await this.recoverItem(s, hooks);
+      }
       const item = this.get(id)!;
       if (!ACTIVE_MERGE_STATES.has(item.state)) return item;
       if (item.state !== "queued" && item.owner !== this.owner) return this.recoverItem(item, hooks);
       return this.process(item, hooks);
-    });
+    }));
   }
 
   /**
@@ -331,7 +395,9 @@ export class MergeQueue {
   async recover(jobId: string, hooks: MergeHooks): Promise<MergeItem[]> {
     const items = this.forJob(jobId).filter((i) => ACTIVE_MERGE_STATES.has(i.state) && i.owner !== this.owner);
     const out: MergeItem[] = [];
-    for (const i of items) out.push(await serial(i.lockKey, () => this.recoverItem(this.get(i.id)!, hooks)));
+    for (const i of items) out.push(await serial(i.lockKey, () => existsSync(i.integrationWorktree)
+      ? this.withBranch(i, () => this.recoverItem(this.get(i.id)!, hooks))
+      : this.recoverItem(this.get(i.id)!, hooks)));
     return out;
   }
 
