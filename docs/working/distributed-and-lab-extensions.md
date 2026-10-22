@@ -10,34 +10,32 @@ Related: [roadmap completion](roadmap-completion.md), [Labs](labs.md), [sessions
 
 ## Current State
 
-Task-attempt lifecycle82ef6bd is merged locally after independent14/14 recovery/source tests
-(105.32s). Supervisor follow-up adds opt-in validation, authorization recheck under insertion
-lock, all-alias source pins, configured default-cwd ordering, configured junction spelling and
-independent retained-control responsiveness. New validation6/6, affected contract9/9 and actual
-concurrent-control1/1 pass; router typecheck/build pass. Caller/verification/integration and
-safe project deletion are still missing: this is a local prerequisite, not complete L5.
-Compose validationce4a257 independently passes10/10; runtime remains disabled.
+Accepted and pushed through8d22596: L1-L4, static-render browser checks/all-head evidence reuse,
+async Gate accounting and default async queue claims. Last accepted queue suite753/753 in85
+files (542.28s), recursive typecheck/build and independent real CLI workers passed. Static
+browser checks execute no app JavaScript; this is not hydrated acceptance.
 
-L1-L4 integration is active under roadmap-completion.md. L5 and R2 were explicitly deferred in
-their original plans; the current build request keeps them open. This document scopes their
-prerequisites rather than treating them as delivered. Initial static-render browser checks
-(scripts disabled; not hydrated app acceptance) and the first async Gate accounting boundary
-are now merged locally after independent8/8 actual Chrome and17/17 ledger tests. Whole-head
-evidence reuse is integrated; full combined acceptance remains pending. Ephemeral-task plan
-is [recorded separately](distributed-and-lab-extensions/reports/ephemeral-lab-plan.md).
+Local integration throughb766516 includes task-attempt lifecycle82ef6bd, root authorization/
+all-alias pin/default-cwd/physical identity fixes, nonblocking service monitoring, caller98ab27a
+and public human acceptance/write fencing. Supervisor independently verified14 lifecycle tests,
+8 caller/verification tests,49 integrated checks and7 project-purge checks; actual dedicated
+Labs supervisor service startup passed14.22s and fixture stopped. Router typecheck/build and
+panel typecheck pass. Scoped immediate project prune is active in roadmap-process; complete
+combined acceptance/package and updated production panel acceptance remain pending. No complete
+L5 claim; task browser recovery is absent.
 
-L1-L4 and the earlier panel fixes are accepted and pushed at77914fc. The next local unit
-at6d61b8e has passed recursive typecheck/build, production policy/model/Labs/legacy browser
-checks and an outside-checkout install smoke; the complete router suite passed734/734 tests
-in83 files (484.47s). Static browser and async Gate accounting prerequisites are accepted.
-Task-Lab lifecycle unit1 remains active in its isolated tree. The default async queue-claim
-boundary418b106 is merged locally after supervisor review and20/20 independent tests, including
-real separate CLI workers (6 unique claims/provider peak1). Full frozen queue acceptance passed
-753/753 tests in85 files (542.28s); recursive typecheck and isolated recursive build passed.
-Compose design is recorded in its report; a new-file-only validation/read-only CLI prerequisite
-is assigned in a third tree. Runtime Compose integration and actual-engine acceptance remain open.
-Caller wiring for task-Lab verification follows lifecycle contract freeze; no ephemeral-task,
-Compose or PostgreSQL/multi-host completion is claimed.
+Compose validationce4a257 independently passed10/10; runtime is disabled. Engine mutation,
+durable container ownership and real-engine acceptance remain open. Browser hydration design
+is [reviewed](distributed-and-lab-extensions/reports/hydrated-browser-plan.md): flags/CDP alone
+do not prove before-contact denial of every transport. New-file-only pipe/capability H1 is
+assigned; no accepted network isolation adapter exists on this Windows host, so hydrated
+runtime cannot yet be enabled. No OS services/firewall/Docker activation authorized.
+
+The next R2 task-lifecycle port is active in roadmap-labs after caller freeze. It must add a
+captured task incarnation because explicit task IDs can be deleted/recreated with reset
+run_count. Worker owns stores/executor/scheduler/watchdog/minimal service and one appended
+receipt migration; root must not edit these files concurrently. Gate/tool/session/Git fencing
+are separate later units. PostgreSQL and real two-host acceptance are not implemented.
 
 The current store is the synchronous better-sqlite3 Database type. Raw prepared statements,
 transactions and SQLite expressions reach beyond storage into admission, routing, admin,
