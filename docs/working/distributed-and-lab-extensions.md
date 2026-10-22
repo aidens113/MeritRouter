@@ -103,6 +103,22 @@ not a reason to stop the independently runnable core work. No service was instal
 
 ## Worker Briefs
 
+### Brief: compose-partial-proof (seed_repair)
+- Tier: isolated roadmap-team after frozen C2/journal design; pure bounded prerequisite, no engine/runtime activation.
+- Read Current State, own compose-journal-plan.md/C2 report and accepted compose-ownership contracts.
+- Own existing compose-ownership.ts/schema.ts (new named partial-proof file allowed), own existing/new proof tests and reports/compose-partial-proof.md only.
+- No migrations, source outside proof module, client/recipe/manager/services/config/public exports/shared-doc edits. Other worker owns lifecycle migration.
+- Goal: explicit per-resource/known-subset positive proof for partial provisioning/cleanup, preserving original FULL normalized approval hash and creation identity; never fabricate a subset approval.
+- Preserve full-generation verifier behavior. New API must clearly distinguish partial identity proof from complete generation/readiness/mutation authority, runtimeEnabled:false.
+- Every supplied known resource ID must already have a committed journal creation receipt; missing/uncommitted IDs remain unavailable, never inferred/adopted from labels/name/cidfile/discovery.
+- Compare sealed full authority/current generation/engine/nonce/config/image baseline exactly. Only exact service subset authorized by original full spec may be inspected; reject extra IDs, aliases, duplicate/colliding IDs or changed seal.
+- Define journal receipt-versus-run completeness semantics explicitly; do not label an issued unknown effect committed merely to satisfy existing schema.
+- Known container proof includes owned network/full ID and reciprocal peer checks; foreign endpoints must block destructive network proof. Network-removal proof requires known committed ID plus empty endpoints, not inferred all-container absence.
+- Unknown/missing creation receipts still quarantine entire run; proving known resources never clears uncertainty, releases ports/paths or permits replacement generation. Return bounded safe codes/counts only.
+- Tests: network-only committed receipt, full approval known container subset, unchanged original seal, missing/unknown IDs, forged labels/replacement network, foreign endpoints, and existing full verifier unchanged.
+- Reuse strict C2 subset/bounds/secret exclusion. No guessed real-engine normalization, CLI/API calls/probes or user data.
+- Freeze then focused tests/router typecheck/build, own report exact semantics/limits; no commit/push. Ask before expanding ownership.
+
 ### Brief: request-admission-protocol (brain_completion)
 - Tier: isolated roadmap-process feature branch, ONLY after root merges frozen async-task-lifecycle and names baseline; do not begin source work before dispatch.
 - Read Current State, own distributed-admission-plan.md and accepted lifecycle strict LeaseRef/companion contracts.
