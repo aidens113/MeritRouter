@@ -6,6 +6,20 @@ own working document with decisions, phases, ledger, and reports.
 
 ## Repository state
 
+- Active local integration now includes recovery-retention943a74a, request protocol2b22160
+  (migration30), root project request blockers/private purgea1dfec5 and Linux helper95907bd.
+  Independent checks: recovery10/10 with full two-day cadence301 receipts; lifecycle42/42;
+  admission38/38 then final classifier15/15; project protocol4/4 + project/Lab12/12;
+  native helper38/38 including17 Python cases. Full frozen1525960 router acceptance is running
+  in roadmap-package (TEMP/switchyard-admission-integration-full-supervisor.log), source untouched.
+  Previous e3abcb5 recursive build/typecheck and warning-free seeded production browser20 images
+  passed, before admission merge; next final build/browser/package still required.
+  Workers: roadmap-labs feat/compose-journal exclusively owns next migration31; roadmap-team
+  feat/linux-browser-proc-policy fixes measured ordinary-user proc-mask mismatch; roadmap-process
+  feat/admission-fixture-integration owns named test fixtures only. Read current briefs/reports.
+  None of these local units are pushed/deployed. Actual4477 remains accepted663626d/PID24040.
+
+
 - Request evidence release accepted:783/783 tests in88files (943.08s), recursive typecheck/build,
   production request and historical-session browser acceptance (16 screenshots, scoped route/API
   checks). Includes classifier project partition, rich historical request details and session
