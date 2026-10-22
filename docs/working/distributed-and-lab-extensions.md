@@ -103,6 +103,19 @@ not a reason to stop the independently runnable core work. No service was instal
 
 ## Worker Briefs
 
+### Brief: browser-pipe-prerequisite (seed_repair)
+- Tier: isolated roadmap-team feature branch; H0 approved for typed/bounded H1 prerequisite only, not hydrated enablement or OS installation.
+- Read: Current State and own hydrated-browser-plan.md; existing browser-protocol.ts as compatibility reference.
+- Own new labs/browser-pipe.ts and browser-isolation.ts plus new named unit tests; own report reports/browser-pipe-prerequisite.md.
+- No existing browser schema/process/network/check/runtime/source changes, public exports, config/migrations, shared docs, tools or user data.
+- Implement bounded NUL-framed CDP byte-stream transport compatible with later pipe adoption: split/coalesced UTF-8 frames, strict validated envelopes, per-frame12MiB/aggregate32MiB, capped pending/event counts and abort/close/drain.
+- Framework-only command API, no model evaluate/URL/script input. Reject malformed/oversized/unfinished frames; no unbounded concatenation or dangling pending calls/listeners.
+- Define minimal trusted isolation adapter/capability contracts with strict public unavailable status. Windows is unsupported until a real accepted adapter; no flags/JSON boolean as proof of OS containment.
+- Pipe transport must not own/kill arbitrary processes or reinterpret network listeners as pipe proof. Fake streams prove framing only; do not claim actual Chrome/OS isolation from unit tests.
+- Preserve existing static runtime entirely. H2/schema/broker integration and H3 durable recovery remain separate, disabled until actual isolation backend accepted.
+- Tests cover boundaries/UTF-8, late/unknown replies, invalid frame/envelope, event flood, pending cap, abort/EOF, resource cleanup and unavailable capability path.
+- No Chrome/probes/service installation needed in this bounded unit. Freeze, router typecheck/build/focused tests and report; no commits/push or source beyond brief.
+
 ### Brief: hydrated-browser-design (seed_repair)
 - Tier: report-only in roadmap-team while root independently validates frozen session source; no source/build changes.
 - Read: Current State; labs/browser-{schema,check,network,protocol,process,artifacts}.ts and browser tests; other source only as needed for this bounded report.
