@@ -797,3 +797,7 @@ acceptance remain outstanding.
   is refused in another.
 - Line attribution for external agents (OpenCode) is per model request, not per tool call, and can
   blur when the agent sends several requests at once.
+
+Model request detail pages show bounded historical session evidence: reconstructed input messages and request parameters, recorded model responses, correlated tool calls and successful recorded file edits. Related task files, artifacts and commit links are displayed separately because a task can span several requests. This journal projection is not the provider's serialized HTTP body; old, missing, failed or incomplete journals can explicitly report unavailable evidence.
+
+Historical request/session payloads require complete same-project task and execution ownership, including the original recorded membership of shared batches. Unknown, deleted, corrupt, oversized or mixed-project scope withholds transcript content while retaining safe metadata and accounting. Classification batches and caches are partitioned by authoritative project for future requests. These checks do not claim arbitrary model text is free of secrets.
