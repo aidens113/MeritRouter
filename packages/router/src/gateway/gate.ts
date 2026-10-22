@@ -13,6 +13,7 @@ import { newId } from "../storage/db.js";
 import { isPaid } from "../routing/select.js";
 import type { ProviderClient } from "../providers/client.js";
 import { probeClient, requestDirect, type DirectRuntime } from "./direct.js";
+import { NOT_IN_PLAN_RECHECK_MS } from "../providers/keys.js";
 
 export type { DirectRuntime } from "./direct.js";
 
@@ -210,14 +211,32 @@ export class Gate {
   }
 
   /**
-   * An endpoint with a served-model violation stays blocked. Nothing lifts the quarantine yet
-   * (a known gap: a release rule, such as a later discovery or a panel action, is still to come).
+   * Why the gate will not send to this endpoint now, for routing to leave it out: a served-model
+   * violation (it stays blocked; nothing lifts the quarantine yet, a known gap), or every usable
+   * key's plan refused the model recently (`not_in_plan`; rechecked after a day).
    */
   quarantined(ep: ModelEndpoint): string | null {
     const row = this.db
       .prepare("SELECT policy_violation FROM model_requests WHERE endpoint_id = ? AND policy_violation IS NOT NULL ORDER BY reserved_at DESC LIMIT 1")
       .get(ep.id) as { policy_violation: string } | undefined;
-    return row ? `quarantined after a policy violation: ${row.policy_violation}` : null;
+    if (row) return `quarantined after a policy violation: ${row.policy_violation}`;
+    return this.refusedByEveryKey(ep);
+  }
+
+  /** "Not in the plan of any <provider> key" when every usable key's plan refused the model within the recheck window. */
+  private refusedByEveryKey(ep: ModelEndpoint): string | null {
+    if (ep.route.kind !== "direct") return null;
+    const rt = this.direct.providers;
+    const creds = rt.credentials().list(ep.route.provider).filter((c) => c.unusableReason === null);
+    if (!creds.length) return null;
+    const now = rt.now();
+    let latest = 0;
+    for (const c of creds) {
+      const r = rt.keys.get(c.ref)?.planRefusals[ep.route.model];
+      if (!r || r.at + NOT_IN_PLAN_RECHECK_MS <= now) return null;
+      latest = Math.max(latest, r.at);
+    }
+    return `not in the plan of any ${ep.route.provider} key (refused ${new Date(latest).toISOString().slice(0, 16)}Z; rechecked a day later)`;
   }
 
   /**

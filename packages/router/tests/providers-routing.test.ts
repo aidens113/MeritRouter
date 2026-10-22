@@ -123,10 +123,13 @@ describe("direct free requests", () => {
     expect(a.planRefusals["plan-only"]!.message).toMatch(/not in this key's plan/);
     expect(sy.health.breakers.get("acme").failures).toBe(0);
 
-    // The next task skips the refused model without a request.
+    // Every usable key refused it: routing leaves it out (with the reason), and no request is spent.
+    const preview = sy.router.plan("summarize", "T1", ["text"]);
+    expect(preview.candidates.map((e) => e.id)).toEqual(["acme/in-plan"]);
+    expect(preview.explanations.find((x) => x.endpointId === "acme/plan-only")!.reasons).toEqual([expect.stringMatching(/^not in the plan of any acme key/)]);
     const [second] = await sy.submitTasks([summarizeTask({ goal: "Summarise the log again" })]);
     const r2 = (await sy.awaitResults([second!.taskId], { timeoutSeconds: 10 })).completed[0]!;
-    expect(r2.routing!.attempts[0]).toMatchObject({ endpointId: "acme/plan-only", outcome: expect.stringMatching(/^skipped: no acme key available \(.*not_in_plan/) });
+    expect(r2.routing!.attempts).toEqual([{ endpointId: "acme/in-plan", outcome: "succeeded" }]);
     expect(r2.servedEndpoints).toEqual(["acme/in-plan"]);
     expect(fake.chats().map((c) => c.body?.model)).toEqual(["plan-only", "in-plan", "in-plan"]);
 
