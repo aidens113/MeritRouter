@@ -11,7 +11,8 @@ Related: [roadmap completion](roadmap-completion.md), [Labs](labs.md), [sessions
 ## Current State
 
 Request-only release663626d is now pushed to dev/main after783/783 (88files,943.08s),
-recursive typecheck/build and production browser acceptance. Authorized4477 update is pending.
+recursive typecheck/build and production browser acceptance. Authorized4477 update completed:
+accepted663626d rebuilt at root, livePID24040 and populated recorded exchange verified; config unchanged.
 Local async task lifecycle19268e7 is merged: supervisor independently50/50 (16.67s), plus
 root scoped receipt purge/tombstone + task-Lab deletion10/10 (25.68s). Public lease DTO exports
 and authored operations guidance are added; complete combined acceptance/package remains pending.

@@ -15,7 +15,8 @@ correlated tool actions/file edits, related task/session/commit links, authorita
 project partition and historical session scope privacy. Full783/783 tests in88files (943.08s),
 recursive typecheck/build and production request + historical-session browser acceptance pass
 (16 screenshots). See [release acceptance](roadmap-completion/reports/request-page-release-acceptance.md).
-Actual4477 still serves prior accepted buildPID6288; authorized update/restart is next.
+Actual4477 serves accepted663626d asPID24040 after authorized root build/restart.
+Read-only live checks passed exact model link and populated request input; config unchanged.
 Existing MCP process is still old in memory and needs client reconnect separately.
 
 Local feature branch includes task-Lab lifecycle/caller, captured all-alias source proof,

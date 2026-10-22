@@ -1,6 +1,6 @@
 # Request page release acceptance
 
-Status: Accepted for push and authorized panel update; deployment pending.
+Status: Accepted, pushed to dev/main at663626d and deployed to authorized panel4477.
 
 This isolated release is based on accepted8d22596 and includes project-isolated classification, bounded historical request evidence, original shared-batch membership proof and historical session project-scope checks. It excludes task-Lab lifecycle/caller, normalized capture migration/backend and other unfinished roadmap units. Runtime source candidate5c9deaa; later82b013d updates test fixtures to record the same durable task/execution authority real runners supply, and8ea5b43 groups authored operations guidance.
 
@@ -17,4 +17,4 @@ Logs are supervisor-owned temporary artifacts: switchyard-request-release-full-s
 
 ## Deployment boundary
 
-User authorized panel rebuild/restart for this session. Actual4477 remains prior accepted buildPID6288 until full acceptance. Config is not test data and is not modified by this release. Existing MCP process remains loaded from its old code until the client reconnects; panel restart does not reload it. Broader L5/R2 work continues separately; this release is not a complete roadmap claim.
+User authorized panel rebuild/restart for this session. Accepted663626d was rebuilt at the main checkout; build passed including filesystem cache compaction. Exact prior panelPID6288 was stopped and CLI restarted4477 asPID24040. Read-only live HTTP/Chrome checks passed global/settings/request listing, the exact reported MiniMax URL and an existing populated request-detail exchange; supervisor viewed the recorded input/parameter/tool/message card. Owned Chrome stopped. Current config SHA256 stayedAF4F6543B85F12321E79A9799107D7AEC012F56C65CB6A741E8ED5E2297D72A0. No project payload/screenshot is committed. Config is not test data and is not modified by this release. Existing MCP process remains loaded from its old code until the client reconnects; panel restart does not reload it. Broader L5/R2 work continues separately; this release is not a complete roadmap claim.
