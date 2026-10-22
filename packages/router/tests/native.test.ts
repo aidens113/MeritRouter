@@ -155,4 +155,23 @@ describe("native coding worker", () => {
     expect(env.cfg.profiles.inspect!.max_output_tokens).toBe(4000);
     expect(env.cfg.profiles.summarize!.max_output_tokens).toBe(2000);
   });
+
+  it("the final request offers only the submit tool, so a model that keeps exploring still submits", async () => {
+    env = makeEnv({ config: baseConfig({ coding: { runner: "native" } }) });
+    const client = new ScriptedClient((req) => {
+      const s = servedFor(sy!, req);
+      // A model that would explore forever: it submits only when nothing else is offered. (It
+      // reads src/app.ts, which its submission cites as evidence.)
+      if ((req.tools ?? []).length === 1) return reply(null, { ...s, toolCalls: submit() });
+      return reply(null, { ...s, toolCalls: call("read_file", { alias: "core", path: "src/app.ts" }) });
+    });
+    sy = open(env, client, { worker: true, coding: createCodingRunner(env.cfg) });
+    const [sub] = await sy.submitTasks([task({ budget: { maxModelRequests: 3 }, constraints: { acceptanceCriteria: ["x"], allowedPaths: ["src/**"] } })]);
+    const r = (await sy.awaitResults([sub!.taskId], { timeoutSeconds: 60 })).completed[0]!;
+    const own = client.requests.filter((q) => (q.tools ?? []).some((t) => t.function.name === "submit_result"));
+    expect(own.at(-1)!.tools!.map((t) => t.function.name)).toEqual(["submit_result"]);
+    expect(own.slice(0, -1).every((q) => q.tools!.length > 1)).toBe(true);
+    expect(r.stopReason).toBe("worker_submitted");
+  }, 90_000);
 });
+
