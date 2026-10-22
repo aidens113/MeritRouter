@@ -1,3 +1,4 @@
+import { BudgetRequestsCard, TaskBudgetCard } from "@/components/budget-requests";
 import { RelatedPanel } from "@/components/related";
 import { AgentLink, CommitLink, ModelLink, RequestLink, TaskLink } from "@/components/entity-links";
 import { Tabs, pickTab } from "@/components/tabs";
@@ -7,7 +8,7 @@ import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { ArrowLeft, CheckCircle2, CircleDashed, CircleX, Globe, Terminal } from "lucide-react";
 import { insights, isTerminal, type Classification, type Switchyard, type VerificationRecord } from "switchyard-router";
-import { brainHref, sessionHref, jobHref, taskHref } from "@/lib/links";
+import { brainHref, sessionHref, jobHref, taskHref, repoHref } from "@/lib/links";
 import type { DetailScope } from "@/components/detail-scope";
 import { RequestsTable } from "@/components/requests-table";
 import { SessionsTable } from "@/components/sessions-table";
@@ -66,6 +67,9 @@ export async function TaskDetailView({ sy, taskId, scope, sp = {} }: { sy: Switc
   const verified = new Map((d.verification?.criteria ?? []).map((c) => [c.id, c]));
   const live = !isTerminal(st.state);
   const sessions = insights.sessionsView(sy, { taskId: st.taskId });
+  const taskBudget = insights.taskBudget(sy, taskId);
+  const budgetPending = insights.budgetRequestsView(sy, { taskId, project: scope.project, status: "pending", limit: 1000 });
+  const budgetHistory = insights.budgetRequestsView(sy, { taskId, project: scope.project }).filter((r) => r.status !== "pending");
   const webRequests = insights.taskWebRequests(sy, st.taskId);
 
   const tab = pickTab(sp, ["result", "verification", "routing", "usage", "sessions"]);
@@ -76,7 +80,7 @@ export async function TaskDetailView({ sy, taskId, scope, sp = {} }: { sy: Switc
       </Link>
       <PageHeader
         title={`${st.profile} task`}
-        live={[`tasks:${st.taskId}`]}
+        live={[`tasks:${st.taskId}`, "budget", "requests"]}
         description={
           <span className="flex flex-wrap items-center gap-2">
             <TaskStateBadge state={st.state} />
@@ -84,6 +88,7 @@ export async function TaskDetailView({ sy, taskId, scope, sp = {} }: { sy: Switc
             {d.importance ? <ImportanceBadge level={d.importance.level} /> : null}
             {res ? <AcceptanceBadge status={res.acceptanceStatus} /> : null}
             {res?.verificationStatus ? <VerificationBadge status={res.verificationStatus} /> : null}
+            {budgetPending.length ? <a href="#budget-requests" className="text-xs font-medium text-warn-ink hover:underline">{budgetPending.length} budget requests pending</a> : null}
             <Mono>{st.taskId}</Mono>
           </span>
         }
@@ -176,7 +181,7 @@ export async function TaskDetailView({ sy, taskId, scope, sp = {} }: { sy: Switc
               ["Started", dateTime(st.startedAt)],
               ["Finished", dateTime(st.finishedAt)],
               ["Model requests", `${st.modelRequestsUsed} of ${Number.isFinite(st.maxModelRequests) ? st.maxModelRequests : "unlimited"} allowed`],
-              ...(d.spec.repositoryAliases.length ? ([["Repositories", d.spec.repositoryAliases.join(", ") + (d.spec.writableRepository ? ` (writes ${d.spec.writableRepository})` : "")]] as Array<[string, ReactNode]>) : []),
+              ...(d.spec.repositoryAliases.length ? ([["Repositories", <span key="repos">{d.spec.repositoryAliases.map((alias, i) => <span key={alias}>{i ? ", " : ""}{repoHref(base, alias) ? <Link href={repoHref(base, alias)!} className="text-accent-ink hover:underline">{alias}</Link> : alias}</span>)}{d.spec.writableRepository ? <> (writes {repoHref(base, d.spec.writableRepository) ? <Link href={repoHref(base, d.spec.writableRepository)!} className="text-accent-ink hover:underline">{d.spec.writableRepository}</Link> : d.spec.writableRepository})</> : null}</span>]] as Array<[string, ReactNode]>) : []),
               ...(d.spec.context.fileRefs?.length ? ([["Files given", <span key="f" className="flex flex-wrap gap-1">{d.spec.context.fileRefs.map((f) => <Mono key={f}>{f}</Mono>)}</span>]] as Array<[string, ReactNode]>) : []),
               ...(d.spec.constraints.allowedPaths?.length ? ([["May edit", d.spec.constraints.allowedPaths.join(", ")]] as Array<[string, ReactNode]>) : []),
               ...(st.dependsOn.length ? ([["Runs after", <span key="d" className="flex flex-wrap gap-1">{st.dependsOn.map((x) => <Link key={x} href={taskHref(base, x)} className="font-mono text-xs text-accent-ink hover:underline">{x}</Link>)}</span>]] as Array<[string, ReactNode]>) : []),
@@ -186,6 +191,7 @@ export async function TaskDetailView({ sy, taskId, scope, sp = {} }: { sy: Switc
           />
         </div>
       </Card>
+      {budgetPending.length ? <BudgetRequestsCard requests={budgetPending} decisions={scope.actions} pendingOnly /> : null}
       <RelatedPanel groups={[
         { label: "Jobs", items: (related?.ancestors ?? []).map(j => ({ key: j.jobId, node: <TaskLink base={base} id={j.jobId} label={j.label} job /> })) },
         { label: "Agents", items: (related?.agents ?? []).map(a => ({ key: a.id, node: <AgentLink base={base} agent={a.id} /> })) },
@@ -197,7 +203,7 @@ export async function TaskDetailView({ sy, taskId, scope, sp = {} }: { sy: Switc
         { label: "Dependencies", items: (related?.dependsOn ?? []).map(id => ({ key: id, node: <TaskLink base={base} id={id} /> })) },
         { label: "Child tasks", items: (related?.children ?? []).map(t => ({ key: t.taskId, node: <TaskLink base={base} id={t.taskId} label={t.label} /> })) }
       ]} />
-      <Tabs items={[{ "id": "result", "label": "Result" }, { "id": "verification", "label": "Verification" }, { "id": "routing", "label": "Routing" }, { "id": "usage", "label": "Usage" }, { "id": "sessions", "label": "Sessions" }]} active={tab} path={taskHref(base, st.taskId)} label="Page sections" anchors={{ "web-requests": "usage" }} />
+      <Tabs items={[{ "id": "result", "label": "Result" }, { "id": "verification", "label": "Verification" }, { "id": "routing", "label": "Routing" }, { "id": "usage", "label": "Usage" }, { "id": "sessions", "label": "Sessions" }]} active={tab} path={taskHref(base, st.taskId)} label="Page sections" anchors={{ "web-requests": "usage", "task-budget": "usage", "budget-history": "usage" }} />
       {tab === "result" ? <div className="space-y-6">{res ? (
         <Card>
           <CardHeader title="Result" description={`Stopped because: ${humanize(res.stopReason)}`} />
@@ -323,7 +329,7 @@ export async function TaskDetailView({ sy, taskId, scope, sp = {} }: { sy: Switc
           <CardHeader title="Difficulty score" help="tier" description="How the rulebook scored this task. Points add up; the total picks the tier." />
           <div className="p-4">{d.classification ? <ClassificationView c={d.classification} sy={sy} profile={st.profile} /> : <p className="text-sm text-ink-3">Not scored yet. Scoring happens when a worker picks the task up.</p>}</div>
         </Card></div> : null}
-      {tab === "usage" ? <div className="space-y-6"><Card>
+      {tab === "usage" ? <div className="space-y-6">{taskBudget ? <TaskBudgetCard budget={taskBudget} used={st.modelRequestsUsed} base={base} /> : null}{budgetHistory.length ? <BudgetRequestsCard requests={budgetHistory} decisions={scope.actions} id="budget-history" /> : null}<Card>
         <CardHeader title="Model requests for this task" />
         <RequestsTable rows={d.requests} names={names} base={base} empty="No model requests were made for this task" />
       </Card>

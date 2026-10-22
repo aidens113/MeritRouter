@@ -1,3 +1,4 @@
+import { BudgetRequestsCard } from "@/components/budget-requests";
 import { Tabs, pickTab } from "@/components/tabs";
 import type { ReactNode } from "react";
 import Link from "next/link";
@@ -19,6 +20,7 @@ type Usage = insights.ProjectUsage;
 
 /** Where to act on an attention item: a project's page for its items, an install page for the rest. */
 function attentionLink(project: string | null, text: string, onlyJob: string | null): { href: string; cta: string } | null {
+  if (/budget requests/.test(text)) return { href: "#budget-requests", cta: "Decide" };
   if (project === null) {
     if (/global knowledge/i.test(text)) return { href: `${ALL}/knowledge#pending`, cta: "Review" };
     if (/provider key/i.test(text)) return { href: `${ALL}/keys`, cta: "Fix" };
@@ -69,6 +71,8 @@ export default async function AllProjectsPage({ searchParams }: { searchParams: 
 
   // Attention: install-wide items first, then each project's, grouped by project.
   const install = [...ov.attention];
+  const budgetPending = insights.budgetRequestsView(sy, { status: "pending", limit: 1000 });
+  if (budgetPending.length) install.push(`${budgetPending.length} budget requests await a decision.`);
   if (awaiting.length) install.push(`${awaiting.length} promotion(s) to global knowledge wait for a person's decision.`);
   const asking = new Map<string, string[]>();
   for (const q of sy.questions({ pendingOnly: true })) {
@@ -121,7 +125,7 @@ export default async function AllProjectsPage({ searchParams }: { searchParams: 
       <PageHeader
         title="All projects"
         description="Every project's jobs, queues, and usage on this install, and what needs you. The pages in the sidebar (models, routing, provider keys, knowledge, settings) are shared by all projects."
-        live={["tasks", "jobs", "requests", "workers", "keys", "brain", "projects"]}
+        live={["tasks", "jobs", "requests", "workers", "keys", "brain", "projects", "budget"]}
       />
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat label="Jobs" value={`${num(d.totals.runningJobs)} running`} sub={`${num(d.totals.queuedJobs)} queued across ${d.projects.length} project${d.projects.length === 1 ? "" : "s"}`} />
@@ -181,6 +185,7 @@ export default async function AllProjectsPage({ searchParams }: { searchParams: 
           No questions, decisions, access requests, interrupted tasks, or promotions are waiting in any project, and provider keys and models are in order.
         </Callout>
       )}
+      {budgetPending.length ? <BudgetRequestsCard requests={budgetPending} pendingOnly /> : null}
       <Tabs items={[{ "id": "projects", "label": "Projects" }, { "id": "activity", "label": "Activity" }, { "id": "usage", "label": "Usage" }, { "id": "health", "label": "Health" }]} active={tab} path={"/all"} label="Page sections" anchors={{}} />
       {tab === "projects" ? <div className="space-y-6"><Card>
         <CardHeader title="Queues by project" description="Every task (jobs, their workers, and standalone tasks) running or waiting to run." />
