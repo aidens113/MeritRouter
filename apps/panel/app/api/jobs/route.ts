@@ -6,6 +6,7 @@ export const dynamic = "force-dynamic";
 
 const Body = z.object({
   project: z.string().trim().min(1, "pick a project").max(100),
+  lab: z.string().regex(/^[a-z0-9][a-z0-9-]{0,40}$/).optional(),
   goal: z.string().trim().min(1, "describe the goal").max(20_000),
   repositories: z.array(z.string().min(1)).min(1, "pick at least one repository").max(20),
   acceptanceCriteria: z.array(z.string().trim().min(1)).max(50).default([]),
@@ -35,6 +36,7 @@ export async function POST(req: Request) {
     const out = await sy.startJob({
       project: project.slug,
       goal: b.goal,
+      ...(b.lab ? { lab: b.lab } : {}),
       repositories: b.repositories,
       acceptanceCriteria: b.acceptanceCriteria,
       checks: b.checks,

@@ -13,3 +13,8 @@ You make bounded code changes in an isolated worktree.
 - Each of your responses that edits files is committed under your agent identity, so every line
   you write is attributed to you and can be undone individually by the supervisor.
 - Never weaken a test to make it pass. If a test must change, explain why.
+
+
+## Lab-bound work
+
+A lab-bound task inherits its root team's lab; never switch labs or reach another team's worktree, data or ports. Use the scoped `lab_status`, `lab_logs`, `lab_check` and `lab_http` tools for declared services. Lifecycle actions go through the current lab supervisor, not background shell commands. Commit implementation work before checks: check records name the exact revision. The lab root supervisor integrates onto the lab branch, records decisions in the lab lane working document and uses `lab_promote` for the configured policy. Manual promotion prepares commands for a human and does not change the target automatically. A successful process start alone is not verification.

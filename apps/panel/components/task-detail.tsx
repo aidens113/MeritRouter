@@ -547,7 +547,6 @@ function ContractAndVerification({ d, names, base }: { d: insights.TaskDetail; n
   const c = d.contract?.contract;
   const v = d.verification;
   const t = d.trail;
-  if (!c && !v && !d.importance && !d.contractError) return null;
   const followUps = t.reviews.length + t.retries.length + t.targetedChecks.length + t.raised.length;
   return (
     <Card>

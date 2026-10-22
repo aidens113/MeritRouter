@@ -6,6 +6,16 @@ export { ProjectLimitsSchema, projectLimits, type ProjectLimits } from "./projec
 export { resolveProjects, deepMerge, type ResolvedProject, type ProjectsResolution, type ProjectOverrides } from "./projects/resolve.js";
 export { projectContext, repoKey, splitRepoKey, type ProjectContext, type ProjectInfo } from "./projects/context.js";
 export { ProjectRegistry, type ProjectRow } from "./projects/registry.js";
+export { LabManager, type LabStatus, type LabManagerOptions } from "./labs/lab.js";
+export { LabsConfigSchema, LabRecipeSchema, ProjectLabsSchema, LabNameSchema, type LabsConfig, type LabRecipe } from "./labs/recipe.js";
+export { type LabRecord, type LabServiceRecord } from "./labs/store.js";
+export { type LabCheckResult } from "./labs/checks.js";
+export { ensureLabSupervisor, LabSupervisorLease, type LabSupervisorState } from "./operations/lab-supervisor.js";
+export { type LabRunContext } from "./labs/binding.js";
+export { LabOperationInputSchema, type LabOperationInput, type LabOperation } from "./labs/control.js";
+export { LabHttpInputSchema, type LabHttpInput, type LabHttpResult } from "./labs/http.js";
+export { LabPromotionInputSchema, LabPromotionResultSchema, type LabPromotionInput, type LabPromotionResult } from "./labs/promotion.js";
+export { type LabPublicStatus } from "./labs/public-status.js";
 export { backfillProjects } from "./projects/backfill.js";
 export {
   WorkerTaskSchema,

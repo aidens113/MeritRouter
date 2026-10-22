@@ -52,6 +52,7 @@ const UsageSchema = z.object({
   inputTokens: z.number().nullable(),
   outputTokens: z.number().nullable(),
   cachedInputTokens: z.number().nullable(),
+  cacheCreationInputTokens: z.number().nonnegative().nullable().optional(),
   reasoningTokens: z.number().nullable(),
   reportedCostUsd: z.number().nullable(),
   basis: z.enum(["provider_reported", "unknown"]),

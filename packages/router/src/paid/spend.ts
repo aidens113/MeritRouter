@@ -178,13 +178,14 @@ export interface TokenPrice {
   in: number;
   out: number;
   cachedIn?: number | null;
+  cacheWriteIn?: number | null;
   /** USD per native web search the provider runs inside the request (unset: no search is priced). */
   perSearch?: number | null;
 }
 
 /** An endpoint's prices as a `TokenPrice`; unknown input or output prices are Infinity (never routable as free). */
-export function endpointPrice(pricing: { inputUsdPerMillion: number | null; outputUsdPerMillion: number | null; cachedInputUsdPerMillion?: number | null | undefined }): TokenPrice {
-  return { in: pricing.inputUsdPerMillion ?? Infinity, out: pricing.outputUsdPerMillion ?? Infinity, cachedIn: pricing.cachedInputUsdPerMillion ?? null };
+export function endpointPrice(pricing: { inputUsdPerMillion: number | null; outputUsdPerMillion: number | null; cachedInputUsdPerMillion?: number | null | undefined; cacheWriteInputUsdPerMillion?: number | null | undefined }): TokenPrice {
+  return { in: pricing.inputUsdPerMillion ?? Infinity, out: pricing.outputUsdPerMillion ?? Infinity, cachedIn: pricing.cachedInputUsdPerMillion ?? null, cacheWriteIn: pricing.cacheWriteInputUsdPerMillion ?? null };
 }
 
 /** Input estimates are approximate; reserve this much headroom over them for paid requests. */
@@ -197,7 +198,7 @@ export const PAID_INPUT_SAFETY = 1.5;
  * native web searches are added at `price.perSearch` (an unknown search price is Infinity).
  */
 export function worstCaseUsd(inputTokens: number, maxOutputTokens: number, price: TokenPrice, maxSearches = 0): number {
-  return (Math.ceil(inputTokens * PAID_INPUT_SAFETY) * price.in + maxOutputTokens * price.out) / 1_000_000 + searchUsd(maxSearches, price);
+  return (Math.ceil(inputTokens * PAID_INPUT_SAFETY) * Math.max(price.in, price.cachedIn ?? price.in, price.cacheWriteIn ?? price.in) + maxOutputTokens * price.out) / 1_000_000 + searchUsd(maxSearches, price);
 }
 
 /** Cost of `searches` native web searches; an unknown per-search price makes any search Infinity. */
@@ -208,14 +209,17 @@ export function searchUsd(searches: number, price: Pick<TokenPrice, "perSearch">
 
 /**
  * Cost of a served request. `cachedInputTokens` (a subset of `inputTokens`) are priced at the
- * cached rate when one is known. Cache writes (Anthropic bills them above the input price) are
- * not reported apart and count as ordinary input. `searches` native web searches are added at
+ * cached rate when one is known. Cache creation is a separate subset, using only its configured
+ * or verified price. Unknown write prices return Infinity. `searches` native web searches are added at
  * `price.perSearch`.
  */
-export function actualUsd(inputTokens: number, outputTokens: number, price: TokenPrice, cachedInputTokens = 0, searches = 0): number {
+export function actualUsd(inputTokens: number, outputTokens: number, price: TokenPrice, cachedInputTokens = 0, searches = 0, cacheCreationInputTokens = 0): number {
   const cached = Math.min(Math.max(0, cachedInputTokens), inputTokens);
+  const created = Math.min(Math.max(0, cacheCreationInputTokens), inputTokens - cached);
+  // Unknown write price can never silently become ordinary input. Gate disables such writes.
+  if (created > 0 && price.cacheWriteIn == null) return Infinity;
   const cachedRate = price.cachedIn ?? price.in;
-  return ((inputTokens - cached) * price.in + cached * cachedRate + outputTokens * price.out) / 1_000_000 + searchUsd(searches, price);
+  return ((inputTokens - cached - created) * price.in + cached * cachedRate + created * (price.cacheWriteIn ?? 0) + outputTokens * price.out) / 1_000_000 + searchUsd(searches, price);
 }
 
 /** What reading `cachedInputTokens` from the cache saved over ordinary input; null without a cached price. */

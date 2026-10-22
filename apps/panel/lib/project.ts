@@ -65,7 +65,7 @@ export async function lastProject(sy: Switchyard): Promise<string | null> {
   return slug && findProject(sy, slug) ? slug : null;
 }
 
-/** Live projects for the switcher, in config order: running (live), queued, and attention counts. */
+/** Project metadata identifies archived settings too; the picker filters archived entries. */
 export function switcherProjects(sy: Switchyard): SwitcherProject[] {
-  return insights.projectsGrid(sy).map((p) => ({ slug: p.slug, name: p.name, live: p.runningTasks > 0, queued: p.runningTasks === 0 && p.queuedTasks > 0, attention: p.attention }));
+  return insights.projectsGrid(sy, { includeArchived: true }).map((p) => ({ slug: p.slug, name: p.name, archived: p.archived, live: p.runningTasks > 0, queued: p.runningTasks === 0 && p.queuedTasks > 0, attention: p.attention }));
 }

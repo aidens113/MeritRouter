@@ -16,6 +16,18 @@ function open<T extends z.ZodRawShape>(shape: T) {
 
 const strings = z.array(z.string());
 
+/** Portable description only; LabOperationInputSchema enforces each kind's strict shape. */
+export const LabOperationArgumentSchema = open({
+  kind: z.enum(["create", "start", "stop", "destroy", "refresh", "restart", "check", "after_integrate", "promote"]),
+  goal: z.string().optional(),
+  targetBranches: open({}).optional().describe("create: repository alias to target branch strings."),
+  service: z.string().optional().describe("restart: optional declared service."),
+  name: z.string().optional().describe("check: required declared check name."),
+  expectedHeads: open({}).optional().describe("after_integrate: required repository alias to exact commit strings."),
+  by: z.enum(["human", "supervisor", "auto"]).optional().describe("promote: required review authority."),
+  reason: z.string().optional().describe("promote: review reason."),
+});
+
 /** One task as submit_tasks takes it: the main fields of core/task.ts's WorkerTaskSchema. */
 export const TaskArgumentSchema = open({
   profile: ProfileNameSchema.describe(PROFILE_NAMES.join(" | ")),

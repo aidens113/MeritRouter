@@ -14,6 +14,7 @@ import { extraRequests } from "../admission/job-pool.js";
 import { criterionTexts, WorkerResultSchema, type TaskState, type WorkerResult } from "./task.js";
 import { restoreRunState } from "./retry-state.js";
 import { baseResult, type RetryContext, type RunContext, type RunOutcome, type RunnerResult } from "../runners/types.js";
+import type { LabManager } from "../labs/lab.js";
 import { repairCap, type ContractStore, type StoredContract } from "../verification/contract.js";
 import { continueRun, planRetry, repairPossible, requestsUsed, verifyWithReview, type ReviewRun, type VerifiedRun } from "../verification/phase.js";
 import { contractShortfall, ensureContract, runCap } from "./acceptance.js";
@@ -83,6 +84,7 @@ export interface ExecutorDeps {
   project?: (task: StoredTask) => ProjectDeps;
   /** Agents' web search and fetch, shared by every project (absent: no web tools). */
   web?: WebAccess | null;
+  labs?: LabManager;
 }
 
 /** What differs per project in the executor's dependencies. */
@@ -119,8 +121,10 @@ export class Executor {
    * brain access in place of the global ones. Throws when the task's project is not configured.
    */
   private depsFor(task: StoredTask): ExecutorDeps {
-    if (!this.d.project) return this.d;
-    return { ...this.d, ...this.d.project(task) };
+    const deps = this.d.project ? { ...this.d, ...this.d.project(task) } : this.d;
+    if (!deps.labs) return deps;
+    const scoped = deps.labs.contextForTask(task.row.project_id || deps.cfg.brain.project, task.row.id, task.spec, deps.tasks);
+    return { ...deps, cfg: scoped.cfg };
   }
 
   /** `depsFor`, or null when the task's project is not configured (reports are then skipped). */
@@ -159,6 +163,7 @@ export class Executor {
   ): RunContext {
     // Runners see the task's project: its repositories, brain scope, and policy overrides.
     const d = this.depsFor(task);
+    const lab = d.labs?.bindTask(task.row.project_id || d.cfg.brain.project, task.row.id, task.spec, d.tasks);
     const budget = effectiveBudget(d.cfg, task.spec, plan.tier);
     // A repair (or escalation) run draws on the repair reserve, on top of the execution cap. A
     // first run also gets every request its approved requests for more granted (budget control D3).
@@ -190,6 +195,7 @@ export class Executor {
       session,
       resume,
       web: this.d.web ?? null,
+      ...(lab ? { lab } : {}),
     };
   }
 
@@ -333,6 +339,10 @@ export class Executor {
       let d: ExecutorDeps;
       try {
         d = this.depsFor(task);
+        if (d.labs) {
+          const binding = d.labs.bindTask(task.row.project_id || d.cfg.brain.project, task.row.id, task.spec, d.tasks);
+          if (binding) await d.labs.assertTaskBases(binding, task.spec, d.tasks);
+        }
         prepared = await this.d.router.prepare(task, this.d.owner, d.cfg);
       } catch (err) {
         if (isSimulatedCrash(err)) {
@@ -497,7 +507,10 @@ export class Executor {
         const routing: Routing = { classification: null, tier: null, escalatedFrom: null, attempts: [] };
         this.routing.set(t.row.id, routing);
         try {
-          const p = await this.d.router.prepare(t, this.d.owner, this.depsFor(t).cfg);
+          const deps = this.depsFor(t);
+          const binding = deps.labs?.bindTask(t.row.project_id || deps.cfg.brain.project, t.row.id, t.spec, deps.tasks);
+          if (binding) await deps.labs!.assertTaskBases(binding, t.spec, deps.tasks);
+          const p = await this.d.router.prepare(t, this.d.owner, deps.cfg);
           routing.classification = p.classification;
           if (!p.plan) this.tooDifficult(t, p);
           else {
@@ -537,14 +550,18 @@ export class Executor {
           crashed = true;
           return;
         }
-        const pendingIds = (err as { batchPendingTaskIds?: string[] }).batchPendingTaskIds ?? members.map((t) => t.row.id);
-        for (const t of members) {
+        const retained = err as { batchOutcomes?: Map<string, RunOutcome>; batchPendingTaskIds?: string[] };
+        outcomes = retained.batchOutcomes ?? new Map();
+        const pendingIds = retained.batchPendingTaskIds ?? members.map((t) => t.row.id);
+        for (const t of [...members]) {
           if (!pendingIds.includes(t.row.id)) continue;
           const d = this.classify(err, this.controllers.get(t.row.id)?.signal ?? shared.signal, t);
           this.endForDisposition(t, sessions.get(t.row.id) ?? null, d);
           this.settle(t, d);
+          members.splice(members.indexOf(t), 1);
         }
-        return;
+        // Retained completions go through the same session end, verification and recording
+        // path as a successful batch. Pending members have already received their disposition.
       }
       for (const t of members) {
         const o = outcomes.get(t.row.id);

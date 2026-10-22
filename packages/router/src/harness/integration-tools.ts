@@ -1,3 +1,5 @@
+import { LabCheckResultSchema } from "../labs/checks.js";
+import { z } from "zod";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { newId } from "../storage/db.js";
@@ -164,6 +166,17 @@ export function integrationHooks(s: SupervisorState, env: HarnessEnv, seam: Inte
         const exitCode = r.killed ? null : r.exitCode;
         recordJobCheck(s.db, { jobId, repo: item.repo, command, exitCode, now: Date.now() });
         out.push({ command, exitCode, ...(logRef ? { logRef } : {}) });
+      }
+      if (s.ctx.lab && s.ctx.lab.rootJobId === jobId && item.afterHead) {
+        const binding = s.ctx.lab;
+        const op = await binding.manager.control(binding.project, binding.name, {kind:"after_integrate",expectedHeads:{[item.repo]:item.afterHead}}, `task:${jobId}`, {signal:s.ctx.signal});
+        const results = z.array(LabCheckResultSchema).parse(op.result);
+        for (const result of results) {
+          const command = `lab:${result.name}`;
+          const exitCode = result.killed ? null : result.exitCode;
+          recordJobCheck(s.db, { jobId, repo: item.repo, command, exitCode, now: Date.now() });
+          out.push({ command, exitCode });
+        }
       }
       return out;
     },

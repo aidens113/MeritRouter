@@ -1,9 +1,9 @@
 # Labs: parallel, isolated, runnable lanes for agent teams
 
 Status: Active
-Status detail: Plan written 2026-10-21 at the user's request; not started.
+Status detail: L1-L4 integrated and independently validated locally; fresh package acceptance/push pending. L5 extensions remain active follow-on work.
 Created: 2026-10-21
-Last updated: 2026-10-21
+Last updated: 2026-10-22
 Owner: Senior supervisor agent
 Scope: Make labs (lanes) a native part of SwitchYard: each lab is an isolated, runnable copy of a
 project on its own branch, with its own ports, data, and running services, where an agent team
@@ -31,7 +31,21 @@ assumptions about FluxIQ are listed under Open Questions for the user to correct
   tree); no ports, per-branch data, long-running services, readiness checks, or process
   supervision; no cleanup of old worktrees (`Worktrees.remove()` has no caller).
 
-**Next steps:** the user answers the Open Questions (or accepts the defaults); then L1.
+**Implementation update 2026-10-22:** L1-L4 are integrated locally: validated recipes/store,
+owned worktrees/data/ports, services, checks, refresh/promotion, team/task tools, CLI, persistent
+brain lanes and project panel/editor/controls. Supervisor independently verified20 focused
+core/integration tests,8 admin tests, production lifecycle/API/browser and legacy migration,
+then701/701 integrated tests(78files), recursive typecheck/build. Final model-navigation browser
+also passes after fixing catalog-version invalidation. Fresh tarball outside-install checks
+remain active before push. See [roadmap-completion](roadmap-completion.md) for exact evidence.
+
+Limits: max_active counts all retained, non-destroyed labs, including stopped/failed labs;
+destroy preserves branches and refuses dirty worktrees. Per-lab recipes are snapshots.
+Process/listener verification is tested on Windows; cross-platform acceptance remains separate.
+
+**Next steps:** finish package/push acceptance; L5 static browser checks and R2's first async
+accounting slice are isolated in progress. Hydrated JavaScript browser checks, ephemeral task
+labs, Compose and multi-host persistence are not complete; see [extensions](distributed-and-lab-extensions.md).
 
 **Blockers:** none.
 
@@ -40,9 +54,9 @@ assumptions about FluxIQ are listed under Open Questions for the user to correct
 ## Concept
 
 A **lab** belongs to a project. It has:
-- a name and a **lab branch** per repository (`switchyard/lab-<name>`), forked from the project's
+- a name and a **lab branch** per repository (`switchyard/lab-<project>-<name>-<id-suffix>`), forked from the project's
   **target branch** (default the repository's current branch, e.g. `dev`);
-- a **lab worktree** per repository (`<storage>/labs/<project>/<lab>/<alias>`), the lab's running
+- a **lab worktree** per repository (`<storage>/labs/<project>/<lab>/repos/<alias>`), the lab's running
   checkout;
 - **allocated ports** (one per named port in the recipe), **its own data** (a lab folder for
   databases, uploads, caches), and **environment variables** derived from both;

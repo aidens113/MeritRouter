@@ -21,23 +21,42 @@ panel on spare ports. Real credentials/environment checks remain explicitly dist
 from completed code. Previously deferred R2/L5 require their architecture/acceptance design
 before implementation; they are tracked below rather than silently omitted.
 
-**Checkpoint:** provider routing/registry/quarantine unit independently accepted (624 tests,
-recursive typecheck/build and demo browser acceptance); merge/push follows. E1 checkpoint5704654,
-Labs L1, project recovery and packaging have returned; supervisor independent integration is
-pending. Labs L2/L3 is the next dispatched phase. No whole-roadmap completion claim.
+**Accepted integrated source e0aad08:** E1 correctness, Labs L1-L4, package discovery/setup/
+bundled panel, external task tools, cache/catalog accounting, provider follow-ups, project
+restore/deletion/config safety and process-race fixes. Supervisor frozen checks701/701
+(78files,422.38s), recursive typecheck and isolated recursive build pass. Independent production
+Labs lifecycle/API/live/browser, legacy migration and model navigation pass. Verification with
+no metadata renders explanations; hovering the Team metrics section opens0 hints, one trigger
+opens1, keyboard focus/closing work. Historical model links and catalog-only refresh pass.
+
+Fresh tarball51,561,351bytes/2489entries installs outside checkout (QiBFVy); native SQLite,
+CLI discovery/init/setup, MCP40tools,8 production panel/API routes and stylesheet, detached
+setup start/reuse/stop pass with checkout reads forbidden. Owned fixtures are stopped. This
+coherent unit is ready for dev/main; previously only provider7a1873f was pushed. Actual user
+panel4477 and MCP processes were not restarted or used for tests; no deployed-fix claim.
+
+**Continuing:** L5 static-render browser checks are frozen in their isolated tree pending root
+review/repetition/all-heads evidence reuse integration. Hydrated JS, ephemeral task Labs and
+Compose remain open. R2 inventory found81 SQLite consumers; first async Gate accounting slice
+is receiving post-reservation lease/deadline revalidation. PostgreSQL/multi-host is not enabled.
+User additionally clarified MCP final-supervisor dispatch must default OFF, while bounded
+sub-supervisors remain available. That setting/guard/UI work is active under
+[external-supervisor-guidance](external-supervisor-guidance.md); obsolete guidance-enable
+toggle semantics were rejected. No whole-roadmap completion claim.
 
 ## Execution phases
 
 | Phase | Work and acceptance | Dependencies/state |
 | --- | --- | --- |
-| E1 | Reproduce/fix sub-job scope propagation, batch result preservation and external context; meaningful regressions | Assigned team-correctness |
-| E2 | Labs L1 schema/store/lifecycle/ports/process supervisor/checks/CLI; two running fixture labs, restart/adoption/idle/destroy | Core assigned; CLI after packaging |
-| E3 | Labs L2/L3 job/tools/brain/charters plus promotion/refresh/overlap/conflict handling; scoped fixture job and competing promotions | E2 |
-| E4 | Labs L4 panel/settings/demo/docs; production pages/API/screenshots | E3 stable API |
-| E5 | npm config discovery/setup/bundled panel; pack and install outside checkout, CLI/MCP/panel smoke checks | Assigned packaging; no publishing |
-| E6 | External runner checks/budget tools; provider quarantine/order/metadata/pricing; project/restore fixes | Partition after initial workers return |
-| E7 | Concurrent-process/crash/CLI/MCP acceptance, caching/verification edge cases, performance measurements | Affected APIs stable; no real providers |
-| E8 | Design/implement explicitly future L5 and R2 as bounded follow-on phases; browser/ephemeral/Compose checks and two-host queue acceptance | Architecture review after E2/E3; no silent completion claim |
+| E1 | Sub-job scope, partial batch results, external context | Accepted in integrated701-test unit |
+| E2 | Labs L1 lifecycle/ports/process ownership/CLI | Accepted Windows fixture/process evidence |
+| E3 | Labs L2/L3 tools/brain/team binding/promotion/refresh | Accepted focused20 and full integration |
+| E4 | Labs L4 panel/settings/demo and reported UI regressions | Accepted independent production browser/API/screenshots |
+| E5 | Config discovery/setup/bundled panel/package | Fresh isolated install passes; no publication or cross-platform install claim |
+| E6 | External tools, accounting, providers, restore/config/project fixes | Accepted fake-provider/process/production checks; live-provider limits remain |
+| E7 | Concurrent processes/crash/CLI/MCP/deletion/performance | Measured and passing integrated; no real-provider throughput claim |
+| E8 | Remaining L5 and R2 phases | Static browser and first async ledger isolated; JS/ephemeral/Compose/PostgreSQL still open |
+| E9 | User-requested configurable MCP final-supervisor ownership | Corrected default false + bounded sub-supervisors; implementation active |
 
 For each phase the supervisor reviews diffs, runs relevant tests then recursive typecheck/build
 and full router suite for integrated code. Panel work additionally uses seeded demo production
@@ -45,6 +64,17 @@ HTTP/API routes and headless Chrome desktop/phone light/dark captures. Only comp
 passing units reach dev/main. Documentation and source commit together.
 
 ## Worker Briefs
+
+### Brief: distributed-storage-inventory
+- Repository: `.claude/worktrees/roadmap-process`; read-only source investigation while integrated root acceptance runs. Existing uncommitted supervisor config files must remain untouched.
+- Task: produce an executable R2 asynchronous persistence migration brief from actual source, not a generic design. Read distributed-and-lab-extensions.md in root read-only if absent here, task claims/service/admission/session/artifact/coordination boundaries and relevant callers.
+- Owns: only `docs/working/roadmap-completion/reports/distributed-storage-inventory.md`. Do not edit code, manifests, shared documents, branches or generated files; no commits/push.
+- Required output: inventory direct SQLite users grouped by subsystem, transaction boundaries that must remain atomic, concrete async interface signatures and staged file partitions. Identify the smallest genuinely integrated first slice (not unused adapter scaffolding), its callers, compatibility migration and acceptance tests.
+- Include worker-host affinity and lease fencing dependencies; distinguish synchronous public API compatibility from backend-safe async work. No process-per-query emulation or shared network SQLite.
+- Inspect available PostgreSQL fixture options without installation or starting OS services; downloads/container starts not in this brief. No user data/real providers. Report actual tool availability and commands, do not claim multi-host verification from local two-process tests.
+- Return concise recommendation for next implementation partition with exact owned files and API contract; supervisor owns scope/integration and will independently verify.
+
+
 
 ### Brief: team-correctness
 - Repository: .claude/worktrees/roadmap-team, feat/roadmap-team, isolated from root validation.
@@ -91,6 +121,49 @@ passing units reach dev/main. Documentation and source commit together.
 - Acceptance: real scripted lab job/tools/integration/restart/checks; two conflicting labs promotion order; manual target untouched; cross-lab HTTP refused and concurrent lifecycle control safely routed. Narrow tests/typecheck and exact report.
 - Report: roadmap-completion/reports/labs-integration.md. Send API contract early; no broad panel edits.
 
+### Brief: cache-catalog-accounting
+- Repository: .claude/worktrees/roadmap-accounting, feat/roadmap-accounting from roadmap-core.
+- Task: retain provider-sourced parameter provenance, quantization and trained/max context metadata in catalog; separately account Anthropic cache-creation tokens/pricing without silently undercharging paid budgets.
+- Required reads: caching-and-continuity Current State; catalog/enrichment; gateway usage normalization/pricing; paid accounting/admission and session usage schemas. Official provider documentation for wire contracts; no hard-coded changing prices.
+- Owns: models catalog/enrichment files; gateway usage/types/Anthropic pricing integration; paid pricing/spend; admission/admission.ts; usage/session schemas needed for cache-creation accounting; focused tests and report cache-catalog-accounting.md.
+- Must not touch: config/schema.ts or migrations (nullable cache_creation_input_tokens and optional cache_write_input_usd_per_million already supplied by L1); runners/coding, harness, core service/executor, CLI/public exports, panel or shared docs. Ask before expanding ownership. No commits/push/user data/live providers.
+- Contract: preserve null/unknown distinctions and existing rows; configured/verified write prices only. Authoritative provider-reported cost wins. Paid reservations must bound writes, not only ordinary input/read; unknown write pricing must fail closed or disable cache creation with a demonstrably enforced wire boundary. Send proposed unknown-price policy to root before implementation.
+- Acceptance: fake Anthropic creation/read/ordinary usage normalization and persistence, actual configured cost/reservation safety, unknown-price boundary, backwards compatibility; provider provenance/quantization/context retained. Narrow tests/typecheck, exact report and limits.
+
+### Brief: labs-panel
+- Repository: isolated roadmap-labs-panel worktree/branch; supervisor supplies current service and L2/L3 APIs before implementation validation.
+- Task: E4/L4 project-scoped Labs list/detail/editor/settings, create/start/stop/restart/check/logs/refresh/promotion controls and lab choice for new jobs; clear ownership/queued-operation state and meaningful failures. Preserve archived-project read-only policy and live page refresh.
+- Required reads: labs.md Current State/L4; root roadmap Current State; LabManager publicStatus/control API and recipe schema; existing project routes/forms/admin insights and live subscriptions.
+- Owns: new admin/labs.ts, panel Labs pages/components and api/labs/**; project navigation Labs entry, job creation form/API lab selection; project settings recipe/editor section; demo seed Labs fixtures. Own tests/report labs-panel.md. Root alone owns admin/insights.ts, admin/live.ts, service/executor/CLI and shared docs.
+- Boundaries: data through public router/admin facade; no service tokens, raw env, secret commands or unscoped project lookup in API/UI. Recipe commands remain human config, model tools cannot author them. Models/services never auto-run on page load; route writes enqueue to existing Labs supervisor after explicit human action. Coordinate launcher public API with root; do not launch model worker.
+- Initial step: inspect and report intended files/API contract; wait for supervisor dependency merge before edits relying on missing APIs. Do independent UI/design work while dependencies integrate; no fake success flags or generated-dist source substitutes.
+- Acceptance: focused tests, production router+panel build, demo pages/API plus desktop/phone light/dark screenshots (root independently verifies). Create two fixture labs, logs/check/control queue/promotion reason/denied cross-project controls, archived read-only, no token exposure. No user data/providers/OS install/commits/push/shared docs.
+- Report: roadmap-completion/reports/labs-panel.md, list exact checks and remaining limits.
+
+### Brief: process-acceptance
+- Repository: isolated roadmap-process worktree, feat/roadmap-process from current core checkpoint.
+- Task: E7 independent real-OS-process fake-provider acceptance for queue claims/leases/recovery/provider slots/integration serialization and CLI/MCP budgets/transports. Reuse existing meaningful fixtures; add missing regressions rather than mirror implementation.
+- Owns: new tests/process-acceptance*.test.ts, own fixtures under tests/fixtures/process-acceptance, report process-acceptance.md. Read affected source only for reproductions. No source edits without root scope amendment, no shared docs/commits/push.
+- Boundaries: temp configurations/stores/repos/brains, fake provider HTTP servers only. Never real credentials/4477/userinstall/paid routes/public service installations. All spawned services/listeners/processes stopped in finally; verify owned process before kill. No repository-wide validation in another worker's tree.
+- Acceptance: competing independent worker processes do not double claim or exceed provider slots; killed owner recovery/resume preserves durable attribution/session records without automatic coding replay; competing integrations serialize. Real CLI and MCP budget approvals/denials/accounting and HTTP/stdio schema refusals. Record exact commands/measurements and distinguish missing acceptance from actual defects.
+- Follow-up: report reproduction and suggested bounded file ownership to root for any source fix; don't silently weaken assertions or call hard-kill persistence verified from caught exceptions. Keep test duration bounded; no live quota.
+- Amendment: supervisor authorizes owning merge-queue source plus focused regressions after deterministic subprocess reproduction of live-owner recovery. Different process owner alone is not stale evidence; verify current leases/owner, preserve attribution and public API. Coordinate Labs worker if API changes.
+
+### Brief: process-performance
+- Repository: existing roadmap-process isolated tree after its source checkpoint; no edits to accepted process/queue files.
+- Task: measure fake-provider concurrent task throughput/latency at bounded loads, live watcher cost on a realistically larger temporary store, and concurrent project deletion refusal/revalidation. Establish evidence for E7 gaps; do not equate fixture throughput with provider throughput.
+- Owns: new tests/process-performance.test.ts or named scripts/benchmark-process.mjs and own report process-performance.md. Root owns admin/live.ts and projects deletion source; send findings before any source edits.
+- Required reads: this Current State and exact public service/live/deletion contracts used. No broad discovery or real providers; use temporary SQLite/repos/brains and fake provider only.
+- Acceptance: record dataset size, concurrency, elapsed/p50/p95, provider peak and watcher quiet/write tick costs; meaningful assertions for no lost/double work and scoped live changes. Revalidate parent source after Labs dependency merge if it changes measurement paths. Stop all owned processes/listeners and distinguish limitations.
+- No commits/push/shared docs/user install/OS services/paid quota. Existing process source is frozen for root review; add only new benchmark/test/report files while root verifies it.
+
+### Brief: model-navigation-regression
+- Repository: roadmap-process worktree after its performance/deletion source is frozen; edits disjoint from those files. Supervisor creates a separate checkpoint before integration.
+- Task: investigate user-reported model detail links yielding Not Found. Root read exact reported URL and model list via GET only: both200, correct model h1, no404 marker. Do not conclude client navigation is verified from that. Reproduce with isolated production demo and actual clicks, including slash/dot model IDs, model changes and tab query preservation; diagnose stale client/navigation behavior or missing historical-model details.
+- Owns: panel model detail/list page and shared ModelLink/format modelHref only if reproduced; new focused regression/temporary isolated browser harness and own report model-navigation.md. Root owns task Verification fix, shared docs, public insights facade and live watcher. Ask before touching router catalog/data APIs.
+- Must not mutate/restart4477, user config/store/browser profile, call providers or run tests against user data. Any production build uses your isolated worktree; coordinate memory-heavy Next compile with panel worker/root. Stop owned demo/browser services.
+- Acceptance: concrete source cause and meaningful regression if defect reproduced, direct and client navigation with encoded IDs and tab switches, historical/unknown ID distinction. Report unverified browser state honestly; no speculative claimed fix. No commits/push/shared docs.
+
 ## Work Ledger
 
 ### Brief: external-runner-tools (next worker after project recovery)
@@ -130,6 +203,52 @@ passing units reach dev/main. Documentation and source commit together.
 - Validation: targeted60/60; live18/18; final frozen full suite624/624(63files,328.83s); recursive typecheck/build pass; final panel rebuild pass. Demo API400/404/409, UI retry preserves evidence; independent682ms refresh retains document marker. Four desktop/phone light/dark captures inspected; no overflow/exceptions; demo acknowledgement restored and services stopped.
 - Outcome: Accepted for bounded provider unit; remaining E6 accounting/catalog work stays open.
 - Follow-up: merge/push unit; independent E1/L1 verification running before integration. Report provider-followups.md records discarded overlapping run and fixture corrections.
+
+### 2026-10-22 - Core checkpoints and independent package acceptance
+- Agent: supervisor
+- Changed: merged E1 5704654, L1 33630ee, project recovery 04fd8c5 and packaging 6cfa823 locally into roadmap-core. Added missing prepared-config public exports; retained-Lab config/deletion guards in progress. Labs L2/L3 and external tools dispatched; accounting brief extended narrowly to providers/anthropic.ts, enrich.ts, discovery.ts and gateway/direct.ts.
+- Validation: independent E1 5/5 and Labs 8/8; independent existing-tarball outside-checkout smoke passed native SQLite, CLI discovery/init/setup, MCP36 tools/usage_summary, eight panel/API pages plus stylesheet, detached setup launch and shutdown. No checkout runtime reads, live quota or user install changes. Root focused project/package checks running; no integrated acceptance claim yet.
+- Decision: unknown paid Anthropic cache-write price disables all cache markers at the wire boundary; native server search also disables paid caching until an internal-token reservation bound exists. Configured ordinary/read/write maximum bounds known prompt-only writes. Provider-reported cost remains authoritative; worker to verify with fake wire tests and primary documentation.
+- Outcome: Partial
+- Follow-up: finish project/browser guards, Labs service/CLI integration and accounting/external reports; integrated full checks and fresh package needed before push. Provider unit alone already pushed to dev/main at7a1873f.
+
+### 2026-10-22 - Process races fixed; reported panel bugs added
+- Agent: supervisor and bounded workers
+- Changed: merged external tools6fc8d60, accountingec92e74, durable integration mutex190e98b and project deletion4d9099c locally; root config writerdccaa42 supplies transaction serialization and expected-text comparison. Added Labs native/external tools, read-only lane context, scoped live source and follow-on L5/R2 architecture (pending L2 API merge, not integrated acceptance).
+- Validation: supervisor independently external5/5; accounting27/27; process acceptance5/5(10.07s) including actual kill/recovery and CLI/MCP; performance/deletion9/9(28.10s). Under concurrent build load fake throughput10.46/s atc1 and20.69/s atc4;61k rows quietp95.279ms/writep95211.81ms. These are fixture measurements, not provider performance claims.
+- Findings: concurrent archive/delete and simultaneous deletions could remove last live project; stale config and failed config backup could lose data. Corrected with final serialized lifecycle/snapshot revalidation and write-before-purge rollback. Windows PID-only ancestry in Labs also falsely associated an older unrelated listener; worker replacing /T termination with birth/command-verified individual processes before final acceptance.
+- User steering: model detail links reported404 and task Verification tab empty. Root read exact reported model URL successfully200/correcth1/no404 marker; client behavior remains under isolated browser investigation. Verification source had an unconditional empty return when all persisted metadata absent; removed so explanations render. Browser regression is required before calling it fixed.
+- Outcome: Partial
+- Follow-up: accept L2/L3 after process identity fix and scripted job/brain ledger regression, merge into panel tree with real insights exports, then production/browser and frozen integrated checks. E8 remains architecture-only; no whole-roadmap or live-provider completion claim.
+
+### 2026-10-22 - Integrated suite exposed MCP contract gaps
+- Agent: supervisor
+- Changed: portable descriptive Lab operation MCP schema retains unknown fields for strict runtime validation; updated tool inventory assertions for four new tools; restored external coding session-note prefix.
+- Validation: first integrated full suite686/691(77files,372.58s); exact failures were MCP operation oneOf/no-type portability, three stale36-tool assertions and session-note prefix. After repairs router build, recursive typecheck and focused MCP/session16/16(16.77s) pass, including invalid operation field/missing check name regressions.
+- Outcome: Partial
+- Follow-up: repeat full suite before push; L4 production/browser acceptance active in isolated tree. L5 static-render browser checks and concrete R2 persistence inventory dispatched with written briefs; neither completes its full future phase.
+
+### 2026-10-22 - Frozen integrated checks pass; partial Lab status repaired
+- Agent: supervisor
+- Changed: status omits an endpoint whose declared placeholders are not yet allocated during creating/failed creation; normal states retain strict substitution. This preserves readable recovery evidence instead of throwing while the durable create operation runs.
+- Validation: frozen6a77c4a full suite691/691(77files,393.07s), recursive typecheck and router build pass. Subsequent partial-status regression initially caught a wrongly scoped fixture root (corrected); focused labs-service2/2(4.44s) pass for creating/failed/stopped and normal team binding.
+- Outcome: Partial
+- Follow-up: L4 production/browser report pending supervisor repetition; rebuild and full suite with L4/partial-status fix before push. New user request for configurable external supervisor guidance tracked separately.
+
+### 2026-10-22 - Independent panel acceptance and catalog watcher regression
+- Agent: supervisor
+- Changed: restore explicit catalog-version mark while retaining narrow meta invalidation; the earlier global-meta optimization missed catalog.bump-only changes.
+- Validation: independent frozen L4 admin8/8; real production Labs lifecycle/API/browser run passed with18 screenshots, actual hover/focus/Verification assertions, promotion instructions, zero model-request delta; legacy migration production API passed. Owned processes1888/23396/8240/2456/23272/20336 verified absent. Screenshots detail/light, recipe/phone/dark and Team metrics focused inspected.
+- Findings: independent model-navigation initially lacked its required production server (fixture invocation corrected); then timed out on catalog-only title refresh. Root live regression19/19(9.03s) passes after narrow catalog-version repair; full browser repetition pending.
+- Outcome: Partial
+- Follow-up: merge L4, fix API project-slug parity, repeat model browser against final production build, integrated full checks/package. New external supervision feature separately active.
+
+### 2026-10-22 - Labs/core/package coherent acceptance
+- Agent: supervisor
+- Changed: integrated L4b4039ae, catalog-version39c966d, partial-status9e06031 and project-slug paritye0aad08; updated authored Labs operations/setup/current state and user-corrected final-supervisor plan.
+- Validation: frozen e0aad08 full701/701(78files,422.38s); recursive typecheck and isolated recursive build pass. Independent final production Labs/Verification/hover-focus/live/API18captures, legacy migration and model navigation all pass; no browser exceptions. Fresh npm tarball51,561,351bytes/2489entries; outside install QiBFVy native/CLI/MCP40/panel8routes+CSS/setup launch/reuse/stop passes with checkout reads forbidden.
+- Outcome: Accepted for coherent E1-L4/package/correctness unit
+- Follow-up: push dev/main under standing authorization, then continue E8/E9. User4477 untouched; future static browser/ledger/policy code not part of this acceptance. Earlier failed runs and repairs remain recorded above.
 
 ## Open Questions
 

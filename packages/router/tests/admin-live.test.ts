@@ -78,6 +78,17 @@ function step(s: Switchyard, cursor: LiveCursor): { topics: string[]; cursor: Li
 }
 
 describe("live change watcher", () => {
+  it("refreshes catalog-only edits without treating unrelated service heartbeats as model changes", () => {
+    env = twoProjects();
+    sy = open(env, new ScriptedClient(() => reply("{}")));
+    let cursor = liveCursor(sy, "all");
+    sy.catalog.bump();
+    const changed = step(sy, cursor);
+    expect(changed.topics).toContain("models");
+    cursor = changed.cursor;
+    sy.db.prepare("INSERT OR REPLACE INTO meta (key,value) VALUES (?,?)").run("lab_supervisor_v1", "heartbeat fixture");
+    expect(step(sy, cursor).topics).not.toContain("models");
+  });
   it("invalidates model views when a quarantine acknowledgement changes independently of requests", () => {
     env = twoProjects();
     sy = open(env, new ScriptedClient(() => reply("{}")));

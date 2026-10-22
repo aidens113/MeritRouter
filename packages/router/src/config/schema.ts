@@ -1,3 +1,4 @@
+import { LabsConfigSchema } from "../labs/recipe.js";
 import { z } from "zod";
 import { TAG_GROUPS } from "../scoring/rulebook.js";
 import { BillingClassSchema } from "../providers/vault.js";
@@ -143,6 +144,7 @@ export const PaidModelSchema = z
     output_usd_per_million: z.number().positive().optional(),
     /** Price of input served from the provider's prompt cache; unset: fetched (pricing_url) or priced as ordinary input. */
     cached_input_usd_per_million: z.number().min(0).optional(),
+    cache_write_input_usd_per_million: z.number().min(0).optional(),
     context_limit_tokens: z.number().int().positive(),
     output_limit_tokens: z.number().int().positive(),
     input_modalities: z.array(ModalitySchema).default(["text"]),
@@ -931,6 +933,7 @@ export const ConfigSchema = z
     /** Agent teams: how one job's task graph runs. */
     team: TeamConfigSchema.prefault({}),
     coding: CodingConfigSchema.prefault({}),
+    labs: LabsConfigSchema.prefault({}),
     /** Importance and verification policy: what evidence a result needs before it is accepted. */
     verification: VerificationConfigSchema.prefault({}),
     /** Agents' web search and page fetch: backends, roles, budgets. */

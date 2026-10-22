@@ -13,6 +13,26 @@ pnpm -r build
 
 Node 22.11 works; 22.12+ or 24 LTS is recommended.
 
+### Build an installable package
+
+From the checkout, `pnpm --filter switchyard-router package:build` builds the router and
+bundled production panel. Run `npm pack` in `packages/router`, then install the resulting
+tarball with `npm install -g <path-to-tarball>`. This does not publish to npm.
+The consumer installation installs its own platform's native SQLite dependency.
+
+Run `switchyard setup` to create the default configuration and start the bundled panel, or
+`switchyard setup --no-panel` to create only the configuration. Existing files are retained.
+Setup begins with no placeholder repositories; add them in project settings or supply
+`--repo app=<path>`. `switchyard init <directory>` still creates a local configuration.
+
+Configuration discovery uses `--config`, then `SWITCHYARD_CONFIG`, then the nearest ancestor's
+`switchyard.config.yaml`, then the application directory. Its defaults are
+`%LOCALAPPDATA%/SwitchYard` on Windows, `~/Library/Application Support/SwitchYard` on macOS,
+and `$XDG_CONFIG_HOME/switchyard` (or `~/.config/switchyard`) on Linux. `SWITCHYARD_HOME`
+overrides that directory. Relative configuration paths resolve beside the selected file.
+The tarball was verified on Windows outside the checkout; Linux/macOS installation remains
+separate acceptance work.
+
 ## 2. Start the panel
 
 ```bash
@@ -525,7 +545,10 @@ The sidebar groups Teams under Jobs; Agents, Sessions and Requests under Tasks; 
 and commits under Code. Agent pages show their tasks, sessions, models, requests and attributed
 changes. Task, session, job, model and request details link to related entities.
 - Inside a project: its overview, jobs, teams, tasks, sessions, requests, brain (with its
-  promotions to global knowledge), and settings.
+  promotions to global knowledge), Labs, and settings. Project settings → Labs edits the
+  human-authored recipe; the Labs page queues lifecycle controls and displays operation/check
+  evidence. Creating/starting a lab does not start model work. Choose a ready lab in the new-job
+  form to bind its team to that isolated environment. See [Labs operations](operations.md#labs-isolated-services-and-checked-promotion).
 - Under "All projects" (`/all`): the dashboard, every request, models and why each is or is not
   used, routing previews and overrides, provider keys and their status, qualification,
   calibration, global knowledge, and the global settings.

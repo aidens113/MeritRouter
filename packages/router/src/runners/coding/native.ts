@@ -12,6 +12,7 @@ import { runAgentLoop } from "../../harness/loop.js";
 import { webTools } from "../../harness/web-tools.js";
 import { artifactTool, brainReadTools, commandTool, declaredCheckTool, editTools, repoTools, type HarnessEnv, type HarnessTool } from "../../harness/tools.js";
 import { requestBudgetTool } from "../../harness/budget-tools.js";
+import { labHarnessTools } from "../../labs/tools.js";
 import { minimalEnv } from "./process.js";
 import { brainContext, submitResultTool, workerActor, workerBrainEnv } from "../../harness/worker.js";
 import type { RunContext, RunOutcome } from "../types.js";
@@ -63,6 +64,7 @@ export class NativeCodingRunner implements CodingRunner {
       artifactTool(),
       ...(brain ? brainReadTools() : []),
       ...webTools(),
+      ...labHarnessTools(),
       requestBudgetTool(),
     ];
     const canCheck = declared.length > 0 && ctx.cfg.coding.max_check_runs_per_task > 0;

@@ -55,7 +55,7 @@ describe("MCP server", () => {
     expect(tools).toEqual([
       "accept_result", "answer_question", "await_results", "blame", "brain_access_requests", "brain_append_ledger", "brain_decide_request", "brain_list", "brain_promote_lesson",
       "brain_read", "brain_search", "brain_set_current_state", "brain_start_working_doc", "brain_write", "budget_requests", "cancel_tasks", "collect_results", "decide_budget_request", "get_job_metrics", "get_job_tree", "get_plan", "get_session", "get_task_status",
-      "job_status", "list_questions", "list_sessions", "panel", "preview_route", "read_artifact", "read_channel", "reject_result", "resume_session", "resume_task", "start_job", "submit_tasks", "usage_summary",
+      "job_status", "lab_control", "lab_logs", "lab_operation", "lab_status", "list_questions", "list_sessions", "panel", "preview_route", "read_artifact", "read_channel", "reject_result", "resume_session", "resume_task", "start_job", "submit_tasks", "usage_summary",
     ]);
 
     // Any tool call revives a panel the user turned off: the marker goes (auto_start off here, and no
@@ -89,6 +89,13 @@ describe("MCP server", () => {
     const noMetrics = await client.callTool({ name: "get_job_metrics", arguments: { jobId: "no-such-job" } });
     expect(noMetrics.isError).toBe(true);
     expect((noMetrics.content as Array<{ text: string }>)[0]!.text).toBe("unknown job or task no-such-job");
+    // Portable descriptive shapes must retain unknown keys for strict runtime validation.
+    const badLabControl = await client.callTool({ name: "lab_control", arguments: { name: "fixture", operation: { kind: "start", unexpected: true } } });
+    expect(badLabControl.isError).toBe(true);
+    expect((badLabControl.content as Array<{ text: string }>)[0]!.text).toMatch(/unexpected/);
+    const missingCheck = await client.callTool({ name: "lab_control", arguments: { name: "fixture", operation: { kind: "check" } } });
+    expect(missingCheck.isError).toBe(true);
+    expect((missingCheck.content as Array<{ text: string }>)[0]!.text).toMatch(/name/);
     expect((await client.callTool({ name: "read_channel", arguments: { jobId: "x", kinds: ["rumour"] } })).isError).toBe(true);
 
     const ok = await client.callTool({ name: "submit_tasks", arguments: { tasks: [summarizeTask({ idempotencyKey: "mcp-1" })] } });
@@ -121,7 +128,7 @@ describe("MCP server", () => {
     await client.connect(new StdioClientTransport({ command: process.execPath, args: [path.join(dist, "cli.js"), "mcp", "--config", env.cfg.configPath, "--no-worker"], env: { PATH: process.env.PATH ?? "", SWITCHYARD_PANEL_DIR: NO_PANEL } }));
     const names = (await client.listTools()).tools.map((t) => t.name);
     expect(names).toContain("submit_tasks");
-    expect(names).toHaveLength(36);
+    expect(names).toHaveLength(40);
     const noJob = await client.callTool({ name: "job_status", arguments: { jobId: "no-such-job" } });
     expect((noJob.content as Array<{ text: string }>)[0]!.text).toBe("unknown job no-such-job");
   }, 60_000);

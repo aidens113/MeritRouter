@@ -11,7 +11,9 @@ import { blame } from "../attribution/index.js";
 import type { Principal } from "../brain/access.js";
 import { SessionStatusSchema } from "../sessions/events.js";
 import { ensurePanel, panelUrl, revivePanel } from "../operations/panel.js";
-import { TaskArgumentSchema } from "./schemas.js";
+import type { LabManager } from "../labs/lab.js";
+import { LabOperationInputSchema } from "../labs/control.js";
+import { LabOperationArgumentSchema, TaskArgumentSchema } from "./schemas.js";
 
 /** What every connection's server shares: the service, its config, and the project it serves. */
 export interface McpContext {
@@ -277,17 +279,23 @@ export function buildMcpServer({ sy, cfg, project }: McpContext): McpServer {
     },
   );
 
+  // Mutations are durable requests; the explicit labs serve owner executes them.
+  const labs = () => (sy as Switchyard & {labs:LabManager}).labs;
+  server.registerTool("lab_status", {title:"Lab status",description:"Declared services, checks and exact lab revisions; secrets omitted.",inputSchema:{name:z.string(),...projectInput}},async(a)=>{try{return json(labs().publicStatus(scope(a.project),a.name));}catch(e){return fail(e);}});
+  server.registerTool("lab_control", {title:"Request lab lifecycle operation",description:"Persist a lifecycle request for the current labs serve owner. Does not start a model worker. Poll lab_operation for completion.",inputSchema:{name:z.string(),operation:LabOperationArgumentSchema,...projectInput}},async(a)=>{try{const p=scope(a.project);const op=labs().requestControl(p,a.name,LabOperationInputSchema.parse(a.operation),"human:mcp");return json(labs().publicOperation(p,a.name,op.id));}catch(e){return fail(e);}});
+  server.registerTool("lab_operation", {title:"Lab operation status",description:"Read a scoped lifecycle request without exposing command or environment details.",inputSchema:{name:z.string(),id:z.string(),...projectInput}},async(a)=>{try{return json(labs().publicOperation(scope(a.project),a.name,a.id));}catch(e){return fail(e);}});
+  server.registerTool("lab_logs", {title:"Lab service logs",description:"Read bounded local service logs.",inputSchema:{name:z.string(),service:z.string(),tail:z.number().int().min(1).max(1000).optional(),...projectInput}},async(a)=>{try{return json({logs:labs().logs(scope(a.project),a.name,a.service,a.tail)});}catch(e){return fail(e);}});
   // ---------- jobs (standalone supervisor) ----------
   server.registerTool(
     "start_job",
     {
       title: "Start a SwitchYard-supervised job",
       description: "Hand a whole goal to SwitchYard's own supervisor (models configured under supervisor), which plans, delegates, verifies, and integrates onto a job branch. Use when you want SwitchYard to run the job end to end instead of supervising tasks yourself.",
-      inputSchema: { goal: z.string().min(1), repositories: z.array(z.string()).min(1), acceptanceCriteria: z.array(z.string()).optional(), checks: z.array(z.string()).optional(), label: z.string().optional(), ...projectInput },
+      inputSchema: { goal: z.string().min(1), repositories: z.array(z.string()).min(1), acceptanceCriteria: z.array(z.string()).optional(), checks: z.array(z.string()).optional(), label: z.string().optional(), lab: z.string().optional(), ...projectInput },
     },
     async (a) => {
       try {
-        return json(await sy.startJob({ goal: a.goal, project: scope(a.project), repositories: a.repositories, ...(a.acceptanceCriteria ? { acceptanceCriteria: a.acceptanceCriteria } : {}), ...(a.checks ? { checks: a.checks } : {}), ...(a.label ? { label: a.label } : {}) }));
+        return json(await sy.startJob({ goal: a.goal, project: scope(a.project), repositories: a.repositories, ...(a.lab ? {lab:a.lab} : {}), ...(a.acceptanceCriteria ? { acceptanceCriteria: a.acceptanceCriteria } : {}), ...(a.checks ? { checks: a.checks } : {}), ...(a.label ? { label: a.label } : {}) }));
       } catch (err) {
         return fail(err);
       }

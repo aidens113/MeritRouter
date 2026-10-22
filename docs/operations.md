@@ -561,7 +561,13 @@ item. A delegated task's session names the supervisor session that delegated it 
   `switchyard session <id> [--after seq] [--limit n] [--json]`, the MCP tools `list_sessions` and
   `get_session`, or a project's Sessions page (`/p/<slug>/sessions`, also linked from task and job pages).
 - External agents (OpenCode) run their tools inside their own process: their sessions record the
-  model traffic through the policy gateway, not individual tool calls.
+  model traffic through the policy gateway. Their calls to SwitchYard's task-scoped MCP checks
+  and budget tools record journal intent and outcome; other built-in agent tools remain visible
+  only through the transcript. The bridge authenticates one execution lease, exposes declared
+  checks with enforced run limits, and closes with the runner. Approved request increases reach
+  later gateway requests; token and paid caps remain in force. Command agents receive
+  `SWITCHYARD_TASK_TOOLS_URL` and `SWITCHYARD_TASK_TOOLS_TOKEN` and must implement that MCP
+  connection explicitly. OpenCode receives the remote MCP configuration inline.
 - A resume appends a `resumed` event recording what was settled and the notice the agent got.
 
 ## The web panel: turning it off, and rebuilding it
@@ -630,11 +636,28 @@ With `--force`:
 - the old store entries move to `.switchyard/pre-restore-<time>/`;
 - the old brain moves to `<brain>.pre-restore-<time>`, next to it.
 
+Replacement store files are copied and migrated in staging, and the brain bundle is fetched
+and its HEAD verified, before live entries move. If a final swap fails, restore returns both
+original halves to their prior paths. If an external lock prevents rollback, the error gives
+the retained recovery paths; recover them before restarting. This handles operational errors;
+it is not an atomic transaction across both directories during abrupt machine or process death.
+
 The restored brain is a fresh repository holding every ref of the bundle, with the backed-up
 branch checked out at the backed-up commit. A brain already at that commit is left alone.
 Restored running tasks have their leases expired, so the next worker recovers them. The command
 prints each brain mount that was not in the backup, so you can restore it from its own
 repository.
+
+## Integration ownership
+
+Integration also uses a durable mutex for the physical Git repository and branch. It covers
+the pick and its verification callbacks across independent processes and repository aliases.
+A different queue-owner string or an old heartbeat does not prove abandonment. A provably
+dead local process permits takeover; live, reused, remote or malformed ownership remains busy
+and returns a bounded error. This preserves evidence while ownership is ambiguous. Separate
+SQLite installations are not coordinated by this mutex. Recovery callbacks must remain
+idempotent: a kill after a callback and before its durable completion can replay that callback,
+while the already-picked commits are retained.
 
 ## One daemon for every project
 
@@ -658,6 +681,45 @@ or workers.
 - A second daemon for the same storage directory is refused.
 - MCP servers for individual projects run beside the daemon with `--no-worker`.
 
+## Labs: isolated services and checked promotion
+
+A project's Labs page creates retained feature labs from its human-authored recipe. Configure
+the recipe under Project settings → Labs; command definitions are editable, while environment
+values stay private and are preserved on save. Existing labs keep their recipe snapshot. A
+single-project configuration is migrated under its existing project identity on explicit save.
+
+Each lab owns repository branches/worktrees, data directories and allocated loopback ports.
+The default active limit counts every retained lab, including stopped/failed labs. Destroy
+stops proven-owned services and removes clean owned worktrees/data, refuses dirty worktrees,
+and preserves branches. Retained labs prevent removing their project or repository mappings.
+
+Lifecycle controls enqueue persisted operations. Creation/start/check/restart/stop/refresh/
+promotion outcomes remain visible on the detail page, along with bounded checks and logs.
+Inspect promotion evidence loads exact checked revisions, conflict paths and manual Git
+instructions on demand; a completed control request can still contain a failed promotion.
+Services never start from page reads, and these controls do not start a model worker.
+
+`switchyard labs serve` owns a renewable install-wide service-supervision lease. Explicit
+CLI/panel controls can start it independently of task execution. `labs supervisor-start`,
+`supervisor-status` and `supervisor-stop` manage that owner; they take the install configuration
+and reject project selection. Per-lab commands take `--project`: `labs list`, `create`, `status`,
+`start`, `stop`, `restart`, `check`, `logs`, `refresh`, `promote`, `operations` and `destroy`.
+The CLI prints the queued operation ID before its bounded wait. Destroy requires confirmation.
+
+Lab-bound jobs use the lab's integration branches and persistent brain lane; only one root
+team can own a lab while work remains active. Native/external task tools expose declared
+checks, bounded logs, verified service HTTP and scoped lifecycle controls. Refresh/promotion
+serialize physical target repositories, run declared checks on exact heads and revalidate
+before changing targets. Manual promotion returns instructions and leaves targets untouched;
+configured supervisor/automatic policies may advance writable targets after those checks.
+
+Services must remain foreground processes. Windows process ownership checks use birth/command
+identity and retained tree evidence; ambiguous orphan ownership blocks destructive cleanup.
+HTTP access requires positive ownership of the declared loopback listener before and after
+the request. These checks are not an OS sandbox for human-authored commands. Linux process
+support exists, but this acceptance used Windows fixtures. Browser/ephemeral/Compose extensions
+and multi-host PostgreSQL remain separate work; they are not implied by the Labs UI.
+
 ## The brain and attribution
 
 - The brain is one git repository (`brain.path`) for every project: `projects/<slug>/` per
@@ -679,9 +741,9 @@ or workers.
 
 ## Known limitations
 
-- Live behaviour against real providers and OpenCode has not been exercised yet (no credentials
-  were available during development). Every policy path is covered by tests with fake providers
-  behind an injectable HTTP fetch and a scripted coding agent. Still to confirm live: rate-limit
+- Ollama Cloud discovery, free calls and web search have recorded live evidence. Other provider
+  and installed OpenCode behavior remains unverified; policy regressions use fake providers
+  behind an injectable HTTP fetch and scripted coding agents. Still to confirm live: rate-limit
   header formats (OpenRouter reset, SambaNova `-day`, Anthropic periods), OpenAI
   `insufficient_quota` as out of credits, Cloudflare and Cohere list pagination, Anthropic model
   `capabilities`, and the shape of OpenRouter's `/api/v1/key`.
