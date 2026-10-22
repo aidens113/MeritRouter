@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -7,6 +7,7 @@ import { BrainAccess, type Principal } from "../src/brain/access.js";
 import { openDatabase } from "../src/storage/db.js";
 import { parseConfig } from "../src/config/load.js";
 import type { Actor } from "../src/attribution/index.js";
+import * as attribution from "../src/attribution/index.js";
 import { baseConfig, makeEnv, type Env } from "./helpers.js";
 
 let env: Env | undefined;
@@ -43,6 +44,34 @@ const goodLedger = {
 };
 
 describe("brain: working documents in git", () => {
+  it("serializes shared-project initialization with writes and never commits its lock", async () => {
+    const { brain, db } = setup();
+    mkdirSync(brain.root, { recursive: true });
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: brain.root });
+    const other = new Brain({ ...env!.cfg, brain: { ...env!.cfg.brain, project: "storefront" } }, db);
+    const commit = attribution.commitAs;
+    let active = 0;
+    let peak = 0;
+    const spy = vi.spyOn(attribution, "commitAs").mockImplementation(async (...args) => {
+      peak = Math.max(peak, ++active);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return await commit(...args);
+      } finally { active--; }
+    });
+    try {
+      const writes = await Promise.allSettled([
+        brain.write({ kind: "human" }, supActor, "projects/demo/facts/one.md", "# One"),
+        other.write({ kind: "human" }, supActor, "projects/storefront/facts/two.md", "# Two"),
+      ]);
+      expect(writes.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
+      expect(peak).toBe(1);
+      expect(execFileSync("git", ["ls-files", "--", ".switchyard-brain.lock"], { cwd: brain.root, encoding: "utf8" }).trim()).toBe("");
+      expect((await brain.history("projects/demo/facts/one.md"))[0]?.agent).toBe(supActor.agent);
+      expect((await other.history("projects/storefront/facts/two.md"))[0]?.agent).toBe(supActor.agent);
+    } finally { spy.mockRestore(); }
+  });
+
   it("creates a protocol working doc committed under the supervisor's identity", async () => {
     const { brain, supervisor } = setup();
     const { path: p, commit } = await brain.createWorkingDoc(supervisor, supActor, "job-j1", { title: "Fix add", statusDetail: "started", owner: "supervisor", scope: "fix add()", currentState: "Nothing done yet." });

@@ -175,22 +175,26 @@ export class Brain {
   ensure(): Promise<void> {
     this.ready ??= (async () => {
       mkdirSync(this.root, { recursive: true });
-      if (!existsSync(path.join(this.root, ".git"))) {
-        await git(this.root, ["init", "-q", "-b", "main"]);
-        await git(this.root, ["config", "core.autocrlf", "false"]);
-      }
-      for (const dir of ["global/lessons", `projects/${this.project}/working`, `projects/${this.project}/decisions`, `projects/${this.project}/repos`]) {
-        mkdirSync(path.join(this.root, dir), { recursive: true });
-      }
-      const glossary = path.join(this.root, "global/glossary.md");
-      if (!existsSync(glossary)) writeFileSync(glossary, "# Glossary\n\nShared terms. Supervisors maintain this file.\n");
-      if (!existsSync(path.join(this.root, "README.md"))) writeFileSync(path.join(this.root, "README.md"), this.renderIndex([]));
-      const own = this.resolve(projectIndexPath(this.project));
-      if (!existsSync(own.abs)) {
-        mkdirSync(path.dirname(own.abs), { recursive: true });
-        writeFileSync(own.abs, this.renderProjectIndex([]));
-      }
-      if (this.cfg.brain.commit) await commitAs(this.root, { agent: "switchyard", role: "tool" }, "Initialise brain").catch(() => null);
+      // Every project has its own Brain instance, but may share this repository.
+      // Initialization must use the same lock as ordinary writes, including its commit.
+      await this.locked(this.root, async () => {
+        if (!existsSync(path.join(this.root, ".git"))) {
+          await git(this.root, ["init", "-q", "-b", "main"]);
+          await git(this.root, ["config", "core.autocrlf", "false"]);
+        }
+        for (const dir of ["global/lessons", `projects/${this.project}/working`, `projects/${this.project}/decisions`, `projects/${this.project}/repos`]) {
+          mkdirSync(path.join(this.root, dir), { recursive: true });
+        }
+        const glossary = path.join(this.root, "global/glossary.md");
+        if (!existsSync(glossary)) writeFileSync(glossary, "# Glossary\n\nShared terms. Supervisors maintain this file.\n");
+        if (!existsSync(path.join(this.root, "README.md"))) writeFileSync(path.join(this.root, "README.md"), this.renderIndex([]));
+        const own = this.resolve(projectIndexPath(this.project));
+        if (!existsSync(own.abs)) {
+          mkdirSync(path.dirname(own.abs), { recursive: true });
+          writeFileSync(own.abs, this.renderProjectIndex([]));
+        }
+        if (this.cfg.brain.commit) await commitAs(this.root, { agent: "switchyard", role: "tool" }, "Initialise brain", { paths: [".", ":(exclude).switchyard-brain.lock"] });
+      });
     })();
     return this.ready;
   }
@@ -250,7 +254,7 @@ export class Brain {
   private async adoptExternalEdits(repo: string): Promise<void> {
     const status = await git(repo, ["status", "--porcelain", "--", "."]);
     const changed = status.split("\n").filter((l) => l.trim() && !l.endsWith(".switchyard-brain.lock"));
-    if (changed.length) await commitAs(repo, { agent: "human", role: "human" }, "Record edits made outside SwitchYard");
+    if (changed.length) await commitAs(repo, { agent: "human", role: "human" }, "Record edits made outside SwitchYard", { paths: [".", ":(exclude).switchyard-brain.lock"] });
   }
 
   /**
