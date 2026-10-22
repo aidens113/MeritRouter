@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { requestEvidence, type RequestEvidence } from "./request-evidence.js";
 import type { WebCitation } from "../gateway/types.js";
 import { parseCitations } from "./request-citations.js";
 import { existsSync } from "node:fs";
@@ -306,6 +307,7 @@ export async function agentDetail(sy: Switchyard, project: string, rawId: string
 // ---------- requests ----------
 
 export interface RequestDetail extends EntityRequest {
+  evidence: RequestEvidence | null;
   webCitations: WebCitation[];
   attempts: number | null;
   attemptsExact: boolean | null;
@@ -330,28 +332,23 @@ export interface RequestDetail extends EntityRequest {
 }
 
 /** One model request with everything it connects to; null for an unknown id. */
-export function requestDetail(sy: Switchyard, id: string): RequestDetail | null {
-  const r = sy.db.prepare("SELECT * FROM model_requests WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+export function requestDetail(sy: Switchyard, id: string, project?: string): RequestDetail | null {
+  const r = sy.db.prepare(`SELECT * FROM model_requests WHERE id = ?${project === undefined ? "" : " AND project_id = ?"}`).get(...(project === undefined ? [id] : [id, project])) as Record<string, unknown> | undefined;
   if (!r) return null;
-  const charges = (sy.db.prepare("SELECT task_id, input_tokens, output_tokens, tokens_exact FROM request_charges WHERE request_id = ?").all(id) as Array<Record<string, number | string>>).map((c) => ({
-    taskId: String(c.task_id),
-    inputTokens: Number(c.input_tokens),
-    outputTokens: Number(c.output_tokens),
-    exact: Number(c.tokens_exact) === 1,
+  const charges = (sy.db.prepare("SELECT c.task_id,c.input_tokens,c.output_tokens,c.tokens_exact FROM request_charges c JOIN tasks t ON t.id=c.task_id WHERE c.request_id=? AND t.project_id=? LIMIT 50").all(id, String(r.project_id)) as Array<Record<string, number | string>>).map((c) => ({
+    taskId: String(c.task_id), inputTokens: Number(c.input_tokens), outputTokens: Number(c.output_tokens), exact: Number(c.tokens_exact) === 1,
   }));
-  const sessions: RequestDetail["sessions"] = [];
-  let read = 0;
-  for (const c of charges) {
-    for (const s of sy.sessions.forTask(c.taskId)) {
-      if (read++ >= MAX_LOGS) break;
-      if (s.createdAt > Number(r.reserved_at) + 1000 || (s.endedAt !== null && s.endedAt < Number(r.reserved_at) - 1000)) continue;
-      if (sessionRequestIds(sy, s).includes(id)) sessions.push({ sessionId: s.id, agent: s.agentLabel, role: s.role });
-    }
-  }
+  const evidence = requestEvidence(sy, String(r.project_id), id);
+  const sessions = evidence?.exchanges.flatMap(exchange => exchange.sessions) ?? [];
   const base = requestRows(sy, [id], new Map(sessions.length ? [[id, sessions[0]!.sessionId]] : []))[0]!;
+  let tasks: EntityTask[] = [];
+  try { tasks = taskRows(sy, charges.map(c => c.taskId)); }
+  catch { if (evidence) { evidence.warnings.push("Related task metadata is malformed; task summaries omitted."); if (evidence.state === "available") evidence.state = "partial"; } }
   return {
     ...base,
-    webCitations: parseCitations(r.web_citations_json),
+    taskIds: charges.map(c => c.taskId),
+    evidence,
+    webCitations: evidence?.payloadScopeExclusive ? parseCitations(r.web_citations_json) : [],
     attempts: (r.provider_attempts as number | null) ?? null,
     attemptsExact: r.attempts_exact === null || r.attempts_exact === undefined ? null : Number(r.attempts_exact) === 1,
     cachedInputTokens: (r.cached_input_tokens as number | null) ?? null,
@@ -360,15 +357,15 @@ export function requestDetail(sy: Switchyard, id: string): RequestDetail | null 
     estInputTokens: Number(r.est_input_tokens),
     reservedOutputTokens: Number(r.reserved_output_tokens),
     httpStatus: (r.http_status as number | null) ?? null,
-    errorMessage: (r.error_message as string | null) ?? null,
+    errorMessage: evidence?.payloadScopeExclusive ? (r.error_message as string | null) ?? null : null,
     policyViolation: (r.policy_violation as string | null) ?? null,
-    routeNote: (r.route_note as string | null) ?? null,
+    routeNote: evidence?.payloadScopeExclusive ? (r.route_note as string | null) ?? null : null,
     cacheHit: r.cache_hit === null || r.cache_hit === undefined ? null : Number(r.cache_hit) === 1,
     executionId: String(r.execution_id),
     nativeWebSearch: (r.native_web_search as string | null) ?? null,
     webSearchRequests: (r.web_search_requests as number | null) ?? null,
     charges,
-    tasks: taskRows(sy, charges.map((c) => c.taskId)),
+    tasks,
     sessions,
   };
 }

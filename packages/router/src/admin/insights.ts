@@ -677,3 +677,5 @@ export function decideBrainAccess(sy: Switchyard, id: number, approve: boolean, 
 }
 
 export * from "./client-supervision.js";
+
+export * from "./request-evidence.js";

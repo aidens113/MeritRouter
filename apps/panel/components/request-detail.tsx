@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { RequestEvidenceView } from "./request-evidence";
 import { notFound } from "next/navigation";
 import { insights, type Switchyard } from "switchyard-router";
 import { itemBase, sessionHref, QUALIFICATION_SLUG } from "@/lib/links";
@@ -10,7 +11,7 @@ import { Disclosure } from "@/components/disclosure";
 import { Card, KeyValue, Badge, Callout } from "@/components/ui";
 
 export function RequestDetailView({ sy, slug, id, name }: { sy: Switchyard; slug: string; id: string; name: string }) {
-  const q = insights.requestDetail(sy, id);
+  const q = insights.requestDetail(sy, id, slug);
   if (!q || q.project !== slug) notFound();
   const base = slug ? itemBase(slug) : "";
   return <div className="space-y-4">
@@ -29,7 +30,8 @@ export function RequestDetailView({ sy, slug, id, name }: { sy: Switchyard; slug
       { label: "Sessions", items: q.sessions.map(s => ({ key: s.sessionId, node: <Link href={sessionHref(base, s.sessionId)}>{s.sessionId}</Link> })) },
       { label: "Agents", items: [...new Set(q.sessions.map(s => s.agent))].map(a => ({ key: a, node: <AgentLink base={base} agent={a} /> })) },
     ]} />
+    <RequestEvidenceView evidence={q.evidence} base={base} />
     {q.webCitations.length > 0 && <Disclosure summary="Cited sources" meta={q.webCitations.length}><ul className="space-y-3 text-sm">{q.webCitations.map((c, i) => <li key={`${c.url}:${i}`}>{/^https?:\/\//i.test(c.url) ? <a className="break-all text-accent-ink hover:underline" href={c.url} target="_blank" rel="noopener noreferrer">{c.title ?? c.url}</a> : <span className="break-all">{c.title ?? c.url}</span>}{c.text && <p className="mt-1 whitespace-pre-wrap text-ink-3">{c.text}</p>}</li>)}</ul></Disclosure>}
-    <Disclosure summary="Usage accounting"><KeyValue items={[["Basis", q.usageBasis ?? "Unknown"], ["Estimated input", q.estInputTokens], ["Reserved output", q.reservedOutputTokens], ["Cache hit", q.cacheHit === null ? "Unknown" : String(q.cacheHit)], ["Execution", q.executionId]]} /><ul className="mt-3 space-y-1 text-sm">{q.charges.map(c => <li key={c.taskId}><TaskLink base="" id={c.taskId} />: {c.inputTokens} input / {c.outputTokens} output ({c.exact ? "exact" : "estimated"})</li>)}</ul></Disclosure>
+    <Disclosure summary="Usage accounting"><KeyValue items={[["Basis", q.usageBasis ?? "Unknown"], ["Estimated input", q.estInputTokens], ["Reserved output", q.reservedOutputTokens], ["Cache hit", q.cacheHit === null ? "Unknown" : String(q.cacheHit)], ["Execution", q.executionId]]} /><ul className="mt-3 space-y-1 text-sm">{q.charges.map(c => <li key={c.taskId}><TaskLink base={base} id={c.taskId} />: {c.inputTokens} input / {c.outputTokens} output ({c.exact ? "exact" : "estimated"})</li>)}</ul></Disclosure>
   </div>;
 }
