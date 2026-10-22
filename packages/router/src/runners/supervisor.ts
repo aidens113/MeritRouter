@@ -9,7 +9,7 @@ import { RepoReader } from "../context/repo-reader.js";
 import { planLimits } from "../routing/select.js";
 import { charterFor } from "../roles/index.js";
 import { commitAs, type Actor } from "../attribution/index.js";
-import { git, headSha } from "../workspaces/git.js";
+import { dirtyPaths, git, headSha } from "../workspaces/git.js";
 import { runAgentLoop, type TerminalTool } from "../harness/loop.js";
 import type { ResumeInput } from "../harness/resume.js";
 import type { ResumeToolRef } from "../sessions/events.js";
@@ -26,6 +26,8 @@ import { baseResult, type RunContext, type RunOutcome } from "./types.js";
 import { WorkspacePointer } from "./session-workspace.js";
 import { criterionTexts } from "../core/task.js";
 import { maxAgentsPerJob } from "../config/schema.js";
+import picomatch from "picomatch";
+import { taskWriteScope } from "../harness/task-scope.js";
 
 interface Finish {
   status: "completed" | "blocked";
@@ -130,6 +132,7 @@ function mergeNote(i: MergeItem): string {
 export class SupervisorRunner implements CodingRunner {
   async run(ctx: RunContext): Promise<RunOutcome> {
     const spec = ctx.spec;
+    const writeScope = taskWriteScope(spec, ctx.tasks);
     const label = spec.label ?? ctx.taskId;
     const actor: Actor = { agent: `supervisor:${label}`, role: "supervisor", model: null, job: ctx.taskId, task: ctx.taskId, tier: ctx.tier };
     const legacy = ctx.resume ? null : loadLegacyState(ctx);
@@ -195,7 +198,7 @@ export class SupervisorRunner implements CodingRunner {
       universe: evidenceUniverse([]),
       allowArtifacts: true,
       // supervisor.implementation: delegate limits the edit tools to coordination files, in code.
-      ...(primary ? { workspace: { alias: primary.alias, root: primary.worktree, allowedPaths: null, guard: coordinationGuard({ cfg: ctx.cfg, db: ctx.tasks.db, jobId: ctx.taskId, alias: primary.alias, sharedFiles: () => state.sharedFiles ?? new Set() }) } } : {}),
+      ...(primary ? { workspace: { alias: primary.alias, root: primary.worktree, allowedPaths: writeScope ?? null, guard: coordinationGuard({ cfg: ctx.cfg, db: ctx.tasks.db, jobId: ctx.taskId, alias: primary.alias, sharedFiles: () => state.sharedFiles ?? new Set() }) } } : {}),
       ...(primary && patterns.length ? { commands: { patterns, cwd: primary.worktree, timeoutMs: ctx.cfg.execution.check_timeout_seconds * 1000 } } : {}),
       edits: new Set(),
       ...(brain ? { brain } : {}),
@@ -330,8 +333,16 @@ export class SupervisorRunner implements CodingRunner {
 
     // Final evidence: the job branch's diff and the job's own checks, run here, not claimed.
     const patchRefs: string[] = [];
+    const scopeViolation: string[] = [];
     const checks: RunOutcome["result"]["checks"] = [];
     for (const r of repos.values()) {
+      if (writeScope) {
+        const allowed = picomatch(writeScope, { dot: true });
+        const changed = (await git(r.worktree, ["diff", "--name-only", "--no-renames", "-z", r.baseSha])).split("\0").filter(Boolean);
+        // Commands can leave tracked or untracked edits without calling an edit tool.
+        const paths = new Set([...changed, ...await dirtyPaths(r.worktree)]);
+        scopeViolation.push(...[...paths].filter(file => !allowed(file)).map(file => `${r.alias}:${file}`));
+      }
       const patch = await git(r.worktree, ["diff", "--binary", r.baseSha, "HEAD"]);
       if (patch) patchRefs.push(ctx.artifacts.write({ taskId: ctx.taskId, executionId, kind: "patch", label: `${r.alias} ${r.branch} vs ${r.baseSha.slice(0, 12)}`, content: patch, mediaType: "text/x-diff", extension: ".patch" }));
     }
@@ -344,7 +355,7 @@ export class SupervisorRunner implements CodingRunner {
     }
     const finish = loop.kind === "terminal" ? loop.value : null;
     const checksPass = checks.length > 0 && checks.every((c) => c.exitCode === 0);
-    const acceptance = checks.some((c) => c.exitCode !== 0) ? "unmet" : finish?.status === "completed" && checksPass ? "met" : "not_verified";
+    const acceptance = scopeViolation.length || checks.some((c) => c.exitCode !== 0) ? "unmet" : finish?.status === "completed" && checksPass ? "met" : "not_verified";
     // A sub-job's branches are integrated by its parent job (integrate_task), not merged by hand.
     const branchNote = [...repos.values()]
       .map((r) => (isSubJob ? `${r.alias}: delivered on ${r.branch}; the parent job ${spec.parentTaskId} integrates it through its merge queue (integrate_task ${label})` : `${r.alias}: review and merge with \`git merge --no-ff ${r.branch}\``))
@@ -373,7 +384,8 @@ export class SupervisorRunner implements CodingRunner {
         acceptanceStatus: acceptance,
         stopReason: finish ? `supervisor_${finish.status}` : loop.kind === "budget_exhausted" ? "supervisor request budget exhausted" : "invalid_finish",
         summary: `${finish?.summary ?? "The supervisor did not finish."}${branchNote ? `\n\n${branchNote}` : ""}`,
-        findings: (finish?.verified ?? []).map((v) => ({ description: `Verified: ${v.claim} (${v.evidence})`, evidenceRefs: [] })),
+        findings: [...(finish?.verified ?? []).map((v) => ({ description: `Verified: ${v.claim} (${v.evidence})`, evidenceRefs: [] })), ...(scopeViolation.length ? [{ description: `Out-of-scope changes (not allowed by allowedPaths): ${scopeViolation.join(", ")}`, evidenceRefs: [] }] : [])],
+        ...(scopeViolation.length ? { scopeViolation } : {}),
         artifactRefs: [transcriptRef],
         patchRefs,
         baseCommits: Object.fromEntries([...repos.values()].map((r) => [r.alias, r.baseSha])),
