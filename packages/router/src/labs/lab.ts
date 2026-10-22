@@ -1,3 +1,4 @@
+import { readBrowserScreenshot } from "./browser-artifacts.js";
 import { LabControl, type LabOperation, type LabOperationInput } from "./control.js";
 import { labCoordination, type LabCoordination } from "./coordination.js";
 import { LabPromotionResultSchema, promoteLab, type LabPromotionInput, type LabPromotionResult } from "./promotion.js";
@@ -288,6 +289,16 @@ export class LabManager {
   http(project: string, name: string, input: LabHttpInput): Promise<LabHttpResult> {
     return labHttp(this, project, name, input);
   }
+  browserArtifact(project:string,name:string,checkId:string,artifactId:string){
+    const status=this.status(project,name);
+    z.string().max(100).regex(/^lc_[a-z0-9]+$/).parse(checkId);z.string().max(100).regex(/^lba_[a-z0-9]+$/).parse(artifactId);
+    const row=z.object({result_json:z.string()}).optional().parse(this.options.db.prepare("SELECT result_json FROM lab_checks WHERE id=? AND lab_id=?").get(checkId,status.lab.id));
+    if(!row)throw new SwitchyardError("not_found","unknown browser check artifact");
+    const result=LabCheckResultSchema.parse(JSON.parse(row.result_json));
+    const artifact=result.browser?.artifacts.find(item=>item.id===artifactId);
+    if(!artifact)throw new SwitchyardError("not_found","unknown browser check artifact");
+    return {metadata:artifact,bytes:readBrowserScreenshot(status.lab,checkId,artifact)};
+  }
   private require(project: string, name: string): LabRecord {
     z.string().regex(/^[a-z0-9][a-z0-9._-]*$/).parse(project);
     LabNameSchema.parse(name);
@@ -498,7 +509,7 @@ export class LabManager {
   private async checkLab(project: string, name: string, check: string): Promise<LabCheckResult> {
     const lab = this.require(project, name);
     this.touch(project, name);
-    return runLabCheck(this.store, lab, check, this.services.config.check_timeout_seconds, this.abort.signal);
+    return runLabCheck(this.store, lab, check, this.services.config.check_timeout_seconds, this.abort.signal, this);
   }
   private async refreshLab(project: string, name: string): Promise<LabStatus> {
     let lab = this.require(project, name);
