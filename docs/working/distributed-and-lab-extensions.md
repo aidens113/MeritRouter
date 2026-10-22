@@ -117,6 +117,30 @@ not a reason to stop the independently runnable core work. No service was instal
 
 ## Worker Briefs
 
+### Brief: linux-browser-fixture-preparation (seed_repair)
+- Tier isolated roadmap-team new feature branch named baseline; owned temporary Linux fixture preparation/report only.
+- Read Current State, own Linux reports and hydrated-browser plan. Own only reports/linux-browser-fixture-preparation.md; no product source/config/migration/shared docs changes.
+- Root independently39/39 passed9.57s including full19 native cases each root+ordinary; proc correction84a890a merged. This is not Chrome acceptance.
+- Prepare portable Linux Node22 and full Chrome for Testing under fresh owned /tmp/switchyard-browser-tools-<random>, without apt/system installs/services/cgroups/OS changes. Max512MiB compressed/2GiB extracted; no user paths.
+- Verify current official primary release metadata/checksums, bound archives and inspect all entries for traversal/symlink/hardlink/special-file escapes before extraction. Record exact TLS URLs/version/revision/download hashes in private fixture manifest.
+- Node must match official version-specific SHASUMS; verify publisher signature with approved release keys when feasible, report trust basis/limitations precisely. Do not execute files failing provenance/hash checks.
+- Chrome metadata lacks publisher SHA256: do not invent one. Record official metadata and computed archive/tree hashes as local fixture provenance; no shipped trusted profile or runtime availability follows.
+- Read ELF DT_NEEDED before executing trusted binaries; identify missing libs without installing packages. No copying Windows node_modules/native modules.
+- Run bounded --version then fixed blank/static fixture only as ordinary uid with normal Chrome sandbox enabled. Never --no-sandbox or arbitrary application/network browsing. Set explicit fixed background-network flags; no model-generated URLs/scripts.
+- Keep download/control manifest private; browser-readable tree separate from control files. Exact process births/owned descendants, hard deadlines, cleanup or explicit quarantine; no broad distro/process kills.
+- Existing product helper remains fixed namespace fixture target. Do not patch it to execute Chrome or claim arbitrary-workload/resource/CDP/zero-contact proof. Report proc-ro sandbox compatibility prerequisites without weakening policy.
+- Return measured executable/dependency/basic sandbox behavior, clean reusable fixture paths/manifest if successful, bounded next adapter/CDP/resource brief. Retain only owned reusable fixture artifacts; remove failed temporary artifacts when safe.
+- No providers/engine activation/public exports/source/build changes/commits. Report precise unresolved provenance/library/kernel/resource constraints; user configuration unchanged.
+
+### Brief: session-authority-plan (brain_completion)
+- Tier isolated roadmap-process new feature branch named baseline; read-only scoped R2 design/report.
+- Read Current State, distributed storage inventory, own admission/lifecycle reports and session/journal/artifact storage boundaries as needed. Own only reports/session-authority-plan.md.
+- Next async authority unit must support session/events/artifact persistence without pretending filesystem JSONL/shared Git is PostgreSQL-safe. Inventory direct consumers and transaction/effect boundaries, not every unrelated subsystem.
+- Propose bounded file-partitioned first implementation unit: immutable task/session incarnation/host owner, append/close receipts and replay/ACK loss, generation-fenced model/tool effects, private project scope, bounded transcript streaming and artifact ownership.
+- Distinguish durable intent/observation/effect proof; no duplicate tools/model spend on journal uncertainty. Preserve accepted historical scope/capture semantics and synchronous local compatibility where explicitly needed.
+- Cover cancellation/close drain, real killed owner, ID reuse, project purge/accounting, secret-bearing payload retention and GC quota progress. No authority from labels/paths/latest rows or bare prompt text.
+- Define async port/backend contracts and exact SQLite migration source ownership for future units; next migration31 remains exclusively Compose worker. No source/schema/migration/config/provider/user-data changes.
+- Return concrete sequence, risks/dependencies, meaningful fault tests, <=40line first brief. No completion/backend/multi-host claim, commits or shared edits.
 ### Brief: admission-fixture-integration (brain_completion)
 - Tier isolated roadmap-process new feature branch from root named baseline after admission merge; test fixture integration only.
 - Read Current State and own request-admission-protocol report; captured lease and request API stable.
@@ -529,3 +553,5 @@ not a reason to stop the independently runnable core work. No service was instal
 - Root combined project/task-Lab deletion12/12 passed23.71s and request blocker/purge4/4 passed4.19s; router typecheck passed. Public requestAttemptId exported and authored operations guidance now reflects captured dispatch/settlement, finite receipt retention, strict transport holds and project deletion. Admission migration30 is committed; next append31 may be reserved exclusively for Compose journal on the named new worker baseline.
 
 - Frozen integration acceptance1525960: router build passed, complete router suite active maxWorkers2 (TEMP/switchyard-admission-integration-full-supervisor.log). Source is isolated from active Composejournal migration31, report-only ordinary-user browser probes and named admission test-fixture integration. No edits/builds in acceptance tree during full test run.
+
+- Proc policy84a890a merged after independent39/39 (9.57s), root+ordinary19 native cases each. Session fixture6e56fba merged after independent13/13 (5.87s); baseline125/125 unchanged already passed. Full1525960 remains active, no source changes in acceptance tree. Next portable fixtures and session authority plan bounded separately; no runtime completion claim.
