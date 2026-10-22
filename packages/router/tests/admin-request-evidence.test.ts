@@ -15,7 +15,7 @@ async function setup() {
   const [a] = await sy.submitTasks([summarizeTask({ idempotencyKey: "alpha-a" })], { project: "alpha" });
   const [b] = await sy.submitTasks([summarizeTask({ idempotencyKey: "alpha-b" })], { project: "alpha" });
   const [foreign] = await sy.submitTasks([summarizeTask({ idempotencyKey: "beta" })], { project: "beta" });
-  sy.db.prepare("INSERT INTO executions(id,kind,profile,status,created_at) VALUES ('shared-execution','batch','summarize','completed',1)").run();
+  sy.db.prepare("INSERT INTO executions(id,kind,profile,status,created_at) VALUES ('shared-execution','task','summarize','completed',1)").run();
   function request(id: string, tasks = [a!.taskId], status = "succeeded") {
     sy!.db.prepare("INSERT INTO model_requests(id,execution_id,purpose,gateway_model,status,reserved_at,finished_at,est_input_tokens,reserved_output_tokens,project_id) VALUES (?,'shared-execution','work','fixture/model',?,1,2,100,100,'alpha')").run(id, status);
     for (const task of tasks) sy!.db.prepare("INSERT INTO request_charges(request_id,task_id,input_tokens,output_tokens,tokens_exact) VALUES (?,?,10,20,1)").run(id, task);
@@ -70,7 +70,9 @@ describe("bounded model request evidence", () => {
   });
   it("deduplicates same-project shared batch exchanges retaining participant session links", async () => {
     const f=await setup(); f.request("r_batch",[f.a,f.b]);
-    for(const task of [f.a,f.b]){const rec=f.session(task);input(rec,"Shared batch prompt");response(rec,"r_batch");rec.end("completed","batch");}
+    f.s.db.prepare("UPDATE executions SET kind='batch' WHERE id='shared-execution'").run();
+    for (const [task,item] of [[f.a,"c1"],[f.b,"c2"]]) f.s.db.prepare("INSERT INTO execution_members(execution_id,task_id,item_id) VALUES('shared-execution',?,?)").run(task,item);
+    for(const task of [f.a,f.b]){const rec=f.session(task);rec.note("Shared batch",{executionId:"shared-execution",members:[{taskId:f.a,itemId:"c1"},{taskId:f.b,itemId:"c2"}]});input(rec,"Shared batch prompt");response(rec,"r_batch");rec.end("completed","batch");}
     const view=requestEvidence(f.s,"alpha","r_batch")!;expect(view.exchanges).toHaveLength(1);expect(view.exchanges[0]!.sessions).toHaveLength(2);expect(view.relatedTasks).toHaveLength(2);
   });
   it("withholds mixed-project classifier payloads before reading either session", async () => {
@@ -78,6 +80,22 @@ describe("bounded model request evidence", () => {
     const view=requestEvidence(f.s,"alpha","r_mixed")!;expect(view.state).toBe("unavailable");expect(view.exchanges).toHaveLength(0);expect(JSON.stringify(view)).not.toContain("FOREIGN");expect(view.relatedTasks.map(t=>t.taskId)).toEqual([f.a]);
     f.s.db.prepare("UPDATE model_requests SET error_message='FOREIGN provider echo',route_note='FOREIGN route text',web_citations_json=? WHERE id='r_mixed'").run(JSON.stringify([{url:"https://example.test/foreign",title:"FOREIGN citation"}]));
     const detail=requestDetail(f.s,"r_mixed")!;expect(detail.taskIds).toEqual([f.a]);expect(detail.charges.map(c=>c.taskId)).toEqual([f.a]);expect(detail.errorMessage).toBeNull();expect(detail.routeNote).toBeNull();expect(detail.webCitations).toEqual([]);
+  });
+  it("does not adopt a historical mixed prompt after foreign accounting members are deleted", async () => {
+    const f = await setup(); f.request("r_deleted_member", [f.a, f.foreign]);
+    f.s.db.prepare("UPDATE executions SET kind='batch' WHERE id='shared-execution'").run();
+    for (const [task,item] of [[f.a,"c1"],[f.foreign,"c2"]]) f.s.db.prepare("INSERT INTO execution_members(execution_id,task_id,item_id) VALUES('shared-execution',?,?)").run(task,item);
+    const rec = f.session();
+    rec.note("Shared classifier cohort", {executionId:"shared-execution",members:[{taskId:f.a,itemId:"c1"},{taskId:f.foreign,itemId:"c2"}]});
+    input(rec, "FOREIGN deleted project goal"); response(rec, "r_deleted_member");
+    f.s.db.prepare("DELETE FROM request_charges WHERE task_id=?").run(f.foreign);
+    f.s.db.prepare("DELETE FROM execution_members WHERE task_id=?").run(f.foreign);
+    f.s.db.prepare("DELETE FROM tasks WHERE id=?").run(f.foreign);
+    f.s.db.prepare("UPDATE model_requests SET error_message='FOREIGN provider echo' WHERE id='r_deleted_member'").run();
+    const view = requestEvidence(f.s, "alpha", "r_deleted_member")!;
+    expect(view.payloadScopeExclusive).toBe(false); expect(view.exchanges).toEqual([]);
+    expect(JSON.stringify(view)).not.toContain("FOREIGN");
+    expect(requestDetail(f.s, "r_deleted_member")!.errorMessage).toBeNull();
   });
   it("reports corrupt, missing, symlink and byte-capped journals without raw path/error leakage", async () => {
     const f=await setup();f.request("r_partial");const rec=f.session();input(rec);response(rec,"r_partial");appendFileSync(rec.logPath,'{"seq":');

@@ -169,20 +169,52 @@ function exchange(events: SessionEvent[], row: z.infer<typeof SessionRow>, reque
 }
 
 /** Exact request-id journal correlation. Related task evidence is deliberately not causal. */
+function recordedMembersExclusive(sy: Switchyard, project: string, execution: string, events: SessionEvent[], budget: {remaining: number}): boolean {
+  let sharedProof = false;
+  const proof = new Set<string>();
+  const current = z.array(z.object({ task_id: Id, item_id: z.string(), project_id: z.string().nullable() })).max(10_000).safeParse(sy.db.prepare("SELECT m.task_id,m.item_id,t.project_id FROM execution_members m LEFT JOIN tasks t ON t.id=m.task_id WHERE m.execution_id=? LIMIT 10001").all(execution));
+  if (!current.success) return false;
+  const authoritative = new Map(current.data.map(member => [JSON.stringify([member.task_id, member.item_id]), member.project_id]));
+  for (const event of events) {
+    if (event.type !== "note" || !event.data.data || typeof event.data.data !== "object") continue;
+    const data = event.data.data as Record<string, unknown>;
+    if (data.executionId !== execution || !("members" in data)) continue;
+    const members = z.array(z.object({ taskId: Id, itemId: z.string().max(200) })).min(1).max(budget.remaining).safeParse(data.members);
+    if (!members.success) return false;
+    sharedProof = true;
+    budget.remaining -= members.data.length;
+    for (const member of members.data) {
+      const key = JSON.stringify([member.taskId, member.itemId]);
+      if (authoritative.get(key) !== project) return false;
+      proof.add(key);
+    }
+  }
+  const row = z.object({ kind: z.string() }).safeParse(sy.db.prepare("SELECT kind FROM executions WHERE id=?").get(execution));
+  return row.success && (row.data.kind !== "batch" || sharedProof)
+    && (!sharedProof || current.data.every(member => member.project_id === project && proof.has(JSON.stringify([member.task_id, member.item_id]))));
+}
+
 export function requestEvidence(sy: Switchyard, project: string, id: string): RequestEvidence | null {
   const parsed = RequestRow.safeParse(sy.db.prepare("SELECT id,execution_id,project_id,status FROM model_requests WHERE id=? AND project_id=?").get(id, project));
   if (!parsed.success) return null;
   const request = parsed.data, warnings: string[] = [], remaining = { bytes: REQUEST_EVIDENCE_LIMITS.totalJournalBytes };
   const participants = z.array(z.object({ project_id: z.string().nullable() })).parse(sy.db.prepare("SELECT DISTINCT t.project_id FROM request_charges c LEFT JOIN tasks t ON t.id=c.task_id WHERE c.request_id=?").all(id));
-  const payloadAllowed = participants.length === 1 && participants[0]!.project_id === project;
+  let payloadAllowed = participants.length === 1 && participants[0]!.project_id === project;
   if (!payloadAllowed) warnings.push("Exchange payload withheld because participant project scope cannot be proven exclusive. Related evidence is limited to this project.");
   const sessions = sy.db.prepare(`SELECT DISTINCT s.id,s.agent_label,s.role,s.task_id FROM sessions s JOIN request_charges c ON c.task_id=s.task_id JOIN tasks t ON t.id=c.task_id WHERE c.request_id=? AND s.project_id=? AND t.project_id=? ORDER BY s.created_at DESC LIMIT ?`).all(id, project, project, REQUEST_EVIDENCE_LIMITS.sessions + 1).flatMap(row => { const parsed = SessionRow.safeParse(row); if (!parsed.success) warnings.push("Malformed session metadata omitted."); return parsed.success ? [parsed.data] : []; });
   if (sessions.length > REQUEST_EVIDENCE_LIMITS.sessions) warnings.push("Related session count exceeds the read limit.");
   const exchanges: RequestExchange[] = [];
   const commits = new Map<string, Array<{ repository: string; sha: string }>>();
   const displayBudget = { remaining: REQUEST_EVIDENCE_LIMITS.textBytes as number }, seen = new Map<string, RequestExchange>();
+  const memberBudget = { remaining: 10_000 };
   for (const row of payloadAllowed ? sessions.slice(0, REQUEST_EVIDENCE_LIMITS.sessions) : []) {
     const events = journal(sy, row.id, remaining, warnings);
+    if (!recordedMembersExclusive(sy, project, request.execution_id, events, memberBudget)) {
+      payloadAllowed = false;
+      exchanges.length = 0; commits.clear();
+      warnings.push("Exchange payload withheld because original recorded participant scope is unavailable.");
+      break;
+    }
     exchanges.push(...exchange(events, row, request, warnings, displayBudget, seen));
     if (row.task_id) for (const event of events) if (event.type === "workspace") {
       commits.set(row.task_id, event.data.repos.slice(0, 20).flatMap(repo => /^[a-f0-9]{40,64}$/.test(repo.head ?? "") && Object.hasOwn(sy.projectContext(project).repositoryPaths, repo.alias) ? [{ repository: repo.alias, sha: repo.head! }] : []));
