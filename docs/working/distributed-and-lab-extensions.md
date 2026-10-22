@@ -13,7 +13,8 @@ Related: [roadmap completion](roadmap-completion.md), [Labs](labs.md), [sessions
 Request-only release663626d is now pushed to dev/main after783/783 (88files,943.08s),
 recursive typecheck/build and production browser acceptance. Authorized4477 update completed:
 accepted663626d rebuilt at root, livePID24040 and populated recorded exchange verified; config unchanged.
-Local async task lifecycle19268e7 is merged: supervisor independently50/50 (16.67s), plus
+Local async task lifecycle19268e7 is merged (acceptance blocked by idle recovery retention cap
+until recovery retention is fixed; legitimate T4 stored-row validation is corrected locally): supervisor independently50/50 (16.67s), plus
 root scoped receipt purge/tombstone + task-Lab deletion10/10 (25.68s). Public lease DTO exports
 and authored operations guidance are added; complete combined acceptance/package remains pending.
 Compose known-resource proofcff80fa independently80/80 (862ms) and is merged locally.
@@ -112,6 +113,21 @@ not a reason to stop the independently runnable core work. No service was instal
    A two-process SQLite test is useful E7 evidence, but is not two-host PostgreSQL acceptance.
 
 ## Worker Briefs
+
+### Brief: task-recovery-retention (link_completion)
+- Tier: isolated roadmap-labs new feature branch from root named baseline after Engine source commit; focused pre-release lifecycle fix.
+- Read Current State and own async-task-lifecycle report. Root confirmed idle runTick creates a7day recovery receipt every1s:100k cap reached in27h46m40s. Not deployed to user.
+- Own storage/task-leases.ts + sqlite-task-leases.ts, core/scheduler.ts allocator only, new recovery-retention tests and proportional recovery-key changes in existing task-leases/executor/scheduler tests; own reports/task-recovery-retention.md.
+- No migrations/queue/Executor/service/Gate/other source/shared docs changes. Admission worker exclusively owns migrations and Gate source; strict LeaseRef stays stable.
+- Dedicated recoveryOperationId trecover_<base36ms>_<24hex>, recovery request/receipt kind bound prefix, explicit5min retry/retention window. Ordinary tlease mutations retain7days. Allocate recovery keys only in scheduler recovery path.
+- Validate prefix/kind/window before receipt lookup. Expired recovery key must reject after pruning and cannot be reinterpreted as normal7day mutation; same-key recovery replay remains exact even if new tasks expire later.
+- Preserve durable empty recovery receipts: dropping them permits old lost-ACK calls to mutate later generations. No change to atomic task mutation+receipt/digest transaction.
+- Keep total cap100k; maintenance max20k and refuse NEW recovery key when total>=80k, reserving20k headroom for ordinary mutations. Replays remain available regardless cap. Document finite-fleet limit honestly.
+- Commit bounded expired-key cleanup independently of an authority mutation that may refuse at cap; otherwise quota refusal can roll cleanup back forever. At most500 keys/call, original expiry rules/cascade preserved. No unbounded retry/cleanup loop.
+- Preserve existing legacy tlease_ recovery tombstones through original7day expiry; no unsafe reclassification/eviction after private payload purge. New legacy recover input refuses; forward-only limitation explicit (feature not deployed).
+- Test deterministic multi-day cadence clock/bounded counts, exact empty/applied recovery replay, five-minute boundary/cross-kind ID reuse, preserved7day ordinary replay, maintenance headroom and cleanup progress on quota refusal.
+- Root owns index exports/operations docs/purge integration; send added API constants/helper names. No real provider quota/engine/user data.
+- Freeze source before router typecheck/build/serial focused checks, own report exact evidence/limits. No commits or pushes.
 
 ### Brief: linux-browser-isolation-plan (seed_repair)
 - Tier: isolated roadmap-team report-only design against newly discovered Ubuntu WSL host, not runtime enablement.
@@ -429,3 +445,5 @@ not a reason to stop the independently runnable core work. No service was instal
 ## Open Questions
 
 - Owner: supervisor. Select concrete PostgreSQL and object-store deployment fixtures during R2 implementation; availability is not yet verified. No user installation or paid infrastructure is assumed.
+
+- Supervisor validation: unchanged paid T4 failed on baseline c3110a0 because StoredTaskDTO rejected persisted T4. Expanded that stored tier union to include T4; unchanged paid and queue tests now18/18 pass (12.24s), log TEMP/switchyard-t4-row-schema-supervisor.log. Recovery retention brief is ready; full acceptance remains blocked pending its fix.
