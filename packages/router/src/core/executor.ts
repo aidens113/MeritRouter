@@ -537,14 +537,18 @@ export class Executor {
           crashed = true;
           return;
         }
-        const pendingIds = (err as { batchPendingTaskIds?: string[] }).batchPendingTaskIds ?? members.map((t) => t.row.id);
-        for (const t of members) {
+        const retained = err as { batchOutcomes?: Map<string, RunOutcome>; batchPendingTaskIds?: string[] };
+        outcomes = retained.batchOutcomes ?? new Map();
+        const pendingIds = retained.batchPendingTaskIds ?? members.map((t) => t.row.id);
+        for (const t of [...members]) {
           if (!pendingIds.includes(t.row.id)) continue;
           const d = this.classify(err, this.controllers.get(t.row.id)?.signal ?? shared.signal, t);
           this.endForDisposition(t, sessions.get(t.row.id) ?? null, d);
           this.settle(t, d);
+          members.splice(members.indexOf(t), 1);
         }
-        return;
+        // Retained completions go through the same session end, verification and recording
+        // path as a successful batch. Pending members have already received their disposition.
       }
       for (const t of members) {
         const o = outcomes.get(t.row.id);

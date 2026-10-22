@@ -51,8 +51,9 @@ was removed from the package rather than kept as an optional adapter. Plan and p
 - **D8. Paid spend is keyed by credential ref** (`vault:<id>`, `config:<provider>:env:<VAR>`,
   ...), so config keys keep their identity across restarts.
 - **D9. The served-model check stays.** A response naming a different model than the one
-  requested is discarded and quarantines the endpoint. The quarantine does not lift yet (a known
-  gap, unchanged from before).
+  requested is discarded and quarantines the endpoint. An explicit human acknowledgement with
+  a reason permits retries for that recorded violation without deleting evidence. A later
+  violation quarantines again; discovery never clears it implicitly (2026-10-22).
 - **D10. CLI.** `switchyard keys add <provider>` reads the secret from `SWITCHYARD_NEW_KEY` or a
   hidden prompt, never from argv; `keys test` lists the models a key can use and marks a
   rejected key invalid; `keys list` shows vault and config keys with status and last four only;

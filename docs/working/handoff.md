@@ -6,6 +6,8 @@ own working document with decisions, phases, ledger, and reports.
 
 ## Repository state
 
+- The user requested implementation of the remaining audit. [roadmap-completion.md](roadmap-completion.md) now owns active execution; its Current State supersedes the static audit below as work lands.
+
 - Panel v2 U1-U3 and completion follow-up accepted; B2 budget UI implemented and accepted alongside it. Final supervisor checks: 622 tests, recursive typecheck/build, warning-free demo seed, 581 route checks, 40 anchors and independent live task/request/brain/budget DOM updates. See working documents and Git refs for integration state.
 - Agent worktrees live under `.claude/worktrees/` (excluded from git locally).
 

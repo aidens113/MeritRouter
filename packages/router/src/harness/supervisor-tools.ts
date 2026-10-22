@@ -23,6 +23,7 @@ import { integrationHooks, integrationTools, type IntegrationSeam } from "./inte
 import { rulebookTier } from "../routing/staffing.js";
 import { liveSlotCounts, readConcurrencyRecords } from "../gateway/capacity.js";
 import type { WorkerTaskInput } from "../core/task.js";
+import { narrowedScope, taskWriteScope } from "./task-scope.js";
 
 export { queueOf } from "./integration-tools.js";
 
@@ -284,7 +285,9 @@ async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, un
   const specs = fresh.map(({ it, label }) => {
     const sub = it.profile === "supervise";
     const repos = (it.repositories as string[] | undefined) ?? [...new Set([...s.repos.keys(), ...s.ctx.spec.repositoryAliases])];
+    if (repos.some(alias => !s.ctx.spec.repositoryAliases.includes(alias))) throw new Error(`${label}: repositories exceeds parent repository scope`);
     const writable = it.profile === "implement" ? String(it.writable_repository ?? [...s.repos.keys()][0] ?? "") : undefined;
+    const paths = sub || writable ? narrowedScope(taskWriteScope(s.ctx.spec, s.ctx.tasks), it.allowed_paths) : undefined;
     const baseCommits: Record<string, string> = {};
     if (writable && s.repos.get(writable)) baseCommits[writable] = "HEAD_OF_JOB";
     // A sub-job's branches fork from this job's branches as integrated so far.
@@ -307,7 +310,7 @@ async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, un
         repository: writable ?? repos.join(", "),
         task: `${String(it.profile)}: ${String(it.goal)}${grant ? ` (request budget ${grant.requests})` : ""}`,
         requiredReads: [...((it.file_refs as string[] | undefined) ?? []), ...shared.map((f) => `${f} (shared, kept by the supervisor)`)].join(", ") || "as needed",
-        owns: sub ? `its own job branch ${s.ctx.cfg.supervisor.branch_prefix}${ids.get(label)!}, forked from this job's branch` : ((it.allowed_paths as string[] | undefined) ?? []).join(", ") || "nothing (read-only)",
+        owns: sub ? `its own job branch ${s.ctx.cfg.supervisor.branch_prefix}${ids.get(label)!}, forked from this job's branch; paths: ${paths?.join(", ") ?? "parent repository scope"}` : (paths ?? []).join(", ") || "nothing (read-only)",
         mustNotTouch: ((it.must_not_touch as string[] | undefined) ?? []).join(", ") || "everything else",
         done: `${((it.acceptance_criteria as string[] | undefined) ?? []).join("; ")}${checks.length ? `; checks: ${checks.join(", ")}` : ""}`,
         reportTo: `projects/${s.ctx.brain?.project ?? "default"}/working/${s.ctx.effort}/reports/${label}.md`,
@@ -322,7 +325,7 @@ async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, un
         repositoryAliases: repos,
         ...(writable ? { writableRepository: writable } : {}),
         context: { ...(it.file_refs ? { fileRefs: it.file_refs } : {}), ...(artifactRefs.length ? { artifactRefs } : {}), baseCommits },
-        constraints: { acceptanceCriteria: it.acceptance_criteria, ...(it.allowed_paths && !sub ? { allowedPaths: it.allowed_paths } : {}), ...(checks.length ? { checks } : {}) },
+        constraints: { acceptanceCriteria: it.acceptance_criteria, ...(paths ? { allowedPaths: paths } : {}), ...(checks.length ? { checks } : {}) },
         ...((it.difficulty && !sub) || typeof it.web === "boolean" ? { hints: { ...(it.difficulty && !sub ? { difficulty: it.difficulty } : {}), ...(typeof it.web === "boolean" ? { web: it.web } : {}) } } : {}),
         ...(it.importance ? { importance: it.importance } : {}),
         ...(it.importance_reason ? { importanceReason: it.importance_reason } : {}),

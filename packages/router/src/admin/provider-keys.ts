@@ -10,7 +10,7 @@ import type { ProviderErrorKind } from "../providers/errors.js";
 import { currentError, providerHealth as keyHealth } from "../providers/health.js";
 import { keyTestTimeoutMs, testKeyListing, type KeyTestOutcome } from "../providers/key-test.js";
 import type { KeyAvailability, KeyState } from "../providers/keys.js";
-import { BUILTIN_PROVIDER_IDS, type ProviderApiKind, type ResolvedProvider } from "../providers/registry.js";
+import { BUILTIN_PROVIDER_IDS, defaultProvider, type KeyPolicy, type ProviderApiKind, type ResolvedProvider } from "../providers/registry.js";
 import { BillingClassSchema, KeyPatchSchema, NewKeySchema, type BillingClass, type KeyLimits, type KeyPatch, type NewKey, type PaidKey } from "../providers/vault.js";
 import { patchConfig } from "./config-edit.js";
 
@@ -77,6 +77,10 @@ export interface ProviderKeysEntry {
   baseUrl: string | null;
   enabled: boolean;
   noKey: boolean;
+  local: boolean;
+  keyPolicy: KeyPolicy;
+  defaultBaseUrl: string | null;
+  baseUrlEnv: string | null;
   /** Keys need an account id (Cloudflare), on the key or the provider. */
   needsAccountId: boolean;
   accountId: string | null;
@@ -246,6 +250,10 @@ export function providerKeysView(sy: Switchyard): ProviderKeysView {
       baseUrl: p?.baseUrl ?? null,
       enabled: p?.enabled ?? false,
       noKey: p?.noKey ?? false,
+      local: p?.local ?? false,
+      keyPolicy: p?.keyPolicy ?? "required",
+      defaultBaseUrl: defaultProvider(id)?.baseUrl || null,
+      baseUrlEnv: p?.baseUrlEnv ?? null,
       needsAccountId: p?.urlParams.includes("account_id") ?? false,
       accountId: p?.accountId ?? null,
       inConfig,

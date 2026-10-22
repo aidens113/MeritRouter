@@ -42,10 +42,13 @@ a real store, two workers scanning at once, the panel's client-side forms in a r
 **Known issues:**
 - Flaky under load: `operations.test.ts` "stop() during a backoff wait" (and once
   `scoring` classifier batching); they pass alone and on rerun.
-- Served-model quarantine never lifts (pre-existing).
-- Under `preferred` paid policy a cooling paid endpoint moves behind other paid endpoints but
-  not behind free ones (pre-existing ordering).
-- `refreshPaidPrices` uses the global `fetch`.
+- Served-model quarantine recovery is implemented in roadmap-completion: human acknowledgement
+  with a reason permits retry of that violation only; history is retained and new mismatches
+  quarantine again. Integrated production acceptance is tracked there.
+- Availability now ranks before paid-policy preference in roadmap-completion, so cooling paid
+  endpoints no longer lead healthy free endpoints solely because paid is preferred.
+- Audit correction: `refreshPaidPrices` already accepts an injected fetch; the prior gap note
+  was stale. No replacement implementation is needed.
 
 **P4 (user, 2026-10-20): add Ollama and wider coverage.** Research:
 [research-coverage.md](./direct-providers/research-coverage.md) (official docs, 2026-10-20).
@@ -57,10 +60,10 @@ Bedrock SigV4, Azure Entra-only, Perplexity (Agent API), Lambda (winding down), 
 Inference.net (pivoted). Done 2026-10-20 ([report](./direct-providers/reports/p4-coverage.md)).
 P4 follow-ups: the panel's `/api/config` `expand()` writes an invalid config when the YAML has no
 `providers:` section (fix in projects J2, which rewrites that route); `ollama: {no_key: true}`
-without `base_url` gives a confusing validation message; the panel hard-codes the three local
-server ids (the admin view should pass `local`/`keyPolicy`/default base URL from the registry);
+without `base_url` gives a confusing validation message; registry-driven panel local-server
+metadata is implemented in roadmap-completion (production acceptance pending);
 the catalog lacks a provider param source, quantization, and trained-maximum context fields;
-`gateway/direct.ts` should test `keyInfoShape === "openrouter_key"` for the free quota.
+`gateway/direct.ts` now tests `keyInfoShape === "openrouter_key"` for the free quota in that unit.
 
 **Next steps:** a first live check, only with the user's approval and budget: one free-tier key
 per provider the user has, `keys test`, `models scan`, and one small task, recording measured

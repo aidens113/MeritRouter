@@ -78,6 +78,13 @@ function step(s: Switchyard, cursor: LiveCursor): { topics: string[]; cursor: Li
 }
 
 describe("live change watcher", () => {
+  it("invalidates model views when a quarantine acknowledgement changes independently of requests", () => {
+    env = twoProjects();
+    sy = open(env, new ScriptedClient(() => reply("{}")));
+    const cursor = liveCursor(sy, "all");
+    sy.db.prepare("INSERT INTO meta (key, value) VALUES (?, ?)").run("quarantine_ack:fixture", JSON.stringify({ requestId: "fixture", endpointId: "fixture/model", actor: "human:test", reason: "Configuration corrected", at: Date.now() }));
+    expect(step(sy, cursor).topics).toContain("models");
+  });
   it("watches scoped budget requests, same-timestamp decisions and released grants", () => {
     env = twoProjects();
     sy = open(env, new ScriptedClient(() => reply("{}")), { worker: false });

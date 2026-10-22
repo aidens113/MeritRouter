@@ -53,6 +53,19 @@ function renderItem(item: Item): string {
  */
 export async function runBatch(ctxs: RunContext[]): Promise<Map<string, RunOutcome>> {
   const outcomes = new Map<string, RunOutcome>();
+  try {
+    return await runItems(ctxs, outcomes);
+  } catch (error) {
+    // Preserve validated answers from earlier rounds/chunks. The executor still classifies
+    // the original failure for every unfinished member (including not-yet-started chunks).
+    throw Object.assign(error instanceof Error ? error : new Error(String(error)), {
+      batchOutcomes: outcomes,
+      batchPendingTaskIds: ctxs.filter(ctx => !outcomes.has(ctx.taskId)).map(ctx => ctx.taskId),
+    });
+  }
+}
+
+async function runItems(ctxs: RunContext[], outcomes: Map<string, RunOutcome>): Promise<Map<string, RunOutcome>> {
   const first = ctxs[0]!;
   const perItemOut = first.profile.batching.per_item_output_tokens;
   const items: Item[] = [];
@@ -152,13 +165,15 @@ async function runChunk(chunk: Item[], done: Done): Promise<void> {
       session.modelRequest(request);
     }
     let res: GateResponse;
+    const requestContext = pending[0]!.ctx;
     try {
       res = await ask(
-        { ...first, session: null },
+        { ...requestContext, session: null },
         { ...request, participants: pending.map((p) => ({ taskId: p.ctx.taskId, leaseOwner: p.ctx.leaseOwner, budget: p.ctx.budget, weight: p.estTokens })) },
       );
     } catch (err) {
       const attempts = (err as { attempts?: GateAttempt[] }).attempts;
+      if (attempts) for (const item of pending) if (item.ctx !== requestContext) item.ctx.attempts.push(...attempts);
       for (const { session } of sessions) session.modelError({ executionId, error: err, ...(attempts ? { attempts } : {}) });
       admission.finishExecution(executionId, "failed", { error: (err as Error).message });
       if (err instanceof AdmissionDenied && err.taskId && ["cancel_requested", "lease_lost", "task_not_active", "deadline_exceeded"].includes(err.reason)) {
@@ -174,7 +189,7 @@ async function runChunk(chunk: Item[], done: Done): Promise<void> {
     }
     for (const { session } of sessions) session.modelResponse(res);
     const response = res.response;
-    for (const p of pending) if (p.ctx !== first) p.ctx.attempts.push(...res.attempts);
+    for (const p of pending) if (p.ctx !== requestContext) p.ctx.attempts.push(...res.attempts);
 
     const text = response.message.content ?? "";
     const responseRef = first.artifacts.write({ taskId: null, executionId, kind: "batch_response", label: `batch ${executionId}`, content: text });
