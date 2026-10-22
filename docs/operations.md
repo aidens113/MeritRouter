@@ -497,7 +497,7 @@ not enable PostgreSQL or multiple hosts.
   ceiling. A worker whose providers are all full waits queued
   (`waiting_for_provider_slot`); supervisors are never held back and supervisor and reviewer
   requests take the next free slot first, so a job whose workers fill every slot still
-  completes. Slots of a dead process expire with its task lease.
+  completes. Generation-bound request holds survive task expiry or client death until exact transport reconciliation; legacy claim/wait holds retain their lease-based expiry. These slots measure observed local attempts, not remote provider execution or billing.
 - **Staffing.** `plan_work` plans nodes without a difficulty at the rulebook's deterministic
   tier (the task is still classified, so tags can raise it) and reports nodes to split and the
   slots in use; the charter keeps strong models for supervision and Deep/Strict review.
@@ -557,6 +557,9 @@ Default SQLite workers await generation-bound renew, finish, interrupt, defer, r
 
 Ordinary task-operation IDs have a seven-day retry window; recovery uses distinct kind-bound IDs with a five-minute window. Empty recovery receipts remain durable so a lost-acknowledgement retry cannot affect tasks that expired later. Conflicting reuse refuses; project deletion purges private receipt metadata while retaining bounded hash-only retry tombstones until expiry. Receipt capacity is finite:100,000 keys total; new recovery refuses at80,000 total or20,000 maintenance keys, preserving ordinary mutation headroom. At one recovery per second a worker retains about301 receipts (up to361 with permitted clock skew). Ordinary seven-day operations also consume the total bound; this is not unlimited fleet capacity. At most500 expired keys are collected in an independently committed transaction before each mutation, even when the subsequent mutation refuses. Async lease mutations therefore refuse inside an existing SQLite transaction. Legacy recovery tombstones retain their original seven-day expiry; an old saturated store may remain constrained until safe expiry, and older workers must be upgraded. This is a local task lifecycle boundary. Provider admission, external side effects, session/Git fencing and PostgreSQL/multi-host operation require their separate contracts and acceptance.
 
+Default Gate task participants carry captured insertion incarnation, owner, run count and project. Each physical key/endpoint attempt has an immutable request ID, payload digest and durable reserve/dispatch-intent/settlement receipt. Lost acknowledgement or replay never authorizes another provider call; a final local SQLite guard runs after awaits immediately before client invocation. Classifier persistence uncertainty propagates to the task instead of silently starting execution. Late usage settles the original request and cannot update charges for a reused task identity.
+
+Request IDs have a seven-day retry window and100,000-key bound. Settled private bindings without outstanding holds expire in bounded64-row cleanup; quota refusal cannot roll that cleanup back. Reserve/prune require a top-level transaction. Unresolved requests or strict transport holds block project deletion before config writes and again during purge. Successful deletion removes scoped private bindings while preserving consumed-ID tombstones and accounting. Aborting a socket or losing a task lease does not prove remote cancellation or nonbilling; unknown holds remain conservative until an operator establishes safe reconciliation. This does not provide PostgreSQL, two-host operation or remote side-effect fencing.
 ## Agent sessions
 
 Every model-driven run is an agent session: each run of a task (a recovery re-run or a tier

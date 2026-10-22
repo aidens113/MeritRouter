@@ -11,7 +11,7 @@ export { LabsConfigSchema, LabRecipeSchema, ProjectLabsSchema, LabNameSchema, ty
 export { type LabRecord, type LabServiceRecord } from "./labs/store.js";
 export { type LabCheckResult } from "./labs/checks.js";
 export { BrowserCheckSchema, BrowserEvidenceSchema, BrowserArtifactSchema, type BrowserCheck, type BrowserEvidence } from "./labs/browser-schema.js";
-export { ReserveRequestDTOSchema, ReservationDTOSchema, RequestOutcomeDTOSchema, RequestPersistenceError, type RequestLedger, type ReserveRequestDTO, type ReservationDTO, type RequestOutcomeDTO } from "./admission/request-ledger.js";
+export { ReserveRequestDTOSchema, ReservationDTOSchema, RequestOutcomeDTOSchema, RequestPersistenceError, requestAttemptId, type RequestLedger, type ReserveRequestDTO, type ReservationDTO, type RequestOutcomeDTO } from "./admission/request-ledger.js";
 export { LeaseRefSchema, LeaseReceiptSchema, RenewLeaseSchema, FinishLeaseSchema, InterruptLeaseSchema, DeferLeaseSchema, RecoverLeasesSchema, CancelLeasesSchema, leaseOperationId, recoveryOperationId, LEASE_RECEIPT_WINDOW_MS, RECOVERY_RECEIPT_WINDOW_MS, LEASE_RECEIPT_CAPACITY, RECOVERY_RECEIPT_CAPACITY, RECOVERY_TOTAL_THRESHOLD, type LeaseRef, type LeaseReceipt, type TaskLeases } from "./storage/task-leases.js";
 export { QueueClaimSchema, QueueCompanionsSchema, TaskAttemptSchema, StoredTaskDTOSchema, QueueTasksSchema, type TaskQueue, type QueueClaim, type QueueCompanions, type TaskAttempt, type StoredTaskDTO } from "./storage/task-queue.js";
 export { ensureLabSupervisor, LabSupervisorLease, type LabSupervisorState } from "./operations/lab-supervisor.js";

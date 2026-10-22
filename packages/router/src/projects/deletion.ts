@@ -4,6 +4,7 @@ import { SwitchyardError } from "../core/errors.js";
 import { immediate, type Db } from "../storage/db.js";
 import { git } from "../workspaces/git.js";
 import { RequestCaptures } from "../storage/request-captures.js";
+import { RequestReceipts } from "../admission/request-receipts.js";
 import { z } from "zod";
 
 // Deleting a project (the mechanics; `admin/projects.ts` checks, confirms, and edits the config):
@@ -127,6 +128,9 @@ async function projectWorktrees(storageDir: string, taskIds: string[], repositor
  */
 export function purgeProjectRows(db: Db, slug: string, activeStates: readonly string[]): { tasks: number; sessions: number } {
   return immediate(db, () => {
+    // Refuse outstanding dispatch/transport uncertainty before deleting any authority.
+    // Settled private bindings go with the project; opaque consumed-ID keys remain.
+    new RequestReceipts(db).purgeProject(slug);
     const active = db.prepare("SELECT COUNT(*) FROM tasks WHERE project_id = ? AND state IN (SELECT value FROM json_each(?))").pluck().get(slug, JSON.stringify(activeStates)) as number;
     if (active) throw new SwitchyardError("usage", `project ${slug} has ${active} running or queued task(s); cancel them or let them finish before deleting it`);
     const p = { slug, ids: ids(db.prepare("SELECT id FROM tasks WHERE project_id = ?").pluck().all(slug) as string[]) };

@@ -11,6 +11,7 @@ import { folderState, prepareRepository } from "../workspaces/repository-prepare
 import { patchConfig, readConfigText, validateConfigText, writeConfigText } from "./config-edit.js";
 import { projectFootprint, purgeProjectRows, removeProjectFiles, removeProjectWorktrees } from "../projects/deletion.js";
 import { immediate } from "../storage/db.js";
+import { RequestReceipts } from "../admission/request-receipts.js";
 
 // Projects for the panel's grid, the CLI's `projects` command, and project selection: listing,
 // per-project activity and attention, and creating or archiving a project. Settings live in the
@@ -323,6 +324,8 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 /** Why a project cannot be deleted now: running or queued tasks, the last live project, or the single-project config. */
 function deletionBlockers(sy: Switchyard, info: ProjectSummary, allowTaskPrune = false): string[] {
   const out: string[] = [];
+  const holds = new RequestReceipts(sy.db).blockers(info.slug);
+  if (holds.requests || holds.slots) out.push(`it has ${holds.requests} unresolved model request(s) and ${holds.slots} retained transport hold(s); reconcile them before deletion`);
   const labs = sy.db.prepare("SELECT count(*) AS n FROM labs WHERE project_id = ? AND state != 'destroyed' AND (?=0 OR kind!='task_attempt' OR state!='stopped')").get(info.slug, allowTaskPrune ? 1 : 0) as { n: number };
   if (labs.n) out.push(`it has ${labs.n} retained or unresolved lab(s); destroy retained Labs or finish owned task-Lab cleanup first`);
   const a = projectActivity(sy, info.slug);

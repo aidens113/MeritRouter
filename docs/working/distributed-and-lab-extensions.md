@@ -150,6 +150,16 @@ not a reason to stop the independently runnable core work. No service was instal
 - Root owns index exports/operations docs/purge integration; send added API constants/helper names. No real provider quota/engine/user data.
 - Freeze source before router typecheck/build/serial focused checks, own report exact evidence/limits. No commits or pushes.
 
+### Brief: linux-browser-observer-plan (seed_repair)
+- Tier isolated roadmap-team report-only follow-up from root baseline after accepted helper commit.
+- Read Current State and own linux-browser-helper report/source. Own only reports/linux-browser-observer-plan.md; no source/schema/config/migration/shared docs changes.
+- Root independently38/38 passed5.63s after cleanup authority fix, including17native cases. Ordinary uid65534 owner still fails kernel proof; root-only WSL substrate is not production availability.
+- Identify exact failing kernel observation as ordinary owner using bounded owned namespace fixtures; record proc/userns/ptrace/dumpability relationships without weakening checks.
+- Evaluate trusted monitor in a fresh outer user namespace with owner pidfd/control lifetime retained, then nested bwrap isolation. Can parent-userns capabilities prove target safely without host/root authority?
+- Short-lived Python/unshare/bwrap/setpriv probes allowed; exact-created fixture cleanup only. No downloads/installs/host sysctl, ptrace settings, services, firewall, cgroup changes or distro termination.
+- Keep no-exec-before-gate and independent birth/namespace/proc/FD/caps proof; no JSON trust or PID adoption. Analyze monitor/owner and pre-bwrap hook death windows, and resource/cgroup limitations separately.
+- Return concrete feasible source partition/next<=40line brief or measured unavailable constraint. No real Chrome/browser/nominal lease/runtime availability claim.
+- Report actual commands/results/failures and remaining ordinary-user/kernel/resource acceptance requirements. No build/source edits/commits.
 ### Brief: linux-browser-helper (seed_repair)
 - Tier isolated roadmap-team new feature branch from supervisor named baseline; native prerequisite only.
 - Read Current State, own reviewed linux-browser-isolation-plan report and H1/hydrated design contracts.
@@ -492,3 +502,7 @@ not a reason to stop the independently runnable core work. No service was instal
 - Recovery retention943a74a merged after supervisor independent10/10 (67.41s), including172,801-call two-day simulation (63.23s) retaining301 keys/receipts. Reviewed prefix/kind window, ordinary headroom, nested transaction refusal and independent500-row GC. Worker52/52 separately recorded. Root exported new helper/constants and authored operational bounds/legacy limitations; full combined acceptance remains pending.
 
 - Root public recovery exports/router typecheck pass; existing lifecycle integration42/42 passed13.75s. Independent request protocol/ledger/classifier/capacity38/38 passed23.65s; review found classifier endSession could still mask persistence uncertainty, returned for scoped hardening before merge. Linux helper independently38/38 passed5.94s; cleanup PID1 authority review fix pending. No admission/helper completion claim yet.
+
+- Linux helper95907bd merged after independent final38/38 (5.63s),17 native cases; forged PID1 metadata cannot grant foreign cleanup signal authority. Runtime still unavailable. Admission2b22160 merged5c65d87 after independent38/38 (23.65s), then final classifier15/15 (5.94s); equivalent duplicate T4 union resolved retaining upstream form. Root deletion blockers/purge hooks newly4/4 pass (4.19s), router typecheck pass; combined deletion check active.
+
+- Root combined project/task-Lab deletion12/12 passed23.71s and request blocker/purge4/4 passed4.19s; router typecheck passed. Public requestAttemptId exported and authored operations guidance now reflects captured dispatch/settlement, finite receipt retention, strict transport holds and project deletion. Admission migration30 is committed; next append31 may be reserved exclusively for Compose journal on the named new worker baseline.
