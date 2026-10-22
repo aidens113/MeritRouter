@@ -433,7 +433,7 @@ export class Admission {
         .prepare(
           `UPDATE model_requests SET status = @status, finished_at = @now, served_model = @servedModel, served_endpoint_id = @servedEndpointId,
              served_provider = @servedProvider, provider_attempts = @attempts, attempts_exact = @attemptsExact,
-             input_tokens = @inputTokens, output_tokens = @outputTokens, cached_input_tokens = @cached, reasoning_tokens = @reasoning,
+             input_tokens = @inputTokens, output_tokens = @outputTokens, cached_input_tokens = @cached, cache_creation_input_tokens = @created, reasoning_tokens = @reasoning,
              usage_basis = @basis, reported_cost_usd = @cost, http_status = @http, error_kind = @errorKind, error_message = @errorMessage,
              cache_hit = @cacheHit, policy_violation = @violation, telemetry_json = @telemetry,
              native_web_search = @nativeSearch, web_search_requests = @searches, web_citations_json = @citations
@@ -451,6 +451,7 @@ export class Admission {
           inputTokens: usage?.inputTokens ?? null,
           outputTokens: usage?.outputTokens ?? null,
           cached: usage?.cachedInputTokens ?? null,
+          created: usage?.cacheCreationInputTokens ?? null,
           reasoning: usage?.reasoningTokens ?? null,
           basis: usage?.basis ?? "unknown",
           cost: usage?.reportedCostUsd ?? null,
@@ -471,12 +472,22 @@ export class Admission {
         let cost: number;
         let basis: "provider_reported" | "computed" | "not_billed" | "uncertain";
         if (outcome.kind === "succeeded") {
-          if (usage?.reportedCostUsd !== null && usage?.reportedCostUsd !== undefined) {
+          if (usage?.reportedCostUsd != null && Number.isFinite(usage.reportedCostUsd)) {
             cost = usage.reportedCostUsd;
             basis = "provider_reported";
           } else if (usage?.inputTokens != null && usage.outputTokens != null) {
-            cost = actualUsd(usage.inputTokens, usage.outputTokens, p.price, usage.cachedInputTokens ?? 0, resp?.webSearch?.requests ?? 0);
-            basis = "computed";
+            const computed = actualUsd(usage.inputTokens, usage.outputTokens, p.price, usage.cachedInputTokens ?? 0, resp?.webSearch?.requests ?? 0, usage.cacheCreationInputTokens ?? 0);
+            if (Number.isFinite(computed)) {
+              cost = computed;
+              basis = "computed";
+            } else {
+              // Unknown creation pricing is an accounting incident, not an ordinary-input charge.
+              // Retain the finite reservation as uncertain; quarantine prevents automatic retries.
+              cost = p.worstCaseUsd;
+              basis = "uncertain";
+              this.db.prepare("UPDATE model_requests SET policy_violation = COALESCE(policy_violation, ?) WHERE id = ?")
+                .run(`cannot price reported cache creation (${usage.cacheCreationInputTokens ?? 0} tokens): paid reservation retained; actual cost unknown`, res.requestId);
+            }
           } else {
             // No billed usage reported: keep the worst case rather than an estimate.
             cost = p.worstCaseUsd;

@@ -5,7 +5,7 @@ import { ModalitySchema, ProfileNameSchema, TierNameSchema, type ProfileName } f
 import { ConfigError } from "../core/errors.js";
 import type { Db } from "../storage/db.js";
 
-export const ParamSourceSchema = z.enum(["override", "manual", "huggingface", "description", "name", "unknown"]);
+export const ParamSourceSchema = z.enum(["override", "manual", "provider", "huggingface", "description", "name", "unknown"]);
 export const ParamConfidenceSchema = z.enum(["exact", "agreed", "heuristic", "unknown"]);
 export const EndpointStatusSchema = z.enum(["active", "pending_confirmation", "disabled", "removed"]);
 export type EndpointStatus = z.infer<typeof EndpointStatusSchema>;
@@ -100,6 +100,9 @@ export const ModelEndpointSchema = z
         evidence: z.array(EvidenceSchema).default([]),
       })
       .prefault({ source: "manual", confidence: "exact", confirmed: true }),
+    maxContextTokens: z.number().int().positive().nullable().optional(),
+    quantization: z.string().nullable().optional(),
+    contextDetail: z.string().nullable().optional(),
     contextLimitTokens: z.number().int().positive().nullable(),
     outputLimitTokens: z.number().int().positive().nullable(),
     outputLimitSource: z.enum(["provider", "override", "manual", "default"]).default("manual"),
@@ -120,6 +123,8 @@ export const ModelEndpointSchema = z
         cachedInputUsdPerMillion: z.number().min(0).nullable().optional(),
         /** Where `cachedInputUsdPerMillion` came from (a model list, paid.models, an override). */
         cachedInputSource: z.string().optional(),
+        cacheWriteInputUsdPerMillion: z.number().min(0).nullable().optional(),
+        cacheWriteInputSource: z.string().optional(),
         freeVerified: z.boolean(),
         source: z.string().default("manual"),
         /**
