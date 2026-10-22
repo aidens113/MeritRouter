@@ -58,7 +58,11 @@ file-partitioned briefs. No whole-roadmap completion claim. After explicit user 
 accepted9682e92 was built and panel4477 restarted; live read-only browser confirms new default-OFF
 setting, exact MiniMax model URL and Verification explanation. Config hash unchanged. Existing
 MCP remains running its prior in-memory code until its client reconnects/restarts the server.
-Facebook clone8082 is also running for the user by explicit request; preserve its existing data.
+The user subsequently requested complete clone removal:8082 stopped, project resources deleted
+through the supported API, remaining repository moved to Recycle Bin after automatic permanent
+delete rejection. No clone at its old path. Wait for the user's future fresh Next.js/Node.js
+build prompt after readiness. Richer model-request detail is newly requested and active in an
+isolated UI/projection unit; it is not included in this accepted queue change.
 
 ## Execution phases
 

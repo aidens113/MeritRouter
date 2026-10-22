@@ -6,6 +6,11 @@ own working document with decisions, phases, ledger, and reports.
 
 ## Repository state
 
+- Async default queue claim/companion prerequisite accepted after753 tests/85files (542.28s),
+  recursive typecheck/build. R2 renew/finish/session/Git and actual PostgreSQL remain open.
+  Richer request-detail inputs/response/tools/files projection is newly active, separate from
+  accepted queue source. Read latest master/worker briefs before assigning overlapping files.
+
 - The user requested implementation of the remaining audit. [roadmap-completion.md](roadmap-completion.md) now owns active execution; its Current State supersedes the static audit below as work lands.
 - Integrated Labs L1-L4, packaging, correctness/accounting/external/project/process follow-ups and reported panel regressions accepted at sourcee0aad08:701 tests, recursive typecheck/build, independent production browser/API and fresh outside-checkout package installation. Remaining L5/R2 and new configurable MCP final-supervisor ownership are active; read the master before dispatch. Actual4477 was not restarted.
 - Next accepted source6d61b8e includes static browser checks/all-head evidence reuse, async Gate accounting and default-OFF MCP final-supervisor permission (bounded sub-supervisors remain allowed):734 tests/83files, recursive typecheck/build, production UI/MCP/model/Labs/legacy checks and fresh outside-checkout package install pass. Task-Lab lifecycle/async queue claims/Compose design continue in isolated worker trees. Actual4477/MCP remain untouched.
