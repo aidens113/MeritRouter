@@ -442,6 +442,13 @@ changes rarely.
   [--reason ...]`, `switchyard budget deny <id> [--reason ...]`. A request whose task finished
   expires; an interrupted wait leaves it pending, and an approval then applies to the resumed run.
   Paid budgets never grow with extra requests.
+  The panel shows pending decisions on the task, job, project and install dashboard. Supply a
+  reason to approve or deny; approval can grant fewer requests than asked, within the current
+  job pool. Job Overview shows the pool, reserve and held grants; task Usage shows its grant,
+  approved extras and decision history. Budget changes arrive through the live connection.
+  The scoped `POST /api/budget/requests/<id>` accepts `project`, `approve`, `reason` and optional
+  integer `grant`; stale decisions, finished tasks and exhausted pools return 409. Unknown or
+  out-of-project requests return 404, including unassigned requests presented in another scope.
 - **Supervisors delegate implementation.** With `supervisor.implementation: delegate` (default),
   a supervisor's `write_file` / `replace_in_file` / `delete_file` succeed only on paths matching
   `supervisor.coordination_paths` (`**/*.md`, `docs/**`), files its briefs listed in
@@ -656,6 +663,12 @@ or workers.
   `switchyard brain ls|read|search` (in the selected project, or every project when none is
   chosen) and each project's Brain page browse it. Every change is a commit under the writing
   agent, so `git log` and `git blame` inside it show who (and which model) wrote what.
+  Initialization and writes share the brain lock, including when several projects initialize
+  the same repository concurrently. The lock file is excluded from initialization and adopted
+  external changes. Initialization errors propagate instead of leaving a partially ready brain.
+  Panel document history and blame are project scoped: private paths and rename ancestry from
+  another project are unavailable. Commit subjects are retained only when every changed path is
+  visible; mixed commits expose only the selected document's changes, without shared metadata.
 - Job branches live in your repositories as `switchyard/job-<id>`; integration worktrees under
   `.switchyard/worktrees/job-<id>-<alias>`. Review, then `git merge --no-ff` (not squash).
 - `switchyard blame <repo> <path> --ref <branch>` attributes lines to agents and models.

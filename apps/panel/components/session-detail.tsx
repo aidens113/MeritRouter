@@ -8,7 +8,7 @@ import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { ArrowLeft, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, FileWarning } from "lucide-react";
 import { insights, type SessionEvent, type Switchyard } from "switchyard-router";
-import { jobHref, sessionHref } from "@/lib/links";
+import { jobHref, repoHref, sessionHref } from "@/lib/links";
 import type { DetailScope } from "@/components/detail-scope";
 import { buttonClass, Callout, Card, CardHeader, cx, KeyValue, Mono, Stat } from "@/components/ui";
 import { PageHeader } from "@/components/page-header";
@@ -261,10 +261,10 @@ export function SessionDetailView({ sy, id, sp, scope }: { sy: Switchyard; id: s
                   <KeyValue
                     key={w.alias}
                     items={[
-                      ["Repository", w.alias],
+                      ["Repository", repoHref(base, w.alias) ? <Link key="r" href={repoHref(base, w.alias)!} className="text-accent-ink hover:underline">{w.alias}</Link> : w.alias],
                       ["Branch", w.branch ? <Mono key="b">{w.branch}</Mono> : "–"],
-                      ["Base commit", w.baseCommit ? <Mono key="c">{w.baseCommit.slice(0, 12)}</Mono> : "–"],
-                      ["Last commit", w.head ? <Mono key="h">{w.head.slice(0, 12)}</Mono> : "none yet"],
+                      ["Base commit", w.baseCommit ? <CommitLink key="c" base={base} repository={w.alias} sha={w.baseCommit}>{w.baseCommit.slice(0, 12)}</CommitLink> : "–"],
+                      ["Last commit", w.head ? <CommitLink key="h" base={base} repository={w.alias} sha={w.head}>{w.head.slice(0, 12)}</CommitLink> : "none yet"],
                       ["Worktree", <Mono key="w" className="break-all">{w.worktree}</Mono>],
                     ]}
                   />

@@ -36,7 +36,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
-import { GatewayError, ProviderError, Switchyard, WorkerTaskSchema, insights, parseConfig, planComparison, runComparison } from "switchyard-router";
+import { BudgetRequests, GatewayError, ProviderError, Switchyard, WorkerTaskSchema, insights, parseConfig, planComparison, runComparison } from "switchyard-router";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const demo = path.resolve(here, "..", ".demo");
@@ -1202,6 +1202,14 @@ await sy.close();
 offset = 0;
 const idle = new Switchyard(cfg, { providerClient, worker: false, now: clock });
 const store = (specs, project = "demo") => idle.tasks.submit(specs.map((x) => WorkerTaskSchema.parse(x)), { project });
+// Budget decisions are genuine pending records on idle tasks, like the queued fixtures below.
+// No scheduler runs: these examples reserve grants without spending model requests.
+const [budgetJob] = store([{ profile: "supervise", label: "budget-review", goal: "Review the team's requests for more budget.", budget: { maxModelRequests: 30 }, constraints: { acceptanceCriteria: ["Each budget request has a recorded human decision"] } }]);
+for (const [label, requests] of [["budget-approve-example", 3], ["budget-deny-example", 2]]) {
+  const [child] = store([{ ...summarize("Finish the incident summary after a budget decision"), label, parentTaskId: budgetJob.taskId, budget: { maxModelRequests: 2 } }]);
+  idle.db.prepare("INSERT INTO task_request_grants (task_id, job_id, requests, source, created_at) VALUES (?, ?, 2, 'supervisor', ?)").run(child.taskId, budgetJob.taskId, Date.now());
+  new BudgetRequests(idle.db).file({ taskId: child.taskId, jobId: budgetJob.taskId, role: "summarizer", requests, reason: "Additional context needs a bounded follow-up pass (demo).", used: 0, cap: 2, approver: "human" });
+}
 const [queued] = store([summarize("Summarise the payments log (queued: no worker running)")]);
 store([summarize("Summarise the follow-up incident report", { id: "followup_after_payments", dependsOn: [queued.taskId] })]);
 // The storefront's job waits in its queue: no worker is running.

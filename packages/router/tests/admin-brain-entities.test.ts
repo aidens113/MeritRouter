@@ -10,11 +10,11 @@ let env: Env | undefined;
 let sy: Switchyard | undefined;
 afterEach(async () => { await sy?.close(); sy = undefined; env?.cleanup(); env = undefined; });
 
-function setup(mount = false) {
+function setup(mount = false, nested = false) {
   const base = baseConfig();
   env = makeEnv({ config: {
     ...base, repositories: {},
-    brain: { path: "brain", project: "alpha", ...(mount ? { mounts: [{ prefix: "projects/alpha/notes", path: "repo", commit: true }] } : {}) },
+    brain: { path: "brain", project: "alpha", ...(mount ? { mounts: [{ prefix: "projects/alpha/notes", path: nested ? "repo/docs" : "repo", commit: true }] } : {}) },
     projects: { alpha: { repositories: {} }, beta: { repositories: {} } },
   } });
   sy = open(env, new ScriptedClient(() => reply("{}")));
@@ -43,6 +43,9 @@ describe("project-scoped brain commit details", () => {
     commitAll(brain.root, "cross project attribution\n\nTask: beta-task\nJob: beta-job");
     expect(await brainDocumentRelated(s, "alpha", "projects/alpha/note.md")).toEqual({ tasks: ["alpha-task"], jobs: ["alpha-job"] });
     expect(await brainDocumentRelated(s, "beta", "projects/alpha/note.md")).toEqual({ tasks: [], jobs: [] });
+    const lines = await brainDocumentBlame(s, "alpha", "projects/alpha/note.md");
+    expect(lines[1]?.task).toBeNull();
+    expect(lines[1]?.job).toBeNull();
   });
 
   it("validates paths and hashes and denies cross-project-only commits", async () => {
@@ -117,13 +120,15 @@ describe("project-scoped brain commit details", () => {
     const brain = s.brainFor("alpha");
     await brain.ensure();
     put(brain.root, "projects/alpha/old.md", "historical content\n");
-    commitAll(brain.root);
+    commitAll(brain.root, "A safe project-only subject");
     const oldHash = (await git(brain.root, ["rev-parse", "HEAD"])).trim();
     renameSync(path.join(brain.root, "projects/alpha/old.md"), path.join(brain.root, "projects/alpha/current.md"));
     commitAll(brain.root);
     const detail = await brainCommitDetail(s, "alpha", "projects/alpha/current.md", oldHash);
     expect(detail?.diff).toContain("+historical content");
     expect(detail?.path).toBe("projects/alpha/current.md");
+    const history = await brainDocumentHistory(s, "alpha", "projects/alpha/current.md");
+    expect(history.find(entry => entry.commit === oldHash)?.subject).toBe("A safe project-only subject");
   });
 
   it("resolves mounted documents without exposing other repository files", async () => {
@@ -136,5 +141,40 @@ describe("project-scoped brain commit details", () => {
     expect(detail?.diff).toContain("+mounted note");
     expect(JSON.stringify(detail)).not.toContain("unrelated");
     expect(await brainCommitDetail(s, "beta", "projects/alpha/notes/note.md", hash)).toBeNull();
+  });
+
+  it("checks paths outside a nested mount before exposing a commit subject", async () => {
+    const { e, s } = setup(true, true);
+    put(e.repo, "docs/note.md", "mounted note\n");
+    put(e.repo, "private.md", "outside mount\n");
+    commitAll(e.repo, "private subject outside nested mount");
+    const history = await brainDocumentHistory(s, "alpha", "projects/alpha/notes/note.md");
+    expect(history[0]?.subject).toBe("Document changed");
+    expect(JSON.stringify(history)).not.toContain("private subject");
+  });
+
+  it.each(["alpha", "beta"])("scopes copied README ancestry from project %s", async (owner) => {
+    const { s } = setup();
+    const brain = s.brainFor("alpha");
+    await brain.ensure();
+    const sourcePath = `projects/${owner}/source/README.md`;
+    const source = Array.from({ length: 30 }, (_, i) => `shared index line ${i}`).join("\n") + "\n";
+    put(brain.root, sourcePath, source);
+    commitAll(brain.root, "private beta README history");
+    const privateHash = (await git(brain.root, ["rev-parse", "HEAD"])).trim();
+    put(brain.root, "projects/alpha/copied/README.md", source.replace("line 0", "line zero"));
+    // Modify the source in the same commit so Git's --follow infers the copy, as in demo seed.
+    put(brain.root, sourcePath, `${source}extra source index line\n`);
+    commitAll(brain.root, "copied project indexes");
+    const copiedHash = (await git(brain.root, ["rev-parse", "HEAD"])).trim();
+    const raw = await git(brain.root, ["log", "--follow", "--format=%H", "--name-status", "HEAD", "--", "projects/alpha/copied/README.md"]);
+    expect(raw).toMatch(/C\d+/);
+    expect(raw).toContain(`${sourcePath}\tprojects/alpha/copied/README.md`);
+    const history = await brainDocumentHistory(s, "alpha", "projects/alpha/copied/README.md");
+    expect(history.map(entry => entry.commit)).toEqual(owner === "alpha" ? [copiedHash, privateHash] : [copiedHash]);
+    const original = await brainCommitDetail(s, "alpha", "projects/alpha/copied/README.md", privateHash);
+    if (owner === "alpha") expect(original?.diff).toContain("shared index line");
+    else expect(original).toBeNull();
+    expect(await brainCommitDetail(s, "alpha", "projects/alpha/copied/README.md", copiedHash)).not.toBeNull();
   });
 });

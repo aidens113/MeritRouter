@@ -198,6 +198,15 @@ retain their existing authorization and open-question constraints.
 - Definition of done: isolated seed exits 0 with expected integrations/rebase/promotions and no brain lock error; meaningful root-cause tests; report exact outputs and unresolved failures.
 - Report to: docs/working/panel-v2/reports/seed-repair.md in your worktree (supervisor integrates).
 
+### Brief: remaining-panel-audit
+- Repository: D:/SwitchYardRouter, feat/panel-completion, read-only source audit while supervisor/other worker validate and edit.
+- Task: Audit remaining D5/D6 acceptance against e00dfd5 baseline and architecture map: preserved data/old anchors/query links and rendered entity links outside the already-covered brain, plan/team and timeline surfaces. Identify concrete missing links/data/navigation, not arbitrary model text/tool JSON. Inspect current pending fixes but do not change source.
+- Required reads: this Current State/D5/D6; docs/working/reports/panel-v2.md; relevant apps/panel page/components and source baseline via git show. Supervisor static inventory found no removed literal CardHeader titles or literal IDs in nine dense pages; verify dynamic settings/groups too.
+- Owns: docs/working/panel-v2/reports/remaining-audit.md only.
+- Must not touch: any source or other docs; no builds/tests/commits/services. No user config.
+- Definition of done: report concrete source references, expected behavior and suggested smallest fixes, plus bounded baseline-section/anchor inventory and explicit unverified cases.
+- Report to: docs/working/panel-v2/reports/remaining-audit.md
+
 ## Work Ledger
 
 ### 2026-10-21 — Plan written
@@ -246,5 +255,22 @@ retain their existing authorization and open-question constraints.
 - Follow-up: integrate isolated brain/seed fix; verify all browser requirements. B2 implementation may proceed in its own isolated worktree while this tree is validated.
 
 ## Open Questions
+
+### Brief: promotion shutdown regression (2026-10-22)
+- Worker: brain_completion; owns core/service.ts, tests/service-close.test.ts and its report only.
+- Trigger: default-parallel full suite 611/612; projects-brain cleanup EBUSY after review completion.
+- Inspect deferred promotion settlement versus close; track/cancel pending scheduling and await
+  active work before database closure. Preserve review semantics; no cleanup retries or weakened tests.
+- Deterministic narrow regression and report required; supervisor runs integrated acceptance.
+
+### Integration checkpoint (2026-10-22)
+- Seed repair merged; root seed independently reproduced nested completion, three integrations,
+  one rebase and verified survey twins. Final seed assertions still running.
+- B2 source merged from 901161a; root acceptance pending. Budget demo adds two genuine pending
+  human decisions on idle tasks with held grants, without model calls.
+- D5/D6 audit found/fixed workspace, parent-job and model links; B2 also fixes job/task repository
+  metadata and opens the transcript wrapper to keep nested tool details within two clicks.
+- Root recursive typecheck passed before B2 integration; full initial suite 611/612 (one cleanup
+  EBUSY); bounded full rerun and production build underway. No completion claim yet.
 
 - None blocking; the information-architecture map is reviewed when U2's report arrives.

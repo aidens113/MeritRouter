@@ -1,9 +1,9 @@
 # Budget control: supervisor-set budgets and requests for more
 
 Status: Active
-Status detail: B1 done and merged 2026-10-22 (7f8d2df); B2 (panel) not started; not yet run live.
+Status detail: B1 done and merged 2026-10-22 (7f8d2df); B2 panel implementation assigned in an isolated worktree; not yet run live.
 Created: 2026-10-21
-Last updated: 2026-10-21
+Last updated: 2026-10-22
 Owner: Senior supervisor agent
 Scope: Per-task request budgets are set by the supervisor that delegates (with a configured
 default), and a worker that runs low asks its supervisor for more instead of stopping.
@@ -118,6 +118,16 @@ OpenCode/command runners lack the new tools; `**/*.md` coordination paths may be
 - Report to: docs/working/reports/budget-control-b1.md
 
 ---
+
+### Brief: budget-panel-b2
+- Repository: D:/SwitchYardRouter/.claude/worktrees/budget-panel, feat/budget-panel. Isolated worktree because supervisor validates Panel v2 concurrently. Install frozen/offline.
+- Task: Implement B2: pending budget requests with human approve/deny, reasons and optional partial grants; job pool used/granted/held/available; per-task grants/extras. Expose pending requests in project and install attention views. Reuse existing insights budget APIs; library enforcement remains authoritative.
+- Required reads: this doc Current State/Decisions/Phases; admin/budget.ts and admission/budget-requests.ts; panel API handle/body, actions patterns, job/task/overview components. Public budget APIs are stable.
+- Owns: new panel components/budget-requests.tsx, client/budget-decision.tsx (or clearly named budget files); new app/api/budget/requests/[id]/route.ts; job detail, task-detail, project overview and install dashboard integration; admin/budget.ts; admin/live.ts + tests/admin-live.test.ts for budget topics; new tests/admin-budget-panel.test.ts; report below.
+- Must not touch: seed-demo.mjs (supervisor adds fixtures after seed repair); brain files, link components, shared docs, export files. No commits/push. Do not edit root checkout.
+- Requirements: zod bodies/IDs; strict project scope including unassigned requests; fail stale/finished/pool-exhausted decisions as actionable 409/400, not 500. Test project denial and budget invariants. Live budget changes must refresh subscribed views. Accessible controls and phone layout; pending count navigates to decisions.
+- Definition of done: B2 core UI/API implemented, focused tests and builds/typecheck observed; supervisor seeds pending requests and validates browser approve/deny/caps after integration. Report exact commands and unresolved risks.
+- Report to: docs/working/budget-control/reports/panel-b2.md in your worktree.
 
 ## Work Ledger
 

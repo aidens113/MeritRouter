@@ -66,27 +66,68 @@ async function documentHistory(sy: Switchyard, project: string, path: string) {
     // forth cannot reveal older content just because its earlier path becomes visible again.
     if (!brainDocumentVisible(project, `${prefix}${historicalPath}`)) break;
     if (!hashSchema.safeParse(commit).success) continue;
-    entries.push({ commit, date, agent, model, subject: "Document changed", repoPath: historicalPath });
+    let touched = false;
+    let previousPath = historicalPath;
     for (let i = 0; i < fields.length; i++) {
       const status = fields[i]!.trim();
-      if (/^R\d+$/.test(status)) {
+      if (/^[RC]\d+$/.test(status)) {
         const oldPath = fields[++i];
         const newPath = fields[++i];
-        if (newPath === historicalPath && oldPath) historicalPath = oldPath;
-      } else if (/^[ACDMRTUXB]\d*$/.test(status)) i++;
+        if (newPath === historicalPath && oldPath) {
+          touched = true;
+          previousPath = oldPath;
+        }
+      } else if (/^[ADMTUXB]\d*$/.test(status)) {
+        if (fields[++i] === historicalPath) touched = true;
+      }
     }
+    if (touched) entries.push({ commit, date, agent, model, subject: "Document changed", repoPath: historicalPath });
+    historicalPath = previousPath;
   }
   return { repo: resolved.repo, entries };
 }
 
 /**
- * Commit subjects and bodies can describe unrelated private changes in a mixed commit. Never
- * read or return them. Agent/model trailers describe attribution of this visible document.
+ * A subject is shown only when a whole-commit path inventory proves all changed paths are
+ * visible. Bodies are never returned. One bounded batch covers the 50 displayed commits.
  */
 export async function brainDocumentHistory(sy: Switchyard, project: string, path: string): Promise<BrainHistoryEntry[]> {
   try {
     const history = await documentHistory(sy, project, path);
-    return (history?.entries ?? []).slice(0, 50).map(({ repoPath: _repoPath, ...entry }) => entry);
+    const entries = (history?.entries ?? []).slice(0, 50).map(({ repoPath: _repoPath, ...entry }) => entry);
+    if (!history || !entries.length) return entries;
+    try {
+      const [repoPrefix, inventory] = await Promise.all([
+        git(history.repo, ["rev-parse", "--show-prefix"]),
+        git(history.repo, ["log", "--no-walk=unsorted", "--root", "-m", "--raw", "--no-renames", "--no-relative", "--abbrev=40", "--format=%H%x00%s%x00", "-z", ...entries.map(entry => entry.commit), "--"], { maxBuffer: 4 * 1024 * 1024 }),
+      ]);
+      const rootPrefix = repoPrefix.trim();
+      const resolved = sy.brainFor(project).resolve(path);
+      const virtualPrefix = path.slice(0, path.length - resolved.repoRel.length);
+      const fields = inventory.split("\0");
+      const subjects = new Map<string, { subject: string; visible: boolean; files: number }>();
+      let current: { subject: string; visible: boolean; files: number } | undefined;
+      for (let i = 0; i < fields.length; i++) {
+        const field = fields[i]!.trim();
+        if (/^[a-f0-9]{40}$/.test(field)) {
+          const subject = fields[++i] ?? "";
+          current = subjects.get(field) ?? { subject, visible: true, files: 0 };
+          subjects.set(field, current);
+        } else if (/^:[0-7]{6} [0-7]{6} [a-f0-9]+ [a-f0-9]+ [ACDMRTUXB]\d*$/.test(field)) {
+          const file = fields[++i] ?? "";
+          if (!current) continue;
+          current.files++;
+          current.visible &&= file.startsWith(rootPrefix) && brainDocumentVisible(project, `${virtualPrefix}${file.slice(rootPrefix.length)}`);
+        } else if (field && current) current.visible = false;
+      }
+      for (const entry of entries) {
+        const found = subjects.get(entry.commit);
+        if (found?.visible && found.files) entry.subject = found.subject;
+      }
+    } catch {
+      // Missing or oversized inventories cannot establish scope; retain generic labels.
+    }
+    return entries;
   } catch { return []; }
 }
 
@@ -97,9 +138,16 @@ export async function brainDocumentBlame(sy: Switchyard, project: string, path: 
     const history = await documentHistory(sy, project, path);
     const visible = new Set(history?.entries.map(entry => entry.commit) ?? []);
     const lines = await sy.brainFor(project).blame(path);
-    return lines.map(line => visible.has(line.commit) || line.uncommitted ? line : {
-      ...line, commit: "", origPath: path, agent: null, role: null, model: null,
-      task: null, job: null, authorName: "Earlier history unavailable", date: "",
+    const belongs = sy.db.prepare("SELECT id FROM tasks WHERE id = ? AND project_id = ?");
+    return lines.map(line => {
+      if (!visible.has(line.commit) && !line.uncommitted) return {
+        ...line, commit: "", origPath: path, agent: null, role: null, model: null,
+        task: null, job: null, authorName: "Earlier history unavailable", date: "",
+      };
+      return { ...line,
+        task: line.task && belongs.get(line.task, project) ? line.task : null,
+        job: line.job && belongs.get(line.job, project) ? line.job : null,
+      };
     });
   } catch { return []; }
 }
