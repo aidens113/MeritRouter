@@ -1,4 +1,4 @@
-import { LeaseRefSchema } from "../storage/task-leases.js";
+import { LeaseRefSchema, type LeaseRef } from "../storage/task-leases.js";
 import { RequestReceipts } from "../admission/request-receipts.js";
 import type { Db } from "../storage/db.js";
 import type { ResolvedConfig } from "../config/load.js";
@@ -28,8 +28,8 @@ export interface GateRequest {
   plan: RoutePlan;
   executionId: string;
   purpose: string;
-  /** Participants with their share of the physical request (one for ordinary tasks). */
-  participants: Array<Omit<Participant, "estInputTokens" | "reservedOutputTokens"> & { weight?: number }>;
+  /** Captured task authority and share; an empty array explicitly denotes taskless accounting. */
+  participants: Array<Omit<Participant, "estInputTokens" | "reservedOutputTokens" | "lease"> & { lease: LeaseRef; weight?: number }>;
   chat: Omit<ChatRequest, "model">;
   signal?: AbortSignal;
   /**

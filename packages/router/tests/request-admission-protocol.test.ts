@@ -24,7 +24,7 @@ function setup(handler?: ScriptedClient['handler']) {
 }
 it('requires captured identity on task participants while preserving explicit taskless package accounting', async () => {
   const { client, request } = setup();
-  await expect(sy!.gate.request({ ...request, participants: request.participants.map(({ lease, ...p }) => p) })).rejects.toThrow();
+  await expect(sy!.gate.request({ ...request, participants: request.participants.map(({ lease, ...p }) => p) as unknown as GateRequest["participants"] })).rejects.toThrow();
   expect(client.requests).toHaveLength(0);
   const result = await sy!.gate.request({ ...request, participants: [] });
   expect(result.requestId).toBeTruthy(); expect(client.requests).toHaveLength(1);

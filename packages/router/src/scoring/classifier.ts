@@ -203,7 +203,7 @@ export class Classifier {
           plan,
           executionId,
           purpose: "classification",
-          participants: batch.map((p) => ({ taskId: p.taskId, leaseOwner: p.leaseOwner, lease: p.lease, budget: p.budget })),
+          participants: batch.map((p) => ({ taskId: p.taskId, leaseOwner: p.leaseOwner, lease: LeaseRefSchema.parse(p.lease), budget: p.budget })),
           chat,
         });
       } catch (err) {

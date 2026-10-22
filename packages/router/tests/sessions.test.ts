@@ -270,6 +270,16 @@ describe("ask() with a session", () => {
     expect(row).toEqual({ name: "gateway:rate_limited", ok: 0 });
   });
 
+  it("refuses missing captured authority before journaling or calling the Gate", async () => {
+    const s = start();
+    let calls = 0;
+    const ctx = ctxWith(s, async () => { calls++; return gateResponse(); });
+    ctx.taskLease = undefined;
+    await expect(ask(ctx, chat([{ role: "user", content: "private fixture" }]))).rejects.toThrow("requires a captured task lease");
+    expect(calls).toBe(0);
+    expect(types(s.sessions.events(ctx.session!.id)!.events)).toEqual(["started"]);
+  });
+
   it("records nothing when the context has no session", async () => {
     const s = start();
     const ctx = { ...ctxWith(s, async () => gateResponse()), session: null } as RunContext;

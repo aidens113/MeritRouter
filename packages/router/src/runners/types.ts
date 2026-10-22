@@ -116,9 +116,11 @@ export interface RunContext {
 export async function ask(ctx: RunContext, req: Omit<GateRequest, "plan" | "participants" | "signal"> & { participants?: GateRequest["participants"] }): Promise<GateResponse> {
   const assertLease = () => {
     const lease = ctx.taskLease;
-    if (lease && !ctx.tasks.dispatchable(lease.taskId, lease.owner, lease.runCount, lease.incarnation, lease.project)) throw new AdmissionDenied("lease_lost", "captured task lease no longer authorizes this runner", undefined, lease.taskId);
+    if (!lease) throw new AdmissionDenied("lease_lost", "runner requires a captured task lease", undefined, ctx.taskId);
+    if (!ctx.tasks.dispatchable(lease.taskId, lease.owner, lease.runCount, lease.incarnation, lease.project)) throw new AdmissionDenied("lease_lost", "captured task lease no longer authorizes this runner", undefined, lease.taskId);
+    return lease;
   };
-  assertLease();
+  const taskLease = assertLease();
   const session = ctx.session;
   if (session) {
     session.syncMessages(req.chat.messages);
@@ -131,7 +133,7 @@ export async function ask(ctx: RunContext, req: Omit<GateRequest, "plan" | "part
       ...req,
       ...(ctx.purpose ? { purpose: ctx.purpose } : {}),
       plan: ctx.plan,
-      participants: req.participants ?? [{ taskId: ctx.taskId, leaseOwner: ctx.leaseOwner, lease: ctx.taskLease, budget: ctx.budget }],
+      participants: req.participants ?? [{ taskId: ctx.taskId, leaseOwner: ctx.leaseOwner, lease: taskLease, budget: ctx.budget }],
       signal: ctx.signal,
     });
   } catch (err) {
