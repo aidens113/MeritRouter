@@ -103,6 +103,27 @@ not a reason to stop the independently runnable core work. No service was instal
 
 ## Worker Briefs
 
+### Brief: task-lab-caller (link_completion)
+- Tier: isolated feature worktree roadmap-labs; start from root feat/roadmap-task-integration checkpoint011b318 or newer.
+- Read: Current State, own lifecycle report, task-attempt-schema.ts; inspect owned caller files as needed.
+- Goal: wire opt-in constraints.labChecks through actual coding execution, mandatory verification and exact winning-attempt integration.
+- Own: core/task.ts result schema only; core/executor.ts; runners/types.ts; runners/coding/{finish,native,index}.ts and new named task-lab caller module.
+- Own: verification/{contract,checks,policy,phase}.ts; harness/{integration-tools,supervisor-tools}.ts; workspaces/merge-queue.ts; mcp/schemas.ts; proportional new caller/verification tests.
+- Ask before other source files. Do not edit service.ts, task validation, projects, admin, config, migrations, gateway, lifecycle files, index or shared docs.
+- Existing lifecycle API is frozen, root owns service/project deletion/public exports and final acceptTask enforcement; send exact helper contract early.
+- Capture immutable runCount from executor's claimed row in RunContext before await; opt-in prepareWorkspace must use it, never re-read current generation.
+- Register persisted session/execution/workspace attempt after attributed commit, submit exact commit/tree/digest; run only human-selected named checks.
+- Ensure dedicated Labs supervisor is started before waiting; do not drain process queue from API/runner. Preserve cancellation cleanup.
+- Store typed taskLab evidence separately from ordinary tree-SHA check evidence; required ephemeral_lab_checks gate cannot be waived by reviewer/human.
+- Verify fresh authoritative attempt, recipe, all heads and stopped resources before pass. Root adds service acceptance guard against your pure validation helper.
+- Integration uses exact accepted winning attempt, not latest workspace. Opt-in conflict rebase must refuse/redelegate with labChecks preserved unless fresh checks run.
+- RepoReader already respects pinned read-only baseCommits; avoid new read-only clone worktrees. Browser checks remain refused.
+- Ordinary coding without labChecks remains compatible. Do not claim browser/whole L5 or full R2 generation fencing.
+- Test real fake-provider native/external coding path, failed checks/no integration, forgery/stale/wrong winner, conflict path and no-opt-in regression.
+- Use temporary configs/brains/repos only; no paid providers, real4477, user data or Docker. Freeze source before checks.
+- Run router typecheck/build and focused tests; supervisor independently verifies/full-suite integrates. No commits/pushes.
+- Report: docs/working/distributed-and-lab-extensions/reports/task-lab-caller.md; include exact files/tests, limitations, resources cleanup.
+
 ### Brief: ephemeral-lab-integration-plan
 - Repository: root read-only source at77914fc; browser WT stays frozen under supervisor tests. Report only at `docs/working/distributed-and-lab-extensions/reports/ephemeral-lab-plan.md` in root.
 - Task: inspect actual task attempt/workspace/finish/verification/integration pipeline and Lab ownership APIs; produce executable L5 ephemeral-task-lab plan with exact interfaces and file partitions. Read Current State/L5 sequence above; browser unit report in its WT for new checks/artifact fields.

@@ -87,6 +87,24 @@ passing units reach dev/main. Documentation and source commit together.
 
 ## Worker Briefs
 
+### Brief: normalized-request-capture (brain_completion)
+- Tier: isolated roadmap-process worktree, new feature branch from current root checkpoint containing classifier06a154a.
+- Read: Current State and reports/request-capture-plan.md; follow its provenance, bounds, retention, attribution and failure semantics.
+- Own: new gateway/request-capture.ts and storage/request-captures.ts (split named files if needed), gateway/{direct,gate}.ts, append ONE migration at current end.
+- Own: new request-capture/gate-request-capture tests. No service, config, admin, insights, index, project deletion, classifier, sessions or caller/Labs source edits.
+- Root owns project purge and public/admin integration; expose store scoped read/purge API and validated RequestCaptureView DTO early for UI coordination.
+- Supervisor approves fixed internal default-on capture:1MiB record/input512KiB/output256KiB,256messages/64tools/64calls/depth16/10k nodes/128omissions/8MiB scan.
+- Retain7days,128MiB/project,512MiB/global,10k records; bounded pruning and unavailable/expiry states. Document defaults in own report; no forever retention.
+- Capture explicit selected-endpoint normalized fields only, never ProviderRequest/config/auth/cache key/env/image locators/raw wire bodies. Input may itself contain private secrets; do not claim general sanitization.
+- Reserve requestId first; each credential retry/fallback has its own row. Input/dispatch/output writes observational only, no provider retries or altered paid/accounting semantics.
+- Recheck abort and authoritative dispatch after every awaited capture boundary immediately before HTTP. Gate close drains capture work.
+- Derive participant scope from authoritative DB rows; mixed/unknown scope fails closed, preserve private participant set for root purge before anonymization.
+- Await output before policy discard but label observed response; failed capture cannot mask ledger uncertainty or change settlement/rotation/fallback.
+- Test fake provider success/failure/key-retry/fallback, delayed capture cancellation/lease loss, capture vs ledger failures, close, Unicode/oversize/image bounds and private sentinel exclusion.
+- Test wrong/mixed/unscoped/expired/corrupt scopes, idempotence/conflict and retention without deleting request/paid history.
+- No providers/paid/user data/services. Freeze source, run typecheck/build/focused tests, report exact checks and resource cleanup; no commits/pushes/shared-doc edits.
+- Report: docs/working/roadmap-completion/reports/normalized-request-capture.md. Historical journal reconstruction remains separate and truthfully partial.
+
 ### Brief: classifier-project-isolation
 - Repository: `.claude/worktrees/roadmap-process`, branch `feat/classifier-project-isolation`, baseline002865d. Previous queue acceptance completed753/753 and is pushed dev/main8d22596; tree available for this new unit.
 - Task: prevent classifier prompt batching and cached rationale reuse across projects, a prerequisite found during richer request-detail evidence work.
