@@ -84,18 +84,20 @@ http://127.0.0.1:8082. SwitchYard fixes from this run: request caps raised in pr
 user's config (7537187), stall nudge and repeat note, path aliases, bare file refs; brain index
 links (25cb632); classifier failure never escalates to T4, classifier output 600/item (82e0cb7);
 review reserves raised (deep 12, strict 16; a deep review had a 2-request cap and no verdict).
-Follow-up: the job page's plan shows segments as failed even when the supervisor finished them
-itself; show "failed; finished by the supervisor" when the supervisor later changed the segment's
-paths on the job branch (after the panel-v2 and budget-control merges).
+Follow-up completed 2026-10-22 (1c7f965): the plan annotates later matching supervisor changes
+on the recorded job branch, links evidence and preserves original failure/acceptance. It does
+not assert independent verification of those later changes.
 
 **Open:**
 - Packaging for npm: `switchyard mcp` now exists; still no default config location, the panel is
   not in the package, and no one-step setup.
 - R2 (Postgres, several hosts): parked; the user was asked whether to do it.
 - Deleting a project while another process runs against the store is untested.
-- The supervisor did all the work itself rather than delegating; delegation untested live.
+- A successful delegation-heavy run of the new budget/delegate-only policies remains unverified
+  live. Pomodoro and Facebook clone already exercised delegation, but workers hit the old caps.
 
-**Next steps:** a delegation-heavy live job; the packaging plan; then caching-and-continuity.
+**Next steps:** a delegation-heavy live job and live caching checks (C1/C2 implementation is done).
+Packaging and Labs decisions remain separately scoped; see handoff.md Remaining-work audit.
 
 **Blockers:** none.
 

@@ -42,21 +42,79 @@ own working document with decisions, phases, ledger, and reports.
 | R2 (Postgres, several hosts) | [agent-sessions-and-teams.md](agent-sessions-and-teams.md) | Parked; the user has not answered whether to do it |
 | npm packaging | (no document yet) | Open: `switchyard mcp` exists; still no default config location, no panel in the package, no one-step setup |
 
-## What to do next (in order, each needs the user's go-ahead where noted)
+## Remaining-work audit (2026-10-22)
 
-1. Close the reopened Panel v2 gaps listed in its Current State before claiming full plan completion.
-2. Budget control B2 (panel for budget requests) is next (same files).
-3. A live team job on the user's install to exercise budget control, `run_check`, and the
-   delegate-only supervisor (spends free Ollama quota: state the budget first).
-4. The job page's plan should show "failed; finished by the supervisor" for segments the supervisor
-   completed itself (follow-up in live-validation.md).
-5. Labs L1 after the user answers labs.md's Open Questions; R2 and npm packaging only on request.
+Audit method: reviewed indexed plans' Current State, phases/acceptance and open questions,
+cross-checked later live-validation/Panel v2 evidence, and inspected selected source/test
+boundaries. This is a consolidated document audit, not a fresh end-to-end test of every gap.
+No code changed or provider tests ran during this audit. Start correctness follow-ups with
+reproductions before changing implementations; keep parked decisions separate from approved work.
+
+Panel v2 U1-U3, its reopened completion audit, budget B1/B2 and the supervisor-recovery plan
+annotation are implemented and accepted. Earlier next-step lists that still name those tasks
+are stale. Passing their acceptance does not close the entire roadmap.
+
+### Unimplemented features and follow-ups
+
+- **Labs L1-L4:** lab recipes, isolated branches/worktrees/data and allocated ports; service
+  readiness/restart/adoption/idle teardown; team/MCP integration; refresh/promotion queue and
+  conflict handling; panel/editor/controls/docs. All remain planned, not started. The four
+  lane semantics questions in labs.md still await answers or acceptance of its defaults.
+- **Labs L5 (later):** browser checks, per-task ephemeral labs and Docker Compose. This is
+  explicitly future scope, not an implemented phase.
+- **External runners:** OpenCode/command runners lack run_check and request_more_budget.
+- **Cache accounting:** Anthropic cache-write premium is not modelled separately; the caching
+  plan records potentially understated settled cost. Live pricing confirmation is also pending.
+- **npm distribution:** default config discovery/location, bundled or separately shipped panel,
+  and one-step setup. No implementation plan yet; handoff reserves packaging for user request.
+- **R2:** Postgres and multiple worker hosts remain explicitly parked, not started.
+- **Session/team correctness follow-ups** (`agent-sessions-and-teams.md:94-103`): parent
+  allowed_paths do not constrain sub-jobs; a batch runner failure can discard already-finished
+  member results; external runner TASK.md context omits inline text/file refs; a dead session
+  remains without Resume until recovery runs. These are recorded gaps, not completed acceptance.
+- **Provider follow-ups** (`direct-providers.md:42-63`): served-model quarantine has no recovery;
+  preferred paid-route cooldown ordering; injectable price fetching; registry-driven local
+  provider metadata/free-quota handling; richer parameter-source/quantization/trained-context
+  catalog metadata and clearer no-key Ollama validation. The old missing-providers config
+  expansion issue is superseded by the project settings rewrite.
+- **Project/restore follow-ups** (`projects.md:47-66`): a brain restore failure can leave the
+  store already restored; strict repository alias matching can reject natural-language aliases;
+  archived project name/read-only presentation and repository setup hints need refinement.
+  Generic settings edits prepare repository paths on the next reload/overview rather than save.
+
+### Implemented, with validation still outstanding
+
+- Delegation-heavy real-provider run of new budget approval/resume, delegate-only supervisors,
+  run_check, nested teams and integration behavior; fake-provider/demo coverage is complete.
+- Budget CLI commands and MCP budget tools over an actual transport.
+- Real-provider cache hints/stickiness/continuation/compaction and cache savings/accounting;
+  verification/reviewer/calibration behavior beyond scripted providers.
+- Other provider adapters and rate-limit/billing behavior, paid routes, non-Ollama search
+  backends and native search. Ollama discovery, free calls and web search/fetch already have
+  live evidence; old documents claiming no provider was ever called are stale.
+- OpenCode live integration; ChatGPT MCP connection through a tunnel; native service installation
+  on real Windows/Linux hosts; project deletion while another process uses the store.
+- Large-store live watcher performance has no benchmark. Historical suite timing sensitivity
+  remains a monitoring item; the reproduced promotion shutdown race was fixed and regression-tested.
+- Genuine concurrent-process claim, promotion/scan, same-session resume, provider-slot and
+  same-branch integration races; real kills while holding a slot or mid-integration; wait expiry
+  into deferral; paid contention/carving; nesting beyond depth two; redundancy/batch crash
+  boundaries; external-runner repair/resume and reset-edits against Git. Existing tests already
+  cover simulated merge/replay and side-effect faults plus a real native-worker kill/restart;
+  this list must not be read as claiming that recovery has no test coverage.
+- T3's measured team-throughput advantage on the evaluation suite is not established by the
+  scripted metrics tests or the demo comparison. Verification also records untested external
+  repair, batch review and failed-audit behavior, and noisy shared-branch escaped-defect attribution.
+
+No live calls or deployment are authorized by this audit alone. Provider checks need a stated
+budget and appropriate credentials; paid routing requires explicit authorization. Use isolated
+test installs rather than the user's real store for destructive/fault validation.
 
 ## Known gaps and risks
 
 - Integration bugs between parts written by different agents pass unit tests and show up only in a
   browser (two in the Facebook clone); labs L5 browser checks are the planned answer.
 - The OpenCode and command coding runners lack `run_check` and `request_more_budget`.
-- Three tests are timing-sensitive under full-suite load (`projects-brain` promotion review,
-  `session-recording` batching, `operations` daemon stop); they pass alone and on rerun.
+- Historical full-suite timing sensitivity: batching and daemon stop. The concrete promotion
+  shutdown race is fixed (tracked/drained settlement); final integrated suite passed 622/622.
 - Windows: bash heredocs mangle backslash escapes; use the edit tool or a script file.
