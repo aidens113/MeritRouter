@@ -189,6 +189,8 @@ allocation:
 # against max_total_requests_per_task, a runaway guard; workers can ask their supervisor for more.
 verification:
   max_total_requests_per_task: 300
+  budget:
+    review_requests: { deep: 12, strict: 16 } # an independent reviewer reads the change before judging it
 
 # Paid routing policy and budgets. A model is free only when verified: priced at $0, a :free id,
 # or served by a free_tier key (then only free_tier keys serve it). Everything else is paid and

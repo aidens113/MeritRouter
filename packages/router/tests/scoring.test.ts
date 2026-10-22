@@ -64,6 +64,16 @@ describe("rulebook scoring", () => {
     expect(amb.rejectReason).toMatch(/clarification/);
     const unsure = decide(env.cfg, DEFAULT_RULEBOOK, spec(), features(), { ...base, basis: "rules+classifier", confidence: 0.2, tags: { kind: "locate", reasoning: "lookup", novelty: "existing_pattern", risk: [], environment: [], ambiguity: "low" } });
     expect(unsure.tier).toBe("T2");
+    // Low confidence never rounds a T3 task up into T4: uncertainty alone does not take work from workers.
+    const unsureT3 = decide(env.cfg, DEFAULT_RULEBOOK, spec(), features({ mode: "coding", linesInScope: 1644, contextTokens: 13252, acceptanceCriteria: 4, checksRequired: true }), {
+      ...base,
+      basis: "rules+classifier",
+      confidence: 0.2,
+      tags: { kind: "locate", reasoning: "lookup", novelty: "existing_pattern", risk: [], environment: [], ambiguity: "low" },
+    });
+    expect(unsureT3.score).toBe(8);
+    expect(unsureT3.tier).toBe("T3");
+    expect(unsureT3.breakdown.some((l) => l.rule === "low_confidence")).toBe(false);
   });
 
   it("supervisor hints and minimum tiers can raise but never lower the tier", () => {

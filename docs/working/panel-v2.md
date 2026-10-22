@@ -53,6 +53,17 @@ section at once: job detail (473 lines), install dashboard (457), project overvi
     map in its report before restructuring, and follows it).
 - **D4. Consistency:** one page-header pattern (title, one-line purpose, actions, live state),
   one tab component, one disclosure component, one empty state; phone layouts first-class.
+- **D6. Entity pages and links (user request 2026-10-21: "when I click on a task it should take me
+  to that task's page, with links to related things like the agent page, which shows the tasks
+  that agent did").** Every entity has its own page under its project with a stable URL: task,
+  job, session, agent, model, request, brain document, commit, repository. An **agent** is the
+  attribution identity (`<role>:<label>`, e.g. `implementer:posts`, `supervisor:<job>`): its page
+  lists the tasks it worked on, its sessions, the models it used, the lines it wrote (from
+  attribution), its requests and spend, and its parent job and supervisor. Each entity page has a
+  "Related" panel linking everything connected (a task: its job, agents, sessions, models,
+  requests, commits, brain reports; a model: the tasks and agents that used it; and so on).
+  Lists show summaries and link to entity pages instead of expanding detail inline. Every place an
+  entity is named (tables, timelines, plan nodes, channel posts, blame lines) is a link.
 - **D5. Nothing is lost:** every datum shown today stays reachable in at most two clicks; links into
   old anchors keep working (`#id` sections map to the tab that holds them).
 
@@ -63,6 +74,7 @@ section at once: job detail (473 lines), install dashboard (457), project overvi
 | Phase | Deliverable | Acceptance |
 | --- | --- | --- |
 | U1 | Live data: `/api/live` SSE with topics and cursor, `LiveProvider`, topic subscriptions on every page that auto-refreshed, connection state in the header, pause kept; `AutoRefresh` polling removed | A change in the store (a task state, a new request, a brain commit) reaches an open page within ~2 s without a reload (verified on the demo with a script that writes to the store while headless Chrome watches the DOM); no request when nothing changes; reconnect after the server restarts |
+| U3 | Entity pages and links (D6): agent pages (new), commit and repository pages, a Related panel on every entity page, entity names linked everywhere | Demo seed: from a task page reach its job, agent, session, model, request, and commit in one click each; an agent page lists that agent's tasks, sessions, models, lines written, and requests; screenshots |
 | U2 | Layout: the information-architecture map (in the report), tabs and disclosures on the dense pages (job, task, session, project overview, install dashboard, models, keys, settings), shared components, phone layouts | Every touched page 200; screenshots before and after at desktop and phone widths, light and dark; each page's first view shows at most about five sections; deep links to old anchors land on the right tab |
 
 ---
@@ -72,13 +84,14 @@ section at once: job detail (473 lines), install dashboard (457), project overvi
 ### Brief: panel-v2
 - Repository: this repository; your own worktree on branch `feat/panel-v2`; run
   `pnpm install --frozen-lockfile` first. Another worker changes the router at the same time.
-- Task: U1, then U2, as the Decisions describe. For U2, first write the information-architecture
+- Task: U1, then U2 and U3 (U3 added 2026-10-21), as the Decisions describe. For U2, first write the information-architecture
   map (page by page: first view, tabs, what moves behind disclosures, what merges) into your report,
   then implement it. The panel's data access stays through `src/admin/insights.ts` and the
   router's public exports; the change watcher's queries go in a new router file `src/admin/live.ts`.
 - Required reads: this document; `AGENTS.md` (Validation for panel changes); `apps/panel/app/**`
   page files you change; `apps/panel/components/**`; `packages/router/src/admin/insights.ts`.
-- Owns: `apps/panel/**`, `packages/router/src/admin/live.ts` (new), its export line in
+- Owns: `apps/panel/**`, `packages/router/src/admin/live.ts` and `packages/router/src/admin/entities.ts`
+  (both new; entities.ts holds the agent and related-entity queries), their export lines in
   `packages/router/src/admin/insights.ts`, `packages/router/tests/admin-live.test.ts` (new),
   `docs/working/reports/panel-v2.md`.
 - Must not touch: any other router file (the budget-control worker owns them), this document,

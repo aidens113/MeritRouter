@@ -190,7 +190,8 @@ export function decide(
   }
   const score = breakdown.reduce((s, l) => s + l.points, 0);
   let tier: TierOrRejected = tierForScore(cfg, score);
-  if (input.confidence !== null && input.confidence < r.low_confidence_threshold && tier !== "T4") {
+  // Low confidence rounds up, but never into T4: uncertainty alone does not take work from workers.
+  if (input.confidence !== null && input.confidence < r.low_confidence_threshold && tier !== "T4" && tier !== "T3") {
     tier = bumpTier(tier);
     breakdown.push({ rule: "low_confidence", points: 0, detail: `classifier confidence ${input.confidence.toFixed(2)}: rounded up to ${tier}` });
   }

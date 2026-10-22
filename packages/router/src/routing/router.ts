@@ -184,9 +184,11 @@ export class TaskRouter {
           suggestedTier: verdict.suggestedTier,
         });
       } else {
-        // Classifier unavailable or invalid: be conservative and round up one tier.
+        // Classifier unavailable or invalid: be conservative and round up one tier, but never out
+        // of the workers' reach (live: a T3-scored task became T4 "too difficult" because the
+        // classifier's reply was cut off, and never ran). T4 needs a real verdict or a hint.
         classification = decide(this.cfg, this.rulebook, spec, features, { ...base, basis: "rules+classifier_failed", tags: null });
-        if (classification.tier !== "T4") {
+        if (classification.tier !== "T4" && classification.tier !== "T3") {
           classification.tier = bumpTier(classification.tier);
           classification.breakdown.push({ rule: "classifier_failed", points: 0, detail: `classifier unavailable: rounded up to ${classification.tier}` });
         }
