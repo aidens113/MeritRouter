@@ -115,6 +115,14 @@ not a reason to stop the independently runnable core work. No service was instal
 
 ## Worker Briefs
 
+### Brief: admission-fixture-integration (brain_completion)
+- Tier isolated roadmap-process new feature branch from root named baseline after admission merge; test fixture integration only.
+- Read Current State and own request-admission-protocol report; captured lease and request API stable.
+- Own ONLY tests/native.test.ts, external-task-tools.test.ts, verification-review.test.ts, verification-flow.test.ts, verification-calibration.test.ts, sessions.test.ts, caching.test.ts, cache-creation.test.ts, execution.test.ts, resilience.test.ts, team-integration.test.ts, task-lab-caller.test.ts; own reports/admission-fixture-integration.md.
+- Inspect these named files for manually constructed RunContext/Gate task participants lacking exact capturedLease. Reproduce failures before proportional fixture-only changes; never substitute latest lease at production dispatch.
+- Preserve all existing assertions/timeout/budget/provider expectations. Valid task execution membership must be established in fixtures rather than weakening authority checks.
+- No runtime/source/public exports/shared docs/migrations or other tests edits. Compose journal worker exclusively owns next migration31. Report any true product failure or outside-file fixture dependency to root.
+- Run affected named files serially, router typecheck/build after freeze. No user data/providers/OS changes. Record exact failures/fixes/checks; no commits/pushes.
 ### Brief: compose-journal (link_completion)
 - Tier isolated roadmap-labs new feature branch from root named baseline, C3 journal prerequisite; runtime unavailable.
 - Read Current State, compose-journal-plan and pure engine/ownership reports and named existing C1/C2 contracts.
