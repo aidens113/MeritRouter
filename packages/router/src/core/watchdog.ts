@@ -8,8 +8,8 @@ import { MAX_AUTO_RESUMES } from "./scheduler.js";
 /** Slack added to a bounded operation's own timeout before the watchdog calls it stuck. */
 export const WATCHDOG_MARGIN_MS = 60_000;
 
-/** Tools that wait on purpose (other tasks, the user): a session inside one is never stuck. */
-export const WATCHDOG_EXEMPT_TOOLS = new Set(["await_tasks", "ask_user"]);
+/** Tools that wait on purpose (other tasks, the user, a budget decision): a session inside one is never stuck. */
+export const WATCHDOG_EXEMPT_TOOLS = new Set(["await_tasks", "ask_user", "request_more_budget"]);
 
 /**
  * Tools that run the task's checks inside one call: `integrate_task` runs every job check after

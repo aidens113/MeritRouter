@@ -124,12 +124,27 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
   let edited = false;
   let stallNudged = false;
   const seenCalls = new Map<string, number>();
+  // Budget control: a worker that may ask for more is told once when it runs low (again after a grant).
+  const canAsk = byName.has("request_more_budget");
+  let lowNoticeAt: number | null = null;
+  let cap = env.ctx.budget.maxModelRequests;
 
   for (;;) {
     // Shutdown, cancellation, or deadline: stop before spending another request.
     if (env.ctx.signal.aborted) throw new Error(`aborted: ${String(env.ctx.signal.reason ?? "aborted")}`);
     const used = env.ctx.gate.admission.taskTotals(env.ctx.taskId).requests;
     const remaining = env.ctx.budget.maxModelRequests - used;
+    if (env.ctx.budget.maxModelRequests > cap) {
+      // An approved request for more raised the cap during this run.
+      cap = env.ctx.budget.maxModelRequests;
+      finalNotice = false;
+      lowNoticeAt = null;
+    }
+    const lowMark = Math.max(2, Math.ceil(allowance / 10));
+    if (canAsk && allowance >= 6 && lowNoticeAt === null && remaining > 1 && remaining <= lowMark) {
+      lowNoticeAt = used;
+      messages.push({ role: "user", content: `You have ${remaining} model requests left. If they will not finish the brief, call request_more_budget now with how many more you need and why; otherwise finish and call ${terminalName}.` });
+    }
     if (canEdit && !edited && !stallNudged && allowance >= 4 && used - runStart >= Math.ceil(allowance / 2) && remaining > 1) {
       stallNudged = true;
       messages.push({

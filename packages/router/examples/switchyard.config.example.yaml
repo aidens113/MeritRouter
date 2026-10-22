@@ -80,11 +80,24 @@ supervisor:
   job_timeout_seconds: 14400
   branch_prefix: switchyard/job-
   allowed_commands: []          # commands the supervisor may run besides its briefs' checks
+  # delegate: the supervisor edits only coordination files (coordination_paths, its briefs'
+  # shared_files, integration conflicts) and delegates all code; allowed: it may edit anything.
+  implementation: delegate
+  coordination_paths: ["**/*.md", "docs/**"]
 
 # Agent teams: how one job's task graph (plan_work) runs. execution.max_concurrent_tasks still
 # bounds everything; team.max_agents replaces supervisor.max_workers_per_job (still read as an alias).
 team:
   max_agents: 8                 # most tasks of one job running at once
+  # A job's budget is one request pool: each delegated task holds its budget (the brief's
+  # max_requests, else default_task_requests, else its tier's cap) while open; unused requests return.
+  # default_task_requests: 40
+  supervisor_reserve_requests: 4 # never granted to tasks: kept for the supervisor's own turns
+  # Workers running low ask for more (request_more_budget) and wait for a decision.
+  budget_approver: supervisor   # supervisor (top-level tasks: the MCP client) | auto | human
+  budget_request_wait_seconds: 300
+  max_budget_requests_per_task: 3
+  auto_grant_max: 30            # most the auto approver grants per request
 
 # Per-role rules: override a charter or add rules. Roles: supervisor, summarizer, inspector,
 # analyst, implementer, reviewer, classifier.
@@ -192,6 +205,7 @@ coding:
   command: opencode            # executable for runner: opencode, or the full command for runner: command
   allowed_commands: []         # e.g. ["npm test*", "pnpm test*"]
   allow_repo_agent_config: false
+  max_check_runs_per_task: 20  # runs of a task's declared checks (run_check) a native coding worker may make
 
 panel:
   port: 4477

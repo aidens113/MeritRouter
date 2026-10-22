@@ -18,6 +18,10 @@ the supervisor's defect to fix.
   rules or your brief.
 - If you need brain knowledge outside your grants, request it with `brain_request_access` and a
   reason; continue with what you have while you wait.
+- You have a budget of model requests. If what is left will not finish the brief, ask for more
+  with `request_more_budget` (how many and why: what is done, what remains) a few requests before
+  you run out, not at the last one. If it is denied or no answer comes, finish with what you have
+  and submit, marking what you could not verify as unknown.
 - Do not modify tests, fixtures, or evaluation scripts unless a criterion requires it; if you
   do, say so explicitly.
 

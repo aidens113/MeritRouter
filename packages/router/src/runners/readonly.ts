@@ -8,6 +8,7 @@ import { charterFor, roleForProfile } from "../roles/index.js";
 import { runAgentLoop } from "../harness/loop.js";
 import { artifactTool, brainReadTools, repoTools, type HarnessEnv, type HarnessTool } from "../harness/tools.js";
 import { webTools } from "../harness/web-tools.js";
+import { requestBudgetTool } from "../harness/budget-tools.js";
 import { brainContext, submitResultTool, workerActor, workerBrainEnv } from "../harness/worker.js";
 import { baseResult, type RunContext, type RunOutcome } from "./types.js";
 import { taskBrief } from "./prompts.js";
@@ -26,7 +27,7 @@ export async function runReadOnly(ctx: RunContext): Promise<RunOutcome> {
   const allowArtifacts = profile.tools === "repository_read_and_artifacts";
   const brain = workerBrainEnv(ctx, role);
   const env: HarnessEnv = { ctx, role, readers, universe, allowArtifacts, edits: new Set(), ...(brain ? { brain } : {}) };
-  const tools: HarnessTool[] = [...repoTools(spec.repositoryAliases), ...(allowArtifacts ? [artifactTool()] : []), ...(brain ? brainReadTools() : []), ...webTools()];
+  const tools: HarnessTool[] = [...repoTools(spec.repositoryAliases), ...(allowArtifacts ? [artifactTool()] : []), ...(brain ? brainReadTools() : []), ...webTools(), requestBudgetTool()];
   const maxTokens = Math.min(profile.max_output_tokens, spec.budget?.maxOutputTokens ?? Infinity);
   const limits = planLimits(ctx.plan, ctx.cfg.routing.max_endpoint_fallbacks);
   const inputBudget = Math.max(2000, limits.contextLimitTokens - maxTokens - estimateTokens([], tools.map((t) => t.def)) - 500);

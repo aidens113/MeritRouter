@@ -10,11 +10,13 @@ import { charterFor } from "../../roles/index.js";
 import { commitAs } from "../../attribution/index.js";
 import { runAgentLoop } from "../../harness/loop.js";
 import { webTools } from "../../harness/web-tools.js";
-import { artifactTool, brainReadTools, commandTool, editTools, repoTools, type HarnessEnv, type HarnessTool } from "../../harness/tools.js";
+import { artifactTool, brainReadTools, commandTool, declaredCheckTool, editTools, repoTools, type HarnessEnv, type HarnessTool } from "../../harness/tools.js";
+import { requestBudgetTool } from "../../harness/budget-tools.js";
+import { minimalEnv } from "./process.js";
 import { brainContext, submitResultTool, workerActor, workerBrainEnv } from "../../harness/worker.js";
 import type { RunContext, RunOutcome } from "../types.js";
 import { taskBrief } from "../prompts.js";
-import { finishCoding, prepareWorkspace, resumeWorkspace, sourceDirtyFinding } from "./finish.js";
+import { agentHome, finishCoding, prepareWorkspace, resumeWorkspace, sourceDirtyFinding } from "./finish.js";
 import { WorkspacePointer } from "../session-workspace.js";
 
 /**
@@ -38,6 +40,9 @@ export class NativeCodingRunner implements CodingRunner {
     const validator = spec.constraints.outputSchema ? compileOutputSchema(spec.constraints.outputSchema) : undefined;
     const brain = workerBrainEnv(ctx, role);
     const patterns = ctx.cfg.coding.allowed_commands;
+    const declared = spec.constraints.checks ?? [];
+    // The declared checks run as they will after submission: same directory, environment, timeout, shell.
+    const home = agentHome(ctx, ws);
     const env: HarnessEnv = {
       ctx,
       role,
@@ -46,19 +51,30 @@ export class NativeCodingRunner implements CodingRunner {
       allowArtifacts: true,
       workspace: { alias, root: ws.worktreePath, allowedPaths: spec.constraints.allowedPaths ?? [] },
       ...(patterns.length ? { commands: { patterns, cwd: ws.worktreePath, timeoutMs: ctx.cfg.execution.check_timeout_seconds * 1000 } } : {}),
+      ...(declared.length ? { checks: { commands: declared, cwd: ws.worktreePath, env: minimalEnv({ HOME: home, USERPROFILE: home, CI: "1" }), timeoutMs: ctx.cfg.execution.check_timeout_seconds * 1000, maxRuns: ctx.cfg.coding.max_check_runs_per_task } } : {}),
       edits: new Set(),
       ...(brain ? { brain } : {}),
     };
-    const tools: HarnessTool[] = [...repoTools(spec.repositoryAliases), ...editTools(), ...(patterns.length ? [commandTool(patterns)] : []), artifactTool(), ...(brain ? brainReadTools() : []), ...webTools()];
+    const tools: HarnessTool[] = [
+      ...repoTools(spec.repositoryAliases),
+      ...editTools(),
+      ...(declared.length ? [declaredCheckTool()] : []),
+      ...(patterns.length ? [commandTool(patterns)] : []),
+      artifactTool(),
+      ...(brain ? brainReadTools() : []),
+      ...webTools(),
+      requestBudgetTool(),
+    ];
+    const canCheck = declared.length > 0 && ctx.cfg.coding.max_check_runs_per_task > 0;
     const limits = planLimits(ctx.plan, ctx.cfg.routing.max_endpoint_fallbacks);
     // Never ask for more output than the candidate models can produce (coding defaults high).
     const maxTokens = Math.min(ctx.profile.max_output_tokens, spec.budget?.maxOutputTokens ?? Infinity, limits.outputLimitTokens || Infinity);
     const inputBudget = Math.max(2000, limits.contextLimitTokens - maxTokens - estimateTokens([], tools.map((t) => t.def)) - 500);
-    const checks = spec.constraints.checks?.length ? `\nChecks that will be run after you finish:\n${spec.constraints.checks.map((c) => `- ${c}`).join("\n")}` : "";
+    const checks = declared.length ? `\nChecks that will be run after you finish${canCheck ? " (run them yourself first with run_check, exactly as written)" : ""}:\n${declared.map((c) => `- ${c}`).join("\n")}` : "";
     const fresh: ChatMessage[] = [
       {
         role: "system",
-        content: `${charterFor(ctx.cfg, role)}\n\n## Tools\nYour workspace is repository "${alias}" (an isolated worktree). Edit only paths matching: ${(spec.constraints.allowedPaths ?? []).join(", ")}. Read with read_file/search; edit with write_file/replace_in_file/delete_file${patterns.length ? "; run allowed commands with run_command" : ""}. When done, call submit_result once.\n\n## Result\n${OUTPUT_CONTRACT}`,
+        content: `${charterFor(ctx.cfg, role)}\n\n## Tools\nYour workspace is repository "${alias}" (an isolated worktree). Edit only paths matching: ${(spec.constraints.allowedPaths ?? []).join(", ")}. Read with read_file/search; edit with write_file/replace_in_file/delete_file${canCheck ? `; run your declared checks with run_check (at most ${ctx.cfg.coding.max_check_runs_per_task} runs)` : ""}${patterns.length ? "; run allowed commands with run_command" : ""}. There is no other shell. When done, call submit_result once.\n\n## Result\n${OUTPUT_CONTRACT}`,
       },
       { role: "user", content: `${taskBrief(spec, ctx.retry)}${checks}\nProvided context:\n${renderSources(sources) || "(none)"}\n${brainContext(env)}` },
     ];

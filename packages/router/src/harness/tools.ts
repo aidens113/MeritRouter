@@ -19,9 +19,14 @@ export interface HarnessEnv {
   readers: Map<string, RepoReader>;
   universe: EvidenceUniverse;
   allowArtifacts: boolean;
-  /** Writable workspace (coding workers: their worktree; supervisors: the integration worktree). */
-  workspace?: { alias: string; root: string; allowedPaths: string[] | null };
+  /**
+   * Writable workspace (coding workers: their worktree; supervisors: the integration worktree).
+   * `guard` refuses an edit with its reason (a delegating supervisor: coordination files only).
+   */
+  workspace?: { alias: string; root: string; allowedPaths: string[] | null; guard?: ((rel: string) => string | null) | null };
   commands?: { patterns: string[]; cwd: string; timeoutMs: number };
+  /** The task's declared checks (constraints.checks), runnable exactly as declared with run_check. */
+  checks?: { commands: string[]; cwd: string; env: Record<string, string>; timeoutMs: number; maxRuns: number };
   brain?: { brain: Brain; access: BrainAccess; principal: () => Principal; actor: Actor; workingDoc: string | null };
   /** Files edited during the current model response (for per-response commits). */
   edits: Set<string>;
@@ -112,6 +117,8 @@ function workspacePath(env: HarnessEnv, input: unknown): { rel: string; abs: str
   if (ws.allowedPaths && !picomatch(ws.allowedPaths, { dot: true })(rel)) {
     throw new Error(`${rel} is outside allowedPaths (${ws.allowedPaths.join(", ")}); the edit was refused`);
   }
+  const refused = ws.guard?.(rel);
+  if (refused) throw new Error(`${refused} The edit was refused.`);
   const abs = path.join(ws.root, ...rel.split("/"));
   const rootReal = realpathSync(ws.root);
   let probe = path.dirname(abs);
@@ -226,6 +233,46 @@ export function commandTool(patterns: string[]): HarnessTool {
       return cap(`$ ${command}\nexit ${r.exitCode}${r.killed ? ` (killed: ${r.killed})` : ""}\n${r.stdout}\n${r.stderr}`);
     },
   );
+}
+
+/** Task event of one run_check run by a worker (counted against coding.max_check_runs_per_task). */
+export const WORKER_CHECK_EVENT = "worker_check_run";
+
+const tail = (t: string, n: number) => (t.length > n ? `[...]\n${t.slice(-n)}` : t);
+
+/**
+ * A coding worker's own runs of its task's declared checks (constraints.checks), with the same
+ * working directory, environment, timeout, and shell as the checks run after it submits. Only a
+ * declared command, exactly as declared, is accepted; runs are capped per task. Results are
+ * informational: the post-submission checks still decide acceptance.
+ */
+export function declaredCheckTool(): HarnessTool {
+  return {
+    ...tool(
+      "run_check",
+      "command",
+      "Run one of your task's declared checks in your worktree and see its output, exactly as it runs after you submit. Pass the command exactly as declared. Run them after editing and fix failures before you submit.",
+      { command: { type: "string", description: "one declared check, exactly as listed in your brief" } },
+      ["command"],
+      async (a, env) => {
+        const c = env.checks;
+        if (!c?.commands.length) throw new Error("this task declares no checks");
+        const raw = typeof a.command === "string" ? a.command : "";
+        const command = c.commands.includes(raw) ? raw : c.commands.find((x) => x === raw.trim());
+        if (!command) throw new Error(`not a declared check; run exactly one of: ${c.commands.map((x) => JSON.stringify(x)).join(", ")} (there is no shell for anything else)`);
+        const taskId = env.ctx.taskId;
+        const runs = (env.ctx.tasks.db.prepare("SELECT COUNT(*) AS n FROM events WHERE task_id = ? AND type = ?").get(taskId, WORKER_CHECK_EVENT) as { n: number }).n;
+        if (runs >= c.maxRuns) throw new Error(`check run limit reached (${runs} of ${c.maxRuns}, coding.max_check_runs_per_task): fix what the last output showed and submit_result; the checks run again after you submit`);
+        const r = await runProcess(command, [], { cwd: c.cwd, env: c.env, timeoutMs: c.timeoutMs, signal: env.ctx.signal, shell: true });
+        const exit = r.killed ? null : r.exitCode;
+        const logRef = env.ctx.artifacts.write({ taskId, kind: "check_log", label: `run_check: ${command}`, content: `$ ${command}\nexit ${r.exitCode}${r.killed ? ` (killed: ${r.killed})` : ""}\n\n${r.stdout}\n${r.stderr}`, extension: ".log" });
+        env.ctx.tasks.event(taskId, WORKER_CHECK_EVENT, { command, exitCode: exit, logRef });
+        return cap(`$ ${command}\nexit ${r.exitCode}${r.killed ? ` (killed: ${r.killed})` : ""} (log ${logRef}; run ${runs + 1} of ${c.maxRuns})\n${tail(r.stdout, 8000)}\n${tail(r.stderr, 4000)}`);
+      },
+    ),
+    idempotent: true,
+    available: (env) => !!env.checks?.commands.length && env.checks.maxRuns > 0,
+  };
 }
 
 // ---------- brain ----------

@@ -126,7 +126,9 @@ export { PROMOTION_RUBRIC, PROMOTION_RUBRIC_VERSION, PromotionReviewer } from ".
 export { GlobalPromotions, PROMOTION_STATUSES, projectSpecificIssues, type PromotionOutcome, type PromotionRecord, type PromotionStatus, type PromotionReviewPort } from "./brain/promotion.js";
 export { systemManaged, isBrainIndex } from "./brain/access.js";
 export { projectIndexPath } from "./brain/brain.js";
-export { REQUEST_PURPOSES, budgetInputFor, purposeCategory, verificationTotal, carvedRequests, carvesOf, childRequestBudget, type RequestPurpose, type BudgetCarve } from "./admission/admission.js";
+export { REQUEST_PURPOSES, budgetInputFor, purposeCategory, verificationTotal, carvedRequests, carvesOf, childRequestBudget, heldRequests, type RequestPurpose, type BudgetCarve } from "./admission/admission.js";
+export { BUDGET_APPROVERS, BUDGET_REQUEST_STATUSES, BudgetRequests, defaultTaskGrant, jobPool, type BudgetApprover, type BudgetRequest, type BudgetRequestStatus, type JobPool } from "./admission/budget-requests.js";
+export { extraRequests, grantOf, grantsOf, workerHeld, type TaskGrant } from "./admission/job-pool.js";
 export { REVIEW_FAMILY, reviewerQualification } from "./qualification/stats.js";
 export { gradeReview, reviewEvalPackage } from "./qualification/runner.js";
 export { QUALIFICATION_PROJECT } from "./qualification/registry.js";

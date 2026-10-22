@@ -16,6 +16,7 @@ import type { ResumeToolRef } from "../sessions/events.js";
 import { artifactTool, brainReadTools, brainSupervisorTools, commandTool, editTools, repoTools, type HarnessEnv, type HarnessTool } from "../harness/tools.js";
 import { webTools } from "../harness/web-tools.js";
 import { ensureCarves, jobDepth, mergeHooks, subJobSection, supervisorTools, type IntegrationRepo, type SupervisorState } from "../harness/supervisor-tools.js";
+import { coordinationGuard, sharedFilesOf } from "../harness/coordination-edits.js";
 import { MergeQueue, type MergeItem } from "../workspaces/merge-queue.js";
 import { newId } from "../storage/db.js";
 import { isSimulatedCrash } from "../core/faults.js";
@@ -147,7 +148,7 @@ export class SupervisorRunner implements CodingRunner {
     const docSection = isSubJob ? subJobSection(label) : null;
     // One merge-queue owner per run: items a dead run left in progress are recovered below.
     const queue = new MergeQueue(ctx.tasks.db, ctx.tasks, newId("mqrun"));
-    const state: SupervisorState = { ctx, db: ctx.tasks.db, actor, repos, briefChecks, children, queue, depth, docSection };
+    const state: SupervisorState = { ctx, db: ctx.tasks.db, actor, repos, briefChecks, children, queue, depth, docSection, sharedFiles: sharedFilesOf(ctx.tasks.db, ctx.taskId) };
     ensureCarves(state);
     const pointer = new WorkspacePointer(
       ctx.session,
@@ -193,7 +194,8 @@ export class SupervisorRunner implements CodingRunner {
       readers,
       universe: evidenceUniverse([]),
       allowArtifacts: true,
-      ...(primary ? { workspace: { alias: primary.alias, root: primary.worktree, allowedPaths: null } } : {}),
+      // supervisor.implementation: delegate limits the edit tools to coordination files, in code.
+      ...(primary ? { workspace: { alias: primary.alias, root: primary.worktree, allowedPaths: null, guard: coordinationGuard({ cfg: ctx.cfg, db: ctx.tasks.db, jobId: ctx.taskId, alias: primary.alias, sharedFiles: () => state.sharedFiles ?? new Set() }) } } : {}),
       ...(primary && patterns.length ? { commands: { patterns, cwd: primary.worktree, timeoutMs: ctx.cfg.execution.check_timeout_seconds * 1000 } } : {}),
       edits: new Set(),
       ...(brain ? { brain } : {}),
@@ -293,7 +295,7 @@ export class SupervisorRunner implements CodingRunner {
       messages = [
         {
           role: "system",
-          content: `${charterFor(ctx.cfg, "supervisor")}\n\n## This job\n- Job id: ${ctx.taskId}\n- Working document: brain:${brain?.workingDoc ?? "(brain disabled)"}\n- Repositories:\n${repoNotes || "- none writable (read-only job)"}\n- Model request budget: ${ctx.budget.maxModelRequests} (await_tasks costs none)\n- Tasks of this job running at once (team.max_agents): ${maxAgentsPerJob(ctx.cfg)}; more wait queued${subNote}\n\nEnd with finish_job.`,
+          content: `${charterFor(ctx.cfg, "supervisor")}\n\n## This job\n- Job id: ${ctx.taskId}\n- Working document: brain:${brain?.workingDoc ?? "(brain disabled)"}\n- Repositories:\n${repoNotes || "- none writable (read-only job)"}\n- Model request budget: ${ctx.budget.maxModelRequests} (await_tasks costs none). It is the job's pool: each task you delegate holds its budget (max_requests, default ${ctx.cfg.team.default_task_requests ?? "its tier's cap"}) from it while open, and approved requests for more come out of it\n- ${ctx.cfg.supervisor.implementation === "delegate" ? `Implementation: delegate. Your edit tools change only coordination files (${ctx.cfg.supervisor.coordination_paths.join(", ")}, files your briefs name in shared_files, and files of an integration conflict you fix); delegate every other change, and re-delegate when a worker fails or runs out` : "Implementation: allowed. You may edit files in your integration worktree, but prefer delegating"}\n- Tasks of this job running at once (team.max_agents): ${maxAgentsPerJob(ctx.cfg)}; more wait queued${subNote}\n\nEnd with finish_job.`,
         },
         {
           role: "user",

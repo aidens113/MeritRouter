@@ -107,6 +107,10 @@ Standalone jobs (a SwitchYard supervisor plans, delegates, verifies, integrates)
                                 completed task, verification share, waiting time by reason
   questions                     questions supervisors are waiting on
   answer <id> "<answer>"        answer one
+  budget list [--status s|all] [--job <id>]   workers' requests for more model requests
+                                (pending by default) with each job's pool
+  budget approve <id> [--grant N] [--reason "..."] | deny <id> [--reason "..."]
+                                decide one (an approval comes out of the job's pool)
 
 Brain (shared knowledge) and attribution
   brain ls [prefix] | read <path> | search <query>
