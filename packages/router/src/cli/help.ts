@@ -24,6 +24,11 @@ Projects (one install holds many; providers, models, routing, and budgets are gl
                                 are kept); refused while it has running or queued tasks
 
 Setup
+  Config: --config, else SWITCHYARD_CONFIG, else nearest ancestor switchyard.config.yaml,
+          else platform user config directory (override its directory with SWITCHYARD_HOME).
+  setup [dir] [--preset <name>] [--repo <alias>=<path> ...] [--port <n>] [--no-panel]
+                                create the discovered/default config and start the bundled panel;
+                                no placeholder repositories, existing files kept; --no-panel only initializes
   init [dir] [--preset <name>] [--project <slug>] [--name "<name>"] [--repo <alias>=<path> ...]
                                 write switchyard.config.yaml (global settings plus a first
                                 project, default my-project) and models.yaml

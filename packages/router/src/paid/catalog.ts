@@ -54,6 +54,7 @@ export function paidEndpoints(cfg: ResolvedConfig, db: Db, paidKeys: (provider: 
     const pin = m.input_usd_per_million ?? fetched?.in ?? null;
     const pout = m.output_usd_per_million ?? fetched?.out ?? null;
     const pcached = m.cached_input_usd_per_million ?? fetched?.cachedIn ?? null;
+    const pwrite = m.cache_write_input_usd_per_million ?? null;
     const keys = paidKeys(m.provider);
     return {
       id: paidEndpointId(m.provider, m.model),
@@ -78,6 +79,7 @@ export function paidEndpoints(cfg: ResolvedConfig, db: Db, paidKeys: (provider: 
       pricing: {
         inputUsdPerMillion: pin,
         outputUsdPerMillion: pout,
+        ...(pwrite !== null ? { cacheWriteInputUsdPerMillion: pwrite, cacheWriteInputSource: "configured in paid.models" } : {}),
         freeVerified: false,
         source: m.input_usd_per_million !== undefined ? "configured in paid.models" : fetched ? `fetched from ${provider.pricing_url}` : "unknown: set prices or a pricing_url",
         ...(pcached !== null ? { cachedInputUsdPerMillion: pcached, cachedInputSource: m.cached_input_usd_per_million !== undefined ? "configured in paid.models" : `fetched from ${provider.pricing_url}` } : {}),

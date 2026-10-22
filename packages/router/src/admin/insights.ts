@@ -480,7 +480,7 @@ export function artifactText(sy: Switchyard, ref: string, maxBytes = 200_000): {
 
 // ---------- configuration editing (config-edit.ts) ----------
 
-export { readConfigText, validateConfigText, writeConfigText, patchConfig } from "./config-edit.js";
+export { readConfigText, validateConfigText, writeConfigText, patchConfig, writePreparedConfigText, patchPreparedConfig } from "./config-edit.js";
 
 export function configSchemaInfo() {
   return { profiles: PROFILE_NAMES, tiers: TIER_NAMES, modalities: MODALITIES };

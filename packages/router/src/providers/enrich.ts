@@ -361,18 +361,17 @@ export async function enrichModel(providerId: string, listed: ListedModel, overr
   }
   // A rounded size label from the server counts as one more heuristic; an exact count wins outright.
   const fromServer = listed.providerParams ?? null;
-  if (fromServer && !fromServer.exact) evidence.push({ source: "description", totalB: fromServer.totalB, activeB: null, detail: fromServer.detail });
+  if (fromServer && !fromServer.exact) evidence.push({ source: "provider", totalB: fromServer.totalB, activeB: null, detail: fromServer.detail });
   const resolved = resolveParams(evidence);
   let params: EnrichedModel["params"] = { ...resolved, confirmed: resolved.confidence === "exact" || resolved.confidence === "agreed" };
   let paramsProv: FieldProvenance =
     resolved.confidence === "unknown"
       ? unknown("a parameter count")
-      : { source: resolved.source === "huggingface" ? "huggingface" : resolved.source === "description" ? "description" : "name", detail: `${resolved.confidence}: ${evidence.filter((e) => e.totalB !== null).map((e) => e.detail).join("; ")}` };
+      : { source: resolved.source === "provider" ? "provider" : resolved.source === "huggingface" ? "huggingface" : resolved.source === "description" ? "description" : "name", detail: `${resolved.confidence}: ${evidence.filter((e) => e.totalB !== null).map((e) => e.detail).join("; ")}` };
   if (fromServer?.exact) {
-    // The served weights' own count. The catalog's evidence sources have no "provider" value, so
-    // it is stored as description evidence with an exact confidence and says where it came from.
+    // Preserve the served weights' authoritative provenance separately from heuristics.
     const totalB = Math.round(fromServer.totalB * 10) / 10;
-    params = { totalParametersB: totalB, activeParametersB: resolved.activeParametersB, source: "description", confidence: "exact", evidence: [{ source: "description", totalB, activeB: null, detail: fromServer.detail }, ...evidence], confirmed: true };
+    params = { totalParametersB: totalB, activeParametersB: resolved.activeParametersB, source: "provider", confidence: "exact", evidence: [{ source: "provider", totalB, activeB: null, detail: fromServer.detail }, ...evidence], confirmed: true };
     paramsProv = { source: "provider", detail: `exact: ${fromServer.detail}` };
   }
 

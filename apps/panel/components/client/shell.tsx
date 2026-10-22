@@ -122,8 +122,8 @@ export function Shell({ children, configPath, loginEnabled, projects }: { childr
   );
 
   const scope = scopeOf(path);
-  // A project missing from the live list is archived (its settings page is the only one that opens).
-  const archived = scope.kind === "project" && !projects.some((p) => p.slug === scope.slug);
+  // Archived metadata retains its name; its settings page is the only project page that opens.
+  const archived = scope.kind === "project" && !projects.some((p) => p.slug === scope.slug && !p.archived);
   const items = scope.kind === "project" ? projectNav(scope.slug).filter((i) => !archived || i.href.endsWith("/settings")) : GLOBAL_NAV;
   const nav = (
     <nav aria-label={scope.kind === "project" ? "Project" : "All projects"} className="flex flex-col gap-0.5">

@@ -36,6 +36,7 @@ export function GeneralCard({ slug, name, legacy, configPath, keyPath, activity,
   const blocked = activity.runningTasks + activity.queuedTasks > 0;
 
   const saveName = async () => {
+    if (archived || legacy) return;
     const v = draft.trim();
     if (!v || v.length > 80) return setNameError(["1 to 80 characters"]);
     setNameError(undefined);
@@ -59,20 +60,22 @@ export function GeneralCard({ slug, name, legacy, configPath, keyPath, activity,
       <div className="grid gap-5 p-4 md:grid-cols-2">
         <div>
           <label htmlFor="project-name" className="text-sm font-medium text-ink">
-            Name
+            Name {archived ? <span className="ml-1 text-xs font-normal text-ink-3">(read only)</span> : null}
           </label>
           <input
             id="project-name"
             value={draft}
-            disabled={legacy}
+            disabled={legacy || archived}
+            readOnly={archived}
+            aria-readonly={archived || undefined}
             onChange={(e) => setDraft(e.target.value)}
-            className="field mt-1"
+            className={cx("field mt-1", archived && "cursor-default bg-surface-2 text-ink-2")}
             aria-invalid={Boolean(nameError)}
             aria-describedby={nameError ? "project-name-error project-name-help" : "project-name-help"}
           />
           <FieldError id="project-name-error" msgs={nameError} />
           <span id="project-name-help" className="mt-1 block text-xs text-ink-3">
-            {legacy ? "A single-project config names its project by its slug. Add a second project to give this one a name." : "Shown in the switcher and on the projects grid."}
+            {archived ? "Unarchive this project to change its name." : legacy ? "A single-project config names its project by its slug. Add a second project to give this one a name." : "Shown in the switcher and on the projects grid."}
           </span>
         </div>
         <div>
@@ -84,7 +87,7 @@ export function GeneralCard({ slug, name, legacy, configPath, keyPath, activity,
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-3 border-t border-line px-4 py-3">
-        <button type="button" className={buttonClass("primary", true)} disabled={busy || !dirty || legacy} onClick={() => void saveName()}>
+        <button type="button" className={buttonClass("primary", true)} disabled={busy || !dirty || legacy || archived} onClick={() => void saveName()}>
           Save name
         </button>
         <div className="min-w-0 flex-1">

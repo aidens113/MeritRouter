@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-import { readFileSync, existsSync, copyFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { loadConfig, DEFAULT_CONFIG_NAME } from "./config/load.js";
+import { loadConfig, resolveConfigPath, DEFAULT_CONFIG_NAME } from "./config/load.js";
 import { PROFILE_NAMES, TIER_NAMES, type ProfileName, type TierName } from "./config/schema.js";
 import { Switchyard } from "./core/service.js";
 import { createCodingRunner } from "./runners/coding/index.js";
@@ -23,7 +23,11 @@ import { comparisonPlanText, comparisonsTable, comparisonText, metricsText } fro
 import { operationsCommand } from "./cli/operations.js";
 import { planText } from "./cli/plan-text.js";
 import { chooseProject, PROJECT_ENV, requireProject, type SelectOptions } from "./cli/project-select.js";
-import { initConfigText, projectsCommand } from "./cli/projects.js";
+import { projectsCommand } from "./cli/projects.js";
+import { initializeConfig } from "./cli/setup.js";
+import { serveLabs, stopLabSupervisor } from "./cli/lab-supervisor.js";
+import { ensureLabSupervisor, LabSupervisorLease } from "./operations/lab-supervisor.js";
+import { labsCommand } from "./cli/labs.js";
 import { sessionRows, sessionTimeline } from "./cli/session-text.js";
 import { out, table } from "./cli/terminal.js";
 import { ensurePanel, revivePanel } from "./operations/panel.js";
@@ -90,6 +94,7 @@ async function main(): Promise<number> {
       status: { type: "string" },
       task: { type: "string" },
       job: { type: "string" },
+      lab: { type: "string" },
       after: { type: "string" },
       limit: { type: "string" },
       reason: { type: "string" },
@@ -111,6 +116,7 @@ async function main(): Promise<number> {
       yes: { type: "boolean", default: false },
       // switchyard mcp (mcp/serve.ts)
       "no-worker": { type: "boolean", default: false },
+      "no-panel": { type: "boolean", default: false },
       http: { type: "boolean", default: false },
       host: { type: "string" },
       port: { type: "string" },
@@ -124,24 +130,23 @@ async function main(): Promise<number> {
   }
   const json = values.json ?? false;
 
-  if (cmd === "init") {
-    const dir = path.resolve(args[0] ?? ".");
-    const examples = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "examples");
-    const preset = values.preset ?? "claude-code";
-    const presetFile = path.join("presets", `${preset}.yaml`);
-    if (!existsSync(path.join(examples, presetFile))) throw new SwitchyardError("usage", `unknown preset ${preset}; choose claude-code, standalone-free, standalone-hybrid, or standalone-paid`);
-    // A global config plus a first project (`--project`, default my-project) in the projects shape.
-    const slug = values.project ?? process.env[PROJECT_ENV] ?? "my-project";
-    const configText = initConfigText(readFileSync(path.join(examples, presetFile), "utf8"), { slug, ...(values.name ? { name: values.name } : {}), repositories: repoFlags(values.repo) });
-    mkdirSync(dir, { recursive: true });
-    for (const [src, dst] of [[presetFile, DEFAULT_CONFIG_NAME], ["models.example.yaml", "models.yaml"]] as const) {
-      const target = path.join(dir, dst);
-      if (existsSync(target)) out(`kept existing ${target}`, false);
-      else {
-        if (src === presetFile) writeFileSync(target, configText);
-        else copyFileSync(path.join(examples, src), target);
-        out(`wrote ${target}${src === presetFile ? ` (first project: ${slug})` : ""}`, false);
-      }
+  if (cmd === "init" || cmd === "setup") {
+    if (args[0] && values.config) throw new SwitchyardError("usage", "choose a directory or --config, not both");
+    const configPath = values.config ? resolveConfigPath(values.config) : cmd === "init"
+      ? path.join(path.resolve(args[0] ?? "."), DEFAULT_CONFIG_NAME)
+      : args[0] ? path.join(path.resolve(args[0]), DEFAULT_CONFIG_NAME) : resolveConfigPath(values.config);
+    const requestedRepos = repoFlags(values.repo);
+    const repositories = cmd === "setup" ? Object.fromEntries(Object.entries(requestedRepos).map(([alias, repo]) => [alias, { path: path.resolve(repo.path) }])) : requestedRepos;
+    const messages = initializeConfig({
+      configPath, preset: values.preset, project: values.project ?? process.env[PROJECT_ENV] ?? "my-project",
+      ...(values.name ? { name: values.name } : {}), repositories, setup: cmd === "setup",
+      ...(values.port !== undefined ? { port: Number(values.port) } : {}),
+    });
+    for (const message of messages) out(message, false);
+    if (cmd === "setup" && !values["no-panel"]) {
+      const status = await ensurePanel(loadConfig(configPath), { force: true });
+      out(status.detail, false);
+      return status.state === "running" || status.state === "started" ? 0 : 1;
     }
     return 0;
   }
@@ -176,6 +181,14 @@ async function main(): Promise<number> {
     switch (cmd) {
       case "projects":
         return await projectsCommand(sy, args, values, json, select);
+      case "labs": {
+        const action = args[0] ?? "list";
+        if (action === "serve") { await serveLabs(sy); return 0; }
+        if (action === "supervisor-start") { await ensureLabSupervisor(sy, CLI_PATH); out({ running: true }, json); return 0; }
+        if (action === "supervisor-stop") { out({ stopped: await stopLabSupervisor(sy) }, json); return 0; }
+        if (action === "supervisor-status") { out(new LabSupervisorLease(sy.db, cfg.configPath).read(), true); return 0; }
+        return labsCommand(sy, args, values, json, { project, list: listScope }, CLI_PATH);
+      }
       case "panel": {
         // Start the panel now, even when panel.auto_start is off or it was turned off (the user asked for it).
         const p = await ensurePanel(cfg, { force: true });
@@ -335,7 +348,7 @@ ${table(rows)}`, json);
         await revivePanel(cfg);
         const goal = args.join(" ").trim();
         if (!goal || !values.repo?.length) throw new SwitchyardError("usage", 'usage: switchyard run "<goal>" --repo <alias> [--repo ...] [--check "<command>"] [--criteria "<text>"] [--wait]');
-        const job = await sy.startJob({ goal, project: project(), repositories: values.repo.flatMap((r) => r.split(",")), ...(values.check ? { checks: values.check } : {}), ...(values.criteria ? { acceptanceCriteria: values.criteria } : {}) });
+        const job = await sy.startJob({ goal, project: project(), repositories: values.repo.flatMap((r) => r.split(",")), ...(values.lab ? { lab: values.lab } : {}), ...(values.check ? { checks: values.check } : {}), ...(values.criteria ? { acceptanceCriteria: values.criteria } : {}) });
         if (!values.wait) {
           out(json ? job : `job ${job.taskId} ${job.state}. A worker runs it (switchyard worker, or the MCP server). Follow with: switchyard job ${job.taskId}`, json);
           return 0;

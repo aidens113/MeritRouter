@@ -1,11 +1,11 @@
-import { closeSync, copyFileSync, cpSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, copyFileSync, cpSync, existsSync, fsyncSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { z } from "zod";
 import { DB_FILE, SCHEMA_VERSION, openDatabase, type Db } from "../storage/db.js";
 import { SwitchyardError } from "../core/errors.js";
 import { logsDirFor, readDaemonLock } from "./daemon.js";
-import { backupBrain, BrainManifestSchema, planBrainRestore, restoreBrain, type BrainMountNote, type BrainRestoreResult } from "./brain-backup.js";
+import { backupBrain, BrainManifestSchema, planBrainRestore, stageBrainRestore, discardStagedBrainRestore, restoreBrain, type BrainMountNote, type BrainRestoreResult } from "./brain-backup.js";
 
 /**
  * Backup and restore of an install: an online SQLite snapshot of the store (consistent while a
@@ -299,43 +299,60 @@ export function restoreStorage(input: RestoreOptions): RestoreResult {
   // Decided before anything moves: a dirty or occupied brain refuses the whole restore.
   const brainPlan = planBrainRestore(manifest.brain, backupDir, opts.brainPath, opts.force);
 
-  mkdirSync(storageDir, { recursive: true });
+  // Stage migration, copied files and the verified brain before any live entry moves.
+  mkdirSync(path.dirname(storageDir), { recursive: true });
+  const staging = mkdtempSync(path.join(path.dirname(storageDir), ".switchyard-restore-"));
+  let stagedBrain: ReturnType<typeof stageBrainRestore> | undefined;
   let previousMovedTo: string | null = null;
-  if (existing.length) {
-    previousMovedTo = path.join(storageDir, `pre-restore-${new Date(now).toISOString().replace(/[:.]/g, "-")}`);
-    mkdirSync(previousMovedTo, { recursive: true });
-    const moved: string[] = [];
-    try {
-      for (const e of existing) {
-        renameSync(path.join(storageDir, e), path.join(previousMovedTo, e));
-        moved.push(e);
-      }
-    } catch (err) {
-      for (const e of moved.reverse()) renameSync(path.join(previousMovedTo, e), path.join(storageDir, e));
-      rmSync(previousMovedTo, { recursive: true, force: true });
-      throw new SwitchyardError("conflict", `cannot move ${storageDir} aside (${(err as Error).message}); is a SwitchYard process (worker, MCP server, panel) still using it?`);
-    }
-  }
-
-  copyFileSync(snapshot, path.join(storageDir, DB_FILE));
-  for (const dir of [SESSIONS_DIR, ARTIFACTS_DIR]) {
-    const from = path.join(backupDir, dir);
-    if (existsSync(from)) cpSync(from, path.join(storageDir, dir), { recursive: true });
-  }
-  const key = path.join(backupDir, MASTER_KEY_FILE);
-  const keyTarget = path.join(storageDir, MASTER_KEY_FILE);
-  if (manifest.includesMasterKey && existsSync(key) && !existsSync(keyTarget)) copyFileSync(key, keyTarget);
-
-  // Migrate to this build's schema and hand interrupted work to the next worker's recovery.
-  const db = openDatabase(storageDir);
   let leasesReleased = 0;
-  let schemaVersion: number;
+  let schemaVersion = 0;
+  const moved: string[] = [];
+  const installed: string[] = [];
+  const storageExisted = existsSync(storageDir);
   try {
-    leasesReleased = db.prepare("UPDATE tasks SET lease_expires_at = 0 WHERE state IN ('running','cancel_requested') AND lease_expires_at > 0").run().changes;
-    schemaVersion = db.pragma("user_version", { simple: true }) as number;
+    copyFileSync(snapshot, path.join(staging, DB_FILE));
+    for (const dir of [SESSIONS_DIR, ARTIFACTS_DIR]) {
+      const from = path.join(backupDir, dir);
+      if (existsSync(from)) cpSync(from, path.join(staging, dir), { recursive: true });
+    }
+    const key = path.join(backupDir, MASTER_KEY_FILE);
+    if (manifest.includesMasterKey && existsSync(key) && !existsSync(path.join(storageDir, MASTER_KEY_FILE))) copyFileSync(key, path.join(staging, MASTER_KEY_FILE));
+    const db = openDatabase(staging);
+    try {
+      leasesReleased = db.prepare("UPDATE tasks SET lease_expires_at = 0 WHERE state IN ('running','cancel_requested') AND lease_expires_at > 0").run().changes;
+      schemaVersion = db.pragma("user_version", { simple: true }) as number;
+    } finally { db.close(); }
+    stagedBrain = stageBrainRestore(brainPlan, manifest.brain, backupDir);
+
+    mkdirSync(storageDir, { recursive: true });
+    if (existing.length) {
+      previousMovedTo = mkdtempSync(path.join(storageDir, `pre-restore-${new Date(now).toISOString().replace(/[:.]/g, "-")}-`));
+      for (const entry of existing) {
+        renameSync(path.join(storageDir, entry), path.join(previousMovedTo, entry));
+        moved.push(entry);
+      }
+    }
+    for (const entry of readdirSync(staging)) {
+      renameSync(path.join(staging, entry), path.join(storageDir, entry));
+      installed.push(entry);
+    }
+    const brain = restoreBrain(brainPlan, manifest.brain, backupDir, now, stagedBrain);
+    return { manifest, storageDir, previousMovedTo, leasesReleased, schemaVersion, brain };
+  } catch (error) {
+    // Move only entries installed by this attempt, then return each original entry. Never
+    // delete the previous-state directory if rollback cannot complete; report its location.
+    try {
+      for (const entry of installed.reverse()) renameSync(path.join(storageDir, entry), path.join(staging, entry));
+      for (const entry of moved.reverse()) renameSync(path.join(previousMovedTo!, entry), path.join(storageDir, entry));
+      if (previousMovedTo) rmdirSync(previousMovedTo);
+      if (!storageExisted && existsSync(storageDir) && !readdirSync(storageDir).length) rmdirSync(storageDir);
+    } catch (rollback) {
+      throw new SwitchyardError("conflict", `restore failed (${(error as Error).message}); store rollback failed (${(rollback as Error).message}). Previous entries remain at ${previousMovedTo ?? storageDir}; recover them before restarting`);
+    }
+    throw error;
   } finally {
-    db.close();
+    if (stagedBrain) discardStagedBrainRestore(stagedBrain);
+    // A cleanup failure must not turn a successfully committed restore into a partial rollback.
+    try { rmSync(staging, { recursive: true, force: true }); } catch { /* A locked staging folder may be cleaned up later. */ }
   }
-  const brain = restoreBrain(brainPlan, manifest.brain, backupDir, now);
-  return { manifest, storageDir, previousMovedTo, leasesReleased, schemaVersion, brain };
 }

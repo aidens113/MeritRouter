@@ -35,6 +35,8 @@ export interface NormalizedUsage {
   /** Total completion tokens as reported (reasoning tokens are a subset). */
   outputTokens: number | null;
   cachedInputTokens: number | null;
+  /** Input written to prompt cache, a subset of total input; absent/null when unreported. */
+  cacheCreationInputTokens?: number | null;
   reasoningTokens: number | null;
   reportedCostUsd: number | null;
   basis: "provider_reported" | "unknown";

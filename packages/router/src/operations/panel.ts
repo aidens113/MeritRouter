@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import net from "node:net";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ResolvedConfig } from "../config/load.js";
@@ -91,14 +92,24 @@ export function panelListening(port: number, timeoutMs = 800): Promise<boolean> 
 }
 
 /** The built panel (a production build and its `next` binary), or why it cannot start. */
-export function findPanelApp(): { dir: string; nextBin: string } | { problem: string } {
-  // dist/operations/panel.js -> the repository root is four levels up.
-  const dir = process.env[PANEL_DIR_ENV] || path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../apps/panel");
-  const nextBin = path.join(dir, "node_modules", "next", "dist", "bin", "next");
-  if (!existsSync(path.join(dir, "package.json"))) return { problem: `no panel app at ${dir} (it ships with a repository checkout; set ${PANEL_DIR_ENV} to its folder)` };
-  if (!existsSync(nextBin)) return { problem: `the panel's dependencies are not installed in ${dir}: run pnpm install at the repository root` };
+export function findPanelApp(): { dir: string; nextBin: string; runtimeModules?: string } | { problem: string } {
+  const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const bundled = path.join(packageRoot, "panel");
+  const checkout = path.resolve(packageRoot, "../../apps/panel");
+  const dir = process.env[PANEL_DIR_ENV] || (existsSync(path.join(bundled, "package.json")) ? bundled : checkout);
+  if (!existsSync(path.join(dir, "package.json"))) return { problem: `no panel app at ${dir} (reinstall switchyard-router, or set ${PANEL_DIR_ENV} to a built checkout panel)` };
+  let nextBin: string;
+  try {
+    nextBin = dir === bundled || existsSync(path.join(dir, "runtime-modules"))
+      ? createRequire(path.join(dir, "package.json")).resolve("next/dist/bin/next")
+      : path.join(dir, "node_modules", "next", "dist", "bin", "next");
+    if (!existsSync(nextBin)) throw new Error("missing Next runtime");
+  } catch {
+    return { problem: `the panel's dependencies are not installed in ${dir}: reinstall switchyard-router (checkout: pnpm install at the repository root)` };
+  }
   if (!existsSync(path.join(dir, ".next", "BUILD_ID"))) return { problem: `the panel is not built: run pnpm -r build at the repository root` };
-  return { dir, nextBin };
+  const runtimeModules = path.join(dir, "runtime-modules");
+  return { dir, nextBin, ...(existsSync(runtimeModules) ? { runtimeModules } : {}) };
 }
 
 /** The router build this module runs from (`dist/`; `src/` under the tests). */
@@ -183,7 +194,12 @@ export async function ensurePanel(cfg: ResolvedConfig, opts: { waitMs?: number; 
         detached: true,
         windowsHide: true,
         stdio: ["ignore", out, out],
-        env: { ...process.env, SWITCHYARD_CONFIG: cfg.configPath },
+        env: {
+          ...process.env,
+          SWITCHYARD_CONFIG: cfg.configPath,
+          SWITCHYARD_ROUTER_CLI: path.join(routerBuildDir(), "cli.js"),
+          ...(app.runtimeModules ? { NODE_PATH: [app.runtimeModules, process.env.NODE_PATH].filter(Boolean).join(path.delimiter) } : {}),
+        },
       });
       child.unref();
     } finally {
