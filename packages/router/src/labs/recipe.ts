@@ -16,7 +16,20 @@ export const LabsConfigSchema = z.object({
   keep_task_worktrees_days: z.number().int().min(0).max(365).default(7),
 }).strict().refine((c) => c.port_range[0] <= c.port_range[1], "port_range must ascend");
 export type LabsConfig = z.infer<typeof LabsConfigSchema>;
-export const ProjectLabsSchema = z.object({ max_active: z.number().int().min(1).max(100).optional(), promotion: z.enum(["manual", "supervisor", "auto"]).default("manual") }).strict();
+const TaskLabPolicySchema = z.object({
+  enabled: z.boolean().default(false),
+  checks: z.array(Name).max(10).default([]),
+}).strict().superRefine((value, ctx) => {
+  if (new Set(value.checks).size !== value.checks.length)
+    ctx.addIssue({ code: "custom", path: ["checks"], message: "ephemeral check names must be unique" });
+  if (value.enabled && !value.checks.length)
+    ctx.addIssue({ code: "custom", path: ["checks"], message: "enabled ephemeral checks require a nonempty human allowlist" });
+});
+export const ProjectLabsSchema = z.object({
+  max_active: z.number().int().min(1).max(100).optional(),
+  promotion: z.enum(["manual", "supervisor", "auto"]).default("manual"),
+  ephemeral: TaskLabPolicySchema.default({ enabled: false, checks: [] }),
+}).strict();
 const Check = z.union([BrowserCheckSchema, Command, z.object({ command: Command, repo: Name.optional(), on_integrate: z.boolean().default(false) }).strict()]);
 const Ready = z.union([z.object({ http: z.string().min(1).max(2000) }).strict(), z.object({ tcp: Name }).strict()]);
 export const LabRecipeSchema = z.object({

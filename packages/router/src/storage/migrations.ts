@@ -845,4 +845,34 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE labs ADD COLUMN creation_until INTEGER NOT NULL DEFAULT 0;
   CREATE TABLE lab_target_locks(repository TEXT NOT NULL,target TEXT NOT NULL,holder_id TEXT NOT NULL,lease_until INTEGER NOT NULL,PRIMARY KEY(repository,target));
   `,
+  // Task-owned verification Labs: immutable attempts, private queue and recoverable spawn intent.
+  `
+  ALTER TABLE labs ADD COLUMN kind TEXT NOT NULL DEFAULT 'retained' CHECK(kind IN ('retained','task_attempt'));
+  CREATE TABLE task_workspace_attempts (
+    id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), project_id TEXT NOT NULL,
+    run_count INTEGER NOT NULL CHECK(run_count>=1), lease_owner TEXT NOT NULL, execution_id TEXT NOT NULL UNIQUE,
+    session_id TEXT, source_worktree TEXT NOT NULL, writable_alias TEXT NOT NULL, repositories_json TEXT NOT NULL,
+    submitted_commit TEXT, submitted_tree TEXT, patch_digest TEXT, state TEXT NOT NULL,
+    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX task_workspace_attempts_task ON task_workspace_attempts(task_id,run_count);
+  CREATE TABLE lab_task_attempts (
+    attempt_id TEXT PRIMARY KEY REFERENCES task_workspace_attempts(id), lab_id TEXT UNIQUE REFERENCES labs(id),
+    desired_state TEXT NOT NULL CHECK(desired_state IN ('running','stopped')), phase TEXT NOT NULL,
+    checks_json TEXT NOT NULL, recipe_json TEXT NOT NULL, recipe_digest TEXT NOT NULL, deadline_at INTEGER NOT NULL,
+    result_json TEXT, cleanup_error TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+  );
+  CREATE TABLE task_lab_operations (
+    id TEXT PRIMARY KEY, attempt_id TEXT NOT NULL REFERENCES task_workspace_attempts(id), kind TEXT NOT NULL CHECK(kind IN ('check','cleanup')),
+    state TEXT NOT NULL CHECK(state IN ('pending','running','completed','failed')), owner_id TEXT, lease_until INTEGER NOT NULL DEFAULT 0,
+    result_json TEXT, error TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX task_lab_operations_pending ON task_lab_operations(state,lease_until);
+  CREATE TABLE lab_attempt_processes (
+    id TEXT PRIMARY KEY, lab_id TEXT NOT NULL REFERENCES labs(id), attempt_id TEXT NOT NULL REFERENCES task_workspace_attempts(id),
+    kind TEXT NOT NULL, logical_name TEXT NOT NULL, token TEXT NOT NULL UNIQUE, pid INTEGER,
+    directory TEXT NOT NULL, state TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX lab_attempt_processes_lab ON lab_attempt_processes(lab_id,state);
+  `,
 ];

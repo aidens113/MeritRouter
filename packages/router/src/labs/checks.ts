@@ -21,6 +21,7 @@ export function labCheckMatchesHeads(check: Pick<LabCheckResult, "repository" | 
     && Object.entries(heads).every(([alias, head]) => head !== null && checked[alias] === head);
 }
 export async function runLabCheck(store: LabsStore, lab: LabRecord, name: string, timeoutSeconds: number, signal?: AbortSignal, manager?: LabManager): Promise<LabCheckResult> {
+  if(lab.kind==="task_attempt")throw new SwitchyardError("lab_scope_denied","task checks require their persisted attempt lifecycle");
   LabNameSchema.parse(name);
   const check = lab.recipe.checks[name];
   if (!Object.hasOwn(lab.recipe.checks, name) || !check)

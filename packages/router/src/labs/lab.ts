@@ -1,3 +1,5 @@
+import { TaskLabLifecycle } from "./task-attempt.js";
+import { taskLabUsesCapacity } from "./task-attempt-runner.js";
 import { readBrowserScreenshot } from "./browser-artifacts.js";
 import { LabControl, type LabOperation, type LabOperationInput } from "./control.js";
 import { labCoordination, type LabCoordination } from "./coordination.js";
@@ -46,6 +48,7 @@ export class LabManager {
   readonly owner = randomBytes(24).toString("hex");
   readonly services: LabServices;
   readonly controls: LabControl;
+  readonly taskAttempts: TaskLabLifecycle;
   private timer: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
   private closed = false;
@@ -57,6 +60,7 @@ export class LabManager {
     this.store = new LabsStore(options.db);
     this.services = new LabServices(this.store, LabsConfigSchema.parse(options.cfg.labs), this.owner, this.abort.signal);
     this.controls = new LabControl(this.store, this.owner, (project, name, input) => this.executeControl(project, name, input), (project, name) => !this.busyLabs.has(`${project}/${name}`));
+    this.taskAttempts = new TaskLabLifecycle(this);
     if (options.monitor !== false) {
       this.timer = setInterval(() => {
         if (this.closed)
@@ -117,6 +121,7 @@ export class LabManager {
     return this.track(() => this.destroyLab(project, name), `${project}/${name}`);
   }
   private foreignOwner(project: string, name: string): boolean {
+    this.assertRetained(project,name);
     const lab = this.require(project, name);
     const owner = this.controls.activeOwner(lab.id);
     return !!owner && owner !== this.owner;
@@ -156,9 +161,15 @@ export class LabManager {
   async processControls(): Promise<void> {
     if (this.closed)
       return;
+    await this.taskAttempts.process();
     await this.controls.processAll();
   }
+  private assertRetained(project: string, name: string): void {
+    if (this.require(project, name).kind !== "retained")
+      throw new SwitchyardError("lab_scope_denied", "task Labs are managed only by their exact attempt lifecycle");
+  }
   private async executeControl(project: string, name: string, input: LabOperationInput): Promise<unknown> {
+    if(input.kind!=="create")this.assertRetained(project,name);
     return this.track(async () => {
       switch (input.kind) {
         case "create": {
@@ -375,9 +386,9 @@ export class LabManager {
     if (existsSync(root))
       throw new Error("lab directory already exists; refusing to adopt its data during creation");
     const now = Date.now();
-    let lab: LabRecord = { id: newId("lab"), project, name, state: "creating", root, recipe, repositories: [], ports: {}, env: {}, goal: z.string().max(16000).parse(input.goal ?? ""), createdAt: now, updatedAt: now, lastActivity: now };
+    let lab: LabRecord = { id: newId("lab"), project, name, state: "creating", kind:"retained", root, recipe, repositories: [], ports: {}, env: {}, goal: z.string().max(16000).parse(input.goal ?? ""), createdAt: now, updatedAt: now, lastActivity: now };
     immediate(this.options.db, () => {
-      const all = this.store.list().filter(l => l.state !== "destroyed");
+      const all = this.store.list().filter(l => taskLabUsesCapacity(this,l));
       if (all.length >= cfg.max_active || all.filter(l => l.project === project).length >= (projectConfig.labs.max_active ?? cfg.max_active))
         throw new SwitchyardError("lab_limit_reached", "active lab limit reached");
       if (this.store.get(project, name))
@@ -572,8 +583,10 @@ export class LabManager {
     this.store.event(lab.id, "destroyed", { branches: lab.repositories.map(r => r.branch) });
   }
   async recover(): Promise<void> {
+    await this.taskAttempts.recover();
     for (const entry of this.list()) {
       const lab = this.require(entry.project, entry.name);
+      if(lab.kind==="task_attempt")continue;
       if (lab.state === "creating") {
         const lease = z.object({ creation_until: z.number() }).parse(this.options.db.prepare("SELECT creation_until FROM labs WHERE id=?").get(lab.id));
         if (lease.creation_until > Date.now())
@@ -595,6 +608,7 @@ export class LabManager {
     }
   }
   async pruneTaskWorktrees(): Promise<LabRetentionResult> {
+    await this.taskAttempts.prune();
     return pruneTaskWorktrees(this.options.db, this.options.storageDir, this.services.config.keep_task_worktrees_days, this.options.project);
   }
   async tick(): Promise<void> {
@@ -610,7 +624,7 @@ export class LabManager {
         this.lastRetention = Date.now();
       }
       for (const entry of this.list()) {
-        if (entry.state !== "running")
+        if (entry.kind==="task_attempt" || entry.state !== "running")
           continue;
         const lab = this.require(entry.project, entry.name);
         const mine = this.store.services(lab.id).some(s => s.owner_id === this.owner);
@@ -639,11 +653,13 @@ export class LabManager {
     this.timer = null;
     this.closed = true;
     this.abort.abort("lab manager closed");
+    await this.taskAttempts.close();
     await Promise.allSettled([...this.operations]);
     while (this.ticking)
       await new Promise(r => setTimeout(r, 20));
     if (input.stopServices !== false) {
       for (const lab of this.list()) {
+        if(lab.kind==="task_attempt")continue;
         if (this.store.services(lab.id).some(s => s.owner_id === this.owner))
           await this.stopLab(lab.project, lab.name);
       }

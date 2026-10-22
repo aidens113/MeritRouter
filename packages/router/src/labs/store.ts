@@ -4,7 +4,7 @@ import { LabNameSchema, LabRecipeSchema } from "./recipe.js";
 export const LabStateSchema = z.enum(["creating", "stopped", "starting", "running", "failed", "destroyed"]);
 export const LabRepositorySchema = z.object({ alias: z.string().min(1), source: z.string().min(1), worktree: z.string().min(1), branch: z.string().min(1), target: z.string().min(1), base: z.string().regex(/^[a-f0-9]{40,64}$/) }).strict();
 export const LabRecordSchema = z.object({
-  id: z.string().min(1), project: z.string().min(1), name: LabNameSchema, state: LabStateSchema,
+  id: z.string().min(1), project: z.string().min(1), name: LabNameSchema, state: LabStateSchema, kind:z.enum(["retained","task_attempt"]).default("retained"),
   root: z.string().min(1), recipe: LabRecipeSchema, repositories: z.array(LabRepositorySchema),
   ports: z.record(z.string(), z.number().int().min(1024).max(65535)), env: z.record(z.string(), z.string()),
   goal: z.string(), createdAt: z.number().int(), updatedAt: z.number().int(), lastActivity: z.number().int(),
@@ -16,13 +16,13 @@ export const LabServiceSchema = z.object({
   next_restart: z.number().nullable(), started_at: z.number().nullable(), owner_id: z.string().nullable(), owner_until: z.number(),
 });
 export type LabServiceRecord = z.infer<typeof LabServiceSchema>;
-const Row = z.object({ id: z.string(), project_id: z.string(), name: z.string(), state: z.string(), root: z.string(), recipe_json: z.string(), repositories_json: z.string(), ports_json: z.string(), env_json: z.string(), goal: z.string(), created_at: z.number(), updated_at: z.number(), last_activity: z.number() });
+const Row = z.object({ id: z.string(), project_id: z.string(), name: z.string(), state: z.string(), kind:z.enum(["retained","task_attempt"]), root: z.string(), recipe_json: z.string(), repositories_json: z.string(), ports_json: z.string(), env_json: z.string(), goal: z.string(), created_at: z.number(), updated_at: z.number(), last_activity: z.number() });
 export class LabsStore {
   constructor(readonly db: Db) {
   }
   private hydrate(raw: unknown): LabRecord {
     const r = Row.parse(raw);
-    return LabRecordSchema.parse({ id: r.id, project: r.project_id, name: r.name, state: r.state, root: r.root, recipe: JSON.parse(r.recipe_json), repositories: JSON.parse(r.repositories_json), ports: JSON.parse(r.ports_json), env: JSON.parse(r.env_json), goal: r.goal, createdAt: r.created_at, updatedAt: r.updated_at, lastActivity: r.last_activity });
+    return LabRecordSchema.parse({ id: r.id, project: r.project_id, name: r.name, state: r.state, kind:r.kind, root: r.root, recipe: JSON.parse(r.recipe_json), repositories: JSON.parse(r.repositories_json), ports: JSON.parse(r.ports_json), env: JSON.parse(r.env_json), goal: r.goal, createdAt: r.created_at, updatedAt: r.updated_at, lastActivity: r.last_activity });
   }
   get(project: string, name: string): LabRecord | null {
     const row = this.db.prepare("SELECT * FROM labs WHERE project_id=? AND name=?").get(project, name);
@@ -35,12 +35,12 @@ export class LabsStore {
   list(project?: string): LabRecord[] {
     return this.db.prepare(`SELECT * FROM labs ${project === undefined ? "" : "WHERE project_id=?"} ORDER BY created_at,id`).all(...(project === undefined ? [] : [project])).map((r) => this.hydrate(r));
   }
-  insert(lab: LabRecord): void {
+  insert(lab: z.input<typeof LabRecordSchema>): void {
     const l = LabRecordSchema.parse(lab);
-    this.db.prepare("INSERT INTO labs (id,project_id,name,state,root,recipe_json,repositories_json,ports_json,env_json,goal,created_at,updated_at,last_activity) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)").run(l.id, l.project, l.name, l.state, l.root, JSON.stringify(l.recipe), JSON.stringify(l.repositories), JSON.stringify(l.ports), JSON.stringify(l.env), l.goal, l.createdAt, l.updatedAt, l.lastActivity);
+    this.db.prepare("INSERT INTO labs (id,project_id,name,state,kind,root,recipe_json,repositories_json,ports_json,env_json,goal,created_at,updated_at,last_activity) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(l.id, l.project, l.name, l.state, l.kind, l.root, JSON.stringify(l.recipe), JSON.stringify(l.repositories), JSON.stringify(l.ports), JSON.stringify(l.env), l.goal, l.createdAt, l.updatedAt, l.lastActivity);
     this.event(l.id, "created", { project: l.project, name: l.name });
   }
-  save(lab: LabRecord): void {
+  save(lab: z.input<typeof LabRecordSchema>): void {
     const l = LabRecordSchema.parse(lab);
     this.db.prepare("UPDATE labs SET state=?, repositories_json=?, ports_json=?, env_json=?, updated_at=?, last_activity=? WHERE id=?").run(l.state, JSON.stringify(l.repositories), JSON.stringify(l.ports), JSON.stringify(l.env), l.updatedAt, l.lastActivity, l.id);
   }

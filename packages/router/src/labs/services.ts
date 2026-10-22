@@ -45,6 +45,7 @@ export class LabServices {
     }
   }
   async start(lab: LabRecord, name: string, restarting = false): Promise<LabServiceRecord> {
+    if(lab.kind==="task_attempt")throw new Error("task-owned services require attempt lifecycle");
     LabNameSchema.parse(name);
     const recipe = lab.recipe.services[name];
     if (!Object.hasOwn(lab.recipe.services, name) || !recipe)
@@ -166,6 +167,7 @@ export class LabServices {
     throw new Error(`service ${name} readiness timed out`);
   }
   async adopt(lab: LabRecord, s: LabServiceRecord): Promise<LabServiceRecord> {
+    if(lab.kind==="task_attempt")throw new Error("task-owned services cannot be adopted as retained services");
     if (!s.pid || !s.token || await processOwnership(s.pid, s.token) !== "owned")
       throw new Error("cannot adopt unverified service process");
     const claimed = immediate(this.store.db, () => this.store.db.prepare("UPDATE lab_services SET owner_id=?,owner_until=? WHERE lab_id=? AND name=? AND (owner_id=? OR owner_until<=?)").run(this.owner, Date.now() + LEASE_MS, s.lab_id, s.name, this.owner, Date.now()).changes);
@@ -198,6 +200,7 @@ export class LabServices {
     this.store.event(lab.id, "service_stopped", { name });
   }
   async monitor(lab: LabRecord): Promise<void> {
+    if(lab.kind==="task_attempt")return;
     for (const s of this.store.services(lab.id)) {
       this.logs(lab, s.name, 1);
       if (s.owner_id !== this.owner) {

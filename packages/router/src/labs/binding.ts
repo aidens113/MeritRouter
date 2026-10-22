@@ -31,6 +31,7 @@ function descendantsEnded(tasks: TaskStore, id: string): boolean {
 /** Synchronous and safe inside the service's task-submit transaction. */
 export function claimLabJob(manager: LabManager, project: string, name: string, jobId: string, tasks: TaskStore): LabRunContext {
   const { lab } = manager.status(project, name);
+  if(lab.kind!=="retained")throw new SwitchyardError("lab_scope_denied","task-owned Labs cannot claim a team");
   const job = tasks.get(jobId);
   if (!job || job.row.project_id !== project || job.spec.lab !== name || job.spec.parentTaskId || manager.options.project(project).profiles[job.spec.profile]?.mode !== "supervisor")
     throw new SwitchyardError("lab_scope_denied", "only a persisted root supervisor job of this project/lab can claim the team");
@@ -57,6 +58,7 @@ export function bindLabTask(manager: LabManager, project: string, taskId: string
     return null;
   }
   const { lab } = manager.status(project, spec.lab);
+  if(lab.kind!=="retained")throw new SwitchyardError("lab_scope_denied","task-owned Labs cannot bind team tasks");
   let current = stored;
   const seen = new Set<string>();
   while (current.spec.parentTaskId) {
@@ -93,6 +95,7 @@ export function labTaskContext(manager: LabManager, project: string, taskId: str
 export function labConfiguration(manager: LabManager, project: string, name: string): ResolvedConfig {
   const original = manager.options.project(project);
   const { lab } = manager.status(project, name);
+  if(lab.kind!=="retained")throw new SwitchyardError("lab_scope_denied","task-owned Labs cannot claim a team");
   const repositoryPaths = { ...original.repositoryPaths };
   const repositories = { ...original.repositories };
   for (const repo of lab.repositories) {
