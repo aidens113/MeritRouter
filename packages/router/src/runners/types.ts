@@ -1,3 +1,4 @@
+import type { LabRunContext } from "../labs/binding.js";
 import type { ResolvedConfig } from "../config/load.js";
 import type { ProfileConfig } from "../config/schema.js";
 import type { Gate, GateAttempt, GateRequest, GateResponse } from "../gateway/gate.js";
@@ -94,6 +95,7 @@ export interface RunContext {
   resume: { plan: ResumePlan } | null;
   /** Agents' web search and fetch (absent or null: no web tools for this run). */
   web?: WebAccess | null;
+  lab?: LabRunContext | null;
 }
 
 /**

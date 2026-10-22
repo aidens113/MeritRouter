@@ -25,8 +25,10 @@ export async function ensureLabSupervisor(sy: Switchyard, cliPath?: string): Pro
     const logs = path.join(sy.cfg.storageDir, "logs");
     mkdirSync(logs, { recursive: true });
     const fd = openSync(path.join(logs, "labs.log"), "a");
+    const env: NodeJS.ProcessEnv = { ...process.env, SWITCHYARD_CONFIG: sy.cfg.configPath };
+    delete env.SWITCHYARD_PROJECT;
     try {
-      const child = spawn(process.execPath, [cliPath, "labs", "serve", "--config", sy.cfg.configPath], { cwd: path.dirname(sy.cfg.configPath), env: { ...process.env, SWITCHYARD_CONFIG: sy.cfg.configPath }, detached: true, windowsHide: true, stdio: ["ignore", fd, fd] });
+      const child = spawn(process.execPath, [cliPath, "labs", "serve", "--config", sy.cfg.configPath], { cwd: path.dirname(sy.cfg.configPath), env, detached: true, windowsHide: true, stdio: ["ignore", fd, fd] });
       await new Promise<void>((resolve, reject) => { child.once("spawn", resolve); child.once("error", reject); });
       child.unref();
     } finally { closeSync(fd); }

@@ -10,7 +10,7 @@ import type { LabsConfig } from "./recipe.js";
 import { substitute } from "./recipe.js";
 import { labEnvironment, labValues } from "./environment.js";
 import { LabsStore, type LabRecord, type LabServiceRecord } from "./store.js";
-import { HOST_MARKER, inspectLabListeners, processOwnership, stopOwnedProcess } from "./process-ownership.js";
+import { captureOwnedProcessTree, HOST_MARKER, inspectLabListeners, processOwnership, stopOwnedProcess } from "./process-ownership.js";
 import { portAvailable } from "./ports.js";
 // The independent wrapper survives its manager. Its random token is verified against the OS
 // command line before another manager adopts or terminates it. Declared services run foreground.
@@ -25,7 +25,25 @@ process.on('SIGTERM',()=>{try{child.kill('SIGTERM')}catch{};setTimeout(()=>proce
 `;
 const LEASE_MS = 60000;
 export class LabServices {
-  constructor(readonly store: LabsStore, readonly config: LabsConfig, readonly owner: string, readonly signal?: AbortSignal) { }
+  constructor(readonly store: LabsStore, readonly config: LabsConfig, readonly owner: string, readonly signal?: AbortSignal) {
+  }
+  private proofPath(lab: LabRecord, name: string): string {
+    return labOwnedPath(path.resolve(lab.root, "../../.."), path.join(lab.root, "logs", `${name}.process-tree.json`));
+  }
+  private async stopProcess(lab: LabRecord, name: string, pid: number, token: string): Promise<void> {
+    try {
+      await stopOwnedProcess(pid, token, this.proofPath(lab, name));
+    }
+    catch (error) {
+      const record = this.store.service(lab.id, name);
+      if (record) {
+        record.state = "failed";
+        this.store.saveService(record);
+      }
+      this.store.event(lab.id, "cleanup_refused", { name, pid, error: (error as Error).message });
+      throw error;
+    }
+  }
   async start(lab: LabRecord, name: string, restarting = false): Promise<LabServiceRecord> {
     LabNameSchema.parse(name);
     const recipe = lab.recipe.services[name];
@@ -42,6 +60,8 @@ export class LabServices {
           throw new Error("lab service is owned by another active manager");
         return this.adopt(lab, previous);
       }
+      if (ownership === "missing")
+        await this.stopProcess(lab, name, previous.pid, previous.token);
       if (ownership === "foreign")
         throw new Error("refused to adopt or replace an unverified recorded process");
     }
@@ -63,7 +83,10 @@ export class LabServices {
     const child = spawn(process.execPath, ["-e", HOST_SOURCE, "--", `--sy-lab-token=${token}`], { cwd: repo.worktree, env: { ...labEnvironment(lab), SWITCHYARD_LAB_COMMAND: JSON.stringify({ command: substitute(recipe.command, labValues(lab)), cwd: repo.worktree }) }, detached: true, windowsHide: true, stdio: ["ignore", fd, fd] });
     closeSync(fd);
     try {
-      await new Promise<void>((resolve, reject) => { child.once("spawn", resolve); child.once("error", reject); });
+      await new Promise<void>((resolve, reject) => {
+        child.once("spawn", resolve);
+        child.once("error", reject);
+      });
       if (!child.pid)
         throw new Error("service process did not start");
       const record = this.store.service(lab.id, name)!;
@@ -72,6 +95,7 @@ export class LabServices {
       this.store.saveService(record);
       child.unref();
       await this.ready(lab, name, child.pid, token);
+      await captureOwnedProcessTree(child.pid, token, this.proofPath(lab, name));
       record.state = "running";
       record.owner_until = Date.now() + LEASE_MS;
       this.store.saveService(record);
@@ -79,12 +103,21 @@ export class LabServices {
       return record;
     }
     catch (err) {
-      if (child.pid)
-        await stopOwnedProcess(child.pid, token).catch(() => undefined);
+      let cleanupFailed = false;
+      if (child.pid) {
+        try {
+          await this.stopProcess(lab, name, child.pid, token);
+        }
+        catch {
+          cleanupFailed = true;
+        }
+      }
       const record = this.store.service(lab.id, name)!;
       record.state = "failed";
-      record.pid = null;
-      record.token = null;
+      if (!cleanupFailed) {
+        record.pid = null;
+        record.token = null;
+      }
       this.store.saveService(record);
       this.store.event(lab.id, "service_failed", { name, error: (err as Error).message });
       throw err;
@@ -106,10 +139,21 @@ export class LabServices {
           await r.body?.cancel();
           ready = r.ok;
         }
-        catch { }
+        catch {
+        }
       }
       if (readiness && "tcp" in readiness)
-        ready = await new Promise<boolean>(resolve => { const socket = net.connect({ host: "127.0.0.1", port: lab.ports[readiness.tcp]! }); socket.setTimeout(500); const done = (v: boolean) => { socket.destroy(); resolve(v); }; socket.once("connect", () => done(true)); socket.once("error", () => done(false)); socket.once("timeout", () => done(false)); });
+        ready = await new Promise<boolean>(resolve => {
+          const socket = net.connect({ host: "127.0.0.1", port: lab.ports[readiness.tcp]! });
+          socket.setTimeout(500);
+          const done = (v: boolean) => {
+            socket.destroy();
+            resolve(v);
+          };
+          socket.once("connect", () => done(true));
+          socket.once("error", () => done(false));
+          socket.once("timeout", () => done(false));
+        });
       if (ready) {
         await inspectLabListeners(pid, token, Object.values(lab.ports));
         return;
@@ -128,6 +172,7 @@ export class LabServices {
     if (!claimed)
       throw new Error("lab service has another live owner");
     await this.ready(lab, s.name, s.pid, s.token);
+    await captureOwnedProcessTree(s.pid, s.token, this.proofPath(lab, s.name));
     s.owner_id = this.owner;
     s.owner_until = Date.now() + LEASE_MS;
     s.state = "running";
@@ -142,7 +187,7 @@ export class LabServices {
     if (s.owner_id !== this.owner && s.owner_until > Date.now())
       throw new Error("lab service has another active owner");
     if (s.pid && s.token)
-      await stopOwnedProcess(s.pid, s.token);
+      await this.stopProcess(lab, name, s.pid, s.token);
     s.state = "stopped";
     s.pid = null;
     s.token = null;
@@ -171,6 +216,8 @@ export class LabServices {
             continue;
           }
         }
+        if (s.pid && s.token)
+          await this.stopProcess(lab, s.name, s.pid, s.token);
         if (["running", "starting", "backoff"].includes(s.state)) {
           const claimed = immediate(this.store.db, () => this.store.db.prepare("UPDATE lab_services SET owner_id=?,owner_until=? WHERE lab_id=? AND name=? AND owner_until<=?").run(this.owner, Date.now() + LEASE_MS, lab.id, s.name, Date.now()).changes);
           if (!claimed)
@@ -197,10 +244,14 @@ export class LabServices {
           continue;
         }
         if (ownership === "owned") {
-          await inspectLabListeners(s.pid, s.token, Object.values(lab.ports)).catch(async (err) => { await this.stop(lab, s.name); throw err; });
+          await inspectLabListeners(s.pid, s.token, Object.values(lab.ports)).catch(async (err) => {
+            await this.stop(lab, s.name);
+            throw err;
+          });
           this.store.saveService(s);
           continue;
         }
+        await this.stopProcess(lab, s.name, s.pid, s.token);
         s.pid = null;
         s.token = null;
         s.restart_count++;

@@ -41,8 +41,13 @@ newest message; `prompt_cache_key` = task id for OpenAI and OpenRouter), endpoin
 truncation recovery, prefix-stable compaction (`harness/compaction.ts`), and the panel's cached
 share and saving.
 
-**Not verified:** live providers honouring the breakpoints and cache key; Anthropic's cache-write
-premium (1.25x) is not modelled, so settled cost runs slightly low; the saving figure with real
+**Accounting update 2026-10-22:** roadmap checkpointec92e74 separately persists cache-creation
+tokens, prices configured writes and reserves the maximum input rate. Unknown write pricing
+and native server search disable paid Anthropic cache markers at the wire boundary. Unexpected
+writes quarantine the endpoint and retain a finite uncertain reservation. Supervisor independently
+passed27 focused tests; integrated full acceptance remains in roadmap-completion.md.
+
+**Not verified:** live providers honouring the breakpoints and cache key; the saving figure with real
 cached prices. Note: the input budget follows the serving model's context, so on a 1M-context
 model compaction rarely runs and requests grow (cheap where the provider caches).
 

@@ -1,0 +1,88 @@
+# Distributed workers and Lab extensions
+Status: Active
+Status detail: Follow-on architecture scoped during roadmap implementation; no R2/L5 completion claim.
+Created: 2026-10-22
+Last updated: 2026-10-22
+Owner: Senior supervisor agent
+Scope: Implement the remaining L5 browser/ephemeral/Compose features and R2 distributed persistence after core Labs integration stabilizes.
+Paired document: none
+Related: [roadmap completion](roadmap-completion.md), [Labs](labs.md), [sessions and teams](agent-sessions-and-teams.md)
+
+## Current State
+
+L1-L4 integration is active under roadmap-completion.md. L5 and R2 were explicitly deferred in
+their original plans; the current build request keeps them open. This document scopes their
+prerequisites rather than treating them as delivered.
+
+The current store is the synchronous better-sqlite3 Database type. Raw prepared statements,
+transactions and SQLite expressions reach beyond storage into admission, routing, admin,
+sessions and Labs. A PostgreSQL connection substituted into openDatabase would not preserve
+these contracts. Filesystem session logs, Git brains/workspaces and local provider capacity
+also need explicit host ownership; a shared database alone does not supply multi-host safety.
+
+Environment inspection: Docker CLI exists, but the Linux engine pipe is absent; docker info
+fails. No psql/postgres executable was discovered. These are unverified acceptance dependencies,
+not a reason to stop the independently runnable core work. No service was installed or started.
+
+## L5 implementation sequence
+
+1. Browser checks: extend the validated declared-check union with a browser kind. Human config
+   selects service/path, viewport, executable and bounded assertions/screenshots; models select
+   only the declared name. Resolve only a currently owned loopback service using the same
+   positive listener proof as lab_http. Capture console/page errors, bounded artifacts and
+   exact checked repository heads. Browser and child processes close on timeout/cancel/failure.
+   Tests use the installed headless browser against an isolated fixture, including foreign-port
+   rebound, cross-origin redirect refusal, failed assertion and screenshot artifact retrieval.
+2. Ephemeral task Labs: introduce a task-owned lab kind with persisted task/attempt binding.
+   Its source is the task's owned commit/worktree, not the target checkout. Allocate independent
+   ports/data and run configured services/checks before integration; persist exact-head evidence
+   into the task result. Teardown runs on success/failure/cancel and recovery, preserves useful
+   branch/artifact evidence, and cannot delete another attempt's worktree. Promotion excludes
+   ephemeral labs. Verify parallel tasks and an actual killed owner.
+3. Compose services: extend the declared service union with a Compose kind, preserving command
+   recipes. Use a unique persisted project name and SwitchYard ownership labels. Validate the
+   resolved Compose document before up: reject host networking, undeclared/public ports,
+   privileged containers and writable host mounts outside owned lab data/worktrees. Validate
+   inspect output before stop/down and never tear down an unrelated Compose project. Credentials
+   stay outside model-visible status/logs. Fake CLI tests cover validation/failures; actual engine
+   acceptance covers two isolated labs, readiness, restart, adoption and complete cleanup.
+
+## R2 implementation sequence
+
+1. Inventory and introduce asynchronous repository interfaces by owned subsystem: task claims,
+   admissions/reservations, sessions/events/artifacts, coordination, catalog/config metadata,
+   projects/brain and Labs. Preserve the SQLite implementation and tests as the default. Move
+   direct SQL behind those interfaces before introducing a second backend; do not emulate
+   synchronous PostgreSQL calls by spawning a process per query.
+2. Add versioned PostgreSQL migrations and backend selection with validated DSN/SSL references.
+   Claims use row locks with SKIP LOCKED, conditional lease generation updates and database time.
+   Reservations, task/project/endpoint slots, job grants, integration and promotion locks use
+   transactions on the same authoritative backend. Stale workers cannot renew or settle another
+   generation. Add independent backend contract tests, including rollback and reconnect.
+3. Register worker hosts and their capabilities; persist host/workspace affinity. Coding work,
+   configured local providers and Labs stay on their owning host. Queue claims refuse missing
+   capabilities rather than resolving another host's absolute path. Shared provider/account caps
+   remain global. Do not put SQLite on a network volume.
+4. Make session events and artifact metadata durable in the selected backend. Store binary
+   artifacts through an authenticated object-store interface with bounded verified hashes;
+   filesystem remains the single-host implementation. Brain/Git writes require an owning host
+   and backend lease, with immutable commit/artifact references crossing hosts. Provider secrets
+   remain host/control-plane credentials, never task payloads or model-visible connection data.
+5. Two isolated worker hosts share PostgreSQL and fake provider/object-store endpoints. Verify
+   exactly one claim/charge, global provider limits, host affinity, dead-host takeover, reconnect,
+   lease fencing, session/artifact retrieval and serialized integration. Kill processes during
+   reservation, model response, journal persistence and integration; compare durable evidence.
+   A two-process SQLite test is useful E7 evidence, but is not two-host PostgreSQL acceptance.
+
+## Work Ledger
+
+### 2026-10-22 - Follow-on prerequisites inspected
+- Agent: supervisor
+- Changed: recorded L5/R2 implementation boundaries and acceptance sequence so deferred features remain visible.
+- Validation: read current Labs/check/store/session design and inspected Docker/PostgreSQL availability; Docker engine unavailable, no PostgreSQL executable found. No feature implementation or provider calls claimed.
+- Outcome: Partial
+- Follow-up: complete core integration first, then execute these bounded phases with isolated fixtures and explicit backend acceptance.
+
+## Open Questions
+
+- Owner: supervisor. Select concrete PostgreSQL and object-store deployment fixtures during R2 implementation; availability is not yet verified. No user installation or paid infrastructure is assumed.

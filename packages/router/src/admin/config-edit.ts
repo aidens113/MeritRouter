@@ -7,6 +7,7 @@ import { ProjectRegistry } from "../projects/registry.js";
 import { recordPreparation } from "../projects/repository-setup.js";
 import { prepareRepository } from "../workspaces/repository-prepare.js";
 import { retainedLabConfigErrors } from "../projects/lab-config-guard.js";
+import { immediate } from "../storage/db.js";
 
 /**
  * Editing the config file from the panel: validate, back up the previous file, write, and let
@@ -36,25 +37,29 @@ export function validateConfigText(text: string, configPath: string): { ok: true
 }
 
 /** Validate, back up the previous file, and write. Running workers reload it automatically. */
-export function writeConfigText(sy: Switchyard, text: string): { ok: true } | { ok: false; errors: string[] } {
+export function writeConfigText(sy: Switchyard, text: string, options: { expectedText?: string } = {}): { ok: true } | { ok: false; errors: string[] } {
   const v = validateConfigText(text, sy.cfg.configPath);
   if (!v.ok) return v;
-  const labErrors = retainedLabConfigErrors(sy.db, parseConfig(YAML.parse(text), sy.cfg.configPath));
-  if (labErrors.length) return { ok: false, errors: labErrors };
-  copyFileSync(sy.cfg.configPath, `${sy.cfg.configPath}.bak`);
-  writeFileSync(sy.cfg.configPath, text);
-  sy.reloadIfChanged();
-  return { ok: true };
+  return immediate(sy.db, () => {
+    if (options.expectedText !== undefined && readConfigText(sy) !== options.expectedText) return { ok: false, errors: ["The config changed during this operation; reload it and retry your edit."] };
+    const labErrors = retainedLabConfigErrors(sy.db, parseConfig(YAML.parse(text), sy.cfg.configPath));
+    if (labErrors.length) return { ok: false, errors: labErrors };
+    copyFileSync(sy.cfg.configPath, `${sy.cfg.configPath}.bak`);
+    writeFileSync(sy.cfg.configPath, text);
+    sy.reloadIfChanged();
+    return { ok: true };
+  });
 }
 
 /** Apply a structured patch (e.g. from a settings form) to the YAML, preserving comments. */
 export function patchConfig(sy: Switchyard, patch: Array<{ path: Array<string | number>; value: unknown }>): { ok: true } | { ok: false; errors: string[] } {
-  const doc = YAML.parseDocument(readConfigText(sy));
+  const original = readConfigText(sy);
+  const doc = YAML.parseDocument(original);
   for (const p of patch) {
     if (p.value === undefined || p.value === null) doc.deleteIn(p.path);
     else doc.setIn(p.path, p.value);
   }
-  return writeConfigText(sy, doc.toString());
+  return writeConfigText(sy, doc.toString(), { expectedText: original });
 }
 
 /** Generic panel saves prepare changed/new repository paths before acknowledging the config. */
@@ -77,7 +82,7 @@ export async function writePreparedConfigText(sy: Switchyard, text: string): Pro
   }
   if (errors.length) return { ok: false, errors };
   if (readConfigText(sy) !== original) return { ok: false, errors: ["The config changed while repository folders were being prepared; reload it and retry your edit."] };
-  return writeConfigText(sy, text);
+  return writeConfigText(sy, text, { expectedText: original });
 }
 
 /** The async generic settings patch path; synchronous internal config editing stays compatible. */

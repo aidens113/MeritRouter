@@ -80,6 +80,20 @@ Agent sessions (every model call and tool call, in order)
                                 statuses: running, completed, failed, interrupted, cancelled
   session <id> [--after seq] [--limit n]   timeline (--json prints the raw page)
 
+Labs (project-scoped isolated branches, ports, data and configured services)
+  labs [list]                   retained labs; --json includes safe service/check details
+  labs create <name> [goal]      create from the project's configured recipe
+  labs status <name>            services, URLs, exact heads and checks
+  labs start|stop|refresh <name> queue a lifecycle request to the Labs supervisor
+  labs restart <name> [service] restart all or one declared service
+  labs check <name> <check>      run a declared revision-bound check
+  labs logs <name> <service>     bounded service logs
+  labs promote <name> [--reason text]   prepare exact checked promotion; manual policy prints commands
+  labs destroy <name> --confirm <name>  stop owned services and remove clean worktrees/data; branches remain
+  labs operations <name>        persisted lifecycle outcomes; --timeout bounds command waits
+  labs serve                    foreground service supervision for all projects; no model worker
+  labs supervisor-start|supervisor-stop|supervisor-status   background supervisor management
+
 Provider keys (stored encrypted in the vault; keys under providers in the config are listed too)
   keys [list] [provider]        every key with its source, billing class, status (ok, cooling
                                 down until, INVALID, out of credits), and last four characters
@@ -99,7 +113,7 @@ Provider keys (stored encrypted in the vault; keys under providers in the config
   keys spend                    paid spend against budgets
 
 Standalone jobs (a SwitchYard supervisor plans, delegates, verifies, integrates)
-  run "<goal>" --repo <alias> [--check "<cmd>"] [--criteria "<text>"] [--wait]
+  run "<goal>" --repo <alias> [--lab <name>] [--check "<cmd>"] [--criteria "<text>"] [--wait]
   jobs                          list jobs
   job <id>                      job status, workers, branch, questions; sub-jobs (tree with
                                 branches and carved budgets), merge queue, recent channel posts

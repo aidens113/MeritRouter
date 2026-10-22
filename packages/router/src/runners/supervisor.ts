@@ -14,13 +14,14 @@ import { runAgentLoop, type TerminalTool } from "../harness/loop.js";
 import type { ResumeInput } from "../harness/resume.js";
 import type { ResumeToolRef } from "../sessions/events.js";
 import { artifactTool, brainReadTools, brainSupervisorTools, commandTool, editTools, repoTools, type HarnessEnv, type HarnessTool } from "../harness/tools.js";
+import { labHarnessTools } from "../labs/tools.js";
 import { webTools } from "../harness/web-tools.js";
 import { ensureCarves, jobDepth, mergeHooks, subJobSection, supervisorTools, type IntegrationRepo, type SupervisorState } from "../harness/supervisor-tools.js";
 import { coordinationGuard, sharedFilesOf } from "../harness/coordination-edits.js";
 import { MergeQueue, type MergeItem } from "../workspaces/merge-queue.js";
 import { newId } from "../storage/db.js";
 import { isSimulatedCrash } from "../core/faults.js";
-import { parseDoc, replaceSection, section } from "../brain/protocol.js";
+import { parseDoc, replaceSection, section, workingDocTemplate } from "../brain/protocol.js";
 import { minimalEnv, runProcess } from "./coding/process.js";
 import { baseResult, type RunContext, type RunOutcome } from "./types.js";
 import { WorkspacePointer } from "./session-workspace.js";
@@ -96,6 +97,14 @@ function questionState(ctx: RunContext, ref: ResumeToolRef): string {
 /** Create (or reuse after a restart) the job branch and its integration worktree per writable repo. */
 async function integrationRepos(ctx: RunContext, saved: IntegrationRepo[]): Promise<Map<string, IntegrationRepo>> {
   const out = new Map<string, IntegrationRepo>();
+  if (ctx.lab && ctx.lab.rootJobId === ctx.taskId) {
+    const status = ctx.lab.manager.status(ctx.lab.project, ctx.lab.name);
+    for (const repo of status.lab.repositories) {
+      if (!ctx.spec.repositoryAliases.includes(repo.alias) || !ctx.cfg.repositoryPaths[repo.alias]?.writable) continue;
+      out.set(repo.alias, { alias: repo.alias, worktree: repo.worktree, branch: repo.branch, baseSha: status.heads[repo.alias] ?? repo.base });
+    }
+    return out;
+  }
   for (const r of saved) if (existsSync(r.worktree)) out.set(r.alias, r);
   const root = path.join(ctx.cfg.storageDir, "worktrees");
   mkdirSync(root, { recursive: true });
@@ -165,7 +174,11 @@ export class SupervisorRunner implements CodingRunner {
       await b.ensure();
       await b.refreshIndex();
       const principal = () => access.principalFor("supervisor", { project: b.project, effort: ctx.effort, task: null, repos: spec.repositoryAliases, jobId: ctx.taskId, tier: ctx.tier });
-      const doc = b.workingDocPath(ctx.effort);
+      const lane = ctx.lab ? `projects/${b.project}/labs/${ctx.lab.name}.md` : null;
+      if (lane && !b.exists(lane)) {
+        await b.write(principal(), actor, lane, workingDocTemplate({title:`Lab ${ctx.lab!.name}`,statusDetail:"Active root team",owner:actor.agent,scope:spec.goal.slice(0,200),currentState:`Root team: ${ctx.lab!.rootJobId}\n\nGoal: ${spec.goal.slice(0,2000)}\n\nUse lab_status and lab_check for current services and revision evidence.`}), `Create lab lane ${ctx.lab!.name}`);
+      }
+      const doc = lane ?? b.workingDocPath(ctx.effort);
       if (!b.exists(doc)) {
         // A sub-job whose parent has no document yet starts one like a top-level job.
         await b.createWorkingDoc(principal(), actor, ctx.effort, {
@@ -211,6 +224,7 @@ export class SupervisorRunner implements CodingRunner {
       ...(env.commands ? [commandTool(patterns)] : []),
       artifactTool(),
       ...webTools(),
+      ...labHarnessTools(),
       // A sub-job rewrites its own section (brain_set_job_section), never the parent's Current State.
       ...(brain ? [...brainReadTools(), ...brainSupervisorTools().filter((t) => !docSection || !["brain_set_current_state", "brain_compact"].includes(t.def.function.name))] : []),
       // Integration and undo commit on the job branch: record the new head after each.
@@ -353,12 +367,22 @@ export class SupervisorRunner implements CodingRunner {
         checks.push({ command, exitCode: res.killed ? null : res.exitCode, logRef });
       }
     }
+    if(ctx.lab && ctx.lab.rootJobId===ctx.taskId){
+      const status=ctx.lab.manager.status(ctx.lab.project,ctx.lab.name);
+      for(const name of Object.keys(status.lab.recipe.checks)){
+        const result=status.checks.find(check=>check.name===name&&check.revision===status.heads[check.repository]);
+        const repo=status.lab.repositories.find(repo=>repo.alias===result?.repository);
+        const clean=repo && !(await dirtyPaths(repo.worktree)).length;
+        const logRef=ctx.artifacts.write({taskId:ctx.taskId,executionId,kind:"check_log",label:`lab:${name}`,content:ctx.lab.manager.redact(ctx.lab.project,ctx.lab.name,result?`revision ${result.revision}\nexit ${result.exitCode}\n${result.stdout}\n${result.stderr}`:"No check result exists for this candidate revision."),extension:".log"});
+        checks.push({command:`lab:${name}`,exitCode:result&&clean&&!result.killed?result.exitCode:null,logRef,revision:result?.revision??null});
+      }
+    }
     const finish = loop.kind === "terminal" ? loop.value : null;
     const checksPass = checks.length > 0 && checks.every((c) => c.exitCode === 0);
     const acceptance = scopeViolation.length || checks.some((c) => c.exitCode !== 0) ? "unmet" : finish?.status === "completed" && checksPass ? "met" : "not_verified";
     // A sub-job's branches are integrated by its parent job (integrate_task), not merged by hand.
     const branchNote = [...repos.values()]
-      .map((r) => (isSubJob ? `${r.alias}: delivered on ${r.branch}; the parent job ${spec.parentTaskId} integrates it through its merge queue (integrate_task ${label})` : `${r.alias}: review and merge with \`git merge --no-ff ${r.branch}\``))
+      .map((r) => (isSubJob ? `${r.alias}: delivered on ${r.branch}; the parent job ${spec.parentTaskId} integrates it through its merge queue (integrate_task ${label})` : ctx.lab ? `${r.alias}: candidate on ${r.branch}; use lab_promote under the configured promotion policy` : `${r.alias}: review and merge with \`git merge --no-ff ${r.branch}\``))
       .join("; ");
 
     if (brain?.workingDoc) {

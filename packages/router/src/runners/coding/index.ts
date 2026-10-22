@@ -6,6 +6,7 @@ import { hasRepoAgentConfig } from "../../workspaces/worktree.js";
 import { commitAs } from "../../attribution/index.js";
 import { workerActor } from "../../harness/worker.js";
 import { baseResult, type RunContext, type RunOutcome } from "../types.js";
+import { startTaskTools, taskToolsBrief, type TaskToolsBridge } from "./task-tools.js";
 import { startPolicyGateway } from "./policy-gateway.js";
 import { minimalEnv, runProcess, type RunResult } from "./process.js";
 import { agentHome, finishCoding, prepareWorkspace, resumeWorkspace, sourceDirtyFinding } from "./finish.js";
@@ -59,8 +60,8 @@ ${readOnlyAliases.length ? `- Other repositories (${readOnlyAliases.join(", ")})
 ${upstream}${ctx.retry ? `\n## Previous attempt\n${renderRetryContext(ctx.retry)}` : ""}`;
 }
 
-/** OpenCode config pinned to the job's policy gateway; passed inline so it outranks project files. */
-export function openCodeConfig(gatewayUrl: string, model: string, ctx: RunContext, allowedCommands: string[]) {
+/** OpenCode /docs configuration: inline overrides project settings; managed policies may override it. */
+export function openCodeConfig(gatewayUrl: string, model: string, ctx: RunContext, allowedCommands: string[], bridge?: Pick<TaskToolsBridge, "url">) {
   const limits = ctx.plan.candidates[0];
   const bash: Record<string, string> = { "*": "deny" };
   for (const c of allowedCommands) bash[c] = "allow";
@@ -84,8 +85,12 @@ export function openCodeConfig(gatewayUrl: string, model: string, ctx: RunContex
     },
     model: `switchyard/${model}`,
     small_model: `switchyard/${model}`,
-    permission: { edit: "allow", bash, webfetch: "deny" },
-    mcp: {},
+    permission: { edit: "allow", bash, webfetch: "deny", ...(bridge ? { "switchyard_task_*": "allow" } : {}) },
+    mcp: bridge ? { switchyard_task: {
+      type: "remote", url: bridge.url, enabled: true, oauth: false,
+      headers: { Authorization: "Bearer {env:SWITCHYARD_TASK_TOOLS_TOKEN}" },
+      timeout: Math.max(ctx.cfg.team.budget_request_wait_seconds, ctx.cfg.execution.check_timeout_seconds) * 1000 + 5000,
+    } } : {},
   };
 }
 
@@ -122,7 +127,7 @@ export class ExternalCodingRunner implements CodingRunner {
     const executionId = ctx.gate.admission.createExecution("task", spec.profile, [{ taskId: ctx.taskId, itemId: ctx.taskId }]);
     // The agent's own tool calls run inside its process: the session sees them only in the
     // transcript it sends with each request, not in the tool journal.
-    ctx.session?.note("external coding agent: tool calls are not journaled; they appear in the transcript", { runner: ctx.cfg.coding.runner, executionId });
+    ctx.session?.note("external agent built-in tool calls appear in its transcript; SwitchYard MCP checks and budget tools are journaled", { runner: ctx.cfg.coding.runner, executionId });
     const snapshot = async (served: { endpointId: string; requestId: string } | null, note: string) => {
       const actor = served ? { ...workerActor(ctx, "implementer", served.endpointId), request: served.requestId } : { ...workerActor(ctx, "implementer"), role: "tool" };
       pointer.setHead(alias, await commitAs(ws.worktreePath, actor, `implementer: ${note}`).catch(() => null));
@@ -152,40 +157,49 @@ export class ExternalCodingRunner implements CodingRunner {
     const providedContext = await contextBrief(ctx, ws.worktreePath, ws.baseSha);
     const stopper = new AbortController();
     let stopReason: string | null = null;
+    let bridge: TaskToolsBridge | undefined;
     const gateway = await startPolicyGateway(ctx, executionId, {
       maxDenied: ctx.cfg.coding.max_denied_requests,
       onStop: (reason) => {
         stopReason ??= reason;
         stopper.abort(reason);
       },
-      beforeRequest: (last) => (last ? snapshot(last, "edits from previous response") : Promise.resolve()),
+      beforeRequest: async (last) => {
+        await bridge?.idle();
+        if (last) await snapshot(last, "edits from previous response");
+      },
     });
     const onCtxAbort = () => stopper.abort(String(ctx.signal.reason ?? "aborted"));
     ctx.signal.addEventListener("abort", onCtxAbort);
 
-    const home = agentHome(ctx, ws);
-    const promptFile = path.join(home, "TASK.md");
-    writeFileSync(promptFile, brief(ctx, spec.repositoryAliases.filter((a) => a !== alias), providedContext) + resumed);
-    const deadline = ctx.tasks.get(ctx.taskId)!.row.deadline_at ?? ctx.now() + ctx.cfg.execution.job_timeout_seconds * 1000;
-    const timeoutMs = Math.max(10_000, deadline - ctx.now() - ctx.cfg.execution.check_timeout_seconds * 1000 * Math.min(1, spec.constraints.checks?.length ?? 0));
-    const env = minimalEnv({
-      HOME: home,
-      USERPROFILE: home,
-      XDG_CONFIG_HOME: path.join(home, ".config"),
-      XDG_DATA_HOME: path.join(home, ".local", "share"),
-      XDG_CACHE_HOME: path.join(home, ".cache"),
-      APPDATA: path.join(home, "AppData", "Roaming"),
-      LOCALAPPDATA: path.join(home, "AppData", "Local"),
-      SWITCHYARD_JOB_TOKEN: gateway.token,
-      SWITCHYARD_BASE_URL: gateway.baseUrl,
-      SWITCHYARD_MODEL: gateway.model,
-      SWITCHYARD_PROMPT_FILE: promptFile,
-      SWITCHYARD_WORKTREE: ws.worktreePath,
-      OPENCODE_CONFIG_CONTENT: JSON.stringify(openCodeConfig(gateway.baseUrl, gateway.model, ctx, ctx.cfg.coding.allowed_commands)),
-    });
-
     let agent: RunResult;
     try {
+      const home = agentHome(ctx, ws);
+      bridge = await startTaskTools(ctx, ws.worktreePath, home);
+      const promptFile = path.join(home, "TASK.md");
+      writeFileSync(promptFile, brief(ctx, spec.repositoryAliases.filter((a) => a !== alias), providedContext) + taskToolsBrief(bridge) + resumed);
+      const deadline = ctx.tasks.get(ctx.taskId)!.row.deadline_at ?? ctx.now() + ctx.cfg.execution.job_timeout_seconds * 1000;
+      const timeoutMs = Math.max(10_000, deadline - ctx.now() - ctx.cfg.execution.check_timeout_seconds * 1000 * Math.min(1, spec.constraints.checks?.length ?? 0));
+      const env = minimalEnv({
+        HOME: home,
+        USERPROFILE: home,
+        XDG_CONFIG_HOME: path.join(home, ".config"),
+        XDG_DATA_HOME: path.join(home, ".local", "share"),
+        XDG_CACHE_HOME: path.join(home, ".cache"),
+        APPDATA: path.join(home, "AppData", "Roaming"),
+        LOCALAPPDATA: path.join(home, "AppData", "Local"),
+        SWITCHYARD_TASK_TOOLS_URL: bridge.url,
+        SWITCHYARD_TASK_TOOLS_TOKEN: bridge.token,
+        SWITCHYARD_TASK_ID: ctx.taskId,
+        SWITCHYARD_JOB_TOKEN: gateway.token,
+        SWITCHYARD_BASE_URL: gateway.baseUrl,
+        SWITCHYARD_MODEL: gateway.model,
+        SWITCHYARD_PROMPT_FILE: promptFile,
+        SWITCHYARD_WORKTREE: ws.worktreePath,
+        OPENCODE_CONFIG_CONTENT: JSON.stringify(openCodeConfig(gateway.baseUrl, gateway.model, ctx, ctx.cfg.coding.allowed_commands, bridge)),
+      });
+
+      if (ctx.signal.aborted) onCtxAbort();
       agent =
         ctx.cfg.coding.runner === "opencode"
           ? await runProcess(ctx.cfg.coding.command, ["run", "--model", `switchyard/${gateway.model}`, "--format", "json", "--dir", ws.worktreePath, "--file", promptFile, "Complete the task described in the attached TASK.md."], {
@@ -198,7 +212,7 @@ export class ExternalCodingRunner implements CodingRunner {
           : await runProcess(ctx.cfg.coding.command, [], { cwd: ws.worktreePath, env, timeoutMs, signal: stopper.signal, shell: true });
     } finally {
       ctx.signal.removeEventListener("abort", onCtxAbort);
-      await gateway.close();
+      await Promise.all([gateway.close(), bridge?.close()]);
     }
     // Whatever the agent changed after its last request belongs to the last response.
     await snapshot(gateway.stats.lastServed, "final edits");

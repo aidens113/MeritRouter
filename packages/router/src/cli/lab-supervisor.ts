@@ -10,7 +10,7 @@ export async function serveLabs(sy: Switchyard): Promise<void> {
   let stopped = false;
   let failure: unknown;
   let closing: Promise<void> | undefined;
-  const stop = () => { stopped = true; closing ??= sy.labs.close(); };
+  const stop = () => { stopped = true; closing ??= sy.labs.close().catch(error => { failure ??= error; }); };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
   const heartbeat = setInterval(() => {

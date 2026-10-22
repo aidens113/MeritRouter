@@ -11,6 +11,11 @@ export { LabsConfigSchema, LabRecipeSchema, ProjectLabsSchema, LabNameSchema, ty
 export { type LabRecord, type LabServiceRecord } from "./labs/store.js";
 export { type LabCheckResult } from "./labs/checks.js";
 export { ensureLabSupervisor, LabSupervisorLease, type LabSupervisorState } from "./operations/lab-supervisor.js";
+export { type LabRunContext } from "./labs/binding.js";
+export { LabOperationInputSchema, type LabOperationInput, type LabOperation } from "./labs/control.js";
+export { LabHttpInputSchema, type LabHttpInput, type LabHttpResult } from "./labs/http.js";
+export { LabPromotionInputSchema, LabPromotionResultSchema, type LabPromotionInput, type LabPromotionResult } from "./labs/promotion.js";
+export { type LabPublicStatus } from "./labs/public-status.js";
 export { backfillProjects } from "./projects/backfill.js";
 export {
   WorkerTaskSchema,

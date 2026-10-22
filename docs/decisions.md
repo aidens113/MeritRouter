@@ -228,9 +228,18 @@ how to get one instead of failing (see the packaging question in the working doc
 - Pricing: `pricing.cachedInputUsdPerMillion` (with `cachedInputSource`) comes from OpenRouter's
   `input_cache_read`, a paid provider's `pricing_url`, `paid.models[].cached_input_usd_per_million`,
   or a catalog override. Settled paid spend and task cost price cached tokens at it; without it
-  cached input costs the input price. The worst-case reservation stays at the full input price.
-  Known gap: Anthropic cache writes (1.25x) are counted as ordinary input. `cacheHit` is
+  cached input costs the input price. Cache creation is persisted separately and priced only
+  from `paid.models[].cache_write_input_usd_per_million` with its configuration provenance.
+  Reservations use the maximum ordinary/read/write input rate. Paid Anthropic calls omit
+  cache markers when the write price is unknown, and for native search whose growing internal
+  prompt has no input-only reservation bound. Unexpected creation after that boundary discards
+  the response and quarantines the endpoint; unknown actual cost retains the finite reservation
+  with an uncertain basis pending reconciliation. No fixed premium is assumed. `cacheHit` is
   `cachedInputTokens > 0`, null when the provider reports no usage.
+
+  This no-marker boundary follows Anthropic's documented condition that automatic server-tool
+  cache breakpoints require at least one explicit marker ([tool caching](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)).
+  Separate counters follow its [prompt caching contract](https://platform.claude.com/docs/en/build-with-claude/prompt-caching).
 - Truncation: a plain reply cut off at the output limit gets one continuation request ("continue
   exactly where you stopped") on the sticky endpoint and the two parts are joined in the
   transcript; a cut-short tool call (unparseable arguments, or an empty reply) retries the turn

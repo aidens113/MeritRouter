@@ -14,6 +14,7 @@ import { baseResult, type RunContext, type RunOutcome } from "./types.js";
 import { taskBrief } from "./prompts.js";
 import { baseCommitsFor, contextManifest } from "./completion.js";
 import { criterionTexts } from "../core/task.js";
+import { labHarnessTools } from "../labs/tools.js";
 
 /** Read-only repository investigation (inspect, analyze, review) on the shared agent harness. */
 export async function runReadOnly(ctx: RunContext): Promise<RunOutcome> {
@@ -27,7 +28,7 @@ export async function runReadOnly(ctx: RunContext): Promise<RunOutcome> {
   const allowArtifacts = profile.tools === "repository_read_and_artifacts";
   const brain = workerBrainEnv(ctx, role);
   const env: HarnessEnv = { ctx, role, readers, universe, allowArtifacts, edits: new Set(), ...(brain ? { brain } : {}) };
-  const tools: HarnessTool[] = [...repoTools(spec.repositoryAliases), ...(allowArtifacts ? [artifactTool()] : []), ...(brain ? brainReadTools() : []), ...webTools(), requestBudgetTool()];
+  const tools: HarnessTool[] = [...repoTools(spec.repositoryAliases), ...(allowArtifacts ? [artifactTool()] : []), ...(brain ? brainReadTools() : []), ...webTools(), requestBudgetTool(), ...labHarnessTools().filter(tool => ["lab_status", "lab_logs"].includes(tool.def.function.name))];
   const maxTokens = Math.min(profile.max_output_tokens, spec.budget?.maxOutputTokens ?? Infinity);
   const limits = planLimits(ctx.plan, ctx.cfg.routing.max_endpoint_fallbacks);
   const inputBudget = Math.max(2000, limits.contextLimitTokens - maxTokens - estimateTokens([], tools.map((t) => t.def)) - 500);
