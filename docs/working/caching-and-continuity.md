@@ -73,6 +73,37 @@ different files except `src/harness/loop.ts`; schedule C1's loop changes after J
 
 ---
 
+## Worker Briefs
+
+### Brief: caching-c1-c2
+- Repository: this repository. Work in your own git worktree on branch `feat/caching`; run
+  `pnpm install --frozen-lockfile` there first. Two other workers edit other files at the same time.
+- Task: implement C1 then C2 exactly as `## Design` and `## Phases` describe: provider cache
+  hints (Anthropic `cache_control` breakpoints; verify Anthropic's current breakpoint limit and
+  minimum cacheable length from its docs and record them in `docs/decisions.md`;
+  OpenAI-compatible `prompt_cache_key` only where the registry marks support), endpoint
+  stickiness per session, cached-input pricing (`cachedInputUsdPerMillion` from discovery or an
+  override; cost and paid spend use it; `cacheHit` from `cachedInputTokens > 0`), truncation
+  recovery, prefix-stable compaction, and the panel's cache display (cached share and saving).
+  Usage already carries `cachedInputTokens` and `uncachedInputTokens` (2026-10-21); build on them.
+- Facts: Ollama Cloud reports `prompt_tokens_details.cached_tokens` (90% cached on a live
+  supervisor job). Never hard-code prices; keep provenance as elsewhere in the catalog.
+- Required reads: this document; `AGENTS.md` Code Structure; the files named in the 2026-10-20 ledger.
+- Owns: `packages/router/src/{providers,harness,gateway,models,admission,paid,sessions,routing,core,config}/**`,
+  `packages/router/src/storage/{usage,migrations}.ts` (append migrations only),
+  `packages/router/tests/**` (new files, or tests of the areas above),
+  `apps/panel/components/{requests-table,requests-view,task-detail,session-timeline}.tsx`,
+  `apps/panel/app/all/models/**`, `docs/decisions.md`, `docs/working/reports/caching-c1-c2.md`.
+- Must not touch: `packages/router/src/{mcp.ts,cli.ts,cli/**,operations/**,admin/projects.ts,projects/**}`,
+  `apps/panel/next.config.ts`, the panel shell, projects and settings pages, `docs/setup.md`,
+  `docs/operations.md` (put text for them in your report), this document's Current State and ledger.
+- Definition of done: the Phases acceptance tests exist and pass; `pnpm -r typecheck`; full
+  `npx vitest run` in packages/router; `pnpm -r build`. Never use the user's config, brain, or
+  port 4477; for a panel check use the demo (`seed:demo`) on a spare port and stop it afterwards.
+- Report to: docs/working/reports/caching-c1-c2.md
+
+---
+
 ## Work Ledger
 
 ### 2026-10-20 — Plan written
