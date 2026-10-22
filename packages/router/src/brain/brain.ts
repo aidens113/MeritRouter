@@ -74,6 +74,7 @@ export function kindOf(input: string): EntryKind {
   if (/\/working\/[^/]+\/reports\/[^/]+\.md$/.test(p)) return "report";
   if (/\/working\/[^/]+\/archive\//.test(p)) return "archive";
   if (/\/working\/[^/]+\.md$/.test(p)) return "working_doc";
+  if (/^projects\/[a-z0-9][a-z0-9._-]*\/labs\/[a-z0-9][a-z0-9-]{0,40}\.md$/.test(p)) return "working_doc";
   if (/^global\/lessons\//.test(p)) return "lesson";
   if (/glossary\.md$/.test(p)) return "glossary";
   if (/\/decisions\//.test(p)) return "decision";

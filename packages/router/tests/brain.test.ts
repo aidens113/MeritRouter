@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { Brain } from "../src/brain/brain.js";
+import { workingDocTemplate } from "../src/brain/protocol.js";
+import { Brain, kindOf } from "../src/brain/brain.js";
 import { BrainAccess, type Principal } from "../src/brain/access.js";
 import { openDatabase } from "../src/storage/db.js";
 import { parseConfig } from "../src/config/load.js";
@@ -168,4 +169,19 @@ describe("brain: working documents in git", () => {
     db.close();
     tmp.cleanup();
   });
+});
+
+
+it("treats only an exact lab lane as a working document with scoped protocol operations",async()=>{
+ const {brain,access,worker}=setup();await brain.ensure();
+ const lane="projects/demo/labs/feature.md";
+ const principal=access.principalFor("supervisor",{project:"demo",effort:"job-j1",task:null,repos:["core"],jobId:"j1",tier:"T2",briefGrants:[{pattern:lane,mode:"write"}]});
+ await brain.write(principal,supActor,lane,workingDocTemplate({title:"Feature lab",statusDetail:"Active",owner:"j1",scope:"fixture",currentState:"Root team j1"}),"Create lane");
+ await brain.setCurrentState(principal,supActor,lane,"Exact checked revision: fixture");
+ await brain.appendLedger(principal,supActor,lane,goodLedger);
+ await brain.appendChannel(supActor,lane,[{id:1,at:Date.now(),kind:"note",author:"j1",authorTask:null,refs:[],text:"integration ready"}]);
+ expect(brain.read(principal,lane).content).toContain("integration ready");
+ expect(kindOf(lane)).toBe("working_doc");expect(kindOf("projects/demo/labs/feature/reports/worker.md")).not.toBe("working_doc");
+ await expect(brain.appendLedger(principal,supActor,"projects/demo/labs/feature/reports/worker.md",goodLedger)).rejects.toThrow(/not a working document/);
+ await expect(brain.setCurrentState(worker(),workActor,lane,"escape")).rejects.toThrow(/no write access/);
 });

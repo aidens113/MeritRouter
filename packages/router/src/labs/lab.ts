@@ -1,3 +1,11 @@
+import { LabControl, type LabOperation, type LabOperationInput } from "./control.js";
+import { labCoordination, type LabCoordination } from "./coordination.js";
+import { LabPromotionResultSchema, promoteLab, type LabPromotionInput, type LabPromotionResult } from "./promotion.js";
+import { labHttp, type LabHttpInput, type LabHttpResult } from "./http.js";
+import { claimLabJob, bindLabTask, labTaskContext, labConfiguration, assertLabTaskBases, type LabRunContext } from "./binding.js";
+import { redactLabText, publicLabStatus, type LabPublicStatus } from "./public-status.js";
+import type { TaskStore } from "../storage/tasks.js";
+import type { WorkerTask } from "../core/task.js";
 import { worktreeHead } from "./revisions.js";
 import { pruneTaskWorktrees, type LabRetentionResult } from "./retention.js";
 import { SwitchyardError } from "../core/errors.js";
@@ -17,7 +25,7 @@ import { allocatePorts } from "./ports.js";
 import { labOwnedPath } from "./paths.js";
 import { labEnvironment, labValues } from "./environment.js";
 import { LabServices } from "./services.js";
-import { labChecks, runLabCheck, type LabCheckResult } from "./checks.js";
+import { labChecks, runLabCheck, LabCheckResultSchema, type LabCheckResult } from "./checks.js";
 export interface LabManagerOptions {
   db: Db;
   storageDir: string;
@@ -36,6 +44,7 @@ export class LabManager {
   readonly store: LabsStore;
   readonly owner = randomBytes(24).toString("hex");
   readonly services: LabServices;
+  readonly controls: LabControl;
   private timer: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
   private closed = false;
@@ -46,8 +55,15 @@ export class LabManager {
   constructor(readonly options: LabManagerOptions) {
     this.store = new LabsStore(options.db);
     this.services = new LabServices(this.store, LabsConfigSchema.parse(options.cfg.labs), this.owner, this.abort.signal);
+    this.controls = new LabControl(this.store, this.owner, (project, name, input) => this.executeControl(project, name, input), (project, name) => !this.busyLabs.has(`${project}/${name}`));
     if (options.monitor !== false) {
-      this.timer = setInterval(() => void this.tick().catch(() => undefined), 1000);
+      this.timer = setInterval(() => {
+        if (this.closed)
+          return;
+        // Lifecycle/check requests may outlast one tick; their services retain leases while awaited.
+        this.options.db.prepare("UPDATE lab_services SET owner_until=? WHERE owner_id=? AND state IN ('running','starting','backoff')").run(Date.now() + 60000, this.owner);
+        void this.tick().catch(() => undefined);
+      }, 1000);
       this.timer.unref();
     }
   }
@@ -70,13 +86,208 @@ export class LabManager {
   create(project: string, name: string, input: {
     goal?: string;
     targetBranches?: Record<string, string>;
-  } = {}): Promise<LabStatus> { return this.track(() => this.createLab(project, name, input), `${project}/${name}`); }
-  start(project: string, name: string): Promise<LabStatus> { return this.track(() => this.startLab(project, name), `${project}/${name}`); }
-  stop(project: string, name: string): Promise<LabStatus> { return this.track(() => this.stopLab(project, name), `${project}/${name}`); }
-  restart(project: string, name: string, service?: string): Promise<LabStatus> { return this.track(() => this.restartLab(project, name, service), `${project}/${name}`); }
-  check(project: string, name: string, check: string): Promise<LabCheckResult> { return this.track(() => this.checkLab(project, name, check), `${project}/${name}`); }
-  refresh(project: string, name: string): Promise<LabStatus> { return this.track(() => this.refreshLab(project, name), `${project}/${name}`); }
-  destroy(project: string, name: string): Promise<void> { return this.track(() => this.destroyLab(project, name), `${project}/${name}`); }
+  } = {}): Promise<LabStatus> {
+    return this.track(() => this.createLab(project, name, input), `${project}/${name}`);
+  }
+  start(project: string, name: string): Promise<LabStatus> {
+    return this.routedStatus(project, name, { kind: "start" }, () => this.startLab(project, name));
+  }
+  stop(project: string, name: string): Promise<LabStatus> {
+    return this.routedStatus(project, name, { kind: "stop" }, () => this.stopLab(project, name));
+  }
+  restart(project: string, name: string, service?: string): Promise<LabStatus> {
+    return this.routedStatus(project, name, { kind: "restart", ...(service ? { service } : {}) }, () => this.restartLab(project, name, service));
+  }
+  refresh(project: string, name: string): Promise<LabStatus> {
+    return this.routedStatus(project, name, { kind: "refresh" }, () => this.refreshLab(project, name));
+  }
+  async check(project: string, name: string, check: string): Promise<LabCheckResult> {
+    if (this.foreignOwner(project, name)) {
+      const op = await this.control(project, name, { kind: "check", name: check });
+      return LabCheckResultSchema.parse(op.result);
+    }
+    return this.track(() => this.checkLab(project, name, check), `${project}/${name}`);
+  }
+  async destroy(project: string, name: string): Promise<void> {
+    if (this.foreignOwner(project, name)) {
+      await this.control(project, name, { kind: "destroy" });
+      return;
+    }
+    return this.track(() => this.destroyLab(project, name), `${project}/${name}`);
+  }
+  private foreignOwner(project: string, name: string): boolean {
+    const lab = this.require(project, name);
+    const owner = this.controls.activeOwner(lab.id);
+    return !!owner && owner !== this.owner;
+  }
+  private async routedStatus(project: string, name: string, input: LabOperationInput, run: () => Promise<LabStatus>): Promise<LabStatus> {
+    if (this.foreignOwner(project, name)) {
+      await this.control(project, name, input);
+      return this.status(project, name);
+    }
+    return this.track(run, `${project}/${name}`);
+  }
+  reloadConfig(): void {
+    Object.assign(this.services.config, LabsConfigSchema.parse(this.options.cfg.labs));
+  }
+  requestControl(project: string, name: string, input: LabOperationInput, by = "human:cli"): LabOperation {
+    this.options.project(project);
+    return this.controls.submit(project, name, input, by);
+  }
+  operation(project: string, name: string, id: string): LabOperation | null {
+    this.options.project(project);
+    return this.controls.get(project, name, id);
+  }
+  waitOperation(project: string, name: string, id: string, options: {
+    timeoutMs?: number;
+    signal?: AbortSignal;
+  } = {}): Promise<LabOperation> {
+    this.options.project(project);
+    return this.controls.wait(project, name, id, { signal: this.abort.signal, ...options });
+  }
+  async control(project: string, name: string, input: LabOperationInput, by = "controller", options: {
+    timeoutMs?: number;
+    signal?: AbortSignal;
+  } = {}): Promise<LabOperation> {
+    const op = this.requestControl(project, name, input, by);
+    return this.waitOperation(project, name, op.id, options);
+  }
+  async processControls(): Promise<void> {
+    if (this.closed)
+      return;
+    await this.controls.processAll();
+  }
+  private async executeControl(project: string, name: string, input: LabOperationInput): Promise<unknown> {
+    return this.track(async () => {
+      switch (input.kind) {
+        case "create": {
+          const { kind, ...value } = input;
+          return publicLabStatus(await this.createLab(project, name, value));
+        }
+        case "start": return publicLabStatus(await this.startLab(project, name));
+        case "stop": return publicLabStatus(await this.stopLab(project, name));
+        case "restart": return publicLabStatus(await this.restartLab(project, name, input.service));
+        case "refresh": return publicLabStatus(await this.refreshLab(project, name));
+        case "destroy":
+          await this.destroyLab(project, name);
+          return { destroyed: true };
+        case "check": return this.checkLab(project, name, input.name);
+        case "after_integrate": return this.afterIntegrationLab(project, name, input.expectedHeads);
+        case "promote": return this.promoteLab(project, name, { by: input.by, reason: input.reason });
+      }
+    }, `${project}/${name}`);
+  }
+  coordination(project: string, name: string): Promise<LabCoordination> {
+    return labCoordination(this, project, name);
+  }
+  async promote(project: string, name: string, input: LabPromotionInput): Promise<LabPromotionResult> {
+    if (this.foreignOwner(project, name)) {
+      const op = await this.control(project, name, { kind: "promote", ...input });
+      return LabPromotionResultSchema.parse(op.result);
+    }
+    return this.track(() => this.promoteLab(project, name, input), `${project}/${name}`);
+  }
+  private promoteLab(project: string, name: string, input: LabPromotionInput): Promise<LabPromotionResult> {
+    return promoteLab(this, project, name, input, { refresh: () => this.refreshLab(project, name), start: () => this.startLab(project, name), check: check => this.checkLab(project, name, check) });
+  }
+  async afterIntegration(project: string, name: string, expectedHeads: Record<string, string>): Promise<LabCheckResult[]> {
+    if (this.foreignOwner(project, name)) {
+      const op = await this.control(project, name, { kind: "after_integrate", expectedHeads });
+      return z.array(LabCheckResultSchema).parse(op.result);
+    }
+    return this.track(() => this.afterIntegrationLab(project, name, expectedHeads), `${project}/${name}`);
+  }
+  private async afterIntegrationLab(project: string, name: string, expectedHeads: Record<string, string>): Promise<LabCheckResult[]> {
+    const before = this.status(project, name);
+    const parsed = z.record(z.string(), z.string().regex(/^[a-f0-9]{40,64}$/)).parse(expectedHeads);
+    for (const [alias, head] of Object.entries(parsed))
+      if (before.heads[alias] !== head)
+        throw new SwitchyardError("lab_revision_changed", "lab advanced before its integration hook could run");
+    const order: string[] = [];
+    const visit = (service: string) => {
+      if (order.includes(service))
+        return;
+      for (const dep of before.lab.recipe.services[service]!.after)
+        visit(dep);
+      order.push(service);
+    };
+    for (const service of Object.keys(before.lab.recipe.services))
+      visit(service);
+    for (const service of order.filter(n => before.lab.recipe.services[n]!.restart_on_integrate))
+      await this.restartLab(project, name, service);
+    const out: LabCheckResult[] = [];
+    for (const [nameOfCheck, check] of Object.entries(before.lab.recipe.checks))
+      if (typeof check !== "string" && check.on_integrate)
+        out.push(await this.checkLab(project, name, nameOfCheck));
+    for (const [alias, head] of Object.entries(parsed))
+      if (this.status(project, name).heads[alias] !== head)
+        throw new SwitchyardError("lab_revision_changed", "lab advanced while its integration checks ran");
+    return out;
+  }
+  claimJob(project: string, name: string, jobId: string, tasks: TaskStore): LabRunContext {
+    return claimLabJob(this, project, name, jobId, tasks);
+  }
+  bindTask(project: string, taskId: string, spec: WorkerTask, tasks: TaskStore): LabRunContext | null {
+    return bindLabTask(this, project, taskId, spec, tasks);
+  }
+  configuration(project: string, name: string): ResolvedConfig {
+    return labConfiguration(this, project, name);
+  }
+  contextForTask(project: string, taskId: string, spec: WorkerTask, tasks: TaskStore): {
+    binding: LabRunContext | null;
+    cfg: ResolvedConfig;
+  } {
+    return labTaskContext(this, project, taskId, spec, tasks);
+  }
+  assertTaskBases(binding: LabRunContext, spec: WorkerTask, tasks: TaskStore): Promise<void> {
+    return assertLabTaskBases(binding, spec, tasks);
+  }
+  publicStatus(project: string, name: string): LabPublicStatus & {
+    ownership: "local" | "other" | null;
+  } {
+    const status = this.status(project, name);
+    const owner = this.controls.activeOwner(status.lab.id);
+    return { ...publicLabStatus(status), ownership: owner ? (owner === this.owner ? "local" : "other") : null };
+  }
+  private publicOperationResult(project: string, name: string, op: LabOperation): unknown {
+    if (op.state !== "completed")
+      return null;
+    switch (op.input.kind) {
+      case "destroy": return z.object({ destroyed: z.literal(true) }).parse(op.result);
+      case "check": {
+        const result = LabCheckResultSchema.parse(op.result);
+        return { ...result, stdout: this.redact(project, name, result.stdout), stderr: this.redact(project, name, result.stderr) };
+      }
+      case "after_integrate": return z.array(LabCheckResultSchema).parse(op.result).map(result => ({ ...result, stdout: this.redact(project, name, result.stdout), stderr: this.redact(project, name, result.stderr) }));
+      case "promote": {
+        const result = LabPromotionResultSchema.parse(op.result);
+        return { ...result, checks: result.checks.map(check => ({ ...check, stdout: this.redact(project, name, check.stdout), stderr: this.redact(project, name, check.stderr) })), error: result.error ? "Promotion did not complete; inspect local supervisor logs for details." : null };
+      }
+      default: return this.store.get(project, name)?.state === "destroyed" ? null : this.publicStatus(project, name);
+    }
+  }
+  publicOperation(project: string, name: string, id: string) {
+    const op = this.operation(project, name, id);
+    if (!op)
+      return null;
+    return { id: op.id, result: this.publicOperationResult(project, name, op), kind: op.input.kind, ...(op.input.kind === "promote" && op.input.reason ? { promotionReason: this.redact(project, name, op.input.reason) } : {}), state: op.state, requestedBy: op.requestedBy, errorCode: op.errorCode, errorMessage: op.errorCode ? "Lab operation failed; inspect local supervisor logs for details." : null, createdAt: op.createdAt, updatedAt: op.updatedAt };
+  }
+  publicOperations(project: string, name: string, limit = 20) {
+    this.options.project(project);
+    const parsed = z.number().int().min(1).max(100).parse(limit);
+    const rows = z.array(z.object({ id: z.string() })).parse(this.options.db.prepare("SELECT id FROM lab_operations WHERE project_id=? AND lab_name=? ORDER BY created_at DESC LIMIT ?").all(project, name, parsed));
+    return rows.flatMap(row => this.publicOperation(project, name, row.id) ?? []);
+  }
+  redact(project: string, name: string, text: string): string {
+    this.options.project(project);
+    const lab = this.store.get(project, name);
+    if (!lab)
+      return text;
+    return redactLabText({ lab, services: this.store.services(lab.id), checks: [], urls: {}, heads: {} }, text);
+  }
+  http(project: string, name: string, input: LabHttpInput): Promise<LabHttpResult> {
+    return labHttp(this, project, name, input);
+  }
   private require(project: string, name: string): LabRecord {
     z.string().regex(/^[a-z0-9][a-z0-9._-]*$/).parse(project);
     LabNameSchema.parse(name);
@@ -118,11 +329,17 @@ export class LabManager {
     }
     return { lab, services: this.store.services(lab.id), checks: labChecks(this.store, lab.id), urls, heads: Object.fromEntries(lab.repositories.map(r => [r.alias, worktreeHead(r.worktree)])) };
   }
-  touch(project: string, name: string): void { const lab = this.require(project, name); lab.lastActivity = Date.now(); lab.updatedAt = Date.now(); this.store.save(lab); }
+  touch(project: string, name: string): void {
+    const lab = this.require(project, name);
+    lab.lastActivity = Date.now();
+    lab.updatedAt = Date.now();
+    this.store.save(lab);
+  }
   private async createLab(project: string, name: string, input: {
     goal?: string;
     targetBranches?: Record<string, string>;
   } = {}): Promise<LabStatus> {
+    this.reloadConfig();
     input = z.object({ goal: z.string().max(16000).optional(), targetBranches: z.record(z.string().regex(/^[a-z][a-z0-9_-]*$/), z.string().min(1).max(300)).optional() }).strict().parse(input);
     LabNameSchema.parse(name);
     z.string().regex(/^[a-z0-9][a-z0-9._-]*$/).parse(project);
@@ -149,7 +366,10 @@ export class LabManager {
       if (this.store.get(project, name))
         throw new SwitchyardError("lab_conflict", "lab name already exists; destroyed lab branches are preserved, choose a new name");
       this.store.insert(lab);
+      this.options.db.prepare("UPDATE labs SET creation_owner=?,creation_until=? WHERE id=?").run(this.owner, Date.now() + 120000, lab.id);
     });
+    const creationTimer = setInterval(() => this.options.db.prepare("UPDATE labs SET creation_until=? WHERE id=? AND creation_owner=?").run(Date.now() + 120000, lab.id, this.owner), 10000);
+    creationTimer.unref();
     try {
       if (existsSync(root))
         throw new Error("lab directory already exists and is not adopted during creation");
@@ -199,6 +419,10 @@ export class LabManager {
       this.store.save(lab);
       this.store.event(lab.id, "creation_failed", { error: (err as Error).message });
       throw err;
+    }
+    finally {
+      clearInterval(creationTimer);
+      this.options.db.prepare("UPDATE labs SET creation_until=0 WHERE id=? AND creation_owner=?").run(lab.id, this.owner);
     }
   }
   private async startLab(project: string, name: string): Promise<LabStatus> {
@@ -269,9 +493,13 @@ export class LabManager {
   logs(project: string, name: string, service: string, tail = 200): string {
     LabNameSchema.parse(service);
     z.number().int().min(1).max(2000).parse(tail);
-    return this.services.logs(this.require(project, name), service, tail);
+    return redactLabText(this.status(project, name), this.services.logs(this.require(project, name), service, tail));
   }
-  private async checkLab(project: string, name: string, check: string): Promise<LabCheckResult> { const lab = this.require(project, name); this.touch(project, name); return runLabCheck(this.store, lab, check, this.services.config.check_timeout_seconds, this.abort.signal); }
+  private async checkLab(project: string, name: string, check: string): Promise<LabCheckResult> {
+    const lab = this.require(project, name);
+    this.touch(project, name);
+    return runLabCheck(this.store, lab, check, this.services.config.check_timeout_seconds, this.abort.signal);
+  }
   private async refreshLab(project: string, name: string): Promise<LabStatus> {
     let lab = this.require(project, name);
     if (["creating", "starting"].includes(lab.state))
@@ -330,6 +558,9 @@ export class LabManager {
     for (const entry of this.list()) {
       const lab = this.require(entry.project, entry.name);
       if (lab.state === "creating") {
+        const lease = z.object({ creation_until: z.number() }).parse(this.options.db.prepare("SELECT creation_until FROM labs WHERE id=?").get(lab.id));
+        if (lease.creation_until > Date.now())
+          continue;
         lab.state = "failed";
         lab.updatedAt = Date.now();
         this.store.save(lab);
@@ -346,12 +577,16 @@ export class LabManager {
       }
     }
   }
-  async pruneTaskWorktrees(): Promise<LabRetentionResult> { return pruneTaskWorktrees(this.options.db, this.options.storageDir, this.services.config.keep_task_worktrees_days, this.options.project); }
+  async pruneTaskWorktrees(): Promise<LabRetentionResult> {
+    return pruneTaskWorktrees(this.options.db, this.options.storageDir, this.services.config.keep_task_worktrees_days, this.options.project);
+  }
   async tick(): Promise<void> {
     if (this.closed || this.ticking)
       return;
     this.ticking = true;
     try {
+      this.reloadConfig();
+      await this.processControls();
       this.options.db.prepare("UPDATE lab_services SET owner_until=? WHERE owner_id=? AND state IN ('running','starting','backoff')").run(Date.now() + 60000, this.owner);
       if (Date.now() - this.lastRetention > 3600000) {
         await this.pruneTaskWorktrees();
@@ -362,6 +597,11 @@ export class LabManager {
           continue;
         const lab = this.require(entry.project, entry.name);
         const mine = this.store.services(lab.id).some(s => s.owner_id === this.owner);
+        const activeTeam = this.options.db.prepare("SELECT t.state FROM lab_teams l JOIN tasks t ON t.id=l.root_job_id WHERE l.lab_id=? AND t.state IN ('running','cancel_requested')").get(lab.id);
+        if (activeTeam) {
+          lab.lastActivity = Date.now();
+          this.store.save(lab);
+        }
         if (mine && Date.now() - lab.lastActivity >= this.services.config.idle_stop_minutes * 60000) {
           await this.stop(lab.project, lab.name);
           this.store.event(lab.id, "idle_stopped", {});

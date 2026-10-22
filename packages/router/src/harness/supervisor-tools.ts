@@ -321,6 +321,7 @@ async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, un
         label,
         goal: String(it.goal),
         parentTaskId: jobId,
+      ...(s.ctx.spec.lab ? { lab: s.ctx.spec.lab } : {}),
         idempotencyKey: `${jobId}:${label}`,
         repositoryAliases: repos,
         ...(writable ? { writableRepository: writable } : {}),

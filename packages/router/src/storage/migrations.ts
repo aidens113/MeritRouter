@@ -836,4 +836,13 @@ export const MIGRATIONS: string[] = [
   `,
   // Cache creation usage is distinct from cache hits; nullable means unreported.
   `ALTER TABLE model_requests ADD COLUMN cache_creation_input_tokens INTEGER CHECK (cache_creation_input_tokens IS NULL OR cache_creation_input_tokens >= 0);`,
+  // A retained lab owns one live root team; lifecycle commands route to its leased service owner.
+  `
+  CREATE TABLE lab_teams(lab_id TEXT PRIMARY KEY REFERENCES labs(id),root_job_id TEXT NOT NULL REFERENCES tasks(id),created_at INTEGER NOT NULL);
+  CREATE TABLE lab_operations(id TEXT PRIMARY KEY,lab_id TEXT REFERENCES labs(id),project_id TEXT NOT NULL,lab_name TEXT NOT NULL,kind TEXT NOT NULL,input_json TEXT NOT NULL,state TEXT NOT NULL,requested_by TEXT NOT NULL,owner_id TEXT,lease_until INTEGER NOT NULL DEFAULT 0,result_json TEXT,error_code TEXT,error_message TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
+  CREATE INDEX lab_operations_pending ON lab_operations(project_id,lab_name,state,created_at);
+  ALTER TABLE labs ADD COLUMN creation_owner TEXT;
+  ALTER TABLE labs ADD COLUMN creation_until INTEGER NOT NULL DEFAULT 0;
+  CREATE TABLE lab_target_locks(repository TEXT NOT NULL,target TEXT NOT NULL,holder_id TEXT NOT NULL,lease_until INTEGER NOT NULL,PRIMARY KEY(repository,target));
+  `,
 ];

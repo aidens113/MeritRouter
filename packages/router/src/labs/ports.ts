@@ -1,7 +1,11 @@
 import net from "node:net";
 import type { Db } from "../storage/db.js";
 export function portAvailable(port: number): Promise<boolean> {
-  return new Promise((resolve) => { const server = net.createServer(); server.once("error", () => resolve(false)); server.listen({ host: "127.0.0.1", port, exclusive: true }, () => server.close(() => resolve(true))); });
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once("error", () => resolve(false));
+    server.listen({ host: "127.0.0.1", port, exclusive: true }, () => server.close(() => resolve(true)));
+  });
 }
 /** Unique reservations serialize across owners; OS-bound ports are checked and skipped. */
 export async function allocatePorts(db: Db, labId: string, names: string[], range: [
