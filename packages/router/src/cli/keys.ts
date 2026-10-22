@@ -1,5 +1,7 @@
 import { z } from "zod";
 import type { Switchyard } from "../core/service.js";
+import { keyScanText, scanAfterKeyChange } from "../admin/provider-keys.js";
+
 import { SwitchyardError } from "../core/errors.js";
 import type { ProviderErrorKind } from "../providers/errors.js";
 import { providerHealth } from "../providers/health.js";
@@ -18,6 +20,9 @@ import { out, stamp, table } from "./terminal.js";
 
 /** Environment variable `keys add` reads the new secret from. */
 export const NEW_KEY_ENV = "SWITCHYARD_NEW_KEY";
+
+/** `keys add --no-scan`: the key is stored and its provider is not listed. */
+const NOT_SCANNED = "models not listed (--no-scan): run switchyard models scan";
 
 export type KeyStatus = "available" | "unusable" | "invalid" | "out_of_credits" | "cooling" | "exhausted" | "free_quota" | "limit";
 
@@ -242,6 +247,7 @@ async function newSecret(provider: string): Promise<string> {
 
 export interface KeysFlags extends AddKeyFlags {
   test?: boolean | undefined;
+  "no-scan"?: boolean | undefined;
 }
 
 const USAGE = "usage: keys list [provider] | add <provider> --billing <class> [options] | test [provider|id|ref] | enable|disable|remove <id> | spend";
@@ -266,11 +272,14 @@ export async function keysCommand(sy: Switchyard, args: string[], flags: KeysFla
       }
       if (!json) out(keyTestText(t, 10), false);
       const k = sy.vault.add(input);
-      out(json ? { added: { ...k, ref: `vault:${k.id}` }, test: t } : `added key vault:${k.id} for ${provider.id} (...${k.last4}); run switchyard models scan to add its models`, json);
+      // The provider's models are listed now, so routing can use them without a separate scan.
+      const scan = flags["no-scan"] ? null : await scanAfterKeyChange(sy, provider.id);
+      out(json ? { added: { ...k, ref: `vault:${k.id}` }, test: t, scan } : `added key vault:${k.id} for ${provider.id} (...${k.last4})\n${scan ? keyScanText(scan) : NOT_SCANNED}`, json);
       return 0;
     }
     const k = sy.vault.add(input);
-    out(json ? { added: { ...k, ref: `vault:${k.id}` }, test: null } : `added key vault:${k.id} for ${provider.id} (...${k.last4}), ${k.billingClass}\nnext: switchyard keys test vault:${k.id} (lists the models it can use), then switchyard models scan`, json);
+    const scan = flags["no-scan"] ? null : await scanAfterKeyChange(sy, provider.id);
+    out(json ? { added: { ...k, ref: `vault:${k.id}` }, test: null, scan } : `added key vault:${k.id} for ${provider.id} (...${k.last4}), ${k.billingClass}\n${scan ? keyScanText(scan) : NOT_SCANNED}`, json);
     return 0;
   }
   if (sub === "test") {

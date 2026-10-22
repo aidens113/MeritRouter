@@ -81,6 +81,7 @@ async function main(): Promise<number> {
       "quota-group": { type: "string" },
       "account-id": { type: "string" },
       test: { type: "boolean", default: false },
+      "no-scan": { type: "boolean", default: false },
       status: { type: "string" },
       task: { type: "string" },
       job: { type: "string" },

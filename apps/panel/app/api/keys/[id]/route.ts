@@ -19,7 +19,10 @@ export async function PATCH(req: Request, ctx: Ctx) {
   return handle(async (sy) => {
     const id = await keyId(sy, ctx);
     const p = await body(req, KeyPatchBody);
-    return { key: insights.updateProviderKey(sy, id, p) };
+    const key = insights.updateProviderKey(sy, id, p);
+    // A new secret or a re-enabled key may reach models the provider's listing does not have yet.
+    const scan = key.enabled && (p.secret !== undefined || p.enabled === true) ? await insights.scanAfterKeyChange(sy, key.provider) : null;
+    return { key, scan, scanText: scan ? insights.keyScanText(scan) : null };
   });
 }
 

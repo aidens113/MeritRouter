@@ -191,11 +191,12 @@ export function AddKeyForm({ providers, billingClasses }: { providers: ProviderO
           e.preventDefault();
           const x = extrasPayload(extras, billing !== "free_tier");
           if (!x.ok) return setError(x.error);
-          const r = await run("/api/keys", "POST", { provider, label, secret, billingClass: billing, accountId: orNull(accountId), ...x.value }, { success: "Key stored in the encrypted vault. Only its last four characters are ever shown. Use Find models on its provider to list what it can use." });
+          const r = await run("/api/keys", "POST", { provider, label, secret, billingClass: billing, accountId: orNull(accountId), ...x.value }, { success: "Key stored in the encrypted vault. Only its last four characters are ever shown." });
           // The secret is cleared whether or not the request succeeded; it is never kept in the page.
           setSecret("");
           setTest(null);
           if (r.ok) {
+            if (typeof r.scanText === "string") setMessage(`Key stored in the encrypted vault (only its last four characters are ever shown). ${r.scanText}`);
             setLabel("");
             setAccountId("");
             setExtras(emptyExtras());
@@ -264,7 +265,7 @@ export function AddKeyForm({ providers, billingClasses }: { providers: ProviderO
 function LocalServerForm({ provider, local, select }: { provider: ProviderOption; local: (typeof LOCAL_SERVERS)[string]; select: ReactNode }) {
   const [baseUrl, setBaseUrl] = useState("");
   const [token, setToken] = useState("");
-  const { run, busy, error, errors, message, setError } = useAction();
+  const { run, busy, error, errors, message, setError, setMessage } = useAction();
   const required = local.defaultUrl === null;
   return (
     <form
@@ -278,11 +279,19 @@ function LocalServerForm({ provider, local, select }: { provider: ProviderOption
           { path: ["providers", provider.id, "enabled"], value: true },
           { path: ["providers", provider.id, "base_url"], value: url || null },
         ];
-        const r = await run("/api/config", "POST", { patch }, { success: `${provider.displayName} is set up${url ? ` at ${url}` : ""}. It takes no key: use Find models on its card.` });
-        if (!r.ok || !token.trim()) return;
-        const k = await run("/api/keys", "POST", { provider: provider.id, label: "server token", secret: token.trim(), billingClass: "free_tier" }, { success: `${provider.displayName} is set up, with its token stored in the encrypted vault. Use Find models on its card.` });
+        const where = `${provider.displayName} is set up${url ? ` at ${url}` : ""}`;
+        const r = await run("/api/config", "POST", { patch }, { success: `${where}.` });
+        if (!r.ok) return;
+        if (!token.trim()) {
+          // No token: list the server's models now, as adding a key does.
+          const s = await run("/api/keys/scan", "POST", { provider: provider.id });
+          if (s.ok && typeof s.scanText === "string") setMessage(`${where}. ${s.scanText}`);
+          return;
+        }
+        const k = await run("/api/keys", "POST", { provider: provider.id, label: "server token", secret: token.trim(), billingClass: "free_tier" }, { success: `${where}, with its token stored in the encrypted vault.` });
         setToken("");
         if (!k.ok) setError(`The server was set up, but its token was not stored: ${k.error ?? "unknown error"}`);
+        else if (typeof k.scanText === "string") setMessage(`${where}, with its token stored in the encrypted vault. ${k.scanText}`);
       }}
     >
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -320,7 +329,7 @@ function CustomProviderForm({ onAdded }: { onAdded: (id: string) => void }) {
   const [api, setApi] = useState("openai_compatible");
   const [noKey, setNoKey] = useState(false);
   const [modelsPath, setModelsPath] = useState("");
-  const { run, busy, error, errors, message } = useAction();
+  const { run, busy, error, errors, message, setMessage } = useAction();
   return (
     <form
       className="space-y-3 rounded-lg border border-line bg-surface-2/50 p-3"
@@ -330,9 +339,14 @@ function CustomProviderForm({ onAdded }: { onAdded: (id: string) => void }) {
           "/api/keys/providers",
           "POST",
           { id, baseUrl, api, noKey, ...(name.trim() ? { displayName: name.trim() } : {}), ...(modelsPath.trim() ? { modelsPath: modelsPath.trim() } : {}) },
-          { success: noKey ? `Added ${id} to the config. It takes no key: use Find models on its card.` : `Added ${id} to the config. Now paste its key.` },
+          { success: noKey ? `Added ${id} to the config. It takes no key.` : `Added ${id} to the config. Now paste its key.` },
         );
         if (r.ok && !noKey) onAdded(id);
+        if (r.ok && noKey) {
+          // Keyless: list its models now, as adding a key does.
+          const sc = await run("/api/keys/scan", "POST", { provider: id });
+          if (sc.ok && typeof sc.scanText === "string") setMessage(`Added ${id} to the config. ${sc.scanText}`);
+        }
       }}
     >
       <div className="flex items-center gap-2 text-sm font-medium text-ink">

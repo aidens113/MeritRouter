@@ -433,6 +433,25 @@ export async function scanProviderModels(sy: Switchyard, id: string): Promise<Pr
   };
 }
 
+/**
+ * List a provider's models right after one of its keys was added, given a new secret, or
+ * re-enabled, so routing can use them without a separate "Find models". A failed listing never
+ * undoes the key change: it comes back as a `failed` result to show.
+ */
+export async function scanAfterKeyChange(sy: Switchyard, provider: string): Promise<ProviderScanResult> {
+  try {
+    return await scanProviderModels(sy, provider);
+  } catch (err) {
+    return { provider, status: "failed", kept: 0, added: [], errors: [(err as Error).message], warnings: [] };
+  }
+}
+
+/** A one-line account of a scan after a key change, for the panel and the CLI. */
+export function keyScanText(s: ProviderScanResult): string {
+  if (s.status === "listed") return `Found ${s.kept} model${s.kept === 1 ? "" : "s"}${s.added.length ? ` (${s.added.length} new)` : ""}; routing can use them now.`;
+  return `The model list failed: ${s.errors[0] ?? s.status}. Use Find models (switchyard models scan) to retry.`;
+}
+
 // ---------- custom providers ----------
 
 export const CustomProviderSchema = z

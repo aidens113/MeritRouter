@@ -221,6 +221,10 @@ export function applyOllamaShow(listed: ListedModel, show: OllamaShow | null, lo
   else if (provider.local) {
     [context, detail] = [OLLAMA_MIN_DEFAULT_CONTEXT, `server default assumed ${OLLAMA_MIN_DEFAULT_CONTEXT} (the smallest documented default)`];
     notes.push(`context assumed ${OLLAMA_MIN_DEFAULT_CONTEXT}: set providers.${provider.id}.default_context_tokens to the server's default (OLLAMA_CONTEXT_LENGTH, or 32k/256k on 24/48+ GiB VRAM)`);
+  } else if (max !== null) {
+    // A hosted Ollama (ollama.com) has no num_ctx, /api/ps, or VRAM-sized default: it serves the
+    // model's own context. Override with default_context_tokens if a plan serves less.
+    [context, detail] = [max, `the model's context length ${max} (/api/show model_info; hosted server)`];
   }
   if (context !== null && max !== null && max < context) [context, detail] = [max, `${detail}, capped at the model's maximum ${max}`];
   const output = context === null ? null : numPredict ? Math.min(numPredict, context) : context;

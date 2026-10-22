@@ -9,10 +9,15 @@ export async function GET() {
   return handle((sy) => ({ view: insights.providerKeysView(sy) }));
 }
 
-/** Store a key in the encrypted vault for any registry, custom, or paid provider. The secret is never echoed back. */
+/**
+ * Store a key in the encrypted vault for any registry, custom, or paid provider, then list that
+ * provider's models so routing can use them at once (`scan`). The secret is never echoed back.
+ */
 export async function POST(req: Request) {
   return handle(async (sy) => {
     const b = await body(req, AddKeyBody);
-    return { key: insights.addProviderKey(sy, b) };
+    const key = insights.addProviderKey(sy, b);
+    const scan = key.enabled ? await insights.scanAfterKeyChange(sy, key.provider) : null;
+    return { key, scan, scanText: scan ? insights.keyScanText(scan) : null };
   });
 }

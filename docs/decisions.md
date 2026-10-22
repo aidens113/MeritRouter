@@ -106,6 +106,11 @@ documentation, fetched 2026-10-20); worker report
   A local server's output is bounded by that context (Ollama: `num_predict` when set). LM Studio
   uses a loaded instance's context; an unloaded model's load-time context is undocumented, so it
   stays unknown unless configured. `/api/show` answers are cached per process by digest.
+  Hosted Ollama (`ollama-cloud`, live check 2026-10-21): `/api/show` on ollama.com works with
+  the key and returns `model_info` (`general.parameter_count`, `<arch>.context_length`) but no
+  `parameters` text, and there is no `/api/ps` or VRAM default. The model's own
+  `context_length` is used as its context (`default_context_tokens` overrides it). Before this,
+  every Ollama Cloud model was left out as "context limit unknown".
 - **D13. New list shapes** `ollama_tags`, `lmstudio_native`, `deepinfra_list`, `ovh_catalog`,
   with an OpenAI-shaped fallback list (`{base}/models`, ids only) for Ollama and LM Studio when
   the native list fails for a reason other than the key. `models_path` on a native-list provider

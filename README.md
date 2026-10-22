@@ -64,8 +64,7 @@ control of which models run, what they may touch, what they spend, or what count
 pnpm install && pnpm -r build
 node packages/router/dist/cli.js init . --preset claude-code --project my-app --repo app=../my-app   # or standalone-free, standalone-hybrid, standalone-paid
 SWITCHYARD_NEW_KEY=gsk_... node packages/router/dist/cli.js keys add groq --billing free_tier   # or the panel's Provider keys page (/all/keys)
-node packages/router/dist/cli.js models scan
-node packages/router/dist/cli.js doctor
+node packages/router/dist/cli.js doctor   # adding a key already listed its provider's models
 ```
 
 See [docs/setup.md](docs/setup.md).

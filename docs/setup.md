@@ -289,14 +289,16 @@ project's at `/p/<slug>/settings`.
 Then:
 
 ```bash
-node packages/router/dist/cli.js models scan   # list each provider's models with your keys, resolve params
+node packages/router/dist/cli.js models scan   # re-list every provider's models (adding a key already lists its provider's)
 node packages/router/dist/cli.js doctor        # every line should say ok (WARN lines are advice)
 node packages/router/dist/cli.js models        # review; confirm "pending" models
 node packages/router/dist/cli.js models confirm groq/some-model --params 70
 node packages/router/dist/cli.js route implement T2   # who would serve this, and why
 ```
 
-The panel's Scan button does the same as `models scan`; a running worker repeats it every
+Adding a key (panel or `keys add`), giving a key a new secret, or re-enabling it lists that
+provider's models at once, and so does setting up a keyless local server in the panel. The
+panel's Scan button does the same as `models scan` for every provider; a running worker repeats it every
 `discovery.interval_minutes` (60). Point the CLI at the config with `--config` or
 `SWITCHYARD_CONFIG` when you run it from another directory.
 

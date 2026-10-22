@@ -12,8 +12,8 @@ Projects (one install holds many; providers, models, routing, and budgets are gl
   projects [list] [--all]       projects with repositories, running and queued jobs and tasks,
                                 last activity, and attention items (--all adds archived ones)
   projects create <slug> [--name "<name>"] [--repo <alias>=<path> ...]
-                                add projects.<slug> to the config (repositories must exist and be
-                                git repositories) and create its brain folders; a single-project
+                                add projects.<slug> to the config (each repository folder is created
+                                or set up with git as needed) and create its brain folders; a single-project
                                 config is converted first (its repositories move under its slug)
   projects archive|unarchive <slug>   hide a project (its settings, tasks, sessions, and brain
                                 are kept); refused while it has running or queued tasks
@@ -63,10 +63,11 @@ Provider keys (stored encrypted in the vault; keys under providers in the config
                                 down until, INVALID, out of credits), and last four characters
   keys add <provider> --billing free_tier|paid_credits|paid_postpaid|trial [--label x]
            [--rpm n] [--rpd n] [--tpm n] [--tpd n] [--quota-group g] [--account-id id]
-           [--balance usd] [--cap usd] [--test]
+           [--balance usd] [--cap usd] [--test] [--no-scan]
                                 the secret comes from SWITCHYARD_NEW_KEY or a hidden prompt,
                                 never the command line; --test lists its models first and
-                                stores the key only if that works
+                                stores the key only if that works; the provider's models are
+                                then listed for routing (--no-scan skips it, e.g. offline)
   keys test [provider|id|ref]   list the models each key can use (a rejected key is marked
                                 invalid; nothing is added to the catalog: run models scan)
   keys enable|disable|remove <id>   vault keys (config keys are changed in the config file)

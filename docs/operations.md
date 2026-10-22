@@ -68,7 +68,8 @@ characters; `switchyard doctor` adds one line per provider.
   (keys will return; `resumeAt` when known), `invalid` (every key needs you), `unknown` (no
   usable key: none added, disabled, or an unset env var). The circuit breakers and adaptive
   slots in [Teams](#teams-plans-leases-and-capacity) and [Recovery](#recovery) work on top of it.
-- **Discovery.** `switchyard models scan`, the panel's Scan button, and a running worker every
+- **Discovery.** Adding, re-keying, or re-enabling a key lists its provider at once; `switchyard
+  models scan`, the panel's Scan button, and a running worker every
   `discovery.interval_minutes` (60) list the models of each provider with a usable key, using
   the first key whose listing works. Each model is enriched with recorded provenance: the
   provider's metadata, OpenRouter's public catalog, Hugging Face parameter counts, an opt-in tool

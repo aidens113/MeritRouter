@@ -6,5 +6,8 @@ export const dynamic = "force-dynamic";
 
 /** List and save one provider's models now. */
 export async function POST(req: Request) {
-  return handle(async (sy) => ({ scan: await insights.scanProviderModels(sy, (await body(req, ScanBody)).provider) }));
+  return handle(async (sy) => {
+    const scan = await insights.scanProviderModels(sy, (await body(req, ScanBody)).provider);
+    return { scan, scanText: insights.keyScanText(scan) };
+  });
 }

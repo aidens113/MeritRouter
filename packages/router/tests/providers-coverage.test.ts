@@ -337,6 +337,18 @@ describe("Ollama discovery", () => {
     expect(fetchFn.calls.map((c) => c.url)).toEqual(["https://ollama.com/api/tags", "https://ollama.com/api/show"]);
     expect(fetchFn.calls.every((c) => c.headers.authorization === "Bearer ollama-cloud-secret")).toBe(true);
 
+    // ollama.com's /api/show (shape observed 2026-10-21): no parameters text, the context in
+    // model_info. The hosted server serves the model's own context.
+    clearOllamaShowCache();
+    const shown = fakeFetch((c) => {
+      if (c.url === "https://ollama.com/api/tags") return json({ models: [{ name: "gpt-oss:120b", digest: "d-o" }] });
+      if (c.url === "https://ollama.com/api/show") return json({ capabilities: ["completion", "tools", "thinking"], details: {}, model_info: { "general.architecture": "gptoss", "general.parameter_count": 116829156672, "gptoss.context_length": 131072 } });
+      return json({ error: "no route" }, 404);
+    });
+    const hosted = await listProviderModels(shown, p, { apiKey: "ollama-cloud-secret", accountId: null }, listOpts);
+    expect(hosted.models[0]).toMatchObject({ id: "gpt-oss:120b", contextLimitTokens: 131072, outputLimitTokens: 131072, supportsTools: true });
+    expect(hosted.models[0]!.contextDetail).toMatch(/model's context length 131072 .*hosted server/);
+
     const balance = fakeFetch(() => json({ included: { balance_usd: 0.42, allowance_usd: 1, period: { from: "2026-10-01T00:00:00Z", until: "2026-11-01T00:00:00Z" } }, purchased: { balance_usd: 5 } }));
     expect(await probeOllamaBalance({ provider: p, credential: { apiKey: "ollama-cloud-secret" }, fetch: balance, now })).toMatchObject({ includedUsd: 0.42, allowanceUsd: 1, purchasedUsd: 5, periodUntil: Date.UTC(2026, 10, 1), checkedAt: NOW });
     expect(balance.calls[0]!.url).toBe("https://ollama.com/api/balance");

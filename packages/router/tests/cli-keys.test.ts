@@ -67,6 +67,9 @@ describe("keys add", () => {
     expect(r.printed).not.toContain(GOOD);
     const added = JSON.parse(r.printed) as { added: { ref: string; last4: string } };
     expect(added.added).toMatchObject({ ref: "vault:1", last4: "1234" });
+    // Adding the key lists the provider's models at once: routing sees them without a scan.
+    expect(JSON.parse(r.printed)).toMatchObject({ scan: { provider: "groq", status: "listed", kept: 2 } });
+    expect(sy.catalog.get("groq/llama-3.3-70b-versatile")).toBeTruthy();
     const stored = sy.vault.get(1)!;
     expect(stored).toMatchObject({ provider: "groq", label: "main", billingClass: "free_tier", quotaGroup: "team-a", limits: { rpm: 30, rpd: null } });
     expect(sy.vault.secret(1)).toBe(GOOD);
@@ -260,14 +263,16 @@ describe("keys through the built CLI", () => {
       for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k !== NEW_KEY_ENV && k !== "SWITCHYARD_MASTER_KEY") e[k] = v;
       return spawnSync(process.execPath, [cliJs, ...args, "--config", env!.cfg.configPath], { encoding: "utf8", env: { ...e, ...extra }, timeout: 30_000 });
     };
-    const add = run(["keys", "add", "groq", "--billing", "free_tier", "--label", "cli"], { [NEW_KEY_ENV]: GOOD });
+    // --no-scan: the built CLI has no fake provider, and a test never reaches the network.
+    const add = run(["keys", "add", "groq", "--billing", "free_tier", "--label", "cli", "--no-scan"], { [NEW_KEY_ENV]: GOOD });
     expect(add.status, add.stderr).toBe(0);
     expect(add.stdout).toMatch(/added key vault:1 for groq \(\.\.\.1234\), free_tier/);
+    expect(add.stdout).toMatch(/models not listed \(--no-scan\)/);
     const list = run(["keys", "list", "--json"]);
     expect(list.status, list.stderr).toBe(0);
     expect(JSON.parse(list.stdout)).toEqual([expect.objectContaining({ ref: "vault:1", provider: "groq", last4: "1234", status: "available" })]);
     expect(list.stdout + add.stdout + add.stderr).not.toContain(GOOD);
-    const noSecret = run(["keys", "add", "groq", "--billing", "free_tier"]);
+    const noSecret = run(["keys", "add", "groq", "--billing", "free_tier", "--no-scan"]);
     expect(noSecret.status).toBe(1);
     expect(noSecret.stderr).toMatch(/set SWITCHYARD_NEW_KEY/);
   });
