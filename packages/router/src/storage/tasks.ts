@@ -443,11 +443,11 @@ export class TaskStore {
   }
 
   /** Graceful shutdown: mark a task this owner holds as interrupted. */
-  interrupt(id: string, owner: string, reason: string): boolean {
+  interrupt(id: string, owner: string, reason: string, expectedRunCount?: number): boolean {
     return immediate(this.db, () => {
       const now = this.now();
       const row = this.db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as TaskRow | undefined;
-      if (!row || row.lease_owner !== owner || !["running", "cancel_requested"].includes(row.state)) return false;
+      if (!row || row.lease_owner !== owner || (expectedRunCount !== undefined && row.run_count !== expectedRunCount) || !["running", "cancel_requested"].includes(row.state)) return false;
       if (row.cancel_requested) {
         this.finalizeWithoutRun(row, "cancelled", "cancelled during shutdown", now);
         return true;
@@ -532,6 +532,16 @@ export class TaskStore {
   leaseLive(id: string): boolean {
     const row = this.db.prepare("SELECT state, lease_expires_at FROM tasks WHERE id = ?").get(id) as Pick<TaskRow, "state" | "lease_expires_at"> | undefined;
     return !!row && ["running", "cancel_requested"].includes(row.state) && (row.lease_expires_at ?? 0) > this.now();
+  }
+
+  /** SQLite dispatch authority after an asynchronous claim; never run a stale attempt. */
+  dispatchable(id: string, owner: string, runCount: number): StoredTask | undefined {
+    const task = this.get(id);
+    if (!task) return undefined;
+    const row = task.row, now = this.now();
+    return row.state === "running" && !row.cancel_requested && row.lease_owner === owner &&
+      row.run_count === runCount && (row.lease_expires_at ?? 0) > now &&
+      (row.deadline_at === null || row.deadline_at > now) ? task : undefined;
   }
 
   /** Lease holder still active and not asked to cancel? Checked before every dispatch. */
