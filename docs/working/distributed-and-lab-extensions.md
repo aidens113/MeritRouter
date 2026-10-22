@@ -24,7 +24,8 @@ checks and an outside-checkout install smoke; the complete router suite passed73
 in83 files (484.47s). Static browser and async Gate accounting prerequisites are accepted.
 Task-Lab lifecycle unit1 remains active in its isolated tree. The default async queue-claim
 boundary418b106 is merged locally after supervisor review and20/20 independent tests, including
-real separate CLI workers (6 unique claims/provider peak1). Full combined checks remain pending.
+real separate CLI workers (6 unique claims/provider peak1). Full frozen queue acceptance passed
+753/753 tests in85 files (542.28s); recursive typecheck and isolated recursive build passed.
 Compose design is recorded in its report; a new-file-only validation/read-only CLI prerequisite
 is assigned in a third tree. Runtime Compose integration and actual-engine acceptance remain open.
 Caller wiring for task-Lab verification follows lifecycle contract freeze; no ephemeral-task,
@@ -189,6 +190,12 @@ not a reason to stop the independently runnable core work. No service was instal
 - Definition of done: actionable report with focused actual-code evidence, safe ordering and failure tests; no feature/fencing/PG completion claim. State any unresolved architecture choice that needs supervisor decision.
 
 ## Work Ledger
+
+### 2026-10-22 — Async queue accepted
+- Agent: supervisor.
+- Changed: accepted418b106 plus public validated DTO exports at6754a11. Default Scheduler uses awaited claim/companion port; no PostgreSQL claim.
+- Validation: independent20 focused tests including actual separate CLI workers; full753/753 in85files (542.28s), recursive typecheck and isolated recursive build. No source edits during checks; only later docs/export publication differs from tested queue tree. Existing paid/verification/browser/process regressions pass.
+- Outcome: Accepted coherent queue prerequisite. Renew/finish/recovery/session/Git APIs remain synchronous; next task-Lab/Compose/request-page work is separate and not included in this unit.
 
 ### 2026-10-22 — Queue prerequisite and authorized user operations
 - Agent: supervisor.
