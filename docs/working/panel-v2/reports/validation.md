@@ -1,7 +1,7 @@
 # Panel v2 supervisor validation — 2026-10-22
 
 ## Outcome
-Core U1-U3 behavior was independently verified by the checks below; full requirement completion was not established. The 2026-10-22 completion audit reopened gaps listed in the working document Current State. No live provider calls; all checks used temp
+U1-U3 and the reopened completion gaps are accepted after the follow-up checks at the end. Earlier checks below remain historical; their limitations prompted the additional work. No live provider calls; all checks used temp
 router fixtures or apps/panel/.demo with fake provider/web transports. The user's install and
 port 4477 were not used for testing or restarted.
 
@@ -44,7 +44,7 @@ The baseline server was stopped and its worktree unregistered. Removing its left
 "blocked by policy" supplied; it remains as an unregistered temporary directory.
 The temporary demo server and headless Chrome were stopped. Automatic approval review also rejected deletion of the generated apps/panel/.demo fixture directory with only "blocked by policy" supplied; it remains gitignored. Final merge is recorded in the working ledger.
 
-## Completion follow-up, 2026-10-22 (integration in progress)
+## Completion follow-up, 2026-10-22 (accepted)
 
 - Root independently seeded the repaired demo: exit 0, no fixture warnings; nested team met,
   three integrations including one rebase, four channel posts, verified survey twins; promotion
@@ -74,3 +74,10 @@ The temporary demo server and headless Chrome were stopped. Automatic approval r
 Artifacts remain under `%TEMP%/switchyard-panel-v2-validation/`: build-accepted.log,
 tests-accepted.log, live-accepted.log, anchors-completion.json, crawl-accepted.json and
 completion-shots/. Earlier evidence above remains historical and retains its limitations.
+
+### Final supervisor acceptance
+- Final frozen router suite: **622/622 tests, 63 files, 308.77 s**, including four service-close and nine scoped brain-history tests. Recursive typecheck and build pass. A final CSS-only blame-width fix was rebuilt and rechecked with typecheck and four viewport captures.
+- Rebuilt production crawl: **581 checks, zero failures**. Copied README history links now resolve; invalid aliases, unknown/cross-project entities and unknown live scope return 404.
+- **64** page captures, **28** focused captures, **4** final blame captures (desktop/phone, light/dark): zero document overflow and browser exceptions. Supervisor inspected representative brain commit/history/blame, plan, changes, workspace, Activity agents, budget pool/grants and pending/settled decision views.
+- Budget DOM refresh observed independently by changing only a demo decision row: appeared within 2500 ms, preserving the document marker and open history. Stored decision reason restored afterward. Approval/denial validation changed only genuine demo requests.
+- Final temporary panel/browser processes stopped. No real provider calls, paid quota, user config/state changes or test artifacts committed. Previously blocked fixture/baseline directory cleanup remains recorded above; generated demo/evidence are untracked.

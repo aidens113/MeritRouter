@@ -666,6 +666,8 @@ or workers.
   Initialization and writes share the brain lock, including when several projects initialize
   the same repository concurrently. The lock file is excluded from initialization and adopted
   external changes. Initialization errors propagate instead of leaving a partially ready brain.
+  Service shutdown cancels queued promotion callbacks and waits for started settlement writes
+  before closing the database, so their Git processes do not outlive the service.
   Panel document history and blame are project scoped: private paths and rename ancestry from
   another project are unavailable. Commit subjects are retained only when every changed path is
   visible; mixed commits expose only the selected document's changes, without shared metadata.

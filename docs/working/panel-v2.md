@@ -1,7 +1,7 @@
 # Panel v2: live data and a calmer layout
 
-Status: Active
-Status detail: Core U1-U3 merged at 672a697; completion audit reopened unmet plan details and acceptance coverage on 2026-10-22.
+Status: Complete
+Status detail: U1-U3 and completion follow-up accepted; 622 tests, production demo browser checks and repaired seed pass (2026-10-22).
 Created: 2026-10-21
 Last updated: 2026-10-22
 Owner: Senior supervisor agent
@@ -14,57 +14,45 @@ Related: [budget-control](./budget-control.md), [labs](./labs.md), [projects](./
 
 ## Current State
 
-**Core implementation delivered 2026-10-22 (not full plan completion):** U1 scoped server-sent live events, reconnect/resume cursors and pause;
-U2 shared headers, grouped navigation, query-addressable tabs, disclosures and mobile summaries;
-U3 agent, repository, commit and request pages (including qualification and unassigned requests),
-with related-entity links on task, job, session and model details. Old section anchors select
-their tabs. The supervisor merged current dev into feat/panel-v2 before completing the work.
+**Complete (2026-10-22):** U1-U3 and the reopened completion audit are implemented and
+independently validated. Scoped live events, pause/reconnect, tabs/disclosures, entity pages,
+Activity agents, plan/team/timeline links, brain commit/history/blame navigation and Related
+panels are delivered. Brain history follows renames and copies only within visible scope;
+private ancestry and mixed-commit metadata are withheld, safe subjects retained.
 
-**Verified:** `pnpm -r typecheck`; `npx vitest run --maxWorkers=2` (603/603, 59 files);
-production builds; demo HTTP crawl (492 checks, zero unexpected failures); browser live updates
-(865 ms, no idle refresh, pause/resume and server restart recovery, scroll/disclosure state kept);
-malformed cursor reset and resumed changes; five old-anchor mappings; a delegated coding task's
-direct job/agent/session/model/request/commit links. Desktop and phone, light and dark screenshots
-were inspected. See [supervisor validation](panel-v2/reports/validation.md) for exact evidence.
+**Additional fixes:** shared-project brain initialization uses the same lock as writes;
+shutdown drains active promotion settlement before database closure. Demo task grants and final
+scripted turns now produce the intended nested integrations instead of fixture warnings.
+Supervisor recovery annotations require later matching changes by the recorded supervisor on
+the recorded job branch, while preserving failed task/acceptance states and explaining the
+limits of that evidence. Transcript detail stays within two clicks; phone blame scrolls.
 
-**Review fixes:** timestamp/older-row change detection, all configured brain roots, bounded
-cursors, watcher resets; inherited repository aliases return 404; URL-decoded agent identities;
-validated request citations; paid cost fallback; bounded-history labels; grouped sidebar pages
-have a shared sibling-navigation strip. Workers' reports were independently verified.
+**Acceptance:** recursive typecheck/build passed; full router suite 622/622 in 63 files
+(308.77 s); fresh demo seed exited 0 without fixture warnings. Production demo crawl: 581
+checks, no failures. Forty legacy anchor checks passed. Independently inserted task/request/
+brain changes reached the browser in 905/735/1222 ms without reload; quiet pages made zero
+refreshes over 2500 ms. Earlier pause/resume/restart checks remain valid. Sixty-four full-page
+and 28 focused viewport captures plus four final blame captures had no document overflow or
+browser exceptions; representative changed sections were visually inspected. B2 acceptance
+also passed (see budget-control.md). Evidence: [supervisor validation](panel-v2/reports/validation.md).
 
-**Limits:** live fingerprints scan mutable rows after database writes (quiet checks avoid those
-scans); large-store performance is unbenchmarked. Some tab data is still queried eagerly.
-Agent request usage covers 60 recent session logs; commits are capped at 200 (repository 50).
-Archived project routes intentionally return 404 until unarchived. Brain commit hashes stay in
-scoped history rather than exposing shared-brain diffs through repository pages.
-The demo seed reported fixture-level brain-lock/integration/promotion warnings; those do not
-establish live team correctness. No real provider calls or user install tests were run.
+**Retention review:** nine dense baseline pages preserve section titles and IDs; dynamic
+settings schemas/renderers are unchanged. All section/hash groups select their owning tabs.
+Old settings tab=form lands on General; its former sections remain one tab click away and old
+hashes select the intended section. Arbitrary model prose and raw tool JSON remain escaped
+content, rather than guessed entity links.
 
-**Completion audit, 2026-10-22:** the previous Complete status overstated the evidence. Passing
-603 tests and the selected route/browser checks establish those behaviors, not every D3-D6
-requirement. Confirmed remaining work:
+**Limits:** large-store watcher performance is unbenchmarked; fingerprints scan mutable rows
+following writes and some inactive tab data remains eager. Agent requests cover 60 session logs;
+repository/agent commit lists are bounded. Archived routes require unarchiving. Shared-brain
+commit views expose only a selected visible document, not whole shared-repository metadata.
+No real providers, paid quota, or user-install tests were used. Labs, parked R2, packaging and
+live-provider follow-ups are separate efforts, not claims of this completion.
 
-1. Finish D6 in the brain document view: history/blame commit hashes must link to a project-scoped
-   commit view, and the selected document needs related-entity navigation. Enforce project/global
-   document visibility in the service before exposing shared-brain commit content; do not simply
-   alias the whole shared brain into the code repository viewer. Add cross-project denial tests.
-2. Complete the map's recent-agent summary in project Activity. Review plan/team surfaces against
-   the map's promised task/agent links, then inventory named entities in timelines and blame.
-   The existing source review is not an exhaustive D6 link audit.
-3. Complete U1 browser acceptance for independently inserted model requests and brain commits,
-   beyond the verified task-state mutation. Inventory D5's pre-existing data/anchors against
-   the tabbed UI; five sampled anchor mappings do not prove every datum is within two clicks.
-4. Reproduce the demo seed warnings in isolation and trace the brain index.lock collision,
-   missing nested integrations/rebase and missing pending promotions. Their cause is not yet
-   established; do not label them harmless or claim that seeded team behavior is verified.
-5. Re-run affected tests and production demo browser checks after fixes; only then mark the full
-   effort Complete. Preserve the existing passing acceptance evidence as historical evidence.
+**Integration:** implementation checkpoint 57f3d49; final acceptance/layout documentation commit
+and dev/main merge are recorded in the ledger and Git refs. Temporary services are stopped at
+session completion; generated fixtures and evidence remain untracked.
 
-**Resumed:** brain-navigation and link-completion workers own disjoint shared files; seed repair runs in an isolated worktree. Supervisor owns acceptance inventory, browser request/brain propagation checks, integration and B2 after Panel v2 closure.
-
-**Next:** close these Panel v2 gaps before treating budget-control B2 as the next completed
-phase. B2, live team/provider checks, Labs, R2 and packaging remain outside the delivered unit;
-retain their existing authorization and open-question constraints.
 ---
 ## Decisions (recommended defaults; the user may override)
 
@@ -207,6 +195,13 @@ retain their existing authorization and open-question constraints.
 - Definition of done: report concrete source references, expected behavior and suggested smallest fixes, plus bounded baseline-section/anchor inventory and explicit unverified cases.
 - Report to: docs/working/panel-v2/reports/remaining-audit.md
 
+### Brief: promotion shutdown regression (2026-10-22)
+- Worker: brain_completion; owns core/service.ts, tests/service-close.test.ts and its report only.
+- Trigger: default-parallel full suite 611/612; projects-brain cleanup EBUSY after review completion.
+- Inspect deferred promotion settlement versus close; track/cancel pending scheduling and await
+  active work before database closure. Preserve review semantics; no cleanup retries or weakened tests.
+- Deterministic narrow regression and report required; supervisor runs integrated acceptance.
+
 ## Work Ledger
 
 ### 2026-10-21 — Plan written
@@ -254,15 +249,6 @@ retain their existing authorization and open-question constraints.
 - Outcome: Partial
 - Follow-up: integrate isolated brain/seed fix; verify all browser requirements. B2 implementation may proceed in its own isolated worktree while this tree is validated.
 
-## Open Questions
-
-### Brief: promotion shutdown regression (2026-10-22)
-- Worker: brain_completion; owns core/service.ts, tests/service-close.test.ts and its report only.
-- Trigger: default-parallel full suite 611/612; projects-brain cleanup EBUSY after review completion.
-- Inspect deferred promotion settlement versus close; track/cancel pending scheduling and await
-  active work before database closure. Preserve review semantics; no cleanup retries or weakened tests.
-- Deterministic narrow regression and report required; supervisor runs integrated acceptance.
-
 ### Integration checkpoint (2026-10-22)
 - Seed repair merged; root seed independently reproduced nested completion, three integrations,
   one rebase and verified survey twins. Final seed assertions still running.
@@ -272,5 +258,14 @@ retain their existing authorization and open-question constraints.
   metadata and opens the transcript wrapper to keep nested tool details within two clicks.
 - Root recursive typecheck passed before B2 integration; full initial suite 611/612 (one cleanup
   EBUSY); bounded full rerun and production build underway. No completion claim yet.
+### 2026-10-22 - Completion follow-up accepted
+- Agent: supervisor (Codex); brain_completion, link_completion and seed_repair.
+- Changed: scoped brain navigation/copy history, Activity and structured links, supervisor recovery evidence, brain initialization/shutdown races, deterministic demo repairs, B2 UI/API and phone blame layout.
+- Validation: supervisor reviewed worker code and reproduced the repaired seed (exit 0, no warnings); 622/622 tests, 63 files, 308.77 s; recursive typecheck/build pass. Production demo: 581 crawl checks, 40 anchor checks, independent task/request/brain live updates 905/735/1222 ms; budget partial approve/deny and 400/404/409 paths; independent budget live update preserves disclosure. 64 page, 28 focused and four final blame captures: no overflow/browser exceptions; representative sections inspected.
+- Outcome: Accepted. U1-U3 and reopened completion requirements closed. B2 accepted separately; real-provider, Labs, R2 and packaging work are not claimed complete.
+- Follow-up: merge/push complete unit to dev and fast-forward main under standing authorization. Temporary demo services stopped; generated fixtures/evidence remain outside commits. Git refs record final push state.
 
-- None blocking; the information-architecture map is reviewed when U2's report arrives.
+## Open Questions
+
+
+- None for this completed phase. Large-store benchmarking and real-provider checks retain their separate scope.

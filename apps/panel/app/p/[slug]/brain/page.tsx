@@ -427,7 +427,7 @@ async function Blame({ sy, slug, path, knownAgents }: { sy: Switchyard; slug: st
     <div className="space-y-3">
       <Legend series={legend} />
       <div className="overflow-x-auto rounded-lg border border-line">
-        <table className="w-full border-collapse font-mono text-xs">
+        <table className="w-full min-w-[40rem] border-collapse font-mono text-xs">
           <tbody>
             {lines.map((l, i) => {
               const k = keyOf(l);
