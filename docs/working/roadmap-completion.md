@@ -51,7 +51,11 @@ sub-supervisors remain available. That setting/guard/UI work is merged locally u
 [external-supervisor-guidance](external-supervisor-guidance.md); obsolete guidance-enable
 toggle semantics were rejected. The corrected feature is accepted in the combined checks above.
 Task-Lab lifecycle, async queue claim implementation and Compose design are dispatched under
-file-partitioned briefs. No whole-roadmap completion claim; actual4477/MCP remain unchanged.
+file-partitioned briefs. No whole-roadmap completion claim. After explicit user approval,
+accepted9682e92 was built and panel4477 restarted; live read-only browser confirms new default-OFF
+setting, exact MiniMax model URL and Verification explanation. Config hash unchanged. Existing
+MCP remains running its prior in-memory code until its client reconnects/restarts the server.
+Facebook clone8082 is also running for the user by explicit request; preserve its existing data.
 
 ## Execution phases
 

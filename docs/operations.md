@@ -408,6 +408,15 @@ changes rarely.
 
 ## Teams: plans, leases, and capacity
 
+The default SQLite scheduler awaits validated task-queue claim and companion receipts before
+starting an executor. Claim policy remains inside one SQLite transaction, including fairness,
+provider/job/project limits and file leases. After an awaited claim it rechecks persisted owner,
+run count, cancellation, lease expiry and deadline. Shutdown stops dispatch immediately, drains
+pending claims and interrupts only its newly acquired undispatched attempts. A queue error halts
+claiming; it does not imply that a lost receipt rolled back. Recovery, renewal, completion,
+sessions and local inventory remain synchronous SQLite operations; this boundary alone does
+not enable PostgreSQL or multiple hosts.
+
 - **Plans.** A supervisor's `plan_work` records the job's decomposition as an immutable,
   versioned, acyclic plan (`job_plans`) and dispatches every node through the normal delegate
   path; re-planning adds a version and keeps nodes already dispatched. The plan reports its

@@ -25,7 +25,10 @@ model navigation, Labs and legacy-recipe checks have passed against6d61b8e. Supe
 desktop/phone screenshots. Fresh packed install outside checkout passed native SQLite, CLI,
 42-tool MCP,8 panel/API routes, stylesheet and setup start/reuse/stop; owned processes closed.
 Full integrated router suite passed734/734 tests in83 files (484.47s). This feature is accepted;
-the broader roadmap remains active. Actual user panel4477/MCP were not restarted.
+the broader roadmap remains active. Following explicit user authorization, accepted9682e92
+was built and panel4477 restarted; read-only browser confirms the new toggle is OFF. Config
+hash unchanged. Existing MCP process was not restarted; it needs a client reconnect/server restart
+to load the new tools/guidance. This differs from once-change delivery within an updated server.
 
 Workflow guidance does not technically enforce behavior inside another host application's agent.
 Existing authorization, budgets, verification, containment and explicit user instructions retain
