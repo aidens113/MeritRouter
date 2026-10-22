@@ -227,19 +227,26 @@ def kernel_proof(pid1, stage, bwrap_pid, expected_fds, pins):
     for target in ("/usr/lib/python3.10", "/usr/lib/x86_64-linux-gnu", "/usr/lib64"):
         actual, expected = os.stat(root + target), os.stat(target)
         require((actual.st_dev, actual.st_ino) == (expected.st_dev, expected.st_ino), "kernel_proof_unavailable")
-    allowed = {"/", "/usr/bin/python3.10", "/usr/lib/python3.10", "/usr/lib/x86_64-linux-gnu", "/usr/lib64", "/proc", "/dev", "/dev/null", "/dev/zero", "/dev/full", "/dev/random", "/dev/urandom", "/dev/tty", "/proc/sysrq-trigger", "/proc/irq", "/proc/bus", "/dev/pts", "/dev/shm", "/tmp", "/run", "/fixture/entry.py"}
     mount_text = open("/proc/%d/mountinfo" % stage, encoding="utf-8").read(65537)
+    validate_mounts(mount_text)
+    return ns
+
+
+def validate_mounts(mount_text):
+    allowed = {"/", "/usr/bin/python3.10", "/usr/lib/python3.10", "/usr/lib/x86_64-linux-gnu", "/usr/lib64", "/proc", "/dev", "/dev/null", "/dev/zero", "/dev/full", "/dev/random", "/dev/urandom", "/dev/tty", "/proc/sysrq-trigger", "/proc/irq", "/proc/bus", "/dev/pts", "/dev/shm", "/tmp", "/run", "/fixture/entry.py"}
     require(len(mount_text) <= 65536 and len(mount_text.splitlines()) <= 64, "kernel_proof_unavailable")
+    optional = {"/proc/sysrq-trigger", "/proc/irq", "/proc/bus"}
+    required = allowed - optional
     seen = set()
-    readonly = {"/usr/bin/python3.10", "/usr/lib/python3.10", "/usr/lib/x86_64-linux-gnu", "/usr/lib64", "/fixture/entry.py", "/proc/sysrq-trigger", "/proc/irq", "/proc/bus"}
+    readonly = {"/usr/bin/python3.10", "/usr/lib/python3.10", "/usr/lib/x86_64-linux-gnu", "/usr/lib64", "/fixture/entry.py", "/proc", "/proc/sysrq-trigger", "/proc/irq", "/proc/bus"}
     for line in mount_text.splitlines():
         parts = line.split()
+        require(len(parts) >= 10 and "-" in parts, "kernel_proof_unavailable")
         require(parts[4] in allowed and parts[4] not in seen, "kernel_proof_unavailable")
         seen.add(parts[4])
         if parts[4] in readonly:
             require("ro" in parts[5].split(","), "kernel_proof_unavailable")
-    require(seen == allowed, "kernel_proof_unavailable")
-    return ns
+    require(required <= seen and seen <= allowed, "kernel_proof_unavailable")
 
 
 def inner(generation, nonce):
@@ -304,7 +311,7 @@ def monitor():
         for source, dest in ((gate_read, 6), (status_write, 7), (info_write, 8)):
             os.dup2(source, dest, inheritable=True)
             fds.append(dest)
-        argv = ["/usr/bin/bwrap", "--unshare-user", "--uid", "65534", "--gid", "65534", "--unshare-net", "--unshare-pid", "--unshare-ipc", "--unshare-uts", "--unshare-cgroup", "--die-with-parent", "--new-session", "--cap-drop", "ALL", "--clearenv", "--setenv", "PATH", "/usr/bin:/bin", "--setenv", "LANG", "C.UTF-8", "--setenv", "HOME", "/home/fixture", "--ro-bind", "/usr/bin/python3.10", "/usr/bin/python3.10", "--ro-bind", "/usr/lib/python3.10", "/usr/lib/python3.10", "--ro-bind", "/usr/lib/x86_64-linux-gnu", "/usr/lib/x86_64-linux-gnu", "--ro-bind", "/usr/lib64", "/usr/lib64", "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64", "--symlink", "usr/bin", "/bin", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/dev/shm", "--tmpfs", "/tmp", "--tmpfs", "/run", "--dir", "/home/fixture", "--ro-bind", config["pins"]["helper"]["path"], "/fixture/entry.py", "--chdir", "/tmp", "--info-fd", "8", "/usr/bin/python3.10", "-I", "-B", "/fixture/entry.py", "--inner", config["generation"], config["nonce"]]
+        argv = ["/usr/bin/bwrap", "--unshare-user", "--uid", "65534", "--gid", "65534", "--unshare-net", "--unshare-pid", "--unshare-ipc", "--unshare-uts", "--unshare-cgroup", "--die-with-parent", "--new-session", "--cap-drop", "ALL", "--clearenv", "--setenv", "PATH", "/usr/bin:/bin", "--setenv", "LANG", "C.UTF-8", "--setenv", "HOME", "/home/fixture", "--ro-bind", "/usr/bin/python3.10", "/usr/bin/python3.10", "--ro-bind", "/usr/lib/python3.10", "/usr/lib/python3.10", "--ro-bind", "/usr/lib/x86_64-linux-gnu", "/usr/lib/x86_64-linux-gnu", "--ro-bind", "/usr/lib64", "/usr/lib64", "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64", "--symlink", "usr/bin", "/bin", "--proc", "/proc", "--remount-ro", "/proc", "--dev", "/dev", "--tmpfs", "/dev/shm", "--tmpfs", "/tmp", "--tmpfs", "/run", "--dir", "/home/fixture", "--ro-bind", config["pins"]["helper"]["path"], "/fixture/entry.py", "--chdir", "/tmp", "--info-fd", "8", "/usr/bin/python3.10", "-I", "-B", "/fixture/entry.py", "--inner", config["generation"], config["nonce"]]
         process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, pass_fds=(6, 7, 8), env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"})
         bwrap_fd, bwrap_birth = pin_pid(process.pid)
         fds.append(bwrap_fd)

@@ -337,9 +337,30 @@ sys.stdin.readline()
         with self.assertRaises(helper.Refused):
             helper.release({"op": "release", "generation": "1" * 32, "nonce": "2" * 64, "script": "canary"}, "1" * 32, "2" * 64)
 
+    def test_exact_proc_mount_policy_accepts_only_fixed_optional_ro_masks(self):
+        base = ["/", "/usr/bin/python3.10", "/usr/lib/python3.10", "/usr/lib/x86_64-linux-gnu", "/usr/lib64", "/proc", "/dev", "/dev/null", "/dev/zero", "/dev/full", "/dev/random", "/dev/urandom", "/dev/tty", "/dev/pts", "/dev/shm", "/tmp", "/run", "/fixture/entry.py"]
+        optional = ["/proc/sysrq-trigger", "/proc/irq", "/proc/bus"]
+        def text(paths):
+            return "\n".join("%d 1 0:1 / %s ro,nosuid,nodev,noexec - proc proc ro" % (i + 2, path) for i, path in enumerate(paths))
+        # Test every permitted optional subset, never making a base entry optional.
+        for mask in range(8):
+            helper.validate_mounts(text(base + [p for i, p in enumerate(optional) if mask & (1 << i)]))
+        for changed in (base + ["/proc/foreign"], base + ["/proc"], [p for p in base if p != "/fixture/entry.py"], [p for p in base if p != "/proc"], base + ["/usr/lib/wsl/drivers"]):
+            with self.assertRaises(helper.Refused):
+                helper.validate_mounts(text(changed))
+        for target in ["/proc"] + optional:
+            changed = text(base + optional).replace(" " + target + " ro,", " " + target + " rw,")
+            with self.assertRaises(helper.Refused):
+                helper.validate_mounts(changed)
+
+    def test_proc_mount_policy_refuses_invalid_and_oversized_observations(self):
+        for text in ("private-canary", "x" * 65537, "\n".join("invalid" for _ in range(65))):
+            with self.assertRaises(helper.Refused):
+                helper.validate_mounts(text)
+
 
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(HelperFixture)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
-    print(json.dumps({"tests": result.testsRun, "failures": len(result.failures), "errors": len(result.errors), "runtimeEnabled": False}), flush=True)
+    print(json.dumps({"tests": result.testsRun, "failures": len(result.failures), "errors": len(result.errors), "ownerUid": os.getuid(), "runtimeEnabled": False}), flush=True)
     sys.exit(0 if result.wasSuccessful() else 1)
