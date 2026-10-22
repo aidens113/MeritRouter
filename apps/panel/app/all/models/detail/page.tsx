@@ -30,8 +30,13 @@ export default async function ModelDetailPage({ searchParams }: { searchParams: 
   const sy = r.sy;
   const sp = await searchParams;
   const id = typeof sp.id === "string" ? sp.id : "";
+  if (!id) notFound();
   const view = insights.modelsView(sy).find((v) => v.endpoint.id === id);
-  if (!view) notFound();
+  if (!view) {
+    const recent = insights.requestLog(sy, { endpointId: id, limit: 15 });
+    if (!recent.length) notFound();
+    return <HistoricalModel id={id} recent={recent} usage={insights.modelUsage(sy, id)} latest={insights.requestDetail(sy, recent[0]!.id)} tab={pickTab(sp, ["overview", "usage"])} />;
+  }
 
   const ep = view.endpoint;
   const st = statusKey(ep, view.quarantined);
@@ -237,6 +242,45 @@ export default async function ModelDetailPage({ searchParams }: { searchParams: 
           />
         </div>
       </Card></div> : null}
+    </div>
+  );
+}
+
+/** Request history remains addressable after its model leaves the current catalog. */
+function HistoricalModel({ id, recent, usage, latest, tab }: {
+  id: string;
+  recent: ReturnType<typeof insights.requestLog>;
+  usage: ReturnType<typeof insights.modelUsage>;
+  latest: ReturnType<typeof insights.requestDetail>;
+  tab: string;
+}) {
+  return (
+    <div className="space-y-6">
+      <Link href="/all/models" className="inline-flex items-center gap-1 text-sm text-ink-3 hover:text-ink"><ArrowLeft size={14} aria-hidden /> All models</Link>
+      <PageHeader title={id} live={["models", "requests", "config"]} description={<Badge>Recorded model history</Badge>} />
+      <Callout tone="warn" title="No longer in the current catalog">
+        Recorded requests and usage remain available. Current model facts, eligibility, qualification actions, and routing controls are unavailable.
+      </Callout>
+      <RelatedPanel groups={[
+        { label: "Tasks", items: usage.tasks.map(t => ({ key: t.taskId, node: <TaskLink base={itemBase(t.project)} id={t.taskId} label={t.label} job={t.profile === "supervise"} /> })) },
+        { label: "Agents", items: usage.agents.map(a => ({ key: a.project + a.id, node: <AgentLink base={itemBase(a.project)} agent={a.id} /> })) },
+        { label: "Projects", items: usage.projects.map(p => ({ key: p.project, node: <Link href={projectBase(p.project)} className="text-accent-ink hover:underline">{p.project}</Link> })) },
+      ]} />
+      <Tabs items={[{ id: "overview", label: "Overview" }, { id: "usage", label: "Usage" }]} active={tab} path="/all/models/detail" label="Page sections" keep={{ id }} />
+      {tab === "overview" ? <Card>
+        <CardHeader title="Latest recorded request" description="Values recorded for this request, rather than current catalog metadata." />
+        <div className="p-4"><KeyValue items={[
+          ["Request", latest ? <RequestLink key="request" base={latest.project ? itemBase(latest.project) : ""} id={latest.id} /> : "Unavailable"],
+          ["Provider reported serving", latest?.servedProvider ?? "Not recorded"],
+          ["Model reported serving", latest?.servedModel ?? "Not recorded"],
+          ["Tokens in / out", latest ? `${num(latest.inputTokens)} / ${num(latest.outputTokens)}` : "Not recorded"],
+          ["Recorded at", latest ? dateTime(latest.reservedAt) : "Not recorded"],
+        ]} /></div>
+      </Card> : null}
+      <Card>
+        <CardHeader title="Recent recorded requests" actions={<Link href={`/all/requests?endpoint=${encodeURIComponent(id)}`} className="text-xs text-accent-ink hover:underline">All requests for this model →</Link>} />
+        <RequestsTable rows={recent} names={new Map()} />
+      </Card>
     </div>
   );
 }
