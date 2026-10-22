@@ -21,10 +21,11 @@ panel on spare ports. Real credentials/environment checks remain explicitly dist
 from completed code. Previously deferred R2/L5 require their architecture/acceptance design
 before implementation; they are tracked below rather than silently omitted.
 
-**Checkpoint:** provider routing/registry/quarantine unit independently accepted (624 tests,
-recursive typecheck/build and demo browser acceptance); merge/push follows. E1 checkpoint5704654,
-Labs L1, project recovery and packaging have returned; supervisor independent integration is
-pending. Labs L2/L3 is the next dispatched phase. No whole-roadmap completion claim.
+**Checkpoint:** provider routing/registry/quarantine accepted and pushed at 7a1873f (624 tests,
+recursive typecheck/build and demo browser acceptance). E1 checkpoint5704654 and Labs L1
+checkpoint33630ee merged locally into roadmap-core; supervisor focused tests 5/5 and 8/8.
+Project recovery and packaging returned, pending independent integration. Labs L2/L3 and
+external-runner tools dispatched in isolated worktrees. No whole-roadmap completion claim.
 
 ## Execution phases
 
@@ -90,6 +91,15 @@ passing units reach dev/main. Documentation and source commit together.
 - Requirements: reject project/repo config deletion while retained labs exist (coordinate with root/project worker; do not edit their files). Surface readable SwitchyardError codes. No commits/push, live providers or user data.
 - Acceptance: real scripted lab job/tools/integration/restart/checks; two conflicting labs promotion order; manual target untouched; cross-lab HTTP refused and concurrent lifecycle control safely routed. Narrow tests/typecheck and exact report.
 - Report: roadmap-completion/reports/labs-integration.md. Send API contract early; no broad panel edits.
+
+### Brief: cache-catalog-accounting
+- Repository: .claude/worktrees/roadmap-accounting, feat/roadmap-accounting from roadmap-core.
+- Task: retain provider-sourced parameter provenance, quantization and trained/max context metadata in catalog; separately account Anthropic cache-creation tokens/pricing without silently undercharging paid budgets.
+- Required reads: caching-and-continuity Current State; catalog/enrichment; gateway usage normalization/pricing; paid accounting/admission and session usage schemas. Official provider documentation for wire contracts; no hard-coded changing prices.
+- Owns: models catalog/enrichment files; gateway usage/types/Anthropic pricing integration; paid pricing/spend; admission/admission.ts; usage/session schemas needed for cache-creation accounting; focused tests and report cache-catalog-accounting.md.
+- Must not touch: config/schema.ts or migrations (nullable cache_creation_input_tokens and optional cache_write_input_usd_per_million already supplied by L1); runners/coding, harness, core service/executor, CLI/public exports, panel or shared docs. Ask before expanding ownership. No commits/push/user data/live providers.
+- Contract: preserve null/unknown distinctions and existing rows; configured/verified write prices only. Authoritative provider-reported cost wins. Paid reservations must bound writes, not only ordinary input/read; unknown write pricing must fail closed or disable cache creation with a demonstrably enforced wire boundary. Send proposed unknown-price policy to root before implementation.
+- Acceptance: fake Anthropic creation/read/ordinary usage normalization and persistence, actual configured cost/reservation safety, unknown-price boundary, backwards compatibility; provider provenance/quantization/context retained. Narrow tests/typecheck, exact report and limits.
 
 ## Work Ledger
 
