@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -56,6 +57,14 @@ describe("MCP server", () => {
       "brain_read", "brain_search", "brain_set_current_state", "brain_start_working_doc", "brain_write", "cancel_tasks", "collect_results", "get_job_metrics", "get_job_tree", "get_plan", "get_session", "get_task_status",
       "job_status", "list_questions", "list_sessions", "panel", "preview_route", "read_artifact", "read_channel", "reject_result", "resume_session", "resume_task", "start_job", "submit_tasks", "usage_summary",
     ]);
+
+    // Any tool call revives a panel the user turned off: the marker goes (auto_start off here, and no
+    // panel app, so nothing starts).
+    const marker = path.join(env!.cfg.storageDir, "panel.stopped");
+    writeFileSync(marker, JSON.stringify({ at: new Date().toISOString(), by: "test" }));
+    await client.callTool({ name: "usage_summary", arguments: {} });
+    for (let i = 0; i < 50 && existsSync(marker); i++) await new Promise((r) => setTimeout(r, 100));
+    expect(existsSync(marker)).toBe(false);
 
     // The test config turns panel.auto_start off: the panel tool reports that and starts nothing.
     const panel = await client.callTool({ name: "panel", arguments: {} });

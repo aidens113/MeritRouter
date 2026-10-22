@@ -12,9 +12,10 @@ import { logsDirFor } from "./daemon.js";
 // it outlives the session that started it; two processes starting it at once is harmless (the
 // second cannot bind the port and exits). Its output goes to `<storage>/logs/panel.log`.
 //
-// Turning the panel off (its power button) leaves a marker, `<storage>/panel.stopped`: background
-// checks then leave it off. An explicit start (`force`: `switchyard panel`, a new MCP session,
-// the MCP `panel` tool) clears the marker and starts it again.
+// Turning the panel off (its power button) leaves a marker, `<storage>/panel.stopped`: idle
+// background checks then leave it off. Agents using SwitchYard again bring it back on their own
+// (`revivePanel`: every MCP tool call, a new MCP session, `switchyard run` and `submit`), as does an
+// explicit start (`force`: `switchyard panel`, the MCP `panel` tool).
 
 /** Overrides where the built panel app lives (default: `apps/panel` of the checkout this package runs from). */
 export const PANEL_DIR_ENV = "SWITCHYARD_PANEL_DIR";
@@ -25,6 +26,26 @@ export type PanelState = "running" | "started" | "starting" | "stopped" | "disab
 
 /** The marker the power button leaves: background checks do not restart a panel the user turned off. */
 export const panelStopFile = (cfg: Pick<ResolvedConfig, "storageDir">): string => path.join(cfg.storageDir, "panel.stopped");
+
+/** How often one process revives the panel at most (a busy agent makes many tool calls). */
+export const REVIVE_EVERY_MS = 30_000;
+let lastRevive = 0;
+
+/**
+ * Agents are using SwitchYard: bring the panel back if nothing answers, even one the user turned
+ * off (the marker is cleared), unless `panel.auto_start` is off. Throttled per process, never
+ * throws, and never blocks the caller (the start runs in the background).
+ */
+export function revivePanel(cfg: ResolvedConfig, now = Date.now()): Promise<PanelStatus> | null {
+  if (now - lastRevive < REVIVE_EVERY_MS) return null;
+  lastRevive = now;
+  return ensurePanel(cfg, { resume: true }).catch(() => null as unknown as PanelStatus);
+}
+
+/** Forget the throttle (tests). */
+export function resetPanelRevive(): void {
+  lastRevive = 0;
+}
 
 /** Record that the user turned the panel off (call before the panel process exits). */
 export function markPanelStopped(cfg: Pick<ResolvedConfig, "storageDir">, by = "the panel's power button"): void {

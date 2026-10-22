@@ -529,9 +529,12 @@ item. A delegated task's session names the supervisor session that delegated it 
 - The power button at the top of the panel, beside the project switcher, turns the panel off
   after a confirmation: `POST /api/panel/stop` writes `<storage>/panel.stopped`, answers, and the
   panel process exits; the page then shows "Panel turned off". Agents and workers keep running.
-  Background checks (the MCP server's minute check, `switchyard worker`) leave a stopped panel
-  off; a new agent session (MCP server start), the MCP `panel` tool, or `switchyard panel` clears
-  the marker and starts it again. The route accepts only same-origin requests.
+  It comes back on its own as soon as agents use SwitchYard again: any MCP tool call (checked at
+  most every 30 seconds per server, in the background), a new MCP session, `switchyard run`, or
+  `switchyard submit` clears the marker and starts it (unless `panel.auto_start` is off). Only the
+  idle background checks (the MCP server's minute check, `switchyard worker` starting) leave it
+  off. `switchyard panel` and the MCP `panel` tool start it even with `panel.auto_start` off. The
+  route accepts only same-origin requests.
 - The panel's production build contains the router code: Turbopack bundles `switchyard-router`
   although `next.config.ts` lists it in `serverExternalPackages`, because it externalizes only
   modules whose real path is under `node_modules`, and the pnpm workspace link resolves to

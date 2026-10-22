@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { ensurePanel, findPanelApp, markPanelStopped, PANEL_DIR_ENV, panelListening, panelStopFile } from "../src/operations/panel.js";
+import { ensurePanel, findPanelApp, markPanelStopped, PANEL_DIR_ENV, panelListening, panelStopFile, resetPanelRevive, revivePanel } from "../src/operations/panel.js";
 import { baseConfig, makeEnv, type Env } from "./helpers.js";
 
 // The panel stays reachable while agents use SwitchYard: ensurePanel starts it (detached) when
@@ -133,6 +133,38 @@ describe("ensurePanel", () => {
     expect(await ensurePanel(env.cfg, { resume: true })).toMatchObject({ state: "disabled" });
     expect(existsSync(panelStopFile(env.cfg))).toBe(false);
     expect(existsSync(path.join(app, "started.json"))).toBe(false);
+  });
+
+  it("agents using SwitchYard revive a panel the user turned off, at most once per 30 s per process", async () => {
+    const port = await freePort();
+    env = envOnPort(port, true);
+    const app = fakePanel();
+    markPanelStopped(env.cfg);
+    resetPanelRevive();
+    const t0 = Date.now();
+    const r = await revivePanel(env.cfg, t0);
+    const started = JSON.parse(readFileSync(path.join(app, "started.json"), "utf8")) as { pid: number };
+    cleanups.push(async () => {
+      try {
+        process.kill(started.pid);
+      } catch {
+        // already gone
+      }
+      for (let i = 0; i < 50; i++) {
+        try {
+          process.kill(started.pid, 0);
+        } catch {
+          return;
+        }
+        await new Promise((res) => setTimeout(res, 100));
+      }
+    });
+    expect(r?.state).toBe("started");
+    expect(existsSync(panelStopFile(env.cfg))).toBe(false);
+    // Throttled: a burst of tool calls checks once.
+    expect(revivePanel(env.cfg, t0 + 1000)).toBeNull();
+    expect(revivePanel(env.cfg, t0 + 31_000)).not.toBeNull();
+    resetPanelRevive();
   });
 
   it("does nothing when panel.auto_start is off", async () => {

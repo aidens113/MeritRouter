@@ -9,7 +9,7 @@ import { brainAccessRequests, CHANNEL_KINDS, decideTaskAcceptance, routingPrevie
 import { blame } from "../attribution/index.js";
 import type { Principal } from "../brain/access.js";
 import { SessionStatusSchema } from "../sessions/events.js";
-import { ensurePanel, panelUrl } from "../operations/panel.js";
+import { ensurePanel, panelUrl, revivePanel } from "../operations/panel.js";
 import { TaskArgumentSchema } from "./schemas.js";
 
 /** What every connection's server shares: the service, its config, and the project it serves. */
@@ -34,6 +34,15 @@ export function buildMcpServer({ sy, cfg, project }: McpContext): McpServer {
         "Tell the user that URL when you start a job or submit tasks, and call the panel tool if they cannot reach it.",
     },
   );
+  // Any tool call means agents are using SwitchYard: a panel the user turned off comes back
+  // (throttled, in the background; panel.auto_start off still wins). Wrapped once here so every
+  // tool registered below does it.
+  const register = server.registerTool.bind(server) as unknown as (name: string, def: unknown, handler: (...args: unknown[]) => unknown) => unknown;
+  (server as unknown as { registerTool: typeof register }).registerTool = (name, def, handler) =>
+    register(name, def, (...args: unknown[]) => {
+      void revivePanel(cfg);
+      return handler(...args);
+    });
   const json = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] });
   const fail = (err: unknown) => ({ isError: true, content: [{ type: "text" as const, text: (err as Error).message ?? String(err) }] });
 

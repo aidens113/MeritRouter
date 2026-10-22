@@ -25,7 +25,7 @@ import { chooseProject, PROJECT_ENV, requireProject, type SelectOptions } from "
 import { initConfigText, projectsCommand } from "./cli/projects.js";
 import { sessionRows, sessionTimeline } from "./cli/session-text.js";
 import { out, table } from "./cli/terminal.js";
-import { ensurePanel } from "./operations/panel.js";
+import { ensurePanel, revivePanel } from "./operations/panel.js";
 import { mcpOptions, runMcpServer } from "./mcp/serve.js";
 import type { ScanSummary } from "./models/scanner.js";
 
@@ -260,6 +260,8 @@ async function main(): Promise<number> {
         return 0;
       }
       case "submit": {
+        // Agents are about to work: bring back a panel the user turned off (panel.auto_start permitting).
+        await revivePanel(cfg);
         const src = args[0] ?? "-";
         const text = src === "-" ? readFileSync(0, "utf8") : readFileSync(src, "utf8");
         const parsed = JSON.parse(text) as unknown;
@@ -327,6 +329,8 @@ ${table(rows)}`, json);
       case "keys":
         return await keysCommand(sy, args, values, json);
       case "run": {
+        // Agents are about to work: bring back a panel the user turned off (panel.auto_start permitting).
+        await revivePanel(cfg);
         const goal = args.join(" ").trim();
         if (!goal || !values.repo?.length) throw new SwitchyardError("usage", 'usage: switchyard run "<goal>" --repo <alias> [--repo ...] [--check "<command>"] [--criteria "<text>"] [--wait]');
         const job = await sy.startJob({ goal, project: project(), repositories: values.repo.flatMap((r) => r.split(",")), ...(values.check ? { checks: values.check } : {}), ...(values.criteria ? { acceptanceCriteria: values.criteria } : {}) });
