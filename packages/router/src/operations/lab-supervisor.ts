@@ -1,4 +1,9 @@
 import { randomBytes } from "node:crypto";
+import { spawn } from "node:child_process";
+import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import type { Switchyard } from "../core/service.js";
 import { z } from "zod";
 import { SwitchyardError } from "../core/errors.js";
 import { immediate, type Db } from "../storage/db.js";
@@ -7,6 +12,33 @@ const KEY = "lab_supervisor_v1";
 const TTL = 15_000;
 const State = z.object({ owner: z.string().regex(/^[a-f0-9]{48}$/), pid: z.number().int().positive(), configPath: z.string().min(1), expiresAt: z.number().int(), ready: z.boolean(), stopRequested: z.boolean() }).strict();
 export type LabSupervisorState = z.infer<typeof State>;
+
+/** Explicit human actions may start service supervision without executing model work. */
+export async function ensureLabSupervisor(sy: Switchyard, cliPath?: string): Promise<void> {
+  cliPath ??= [process.env.SWITCHYARD_ROUTER_CLI, fileURLToPath(new URL("../cli.js", import.meta.url)), path.resolve(process.cwd(), "../dist/cli.js"), path.resolve(process.cwd(), "../../packages/router/dist/cli.js")].find((candidate): candidate is string => !!candidate && existsSync(candidate));
+  const lease = new LabSupervisorLease(sy.db, sy.cfg.configPath);
+  const previous = lease.read();
+  if (previous && previous.expiresAt > Date.now() && path.resolve(previous.configPath) !== path.resolve(sy.cfg.configPath)) throw new SwitchyardError("conflict", "Labs supervisor uses a different configuration for this storage directory");
+  if (previous?.ready && !previous.stopRequested && previous.expiresAt > Date.now()) return;
+  if (!previous || previous.expiresAt <= Date.now()) {
+    if (!cliPath || !existsSync(cliPath)) throw new SwitchyardError("lab_invalid_state", "Build the router before starting Labs supervision, or run switchyard labs serve from the installed package");
+    const logs = path.join(sy.cfg.storageDir, "logs");
+    mkdirSync(logs, { recursive: true });
+    const fd = openSync(path.join(logs, "labs.log"), "a");
+    try {
+      const child = spawn(process.execPath, [cliPath, "labs", "serve", "--config", sy.cfg.configPath], { cwd: path.dirname(sy.cfg.configPath), env: { ...process.env, SWITCHYARD_CONFIG: sy.cfg.configPath }, detached: true, windowsHide: true, stdio: ["ignore", fd, fd] });
+      await new Promise<void>((resolve, reject) => { child.once("spawn", resolve); child.once("error", reject); });
+      child.unref();
+    } finally { closeSync(fd); }
+  }
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const state = lease.read();
+    if (state?.ready && !state.stopRequested && state.expiresAt > Date.now()) return;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  throw new SwitchyardError("lab_invalid_state", "Labs supervisor did not become ready within 30 seconds; inspect storage/logs/labs.log");
+}
 
 /** A renewable singleton lease; no PID is used as authority to terminate a process. */
 export class LabSupervisorLease {

@@ -10,6 +10,7 @@ export { LabManager, type LabStatus, type LabManagerOptions } from "./labs/lab.j
 export { LabsConfigSchema, LabRecipeSchema, ProjectLabsSchema, LabNameSchema, type LabsConfig, type LabRecipe } from "./labs/recipe.js";
 export { type LabRecord, type LabServiceRecord } from "./labs/store.js";
 export { type LabCheckResult } from "./labs/checks.js";
+export { ensureLabSupervisor, LabSupervisorLease, type LabSupervisorState } from "./operations/lab-supervisor.js";
 export { backfillProjects } from "./projects/backfill.js";
 export {
   WorkerTaskSchema,

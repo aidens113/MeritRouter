@@ -118,6 +118,7 @@ passing units reach dev/main. Documentation and source commit together.
 - Boundaries: temp configurations/stores/repos/brains, fake provider HTTP servers only. Never real credentials/4477/userinstall/paid routes/public service installations. All spawned services/listeners/processes stopped in finally; verify owned process before kill. No repository-wide validation in another worker's tree.
 - Acceptance: competing independent worker processes do not double claim or exceed provider slots; killed owner recovery/resume preserves durable attribution/session records without automatic coding replay; competing integrations serialize. Real CLI and MCP budget approvals/denials/accounting and HTTP/stdio schema refusals. Record exact commands/measurements and distinguish missing acceptance from actual defects.
 - Follow-up: report reproduction and suggested bounded file ownership to root for any source fix; don't silently weaken assertions or call hard-kill persistence verified from caught exceptions. Keep test duration bounded; no live quota.
+- Amendment: supervisor authorizes owning merge-queue source plus focused regressions after deterministic subprocess reproduction of live-owner recovery. Different process owner alone is not stale evidence; verify current leases/owner, preserve attribution and public API. Coordinate Labs worker if API changes.
 
 ## Work Ledger
 

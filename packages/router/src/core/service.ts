@@ -5,7 +5,7 @@ import { randomBytes } from "node:crypto";
 import { statSync } from "node:fs";
 import { parseConfig, readConfigFile, type ResolvedConfig } from "../config/load.js";
 import type { ProfileName, TierName } from "../config/schema.js";
-import { openDatabase, type Db } from "../storage/db.js";
+import { immediate, openDatabase, type Db } from "../storage/db.js";
 import { TaskStore, type StoredTask, type SubmitOutcome } from "../storage/tasks.js";
 import { ArtifactStore } from "../storage/artifacts.js";
 import { usageSummary, type UsageSummary } from "../storage/usage.js";
@@ -42,6 +42,7 @@ import { DELEGATED_BY_SESSION, Executor, type CodingRunner, type ProjectDeps } f
 import { ProjectRegistry } from "../projects/registry.js";
 import { retainedLabConfigErrors } from "../projects/lab-config-guard.js";
 import { LabManager } from "../labs/lab.js";
+import { LabNameSchema } from "../labs/recipe.js";
 import { prepareProjectRepositories, type RepositoryPreparation } from "../projects/repository-setup.js";
 import type { ProjectContext } from "../projects/context.js";
 import { Scheduler } from "./scheduler.js";
@@ -244,6 +245,7 @@ export class Switchyard {
       onSettled: (id) => this.events.emit("settled", id),
       project: (task) => this.projectDeps(task.row.project_id),
       web: this.web,
+      labs: this.labs,
     });
     this.qualifier = new Qualifier(this);
     this.auditor = new Auditor(
@@ -432,6 +434,7 @@ export class Switchyard {
       const labErrors = retainedLabConfigErrors(this.db, next);
       if (labErrors.length) throw new Error(labErrors.join("; "));
       Object.assign(this.cfg, next);
+      this.labs.reloadConfig();
       this.projects.refresh();
       this.tasks.event(null, "config_reloaded", { at: this.now() });
       // A running service prepares repositories added or moved by the edit.
@@ -496,8 +499,10 @@ export class Switchyard {
     const largestContext = this.largestContext();
     for (const [i, r] of raw.entries()) {
       try {
+        const lab = typeof r === "object" && r !== null && "lab" in r && r.lab !== undefined ? LabNameSchema.parse(r.lab) : undefined;
+        const taskConfig = lab ? this.labs.configuration(project.project.slug, lab) : project;
         specs.push(
-          await validateTask(project, r, this.artifacts, {
+          await validateTask(taskConfig, r, this.artifacts, {
             ...(largestContext !== undefined ? { largestContext } : {}),
             knownEndpoint: (id) => this.catalog.get(id) !== undefined,
           }),
@@ -512,7 +517,15 @@ export class Switchyard {
       if (shortfall) errors.push(`task[${i}]: ${shortfall}`);
     });
     if (errors.length) throw new TaskValidationError(errors.join("\n"), errors);
-    const outcomes = this.tasks.submit(specs, { project: project.project.slug });
+    const outcomes = immediate(this.db, () => {
+      const submitted = this.tasks.submit(specs, { project: project.project.slug });
+      for (const outcome of submitted) {
+        if (outcome.deduplicated) continue;
+        const task = this.tasks.get(outcome.taskId)!;
+        this.labs.bindTask(project.project.slug, outcome.taskId, task.spec, this.tasks);
+      }
+      return submitted;
+    });
     this.projects.touch(project.project.slug);
     if (opts.purpose && opts.purpose !== "work") {
       for (const o of outcomes) if (!o.deduplicated) this.db.prepare("UPDATE tasks SET purpose = ? WHERE id = ?").run(opts.purpose, o.taskId);
@@ -638,6 +651,8 @@ export class Switchyard {
     maxPaidUsd?: number;
     /** The job's project (required when the install has several). */
     project?: string;
+    /** Use this project's retained Lab as the team's integration workspace. */
+    lab?: string;
   }): Promise<SubmitOutcome> {
     if (!this.cfg.profiles.supervise) throw new TaskValidationError("this configuration has no supervise task type; use a standalone preset or add profiles.supervise");
     const project = this.projects.forWrite(input.project).project.slug;
@@ -646,6 +661,7 @@ export class Switchyard {
         profile: "supervise",
         goal: input.goal,
         repositoryAliases: input.repositories,
+        ...(input.lab ? { lab: input.lab } : {}),
         ...(input.label ? { label: input.label } : {}),
         ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
         constraints: { acceptanceCriteria: input.acceptanceCriteria?.length ? input.acceptanceCriteria : ["The goal is achieved and the supervisor verified it"], ...(input.checks?.length ? { checks: input.checks } : {}) },
