@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { ResolvedConfig } from "../config/load.js";
 import { immediate } from "./db.js";
 import { canonicalJson, type StoredTask, type TaskStore } from "./tasks.js";
-import { LEASE_RECEIPT_WINDOW_MS, LeaseReceiptSchema, RenewLeaseSchema, FinishLeaseSchema, InterruptLeaseSchema, DeferLeaseSchema, RecoverLeasesSchema, CancelLeasesSchema, type LeaseRef, type LeaseReceipt, type TaskLeases } from "./task-leases.js";
+import { LEASE_RECEIPT_WINDOW_MS, RECOVERY_RECEIPT_WINDOW_MS, LEASE_RECEIPT_CAPACITY, RECOVERY_RECEIPT_CAPACITY, RECOVERY_TOTAL_THRESHOLD, LeaseReceiptSchema, RenewLeaseSchema, FinishLeaseSchema, InterruptLeaseSchema, DeferLeaseSchema, RecoverLeasesSchema, CancelLeasesSchema, type LeaseRef, type LeaseReceipt, type TaskLeases } from "./task-leases.js";
 /** Local SQLite server-time authority. All mutation and receipt writes share one immediate transaction. */
 export class SqliteTaskLeases implements TaskLeases {
   constructor(private readonly cfg: ResolvedConfig, readonly tasks: TaskStore, private readonly now: () => number = () => tasks.serverNow()) {
@@ -23,10 +23,25 @@ export class SqliteTaskLeases implements TaskLeases {
       incarnation: string;
     }>;
   }, change: (now: number, scopes: Set<string>) => Omit<LeaseReceipt, "operationId" | "kind" | "serverNow">): LeaseReceipt {
-    return immediate(this.tasks.db, () => {
-      const now = this.now(), issued = Number.parseInt(input.operationId.split("_")[1]!, 36);
-      if (!Number.isSafeInteger(issued) || issued > now + 60000 || issued < now - LEASE_RECEIPT_WINDOW_MS)
+    // Cleanup must commit even when the subsequent authority transaction refuses at quota.
+    // Nested transactions are savepoints and could roll that progress back with the caller.
+    if (this.tasks.db.inTransaction)
+      throw new Error("async task lease mutations require an independent transaction");
+    const recovery = kind === "recover";
+    const window = recovery ? RECOVERY_RECEIPT_WINDOW_MS : LEASE_RECEIPT_WINDOW_MS;
+    const issued = Number.parseInt(input.operationId.split("_")[1]!, 36);
+    const validateKey = (now: number) => {
+      const pattern = recovery ? /^trecover_[a-z0-9]{1,12}_[a-f0-9]{24}$/ : /^tlease_[a-z0-9]{1,12}_[a-f0-9]{24}$/;
+      if (!pattern.test(input.operationId) || !Number.isSafeInteger(issued) || issued > now + 60000 || issued < now - window)
         throw new Error("task lease operation key is outside its retry window");
+    };
+    validateKey(this.now());
+    immediate(this.tasks.db, () => {
+      this.tasks.db.prepare("DELETE FROM task_lease_operation_keys WHERE id IN (SELECT id FROM task_lease_operation_keys WHERE expires_at<? ORDER BY expires_at,id LIMIT 500)").run(this.now());
+    });
+    return immediate(this.tasks.db, () => {
+      const now = this.now();
+      validateKey(now);
       if (Buffer.byteLength(canonicalJson(input), "utf8") > 2 * 1024 * 1024)
         throw new Error("task lease input exceeds size limit");
       const digest = createHash("sha256").update(canonicalJson({
@@ -49,11 +64,15 @@ export class SqliteTaskLeases implements TaskLeases {
         return LeaseReceiptSchema.parse({
           operationId: input.operationId, kind, disposition: "replayed", original: "stale", serverNow: now, ...(input.lease ? { lease: input.lease } : {}), affected: []
         });
-      this.tasks.db.prepare("DELETE FROM task_lease_operation_keys WHERE id IN (SELECT id FROM task_lease_operation_keys WHERE expires_at<? LIMIT 500)").run(now);
       const count = z.object({ n: z.number() }).parse(this.tasks.db.prepare("SELECT COUNT(*) n FROM task_lease_operation_keys").get()).n;
-      if (count >= 100000)
+      if (count >= LEASE_RECEIPT_CAPACITY)
         throw new Error("task lease receipt capacity exhausted");
-      this.tasks.db.prepare("INSERT INTO task_lease_operation_keys(id,request_digest,expires_at) VALUES(?,?,?)").run(input.operationId, digest, issued + LEASE_RECEIPT_WINDOW_MS);
+      if (recovery) {
+        const maintenance = z.object({ n: z.number() }).parse(this.tasks.db.prepare("SELECT COUNT(*) n FROM task_lease_operation_keys WHERE id GLOB 'trecover_*'").get()).n;
+        if (count >= RECOVERY_TOTAL_THRESHOLD || maintenance >= RECOVERY_RECEIPT_CAPACITY)
+          throw new Error("task recovery receipt capacity exhausted");
+      }
+      this.tasks.db.prepare("INSERT INTO task_lease_operation_keys(id,request_digest,expires_at) VALUES(?,?,?)").run(input.operationId, digest, issued + window);
       const scopes = new Set<string>();
       const receipt = LeaseReceiptSchema.parse({
         ...change(now, scopes), operationId: input.operationId, kind, serverNow: now
@@ -65,7 +84,7 @@ export class SqliteTaskLeases implements TaskLeases {
       const serialized = JSON.stringify(receipt);
       if (Buffer.byteLength(serialized, "utf8") > 1048576)
         throw new Error("task lease receipt exceeds size limit");
-      this.tasks.db.prepare("INSERT INTO task_lease_operations(id,kind,request_digest,response_json,created_at,expires_at) VALUES(?,?,?,?,?,?)").run(input.operationId, kind, digest, serialized, now, issued + LEASE_RECEIPT_WINDOW_MS);
+      this.tasks.db.prepare("INSERT INTO task_lease_operations(id,kind,request_digest,response_json,created_at,expires_at) VALUES(?,?,?,?,?,?)").run(input.operationId, kind, digest, serialized, now, issued + window);
       for (const project of scopes)
         this.tasks.db.prepare("INSERT INTO task_lease_operation_projects(operation_id,project_id) VALUES(?,?)").run(input.operationId, project);
       return receipt;

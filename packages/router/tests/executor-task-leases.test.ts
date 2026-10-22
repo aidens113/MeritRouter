@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { Executor, type CodingRunner } from "../src/core/executor.js";
 import { TaskRunLeases } from "../src/core/task-run-leases.js";
 import { SqliteTaskLeases } from "../src/storage/sqlite-task-leases.js";
-import { capturedLease, leaseOperationId, type TaskLeases, type LeaseReceipt } from "../src/storage/task-leases.js";
+import { capturedLease, recoveryOperationId, leaseOperationId, type TaskLeases, type LeaseReceipt } from "../src/storage/task-leases.js";
 import { WorkerTaskSchema } from "../src/core/task.js";
 import { baseResult } from "../src/runners/types.js";
 import type { Switchyard } from "../src/core/service.js";
@@ -106,7 +106,7 @@ it('a delayed old finish cannot settle or report over same-owner takeover', asyn
   await entered.promise;
   now += 10001;
   await fixture.real.recover({
-    operationId: leaseOperationId(now), mode: 'startup'
+    operationId: recoveryOperationId(now), mode: 'startup'
   });
   const current = claim()[0]!;
   blocked.release();
@@ -209,7 +209,7 @@ it('a delayed logical cancellation and old renewal cannot abort the newer local 
   await entered.promise;
   now += 10001;
   await fixture.real.recover({
-    operationId: leaseOperationId(now), mode: 'startup'
+    operationId: recoveryOperationId(now), mode: 'startup'
   });
   const newer = claim()[0]!;
   const newController = new AbortController();
@@ -310,11 +310,11 @@ it.each(['kind', 'operationId'] as const)('refuses delayed recovery receipt with
     const receipt = await original(input);
     entered.release();
     await blocked.promise;
-    return { ...receipt, ...(field === 'kind' ? { kind: 'renew' as const } : { operationId: leaseOperationId(now) }) };
+    return { ...receipt, ...(field === 'kind' ? { kind: 'renew' as const } : { operationId: recoveryOperationId(now) }) };
   });
   const pending = sy!.recoverAsync();
   await entered.promise;
-  const refused = expect(pending).rejects.toThrow(/recovery receipt identity mismatch/);
+  const refused = expect(pending).rejects.toThrow(field === 'kind' ? /receipt key must match its operation kind/ : /recovery receipt identity mismatch/);
   blocked.release();
   await refused;
   expect(deadSessions).not.toHaveBeenCalled();
