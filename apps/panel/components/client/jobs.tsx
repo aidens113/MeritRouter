@@ -16,8 +16,9 @@ export interface RepoOption {
 }
 
 /** Form for starting a standalone job in `project`. The job is queued; a worker runs it. */
-export function NewJobForm({ project, repos, enabled }: { project: string; repos: RepoOption[]; enabled: boolean }) {
+export function NewJobForm({ project, repos, enabled, labs = [] }: { project: string; repos: RepoOption[]; enabled: boolean; labs?: Array<{ name: string; state: string }> }) {
   const router = useRouter();
+  const [lab, setLab] = useState("");
   const [goal, setGoal] = useState("");
   const [label, setLabel] = useState("");
   const [selected, setSelected] = useState<string[]>(repos.length === 1 ? [repos[0]!.alias] : []);
@@ -40,6 +41,7 @@ export function NewJobForm({ project, repos, enabled }: { project: string; repos
         project,
         goal,
         repositories: selected,
+        ...(lab ? { lab } : {}),
         acceptanceCriteria: criteria.map((c) => c.trim()).filter(Boolean),
         checks: checks.map((c) => c.trim()).filter(Boolean),
         ...(label.trim() ? { label: label.trim() } : {}),
@@ -87,6 +89,7 @@ export function NewJobForm({ project, repos, enabled }: { project: string; repos
           )}
           <span className="mt-1 block text-xs text-ink-3">Writable repositories get their own job branch; your checkout is never touched.</span>
         </div>
+        <label className="block text-sm font-medium text-ink">Lab (optional)<select className="field mt-1" value={lab} onChange={e => setLab(e.target.value)}><option value="">Standalone job branch</option>{labs.map(l => <option key={l.name} value={l.name}>{l.name} ({l.state})</option>)}</select><span className="mt-1 block text-xs font-normal text-ink-3">A lab job integrates into that lab. Services are managed separately from the job.</span></label>
         <label className="block text-sm font-medium text-ink">
           Label (optional)
           <input value={label} onChange={(e) => setLabel(e.target.value.toLowerCase())} pattern="[a-z0-9][a-z0-9-]{0,40}" className="field mt-1 font-mono text-[13px] font-normal" placeholder="e.g. input-validation" />

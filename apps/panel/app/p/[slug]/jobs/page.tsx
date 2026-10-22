@@ -22,6 +22,7 @@ export default async function JobsPage({ params }: { params: Promise<{ slug: str
   const base = projectBase(p.slug);
   const enabled = Boolean(sy.cfg.profiles.supervise);
   const jobs = insights.jobsView(sy, 100, p.slug);
+  const labs = insights.labsListView(sy, p.slug).labs.flatMap(l => l.status && ["running", "stopped"].includes(l.status.lab.state) ? [{ name: l.name, state: l.status.lab.state }] : []);
   const now = Date.now();
   const live = jobs.some((j) => !isTerminal(j.state));
   const waiting = jobs.reduce((n, j) => n + j.pendingQuestions, 0);
@@ -36,7 +37,7 @@ export default async function JobsPage({ params }: { params: Promise<{ slug: str
             This project's standalone work, run by a SwitchYard supervisor: it plans, delegates tasks to workers, verifies them, and commits the result to a job branch for you to review. <HelpTip term="job" />
           </>
         }
-        live={["jobs", "tasks"]}
+        live={["jobs", "tasks", "labs"]}
       />
 
       {waiting ? (
@@ -58,7 +59,7 @@ export default async function JobsPage({ params }: { params: Promise<{ slug: str
               </Callout>
             </div>
           ) : null}
-          <NewJobForm project={p.slug} repos={repos} enabled={enabled} />
+          <NewJobForm project={p.slug} repos={repos} enabled={enabled} labs={labs} />
         </div>
       </Card>
 
