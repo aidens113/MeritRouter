@@ -103,6 +103,21 @@ not a reason to stop the independently runnable core work. No service was instal
 
 ## Worker Briefs
 
+### Brief: hydrated-browser-design (seed_repair)
+- Tier: report-only in roadmap-team while root independently validates frozen session source; no source/build changes.
+- Read: Current State; labs/browser-{schema,check,network,protocol,process,artifacts}.ts and browser tests; other source only as needed for this bounded report.
+- Goal: concrete next implementation brief for declared hydrated JS browser checks, preserving existing static default and truthful evidence.
+- Own only docs/working/distributed-and-lab-extensions/reports/hydrated-browser-plan.md. No shared docs, code, tests, config, services or user data edits.
+- Establish current request broker/target isolation/process cleanup contracts and exact insertion points; identify declared schema/evidence additions and data compatibility.
+- Human selects mode/check/assertions/limits; models only select names. No model evaluate/script/URL or unbounded navigation API.
+- Investigate before-contact network enforcement for fetch/XHR/images/forms/redirects/popups/iframes/workers/serviceworkers/WebSocket/WebTransport/WebRTC/DNS/prefetch, including non-HTTP bypasses.
+- Use primary official Chromium/CDP/spec docs for uncertain facts/flags; record verified URLs and limits. Do not claim interception covers transports it cannot mediate.
+- Small read-only/local loopback probes allowed if essential, no external network targets or OS/firewall/Docker/service installation. Close all owned probe resources.
+- Recommend safe implementable first hydrated subset with bounded DOM wait/assertions, console/page error collection, exact heads/screenshots and ownership rechecks.
+- If hard containment needs unavailable OS/engine capabilities, state that clearly and separate trusted-human executable/host boundary from model input controls; no silent weakening or false sandbox claim.
+- Detail file partition, failure/cancel/crash recovery, tests using actual JS-rendered isolated fixture and foreign transport sentinels, expected acceptance evidence and limits.
+- Report ready-to-execute phases, not implementation or completion claim. No commits/push; final return exact reads/probes/cleanup/open decisions.
+
 ### Brief: task-lab-project-prune (next available worker; not dispatched yet)
 - Tier: isolated feature tree based on root74f818b or newer, never mutate active validation tree.
 - Read: Current State, lifecycle report, task-attempt.ts/runner.ts and scoped prune invariants.
