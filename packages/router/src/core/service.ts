@@ -8,7 +8,7 @@ import { openDatabase, type Db } from "../storage/db.js";
 import { TaskStore, type StoredTask, type SubmitOutcome } from "../storage/tasks.js";
 import { ArtifactStore } from "../storage/artifacts.js";
 import { usageSummary, type UsageSummary } from "../storage/usage.js";
-import { Admission } from "../admission/admission.js";
+import { Admission, effectiveBudget } from "../admission/admission.js";
 import { Gate, ProviderHealth } from "../gateway/gate.js";
 import { Catalog } from "../models/catalog.js";
 import { Scanner, type ScanSummary } from "../models/scanner.js";
@@ -500,14 +500,8 @@ export class Switchyard {
     } catch {
       contractTotal = null; // a corrupt contract is reported where it is read, not in a status line
     }
-    const budget =
-      contractTotal ??
-      Math.min(
-        this.cfg.profiles[t.spec.profile]?.max_model_requests ?? 0,
-        tierCfg ? tierCfg.max_model_requests : Infinity,
-        this.cfg.execution.max_model_requests_per_task,
-        t.spec.budget?.maxModelRequests ?? Infinity,
-      );
+    // The same cap the executor applies (a supervisor is bounded by its profile, not the tier).
+    const budget = contractTotal ?? (this.cfg.profiles[t.spec.profile] ? effectiveBudget(this.cfg, t.spec, tierCfg ? (row.tier as TierName) : null).maxModelRequests : 0);
     return {
       taskId: t.row.id,
       project: t.row.project_id,

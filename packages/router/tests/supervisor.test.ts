@@ -57,6 +57,10 @@ describe("standalone supervisor", () => {
     expect(r.acceptanceStatus).toBe("met");
     expect(r.checks[0]!.exitCode).toBe(0);
     expect(r.summary).toMatch(/git merge --no-ff switchyard\/job-/);
+    // Status reports the cap the executor applied: a supervisor's profile cap, not its tier's.
+    const st = sy.getStatus([job.taskId])[0] as { tier: "T1" | "T2" | "T3"; maxModelRequests: number };
+    expect(st.maxModelRequests).toBe(sy.cfg.profiles.supervise!.max_model_requests);
+    expect(st.maxModelRequests).not.toBe(sy.cfg.tiers[st.tier].max_model_requests);
 
     // Every tool result the supervisor saw was a success (no "error:" outputs).
     const sup = client.requests.filter(isSupervisor).at(-1)!;
