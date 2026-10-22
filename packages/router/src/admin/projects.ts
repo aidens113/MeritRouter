@@ -10,6 +10,7 @@ import { recordPreparation, repositoryNotices, repositoryProblems } from "../pro
 import { folderState, prepareRepository } from "../workspaces/repository-prepare.js";
 import { patchConfig, readConfigText, validateConfigText, writeConfigText } from "./config-edit.js";
 import { projectFootprint, purgeProjectRows, removeProjectFiles, removeProjectWorktrees } from "../projects/deletion.js";
+import { immediate } from "../storage/db.js";
 
 // Projects for the panel's grid, the CLI's `projects` command, and project selection: listing,
 // per-project activity and attention, and creating or archiving a project. Settings live in the
@@ -256,18 +257,24 @@ export async function createProject(sy: Switchyard, input: CreateProjectInput): 
  * settings, tasks, sessions, and brain. Refused while it has running or queued tasks.
  */
 export function archiveProject(sy: Switchyard, slug: string, now = Date.now()): ProjectSummary {
-  const info = projectInfo(sy, slug);
-  const a = projectActivity(sy, slug);
-  if (a.runningTasks + a.queuedTasks > 0) throw new SwitchyardError("usage", `project ${slug} has ${a.runningTasks} running and ${a.queuedTasks} queued task(s); cancel them or let them finish before archiving`);
-  if (!info.archived) sy.db.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").run(now, slug);
-  return projectInfo(sy, slug);
+  return immediate(sy.db, () => {
+    sy.reloadIfChanged();
+    const info = projectInfo(sy, slug);
+    const a = projectActivity(sy, slug);
+    if (a.runningTasks + a.queuedTasks > 0) throw new SwitchyardError("usage", `project ${slug} has ${a.runningTasks} running and ${a.queuedTasks} queued task(s); cancel them or let them finish before archiving`);
+    if (!info.archived) sy.db.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").run(now, slug);
+    return projectInfo(sy, slug);
+  });
 }
 
 /** Bring an archived project back. */
 export function unarchiveProject(sy: Switchyard, slug: string): ProjectSummary {
-  projectInfo(sy, slug);
-  sy.db.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").run(slug);
-  return projectInfo(sy, slug);
+  return immediate(sy.db, () => {
+    sy.reloadIfChanged();
+    projectInfo(sy, slug);
+    sy.db.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").run(slug);
+    return projectInfo(sy, slug);
+  });
 }
 
 // ---------- delete ----------
@@ -373,7 +380,8 @@ export async function deleteProject(sy: Switchyard, slug: string, opts: { confir
   if (blockers.length) throw new SwitchyardError("usage", `project ${slug} cannot be deleted: ${blockers.join("; ")}`);
 
   // The config without the project, validated before anything is removed.
-  const doc = YAML.parseDocument(readConfigText(sy));
+  const original = readConfigText(sy);
+  const doc = YAML.parseDocument(original);
   doc.deleteIn(["projects", slug]);
   let newPrimary: string | null = null;
   if (sy.projects.primary.project.slug === slug) {
@@ -386,10 +394,31 @@ export async function deleteProject(sy: Switchyard, slug: string, opts: { confir
 
   const fp = await footprintOf(sy, sy.projects.get(slug)!);
   const brainEntries = sy.brain.projectFolderFiles(slug);
-  const purged = purgeProjectRows(sy.db, slug, ACTIVE_STATES);
+  let configWritten = false;
+  let purged: ReturnType<typeof purgeProjectRows>;
+  try {
+    purged = immediate(sy.db, () => {
+      // Footprint discovery yields to other services. Serialize the final lifecycle/config
+      // checks with archive writes, submissions, and other deletions before removing anything.
+      if (readConfigText(sy) !== original) throw new SwitchyardError("config_changed", "The config changed during project deletion; reload it and retry.");
+      sy.reloadIfChanged();
+      const currentBlockers = deletionBlockers(sy, projectInfo(sy, slug));
+      if (currentBlockers.length) throw new SwitchyardError("usage", `project ${slug} cannot be deleted: ${currentBlockers.join("; ")}`);
+      const written = writeConfigText(sy, text, { expectedText: original });
+      if (!written.ok) throw new SwitchyardError("config_write_failed", `the config could not be written: ${written.errors.join("; ")}`);
+      configWritten = true;
+      return purgeProjectRows(sy.db, slug, ACTIVE_STATES);
+    });
+  } catch (error) {
+    // SQLite rolls the rows back if purge fails. Restore the file only if it is still the
+    // exact file we wrote; an intervening external editor must never be overwritten.
+    if (configWritten) {
+      const restored = writeConfigText(sy, original, { expectedText: text });
+      if (!restored.ok) throw new SwitchyardError("config_restore_failed", `${(error as Error).message}; the config could not be restored: ${restored.errors.join("; ")}`);
+    }
+    throw error;
+  }
   const problems: string[] = [];
-  const written = writeConfigText(sy, text);
-  if (!written.ok) problems.push(`the config could not be written: ${written.errors.join("; ")}`);
   if (sy.projects.get(slug)) sy.reloadIfChanged();
   // A process that reloaded the config between the purge and the write may have recorded the row again.
   sy.db.prepare("DELETE FROM projects WHERE id = ?").run(slug);
