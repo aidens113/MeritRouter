@@ -639,7 +639,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
     }),
 
     tool("cancel_tasks", "delegate", "Cancel tasks this job dispatched.", { task_ids: { type: "array", items: { type: "string" } } }, ["task_ids"], async (a) => {
-      svc.cancelTasks((a.task_ids as string[]).map((x) => ownTask(s, x)));
+      await svc.cancelTasks((a.task_ids as string[]).map((x) => ownTask(s, x)));
       return "cancellation requested";
     }),
 

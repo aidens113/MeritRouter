@@ -41,7 +41,7 @@ export class SqliteTaskQueue implements TaskQueue {
   async claimCompanions(raw: QueueCompanions): Promise<StoredTaskDTO[]> {
     const input = QueueCompanionsSchema.parse(raw);
     return immediate(this.tasks.db, () => {
-      const leader = this.tasks.dispatchable(input.leader.taskId, input.owner, input.leader.runCount);
+      const leader = this.tasks.dispatchable(input.leader.taskId, input.owner, input.leader.runCount, input.leader.incarnation, input.leader.project);
       if (!leader) return [];
       const profile = this.cfg.profiles[leader.spec.profile];
       const key = profile?.mode === "completion" && profile.batching.enabled && !this.redundant(leader) ? projectBatchKey(leader) : null;

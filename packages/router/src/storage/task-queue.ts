@@ -4,10 +4,10 @@ import { TASK_STATES, WorkerTaskSchema, WorkerResultSchema } from "../core/task.
 
 const timestamp = z.number().int().nonnegative();
 const json: z.ZodType<unknown> = z.lazy(() => z.union([z.null(), z.boolean(), z.string(), z.number().finite(), z.array(json), z.record(z.string(), json)]));
-export const TaskAttemptSchema = z.object({ taskId: z.string().min(1), runCount: z.number().int().positive() }).strict();
+export const TaskAttemptSchema = z.object({ taskId: z.string().min(1), runCount: z.number().int().positive(), incarnation: z.string().regex(/^[a-f0-9]{32}$/), project: z.string() }).strict();
 export type TaskAttempt = z.infer<typeof TaskAttemptSchema>;
-export const QueueClaimSchema = z.object({ owner: z.string().min(1) }).strict();
-export const QueueCompanionsSchema = z.object({ owner: z.string().min(1), leader: TaskAttemptSchema, excludeTaskIds: z.array(z.string().min(1)) }).strict();
+export const QueueClaimSchema = z.object({ owner: z.string().min(1).max(200) }).strict();
+export const QueueCompanionsSchema = z.object({ owner: z.string().min(1).max(200), leader: TaskAttemptSchema, excludeTaskIds: z.array(z.string().min(1)) }).strict();
 export type QueueClaim = z.infer<typeof QueueClaimSchema>;
 export type QueueCompanions = z.infer<typeof QueueCompanionsSchema>;
 
@@ -19,6 +19,7 @@ export const StoredTaskDTOSchema = z.object({
     profile: ProfileNameSchema, spec_json: z.string(), state: z.enum(TASK_STATES), state_reason: z.string().nullable(),
     created_at: timestamp, updated_at: timestamp, started_at: timestamp.nullable(), deadline_at: timestamp.nullable(),
     finished_at: timestamp.nullable(), lease_owner: z.string().nullable(), lease_expires_at: timestamp.nullable(),
+    lease_incarnation: z.string().regex(/^[a-f0-9]{32}$/),
     run_count: z.number().int().nonnegative(), cancel_requested: z.union([z.literal(0), z.literal(1)]),
     next_attempt_at: timestamp.nullable(), writable_repo: z.string().nullable(), result_json: z.string().nullable(), project_id: z.string(),
   }).strict(),

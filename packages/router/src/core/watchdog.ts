@@ -96,6 +96,7 @@ export function abortStuckRuns(d: { cfg: ResolvedConfig; db: Db; tasks: TaskStor
   if (d.cfg.execution.watchdog_minutes <= 0) return [];
   const aborted: string[] = [];
   for (const [taskId, w] of watched) {
+    if (!d.tasks.dispatchable(taskId, w.task.row.lease_owner ?? "", w.task.row.run_count, w.task.row.lease_incarnation)) continue;
     // During a review the reviewer's session is the one that must make progress (it runs no checks).
     const reviewing = !!w.reviewer && !w.reviewer.ended;
     const session = reviewing ? w.reviewer : w.session();
@@ -118,7 +119,9 @@ export function abortStuckRuns(d: { cfg: ResolvedConfig; db: Db; tasks: TaskStor
  * like recovery). The author's session is named even when a reviewer was the one stuck.
  */
 export function requeueStuck(tasks: TaskStore, owner: string, task: StoredTask, watched: WatchedRun | undefined): void {
-  tasks.interrupt(task.row.id, owner, "no progress: stopped by the watchdog");
+  const current = tasks.get(task.row.id)?.row;
+  if (current?.lease_incarnation !== task.row.lease_incarnation || current.run_count !== task.row.run_count || current.lease_owner !== owner) return;
+  tasks.interrupt(task.row.id, owner, "no progress: stopped by the watchdog", task.row.run_count);
   const now = tasks.get(task.row.id);
   if (now?.row.state !== "interrupted" || now.row.run_count >= MAX_AUTO_RESUMES) return;
   const sessionId = watched?.session()?.id;

@@ -889,4 +889,27 @@ export const MIGRATIONS: string[] = [
   CREATE INDEX request_captures_project ON request_captures(project_id,created_at);
   `,
 
+  // Local async task authority: insertion identity prevents explicit task-ID reuse collisions.
+  `
+  ALTER TABLE tasks ADD COLUMN lease_incarnation TEXT NOT NULL DEFAULT '';
+  UPDATE tasks SET lease_incarnation=lower(hex(randomblob(16)));
+  CREATE TRIGGER tasks_lease_incarnation AFTER INSERT ON tasks WHEN NEW.lease_incarnation=''
+    BEGIN UPDATE tasks SET lease_incarnation=lower(hex(randomblob(16))) WHERE id=NEW.id; END;
+  CREATE TABLE task_lease_operation_keys (
+    id TEXT PRIMARY KEY, request_digest TEXT NOT NULL, expires_at INTEGER NOT NULL
+  );
+  CREATE INDEX task_lease_operation_keys_expiry ON task_lease_operation_keys(expires_at,id);
+  CREATE TABLE task_lease_operations (
+    id TEXT PRIMARY KEY REFERENCES task_lease_operation_keys(id) ON DELETE CASCADE, kind TEXT NOT NULL, request_digest TEXT NOT NULL,
+    response_json TEXT NOT NULL CHECK(length(CAST(response_json AS BLOB))<=1048576),
+    created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL
+  );
+  CREATE INDEX task_lease_operations_expiry ON task_lease_operations(expires_at,id);
+  CREATE TABLE task_lease_operation_projects (
+    operation_id TEXT NOT NULL REFERENCES task_lease_operations(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL, PRIMARY KEY(operation_id,project_id)
+  );
+  CREATE INDEX task_lease_operation_projects_scope ON task_lease_operation_projects(project_id,operation_id);
+  `,
+
 ];

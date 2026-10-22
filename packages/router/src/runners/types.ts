@@ -1,3 +1,5 @@
+import { AdmissionDenied } from "../core/errors.js";
+import type { LeaseRef } from "../storage/task-leases.js";
 import type { LabManager } from "../labs/lab.js";
 import type { LabRunContext } from "../labs/binding.js";
 import type { ResolvedConfig } from "../config/load.js";
@@ -67,6 +69,7 @@ export interface RunContext {
   leaseOwner: string;
   /** Immutable generation captured from the executor claim, never re-read by opted-in runners. */
   claimedRunCount?: number;
+  taskLease?: LeaseRef;
   taskProject?: string;
   taskLabs?: LabManager;
   ensureLabsSupervisor?: () => Promise<void>;
@@ -110,6 +113,11 @@ export interface RunContext {
  * failure throws.
  */
 export async function ask(ctx: RunContext, req: Omit<GateRequest, "plan" | "participants" | "signal"> & { participants?: GateRequest["participants"] }): Promise<GateResponse> {
+  const assertLease = () => {
+    const lease = ctx.taskLease;
+    if (lease && !ctx.tasks.dispatchable(lease.taskId, lease.owner, lease.runCount, lease.incarnation, lease.project)) throw new AdmissionDenied("lease_lost", "captured task lease no longer authorizes this runner", undefined, lease.taskId);
+  };
+  assertLease();
   const session = ctx.session;
   if (session) {
     session.syncMessages(req.chat.messages);
@@ -132,6 +140,7 @@ export async function ask(ctx: RunContext, req: Omit<GateRequest, "plan" | "part
     throw err;
   }
   ctx.attempts.push(...res.attempts);
+  assertLease();
   session?.modelResponse(res);
   faultPoint("after_model_response", ctx.purpose ?? req.purpose);
   return res;
