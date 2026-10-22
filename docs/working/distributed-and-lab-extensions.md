@@ -160,6 +160,17 @@ not a reason to stop the independently runnable core work. No service was instal
 - Root owns index exports/operations docs/purge integration; send added API constants/helper names. No real provider quota/engine/user data.
 - Freeze source before router typecheck/build/serial focused checks, own report exact evidence/limits. No commits or pushes.
 
+### Brief: linux-browser-proc-policy (seed_repair)
+- Tier isolated roadmap-team new feature branch from named root baseline; fixture correction only.
+- Read Current State and own linux-browser-helper + linux-browser-observer-plan reports. Exact ordinary failure is mount-set equality, not unavailable kernel/ptrace observation.
+- Own labs/browser-linux-helper.py; browser-linux-plan.ts metadata only if needed; tests/browser-linux-helper.test.ts + fixtures/browser-linux-helper-fixture.py; reports/linux-browser-proc-policy.md only.
+- No capability/lease/static runtime/manager/config/exports/migration/shared docs changes, no Chrome/downloads/OS/cgroup/services changes.
+- Add fixed --remount-ro /proc after proc construction; exact required base mounts and only3 optional fixed sysrq-trigger/irq/bus masks. Independently require every present proc mount read-only; no blanket optionality.
+- Preserve kernel parent/birth/pidfd/caps/NNP/FD/root/bind proof, exact gate and candidate cleanup authority. No outer-userns/privileged fallback or child-attestation proof.
+- Test writable/unknown/duplicate/missing-required mount refusal; omission allowed only for listed masks with proc-ro enforced. Keep all17 native regressions.
+- Run actual root AND ordinary-owner helper positive execution, EOF/gate failure/owner+helper death, exact-owned descendant cleanup. No mocked positive kernel proof.
+- Record proc-ro may break later Chrome sandbox uid_map writes; no browser/general-workload acceptance or runtime availability.
+- Freeze then focused tests/router typecheck/build/report exact evidence/limits. No commits/pushes/shared edits.
 ### Brief: linux-browser-observer-plan (seed_repair)
 - Tier isolated roadmap-team report-only follow-up from root baseline after accepted helper commit.
 - Read Current State and own linux-browser-helper report/source. Own only reports/linux-browser-observer-plan.md; no source/schema/config/migration/shared docs changes.
