@@ -26,6 +26,7 @@ import { initConfigText, projectsCommand } from "./cli/projects.js";
 import { sessionRows, sessionTimeline } from "./cli/session-text.js";
 import { out, table } from "./cli/terminal.js";
 import { ensurePanel } from "./operations/panel.js";
+import { mcpOptions, runMcpServer } from "./mcp/serve.js";
 import type { ScanSummary } from "./models/scanner.js";
 
 // The `switchyard` command: argument parsing and dispatch. Terminal rendering lives in src/cli/.
@@ -104,6 +105,11 @@ async function main(): Promise<number> {
       "team-factor": { type: "string" },
       "team-requests": { type: "string" },
       yes: { type: "boolean", default: false },
+      // switchyard mcp (mcp/serve.ts)
+      "no-worker": { type: "boolean", default: false },
+      http: { type: "boolean", default: false },
+      host: { type: "string" },
+      port: { type: "string" },
       help: { type: "boolean", short: "h", default: false },
     },
   });
@@ -133,6 +139,13 @@ async function main(): Promise<number> {
         out(`wrote ${target}${src === presetFile ? ` (first project: ${slug})` : ""}`, false);
       }
     }
+    return 0;
+  }
+
+  // The MCP server opens its own Switchyard (with or without a worker) and serves until its
+  // client disconnects (stdio) or it is interrupted (HTTP).
+  if (cmd === "mcp") {
+    await runMcpServer(mcpOptions(values));
     return 0;
   }
 

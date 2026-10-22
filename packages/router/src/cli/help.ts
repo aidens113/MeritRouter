@@ -30,6 +30,15 @@ Setup
   doctor                        check config, each provider (keys, cooldowns, invalid keys,
                                 last model listing), secrets in the config, models, and per
                                 project its repositories and brain folders (--project: one)
+  mcp [--no-worker] [--http [--host <h>] [--port <n>]]
+                                the MCP server for Claude Code, Codex, ChatGPT, and other MCP
+                                clients, serving one project; stdio by default (the client
+                                launches it); --http serves Streamable HTTP at
+                                http://127.0.0.1:4478/mcp (--host or --port imply --http).
+                                SWITCHYARD_MCP_TOKEN, when set, is required on every request
+                                (Authorization: Bearer <token>, or the URL /mcp/<token>); it
+                                must be set for a non-loopback --host. --no-worker leaves the
+                                worker to a daemon
   models [--all]                list models with status and eligibility
   models scan                   list the models of every provider with a usable key, refresh
                                 free daily quotas and paid prices (exit 1 if nothing was listed)
