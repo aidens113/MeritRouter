@@ -302,18 +302,25 @@ panel's Scan button does the same as `models scan` for every provider; a running
 `discovery.interval_minutes` (60). Point the CLI at the config with `--config` or
 `SWITCHYARD_CONFIG` when you run it from another directory.
 
-## 4. Register the MCP server with Claude Code
+## 4. Connect an MCP client (Claude Code, Codex, ChatGPT)
 
-Run from the project you want Claude to work in. Paths are examples. The server reads
-`SWITCHYARD_CONFIG` (or pass `--config`).
+`switchyard mcp` is SwitchYard's MCP server. It is the same as `node
+packages/router/dist/cli.js mcp`, or `node packages/router/dist/mcp.js` for older registrations.
+The server reads `SWITCHYARD_CONFIG`, or you pass `--config`. Paths below are examples. Use
+`switchyard` when the package is installed or linked, otherwise `node <checkout>/packages/router/dist/cli.js`.
 
-```powershell
-claude mcp add --transport stdio --scope local switchyard -- node "D:/SwitchYardRouter/packages/router/dist/mcp.js" --config "D:/path/to/switchyard.config.yaml" --project my-app
-```
-
-```bash
-claude mcp add --transport stdio --scope local switchyard -- node /abs/SwitchYardRouter/packages/router/dist/mcp.js --config /abs/path/switchyard.config.yaml --project my-app
-```
+It speaks two transports:
+- **stdio** (default). The client launches the server and talks over its stdin and stdout. Use
+  this for Claude Code and Codex on the same machine.
+- **Streamable HTTP** (`--http`). The server listens at `http://127.0.0.1:4478/mcp` and clients
+  connect to that URL. Change the address with `--host` and `--port`; either one alone also turns
+  on HTTP. Use this for ChatGPT, through a tunnel, or for several clients sharing one server.
+  - `SWITCHYARD_MCP_TOKEN`: when set, every request must carry it, either as
+    `Authorization: Bearer <token>` or as the last part of the URL, `/mcp/<token>`.
+  - A `--host` other than loopback (for example `0.0.0.0`) refuses to start without the token.
+  - Without a token, the server answers only requests addressed to a loopback name (Host and
+    Origin). So a web page cannot reach it, and neither can a tunnel. Make a token with
+    `openssl rand -hex 32` or any long random string.
 
 One MCP server serves one project:
 - Its tools default to that project. A tool with a `project` input may name another one.
@@ -323,22 +330,100 @@ The server picks its project in this order:
 1. `--project <slug>`;
 2. `SWITCHYARD_PROJECT`;
 3. the only project;
-4. the project whose repository contains Claude Code's working directory.
+4. the project whose repository contains the client's working directory.
 
 If none of these picks a project, the server does not start: it exits with an error that lists
 the projects. A guessed default could write tasks and brain entries into the wrong project. So
-once an install has several projects, pass `--project` unless Claude Code always runs inside one
+once an install has several projects, pass `--project` unless the client always runs inside one
 of the project's repositories.
 
 Add `--no-worker` when a daemon or service already runs the worker (see below). The MCP server
 then only submits and reads, and leaves recovery to the daemon. Without the flag, the server
-runs a worker for every project in its own process, as before.
+runs a worker for every project in its own process.
+
+The tools only add to the client. The client keeps its own login and model; nothing intercepts
+its native requests.
+
+### Claude Code
+
+Run from the project you want Claude to work in:
+
+```powershell
+claude mcp add --transport stdio --scope local switchyard -- node "D:/SwitchYardRouter/packages/router/dist/cli.js" mcp --config "D:/path/to/switchyard.config.yaml" --project my-app
+```
+
+```bash
+claude mcp add --transport stdio --scope local switchyard -- node /abs/SwitchYardRouter/packages/router/dist/cli.js mcp --config /abs/path/switchyard.config.yaml --project my-app
+```
 
 Check with `claude mcp get switchyard` and `/mcp` inside Claude Code. Merge
 `packages/router/examples/CLAUDE.delegation.md` into the project's `CLAUDE.md`.
 
-This only adds tools. Claude Code keeps its own login and model; nothing intercepts native
-Claude requests.
+A `--scope local` entry is keyed by the folder path exactly as written. If your editor opens the
+folder with another spelling (`d:\repo` against `D:/repo`), the entry does not load. A project
+`.mcp.json` at the repository root avoids this:
+
+```json
+{ "mcpServers": { "switchyard": { "command": "node", "args": ["D:/SwitchYardRouter/packages/router/dist/cli.js", "mcp", "--config", "D:/path/to/switchyard.config.yaml", "--project", "my-app"] } } }
+```
+
+### Codex (CLI, IDE extension, app)
+
+Codex keeps MCP servers in `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`), shared by the
+CLI and the IDE extension. Register the stdio server:
+
+```bash
+codex mcp add switchyard -- node /abs/SwitchYardRouter/packages/router/dist/cli.js mcp --config /abs/path/switchyard.config.yaml --project my-app
+codex mcp list
+codex mcp get switchyard
+```
+
+This writes:
+
+```toml
+[mcp_servers.switchyard]
+command = "node"
+args = ["/abs/SwitchYardRouter/packages/router/dist/cli.js", "mcp", "--config", "/abs/path/switchyard.config.yaml", "--project", "my-app"]
+```
+
+To use an HTTP server that is already running (`switchyard mcp --http`, with the token in
+`SWITCHYARD_MCP_TOKEN` for both processes):
+
+```bash
+codex mcp add switchyard-http --url http://127.0.0.1:4478/mcp --bearer-token-env-var SWITCHYARD_MCP_TOKEN
+```
+
+Inside Codex, `/mcp` lists the servers and their tools. Codex reads a reduced form of JSON Schema
+for tool inputs. SwitchYard's tool inputs stay inside that form, and the service still checks
+every task in full. So a task Codex fills in wrongly is refused with the reason, not run.
+
+### ChatGPT (developer mode)
+
+ChatGPT connects only to a remote HTTPS URL, and it cannot send a bearer header: a connector
+uses OAuth or no authentication. So the token goes in the URL, and the tunnel's address plus
+the token is the secret.
+
+1. Start the HTTP server with a token:
+
+   ```bash
+   export SWITCHYARD_MCP_TOKEN=$(openssl rand -hex 32)       # PowerShell: $env:SWITCHYARD_MCP_TOKEN = "<long random string>"
+   switchyard mcp --http --config /abs/path/switchyard.config.yaml --project my-app
+   ```
+
+2. Expose port 4478 over HTTPS with a tunnel, for example
+   `cloudflared tunnel --url http://127.0.0.1:4478` or `ngrok http 4478`. Note the
+   `https://...` address it prints.
+3. In ChatGPT, open Settings, then Apps & Connectors, then Advanced settings, and turn on
+   Developer mode. Create a connector:
+   - MCP server URL: `https://<tunnel address>/mcp/<token>`;
+   - Authentication: No authentication.
+4. In a chat, choose Developer mode and the connector. Each tool call shows its arguments before
+   it runs.
+
+Anyone with that URL can submit tasks that spend your provider quota, write to the project's
+brain, and accept results. Keep it private. Stop the tunnel when you are done, and change the
+token if the URL leaked. A tunnel to a server without a token gets 403 for every request, because
+the tunnel's host name is not loopback.
 
 Without `--no-worker`, the MCP process runs the worker loop, so tasks run while the Claude Code
 session is open. For work that should continue after closing Claude, run

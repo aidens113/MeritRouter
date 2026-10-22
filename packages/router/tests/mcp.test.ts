@@ -5,8 +5,31 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { makeEnv, summarizeTask, type Env } from "./helpers.js";
 
-const server = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "dist", "mcp.js");
+const dist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "dist");
+const server = path.join(dist, "mcp.js");
 let env: Env | undefined;
+
+/** JSON Schema keywords every MCP client reads, OpenAI's included (see src/mcp/schemas.ts). */
+const PORTABLE = new Set(["type", "properties", "required", "items", "enum", "description", "additionalProperties", "anyOf", "minimum", "maximum", "exclusiveMinimum", "minItems", "maxItems", "minLength", "maxLength", "default"]);
+
+/** Why a tool's input schema would not suit an OpenAI client; empty when it suits. */
+function schemaProblems(tool: string, schema: Record<string, unknown>): string[] {
+  const problems: string[] = [];
+  if (schema.type !== "object" || typeof schema.properties !== "object") problems.push(`${tool}: the input schema is not an object with properties`);
+  const walk = (node: unknown, at: string) => {
+    if (!node || typeof node !== "object" || Array.isArray(node)) return problems.push(`${at}: not a schema`);
+    const n = node as Record<string, unknown>;
+    for (const k of Object.keys(n)) if (!PORTABLE.has(k) && !(at === tool && k === "$schema")) problems.push(`${at}: keyword ${k}`);
+    if (n.type === undefined && !Array.isArray(n.anyOf)) problems.push(`${at}: no type (Codex would read a string)`);
+    if (n.type === "array" && !n.items) problems.push(`${at}: array without items`);
+    if (n.additionalProperties !== undefined && typeof n.additionalProperties !== "boolean") problems.push(`${at}: additionalProperties is a schema, not true or false`);
+    for (const [k, v] of Object.entries((n.properties as Record<string, unknown>) ?? {})) walk(v, `${at}.${k}`);
+    if (n.items) walk(n.items, `${at}[]`);
+    for (const [i, v] of ((n.anyOf as unknown[]) ?? []).entries()) walk(v, `${at}|${i}`);
+  };
+  walk(schema, tool);
+  return problems;
+}
 let client: Client | undefined;
 afterEach(async () => {
   await client?.close();
@@ -18,7 +41,12 @@ describe("MCP server", () => {
     env = makeEnv();
     client = new Client({ name: "test", version: "1" });
     await client.connect(new StdioClientTransport({ command: process.execPath, args: [server, "--config", env.cfg.configPath], env: { PATH: process.env.PATH ?? "" } }));
-    const tools = (await client.listTools()).tools.map((t) => t.name).sort();
+    const listed = (await client.listTools()).tools;
+    // Every input schema suits OpenAI clients (Codex, ChatGPT): portable keywords only, typed
+    // nodes, and open objects that say additionalProperties: true. Empty inputs are objects.
+    expect(listed.flatMap((t) => schemaProblems(t.name, t.inputSchema as Record<string, unknown>))).toEqual([]);
+    expect(listed.find((t) => t.name === "panel")!.inputSchema).toMatchObject({ type: "object", properties: {} });
+    const tools = listed.map((t) => t.name).sort();
     expect(tools).toEqual([
       "accept_result", "answer_question", "await_results", "blame", "brain_access_requests", "brain_append_ledger", "brain_decide_request", "brain_list", "brain_promote_lesson",
       "brain_read", "brain_search", "brain_set_current_state", "brain_start_working_doc", "brain_write", "cancel_tasks", "collect_results", "get_job_metrics", "get_job_tree", "get_plan", "get_session", "get_task_status",
@@ -33,6 +61,10 @@ describe("MCP server", () => {
 
     const bad = await client.callTool({ name: "submit_tasks", arguments: { tasks: [{ profile: "summarize" }] } });
     expect(bad.isError).toBe(true);
+    // The described task shape keeps unknown keys, so the service's strict validation still sees them.
+    const unknownKey = await client.callTool({ name: "submit_tasks", arguments: { tasks: [{ ...summarizeTask({ idempotencyKey: "mcp-x" }), bogusField: 1 }] } });
+    expect(unknownKey.isError).toBe(true);
+    expect((unknownKey.content as Array<{ text: string }>)[0]!.text).toMatch(/bogusField/);
     const noPlan = await client.callTool({ name: "get_plan", arguments: { jobId: "no-such-job" } });
     expect(noPlan.isError).toBe(true);
     expect((noPlan.content as Array<{ text: string }>)[0]!.text).toBe("unknown job no-such-job");
@@ -68,5 +100,16 @@ describe("MCP server", () => {
     const res = await client.callTool({ name: "await_results", arguments: { taskIds: [submitted[0].taskId], timeoutSeconds: 15 } });
     const body = JSON.parse((res.content as Array<{ text: string }>)[0]!.text);
     expect(body.completed[0].stopReason).toMatch(/gateway_auth|no_eligible_endpoint/);
+  }, 60_000);
+
+  it("runs as `switchyard mcp` on stdio, so an installed package needs no dist path", async () => {
+    env = makeEnv();
+    client = new Client({ name: "test", version: "1" });
+    await client.connect(new StdioClientTransport({ command: process.execPath, args: [path.join(dist, "cli.js"), "mcp", "--config", env.cfg.configPath, "--no-worker"], env: { PATH: process.env.PATH ?? "" } }));
+    const names = (await client.listTools()).tools.map((t) => t.name);
+    expect(names).toContain("submit_tasks");
+    expect(names).toHaveLength(34);
+    const noJob = await client.callTool({ name: "job_status", arguments: { jobId: "no-such-job" } });
+    expect((noJob.content as Array<{ text: string }>)[0]!.text).toBe("unknown job no-such-job");
   }, 60_000);
 });
