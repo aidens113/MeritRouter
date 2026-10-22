@@ -1,3 +1,4 @@
+import { validateRecipe } from "../labs/recipe.js";
 import path from "node:path";
 import type { z } from "zod";
 import { CodingConfigSchema, SupervisorConfigSchema, TeamConfigSchema, VerificationConfigSchema, type RawConfig } from "../config/schema.js";
@@ -75,6 +76,13 @@ export function resolveProjects(cfg: RawConfig, baseDir: string): { resolution: 
       continue;
     }
     const p = parsed.data;
+    if (p.lab) {
+      try {
+        validateRecipe(p.lab, Object.keys(p.repositories));
+      } catch (err) {
+        issues.push({ path: ["projects", slug, "lab"], message: (err as Error).message });
+      }
+    }
     const overrides: ProjectOverrides = {
       brain: {
         ...cfg.brain,

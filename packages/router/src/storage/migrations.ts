@@ -804,4 +804,36 @@ export const MIGRATIONS: string[] = [
     UPDATE budget_requests SET project_id = COALESCE((SELECT project_id FROM tasks WHERE id = NEW.task_id), '') WHERE id = NEW.id;
   END;
   `,
+  // Project-scoped isolated labs, durable services/port reservations/checks and promotion queue.
+  `
+  CREATE TABLE labs (
+    id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL, state TEXT NOT NULL,
+    root TEXT NOT NULL, recipe_json TEXT NOT NULL, repositories_json TEXT NOT NULL, ports_json TEXT NOT NULL,
+    env_json TEXT NOT NULL, goal TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+    last_activity INTEGER NOT NULL, UNIQUE(project_id, name)
+  );
+  CREATE TABLE lab_ports (port INTEGER PRIMARY KEY, lab_id TEXT NOT NULL REFERENCES labs(id), name TEXT NOT NULL, UNIQUE(lab_id,name));
+  CREATE TABLE lab_services (
+    lab_id TEXT NOT NULL REFERENCES labs(id), name TEXT NOT NULL, state TEXT NOT NULL,
+    pid INTEGER, token TEXT, log_path TEXT NOT NULL, restart_count INTEGER NOT NULL DEFAULT 0,
+    next_restart INTEGER, started_at INTEGER, owner_id TEXT, owner_until INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(lab_id,name)
+  );
+  CREATE TABLE lab_checks (
+    id TEXT PRIMARY KEY, lab_id TEXT NOT NULL REFERENCES labs(id), name TEXT NOT NULL, repository TEXT NOT NULL,
+    revision TEXT NOT NULL, result_json TEXT NOT NULL, created_at INTEGER NOT NULL
+  );
+  CREATE TABLE lab_events (id INTEGER PRIMARY KEY AUTOINCREMENT, lab_id TEXT NOT NULL REFERENCES labs(id), type TEXT NOT NULL, data_json TEXT NOT NULL, created_at INTEGER NOT NULL);
+  CREATE TABLE lab_promotions (
+    id TEXT PRIMARY KEY, lab_id TEXT NOT NULL REFERENCES labs(id), state TEXT NOT NULL, policy TEXT NOT NULL,
+    revisions_json TEXT NOT NULL DEFAULT '{}', targets_json TEXT NOT NULL DEFAULT '{}', details_json TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX labs_project_state ON labs(project_id,state);
+  CREATE INDEX lab_events_lab ON lab_events(lab_id,id);
+  CREATE INDEX lab_checks_lab ON lab_checks(lab_id,created_at);
+  CREATE INDEX lab_promotions_state ON lab_promotions(state,created_at);
+  `,
+  // Cache creation usage is distinct from cache hits; nullable means unreported.
+  `ALTER TABLE model_requests ADD COLUMN cache_creation_input_tokens INTEGER CHECK (cache_creation_input_tokens IS NULL OR cache_creation_input_tokens >= 0);`,
 ];

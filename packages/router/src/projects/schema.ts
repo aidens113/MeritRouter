@@ -1,3 +1,4 @@
+import { LabRecipeSchema, ProjectLabsSchema } from "../labs/recipe.js";
 import { z } from "zod";
 import { BrainModeSchema, REPOSITORY_ALIAS_RE, RepositorySchema, RoleNameSchema, RoleSchema, TierNameSchema } from "../config/schema.js";
 
@@ -70,6 +71,8 @@ export const ProjectConfigSchema = z
     ...ProjectLimitsSchema.shape,
     /** Display name (defaults to the slug). */
     name: z.string().min(1).max(80).optional(),
+    lab: LabRecipeSchema.optional(),
+    labs: ProjectLabsSchema.prefault({}),
     /** Repositories by alias; users write the bare alias, SwitchYard keys it `<project>/<alias>` internally. */
     repositories: z.record(z.string().regex(REPOSITORY_ALIAS_RE), RepositorySchema).default({}),
     brain: z
