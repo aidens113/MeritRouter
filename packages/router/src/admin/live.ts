@@ -17,7 +17,7 @@ import type { Switchyard } from "../core/service.js";
  */
 
 /** Topics a page can subscribe to. Install-wide ones (keys, models, config, projects, workers) change in every scope. */
-export const LIVE_TOPICS = ["tasks", "jobs", "sessions", "requests", "events", "brain", "keys", "web", "models", "config", "projects", "workers", "budget"] as const;
+export const LIVE_TOPICS = ["tasks", "jobs", "sessions", "requests", "events", "brain", "keys", "web", "models", "config", "projects", "workers", "budget", "labs"] as const;
 export type LiveTopic = (typeof LIVE_TOPICS)[number];
 
 /** `all` (every project) or one project's slug. */
@@ -87,6 +87,21 @@ function jobAncestors(db: Db, taskIds: string[]): string[] {
 }
 
 const SOURCES: Record<string, Source & { topic: LiveTopic }> = {
+  labs: {
+    topic: "labs",
+    mark: ({ db, project }) => {
+      const s = scoped(project, "l.project_id");
+      // Lease-renewal timestamps are deliberately excluded: state and ownership changes matter
+      // to the page, while a healthy supervisor renews every second.
+      const labs = db.prepare(`SELECT l.id,l.name,l.state,l.updated_at,l.last_activity FROM labs l WHERE ${s.sql} ORDER BY l.id`).all(...s.args);
+      const services = db.prepare(`SELECT x.lab_id,x.name,x.state,x.pid,x.restart_count,x.owner_id FROM lab_services x JOIN labs l ON l.id=x.lab_id WHERE ${s.sql} ORDER BY x.lab_id,x.name`).all(...s.args);
+      const checks = db.prepare(`SELECT x.id,x.lab_id,x.revision,x.created_at FROM lab_checks x JOIN labs l ON l.id=x.lab_id WHERE ${s.sql} ORDER BY x.id`).all(...s.args);
+      const promotions = db.prepare(`SELECT x.id,x.state,x.updated_at FROM lab_promotions x JOIN labs l ON l.id=x.lab_id WHERE ${s.sql} ORDER BY x.id`).all(...s.args);
+      const operations = db.prepare(`SELECT id,state,error_code,updated_at FROM lab_operations WHERE ${scoped(project).sql} ORDER BY id`).all(...scoped(project).args);
+      return [digest([labs, services, checks, promotions, operations])];
+    },
+    topics: () => ["labs"],
+  },
   tasks: {
     topic: "tasks",
     mark: ({ db, project }) => {
@@ -359,7 +374,7 @@ const MUTABLE_TABLES: Record<string, string[]> = {
 };
 const GLOBAL_MUTABLE_TABLES: Record<string, string[]> = {
   keys: ["provider_key_state", "paid_keys", "paid_spend", "web_backend_state"],
-  models: ["endpoints", "endpoint_overrides", "routing_overrides", "scans", "model_requests", "meta"],
+  models: ["endpoints", "endpoint_overrides", "routing_overrides", "scans", "model_requests"],
   projects: ["projects"], brainAccess: ["brain_files"],
 };
 const digest = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex");

@@ -5,6 +5,7 @@ import { serveHttp } from "../../mcp/http.js";
 import { AdmissionDenied } from "../../core/errors.js";
 import { declaredCheckTool, availableTools, type HarnessEnv, type HarnessTool } from "../../harness/tools.js";
 import { requestBudgetTool } from "../../harness/budget-tools.js";
+import { labHarnessTools } from "../../labs/tools.js";
 import { evidenceUniverse } from "../../core/worker-output.js";
 import type { RunContext } from "../types.js";
 import { minimalEnv } from "./process.js";
@@ -33,7 +34,7 @@ export async function startTaskTools(ctx: RunContext, worktree: string, home: st
     ctx: toolCtx, role: "implementer", readers: new Map(), universe: evidenceUniverse([]), allowArtifacts: false, edits: new Set(),
     checks: { commands: ctx.spec.constraints.checks ?? [], cwd: worktree, env: minimalEnv({ HOME: home, USERPROFILE: home, CI: "1" }), timeoutMs: ctx.cfg.execution.check_timeout_seconds * 1000, maxRuns: ctx.cfg.coding.max_check_runs_per_task },
   };
-  const tools = availableTools([declaredCheckTool(), requestBudgetTool()], env);
+  const tools = availableTools([declaredCheckTool(), requestBudgetTool(), ...labHarnessTools()], env);
   let closing = false;
   let serial: Promise<void> = Promise.resolve();
 
@@ -75,6 +76,7 @@ export async function startTaskTools(ctx: RunContext, worktree: string, home: st
         const description = tool.def.function.description;
         if (name === "run_check") server.registerTool(name, { description, inputSchema: CheckArgs }, args => invoke(tool, args));
         else if (name === "request_more_budget") server.registerTool(name, { description, inputSchema: BudgetArgs }, args => invoke(tool, args));
+        else if (name.startsWith("lab_")) server.registerTool(name, { description, inputSchema: z.object({}).catchall(z.unknown()) }, args => invoke(tool, args));
       }
       return server;
     } });

@@ -561,7 +561,13 @@ item. A delegated task's session names the supervisor session that delegated it 
   `switchyard session <id> [--after seq] [--limit n] [--json]`, the MCP tools `list_sessions` and
   `get_session`, or a project's Sessions page (`/p/<slug>/sessions`, also linked from task and job pages).
 - External agents (OpenCode) run their tools inside their own process: their sessions record the
-  model traffic through the policy gateway, not individual tool calls.
+  model traffic through the policy gateway. Their calls to SwitchYard's task-scoped MCP checks
+  and budget tools record journal intent and outcome; other built-in agent tools remain visible
+  only through the transcript. The bridge authenticates one execution lease, exposes declared
+  checks with enforced run limits, and closes with the runner. Approved request increases reach
+  later gateway requests; token and paid caps remain in force. Command agents receive
+  `SWITCHYARD_TASK_TOOLS_URL` and `SWITCHYARD_TASK_TOOLS_TOKEN` and must implement that MCP
+  connection explicitly. OpenCode receives the remote MCP configuration inline.
 - A resume appends a `resumed` event recording what was settled and the notice the agent got.
 
 ## The web panel: turning it off, and rebuilding it
@@ -641,6 +647,17 @@ branch checked out at the backed-up commit. A brain already at that commit is le
 Restored running tasks have their leases expired, so the next worker recovers them. The command
 prints each brain mount that was not in the backup, so you can restore it from its own
 repository.
+
+## Integration ownership
+
+Integration also uses a durable mutex for the physical Git repository and branch. It covers
+the pick and its verification callbacks across independent processes and repository aliases.
+A different queue-owner string or an old heartbeat does not prove abandonment. A provably
+dead local process permits takeover; live, reused, remote or malformed ownership remains busy
+and returns a bounded error. This preserves evidence while ownership is ambiguous. Separate
+SQLite installations are not coordinated by this mutex. Recovery callbacks must remain
+idempotent: a kill after a callback and before its durable completion can replay that callback,
+while the already-picked commits are retained.
 
 ## One daemon for every project
 

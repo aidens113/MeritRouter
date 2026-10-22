@@ -183,6 +183,7 @@ async function main(): Promise<number> {
         return await projectsCommand(sy, args, values, json, select);
       case "labs": {
         const action = args[0] ?? "list";
+        if (explicit && ["serve", "supervisor-start", "supervisor-stop", "supervisor-status"].includes(action)) throw new SwitchyardError("usage", "Labs supervision serves every project in this installation; remove --project and SWITCHYARD_PROJECT");
         if (action === "serve") { await serveLabs(sy); return 0; }
         if (action === "supervisor-start") { await ensureLabSupervisor(sy, CLI_PATH); out({ running: true }, json); return 0; }
         if (action === "supervisor-stop") { out({ stopped: await stopLabSupervisor(sy) }, json); return 0; }

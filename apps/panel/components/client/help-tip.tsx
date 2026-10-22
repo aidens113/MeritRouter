@@ -32,14 +32,14 @@ export function HelpTip({ term, text, label }: { term?: GlossaryKey; text?: stri
     el.style.marginLeft = `${Math.round(shift)}px`;
   };
   return (
-    <span className="group relative inline-flex align-middle" onMouseEnter={() => place()} onFocus={() => place()}>
+    <span className="group/help-tip relative inline-flex align-middle" onMouseEnter={() => place()} onFocus={() => place()}>
       <button type="button" aria-label={label ?? "What does this mean?"} className="inline-flex rounded-full text-ink-3 hover:text-ink focus:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">
         <CircleHelp size={14} aria-hidden />
       </button>
       <span
         ref={tip}
         role="tooltip"
-        className="pointer-events-none absolute left-1/2 top-full z-50 mt-1.5 hidden w-72 max-w-[calc(100vw-1rem)] -translate-x-1/2 rounded-lg border border-line bg-surface p-3 text-left text-xs font-normal leading-relaxed text-ink-2 shadow-lg group-focus-within:block group-hover:block"
+        className="pointer-events-none absolute left-1/2 top-full z-50 mt-1.5 hidden w-72 max-w-[calc(100vw-1rem)] -translate-x-1/2 rounded-lg border border-line bg-surface p-3 text-left text-xs font-normal leading-relaxed text-ink-2 shadow-lg group-focus-within/help-tip:block group-hover/help-tip:block"
       >
         {body}
       </span>

@@ -59,12 +59,14 @@ export function workerBrainEnv(ctx: RunContext, role: RoleName): HarnessEnv["bra
   const brain = ctx.brain;
   const access = ctx.access;
   const g = { project: brain.project, effort: ctx.effort, task: ctx.spec.label ?? ctx.taskId, repos: ctx.spec.repositoryAliases };
+  const workingDoc = ctx.lab ? `projects/${brain.project}/labs/${ctx.lab.name}.md` : brain.workingDocPath(ctx.effort);
+  const briefGrants = [...(ctx.spec.brain?.grants ?? []), ...(ctx.lab ? [{ pattern: workingDoc, mode: "read" as const }] : [])];
   return {
     brain,
     access,
-    principal: () => access.principalFor(role, { ...g, jobId: ctx.jobId, tier: ctx.tier, ...(ctx.spec.brain?.grants ? { briefGrants: ctx.spec.brain.grants } : {}) }),
+    principal: () => access.principalFor(role, { ...g, jobId: ctx.jobId, tier: ctx.tier, ...(briefGrants.length ? { briefGrants } : {}) }),
     actor: workerActor(ctx, role),
-    workingDoc: brain.workingDocPath(ctx.effort),
+    workingDoc,
   };
 }
 
