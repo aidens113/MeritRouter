@@ -1,0 +1,27 @@
+# Browser pipe and isolation prerequisite worker report
+
+Status: FROZEN for supervisor review. Source implemented; final router typecheck/build and26/26 focused tests passed. No runtime registration, hydration enablement or operating-system adapter.
+
+## Owned implementation
+
+New `labs/browser-pipe.ts` exports an internal framework `BrowserPipeProtocol` over caller-supplied Node readable/writable streams. It owns and closes those streams only, not PIDs/process trees/network listeners. It uses Chromium-compatible default NUL-delimited JSON framing with fatal UTF-8 decoding, handles arbitrary byte splits/coalesced frames, and validates strict response/error/event envelopes. Unknown/late valid reply IDs cannot settle another call; a known reply must match the pending flat target session exactly. Remote error messages/data and invalid raw frame text do not enter returned errors.
+
+Limits are enforced before accepting accumulated frames/work: 12MiB frame, 32MiB aggregate input+output including separators, 32 pending responses/queued writes/drain waiters, 10,000 events,16 subscribers and60s total transport lifetime. Tests can reduce limits; hard maxima cannot be increased. Incoming frame storage grows geometrically to the cap, without retaining an unbounded list of tiny fragments. Outbound JSON serialization rejects cyclic/deep/non-JSON/accessor objects and caps nodes/depth/serialized bytes before final joining; no toJSON/getter execution. Write callback completion serializes buffered writes and drain waits for both accepted responses and writes.
+
+`call` accepts an explicit internal CDP method allowlist, JSON parameters and optional session ID. It has no evaluate/script-injection method or model-facing entry point. Method-specific service-origin/target/assertion authorization remains the later framework integration's responsibility; a pipe is not an origin or containment proof. `onEvent` subscriptions are synchronous and capped; accidental async rejection is observed and the unsupported async listener fails the transport. `drain`, EOF/unfinished frames, I/O failure, abort, deadline and idempotent close reject outstanding calls and release own listeners/buffers/timer; already closed/aborted streams fail immediately. No external listener is removed deliberately; final stream error guards remain only until normal Node stream close to handle callback/error ordering.
+
+New `labs/browser-isolation.ts` defines strict public unavailable status, validated backend identifiers, explicit unavailable error/require function, and a nominal opaque future isolation lease interface. Both Linux and Windows report unavailable: matching platform says adapter_not_installed, mismatched platform says unsupported_platform. There is no available status, real adapter, launch fallback, executable selection, PID or JSON/boolean containment-proof path. The private unique-symbol lease brand prevents structural JSON construction in typed framework code; it is an API boundary, not a runtime native-containment verification implementation. A future accepted adapter still must implement and revalidate exact containment/descendant generation ownership.
+
+## Scope and validation
+
+Only new source files above, `tests/browser-pipe.test.ts`, `tests/browser-isolation.test.ts` and this report are owned. Existing static schema/process/network/check/protocol/artifacts, package public exports, config, migrations and all runtime integration remain untouched. H2 integration and H3 durable ownership/recovery remain separate. No source or data from a downstream project.
+
+26/26 fake-stream/capability unit cases pass: byte-split multibyte UTF-8, coalesced frames, exact target-session correlation, unknown/late replies, strict invalid envelopes/UTF-8/empty frames, exact frame/aggregate boundaries, event/pending/subscriber/drain caps, queued/backpressured writes, abort/clean and unfinished EOF/close, output errors, deadline, pre-aborted/closed streams, hard cap configuration, oversized/cyclic/accessor commands, thrown/async listeners and unavailable/boolean-proof rejection. Initial write-error test expected one specific race ordering; corrected assertion accepts either sanitized write or stream I/O failure. No product workaround.
+
+No Chrome/native-isolation probes, OS/firewall/Docker/service installation, providers, user panel, tests against user data or processes were started. Fake streams prove protocol framing and teardown only, not actual Chrome pipe compatibility or OS containment. Final router typecheck/build passed; no full-suite/production/hydration success claim. Old untracked logs preserved. No commits/push/shared-doc edits.
+
+## Later review requirements
+
+Actual Chromium pipe launch/descriptor ownership/version negotiation and Linux/Windows isolation acceptance are deliberately absent. The streams' Node implementation and internal framework caller are trusted; this module does not attest remote browser truth or safely execute arbitrary native programs. Every future native adapter must supply an opaque generation-bound authority, not turn this public unavailable JSON into proof. Unsupported platform behavior remains fail-closed until that separate unit is independently accepted.
+
+Final git diff --check passed. Only the two new source files, two new tests and this report were created by this unit. No existing tracked source changes or owned OS resources remain; previous untracked logs were preserved. Frozen after observed final checks; supervisor review/integration remains required.
