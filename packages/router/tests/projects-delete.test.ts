@@ -7,6 +7,7 @@ import YAML from "yaml";
 import type { Switchyard } from "../src/core/service.js";
 import { archiveProject, deleteProject, previewProjectDeletion } from "../src/admin/insights.js";
 import { backfillProjects } from "../src/projects/backfill.js";
+import { purgeProjectRows } from "../src/projects/deletion.js";
 import { ensurePanel, panelBuildStale, panelStopFile, turnPanelOff } from "../src/operations/panel.js";
 import { baseConfig, commitAll, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, summarizeTask, type Env } from "./helpers.js";
 
@@ -55,6 +56,29 @@ async function runIn(project: string, goal: string): Promise<string> {
 const count = (sql: string, ...args: unknown[]) => sy!.db.prepare(sql).pluck().get(...args) as number;
 
 describe("deleting a project", () => {
+  it("keeps task Lab recovery records until cleanup is proven, then purges dependent rows", async () => {
+    env = makeProjects({ alpha: repoOf("alpha"), beta: repoOf("beta") });
+    sy = open(env, client(), { worker: true });
+    const task = await runIn("beta", "Completed task with retained runtime evidence");
+    await sy.close(); sy = open(env, client());
+    const now = Date.now();
+    sy.db.prepare("INSERT INTO task_workspace_attempts(id,task_id,project_id,run_count,lease_owner,execution_id,source_worktree,writable_alias,repositories_json,state,created_at,updated_at) VALUES('twa_test',?,'beta',1,'old-owner','e-lab','managed-source','app','[]','submitted',?,?)").run(task, now, now);
+    sy.db.prepare("INSERT INTO labs(id,project_id,name,state,root,recipe_json,repositories_json,ports_json,env_json,goal,created_at,updated_at,last_activity,kind) VALUES('lab-test','beta','task-test','destroyed','managed-root','{}','[]','{}','{}','',?,?,?,'task_attempt')").run(now, now, now);
+    sy.db.prepare("INSERT INTO lab_task_attempts(attempt_id,lab_id,desired_state,phase,checks_json,recipe_json,recipe_digest,deadline_at,created_at,updated_at) VALUES('twa_test','lab-test','stopped','cleanup_blocked','[]','{}','digest',?,?,?)").run(now, now, now);
+    sy.db.prepare("INSERT INTO task_lab_operations(id,attempt_id,kind,state,created_at,updated_at) VALUES('op-test','twa_test','cleanup','completed',?,?)").run(now, now);
+    sy.db.prepare("INSERT INTO lab_attempt_processes(id,lab_id,attempt_id,kind,logical_name,token,directory,state,created_at,updated_at) VALUES('tap_test','lab-test','twa_test','check','test','token','proof','running',?,?)").run(now, now);
+    expect(() => purgeProjectRows(sy!.db, "beta", ["running", "queued"])).toThrow(/cleanup/);
+    expect(sy.tasks.get(task)).not.toBeNull();
+    sy.db.prepare("UPDATE lab_task_attempts SET phase='pruned'").run();
+    expect(() => purgeProjectRows(sy!.db, "beta", ["running", "queued"])).toThrow(/cleanup/);
+    sy.db.prepare("UPDATE lab_attempt_processes SET state='stopped'").run();
+    expect(purgeProjectRows(sy.db, "beta", ["running", "queued"]).tasks).toBe(1);
+    expect(count("SELECT count(*) FROM task_workspace_attempts")).toBe(0);
+    expect(count("SELECT count(*) FROM lab_attempt_processes")).toBe(0);
+    expect(count("SELECT count(*) FROM labs")).toBe(0);
+    expect(sy.projects.rows().some(row => row.id === "alpha")).toBe(true);
+    expect(sy.db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+  });
   it("previews, refuses a wrong confirmation and active tasks, then removes the project and keeps accounting", async () => {
     env = makeProjects({ alpha: repoOf("alpha"), beta: repoOf("beta") });
     sy = open(env, client(), { worker: true });

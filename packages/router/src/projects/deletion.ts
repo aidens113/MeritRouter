@@ -126,6 +126,25 @@ export function purgeProjectRows(db: Db, slug: string, activeStates: readonly st
     if (active) throw new SwitchyardError("usage", `project ${slug} has ${active} running or queued task(s); cancel them or let them finish before deleting it`);
     const p = { slug, ids: ids(db.prepare("SELECT id FROM tasks WHERE project_id = ?").pluck().all(slug) as string[]) };
     const run = (sql: string) => db.prepare(sql).run(p).changes;
+    // Private runtime ownership records may only go after their resources were proved removed.
+    // In particular, removing a task must not orphan a recoverable task-Lab process intent.
+    if (db.prepare("SELECT 1 FROM labs WHERE project_id=? AND state!='destroyed' LIMIT 1").get(slug)
+      || db.prepare(`SELECT 1 FROM lab_task_attempts l JOIN task_workspace_attempts a ON a.id=l.attempt_id WHERE a.task_id IN ${IN_TASKS} AND l.phase!='pruned' LIMIT 1`).get(p)
+      || db.prepare(`SELECT 1 FROM task_lab_operations WHERE attempt_id IN (SELECT id FROM task_workspace_attempts WHERE task_id IN ${IN_TASKS}) AND state IN ('pending','running') LIMIT 1`).get(p)
+      || db.prepare(`SELECT 1 FROM lab_attempt_processes WHERE attempt_id IN (SELECT id FROM task_workspace_attempts WHERE task_id IN ${IN_TASKS}) AND state!='stopped' LIMIT 1`).get(p)
+      || db.prepare("SELECT 1 FROM lab_operations WHERE project_id=? AND state IN ('pending','running') LIMIT 1").get(slug)) {
+      throw new SwitchyardError("usage", `project ${slug} still has Lab resources or pending cleanup; finish owned Lab cleanup before deleting it`);
+    }
+    const attempts = `(SELECT id FROM task_workspace_attempts WHERE task_id IN ${IN_TASKS})`;
+    const labs = "(SELECT id FROM labs WHERE project_id=@slug)";
+    run(`DELETE FROM lab_attempt_processes WHERE attempt_id IN ${attempts}`);
+    run(`DELETE FROM task_lab_operations WHERE attempt_id IN ${attempts}`);
+    run(`DELETE FROM lab_task_attempts WHERE attempt_id IN ${attempts}`);
+    run(`DELETE FROM task_workspace_attempts WHERE task_id IN ${IN_TASKS}`);
+    run(`DELETE FROM lab_teams WHERE lab_id IN ${labs} OR root_job_id IN ${IN_TASKS}`);
+    run(`DELETE FROM lab_operations WHERE lab_id IN ${labs} OR project_id=@slug`);
+    for (const table of ["lab_ports", "lab_services", "lab_checks", "lab_events", "lab_promotions"]) run(`DELETE FROM ${table} WHERE lab_id IN ${labs}`);
+    run("DELETE FROM labs WHERE project_id=@slug");
     run(`DELETE FROM session_events WHERE session_id IN (SELECT id FROM sessions WHERE ${SESSIONS})`);
     const sessions = run(`DELETE FROM sessions WHERE ${SESSIONS}`);
     run(`DELETE FROM task_deps WHERE task_id IN ${IN_TASKS} OR depends_on IN ${IN_TASKS}`);

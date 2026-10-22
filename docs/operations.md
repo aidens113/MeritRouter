@@ -581,6 +581,17 @@ item. A delegated task's session names the supervisor session that delegated it 
 
 ## The web panel: turning it off, and rebuilding it
 
+Model request detail includes bounded recorded messages, parameters, responses and tool actions
+when an exact response request ID can be matched to a session journal. Successful edit targets
+require a matching recorded tool outcome. Related task file lists, artifacts and commit heads
+are displayed separately as task-wide context; they can include later work or other requests.
+Historical journals contain logical messages, not serialized provider HTTP bodies or complete
+tool schemas, and the recorder may miss some in-place message edits. Failed attempts, missing
+journals and direct calls can have accounting without recoverable input; the page explains
+this absence. Mixed-project or unprovable participant scope withholds the transcript payload.
+Reads and displayed text are capped and shortened data is marked; arbitrary artifact bodies or
+repository files are not opened to populate the request page.
+
 - The power button at the top of the panel, beside the project switcher, turns the panel off
   after a confirmation: `POST /api/panel/stop` writes `<storage>/panel.stopped`, answers, and the
   panel process exits; the page then shows "Panel turned off". Agents and workers keep running.

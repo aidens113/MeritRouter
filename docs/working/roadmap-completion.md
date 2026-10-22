@@ -10,6 +10,14 @@ Related: [handoff](handoff.md), [labs](labs.md), [budget-control](budget-control
 
 ## Current State
 
+Request-evidence UI3da30cf is merged locally: supervisor independently passed39 focused tests
+(10.34s) and production browser harness on demo4497, eight desktop/phone light/dark screenshots,
+actual navigation/scoped404/related links, zero model calls/browser exceptions; captures viewed.
+Classifier06a154a partitions future batches/cache by authoritative project (independent14 tests).
+Historical session transcript scope repair and bounded normalized future Gate capture are assigned.
+Neither richer request page nor these new prerequisites is deployed to4477 yet. Task-Lab caller
+integration is active; source/auth/process prerequisites are local only, not a complete feature.
+
 Baseline dev/main e9a0726: Panel v2 and budget B1/B2 accepted; 622 tests passed. The user's
 "ok BUILD IT THEN" authorizes implementing the remaining audit, rather than another audit-only
 turn. Use documented defaults: feature labs, four active, isolated data, manual promotion;
