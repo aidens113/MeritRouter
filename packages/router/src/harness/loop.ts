@@ -115,11 +115,28 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
     }
   }
 
+  // Progress guards (live 2026-10-21: coding workers spent whole budgets reading and searching):
+  // a coding run that has edited nothing by half its requests is told to write now, and an exact
+  // repeat of an earlier read is marked as such.
+  const canEdit = byName.has("write_file");
+  const runStart = env.ctx.gate.admission.taskTotals(env.ctx.taskId).requests;
+  const allowance = env.ctx.budget.maxModelRequests - runStart;
+  let edited = false;
+  let stallNudged = false;
+  const seenCalls = new Map<string, number>();
+
   for (;;) {
     // Shutdown, cancellation, or deadline: stop before spending another request.
     if (env.ctx.signal.aborted) throw new Error(`aborted: ${String(env.ctx.signal.reason ?? "aborted")}`);
     const used = env.ctx.gate.admission.taskTotals(env.ctx.taskId).requests;
     const remaining = env.ctx.budget.maxModelRequests - used;
+    if (canEdit && !edited && !stallNudged && allowance >= 4 && used - runStart >= Math.ceil(allowance / 2) && remaining > 1) {
+      stallNudged = true;
+      messages.push({
+        role: "user",
+        content: `You have used ${used - runStart} of ${allowance} requests and have not changed any file yet. Write your implementation now with write_file. If something you depend on does not exist yet (another task's module or interface), define the smallest version you need yourself, state that assumption in your result, and continue; do not search for it again.`,
+      });
+    }
     if (remaining <= 0) {
       sync();
       return { kind: "budget_exhausted", messages };
@@ -238,7 +255,17 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
           return { ok: false, output: `error: ${(err as Error).message}` };
         }
       });
-      messages.push({ role: "tool", tool_call_id: call.id, content: r.output });
+      if (r.ok && t?.sideEffect === "edit") edited = true;
+      // An exact repeat of an earlier read: the answer cannot have changed unless a file was edited since.
+      let output = r.output;
+      if (t && t.sideEffect !== "edit" && args !== undefined) {
+        const key = `${call.function.name} ${JSON.stringify(args)}`;
+        const n = (seenCalls.get(key) ?? 0) + 1;
+        seenCalls.set(key, n);
+        if (n > 1) output += `\n[You made this exact ${call.function.name} call ${n} times; the result is the same. Use it and move on.]`;
+      }
+      if (t?.sideEffect === "edit" && r.ok) seenCalls.clear();
+      messages.push({ role: "tool", tool_call_id: call.id, content: output });
     }
     if (env.edits.size) await o.onResponse?.({ endpointId, requestId, edits: [...env.edits] });
     sync();

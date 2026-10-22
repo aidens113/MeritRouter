@@ -103,9 +103,9 @@ discovery:
   require_confirmation_for_heuristic_params: true
 
 tiers:
-  T1: { max_score: 3,  min_total_parameters_b: 30,  max_model_requests: 4,  prefer: smallest_sufficient }
-  T2: { max_score: 7,  min_total_parameters_b: 100, max_model_requests: 8,  prefer: smallest_sufficient }
-  T3: { max_score: 11, min_total_parameters_b: 100, max_model_requests: 12, prefer: most_capable }
+  T1: { max_score: 3,  min_total_parameters_b: 30,  max_model_requests: 20, prefer: smallest_sufficient }
+  T2: { max_score: 7,  min_total_parameters_b: 100, max_model_requests: 60, prefer: smallest_sufficient }
+  T3: { max_score: 11, min_total_parameters_b: 100, max_model_requests: 100, prefer: most_capable }
 
 routing:
   max_endpoint_fallbacks: 3
@@ -148,14 +148,19 @@ projects:
 execution:
   max_concurrent_tasks: 2
   max_concurrent_writers_per_repository: 1
-  max_model_requests_per_task: 16
+  max_model_requests_per_task: 150 # a runaway guard per attempt; workers can ask their supervisor for more
   job_timeout_seconds: 1200
   on_capacity_exhausted: queue
   await_max_seconds: 240
 
 allocation:
-  max_model_requests_per_hour: 150
-  max_model_requests_per_day: 1500
+  max_model_requests_per_hour: 1000
+  max_model_requests_per_day: 10000
+
+# Verification and the per-task total: every request of a task (execution, review, repair) counts
+# against max_total_requests_per_task, a runaway guard; workers can ask their supervisor for more.
+verification:
+  max_total_requests_per_task: 300
 
 # Paid routing policy and budgets. A model is free only when verified: priced at $0, a :free id,
 # or served by a free_tier key (then only free_tier keys serve it). Everything else is paid and
@@ -204,24 +209,24 @@ profiles:
   inspect:
     mode: read_only
     min_total_parameters_b: 30
-    max_model_requests: 6
+    max_model_requests: 40
     tools: repository_read
   analyze:
     mode: read_only
     min_total_parameters_b: 100
-    max_model_requests: 10
+    max_model_requests: 60
     tools: repository_read_and_artifacts
     min_tier: T2
   implement:
     mode: coding
     min_total_parameters_b: 100
-    max_model_requests: 12
+    max_model_requests: 100
     workspace: isolated_worktree
     tools: scoped_edit_and_checks
     min_tier: T2
   review:
     mode: read_only
     min_total_parameters_b: 100
-    max_model_requests: 8
+    max_model_requests: 40
     tools: repository_read_and_artifacts
     min_tier: T2

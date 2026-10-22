@@ -69,9 +69,13 @@ export async function loadSources(
       totalLines: spec.context.inlineText.split("\n").length,
     });
   }
-  for (const ref of spec.context.fileRefs ?? []) {
+  for (const raw of spec.context.fileRefs ?? []) {
+    // A bare path is unambiguous when the task has one repository (live: a supervisor wrote
+    // "INTERFACES.md" for "app:INTERFACES.md" and its whole plan was refused).
+    const only = spec.repositoryAliases.length === 1 ? spec.repositoryAliases[0]! : null;
+    const ref = only && !raw.includes(":") ? `${only}:${raw}` : raw;
     const parsed = parseFileRef(ref);
-    if (!parsed) throw new Error(`invalid file reference ${ref}`);
+    if (!parsed) throw new Error(`invalid file reference ${raw}: write <alias>:<path> or <alias>:<path>#L10-L80 (aliases: ${spec.repositoryAliases.join(", ")})`);
     const reader = readers.get(parsed.alias);
     if (!reader) throw new Error(`file reference ${ref} uses alias ${parsed.alias}, which is not in repositoryAliases`);
     const file = await reader.readFile(parsed.relPath);

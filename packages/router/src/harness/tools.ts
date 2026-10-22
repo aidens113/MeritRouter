@@ -127,6 +127,16 @@ function workspacePath(env: HarnessEnv, input: unknown): { rel: string; abs: str
   return { rel, abs };
 }
 
+/**
+ * The file argument of an edit tool. Models also send it as `file_path`, `filename`, or `file`
+ * (live: a 2197-token write_file without `path` was refused and lost); a call with none is refused
+ * with what is needed, saying that nothing was written.
+ */
+function pathArg(a: Record<string, unknown>, toolName: string): string {
+  for (const k of ["path", "file_path", "filename", "file"]) if (typeof a[k] === "string" && (a[k] as string).trim()) return a[k] as string;
+  throw new Error(`${toolName} needs path: the file, relative to the repository root (for example "src/posts.js"). Nothing was written; call ${toolName} again with path.`);
+}
+
 /** A file the worker edited is citable evidence, like one it read. */
 function noteEdited(env: HarnessEnv, rel: string, abs: string): void {
   env.edits.add(rel);
@@ -136,7 +146,7 @@ function noteEdited(env: HarnessEnv, rel: string, abs: string): void {
 export function editTools(): HarnessTool[] {
   return [
     tool("write_file", "edit", "Create or overwrite a file in your workspace with the full new content.", { path: { type: "string" }, content: { type: "string" } }, ["path", "content"], async (a, env) => {
-      const { rel, abs } = workspacePath(env, a.path);
+      const { rel, abs } = workspacePath(env, pathArg(a, "write_file"));
       mkdirSync(path.dirname(abs), { recursive: true });
       // Keep an existing file's line-ending style.
       const crlf = existsSync(abs) && readFileSync(abs, "utf8").includes("\r\n");
@@ -152,7 +162,7 @@ export function editTools(): HarnessTool[] {
       { path: { type: "string" }, old_text: { type: "string" }, new_text: { type: "string" }, replace_all: { type: "boolean" } },
       ["path", "old_text", "new_text"],
       async (a, env) => {
-        const { rel, abs } = workspacePath(env, a.path);
+        const { rel, abs } = workspacePath(env, pathArg(a, "replace_in_file"));
         if (!existsSync(abs)) throw new Error(`${rel} does not exist`);
         // Match on LF-normalised text and write back in the file's own line-ending style, so
         // CRLF checkouts work with model output that uses \n.
@@ -171,7 +181,7 @@ export function editTools(): HarnessTool[] {
       },
     ),
     tool("delete_file", "edit", "Delete a file in your workspace.", { path: { type: "string" } }, ["path"], async (a, env) => {
-      const { rel, abs } = workspacePath(env, a.path);
+      const { rel, abs } = workspacePath(env, pathArg(a, "delete_file"));
       if (!existsSync(abs)) throw new Error(`${rel} does not exist`);
       rmSync(abs);
       env.edits.add(rel);

@@ -14,7 +14,7 @@ const supervise = {
   mode: "supervisor",
   tools: "supervisor",
   min_total_parameters_b: 100,
-  max_model_requests: 60,
+  max_model_requests: 300,
   max_output_tokens: 8000,
   classify: "never",
   min_tier: "T3",

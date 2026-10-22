@@ -173,5 +173,42 @@ describe("native coding worker", () => {
     expect(own.slice(0, -1).every((q) => q.tools!.length > 1)).toBe(true);
     expect(r.stopReason).toBe("worker_submitted");
   }, 90_000);
+
+  it("nudges a coding worker that has edited nothing by half its requests, and marks exact repeat reads", async () => {
+    env = makeEnv({ config: baseConfig({ coding: { runner: "native" } }) });
+    const client = new ScriptedClient((req) => {
+      const s = servedFor(sy!, req);
+      if ((req.tools ?? []).length === 1) return reply(null, { ...s, toolCalls: submit() });
+      return reply(null, { ...s, toolCalls: call("read_file", { alias: "core", path: "src/app.ts" }) });
+    });
+    sy = open(env, client, { worker: true, coding: createCodingRunner(env.cfg) });
+    const [sub] = await sy.submitTasks([task({ budget: { maxModelRequests: 6 }, constraints: { acceptanceCriteria: ["x"], allowedPaths: ["src/**"] } })]);
+    await sy.awaitResults([sub!.taskId], { timeoutSeconds: 60 });
+    const last = client.requests.at(-1)!.messages;
+    const nudges = last.filter((m) => m.role === "user" && String(m.content).includes("have not changed any file yet"));
+    expect(nudges).toHaveLength(1);
+    expect(String(nudges[0]!.content)).toMatch(/You have used 3 of 6 requests/);
+    expect(last.some((m) => m.role === "tool" && String(m.content).includes("[You made this exact read_file call 2 times"))).toBe(true);
+  }, 90_000);
+
+  it("file tools take file_path as path, say plainly when the path is missing, and context accepts a bare path for a single repository", async () => {
+    env = makeEnv({ config: baseConfig({ coding: { runner: "native" } }) });
+    const client = new ScriptedClient((req) => {
+      const s = servedFor(sy!, req);
+      const n = toolCount(req);
+      if (n === 0) return reply(null, { ...s, toolCalls: call("write_file", { content: "lost?" }) });
+      if (n === 1) return reply(null, { ...s, toolCalls: call("write_file", { file_path: "src/sub.ts", content: "export const subtract = (a: number, b: number) => a - b;\n" }) });
+      return reply(null, { ...s, toolCalls: submit() });
+    });
+    sy = open(env, client, { worker: true, coding: createCodingRunner(env.cfg) });
+    const [sub] = await sy.submitTasks([task({ context: { fileRefs: ["src/app.ts"] }, constraints: { acceptanceCriteria: ["x"], allowedPaths: ["src/**"] } })]);
+    await sy.awaitResults([sub!.taskId], { timeoutSeconds: 60 });
+    const tools = client.requests.at(-1)!.messages.filter((m) => m.role === "tool").map((m) => String(m.content));
+    expect(tools[0]).toMatch(/^error: write_file needs path: .*Nothing was written/);
+    expect(tools[1]).toMatch(/^wrote src\/sub\.ts/);
+    expect(readFileSync(path.join(worktreeOf(sub!.taskId), "src/sub.ts"), "utf8")).toContain("a - b");
+    // The bare "src/app.ts" was read as core:src/app.ts (the only repository).
+    expect(JSON.stringify(client.requests[0]!.messages)).toContain("core:src/app.ts");
+  }, 90_000);
 });
 
