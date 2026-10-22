@@ -8,7 +8,7 @@ import { openDatabase, type Db } from "../src/storage/db.js";
 import { TaskStore, syntheticResult } from "../src/storage/tasks.js";
 import { WorkerTaskSchema } from "../src/core/task.js";
 import { SqliteTaskLeases } from "../src/storage/sqlite-task-leases.js";
-import { capturedLease, leaseOperationId, LEASE_RECEIPT_WINDOW_MS, type LeaseRef } from "../src/storage/task-leases.js";
+import { capturedLease, recoveryOperationId, leaseOperationId, LEASE_RECEIPT_WINDOW_MS, type LeaseRef } from "../src/storage/task-leases.js";
 import { baseConfig, makeEnv, type Env } from "./helpers.js";
 let env: Env | undefined, db: Db | undefined, child: ChildProcess | undefined;
 let now: number, tasks: TaskStore, leases: SqliteTaskLeases;
@@ -55,7 +55,7 @@ it('fences every mutation from same-owner older generation and does not resurrec
   })).disposition).toBe('expired');
   expect((await finish(a)).disposition).toBe('expired');
   await leases.recover({
-    operationId: key(), mode: 'startup'
+    operationId: recoveryOperationId(now), mode: 'startup'
   });
   const b = capturedLease(claim()[0]!), before = tasks.get(b.taskId)!;
   expect(b.owner).toBe(a.owner);
@@ -131,11 +131,11 @@ it('logical cancellation observes its generation, cancellation wins valid late o
   const old = capturedLease(claim()[0]!);
   now += 30001;
   await leases.recover({
-    operationId: key(), mode: 'expired_only'
+    operationId: recoveryOperationId(now), mode: 'expired_only'
   });
   expect(tasks.get('resume')!.row.state).toBe('interrupted');
   await leases.recover({
-    operationId: key(), mode: 'startup'
+    operationId: recoveryOperationId(now), mode: 'startup'
   });
   const current = capturedLease(claim()[0]!);
   const stale = await leases.cancel({
@@ -200,7 +200,7 @@ it('recovers a real killed fixture owner and refuses its stale DTOs after same-o
   expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
   db!.prepare('UPDATE tasks SET lease_expires_at=? WHERE id=?').run(now - 1, old.taskId);
   await leases.recover({
-    operationId: key(), mode: 'startup'
+    operationId: recoveryOperationId(now), mode: 'startup'
   });
   const current = capturedLease(claim(old.owner)[0]!);
   expect(current.runCount).toBe(old.runCount + 1);
@@ -245,7 +245,7 @@ it('keeps expired recovery atomic with renewal and cancellation', async () => {
     lease, operationId: key()
   });
   expect((await leases.recover({
-    operationId: key(), mode: 'expired_only'
+    operationId: recoveryOperationId(now), mode: 'expired_only'
   })).affected).toHaveLength(0);
   await leases.cancel({
     operationId: key(), project: 'demo', actor: 'control', targets: [{
@@ -254,9 +254,9 @@ it('keeps expired recovery atomic with renewal and cancellation', async () => {
   });
   now += 30001;
   await Promise.all([leases.recover({
-      operationId: key(), mode: 'expired_only'
+      operationId: recoveryOperationId(now), mode: 'expired_only'
     }), leases.recover({
-      operationId: key(), mode: 'expired_only'
+      operationId: recoveryOperationId(now), mode: 'expired_only'
     })]);
   expect(tasks.get(lease.taskId)!.row.state).toBe('cancelled');
   expect(tasks.events(lease.taskId).filter(event => event.type === 'cancelled')).toHaveLength(1);

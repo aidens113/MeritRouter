@@ -1,6 +1,6 @@
 import { SqliteTaskLeases } from "../storage/sqlite-task-leases.js";
 import type { TaskLeases } from "../storage/task-leases.js";
-import { leaseOperationId, reconcileLeaseOperation, capturedLease } from "../storage/task-leases.js";
+import { recoveryOperationId, leaseOperationId, reconcileLeaseOperation, capturedLease } from "../storage/task-leases.js";
 import type { ResolvedConfig } from "../config/load.js";
 import type { ClaimAdmission, StoredTask, TaskStore } from "../storage/tasks.js";
 import { redundancyFor } from "../storage/plans.js";
@@ -83,7 +83,7 @@ export class Scheduler {
   }
 
   recoverAsync(mode: "expired_only" | "startup" = "startup"): Promise<string[]> {
-    const operationId = leaseOperationId(this.tasks.serverNow());
+    const operationId = recoveryOperationId(this.tasks.serverNow());
     const pending = (async () => {
       const receipt = await reconcileLeaseOperation(() => this.taskLeases.recover({ operationId, mode }));
       if (receipt.kind !== "recover" || receipt.operationId !== operationId) throw new Error("recovery receipt identity mismatch");

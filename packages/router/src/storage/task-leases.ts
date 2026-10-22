@@ -3,6 +3,10 @@ import { z } from "zod";
 import { TASK_STATES, WorkerResultSchema } from "../core/task.js";
 import type { StoredTask } from "./tasks.js";
 export const LEASE_RECEIPT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+export const RECOVERY_RECEIPT_WINDOW_MS = 5 * 60 * 1000;
+export const LEASE_RECEIPT_CAPACITY = 100_000;
+export const RECOVERY_RECEIPT_CAPACITY = 20_000;
+export const RECOVERY_TOTAL_THRESHOLD = 80_000;
 export const LeaseRefSchema = z.object({
   taskId: z.string().min(1).max(64), owner: z.string().min(1).max(200),
   runCount: z.number().int().positive(), project: z.string().max(200), incarnation: z.string().regex(/^[a-f0-9]{32}$/),
@@ -17,6 +21,11 @@ export function capturedLease(task: StoredTask): LeaseRef {
 export function leaseOperationId(now = Date.now()): string {
   return `tlease_${now.toString(36)}_${randomBytes(12).toString("hex")}`;
 }
+/** Recovery keys cannot become seven-day mutation authority after their shorter expiry. */
+export function recoveryOperationId(now = Date.now()): string {
+  return `trecover_${now.toString(36)}_${randomBytes(12).toString("hex")}`;
+}
+const recoveryId = z.string().regex(/^trecover_[a-z0-9]{1,12}_[a-f0-9]{24}$/);
 const operationId = z.string().regex(/^tlease_[a-z0-9]{1,12}_[a-f0-9]{24}$/);
 const json: z.ZodType<unknown> = z.lazy(() => z.union([z.null(), z.boolean(), z.string(), z.number().finite(), z.array(json), z.record(z.string(), json)]));
 const identity = {
@@ -44,7 +53,7 @@ export const DeferLeaseSchema = z.object({
   ...identity, nextAttemptAt: z.number().int().nonnegative(), reason: z.string().min(1).max(2000)
 }).strict();
 export const RecoverLeasesSchema = z.object({
-  operationId, mode: z.enum(["expired_only", "startup"])
+  operationId: recoveryId, mode: z.enum(["expired_only", "startup"])
 }).strict();
 export const CancelTargetSchema = LeaseRefSchema.pick({
   taskId: true, incarnation: true, runCount: true
@@ -55,7 +64,7 @@ export const CancelLeasesSchema = z.object({
 }).strict();
 const disposition = z.enum(["applied", "replayed", "stale", "expired", "not_active", "cancel_requested", "deadline_exceeded"]);
 export const LeaseReceiptSchema = z.object({
-  operationId, kind: z.enum(["renew", "finish", "interrupt", "defer", "recover", "cancel"]),
+  operationId: z.union([operationId, recoveryId]), kind: z.enum(["renew", "finish", "interrupt", "defer", "recover", "cancel"]),
   disposition, original: disposition.exclude(["replayed"]), serverNow: z.number().int().nonnegative(),
   lease: LeaseRefSchema.optional(), leaseExpiresAt: z.number().int().nonnegative().nullable().optional(),
   state: z.enum(TASK_STATES).optional(),
@@ -63,7 +72,10 @@ export const LeaseReceiptSchema = z.object({
   affected: z.array(z.object({
     target: CancelTargetSchema, owner: z.string().nullable(), state: z.union([z.enum(TASK_STATES), z.literal("unknown")])
   }).strict()).max(1000).default([]),
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  if ((value.kind === "recover") !== value.operationId.startsWith("trecover_"))
+    ctx.addIssue({ code: "custom", message: "task lease receipt key must match its operation kind" });
+});
 export type LeaseReceipt = z.infer<typeof LeaseReceiptSchema>;
 export interface TaskLeases {
   renew(input: z.input<typeof RenewLeaseSchema>): Promise<LeaseReceipt>;
