@@ -1,6 +1,6 @@
 # External supervisor guidance
 Status: Active
-Status detail: User requested default Claude/Codex supervision guidance with UI and explicit model-request changes; implementation queued alongside roadmap acceptance.
+Status detail: Corrected final-supervisor dispatch setting/guards/UI merged locally after independent focused/browser checks; full integrated acceptance pending.
 Created: 2026-10-22
 Last updated: 2026-10-22
 Owner: Senior supervisor agent
@@ -17,9 +17,15 @@ bounded SwitchYard sub-supervisors remain available. Turning it on permits an ex
 SwitchYard project supervisor over MCP. The earlier enabled/disabled-guidance implementation
 and acceptance are superseded and must not be integrated as satisfying this request.
 
-This adds workflow guidance, not technical enforcement over another host application's agent.
+The corrected feature5b4725a is merged locally. Supervisor independently verified13 focused
+tests, actual UI/MCP save/reload/default-OFF/once-change feedback and desktop/phone screenshots.
+Final submission rechecks policy under the insertion lock after async validation; deterministic
+revocation leaves no new tasks. Full combined typecheck/build/tests/browser acceptance is next.
+
+Workflow guidance does not technically enforce behavior inside another host application's agent.
 Existing authorization, budgets, verification, containment and explicit user instructions retain
-their authority. Disabling the guidance does not alter internal supervisor charters or limits.
+their authority. The switch changes final-project dispatch permission; guidance and bounded
+sub-supervision remain available in both states.
 
 ## Corrected plan and acceptance
 

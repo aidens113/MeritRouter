@@ -9,7 +9,7 @@ enforced in code enforced in code.
 
 | | Supervisor | Worker |
 | --- | --- | --- |
-| Who | Claude Code (preset `claude-code`) or SwitchYard's own supervisor (standalone presets) | A model SwitchYard routes to for one brief |
+| Who | External MCP client (Claude Code, Codex, etc.) or SwitchYard's own supervisor (standalone presets) | A model SwitchYard routes to for one brief |
 | Owns | The goal, the plan, delegation, verification, integration, the job's working document, the final report | One bounded brief |
 | Reads | Its project's brain folder and `global/`; its project's repositories | Only what its brief names and grants |
 | Writes | Its project's brain entries; the job branch; `global/` only through a reviewed promotion | Its own report; files under its `allowedPaths` in an isolated worktree |
@@ -21,16 +21,33 @@ checks itself, or dispatches a `review`) before treating anything as done.
 
 ## Who supervises
 
-- **Claude Code** (`switchyard init --preset claude-code`): Claude Code is the supervisor and talks
+- **External MCP client** (`switchyard init --preset claude-code`): Claude Code, Codex or another client is the supervisor and talks
   to SwitchYard through MCP. It submits tasks, waits, reads results, uses the brain, and
   integrates patches itself. Merge [`packages/router/examples/CLAUDE.delegation.md`](../packages/router/examples/CLAUDE.delegation.md)
   into the project's `CLAUDE.md`.
 - **SwitchYard's supervisor** (standalone presets): you give a goal (`switchyard run`, the
-  Jobs page of a project in the panel, `sy.startJob()`, or MCP `start_job`), and a supervisor model you choose
+  Jobs page of a project in the panel, or `sy.startJob()`), and a supervisor model you choose
   does the whole job.
 
-Claude Code can also hand a whole goal to SwitchYard's supervisor with `start_job` when it
-prefers not to supervise a job itself.
+Over MCP, `client_supervision.dispatch_final_supervisor` defaults to **false**. The external
+client owns the project's plan, integration, final review/tests and iteration. It should
+delegate as much practical bounded work as possible; SwitchYard sub-supervisors remain available.
+`start_job` and supervisor-mode `submit_tasks` default to `supervisionScope: subtask`, which
+completes a delegated component rather than declaring the entire project finished.
+
+Allow explicit `supervisionScope: project` dispatch in Settings → General → Claude/Codex
+supervision, or ask the connected model to use `set_supervision_policy` with a reason. The
+setting permits project-level SwitchYard supervision; it never disables bounded delegation.
+`get_supervision_policy` reads the effective guidance. Custom instructions are optional.
+Existing MCP connections receive a changed policy once on their next tool call; new connections
+receive it during initialization. Direct task submission and resume calls obey the same MCP
+ownership choice; a legacy root supervisor is treated as project scope for resume checks.
+Policy is rechecked after asynchronous validation under the task/config insertion lock.
+
+This setting governs MCP dispatch, not CLI/panel standalone jobs or already-running tasks.
+Structured scope is enforced; the breadth of a natural-language goal cannot be proved from its
+text. Default instructions do not grant deployment, spending or messaging authority, and an
+agent should change the setting only on an explicit user request.
 
 ## Choosing models per role
 
