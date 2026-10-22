@@ -8,6 +8,7 @@ import { MIGRATIONS } from "../src/storage/migrations.js";
 import { DB_FILE, openDatabase } from "../src/storage/db.js";
 import { Catalog } from "../src/models/catalog.js";
 import { ProviderError } from "../src/providers/errors.js";
+import { insights } from "../src/index.js";
 import { baseConfig, directEndpoint, endpoint, FakeProvider, goodOutput, makeEnv, open, providerChat, providerJson, providerModels, summarizeTask, type Env } from "./helpers.js";
 
 let env: Env | undefined;
@@ -132,6 +133,11 @@ describe("direct free requests", () => {
     expect(r2.routing!.attempts).toEqual([{ endpointId: "acme/in-plan", outcome: "succeeded" }]);
     expect(r2.servedEndpoints).toEqual(["acme/in-plan"]);
     expect(fake.chats().map((c) => c.body?.model)).toEqual(["plan-only", "in-plan", "in-plan"]);
+
+    // A plan refusal is not a quarantine: the models view says why, without "quarantined".
+    const view = insights.modelsView(sy).find((v) => v.endpoint.id === "acme/plan-only")!;
+    expect(view).toMatchObject({ quarantined: null, planRefused: expect.stringMatching(/^not in the plan of any acme key/) });
+    expect(view.headline).toMatch(/^Not available with your keys: not in the plan/);
 
     // Re-keying or re-enabling the key forgets its refusals.
     sy.providers.keys.clear(REF_A);

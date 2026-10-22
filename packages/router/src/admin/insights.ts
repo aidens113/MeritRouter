@@ -174,7 +174,10 @@ export interface EligibilityCell {
 export interface ModelView {
   endpoint: ModelEndpoint;
   override: EndpointOverride | null;
+  /** Set only after a served-model violation (the provider answered with another model). */
   quarantined: string | null;
+  /** Every usable key's plan refused the model (not a quarantine; rechecked after a day). */
+  planRefused: string | null;
   firstSeenAt: number | null;
   stats7d: EndpointStats;
   eligibility: EligibilityCell[];
@@ -190,7 +193,7 @@ function matrix(sy: Switchyard): Map<string, EligibilityCell[]> {
   const overrides = sy.catalog.routingOverrides();
   for (const profile of Object.keys(sy.cfg.profiles) as ProfileName[]) {
     for (const tier of TIER_NAMES) {
-      const plan = planRoute(sy.cfg, eps, overrides, { profile, tier, inputModalities: ["text"], needsStructuredOutput: false }, { now: new Date(), qualification: qual, health: sy.health.lookup, quarantined: (ep) => sy.gate.quarantined(ep) });
+      const plan = planRoute(sy.cfg, eps, overrides, { profile, tier, inputModalities: ["text"], needsStructuredOutput: false }, { now: new Date(), qualification: qual, health: sy.health.lookup, quarantined: (ep) => sy.gate.excluded(ep) });
       for (const ex of plan.explanations) {
         const cells = out.get(ex.endpointId) ?? [];
         cells.push({ profile, tier, eligible: ex.eligible, rank: ex.rank, reasons: ex.reasons });
@@ -201,8 +204,9 @@ function matrix(sy: Switchyard): Map<string, EligibilityCell[]> {
   return out;
 }
 
-function headline(ep: ModelEndpoint, cells: EligibilityCell[], quarantined: string | null): string {
+function headline(ep: ModelEndpoint, cells: EligibilityCell[], quarantined: string | null, planRefused: string | null): string {
   if (quarantined) return "Quarantined after its provider served a different model than the one requested.";
+  if (planRefused) return `Not available with your keys: ${planRefused}.`;
   if (ep.status !== "active") return ep.statusReason ?? ep.status;
   const usable = cells.filter((c) => c.eligible);
   if (!usable.length) return `Not used for any task: ${cells[0]?.reasons[0] ?? "no eligible task type"}.`;
@@ -218,15 +222,17 @@ export function modelsView(sy: Switchyard): ModelView[] {
   return sy.catalog.endpoints().map((ep) => {
     const cells = m.get(ep.id) ?? [];
     const quarantined = sy.gate.quarantined(ep);
+    const planRefused = sy.gate.planRefused(ep);
     return {
       endpoint: ep,
       override: sy.catalog.override(ep.id),
       quarantined,
+      planRefused,
       firstSeenAt: sy.catalog.discoveredRow(ep.id)?.firstSeenAt ?? null,
       stats7d: endpointStats(sy, ep.id, since),
       eligibility: cells,
       qualification: families.flatMap((family) => TIER_NAMES.map((tier) => ({ family, tier, stat: qualificationStat(sy.db, sy.cfg, ep.id, family, tier) }))),
-      headline: headline(ep, cells, quarantined),
+      headline: headline(ep, cells, quarantined, planRefused),
     };
   });
 }
@@ -343,7 +349,7 @@ export function routingPreview(sy: Switchyard, profile: ProfileName, tier: TierN
     sy.catalog.endpoints(),
     sy.catalog.routingOverrides(),
     { profile, tier, inputModalities: modalities, needsStructuredOutput: false },
-    { now: new Date(), qualification: qualificationLookup(sy.db, sy.cfg), health: sy.health.lookup, quarantined: (ep) => sy.gate.quarantined(ep) },
+    { now: new Date(), qualification: qualificationLookup(sy.db, sy.cfg), health: sy.health.lookup, quarantined: (ep) => sy.gate.excluded(ep) },
   );
   return { floorB: plan.floorB, forced: plan.forced, explanations: plan.explanations };
 }

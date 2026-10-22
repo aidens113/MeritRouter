@@ -57,7 +57,7 @@ export class TaskRouter {
         now: new Date(this.now()),
         qualification: qualificationLookup(this.db, this.cfg),
         health: this.gate.health.lookup,
-        quarantined: (ep) => this.gate.quarantined(ep),
+        quarantined: (ep) => this.gate.excluded(ep),
       },
     );
   }
@@ -96,7 +96,7 @@ export class TaskRouter {
         now: new Date(this.now()),
         qualification: qualificationLookup(this.db, this.cfg),
         health: this.gate.health.lookup,
-        quarantined: (ep) => this.gate.quarantined(ep),
+        quarantined: (ep) => this.gate.excluded(ep),
       },
     );
   }

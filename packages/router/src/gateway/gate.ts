@@ -211,20 +211,27 @@ export class Gate {
   }
 
   /**
-   * Why the gate will not send to this endpoint now, for routing to leave it out: a served-model
-   * violation (it stays blocked; nothing lifts the quarantine yet, a known gap), or every usable
-   * key's plan refused the model recently (`not_in_plan`; rechecked after a day).
+   * A served-model violation quarantines the endpoint: the provider answered with a different
+   * model than requested. It stays blocked (nothing lifts the quarantine yet, a known gap).
    */
   quarantined(ep: ModelEndpoint): string | null {
     const row = this.db
       .prepare("SELECT policy_violation FROM model_requests WHERE endpoint_id = ? AND policy_violation IS NOT NULL ORDER BY reserved_at DESC LIMIT 1")
       .get(ep.id) as { policy_violation: string } | undefined;
-    if (row) return `quarantined after a policy violation: ${row.policy_violation}`;
-    return this.refusedByEveryKey(ep);
+    return row ? `quarantined after a policy violation: ${row.policy_violation}` : null;
   }
 
-  /** "Not in the plan of any <provider> key" when every usable key's plan refused the model within the recheck window. */
-  private refusedByEveryKey(ep: ModelEndpoint): string | null {
+  /**
+   * Why the gate will not send to this endpoint now, for routing to leave it out: quarantine, or
+   * every usable key's plan refused the model recently (`planRefused`). Only the first is a
+   * quarantine; the panel shows them apart.
+   */
+  excluded(ep: ModelEndpoint): string | null {
+    return this.quarantined(ep) ?? this.planRefused(ep);
+  }
+
+  /** "Not in the plan of any <provider> key" when every usable key's plan refused the model within the recheck window (rechecked after a day). */
+  planRefused(ep: ModelEndpoint): string | null {
     if (ep.route.kind !== "direct") return null;
     const rt = this.direct.providers;
     const creds = rt.credentials().list(ep.route.provider).filter((c) => c.unusableReason === null);
@@ -303,7 +310,7 @@ export class Gate {
         attempts.push({ endpointId: ep.id, outcome: `skipped (too large): ${misfit}` });
         continue;
       }
-      const q = this.quarantined(ep);
+      const q = this.excluded(ep);
       if (q) {
         attempts.push({ endpointId: ep.id, outcome: `skipped: ${q}` });
         continue;
