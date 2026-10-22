@@ -1,6 +1,8 @@
 import type { Db } from "../storage/db.js";
 import type { ResolvedConfig } from "../config/load.js";
 import { Admission, type Participant } from "../admission/admission.js";
+import type { RequestLedger } from "../admission/request-ledger.js";
+import { SqliteRequestLedger } from "../admission/sqlite-request-ledger.js";
 import { AdmissionDenied, GatewayError, type AdmissionDenialReason } from "../core/errors.js";
 import type { ModelEndpoint } from "../models/catalog.js";
 import type { RoutePlan } from "../routing/select.js";
@@ -176,6 +178,9 @@ export class ProviderHealth {
  * paid.max_paid_attempts paid dispatched endpoints.
  */
 export class Gate {
+  private closing = false;
+  private readonly inFlight = new Set<Promise<GateResponse>>();
+  readonly ledger: RequestLedger;
   constructor(
     private readonly db: Db,
     private readonly cfg: ResolvedConfig,
@@ -183,7 +188,9 @@ export class Gate {
     readonly health: ProviderHealth,
     /** Providers (free and paid), their keys, and the spend ledger. */
     readonly direct: DirectRuntime,
+    ledger?: RequestLedger,
   ) {
+    this.ledger = ledger ?? new SqliteRequestLedger(admission, direct.spend);
     // Settings are read live (a config reload mutates cfg in place); state is mirrored to meta.
     health.breakers.attach(db, () => cfg.routing.circuit_breaker);
     // A request slot older than every attempt's timeout belongs to a request that is gone.
@@ -278,6 +285,21 @@ export class Gate {
    * timeout; then fail `rate_limited` so the executor defers the task for capacity.
    */
   async request(req: GateRequest): Promise<GateResponse> {
+    if (this.closing) throw new Error("model request gate is closed");
+    // Register before invoking even a synchronously executing adapter/hook (it may close).
+    const run = Promise.resolve().then(() => this.performRequest(req));
+    this.inFlight.add(run);
+    try { return await run; }
+    finally { this.inFlight.delete(run); }
+  }
+
+  /** Stop new routed requests and drain accounting before its SQLite connection closes. */
+  async close(): Promise<void> {
+    this.closing = true;
+    await Promise.allSettled([...this.inFlight]);
+  }
+
+  private async performRequest(req: GateRequest): Promise<GateResponse> {
     const holder: SlotHolder = { id: newId("h"), taskIds: req.participants.map((p) => p.taskId), leaseOwner: req.participants[0]?.leaseOwner ?? null, priority: this.priorityOf(req), since: null };
     const started = Date.now();
     const maxWaitMs = this.cfg.providers.request_timeout_seconds * 1000;
@@ -341,7 +363,7 @@ export class Gate {
         attempts.push({ endpointId: ep.id, outcome: `skipped: ${q}` });
         continue;
       }
-      const r = await requestDirect({ cfg: this.cfg, admission: this.admission, health: this.health, direct: this.direct }, ep, req, participants, estInput, attempts, (e) => this.admit(e, holder, attempts, full, admitted));
+      const r = await requestDirect({ cfg: this.cfg, ledger: this.ledger, assertDispatch: participants => this.admission.assertDispatch(participants), health: this.health, direct: this.direct }, ep, req, participants, estInput, attempts, (e) => this.admit(e, holder, attempts, full, admitted));
       if (r.kind === "skip") {
         if (r.resumeAt !== null) keyRetryAt = Math.min(keyRetryAt ?? r.resumeAt, r.resumeAt);
         continue;
