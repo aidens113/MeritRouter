@@ -270,6 +270,13 @@ passing units reach dev/main. Documentation and source commit together.
 
 ## Work Ledger
 
+### 2026-10-22 - Request release and capture acceptance progress
+- Agent: supervisor.
+- Changed: reviewed/merged request journal UI3da30cf and classifier isolation06a154a. Capture82dfe80 independently29/29 tests passed12.02s and source reviewed; private admin/UI/purge integration remains local work in progress.
+- Validation: request-only f77401c recursive typecheck/build pass. Unbounded-concurrency full suite765 passed/3 failed (87 files,336.95s): two Chrome broker/navigation timing failures and45s throughput timeout under overlapping builds/process tests. Single-worker rerun17/17 browser/performance tests passed155.30s, including actual Chrome8/8 and24-task concurrency1/4 throughput. No full-green claim; repeat bounded full suite after historical scope integration.
+- Finding: deletion removes accounting cohorts, so journal original shared-member proofs must also be checked. Request projection now withholds missing/mismatched/deleted member proofs; independent8/8 tests passed4.92s. Session worker implements the corresponding historical guard and restores scoped failed-request accounting.
+- Outcome: Partial. No richer request/capture deployment or whole-roadmap completion claim. Caller end-to-end fixtures passed in worker tree; independent final validation remains pending.
+
 ### Acceptance ledger: 2026-10-22 — browser, ledger and client supervision
 - Agent: supervisor.
 - Changed: accepted source6d61b8e with bounded static browser checks, fail-closed all-repository evidence reuse, awaited default Gate request accounting, corrected final-supervisor ownership setting/guards/UI.
