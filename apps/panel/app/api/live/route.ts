@@ -60,6 +60,9 @@ export async function GET(req: Request) {
       // Catch up a resumed client first, then hand over to the shared watcher.
       try {
         const from = resume ? insights.decodeLiveCursor(resume, scope) : null;
+        // A rejected/obsolete cursor cannot establish what the browser missed.
+        // Invalidate every topic before installing a new baseline.
+        if (resume && !from) send("reset", "", {});
         if (from) {
           const check = insights.liveChanges(sy, from);
           if (check.topics.length) send("change", insights.encodeLiveCursor(check.cursor), { topics: check.topics, resumed: true });
@@ -70,7 +73,7 @@ export async function GET(req: Request) {
         send("hello", "", { scope });
       }
       if (closed) return;
-      unsubscribe = subscribeLive(scope, (m: LiveMessage) => send("change", m.cursor, { topics: m.topics }));
+      unsubscribe = subscribeLive(scope, (m: LiveMessage) => send(m.reset ? "reset" : "change", m.cursor, { topics: m.topics }));
       heartbeat = setInterval(() => write(`: ${Date.now()}\n\n`), HEARTBEAT_MS);
       stop = close;
       if (req.signal.aborted) close();

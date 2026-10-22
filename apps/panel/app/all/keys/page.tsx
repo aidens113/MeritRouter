@@ -1,3 +1,5 @@
+import { Tabs, pickTab } from "@/components/tabs";
+import { Disclosure } from "@/components/disclosure";
 import Link from "next/link";
 import { CreditCard, Globe, KeyRound, Power, Radar } from "lucide-react";
 import { insights, WEB_BACKEND_NAMES } from "switchyard-router";
@@ -47,7 +49,8 @@ const POLICY_LABEL: Record<string, string> = { never: "never", on_free_exhaustio
  * config keys read-only), their health, the models each provider offers, and paid spend.
  * Secrets never reach the browser: the server sends only last four characters.
  */
-export default async function KeysPage() {
+export default async function KeysPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const sp = await searchParams;
   const r = getSy();
   if (!r.sy) return <SetupScreen error={r.error} configPath={r.configPath} />;
   const sy = r.sy;
@@ -67,6 +70,7 @@ export default async function KeysPage() {
     { label: "30 days", spent: paid.month, budget: paid.budgets.perMonthUsd },
   ];
 
+  const tab = pickTab(sp, ["keys", "add", "web", "paid"]);
   return (
     <div className="space-y-6">
       <PageHeader
@@ -78,21 +82,13 @@ export default async function KeysPage() {
           </ActionButton>
         }
       />
-
       {view.usableKeys === 0 ? (
         <Callout tone="accent" icon={<KeyRound size={16} />} title="Add your first provider key">
           Pick a provider below, paste a key from its console, and press Test key to see the models it can use. Then Add key and Find models. Keys can also be declared under <Mono>providers</Mono> in the config file (prefer <Mono>api_key_env</Mono>); those appear here read-only.
         </Callout>
       ) : null}
-
-      <Card id="add">
-        <CardHeader title="Add a key" help="billingClass" description="Any built-in provider, a custom OpenAI-compatible server, or a provider configured for paid models." />
-        <div className="p-4">
-          <AddKeyForm providers={options} billingClasses={view.billingClasses} />
-        </div>
-      </Card>
-
-      {shown.map((p) => {
+      <Tabs items={[{ "id": "keys", "label": "Keys" }, { "id": "add", "label": "Add a key" }, { "id": "web", "label": "Web search" }, { "id": "paid", "label": "Paid spend" }]} active={tab} path={"/all/keys"} label="Page sections" anchors={{ add: "add", "web-search": "web", paid: "paid", ...Object.fromEntries(shown.map(p => [`provider-${p.id}`, "keys"])) }} />
+      {tab === "keys" ? <div className="space-y-6">{shown.map((p) => {
         const h = p.health ? HEALTH[p.health.status] : null;
         const removable = p.kind === "custom" && p.inConfig && p.keys.every((k) => k.source === "vault" && k.status === "removed");
         return (
@@ -149,9 +145,14 @@ export default async function KeysPage() {
             )}
           </Card>
         );
-      })}
-
-      <Card id="web-search">
+      })}</div> : null}
+      {tab === "add" ? <div className="space-y-6"><Card id="add">
+        <CardHeader title="Add a key" help="billingClass" description="Any built-in provider, a custom OpenAI-compatible server, or a provider configured for paid models." />
+        <div className="p-4">
+          <AddKeyForm providers={options} billingClasses={view.billingClasses} />
+        </div>
+      </Card></div> : null}
+      {tab === "web" ? <div className="space-y-6"><Card id="web-search">
         <CardHeader
           title={
             <span className="flex flex-wrap items-center gap-2">
@@ -273,9 +274,8 @@ export default async function KeysPage() {
           ))}
           <AddSearchKeyForm services={web.services.map((s) => ({ id: s.id, displayName: s.displayName, signupUrl: s.signupUrl, note: s.note }))} />
         </div>
-      </Card>
-
-      <Card id="paid">
+      </Card></div> : null}
+      {tab === "paid" ? <div className="space-y-6"><Card id="paid">
         <CardHeader
           title={
             <span className="flex items-center gap-2">
@@ -350,7 +350,7 @@ export default async function KeysPage() {
             <p className="text-sm text-ink-3">No paid requests in the last 30 days.</p>
           )}
         </div>
-      </Card>
+      </Card></div> : null}
     </div>
   );
 }

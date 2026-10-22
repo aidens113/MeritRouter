@@ -514,7 +514,16 @@ started it, and logs to `<storage>/logs/panel.log`. `switchyard panel` starts it
 the MCP server's `panel` tool does the same for Claude, whose server instructions carry the URL.
 It needs the built panel from this repository checkout (`pnpm -r build`).
 
-The panel opens on the projects grid (see [Projects](#projects)).
+The panel opens on the projects grid (see [Projects](#projects)). Pages receive scoped live
+change events over one server-sent connection per browser tab. The header shows Live,
+Reconnecting, or Paused; pausing holds page updates until resumed. Only changed topics refresh
+the current page, preserving scroll and open disclosures. No provider calls are needed for updates.
+
+Dense pages show a summary first, with bookmarkable `?tab=` sections for plans, teams, results,
+verification, usage, and settings. Earlier section-anchor links open the corresponding tab.
+The sidebar groups Teams under Jobs; Agents, Sessions and Requests under Tasks; and repositories
+and commits under Code. Agent pages show their tasks, sessions, models, requests and attributed
+changes. Task, session, job, model and request details link to related entities.
 - Inside a project: its overview, jobs, teams, tasks, sessions, requests, brain (with its
   promotions to global knowledge), and settings.
 - Under "All projects" (`/all`): the dashboard, every request, models and why each is or is not

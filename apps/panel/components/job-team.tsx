@@ -4,6 +4,7 @@ import type { insights } from "switchyard-router";
 import { Badge, Card, CardHeader, Mono, type Tone } from "./ui";
 import { AcceptanceBadge, TaskStateBadge } from "./task-badges";
 import { dateTime, humanize, shortId } from "@/lib/format";
+import { AgentLink } from "./entity-links";
 import { jobHref, taskHref } from "@/lib/links";
 
 // The job page's team view (T2): the job tree (sub-jobs with branch and carved budget, and their
@@ -217,7 +218,7 @@ function PostItem({ p, showJob, base }: { p: Post; showJob: boolean; base: strin
     <li className="space-y-1.5 px-4 py-3">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-3">
         <Badge tone={k.tone}>{k.label}</Badge>
-        <span className="font-medium text-ink">{p.author.label}</span>
+        <AgentLink base={base} agent={p.author.label.includes(":") ? p.author.label : `${p.author.role}:${p.author.label}`} />
         <span>({p.author.role})</span>
         {showJob ? (
           <span>

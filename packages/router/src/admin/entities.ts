@@ -1,3 +1,6 @@
+import { z } from "zod";
+import type { WebCitation } from "../gateway/types.js";
+import { parseCitations } from "./request-citations.js";
 import { existsSync } from "node:fs";
 import { ROLE_NAMES } from "../config/schema.js";
 import type { Switchyard } from "../core/service.js";
@@ -31,6 +34,7 @@ export interface AgentId {
 
 /** An agent id from untrusted input (a URL): `<role>:<label>` with a known role; null otherwise. */
 export function parseAgentId(raw: string): AgentId | null {
+  if (!z.string().min(3).max(240).safeParse(raw).success) return null;
   const i = raw.indexOf(":");
   if (i <= 0 || raw.length > 240) return null;
   const role = raw.slice(0, i);
@@ -290,7 +294,7 @@ export async function agentDetail(sy: Switchyard, project: string, rawId: string
       failedRequests: requests.filter((r) => r.status === "failed").length,
       inputTokens: sum((r) => r.inputTokens ?? 0),
       outputTokens: sum((r) => r.outputTokens ?? 0),
-      costUsd: sum((r) => r.costUsd ?? 0),
+      costUsd: sum((r) => r.paidUsd ?? r.costUsd ?? 0),
       paidUsd: sum((r) => r.paidUsd ?? 0),
       commits: commits.length,
       linesAdded: commits.reduce((n, c) => n + c.added, 0),
@@ -302,6 +306,7 @@ export async function agentDetail(sy: Switchyard, project: string, rawId: string
 // ---------- requests ----------
 
 export interface RequestDetail extends EntityRequest {
+  webCitations: WebCitation[];
   attempts: number | null;
   attemptsExact: boolean | null;
   cachedInputTokens: number | null;
@@ -346,6 +351,7 @@ export function requestDetail(sy: Switchyard, id: string): RequestDetail | null 
   const base = requestRows(sy, [id], new Map(sessions.length ? [[id, sessions[0]!.sessionId]] : []))[0]!;
   return {
     ...base,
+    webCitations: parseCitations(r.web_citations_json),
     attempts: (r.provider_attempts as number | null) ?? null,
     attemptsExact: r.attempts_exact === null || r.attempts_exact === undefined ? null : Number(r.attempts_exact) === 1,
     cachedInputTokens: (r.cached_input_tokens as number | null) ?? null,
@@ -460,7 +466,8 @@ export interface CommitDetail extends EntityCommit {
 
 /** One commit of a project's repository, with its attribution, files, branches, and diff; null when unknown. */
 export async function commitDetail(sy: Switchyard, project: string, alias: string, sha: string): Promise<CommitDetail | null> {
-  const repo = projectRepos(sy, project)[alias];
+  const repositories = projectRepos(sy, project);
+  const repo = Object.hasOwn(repositories, alias) ? repositories[alias] : undefined;
   if (!repo || !SHA_RE.test(sha) || !existsSync(repo.path)) return null;
   let raw: string;
   try {
@@ -528,7 +535,8 @@ export interface RepositoryView {
 
 /** A project's repository: where it is, its branches, and its newest commits with attribution. Null for an unknown alias. */
 export async function repositoryView(sy: Switchyard, project: string, alias: string, limit = 50): Promise<RepositoryView | null> {
-  const repo = projectRepos(sy, project)[alias];
+  const repositories = projectRepos(sy, project);
+  const repo = Object.hasOwn(repositories, alias) ? repositories[alias] : undefined;
   if (!repo) return null;
   const view: RepositoryView = { alias, path: repo.path, writable: repo.writable, exists: existsSync(repo.path), head: null, branch: null, branches: [], commits: [], error: null };
   if (!view.exists) return view;

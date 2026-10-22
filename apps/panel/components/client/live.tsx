@@ -76,6 +76,10 @@ export function LiveProvider({ scope, children }: { scope: string; children: Rea
     flushTimer.current = setTimeout(() => {
       flushTimer.current = null;
       if (!pending.current || snap.current.paused) return;
+      if (document.visibilityState !== "visible") {
+        update({ waiting: true });
+        return;
+      }
       pending.current = false;
       lastRefresh.current = Date.now();
       update({ waiting: false, lastUpdate: lastRefresh.current });
@@ -128,6 +132,11 @@ export function LiveProvider({ scope, children }: { scope: string; children: Rea
         } catch {
           // a malformed event is ignored
         }
+      });
+      source.addEventListener("reset", (e) => {
+        remember(e as MessageEvent);
+        pending.current = true;
+        flush();
       });
       source.onerror = () => {
         // Take over from the browser's own retry so the wait grows and the cursor is sent back.

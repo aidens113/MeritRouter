@@ -7,6 +7,7 @@ import { brainHref, jobHref, projectBase, taskHref } from "@/lib/links";
 import { SetupScreen } from "@/components/setup";
 import { Badge, Callout, Card, CardHeader, cx, EmptyState, HelpTip, Mono, type Tone } from "@/components/ui";
 import { PageHeader } from "@/components/page-header";
+import { AgentLink, ModelLink, TaskLink } from "@/components/entity-links";
 import { Markdown } from "@/components/markdown";
 import { AccessDecision, BrainEditor } from "@/components/client/brain";
 import { Legend } from "@/components/client/charts";
@@ -375,8 +376,8 @@ async function History({ sy, slug, path }: { sy: Switchyard; slug: string; path:
             <tr key={h.commit}>
               <td className="font-mono text-xs text-ink-2">{h.commit.slice(0, 10)}</td>
               <td className="whitespace-nowrap text-xs">{dateTime(h.date)}</td>
-              <td className="text-xs">{h.agent ?? <span className="text-ink-3">unknown</span>}</td>
-              <td className="font-mono text-[11px] text-ink-2">{h.model ?? <span className="font-sans text-ink-3">–</span>}</td>
+              <td className="text-xs">{h.agent ? <AgentLink base={projectBase(slug)} agent={h.agent} /> : <span className="text-ink-3">unknown</span>}</td>
+              <td className="font-mono text-[11px] text-ink-2">{h.model ? <ModelLink id={h.model} /> : <span className="font-sans text-ink-3">–</span>}</td>
               <td className="text-ink">{h.subject}</td>
             </tr>
           ))}
@@ -415,7 +416,7 @@ async function Blame({ sy, slug, path }: { sy: Switchyard; slug: string; path: s
               const tip = l.uncommitted ? "Not committed yet" : `${l.agent ?? l.authorName} · role ${l.role ?? "?"} · model ${l.model ?? "?"} · commit ${l.commit.slice(0, 10)} · ${dateTime(l.date)}${l.task ? ` · task ${l.task}` : ""}`;
               return (
                 <tr key={i} title={tip} className="group hover:bg-surface-2">
-                  <td className="w-44 max-w-44 truncate border-r border-line px-2 py-0.5 font-sans text-[11px] text-ink-3" style={{ borderLeft: `4px solid ${color.get(k)}` }}>{first ? `${(l.agent ?? l.authorName).slice(0, 28)} · ${l.commit.slice(0, 7)}` : ""}</td>
+                  <td className="w-44 max-w-44 truncate border-r border-line px-2 py-0.5 font-sans text-[11px] text-ink-3" style={{ borderLeft: `4px solid ${color.get(k)}` }}>{first ? <>{l.agent ? <AgentLink base={projectBase(slug)} agent={l.agent} /> : l.authorName} · {l.commit.slice(0, 7)}{l.task ? <> · <TaskLink base={projectBase(slug)} id={l.task} /></> : null}</> : ""}</td>
                   <td className="w-10 select-none px-2 py-0.5 text-right text-ink-3">{l.line}</td>
                   <td className="whitespace-pre-wrap px-2 py-0.5 text-ink [overflow-wrap:anywhere]">{l.text || " "}</td>
                 </tr>
@@ -531,7 +532,7 @@ function Promotions({ sc, promotions, error }: { sc: Sc; promotions: PromotionRe
               <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-ink-3">
                 <span>proposed {dateTime(Date.parse(x.created_at))}</span>
                 <span>
-                  by {x.supervisor.agent}
+                  by <AgentLink base={sc.base} agent={x.supervisor.agent} />
                   {x.supervisor.model ? <> · <span className="font-mono">{x.supervisor.model}</span></> : null}
                 </span>
                 {x.supervisor.job ? (

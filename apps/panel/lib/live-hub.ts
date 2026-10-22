@@ -13,6 +13,7 @@ export interface LiveMessage {
   /** The resume cursor after this change (the SSE event id). */
   cursor: string;
   topics: string[];
+  reset?: boolean;
 }
 
 type Listener = (msg: LiveMessage) => void;
@@ -30,6 +31,13 @@ function tick(w: Watcher): void {
   try {
     if (!w.cursor) {
       w.cursor = insights.liveCursor(r.sy, w.scope);
+      if (w.failing) {
+        w.failing = false;
+        const msg: LiveMessage = { cursor: insights.encodeLiveCursor(w.cursor), topics: [], reset: true };
+        for (const listener of [...w.listeners]) {
+          try { listener(msg); } catch { /* stream cleanup belongs to its close handler */ }
+        }
+      }
       return;
     }
     const check = insights.liveChanges(r.sy, w.cursor);

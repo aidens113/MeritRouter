@@ -1,3 +1,4 @@
+import { Tabs, pickTab } from "@/components/tabs";
 import Link from "next/link";
 import YAML from "yaml";
 import { Globe, Network, SlidersHorizontal } from "lucide-react";
@@ -26,11 +27,14 @@ const GLOBAL_APPROVAL_FIELD: Field = {
   help: "Supervisors' lessons that pass the project check and the independent review wait on the Knowledge page until you approve or reject them. Off: they are added at once, and you can revert them there.",
 };
 
-const TABS = [
-  { id: "form", label: "Settings" },
-  { id: "rulebook", label: "Rulebook" },
-  { id: "yaml", label: "Advanced: raw YAML" },
-] as const;
+const TABS = [{ id: "general", label: "General" }, { id: "routing", label: "Routing" }, { id: "types", label: "Task types" }, { id: "web", label: "Web and paid" }, { id: "brain", label: "Brain and roles" }, { id: "rulebook", label: "Rulebook" }, { id: "yaml", label: "Raw YAML" }];
+function sectionTab(id: string): string {
+  if (["tiers", "routing", "scoring", "qualification", "allocation", "capacity"].includes(id)) return "routing";
+  if (["execution", "coding", "supervisor"].includes(id) || id.startsWith("profile-")) return "types";
+  if (id.startsWith("web") || id.startsWith("paid")) return "web";
+  if (id.startsWith("brain") || id === "roles") return "brain";
+  return "general";
+}
 
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const r = getSy();
@@ -39,7 +43,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   const sp = await searchParams;
   // With several projects, repositories live under projects.<slug> (each project's settings page).
   const multiProject = insights.globalSettings(sy).multiProject;
-  const tab = TABS.some((t) => t.id === sp.tab) ? (sp.tab as (typeof TABS)[number]["id"]) : "form";
+  const tab = pickTab(sp, TABS.map(t => t.id));
   const cfg = sy.cfg as unknown as Record<string, unknown>;
   const valuesFor = (s: Section) => Object.fromEntries(s.fields.map((f) => [f.path.join("."), getIn(cfg, f.path) as string | number | boolean | string[] | null | undefined]));
   // With several projects, project-level settings (repositories, the brain project, brain mounts and
@@ -68,15 +72,9 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           </>
         }
       />
-      <nav aria-label="Settings views" className="flex flex-wrap gap-1 border-b border-line">
-        {TABS.map((t) => (
-          <Link key={t.id} href={t.id === "form" ? "/all/settings" : `/all/settings?tab=${t.id}`} aria-current={tab === t.id ? "page" : undefined} className={cx("-mb-px border-b-2 px-3 py-2 text-sm", tab === t.id ? "border-accent font-medium text-accent-ink" : "border-transparent text-ink-2 hover:text-ink")}>
-            {t.label}
-          </Link>
-        ))}
-      </nav>
+      <Tabs items={TABS} active={tab} path="/all/settings" label="Settings sections" anchors={Object.fromEntries([...SECTIONS.map(s => s.id), ...profileSections.map(s => s.id), "repositories", "supervisor", "web", "web-limits", "paid", "paid-providers", "paid-models", "brain", "brain-mounts", "brain-auto-approve", "roles"].map(id => [id, sectionTab(id)]))} />
 
-      {tab === "form" ? (
+      {!["yaml", "rulebook"].includes(tab) ? (
         <div className="space-y-4 xl:grid xl:grid-cols-[12rem_1fr] xl:gap-6 xl:space-y-0">
           <SectionNav
             label="Settings sections"
@@ -94,14 +92,14 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
               ...(showMounts ? [{ id: "brain-mounts", title: "Brain mounts" }] : []),
               ...(showAutoApprove ? [{ id: "brain-auto-approve", title: "Auto-approve rules" }] : []),
               { id: "roles", title: "Roles" },
-            ]}
+            ].filter(s => sectionTab(s.id) === tab)}
           />
           {/* Scroll margin clears the sticky top bar and section strip on narrow screens. */}
           <div className="min-w-0 space-y-6 [&>section[id]]:scroll-mt-28 xl:[&>section[id]]:scroll-mt-6">
-            {SECTIONS.map((s) => (
+            {SECTIONS.filter(s => sectionTab(s.id) === tab).map((s) => (
               <SectionForm key={s.id} section={s} values={valuesFor(s)} />
             ))}
-            {multiProject ? (
+            {tab === "general" ? <>{multiProject ? (
               <Card id="repositories">
                 <CardHeader
                   title="Project settings"
@@ -120,11 +118,11 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
               </Card>
             ) : (
               <RepositoriesForm repos={Object.entries(sy.cfg.repositories).map(([alias, v]) => ({ alias, path: v.path, writable: v.writable, resolved: sy.cfg.repositoryPaths[alias]?.path ?? "" }))} />
-            )}
-            {profileSections.map((s) => (
+            )}</> : null}
+            {tab === "types" ? <>{profileSections.map((s) => (
               <SectionForm key={s.id} section={s} values={valuesFor(s)} badge={sy.cfg.profiles[s.id.slice("profile-".length) as keyof typeof sy.cfg.profiles]?.mode} />
-            ))}
-            {!sy.cfg.profiles.supervise ? (
+            ))}</> : null}
+            {tab === "types" ? <>{!sy.cfg.profiles.supervise ? (
               <Callout tone="accent" icon={<Network size={16} />} title="Standalone jobs are off">
                 <p>
                   Jobs need the <Mono>supervise</Mono> task type. Adding it writes <Mono>profiles.supervise</Mono> with the standalone preset (supervisor mode, T3 and up, models of 100B+ parameters, 30 requests); you can tune it afterwards.
@@ -135,11 +133,11 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                   </ActionButton>
                 </div>
               </Callout>
-            ) : null}
-            <SectionForm section={SUPERVISOR_SECTION} values={valuesFor(SUPERVISOR_SECTION)} />
-            <WebStatus sy={sy} />
-            <SectionForm section={WEB_SECTION} values={valuesFor(WEB_SECTION)} badge={sy.web.status().on ? "on" : "off"} />
-            <RowsForm
+            ) : null}</> : null}
+            {tab === "types" ? <><SectionForm section={SUPERVISOR_SECTION} values={valuesFor(SUPERVISOR_SECTION)} /></> : null}
+            {tab === "web" ? <><WebStatus sy={sy} /></> : null}
+            {tab === "web" ? <><SectionForm section={WEB_SECTION} values={valuesFor(WEB_SECTION)} badge={sy.web.status().on ? "on" : "off"} /></> : null}
+            {tab === "web" ? <><RowsForm
               id="web-limits"
               title="Web search caps"
               description="Optional caps per search backend, counted from SwitchYard's own record of web requests (for ollama, page fetches count too). A backend at its cap is skipped until its UTC day or month resets. Set them to your plan's allowance: SwitchYard has no built-in numbers."
@@ -150,9 +148,9 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
               newRow={{ backend: "tavily" }}
               addLabel="Add cap"
               empty="No caps: backends are used until they report a limit (then they cool down)."
-            />
-            <SectionForm section={PAID_SECTION} values={valuesFor(PAID_SECTION)} badge={sy.cfg.paid.enabled ? "on" : "off"} />
-            <RowsForm
+            /></> : null}
+            {tab === "web" ? <><SectionForm section={PAID_SECTION} values={valuesFor(PAID_SECTION)} badge={sy.cfg.paid.enabled ? "on" : "off"} /></> : null}
+            {tab === "web" ? <><RowsForm
               id="paid-providers"
               title="Paid providers"
               description="Providers paid models are reached through directly. Keys for them are added on the Provider keys page, never here."
@@ -163,8 +161,8 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
               newRow={{ name: "", kind: "openai_compatible", base_url: "", balance_api: "none" }}
               addLabel="Add provider"
               empty="No paid providers. Add one to configure paid models."
-            />
-            <RowsForm
+            /></> : null}
+            {tab === "web" ? <><RowsForm
               id="paid-models"
               title="Paid models"
               description="Models served by the providers above. A model needs a price (set here or fetched from the provider's pricing URL) and an enabled key before it can be used."
@@ -174,9 +172,9 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
               newRow={{ provider: Object.keys(sy.cfg.paid.providers)[0] ?? "", model: "", context_limit_tokens: 128000, output_limit_tokens: 8192, input_modalities: ["text"], supports_tools: true, supports_structured_output: false, ignore_size_floor: false }}
               addLabel="Add model"
               empty="No paid models."
-            />
-            <SectionForm section={brainSection} values={valuesFor(brainSection)} />
-            {showMounts ? (
+            /></> : null}
+            {tab === "brain" ? <><SectionForm section={brainSection} values={valuesFor(brainSection)} /></> : null}
+            {tab === "brain" ? <>{showMounts ? (
               <RowsForm
                 id="brain-mounts"
                 title={multiProject ? "Brain mounts (every project)" : "Brain mounts"}
@@ -188,8 +186,8 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                 addLabel="Add mount"
                 empty="No mounts: everything lives in the brain repository."
               />
-            ) : null}
-            {showAutoApprove ? (
+            ) : null}</> : null}
+            {tab === "brain" ? <>{showAutoApprove ? (
               <RowsForm
                 id="brain-auto-approve"
                 title={multiProject ? "Auto-approve rules (every project)" : "Auto-approve rules"}
@@ -201,8 +199,8 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                 addLabel="Add rule"
                 empty="No auto-approve rules."
               />
-            ) : null}
-            <RolesForm roles={[...ROLE_NAMES]} values={sy.cfg.roles as Record<string, RoleValue | undefined>} help={ROLE_HELP} />
+            ) : null}</> : null}
+            {tab === "brain" ? <><RolesForm roles={[...ROLE_NAMES]} values={sy.cfg.roles as Record<string, RoleValue | undefined>} help={ROLE_HELP} /></> : null}
           </div>
         </div>
       ) : tab === "yaml" ? (

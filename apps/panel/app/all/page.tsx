@@ -1,3 +1,4 @@
+import { Tabs, pickTab } from "@/components/tabs";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { BookOpenText, CheckCircle2, CircleAlert, Hourglass, MessageCircleQuestion, Network, Server, TriangleAlert } from "lucide-react";
@@ -53,7 +54,9 @@ function tokenTitle(u: insights.ProjectUsage): string {
   return `${num(u.uncachedInputTokens)} new input + ${num(u.outputTokens)} output; ${num(u.cachedInputTokens)} more input served from cache (${num(u.inputTokens + u.outputTokens)} with cached)`;
 }
 
-export default async function AllProjectsPage() {
+export default async function AllProjectsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const sp = await searchParams;
+  const tab = pickTab(sp, ["projects", "activity", "usage", "health"]);
   const r = getSy();
   if (!r.sy) return <SetupScreen error={r.error} configPath={r.configPath} />;
   const sy = r.sy;
@@ -95,17 +98,17 @@ export default async function AllProjectsPage() {
     // Qualification runs and eval comparisons work in a reserved project that is not one of the projects.
     ...(d.qualification.usage7d.requests || d.qualification.usage7d.tasksSubmitted || d.qualification.usage7d.paidSpendUsd
       ? [
-          {
-            key: "__qualification",
-            label: (
-              <Link href="/all/qualification#work" className="text-accent-ink hover:underline">
-                Qualification and comparisons
-              </Link>
-            ),
-            u24: d.qualification.usage24h,
-            u7: d.qualification.usage7d,
-          },
-        ]
+        {
+          key: "__qualification",
+          label: (
+            <Link href="/all/qualification#work" className="text-accent-ink hover:underline">
+              Qualification and comparisons
+            </Link>
+          ),
+          u24: d.qualification.usage24h,
+          u7: d.qualification.usage7d,
+        },
+      ]
       : []),
     ...(d.unattributed.usage7d.requests || d.unattributed.usage7d.paidSpendUsd ? [{ key: "__none", label: <span className="text-ink-2">No project (probes, scans)</span>, u24: d.unattributed.usage24h, u7: d.unattributed.usage7d }] : []),
   ];
@@ -120,11 +123,10 @@ export default async function AllProjectsPage() {
         description="Every project's jobs, queues, and usage on this install, and what needs you. The pages in the sidebar (models, routing, provider keys, knowledge, settings) are shared by all projects."
         live={["tasks", "jobs", "requests", "workers", "keys", "brain", "projects"]}
       />
-
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat label="Jobs" value={`${num(d.totals.runningJobs)} running`} sub={`${num(d.totals.queuedJobs)} queued across ${d.projects.length} project${d.projects.length === 1 ? "" : "s"}`} />
         <Stat label="Tasks" value={`${num(d.totals.runningTasks)} running`} sub={`${num(d.totals.queuedTasks)} queued`} />
-        <Stat label="Model requests (24h)" help="requests" value={compact(d.totals.usage24h.requests)} sub={`${num(d.totals.usage24h.failedRequests)} failed · ${compact(d.totals.usage7d.requests)} in 7 days`} />
+        <Stat label="Model requests (24h)" help="requests" value={compact(d.totals.usage24h.requests)} sub={`${num(d.totals.usage24h.failedRequests)} failed Â· ${compact(d.totals.usage7d.requests)} in 7 days`} />
         <Stat label="Paid spend (24h)" value={usd(d.totals.usage24h.paidSpendUsd)} sub={`${usd(d.totals.usage7d.paidSpendUsd)} in 7 days`} />
         <Stat
           label="Workers"
@@ -133,7 +135,6 @@ export default async function AllProjectsPage() {
           sub={ov.workers.length ? `${ov.models.routable} of ${totalModels} models routable` : d.totals.queuedTasks ? "Queued tasks wait for a worker" : "Nothing queued"}
         />
       </div>
-
       {attentionCount ? (
         <Card className="border-warn/40">
           <div className="flex items-center gap-2 border-b border-line px-4 py-3 text-sm font-semibold text-ink">
@@ -163,7 +164,7 @@ export default async function AllProjectsPage() {
                           <span className="min-w-0 flex-1 break-words">{a}</span>
                           {act ? (
                             <Link href={act.href} className="shrink-0 text-xs font-medium text-accent-ink hover:underline">
-                              {act.cta} →
+                              {act.cta} â†’
                             </Link>
                           ) : null}
                         </li>
@@ -180,105 +181,101 @@ export default async function AllProjectsPage() {
           No questions, decisions, access requests, interrupted tasks, or promotions are waiting in any project, and provider keys and models are in order.
         </Callout>
       )}
-
-      <div className="grid gap-6 xl:grid-cols-2">
-        <Card>
-          <CardHeader title="Running and queued jobs" description="Top-level jobs of every project that have not finished, newest first." />
-          {d.jobs.length ? (
-            <ul className="divide-y divide-line">
-              {d.jobs.map((j) => (
-                <li key={j.taskId} className="flex flex-wrap items-start gap-x-3 gap-y-1 px-4 py-2.5 text-sm">
-                  <Network size={15} className="mt-0.5 shrink-0 text-ink-3" aria-hidden />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-baseline gap-x-2">
-                      <Link href={jobHref(projectBase(j.project), j.taskId)} className="font-medium text-accent-ink hover:underline">
-                        {j.label ?? shortId(j.taskId, 18)}
+      <Tabs items={[{ "id": "projects", "label": "Projects" }, { "id": "activity", "label": "Activity" }, { "id": "usage", "label": "Usage" }, { "id": "health", "label": "Health" }]} active={tab} path={"/all"} label="Page sections" anchors={{}} />
+      {tab === "projects" ? <div className="space-y-6"><Card>
+        <CardHeader title="Queues by project" description="Every task (jobs, their workers, and standalone tasks) running or waiting to run." />
+        <div className="overflow-x-auto">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Project</th>
+                <th className="text-right">Running</th>
+                <th className="text-right">Waiting</th>
+                <th>Oldest waiting</th>
+              </tr>
+            </thead>
+            <tbody>
+              {d.projects.map((p) => {
+                const s = p.tasksByState;
+                const waitingFor = [
+                  s.queued ? `${s.queued} queued` : null,
+                  s.waiting_for_dependencies ? `${s.waiting_for_dependencies} on dependencies` : null,
+                  s.waiting_for_capacity ? `${s.waiting_for_capacity} for capacity` : null,
+                ].filter((x): x is string => x !== null);
+                return (
+                  <tr key={p.slug}>
+                    <td className="whitespace-nowrap">
+                      <Link href={`${projectBase(p.slug)}/tasks?state=active`} className="font-medium text-accent-ink hover:underline">
+                        {p.name}
                       </Link>
-                      <Link href={projectBase(j.project)} className="text-xs text-ink-3 hover:text-ink hover:underline">
-                        {names.get(j.project) ?? j.project}
-                      </Link>
-                    </div>
-                    <p className="line-clamp-2 text-xs text-ink-2">{j.goal}</p>
+                    </td>
+                    <td className="tabular text-right text-xs">{num(p.runningTasks)}</td>
+                    <td className="tabular text-right text-xs" title={waitingFor.join(", ") || "nothing waiting"}>
+                      {num(p.queuedTasks)}
+                      {waitingFor.length > 1 || s.waiting_for_capacity ? <div className="whitespace-nowrap text-[11px] text-ink-3">{waitingFor.join(" Â· ")}</div> : null}
+                    </td>
+                    <td className="whitespace-nowrap text-xs text-ink-2">
+                      {p.oldestQueuedAt ? (
+                        <span className="inline-flex items-center gap-1" title={dateTime(p.oldestQueuedAt)}>
+                          <Hourglass size={12} className="text-ink-3" aria-hidden /> {ago(p.oldestQueuedAt, now)}
+                        </span>
+                      ) : (
+                        <span className="text-ink-3">none</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Card></div> : null}
+      {tab === "activity" ? <div className="space-y-6"><Card>
+        <CardHeader title="Running and queued jobs" description="Top-level jobs of every project that have not finished, newest first." />
+        {d.jobs.length ? (
+          <ul className="divide-y divide-line">
+            {d.jobs.map((j) => (
+              <li key={j.taskId} className="flex flex-wrap items-start gap-x-3 gap-y-1 px-4 py-2.5 text-sm">
+                <Network size={15} className="mt-0.5 shrink-0 text-ink-3" aria-hidden />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-baseline gap-x-2">
+                    <Link href={jobHref(projectBase(j.project), j.taskId)} className="font-medium text-accent-ink hover:underline">
+                      {j.label ?? shortId(j.taskId, 18)}
+                    </Link>
+                    <Link href={projectBase(j.project)} className="text-xs text-ink-3 hover:text-ink hover:underline">
+                      {names.get(j.project) ?? j.project}
+                    </Link>
                   </div>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <TaskStateBadge state={j.state} />
-                    {j.pendingQuestions ? (
-                      <Badge tone="warn" icon={<MessageCircleQuestion size={11} />}>
-                        {j.pendingQuestions} question{j.pendingQuestions === 1 ? "" : "s"}
-                      </Badge>
-                    ) : null}
-                    <span className="text-[11px] text-ink-3" title={dateTime(j.createdAt)}>
-                      {j.startedAt ? `started ${ago(j.startedAt, now)}` : `queued ${ago(j.createdAt, now)}`}
-                    </span>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <EmptyState icon={<Network size={22} />} title="No jobs running or queued">
-              Start a job from a project&apos;s Jobs page. Each job runs a supervisor that plans, delegates, verifies, and commits to a job branch.
-            </EmptyState>
-          )}
-        </Card>
-
-        <Card>
-          <CardHeader title="Queues by project" description="Every task (jobs, their workers, and standalone tasks) running or waiting to run." />
-          <div className="overflow-x-auto">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Project</th>
-                  <th className="text-right">Running</th>
-                  <th className="text-right">Waiting</th>
-                  <th>Oldest waiting</th>
-                </tr>
-              </thead>
-              <tbody>
-                {d.projects.map((p) => {
-                  const s = p.tasksByState;
-                  const waitingFor = [
-                    s.queued ? `${s.queued} queued` : null,
-                    s.waiting_for_dependencies ? `${s.waiting_for_dependencies} on dependencies` : null,
-                    s.waiting_for_capacity ? `${s.waiting_for_capacity} for capacity` : null,
-                  ].filter((x): x is string => x !== null);
-                  return (
-                    <tr key={p.slug}>
-                      <td className="whitespace-nowrap">
-                        <Link href={`${projectBase(p.slug)}/tasks?state=active`} className="font-medium text-accent-ink hover:underline">
-                          {p.name}
-                        </Link>
-                      </td>
-                      <td className="tabular text-right text-xs">{num(p.runningTasks)}</td>
-                      <td className="tabular text-right text-xs" title={waitingFor.join(", ") || "nothing waiting"}>
-                        {num(p.queuedTasks)}
-                        {waitingFor.length > 1 || s.waiting_for_capacity ? <div className="whitespace-nowrap text-[11px] text-ink-3">{waitingFor.join(" · ")}</div> : null}
-                      </td>
-                      <td className="whitespace-nowrap text-xs text-ink-2">
-                        {p.oldestQueuedAt ? (
-                          <span className="inline-flex items-center gap-1" title={dateTime(p.oldestQueuedAt)}>
-                            <Hourglass size={12} className="text-ink-3" aria-hidden /> {ago(p.oldestQueuedAt, now)}
-                          </span>
-                        ) : (
-                          <span className="text-ink-3">none</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      </div>
-
-      <Card>
+                  <p className="line-clamp-2 text-xs text-ink-2">{j.goal}</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <TaskStateBadge state={j.state} />
+                  {j.pendingQuestions ? (
+                    <Badge tone="warn" icon={<MessageCircleQuestion size={11} />}>
+                      {j.pendingQuestions} question{j.pendingQuestions === 1 ? "" : "s"}
+                    </Badge>
+                  ) : null}
+                  <span className="text-[11px] text-ink-3" title={dateTime(j.createdAt)}>
+                    {j.startedAt ? `started ${ago(j.startedAt, now)}` : `queued ${ago(j.createdAt, now)}`}
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <EmptyState icon={<Network size={22} />} title="No jobs running or queued">
+            Start a job from a project&apos;s Jobs page. Each job runs a supervisor that plans, delegates, verifies, and commits to a job branch.
+          </EmptyState>
+        )}
+      </Card></div> : null}
+      {tab === "usage" ? <div className="space-y-6"><Card>
         <CardHeader
           title="Usage and paid spend by project"
           help="requests"
           description="Model requests charged to each project's tasks, tokens, failures, and paid spend (settled where known, else the reservation)."
           actions={
             <Link className="text-xs text-accent-ink hover:underline" href={`${ALL}/requests`}>
-              Request log →
+              Request log â†’
             </Link>
           }
         />
@@ -313,7 +310,7 @@ export default async function AllProjectsPage() {
                         {num(x.u24.failedRequests)} <span className="text-ink-3">({pct(x.u24.failedRequests, x.u24.requests)})</span>
                       </span>
                     ) : (
-                      <span className="text-ink-3">–</span>
+                      <span className="text-ink-3">â€“</span>
                     )}
                   </td>
                   <td className="tabular text-right text-xs" title={tokenTitle(x.u24)}>
@@ -349,9 +346,8 @@ export default async function AllProjectsPage() {
             </tfoot>
           </table>
         </div>
-      </Card>
-
-      <div className="grid gap-6 lg:grid-cols-3">
+      </Card></div> : null}
+      {tab === "health" ? <div className="space-y-6"><div className="grid gap-6 lg:grid-cols-3">
         <Card>
           <CardHeader title="Worker" help="worker" description="One worker serves every project, sharing capacity fairly." />
           <div className="space-y-2 p-4 text-sm">
@@ -387,7 +383,7 @@ export default async function AllProjectsPage() {
             description="From SwitchYard's own key state (cooldowns, invalid keys, limits) and circuit breakers."
             actions={
               <Link className="text-xs text-accent-ink hover:underline" href={`${ALL}/keys`}>
-                Provider keys →
+                Provider keys â†’
               </Link>
             }
           />
@@ -404,14 +400,14 @@ export default async function AllProjectsPage() {
                         {p.requestsRemainingPct !== null ? <span>{Math.round(p.requestsRemainingPct)}% left</span> : null}
                         {breaker ? (
                           <Badge tone="bad" title={`Circuit breaker: ${breaker.effective}`}>
-                            {breaker.effective === "open" ? `Breaker open${breaker.probeInMs ? ` · probe in ${Math.ceil(breaker.probeInMs / 1000)}s` : ""}` : "Breaker probing"}
+                            {breaker.effective === "open" ? `Breaker open${breaker.probeInMs ? ` Â· probe in ${Math.ceil(breaker.probeInMs / 1000)}s` : ""}` : "Breaker probing"}
                           </Badge>
                         ) : null}
                         {p.status === "healthy" ? (
                           <Badge tone="good">Healthy</Badge>
                         ) : p.status === "rate_limited" ? (
                           <Badge tone="warn" title={p.lastError ?? undefined}>
-                            Rate limited{p.resumeAt ? ` · resumes ${ago(p.resumeAt, now)}` : ""}
+                            Rate limited{p.resumeAt ? ` Â· resumes ${ago(p.resumeAt, now)}` : ""}
                           </Badge>
                         ) : p.status === "invalid" ? (
                           <Badge tone="bad" title={p.lastError ?? undefined}>
@@ -443,15 +439,14 @@ export default async function AllProjectsPage() {
           </div>
         </Card>
       </div>
-
-      <p className="text-xs text-ink-3">
-        <BookOpenText size={13} className="mr-1.5 inline align-[-2px]" aria-hidden />
-        Lessons supervisors promoted for every project, with where they came from, are on the{" "}
-        <Link href={`${ALL}/knowledge`} className="text-accent-ink hover:underline">
-          Knowledge
-        </Link>{" "}
-        page.
-      </p>
+        <p className="text-xs text-ink-3">
+          <BookOpenText size={13} className="mr-1.5 inline align-[-2px]" aria-hidden />
+          Lessons supervisors promoted for every project, with where they came from, are on the{" "}
+          <Link href={`${ALL}/knowledge`} className="text-accent-ink hover:underline">
+            Knowledge
+          </Link>{" "}
+          page.
+        </p></div> : null}
     </div>
   );
 }

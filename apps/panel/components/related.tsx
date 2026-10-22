@@ -55,7 +55,12 @@ export function RelatedPanel({ groups, title = "Related", description }: { group
                           {g.more.label}
                         </Link>
                       ) : (
-                        `and ${g.items.length - SHOWN} more`
+                        <details className="mt-1">
+                          <summary className="cursor-pointer text-accent-ink">Show {g.items.length - SHOWN} more</summary>
+                          <ul className="mt-1 space-y-0.5">
+                            {g.items.slice(SHOWN).map(i => <li key={i.key} className="break-all">{i.node}{i.meta ? <span className="ml-1.5 text-ink-3">{i.meta}</span> : null}</li>)}
+                          </ul>
+                        </details>
                       )}
                     </li>
                   ) : g.more ? (

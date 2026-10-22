@@ -1,8 +1,13 @@
+import { RelatedPanel } from "@/components/related";
+import { AgentLink, CommitLink, ModelLink, RequestLink, TaskLink } from "@/components/entity-links";
+import { Tabs, pickTab } from "@/components/tabs";
+import { Disclosure } from "@/components/disclosure";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, ExternalLink, Radar, ShieldAlert } from "lucide-react";
 import { insights, MODALITIES, TIER_NAMES } from "switchyard-router";
+import { projectBase, itemBase } from "@/lib/links";
 import { getSy } from "@/lib/sy";
 import { isFree, keyedProviders, reachable, type ModelView } from "@/lib/models";
 import { SetupScreen } from "@/components/setup";
@@ -31,9 +36,11 @@ export default async function ModelDetailPage({ searchParams }: { searchParams: 
   const st = statusKey(ep, view.quarantined);
   const names = new Map(sy.catalog.endpoints().map((e) => [e.id, e.displayName ?? e.gatewayModelId]));
   const recent = insights.requestLog(sy, { endpointId: ep.id, limit: 15 });
+  const usage = insights.modelUsage(sy, ep.id);
   const s = view.stats7d;
   const profiles = Object.keys(sy.cfg.profiles);
 
+  const tab = pickTab(sp, ["overview", "eligibility", "qualification", "usage", "controls"]);
   return (
     <div className="space-y-6">
       <Link href="/all/models" className="inline-flex items-center gap-1 text-sm text-ink-3 hover:text-ink">
@@ -56,110 +63,104 @@ export default async function ModelDetailPage({ searchParams }: { searchParams: 
           </ActionButton>
         }
       />
-
       <Callout tone={st === "active" && view.eligibility.some((c) => c.eligible) ? "good" : st === "quarantined" ? "bad" : "warn"} icon={st === "quarantined" ? <ShieldAlert size={16} /> : undefined} title={view.headline}>
         {ep.statusReason && st !== "active" && !view.headline.includes(ep.statusReason) ? <>Status: {ep.statusReason}. </> : null}
         {ep.notes ? <>Note: {ep.notes}</> : null}
       </Callout>
-
-      <Card>
-        <CardHeader title="Why is or isn't this model used?" help="eligibility" description="Each cell is one task type at one tier, with text-only input. A number is the model's position in the candidate list; red cells list what excludes it." />
-        <div className="overflow-x-auto p-4">
-          <EligibilityGrid view={view} profiles={profiles} />
-        </div>
-      </Card>
-
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Requests (7 days)" value={num(s.requests)} sub={s.requests ? `${pct(s.succeeded, s.requests)} succeeded · ${s.failed} failed · ${s.uncertain} uncertain` : "Not used this week"} />
         <Stat label="Tokens (7 days)" value={compact(s.inputTokens + s.outputTokens)} sub={`${compact(s.inputTokens)} in · ${compact(s.outputTokens)} out`} />
         <Stat label="Average latency" value={s.avgLatencyMs === null ? "–" : duration(s.avgLatencyMs)} sub={s.lastUsedAt ? `last used ${ago(s.lastUsedAt)}` : "never used"} />
         <Stat label="Task outcomes (7 days)" value={`${s.tasksCompleted} completed`} sub={`${s.tasksFailed} failed${s.policyViolations ? ` · ${s.policyViolations} policy violation(s)` : ""}`} tone={s.policyViolations ? "bad" : undefined} />
       </div>
-
-      <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
-        <Card>
-          <CardHeader title="Facts" description={`Origin: ${ep.origin === "manual" ? "models file (manual entry)" : "discovered by scan"} · metadata checked ${ago(Date.parse(ep.checkedAt))}`} />
-          <div className="p-4">
-            <KeyValue
-              items={[
-                [
-                  "Size",
-                  <span key="s" className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium">{params(ep.totalParametersB)}</span>
-                    {ep.activeParametersB ? <span className="text-ink-2">({params(ep.activeParametersB)} active, mixture of experts)</span> : null}
-                    <ProvenanceBadge params={ep.params} />
-                    <HelpTip term="provenance" />
-                  </span>,
-                ],
-                ["Reads", <Modalities key="m" list={ep.inputModalities} showLabels />],
-                ["Context limit", `${tokens(ep.contextLimitTokens)} tokens`],
-                [
-                  "Output limit",
-                  <span key="o">
-                    {tokens(ep.outputLimitTokens)} tokens{" "}
-                    <Badge tone={ep.outputLimitSource === "default" ? "warn" : "neutral"} title={ep.outputLimitSource === "default" ? "No provider reported it: the value was assumed. Set the real limit in an override." : undefined}>
-                      {ep.outputLimitSource}
-                    </Badge>
-                  </span>,
-                ],
-                ["Tool calling", ep.supportsTools === null ? "Unknown (cannot do repository work until set)" : ep.supportsTools ? "Yes" : "No (cannot do repository work)"],
-                ["Structured output", ep.supportsStructuredOutput === null ? "Unknown" : ep.supportsStructuredOutput ? "Yes" : "No"],
-                ["Web search in the call", <WebSearchFact key="w" info={ep.nativeWebSearch ?? null} />],
-                [
-                  "Price",
-                  <span key="p" className="flex flex-wrap items-center gap-2">
-                    {isFree(ep) ? <Badge tone="good">Free (verified)</Badge> : <Badge tone="bad">Not verified free</Badge>}
-                    <span className="text-xs text-ink-3">
-                      source: {ep.pricing.source}
-                      {ep.pricing.inputUsdPerMillion !== null ? ` · $${ep.pricing.inputUsdPerMillion}/M in, $${ep.pricing.outputUsdPerMillion ?? "?"}/M out` : ""}
-                      {ep.pricing.cachedInputUsdPerMillion !== null && ep.pricing.cachedInputUsdPerMillion !== undefined
-                        ? ` · $${ep.pricing.cachedInputUsdPerMillion}/M cached in${ep.pricing.cachedInputSource ? ` (${ep.pricing.cachedInputSource})` : ""}`
-                        : !isFree(ep)
-                          ? " · cached input priced as input (no cached price)"
-                          : ""}
-                    </span>
-                  </span>,
-                ],
-                [
-                  "Rate limits",
-                  ep.rateLimits && Object.values(ep.rateLimits).some((v) => v != null)
-                    ? Object.entries(ep.rateLimits)
-                        .filter(([, v]) => v != null)
-                        .map(([k, v]) => `${num(v as number)} ${k}`)
-                        .join(" · ")
-                    : "not reported",
-                ],
-                ["Quota scope", ep.quotaScopeIds.length ? ep.quotaScopeIds.join(", ") : <span className="text-ink-3">none set <HelpTip term="quotaScope" /></span>],
-                [
-                  <span key="a" className="inline-flex items-center gap-1">
-                    Reachable <HelpTip term="available" />
-                  </span>,
-                  reachable(ep, keyedProviders(sy)) ? (
-                    "Yes"
-                  ) : (
-                    <span key="av">
-                      No: no usable key for {ep.route.provider}, or the provider no longer lists it.{" "}
-                      <Link href="/all/keys" className="text-accent-ink hover:underline">
-                        Provider keys
-                      </Link>
-                    </span>
-                  ),
-                ],
-                [
-                  "Sent to",
-                  <span key="r" className="space-y-1">
-                    <Mono>{`${ep.route.provider}/${ep.route.model}`}</Mono>
-                    <span className="block text-xs text-ink-3">Directly to the provider with one of its keys; the model it reports serving is checked against this one.</span>
-                  </span>,
-                ],
-                ...(view.quarantined ? ([["Quarantine", <span key="q" className="text-bad-ink">{view.quarantined}</span>]] as Array<[string, ReactNode]>) : []),
-                ["First seen", view.firstSeenAt ? dateTime(view.firstSeenAt) : "manual entry"],
-              ]}
-            />
-          </div>
-        </Card>
-
-        <Card>
+      <RelatedPanel groups={[
+        { label: "Tasks", items: usage.tasks.map(t => ({ key: t.taskId, node: <TaskLink base={itemBase(t.project)} id={t.taskId} label={t.label} job={t.profile === "supervise"} /> })) },
+        { label: "Agents", items: usage.agents.map(a => ({ key: a.project + a.id, node: <AgentLink base={itemBase(a.project)} agent={a.id} /> })) },
+        { label: "Projects", items: usage.projects.map(p => ({ key: p.project, node: <Link href={projectBase(p.project)} className="text-accent-ink hover:underline">{p.project}</Link> })) }
+      ]} />
+      <Tabs items={[{ "id": "overview", "label": "Overview" }, { "id": "eligibility", "label": "Eligibility" }, { "id": "qualification", "label": "Qualification" }, { "id": "usage", "label": "Usage" }, { "id": "controls", "label": "Controls" }]} active={tab} path={"/all/models/detail"} label="Page sections" keep={{ id }} anchors={{ "controls": "controls" }} />
+      {tab === "overview" ? <div className="space-y-6"><Card>
+        <CardHeader title="Facts" description={`Origin: ${ep.origin === "manual" ? "models file (manual entry)" : "discovered by scan"} · metadata checked ${ago(Date.parse(ep.checkedAt))}`} />
+        <div className="p-4">
+          <KeyValue
+            items={[
+              [
+                "Size",
+                <span key="s" className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">{params(ep.totalParametersB)}</span>
+                  {ep.activeParametersB ? <span className="text-ink-2">({params(ep.activeParametersB)} active, mixture of experts)</span> : null}
+                  <ProvenanceBadge params={ep.params} />
+                  <HelpTip term="provenance" />
+                </span>,
+              ],
+              ["Reads", <Modalities key="m" list={ep.inputModalities} showLabels />],
+              ["Context limit", `${tokens(ep.contextLimitTokens)} tokens`],
+              [
+                "Output limit",
+                <span key="o">
+                  {tokens(ep.outputLimitTokens)} tokens{" "}
+                  <Badge tone={ep.outputLimitSource === "default" ? "warn" : "neutral"} title={ep.outputLimitSource === "default" ? "No provider reported it: the value was assumed. Set the real limit in an override." : undefined}>
+                    {ep.outputLimitSource}
+                  </Badge>
+                </span>,
+              ],
+              ["Tool calling", ep.supportsTools === null ? "Unknown (cannot do repository work until set)" : ep.supportsTools ? "Yes" : "No (cannot do repository work)"],
+              ["Structured output", ep.supportsStructuredOutput === null ? "Unknown" : ep.supportsStructuredOutput ? "Yes" : "No"],
+              ["Web search in the call", <WebSearchFact key="w" info={ep.nativeWebSearch ?? null} />],
+              [
+                "Price",
+                <span key="p" className="flex flex-wrap items-center gap-2">
+                  {isFree(ep) ? <Badge tone="good">Free (verified)</Badge> : <Badge tone="bad">Not verified free</Badge>}
+                  <span className="text-xs text-ink-3">
+                    source: {ep.pricing.source}
+                    {ep.pricing.inputUsdPerMillion !== null ? ` · $${ep.pricing.inputUsdPerMillion}/M in, $${ep.pricing.outputUsdPerMillion ?? "?"}/M out` : ""}
+                    {ep.pricing.cachedInputUsdPerMillion !== null && ep.pricing.cachedInputUsdPerMillion !== undefined
+                      ? ` · $${ep.pricing.cachedInputUsdPerMillion}/M cached in${ep.pricing.cachedInputSource ? ` (${ep.pricing.cachedInputSource})` : ""}`
+                      : !isFree(ep)
+                        ? " · cached input priced as input (no cached price)"
+                        : ""}
+                  </span>
+                </span>,
+              ],
+              [
+                "Rate limits",
+                ep.rateLimits && Object.values(ep.rateLimits).some((v) => v != null)
+                  ? Object.entries(ep.rateLimits)
+                    .filter(([, v]) => v != null)
+                    .map(([k, v]) => `${num(v as number)} ${k}`)
+                    .join(" · ")
+                  : "not reported",
+              ],
+              ["Quota scope", ep.quotaScopeIds.length ? ep.quotaScopeIds.join(", ") : <span className="text-ink-3">none set <HelpTip term="quotaScope" /></span>],
+              [
+                <span key="a" className="inline-flex items-center gap-1">
+                  Reachable <HelpTip term="available" />
+                </span>,
+                reachable(ep, keyedProviders(sy)) ? (
+                  "Yes"
+                ) : (
+                  <span key="av">
+                    No: no usable key for {ep.route.provider}, or the provider no longer lists it.{" "}
+                    <Link href="/all/keys" className="text-accent-ink hover:underline">
+                      Provider keys
+                    </Link>
+                  </span>
+                ),
+              ],
+              [
+                "Sent to",
+                <span key="r" className="space-y-1">
+                  <Mono>{`${ep.route.provider}/${ep.route.model}`}</Mono>
+                  <span className="block text-xs text-ink-3">Directly to the provider with one of its keys; the model it reports serving is checked against this one.</span>
+                </span>,
+              ],
+              ...(view.quarantined ? ([["Quarantine", <span key="q" className="text-bad-ink">{view.quarantined}</span>]] as Array<[string, ReactNode]>) : []),
+              ["First seen", view.firstSeenAt ? dateTime(view.firstSeenAt) : "manual entry"],
+            ]}
+          />
+        </div>
+      </Card>
+        <Disclosure summary="Parameter evidence"><Card>
           <CardHeader title="Parameter evidence" help="provenance" description="Every source SwitchYard found for this model's size." />
           <div className="p-4">
             {ep.params.evidence.length ? (
@@ -193,10 +194,24 @@ export default async function ModelDetailPage({ searchParams }: { searchParams: 
               </div>
             ) : null}
           </div>
-        </Card>
-      </div>
-
-      <Card id="controls">
+        </Card></Disclosure></div> : null}
+      {tab === "eligibility" ? <div className="space-y-6"><Card>
+        <CardHeader title="Why is or isn't this model used?" help="eligibility" description="Each cell is one task type at one tier, with text-only input. A number is the model's position in the candidate list; red cells list what excludes it." />
+        <div className="overflow-x-auto p-4">
+          <EligibilityGrid view={view} profiles={profiles} />
+        </div>
+      </Card></div> : null}
+      {tab === "qualification" ? <div className="space-y-6"><Card>
+        <CardHeader title="Qualification" help="qualification" description="Pass rate per task family and tier, with a 95% confidence interval. Results at harder tiers count for easier ones." actions={<Link href="/all/qualification" className="text-xs text-accent-ink hover:underline">Leaderboard →</Link>} />
+        <div className="p-4">
+          <QualificationTable view={view} />
+        </div>
+      </Card></div> : null}
+      {tab === "usage" ? <div className="space-y-6"><Card>
+        <CardHeader title="Recent requests" actions={<Link href={`/all/requests?endpoint=${encodeURIComponent(ep.id)}`} className="text-xs text-accent-ink hover:underline">All requests for this model →</Link>} />
+        <RequestsTable rows={recent} names={names} hideModel empty="This model has not served any requests yet" />
+      </Card></div> : null}
+      {tab === "controls" ? <div className="space-y-6"><Card id="controls">
         <CardHeader title="Controls" help="override" description="Corrections you make here sit on top of discovered data and survive rescans." />
         <div className="p-4">
           <OverrideEditor
@@ -218,19 +233,7 @@ export default async function ModelDetailPage({ searchParams }: { searchParams: 
             }}
           />
         </div>
-      </Card>
-
-      <Card>
-        <CardHeader title="Qualification" help="qualification" description="Pass rate per task family and tier, with a 95% confidence interval. Results at harder tiers count for easier ones." actions={<Link href="/all/qualification" className="text-xs text-accent-ink hover:underline">Leaderboard →</Link>} />
-        <div className="p-4">
-          <QualificationTable view={view} />
-        </div>
-      </Card>
-
-      <Card>
-        <CardHeader title="Recent requests" actions={<Link href={`/all/requests?endpoint=${encodeURIComponent(ep.id)}`} className="text-xs text-accent-ink hover:underline">All requests for this model →</Link>} />
-        <RequestsTable rows={recent} names={names} hideModel empty="This model has not served any requests yet" />
-      </Card>
+      </Card></div> : null}
     </div>
   );
 }

@@ -75,6 +75,68 @@ function step(s: Switchyard, cursor: LiveCursor): { topics: string[]; cursor: Li
 }
 
 describe("live change watcher", () => {
+  it("detects mutable settings updates that preserve counts, timestamps and key lengths", () => {
+    env = twoProjects();
+    sy = open(env, new ScriptedClient(() => reply("{}")));
+    const key = sy.db.prepare("INSERT INTO paid_keys (provider, billing_class, enc, iv, tag, created_at) VALUES ('fake', 'paid', 'fake-a', 'fake', 'fake', 1)").run().lastInsertRowid;
+    sy.db.prepare("INSERT INTO endpoint_overrides (endpoint_id, data_json, updated_at) VALUES ('fake-endpoint', '{}', 1)").run();
+    let c = liveCursor(sy, "all");
+    sy.db.prepare("UPDATE paid_keys SET enc = 'fake-b' WHERE id = ?").run(key);
+    let check = step(sy, c);
+    expect(check.topics).toContain("keys");
+    c = check.cursor;
+    sy.db.prepare("UPDATE projects SET name = 'Renamed' WHERE id = 'alpha'").run();
+    check = step(sy, c);
+    expect(check.topics).toContain("projects");
+    c = check.cursor;
+    sy.db.prepare("UPDATE endpoint_overrides SET data_json = '{\"blocked\":true}' WHERE endpoint_id = 'fake-endpoint'").run();
+    check = step(sy, c);
+    expect(check.topics).toContain("models");
+    expect(step(sy, check.cursor).topics).toEqual([]);
+  });
+
+  it("watches the install brain even when project brain roots differ", () => {
+    env = twoProjects();
+    sy = open(env, new ScriptedClient(() => reply("{}")));
+    const root = path.join(env.dir, "separate-install-brain");
+    gitRepo(root);
+    // Model an install root distinct from each configured project's brain root.
+    Object.defineProperty(sy, "brain", { configurable: true, value: { root } });
+    try {
+      const c = liveCursor(sy, "all");
+      writeFileSync(path.join(root, "README.md"), "# Changed install brain\n");
+      commitAll(root, "install brain update");
+      expect(step(sy, c).topics).toContain("brain");
+    } finally {
+      Reflect.deleteProperty(sy, "brain");
+    }
+  });
+
+  it("detects task edits with an unchanged timestamp and older-row edits", async () => {
+    env = makeEnv();
+    sy = open(env, new ScriptedClient(() => reply("{}")));
+    const [first, second] = await sy.submitTasks([summarizeTask(), summarizeTask()]);
+    sy.db.prepare("UPDATE tasks SET updated_at = CASE WHEN id = ? THEN 100 ELSE 200 END").run(first!.taskId);
+    let c = liveCursor(sy, "all");
+    sy.db.prepare("UPDATE tasks SET state_reason = 'same millisecond' WHERE id = ?").run(second!.taskId);
+    let check = step(sy, c);
+    expect(liveMatches(`tasks:${second!.taskId}`, check.topics)).toBe(true);
+    c = check.cursor;
+    sy.db.prepare("UPDATE tasks SET state_reason = 'older row' WHERE id = ?").run(first!.taskId);
+    check = step(sy, c);
+    expect(liveMatches(`tasks:${first!.taskId}`, check.topics)).toBe(true);
+    expect(step(sy, check.cursor).topics).toEqual([]);
+  });
+
+  it("can resume with many workers without exceeding the cursor string limit", () => {
+    env = makeEnv();
+    sy = open(env, new ScriptedClient(() => reply("{}")));
+    const insert = sy.db.prepare("INSERT INTO meta (key, value) VALUES (?, ?)");
+    for (let i = 0; i < 30; i++) insert.run(`worker:long-worker-identity-${i}`, String(Date.now()));
+    const c = liveCursor(sy, "all");
+    expect(decodeLiveCursor(encodeLiveCursor(c), "all")?.marks).toEqual(c.marks);
+  });
+
   it("reports nothing when nothing changed, and does not query the store when it was not written", () => {
     env = makeEnv();
     sy = open(env, new ScriptedClient(() => reply("{}")));
@@ -256,6 +318,11 @@ describe("entity queries", () => {
     expect(r.tasks.map((t) => t.taskId)).toEqual([sub!.taskId]);
     expect(r.sessions).toEqual([{ sessionId: a!.sessions[0]!.id, agent: "summarizer:notes", role: "summarizer" }]);
     expect(requestDetail(sy, "r_nope")).toBeNull();
+    const citations = [{ url: "https://example.test/source", title: "Source", text: "Evidence" }];
+    sy.db.prepare("UPDATE model_requests SET web_citations_json = ? WHERE id = ?").run(JSON.stringify(citations), r.id);
+    expect(requestDetail(sy, r.id)!.webCitations).toEqual(citations);
+    sy.db.prepare("UPDATE model_requests SET web_citations_json = ? WHERE id = ?").run('{"bad":true}', r.id);
+    expect(requestDetail(sy, r.id)!.webCitations).toEqual([]);
     expect(sessionRequests(sy, a!.sessions[0]!.id).map((x) => x.id)).toEqual([r.id]);
 
     const rel = (await taskRelated(sy, sub!.taskId))!;
@@ -290,5 +357,9 @@ describe("entity queries", () => {
     expect(repo).toMatchObject({ alias: "core", exists: true, branch: "main", head: sha });
     expect(repo.commits.map((x) => x.commit)).toEqual([sha, expect.any(String)]);
     expect(await repositoryView(sy, "demo", "nope")).toBeNull();
+    for (const alias of ["__proto__", "constructor", "toString"]) {
+      expect(await repositoryView(sy, "demo", alias)).toBeNull();
+      expect(await commitDetail(sy, "demo", alias, sha!)).toBeNull();
+    }
   });
 });

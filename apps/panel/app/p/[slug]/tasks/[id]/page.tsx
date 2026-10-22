@@ -7,7 +7,7 @@ import { TaskDetailView } from "@/components/task-detail";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Task" };
 
-export default async function TaskDetailPage({ params }: { params: Promise<{ slug: string; id: string }> }) {
+export default async function TaskDetailPage({ params, searchParams }: { params: Promise<{ slug: string; id: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const r = getSy();
   if (!r.sy) return <SetupScreen error={r.error} configPath={r.configPath} />;
   const { slug, id } = await params;
@@ -16,5 +16,5 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ slu
   const taskId = decodeURIComponent(id);
   // Another project's task is not found here (its own project's URL is /tasks/<id>).
   requireTaskIn(r.sy, p.slug, taskId);
-  return <TaskDetailView sy={r.sy} taskId={taskId} scope={{ project: p.slug, base, back: { href: `${base}/tasks`, label: "All tasks" }, actions: true, lists: true }} />;
+  return <TaskDetailView sy={r.sy} taskId={taskId} sp={await searchParams} scope={{ project: p.slug, base, back: { href: `${base}/tasks`, label: "All tasks" }, actions: true, lists: true }} />;
 }

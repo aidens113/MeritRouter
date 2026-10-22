@@ -1,3 +1,4 @@
+import { Tabs, pickTab } from "@/components/tabs";
 import Link from "next/link";
 import { Archive, ArchiveRestore } from "lucide-react";
 import { insights } from "switchyard-router";
@@ -40,7 +41,9 @@ const COMMAND_ORDER = ["coding.allowed_commands", "supervisor.allowed_commands",
  * every other page of an archived project is a 404 (app/p/[slug]/layout.tsx). The Danger zone at
  * the end deletes the project, archived or not (components/client/delete-project.tsx).
  */
-export default async function ProjectSettingsPage({ params }: { params: Promise<{ slug: string }> }) {
+export default async function ProjectSettingsPage({ params, searchParams }: { params: Promise<{ slug: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const tab = pickTab(await searchParams, ["general", "scheduling", "policy", "danger"]);
+  const sectionTab = (id: string) => ["general", "repositories", "brain"].includes(id) ? "general" : id === "scheduling" ? "scheduling" : id === "danger" ? "danger" : "policy";
   const r = getSy();
   if (!r.sy) return <SetupScreen error={r.error} configPath={r.configPath} />;
   const p = project(r.sy, (await params).slug, { archived: true });
@@ -87,37 +90,38 @@ export default async function ProjectSettingsPage({ params }: { params: Promise<
           </div>
         </Callout>
       ) : null}
+      <Tabs items={[{ id: "general", label: "General" }, { id: "scheduling", label: "Scheduling" }, { id: "policy", label: "Policy" }, { id: "danger", label: "Danger zone" }]} active={tab} path={`/p/${encodeURIComponent(p.slug)}/settings`} label="Project settings" anchors={Object.fromEntries(NAV.map(s => [s.id, sectionTab(s.id)]))} />
       <div className="space-y-4 xl:grid xl:grid-cols-[12rem_1fr] xl:gap-6 xl:space-y-0">
-        <SectionNav label="Project settings sections" items={NAV} />
+        <SectionNav label="Project settings sections" items={NAV.filter(s => sectionTab(s.id) === tab)} />
         {/* Scroll margin clears the sticky top bar and section strip on narrow screens. A disabled
             fieldset makes every control read-only while the project is archived. */}
         <div className="min-w-0 space-y-6">
           <fieldset disabled={v.archived} aria-label={v.archived ? "Settings (read-only: the project is archived)" : undefined} className="m-0 min-w-0 space-y-6 border-0 p-0 [&>section[id]]:scroll-mt-28 xl:[&>section[id]]:scroll-mt-6">
-            <GeneralCard slug={p.slug} name={v.name} legacy={v.legacy} configPath={v.configPath} keyPath={v.configKeyPath.join(".")} activity={v.activity} archived={v.archived} />
-            <RepositoriesCard slug={p.slug} rows={v.repositoryRows} />
-            <BrainCard slug={p.slug} legacy={v.legacy} globalMounts={v.mounts.global} mounts={v.mounts.project} items={of("brain")} />
-            <SchedulingCard slug={p.slug} legacy={v.legacy} limits={v.limits} />
-            <OverridesCard
+            {tab === "general" ? <><GeneralCard slug={p.slug} name={v.name} legacy={v.legacy} configPath={v.configPath} keyPath={v.configKeyPath.join(".")} activity={v.activity} archived={v.archived} /></> : null}
+            {tab === "general" ? <><RepositoriesCard slug={p.slug} rows={v.repositoryRows} /></> : null}
+            {tab === "general" ? <><BrainCard slug={p.slug} legacy={v.legacy} globalMounts={v.mounts.global} mounts={v.mounts.project} items={of("brain")} /></> : null}
+            {tab === "scheduling" ? <><SchedulingCard slug={p.slug} legacy={v.legacy} limits={v.limits} /></> : null}
+            {tab === "policy" ? <><OverridesCard
               id="verification"
               slug={p.slug}
               title="Verification"
               description="How this project's results are checked: importance, levels, review, and acceptance. A project value is merged onto the global policy (lists replace)."
               items={verification}
               locked={locked}
-            />
-            <OverridesCard id="team" slug={p.slug} title="Team policy" description="How this project's jobs grow: agents per job, sub-supervisors, and the team channel. Provider concurrency stays global." items={of("team")} locked={locked} />
-            <OverridesCard
+            /></> : null}
+            {tab === "policy" ? <><OverridesCard id="team" slug={p.slug} title="Team policy" description="How this project's jobs grow: agents per job, sub-supervisors, and the team channel. Provider concurrency stays global." items={of("team")} locked={locked} /></> : null}
+            {tab === "policy" ? <><OverridesCard
               id="commands"
               slug={p.slug}
               title="Commands and paths"
               description="What this project's coding workers and supervisors may run, which files they may not weaken, and the branch its jobs commit to."
               items={commands}
               locked={locked}
-            />
-            <OverridesCard id="roles" slug={p.slug} title="Roles and charters" description="Each role's charter, extra rules, and brain grants in this project. A role set here replaces the global entry for that role." items={of("roles")} locked={locked} />
+            /></> : null}
+            {tab === "policy" ? <><OverridesCard id="roles" slug={p.slug} title="Roles and charters" description="Each role's charter, extra rules, and brain grants in this project. A role set here replaces the global entry for that role." items={of("roles")} locked={locked} /></> : null}
           </fieldset>
           {/* Outside the fieldset: an archived project can still be deleted. */}
-          <DangerZone slug={p.slug} name={v.name} />
+          {tab === "danger" ? <DangerZone slug={p.slug} name={v.name} /> : null}
         </div>
       </div>
     </div>

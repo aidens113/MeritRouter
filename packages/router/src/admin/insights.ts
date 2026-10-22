@@ -22,6 +22,7 @@ import type { UsageSummary } from "../storage/usage.js";
 import type { ArtifactRow } from "../storage/artifacts.js";
 import type { ProviderStatus, WebCitation } from "../gateway/types.js";
 import { z } from "zod";
+import { parseCitations } from "./request-citations.js";
 import { readBreakerRecords, type BreakerRecord, type BreakerSettings } from "../gateway/breaker.js";
 
 const DAY = 86_400_000;
@@ -263,19 +264,6 @@ export interface RequestRow {
   taskIds: string[];
   /** The project the request was charged to ('' for none: probes, scans). */
   project: string;
-}
-
-const CitationsSchema = z.array(z.object({ url: z.string(), title: z.string().nullable(), text: z.string().nullable() }));
-
-/** Stored citations (a JSON column); anything malformed reads as none. */
-function parseCitations(raw: unknown): WebCitation[] {
-  if (typeof raw !== "string" || !raw) return [];
-  try {
-    const r = CitationsSchema.safeParse(JSON.parse(raw));
-    return r.success ? r.data : [];
-  } catch {
-    return [];
-  }
 }
 
 /**

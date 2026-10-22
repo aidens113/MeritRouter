@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { Switchyard } from "../core/service.js";
 
@@ -9,9 +10,10 @@ import type { Switchyard } from "../core/service.js";
  * file's mtime, the set of live workers); `liveChanges` compares the store with a cursor and names
  * the topics that changed since, with the ids it can attribute (`tasks:<id>`, `jobs:<id>`,
  * `sessions:<id>`). A topic followed by `:*` means "some id under this topic changed and the list
- * was cut short". Every query is an index lookup or a scan of rows newer than the mark, and when
+ * was cut short". Mutable rows are fingerprinted after writes to detect timestamp collisions; when
  * the database has not been written since the previous check (`PRAGMA data_version` and this
- * connection's `total_changes()`), the store is not queried at all.
+ * connection's `total_changes()`), mutable tables are not scanned. Database-version and worker
+ * heartbeat queries still run on quiet ticks.
  */
 
 /** Topics a page can subscribe to. Install-wide ones (keys, models, config, projects, workers) change in every scope. */
@@ -200,7 +202,10 @@ const SOURCES: Record<string, Source & { topic: LiveTopic }> = {
   brainHead: {
     topic: "brain",
     external: true,
-    mark: ({ sy }) => [gitHead(sy.brain.root)],
+    mark: ({ sy, project }) => {
+      const roots = project ? [sy.brainFor(project).root] : [sy.brain.root, ...sy.projects.slugs().map((slug) => sy.brainFor(slug).root)];
+      return [digest([...new Set(roots)].sort().map((root) => [root, gitHead(root)]))];
+    },
     topics: () => ["brain"],
   },
   keys: {
@@ -256,7 +261,7 @@ const SOURCES: Record<string, Source & { topic: LiveTopic }> = {
     mark: ({ db, now }) => {
       const rows = db.prepare("SELECT key, value FROM meta WHERE key LIKE 'worker:%'").all() as Array<{ key: string; value: string }>;
       const live = rows.filter((r) => now - Number(r.value) <= WORKER_LIVE_MS).map((r) => r.key.slice("worker:".length));
-      return [live.sort().join("\n")];
+      return [digest(live.sort())];
     },
     topics: () => ["workers"],
   },
@@ -304,9 +309,42 @@ function scopeProject(scope: LiveScope): string | null {
 
 function readMarks(c: Ctx, only?: (s: Source) => boolean): Record<string, Mark> {
   const marks: Record<string, Mark> = {};
-  for (const [name, src] of Object.entries(SOURCES)) if (!only || only(src)) marks[name] = src.mark(c);
+  for (const [name, src] of Object.entries(SOURCES)) if (!only || only(src)) {
+    marks[name] = src.mark(c);
+    // High-water timestamps alone miss writes within the same millisecond and updates to
+    // older rows. Fingerprint mutable rows only after a database write, never on quiet ticks.
+    const tables = MUTABLE_TABLES[name];
+    if (tables) marks[name].push(digest(tables.map((table) => {
+      const s = scoped(c.project);
+      return c.db.prepare(`SELECT * FROM ${table} WHERE ${s.sql} ORDER BY rowid`).all(...s.args);
+    })));
+    const globalTables = GLOBAL_MUTABLE_TABLES[name];
+    if (globalTables) marks[name].push(digest(globalTables.map((table) =>
+      c.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all(),
+    )));
+    if (name === "jobs") {
+      const s = scoped(c.project, "t.project_id");
+      marks[name].push(digest([
+        ...["job_questions", "merge_queue", "file_leases"].map((table) =>
+          c.db.prepare(`SELECT x.* FROM ${table} x JOIN tasks t ON t.id = x.task_id WHERE ${s.sql} ORDER BY x.rowid`).all(...s.args)),
+        c.db.prepare(`SELECT x.* FROM job_channel x JOIN tasks t ON t.id = x.job_id WHERE ${s.sql} ORDER BY x.rowid`).all(...s.args),
+      ]));
+    }
+  }
   return marks;
 }
+
+const MUTABLE_TABLES: Record<string, string[]> = {
+  tasks: ["tasks"], sessions: ["sessions"], requests: ["model_requests"],
+  jobs: ["job_state", "job_plans"],
+  web: ["web_requests"], brainAccess: ["brain_access_requests", "brain_grants"],
+};
+const GLOBAL_MUTABLE_TABLES: Record<string, string[]> = {
+  keys: ["provider_key_state", "paid_keys", "paid_spend", "web_backend_state"],
+  models: ["endpoints", "endpoint_overrides", "routing_overrides", "scans"],
+  projects: ["projects"], brainAccess: ["brain_files"],
+};
+const digest = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
 const same = (a: Mark | undefined, b: Mark): boolean => !!a && a.length === b.length && a.every((v, i) => v === b[i]);
 
@@ -318,9 +356,9 @@ export function liveCursor(sy: Switchyard, scope: LiveScope, now = Date.now()): 
 }
 
 /**
- * What changed in `cursor.scope` since `cursor`. The store is queried only when it was written
- * since the cursor was read (by this connection or another process); files and the worker set
- * are checked every time.
+ * What changed in `cursor.scope` since `cursor`. Mutable tables are scanned only after writes
+ * since the cursor was read (by this connection or another process). Database-version queries,
+ * files and the worker heartbeat set are checked every time.
  */
 export function liveChanges(sy: Switchyard, cursor: LiveCursor, now = Date.now()): LiveCheck {
   const c: Ctx = { sy, db: sy.db, project: scopeProject(cursor.scope), now };
@@ -332,6 +370,13 @@ export function liveChanges(sy: Switchyard, cursor: LiveCursor, now = Date.now()
     const mark = next[name];
     if (!mark || same(cursor.marks[name], mark)) continue;
     for (const t of src.topics(c, cursor.marks[name], mark)) topics.add(t);
+    // A changed older row may lie below the previous timestamp cutoff. Fine-grained
+    // subscribers must refresh too, including enclosing jobs for task/session changes.
+    if (name === "tasks" || name === "sessions" || name === "jobs") {
+      topics.add(`${name}:*`);
+      topics.add("jobs:*");
+      if (name === "sessions") topics.add("tasks:*");
+    }
   }
   return { cursor: { v: 1, scope: cursor.scope, marks: next, dv }, topics: [...topics].sort() };
 }
@@ -360,7 +405,7 @@ export function decodeLiveCursor(text: string, scope: LiveScope): LiveCursor | n
   try {
     const parsed = CursorSchema.safeParse(JSON.parse(Buffer.from(text, "base64url").toString("utf8")));
     if (!parsed.success || parsed.data.scope !== scope) return null;
-    const known = Object.fromEntries(Object.entries(parsed.data.marks).filter(([k]) => k in SOURCES));
+    const known = Object.fromEntries(Object.entries(parsed.data.marks).filter(([k]) => Object.hasOwn(SOURCES, k)));
     return { v: 1, scope, marks: known };
   } catch {
     return null;

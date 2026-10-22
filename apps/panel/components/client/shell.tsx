@@ -32,6 +32,7 @@ import { ProjectSwitcher, type Scope, type SwitcherProject } from "./project-swi
 import { ConfirmDialog } from "./confirm-dialog";
 import { callApi } from "./actions";
 import { LiveProvider } from "./live";
+import { GroupTabs } from "../group-tabs";
 
 /** `also`: other paths whose pages belong to this entry (they share its tab strip, components/group-tabs.tsx). */
 type NavItem = { href: string; label: string; icon: LucideIcon; exact?: boolean; also?: string[] };
@@ -72,6 +73,18 @@ function isActive(path: string, item: NavItem) {
   return (item.exact ? path === item.href : under(item.href)) || (item.also ?? []).some(under);
 }
 
+function sectionTabs(path: string, scope: Scope) {
+  if (scope.kind === "project") {
+    const base = projectBase(scope.slug);
+    const section = path.slice(base.length).split("/")[1] ?? "";
+    if (section === "jobs" || section === "teams") return <GroupTabs group="jobs" active={section} base={base} />;
+    if (["tasks", "agents", "sessions", "requests"].includes(section)) return <GroupTabs group="work" active={section} base={base} />;
+  }
+  if (path === ALL || path.startsWith(`${ALL}/requests`)) return <GroupTabs group="dashboard" active={path === ALL ? "dashboard" : "requests"} />;
+  if (path.startsWith(`${ALL}/models`) || path === `${ALL}/routing`) return <GroupTabs group="models" active={path === `${ALL}/routing` ? "routing" : "models"} />;
+  if (path.startsWith(`${ALL}/qualification`) || path === `${ALL}/calibration`) return <GroupTabs group="quality" active={path === `${ALL}/calibration` ? "calibration" : "qualification"} />;
+  return null;
+}
 export function Shell({ children, configPath, loginEnabled, projects }: { children: ReactNode; configPath: string; loginEnabled: boolean; projects: SwitcherProject[] }) {
   const path = usePathname();
   const [open, setOpen] = useState(false);
@@ -181,7 +194,7 @@ export function Shell({ children, configPath, loginEnabled, projects }: { childr
       <main className="min-w-0 px-4 py-6 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-[1400px]">
           {/* One live connection per tab, scoped to the project being viewed (or every project). */}
-          <LiveProvider scope={scope.kind === "project" ? scope.slug : "all"}>{children}</LiveProvider>
+          <LiveProvider scope={scope.kind === "project" ? scope.slug : "all"}>{sectionTabs(path, scope)}{children}</LiveProvider>
         </div>
       </main>
 
