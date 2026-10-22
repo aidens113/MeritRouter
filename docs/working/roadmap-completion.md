@@ -87,6 +87,21 @@ passing units reach dev/main. Documentation and source commit together.
 
 ## Worker Briefs
 
+### Brief: historical-session-project-scope (seed_repair)
+- Tier: isolated roadmap-team feature branch from integrated request-page/classifier checkpoint.
+- Read: Current State, own request-page report unresolved section, admin/sessions.ts and session store/event schemas as needed.
+- Goal: prevent old mixed-project classifier/batch transcript content from leaking through existing session detail/page/API after new request page withholds it.
+- Own: admin/sessions.ts and new named session-scope projection helper; proportional new tests; panel session-detail.tsx + sessions API route only if needed for explanation/scoped-entry.
+- Own entities.ts sessionRequests function ONLY if needed; ask before other source. No request-evidence/entity requestDetail, gateway, storage/migrations, classifier/runtime/caller/Labs or shared docs.
+- Derive authoritative project/request execution participants from stored rows; never infer scope from selected UI project or redact foreign goal strings as boundary.
+- Historical mixed or unknown cohort fails closed for transcript payload. Missing successful request anchor/failed model_error must not bypass guard; paging must not expose hidden earlier context.
+- Keep legitimate same-project coding/classifier/shared batches usable. Scope check before reading foreign journal; filter child/task session metadata to same project.
+- Include clear unavailable explanation, preserve safe accounting/session metadata. Do not reveal foreign names/IDs/content through errors, workspace, tool args or links.
+- Existing request helper fingerprint/session recording limitations remain; no exact-body claim. Bound any new reads and use zod for stored/runtime data.
+- Test two-project old shared execution transcripts, failures/no-response, pagination, dangling participants/deletion, wrong-project entry, same-project positives and no foreign disk read.
+- Fakes/temp/demo only; no user4477/providers. Freeze, router typecheck/build and affected tests; if panel changes build/demo/production browser/screenshots and stop owned processes.
+- Report: docs/working/roadmap-completion/reports/historical-session-project-scope.md; exact checks/limits/cleanup. No commits/push/shared-doc edits.
+
 ### Brief: normalized-request-capture (brain_completion)
 - Tier: isolated roadmap-process worktree, new feature branch from current root checkpoint containing classifier06a154a.
 - Read: Current State and reports/request-capture-plan.md; follow its provenance, bounds, retention, attribution and failure semantics.
