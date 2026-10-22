@@ -8,6 +8,7 @@ own working document with decisions, phases, ledger, and reports.
 
 - The user requested implementation of the remaining audit. [roadmap-completion.md](roadmap-completion.md) now owns active execution; its Current State supersedes the static audit below as work lands.
 - Integrated Labs L1-L4, packaging, correctness/accounting/external/project/process follow-ups and reported panel regressions accepted at sourcee0aad08:701 tests, recursive typecheck/build, independent production browser/API and fresh outside-checkout package installation. Remaining L5/R2 and new configurable MCP final-supervisor ownership are active; read the master before dispatch. Actual4477 was not restarted.
+- Next accepted source6d61b8e includes static browser checks/all-head evidence reuse, async Gate accounting and default-OFF MCP final-supervisor permission (bounded sub-supervisors remain allowed):734 tests/83files, recursive typecheck/build, production UI/MCP/model/Labs/legacy checks and fresh outside-checkout package install pass. Task-Lab lifecycle/async queue claims/Compose design continue in isolated worker trees. Actual4477/MCP remain untouched.
 
 - Panel v2 U1-U3 and completion follow-up accepted; B2 budget UI implemented and accepted alongside it. Final supervisor checks: 622 tests, recursive typecheck/build, warning-free demo seed, 581 route checks, 40 anchors and independent live task/request/brain/budget DOM updates. See working documents and Git refs for integration state.
 - Agent worktrees live under `.claude/worktrees/` (excluded from git locally).
@@ -40,10 +41,10 @@ own working document with decisions, phases, ledger, and reports.
 | Caching and continuity | [caching-and-continuity.md](caching-and-continuity.md) | C1-C2 done: cache hints, endpoint stickiness, cached pricing, truncation recovery, prefix-stable compaction. Not checked live |
 | Budget control | [budget-control.md](budget-control.md) | B1 done and merged (job request pool, `max_requests` on briefs, `request_more_budget` and decisions, delegate-only supervisors, `run_check` for implementers). B2 panel requests, approve/deny, pools and task grants accepted (622 integrated tests plus production demo/browser checks). Never run against a live job yet |
 | Panel v2 | [panel-v2.md](panel-v2.md) | Complete: U1-U3 plus scoped brain navigation, Activity/link audit, repaired seed and full follow-up acceptance; 622 tests and production browser checks pass |
-| Labs | [labs.md](labs.md) | Planned (L1-L5); waiting on the user's answers to four questions about FluxIQ's lanes (or "use the defaults") |
+| Labs | [labs.md](labs.md) | L1-L4 accepted using documented defaults; static browser checks accepted; task-Lab lifecycle active, hydrated JS and Compose remain open |
 | Projects | [projects.md](projects.md) | Done (J1-J3) plus deletion, repository auto-setup, panel power button |
-| R2 (Postgres, several hosts) | [agent-sessions-and-teams.md](agent-sessions-and-teams.md) | Parked; the user has not answered whether to do it |
-| npm packaging | (no document yet) | Open: `switchyard mcp` exists; still no default config location, no panel in the package, no one-step setup |
+| R2 (Postgres, several hosts) | [distributed-and-lab-extensions.md](distributed-and-lab-extensions.md) | Implementation authorized; async Gate ledger accepted, queue boundary active; PostgreSQL/multi-host not enabled or verified |
+| npm packaging | [roadmap-completion.md](roadmap-completion.md) | Config discovery/setup/bundled panel accepted in fresh outside-checkout install; publication/cross-platform install not performed |
 
 ## Remaining-work audit (2026-10-22)
 

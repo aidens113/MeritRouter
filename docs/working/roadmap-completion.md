@@ -35,16 +35,23 @@ setup start/reuse/stop pass with checkout reads forbidden. Owned fixtures are st
 coherent unit was pushed to dev/main at77914fc (remote heads verified equal). Actual user
 panel4477 and MCP processes were not restarted or used for tests; no deployed-fix claim.
 
-**Continuing:** static-render browser checks, all-heads evidence reuse and first async Gate
-accounting boundary are merged locally after independent8 browser/17 ledger tests. Hydrated
+**Next accepted source6d61b8e:** static-render browser checks, all-heads evidence reuse and
+first async Gate accounting boundary, plus corrected MCP final-supervisor dispatch. Supervisor
+observed734/734 tests in83files (484.47s), recursive typecheck/build, production policy UI/MCP,
+model navigation, Labs18screenshots and legacy recipe API checks. Viewed desktop/phone captures.
+Fresh tarball53,308,449bytes/2522entries installs outside checkout (hrAtm3): native SQLite,
+CLI, MCP42tools,8 panel/API routes/CSS and setup start/reuse/stop pass; owned processes closed.
+
+**Continuing:** Hydrated
 JS, ephemeral task Labs and Compose remain open. R2 inventory found81 SQLite consumers;
 PostgreSQL/multi-host is not enabled. Ephemeral integration plan records attempt identity,
 exact commit/tree evidence and durable auxiliary-process recovery prerequisites.
 User additionally clarified MCP final-supervisor dispatch must default OFF, while bounded
 sub-supervisors remain available. That setting/guard/UI work is merged locally under
 [external-supervisor-guidance](external-supervisor-guidance.md); obsolete guidance-enable
-toggle semantics were rejected. Independent13 policy tests and actual production UI/MCP
-acceptance pass; final combined checks/build/browser/package remain. No whole-roadmap completion claim.
+toggle semantics were rejected. The corrected feature is accepted in the combined checks above.
+Task-Lab lifecycle, async queue claim implementation and Compose design are dispatched under
+file-partitioned briefs. No whole-roadmap completion claim; actual4477/MCP remain unchanged.
 
 ## Execution phases
 
@@ -57,8 +64,8 @@ acceptance pass; final combined checks/build/browser/package remain. No whole-ro
 | E5 | Config discovery/setup/bundled panel/package | Fresh isolated install passes; no publication or cross-platform install claim |
 | E6 | External tools, accounting, providers, restore/config/project fixes | Accepted fake-provider/process/production checks; live-provider limits remain |
 | E7 | Concurrent processes/crash/CLI/MCP/deletion/performance | Measured and passing integrated; no real-provider throughput claim |
-| E8 | Remaining L5 and R2 phases | Static browser and first async ledger isolated; JS/ephemeral/Compose/PostgreSQL still open |
-| E9 | User-requested configurable MCP final-supervisor ownership | Corrected default false + bounded sub-supervisors; implementation active |
+| E8 | Remaining L5 and R2 phases | Static browser/first async ledger accepted; JS/ephemeral/Compose/PostgreSQL still open |
+| E9 | User-requested configurable MCP final-supervisor ownership | Accepted default false + bounded sub-supervisors, dispatch/resume guards and UI |
 
 For each phase the supervisor reviews diffs, runs relevant tests then recursive typecheck/build
 and full router suite for integrated code. Panel work additionally uses seeded demo production
@@ -167,6 +174,13 @@ passing units reach dev/main. Documentation and source commit together.
 - Acceptance: concrete source cause and meaningful regression if defect reproduced, direct and client navigation with encoded IDs and tab switches, historical/unknown ID distinction. Report unverified browser state honestly; no speculative claimed fix. No commits/push/shared docs.
 
 ## Work Ledger
+
+### Acceptance ledger: 2026-10-22 — browser, ledger and client supervision
+- Agent: supervisor.
+- Changed: accepted source6d61b8e with bounded static browser checks, fail-closed all-repository evidence reuse, awaited default Gate request accounting, corrected final-supervisor ownership setting/guards/UI.
+- Validation:734/734 tests,83files,484.47s; recursive typecheck/build; actual production policy/model/Labs/legacy API/browser checks;18 Labs and4 policy screenshots, desktop/phone light/dark; fresh package53,308,449bytes/2522entries installed at temporary hrAtm3 with checkout reads forbidden, native/CLI/MCP42/panel8routes+CSS/setup lifecycle passed and processes closed.
+- Outcome: Accepted coherent unit; no full-roadmap or user-install deployment claim.
+- Follow-up: isolated task-Lab lifecycle and queue-claim workers implement next prerequisites; Compose worker writes executable design. Hydrated JS, full ephemeral integration, Compose and PostgreSQL/two-host acceptance remain open.
 
 ### Brief: external-runner-tools (next worker after project recovery)
 - Repository: isolated roadmap-external branch/worktree based on E1 checkpoint plus current dev; supervisor creates it.

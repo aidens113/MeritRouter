@@ -1,6 +1,6 @@
 # External supervisor guidance
-Status: Active
-Status detail: Corrected final-supervisor dispatch setting/guards/UI merged locally after independent focused/browser checks; full integrated acceptance pending.
+Status: Complete
+Status detail: Corrected default-OFF final-supervisor dispatch accepted in734-test integrated unit, production UI/MCP and fresh outside-checkout package checks.
 Created: 2026-10-22
 Last updated: 2026-10-22
 Owner: Senior supervisor agent
@@ -20,7 +20,12 @@ and acceptance are superseded and must not be integrated as satisfying this requ
 The corrected feature5b4725a is merged locally. Supervisor independently verified13 focused
 tests, actual UI/MCP save/reload/default-OFF/once-change feedback and desktop/phone screenshots.
 Final submission rechecks policy under the insertion lock after async validation; deterministic
-revocation leaves no new tasks. Full combined typecheck/build/tests/browser acceptance is next.
+revocation leaves no new tasks. Combined recursive typecheck/build and production UI/MCP,
+model navigation, Labs and legacy-recipe checks have passed against6d61b8e. Supervisor viewed
+desktop/phone screenshots. Fresh packed install outside checkout passed native SQLite, CLI,
+42-tool MCP,8 panel/API routes, stylesheet and setup start/reuse/stop; owned processes closed.
+Full integrated router suite passed734/734 tests in83 files (484.47s). This feature is accepted;
+the broader roadmap remains active. Actual user panel4477/MCP were not restarted.
 
 Workflow guidance does not technically enforce behavior inside another host application's agent.
 Existing authorization, budgets, verification, containment and explicit user instructions retain
@@ -97,6 +102,12 @@ sub-supervision remain available in both states.
 - Structure: keep guidance/settings functions by concern, do not bloat tools.ts further; report exact commands/results and what was not verified. Supervisor owns integration/docs/public exports/final acceptance.
 
 ## Work Ledger
+
+### Acceptance ledger: 2026-10-22
+- Agent: supervisor.
+- Changed: corrected final-project dispatch permission and structured scope guards; retained bounded sub-supervisors and external completion guidance, UI/custom instructions and explicit-request tools.
+- Validation: source6d61b8e,734/734 router tests in83files (484.47s), recursive typecheck/build; actual production UI save/reload, default-OFF, live MCP once-change feedback, invalid-input rejection, unrelated YAML/comments preserved, zero model calls; desktop/phone light/dark screenshots reviewed; packed outside-checkout install passed native/CLI/MCP42/panel/setup.
+- Outcome: Accepted. No actual4477/MCP restart or provider calls. Broader roadmap work continues.
 
 ### 2026-10-22 - User requirement inspected and implementation scoped
 - Agent: supervisor
