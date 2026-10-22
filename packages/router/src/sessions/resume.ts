@@ -109,6 +109,12 @@ export interface ResumePlan {
   workspace: SessionWorkspace | null;
   /** The reason used in the summary (null when unknown). */
   reason: string | null;
+  /**
+   * The endpoint that served the session's last recorded response: the continued run tries it
+   * first while it is healthy, so the provider's prompt cache still holds the prefix. Null when
+   * no response was recorded.
+   */
+  lastEndpointId: string | null;
   warnings: string[];
 }
 
@@ -308,5 +314,6 @@ export function planResume(events: readonly SessionEvent[], opts: PlanResumeOpti
   const body = [...dropped, ...lines];
   const summary = body.length ? `${head}\n${body.join("\n")}\nContinue from here.` : `${head} Nothing was in flight. Continue from here.`;
 
-  return { messages, actions, summary, resolvedIntentSeqs: resolved.sort((a, b) => a - b), droppedRequestSeqs: unanswered, workspace, reason, warnings };
+  const lastEndpointId = responses.length ? responses[responses.length - 1]!.data.endpointId : null;
+  return { messages, actions, summary, resolvedIntentSeqs: resolved.sort((a, b) => a - b), droppedRequestSeqs: unanswered, workspace, reason, lastEndpointId, warnings };
 }

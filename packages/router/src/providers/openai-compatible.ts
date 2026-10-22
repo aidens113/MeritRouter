@@ -28,7 +28,7 @@ function mapMessages(p: ResolvedProvider, messages: ChatMessage[]): unknown[] {
 }
 
 /** Build the chat-completions body with the provider's rules applied. Exported for tests and probes. */
-export function buildOpenAiBody(p: ResolvedProvider, req: Pick<ProviderRequest, "model" | "chat" | "params">): Record<string, unknown> {
+export function buildOpenAiBody(p: ResolvedProvider, req: Pick<ProviderRequest, "model" | "chat" | "params" | "cacheKey">): Record<string, unknown> {
   const { chat } = req;
   const body: Record<string, unknown> = { model: req.model, messages: mapMessages(p, chat.messages), stream: false, [p.tokenLimitParam]: chat.max_tokens };
   if (chat.temperature !== undefined) body.temperature = p.temperatureMax !== null ? Math.min(chat.temperature, p.temperatureMax) : chat.temperature;
@@ -45,6 +45,8 @@ export function buildOpenAiBody(p: ResolvedProvider, req: Pick<ProviderRequest, 
     if (k === "parallel_tool_calls" && !hasTools) continue;
     body[p.renameParams[k] ?? k] = v;
   }
+  // One key per conversation routes its requests to the same cache (only where documented).
+  if (p.promptCache === "prompt_cache_key" && req.cacheKey) body.prompt_cache_key = req.cacheKey;
   return { ...body, ...p.bodyExtras };
 }
 
@@ -67,11 +69,13 @@ export async function completeOpenAiCompatible(fetchFn: FetchLike, req: Provider
     throw new ProviderError("policy", `${p.id} withheld the response (content_filter)`, { provider: p.id, status: res.status, possiblyConsumed: true, rateLimits: res.rateLimits });
   }
   const usage = (json.usage ?? undefined) as Record<string, unknown> | undefined;
+  const normalized = normalizeOpenAiUsage(usage, usage?.cost);
   return {
     message: { content: message.content ?? null, ...(message.tool_calls?.length ? { tool_calls: message.tool_calls } : {}) },
     finishReason,
-    usage: normalizeOpenAiUsage(usage, usage?.cost),
-    telemetry: { servedModel: typeof json.model === "string" ? json.model : null, servedProvider: p.id, providerAttempts: 1, providerAttemptsExact: true, cacheHit: false, headers: auditHeaders(res.headers) },
+    usage: normalized,
+    // A hit only when the provider reported cached tokens; unknown when it reports none.
+    telemetry: { servedModel: typeof json.model === "string" ? json.model : null, servedProvider: p.id, providerAttempts: 1, providerAttemptsExact: true, cacheHit: normalized.cachedInputTokens === null ? null : normalized.cachedInputTokens > 0, headers: auditHeaders(res.headers) },
     httpStatus: res.status,
     rateLimits: res.rateLimits,
   };

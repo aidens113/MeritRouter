@@ -13,7 +13,7 @@ import { ActionButton, AutoRefresh } from "@/components/client/actions";
 import { ArtifactViewer } from "@/components/client/artifact-viewer";
 import { RequestsByPurpose, TrailHeading, VerificationTrail } from "@/components/verification-trail";
 import { AcceptanceActions } from "@/components/client/acceptance";
-import { dateTime, humanize, modelHref, num } from "@/lib/format";
+import { dateTime, humanize, modelHref, num, pct } from "@/lib/format";
 
 const RULE_LABEL: Record<string, string> = {
   mode: "Kind of work",
@@ -253,7 +253,7 @@ export function TaskDetailView({ sy, taskId, scope }: { sy: Switchyard; taskId: 
                   ...(res.protectedPathsChanged?.length ? ([["Protected paths", <span key="pp" className="flex flex-wrap gap-1">{res.protectedPathsChanged.map((p) => <Mono key={p}>{p}</Mono>)}</span>]] as Array<[string, ReactNode]>) : []),
                   ["Model requests", num(res.usage.modelRequests)],
                   ["Provider attempts", `${num(res.usage.providerAttempts)}${res.usage.providerAttemptsExact ? "" : " (reported, not exact)"}`],
-                  ["Tokens", `${res.usage.uncachedInputTokens !== null && res.usage.uncachedInputTokens !== undefined ? `${num(res.usage.uncachedInputTokens)} new in · ` : ""}${num(res.usage.outputTokens)} out · ${num(res.usage.inputTokens)} in with ${num(res.usage.cachedInputTokens ?? 0)} cached`],
+                  ["Tokens", `${res.usage.uncachedInputTokens !== null && res.usage.uncachedInputTokens !== undefined ? `${num(res.usage.uncachedInputTokens)} new in · ` : ""}${num(res.usage.outputTokens)} out · ${num(res.usage.inputTokens)} in with ${num(res.usage.cachedInputTokens ?? 0)} cached${res.usage.cachedInputTokens && res.usage.inputTokens ? ` (${pct(res.usage.cachedInputTokens, res.usage.inputTokens)})` : ""}`],
                   ["Token basis", res.usage.batchId ? `${humanize(res.usage.tokenUsageBasis)} (share of batch ${res.usage.batchId})` : humanize(res.usage.tokenUsageBasis)],
                   ["Cost", res.usage.estimatedCostUsd === 0 ? "Free" : res.usage.estimatedCostUsd === null ? "unknown" : `$${res.usage.estimatedCostUsd}`],
                   [

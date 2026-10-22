@@ -9,6 +9,8 @@ export function paidEndpointId(provider: string, model: string): string {
 interface FetchedPrice {
   in: number;
   out: number;
+  /** OpenRouter-style `input_cache_read`, when the list states it. */
+  cachedIn?: number;
   fetchedAt: number;
 }
 
@@ -24,12 +26,13 @@ export async function refreshPaidPrices(db: Db, cfg: ResolvedConfig, fetchImpl: 
     if (!p.pricing_url) continue;
     try {
       const res = await fetchImpl(p.pricing_url, { signal: AbortSignal.timeout(20_000) });
-      const body = (await res.json()) as { data?: Array<{ id: string; pricing?: { prompt?: string; completion?: string } }> };
+      const body = (await res.json()) as { data?: Array<{ id: string; pricing?: { prompt?: string; completion?: string; input_cache_read?: string } }> };
       const prices: Record<string, FetchedPrice> = {};
       for (const m of body.data ?? []) {
         const pin = Number(m.pricing?.prompt);
         const pout = Number(m.pricing?.completion);
-        if (Number.isFinite(pin) && Number.isFinite(pout)) prices[m.id] = { in: pin * 1e6, out: pout * 1e6, fetchedAt: Date.now() };
+        const pcached = m.pricing?.input_cache_read === undefined ? NaN : Number(m.pricing.input_cache_read);
+        if (Number.isFinite(pin) && Number.isFinite(pout)) prices[m.id] = { in: pin * 1e6, out: pout * 1e6, ...(Number.isFinite(pcached) && pcached >= 0 ? { cachedIn: pcached * 1e6 } : {}), fetchedAt: Date.now() };
       }
       db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(`paid_prices:${name}`, JSON.stringify(prices));
     } catch (err) {
@@ -50,6 +53,7 @@ export function paidEndpoints(cfg: ResolvedConfig, db: Db, paidKeys: (provider: 
     const fetched = fetchedPrices(db, m.provider)[m.model];
     const pin = m.input_usd_per_million ?? fetched?.in ?? null;
     const pout = m.output_usd_per_million ?? fetched?.out ?? null;
+    const pcached = m.cached_input_usd_per_million ?? fetched?.cachedIn ?? null;
     const keys = paidKeys(m.provider);
     return {
       id: paidEndpointId(m.provider, m.model),
@@ -76,6 +80,7 @@ export function paidEndpoints(cfg: ResolvedConfig, db: Db, paidKeys: (provider: 
         outputUsdPerMillion: pout,
         freeVerified: false,
         source: m.input_usd_per_million !== undefined ? "configured in paid.models" : fetched ? `fetched from ${provider.pricing_url}` : "unknown: set prices or a pricing_url",
+        ...(pcached !== null ? { cachedInputUsdPerMillion: pcached, cachedInputSource: m.cached_input_usd_per_million !== undefined ? "configured in paid.models" : `fetched from ${provider.pricing_url}` } : {}),
       },
       available: cfg.paid.enabled && keys > 0,
       enabled: true,

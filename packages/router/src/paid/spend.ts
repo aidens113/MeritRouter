@@ -166,6 +166,21 @@ export class PaidSpend {
   }
 }
 
+/**
+ * USD per million tokens: input, output, and (when known) input served from the provider's
+ * prompt cache. Without `cachedIn`, cached input is priced as ordinary input.
+ */
+export interface TokenPrice {
+  in: number;
+  out: number;
+  cachedIn?: number | null;
+}
+
+/** An endpoint's prices as a `TokenPrice`; unknown input or output prices are Infinity (never routable as free). */
+export function endpointPrice(pricing: { inputUsdPerMillion: number | null; outputUsdPerMillion: number | null; cachedInputUsdPerMillion?: number | null | undefined }): TokenPrice {
+  return { in: pricing.inputUsdPerMillion ?? Infinity, out: pricing.outputUsdPerMillion ?? Infinity, cachedIn: pricing.cachedInputUsdPerMillion ?? null };
+}
+
 /** Input estimates are approximate; reserve this much headroom over them for paid requests. */
 export const PAID_INPUT_SAFETY = 1.5;
 
@@ -174,10 +189,23 @@ export const PAID_INPUT_SAFETY = 1.5;
  * dense text such as base64 tokenizes worse than ~3 characters per token) plus the full output
  * allowance. Reasoning tokens count inside max_tokens for the supported APIs.
  */
-export function worstCaseUsd(inputTokens: number, maxOutputTokens: number, price: { in: number; out: number }): number {
+export function worstCaseUsd(inputTokens: number, maxOutputTokens: number, price: TokenPrice): number {
   return (Math.ceil(inputTokens * PAID_INPUT_SAFETY) * price.in + maxOutputTokens * price.out) / 1_000_000;
 }
 
-export function actualUsd(inputTokens: number, outputTokens: number, price: { in: number; out: number }): number {
-  return (inputTokens * price.in + outputTokens * price.out) / 1_000_000;
+/**
+ * Cost of a served request. `cachedInputTokens` (a subset of `inputTokens`) are priced at the
+ * cached rate when one is known. Cache writes (Anthropic bills them above the input price) are
+ * not reported apart and count as ordinary input.
+ */
+export function actualUsd(inputTokens: number, outputTokens: number, price: TokenPrice, cachedInputTokens = 0): number {
+  const cached = Math.min(Math.max(0, cachedInputTokens), inputTokens);
+  const cachedRate = price.cachedIn ?? price.in;
+  return ((inputTokens - cached) * price.in + cached * cachedRate + outputTokens * price.out) / 1_000_000;
+}
+
+/** What reading `cachedInputTokens` from the cache saved over ordinary input; null without a cached price. */
+export function cacheSavingUsd(cachedInputTokens: number, price: TokenPrice): number | null {
+  if (price.cachedIn === null || price.cachedIn === undefined || !Number.isFinite(price.in)) return null;
+  return (Math.max(0, cachedInputTokens) * Math.max(0, price.in - price.cachedIn)) / 1_000_000;
 }

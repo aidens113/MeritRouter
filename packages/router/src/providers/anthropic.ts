@@ -5,11 +5,17 @@ import { chatUrl, requestHeaders } from "./registry.js";
 import { requestJson, type FetchLike } from "./transport.js";
 import type { ProviderRequest, ProviderResponse } from "./client.js";
 
-type AnthropicBlock =
+type AnthropicBlock = (
   | { type: "text"; text: string }
   | { type: "image"; source: { type: "base64"; media_type: string; data: string } | { type: "url"; url: string } }
   | { type: "tool_use"; id: string; name: string; input: unknown }
-  | { type: "tool_result"; tool_use_id: string; content: string };
+  | { type: "tool_result"; tool_use_id: string; content: string }
+) & { cache_control?: { type: "ephemeral" } };
+
+/** A prompt-cache breakpoint (default five-minute lifetime). */
+const EPHEMERAL = { type: "ephemeral" } as const;
+/** Anthropic allows at most this many `cache_control` breakpoints per request (prompt-caching docs, 2026-10-21). */
+export const MAX_CACHE_BREAKPOINTS = 4;
 
 function imageBlock(url: string): AnthropicBlock {
   const m = /^data:([^;]+);base64,(.*)$/s.exec(url);
@@ -49,15 +55,40 @@ export function toAnthropic(messages: ChatMessage[]): { system: string; messages
   return { system: system.join("\n\n"), messages: out };
 }
 
-/** Build the Messages API body. Exported for tests. */
+/**
+ * Build the Messages API body. Exported for tests.
+ *
+ * With `promptCache: cache_control` the body carries up to three breakpoints, in render order:
+ * the last tool (tools never change within a run), the system prompt, and the last block of the
+ * newest message (turns only append, so the next request reads everything before it from the
+ * cache). A prefix shorter than the model's minimum is simply not cached; the API does not fail.
+ */
 export function buildAnthropicBody(req: Pick<ProviderRequest, "model" | "chat" | "provider">): Record<string, unknown> {
   const conv = toAnthropic(req.chat.messages);
-  const tools = req.chat.tools?.map((t) => ({ name: t.function.name, description: t.function.description, input_schema: t.function.parameters }));
+  const cache = req.provider.promptCache === "cache_control";
+  const tools: Array<Record<string, unknown>> | undefined = req.chat.tools?.map((t) => ({ name: t.function.name, description: t.function.description, input_schema: t.function.parameters }));
   const mapped = req.provider.toolChoice[req.chat.tool_choice ?? "auto"];
+  let system: unknown = conv.system || undefined;
+  let marks = 0;
+  if (cache) {
+    if (tools?.length) {
+      tools[tools.length - 1] = { ...tools[tools.length - 1], cache_control: EPHEMERAL };
+      marks++;
+    }
+    if (conv.system) {
+      system = [{ type: "text", text: conv.system, cache_control: EPHEMERAL }];
+      marks++;
+    }
+    const last = conv.messages[conv.messages.length - 1];
+    if (last?.content.length && marks < MAX_CACHE_BREAKPOINTS) {
+      const i = last.content.length - 1;
+      last.content[i] = { ...last.content[i]!, cache_control: EPHEMERAL };
+    }
+  }
   return {
     model: req.model,
     max_tokens: req.chat.max_tokens,
-    ...(conv.system ? { system: conv.system } : {}),
+    ...(system !== undefined ? { system } : {}),
     messages: conv.messages,
     ...(req.chat.temperature !== undefined ? { temperature: req.chat.temperature } : {}),
     ...(tools?.length ? { tools, ...(mapped !== null ? { tool_choice: { type: mapped } } : {}) } : {}),
@@ -95,7 +126,7 @@ export async function completeAnthropic(fetchFn: FetchLike, req: ProviderRequest
       reportedCostUsd: null,
       basis: typeof u.input_tokens === "number" ? "provider_reported" : "unknown",
     },
-    telemetry: { servedModel: typeof json.model === "string" ? json.model : null, servedProvider: p.id, providerAttempts: 1, providerAttemptsExact: true, cacheHit: false, headers: auditHeaders(res.headers) },
+    telemetry: { servedModel: typeof json.model === "string" ? json.model : null, servedProvider: p.id, providerAttempts: 1, providerAttemptsExact: true, cacheHit: typeof u.input_tokens === "number" ? cacheRead > 0 : null, headers: auditHeaders(res.headers) },
     httpStatus: res.status,
     rateLimits: res.rateLimits,
   };

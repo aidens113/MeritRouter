@@ -513,6 +513,7 @@ function toEndpoint(provider: ResolvedProvider, e: EnrichedModel, free: { value:
     pricing: {
       inputUsdPerMillion: freeValue ? 0 : (usd?.input ?? null),
       outputUsdPerMillion: freeValue ? 0 : (usd?.output ?? null),
+      ...(!freeValue && usd?.cachedInput !== undefined && usd.cachedInput !== null ? { cachedInputUsdPerMillion: usd.cachedInput, cachedInputSource: `${provider.id} model list (input_cache_read)` } : {}),
       freeVerified: freeValue,
       source: override?.freeVerified !== undefined ? "override" : `${provider.id}: ${free.reason}`,
       ...(freeBasis ? { freeBasis } : {}),

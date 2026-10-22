@@ -108,6 +108,11 @@ export default async function ModelDetailPage({ searchParams }: { searchParams: 
                     <span className="text-xs text-ink-3">
                       source: {ep.pricing.source}
                       {ep.pricing.inputUsdPerMillion !== null ? ` · $${ep.pricing.inputUsdPerMillion}/M in, $${ep.pricing.outputUsdPerMillion ?? "?"}/M out` : ""}
+                      {ep.pricing.cachedInputUsdPerMillion !== null && ep.pricing.cachedInputUsdPerMillion !== undefined
+                        ? ` · $${ep.pricing.cachedInputUsdPerMillion}/M cached in${ep.pricing.cachedInputSource ? ` (${ep.pricing.cachedInputSource})` : ""}`
+                        : !isFree(ep)
+                          ? " · cached input priced as input (no cached price)"
+                          : ""}
                     </span>
                   </span>,
                 ],

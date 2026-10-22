@@ -3,7 +3,7 @@ import { ShieldAlert } from "lucide-react";
 import type { insights } from "switchyard-router";
 import { RequestStatusBadge, TierBadge } from "./task-badges";
 import { Badge, EmptyState } from "./ui";
-import { dateTime, duration, humanize, modelHref, num, shortDateTime, shortId } from "@/lib/format";
+import { dateTime, duration, humanize, modelHref, num, pct, shortDateTime, shortId } from "@/lib/format";
 import { itemBase, QUALIFICATION_BASE, QUALIFICATION_SLUG, taskHref } from "@/lib/links";
 
 export type RequestRow = ReturnType<typeof insights.requestLog>[number];
@@ -19,6 +19,25 @@ const PURPOSE: Record<string, string> = {
 
 export function purposeLabel(p: string): string {
   return PURPOSE[p] ?? humanize(p);
+}
+
+type Pricing = { inputUsdPerMillion: number | null; cachedInputUsdPerMillion?: number | null | undefined };
+
+/**
+ * What the provider's prompt cache saved on these requests: each request's cached input tokens
+ * times the difference between its model's input and cached-input prices. `known` is false when
+ * no request with cached tokens has a model with a cached price (nothing is guessed).
+ */
+export function cacheSaving(rows: Pick<RequestRow, "endpointId" | "cachedInputTokens">[], pricing: Map<string, Pricing>): { usd: number; known: boolean } {
+  let usd = 0;
+  let known = false;
+  for (const r of rows) {
+    const p = r.endpointId ? pricing.get(r.endpointId) : undefined;
+    if (!r.cachedInputTokens || !p || p.inputUsdPerMillion === null || p.cachedInputUsdPerMillion === null || p.cachedInputUsdPerMillion === undefined) continue;
+    usd += (r.cachedInputTokens * Math.max(0, p.inputUsdPerMillion - p.cachedInputUsdPerMillion)) / 1_000_000;
+    known = true;
+  }
+  return { usd, known };
 }
 
 /**
@@ -44,7 +63,7 @@ export function RequestsTable({ rows, names, base, hideModel = false, empty }: {
               Tokens in
             </th>
             <th className="text-right">Out</th>
-            <th className="text-right" title="Of the input, how much the provider served from its prompt cache">
+            <th className="text-right" title="Of the input, how much the provider served from its prompt cache (and its share of the input)">
               Cached
             </th>
             <th>Error / policy</th>
@@ -82,7 +101,10 @@ export function RequestsTable({ rows, names, base, hideModel = false, empty }: {
               <td className="text-right">{num(r.providerAttempts)}</td>
               <td className="text-right">{num(r.inputTokens)}</td>
               <td className="text-right">{num(r.outputTokens)}</td>
-              <td className="text-right">{num(r.cachedInputTokens)}</td>
+              <td className="text-right">
+                {num(r.cachedInputTokens)}
+                {r.cachedInputTokens && r.inputTokens ? <div className="text-[11px] text-ink-3">{pct(r.cachedInputTokens, r.inputTokens)}</div> : null}
+              </td>
               <td className="min-w-[8rem] max-w-[18rem]">
                 {r.policyViolation ? (
                   <Badge tone="bad" icon={<ShieldAlert size={11} aria-hidden />} title={r.policyViolation}>

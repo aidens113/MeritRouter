@@ -19,6 +19,7 @@ export {
   type ModelListShape,
   type ModelListSpec,
   type ProviderApiKind,
+  type PromptCacheStyle,
   type ProviderDefinition,
   type QuotaScope,
   type RateLimitHeaderFamily,

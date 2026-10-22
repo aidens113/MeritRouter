@@ -1,10 +1,15 @@
 import type { ChatMessage, ChatTool, ChatToolCall } from "../gateway/types.js";
 import { estimateTokens } from "../gateway/types.js";
+import type { GateResponse } from "../gateway/gate.js";
+import type { ModelEndpoint } from "../models/catalog.js";
 import { AdmissionDenied } from "../core/errors.js";
 import { ask } from "../runners/types.js";
 import { availableTools, type HarnessEnv, type HarnessTool } from "./tools.js";
 import { journaled, parseArgs } from "./journal.js";
 import { applyResume, type ResumeInput } from "./resume.js";
+import { compact } from "./compaction.js";
+
+export { compact } from "./compaction.js";
 
 export interface TerminalTool<T> {
   def: ChatTool;
@@ -26,6 +31,10 @@ export interface LoopOptions<T> {
   tools: HarnessTool[];
   terminal: TerminalTool<T>;
   maxTokens: number;
+  /**
+   * Input budget that fits every fallback endpoint (the smallest context among them). While a
+   * larger endpoint keeps serving the conversation, its own budget applies instead.
+   */
   inputBudget: number;
   maxInvalidTerminal: number;
   /** Called after each response's tool calls ran (per-response commits). */
@@ -43,18 +52,31 @@ export type LoopResult<T> =
   | { kind: "budget_exhausted"; messages: ChatMessage[] }
   | { kind: "invalid_terminal"; errors: string[]; messages: ChatMessage[] };
 
-/** Replace the oldest tool outputs with a stub until the conversation fits the budget. */
-export function compact(messages: ChatMessage[], maxInputTokens: number): void {
-  for (const m of messages) {
-    if (estimateTokens(messages) <= maxInputTokens) return;
-    if (m.role === "tool" && !m.content.startsWith("[elided")) m.content = "[elided to fit context; call the tool again if needed]";
-  }
+/** Sent after a reply cut off at the output limit with no tool calls; the two parts are joined. */
+export const CONTINUE_TEXT = "Your previous reply was cut off at the output limit. Continue exactly where you stopped: do not repeat anything already written, and end with the tool calls you meant to make.";
+
+/** Headroom kept below an endpoint's context when the budget follows the serving endpoint. */
+const BUDGET_MARGIN_TOKENS = 500;
+
+/** The retry of a turn whose tool call was cut short: a larger output allowance, or another endpoint. */
+interface TurnRetry {
+  maxTokens: number;
+  avoid: string[];
+  /** The truncated response, used as is when no endpoint can take the retry. */
+  fallback: GateResponse;
 }
 
 /**
  * One agent loop for every role. Each iteration is one admitted model request through the
  * gate; tool calls run with code-enforced limits; the loop ends when the terminal tool's
  * submission validates or the task's request budget runs out.
+ *
+ * Caching and continuity: every request names the endpoint that served the previous turn
+ * (`preferEndpointId`, tried first while healthy) and a per-task cache key, and the transcript
+ * only grows, except for rare batch compaction (see harness/compaction.ts). A reply cut off at
+ * the output limit gets one continuation request (plain text) or one retry of the turn (a
+ * truncated tool call: a larger `max_tokens` where the endpoint allows, otherwise another
+ * endpoint); both are ordinary requests counted against the task's budget.
  */
 export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>> {
   const { env, messages } = o;
@@ -66,8 +88,24 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
   const byName = new Map(tools.map((t) => [t.def.function.name, t]));
   const defs = [...tools.map((t) => t.def), o.terminal.def];
   const terminalName = o.terminal.def.function.name;
+  const toolTokens = estimateTokens([], defs);
+  const cacheKey = env.ctx.taskId;
   let invalid = 0;
   let lastErrors: string[] = [];
+  let finalNotice = false;
+
+  /** The input budget while `ep` serves: its own context, never less than the fallback budget. */
+  const budgetFor = (ep: ModelEndpoint | undefined): number | null =>
+    ep?.contextLimitTokens ? Math.max(o.inputBudget, ep.contextLimitTokens - o.maxTokens - toolTokens - BUDGET_MARGIN_TOKENS) : null;
+
+  // The endpoint that served the last turn (a resumed session's last recorded response at first).
+  let sticky: string | null = o.resume?.plan.lastEndpointId ?? null;
+  let servingBudget = budgetFor(env.ctx.plan.candidates.find((c) => c.id === sticky));
+  // Per-turn recovery state: at most one continuation and one truncated-call retry per turn.
+  let continued: ChatMessage | null = null;
+  let continuedThisTurn = false;
+  let retry: TurnRetry | null = null;
+  let retriedThisTurn = false;
 
   if (o.resume) {
     const r = await applyResume({ env, messages, tools, terminal: o.terminal }, o.resume);
@@ -86,36 +124,84 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
       sync();
       return { kind: "budget_exhausted", messages };
     }
-    if (remaining === 1) messages.push({ role: "user", content: `This is your final model request. Call ${terminalName} now with what you have; mark anything unverified as unknown.` });
-    compact(messages, o.inputBudget);
+    if (remaining === 1 && !finalNotice) {
+      finalNotice = true;
+      messages.push({ role: "user", content: `This is your final model request. Call ${terminalName} now with what you have; mark anything unverified as unknown.` });
+    }
+    const budget = servingBudget ?? o.inputBudget;
+    compact(messages, budget);
 
-    let response;
-    let endpointId = "";
-    let requestId = "";
+    const pending: TurnRetry | null = retry;
+    retry = null;
+    let res: GateResponse;
     try {
-      const res = await ask(env.ctx, {
+      res = await ask(env.ctx, {
         executionId: o.executionId,
         purpose: o.purpose ?? "agent_loop",
-        chat: { messages, max_tokens: o.maxTokens, temperature: 0.2, tools: defs, tool_choice: remaining === 1 ? "required" : "auto" },
+        chat: { messages, max_tokens: pending?.maxTokens ?? o.maxTokens, temperature: 0.2, tools: defs, tool_choice: remaining === 1 ? "required" : "auto" },
+        preferEndpointId: sticky,
+        cacheKey,
+        ...(pending?.avoid.length ? { avoidEndpointIds: pending.avoid } : {}),
       });
-      response = res.response;
-      endpointId = res.endpoint.id;
-      requestId = res.requestId;
     } catch (err) {
       if (err instanceof AdmissionDenied && err.reason === "task_request_budget_exhausted") {
         sync();
         return { kind: "budget_exhausted", messages };
       }
-      throw err;
+      // Grown to the serving endpoint's context, and nothing that size is available now: fit the fallback budget.
+      if (err instanceof AdmissionDenied && err.reason === "context_does_not_fit" && budget > o.inputBudget) {
+        servingBudget = null;
+        if (pending) retry = pending;
+        continue;
+      }
+      // No endpoint could take the retry of a cut-short turn: keep the truncated response as it is.
+      if (pending && err instanceof AdmissionDenied) res = pending.fallback;
+      else throw err;
     }
+    const endpointId = res.endpoint.id;
+    const requestId = res.requestId;
+    sticky = endpointId;
+    servingBudget = budgetFor(res.endpoint);
 
     // Tools run on behalf of the model that produced this response: attribute their writes to it.
     if (env.brain) {
       env.brain.actor.model = endpointId;
       env.brain.actor.request = requestId;
     }
-    const calls: ChatToolCall[] = response.message.tool_calls ?? [];
-    messages.push({ role: "assistant", content: response.message.content, ...(calls.length ? { tool_calls: calls } : {}) });
+    const response = res.response;
+    let content = response.message.content;
+    let calls: ChatToolCall[] = response.message.tool_calls ?? [];
+
+    // The answer to a continuation request: join it to the reply it continues.
+    if (continued) {
+      const at = messages.indexOf(continued);
+      const before = continued.role === "assistant" ? (continued.content ?? "") : "";
+      if (at >= 0) messages.splice(at);
+      content = `${before}${content ?? ""}` || null;
+      continued = null;
+    } else if (response.finishReason === "length" && res !== pending?.fallback) {
+      const broken = calls.some((c) => parseArgs(c.function.arguments) === undefined);
+      // A tool call (or the whole reply) cut short: retry the turn once without keeping the broken reply.
+      if ((broken || (!calls.length && !content)) && !retriedThisTurn) {
+        const next = turnRetry(res, estimateTokens(messages, defs), o.maxTokens, env.ctx.plan.candidates);
+        if (next) {
+          retriedThisTurn = true;
+          retry = next;
+          continue;
+        }
+      } else if (!calls.length && content && !continuedThisTurn) {
+        // Plain text cut short: ask the same endpoint to continue it.
+        continuedThisTurn = true;
+        const partial: ChatMessage = { role: "assistant", content };
+        continued = partial;
+        messages.push(partial, { role: "user", content: CONTINUE_TEXT });
+        continue;
+      }
+    }
+
+    messages.push({ role: "assistant", content, ...(calls.length ? { tool_calls: calls } : {}) });
+    continuedThisTurn = false;
+    retriedThisTurn = false;
     env.edits.clear();
     if (calls.length === 0) {
       messages.push({ role: "user", content: `Use the tools, then call ${terminalName}. Plain text answers are not accepted.` });
@@ -157,4 +243,18 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
     if (finished !== undefined) return { kind: "terminal", value: finished, messages };
     if (invalid > o.maxInvalidTerminal) return { kind: "invalid_terminal", errors: lastErrors, messages };
   }
+}
+
+/**
+ * How to retry a turn whose reply was cut short: twice the output allowance on the same
+ * endpoint when its output limit and context allow more than now, otherwise the same allowance
+ * on any other candidate. Null when neither is possible (the truncated reply is then kept).
+ */
+export function turnRetry(res: GateResponse, inputTokens: number, maxTokens: number, candidates: readonly ModelEndpoint[]): TurnRetry | null {
+  const ep = res.endpoint;
+  const room = Math.min(ep.outputLimitTokens ?? maxTokens, (ep.contextLimitTokens ?? Infinity) - inputTokens);
+  const larger = Math.min(maxTokens * 2, room);
+  if (larger > maxTokens) return { maxTokens: larger, avoid: [], fallback: res };
+  if (candidates.some((c) => c.id !== ep.id)) return { maxTokens, avoid: [ep.id], fallback: res };
+  return null;
 }

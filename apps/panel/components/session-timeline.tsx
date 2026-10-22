@@ -5,7 +5,7 @@ import type { SessionEvent } from "switchyard-router";
 import { Badge, cx, Mono, type Tone } from "./ui";
 import { SessionStatusBadge } from "./sessions-table";
 import { purposeLabel } from "./requests-table";
-import { duration, humanize, modelHref, num, shortDateTime } from "@/lib/format";
+import { duration, humanize, modelHref, num, pct, shortDateTime } from "@/lib/format";
 
 type Ev<T extends SessionEvent["type"]> = Extract<SessionEvent, { type: T }>;
 type Outcome = Ev<"tool_outcome">;
@@ -149,7 +149,7 @@ function EventBody({
             </Link>
             {d.servedModel ? <span className="text-ink-3">served {d.servedModel}</span> : null}
             <span className="tabular">
-              {num(d.usage.inputTokens)} in{d.usage.cachedInputTokens ? ` (${num(d.usage.cachedInputTokens)} cached)` : ""} · {num(d.usage.outputTokens)} out
+              {num(d.usage.inputTokens)} in{d.usage.cachedInputTokens ? ` (${num(d.usage.cachedInputTokens)} cached${d.usage.inputTokens ? `, ${pct(d.usage.cachedInputTokens, d.usage.inputTokens)}` : ""})` : ""} · {num(d.usage.outputTokens)} out
             </span>
             {d.finishReason ? <Badge>{humanize(d.finishReason)}</Badge> : null}
             {fellBack ? <Badge tone="warn" title={d.attempts.map((a) => `${a.endpointId}: ${a.outcome}`).join("\n")}>after {d.attempts.length - 1} fallback{d.attempts.length > 2 ? "s" : ""}</Badge> : null}

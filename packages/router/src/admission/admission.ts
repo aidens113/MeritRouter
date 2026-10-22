@@ -7,7 +7,7 @@ import type { BudgetInput } from "../verification/contract.js";
 import type { WorkerTask } from "../core/task.js";
 import { AdmissionDenied } from "../core/errors.js";
 import type { ChatResponse } from "../gateway/types.js";
-import { actualUsd, type PaidSpend, type SpendKey } from "../paid/spend.js";
+import { actualUsd, type PaidSpend, type SpendKey, type TokenPrice } from "../paid/spend.js";
 import { projectLimits } from "../projects/schema.js";
 
 /** Effective per-task limits: task budgets may narrow configured policy, never widen it. */
@@ -169,7 +169,7 @@ export interface ReservationRequest {
   reservedOutputTokens: number;
   participants: Participant[];
   /** Direct paid request: the worst-case cost is reserved atomically with the request. */
-  paid?: { spend: PaidSpend; key: SpendKey; provider: string; worstCaseUsd: number; price: { in: number; out: number } };
+  paid?: { spend: PaidSpend; key: SpendKey; provider: string; worstCaseUsd: number; price: TokenPrice };
 }
 
 export interface Reservation {
@@ -461,7 +461,7 @@ export class Admission {
             cost = usage.reportedCostUsd;
             basis = "provider_reported";
           } else if (usage?.inputTokens != null && usage.outputTokens != null) {
-            cost = actualUsd(usage.inputTokens, usage.outputTokens, p.price);
+            cost = actualUsd(usage.inputTokens, usage.outputTokens, p.price, usage.cachedInputTokens ?? 0);
             basis = "computed";
           } else {
             // No billed usage reported: keep the worst case rather than an estimate.
