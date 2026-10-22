@@ -6,7 +6,7 @@ own working document with decisions, phases, ledger, and reports.
 
 ## Repository state
 
-- Panel v2 U1-U3 is the latest completed coherent unit. Final checks: 603 router tests, recursive typecheck and build, and demo browser acceptance. See its working document for integration/push status.
+- Panel v2 U1-U3 (merge 672a697) is the latest completed coherent unit. Final checks: 603 router tests, recursive typecheck and build, and demo browser acceptance. See its working document for integration/push status.
 - Panel v2 U1-U3 completed and demo-validated 2026-10-22 (603 router tests); see its working document and supervisor validation report.
 - Agent worktrees live under `.claude/worktrees/` (excluded from git locally).
 

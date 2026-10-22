@@ -1,7 +1,7 @@
 # Panel v2: live data and a calmer layout
 
 Status: Complete
-Status detail: U1-U3 implemented and demo-validated 2026-10-22; final integration checks and merge recorded below.
+Status detail: U1-U3 delivered and demo-validated 2026-10-22; merged into dev at 672a697.
 Created: 2026-10-21
 Last updated: 2026-10-22
 Owner: Senior supervisor agent
@@ -179,7 +179,7 @@ remain governed by the handoff's existing constraints.
 - Why: finish the interrupted Panel v2 plan and verify the worker claims independently.
 - Validation: final `pnpm -r typecheck` and `pnpm -r build` passed; `npx vitest run --maxWorkers=2` passed 603/603 in 59 files. Final production-demo crawl: 492 checks, zero unexpected failures; old anchors, SSE reset/resume, direct entity links and light/dark desktop/phone screenshots verified. Live DOM update 865 ms, idle refreshes 0; pause/resume, restart and state preservation passed.
 - Outcome: Accepted
-- Follow-up: merge/push dev and fast-forward main; B2 next. Temporary demo/browser servers stopped. Automatic approval review blocked deletion of both the unregistered baseline directory and generated demo fixtures (only "blocked by policy" supplied); neither is committed.
+- Follow-up: B2 next. Merge into dev: 672a697; final narrow admin-live rerun passed 16/16 after confirming dev was current. Push state is recorded by Git refs. Temporary demo/browser servers stopped. Automatic approval review blocked deletion of both the unregistered baseline directory and generated demo fixtures (only "blocked by policy" supplied); neither is committed.
 
 ## Open Questions
 
