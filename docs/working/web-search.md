@@ -26,7 +26,12 @@ on 2026-10-21:
   Tavily (1,000 credits/month), Brave ($5 credit/month, attribution required), Exa (monthly free
   credit); SearXNG is self-hosted with no key.
 
-**Next steps:** W1 (worker web-search-w1), then W2.
+**User changes (2026-10-21):** (1) web search must use every configured backend, not one: a
+backend pool with spread or fallback selection, per-backend health, key rotation, and optional
+per-backend caps (sent to worker web-search-w1 as a rework); (2) detect and use models whose
+provider searches the web inside the API call (phase W3).
+
+**Next steps:** W1/W2 with the pool rework (worker web-search-w1), then W3.
 
 **Blockers:** none.
 
@@ -55,6 +60,23 @@ on 2026-10-21:
 - **D6. Off unless a backend is usable:** with `backend: auto` and nothing usable, the tools are not
   offered (no failing tool in the list); `doctor` and the panel say how to enable web search.
 - **D7. Not in the MCP server:** Claude Code, Codex, and ChatGPT have their own web search.
+- **D8. Backend pool (user decision 2026-10-21):** `web.search.backends` (ordered; `auto` = every
+  usable one), `web.search.strategy: spread | fallback` (default spread, so free allowances add
+  up), failover to the next backend within one call, per-backend health like provider keys,
+  several keys per backend rotated, optional caps `web.search.limits.<backend>`. Fetch is a chain,
+  `web.fetch.backends` default `[builtin, ollama]`; a URL the SSRF guard refused reaches no backend.
+- **D9. Built-in (native) web search in model calls (user request 2026-10-21):** some providers
+  search inside the API call. Each endpoint gets `nativeWebSearch` with provenance: how it is
+  enabled (an OpenRouter web plugin or `:online` variant, OpenAI `web_search_options`, an
+  Anthropic server tool, Gemini grounding, or `always_on` for models that always search), its
+  price when known, and its source (registry fact with doc URL and date, discovery metadata such
+  as OpenRouter `supported_parameters`, or a models.yaml override). Rules: a task that needs the
+  web (`hints.web: true`, or a supervisor brief saying so) may prefer endpoints with native search
+  and enables it in the request; priced native search is paid (paid budgets, blocked while paid
+  routing is off), unknown price counts as paid; `always_on` models are marked so their output is
+  treated as web content (untrusted) and never chosen for tasks that must not touch the web
+  (`hints.web: false`); reported search counts (e.g. `server_tool_use.web_search_requests`) go into
+  usage and spend; citations the provider returns are recorded with the response as evidence.
 
 ---
 
@@ -63,6 +85,7 @@ on 2026-10-21:
 | Phase | Deliverable | Acceptance |
 | --- | --- | --- |
 | W1 | Router: config `web` section, backends (ollama, tavily, brave, exa, searxng), built-in fetch with SSRF guard, tools for the configured roles, budgets, usage and events, doctor check | Fake-HTTP tests per backend; SSRF refusals (127.0.0.1, 10.x, 169.254.169.254, a redirect to a private address); budgets enforced; tools absent without a backend; a worker task using web_search end to end with a scripted model |
+| W3 | Native web search in model calls (D9): detection with provenance, request enabling per provider, routing preference, paid handling, usage and citations, panel model badge and filter | Fake-provider tests per kind (request body carries the provider's switch; citations recorded; search counts priced into spend); a priced native-search model is skipped while paid is off; an `always_on` model is excluded for `hints.web: false`; discovery marks OpenRouter models from `supported_parameters` |
 | W2 | Panel and docs: Settings "Web search" section, search-service keys on the keys page, web calls in the session timeline and task usage, setup/operations docs | Demo panel pages 200 and screenshots; docs describe backends, limits, and safety |
 
 ---
