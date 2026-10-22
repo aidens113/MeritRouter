@@ -181,6 +181,32 @@ service reload or overview load does.
 
 The archived flag is kept in the store (`projects` table), not in the config file.
 
+### Deleting a project
+
+`switchyard projects delete <slug>` shows what deleting removes and keeps, with counts, and
+whether it can be deleted now; `switchyard projects delete <slug> --confirm <slug>` deletes it. In
+the panel, the Danger zone at the end of the project's Settings page does the same in two steps:
+a dialog listing what goes and what stays, then one that asks for the slug before "Delete
+permanently". Archived projects can be deleted too.
+- Refused while the project has running or queued tasks, for the last project that is not
+  archived, and for a single-project config (it is the install's only project). The confirmation
+  must equal the slug.
+- Removed: `projects.<slug>` from the config (through the config editor: validated first, the
+  previous file kept as `switchyard.config.yaml.bak`); the project's tasks and everything stored
+  for them (results, contracts, verdicts, plans, leases, merge queue, team channel, questions,
+  supervisor transcripts), its sessions and their logs, artifacts, events, brain access requests
+  and grants, and its `projects` row, in one transaction; the worktrees SwitchYard made for its
+  tasks and jobs under `<storage>/worktrees` (`git worktree remove`, then `prune`); and its brain
+  folder `projects/<slug>/`, in one brain commit with a `Remove-Reason` trailer (edits made
+  outside SwitchYard are committed first, so the text stays in the brain's history).
+- Kept: the repository folders and every branch in them (job branches included), model requests
+  with their per-task charges and paid spend (for accounting; the requests no longer belong to a
+  project, so they count only in install-wide views, and their charges name tasks that no longer
+  exist), brain mounts outside the brain repository, and the brain's git history.
+- Deleting the primary project (`brain.project`) moves `brain.project` to another live project.
+  A running worker or MCP server that had it as its primary keeps its old brain handle until it
+  restarts.
+
 ### The reserved `_qualification` project
 
 Qualification runs (`switchyard qualify`) and comparison runs on the eval goals
@@ -400,10 +426,27 @@ item. A delegated task's session names the supervisor session that delegated it 
   model traffic through the policy gateway, not individual tool calls.
 - A resume appends a `resumed` event recording what was settled and the notice the agent got.
 
+## The web panel: turning it off, and rebuilding it
+
+- The power button at the top of the panel, beside the project switcher, turns the panel off
+  after a confirmation: `POST /api/panel/stop` writes `<storage>/panel.stopped`, answers, and the
+  panel process exits; the page then shows "Panel turned off". Agents and workers keep running.
+  Background checks (the MCP server's minute check, `switchyard worker`) leave a stopped panel
+  off; a new agent session (MCP server start), the MCP `panel` tool, or `switchyard panel` clears
+  the marker and starts it again. The route accepts only same-origin requests.
+- The panel's production build contains the router code: Turbopack bundles `switchyard-router`
+  although `next.config.ts` lists it in `serverExternalPackages`, because it externalizes only
+  modules whose real path is under `node_modules`, and the pnpm workspace link resolves to
+  `packages/router`. A router change therefore reaches the panel only after `pnpm -r build` (or
+  `pnpm --filter switchyard-panel build`) and a panel restart. When `.next/BUILD_ID` is older than
+  the newest file in the router's `dist/`, starting or checking the panel reports it
+  (`ensurePanel`'s `warning`; `panelBuildCheck` for `doctor`).
+
 ## Housekeeping
 
-- Worktrees and agent homes are not deleted automatically. Remove old ones with
-  `git worktree remove` in the source repository, then delete the folder.
+- Worktrees and agent homes are not deleted automatically (deleting a project removes its own;
+  see [Deleting a project](#deleting-a-project)). Remove old ones with `git worktree remove` in
+  the source repository, then delete the folder.
 - Backups: see [Backup and restore](#backup-and-restore).
 - Durability: `storage.durability: full` sets SQLite `synchronous=FULL` (survives power loss at
   some write cost); `normal` (default) can lose the last transactions on power loss but never

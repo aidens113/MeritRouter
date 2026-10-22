@@ -2,7 +2,7 @@ import YAML from "yaml";
 import { PROJECT_SLUG_RE } from "../config/schema.js";
 import { SwitchyardError } from "../core/errors.js";
 import type { Switchyard } from "../core/service.js";
-import { archiveProject, createProject, projectsGrid, selectableProjects, unarchiveProject } from "../admin/insights.js";
+import { archiveProject, createProject, deleteProject, previewProjectDeletion, projectsGrid, selectableProjects, unarchiveProject } from "../admin/insights.js";
 import { repoFlags } from "./args.js";
 import { chooseProject, type SelectOptions } from "./project-select.js";
 import { out, stamp, table } from "./terminal.js";
@@ -14,9 +14,11 @@ export interface ProjectsFlags {
   all?: boolean;
   name?: string;
   repo?: string[];
+  /** `projects delete <slug> --confirm <slug>`: the slug again, to confirm. */
+  confirm?: string;
 }
 
-const USAGE = 'usage: switchyard projects [list [--all]] | create <slug> [--name "<name>"] [--repo <alias>=<path> ...] | archive <slug> | unarchive <slug>';
+const USAGE = 'usage: switchyard projects [list [--all]] | create <slug> [--name "<name>"] [--repo <alias>=<path> ...] | archive <slug> | unarchive <slug> | delete <slug> [--confirm <slug>]';
 
 export async function projectsCommand(sy: Switchyard, args: string[], values: ProjectsFlags, json: boolean, select: SelectOptions): Promise<number> {
   const sub = args[0] ?? "list";
@@ -66,6 +68,40 @@ export async function projectsCommand(sy: Switchyard, args: string[], values: Pr
     if (!slug) throw new SwitchyardError("usage", USAGE);
     const p = sub === "archive" ? archiveProject(sy, slug) : unarchiveProject(sy, slug);
     out(json ? p : `${p.slug}: ${p.archived ? "archived (hidden; its settings, tasks, sessions, and brain are kept)" : "active"}`, json);
+    return 0;
+  }
+  if (sub === "delete") {
+    const slug = args[1];
+    if (!slug) throw new SwitchyardError("usage", USAGE);
+    if (values.confirm === undefined) {
+      // Without --confirm: what deleting would remove and keep, and how to confirm.
+      const p = await previewProjectDeletion(sy, slug);
+      out(
+        json
+          ? p
+          : [
+              `Deleting project ${p.slug} (${p.name}) removes:`,
+              ...p.removes.map((l) => `  - ${l}`),
+              "It keeps:",
+              ...p.keeps.map((l) => `  - ${l}`),
+              p.blockers.length ? `It cannot be deleted now: ${p.blockers.join("; ")}.` : `This cannot be undone. To delete it: switchyard projects delete ${p.slug} --confirm ${p.slug}`,
+            ].join("\n"),
+        json,
+      );
+      return p.blockers.length ? 1 : 0;
+    }
+    const r = await deleteProject(sy, slug, { confirm: values.confirm });
+    const c = r.removed;
+    out(
+      json
+        ? r
+        : [
+            `deleted project ${r.slug}: ${c.tasks} task(s), ${c.sessions} session(s), ${c.artifacts} artifact(s), ${c.worktrees} worktree(s), and its brain folder (${c.brainEntries} file(s))${r.brainCommit ? ` in brain commit ${r.brainCommit.slice(0, 7)}` : ""}; repository folders and branches were not touched`,
+            ...(r.newPrimary ? [`${r.newPrimary} is now the primary project (brain.project)`] : []),
+            ...r.problems.map((p) => `warning: ${p}`),
+          ].join("\n"),
+      json,
+    );
     return 0;
   }
   throw new SwitchyardError("usage", USAGE);

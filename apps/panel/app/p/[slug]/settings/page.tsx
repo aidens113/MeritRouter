@@ -8,6 +8,7 @@ import { Callout, Mono, PageHeader } from "@/components/ui";
 import { ActionButton } from "@/components/client/actions";
 import { ago } from "@/lib/format";
 import { SectionNav } from "@/components/client/section-nav";
+import { DangerZone } from "@/components/client/delete-project";
 import { metaFor, VERIFICATION_META, type OverrideItem } from "./fields";
 import { OverridesCard } from "./overrides";
 import { BrainCard, GeneralCard, RepositoriesCard, SchedulingCard } from "./forms";
@@ -24,6 +25,7 @@ const NAV = [
   { id: "team", title: "Team policy" },
   { id: "commands", title: "Commands and paths" },
   { id: "roles", title: "Roles and charters" },
+  { id: "danger", title: "Danger zone" },
 ];
 
 const VERIFICATION_ORDER = Object.keys(VERIFICATION_META);
@@ -34,7 +36,8 @@ const COMMAND_ORDER = ["coding.allowed_commands", "supervisor.allowed_commands",
  * Every override shows the install-wide value it inherits; saving goes through
  * `insights.saveProjectSettings` (`patchProjectSettings`), so the file stays the source of truth.
  * An archived project's settings are shown read-only (the API refuses changes) with Unarchive;
- * every other page of an archived project is a 404 (app/p/[slug]/layout.tsx).
+ * every other page of an archived project is a 404 (app/p/[slug]/layout.tsx). The Danger zone at
+ * the end deletes the project, archived or not (components/client/delete-project.tsx).
  */
 export default async function ProjectSettingsPage({ params }: { params: Promise<{ slug: string }> }) {
   const r = getSy();
@@ -87,30 +90,34 @@ export default async function ProjectSettingsPage({ params }: { params: Promise<
         <SectionNav label="Project settings sections" items={NAV} />
         {/* Scroll margin clears the sticky top bar and section strip on narrow screens. A disabled
             fieldset makes every control read-only while the project is archived. */}
-        <fieldset disabled={v.archived} aria-label={v.archived ? "Settings (read-only: the project is archived)" : undefined} className="m-0 min-w-0 space-y-6 border-0 p-0 [&>section[id]]:scroll-mt-28 xl:[&>section[id]]:scroll-mt-6">
-          <GeneralCard slug={p.slug} name={v.name} legacy={v.legacy} configPath={v.configPath} keyPath={v.configKeyPath.join(".")} activity={v.activity} archived={v.archived} />
-          <RepositoriesCard slug={p.slug} rows={v.repositoryRows} />
-          <BrainCard slug={p.slug} legacy={v.legacy} globalMounts={v.mounts.global} mounts={v.mounts.project} items={of("brain")} />
-          <SchedulingCard slug={p.slug} legacy={v.legacy} limits={v.limits} />
-          <OverridesCard
-            id="verification"
-            slug={p.slug}
-            title="Verification"
-            description="How this project's results are checked: importance, levels, review, and acceptance. A project value is merged onto the global policy (lists replace)."
-            items={verification}
-            locked={locked}
-          />
-          <OverridesCard id="team" slug={p.slug} title="Team policy" description="How this project's jobs grow: agents per job, sub-supervisors, and the team channel. Provider concurrency stays global." items={of("team")} locked={locked} />
-          <OverridesCard
-            id="commands"
-            slug={p.slug}
-            title="Commands and paths"
-            description="What this project's coding workers and supervisors may run, which files they may not weaken, and the branch its jobs commit to."
-            items={commands}
-            locked={locked}
-          />
-          <OverridesCard id="roles" slug={p.slug} title="Roles and charters" description="Each role's charter, extra rules, and brain grants in this project. A role set here replaces the global entry for that role." items={of("roles")} locked={locked} />
-        </fieldset>
+        <div className="min-w-0 space-y-6">
+          <fieldset disabled={v.archived} aria-label={v.archived ? "Settings (read-only: the project is archived)" : undefined} className="m-0 min-w-0 space-y-6 border-0 p-0 [&>section[id]]:scroll-mt-28 xl:[&>section[id]]:scroll-mt-6">
+            <GeneralCard slug={p.slug} name={v.name} legacy={v.legacy} configPath={v.configPath} keyPath={v.configKeyPath.join(".")} activity={v.activity} archived={v.archived} />
+            <RepositoriesCard slug={p.slug} rows={v.repositoryRows} />
+            <BrainCard slug={p.slug} legacy={v.legacy} globalMounts={v.mounts.global} mounts={v.mounts.project} items={of("brain")} />
+            <SchedulingCard slug={p.slug} legacy={v.legacy} limits={v.limits} />
+            <OverridesCard
+              id="verification"
+              slug={p.slug}
+              title="Verification"
+              description="How this project's results are checked: importance, levels, review, and acceptance. A project value is merged onto the global policy (lists replace)."
+              items={verification}
+              locked={locked}
+            />
+            <OverridesCard id="team" slug={p.slug} title="Team policy" description="How this project's jobs grow: agents per job, sub-supervisors, and the team channel. Provider concurrency stays global." items={of("team")} locked={locked} />
+            <OverridesCard
+              id="commands"
+              slug={p.slug}
+              title="Commands and paths"
+              description="What this project's coding workers and supervisors may run, which files they may not weaken, and the branch its jobs commit to."
+              items={commands}
+              locked={locked}
+            />
+            <OverridesCard id="roles" slug={p.slug} title="Roles and charters" description="Each role's charter, extra rules, and brain grants in this project. A role set here replaces the global entry for that role." items={of("roles")} locked={locked} />
+          </fieldset>
+          {/* Outside the fieldset: an archived project can still be deleted. */}
+          <DangerZone slug={p.slug} name={v.name} />
+        </div>
       </div>
     </div>
   );

@@ -8,7 +8,8 @@ import type { ProjectContext } from "../projects/context.js";
 import type { SelectableProject } from "../cli/project-select.js";
 import { recordPreparation, repositoryNotices, repositoryProblems } from "../projects/repository-setup.js";
 import { folderState, prepareRepository } from "../workspaces/repository-prepare.js";
-import { patchConfig, readConfigText } from "./config-edit.js";
+import { patchConfig, readConfigText, validateConfigText, writeConfigText } from "./config-edit.js";
+import { projectFootprint, purgeProjectRows, removeProjectFiles, removeProjectWorktrees } from "../projects/deletion.js";
 
 // Projects for the panel's grid, the CLI's `projects` command, and project selection: listing,
 // per-project activity and attention, and creating or archiving a project. Settings live in the
@@ -267,4 +268,149 @@ export function unarchiveProject(sy: Switchyard, slug: string): ProjectSummary {
   projectInfo(sy, slug);
   sy.db.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").run(slug);
   return projectInfo(sy, slug);
+}
+
+// ---------- delete ----------
+
+/** Task states that block deleting a project (running and queued). */
+const ACTIVE_STATES = [...RUNNING_STATES, ...QUEUED_STATES] as const;
+
+export interface ProjectDeletionCounts {
+  tasks: number;
+  jobs: number;
+  sessions: number;
+  artifacts: number;
+  /** Files under the project's brain folder (`projects/<slug>/`). */
+  brainEntries: number;
+  worktrees: number;
+}
+
+export interface ProjectDeletionPreview {
+  slug: string;
+  name: string;
+  archived: boolean;
+  legacy: boolean;
+  counts: ProjectDeletionCounts;
+  /** Kept for accounting: model requests recorded for the project, and those with paid spend. */
+  kept: { requests: number; paidRequests: number; repositories: Array<{ alias: string; path: string }> };
+  /** What deleting removes and what it keeps, as sentences with the counts (for the panel and CLI). */
+  removes: string[];
+  keeps: string[];
+  /** Why the project cannot be deleted now; empty when it can. */
+  blockers: string[];
+}
+
+export interface ProjectDeletionResult {
+  slug: string;
+  removed: ProjectDeletionCounts;
+  /** The brain commit that removed `projects/<slug>/`, when the brain commits. */
+  brainCommit: string | null;
+  /** The project that is now the primary one (`brain.project`) when the deleted project was. */
+  newPrimary: string | null;
+  /** Files or worktrees that could not be removed (the rows are gone either way). */
+  problems: string[];
+}
+
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** Why a project cannot be deleted now: running or queued tasks, the last live project, or the single-project config. */
+function deletionBlockers(sy: Switchyard, info: ProjectSummary): string[] {
+  const out: string[] = [];
+  const a = projectActivity(sy, info.slug);
+  if (a.runningTasks + a.queuedTasks > 0) out.push(`it has ${a.runningTasks} running and ${a.queuedTasks} queued task(s); cancel them or let them finish first`);
+  if (info.legacy) out.push("it is the single-project config itself; an install needs at least one project");
+  else if (!projectList(sy).some((p) => p.slug !== info.slug)) {
+    out.push(sy.projects.list().length === 1 ? "it is the only project; an install needs at least one" : "it is the last project that is not archived; unarchive or create another first");
+  }
+  return out;
+}
+
+function footprintOf(sy: Switchyard, ctx: ProjectContext) {
+  return projectFootprint(sy.db, sy.cfg.storageDir, ctx.project.slug, Object.values(ctx.repositoryPaths).map((r) => r.path));
+}
+
+/** What deleting a project removes and keeps, with counts, and whether it can be deleted now. */
+export async function previewProjectDeletion(sy: Switchyard, slug: string): Promise<ProjectDeletionPreview> {
+  const info = projectInfo(sy, slug);
+  const fp = await footprintOf(sy, sy.projects.get(slug)!);
+  const counts: ProjectDeletionCounts = { tasks: fp.taskIds.length, jobs: fp.jobs, sessions: fp.sessions, artifacts: fp.artifacts, brainEntries: sy.brain.projectFolderFiles(slug), worktrees: fp.worktrees.length };
+  const repositories = info.repositories.map((r) => ({ alias: r.alias, path: r.path }));
+  return {
+    slug,
+    name: info.name,
+    archived: info.archived,
+    legacy: info.legacy,
+    counts,
+    kept: { requests: fp.requests, paidRequests: fp.paidRequests, repositories },
+    removes: [
+      `Its settings: projects.${slug} in the config (the previous file is kept as a .bak).`,
+      `${plural(counts.tasks, "task")} (${counts.jobs} of them ${counts.jobs === 1 ? "a job" : "jobs"}) with their results, plans, questions, and team channels.`,
+      `${plural(counts.sessions, "session")} with ${counts.sessions === 1 ? "its log" : "their logs"}, and ${plural(counts.artifacts, "artifact")}.`,
+      `${plural(counts.worktrees, "worktree")} SwitchYard made for its tasks (their branches stay).`,
+      `Its brain folder projects/${slug}/ (${plural(counts.brainEntries, "file")}), removed in one brain commit.`,
+    ],
+    keeps: [
+      repositories.length === 1 ? "Its repository folder and every branch in it, untouched." : `${plural(repositories.length, "repository folder")} and every branch in them, untouched.`,
+      `${plural(fp.requests, "model request")} (${fp.paidRequests} paid), with their charges and spend, for accounting; they no longer belong to a project.`,
+      "The brain's history: the removed folder stays in its git log.",
+    ],
+    blockers: deletionBlockers(sy, info),
+  };
+}
+
+/**
+ * Delete a project. `confirm` must equal the slug. Refused while it has running or queued tasks,
+ * and for the last live project. The config edit is validated first; then its rows go in one
+ * transaction (see `purgeProjectRows`), `projects.<slug>` is removed through the config editor
+ * (previous file backed up; when it was the primary project, `brain.project` moves to another),
+ * and its session logs, artifacts, SwitchYard worktrees (branches kept), and brain folder (one
+ * commit) are removed. Repository folders are never touched.
+ */
+export async function deleteProject(sy: Switchyard, slug: string, opts: { confirm: string }): Promise<ProjectDeletionResult> {
+  const info = projectInfo(sy, slug);
+  if (opts.confirm !== slug) throw new SwitchyardError("usage", `type the project's slug to confirm: expected ${JSON.stringify(slug)}, got ${JSON.stringify(opts.confirm)}`);
+  const blockers = deletionBlockers(sy, info);
+  if (blockers.length) throw new SwitchyardError("usage", `project ${slug} cannot be deleted: ${blockers.join("; ")}`);
+
+  // The config without the project, validated before anything is removed.
+  const doc = YAML.parseDocument(readConfigText(sy));
+  doc.deleteIn(["projects", slug]);
+  let newPrimary: string | null = null;
+  if (sy.projects.primary.project.slug === slug) {
+    newPrimary = projectList(sy).find((p) => p.slug !== slug)?.slug ?? null;
+    if (newPrimary) doc.setIn(["brain", "project"], newPrimary);
+  }
+  const text = doc.toString();
+  const valid = validateConfigText(text, sy.cfg.configPath);
+  if (!valid.ok) throw new SwitchyardError("config_invalid", `the config without projects.${slug} does not validate:\n  ${valid.errors.join("\n  ")}`);
+
+  const fp = await footprintOf(sy, sy.projects.get(slug)!);
+  const brainEntries = sy.brain.projectFolderFiles(slug);
+  const purged = purgeProjectRows(sy.db, slug, ACTIVE_STATES);
+  const problems: string[] = [];
+  const written = writeConfigText(sy, text);
+  if (!written.ok) problems.push(`the config could not be written: ${written.errors.join("; ")}`);
+  if (sy.projects.get(slug)) sy.reloadIfChanged();
+  // A process that reloaded the config between the purge and the write may have recorded the row again.
+  sy.db.prepare("DELETE FROM projects WHERE id = ?").run(slug);
+  problems.push(...removeProjectFiles(fp));
+  const wt = await removeProjectWorktrees(fp.worktrees);
+  problems.push(...wt.problems);
+  let brainCommit: string | null = null;
+  const keeper = sy.projects.primary.project.slug;
+  if (keeper === slug || sy.projects.get(slug)) problems.push(`the brain folder projects/${slug}/ was not removed: this process has not reloaded the config yet`);
+  else {
+    try {
+      brainCommit = (await sy.brainFor(keeper).removeProjectFolder(slug, { agent: "human", role: "human" }, `project ${slug} was deleted`)).commit;
+    } catch (err) {
+      problems.push(`brain folder projects/${slug}/: ${(err as Error).message}`);
+    }
+  }
+  return {
+    slug,
+    removed: { tasks: purged.tasks, jobs: fp.jobs, sessions: purged.sessions, artifacts: fp.artifacts, brainEntries, worktrees: wt.removed },
+    brainCommit,
+    newPrimary,
+    problems,
+  };
 }

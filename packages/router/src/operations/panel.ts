@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,11 +32,25 @@ export function markPanelStopped(cfg: Pick<ResolvedConfig, "storageDir">, by = "
   writeFileSync(panelStopFile(cfg), JSON.stringify({ at: new Date().toISOString(), by }));
 }
 
+/**
+ * The power button: record the stop (`markPanelStopped`), then end this process once the response
+ * has had time to leave (`exit` after `delayMs`). Agents keep running; a new agent session or
+ * `switchyard panel` starts the panel again.
+ */
+export function turnPanelOff(cfg: Pick<ResolvedConfig, "storageDir">, opts: { delayMs?: number; exit?: () => void } = {}): { stoppedAt: string; marker: string } {
+  markPanelStopped(cfg);
+  const exit = opts.exit ?? (() => process.exit(0));
+  setTimeout(exit, opts.delayMs ?? 300).unref?.();
+  return { stoppedAt: new Date().toISOString(), marker: panelStopFile(cfg) };
+}
+
 export interface PanelStatus {
   state: PanelState;
   url: string;
   /** What happened, or how to fix it (an unbuilt panel, say). */
   detail: string;
+  /** The panel build is older than the router build it bundles (see `panelBuildStale`). */
+  warning?: string;
 }
 
 export const panelUrl = (cfg: ResolvedConfig): string => `http://127.0.0.1:${cfg.panel.port}`;
@@ -66,6 +80,56 @@ export function findPanelApp(): { dir: string; nextBin: string } | { problem: st
   return { dir, nextBin };
 }
 
+/** The router build this module runs from (`dist/`; `src/` under the tests). */
+export function routerBuildDir(): string {
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+}
+
+/** The newest file modification time under `dir` (0 when it has no files). */
+function newestFileMtime(dir: string): number {
+  let newest = 0;
+  const walk = (d: string) => {
+    let entries;
+    try {
+      entries = readdirSync(d, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.isFile()) newest = Math.max(newest, statSync(p).mtimeMs);
+    }
+  };
+  walk(dir);
+  return newest;
+}
+
+/**
+ * Why the panel's production build is out of date, or null. Turbopack bundles the router into
+ * the panel's server chunks although `next.config.ts` lists it in `serverExternalPackages`: it
+ * externalizes only modules whose real path is under `node_modules`, and the pnpm workspace link
+ * resolves to `packages/router`. So a router change reaches the panel only through a panel
+ * rebuild; a build (`.next/BUILD_ID`) older than the newest router build file is stale.
+ */
+export function panelBuildStale(panelDir: string, routerDir = routerBuildDir()): string | null {
+  const id = path.join(panelDir, ".next", "BUILD_ID");
+  if (!existsSync(id)) return null;
+  const built = statSync(id).mtimeMs;
+  const router = newestFileMtime(routerDir);
+  if (router <= built) return null;
+  const at = (ms: number) => new Date(ms).toISOString().replace("T", " ").slice(0, 19);
+  return `the panel build (${at(built)} UTC) is older than the router build (${at(router)} UTC) and runs the older router code: rebuild it with pnpm -r build (or pnpm --filter switchyard-panel build), then restart the panel`;
+}
+
+/** For `switchyard doctor`: whether the panel is built, and built after the router. */
+export function panelBuildCheck(): { ok: boolean; detail: string } {
+  const app = findPanelApp();
+  if ("problem" in app) return { ok: false, detail: app.problem };
+  const stale = panelBuildStale(app.dir);
+  return stale ? { ok: false, detail: stale } : { ok: true, detail: `built at ${app.dir}, after the router build` };
+}
+
 /**
  * Make sure the panel answers on `panel.port`: start it (detached) when nothing does and
  * `panel.auto_start` is on. A panel the user turned off stays off unless `force` (an explicit
@@ -74,7 +138,12 @@ export function findPanelApp(): { dir: string; nextBin: string } | { problem: st
  */
 export async function ensurePanel(cfg: ResolvedConfig, opts: { waitMs?: number; force?: boolean } = {}): Promise<PanelStatus> {
   const url = panelUrl(cfg);
-  if (await panelListening(cfg.panel.port)) return { state: "running", url, detail: `the panel is running at ${url}` };
+  const warned = (st: PanelStatus): PanelStatus => {
+    const app = findPanelApp();
+    const warning = "problem" in app ? null : panelBuildStale(app.dir);
+    return warning ? { ...st, detail: `${st.detail}; warning: ${warning}`, warning } : st;
+  };
+  if (await panelListening(cfg.panel.port)) return warned({ state: "running", url, detail: `the panel is running at ${url}` });
   if (opts.force) rmSync(panelStopFile(cfg), { force: true });
   else if (existsSync(panelStopFile(cfg))) return { state: "stopped", url, detail: `the panel was turned off from its power button; switchyard panel or a new agent session starts it again` };
   if (!cfg.panel.auto_start && !opts.force) return { state: "disabled", url, detail: `nothing answers at ${url} and panel.auto_start is off: start it with switchyard panel` };
@@ -104,8 +173,8 @@ export async function ensurePanel(cfg: ResolvedConfig, opts: { waitMs?: number; 
   }
   const deadline = Date.now() + (opts.waitMs ?? START_WAIT_MS);
   while (Date.now() < deadline) {
-    if (await panelListening(cfg.panel.port)) return { state: "started", url, detail: `started the panel at ${url} (log: ${logFile})` };
+    if (await panelListening(cfg.panel.port)) return warned({ state: "started", url, detail: `started the panel at ${url} (log: ${logFile})` });
     await new Promise((r) => setTimeout(r, 300));
   }
-  return { state: "starting", url, detail: `the panel was started but does not answer at ${url} yet; see ${logFile}` };
+  return warned({ state: "starting", url, detail: `the panel was started but does not answer at ${url} yet; see ${logFile}` });
 }

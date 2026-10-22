@@ -94,10 +94,12 @@ export const btn = {
   secondary: "border border-line-strong bg-surface text-ink hover:bg-surface-2",
   ghost: "text-ink-2 hover:bg-surface-2 hover:text-ink",
   danger: "border border-bad/40 bg-bad-soft text-bad-ink hover:bg-bad/20",
+  /** Solid red: the final step of an action that cannot be undone. */
+  destructive: "border border-bad bg-bad text-white hover:brightness-110",
   sm: "px-2 py-1 text-xs",
 };
 
-export function buttonClass(variant: "primary" | "secondary" | "ghost" | "danger" = "secondary", small = false): string {
+export function buttonClass(variant: "primary" | "secondary" | "ghost" | "danger" | "destructive" = "secondary", small = false): string {
   return cx(btn.base, btn[variant], small && btn.sm);
 }
 

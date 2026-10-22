@@ -16,6 +16,7 @@ import {
   Monitor,
   Moon,
   Network,
+  Power,
   Route,
   Scale,
   ScrollText,
@@ -28,10 +29,12 @@ import {
   Library,
   type LucideIcon,
 } from "lucide-react";
-import { cx } from "../ui";
+import { cx, Mono } from "../ui";
 import { THEME_KEY } from "@/lib/theme";
 import { ALL, projectBase, slugOfPath } from "@/lib/links";
 import { ProjectSwitcher, type Scope, type SwitcherProject } from "./project-switcher";
+import { ConfirmDialog } from "./confirm-dialog";
+import { callApi } from "./actions";
 
 type NavItem = { href: string; label: string; icon: LucideIcon; exact?: boolean };
 
@@ -78,9 +81,38 @@ function isActive(path: string, item: NavItem) {
 export function Shell({ children, configPath, loginEnabled, projects }: { children: ReactNode; configPath: string; loginEnabled: boolean; projects: SwitcherProject[] }) {
   const path = usePathname();
   const [open, setOpen] = useState(false);
+  const [confirmOff, setConfirmOff] = useState(false);
+  const [offError, setOffError] = useState<string | null>(null);
+  const [off, setOff] = useState(false);
   useEffect(() => setOpen(false), [path]);
 
   if (path === "/login") return <main className="min-h-screen">{children}</main>;
+  if (off) return <PanelOff />;
+
+  const turnOff = async (): Promise<boolean> => {
+    setOffError(null);
+    const r = await callApi("/api/panel/stop", "POST");
+    if (!r.ok) {
+      setOffError(r.error ?? "The panel did not turn off.");
+      return false;
+    }
+    setOff(true);
+    return true;
+  };
+  const power = (
+    <button
+      type="button"
+      onClick={() => {
+        setOffError(null);
+        setConfirmOff(true);
+      }}
+      aria-label="Turn the panel off"
+      title="Turn the panel off"
+      className="shrink-0 rounded-lg p-2 text-ink-2 hover:bg-surface-2 hover:text-bad-ink"
+    >
+      <Power size={18} aria-hidden />
+    </button>
+  );
 
   const scope = scopeOf(path);
   // A project missing from the live list is archived (its settings page is the only one that opens).
@@ -124,7 +156,12 @@ export function Shell({ children, configPath, loginEnabled, projects }: { childr
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-[15rem_1fr]">
       <aside className="sticky top-0 hidden h-screen flex-col gap-4 overflow-y-auto border-r border-line bg-surface px-3 py-4 lg:flex">
-        <ProjectSwitcher scope={scope} initial={projects} />
+        <div className="flex items-start gap-1">
+          <div className="min-w-0 flex-1">
+            <ProjectSwitcher scope={scope} initial={projects} />
+          </div>
+          {power}
+        </div>
         <div className="flex-1">{nav}</div>
         {footer}
       </aside>
@@ -133,9 +170,12 @@ export function Shell({ children, configPath, loginEnabled, projects }: { childr
         <div className="min-w-0 max-w-[20rem] flex-1">
           <ProjectSwitcher scope={scope} initial={projects} />
         </div>
-        <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-label="Toggle navigation" className="shrink-0 rounded-lg p-2 text-ink-2 hover:bg-surface-2">
-          {open ? <X size={18} /> : <Menu size={18} />}
-        </button>
+        <div className="flex shrink-0 items-center gap-1">
+          {power}
+          <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-label="Toggle navigation" className="shrink-0 rounded-lg p-2 text-ink-2 hover:bg-surface-2">
+            {open ? <X size={18} /> : <Menu size={18} />}
+          </button>
+        </div>
         {open ? (
           <div className="absolute inset-x-0 top-full max-h-[calc(100vh-4rem)] space-y-4 overflow-y-auto border-b border-line bg-surface px-3 py-3 shadow-lg">
             {nav}
@@ -147,7 +187,43 @@ export function Shell({ children, configPath, loginEnabled, projects }: { childr
       <main className="min-w-0 px-4 py-6 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-[1400px]">{children}</div>
       </main>
+
+      <ConfirmDialog
+        open={confirmOff}
+        onClose={() => setConfirmOff(false)}
+        onConfirm={turnOff}
+        title="Turn the panel off?"
+        description={
+          <>
+            Agents keep running; the panel starts again when a new agent session begins or you run <Mono>switchyard panel</Mono>.
+          </>
+        }
+        confirmLabel="Turn off"
+        tone="danger"
+      >
+        {offError ? (
+          <p role="alert" className="text-bad-ink">
+            {offError}
+          </p>
+        ) : null}
+      </ConfirmDialog>
     </div>
+  );
+}
+
+/** What stays on screen once the panel's server has stopped: static, nothing here calls it. */
+function PanelOff() {
+  return (
+    <main className="flex min-h-screen items-center justify-center px-4 py-10">
+      <div role="status" className="w-full max-w-md rounded-xl border border-line bg-surface p-6 text-center shadow-sm">
+        <Power size={28} className="mx-auto text-ink-3" aria-hidden />
+        <h1 className="mt-3 text-lg font-semibold tracking-tight text-ink">Panel turned off</h1>
+        <p className="mt-2 text-sm leading-relaxed text-ink-2">
+          Agents keep running. The panel starts again when a new agent session begins, or when you run{" "}
+          <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[0.85em]">switchyard panel</code>.
+        </p>
+      </div>
+    </main>
   );
 }
 
