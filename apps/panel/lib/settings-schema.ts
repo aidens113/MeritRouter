@@ -16,6 +16,7 @@ export interface Field {
   step?: number;
   unit?: string;
   readOnly?: boolean;
+  multiline?: boolean;
   placeholder?: string;
   /** Plain-language explanation of each enum option, shown under the select for the chosen one. */
   optionHelp?: Record<string, string>;
@@ -31,6 +32,15 @@ export interface Section {
 const f = (path: string, label: string, kind: FieldKind, help: string, extra: Partial<Field> = {}): Field => ({ path: path.split("."), label, kind, help, ...extra });
 
 export const SECTIONS: Section[] = [
+  {
+    id: "client-supervision",
+    title: "Claude/Codex supervision",
+    description: "Choose whether MCP may dispatch SwitchYard as the final project supervisor. The external Claude/Codex client remains final supervisor by default and can delegate bounded sub-supervisors. This is separate from SwitchYard's internal job supervisors and grants no permissions. Existing MCP connections receive changes on their next tool call.",
+    fields: [
+      f("client_supervision.dispatch_final_supervisor", "Allow SwitchYard final project-supervisor dispatch", "bool", "Off by default: Claude/Codex owns final project review, testing and completion. Bounded SwitchYard sub-supervisors remain available. Turn on to permit explicitly project-scoped MCP jobs; you can also explicitly ask your connected model to change this setting."),
+      f("client_supervision.instructions", "Custom supervision instructions", "optText", "Optional human workflow guidance, up to 8000 characters. Explicit user and repository instructions, permissions and budgets retain their authority.", { multiline: true }),
+    ],
+  },
   {
     id: "providers",
     title: "Providers",

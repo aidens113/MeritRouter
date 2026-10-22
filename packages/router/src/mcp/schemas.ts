@@ -30,6 +30,8 @@ export const LabOperationArgumentSchema = open({
 
 /** One task as submit_tasks takes it: the main fields of core/task.ts's WorkerTaskSchema. */
 export const TaskArgumentSchema = open({
+  supervisionScope: z.enum(["subtask", "project"]).optional().describe("Supervisor task authority: defaults subtask, external client owns final project completion. Project requires policy permission."),
+  parentTaskId: z.string().min(1).optional().describe("Existing same-project supervisor parent; children cannot claim project scope."),
   profile: ProfileNameSchema.describe(PROFILE_NAMES.join(" | ")),
   goal: z.string().describe("What the worker must achieve."),
   idempotencyKey: z.string().optional().describe("Resubmitting the same key returns the same task."),
@@ -58,3 +60,10 @@ export const TaskArgumentSchema = open({
   }).optional(),
   routing: open({ tier: TierNameSchema.optional(), endpointId: z.string().optional() }).optional(),
 });
+
+/** Portable typed description; strict runtime validation lives in admin/client-supervision.ts. */
+export const SupervisionPolicyArgumentShape = {
+  dispatch_final_supervisor: z.boolean().optional(),
+  instructions: z.string().max(8000).optional(),
+  reason: z.string().min(1).max(2000).describe("The explicit user's requested policy change and why."),
+};

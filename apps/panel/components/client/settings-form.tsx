@@ -185,6 +185,8 @@ function FieldInput({ field: f, value, error, onChange }: { field: Field; value:
               </option>
             ))}
           </select>
+        ) : f.multiline ? (
+          <textarea id={id} rows={6} value={String(value)} readOnly={f.readOnly} disabled={f.readOnly} onChange={e => onChange(e.target.value)} placeholder={f.placeholder} className="field resize-y font-mono text-[13px]" aria-invalid={Boolean(error)} aria-describedby={`${id}-help`} />
         ) : (
           <input
             id={id}
