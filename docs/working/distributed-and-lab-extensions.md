@@ -117,6 +117,18 @@ not a reason to stop the independently runnable core work. No service was instal
 
 ## Worker Briefs
 
+### Brief: request-operator-recovery-plan (brain_completion)
+- Tier isolated roadmap-process new feature branch named root baseline; scoped design/report only.
+- Read Current State, own request/session authority reports, current RequestReceipts/ProviderCapacity/ledger and admin/project/panel mutation authority patterns. Own reports/request-operator-recovery-plan.md only.
+- Defect/gap: strict uncertain/crash holds block capacity/deletion but no supported operator list/reconcile UI/API. Hold rows lack independently proven host/process-birth liveness; task death/TTL/PID text cannot prove safe remote stop or nonbilling.
+- Design bounded explicit human control workflow with exact request fingerprint/slot nonce/generation, fresh revalidation, auditable operationId+digest replay, active-attempt refusal/drain and no model-accessible generic override.
+- Separate a deliberate risk/control decision from verified provider outcome. Preserve original unknown dispatch evidence/worst-case paid reservation, no refund/inferred nonbilling; releasing local capacity never means remote processing ended.
+- Handle truthful late original usage after override exactly once against original request, never new task incarnation. Do not overwrite unknown with fabricated failed/succeeded receipt or let final accounting callback silently retry HTTP.
+- Coordinate project deletion/private purge/opaque keys with unresolved original transports and late billing. Unknown evidence may require retained minimal accounting/private binding rather than unsafe delete; specify actual achievable guarantees.
+- Need read-only scoped diagnostics, operator action/no-op/conflict/result semantics, authority/UI confirmation, crash/restart/close retention, quota progress and fixed safe public outputs. No raw credentials/request bodies.
+- Prefer no override for fresh active requests; human consent alone cannot supply kernel proof. If safe release requires new durable owner host/birth registration, state exact prerequisite and file partition rather than fake proof.
+- Next migration31 belongs exclusively Compose journal; no source/migration/schema/config/UI/user data/OS/provider changes now.
+- Return concrete bounded first backend/control unit and UI follow-on briefs<=40lines, risks, meaningful fault tests. No implementation/backend completion claim, commits/shared edits.
 ### Brief: linux-browser-fixture-preparation (seed_repair)
 - Tier isolated roadmap-team new feature branch named baseline; owned temporary Linux fixture preparation/report only.
 - Read Current State, own Linux reports and hydrated-browser plan. Own only reports/linux-browser-fixture-preparation.md; no product source/config/migration/shared docs changes.
