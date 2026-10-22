@@ -123,6 +123,22 @@ const globalLessons = (brain: Brain) => {
   return existsSync(dir) ? readdirSync(dir).filter((n) => n.endsWith(".md")) : [];
 };
 
+describe("project brain index", () => {
+  it("links each working document relative to the index, so every link resolves to an existing file", async () => {
+    env = twoProjects();
+    sy = open(env, new FakeProvider());
+    const a = sy.brainFor("alpha");
+    const supA = supervisorOf(sy.brainAccessFor("alpha"), "alpha", ["web"]);
+    await a.createWorkingDoc(supA, actorOf("alpha"), "launch", { title: "Alpha launch", statusDetail: "started", owner: "supervisor", scope: "launch alpha", currentState: "Under way." });
+    await a.regenerateIndex(actorOf("alpha"));
+    const index = readFileSync(path.join(a.root, "projects", "alpha", "README.md"), "utf8");
+    const links = [...index.matchAll(/\]\(([^)]+)\)/g)].map((m) => m[1]!);
+    expect(links).toEqual(["working/launch.md"]);
+    // Resolved against the index's folder, as the panel and any markdown viewer do.
+    for (const l of links) expect(existsSync(path.join(a.root, "projects", "alpha", l))).toBe(true);
+  });
+});
+
 describe("project brain isolation (D4)", () => {
   it("a supervisor of one project reads its project and global/, never another project's working documents", async () => {
     env = twoProjects();
