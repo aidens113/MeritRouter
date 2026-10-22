@@ -38,7 +38,9 @@ independently passed51/51 (648ms). Both are local prerequisites; runtime is disa
 mutation, durable container ownership and real-engine acceptance remain open. Browser hydration design
 is [reviewed](distributed-and-lab-extensions/reports/hydrated-browser-plan.md): flags/CDP alone
 do not prove before-contact denial of every transport. Pipe/capability H1 independently passed26/26 (1.12s) and is merged locally; no accepted network isolation adapter exists on this Windows host, so hydrated
-runtime cannot yet be enabled. No OS services/firewall/Docker activation authorized.
+runtime cannot yet be enabled. No OS services/firewall/Docker activation authorized. Read-only follow-up found a usable Ubuntu
+WSL2 host: root unshare --net true succeeded; Linux Node/Chrome fixture tools remain absent.
+Native Linux isolation investigation is active without host configuration changes.
 
 Next R2 request-admission-protocol is ready for serial source dispatch after the accepted
 local lifecycle merge. It carries strict LeaseRef into Gate/batch/classifier, durable request
@@ -110,6 +112,20 @@ not a reason to stop the independently runnable core work. No service was instal
    A two-process SQLite test is useful E7 evidence, but is not two-host PostgreSQL acceptance.
 
 ## Worker Briefs
+
+### Brief: linux-browser-isolation-plan (seed_repair)
+- Tier: isolated roadmap-team report-only design against newly discovered Ubuntu WSL host, not runtime enablement.
+- Read Current State, hydrated-browser-plan.md/H1 reports and browser isolation/pipe/process/network/check contracts as needed.
+- Own only reports/linux-browser-isolation-plan.md. No existing/shared source/docs/config/migrations/user data changes.
+- Root read-only discovery: Ubuntu distro runs Linux6.18.54.1 WSL2 asuid0; unshare --net /bin/true succeeded. /usr/bin/unshare/python3/curl exist. Node/Chrome/LinuxPostgres absent from initial command discovery. Windows Docker CLI is in inherited PATH; do not invoke it. Another registered distro lacks its backing disk; do not repair/reconfigure it.
+- Allowed: bounded read-only Ubuntu capability/library/version queries and short-lived isolated namespace probes that exit immediately. No apt installs/downloads, engine/service/firewall activation, host config changes or distro termination.
+- Goal: concrete first native Linux deny-all browser network adapter + trusted helper unit, using current H1 nominal lease and CDP pipe, positive kernel namespace/process-birth/descendant proof and owner-death cleanup.
+- Account for AF_UNIX/system resolver/portal/DBus and inherited descriptors/env as well as TCP/UDP/DNS/IPv6; a bare netns assertion cannot silently claim all transport isolation if host services can broker traffic.
+- Specify privilege/capability drop and proc/mount namespace policy, exact child containment/handshake before navigation, lease assertion and no stale PID adoption. Preserve artifacts/proof on ambiguous cleanup.
+- Human trusted executable boundary and browser escape limits explicit; no model URLs/evaluate/scripts/config authority. Static compatibility remains unchanged.
+- Plan temporary portable Node/headless Chrome/dependency fixture under owned temp paths without OS service installation; list required primary verified URLs/checksum/version provenance and unresolved dependencies, no downloads now.
+- Define actual zero-contact TCP/UDP/DNS/WS/SW/worker/popup/redirect tests with interception intentionally bypassed; owner crash/FD/profile cleanup and unsupported-host refusal.
+- Return reviewed source partition and <=40line first implementation brief, actual capability observations, risks and exact environment limitations. No code/build/runtime completion claim or commits.
 
 ### Brief: compose-engine-contract (link_completion)
 - Tier: fresh isolated roadmap-labs branch from root baseline named at dispatch; bounded C3 prerequisite, runtime unavailable.
