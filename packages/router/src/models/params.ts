@@ -54,7 +54,7 @@ const round = (n: number) => Math.round(n * 10) / 10;
  */
 export function resolveParams(evidence: ParamEvidence[]): ResolvedParams {
   const hf = evidence.find((e) => e.source === "huggingface" && e.totalB !== null);
-  const heuristics = evidence.filter((e) => (e.source === "name" || e.source === "description") && e.totalB !== null);
+  const heuristics = evidence.filter((e) => (e.source === "name" || e.source === "description" || e.source === "provider") && e.totalB !== null);
   const activeFrom = evidence.find((e) => e.activeB !== null);
   if (hf) {
     return { totalParametersB: round(hf.totalB!), activeParametersB: activeFrom?.activeB ?? null, source: "huggingface", confidence: "exact", evidence };

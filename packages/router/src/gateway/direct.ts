@@ -114,6 +114,9 @@ export async function requestDirect(
   // Native web search under this plan: an always-on model, or a web task's optional search.
   const search = planSearch(ep, d.cfg, req.plan);
   const paid = isPaid(ep) || (search?.charged ?? false);
+  // Server-tool loops can cache growing internal prompts: no finite input-only write bound.
+  const disableCacheWrites = paid && provider.api === "anthropic" && (ep.pricing.cacheWriteInputUsdPerMillion == null || !!search);
+  const requestProvider = disableCacheWrites ? { ...provider, promptCache: "none" as const } : provider;
   const price = { ...endpointPrice(ep.pricing), ...(search ? { perSearch: search.usdPerSearch } : {}) };
   const worst = paid ? worstCaseUsd(estInput, req.chat.max_tokens, price, search?.charged ? search.maxSearches : 0) : 0;
   const creds = rt.credentials().list(provider.id);
@@ -207,7 +210,7 @@ export async function requestDirect(
       try {
         const webSearch = search ? { via: search.via, alwaysOn: search.alwaysOn, maxUses: search.maxUses, maxResults: search.maxResults, ...(search.engine ? { engine: search.engine } : {}) } : null;
         const call: ProviderRequest = {
-          provider,
+          provider: requestProvider,
           credential,
           model: route.model,
           chat,
@@ -245,8 +248,10 @@ export async function requestDirect(
       d.health.recordOutcome(ep.providerId, null, slot.generation);
       // Providers often report a dated variant of the requested model id.
       const served = chatResponse.telemetry.servedModel;
-      const violation =
-        served && served !== route.model && !served.startsWith(`${route.model}-`) && !served.endsWith(`/${route.model}`) ? `requested ${route.model} but ${provider.id} served ${served}` : undefined;
+      const unexpectedWrite = disableCacheWrites && (chatResponse.usage.cacheCreationInputTokens ?? 0) > 0
+        ? `provider ${provider.id} reported ${chatResponse.usage.cacheCreationInputTokens} cache creation tokens despite disabled prompt caching` : undefined;
+      const violation = unexpectedWrite ?? (
+        served && served !== route.model && !served.startsWith(`${route.model}-`) && !served.endsWith(`/${route.model}`) ? `requested ${route.model} but ${provider.id} served ${served}` : undefined);
       d.admission.reconcile(reservation, { kind: "succeeded", response: chatResponse, servedEndpointId: violation ? null : ep.id, ...(violation ? { policyViolation: violation } : {}) });
       if (violation) {
         attempts.push({ endpointId: ep.id, outcome: "policy_violation" });
