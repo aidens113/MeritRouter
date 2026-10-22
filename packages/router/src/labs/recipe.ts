@@ -1,3 +1,4 @@
+import { BrowserCheckSchema } from "./browser-schema.js";
 import { z } from "zod";
 export const LabNameSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,40}$/);
 const Name = LabNameSchema;
@@ -16,7 +17,7 @@ export const LabsConfigSchema = z.object({
 }).strict().refine((c) => c.port_range[0] <= c.port_range[1], "port_range must ascend");
 export type LabsConfig = z.infer<typeof LabsConfigSchema>;
 export const ProjectLabsSchema = z.object({ max_active: z.number().int().min(1).max(100).optional(), promotion: z.enum(["manual", "supervisor", "auto"]).default("manual") }).strict();
-const Check = z.union([Command, z.object({ command: Command, repo: Name.optional(), on_integrate: z.boolean().default(false) }).strict()]);
+const Check = z.union([BrowserCheckSchema, Command, z.object({ command: Command, repo: Name.optional(), on_integrate: z.boolean().default(false) }).strict()]);
 const Ready = z.union([z.object({ http: z.string().min(1).max(2000) }).strict(), z.object({ tcp: Name }).strict()]);
 export const LabRecipeSchema = z.object({
   ports: z.array(Name).max(32).default([]), data: z.array(Name).max(32).default([]),
@@ -52,6 +53,12 @@ export const LabRecipeSchema = z.object({
   };
   for (const name of Object.keys(v.services))
     visit(name, new Set());
+  for (const [name, check] of Object.entries(v.checks)) {
+    if (typeof check !== "string" && "kind" in check && check.kind === "browser") {
+      const service = v.services[check.service];
+      if (!service?.ready || !("http" in service.ready)) ctx.addIssue({code:"custom",path:["checks",name,"service"],message:"browser check must name a declared HTTP service"});
+    }
+  }
   const templates = JSON.stringify(v);
   for (const match of templates.matchAll(/\{(port\.[^{}]+|lab\.[^{}]+|repo\.[^{}]+)\}/g)) {
     const key = match[1]!;
