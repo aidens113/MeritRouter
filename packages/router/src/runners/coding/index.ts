@@ -127,7 +127,7 @@ export class ExternalCodingRunner implements CodingRunner {
     const executionId = ctx.gate.admission.createExecution("task", spec.profile, [{ taskId: ctx.taskId, itemId: ctx.taskId }]);
     // The agent's own tool calls run inside its process: the session sees them only in the
     // transcript it sends with each request, not in the tool journal.
-    ctx.session?.note("external agent built-in tool calls appear in its transcript; SwitchYard MCP checks and budget tools are journaled", { runner: ctx.cfg.coding.runner, executionId });
+    ctx.session?.note("external coding agent: built-in tool calls appear in its transcript; SwitchYard MCP checks and budget tools are journaled", { runner: ctx.cfg.coding.runner, executionId });
     const snapshot = async (served: { endpointId: string; requestId: string } | null, note: string) => {
       const actor = served ? { ...workerActor(ctx, "implementer", served.endpointId), request: served.requestId } : { ...workerActor(ctx, "implementer"), role: "tool" };
       pointer.setHead(alias, await commitAs(ws.worktreePath, actor, `implementer: ${note}`).catch(() => null));

@@ -32,6 +32,12 @@ L2/L3 and panel work active; Windows process identity/orphan cleanup is receivin
 Durable integration mutex190e98b independently5/5 and deletion races4d9099c independently9/9
 are merged locally. Reported blank Verification source fixed pending browser acceptance;
 model-history link404 reproduced and fix underway (current exact reported URL reads200).
+L2/L3 is now merged at002515e; supervisor20/20 focused tests pass. Historical model links
+fixed atb5d0723; Team metrics hint selectors are scoped to their own trigger at9e23fb6.
+Integrated typecheck passes; first full run686/691 exposed an MCP schema portability defect,
+stale tool-count expectations and an external session-note prefix regression. Repairs are
+underway; no passing full-suite claim. L4 production acceptance is active. L5 static browser
+checks have a bounded isolated worker brief; R2 async storage inventory is active.
 Whole integrated checks and push remain pending. No whole-roadmap completion claim.
 
 ## Execution phases
@@ -53,6 +59,17 @@ HTTP/API routes and headless Chrome desktop/phone light/dark captures. Only comp
 passing units reach dev/main. Documentation and source commit together.
 
 ## Worker Briefs
+
+### Brief: distributed-storage-inventory
+- Repository: `.claude/worktrees/roadmap-process`; read-only source investigation while integrated root acceptance runs. Existing uncommitted supervisor config files must remain untouched.
+- Task: produce an executable R2 asynchronous persistence migration brief from actual source, not a generic design. Read distributed-and-lab-extensions.md in root read-only if absent here, task claims/service/admission/session/artifact/coordination boundaries and relevant callers.
+- Owns: only `docs/working/roadmap-completion/reports/distributed-storage-inventory.md`. Do not edit code, manifests, shared documents, branches or generated files; no commits/push.
+- Required output: inventory direct SQLite users grouped by subsystem, transaction boundaries that must remain atomic, concrete async interface signatures and staged file partitions. Identify the smallest genuinely integrated first slice (not unused adapter scaffolding), its callers, compatibility migration and acceptance tests.
+- Include worker-host affinity and lease fencing dependencies; distinguish synchronous public API compatibility from backend-safe async work. No process-per-query emulation or shared network SQLite.
+- Inspect available PostgreSQL fixture options without installation or starting OS services; downloads/container starts not in this brief. No user data/real providers. Report actual tool availability and commands, do not claim multi-host verification from local two-process tests.
+- Return concise recommendation for next implementation partition with exact owned files and API contract; supervisor owns scope/integration and will independently verify.
+
+
 
 ### Brief: team-correctness
 - Repository: .claude/worktrees/roadmap-team, feat/roadmap-team, isolated from root validation.
@@ -198,6 +215,13 @@ passing units reach dev/main. Documentation and source commit together.
 - User steering: model detail links reported404 and task Verification tab empty. Root read exact reported model URL successfully200/correcth1/no404 marker; client behavior remains under isolated browser investigation. Verification source had an unconditional empty return when all persisted metadata absent; removed so explanations render. Browser regression is required before calling it fixed.
 - Outcome: Partial
 - Follow-up: accept L2/L3 after process identity fix and scripted job/brain ledger regression, merge into panel tree with real insights exports, then production/browser and frozen integrated checks. E8 remains architecture-only; no whole-roadmap or live-provider completion claim.
+
+### 2026-10-22 - Integrated suite exposed MCP contract gaps
+- Agent: supervisor
+- Changed: portable descriptive Lab operation MCP schema retains unknown fields for strict runtime validation; updated tool inventory assertions for four new tools; restored external coding session-note prefix.
+- Validation: first integrated full suite686/691(77files,372.58s); exact failures were MCP operation oneOf/no-type portability, three stale36-tool assertions and session-note prefix. After repairs router build, recursive typecheck and focused MCP/session16/16(16.77s) pass, including invalid operation field/missing check name regressions.
+- Outcome: Partial
+- Follow-up: repeat full suite before push; L4 production/browser acceptance active in isolated tree. L5 static-render browser checks and concrete R2 persistence inventory dispatched with written briefs; neither completes its full future phase.
 
 ## Open Questions
 

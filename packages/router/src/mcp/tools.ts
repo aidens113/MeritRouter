@@ -13,7 +13,7 @@ import { SessionStatusSchema } from "../sessions/events.js";
 import { ensurePanel, panelUrl, revivePanel } from "../operations/panel.js";
 import type { LabManager } from "../labs/lab.js";
 import { LabOperationInputSchema } from "../labs/control.js";
-import { TaskArgumentSchema } from "./schemas.js";
+import { LabOperationArgumentSchema, TaskArgumentSchema } from "./schemas.js";
 
 /** What every connection's server shares: the service, its config, and the project it serves. */
 export interface McpContext {
@@ -282,7 +282,7 @@ export function buildMcpServer({ sy, cfg, project }: McpContext): McpServer {
   // Mutations are durable requests; the explicit labs serve owner executes them.
   const labs = () => (sy as Switchyard & {labs:LabManager}).labs;
   server.registerTool("lab_status", {title:"Lab status",description:"Declared services, checks and exact lab revisions; secrets omitted.",inputSchema:{name:z.string(),...projectInput}},async(a)=>{try{return json(labs().publicStatus(scope(a.project),a.name));}catch(e){return fail(e);}});
-  server.registerTool("lab_control", {title:"Request lab lifecycle operation",description:"Persist a lifecycle request for the current labs serve owner. Does not start a model worker. Poll lab_operation for completion.",inputSchema:{name:z.string(),operation:LabOperationInputSchema,...projectInput}},async(a)=>{try{const p=scope(a.project);const op=labs().requestControl(p,a.name,a.operation,"human:mcp");return json(labs().publicOperation(p,a.name,op.id));}catch(e){return fail(e);}});
+  server.registerTool("lab_control", {title:"Request lab lifecycle operation",description:"Persist a lifecycle request for the current labs serve owner. Does not start a model worker. Poll lab_operation for completion.",inputSchema:{name:z.string(),operation:LabOperationArgumentSchema,...projectInput}},async(a)=>{try{const p=scope(a.project);const op=labs().requestControl(p,a.name,LabOperationInputSchema.parse(a.operation),"human:mcp");return json(labs().publicOperation(p,a.name,op.id));}catch(e){return fail(e);}});
   server.registerTool("lab_operation", {title:"Lab operation status",description:"Read a scoped lifecycle request without exposing command or environment details.",inputSchema:{name:z.string(),id:z.string(),...projectInput}},async(a)=>{try{return json(labs().publicOperation(scope(a.project),a.name,a.id));}catch(e){return fail(e);}});
   server.registerTool("lab_logs", {title:"Lab service logs",description:"Read bounded local service logs.",inputSchema:{name:z.string(),service:z.string(),tail:z.number().int().min(1).max(1000).optional(),...projectInput}},async(a)=>{try{return json({logs:labs().logs(scope(a.project),a.name,a.service,a.tail)});}catch(e){return fail(e);}});
   // ---------- jobs (standalone supervisor) ----------

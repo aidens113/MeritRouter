@@ -74,6 +74,19 @@ not a reason to stop the independently runnable core work. No service was instal
    reservation, model response, journal persistence and integration; compare durable evidence.
    A two-process SQLite test is useful E7 evidence, but is not two-host PostgreSQL acceptance.
 
+## Worker Briefs
+
+### Brief: labs-browser
+- Repository: `.claude/worktrees/roadmap-labs`, branch `feat/roadmap-labs-browser`, baseline e99da6b; isolated from ongoing core/panel acceptance.
+- Task: implement L5 declared browser checks only; ephemeral task labs and Compose remain subsequent units. Read Current State and L5 sequence above, labs recipe/check/http ownership implementation and focused tests.
+- Owns: labs recipe/check/browser implementation and necessary labs integration files; new browser-check tests/fixtures; own report `distributed-and-lab-extensions/reports/labs-browser.md`.
+- Must not touch: panel, core service/executor, CLI, config/project schemas, migrations, package manifests, public exports or shared working docs. Ask supervisor for necessary cross-boundary changes. No commits/push, real providers or user install.
+- Contract: human recipe chooses browser executable/service/path, bounded viewport/time/artifact sizes and assertions; models select declared check name only. Existing command checks remain backwards compatible. Validate inputs and stored evidence with zod.
+- Security: positively prove current owned listener before/after; enforce loopback service origin for navigation and subresources, refuse redirects/requests to other origins (including browser network side channels where feasible); no arbitrary evaluate/script action from model. Do not equate URL string validation with browser network containment. Fail closed if browser interception cannot enforce the declared boundary.
+- Capture exact checked heads, bounded screenshot artifact references plus console/page errors; redact configured secrets, avoid model-visible host paths/commands. Cleanup owned Chrome/profile/listeners on timeout/cancel/error. Keep raw pixels outside public status/logs.
+- Acceptance: actual installed Chrome isolated fixture pass/assertion failure; foreign port rebound, cross-origin redirect/subresource denial; bounded output/screenshots and cancellation cleanup; existing Lab check tests. Record any browser containment limitation candidly and do not silently widen trust.
+- Verification: own narrow tests/typecheck in this isolated tree, report exact results, then freeze for supervisor review. Do not run Next build. Worker never edits this brief/current state/ledger.
+
 ## Work Ledger
 
 ### 2026-10-22 - Follow-on prerequisites inspected
