@@ -1,7 +1,7 @@
 # Budget control: supervisor-set budgets and requests for more
 
 Status: Active
-Status detail: Plan written 2026-10-21 at the user's request; B1 dispatched.
+Status detail: B1 done and merged 2026-10-22 (7f8d2df); B2 (panel) not started; not yet run live.
 Created: 2026-10-21
 Last updated: 2026-10-21
 Owner: Senior supervisor agent
@@ -29,7 +29,20 @@ remaining requests (`team.child_budget_share`, `job_budget_carves`); a contract'
 when the task starts. Workers already ask supervisors for brain access (`brain_request_access`,
 `brain_access_requests`, `brain_decide_request`), the pattern this plan reuses.
 
-**Next steps:** B1 (worker budget-control-b1).
+**Done (B1, merged 7f8d2df, report `reports/budget-control-b1.md`):** job request pool with
+`max_requests` on briefs (default: the tier cap held from the pool), `team.supervisor_reserve_requests`
+(4), `request_more_budget` with supervisor / auto / human decisions (MCP `budget_requests`,
+`decide_budget_request`; CLI `switchyard budget`), delegate-only supervisors
+(`supervisor.implementation: delegate`, `coordination_paths`, brief `shared_files`, conflict files),
+`run_check` for implementers' declared checks (`coding.max_check_runs_per_task` 20). Presets:
+supervise 1000. Supervisor accepted the worker's three choices (held default, 1000, reserve 4).
+Validation: worker 587 tests; supervisor reviewed the edit gate and run_check, merged dev into the
+branch, 587 passed, `pnpm -r build` and typecheck pass on dev.
+
+**Not verified:** a live job; the CLI `budget` command run; MCP budget tools over a transport;
+OpenCode/command runners lack the new tools; `**/*.md` coordination paths may be wider than wanted.
+
+**Next steps:** B2 after panel v2 lands; a live team job.
 
 **Blockers:** none.
 

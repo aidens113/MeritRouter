@@ -541,6 +541,15 @@ export const SupervisorConfigSchema = z
     branch_prefix: z.string().regex(/^[A-Za-z0-9._/-]+$/).default("switchyard/job-"),
     /** How long ask_user waits for an answer before the job pauses as interrupted. */
     question_timeout_seconds: z.number().int().positive().default(86_400),
+    /**
+     * delegate (default): the supervisor's edit tools may change only coordination files (paths
+     * matching `coordination_paths`, files a brief names in `shared_files`, and files of an
+     * integration conflict it fixes); any other edit is refused, so implementation goes to
+     * workers. allowed: the supervisor may edit anything in its integration worktree.
+     */
+    implementation: z.enum(["delegate", "allowed"]).default("delegate"),
+    /** Globs (repository-relative) a delegating supervisor may always edit: shared docs and interface notes. */
+    coordination_paths: z.array(z.string().min(1)).default(["**/*.md", "docs/**"]),
   })
   .strict();
 export type SupervisorConfig = z.infer<typeof SupervisorConfigSchema>;
@@ -561,6 +570,26 @@ export const TeamConfigSchema = z
     max_depth: z.number().int().min(1).max(5).default(2),
     /** Share of the parent's remaining request budget a sub-supervisor is given (and the parent loses while it runs). */
     child_budget_share: z.number().gt(0).max(1).default(0.5),
+    /**
+     * Request budget of a delegated worker task whose brief sets no `max_requests` (it becomes the
+     * task's budget.maxModelRequests). Unset: the execution cap at the brief's tier (the profile,
+     * tier, and per-task caps), and the task keeps its usual verification reserves.
+     */
+    default_task_requests: z.number().int().positive().optional(),
+    /** Requests of a job's budget new delegations may never take: kept for the supervisor's own turns. */
+    supervisor_reserve_requests: z.number().int().min(0).default(4),
+    /**
+     * Who decides a worker's request for more model requests (request_more_budget): the job's
+     * supervisor (top-level tasks: the external supervisor over MCP, or a person), auto (granted
+     * while the job's pool has room, up to auto_grant_max), or human (the panel or the CLI).
+     */
+    budget_approver: z.enum(["supervisor", "auto", "human"]).default("supervisor"),
+    /** How long a worker waits (without model requests) for a decision on its request. */
+    budget_request_wait_seconds: z.number().int().positive().max(86_400).default(300),
+    /** Requests for more budget one task may make (0: workers are not offered request_more_budget). */
+    max_budget_requests_per_task: z.number().int().min(0).max(20).default(3),
+    /** Most requests the auto approver grants per request. */
+    auto_grant_max: z.number().int().positive().default(30),
     /** Posts one worker task may make to its job's team channel. */
     channel_max_posts_per_task: z.number().int().min(1).max(1000).default(10),
     /** Posts a job's supervisor may make to its own job's team channel. */
@@ -601,6 +630,8 @@ export const CodingConfigSchema = z
     allow_repo_agent_config: z.boolean().default(false),
     /** Stop the agent after this many consecutive denied model requests. */
     max_denied_requests: z.number().int().positive().default(3),
+    /** Runs of the task's declared checks (run_check) one coding task may make before submitting. */
+    max_check_runs_per_task: z.number().int().min(0).default(20),
     /** Files whose modification blocks a "met" acceptance status (tests, evaluators). */
     protected_paths: z.array(z.string()).default(["**/*.test.*", "**/*.spec.*", "**/test/**", "**/tests/**", "**/__tests__/**"]),
   })

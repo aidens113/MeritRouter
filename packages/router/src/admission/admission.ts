@@ -9,6 +9,7 @@ import { AdmissionDenied } from "../core/errors.js";
 import type { ChatResponse } from "../gateway/types.js";
 import { actualUsd, type PaidSpend, type SpendKey, type TokenPrice } from "../paid/spend.js";
 import { projectLimits } from "../projects/schema.js";
+import { workerHeld } from "./job-pool.js";
 
 /** Effective per-task limits: task budgets may narrow configured policy, never widen it. */
 export interface EffectiveBudget {
@@ -100,6 +101,14 @@ export function carvedRequests(db: Db, parentTaskId: string, depth = 0): number 
   let total = 0;
   for (const r of rows) total += TERMINAL_TASK_STATES.has(r.state) ? Math.min(r.requests, requestsCharged(db, r.child) + carvedRequests(db, r.child, depth + 1)) : r.requests;
   return total;
+}
+
+/**
+ * Everything a job's budget holds for others: its sub-supervisors' carves and its worker tasks'
+ * grants (budget control D2; see admission/job-pool.ts). Its own requests come on top.
+ */
+export function heldRequests(db: Db, jobId: string): number {
+  return carvedRequests(db, jobId) + workerHeld(db, jobId);
 }
 
 /**
@@ -313,12 +322,12 @@ export class Admission {
         if (deadline !== null && now >= deadline) throw new AdmissionDenied("deadline_exceeded", `task ${p.taskId} passed its deadline`, undefined, p.taskId);
 
         const used = this.taskTotals(p.taskId);
-        // A job's budget also covers what it carved for its sub-supervisors.
-        const carved = carvedRequests(this.db, p.taskId);
-        if (used.requests + carved + 1 > p.budget.maxModelRequests) {
+        // A job's budget also covers what its sub-supervisors and worker tasks hold (one pool).
+        const held = heldRequests(this.db, p.taskId);
+        if (used.requests + held + 1 > p.budget.maxModelRequests) {
           throw new AdmissionDenied(
             "task_request_budget_exhausted",
-            `task ${p.taskId} used ${used.requests}/${p.budget.maxModelRequests} model requests${carved ? ` (plus ${carved} carved for sub-supervisors)` : ""}`,
+            `task ${p.taskId} used ${used.requests}/${p.budget.maxModelRequests} model requests${held ? ` (plus ${held} held by its delegated tasks)` : ""}`,
             undefined,
             p.taskId,
           );

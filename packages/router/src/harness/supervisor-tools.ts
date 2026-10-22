@@ -6,7 +6,11 @@ import { AWAITING_ACCEPTANCE, TaskStore } from "../storage/tasks.js";
 import type { RunContext } from "../runners/types.js";
 import { IMPORTANCE_LEVELS, MIN_CHILD_REQUESTS, PROFILE_NAMES, maxAgentsPerJob, type Importance } from "../config/schema.js";
 import { ARTIFACT_REF_RE } from "../core/task.js";
-import { carvedRequests, childRequestBudget, recordCarve } from "../admission/admission.js";
+import { childRequestBudget, heldRequests, recordCarve } from "../admission/admission.js";
+import { grantOf, recordGrant } from "../admission/job-pool.js";
+import { defaultTaskGrant } from "../admission/budget-requests.js";
+import { grantBriefs, pendingBudgetLines, supervisorAsked, supervisorBudgetTools } from "./budget-tools.js";
+import { SHARED_FILES_EVENT, sharedFilesArg } from "./coordination-edits.js";
 import type { MergeHooks, MergeQueue } from "../workspaces/merge-queue.js";
 import { git } from "../workspaces/git.js";
 import { blame, commitsMatching, commitsOfTasks, revertCommits, undoLines, type Actor, type UndoHook } from "../attribution/index.js";
@@ -44,6 +48,8 @@ export interface SupervisorState {
   depth?: number;
   /** A sub-job's own section of its parent's working document (null or absent for a top-level job). */
   docSection?: string | null;
+  /** Files this job's briefs named as shared (interface contracts, docs): the supervisor may edit them. */
+  sharedFiles?: Set<string>;
 }
 
 /** Marker before a sub-job's own status in its section (the brief above it is the parent's). */
@@ -163,6 +169,8 @@ function briefProperties(allowSupervise: boolean): Record<string, unknown> {
     importance: { type: "string", enum: [...IMPORTANCE_LEVELS], description: "how much the result matters (default normal); raises verification, never difficulty" },
     importance_reason: { type: "string", description: "why; required for high and critical" },
     depends_on: { type: "array", items: { type: "string" }, description: "labels of tasks this one needs first (in this call, or dispatched earlier); it starts once they finish and sees their results" },
+    max_requests: { type: "integer", minimum: 1, description: "the task's model request budget, held from your job's budget while it runs (default: team.default_task_requests, else its tier's cap); it must fit in what your job has left. Workers can ask you for more." },
+    shared_files: { type: "array", items: { type: "string" }, description: "repository-relative files you maintain yourself for the workers (interface contracts, shared docs such as INTERFACES.md); you may edit these, workers read them" },
     brain_grants: { type: "array", items: { type: "object", properties: { pattern: { type: "string" }, mode: { type: "string", enum: ["read", "append"] } } } },
   };
 }
@@ -236,15 +244,19 @@ async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, un
   const depIds = (it: Record<string, unknown>) =>
     ((it.depends_on as string[] | undefined) ?? []).map((l) => s.children.get(slug(l)) ?? ids.get(slug(l)) ?? (s.children.has(l) ? s.children.get(l)! : l));
 
-  // Sub-supervisors: the depth limit, then a budget carved from what this job has left.
+  // Worker budgets (budget control D1): each new worker task is granted a request budget, held
+  // from this job's pool while it is open; together they must fit in what the job has left.
   const team = s.ctx.cfg.team;
+  const { grants, total: granting } = grantBriefs(s.db, s.ctx.cfg, jobId, fresh.filter((x) => x.it.profile !== "supervise"));
+
+  // Sub-supervisors: the depth limit, then a budget carved from what this job has left.
   const subs = fresh.filter((x) => x.it.profile === "supervise");
   const carves = new Map<string, { requests: number; remaining: number }>();
   if (subs.length) {
     const depth = depthOf(s);
     if (!maySupervise(s)) throw new Error(`${subs[0]!.label}: sub-supervisors are limited to team.max_depth ${team.max_depth}; this job is at depth ${depth}, so delegate workers instead`);
     const used = s.ctx.gate.admission.taskTotals(jobId).requests;
-    let carved = carvedRequests(s.db, jobId);
+    let carved = heldRequests(s.db, jobId) + granting;
     for (const { label } of subs) {
       const c = childRequestBudget({ parentCap: s.ctx.budget.maxModelRequests, parentUsed: used, carved, share: team.child_budget_share, min: MIN_CHILD_REQUESTS });
       if (!c) throw new Error(`${label}: not enough request budget left for a sub-supervisor (${Math.max(0, s.ctx.budget.maxModelRequests - used - carved)} remaining, share ${team.child_budget_share}, at least ${MIN_CHILD_REQUESTS} needed); delegate workers instead`);
@@ -281,16 +293,20 @@ async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, un
     for (const c of checks) s.briefChecks.add(c);
     const deps = depIds(it);
     const carve = carves.get(label);
+    const grant = grants.get(label);
+    const shared = sharedFilesArg(it);
     const artifactRefs = (opts.artifactRefs?.[label] ?? []).filter((r) => ARTIFACT_REF_RE.test(r));
     return {
       label,
       sub,
       carve,
+      grant,
+      shared,
       brief: formatBrief({
         label,
         repository: writable ?? repos.join(", "),
-        task: `${String(it.profile)}: ${String(it.goal)}`,
-        requiredReads: ((it.file_refs as string[] | undefined) ?? []).join(", ") || "as needed",
+        task: `${String(it.profile)}: ${String(it.goal)}${grant ? ` (request budget ${grant.requests})` : ""}`,
+        requiredReads: [...((it.file_refs as string[] | undefined) ?? []), ...shared.map((f) => `${f} (shared, kept by the supervisor)`)].join(", ") || "as needed",
         owns: sub ? `its own job branch ${s.ctx.cfg.supervisor.branch_prefix}${ids.get(label)!}, forked from this job's branch` : ((it.allowed_paths as string[] | undefined) ?? []).join(", ") || "nothing (read-only)",
         mustNotTouch: ((it.must_not_touch as string[] | undefined) ?? []).join(", ") || "everything else",
         done: `${((it.acceptance_criteria as string[] | undefined) ?? []).join("; ")}${checks.length ? `; checks: ${checks.join(", ")}` : ""}`,
@@ -311,7 +327,7 @@ async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, un
         ...(it.importance ? { importance: it.importance } : {}),
         ...(it.importance_reason ? { importanceReason: it.importance_reason } : {}),
         ...(deps.length ? { dependsOn: deps } : {}),
-        ...(carve ? { budget: { maxModelRequests: carve.requests } } : {}),
+        ...(carve ? { budget: { maxModelRequests: carve.requests } } : grant?.setBudget ? { budget: { maxModelRequests: grant.requests } } : {}),
         brain: { effort: s.ctx.effort, ...(it.brain_grants ? { grants: it.brain_grants } : {}) },
       } as Record<string, unknown>,
     };
@@ -341,12 +357,18 @@ async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, un
     // Recorded after the submission (the carve names the task); a crash in between is repaired
     // when the job resumes (see ensureCarves).
     if (sp.carve) recordCarve(s.db, { childTaskId: o.taskId, parentTaskId: jobId, requests: sp.carve.requests, parentRemaining: sp.carve.remaining, share: team.child_budget_share, depth: depthOf(s) + 1 }, Date.now());
+    if (sp.grant) recordGrant(s.db, { taskId: o.taskId, jobId, requests: sp.grant.requests, source: sp.grant.source }, Date.now());
+    if (sp.shared.length) {
+      for (const f of sp.shared) (s.sharedFiles ??= new Set()).add(f);
+      s.ctx.tasks.event(jobId, SHARED_FILES_EVENT, { label: sp.label, taskId: o.taskId, files: sp.shared });
+    }
   });
   const submitted = new Map(out.map((o, i) => [specs[i]!.label, o]));
   const lines = labels.map((label) => {
     const o = submitted.get(label);
     const carve = carves.get(label);
-    if (o) return `${label} -> ${o.taskId} (${o.state}${o.deduplicated ? ", already submitted" : ""})${carve ? `; sub-supervisor with ${carve.requests} requests on branch ${s.ctx.cfg.supervisor.branch_prefix}${o.taskId}` : ""}`;
+    const grant = grants.get(label);
+    if (o) return `${label} -> ${o.taskId} (${o.state}${o.deduplicated ? ", already submitted" : ""})${carve ? `; sub-supervisor with ${carve.requests} requests on branch ${s.ctx.cfg.supervisor.branch_prefix}${o.taskId}` : ""}${grant ? `; budget ${grant.requests} requests` : ""}`;
     const id = s.children.get(label)!;
     return `${label} -> ${id} (${svc.getTask(id)?.state ?? "unknown"}, already submitted)`;
   });
@@ -415,8 +437,15 @@ export function ensureCarves(s: SupervisorState): void {
   const tasks = new TaskStore(s.db);
   for (const id of s.children.values()) {
     const t = tasks.get(id);
-    const requests = t?.spec.profile === "supervise" ? t.spec.budget?.maxModelRequests : undefined;
-    if (requests) recordCarve(s.db, { childTaskId: id, parentTaskId: s.ctx.taskId, requests, parentRemaining: null, share: s.ctx.cfg.team.child_budget_share, depth: depthOf(s) + 1 }, Date.now());
+    if (!t) continue;
+    if (t.spec.profile === "supervise") {
+      const requests = t.spec.budget?.maxModelRequests;
+      if (requests) recordCarve(s.db, { childTaskId: id, parentTaskId: s.ctx.taskId, requests, parentRemaining: null, share: s.ctx.cfg.team.child_budget_share, depth: depthOf(s) + 1 }, Date.now());
+    } else if (!grantOf(s.db, id)) {
+      // A worker's grant (budget control D1): its explicit budget, else the default it was given.
+      const explicit = t.spec.budget?.maxModelRequests;
+      recordGrant(s.db, { taskId: id, jobId: s.ctx.taskId, requests: explicit ?? defaultTaskGrant(s.ctx.cfg, t.spec.profile, t.spec.hints?.difficulty ?? null), source: explicit ? "supervisor" : "default" }, Date.now());
+    }
   }
 }
 
@@ -579,18 +608,19 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
       },
     ),
 
-    tool("await_tasks", "none", "Wait (without model requests) until the given tasks, or all of this job's active tasks, finish or the timeout passes. Returns early when everything still open waits for you to accept or reject an upstream result. Returns compact results.", { task_ids: { type: "array", items: { type: "string" } }, timeout_seconds: { type: "integer" } }, [], async (a) => {
+    tool("await_tasks", "none", "Wait (without model requests) until the given tasks, or all of this job's active tasks, finish or the timeout passes. Returns early when everything still open waits for you to accept or reject an upstream result, and when a worker asks you for more model requests (decide it with decide_budget_request). Returns compact results.", { task_ids: { type: "array", items: { type: "string" } }, timeout_seconds: { type: "integer" } }, [], async (a) => {
       const ids = Array.isArray(a.task_ids) && a.task_ids.length ? (a.task_ids as string[]).map((x) => ownTask(s, x)) : [...s.children.values()];
       if (!ids.length) return "no tasks dispatched yet";
       const until = Date.now() + Math.min(Number(a.timeout_seconds) || 1800, 3600) * 1000;
-      // Wait in slices: a dependent waiting on this supervisor's acceptance would otherwise hold
-      // the wait until the timeout while nothing else can happen.
+      // Wait in slices: a dependent waiting on this supervisor's acceptance, or a worker waiting on
+      // its budget request, would otherwise hold the wait until the timeout.
       let r: Awaited<ReturnType<typeof svc.awaitResults>>;
       for (;;) {
         r = await svc.awaitResults(ids, { timeoutSeconds: Math.max(1, Math.min(3, Math.ceil((until - Date.now()) / 1000))), signal: s.ctx.signal, uncapped: true });
-        if (!r.pending.length || Date.now() >= until || s.ctx.signal.aborted || blockedOnAcceptance(s, r.pending)) break;
+        if (!r.pending.length || Date.now() >= until || s.ctx.signal.aborted || blockedOnAcceptance(s, r.pending) || supervisorAsked(s.db, jobId)) break;
       }
-      return cap([...r.completed.map((c) => summarizeResult(c.taskId, s)), ...r.pending.map((p) => {
+      const budget = pendingBudgetLines(s.db, s.ctx.cfg, jobId);
+      return cap([...budget, ...r.completed.map((c) => summarizeResult(c.taskId, s)), ...r.pending.map((p) => {
         const why = stateReason(s, p.taskId);
         return `${p.taskId}: still ${p.state}${why && why !== "resumed" ? ` (${why}${why.startsWith(AWAITING_ACCEPTANCE) ? "; accept_task or reject_task the upstream result" : ""})` : ""}`;
       })].join("\n"));
@@ -635,6 +665,8 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
     ),
 
     ...integrationTools(s, seamOf(s)),
+
+    ...supervisorBudgetTools(jobId),
 
     tool("run_check", "command", "Run a check command in the job's integration worktree (commands from your briefs' checks or the supervisor allowlist).", { command: { type: "string" }, repository: { type: "string" } }, ["command"], async (a) => {
       const repo = repoFor(s, a.repository);

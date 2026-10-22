@@ -614,6 +614,7 @@ export * from "./dashboards.js";
 export * from "./project-settings.js";
 // Global knowledge (D9): global entries with provenance, promotions awaiting a person, reverts.
 export * from "./promotions.js";
+export * from "./budget.js";
 // Team-vs-single comparisons (recorded by the qualification comparison runner).
 export { comparisons, comparison, type ComparisonRecord, type ComparisonResult, type ComparisonRunRecord, type MetricsSnapshot } from "../qualification/comparison.js";
 // The reserved `_qualification` project's tasks and eval comparisons (the panel's /all/qualification).

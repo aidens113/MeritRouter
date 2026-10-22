@@ -766,4 +766,42 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE model_requests ADD COLUMN web_search_requests INTEGER;
   ALTER TABLE model_requests ADD COLUMN web_citations_json TEXT;
   `,
+  // Budget control (docs/working/budget-control.md): the request budget a supervisor granted each
+  // worker task it delegated (held from the job's pool while the task is open), and workers'
+  // requests for more model requests with their decisions.
+  `
+  CREATE TABLE task_request_grants (
+    task_id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL,
+    requests INTEGER NOT NULL,
+    source TEXT NOT NULL CHECK (source IN ('supervisor', 'default')),
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX task_request_grants_job ON task_request_grants(job_id);
+  CREATE TABLE budget_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL,
+    job_id TEXT,
+    project_id TEXT NOT NULL DEFAULT '',
+    role TEXT NOT NULL,
+    requests INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    used INTEGER NOT NULL,
+    cap INTEGER NOT NULL,
+    approver TEXT NOT NULL CHECK (approver IN ('supervisor', 'external', 'auto', 'human')),
+    status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'denied', 'expired')),
+    granted INTEGER NOT NULL DEFAULT 0,
+    decided_by TEXT,
+    decision_reason TEXT,
+    created_at INTEGER NOT NULL,
+    decided_at INTEGER
+  );
+  CREATE INDEX budget_requests_task ON budget_requests(task_id, status);
+  CREATE INDEX budget_requests_job ON budget_requests(job_id, status);
+  CREATE INDEX budget_requests_project ON budget_requests(project_id, status, created_at);
+  CREATE TRIGGER budget_requests_project AFTER INSERT ON budget_requests WHEN NEW.project_id = ''
+  BEGIN
+    UPDATE budget_requests SET project_id = COALESCE((SELECT project_id FROM tasks WHERE id = NEW.task_id), '') WHERE id = NEW.id;
+  END;
+  `,
 ];
