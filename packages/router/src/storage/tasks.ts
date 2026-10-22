@@ -26,6 +26,7 @@ export interface TaskRow {
   lease_owner: string | null;
   lease_expires_at: number | null;
   run_count: number;
+  lease_incarnation: string;
   cancel_requested: number;
   next_attempt_at: number | null;
   /** `<project>/<alias>` (see `repoKey`); a bare alias only for rows written without a project. */
@@ -123,6 +124,9 @@ export class TaskStore {
     readonly db: Db,
     private readonly now: () => number = Date.now,
   ) {}
+
+  /** Local authoritative clock, shared by the SQLite lifecycle adapter. */
+  serverNow(): number { return this.now(); }
 
   private hydrate(row: TaskRow): StoredTask {
     return {
@@ -535,12 +539,12 @@ export class TaskStore {
   }
 
   /** SQLite dispatch authority after an asynchronous claim; never run a stale attempt. */
-  dispatchable(id: string, owner: string, runCount: number): StoredTask | undefined {
+  dispatchable(id: string, owner: string, runCount: number, incarnation?: string, project?: string): StoredTask | undefined {
     const task = this.get(id);
     if (!task) return undefined;
     const row = task.row, now = this.now();
     return row.state === "running" && !row.cancel_requested && row.lease_owner === owner &&
-      row.run_count === runCount && (row.lease_expires_at ?? 0) > now &&
+      row.run_count === runCount && (incarnation === undefined || row.lease_incarnation === incarnation) && (project === undefined || row.project_id === project) && (row.lease_expires_at ?? 0) > now &&
       (row.deadline_at === null || row.deadline_at > now) ? task : undefined;
   }
 
@@ -648,12 +652,12 @@ export class TaskStore {
    * Expired leases mean the worker process died. Mark those tasks interrupted (cancelled if a
    * cancellation was pending). Interrupted tasks are not replayed automatically here.
    */
-  recoverExpiredLeases(): string[] {
+  recoverExpiredLeases(limit = Number.MAX_SAFE_INTEGER, serverNow?: number): string[] {
     return immediate(this.db, () => {
-      const now = this.now();
+      const now = serverNow ?? this.now();
       const rows = this.db
-        .prepare("SELECT * FROM tasks WHERE state IN ('running','cancel_requested') AND lease_expires_at <= ?")
-        .all(now) as TaskRow[];
+        .prepare("SELECT * FROM tasks WHERE state IN ('running','cancel_requested') AND lease_expires_at <= ? ORDER BY rowid LIMIT ?")
+        .all(now, limit) as TaskRow[];
       for (const row of rows) {
         if (row.cancel_requested) {
           this.finalizeWithoutRun(row, "cancelled", "cancelled; worker lease expired before confirmation", now);

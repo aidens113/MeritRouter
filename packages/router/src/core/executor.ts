@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import { TaskRunLeases } from "./task-run-leases.js";
+import { leaseOperationId, reconcileLeaseOperation, receiptApplied, type LeaseRef, type LeaseReceipt, type TaskLeases } from "../storage/task-leases.js";
+import { canonicalJson } from "../storage/tasks.js";
 import type { ResolvedConfig } from "../config/load.js";
 import type { WebAccess } from "../web/access.js";
 import { TIER_NAMES, type ProfileMode, type TierName } from "../config/schema.js";
@@ -34,7 +38,7 @@ import type { ResumePlan } from "../sessions/resume.js";
 import { endRunSession, interruptedTier, jobIdFor, openRunSession, resumeFor, sessionEnd, type RunResume } from "../sessions/run-sessions.js";
 import { isSimulatedCrash } from "./faults.js";
 import { withUpstreamContext } from "../context/upstream.js";
-import { abortStuckRuns, requeueStuck, type WatchedRun } from "./watchdog.js";
+import { abortStuckRuns, type WatchedRun } from "./watchdog.js";
 import { classifyFailure, dispositionSessionEnd, WATCHDOG_STOP, type AbortReason, type Disposition } from "./disposition.js";
 import { redundancyFor } from "../storage/plans.js";
 import { planRedundancy, raceTwins, redundancyRefused, REDUNDANCY_SKIPPED, type RedundancyPlan, type TwinResult } from "./redundancy.js";
@@ -86,6 +90,7 @@ export interface ExecutorDeps {
   web?: WebAccess | null;
   labs?: LabManager;
   ensureLabsSupervisor?: () => Promise<void>;
+  taskLeases?: TaskLeases;
 }
 
 /** What differs per project in the executor's dependencies. */
@@ -104,19 +109,31 @@ interface Routing {
 
 /** Runs claimed units (single tasks or prompt batches) and records their outcomes. */
 export class Executor {
-  readonly controllers = new Map<string, AbortController>();
+  readonly controllers: Map<string, AbortController>;
   private readonly routing = new Map<string, Routing>();
+  readonly taskLeases: TaskLeases;
+  private readonly runLeases: TaskRunLeases;
+  private readonly published = new WeakSet<LeaseRef>();
   private readonly reports = new Set<Promise<unknown>>();
   /** Single-task runs the progress watchdog looks at (see `WatchedRun`). */
   private readonly watched = new Map<string, WatchedRun>();
 
   /** Wait for pending brain report writes (called on shutdown). */
   async flush(): Promise<void> {
-    await Promise.allSettled([...this.reports]);
+    await this.runLeases.drain();
+    while (this.reports.size) await Promise.allSettled([...this.reports]);
   }
 
-  constructor(private readonly d: ExecutorDeps) {}
+  constructor(private readonly d: ExecutorDeps) {
+    this.runLeases = new TaskRunLeases(d);
+    this.controllers = this.runLeases.controllers;
+    this.taskLeases = this.runLeases.port;
+  }
 
+  cancelTasksAsync(ids: string[], project?: string, actorLease?: LeaseRef): Promise<LeaseReceipt[]> {
+    return this.runLeases.cancelTasksAsync(ids, project, actorLease);
+  }
+  abortLease(lease: LeaseRef, reason: AbortReason): void { this.runLeases.abortLease(lease, reason); }
   /**
    * The executor's dependencies as one task sees them: its project's configuration, brain, and
    * brain access in place of the global ones. Throws when the task's project is not configured.
@@ -175,7 +192,8 @@ export class Executor {
       spec: task.spec,
       taskId: task.row.id,
       leaseOwner: this.d.owner,
-      claimedRunCount: task.row.run_count,
+      claimedRunCount: this.runLeases.lease(task).runCount,
+      taskLease: this.runLeases.lease(task),
       taskProject: task.row.project_id || d.cfg.brain.project,
       taskLabs: d.labs,
       ensureLabsSupervisor: d.ensureLabsSupervisor,
@@ -196,7 +214,7 @@ export class Executor {
       access: d.access,
       effort: effortFor(task.spec, task.row.id),
       jobId: jobIdFor(task),
-      services: this.d.services,
+      services: this.d.services ? { ...this.d.services, cancelTasks: ids => this.cancelTasksAsync(ids, task.row.project_id, this.runLeases.lease(task)) } : null,
       session,
       resume,
       web: this.d.web ?? null,
@@ -205,21 +223,6 @@ export class Executor {
   }
 
   /** Heartbeats the lease, watches for cancellation, and enforces the deadline. */
-  private supervise(task: StoredTask, controller: AbortController): () => void {
-    const leaseMs = this.d.cfg.execution.lease_seconds * 1000;
-    const timer = setInterval(() => {
-      const status = this.d.tasks.activeStatus(task.row.id, this.d.owner);
-      if (status === "cancel_requested") controller.abort("cancel");
-      else if (status !== "active" || !this.d.tasks.heartbeat(task.row.id, this.d.owner, leaseMs)) controller.abort("lease_lost");
-    }, Math.max(1000, Math.floor(leaseMs / 4)));
-    const deadline = this.d.tasks.get(task.row.id)?.row.deadline_at;
-    const deadlineTimer = deadline ? setTimeout(() => controller.abort("deadline"), Math.max(0, deadline - this.d.now())) : null;
-    return () => {
-      clearInterval(timer);
-      if (deadlineTimer) clearTimeout(deadlineTimer);
-      this.controllers.delete(task.row.id);
-    };
-  }
 
   private runMode(ctx: RunContext): Promise<RunOutcome> {
     if (ctx.profile.mode === "completion") return runCompletion(ctx);
@@ -236,7 +239,7 @@ export class Executor {
    * The task's acceptance contract (compiled now or stored earlier). When the verification
    * policy needs more requests than the task allows, the task fails here and null is returned.
    */
-  private contractFor(task: StoredTask, tier: TierName, classification: Prepared["classification"]): StoredContract | null {
+  private async contractFor(task: StoredTask, tier: TierName, classification: Prepared["classification"]): Promise<StoredContract | null> {
     const c = ensureContract(
       { cfg: this.depsFor(task).cfg, tasks: this.d.tasks, contracts: this.d.contracts, requestsUsed: (id) => this.d.gate.admission.taskTotals(id).requests, now: this.d.now },
       task,
@@ -245,12 +248,12 @@ export class Executor {
     );
     if (c.ok) {
       if (JSON.stringify(c.stored.contract.declaredLabChecks) !== JSON.stringify(task.spec.constraints.labChecks ?? [])) {
-        this.record(task, "failed", contractShortfall(task.spec, "Stored task Lab check selection differs from the submitted task"));
+        await this.record(task, "failed", contractShortfall(task.spec, "Stored task Lab check selection differs from the submitted task"));
         return null;
       }
       return c.stored;
     }
-    this.record(task, "failed", contractShortfall(task.spec, c.message));
+    await this.record(task, "failed", contractShortfall(task.spec, c.message));
     return null;
   }
 
@@ -271,7 +274,7 @@ export class Executor {
       },
       onReviewer: (reviewer) => {
         const watch = this.watched.get(task.row.id);
-        if (watch && (reviewer || watch.reviewer)) Object.assign(watch, { reviewer, phaseAt: this.d.now() });
+        if (watch?.task.row.lease_incarnation === task.row.lease_incarnation && watch.task.row.run_count === task.row.run_count && (reviewer || watch.reviewer)) Object.assign(watch, { reviewer, phaseAt: this.d.now() });
       },
     };
   }
@@ -325,9 +328,9 @@ export class Executor {
     });
   }
 
-  private tooDifficult(task: StoredTask, prepared: Prepared): void {
+  private async tooDifficult(task: StoredTask, prepared: Prepared): Promise<void> {
     const c = prepared.classification;
-    this.record(task, "failed", baseResult({
+    await this.record(task, "failed", baseResult({
       executionStatus: "failed",
       stopReason: `too_difficult_for_workers: ${c.rejectReason}`,
       summary: `Not delegated. ${c.rejectReason}. Score ${c.score}: ${c.breakdown.filter((l) => l.points).map((l) => `${l.detail} (+${l.points})`).join(", ")}.`,
@@ -336,9 +339,10 @@ export class Executor {
   }
 
   async runSingle(task: StoredTask): Promise<void> {
+    this.runLeases.lease(task);
     const controller = new AbortController();
     this.controllers.set(task.row.id, controller);
-    const release = this.supervise(task, controller);
+    const release = this.runLeases.supervise(task, controller);
     const routing: Routing = { classification: null, tier: null, escalatedFrom: null, attempts: [] };
     this.routing.set(task.row.id, routing);
     let session: SessionRecorder | null = null;
@@ -362,12 +366,12 @@ export class Executor {
           crashed = true;
           return;
         }
-        this.settle(task, this.classify(err, controller.signal, task));
+        await this.settle(task, this.classify(err, controller.signal, task));
         return;
       }
       routing.classification = prepared.classification;
       if (!prepared.plan) {
-        this.tooDifficult(task, prepared);
+        await this.tooDifficult(task, prepared);
         return;
       }
       // A dependent sees its upstream results (and, for coding, its chosen base commit) from here on.
@@ -377,7 +381,7 @@ export class Executor {
       // Supervisor jobs are judged by their own job checks; every other task gets a contract.
       let contract: StoredContract | null = null;
       if (mode !== "supervisor") {
-        const c = this.contractFor(task, plan.tier, prepared.classification);
+        const c = await this.contractFor(task, plan.tier, prepared.classification);
         if (!c) return;
         contract = c;
       }
@@ -403,7 +407,7 @@ export class Executor {
       // Redundant execution (T2): a plan node's first attempt may run twice, on different endpoints.
       let twin = this.redundancy(task, mode, plan, contract, { firstAttempt: !resume && !repairing && !retry, pinned: exempt });
       if (twin?.kind === "refuse") {
-        this.record(task, "failed", redundancyRefused(task.spec, twin.reason));
+        await this.record(task, "failed", redundancyRefused(task.spec, twin.reason));
         return;
       }
       for (;;) {
@@ -433,13 +437,13 @@ export class Executor {
           }
           const d = this.classify(err, controller.signal, task);
           this.endForDisposition(task, session, d);
-          this.settle(task, d);
+          await this.settle(task, d);
           return;
         }
         if (controller.signal.aborted) {
           const d = this.classify(new Error("aborted"), controller.signal, task);
           this.endForDisposition(task, session, d);
-          this.settle(task, d, outcome.result);
+          await this.settle(task, d, outcome.result);
           return;
         }
         let verified: VerifiedRun["verified"] | null = null;
@@ -462,7 +466,7 @@ export class Executor {
             }
             const d = this.classify(err, controller.signal, task);
             this.endForDisposition(task, session, d);
-            this.settle(task, d, outcome.result);
+            await this.settle(task, d, outcome.result);
             return;
           }
         }
@@ -487,28 +491,30 @@ export class Executor {
         if (verified?.decision.action === "repair" && settle) result = settle().result;
         const e = sessionEnd(outcome.state, outcome.result.stopReason);
         this.endSession(task, session, e.status, e.stopReason);
-        this.record(task, outcome.state, result);
+        await this.record(task, outcome.state, result);
         return;
       }
     } finally {
       // Whatever escaped above (a store or recording failure), never leave the session running.
       if (!crashed) this.endSession(task, session, "failed", "executor_error");
-      this.watched.delete(task.row.id);
-      this.routing.delete(task.row.id);
-      release();
+      if (this.controllers.get(task.row.id) === controller) { this.watched.delete(task.row.id); this.routing.delete(task.row.id); }
+      await release();
     }
   }
 
   async runBatch(tasks: StoredTask[]): Promise<void> {
     // Members share one physical request; a member's cancellation is applied when it finishes.
+    for (const task of tasks) this.runLeases.lease(task);
     const shared = new AbortController();
+    const ownControllers = new Map<string, AbortController>();
     const releases = tasks.map((t) => {
       const c = new AbortController();
+      ownControllers.set(t.row.id, c);
       this.controllers.set(t.row.id, c);
       c.signal.addEventListener("abort", () => {
-        if (c.signal.reason === "shutdown" || tasks.every((x) => this.controllers.get(x.row.id)?.signal.aborted)) shared.abort(c.signal.reason);
+        if (c.signal.reason === "shutdown" || tasks.every((x) => ownControllers.get(x.row.id)?.signal.aborted)) shared.abort(c.signal.reason);
       });
-      return this.supervise(t, c);
+      return this.runLeases.supervise(t, c);
     });
     const sessions = new Map<string, SessionRecorder>();
     let crashed = false;
@@ -525,13 +531,13 @@ export class Executor {
           if (binding) await deps.labs!.assertTaskBases(binding, t.spec, deps.tasks);
           const p = await this.d.router.prepare(t, this.d.owner, deps.cfg);
           routing.classification = p.classification;
-          if (!p.plan) this.tooDifficult(t, p);
+          if (!p.plan) await this.tooDifficult(t, p);
           else {
             prepared.set(t.row.id, p);
             members.push(await this.withUpstream(t));
           }
         } catch (err) {
-          this.settle(t, this.classify(err, this.controllers.get(t.row.id)!.signal, t));
+          await this.settle(t, this.classify(err, ownControllers.get(t.row.id)!.signal, t));
         }
       }
       if (!members.length) return;
@@ -542,7 +548,7 @@ export class Executor {
       // cannot fit its budget fails before the shared request.
       const contracts = new Map<string, StoredContract>();
       for (const m of [...members]) {
-        const c = this.contractFor(m, prepared.get(m.row.id)!.plan!.tier, prepared.get(m.row.id)!.classification);
+        const c = await this.contractFor(m, prepared.get(m.row.id)!.plan!.tier, prepared.get(m.row.id)!.classification);
         if (c) contracts.set(m.row.id, c);
         else members.splice(members.indexOf(m), 1);
       }
@@ -568,9 +574,9 @@ export class Executor {
         const pendingIds = retained.batchPendingTaskIds ?? members.map((t) => t.row.id);
         for (const t of [...members]) {
           if (!pendingIds.includes(t.row.id)) continue;
-          const d = this.classify(err, this.controllers.get(t.row.id)?.signal ?? shared.signal, t);
+          const d = this.classify(err, ownControllers.get(t.row.id)?.signal ?? shared.signal, t);
           this.endForDisposition(t, sessions.get(t.row.id) ?? null, d);
-          this.settle(t, d);
+          await this.settle(t, d);
           members.splice(members.indexOf(t), 1);
         }
         // Retained completions go through the same session end, verification and recording
@@ -584,32 +590,32 @@ export class Executor {
           this.endSession(t, session, e.status, e.stopReason);
           const contract = contracts.get(t.row.id);
           if (!contract) {
-            this.record(t, o.state, o.result);
+            await this.record(t, o.state, o.result);
             continue;
           }
           // Members are reviewed one by one when their level requires it (no repair inside a batch).
-          const signal = this.controllers.get(t.row.id)?.signal ?? shared.signal;
+          const signal = ownControllers.get(t.row.id)?.signal ?? shared.signal;
           try {
             const run = this.reviewRun(t, signal, this.routing.get(t.row.id)!, session, contract, tier, false);
             const v = await verifyWithReview(this.depsFor(t), t, contract, this.d.cfg.profiles[t.spec.profile]!.mode, o, restoreRunState(this.d.tasks, t.row.id).st, run);
-            this.record(t, o.state, v.verified.decision.action === "repair" ? v.settle().result : v.verified.result);
+            await this.record(t, o.state, v.verified.decision.action === "repair" ? v.settle().result : v.verified.result);
           } catch (err) {
             if (isSimulatedCrash(err)) {
               crashed = true;
               return;
             }
-            this.settle(t, this.classify(err, signal, t), o.result);
+            await this.settle(t, this.classify(err, signal, t), o.result);
           }
         } else {
           this.endSession(t, session, "failed", "batch_member_unaccounted");
-          this.settle(t, { kind: "final", state: "failed", stopReason: "batch_member_unaccounted" });
+          await this.settle(t, { kind: "final", state: "failed", stopReason: "batch_member_unaccounted" });
         }
       }
     } finally {
       // Members that left the batch without an outcome (an error escaped) still end their sessions.
       if (!crashed) for (const t of tasks) this.endSession(t, sessions.get(t.row.id) ?? null, "failed", "batch_aborted");
-      for (const t of tasks) this.routing.delete(t.row.id);
-      for (const r of releases) r();
+      for (const t of tasks) if (this.controllers.get(t.row.id) === ownControllers.get(t.row.id)) this.routing.delete(t.row.id);
+      await Promise.all(releases.map(release => release()));
     }
   }
 
@@ -617,23 +623,25 @@ export class Executor {
     return classifyFailure(err, signal, { cfg: this.d.cfg, now: () => this.d.now(), deadline: () => this.d.tasks.get(task.row.id)?.row.deadline_at ?? Infinity });
   }
 
-  private settle(task: StoredTask, d: Disposition, partial?: RunnerResult): void {
+  private async settle(task: StoredTask, d: Disposition, partial?: RunnerResult): Promise<void> {
     if (d.kind === "abandon") {
-      if (d.reason === "shutdown") this.d.tasks.interrupt(task.row.id, this.d.owner, "worker shut down");
-      if (d.reason === WATCHDOG_STOP) requeueStuck(this.d.tasks, this.d.owner, task, this.watched.get(task.row.id));
-      this.d.onSettled(task.row.id);
+      if (d.reason === "shutdown" || d.reason === WATCHDOG_STOP) {
+        const lease = this.runLeases.lease(task), operationId = leaseOperationId(this.d.now());
+        const receipt = await this.runLeases.trackLease(reconcileLeaseOperation(() => this.taskLeases.interrupt({ lease, operationId, reason: d.reason === "shutdown" ? "worker shut down" : "no progress: stopped by the watchdog", resume: d.reason === WATCHDOG_STOP, sessionId: this.watched.get(task.row.id)?.session()?.id })));
+        if (receipt.kind !== "interrupt" || receipt.operationId !== operationId || canonicalJson(receipt.lease) !== canonicalJson(lease)) throw new Error("interrupt receipt identity mismatch");
+        if (receiptApplied(receipt) && this.sameGeneration(lease)) this.d.onSettled(task.row.id);
+      }
       return;
     }
     if (d.kind === "defer") {
-      if (!this.d.tasks.deferForCapacity(task.row.id, this.d.owner, d.at, d.reason)) {
-        this.record(task, "cancelled", baseResult({ executionStatus: "cancelled", stopReason: "cancelled" }));
-        return;
-      }
-      this.d.onSettled(task.row.id);
+      const lease = this.runLeases.lease(task), operationId = leaseOperationId(this.d.now());
+      const receipt = await this.runLeases.trackLease(reconcileLeaseOperation(() => this.taskLeases.defer({ lease, operationId, nextAttemptAt: d.at, reason: d.reason })));
+      if (receipt.kind !== "defer" || receipt.operationId !== operationId || canonicalJson(receipt.lease) !== canonicalJson(lease)) throw new Error("defer receipt identity mismatch");
+      if (receiptApplied(receipt) && this.sameGeneration(lease)) this.d.onSettled(task.row.id);
       return;
     }
     const status = d.state === "completed" ? "failed" : d.state;
-    this.record(
+    await this.record(
       task,
       d.state,
       baseResult({
@@ -647,7 +655,7 @@ export class Executor {
     );
   }
 
-  private record(task: StoredTask, state: TaskState, runner: RunnerResult): void {
+  private async record(task: StoredTask, state: TaskState, runner: RunnerResult): Promise<void> {
     const { usage, servedEndpoints } = taskUsage(this.d.db, this.d.catalog, task.row.id);
     const r = this.routing.get(task.row.id);
     const c = r?.classification;
@@ -659,7 +667,14 @@ export class Executor {
       classification: c ? { tier: c.tier, score: c.score, basis: c.basis, rulebookVersion: c.rulebookVersion, breakdown: c.breakdown } : null,
       routing: r?.tier ? { tier: r.tier, escalatedFrom: r.escalatedFrom, attempts: r.attempts } : null,
     });
-    const final = this.d.tasks.finish(task.row.id, this.d.owner, result, state);
+    const submittedResult = structuredClone(result);
+    const lease = this.runLeases.lease(task), operationId = leaseOperationId(this.d.now());
+    const receipt = await this.runLeases.trackLease(reconcileLeaseOperation(() => this.taskLeases.finish({ lease, operationId, result: submittedResult, state: state as "completed" | "failed" | "cancelled" | "budget_exhausted" | "interrupted" })));
+    if (receipt.kind !== "finish" || receipt.operationId !== operationId || canonicalJson(receipt.lease) !== canonicalJson(lease) || !receiptApplied(receipt) || !this.sameGeneration(lease) || this.published.has(lease)) return;
+    const persisted = this.d.tasks.get(task.row.id);
+    if (!persisted?.result || !receipt.state || persisted.row.state !== receipt.state || !receipt.resultDigest || receipt.resultDigest !== createHash("sha256").update(canonicalJson(persisted.result)).digest("hex")) return;
+    this.published.add(lease);
+    const final = receipt.state!;
     const mode = this.d.cfg.profiles[task.spec.profile]?.mode;
     const d = this.tryDepsFor(task);
     if (d?.brain && mode && mode !== "supervisor" && final !== "running") {
@@ -670,11 +685,15 @@ export class Executor {
         final,
       ).finally(() => {
         this.reports.delete(p);
-        this.d.onSettled(task.row.id);
       });
       this.reports.add(p);
     }
     this.d.onSettled(task.row.id);
+  }
+
+  private sameGeneration(lease: LeaseRef): boolean {
+    const row = this.d.tasks.get(lease.taskId)?.row;
+    return row?.lease_incarnation === lease.incarnation && row.run_count === lease.runCount;
   }
 
   /** Progress watchdog, called on every scheduler tick (see `abortStuckRuns`). Returns the aborted task ids. */

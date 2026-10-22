@@ -1,0 +1,12 @@
+﻿import { writeFileSync } from 'node:fs';
+import { openDatabase } from '../../dist/storage/db.js';
+import { TaskStore } from '../../dist/storage/tasks.js';
+import { capturedLease } from '../../dist/storage/task-leases.js';
+const [storage, barrier] = process.argv.slice(2);
+const db = openDatabase(storage);
+const store = new TaskStore(db);
+const task = store.claim('killed-fixture-owner', { maxConcurrent: 1, maxWritersPerRepo: 1, leaseMs: 30000, defaultTimeoutMs: 1000000 })[0];
+if (!task) throw new Error('fixture could not claim task');
+writeFileSync(barrier, JSON.stringify(capturedLease(task)));
+process.send?.({ ready: true });
+setInterval(() => {}, 1000);

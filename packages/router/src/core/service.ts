@@ -671,6 +671,18 @@ export class Switchyard {
     return out;
   }
 
+  /** Awaited logical cancellation with immutable target generations and durable receipts. */
+  async cancelTasksAsync(ids: string[], project?: string) {
+    if (this.closing) throw new TaskValidationError("service is closing");
+    for (const id of ids) this.assertInProject(id, project);
+    return this.executor.cancelTasksAsync(ids, project);
+  }
+
+  async recoverAsync(): Promise<string[]> {
+    if (this.closing) throw new TaskValidationError("service is closing");
+    return this.scheduler.recoverAsync();
+  }
+
   /**
    * Start a standalone job: a supervisor (the models you configured for the role) plans,
    * delegates to workers, verifies, and integrates onto a job branch.

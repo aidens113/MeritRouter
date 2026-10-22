@@ -1,3 +1,6 @@
+import { SqliteTaskLeases } from "../storage/sqlite-task-leases.js";
+import type { TaskLeases } from "../storage/task-leases.js";
+import { leaseOperationId, reconcileLeaseOperation, capturedLease } from "../storage/task-leases.js";
 import type { ResolvedConfig } from "../config/load.js";
 import type { ClaimAdmission, StoredTask, TaskStore } from "../storage/tasks.js";
 import { redundancyFor } from "../storage/plans.js";
@@ -25,8 +28,11 @@ export class Scheduler {
   private timer: NodeJS.Timeout | null = null;
   private ticking: Promise<void> | null = null;
   private stopping: Promise<void> | null = null;
+  private readonly taskLeases: TaskLeases;
+  private startup: Promise<unknown> | null = null;
   private again = false;
   private stopped = false;
+  private readonly recovering = new Set<Promise<string[]>>();
   private readonly inFlight = new Set<Promise<void>>();
 
   constructor(
@@ -46,12 +52,13 @@ export class Scheduler {
     /** A project's configuration (its `team.max_agents` override); null or unknown: the global one. */
     private readonly projectConfig: ((slug: string) => ResolvedConfig | undefined) | null = null,
     readonly queue: TaskQueue = new SqliteTaskQueue(cfg, tasks, providerSlots, projectConfig),
-  ) {}
+  ) { this.taskLeases = executor.taskLeases ?? new SqliteTaskLeases(cfg, tasks); }
 
   start(intervalMs = 1000): void {
     if (this.timer || this.stopping) return;
     this.stopped = false;
-    this.recover();
+    this.startup = this.recoverAsync();
+    void this.startup.catch(() => undefined);
     this.timer = setInterval(() => this.wake(), intervalMs);
     this.timer.unref?.();
     this.wake();
@@ -75,6 +82,19 @@ export class Scheduler {
     return interrupted;
   }
 
+  recoverAsync(mode: "expired_only" | "startup" = "startup"): Promise<string[]> {
+    const operationId = leaseOperationId(this.tasks.serverNow());
+    const pending = (async () => {
+      const receipt = await reconcileLeaseOperation(() => this.taskLeases.recover({ operationId, mode }));
+      if (receipt.kind !== "recover" || receipt.operationId !== operationId) throw new Error("recovery receipt identity mismatch");
+      if (mode === "startup") this.sessions?.markDeadRunning(s => !s.taskId || this.tasks.leaseLive(s.taskId));
+      return [...new Set(receipt.affected.map(item => item.target.taskId))];
+    })();
+    this.recovering.add(pending);
+    void pending.finally(() => this.recovering.delete(pending)).catch(() => undefined);
+    return pending;
+  }
+
   /** Wake the loop. A no-op unless start() was called (non-worker processes never run tasks). */
   kick(): void {
     if (!this.timer) return;
@@ -96,6 +116,7 @@ export class Scheduler {
   private async runTick(): Promise<void> {
     const acquired = new Map<string, StoredTask>();
     try {
+      await this.startup;
       do {
         if (this.stopped) break;
         this.again = false;
@@ -103,10 +124,10 @@ export class Scheduler {
         this.tasks.db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(`worker:${this.owner}`, String(Date.now()));
         // Stuck runs first: a run aborted here ends `interrupted` and is queued to resume.
         this.executor.checkWatchdog();
-        this.tasks.recoverExpiredLeases();
+        await this.recoverAsync("expired_only");
         this.onTick();
         const claimed = await this.queueOperation(() => this.queue.claim({ owner: this.owner }));
-        for (const task of claimed) acquired.set(this.attemptKey(task.row.id, task.row.run_count), task);
+        for (const task of claimed) acquired.set(this.attemptKey(task.row.id, task.row.run_count, task.row.lease_incarnation), task);
         if (this.stopped) break;
         const taken = new Set<string>();
         for (const task of claimed) {
@@ -116,9 +137,9 @@ export class Scheduler {
           const key = profile.mode === "completion" && profile.batching.enabled && !this.redundant(task) ? projectBatchKey(task) : null;
           if (key) {
             const companions = await this.queueOperation(() => this.queue.claimCompanions({
-              owner: this.owner, leader: { taskId: task.row.id, runCount: task.row.run_count }, excludeTaskIds: [...taken],
+              owner: this.owner, leader: { taskId: task.row.id, runCount: task.row.run_count, incarnation: task.row.lease_incarnation, project: task.row.project_id }, excludeTaskIds: [...taken],
             }));
-            for (const member of companions) acquired.set(this.attemptKey(member.row.id, member.row.run_count), member);
+            for (const member of companions) acquired.set(this.attemptKey(member.row.id, member.row.run_count, member.row.lease_incarnation), member);
             if (this.stopped) break;
             // Claimed tasks that fit this batch join it instead of running alone.
             const extra = claimed.filter((c) => !taken.has(c.row.id) && projectBatchKey(c) === key && !this.redundant(c)).slice(0, profile.batching.max_items - 1 - companions.length);
@@ -137,30 +158,38 @@ export class Scheduler {
       this.tasks.db.prepare("DELETE FROM meta WHERE key = ?").run(`worker:${this.owner}`);
       throw error;
     } finally {
-      for (const task of acquired.values()) this.tasks.interrupt(task.row.id, this.owner, "queue_dispatch_abandoned", task.row.run_count);
+      for (const task of acquired.values()) await this.abandon(task, "queue_dispatch_abandoned");
     }
   }
 
-  private attemptKey(id: string, run: number): string { return JSON.stringify([id, run]); }
+  private attemptKey(id: string, run: number, incarnation?: string): string { return JSON.stringify([id, run, incarnation]); }
+
+  private async abandon(task: StoredTask, reason: string): Promise<void> {
+    const lease = capturedLease(task), operationId = leaseOperationId(this.tasks.serverNow());
+    await reconcileLeaseOperation(() => this.taskLeases.interrupt({ lease, operationId, reason }));
+  }
 
   /** Local SQLite inventory fences receipt-loss cleanup from older dispatched attempts. */
   private ownedAttempts(): TaskAttempt[] {
-    return TaskAttemptSchema.array().parse(this.tasks.db.prepare("SELECT id AS taskId, run_count AS runCount FROM tasks WHERE lease_owner = ? AND state IN ('running','cancel_requested')").all(this.owner));
+    return TaskAttemptSchema.array().parse(this.tasks.db.prepare("SELECT id AS taskId, run_count AS runCount,lease_incarnation AS incarnation,project_id AS project FROM tasks WHERE lease_owner = ? AND state IN ('running','cancel_requested')").all(this.owner));
   }
 
   private async queueOperation(call: () => Promise<StoredTask[]>): Promise<StoredTask[]> {
-    const before = new Set(this.ownedAttempts().map(ref => this.attemptKey(ref.taskId, ref.runCount)));
+    const before = new Set(this.ownedAttempts().map(ref => this.attemptKey(ref.taskId, ref.runCount, ref.incarnation)));
     try {
       const tasks = QueueTasksSchema.parse(await call());
-      const keys = new Set(tasks.map(task => this.attemptKey(task.row.id, task.row.run_count)));
-      const fresh = this.ownedAttempts().filter(ref => !before.has(this.attemptKey(ref.taskId, ref.runCount)));
-      if (keys.size !== tasks.length || tasks.some(task => task.row.lease_owner !== this.owner || before.has(this.attemptKey(task.row.id, task.row.run_count))) || fresh.length !== keys.size || fresh.some(ref => !keys.has(this.attemptKey(ref.taskId, ref.runCount)))) {
+      const keys = new Set(tasks.map(task => this.attemptKey(task.row.id, task.row.run_count, task.row.lease_incarnation)));
+      const fresh = this.ownedAttempts().filter(ref => !before.has(this.attemptKey(ref.taskId, ref.runCount, ref.incarnation)));
+      if (keys.size !== tasks.length || tasks.some(task => task.row.lease_owner !== this.owner || before.has(this.attemptKey(task.row.id, task.row.run_count, task.row.lease_incarnation))) || fresh.length !== keys.size || fresh.some(ref => !keys.has(this.attemptKey(ref.taskId, ref.runCount, ref.incarnation)))) {
         throw new Error("queue receipt does not match newly acquired SQLite attempts");
       }
       return tasks;
     } catch (error) {
       for (const ref of this.ownedAttempts()) {
-        if (!before.has(this.attemptKey(ref.taskId, ref.runCount))) this.tasks.interrupt(ref.taskId, this.owner, "queue_claim_uncertain", ref.runCount);
+        if (!before.has(this.attemptKey(ref.taskId, ref.runCount, ref.incarnation))) {
+          const operationId = leaseOperationId(this.tasks.serverNow());
+          await reconcileLeaseOperation(() => this.taskLeases.interrupt({ lease: { taskId: ref.taskId, owner: this.owner, runCount: ref.runCount, incarnation: ref.incarnation, project: ref.project }, operationId, reason: "queue_claim_uncertain" }));
+        }
       }
       throw error;
     }
@@ -170,12 +199,12 @@ export class Scheduler {
     if (this.stopped) return;
     // Re-read authority and task contents after every asynchronous queue boundary.
     const live = members.flatMap(member => {
-      const current = this.tasks.dispatchable(member.row.id, this.owner, member.row.run_count);
+      const current = this.tasks.dispatchable(member.row.id, this.owner, member.row.run_count, member.row.lease_incarnation, member.row.project_id);
       return current ? [StoredTaskDTOSchema.parse(current)] : [];
     });
     if (!live.length) return;
     const running = live.length > 1 ? this.executor.runBatch(live) : this.executor.runSingle(live[0]!);
-    for (const task of live) acquired.delete(this.attemptKey(task.row.id, task.row.run_count));
+    for (const task of live) acquired.delete(this.attemptKey(task.row.id, task.row.run_count, task.row.lease_incarnation));
     this.track(running);
   }
 
@@ -202,8 +231,10 @@ export class Scheduler {
     this.timer = null;
     this.executor.abortAll("shutdown");
     this.stopping = (async () => {
+      await this.startup?.catch(() => undefined);
       await this.ticking?.catch(() => undefined);
       await Promise.allSettled([...this.inFlight]);
+      while (this.recovering.size) await Promise.allSettled([...this.recovering]);
       if (this.tasks.db.open) this.tasks.db.prepare("DELETE FROM meta WHERE key = ?").run(`worker:${this.owner}`);
     })().finally(() => { this.stopping = null; });
     return this.stopping;

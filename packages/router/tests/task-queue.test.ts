@@ -13,6 +13,10 @@ function setup() {
   sy = open(env, new ScriptedClient(req => reply(JSON.stringify(goodOutput()), { model: req.model, provider: req.provider })), { worker: false });
   return new SqliteTaskQueue(sy.cfg, sy.tasks);
 }
+function leaderRef(id: string, runCount?: number) {
+  const row = sy!.tasks.get(id)!.row;
+  return { taskId: id, runCount: runCount ?? row.run_count, incarnation: row.lease_incarnation, project: row.project_id };
+}
 function submit(id: string, project = "demo", extra: Record<string, unknown> = {}) {
   sy!.tasks.submit([WorkerTaskSchema.parse(summarizeTask({ id, ...extra }))], { project });
 }
@@ -48,11 +52,11 @@ it("derives companion bounds and compatibility privately, preserves project and 
   for (const id of ["excluded", "a", "b", "c", "d"]) submit(id);
   const [leader] = await queue.claim({ owner: "owner" });
   expect(leader!.row.id).toBe("leader");
-  const companions = await queue.claimCompanions({ owner: "owner", leader: { taskId: "leader", runCount: leader!.row.run_count }, excludeTaskIds: ["excluded"] });
+  const companions = await queue.claimCompanions({ owner: "owner", leader: leaderRef("leader", leader!.row.run_count), excludeTaskIds: ["excluded"] });
   expect(companions.map(task => task.row.id)).toEqual(["a", "b", "c"]);
   for (const id of ["foreign", "capped", "excluded", "d"]) expect(sy!.tasks.get(id)!.row.state).toBe("queued");
-  expect(await queue.claimCompanions({ owner: "wrong", leader: { taskId: "leader", runCount: 1 }, excludeTaskIds: [] })).toEqual([]);
-  expect(await queue.claimCompanions({ owner: "owner", leader: { taskId: "leader", runCount: 2 }, excludeTaskIds: [] })).toEqual([]);
+  expect(await queue.claimCompanions({ owner: "wrong", leader: leaderRef("leader", 1), excludeTaskIds: [] })).toEqual([]);
+  expect(await queue.claimCompanions({ owner: "owner", leader: leaderRef("leader", 2), excludeTaskIds: [] })).toEqual([]);
 });
 
 it("uses current adapter config and the same provider policy inside atomic claim", async () => {
@@ -107,11 +111,29 @@ it("never admits a redundant plan node as a companion or a companion to its lead
   new PlanStore(sy!.db).record("job", [{ label: "redundant", profile: "summarize", goal: "fixture", acceptanceCriteria: ["fixture"], requiresAcceptedInputs: false, weight: 1, difficulty: "T1", redundancy: 2 }]);
   submit("leader"); submit("redundant", "demo", { parentTaskId: "job", label: "redundant" }); submit("ordinary");
   await queue.claim({ owner: "owner" });
-  const companions = await queue.claimCompanions({ owner: "owner", leader: { taskId: "leader", runCount: 1 }, excludeTaskIds: [] });
+  const companions = await queue.claimCompanions({ owner: "owner", leader: leaderRef("leader", 1), excludeTaskIds: [] });
   expect(companions.map(task => task.row.id)).toEqual(["ordinary"]);
   for (const id of ["leader", "ordinary"]) sy!.tasks.interrupt(id, "owner", "fixture", 1);
   expect((await queue.claim({ owner: "owner" })).map(task => task.row.id)).toEqual(["redundant"]);
   submit("remaining");
-  expect(await queue.claimCompanions({ owner: "owner", leader: { taskId: "redundant", runCount: 1 }, excludeTaskIds: [] })).toEqual([]);
+  expect(await queue.claimCompanions({ owner: "owner", leader: leaderRef("redundant", 1), excludeTaskIds: [] })).toEqual([]);
   expect(sy!.tasks.get("remaining")!.row.state).toBe("queued");
+});
+
+it("requires full async leader identity and rejects same-owner task-ID reuse before companion allocation", async () => {
+  const queue = setup(); submit("leader");
+  const [leader] = await queue.claim({ owner: "owner" });
+  const old = leaderRef(leader!.row.id);
+  expect(QueueCompanionsSchema.safeParse({ owner: "owner", leader: { ...old, project: undefined }, excludeTaskIds: [] }).success).toBe(false);
+  expect(QueueCompanionsSchema.safeParse({ owner: "owner", leader: { ...old, incarnation: undefined }, excludeTaskIds: [] }).success).toBe(false);
+  expect(QueueCompanionsSchema.safeParse({ owner: "owner", leader: { taskId: "leader", runCount: 1 }, excludeTaskIds: [] }).success).toBe(false);
+  sy!.tasks.interrupt("leader", "owner", "fixture");
+  sy!.db.prepare("DELETE FROM events WHERE task_id='leader'").run();
+  sy!.db.prepare("DELETE FROM tasks WHERE id='leader'").run();
+  submit("leader"); await queue.claim({ owner: "owner" }); submit("companion");
+  expect(leaderRef("leader").runCount).toBe(old.runCount);
+  expect(leaderRef("leader").incarnation).not.toBe(old.incarnation);
+  expect(await queue.claimCompanions({ owner: "owner", leader: old, excludeTaskIds: [] })).toEqual([]);
+  expect(sy!.tasks.get("companion")!.row.state).toBe("queued");
+  expect((await queue.claimCompanions({ owner: "owner", leader: leaderRef("leader"), excludeTaskIds: [] })).map(task => task.row.id)).toEqual(["companion"]);
 });
