@@ -117,6 +117,15 @@ not a reason to stop the independently runnable core work. No service was instal
 
 ## Worker Briefs
 
+### Brief: integration-fixture-cleanup (brain_completion)
+- Tier isolated roadmap-process new feature branch named root baseline; reproduce/fix full-suite failures only.
+- Read Current State and full TEMP/switchyard-admission-integration-full-supervisor.log:1083pass2fail1skip756.65s. Worker report own reports/integration-fixture-cleanup.md.
+- Own ONLY tests/request-capture.test.ts and tests/process-acceptance-workers.test.ts plus report. No runtime/source/migration/shared docs/helpers.ts/other tests changes; journal worker exclusively31.
+- Capture test tries admitting mixed projects through sync Admission, now correctly refused. Preserve strict admission; construct an explicitly historical corrupt/mixed accounting cohort fixture using valid stored rows to exercise the original capture privacy/purge assertions. Do not weaken/remove assertions or make default Gate dispatch mixed scopes.
+- CLI-worker assertions pass but fixture brain removal EBUSY recurred twice only in full run. Inspect actual child lifecycle: exit vs close, Git descendants/handles and exact-owned cleanup. Reproduce under bounded isolated contention where feasible.
+- Await full owned process/stdio cleanup; if bounded Windows rm retry is justified keep it local to this fixture and fail visibly after deadline. No swallowing errors, disabling cleanup, broad tree kills, unrelated paths or arbitrary sleeps masquerading as proof.
+- Do not weaken claim-once/provider ceiling assertions/timeouts. Tests use temp fake providers, no user data/services/config changes.
+- Freeze then affected tests serially; router typecheck/build, report exact failures/fixes/limits. No commits/pushes/shared edits.
 ### Brief: request-operator-recovery-plan (brain_completion)
 - Tier isolated roadmap-process new feature branch named root baseline; scoped design/report only.
 - Read Current State, own request/session authority reports, current RequestReceipts/ProviderCapacity/ledger and admin/project/panel mutation authority patterns. Own reports/request-operator-recovery-plan.md only.
