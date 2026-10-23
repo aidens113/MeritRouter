@@ -117,3 +117,23 @@ constructor. Retain stale/expired lease cancellation coverage using an advanced 
 Seed follow-up after process exit: detect failed `integrate_task` outcomes before emitting
 success/rebase claims; fail the offline fixture with actual tool error details. Do not silently
 accept failed checks, fabricate rebase evidence, or bypass the runtime wait operation.
+
+### Clock-fix child seed: rounding timeout diagnosis
+
+Read-only raw SQLite/JSONL inspection of the closed clock worktree demo database. No service
+construction, DB mutation or source edit. Nested fixture now passed 3 integrations/1 rebase.
+
+Rounding task `t_0mvlgsz3md52ebf7c94de` was running, not queued or blocked on provider
+admission. Classification, T2 analysis and deliberately failing review consumed roughly 49s.
+T3 escalation began around 49s and issued successful model/read_file intent around 54.7s.
+The phase's default 60-second wait expired before that read completed. Seeder then advanced
+its historical offset from 1.6h to 1.4h, jumping injected time forward 720000ms while the
+task's lease lasted only 30s. Its read intent at 1792784172590 and successful outcome at
+1792784898010 differ by 725420ms: exactly that jump plus 5420ms real work. Session then ended
+with lease lost; task became interrupted/worker lease expired. No AIMD/provider-slot deadlock
+evidence was present. Concurrent validation IO timing likely caused the initial 60s overrun.
+
+Recommendation sent to supervisor: phase must never advance the shared clock with unfinished
+tasks. On timeout fail/stop the fixture, or explicitly cancel and settle the old phase before
+moving time. Merely increasing waits can hide the lifecycle flaw. If preserving the expected
+false-rejection calibration evidence, completion must be asserted rather than silently skipped.

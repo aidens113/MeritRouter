@@ -11,7 +11,7 @@ Related: [AGENTS.md](../../AGENTS.md), [working document index](./README.md), ru
 
 The normative sections below, [The Protocol](#the-protocol) and
 [Agent Operating Rules](#agent-operating-rules), apply to every working document in this
-repository. SwitchYard's brain enforces the same rules for its runtime agents; a change to one
+repository. MeritRouter's brain enforces the same rules for its runtime agents; a change to one
 must be mirrored in the other in the same work unit.
 
 ---

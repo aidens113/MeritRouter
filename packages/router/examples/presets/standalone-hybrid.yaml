@@ -2,7 +2,7 @@
 # Generated from meritrouter.config.example.yaml by scripts/build-presets.mjs.
 
 
-# MeritRouter Router configuration. Relative paths resolve against this file's directory.
+# MeritRouter configuration. Relative paths resolve against this file's directory.
 # Every setting here can also be edited from the web panel (Settings).
 version: 1
 

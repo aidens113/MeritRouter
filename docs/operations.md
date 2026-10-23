@@ -597,6 +597,17 @@ Historical request/session payloads require complete same-project task and execu
 
 ## The web panel: turning it off, and rebuilding it
 
+Project **Overview** shows reported token totals and usage charts directly. **Activity** holds
+operational details such as attention items, budget requests, running jobs, repositories and workers. The task workspace's
+**Agents** page includes roles, session activity, task assignments and first/last activity times,
+with links to each agent's detail page. The Jobs page lists existing work first; expand
+**New job** at the bottom to create one. Existing `jobs#new` links open that form.
+
+When cache usage is incomplete, request summaries show an approximate reported token total
+such as `~4.21M`, labelled **Reported tokens**. That is reported input plus output, including
+cached input; it does not estimate an exact uncached share. Missing provider usage remains
+unknown, and the underlying cache/accounting provenance is preserved.
+
 Model request detail includes bounded recorded messages, parameters, responses and tool actions
 when an exact response request ID can be matched to a session journal. Successful edit targets
 require a matching recorded tool outcome. Related task file lists, artifacts and commit heads

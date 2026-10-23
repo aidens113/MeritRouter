@@ -6,7 +6,7 @@ lines, worker briefs, append-only ledger with real validation, open questions).
 
 | Document | Status | Scope |
 | --- | --- | --- |
-| [meritrouter-rename.md](meritrouter-rename.md) | Active | Complete MeritRouter identity, safe existing-install migration, readable docs and agent-first README onboarding. |
+| [meritrouter-rename.md](meritrouter-rename.md) | Complete | Complete MeritRouter identity, safe existing-install migration, readable docs and agent-first README onboarding. |
 | [correctness-and-panel-flows.md](correctness-and-panel-flows.md) | Complete | Accepted audit fixes, repository containment/security policy, supervisor approvals and connected panel flows; no live deployment. |
 | [post-change-fix-audit.md](post-change-fix-audit.md) | Superseded | Audit findings implemented by correctness-and-panel-flows; historical baseline and fix plan. |
 | [roadmap-completion.md](roadmap-completion.md) | Active | User-authorized execution of the remaining audit: correctness, Labs, packaging, provider/project follow-ups and acceptance. |

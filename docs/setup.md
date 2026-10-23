@@ -50,6 +50,8 @@ Old environment variables and default config filenames are not discovery aliases
 1. Stop old workers, MCP servers, panels and services. Back up configuration, storage/database,
    vault and its matching master key, brain repositories and working repositories. See
    [backup and restore](operations.md#backup-and-restore).
+   Uninstall old service registrations with the old executable before replacing it, or retain
+   that executable until you have removed those registrations.
 2. Rename built-in runtime `SWITCHYARD_*` environment variables to `MERITROUTER_*`, preserving
    values, especially the master key, before opening the installation with the new executable.
    Keep the encrypted vault and `.master-key` together when using a file key. User-chosen provider
@@ -63,8 +65,8 @@ Old environment variables and default config filenames are not discovery aliases
    does not exist; if both exist, `meritrouter.db` takes precedence. Do not manually rename
    database files, vaults or brain directories.
 4. Re-register MCP as `meritrouter`, with the new executable and explicit old config path.
-   Remove or disable the old registration and reconnect clients. Uninstall old services using
-   the old executable/config; inspect `meritrouter service install --dry-run --config <old-config>`
+   Remove or disable the old registration and reconnect clients. Inspect
+   `meritrouter service install --dry-run --config <old-config>`
    before installing the new service. Update daemon/startup commands too.
 5. Verify projects, task history and vault access before resuming. If you later move or rename
    the config, adjust relative paths to preserve their exact targets: paths resolve against
@@ -73,6 +75,10 @@ Old environment variables and default config filenames are not discovery aliases
 Keep historical Git refs and `.switchyard` worktrees/artifacts needed for recovery. The rename
 does not automatically move or delete user data. The panel uses new login/preferences cookies;
 sign in again with the configured token and reselect your project if necessary.
+
+Library users should import from `meritrouter` and replace `Switchyard`, `SwitchyardOptions`
+and `SwitchyardError` with `MeritRouter`, `MeritRouterOptions` and `MeritRouterError`.
+The old package, executable and public class names are not compatibility aliases.
 
 Local, single user. Tested on Windows 10 with Node 22.11; Linux/WSL use the same commands.
 

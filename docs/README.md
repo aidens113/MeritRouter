@@ -18,6 +18,8 @@ No published npm package is assumed.
 In the panel, choose a project to see its jobs, tasks, sessions, requests, brain and settings.
 Use **All projects** for shared provider keys, models and routing. Task and job details link
 related work and show pending action approvals; job Requests includes descendant model calls.
+Project Overview includes token totals and usage graphs. Agents shows formatted role/session
+activity, and the Jobs page keeps its creation form collapsed below existing jobs.
 
 The native runner enforces repository paths. Host commands need exact approvals under the
 configured security policy; external coding runners currently fail closed because an accepted

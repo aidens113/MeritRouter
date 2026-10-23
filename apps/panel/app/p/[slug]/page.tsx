@@ -126,7 +126,7 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
           </ul>
         </Callout>
       ) : null}
-      {ov.attention.length || budgetPending.length ? (
+      {tab === "activity" ? <>{ov.attention.length || budgetPending.length ? (
         <Card className="border-warn/40">
           <div className="flex items-center gap-2 border-b border-line px-4 py-3 text-sm font-semibold text-ink">
             <TriangleAlert size={16} className="text-warn-ink" aria-hidden /> Needs your attention
@@ -154,9 +154,8 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
         <Callout tone="good" icon={<CheckCircle2 size={16} />} title="Nothing needs your attention">
           No questions, decisions, access requests, or interrupted tasks in this project, and every repository is in place.
         </Callout>
-      )}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <Stat label="Jobs" value={`${num(ov.activity.runningJobs)} running`} sub={`${num(ov.activity.queuedJobs)} queued · ${num(ov.activity.runningTasks)} tasks running, ${num(ov.activity.queuedTasks)} queued`} />
+      )}</> : null}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Model requests (24h)" help="requests" value={compact(u.modelRequests)} sub={`${compact(ov.usage7d.modelRequests)} in the last 7 days`} />
         <Stat
           label="Success rate (24h)"
@@ -167,7 +166,7 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
         <Stat label="Tasks (24h)" value={`${num(u.logicalTasks.completed)} done`} sub={`${num(u.logicalTasks.failed)} failed · ${num(u.logicalTasks.other)} other · ${num(u.logicalTasks.submitted)} submitted`} tone={u.logicalTasks.failed > u.logicalTasks.completed ? "bad" : undefined} />
         <Stat label="Paid spend (24h)" value={usd(ov.paidSpendUsd.last24h)} sub={`${usd(ov.paidSpendUsd.last7d)} in the last 7 days · ${u.cacheUsageKnown ? "" : "up to "}${compact(u.uncachedInputTokens + u.outputTokens)} new tokens today${u.cacheUsageKnown ? ` (${compact(u.cachedInputTokens)} cached)` : ` (at least ${compact(u.cachedInputTokens)} cached; ${u.requestsWithUnknownCacheUsage} unknown)`}`} />
       </div>
-      {budgetPending.length ? <BudgetRequestsCard requests={budgetPending} pendingOnly /> : null}
+      {tab === "activity" && budgetPending.length ? <BudgetRequestsCard requests={budgetPending} pendingOnly /> : null}
       <Tabs items={[{ "id": "overview", "label": "Overview" }, { "id": "activity", "label": "Activity" }]} active={tab} path={base} label="Page sections" anchors={{}} />
       {tab === "overview" ? <div className="space-y-6">      <div className="grid gap-3 sm:grid-cols-3">
         <Stat label="Reported tokens (24h)" value={compact(u.inputTokens + u.outputTokens)} sub="Input and output, cached input included" />
@@ -176,7 +175,7 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
       </div>
       <Card>
         <CardHeader title="Tokens over the last 24 hours" description="Reported input and output per hour. Input includes tokens served from the prompt cache." actions={<Link href={`${base}/requests`} className="text-xs text-accent-ink hover:underline">Request log</Link>} />
-        <div className="p-4">{ts.length ? <StackedColumns buckets={buckets} series={tokenSeries} bucketMinutes={60} /> : <EmptyState title="No token usage in the last 24 hours">Reported input and output appear as this project's model requests finish.</EmptyState>}</div>
+        <div className="p-4">{ts.length ? <StackedColumns buckets={buckets} series={tokenSeries} bucketMinutes={60} unit="tokens" /> : <EmptyState title="No token usage in the last 24 hours">Reported input and output appear as this project's model requests finish.</EmptyState>}</div>
       </Card>
       <div className="grid gap-6 xl:grid-cols-[2fr_1fr]">
         <Card>

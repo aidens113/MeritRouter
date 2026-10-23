@@ -1,6 +1,6 @@
 # MeritRouter rename and documentation
-Status: Active
-Status detail: User authorized complete product rename and readable setup documentation with an agent prompt at the top of README.
+Status: Complete
+Status detail: Rename, onboarding, requested UI refinements and acceptance complete; authorized publication to dev/main.
 Created: 2026-10-23
 Last updated: 2026-10-23
 Owner: Senior supervisor agent
@@ -10,53 +10,36 @@ Related: [handoff](handoff.md), [index](README.md)
 
 ## Current State
 
-All rename workers frozen. Recursive build passes; first parallel typecheck saw stale pre-rename
-dist declarations, then ordered repeat passes. Presets regenerated, pnpm lock/link refreshed.
-Package prepack exposed a staging collision: old MCP auto-started user4477 from generated
-packages/router/panel; prepack rm of that staging directory failed EBUSY. No user process was
-stopped or config changed. Supervisor restores exact prior generated files from own archived
-accepted package with SHA256 verification. Panel worker now separates canonical bundled-panel
-staging and prefers apps/panel in source checkouts. Supervisor restored/hash-verified1812 old
-generated panel files, with user config/process unchanged. Safety focused18/18 passes; final
-recursive typecheck passes. Full suite now running at bounded2workers on frozen source.
-Installed fresh tarball passes renamed CLI init/setup, package README, stdio MCP42tools/name,
-bundled overview/security/project/icon routes and clean stop, no stale warning. Demo nested-job
-assertion failed: pending mean final_check cancelled by await_tasks reconciliation constructing
-WorkerActionRequests without injected ctx.now. Worker diagnosed through raw readonly session/
-SQLite evidence; no real-clock service opened against seed. Proper clock fix + regression is
-queued until full frozen run finishes; do not mask it with looser demo assertions/timeouts.
-Supervisor browser acceptance:19 branded routes,4 desktop/mobile screenshots inspected,
-0exceptions; physical checkout path is an intentional exception. Owned demo4495 stopped before
-reseed; owned Chrome9337 retained for final pass. Provider/API requests remain fake/offline.
-Independent onboarding audit found/fixed migration ordering (pin paths/env before doctor),
-user-chosen provider env references, installed CLI/source command distinction and prompt doc
-location ambiguity. All local documentation links/anchors resolve.
+Implementation is integrated on feat/meritrouter-rename: canonical MeritRouter runtime,
+package/CLI, public types, configuration, environment, storage defaults, MCP and panel identity.
+README begins with a copyable agent prompt; setup and migration docs preserve existing data,
+keys and explicit paths. Historical paths and narrow cross-version protocol markers remain.
 
-Baseline clean dev3c06c69. Work branch feat/meritrouter-rename. User requests full rename from
-the previous product name to MeritRouter and readable docs, especially an easy README with a
-copyable prompt immediately below the title telling an agent to use MeritRouter.
-Inventory:360 non-working-document files reference the old name: package/import/CLI names,
-class/error symbols, config/environment/default storage paths, Git namespaces, MCP identity,
-panel branding/cookies/scripts, examples/tests and authored docs. Rename must be integrated,
-not cosmetic. Canonical names: MeritRouter, npm/library/CLI `meritrouter`, panel
-`meritrouter-panel`, root private workspace `meritrouter-workspace`, env `MERITROUTER_*`,
-config `meritrouter.config.yaml`, runtime `.meritrouter`, public class `MeritRouter`.
+User UI refinements are integrated: Jobs lists work before a collapsed creation form; #new
+opens it on direct/client navigation and preserves drafts. Overview includes reported token
+totals and usage charts with operational details in Activity, no separate Usage tab. Agents
+has role filters, status/session/task summaries and first/last activity. Requests with partial
+cache accounting show approximate reported tokens without altering backend provenance.
 
-New defaults use new names. Do not silently move/delete existing installs, configs, databases,
-vaults, brains, repositories or services. Existing config can be opened explicitly with --config;
-relative stored paths must retain their meaning. Explain migration and service/MCP reconnect.
-No old package/CLI alias is promised, no npm publication or provider/network job authorized.
-Do not invent an available npm package or changed GitHub repository URL. Hosted repository
-rename, if unavailable, must be recorded; clone instructions must use a verified working URL.
-Historical working reports/commit hashes and real deployment paths remain historical evidence;
-do not pretend old deployments or directories were renamed. No physical checkout move.
+Frozen checkpoint 9fa547a passed the full router suite: 117 files, 1193 tests passed, 2
+Linux-only skips, 1138.85s. Clock and UI followups integrated as f3666cb and 23fa896.
+Final recursive build/typecheck pass; final affected suites pass 49/49. Final installed
+tarball CLI/setup/MCP (42 tools)/bundled panel smoke passes after integration.
+Hardened demo exits 0, including 3 nested integrations/1 rebase and stopped fixture services.
+Final browser interactions/mobile overflow and usage-focused visual refinement pass, including
+19 branded routes, 8 changed-page screenshots and no browser exceptions. Chart axes accommodate
+large token counts; token chart units are explicit.
 
-Three disjoint workers: router/runtime/tests, panel, current authored docs. Supervisor owns
-README (root and new packages/router/README.md), root manifests/lockfile/ignore files/agent instructions, working docs, integration and
-all release acceptance. No broad tests/builds until source freeze; workers use focused checks.
-All worker commands must use this repository as workdir and touch only owned files; report
-outside needs to supervisor. Tests temp fixtures permitted under existing testing protocol;
-no user install/config/actual4477/paid provider work. No commits by workers.
+Acceptance found and fixed two defects: legacy generated panel staging collided with an
+existing user process (restored and SHA256-verified 1812 files; new staging bundled-panel
+never touches it), and await_tasks used real time to reconcile injected-clock actions.
+The clock fix has 3 regressions; demo phases now fail/settle unfinished tasks before changing
+historical time. No user configuration or running service was changed.
+
+Hosted repository is now https://github.com/aidens113/MeritRouter; origin updated and fetch
+verified. Local acceptance is complete; supervisor is publishing dev/main. No npm publication
+or live deployment. User services remain unchanged; follow setup migration before upgrading.
+
 
 ## Phases
 
@@ -70,6 +53,21 @@ no user install/config/actual4477/paid provider work. No commits by workers.
 6. Record evidence, commit/merge/push dev/main under standing repository rules; no live deploy.
 
 ## Worker Briefs
+
+### Isolated Jobs form layout
+- Panel worker owns ONLY apps/panel/app/p/[slug]/jobs/page.tsx and NEW apps/panel/components/client/job-create-section.tsx if needed, plus own reports/job-form.md IN .claude/worktrees/meritrouter-job-form. No primary-tree edits.
+- Move New job below all existing jobs. Collapse by default with clear accessible disclosure/summary. Retain full existing form and setup warning; preserve unsaved draft when toggled.
+- Existing /jobs#new links must open/scroll to the form on initial and client navigation. Change empty-state copy from form above to below; preserve enabled/disabled/labs behavior. No endpoint/security/routing changes.
+- Offline frozen pnpm install permitted in own worktree. Focused syntax/type checks only, no build/full/demo/user config/process operations. Root owns integrated production browser and publication; no commits.
+- Extension: same worker additionally owns app/p/[slug]/page.tsx, app/p/[slug]/agents/page.tsx, components/requests-view.tsx in isolated UI worktree. Project Overview gets existing usage graphs inline, token stat/input-output chart from existing DTOs, no Usage tab; legacy usage query resolves Overview. Agents uses existing AgentRow role/label/running/timestamps/tasks/sessions/status with proper filter/summary/badges/scopedlinks, no backend/N+1. Requests unknown-cache state shows ~reported total with honest reported-token label/concise provenance, known-cache exact unchanged. No backend metric mutation.
+- Ordering refinement: Overview is usage-first; existing Labs/running-jobs/repositories blocks move into Activity so they do not precede the charts. All existing navigation remains available.
+
+### Isolated clock correction
+- Separate worktree .claude/worktrees/meritrouter-clock, branch feat/meritrouter-clock-fix based9fa547a. Root checkout remains frozen for full suite.
+- Security worker owns ONLY packages/router/src/harness/supervisor-tools.ts, new packages/router/tests/supervisor-action-clock.test.ts and own reports/clock.md IN THAT WORKTREE. No edits in primary checkout.
+- Pass s.ctx.now to both await_tasks WorkerActionRequests constructors; keep Date.now for elapsed waits. Regress pending action survival/projection with historical injected clock, operator real execution, actual injected expiry still refused. No weaker authority/expiry checks.
+- Worker may pnpm install --offline --frozen-lockfile and focused Vitest in isolated worktree; no build/demo/full suite/provider/userconfig operations. All commands stay in worktree/repository. Send freeze/diff/results, no commits.
+- Supervisor reviews, commits in child worktree, then integrates only after primary full run finishes and rechecks affected suites. Demo fixture may be strengthened separately after diagnosis; never mask clock defect.
 
 ### Router rename
 - Own packages/router/** except package.json (supervisor owns manifest); no panel/root/docs edits.
@@ -106,8 +104,18 @@ no user install/config/actual4477/paid provider work. No commits by workers.
 - Validation: not yet run on rename candidate.
 - Outcome: Partial; three workers to implement disjoint files, supervisor integrates.
 
+### 2026-10-23 - Integrated acceptance
+- Agent: senior supervisor
+- Evidence: full frozen suite 117 files, 1193 passed, 2 Linux-only skips; final affected 49/49.
+- Validation: recursive build/typecheck pass; fresh installed package CLI/MCP42tools/panel pass;
+  hardened offline seed exits 0 with 3 nested integrations/1 rebase; browser interactions and
+  mobile layout pass with 8 screenshots and no exceptions.
+- Decision: preserve old generated panel used by existing process; canonical staging isolated.
+  Fix injected-clock reconciliation and reject seed time changes with unfinished tasks.
+- Outcome: final visual refinement passes; tarball SHA1 924b1f3fa33088c47fa3adbd58d399962324c7de
+  reinstalled and smoke-tested. Hosted repository renamed, origin updated and fetch succeeds.
+
 ## Open Questions
 
-GitHub ADMIN capability verified for aidens113/SwitchYardRouter; full rename is user-authorized.
-Supervisor will perform the hosted rename after local acceptance and verify the new clone URL
-before publishing. No provider budget, npm publish or live deployment requested.
+None for this unit. Existing user services/MCP clients require the documented migration and
+reconnection; this source publication does not restart them or publish an npm package.
