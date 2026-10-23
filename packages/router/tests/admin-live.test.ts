@@ -78,6 +78,35 @@ function step(s: Switchyard, cursor: LiveCursor): { topics: string[]; cursor: Li
 }
 
 describe("live change watcher", () => {
+  it("refreshes scoped task and job approvals after inserts, decisions and removal without task events", () => {
+    env = twoProjects();
+    sy = open(env, new ScriptedClient(() => reply("{}")));
+    for (const project of ["alpha", "beta"]) sy.tasks.submit([WorkerTaskSchema.parse({ id: `action-${project}`, profile: "inspect", goal: "Review a scoped action", repositoryAliases: ["app"], constraints: { acceptanceCriteria: ["records a decision"] } })], { project });
+    const other = new Database(sy.db.name); extra.push(other);
+    const eventsBefore = sy.db.prepare("SELECT COUNT(*) AS n FROM events").get();
+    let alpha = liveCursor(sy, "alpha"), beta = liveCursor(sy, "beta"), all = liveCursor(sy, "all");
+    const capture = (project: string) => ({ id: `wa-${project}`, project, taskId: `action-${project}`, status: "pending", action: { command: "node --version", cwd: path.join(env!.dir, `${project}-app`), timeoutMs: 5000, reason: "Review this exact fixture action", source: "0".repeat(64), lease: { taskId: `action-${project}`, owner: "fixture", runCount: 1, project, incarnation: "fixture-live" }, jobId: null }, decisionReason: null, decidedBy: null, output: null, exitCode: null, createdAt: 1 });
+    const insert = (project: string) => other.prepare("INSERT INTO worker_action_requests(id,project_id,task_id,request_key,value_json,created_at) VALUES (?,?,?,?,?,1)").run(`wa-${project}`, project, `action-${project}`, `key-${project}`, JSON.stringify(capture(project)));
+    const expectScope = (affected: "alpha" | "beta") => {
+      const a = step(sy!, alpha), b = step(sy!, beta), g = step(sy!, all);
+      const own = affected === "alpha" ? a : b, foreign = affected === "alpha" ? b : a;
+      for (const topic of ["tasks", "jobs", "tasks:*", "jobs:*"]) {
+        expect(own.topics).toContain(topic); expect(g.topics).toContain(topic);
+        expect(foreign.topics).not.toContain(topic);
+      }
+      alpha = a.cursor; beta = b.cursor; all = g.cursor;
+      expect(step(sy!, alpha).topics).toEqual([]);
+    };
+    insert("alpha"); expectScope("alpha");
+    // Decisions and output can change without a new timestamp or any task/session event.
+    other.prepare("UPDATE worker_action_requests SET value_json=json_set(value_json,'$.status','completed','$.decisionReason','approved','$.output','v22 fixture','$.exitCode',0) WHERE id='wa-alpha'").run();
+    expectScope("alpha");
+    insert("beta"); expectScope("beta");
+    other.prepare("UPDATE worker_action_requests SET value_json=json_set(value_json,'$.status','denied') WHERE id='wa-beta'").run();
+    expectScope("beta");
+    other.prepare("DELETE FROM worker_action_requests WHERE id='wa-alpha'").run(); expectScope("alpha");
+    expect(sy.db.prepare("SELECT COUNT(*) AS n FROM events").get()).toEqual(eventsBefore);
+  });
   it("refreshes catalog-only edits without treating unrelated service heartbeats as model changes", () => {
     env = twoProjects();
     sy = open(env, new ScriptedClient(() => reply("{}")));

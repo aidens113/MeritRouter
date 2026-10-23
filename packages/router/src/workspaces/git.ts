@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { prepareGitProcess } from "./git-process-policy.js";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -16,11 +17,12 @@ export class GitError extends Error {
 /** Run git without a shell. Output is capped; callers truncate further as needed. */
 export async function git(cwd: string, args: string[], opts: { maxBuffer?: number; allowExit?: number[]; env?: Record<string, string> } = {}): Promise<string> {
   try {
-    const { stdout } = await execFileAsync("git", args, {
+    const processPolicy = prepareGitProcess(cwd, args, opts.env);
+    const { stdout } = await execFileAsync("git", processPolicy.args, {
       cwd,
       maxBuffer: opts.maxBuffer ?? 32 * 1024 * 1024,
       windowsHide: true,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", ...opts.env },
+      env: processPolicy.env,
     });
     return stdout;
   } catch (err) {

@@ -6,6 +6,7 @@ import {
   SessionEventSchema,
   TOOL_OUTPUT_CAP_BYTES,
   type ResumeAction,
+  type NotAppliedToolProof,
   type SessionEndStatus,
   type SessionEvent,
   type SessionEventData,
@@ -261,9 +262,9 @@ export class SessionRecorder {
    * `ResumePlan` itself as `detail`. Intents listed in `resolvedIntentSeqs` are closed: a later
    * `toolOutcome` for them throws, and `pendingIntents` no longer reports them.
    */
-  resumed(summary: string, actions: ResumeAction[], detail: { resolvedIntentSeqs?: number[]; droppedRequestSeqs?: number[] } = {}): number {
+  resumed(summary: string, actions: ResumeAction[], detail: { resolvedIntentSeqs?: number[]; droppedRequestSeqs?: number[]; notAppliedTools?: NotAppliedToolProof[] } = {}): number {
     const resolved = detail.resolvedIntentSeqs ?? [];
-    const seq = this.append("resumed", { summary, actions, resolvedIntentSeqs: resolved, droppedRequestSeqs: detail.droppedRequestSeqs ?? [] });
+    const seq = this.append("resumed", { summary, actions, resolvedIntentSeqs: resolved, droppedRequestSeqs: detail.droppedRequestSeqs ?? [], ...(detail.notAppliedTools?.length ? { notAppliedTools: detail.notAppliedTools } : {}) });
     for (const s of resolved) this.intents.delete(s);
     return seq;
   }

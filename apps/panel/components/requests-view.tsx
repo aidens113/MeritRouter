@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { Switchyard } from "switchyard-router";
 import { insights } from "switchyard-router";
 import { cacheSaving, purposeLabel, RequestsTable } from "@/components/requests-table";
@@ -5,7 +6,7 @@ import { Card, HelpTip, Stat } from "@/components/ui";
 import { PageHeader } from "@/components/page-header";
 import { UrlFilters } from "@/components/client/url-filters";
 import { compact, num, pct } from "@/lib/format";
-import { projectBase } from "@/lib/links";
+import { jobHref, projectBase } from "@/lib/links";
 
 const LIMITS = ["50", "100", "200", "500"];
 
@@ -18,16 +19,24 @@ export function RequestsView({ sy, project, sp }: { sy: Switchyard; project: { s
   const status = str("status");
   const endpoint = str("endpoint");
   const task = str("task").trim();
+  const job = str("job").trim();
+  const page = Math.max(1, Math.min(10000, Math.floor(Number(str("page"))) || 1));
   const purpose = str("purpose");
   const tier = str("tier");
   const problems = str("problems");
   const limit = LIMITS.includes(str("limit")) ? Number(str("limit")) : 200;
   const scope = project ? { project: project.slug } : {};
 
-  let rows = insights.requestLog(sy, { limit, ...scope, ...(status ? { status } : {}), ...(endpoint ? { endpointId: endpoint } : {}), ...(task ? { taskId: task } : {}) });
-  if (purpose) rows = rows.filter((x) => x.purpose === purpose);
-  if (tier) rows = rows.filter((x) => x.tier === tier);
-  if (problems === "yes") rows = rows.filter((x) => x.errorKind || x.policyViolation);
+  const filters = { ...scope, ...(status ? { status } : {}), ...(endpoint ? { endpointId: endpoint } : {}), ...(task ? { taskId: task } : {}), ...(job ? { jobId: job } : {}), ...(purpose ? { purpose } : {}), ...(tier ? { tier } : {}), ...(problems === "yes" ? { problems: true } : {}) };
+  const total = insights.requestLogCount(sy, filters);
+  const rows = insights.requestLog(sy, { ...filters, limit, offset: (page - 1) * limit });
+  const scopedJob = job ? insights.jobDetail(sy, job, { transcript: false }) : null;
+  const visibleJob = scopedJob && (!project || scopedJob.project === project.slug) ? scopedJob : null;
+  const pageHref = (next: number) => {
+    const query = new URLSearchParams(Object.entries(sp).flatMap(([key, value]) => typeof value === "string" && key !== "page" ? [[key, value]] : []));
+    query.set("page", String(next));
+    return `?${query}`;
+  };
   const eps = sy.catalog.endpoints();
   const names = new Map(eps.map((e) => [e.id, e.displayName ?? e.gatewayModelId]));
   const purposes = [...new Set(insights.requestLog(sy, { limit: 1000, ...scope }).map((x) => x.purpose))].sort();
@@ -35,6 +44,8 @@ export function RequestsView({ sy, project, sp }: { sy: Switchyard; project: { s
   const tokIn = rows.reduce((s, x) => s + (x.inputTokens ?? 0), 0);
   // Cached input was read again from the provider's prompt cache: it is not new work.
   const tokCached = rows.reduce((s, x) => s + (x.cachedInputTokens ?? 0), 0);
+  const unknownCache = rows.filter(x => x.cachedInputTokens === null).length;
+  const cacheKnown = unknownCache === 0;
   const tokOut = rows.reduce((s, x) => s + (x.outputTokens ?? 0), 0);
   const saving = cacheSaving(rows, new Map(eps.map((e) => [e.id, e.pricing])));
   const violations = rows.filter((x) => x.policyViolation).length;
@@ -51,20 +62,17 @@ export function RequestsView({ sy, project, sp }: { sy: Switchyard; project: { s
         live={["requests"]}
       />
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <Stat label="Requests shown" value={num(rows.length)} sub={`newest ${limit} matching the filters`} />
+        <Stat label="Requests shown" value={num(rows.length)} sub={`${num(total)} matching | page ${page}`} />
         <Stat label="Succeeded" value={rows.length ? pct(ok, rows.length) : "–"} sub={`${num(rows.length - ok)} failed or uncertain`} />
-        <Stat label="New tokens" value={compact(tokIn - tokCached + tokOut)} sub={`${compact(tokIn - tokCached)} in · ${compact(tokOut)} out · ${compact(tokCached)} cached · ${compact(tokIn + tokOut)} with cached`} />
-        <Stat
-          label="Prompt cache"
-          value={tokIn ? pct(tokCached, tokIn) : "–"}
-          sub={`of input read from the provider's cache · ${saving.known ? `saved $${saving.usd.toFixed(4)} at cached prices` : "saving unknown (no cached price)"}`}
-        />
+        <Stat label="New tokens" value={cacheKnown ? compact(tokIn - tokCached + tokOut) : "Unknown"} sub={cacheKnown ? `${compact(tokIn - tokCached)} in | ${compact(tokOut)} out | ${compact(tokCached)} cached` : `${unknownCache} requests have unknown cache usage | ${compact(tokIn + tokOut)} total reported tokens`} />
+        <Stat label="Prompt cache" value={cacheKnown && tokIn ? pct(tokCached, tokIn) : cacheKnown ? "0" : "Unknown"} sub={`${compact(tokCached)} known cached tokens${unknownCache ? ` | ${unknownCache} unknown requests` : ""} | ${saving.known ? `known savings $${saving.usd.toFixed(4)}` : "saving unknown (no cached price)"}`} />
         <Stat label="Policy violations" value={num(violations)} tone={violations ? "bad" : undefined} sub="served by a different model than routed" />
       </div>
+      {visibleJob ? <p className="text-sm text-ink-2">Requests for <Link href={jobHref(projectBase(visibleJob.project), visibleJob.taskId)} className="text-accent-ink hover:underline">{visibleJob.label ?? visibleJob.taskId}</Link> and all its descendant tasks and sub-jobs.</p> : null}
       <Card>
         <div className="border-b border-line px-4 py-3">
           <UrlFilters
-            values={{ status, endpoint, purpose, tier, problems, task, limit: str("limit") }}
+            values={{ status, endpoint, purpose, tier, problems, task, job, limit: str("limit") }}
             fields={[
               { name: "status", label: "Status", kind: "select", options: [["succeeded", "Succeeded"], ["failed", "Failed"], ["uncertain", "Uncertain"], ["reserved", "In flight"]] },
               { name: "endpoint", label: "Model", kind: "select", options: eps.map((e) => [e.id, e.displayName ?? e.gatewayModelId] as [string, string]) },
@@ -72,12 +80,18 @@ export function RequestsView({ sy, project, sp }: { sy: Switchyard; project: { s
               { name: "tier", label: "Tier", kind: "select", options: ["T1", "T2", "T3"].map((t) => [t, t] as [string, string]) },
               { name: "problems", label: "Problems", kind: "select", options: [["yes", "Errors or violations only"]], anyLabel: "All requests" },
               { name: "limit", label: "Show", kind: "select", options: LIMITS.filter((l) => l !== "200").map((l) => [l, `${l} rows`] as [string, string]), anyLabel: "200 rows" },
+              { name: "job", label: "Job id (including descendants)", kind: "text", placeholder: "job_..." },
               { name: "task", label: "Task id", kind: "text", placeholder: "t_…" },
             ]}
           />
         </div>
         <RequestsTable rows={rows} names={names} {...(project ? { base: projectBase(project.slug) } : {})} empty="No requests match these filters" />
       </Card>
+      <nav aria-label="Request pages" className="flex items-center justify-between text-sm">
+        {page > 1 ? <Link href={pageHref(page - 1)} className="text-accent-ink hover:underline">Previous page</Link> : <span />}
+        <span className="text-ink-3">{total ? `${Math.min((page - 1) * limit + 1, total)}-${Math.min(page * limit, total)} of ${total}` : "No matching requests"}</span>
+        {page * limit < total ? <Link href={pageHref(page + 1)} className="text-accent-ink hover:underline">Next page</Link> : <span />}
+      </nav>
     </div>
   );
 }

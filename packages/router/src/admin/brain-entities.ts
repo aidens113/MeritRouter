@@ -49,11 +49,11 @@ export interface BrainHistoryEntry {
 /** Read history once, tracking historical paths without exposing private rename ancestors. */
 async function documentHistory(sy: Switchyard, project: string, path: string) {
   if (!brainDocumentVisible(project, path) || !sy.projects.get(project)) return null;
-  const resolved = sy.brainFor(project).resolve(path);
-  if (!resolved.repo || !resolved.repoRel) return null;
+  const resolved = await sy.brainFor(project).resolveGitDocument(path);
+  if (!resolved) return null;
   const raw = await git(resolved.repo, ["log", "--follow", "--relative", "--format=%x1e%H%x00%aI%x00%(trailers:key=Agent,valueonly)%x00%(trailers:key=Model,valueonly)%x00", "--name-status", "-z", "HEAD", "--", `:(literal)${resolved.repoRel}`]);
   let historicalPath = resolved.repoRel;
-  const prefix = path.slice(0, path.length - resolved.repoRel.length);
+  const visiblePath = (repoPath: string) => repoPath.startsWith(resolved.mountPrefix) && brainDocumentVisible(project, `${resolved.virtualPrefix}${repoPath.slice(resolved.mountPrefix.length)}`);
   const entries: Array<BrainHistoryEntry & { repoPath: string }> = [];
   for (const record of raw.split("\x1e")) {
     const fields = record.split("\0");
@@ -64,7 +64,7 @@ async function documentHistory(sy: Switchyard, project: string, path: string) {
     const model = fields.shift()?.trim() || null;
     // Stop permanently at the first visibility boundary. A document that moved back and
     // forth cannot reveal older content just because its earlier path becomes visible again.
-    if (!brainDocumentVisible(project, `${prefix}${historicalPath}`)) break;
+    if (!visiblePath(historicalPath)) break;
     if (!hashSchema.safeParse(commit).success) continue;
     let touched = false;
     let previousPath = historicalPath;
@@ -84,7 +84,7 @@ async function documentHistory(sy: Switchyard, project: string, path: string) {
     if (touched) entries.push({ commit, date, agent, model, subject: "Document changed", repoPath: historicalPath });
     historicalPath = previousPath;
   }
-  return { repo: resolved.repo, entries };
+  return { repo: resolved.repo, mountPrefix: resolved.mountPrefix, virtualPrefix: resolved.virtualPrefix, entries };
 }
 
 /**
@@ -97,13 +97,9 @@ export async function brainDocumentHistory(sy: Switchyard, project: string, path
     const entries = (history?.entries ?? []).slice(0, 50).map(({ repoPath: _repoPath, ...entry }) => entry);
     if (!history || !entries.length) return entries;
     try {
-      const [repoPrefix, inventory] = await Promise.all([
-        git(history.repo, ["rev-parse", "--show-prefix"]),
-        git(history.repo, ["log", "--no-walk=unsorted", "--root", "-m", "--raw", "--no-renames", "--no-relative", "--abbrev=40", "--format=%H%x00%s%x00", "-z", ...entries.map(entry => entry.commit), "--"], { maxBuffer: 4 * 1024 * 1024 }),
-      ]);
-      const rootPrefix = repoPrefix.trim();
-      const resolved = sy.brainFor(project).resolve(path);
-      const virtualPrefix = path.slice(0, path.length - resolved.repoRel.length);
+      const inventory = await git(history.repo, ["log", "--no-walk=unsorted", "--root", "-m", "--raw", "--no-renames", "--no-relative", "--abbrev=40", "--format=%H%x00%s%x00", "-z", ...entries.map(entry => entry.commit), "--"], { maxBuffer: 4 * 1024 * 1024 });
+      const rootPrefix = history.mountPrefix;
+      const virtualPrefix = history.virtualPrefix;
       const fields = inventory.split("\0");
       const subjects = new Map<string, { subject: string; visible: boolean; files: number }>();
       let current: { subject: string; visible: boolean; files: number } | undefined;
@@ -161,7 +157,7 @@ export async function brainCommitDetail(sy: Switchyard, project: string, path: s
     const commit = (await git(history.repo, ["rev-parse", "--verify", `${hash}^{commit}`])).trim();
     const selected = history.entries.find(entry => entry.commit === commit);
     if (!selected) return null;
-    const diff = await git(history.repo, ["show", "--format=", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "--relative", "--patch", commit, "--", `:(literal)${selected.repoPath}`]);
+    const diff = await git(history.repo, ["show", "--format=", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ...(history.mountPrefix ? [`--relative=${history.mountPrefix}`] : ["--relative"]), "--patch", commit, "--", `:(literal)${selected.repoPath}`]);
     if (!diff.trim()) return null;
     return { commit, date: selected.date, path, diff: diff.slice(0, 200_000), truncated: diff.length > 200_000 };
   } catch { return null; }

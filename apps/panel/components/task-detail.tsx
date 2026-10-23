@@ -1,3 +1,4 @@
+import { WorkerActionRequestsCard } from "@/components/worker-action-requests";
 import { BudgetRequestsCard, TaskBudgetCard } from "@/components/budget-requests";
 import { RelatedPanel } from "@/components/related";
 import { AgentLink, CommitLink, ModelLink, RequestLink, TaskLink } from "@/components/entity-links";
@@ -70,6 +71,7 @@ export async function TaskDetailView({ sy, taskId, scope, sp = {} }: { sy: Switc
   const taskBudget = insights.taskBudget(sy, taskId);
   const budgetPending = insights.budgetRequestsView(sy, { taskId, project: scope.project, status: "pending", limit: 1000 });
   const budgetHistory = insights.budgetRequestsView(sy, { taskId, project: scope.project }).filter((r) => r.status !== "pending");
+  const workerActions = insights.listWorkerActions(sy.db, { project: scope.project, taskId });
   const webRequests = insights.taskWebRequests(sy, st.taskId);
 
   const tab = pickTab(sp, ["result", "verification", "routing", "usage", "sessions"]);
@@ -107,9 +109,10 @@ export async function TaskDetailView({ sy, taskId, scope, sp = {} }: { sy: Switc
           </>
         }
       />
+      <WorkerActionRequestsCard policy={sy.cfg.security.outside_repository} requests={workerActions} decisions={scope.actions} />
       {scope.lists && (st.profile === "supervise" || d.spec.parentTaskId) ? (
         <Callout tone="accent" title={st.profile === "supervise" ? "This task is a job" : "Part of a job"}>
-          {st.profile === "supervise" ? "Its questions, branches, worker tasks, and supervisor transcript are on the " : "It was delegated by a job's supervisor. See the "}
+      {st.profile === "supervise" ? "Its questions, branches, worker tasks, and supervisor transcript are on the " : "It was delegated by a job's supervisor. See the "}
           <Link href={jobHref(base, st.profile === "supervise" ? st.taskId : (d.spec.parentTaskId ?? ""))} className="font-medium text-accent-ink hover:underline">
             job page
           </Link>
@@ -268,7 +271,7 @@ export async function TaskDetailView({ sy, taskId, scope, sp = {} }: { sy: Switc
                   ["Model requests", num(res.usage.modelRequests)],
                   ...(res.usage.webRequests ? ([["Web requests", `${num(res.usage.webRequests)} (searches and page fetches)`]] as Array<[string, ReactNode]>) : []),
                   ["Provider attempts", `${num(res.usage.providerAttempts)}${res.usage.providerAttemptsExact ? "" : " (reported, not exact)"}`],
-                  ["Tokens", `${res.usage.uncachedInputTokens !== null && res.usage.uncachedInputTokens !== undefined ? `${num(res.usage.uncachedInputTokens)} new in · ` : ""}${num(res.usage.outputTokens)} out · ${num(res.usage.inputTokens)} in with ${num(res.usage.cachedInputTokens ?? 0)} cached${res.usage.cachedInputTokens && res.usage.inputTokens ? ` (${pct(res.usage.cachedInputTokens, res.usage.inputTokens)})` : ""}`],
+                  ["Tokens", `${res.usage.uncachedInputTokens !== null && res.usage.uncachedInputTokens !== undefined ? `${num(res.usage.uncachedInputTokens)} new in · ` : ""}${num(res.usage.outputTokens)} out · ${num(res.usage.inputTokens)} in with ${(res.usage.cachedInputTokens == null ? "unknown" : num(res.usage.cachedInputTokens))} cached${res.usage.cachedInputTokens && res.usage.inputTokens ? ` (${pct(res.usage.cachedInputTokens, res.usage.inputTokens)})` : ""}`],
                   ["Token basis", res.usage.batchId ? `${humanize(res.usage.tokenUsageBasis)} (share of batch ${res.usage.batchId})` : humanize(res.usage.tokenUsageBasis)],
                   ["Cost", res.usage.estimatedCostUsd === 0 ? "Free" : res.usage.estimatedCostUsd === null ? "unknown" : `$${res.usage.estimatedCostUsd}`],
                   [

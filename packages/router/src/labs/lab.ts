@@ -20,8 +20,10 @@ import type { ResolvedConfig } from "../config/load.js";
 import type { ProjectContext } from "../projects/context.js";
 import { ProjectConfigSchema } from "../projects/schema.js";
 import { immediate, newId, type Db } from "../storage/db.js";
-import { dirtyPaths, git } from "../workspaces/git.js";
+import { dirtyPaths, git as unguardedGit } from "../workspaces/git.js";
 import { runProcess } from "../runners/coding/process.js";
+import type { LeaseRef } from "../storage/task-leases.js";
+import { assertLabEffect, assertLabSupervisor, labEffectSignal, withLabAuthority } from "./control-authority.js";
 import { LabsConfigSchema, LabNameSchema, validateRecipe, substitute } from "./recipe.js";
 import { LabsStore, type LabRecord, type LabServiceRecord } from "./store.js";
 import { allocatePorts } from "./ports.js";
@@ -58,8 +60,8 @@ export class LabManager {
   private readonly busyLabs = new Set<string>();
   constructor(readonly options: LabManagerOptions) {
     this.store = new LabsStore(options.db);
-    this.services = new LabServices(this.store, LabsConfigSchema.parse(options.cfg.labs), this.owner, this.abort.signal);
-    this.controls = new LabControl(this.store, this.owner, (project, name, input) => this.executeControl(project, name, input), (project, name) => !this.busyLabs.has(`${project}/${name}`));
+    this.services = new LabServices(this.store, LabsConfigSchema.parse(options.cfg.labs), this.owner, this.abort.signal, options.cfg);
+    this.controls = new LabControl(this.store, this.owner, (project, name, input, lease) => withLabAuthority(options.db, options.cfg, project, lease, this.abort.signal, () => this.executeControl(project, name, input)), (project, name) => !this.busyLabs.has(`${project}/${name}`), (project, lease) => { if (lease) assertLabSupervisor(options.db, options.cfg, project, lease); });
     this.taskAttempts = new TaskLabLifecycle(this);
     if (options.monitor !== false) {
       this.timer = setInterval(() => {
@@ -136,9 +138,10 @@ export class LabManager {
   reloadConfig(): void {
     Object.assign(this.services.config, LabsConfigSchema.parse(this.options.cfg.labs));
   }
-  requestControl(project: string, name: string, input: LabOperationInput, by = "human:cli"): LabOperation {
+  requestControl(project: string, name: string, input: LabOperationInput, by = "human:cli", options: { taskLease?: LeaseRef } = {}): LabOperation {
     this.options.project(project);
-    return this.controls.submit(project, name, input, by);
+    if (options.taskLease) assertLabSupervisor(this.options.db, this.options.cfg, project, options.taskLease);
+    return this.controls.submit(project, name, input, by, options.taskLease);
   }
   operation(project: string, name: string, id: string): LabOperation | null {
     this.options.project(project);
@@ -152,10 +155,11 @@ export class LabManager {
     return this.controls.wait(project, name, id, { signal: this.abort.signal, ...options });
   }
   async control(project: string, name: string, input: LabOperationInput, by = "controller", options: {
+    taskLease?: LeaseRef;
     timeoutMs?: number;
     signal?: AbortSignal;
   } = {}): Promise<LabOperation> {
-    const op = this.requestControl(project, name, input, by);
+    const op = this.requestControl(project, name, input, by, options);
     return this.waitOperation(project, name, op.id, options);
   }
   async processControls(): Promise<void> {
@@ -296,8 +300,8 @@ export class LabManager {
       return text;
     return redactLabText({ lab, services: this.store.services(lab.id), checks: [], urls: {}, heads: {} }, text);
   }
-  http(project: string, name: string, input: LabHttpInput): Promise<LabHttpResult> {
-    return labHttp(this, project, name, input);
+  http(project: string, name: string, input: LabHttpInput, options: { signal?: AbortSignal } = {}): Promise<LabHttpResult> {
+    return labHttp(this, project, name, input, options);
   }
   browserArtifact(project:string,name:string,checkId:string,artifactId:string){
     const status=this.status(project,name);
@@ -430,7 +434,9 @@ export class LabManager {
         const repo = typeof setup === "string" ? lab.repositories[0] : lab.repositories.find(r => r.alias === setup.repo);
         if (!repo)
           throw new Error("setup repository unavailable");
-        const result = await runProcess(substitute(typeof setup === "string" ? setup : setup.command, labValues(lab)), [], { cwd: repo.worktree, env: labEnvironment(lab), timeoutMs: cfg.setup_timeout_seconds * 1000, shell: true, signal: this.abort.signal });
+        assertLabEffect();
+        const result = await runProcess(substitute(typeof setup === "string" ? setup : setup.command, labValues(lab)), [], { cwd: repo.worktree, env: labEnvironment(lab), timeoutMs: cfg.setup_timeout_seconds * 1000, shell: true, signal: labEffectSignal(this.abort.signal) });
+        assertLabEffect();
         this.store.event(lab.id, "setup_finished", { repository: repo.alias, ...result });
         if (result.exitCode !== 0 || result.killed)
           throw new Error(`lab setup failed: ${result.stderr.slice(-1000)}`);
@@ -465,8 +471,11 @@ export class LabManager {
         return;
       for (const dep of lab.recipe.services[service]!.after)
         await visit(dep);
-      await this.services.start(lab, service);
-      started.add(service);
+      assertLabEffect();
+      const previousToken = this.store.service(lab.id, service)?.token;
+      const actual = await this.services.start(lab, service);
+      if (actual.token !== previousToken) started.add(service);
+      assertLabEffect();
     };
     try {
       for (const service of Object.keys(lab.recipe.services))
@@ -480,7 +489,7 @@ export class LabManager {
     }
     catch (err) {
       for (const service of [...started].reverse())
-        await this.services.stop(lab, service).catch(() => undefined);
+        await this.services.stop(lab, service, true).catch(() => undefined);
       lab.state = "failed";
       lab.updatedAt = Date.now();
       this.store.save(lab);
@@ -525,7 +534,8 @@ export class LabManager {
   private async checkLab(project: string, name: string, check: string): Promise<LabCheckResult> {
     const lab = this.require(project, name);
     this.touch(project, name);
-    return runLabCheck(this.store, lab, check, this.services.config.check_timeout_seconds, this.abort.signal, this);
+    assertLabEffect();
+    return runLabCheck(this.store, lab, check, this.services.config.check_timeout_seconds, labEffectSignal(this.abort.signal), this);
   }
   private async refreshLab(project: string, name: string): Promise<LabStatus> {
     let lab = this.require(project, name);
@@ -666,4 +676,11 @@ export class LabManager {
     }
     this.options.db.prepare("UPDATE lab_services SET owner_until=0 WHERE owner_id=?").run(this.owner);
   }
+}
+
+async function git(...args: Parameters<typeof unguardedGit>): Promise<string> {
+  assertLabEffect();
+  const result = await unguardedGit(...args);
+  assertLabEffect();
+  return result;
 }

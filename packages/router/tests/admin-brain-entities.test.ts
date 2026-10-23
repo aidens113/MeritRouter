@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Switchyard } from "../src/core/service.js";
 import { brainCommitDetail, brainDocumentBlame, brainDocumentHistory, brainDocumentRelated, brainDocumentVisible } from "../src/admin/brain-entities.js";
@@ -10,11 +10,11 @@ let env: Env | undefined;
 let sy: Switchyard | undefined;
 afterEach(async () => { await sy?.close(); sy = undefined; env?.cleanup(); env = undefined; });
 
-function setup(mount = false, nested = false) {
+function setup(mount = false, nested = false, mountPath?: string) {
   const base = baseConfig();
   env = makeEnv({ config: {
     ...base, repositories: {},
-    brain: { path: "brain", project: "alpha", ...(mount ? { mounts: [{ prefix: "projects/alpha/notes", path: nested ? "repo/docs" : "repo", commit: true }] } : {}) },
+    brain: { path: "brain", project: "alpha", ...(mount ? { mounts: [{ prefix: "projects/alpha/notes", path: mountPath ?? (nested ? "repo/docs" : "repo"), commit: true }] } : {}) },
     projects: { alpha: { repositories: {} }, beta: { repositories: {} } },
   } });
   sy = open(env, new ScriptedClient(() => reply("{}")));
@@ -151,6 +151,105 @@ describe("project-scoped brain commit details", () => {
     const history = await brainDocumentHistory(s, "alpha", "projects/alpha/notes/note.md");
     expect(history[0]?.subject).toBe("Document changed");
     expect(JSON.stringify(history)).not.toContain("private subject");
+  });
+
+  it("keeps nested mount-only history, document diffs and blame usable", async () => {
+    const { e, s } = setup(true, true);
+    put(e.repo, "docs/note.md", "public note\n");
+    commitAll(e.repo, "Safe nested note subject");
+    const hash = (await git(e.repo, ["rev-parse", "HEAD"])).trim();
+    const history = await brainDocumentHistory(s, "alpha", "projects/alpha/notes/note.md");
+    expect(history[0]?.subject).toBe("Safe nested note subject");
+    const detail = await brainCommitDetail(s, "alpha", "projects/alpha/notes/note.md", hash);
+    expect(detail?.diff).toContain("+public note");
+    expect(detail?.diff).not.toContain("docs/note.md");
+    const lines = await brainDocumentBlame(s, "alpha", "projects/alpha/notes/note.md");
+    expect(lines[0]?.text).toBe("public note");
+    expect(lines[0]?.commit).toBe(hash);
+  });
+
+  it("stops nested mount ancestry at an outside rename and hides its attribution", async () => {
+    const { e, s } = setup(true, true);
+    put(e.repo, "private.md", "now public document\n");commitAll(e.repo, "private ancestor subject");
+    const privateHash = (await git(e.repo, ["rev-parse", "HEAD"])).trim();
+    mkdirSync(path.join(e.repo, "docs"), { recursive: true });
+    renameSync(path.join(e.repo, "private.md"), path.join(e.repo, "docs/note.md"));commitAll(e.repo, "move private path into mount");
+    const movedHash = (await git(e.repo, ["rev-parse", "HEAD"])).trim();
+    const history = await brainDocumentHistory(s, "alpha", "projects/alpha/notes/note.md");
+    expect(history.map(entry => entry.commit)).toEqual([movedHash]);
+    expect(history[0]?.subject).toBe("Document changed");
+    const mountedHistory = await s.brainFor("alpha").history("projects/alpha/notes/note.md");
+    expect(mountedHistory.map(entry => entry.commit)).toEqual([movedHash]);
+    expect(mountedHistory[0]?.subject).toBe("Document changed");
+    expect(await brainCommitDetail(s, "alpha", "projects/alpha/notes/note.md", privateHash)).toBeNull();
+    expect(JSON.stringify(await brainCommitDetail(s, "alpha", "projects/alpha/notes/note.md", movedHash))).not.toContain("private.md");
+    const lines = await brainDocumentBlame(s, "alpha", "projects/alpha/notes/note.md");
+    expect(lines[0]?.commit).toBe("");expect(lines[0]?.authorName).toBe("Earlier history unavailable");
+    expect(JSON.stringify(lines)).not.toContain("private.md");
+  });
+
+  it("rejects core.worktree redirection to an unrelated repository", async () => {
+    const { e, s } = setup(true, true);
+    put(e.repo, "docs/note.md", "safe note\n");commitAll(e.repo, "safe subject");
+    const outside = path.join(e.dir, "unrelated");mkdirSync(outside);
+    await git(outside, ["init", "-q"]);put(outside, "docs/note.md", "unrelated secret\n");commitAll(outside, "unrelated secret subject");
+    await git(e.repo, ["config", "core.worktree", outside]);
+    expect(await brainDocumentHistory(s, "alpha", "projects/alpha/notes/note.md")).toEqual([]);
+    expect(await brainDocumentBlame(s, "alpha", "projects/alpha/notes/note.md")).toEqual([]);
+    const actor = { agent: "supervisor:mount", role: "supervisor" };
+    await expect(s.brainFor("alpha").write({ kind: "human" }, actor, "projects/alpha/notes/note.md", "must not write")).rejects.toThrow(/escapes its Git repository/);
+    await expect(s.brainFor("alpha").remove({ kind: "human" }, actor, "projects/alpha/notes/note.md", "must not delete")).rejects.toThrow(/escapes its Git repository/);
+    expect(readFileSync(path.join(e.repo, "docs/note.md"), "utf8")).toBe("safe note\n");
+    expect(readFileSync(path.join(outside, "docs/note.md"), "utf8")).toBe("unrelated secret\n");
+  });
+
+  it("rejects a redirected enclosing root with a different Git common directory", async () => {
+    const { e, s } = setup(true, true);
+    put(e.repo, "docs/note.md", "safe mounted note\n");commitAll(e.repo, "fixture note");
+    await git(e.dir, ["init", "-q"]);put(e.dir, "marker.txt", "enclosing repository\n");await git(e.dir, ["add", "--", "marker.txt"]);
+    await git(e.dir, ["-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "-m", "enclosing repository"]);
+    await git(e.repo, ["config", "core.worktree", e.dir]);
+    await expect(s.brainFor("alpha").write({ kind: "human" }, { agent: "supervisor:mount", role: "supervisor" }, "projects/alpha/notes/note.md", "must not write")).rejects.toThrow(/identity changed/);
+    expect(await brainDocumentHistory(s, "alpha", "projects/alpha/notes/note.md")).toEqual([]);
+    expect(readFileSync(path.join(e.repo, "docs/note.md"), "utf8")).toBe("safe mounted note\n");
+  });
+
+  it("writes, adopts and removes inside a nested mount without committing unrelated staged changes", async () => {
+    const { e, s } = setup(true, true);
+    await git(e.repo, ["config", "core.autocrlf", "false"]);
+    put(e.repo, "docs/note.md", "old mounted note\n");put(e.repo, "private.md", "private base\n");commitAll(e.repo, "fixture base");
+    put(e.repo, "private.md", "private staged\n");await git(e.repo, ["add", "--", "private.md"]);
+    put(e.repo, "private.md", "private staged plus unstaged\n");put(e.repo, "untracked.md", "outside untracked\n");
+    const cached = await git(e.repo, ["diff", "--cached", "--binary", "--", "private.md"]);
+    const unstaged = await git(e.repo, ["diff", "--binary", "--", "private.md"]);
+    put(e.repo, "docs/hand.md", "human mounted edit\n");
+    const brain = s.brainFor("alpha"), actor = { agent: "supervisor:mount", role: "supervisor" };
+    const result = await brain.write({ kind: "human" }, actor, "projects/alpha/notes/note.md", "updated mounted note");
+    expect(result.commit).toBeTruthy();
+    expect(await git(e.repo, ["diff", "--cached", "--binary", "--", "private.md"])).toBe(cached);
+    expect(await git(e.repo, ["diff", "--binary", "--", "private.md"])).toBe(unstaged);
+    expect(await git(e.repo, ["show", "--format=", "--name-only", result.commit!])).toContain("docs/note.md");
+    const recent = await git(e.repo, ["log", "-2", "--format=%(trailers:key=Agent,valueonly)%x09%s", "--name-only"]);
+    expect(recent).toContain("human");expect(recent).not.toContain("private.md");expect(recent).not.toContain(".switchyard-brain.lock");
+    expect((await brain.history("projects/alpha/notes/note.md"))[0]?.subject).toContain("note.md");
+    await brain.write({ kind: "human" }, actor, "projects/alpha/notes/new.md", "new mounted document");
+    const removed = await brain.remove({ kind: "human" }, actor, "projects/alpha/notes/new.md", "remove fixture document");
+    expect(removed.commit).toBeTruthy();expect(removed.text).toContain("new mounted document");
+    expect(await git(e.repo, ["diff", "--cached", "--binary", "--", "private.md"])).toBe(cached);
+    expect(readFileSync(path.join(e.repo, "untracked.md"), "utf8")).toBe("outside untracked\n");
+  });
+
+  it("reads a nested mount in a legitimate managed worktree", async () => {
+    const { e, s } = setup(true, true, "managed/docs");
+    const managed = path.join(e.dir, "managed");await git(e.repo, ["worktree", "add", "--detach", managed, "HEAD"]);
+    put(managed, "docs/note.md", "managed note\n");commitAll(managed, "Managed mount subject");
+    const history = await brainDocumentHistory(s, "alpha", "projects/alpha/notes/note.md");
+    expect(history[0]?.subject).toBe("Managed mount subject");
+    expect((await brainDocumentBlame(s, "alpha", "projects/alpha/notes/note.md"))[0]?.text).toBe("managed note");
+    const sourceHead = (await git(e.repo, ["rev-parse", "HEAD"])).trim();
+    const updated = await s.brainFor("alpha").write({ kind: "human" }, { agent: "supervisor:mount", role: "supervisor" }, "projects/alpha/notes/note.md", "managed update");
+    expect(updated.commit).toBeTruthy();expect((await git(e.repo, ["rev-parse", "HEAD"])).trim()).toBe(sourceHead);
+    expect(readFileSync(path.join(managed, "docs/note.md"), "utf8")).toBe("managed update\n");
   });
 
   it.each(["alpha", "beta"])("scopes copied README ancestry from project %s", async (owner) => {

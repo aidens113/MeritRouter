@@ -1,3 +1,5 @@
+import { restoreCheckEvidence } from "../../harness/check-evidence.js";
+import { workerActionTools } from "../../harness/worker-action-tools.js";
 import type { ChatMessage } from "../../gateway/types.js";
 import { estimateTokens } from "../../gateway/types.js";
 import type { CodingRunner } from "../../core/executor.js";
@@ -36,7 +38,11 @@ export class NativeCodingRunner implements CodingRunner {
     const pointer = new WorkspacePointer(ctx.session, [{ alias, worktree: ws.worktreePath, branch: null, baseCommit: ws.baseSha, head: reused?.head ?? ws.baseSha }]);
     const readers = readersFor(ctx.cfg, spec);
     readers.set(alias, new RepoReader(alias, ws.worktreePath, null)); // read your own edits
-    const sources = await loadSources(ctx.cfg, spec, ctx.artifacts, readersFor(ctx.cfg, spec));
+    // Explicit context describes the isolated base, even when the source checkout changes
+    // after submission. Tool reads separately follow this worktree's current edits.
+    const contextReaders = readersFor(ctx.cfg, spec);
+    contextReaders.set(alias, new RepoReader(alias, ws.worktreePath, ws.baseSha));
+    const sources = await loadSources(ctx.cfg, spec, ctx.artifacts, contextReaders);
     const universe = evidenceUniverse(sources);
     const validator = spec.constraints.outputSchema ? compileOutputSchema(spec.constraints.outputSchema) : undefined;
     const brain = workerBrainEnv(ctx, role);
@@ -53,9 +59,10 @@ export class NativeCodingRunner implements CodingRunner {
       workspace: { alias, root: ws.worktreePath, allowedPaths: spec.constraints.allowedPaths ?? [] },
       ...(patterns.length ? { commands: { patterns, cwd: ws.worktreePath, timeoutMs: ctx.cfg.execution.check_timeout_seconds * 1000 } } : {}),
       ...(declared.length ? { checks: { commands: declared, cwd: ws.worktreePath, env: minimalEnv({ HOME: home, USERPROFILE: home, CI: "1" }), timeoutMs: ctx.cfg.execution.check_timeout_seconds * 1000, maxRuns: ctx.cfg.coding.max_check_runs_per_task } } : {}),
-      edits: new Set(),
+      edits: new Set(), checkResults: [],
       ...(brain ? { brain } : {}),
     };
+    await restoreCheckEvidence(env);
     const tools: HarnessTool[] = [
       ...repoTools(spec.repositoryAliases),
       ...editTools(),
@@ -66,6 +73,7 @@ export class NativeCodingRunner implements CodingRunner {
       ...webTools(),
       ...labHarnessTools(),
       requestBudgetTool(),
+    ...workerActionTools(),
     ];
     const canCheck = declared.length > 0 && ctx.cfg.coding.max_check_runs_per_task > 0;
     const limits = planLimits(ctx.plan, ctx.cfg.routing.max_endpoint_fallbacks);
@@ -108,9 +116,9 @@ export class NativeCodingRunner implements CodingRunner {
       executionId,
       findings,
       artifactRefs: [transcriptRef],
-      stopReason: loop.kind === "terminal" ? "worker_submitted" : loop.kind === "budget_exhausted" ? `model request budget (${ctx.budget.maxModelRequests}) exhausted` : "invalid_output",
-      state: loop.kind === "budget_exhausted" ? "budget_exhausted" : "completed",
-      summaryLead: loop.kind === "terminal" ? loop.value.output.summary : "",
+      stopReason: loop.kind === "terminal" ? "worker_submitted" : loop.kind === "budget_exhausted" ? `model request budget (${ctx.budget.maxModelRequests}) exhausted` : loop.kind === "stalled" ? loop.reason : "invalid_output",
+      state: loop.kind === "budget_exhausted" ? "budget_exhausted" : loop.kind === "stalled" ? "failed" : "completed",
+      summaryLead: loop.kind === "terminal" ? loop.value.output.summary : loop.kind === "stalled" ? "Stopped after a repeated identical tool call without progress." : "",
       universe: env.universe,
       output: loop.kind === "terminal" ? loop.value.output : null,
     });

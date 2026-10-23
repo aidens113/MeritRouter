@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import type { Switchyard } from "../src/core/service.js";
 import type { ChatRequest, ChatResponse } from "../src/gateway/types.js";
 import type { ResolvedConfig } from "../src/config/load.js";
@@ -12,6 +11,7 @@ import { WorkerTaskSchema } from "../src/core/task.js";
 import { Admission } from "../src/admission/admission.js";
 import { AdmissionDenied } from "../src/core/errors.js";
 import { classifyFailure } from "../src/core/disposition.js";
+import { ProviderError } from "../src/providers/errors.js";
 import { projectLimits } from "../src/projects/schema.js";
 import { agentTimeline } from "../src/admin/job-metrics.js";
 import { qualificationBoard } from "../src/admin/insights.js";
@@ -21,12 +21,11 @@ import { QUALIFICATION_PROJECT } from "../src/qualification/registry.js";
 import { Brain } from "../src/brain/brain.js";
 import { BrainAccess, type Principal } from "../src/brain/access.js";
 import { ProjectRegistry } from "../src/projects/registry.js";
-import { baseConfig, commitAll, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, summarizeTask, type Env, type ScriptedRequest } from "./helpers.js";
+import { baseConfig, commitAll, goodOutput, makeEnv, openWithTestSupervisor as open, reply, ScriptedClient, servedFor, summarizeTask, type Env, type ScriptedRequest } from "./helpers.js";
 
 // J2 router fixes for the projects layout: qualification and comparisons in a reserved project,
 // a per-project brain index, the project-cap waiting reason, and distinct project denial reasons.
 
-const agent = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "fake-agent.mjs");
 let env: Env | undefined;
 let sy: Switchyard | undefined;
 let db: Db | undefined;
@@ -89,9 +88,14 @@ async function waitForRun(runId: string, timeoutMs = 60_000) {
 
 describe("qualification and comparisons in the projects layout", () => {
   it("a qualification run grades, in the reserved qualification project; no user project sees its fixtures", async () => {
-    env = twoProjects({ coding: { runner: "command", command: `node "${agent}" fixrange` } });
+    env = twoProjects({ coding: { runner: "native" } });
     const client = new ScriptedClient((req) => {
       if (req.tools?.length) {
+        const rangeAlias = JSON.stringify(req.messages).match(/q-[a-z0-9]+-fix-range-1/)?.[0];
+        if (rangeAlias) {
+          if (turns(req) === 0) return reply(null, { ...servedFor(sy!, req), toolCalls: [call("replace_in_file", { path: "src/range.js", old_text: "i <= end", new_text: "i < end" })] });
+          return reply(null, { ...servedFor(sy!, req), toolCalls: [call("submit_result", goodOutput(1, `${rangeAlias}:src/range.js#L1-L3`))] });
+        }
         const alias = JSON.stringify(req.messages).match(/q-[a-z0-9]+-locate-validator-1/)?.[0];
         // Read the file it cites, then submit.
         if (turns(req) === 0) return reply(null, { ...servedFor(sy!, req), toolCalls: [call("read_file", { alias, path: "src/validation/address.js" })] });
@@ -325,5 +329,24 @@ describe("distinct denial reasons for a project's own limits", () => {
     env = twoProjects();
     const d = classifyFailure(new AdmissionDenied("paid_budget_exhausted", "weekly paid budget"), new AbortController().signal, { cfg: env.cfg, now: () => 0, deadline: () => Infinity });
     expect(d).toEqual({ kind: "final", state: "failed", stopReason: "paid_budget_exhausted: weekly paid budget" });
+  });
+
+  it("does not defer a model-plan refusal as temporary provider capacity", () => {
+    env = twoProjects();
+    const refusal = new ProviderError("not_in_plan", "ollama-cloud HTTP 402: model not available on free plan", {
+      provider: "ollama-cloud",
+      status: 402,
+      possiblyConsumed: false,
+    });
+    const d = classifyFailure(refusal, new AbortController().signal, {
+      cfg: env.cfg,
+      now: () => 0,
+      deadline: () => Infinity,
+    });
+    expect(d).toEqual({
+      kind: "final",
+      state: "failed",
+      stopReason: "gateway_not_in_plan: ollama-cloud HTTP 402: model not available on free plan",
+    });
   });
 });

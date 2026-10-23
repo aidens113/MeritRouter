@@ -12,7 +12,7 @@ import { budgetRequestsView, decideBudgetRequest, jobBudget } from "../src/admin
 import { coordinationGuard } from "../src/harness/coordination-edits.js";
 import { ChannelStore } from "../src/storage/channel.js";
 import { verificationTrail } from "../src/verification/trail.js";
-import { baseConfig, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
+import { baseConfig, goodOutput, makeEnv, openWithTestSupervisor as open, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
 
 let env: Env | undefined;
 let sy: Switchyard | undefined;
@@ -38,7 +38,7 @@ function jobConfig(team: Record<string, unknown> = {}, extra: Record<string, unk
 }
 
 const brief = (label: string, extra: Record<string, unknown> = {}) => ({ label, profile: "inspect", goal: `Look into ${label}`, acceptance_criteria: ["reports what it found"], difficulty: "T1", ...extra });
-const readMe = () => call("read_file", { alias: "core", path: "README.md" }, `r${Math.random().toString(36).slice(2, 8)}`);
+const readMe = (startLine?: number) => call("read_file", { alias: "core", path: "README.md", ...(startLine ? { start_line: startLine } : {}) }, `r${Math.random().toString(36).slice(2, 8)}`);
 const submit = () => call("submit_result", goodOutput(1, "core:README.md#L1-L3"), "s1");
 /** A worker that reads, then submits. */
 const readThenSubmit = (req: ChatRequest) => (turns(req) === 0 ? [readMe()] : [submit()]);
@@ -127,6 +127,24 @@ describe("budget control: supervisor-set budgets (D1, D2)", () => {
     expect(after.pool.available).toBe(30 - after.pool.used - 2 - 4);
   }, 120_000);
 
+  it("accepts a JSON-stringified task array returned by a model", async () => {
+    env = makeEnv({ config: jobConfig() });
+    const client = scripted(
+      [
+        () => [call("delegate", { tasks: JSON.stringify([brief("stringified")]) })],
+        () => [call("await_tasks", { timeout_seconds: 60 })],
+        () => [finish()],
+      ],
+      readThenSubmit,
+    );
+    sy = open(env, client, { worker: true });
+    const { taskId: job } = await sy.startJob({ goal: "Dispatch a serialized brief", repositories: ["core"] });
+    const r = (await sy.awaitResults([job], { timeoutSeconds: 90 })).completed[0]!;
+    expect(r.stopReason).toBe("supervisor_completed");
+    expect(sy.tasks.childrenOf(job).map((child) => child.spec.label)).toEqual(["stringified"]);
+    expect(toolOutputs(client.requests.filter(isSupervisor)[1]!).join("\n")).toMatch(/stringified -> t_\w+ \(queued\)/);
+  }, 120_000);
+
   it("gives a brief without max_requests the configured default (the tier cap unless team.default_task_requests is set)", async () => {
     env = makeEnv({ config: jobConfig({ default_task_requests: 5 }) });
     const client = scripted([() => [call("delegate", { tasks: [brief("a")] })], () => [call("await_tasks", { timeout_seconds: 60 })], () => [finish()]], readThenSubmit);
@@ -160,7 +178,7 @@ describe("budget control: requests for more (D3, D4, D5)", () => {
       (req) => {
         const n = turns(req);
         if (n === 1) return [call("request_more_budget", { requests: 4, reason: "read the readme; three more files to read" })];
-        return n >= 5 ? [submit()] : [readMe()];
+        return n >= 5 ? [submit()] : [readMe(n + 1)];
       },
     );
     sy = open(env, client, { worker: true });
@@ -229,7 +247,7 @@ describe("budget control: requests for more (D3, D4, D5)", () => {
       (req) => {
         const n = turns(req);
         if (n === 0) return [call("request_more_budget", { requests: 5, reason: "need five" })];
-        return n >= 4 ? [submit()] : [readMe()];
+        return n >= 4 ? [submit()] : [readMe(n + 1)];
       },
     );
     sy = open(env, client, { worker: true });
@@ -268,7 +286,7 @@ describe("budget control: requests for more (D3, D4, D5)", () => {
       if (goal.includes("expire")) return reply(null, { ...s, toolCalls: [[call("request_more_budget", { requests: 2, reason: "more" })], [readMe()]][n] ?? [submit()] });
       // The decided one: asks, then reads until it submits on its sixth request.
       if (n === 0) return reply(null, { ...s, toolCalls: [call("request_more_budget", { requests: 3, reason: "three more" })] });
-      return reply(null, { ...s, toolCalls: n >= 5 ? [submit()] : [readMe()] });
+      return reply(null, { ...s, toolCalls: n >= 5 ? [submit()] : [readMe(n + 1)] });
     });
     sy = open(env, client, { worker: true });
     const [expiring] = await sy.submitTasks([{ profile: "inspect", goal: "expire: look", repositoryAliases: ["core"], hints: { difficulty: "T1" }, budget: { maxModelRequests: 3 }, constraints: { acceptanceCriteria: ["x"] } }]);
@@ -389,6 +407,7 @@ describe("declared checks for implementers (run_check)", () => {
         () => call("replace_in_file", { path: "src/app.ts", old_text: "export function add", new_text: "export function subtract(a: number, b: number) {\n  return a - b;\n}\n\nexport function add" }, "e1"),
         () => call("run_check", { command: "node --test" }, "k1"),
         () => call("run_check", { command: check }, "k2"),
+        () => call("replace_in_file", { path: "src/app.ts", old_text: "return a - b;", new_text: "return a - b; // verified" }, "e2"),
         () => call("run_check", { command: check }, "k3"),
         () => call("submit_result", goodOutput(1, "core:src/app.ts#L1-L3"), "s1"),
       ];
@@ -404,13 +423,15 @@ describe("declared checks for implementers (run_check)", () => {
     expect((first.tools ?? []).map((x) => x.function.name)).toContain("run_check");
     expect(String(first.messages[0]!.content)).toMatch(/run your declared checks with run_check \(at most 2 runs\)/);
     const outputs = toolOutputs(client.requests.at(-1)!);
-    expect(outputs[0]).toMatch(/^\$ node -e .*\nexit 1 \(log artifact:\S+; run 1 of 2\)/);
+    expect(outputs[0]).toMatch(/^\$ node -e .*\nsource [a-f0-9]{64}\nexit 1\n/);
+    expect(outputs[0]).toMatch(/\(log artifact:\S+; supervisor action wa_\S+\)/);
     expect(outputs[2]).toMatch(/^error: not a declared check; run exactly one of: "node -e/);
-    expect(outputs[3]).toMatch(/\nexit 0 \(log artifact:\S+; run 2 of 2\)/);
-    expect(outputs[4]).toMatch(/^error: check run limit reached \(2 of 2, coding\.max_check_runs_per_task\)/);
+    expect(outputs[3]).toMatch(/\nsource [a-f0-9]{64}\nexit 0\n/);
+    expect(outputs[3]).toMatch(/\(log artifact:\S+; supervisor action wa_\S+\)/);
+    expect(outputs[5]).toMatch(/^error: check run limit reached \(2 of 2, coding\.max_check_runs_per_task\)/);
     // Stored like other check logs; informational only (the post-submission check decides).
     const logs = sy.db.prepare("SELECT label FROM artifacts WHERE task_id = ? AND kind = 'check_log'").all(t!.taskId) as Array<{ label: string }>;
-    expect(logs.filter((l) => l.label.startsWith("run_check: "))).toHaveLength(2);
+    expect(logs.filter((l) => l.label.startsWith("supervisor check: "))).toHaveLength(2);
     expect(sy.tasks.events(t!.taskId, 200).filter((e) => e.type === "worker_check_run").map((e) => (e.data as { exitCode: number }).exitCode)).toEqual([1, 0]);
     expect(r.checks).toHaveLength(1);
     expect(r.checks[0]).toMatchObject({ command: check, exitCode: 0 });

@@ -53,6 +53,7 @@ const FOOT = { borderTop: "1px solid var(--line)", borderBottom: 0 } as const;
 
 /** Hover text for a new-token count: the parts, and the total with cached input. */
 function tokenTitle(u: insights.ProjectUsage): string {
+  if (!u.cacheUsageKnown) return `Up to ${num(u.uncachedInputTokens)} new input + ${num(u.outputTokens)} output; at least ${num(u.cachedInputTokens)} cached input; cache usage unknown for ${u.requestsWithUnknownCacheUsage} requests`;
   return `${num(u.uncachedInputTokens)} new input + ${num(u.outputTokens)} output; ${num(u.cachedInputTokens)} more input served from cache (${num(u.inputTokens + u.outputTokens)} with cached)`;
 }
 
@@ -130,7 +131,7 @@ export default async function AllProjectsPage({ searchParams }: { searchParams: 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat label="Jobs" value={`${num(d.totals.runningJobs)} running`} sub={`${num(d.totals.queuedJobs)} queued across ${d.projects.length} project${d.projects.length === 1 ? "" : "s"}`} />
         <Stat label="Tasks" value={`${num(d.totals.runningTasks)} running`} sub={`${num(d.totals.queuedTasks)} queued`} />
-        <Stat label="Model requests (24h)" help="requests" value={compact(d.totals.usage24h.requests)} sub={`${num(d.totals.usage24h.failedRequests)} failed Â· ${compact(d.totals.usage7d.requests)} in 7 days`} />
+        <Stat label="Model requests (24h)" help="requests" value={compact(d.totals.usage24h.requests)} sub={`${num(d.totals.usage24h.failedRequests)} failed · ${compact(d.totals.usage7d.requests)} in 7 days`} />
         <Stat label="Paid spend (24h)" value={usd(d.totals.usage24h.paidSpendUsd)} sub={`${usd(d.totals.usage7d.paidSpendUsd)} in 7 days`} />
         <Stat
           label="Workers"
@@ -168,7 +169,7 @@ export default async function AllProjectsPage({ searchParams }: { searchParams: 
                           <span className="min-w-0 flex-1 break-words">{a}</span>
                           {act ? (
                             <Link href={act.href} className="shrink-0 text-xs font-medium text-accent-ink hover:underline">
-                              {act.cta} â†’
+                              {act.cta} →
                             </Link>
                           ) : null}
                         </li>
@@ -217,7 +218,7 @@ export default async function AllProjectsPage({ searchParams }: { searchParams: 
                     <td className="tabular text-right text-xs">{num(p.runningTasks)}</td>
                     <td className="tabular text-right text-xs" title={waitingFor.join(", ") || "nothing waiting"}>
                       {num(p.queuedTasks)}
-                      {waitingFor.length > 1 || s.waiting_for_capacity ? <div className="whitespace-nowrap text-[11px] text-ink-3">{waitingFor.join(" Â· ")}</div> : null}
+                      {waitingFor.length > 1 || s.waiting_for_capacity ? <div className="whitespace-nowrap text-[11px] text-ink-3">{waitingFor.join(" · ")}</div> : null}
                     </td>
                     <td className="whitespace-nowrap text-xs text-ink-2">
                       {p.oldestQueuedAt ? (
@@ -280,7 +281,7 @@ export default async function AllProjectsPage({ searchParams }: { searchParams: 
           description="Model requests charged to each project's tasks, tokens, failures, and paid spend (settled where known, else the reservation)."
           actions={
             <Link className="text-xs text-accent-ink hover:underline" href={`${ALL}/requests`}>
-              Request log â†’
+              Request log →
             </Link>
           }
         />
@@ -315,11 +316,11 @@ export default async function AllProjectsPage({ searchParams }: { searchParams: 
                         {num(x.u24.failedRequests)} <span className="text-ink-3">({pct(x.u24.failedRequests, x.u24.requests)})</span>
                       </span>
                     ) : (
-                      <span className="text-ink-3">â€“</span>
+                      <span className="text-ink-3">–</span>
                     )}
                   </td>
                   <td className="tabular text-right text-xs" title={tokenTitle(x.u24)}>
-                    {compact(x.u24.uncachedInputTokens + x.u24.outputTokens)}
+                    {x.u24.cacheUsageKnown ? "" : "up to "}{compact(x.u24.uncachedInputTokens + x.u24.outputTokens)}
                   </td>
                   <td className="tabular text-right text-xs">{usd(x.u24.paidSpendUsd)}</td>
                   <td className="tabular text-right text-xs">{usd(x.u7.paidSpendUsd)}</td>
@@ -339,7 +340,7 @@ export default async function AllProjectsPage({ searchParams }: { searchParams: 
                   {num(d.totals.usage24h.failedRequests)}
                 </td>
                 <td style={FOOT} className="tabular text-right text-xs" title={tokenTitle(d.totals.usage24h)}>
-                  {compact(d.totals.usage24h.uncachedInputTokens + d.totals.usage24h.outputTokens)}
+                  {d.totals.usage24h.cacheUsageKnown ? "" : "up to "}{compact(d.totals.usage24h.uncachedInputTokens + d.totals.usage24h.outputTokens)}
                 </td>
                 <td style={FOOT} className="tabular text-right text-xs">
                   {usd(d.totals.usage24h.paidSpendUsd)}
@@ -388,7 +389,7 @@ export default async function AllProjectsPage({ searchParams }: { searchParams: 
             description="From SwitchYard's own key state (cooldowns, invalid keys, limits) and circuit breakers."
             actions={
               <Link className="text-xs text-accent-ink hover:underline" href={`${ALL}/keys`}>
-                Provider keys â†’
+                Provider keys →
               </Link>
             }
           />
@@ -405,14 +406,14 @@ export default async function AllProjectsPage({ searchParams }: { searchParams: 
                         {p.requestsRemainingPct !== null ? <span>{Math.round(p.requestsRemainingPct)}% left</span> : null}
                         {breaker ? (
                           <Badge tone="bad" title={`Circuit breaker: ${breaker.effective}`}>
-                            {breaker.effective === "open" ? `Breaker open${breaker.probeInMs ? ` Â· probe in ${Math.ceil(breaker.probeInMs / 1000)}s` : ""}` : "Breaker probing"}
+                            {breaker.effective === "open" ? `Breaker open${breaker.probeInMs ? ` · probe in ${Math.ceil(breaker.probeInMs / 1000)}s` : ""}` : "Breaker probing"}
                           </Badge>
                         ) : null}
                         {p.status === "healthy" ? (
                           <Badge tone="good">Healthy</Badge>
                         ) : p.status === "rate_limited" ? (
                           <Badge tone="warn" title={p.lastError ?? undefined}>
-                            Rate limited{p.resumeAt ? ` Â· resumes ${ago(p.resumeAt, now)}` : ""}
+                            Rate limited{p.resumeAt ? ` · resumes ${ago(p.resumeAt, now)}` : ""}
                           </Badge>
                         ) : p.status === "invalid" ? (
                           <Badge tone="bad" title={p.lastError ?? undefined}>

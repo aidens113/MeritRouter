@@ -1,3 +1,5 @@
+import { WorkerActionRequestsCard } from "@/components/worker-action-requests";
+import { RequestsTable } from "@/components/requests-table";
 import { BudgetRequestsCard, JobBudgetCard } from "@/components/budget-requests";
 import { ShowAllRows } from "@/components/client/show-all";
 import { RelatedPanel } from "@/components/related";
@@ -60,9 +62,12 @@ export default async function JobDetailPage({ params, searchParams }: { params: 
   const budget = insights.jobBudget(sy, id);
   const budgetPending = insights.budgetRequestsView(sy, { jobId: id, project: p.slug, status: "pending", limit: 1000 });
   const budgetHistory = insights.budgetRequestsView(sy, { jobId: id, project: p.slug }).filter((r) => r.status !== "pending");
-  const requests = insights.requestLog(sy, { taskId: id, project: p.slug, limit: 100 });
+  const requests = insights.requestLog(sy, { jobId: id, project: p.slug, limit: 100 });
 
-  const tab = pickTab(sp, ["overview", "plan", "team", "changes", "checks", "channel", "sessions"]);
+  const workerActions = insights.listWorkerActions(sy.db, { project: p.slug, jobId: id });
+  const requestCount = insights.requestLogCount(sy, { jobId: id, project: p.slug });
+  const modelNames = new Map(sy.catalog.endpoints().map(e => [e.id, e.displayName ?? e.gatewayModelId]));
+  const tab = pickTab(sp, ["overview", "plan", "team", "changes", "checks", "channel", "sessions", "requests"]);
   const recovery = tab === "plan" ? await insights.planRecovery(sy, id) : undefined;
   return (
     <div className="space-y-6">
@@ -105,6 +110,7 @@ export default async function JobDetailPage({ params, searchParams }: { params: 
           </>
         }
       />
+      <WorkerActionRequestsCard policy={sy.cfg.security.outside_repository} requests={workerActions} />
       {status.stateReason && job.state !== "completed" ? (
         <Callout tone={job.state === "failed" || job.state === "budget_exhausted" ? "bad" : job.state === "interrupted" ? "serious" : "warn"} title={job.state === "queued" ? "Waiting for a worker" : job.state === "interrupted" ? "This job is paused" : "Status"}>
           {humanize(status.stateReason).replace(/\.?$/, ".")}
@@ -165,8 +171,8 @@ export default async function JobDetailPage({ params, searchParams }: { params: 
         { label: "Child tasks", items: (related?.children ?? []).map(t => ({ key: t.taskId, node: <TaskLink base={base} id={t.taskId} label={t.label} /> })) }
       ]} />
       </Disclosure>
-      <Tabs items={[{ "id": "overview", "label": "Overview" }, { "id": "plan", "label": "Plan" }, { "id": "team", "label": "Team" }, { "id": "changes", "label": "Changes" }, { "id": "checks", "label": "Checks" }, { "id": "channel", "label": "Channel" }, { "id": "sessions", "label": "Sessions" }]} active={tab} path={jobHref(base, id)} label="Page sections" anchors={{ "plan": "plan", "team": "team", "metrics": "team", "merge-queue": "changes", "channel": "channel", "request-pool": "overview", "budget-history": "overview" }} />
-      {tab === "overview" ? <div className="space-y-6">{budget ? <JobBudgetCard budget={budget} base={base} /> : null}{budgetHistory.length ? <BudgetRequestsCard requests={budgetHistory} id="budget-history" /> : null}<div className="grid gap-6 xl:grid-cols-[3fr_2fr]">
+      <Tabs items={[{ "id": "overview", "label": "Overview" }, { "id": "requests", "label": `Requests (${requestCount})` }, { "id": "plan", "label": "Plan" }, { "id": "team", "label": "Team" }, { "id": "changes", "label": "Changes" }, { "id": "checks", "label": "Checks" }, { "id": "channel", "label": "Channel" }, { "id": "sessions", "label": "Sessions" }]} active={tab} path={jobHref(base, id)} label="Page sections" anchors={{ "plan": "plan", "team": "team", "metrics": "team", "merge-queue": "changes", "channel": "channel", "request-pool": "overview", "budget-history": "overview" }} />
+      {tab === "overview" ? <div className="space-y-6"><TeamCard team={team} base={base} />{budget ? <JobBudgetCard budget={budget} base={base} /> : null}{budgetHistory.length ? <BudgetRequestsCard requests={budgetHistory} id="budget-history" /> : null}<div className="grid gap-6 xl:grid-cols-[3fr_2fr]">
         <Card>
           <CardHeader title="Goal" />
           <div className="space-y-4 p-4 text-sm">
@@ -274,7 +280,7 @@ export default async function JobDetailPage({ params, searchParams }: { params: 
             </div>
           </Card>
         ) : null}</div> : null}
-      {tab === "plan" ? <div className="space-y-6">{plan?.plan ? <PlanCard plan={plan} base={base} recovery={recovery} /> : null}</div> : null}
+      {tab === "plan" ? <div className="space-y-6">{plan?.plan ? <PlanCard plan={plan} base={base} recovery={recovery} /> : <Card><EmptyState title="No plan recorded">The supervisor can delegate tasks before recording a structured plan. Open Overview to see all delegated work.</EmptyState></Card>}</div> : null}
       {tab === "team" ? <div className="space-y-6">{team.subJobs || team.parentJobId ? <TeamCard team={team} base={base} /> : null}
         <Card>
           <CardHeader title="Worker tasks" description={plan?.plan ? "Every task the supervisor dispatched, planned or not. Each has its own page with requests, artifacts, and checks." : "Tasks the supervisor delegated. Each has its own page with requests, artifacts, and checks."} />
@@ -300,7 +306,7 @@ export default async function JobDetailPage({ params, searchParams }: { params: 
                       </td>
                       <td>{c.acceptance ? <AcceptanceBadge status={c.acceptance} /> : <span className="text-xs text-ink-3">–</span>}</td>
                       <td>
-                        <Link href={taskHref(base, c.taskId)} className="font-mono text-xs text-accent-ink hover:underline">
+                        <Link href={c.profile === "supervise" ? jobHref(base, c.taskId) : taskHref(base, c.taskId)} className="font-mono text-xs text-accent-ink hover:underline">
                           {shortId(c.taskId, 22)}
                         </Link>
                       </td>
@@ -348,6 +354,7 @@ export default async function JobDetailPage({ params, searchParams }: { params: 
         <MergeQueueCard team={team} base={base} /></div> : null}
       {tab === "checks" ? <div className="space-y-6"><Card><CardHeader title="Acceptance criteria and required checks" /><div className="space-y-3 p-4 text-sm"><ol className="list-decimal space-y-1 pl-5">{criterionTexts(spec).map((c, i) => <li key={i}>{c}</li>)}</ol><ul className="space-y-1">{spec.constraints.checks?.map(c => <li key={c}><code className="break-all text-xs">{c}</code></li>)}</ul></div></Card><Card><CardHeader title="Checks" /><div className="space-y-3 p-4">{res?.checks.length ? res.checks.map((c, i) => <div key={i} className="space-y-2"><code className="break-all text-xs">{c.command}</code><Badge tone={c.exitCode === 0 ? "good" : "bad"}>exit {c.exitCode ?? "killed"}</Badge><ArtifactViewer refId={c.logRef} kind="check_log" label="Check output" /></div>) : <p className="text-sm text-ink-3">No checks recorded yet.</p>}</div></Card></div> : null}
       {tab === "channel" ? <div className="space-y-6"><ChannelCard team={team} base={base} /></div> : null}
+      {tab === "requests" ? <Card><CardHeader title="Job requests" description={`Newest ${requests.length} of ${requestCount} physical requests from this supervisor and all descendant tasks and sub-jobs. Batched requests count once.`} actions={<Link href={`${base}/requests?job=${encodeURIComponent(id)}`} className="text-xs text-accent-ink hover:underline">Filter and browse all requests</Link>} /><RequestsTable rows={requests} names={modelNames} base={base} empty="No model requests for this job yet" /></Card> : null}
       {tab === "sessions" ? <div className="space-y-6"><Card>
         <CardHeader
           title="Agent sessions"

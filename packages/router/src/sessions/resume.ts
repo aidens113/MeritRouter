@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import type { ChatMessage } from "../gateway/types.js";
-import type { RecoverEditsPolicy, ResumeAction, ResumeToolRef, SessionEvent, SessionEventOf, SessionWorkspace, ToolSideEffect } from "./events.js";
+import type { NotAppliedToolProof, RecoverEditsPolicy, ResumeAction, ResumeToolRef, SessionEvent, SessionEventOf, SessionWorkspace, ToolSideEffect } from "./events.js";
 
 /**
  * Resume protocol (S2), as pure functions over a session's events: replay the transcript, find
@@ -116,6 +117,23 @@ export interface ResumePlan {
    */
   lastEndpointId: string | null;
   warnings: string[];
+  /** Trusted proofs for exact never-run/reconciled occurrences; old plans may omit them. */
+  notAppliedTools?: NotAppliedToolProof[];
+  /** Pending edit intents whose recorded workspace HEAD never advanced since before the intent. */
+  notAppliedCandidateIntents?: number[];
+}
+
+/** Bind retry authority to the entire exact transcript prefix, including this tool occurrence.
+ * Reused call IDs or transcript compaction must never transfer a proof to a later applied call.
+ */
+export function notAppliedToolProof(messages: readonly ChatMessage[], messageIndex: number): NotAppliedToolProof | null {
+  const message = messages[messageIndex];
+  if (message?.role !== "tool") return null;
+  return { messageIndex, callId: message.tool_call_id, transcriptSha256: createHash("sha256").update(JSON.stringify(messages.slice(0, messageIndex + 1))).digest("hex") };
+}
+export function validNotAppliedToolProof(messages: readonly ChatMessage[], proof: NotAppliedToolProof): boolean {
+  const actual = notAppliedToolProof(messages, proof.messageIndex);
+  return !!actual && actual.callId === proof.callId && actual.transcriptSha256 === proof.transcriptSha256;
 }
 
 /** The text to give the model for a reconciled edit, given the files the reconciliation found. */
@@ -159,6 +177,7 @@ export function planResume(events: readonly SessionEvent[], opts: PlanResumeOpti
   const responses: Response[] = [];
   const intents: Intent[] = [];
   const outcomes = new Map<number, SessionEventOf<"tool_outcome">>();
+  const absenceProofs: NotAppliedToolProof[] = [];
   let unanswered: number[] = [];
   let openRequest: number | null = null;
   for (const e of events) {
@@ -190,6 +209,7 @@ export function planResume(events: readonly SessionEvent[], opts: PlanResumeOpti
         outcomes.set(e.data.intentSeq, e);
         break;
       case "resumed":
+        absenceProofs.push(...(e.data.notAppliedTools ?? []));
         unanswered = [];
         openRequest = null;
         break;
@@ -213,6 +233,7 @@ export function planResume(events: readonly SessionEvent[], opts: PlanResumeOpti
   const editCalls: ResumeToolRef[] = [];
   const completedEdits: string[] = [];
   const editRefs: Array<{ ref: ResumeToolRef; label: string }> = [];
+  const notAppliedCandidateIntents: number[] = [];
 
   const settle = (p: PendingIntent, messageIndex: number | null): string => {
     handled.add(p.seq);
@@ -273,6 +294,8 @@ export function planResume(events: readonly SessionEvent[], opts: PlanResumeOpti
       if (!intent) {
         lines.push(`- ${call.function.name} (call ${call.id}): ${RESUME_TEXT.notRun}.`);
         messages.push({ role: "tool", tool_call_id: call.id, content: RESUME_TEXT.notRun });
+        const proof = notAppliedToolProof(messages, index);
+        if (proof) absenceProofs.push(proof);
         continue;
       }
       const outcome = outcomes.get(intent.seq);
@@ -293,6 +316,16 @@ export function planResume(events: readonly SessionEvent[], opts: PlanResumeOpti
     const repos = workspace?.repos ?? [];
     if (repos.length) {
       for (const { ref } of editRefs) editCalls.push(ref);
+      notAppliedCandidateIntents.push(...editCalls.filter(call => {
+        const before = [...events].reverse().find(event => event.type === "workspace" && event.seq < call.intentSeq);
+        if (before?.type !== "workspace") return false;
+        return repos.every(repo => {
+          const prior = before.data.repos.find(candidate => candidate.alias === repo.alias && candidate.worktree === repo.worktree);
+          if (!prior?.head || prior.head !== repo.head) return false;
+          return events.filter(event => event.type === "workspace" && event.seq > call.intentSeq).every(event =>
+            event.type === "workspace" && event.data.repos.some(candidate => candidate.alias === repo.alias && candidate.worktree === repo.worktree && candidate.head === prior.head));
+        });
+      }).map(call => call.intentSeq));
       actions.push({ kind: "reconcile_edits", policy, repos, calls: editCalls, completedCallIds: completedEdits });
       for (const { label } of editRefs) lines.push(`- ${label}: interrupted; uncommitted changes were ${policy === "commit" ? "committed as recovered" : "reset to the last commit"}, see its result.`);
       if (!editRefs.length) lines.push(`- Edits that finished before the interruption were not committed yet; they were ${policy === "commit" ? "committed as recovered" : "reset to the last commit"}.`);
@@ -315,5 +348,6 @@ export function planResume(events: readonly SessionEvent[], opts: PlanResumeOpti
   const summary = body.length ? `${head}\n${body.join("\n")}\nContinue from here.` : `${head} Nothing was in flight. Continue from here.`;
 
   const lastEndpointId = responses.length ? responses[responses.length - 1]!.data.endpointId : null;
-  return { messages, actions, summary, resolvedIntentSeqs: resolved.sort((a, b) => a - b), droppedRequestSeqs: unanswered, workspace, reason, lastEndpointId, warnings };
+  const notAppliedTools = [...new Map(absenceProofs.filter(proof => validNotAppliedToolProof(messages, proof)).map(proof => [proof.messageIndex, proof])).values()];
+  return { messages, actions, summary, resolvedIntentSeqs: resolved.sort((a, b) => a - b), droppedRequestSeqs: unanswered, workspace, reason, lastEndpointId, warnings, ...(notAppliedTools.length ? { notAppliedTools } : {}), ...(notAppliedCandidateIntents.length ? { notAppliedCandidateIntents } : {}) };
 }

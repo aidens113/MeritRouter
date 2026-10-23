@@ -4,7 +4,7 @@ import type { insights } from "switchyard-router";
 import { RequestStatusBadge, TierBadge } from "./task-badges";
 import { Badge, EmptyState } from "./ui";
 import { dateTime, duration, humanize, modelHref, num, pct, shortDateTime, shortId } from "@/lib/format";
-import { itemBase, projectBase, QUALIFICATION_BASE, QUALIFICATION_SLUG, requestHref, taskHref } from "@/lib/links";
+import { itemBase, projectBase, QUALIFICATION_BASE, QUALIFICATION_SLUG, requestHref, taskHref, jobHref } from "@/lib/links";
 
 export type RequestRow = ReturnType<typeof insights.requestLog>[number];
 
@@ -33,7 +33,7 @@ export function cacheSaving(rows: Pick<RequestRow, "endpointId" | "cachedInputTo
   let known = false;
   for (const r of rows) {
     const p = r.endpointId ? pricing.get(r.endpointId) : undefined;
-    if (!r.cachedInputTokens || !p || p.inputUsdPerMillion === null || p.cachedInputUsdPerMillion === null || p.cachedInputUsdPerMillion === undefined) continue;
+    if (r.cachedInputTokens === null || !p || p.inputUsdPerMillion === null || p.cachedInputUsdPerMillion === null || p.cachedInputUsdPerMillion === undefined) continue;
     usd += (r.cachedInputTokens * Math.max(0, p.inputUsdPerMillion - p.cachedInputUsdPerMillion)) / 1_000_000;
     known = true;
   }
@@ -123,7 +123,7 @@ export function RequestsTable({ rows, names, base, hideModel = false, empty }: {
               <td className="text-right">{num(r.inputTokens)}</td>
               <td className="text-right">{num(r.outputTokens)}</td>
               <td className="text-right">
-                {num(r.cachedInputTokens)}
+                {r.cachedInputTokens === null ? <span className="text-ink-3">Unknown</span> : num(r.cachedInputTokens)}
                 {r.cachedInputTokens && r.inputTokens ? <div className="text-[11px] text-ink-3">{pct(r.cachedInputTokens, r.inputTokens)}</div> : null}
               </td>
               <td className="min-w-[8rem] max-w-[18rem]">
@@ -166,15 +166,15 @@ export function RequestsTable({ rows, names, base, hideModel = false, empty }: {
                 ) : null}
                 <div className="flex flex-col">
                   {r.taskIds.slice(0, r.taskIds.length > 2 ? 0 : 2).map((t) => (
-                    <Link key={t} href={taskHref(base ?? (r.project ? itemBase(r.project) : ""), t)} className="font-mono text-xs text-accent-ink hover:underline">
-                      {shortId(t, 14)}
+                    <Link key={t} href={(r.taskRefs?.find(ref => ref.id === t)?.job ? jobHref : taskHref)(base ?? (r.project ? itemBase(r.project) : ""), t)} className="font-mono text-xs text-accent-ink hover:underline">
+                      {r.taskRefs?.find(ref => ref.id === t)?.job ? "Job: " : "Task: "}{r.taskRefs?.find(ref => ref.id === t)?.label ?? shortId(t, 14)}
                     </Link>
                   ))}
                   {r.taskIds.length > 2 ? (
                     <span className="mt-0.5 flex flex-wrap gap-1">
                       {r.taskIds.map((t) => (
-                        <Link key={t} href={taskHref(base ?? (r.project ? itemBase(r.project) : ""), t)} className="font-mono text-[11px] text-accent-ink hover:underline">
-                          {shortId(t, 8)}
+                        <Link key={t} href={(r.taskRefs?.find(ref => ref.id === t)?.job ? jobHref : taskHref)(base ?? (r.project ? itemBase(r.project) : ""), t)} className="font-mono text-[11px] text-accent-ink hover:underline">
+                          {r.taskRefs?.find(ref => ref.id === t)?.job ? "Job: " : "Task: "}{r.taskRefs?.find(ref => ref.id === t)?.label ?? shortId(t, 8)}
                         </Link>
                       ))}
                     </span>

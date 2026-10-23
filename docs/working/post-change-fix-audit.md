@@ -1,6 +1,6 @@
 # Post-change fix audit
-Status: Active
-Status detail: Audit complete; prioritized implementation and acceptance plan ready, product fixes not started.
+Status: Superseded
+Status detail: Accepted fix plan implemented and validated in correctness-and-panel-flows.md; audit evidence below is historical.
 Created: 2026-10-23
 Last updated: 2026-10-23
 Owner: Senior supervisor agent
@@ -9,6 +9,11 @@ Paired document: none
 Related: [handoff](handoff.md), [roadmap](roadmap-completion.md), [live validation](live-validation.md)
 
 ## Current State
+
+Implementation and latest acceptance are owned by
+[Correctness and panel flows](correctness-and-panel-flows.md). F1-F6 were executed with the
+expanded user security/UX requirements. The original findings and baseline measurements below
+are retained as audit evidence, not a description of the current candidate or live deployment.
 
 Audited dev 371875a plus the existing 28 modified tracked files and untracked readonly-checks test.
 The dirty changes implement repeat suppression, read-only declared checks, scheduler restart,

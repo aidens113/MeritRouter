@@ -149,6 +149,7 @@ export async function verifyWithReview(d: PhaseDeps, task: StoredTask, contract:
   }
   const allowed = mode === "coding" ? targetedCheckAllowed(d.cfg, task.spec.constraints.checks ?? []) : null;
   let phase: ReviewPhaseResult | null = null;
+  let actionContext: RunContext | null = null;
   const notes: string[] = [];
   for (let round = 0; round < 2; round++) {
     let reviewing = false;
@@ -172,7 +173,9 @@ export async function verifyWithReview(d: PhaseDeps, task: StoredTask, contract:
             // The watchdog follows the reviewer while it works (the author's session is idle then).
             reviewing = true;
             run.onReviewer?.(session);
-            return run.reviewerContext(plan, session, maxModelRequests, attempts, profile);
+            const context = run.reviewerContext(plan, session, maxModelRequests, attempts, profile);
+            actionContext = context;
+            return context;
           },
           targetedChecksAllowed: allowed,
         },
@@ -189,7 +192,7 @@ export async function verifyWithReview(d: PhaseDeps, task: StoredTask, contract:
     // Missing evidence a check can supply: run it once on the submitted revision, then re-review.
     st.targetedRan = true;
     const ev = outcome.evidence ?? {};
-    const t = await runTargetedChecks({ cfg: d.cfg, db: d.db, artifacts: d.artifacts, signal: run.signal }, task, outcome.result, ev.revision ?? null, ev.artifactDigest ?? null, v.targetedChecks ?? []);
+    const t = await runTargetedChecks({ cfg: d.cfg, db: d.db, artifacts: d.artifacts, signal: run.signal, ...(actionContext ? { context: actionContext } : {}) }, task, outcome.result, ev.revision ?? null, ev.artifactDigest ?? null, v.targetedChecks ?? []);
     d.tasks.event(task.row.id, "targeted_check", { commands: v.targetedChecks ?? [], ran: t.records.map((c) => ({ command: c.command, exitCode: c.exitCode })), note: t.note });
     notes.push(t.note);
     if (!t.records.length) break;
@@ -231,6 +234,7 @@ export interface RetryInput {
  */
 export async function planRetry(d: Pick<PhaseDeps, "cfg" | "db" | "gate" | "router" | "tasks" | "artifacts">, task: StoredTask, st: VerificationState, i: RetryInput): Promise<PlannedRetry | null> {
   const { plan, outcome, result, contract } = i;
+  if (result.stopReason.startsWith("repeated_tool_call:")) return null;
   const next = nextTier(plan.tier);
   const execFailure = outcome.state === "budget_exhausted" ? "budget_exhausted" : result.stopReason === "invalid_output" ? "invalid_output" : null;
   const quality = !execFailure && i.verified?.decision.action === "repair";

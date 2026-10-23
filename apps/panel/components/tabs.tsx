@@ -60,7 +60,7 @@ export function Tabs({
   const first = items[0]?.id ?? "";
   return (
     <>
-      <nav aria-label={label} className={cx("-mx-4 mb-5 overflow-x-auto border-b border-line px-4 [scrollbar-width:thin] sm:mx-0 sm:px-0", className)}>
+      <nav aria-label={label} className={cx("-mx-4 mb-5 overflow-x-auto overflow-y-hidden border-b border-line px-4 [scrollbar-width:thin] sm:mx-0 sm:px-0", className)}>
         <ul className="flex min-w-max gap-1">
           {items.map((t) => {
             const on = t.id === active;

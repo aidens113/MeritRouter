@@ -107,7 +107,9 @@ export function taskUsage(db: Db, catalog: { endpoints(): ModelEndpoint[] }, tas
   usage.inputTokens = inTok;
   usage.outputTokens = outTok;
   usage.cachedInputTokens = cached;
-  usage.uncachedInputTokens = uncached;
+  // An unknown cache share cannot be presented as measured new input. Pricing may still
+  // conservatively assume ordinary input, but that is separate from observed usage.
+  usage.uncachedInputTokens = cached === null ? null : uncached;
   usage.reportedCostUsd = reportedCost;
   usage.estimatedCostUsd = estCostKnown ? Math.round(estCost * 1e6) / 1e6 : null;
   return { usage, servedEndpoints: [...served] };
@@ -126,14 +128,17 @@ export interface UsageSummary {
   /** Every input token read, cached ones included. */
   inputTokens: number;
   outputTokens: number;
+  /** Known cached input; a lower bound when cacheUsageKnown is false. */
   cachedInputTokens: number;
-  /** New input: each request's input minus its cached tokens (all of it when the cache is unknown). */
+  cacheUsageKnown: boolean;
+  requestsWithUnknownCacheUsage: number;
+  /** New input; an upper bound when any request's cache usage is unknown. */
   uncachedInputTokens: number;
   reasoningTokens: number;
   tokenUsageBasis: "provider_reported" | "mixed" | "unknown";
   reportedCostUsd: number | null;
   policyViolations: number;
-  byEndpoint: Array<{ endpointId: string | null; requests: number; inputTokens: number; cachedInputTokens: number; uncachedInputTokens: number; outputTokens: number }>;
+  byEndpoint: Array<{ endpointId: string | null; requests: number; inputTokens: number; cachedInputTokens: number; uncachedInputTokens: number; outputTokens: number; cacheUsageKnown: boolean; requestsWithUnknownCacheUsage: number }>;
   byGatewayModel: Array<{ gatewayModel: string; requests: number; failed: number }>;
 }
 
@@ -163,6 +168,7 @@ export function usageSummary(db: Db, sinceMs: number, untilMs = Date.now(), proj
               COALESCE(SUM(input_tokens), 0) AS input_tokens,
               COALESCE(SUM(output_tokens), 0) AS output_tokens,
               COALESCE(SUM(cached_input_tokens), 0) AS cached,
+              COALESCE(SUM(cached_input_tokens IS NULL), 0) AS unknown_cache,
               COALESCE(SUM(MAX(0, input_tokens - COALESCE(cached_input_tokens, 0))), 0) AS uncached,
               COALESCE(SUM(reasoning_tokens), 0) AS reasoning,
               SUM(usage_basis = 'provider_reported') AS reported,
@@ -175,11 +181,12 @@ export function usageSummary(db: Db, sinceMs: number, untilMs = Date.now(), proj
     .prepare(
       `SELECT served_endpoint_id AS endpointId, COUNT(*) AS requests, COALESCE(SUM(input_tokens),0) AS inputTokens,
               COALESCE(SUM(cached_input_tokens),0) AS cachedInputTokens,
+              COALESCE(SUM(cached_input_tokens IS NULL),0) AS requestsWithUnknownCacheUsage,
               COALESCE(SUM(MAX(0, input_tokens - COALESCE(cached_input_tokens, 0))),0) AS uncachedInputTokens,
               COALESCE(SUM(output_tokens),0) AS outputTokens
          FROM model_requests WHERE reserved_at > ? AND reserved_at <= ?${scope} GROUP BY served_endpoint_id ORDER BY requests DESC`,
     )
-    .all(...args(sinceMs, untilMs)) as UsageSummary["byEndpoint"];
+    .all(...args(sinceMs, untilMs)) as Array<Omit<UsageSummary["byEndpoint"][number], "cacheUsageKnown">>;
   const byGatewayModel = db
     .prepare(
       `SELECT gateway_model AS gatewayModel, COUNT(*) AS requests, SUM(status != 'succeeded') AS failed
@@ -206,12 +213,14 @@ export function usageSummary(db: Db, sinceMs: number, untilMs = Date.now(), proj
     inputTokens: r.input_tokens ?? 0,
     outputTokens: r.output_tokens ?? 0,
     cachedInputTokens: r.cached ?? 0,
+    cacheUsageKnown: (r.unknown_cache ?? 0) === 0,
+    requestsWithUnknownCacheUsage: r.unknown_cache ?? 0,
     uncachedInputTokens: r.uncached ?? 0,
     reasoningTokens: r.reasoning ?? 0,
     tokenUsageBasis: n === 0 ? "unknown" : reported === n ? "provider_reported" : reported === 0 ? "unknown" : "mixed",
     reportedCostUsd: r.cost ?? null,
     policyViolations: r.violations ?? 0,
-    byEndpoint,
+    byEndpoint: byEndpoint.map(row => ({ ...row, cacheUsageKnown: row.requestsWithUnknownCacheUsage === 0 })),
     byGatewayModel,
   };
 }

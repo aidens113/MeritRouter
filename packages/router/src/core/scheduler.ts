@@ -28,6 +28,9 @@ export class Scheduler {
   private timer: NodeJS.Timeout | null = null;
   private ticking: Promise<void> | null = null;
   private stopping: Promise<void> | null = null;
+  private restartTimer: NodeJS.Timeout | null = null;
+  private intervalMs = 1000;
+  private retryDelayMs = 1000;
   private readonly taskLeases: TaskLeases;
   private startup: Promise<unknown> | null = null;
   private again = false;
@@ -55,7 +58,8 @@ export class Scheduler {
   ) { this.taskLeases = executor.taskLeases ?? new SqliteTaskLeases(cfg, tasks); }
 
   start(intervalMs = 1000): void {
-    if (this.timer || this.stopping) return;
+    if (this.timer || this.stopping || this.restartTimer) return;
+    this.intervalMs = intervalMs;
     this.stopped = false;
     this.startup = this.recoverAsync();
     void this.startup.catch(() => undefined);
@@ -102,7 +106,19 @@ export class Scheduler {
   }
 
   private wake(): void {
-    void this.tick().catch(() => { /* tick fails closed; the returned promise remains observable to direct callers. */ });
+    void this.tick().then(() => {
+      this.retryDelayMs = 1000;
+    }).catch(error => {
+      const delay = this.retryDelayMs;
+      console.error(`SwitchYard worker ${this.owner} stopped after a tick error; retrying in ${delay}ms`, error);
+      this.retryDelayMs = Math.min(delay * 2, 60_000);
+      if (this.stopping || this.restartTimer) return;
+      this.restartTimer = setTimeout(() => {
+        this.restartTimer = null;
+        if (!this.stopping) this.start(this.intervalMs);
+      }, delay);
+      this.restartTimer.unref?.();
+    });
   }
 
   tick(): Promise<void> {
@@ -229,6 +245,8 @@ export class Scheduler {
     this.stopped = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    if (this.restartTimer) clearTimeout(this.restartTimer);
+    this.restartTimer = null;
     this.executor.abortAll("shutdown");
     this.stopping = (async () => {
       await this.startup?.catch(() => undefined);

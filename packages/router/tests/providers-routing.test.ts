@@ -162,13 +162,13 @@ describe("direct free requests", () => {
     const ra = (await sy.awaitResults([a!.taskId], { timeoutSeconds: 10 })).completed[0]!;
     const [b] = await sy.submitTasks([summarizeTask({ goal: "Summarise the log again" })]);
     const rb = (await sy.awaitResults([b!.taskId], { timeoutSeconds: 10 })).completed[0]!;
-    // No cache reported: unknown (null), and all of its input counts as new.
-    expect(ra.usage).toMatchObject({ inputTokens: 1000, cachedInputTokens: null, uncachedInputTokens: 1000, outputTokens: 50 });
+    // No cache reported: neither cached nor new input is known.
+    expect(ra.usage).toMatchObject({ inputTokens: 1000, cachedInputTokens: null, uncachedInputTokens: null, outputTokens: 50 });
     expect(rb.usage).toMatchObject({ inputTokens: 1200, cachedInputTokens: 1000, uncachedInputTokens: 200, outputTokens: 60 });
 
     const s = sy.usage(before, Date.now() + 1);
-    expect(s).toMatchObject({ inputTokens: 2200, cachedInputTokens: 1000, uncachedInputTokens: 1200, outputTokens: 110 });
-    expect(s.byEndpoint.find((e) => e.endpointId === "acme/big-free")).toMatchObject({ inputTokens: 2200, cachedInputTokens: 1000, uncachedInputTokens: 1200 });
+    expect(s).toMatchObject({ inputTokens: 2200, cachedInputTokens: 1000, uncachedInputTokens: 1200, outputTokens: 110, cacheUsageKnown: false, requestsWithUnknownCacheUsage: 1 });
+    expect(s.byEndpoint.find((e) => e.endpointId === "acme/big-free")).toMatchObject({ inputTokens: 2200, cachedInputTokens: 1000, uncachedInputTokens: 1200, cacheUsageKnown: false, requestsWithUnknownCacheUsage: 1 });
   });
 
   it("a configured limit blocks the provider until its window passes, then the deferred task resumes", async () => {

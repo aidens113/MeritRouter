@@ -4,12 +4,14 @@ import type { StoredTask, TaskStore } from "../storage/tasks.js";
 import type { SessionRecorder } from "../sessions/recorder.js";
 import type { AbortReason } from "./disposition.js";
 import { MAX_AUTO_RESUMES } from "./scheduler.js";
+import { z } from "zod";
+import { LeaseRefSchema } from "../storage/task-leases.js";
 
 /** Slack added to a bounded operation's own timeout before the watchdog calls it stuck. */
 export const WATCHDOG_MARGIN_MS = 60_000;
 
 /** Tools that wait on purpose (other tasks, the user, a budget decision): a session inside one is never stuck. */
-export const WATCHDOG_EXEMPT_TOOLS = new Set(["await_tasks", "ask_user", "request_more_budget"]);
+export const WATCHDOG_EXEMPT_TOOLS = new Set(["await_tasks", "ask_user", "request_more_budget", "await_supervisor_action"]);
 
 /**
  * Tools that run the task's checks inside one call: `integrate_task` runs every job check after
@@ -103,6 +105,18 @@ export function abortStuckRuns(d: { cfg: ResolvedConfig; db: Db; tasks: TaskStor
     if (w.controller.signal.aborted || !session || session.ended) continue;
     const progress = sessionProgress(d.db, session.id);
     if (!progress) continue;
+    // Post-submission checks also wait for operator/supervisor decisions without a model
+    // tool intent. Only a current bounded wait from this exact live task is exempt.
+    const actionWait = d.db.prepare("SELECT type, data_json FROM events WHERE task_id = ? AND type IN ('worker_action_wait','worker_action_wait_end') ORDER BY id DESC LIMIT 1").get(taskId) as { type: string; data_json: string } | undefined;
+    if (actionWait?.type === "worker_action_wait") {
+      try {
+        const data = z.object({ id: z.string(), until: z.number().int() }).parse(JSON.parse(actionWait.data_json));
+        const row = d.db.prepare("SELECT value_json FROM worker_action_requests WHERE id=? AND task_id=? AND project_id=?").get(data.id, taskId, w.task.row.project_id) as { value_json: string } | undefined;
+        const action = row ? z.object({ status: z.enum(["pending", "running", "completed", "denied", "cancelled", "uncertain"]), action: z.object({ lease: LeaseRefSchema }) }).parse(JSON.parse(row.value_json)) : null;
+        const lease = action?.action.lease;
+        if (action && ["pending", "running"].includes(action.status) && lease?.taskId === taskId && lease.project === w.task.row.project_id && lease.owner === w.task.row.lease_owner && lease.runCount === w.task.row.run_count && lease.incarnation === w.task.row.lease_incarnation && data.until > Date.now() && data.until <= Date.now() + 60_000) continue;
+      } catch { /* Invalid persisted wait data cannot exempt a run. */ }
+    }
     // Idle time counts from the later of the session's last event and the last phase switch
     // (a review starting or ending), so time spent in another session is not held against it.
     const v = watchdogVerdict(d.cfg, { ...progress, at: Math.max(progress.at, w.phaseAt) }, d.now(), { checks: reviewing ? 0 : (w.task.spec.constraints.checks?.length ?? 0), repositories: w.task.spec.repositoryAliases.length });

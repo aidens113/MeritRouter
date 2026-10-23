@@ -2,16 +2,13 @@ import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { TASK_STATES, WorkerResultSchema } from "../core/task.js";
 import type { StoredTask } from "./tasks.js";
+import { LeaseRefSchema, type LeaseRef } from "./lease-ref.js";
+export { LeaseRefSchema, type LeaseRef } from "./lease-ref.js";
 export const LEASE_RECEIPT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 export const RECOVERY_RECEIPT_WINDOW_MS = 5 * 60 * 1000;
 export const LEASE_RECEIPT_CAPACITY = 100_000;
 export const RECOVERY_RECEIPT_CAPACITY = 20_000;
 export const RECOVERY_TOTAL_THRESHOLD = 80_000;
-export const LeaseRefSchema = z.object({
-  taskId: z.string().min(1).max(64), owner: z.string().min(1).max(200),
-  runCount: z.number().int().positive(), project: z.string().max(200), incarnation: z.string().regex(/^[a-f0-9]{32}$/),
-}).strict();
-export type LeaseRef = Readonly<z.infer<typeof LeaseRefSchema>>;
 export function capturedLease(task: StoredTask): LeaseRef {
   return Object.freeze(LeaseRefSchema.parse({
     taskId: task.row.id, owner: task.row.lease_owner,

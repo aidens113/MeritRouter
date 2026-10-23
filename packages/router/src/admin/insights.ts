@@ -1,5 +1,6 @@
 import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 export { acknowledgeModelQuarantine } from "./quarantine.js";
+export { listWorkerActions, getWorkerAction, decideWorkerAction } from "./worker-actions.js";
 import path from "node:path";
 import YAML from "yaml";
 import { MODALITIES, PROFILE_NAMES, TIER_NAMES, type Importance, type Modality, type ProfileName, type TierName } from "../config/schema.js";
@@ -263,6 +264,7 @@ export interface RequestRow {
   /** Sources the provider cited (untrusted web data). */
   webCitations: WebCitation[];
   taskIds: string[];
+  taskRefs: Array<{ id: string; label: string | null; job: boolean }>;
   /** The project the request was charged to ('' for none: probes, scans). */
   project: string;
 }
@@ -271,31 +273,56 @@ export interface RequestRow {
  * Model requests, newest first. `project` limits them to one project's requests (those charged to
  * its tasks); without it every request is listed, including probes charged to no project.
  */
-export function requestLog(sy: Switchyard, opts: { limit?: number; endpointId?: string; taskId?: string; status?: string; project?: string } = {}): RequestRow[] {
+export interface RequestLogOptions {
+  limit?: number; offset?: number; endpointId?: string; taskId?: string; jobId?: string;
+  status?: string; project?: string; purpose?: string; tier?: string; problems?: boolean;
+}
+
+const RequestLogOptionsSchema = z.object({
+  limit: z.number().int().positive().max(1000).optional(), offset: z.number().int().nonnegative().max(100000000).optional(),
+  endpointId: z.string().max(1000).optional(), taskId: z.string().max(1000).optional(), jobId: z.string().max(1000).optional(),
+  status: z.string().max(100).optional(), project: z.string().max(1000).optional(), purpose: z.string().max(100).optional(),
+  tier: z.string().max(100).optional(), problems: z.boolean().optional(),
+}).strict();
+function requestLogScope(sy: Switchyard, opts: RequestLogOptions): { where: string[]; args: unknown[] } {
+  opts = RequestLogOptionsSchema.parse(opts);
   const where: string[] = [];
   const args: unknown[] = [];
-  if (opts.project) {
-    where.push("r.project_id = ?");
-    args.push(opts.project);
-  }
-  if (opts.endpointId) {
-    where.push("r.endpoint_id = ?");
-    args.push(opts.endpointId);
-  }
-  if (opts.status) {
-    where.push("r.status = ?");
-    args.push(opts.status);
+  for (const [column, value] of [["project_id", opts.project], ["endpoint_id", opts.endpointId], ["status", opts.status], ["purpose", opts.purpose], ["tier", opts.tier]] as const) {
+    if (value !== undefined) { where.push(`r.${column} = ?`); args.push(value); }
   }
   if (opts.taskId) {
     where.push("r.id IN (SELECT request_id FROM request_charges WHERE task_id = ?)");
     args.push(opts.taskId);
   }
+  if (opts.jobId) {
+    // Derive scope from the stored root, never from a URL's project assertion. UNION terminates cycles.
+    where.push(`r.id IN (WITH RECURSIVE job_tasks(id, project_id) AS (
+      SELECT id, project_id FROM tasks WHERE id = ? AND profile = 'supervise'
+      UNION SELECT t.id, t.project_id FROM tasks t JOIN job_tasks j
+        ON json_extract(t.spec_json, '$.parentTaskId') = j.id AND t.project_id = j.project_id
+    ) SELECT c.request_id FROM request_charges c JOIN job_tasks j ON j.id = c.task_id
+      WHERE j.project_id = r.project_id)`);
+    args.push(opts.jobId);
+  }
+  if (opts.problems) where.push("(r.error_kind IS NOT NULL OR r.policy_violation IS NOT NULL)");
+  return { where, args };
+}
+
+/** Matching physical requests, before pagination; batches count once. */
+export function requestLogCount(sy: Switchyard, opts: RequestLogOptions = {}): number {
+  const { where, args } = requestLogScope(sy, opts);
+  return (sy.db.prepare(`SELECT COUNT(*) AS n FROM model_requests r ${where.length ? `WHERE ${where.join(" AND ")}` : ""}`).get(...args) as { n: number }).n;
+}
+
+export function requestLog(sy: Switchyard, opts: RequestLogOptions = {}): RequestRow[] {
+  const { where, args } = requestLogScope(sy, opts);
   const rows = sy.db
     .prepare(
-      `SELECT r.*, (SELECT group_concat(task_id) FROM request_charges c WHERE c.request_id = r.id) AS task_ids
-         FROM model_requests r ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY r.reserved_at DESC LIMIT ?`,
+      `SELECT r.*, (SELECT group_concat(c.task_id) FROM request_charges c JOIN tasks t ON t.id = c.task_id WHERE c.request_id = r.id AND t.project_id = r.project_id) AS task_ids
+         FROM model_requests r ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY r.reserved_at DESC, r.id DESC LIMIT ? OFFSET ?`,
     )
-    .all(...args, opts.limit ?? 200) as Array<Record<string, unknown>>;
+    .all(...args, Math.max(1, Math.min(1000, opts.limit ?? 200)), Math.max(0, opts.offset ?? 0)) as Array<Record<string, unknown>>;
   return rows.map((r) => ({
     id: String(r.id),
     reservedAt: Number(r.reserved_at),
@@ -316,6 +343,10 @@ export function requestLog(sy: Switchyard, opts: { limit?: number; endpointId?: 
     nativeWebSearch: (r.native_web_search as string | null) ?? null,
     webSearchRequests: (r.web_search_requests as number | null) ?? null,
     webCitations: parseCitations(r.web_citations_json),
+    taskRefs: (r.task_ids ? String(r.task_ids).split(",") : []).flatMap(id => {
+      const task = sy.tasks.get(id);
+      return task && task.row.project_id === String(r.project_id ?? "") ? [{ id, label: task.spec.label ?? null, job: task.spec.profile === "supervise" }] : [];
+    }),
     taskIds: r.task_ids ? String(r.task_ids).split(",") : [],
     project: String(r.project_id ?? ""),
   }));

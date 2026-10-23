@@ -4,7 +4,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import type { Switchyard } from "../src/core/service.js";
 import { LabManager } from "../src/labs/lab.js";
-import { baseConfig, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
+import { baseConfig, goodOutput, makeEnv, openWithTestSupervisor, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
 let env: Env | undefined;
 let sy: Switchyard | undefined;
 let owner: LabManager | undefined;
@@ -19,7 +19,7 @@ afterEach(async () => {
 const call = (name: string, args: unknown) => ({ id: name, type: "function" as const, function: { name, arguments: JSON.stringify(args) } });
 it("runs a scripted bound team, scoped tools, integration restart and revision check on the lab branch", async () => {
   const node = JSON.stringify(process.execPath);
-  const config = baseConfig({ coding: { runner: "native" }, repositories: {}, brain: { path: "brain", project: "alpha" }, labs: { port_range: [56000, 56500] }, projects: { alpha: { repositories: { app: { path: "repo" } }, lab: { ports: ["web"], env: { PORT: "{port.web}" }, services: { web: { repo: "app", command: `${node} server.cjs`, ready: { http: "http://127.0.0.1:{port.web}/" } } }, checks: { verify: { repo: "app", command: `${node} check.cjs`, on_integrate: true } } } } } });
+  const config = baseConfig({ security: { outside_repository: "supervisor" }, coding: { runner: "native" }, repositories: {}, brain: { path: "brain", project: "alpha" }, labs: { port_range: [56000, 56500] }, projects: { alpha: { repositories: { app: { path: "repo" } }, lab: { ports: ["web"], env: { PORT: "{port.web}" }, services: { web: { repo: "app", command: `${node} server.cjs`, ready: { http: "http://127.0.0.1:{port.web}/" } } }, checks: { verify: { repo: "app", command: `${node} check.cjs`, on_integrate: true } } } } } });
   (config.profiles as Record<string, unknown>).supervise = { mode: "supervisor", tools: "supervisor", min_total_parameters_b: 100, max_model_requests: 30, max_output_tokens: 4000, classify: "never", min_tier: "T3" };
   env = makeEnv({ config, files: { "src/app.ts": "export function add(a: number, b: number) { return a + b; }\n", "server.cjs": "require('node:http').createServer((_q,r)=>r.end('fixture')).listen(Number(process.env.PORT),'127.0.0.1');", "check.cjs": "process.exit(require('fs').readFileSync('src/app.ts','utf8').includes('subtract')?0:1)" } });
   const script = [
@@ -38,13 +38,15 @@ it("runs a scripted bound team, scoped tools, integration restart and revision c
       return reply(null, { ...servedFor(sy!, req), toolCalls: [call("replace_in_file", { path: "src/app.ts", old_text: "export function add", new_text: "export function subtract(a: number, b: number) { return a - b; }\n\nexport function add" })] });
     return reply(null, { ...servedFor(sy!, req), toolCalls: [call("submit_result", goodOutput(1, "app:src/app.ts#L1-L1"))] });
   });
-  sy = open(env, client, { worker: true });
+  sy = openWithTestSupervisor(env, client, { worker: true });
   owner = new LabManager({ ...sy.labs.options, monitor: true });
   const created = await owner.create("alpha", "scripted");
   await owner.start("alpha", "scripted");
   const initialPid = owner.status("alpha", "scripted").services[0]!.pid;
   const job = await sy.startJob({ project: "alpha", lab: "scripted", goal: "Add subtract", repositories: ["app"], label: "lab-team" });
-  const result = (await sy.awaitResults([job.taskId], { timeoutSeconds: 120 })).completed[0]!;
+  const outcome = await sy.awaitResults([job.taskId], { timeoutSeconds: 60 });
+  expect(outcome.pending, JSON.stringify(outcome.pending)).toHaveLength(0);
+  const result = outcome.completed[0]!;
   expect(result.stopReason).toBe("supervisor_completed");
   const diagnostic = client.requests.filter(req => String(req.messages[0]!.content).startsWith("# Supervisor charter")).at(-1)!.messages.filter(m => m.role === "tool").map(m => String(m.content));
   expect(diagnostic.filter(text => text.startsWith("error:"))).toEqual([]);

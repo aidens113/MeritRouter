@@ -256,3 +256,4 @@ export { commitsMatching, commitsOfTasks, type CommitInfo } from "./attribution/
 export { markPanelStopped, panelStopFile, turnPanelOff } from "./operations/panel.js";
 export * from "./web/index.js";
 export { webTools } from "./harness/web-tools.js";
+export { WorkerActionRequests, outsideRepositoryPolicy, type WorkerActionRequest, type WorkerActionActor } from "./harness/worker-actions.js";

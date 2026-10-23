@@ -8,7 +8,8 @@ import { createCodingRunner } from "../src/runners/coding/index.js";
 import { blame } from "../src/attribution/index.js";
 import { GatewayError } from "../src/core/errors.js";
 import type { ChatRequest } from "../src/gateway/types.js";
-import { baseConfig, endpoint, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
+import type { SessionEventOf } from "../src/sessions/events.js";
+import { baseConfig, endpoint, goodOutput, makeEnv, openWithTestSupervisor as open, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
 
 const agent = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "fake-agent.mjs");
 let env: Env | undefined;
@@ -87,14 +88,16 @@ describe("native coding worker", () => {
     expect(lines.find((l) => l.text.includes("by second"))!.model).toBe("groq/second");
   }, 90_000);
 
-  it("external agents get per-response attribution through the job gateway", async () => {
+  it("external coding workers fail closed when no OS repository sandbox is available", async () => {
     env = makeEnv({ config: baseConfig({ coding: { runner: "command", command: `node "${agent}" good` } }) });
     sy = open(env, new ScriptedClient((req) => reply(JSON.stringify(goodOutput()), servedFor(sy!, req))), { worker: true, coding: createCodingRunner(env.cfg) });
     const [sub] = await sy.submitTasks([task()]);
     const r = (await sy.awaitResults([sub!.taskId], { timeoutSeconds: 60 })).completed[0]!;
-    expect(r.acceptanceStatus).toBe("met");
-    const lines = await blame(worktreeOf(sub!.taskId), "src/app.ts");
-    expect(lines.find((l) => l.text.includes("subtract"))!.model).toBe("openrouter/vendor/big-a:free");
+    expect(r.executionStatus).toBe("failed");
+    expect(r.acceptanceStatus).toBe("not_verified");
+    expect(r.stopReason).toBe("worker_sandbox_unavailable");
+    expect(readFileSync(path.join(env.repo, "src/app.ts"), "utf8")).not.toContain("subtract");
+    expect(sy.db.prepare("SELECT worktree_path FROM workspaces WHERE task_id = ?").get(sub!.taskId)).toBeUndefined();
   }, 90_000);
 
   it("writes each worker's report into the brain", async () => {
@@ -125,7 +128,7 @@ describe("native coding worker", () => {
       if (!continuing) {
         // First attempt: write a file, then keep looking around until its budget (T2: 8) is spent.
         if (n === 0) return reply(null, { ...s, toolCalls: call("write_file", { path: "src/sub.ts", content: "export const subtract = (a: number, b: number) => a - b;\n" }) });
-        return reply(null, { ...s, toolCalls: call("list_files", { alias: "core", dir: "src", glob: "*.nothing" }) });
+        return reply(null, { ...s, toolCalls: call("list_files", { alias: "core", dir: "src", glob: `*.nothing${n}` }) });
       }
       if (n === 0) return reply(null, { ...s, toolCalls: call("read_file", { alias: "core", path: "src/sub.ts" }) });
       return reply(null, { ...s, toolCalls: submit() });
@@ -137,7 +140,7 @@ describe("native coding worker", () => {
 
     // The empty listing is a plain, complete answer (models otherwise list again and again).
     const listing = client.requests.flatMap((q) => q.messages).find((m) => m.role === "tool" && String(m.content).startsWith("No files"));
-    expect(String(listing?.content)).toMatch(/^No files matching \*\.nothing in src\. This is a complete answer, not an error: nothing matches\.$/);
+    expect(String(listing?.content)).toMatch(/^No files matching \*\.nothing\d+ in src\. This is a complete answer, not an error: nothing matches\.$/);
 
     // The escalated run was told about the unfinished work and found the first attempt's file.
     const second = client.requests.filter((q) => q.messages.some((m) => m.role === "user" && String(m.content).includes(NOTE)));
@@ -156,39 +159,94 @@ describe("native coding worker", () => {
     expect(env.cfg.profiles.summarize!.max_output_tokens).toBe(2000);
   });
 
-  it("the final request offers only the submit tool, so a model that keeps exploring still submits", async () => {
+  it("refreshes repeated reads, then stops when their observed state stays unchanged", async () => {
     env = makeEnv({ config: baseConfig({ coding: { runner: "native" } }) });
     const client = new ScriptedClient((req) => {
       const s = servedFor(sy!, req);
-      // A model that would explore forever: it submits only when nothing else is offered. (It
-      // reads src/app.ts, which its submission cites as evidence.)
-      if ((req.tools ?? []).length === 1) return reply(null, { ...s, toolCalls: submit() });
-      return reply(null, { ...s, toolCalls: call("read_file", { alias: "core", path: "src/app.ts" }) });
+      // Object key order does not make a repeated call new work.
+      const args = toolCount(req) === 0
+        ? { alias: "core", path: "src/app.ts" }
+        : { path: "src/app.ts", alias: "core" };
+      return reply(null, { ...s, toolCalls: call("read_file", args) });
     });
     sy = open(env, client, { worker: true, coding: createCodingRunner(env.cfg) });
-    const [sub] = await sy.submitTasks([task({ budget: { maxModelRequests: 3 }, constraints: { acceptanceCriteria: ["x"], allowedPaths: ["src/**"] } })]);
+    const [sub] = await sy.submitTasks([task({ budget: { maxModelRequests: 4 }, constraints: { acceptanceCriteria: ["x"], allowedPaths: ["src/**"] } })]);
     const r = (await sy.awaitResults([sub!.taskId], { timeoutSeconds: 60 })).completed[0]!;
-    const own = client.requests.filter((q) => (q.tools ?? []).some((t) => t.function.name === "submit_result"));
-    expect(own.at(-1)!.tools!.map((t) => t.function.name)).toEqual(["submit_result"]);
-    expect(own.slice(0, -1).every((q) => q.tools!.length > 1)).toBe(true);
-    expect(r.stopReason).toBe("worker_submitted");
+    expect(client.requests).toHaveLength(3);
+    expect(r.stopReason).toBe("repeated_tool_call:read_file");
+    expect(r.executionStatus).toBe("failed");
+    expect(client.requests.at(-1)!.messages.some((message) => message.role === "tool" && String(message.content).includes("repeating it again will stop the task"))).toBe(true);
   }, 90_000);
 
-  it("nudges a coding worker that has edited nothing by half its requests, and marks exact repeat reads", async () => {
+  it("continues after a fresh repeated read so the worker can make progress", async () => {
     env = makeEnv({ config: baseConfig({ coding: { runner: "native" } }) });
     const client = new ScriptedClient((req) => {
       const s = servedFor(sy!, req);
-      if ((req.tools ?? []).length === 1) return reply(null, { ...s, toolCalls: submit() });
-      return reply(null, { ...s, toolCalls: call("read_file", { alias: "core", path: "src/app.ts" }) });
+      const n = toolCount(req);
+      if (n < 2) {
+        const args = n === 0
+          ? { alias: "core", path: "src/app.ts" }
+          : { path: "src/app.ts", alias: "core" };
+        return reply(null, { ...s, toolCalls: call("read_file", args) });
+      }
+      if (n === 2) {
+        return reply(null, {
+          ...s,
+          toolCalls: call("replace_in_file", {
+            path: "src/app.ts",
+            old_text: "  return a + b;\n}\n",
+            new_text: "  return a + b;\n}\n\nexport function subtract(a: number, b: number) {\n  return a - b;\n}\n",
+          }),
+        });
+      }
+      return reply(null, { ...s, toolCalls: submit() });
+    });
+    sy = open(env, client, { worker: true, coding: createCodingRunner(env.cfg) });
+    const [sub] = await sy.submitTasks([task()]);
+    const r = (await sy.awaitResults([sub!.taskId], { timeoutSeconds: 60 })).completed[0]!;
+    expect(r.acceptanceStatus).toBe("met");
+    expect(r.checks[0]!.exitCode).toBe(0);
+    expect(client.requests).toHaveLength(4);
+    expect(client.requests.at(-1)!.messages.some((message) => message.role === "tool" && String(message.content).includes("tool ran freshly"))).toBe(true);
+  }, 90_000);
+
+  it("does not execute a repeated edit a second time", async () => {
+    env = makeEnv({ config: baseConfig({ coding: { runner: "native" } }) });
+    const client = new ScriptedClient((req) => reply(null, {
+      ...servedFor(sy!, req),
+      toolCalls: call("write_file", { path: "src/repeat.ts", content: "export const once = true;\n" }),
+    }));
+    sy = open(env, client, { worker: true, coding: createCodingRunner(env.cfg) });
+    const [sub] = await sy.submitTasks([task({ budget: { maxModelRequests: 4 }, constraints: { acceptanceCriteria: ["x"], allowedPaths: ["src/**"] } })]);
+    const r = (await sy.awaitResults([sub!.taskId], { timeoutSeconds: 60 })).completed[0]!;
+    expect(r.stopReason).toBe("repeated_tool_call:write_file");
+    expect(readFileSync(path.join(worktreeOf(sub!.taskId), "src/repeat.ts"), "utf8")).toBe("export const once = true;\n");
+    const outcomes = sy.sessions.forTask(sub!.taskId)
+      .flatMap(session => sy!.sessions.events(session.id)!.events)
+      .filter((event): event is SessionEventOf<"tool_outcome"> => event.type === "tool_outcome" && event.data.name === "write_file");
+    expect(outcomes.map(event => event.data.output)).toHaveLength(2);
+    expect(outcomes[1]!.data.output).toContain("did not repeat it to avoid duplicating its side effect");
+  }, 90_000);
+
+  it("keeps the no-progress nudge and stops when a read is repeated", async () => {
+    env = makeEnv({ config: baseConfig({ coding: { runner: "native" } }) });
+    const client = new ScriptedClient((req) => {
+      const s = servedFor(sy!, req);
+      const reads = req.messages.filter(message => message.role === "tool").length;
+      if (reads === 0) return reply(null, { ...s, toolCalls: call("read_file", { alias: "core", path: "src/app.ts" }) });
+      if (reads === 1) return reply(null, { ...s, toolCalls: call("list_files", { alias: "core" }) });
+      if (reads === 2) return reply(null, { ...s, toolCalls: call("search", { alias: "core", pattern: "function add" }) });
+      return reply(null, { ...s, toolCalls: call("search", { alias: "core", pattern: "function add" }) });
     });
     sy = open(env, client, { worker: true, coding: createCodingRunner(env.cfg) });
     const [sub] = await sy.submitTasks([task({ budget: { maxModelRequests: 6 }, constraints: { acceptanceCriteria: ["x"], allowedPaths: ["src/**"] } })]);
-    await sy.awaitResults([sub!.taskId], { timeoutSeconds: 60 });
+    const r = (await sy.awaitResults([sub!.taskId], { timeoutSeconds: 60 })).completed[0]!;
     const last = client.requests.at(-1)!.messages;
     const nudges = last.filter((m) => m.role === "user" && String(m.content).includes("have not changed any file yet"));
     expect(nudges).toHaveLength(1);
     expect(String(nudges[0]!.content)).toMatch(/You have used 3 of 6 requests/);
-    expect(last.some((m) => m.role === "tool" && String(m.content).includes("[You made this exact read_file call 2 times"))).toBe(true);
+    expect(client.requests).toHaveLength(5);
+    expect(r.stopReason).toBe("repeated_tool_call:search");
   }, 90_000);
 
   it("file tools take file_path as path, say plainly when the path is missing, and context accepts a bare path for a single repository", async () => {
@@ -211,4 +269,3 @@ describe("native coding worker", () => {
     expect(JSON.stringify(client.requests[0]!.messages)).toContain("core:src/app.ts");
   }, 90_000);
 });
-

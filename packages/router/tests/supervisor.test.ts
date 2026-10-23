@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import type { Switchyard } from "../src/core/service.js";
 import type { ChatRequest } from "../src/gateway/types.js";
 import { blame } from "../src/attribution/index.js";
-import { baseConfig, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
+import { baseConfig, goodOutput, makeEnv, open, openWithTestSupervisor, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
 
 let env: Env | undefined;
 let sy: Switchyard | undefined;
@@ -50,12 +50,17 @@ describe("standalone supervisor", () => {
       if (!isSupervisor(req)) return worker(req);
       return reply(null, { ...servedFor(sy!, req), toolCalls: script[turns(req)]!() });
     });
-    sy = open(env, client, { worker: true });
+    // The fixture operator approves only this exact declared check, including the
+    // worker's post-submission and supervisor integration verification requests.
+    sy = openWithTestSupervisor(env, client, { worker: true }, [check]);
     const job = await sy.startJob({ goal: "Add subtract() to the app", repositories: ["core"], checks: [check], label: "subtract-job" });
     const r = (await sy.awaitResults([job.taskId], { timeoutSeconds: 120 })).completed[0]!;
     expect(r.stopReason).toBe("supervisor_completed");
     expect(r.acceptanceStatus).toBe("met");
     expect(r.checks[0]!.exitCode).toBe(0);
+    const actions = sy.db.prepare("SELECT value_json FROM worker_action_requests WHERE project_id=?").all(sy.tasks.projectOf(job.taskId)) as Array<{ value_json: string }>;
+    expect(actions.length).toBeGreaterThanOrEqual(2);
+    for (const row of actions) expect(JSON.parse(row.value_json)).toMatchObject({ status: "completed", decidedBy: "operator", action: { command: check } });
     expect(r.summary).toMatch(/git merge --no-ff switchyard\/job-/);
     // Status reports the cap the executor applied: a supervisor's profile cap, not its tier's.
     const st = sy.getStatus([job.taskId])[0] as { tier: "T1" | "T2" | "T3"; maxModelRequests: number };

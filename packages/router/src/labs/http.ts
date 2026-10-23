@@ -4,6 +4,7 @@ import { LabNameSchema, substitute } from "./recipe.js";
 import { labValues } from "./environment.js";
 import { inspectLabListeners, processOwnership } from "./process-ownership.js";
 import { SwitchyardError } from "../core/errors.js";
+import { assertLabEffect, labEffectSignal } from "./control-authority.js";
 export const LabHttpInputSchema = z.object({ service: LabNameSchema, method: z.enum(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]).default("GET"), path: z.string().min(1).max(2000).default("/"), headers: z.record(z.string(), z.string().max(2048)).default({}), body: z.string().max(65536).optional(), timeoutMs: z.number().int().min(100).max(10000).default(5000) }).strict();
 export type LabHttpInput = z.input<typeof LabHttpInputSchema>;
 export interface LabHttpResult {
@@ -13,7 +14,10 @@ export interface LabHttpResult {
   truncated: boolean;
   url: string;
 }
-export async function labHttp(manager: LabManager, project: string, name: string, raw: LabHttpInput): Promise<LabHttpResult> {
+export async function labHttp(manager: LabManager, project: string, name: string, raw: LabHttpInput, options: { signal?: AbortSignal } = {}): Promise<LabHttpResult> {
+  const signal = labEffectSignal(options.signal);
+  const current = () => { assertLabEffect(); if (signal?.aborted) throw new SwitchyardError("lab_control_cancelled", "Lab HTTP cancelled"); };
+  current();
   const input = LabHttpInputSchema.parse(raw);
   const before = manager.status(project, name);
   const s = before.services.find(x => x.name === input.service);
@@ -22,6 +26,7 @@ export async function labHttp(manager: LabManager, project: string, name: string
     throw new SwitchyardError("lab_http_unavailable", "HTTP requires a running declared HTTP service in this lab");
   if (await processOwnership(s.pid, s.token) !== "owned")
     throw new SwitchyardError("lab_process_ownership", "HTTP service process ownership could not be verified");
+  current();
   const base = new URL(substitute(recipe.ready.http, labValues(before.lab)));
   const port = Number(base.port);
   if (base.protocol !== "http:" || base.hostname !== "127.0.0.1" || base.username || base.password || !Object.values(before.lab.ports).includes(port))
@@ -32,6 +37,7 @@ export async function labHttp(manager: LabManager, project: string, name: string
   if (url.origin !== base.origin || url.username || url.password)
     throw new SwitchyardError("lab_scope_denied", "HTTP target escaped the service origin");
   const listeners = await inspectLabListeners(s.pid, s.token, Object.values(before.lab.ports));
+  current();
   if (!listeners.some(x => x.port === port))
     throw new SwitchyardError("lab_process_ownership", "allocated HTTP port is not currently owned by this service's process tree");
   const headers: Record<string, string> = {};
@@ -47,7 +53,9 @@ export async function labHttp(manager: LabManager, project: string, name: string
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort("lab HTTP timed out"), input.timeoutMs);
   try {
-    const response = await fetch(url, { method: input.method, headers, body: input.body, redirect: "manual", signal: controller.signal });
+    current();
+    const response = await fetch(url, { method: input.method, headers, body: input.body, redirect: "manual", signal: signal ? AbortSignal.any([controller.signal, signal]) : controller.signal });
+    current();
     if (response.status >= 300 && response.status < 400) {
       await response.body?.cancel();
       throw new SwitchyardError("lab_http_redirect", "lab HTTP redirects are not followed; use an explicit path on this service");
@@ -59,6 +67,7 @@ export async function labHttp(manager: LabManager, project: string, name: string
     if (reader) {
       while (true) {
         const next = await reader.read();
+        current();
         if (next.done)
           break;
         const remaining = 65536 - size;
@@ -78,6 +87,7 @@ export async function labHttp(manager: LabManager, project: string, name: string
     if (after?.state !== "running" || after.pid !== s.pid || after.token !== s.token || await processOwnership(s.pid, s.token) !== "owned")
       throw new SwitchyardError("lab_process_ownership", "HTTP service ownership changed during the request");
     const listenersAfter = await inspectLabListeners(s.pid, s.token, Object.values(before.lab.ports));
+    current();
     if (!listenersAfter.some(listener => listener.port === port))
       throw new SwitchyardError("lab_process_ownership", "HTTP listening socket ownership changed during the request");
     return { status: response.status, headers: Object.fromEntries([...response.headers].filter(([key]) => ["content-type", "content-length", "etag", "last-modified"].includes(key))), body: Buffer.concat(chunks).toString("utf8"), truncated, url: url.href };

@@ -8,7 +8,7 @@ import type { SessionWorkspace } from "../../sessions/events.js";
 import { git } from "../../workspaces/git.js";
 import type { EvidenceUniverse, WorkerOutput } from "../../core/worker-output.js";
 import { baseResult, type RunContext, type RunOutcome } from "../types.js";
-import { minimalEnv, runProcess } from "./process.js";
+import { awaitWorkerCommand, workerSourceIdentity } from "../../harness/worker-actions.js";
 import { criteria } from "../../core/task.js";
 import { checkRunOutcome } from "../../verification/checks.js";
 
@@ -108,11 +108,11 @@ export async function finishCoding(
   const aborted = ctx.signal.aborted;
   const checks: RunOutcome["result"]["checks"] = [];
   if (!aborted && changes.changed.length) {
-    const home = agentHome(ctx, o.ws);
     for (const command of spec.constraints.checks ?? []) {
-      const r = await runProcess(command, [], { cwd: o.ws.worktreePath, env: minimalEnv({ HOME: home, USERPROFILE: home, CI: "1" }), timeoutMs: ctx.cfg.execution.check_timeout_seconds * 1000, signal: ctx.signal, shell: true });
-      const logRef = ctx.artifacts.write({ taskId: ctx.taskId, executionId: o.executionId, kind: "check_log", label: command, content: `$ ${command}\nexit ${r.exitCode}${r.killed ? ` (killed: ${r.killed})` : ""}${revision ? `\nrevision ${revision}` : ""}\n\n${r.stdout}\n${r.stderr}`, extension: ".log" });
-      checks.push({ command, exitCode: r.killed ? null : r.exitCode, logRef, revision, ...(artifactDigest ? { artifactDigest } : {}) });
+      const action = await awaitWorkerCommand(ctx, { command, cwd: o.ws.worktreePath, invocationId: `final_check:${o.executionId}:${checks.length}`, timeoutMs: ctx.cfg.execution.check_timeout_seconds * 1000, reason: "Post-submission source check requires exact supervisor execution, not unsandboxed worker shell." });
+      const unchanged = action.action.source === await workerSourceIdentity(o.ws.worktreePath);
+      const logRef = ctx.artifacts.write({ taskId: ctx.taskId, executionId: o.executionId, kind: "check_log", label: command, content: `${action.output ?? `Supervisor action ${action.id}: ${action.status}`}\nrevision ${revision}\n${unchanged ? "source unchanged" : "source changed; check is not valid evidence"}`, extension: ".log" });
+      checks.push({ command, exitCode: action.status === "completed" && unchanged ? action.exitCode : null, logRef, revision, ...(artifactDigest ? { artifactDigest } : {}) });
     }
   }
   let taskLab: TaskLabEvidence | undefined;

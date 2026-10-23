@@ -10,10 +10,16 @@ import type { Brain } from "../brain/brain.js";
 import type { BrainAccess, Principal } from "../brain/access.js";
 import type { Actor } from "../attribution/index.js";
 import type { ToolSideEffect } from "../sessions/events.js";
-import { minimalEnv, runProcess } from "../runners/coding/process.js";
+import { minimalEnv } from "../runners/coding/process.js";
 import { channelTools } from "./channel-tools.js";
+import { awaitWorkerCommand, executeSupervisorCommand, requestWorkerCommand, workerSourceIdentity } from "./worker-actions.js";
+import { scopedArtifact } from "./check-evidence.js";
+import { dirtyPaths } from "../workspaces/git.js";
+import { currentSupervisorAuthority } from "../core/supervisor-authority.js";
 
 export interface HarnessEnv {
+  /** Trusted journal identity for this invocation; never taken from model arguments. */
+  toolInvocationId?: string;
   ctx: RunContext;
   role: RoleName;
   readers: Map<string, RepoReader>;
@@ -27,6 +33,8 @@ export interface HarnessEnv {
   commands?: { patterns: string[]; cwd: string; timeoutMs: number };
   /** The task's declared checks (constraints.checks), runnable exactly as declared with run_check. */
   checks?: { commands: string[]; cwd: string; env: Record<string, string>; timeoutMs: number; maxRuns: number };
+  /** Checks run in this agent loop; read-only task results use these as their execution evidence. */
+  checkResults?: Array<{ command: string; exitCode: number | null; logRef: string }>;
   brain?: { brain: Brain; access: BrainAccess; principal: () => Principal; actor: Actor; workingDoc: string | null };
   /** Files edited during the current model response (for per-response commits). */
   edits: Set<string>;
@@ -38,6 +46,8 @@ export interface HarnessTool {
   sideEffect: ToolSideEffect;
   /** For `command` tools: safe to re-run on resume. */
   idempotent?: boolean;
+  /** The same call may legitimately return new state when repeated. */
+  repeatBehavior?: "execute" | "observe" | ((args: Record<string, unknown>) => "execute" | "observe" | undefined);
   /**
    * Whether this run may have the tool at all (default: yes). A tool that is not available is
    * neither offered to the model nor run (the agent loop drops it), e.g. the team channel outside
@@ -99,8 +109,7 @@ export function repoTools(aliases: string[]): HarnessTool[] {
 export function artifactTool(): HarnessTool {
   return tool("read_artifact", "read", "Read a stored artifact (logs, traces, patches, earlier results) by its artifact:<id> reference.", { ref: { type: "string" } }, ["ref"], async (a, env) => {
     if (!env.allowArtifacts) throw new Error("artifacts are not available to this role");
-    const art = env.ctx.artifacts.read(str(a.ref, "ref"));
-    if (!art) throw new Error("unknown artifact");
+    const art = scopedArtifact(env, str(a.ref, "ref"));
     const text = art.content.toString("utf8");
     env.universe.refs.set(`artifact:${art.row.id}`, text.split("\n").length);
     return cap(text);
@@ -120,6 +129,7 @@ function workspacePath(env: HarnessEnv, input: unknown): { rel: string; abs: str
   const refused = ws.guard?.(rel);
   if (refused) throw new Error(`${refused} The edit was refused.`);
   const abs = path.join(ws.root, ...rel.split("/"));
+  if (path.resolve(abs).toLowerCase() === path.resolve(env.ctx.cfg.configPath).toLowerCase()) throw new Error("agents cannot edit the trusted SwitchYard configuration through repository tools");
   const rootReal = realpathSync(ws.root);
   let probe = path.dirname(abs);
   while (!existsSync(probe)) probe = path.dirname(probe);
@@ -128,6 +138,7 @@ function workspacePath(env: HarnessEnv, input: unknown): { rel: string; abs: str
   // Never write through a symlink: the link itself could point anywhere.
   if (existsSync(abs) || lstatExists(abs)) {
     if (lstatSync(abs).isSymbolicLink()) throw new Error(`${rel} is a symbolic link; edits through links are refused`);
+    if (lstatSync(abs).nlink > 1) throw new Error(`${rel} has multiple hard links; edits could affect files outside the workspace`);
     const rel3 = path.relative(rootReal, realpathSync(abs));
     if (rel3.startsWith("..") || path.isAbsolute(rel3)) throw new Error(`${rel} resolves outside the workspace`);
   }
@@ -229,7 +240,11 @@ export function commandTool(patterns: string[]): HarnessTool {
       const c = env.commands;
       const command = str(a.command, "command");
       if (!c || !commandAllowed(command, c.patterns)) throw new Error(`command not allowed; allowed patterns: ${c?.patterns.join(", ") || "none"}`);
-      const r = await runProcess(command, [], { cwd: c.cwd, env: minimalEnv({ CI: "1" }), timeoutMs: c.timeoutMs, signal: env.ctx.signal, shell: true });
+      if (!env.ctx.taskLease || !currentSupervisorAuthority(env.ctx.tasks.db, env.ctx.cfg, env.ctx.taskLease, env.ctx.now())) {
+        const request = await requestWorkerCommand(env.ctx, { command, cwd: c.cwd, timeoutMs: c.timeoutMs, invocationId: env.toolInvocationId, reason: "Worker command requires supervisor execution because no OS repository sandbox is available." });
+        return JSON.stringify(request);
+      }
+      const r = await executeSupervisorCommand(env.ctx, { command, invocationId: env.toolInvocationId, cwd: c.cwd, timeoutMs: c.timeoutMs, reason: "Supervisor command tool", env: minimalEnv({ CI: "1" }) });
       return cap(`$ ${command}\nexit ${r.exitCode}${r.killed ? ` (killed: ${r.killed})` : ""}\n${r.stdout}\n${r.stderr}`);
     },
   );
@@ -251,7 +266,7 @@ export function declaredCheckTool(): HarnessTool {
     ...tool(
       "run_check",
       "command",
-      "Run one of your task's declared checks in your worktree and see its output, exactly as it runs after you submit. Pass the command exactly as declared. Run them after editing and fix failures before you submit.",
+      "Run one of your task's declared checks in your task workspace and see its output. Pass the command exactly as declared; arbitrary commands are refused. The returned artifact is evidence you may cite with its exact artifact:<id> reference. Coding tasks run checks again after submission; read-only tasks retain this run as their check evidence.",
       { command: { type: "string", description: "one declared check, exactly as listed in your brief" } },
       ["command"],
       async (a, env) => {
@@ -263,14 +278,31 @@ export function declaredCheckTool(): HarnessTool {
         const taskId = env.ctx.taskId;
         const runs = (env.ctx.tasks.db.prepare("SELECT COUNT(*) AS n FROM events WHERE task_id = ? AND type = ?").get(taskId, WORKER_CHECK_EVENT) as { n: number }).n;
         if (runs >= c.maxRuns) throw new Error(`check run limit reached (${runs} of ${c.maxRuns}, coding.max_check_runs_per_task): fix what the last output showed and submit_result; the checks run again after you submit`);
-        const r = await runProcess(command, [], { cwd: c.cwd, env: c.env, timeoutMs: c.timeoutMs, signal: env.ctx.signal, shell: true });
+        if (!env.ctx.taskLease || !currentSupervisorAuthority(env.ctx.tasks.db, env.ctx.cfg, env.ctx.taskLease, env.ctx.now())) {
+          const reader = [...env.readers.values()].find(r => path.resolve(r.root) === path.resolve(c.cwd));
+          if (reader?.commit && (reader.commit !== (await reader.headSha()) || (await dirtyPaths(reader.root)).length > 0)) throw new Error("declared check source differs from the pinned read revision; no host check may run against another revision or dirty worktree");
+          const request = await awaitWorkerCommand(env.ctx, { command, cwd: c.cwd, timeoutMs: c.timeoutMs, invocationId: env.toolInvocationId ?? `worker_check:${runs}`, reason: "Declared check requires exact supervisor execution; worker shell is not OS-contained." });
+          if (request.status !== "completed" || request.action.operation) return JSON.stringify(request);
+          const logContent = request.output ?? "supervisor command output unavailable";
+          const logRef = env.ctx.artifacts.write({ taskId, kind: "check_log", label: `supervisor check: ${command}`, content: logContent, extension: ".log" });
+          env.universe.refs.set(logRef, logContent.split(/\r?\n/).length);
+          const record = { command, exitCode: request.action.source === await workerSourceIdentity(c.cwd) ? request.exitCode : null, logRef };
+          env.checkResults?.push(record);
+          env.ctx.tasks.event(taskId, WORKER_CHECK_EVENT, { ...record, actionId: request.id, source: request.action.source, sessionId: env.ctx.session?.id ?? null });
+          return cap(`${logContent}\n(log ${logRef}; supervisor action ${request.id})`);
+        }
+        const r = await executeSupervisorCommand(env.ctx, { command, invocationId: env.toolInvocationId, cwd: c.cwd, env: c.env, timeoutMs: c.timeoutMs, reason: "Supervisor declared check" });
         const exit = r.killed ? null : r.exitCode;
-        const logRef = env.ctx.artifacts.write({ taskId, kind: "check_log", label: `run_check: ${command}`, content: `$ ${command}\nexit ${r.exitCode}${r.killed ? ` (killed: ${r.killed})` : ""}\n\n${r.stdout}\n${r.stderr}`, extension: ".log" });
+        const logContent = `$ ${command}\nexit ${r.exitCode}${r.killed ? ` (killed: ${r.killed})` : ""}\n\n${r.stdout}\n${r.stderr}`;
+        const logRef = env.ctx.artifacts.write({ taskId, kind: "check_log", label: `run_check: ${command}`, content: logContent, extension: ".log" });
+        env.universe.refs.set(logRef, logContent.split(/\r?\n/).length);
+        env.checkResults?.push({ command, exitCode: exit, logRef });
         env.ctx.tasks.event(taskId, WORKER_CHECK_EVENT, { command, exitCode: exit, logRef });
         return cap(`$ ${command}\nexit ${r.exitCode}${r.killed ? ` (killed: ${r.killed})` : ""} (log ${logRef}; run ${runs + 1} of ${c.maxRuns})\n${tail(r.stdout, 8000)}\n${tail(r.stderr, 4000)}`);
       },
     ),
     idempotent: true,
+    repeatBehavior: "execute",
     available: (env) => !!env.checks?.commands.length && env.checks.maxRuns > 0,
   };
 }

@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const pkg = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const root = path.resolve(pkg, "../..");
@@ -18,7 +18,11 @@ for (const name of ["next", "react", "react-dom"]) {
 }
 const run = (args) => execFileSync(process.platform === "win32" ? "pnpm.cmd" : "pnpm", args, { cwd: root, stdio: "inherit", ...(process.platform === "win32" ? { shell: true } : {}) });
 run(["--filter", "switchyard-router", "build"]);
+const { routerBuildFingerprint, PANEL_ROUTER_FINGERPRINT, PANEL_ROUTER_FINGERPRINT_ALGORITHM } = await import(pathToFileURL(path.join(pkg, "dist", "operations", "panel.js")).href);
+const routerFingerprint = routerBuildFingerprint(path.join(pkg, "dist"));
 run(["--filter", "switchyard-panel", "build"]);
+const afterPanelBuild = routerBuildFingerprint(path.join(pkg, "dist"));
+if (routerFingerprint.digest !== afterPanelBuild.digest || routerFingerprint.files !== afterPanelBuild.files) throw new Error("Router content changed while building the panel; rebuild a stable source tree");
 // This target is a fixed generated directory inside this package, never a configured user path.
 if (path.dirname(target) !== pkg || path.basename(target) !== "panel") throw new Error("invalid panel staging directory");
 rmSync(target, { recursive: true, force: true });
@@ -52,4 +56,8 @@ if (built.experimental) delete built.experimental.turbopackRoot;
 if (built.turbopack) delete built.turbopack.root;
 built.distDir = ".next";
 writeFileSync(path.join(target, "next.config.mjs"), `export default ${JSON.stringify(built, null, 2)};\n`);
-console.log(`Packaged production panel at ${target}`);
+const buildIdText = readFileSync(path.join(target, ".next", "BUILD_ID"), "utf8");
+const buildId = buildIdText.trim();
+if (!buildId || buildId.length > 200 || Buffer.byteLength(buildIdText) > 4096) throw new Error("Invalid panel BUILD_ID for package fingerprint");
+writeFileSync(path.join(target, ".next", PANEL_ROUTER_FINGERPRINT), JSON.stringify({ version: 1, algorithm: PANEL_ROUTER_FINGERPRINT_ALGORITHM, buildId, ...routerFingerprint }, null, 2) + "\n");
+console.log(`Packaged production panel at ${target} (router ${routerFingerprint.digest})`);

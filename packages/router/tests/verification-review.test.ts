@@ -13,7 +13,7 @@ import { validateVerdict } from "../src/verification/review.js";
 import { autoCriterionId, WorkerTaskSchema, type WorkerResult } from "../src/core/task.js";
 import { compileContract } from "../src/verification/contract.js";
 import { budgetInputFor } from "../src/admission/admission.js";
-import { baseConfig, endpoint, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, summarizeTask, type Env } from "./helpers.js";
+import { baseConfig, endpoint, goodOutput, makeEnv, openWithTestSupervisor as open, reply, ScriptedClient, servedFor, summarizeTask, type Env } from "./helpers.js";
 
 let env: Env | undefined;
 let sy: Switchyard | undefined;
@@ -261,7 +261,7 @@ describe("missing evidence", () => {
         return reply(null, { ...servedFor(sy!, req), toolCalls: [call("submit_verdict", probed ? verdict(req, "pass") : verdict(req, "inconclusive", { missing: ["no check exercises subtract"], action: "run_targeted_check", targeted: [PROBE] }))] });
       }
       return codingAuthor(req, "a - b", "a - b");
-    }), { worker: true, coding: createCodingRunner(env.cfg) });
+    }), { worker: true, coding: createCodingRunner(env.cfg) }, [PROBE]);
     const [sub] = await sy.submitTasks([implement()]);
     const r = await result(sub!.taskId);
     expect(reviews).toBe(2);
@@ -411,7 +411,7 @@ describe("budget", () => {
     env = envWith();
     sy = open(env, new ScriptedClient((req) => {
       // A reviewer that keeps reading and never submits.
-      if (isReviewer(req)) return reply(null, { ...servedFor(sy!, req), toolCalls: [call("read_file", { alias: "core", path: "src/app.ts" }, `r${toolCount(req)}`)] });
+      if (isReviewer(req)) return reply(null, { ...servedFor(sy!, req), toolCalls: [call("read_file", { alias: "core", path: "src/app.ts", start_line: toolCount(req) + 1 }, `r${toolCount(req)}`)] });
       return codingAuthor(req, "a - b", "a - b");
     }), { worker: true, coding: createCodingRunner(env.cfg) });
     const [sub] = await sy.submitTasks([implement()]);

@@ -155,7 +155,7 @@ function EventBody({
             </Link>
             {d.servedModel ? <span className="text-ink-3">served {d.servedModel}</span> : null}
             <span className="tabular">
-              {num(d.usage.inputTokens)} in{d.usage.cachedInputTokens ? ` (${num(d.usage.cachedInputTokens)} cached${d.usage.inputTokens ? `, ${pct(d.usage.cachedInputTokens, d.usage.inputTokens)}` : ""})` : ""} · {num(d.usage.outputTokens)} out
+              {num(d.usage.inputTokens)} in{d.usage.cachedInputTokens == null ? " (cache usage unknown)" : ` (${num(d.usage.cachedInputTokens)} cached${d.usage.inputTokens ? `, ${pct(d.usage.cachedInputTokens, d.usage.inputTokens)}` : ""})`} | {num(d.usage.outputTokens)} out
             </span>
             {d.finishReason ? <Badge>{humanize(d.finishReason)}</Badge> : null}
             {fellBack ? <Badge tone="warn" title={d.attempts.map((a) => `${a.endpointId}: ${a.outcome}`).join("\n")}>after {d.attempts.length - 1} fallback{d.attempts.length > 2 ? "s" : ""}</Badge> : null}

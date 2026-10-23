@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -38,6 +38,21 @@ describe("attribution", () => {
     expect(bl[1]).toMatchObject({ model: "groq/model-a", task: "t_a", role: "implementer" });
     expect(execFileSync("git", ["log", "-1", "--format=%an <%ae>"], { cwd: r }).toString().trim()).toBe("implementer t_b (kilo/model-b) <implementer.t_b@switchyard.local>");
     expect((await commitsMatching(r, `${base}..HEAD`, { Model: "groq/model-a" })).map((c) => c.subject)).toEqual(["a edits two"]);
+  });
+
+  it("commits only selected paths and preserves unrelated staged additions, edits and deletions", async () => {
+    const r = repo();execFileSync("git", ["config", "core.autocrlf", "false"], { cwd: r });
+    writeFileSync(file(r), "selected base\n");writeFileSync(path.join(r, "outside.txt"), "outside base\n");writeFileSync(path.join(r, "outside-delete.txt"), "outside deletion base\n");await commitAs(r, human, "base");
+    writeFileSync(path.join(r, "outside.txt"), "outside staged\n");writeFileSync(path.join(r, "outside-add.txt"), "outside staged addition\n");unlinkSync(path.join(r, "outside-delete.txt"));execFileSync("git", ["add", "-A", "--", "outside.txt", "outside-add.txt", "outside-delete.txt"], { cwd: r });
+    const cached = () => execFileSync("git", ["diff", "--cached", "--binary", "--", "outside.txt", "outside-add.txt", "outside-delete.txt"], { cwd: r }).toString();
+    const before = cached();
+    expect(await commitAs(r, a, "no selected change", { paths: ["app.txt"] })).toBeNull();
+    writeFileSync(file(r), "selected edit\n");const changed = await commitAs(r, a, "selected edit", { paths: ["app.txt"] });
+    expect(cached()).toBe(before);expect(execFileSync("git", ["show", "--format=", "--name-only", changed!], { cwd: r }).toString().trim()).toBe("app.txt");
+    writeFileSync(path.join(r, "new.txt"), "new selected\n");await commitAs(r, b, "selected add", { paths: ["new.txt"] });expect(cached()).toBe(before);
+    unlinkSync(file(r));await commitAs(r, a, "selected delete", { paths: ["app.txt"] });expect(cached()).toBe(before);
+    expect(execFileSync("git", ["log", "-1", "--format=%(trailers:key=Agent,valueonly)"], { cwd: r }).toString().trim()).toBe(a.agent);
+    expect(execFileSync("git", ["diff", "HEAD", "--name-only"], { cwd: r }).toString()).toContain("outside.txt");
   });
 
   it("undoes specific lines: added lines are removed, modified lines restored", async () => {

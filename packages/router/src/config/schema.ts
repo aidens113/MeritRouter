@@ -945,6 +945,8 @@ export const ConfigSchema = z
     roles: z.partialRecord(RoleNameSchema, RoleSchema).default({}),
     /** Standalone supervisor settings (used by the supervise task type). */
     supervisor: SupervisorConfigSchema.prefault({}),
+    /** Host effects outside enforced repository containment require the selected trusted authority. */
+    security: z.object({ outside_repository: z.enum(["disabled", "human_only", "supervisor"]).default("human_only") }).strict().prefault({}),
     /** Agent teams: how one job's task graph runs. */
     team: TeamConfigSchema.prefault({}),
     coding: CodingConfigSchema.prefault({}),
@@ -968,6 +970,9 @@ export const ConfigSchema = z
   })
   .strict()
   .superRefine((c, ctx) => {
+    for (const [name, profile] of Object.entries(c.profiles)) {
+      if (profile && name === "supervise" && profile.mode !== "supervisor") ctx.addIssue({ code: "custom", path: ["profiles", name, "mode"], message: "the reserved supervise profile must use supervisor mode" });
+    }
     for (const [i, m] of c.paid.models.entries()) {
       if (!c.paid.providers[m.provider]) ctx.addIssue({ code: "custom", path: ["paid", "models", i, "provider"], message: `unknown paid provider ${m.provider}` });
     }

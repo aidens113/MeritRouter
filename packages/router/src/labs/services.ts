@@ -12,6 +12,8 @@ import { labEnvironment, labValues } from "./environment.js";
 import { LabsStore, type LabRecord, type LabServiceRecord } from "./store.js";
 import { captureOwnedProcessTree, HOST_MARKER, inspectLabListeners, processOwnership, stopOwnedProcess } from "./process-ownership.js";
 import { portAvailable } from "./ports.js";
+import type { ResolvedConfig } from "../config/load.js";
+import { assertLabEffect, assertLabSupervisor, currentLabAuthority, labEffectSignal, serviceLabAuthority, withLabAuthority } from "./control-authority.js";
 // The independent wrapper survives its manager. Its random token is verified against the OS
 // command line before another manager adopts or terminates it. Declared services run foreground.
 const HOST_SOURCE = `// ${HOST_MARKER}
@@ -25,7 +27,7 @@ process.on('SIGTERM',()=>{try{child.kill('SIGTERM')}catch{};setTimeout(()=>proce
 `;
 const LEASE_MS = 60000;
 export class LabServices {
-  constructor(readonly store: LabsStore, readonly config: LabsConfig, readonly owner: string, readonly signal?: AbortSignal) {
+  constructor(readonly store: LabsStore, readonly config: LabsConfig, readonly owner: string, readonly signal?: AbortSignal, readonly hostConfig?: ResolvedConfig) {
   }
   private proofPath(lab: LabRecord, name: string): string {
     return labOwnedPath(path.resolve(lab.root, "../../.."), path.join(lab.root, "logs", `${name}.process-tree.json`));
@@ -45,6 +47,7 @@ export class LabServices {
     }
   }
   async start(lab: LabRecord, name: string, restarting = false): Promise<LabServiceRecord> {
+    assertLabEffect();
     if(lab.kind==="task_attempt")throw new Error("task-owned services require attempt lifecycle");
     LabNameSchema.parse(name);
     const recipe = lab.recipe.services[name];
@@ -56,6 +59,7 @@ export class LabServices {
     let previous = this.store.service(lab.id, name);
     if (previous?.pid && previous.token) {
       const ownership = await processOwnership(previous.pid, previous.token);
+      assertLabEffect();
       if (ownership === "owned") {
         if (previous.owner_id !== this.owner && previous.owner_until > Date.now())
           throw new Error("lab service is owned by another active manager");
@@ -76,10 +80,12 @@ export class LabServices {
       if (previous?.owner_id && previous.owner_id !== this.owner && previous.owner_until > Date.now())
         throw new Error("another manager is starting this service");
       this.store.saveService({ lab_id: lab.id, name, state: "starting", pid: null, token: null, log_path: path.join(lab.root, "logs", `${name}.log`), restart_count: restarting ? (previous?.restart_count ?? 0) : 0, next_restart: null, started_at: Date.now(), owner_id: this.owner, owner_until: Date.now() + LEASE_MS });
+      this.store.db.prepare("UPDATE lab_services SET authority_json=? WHERE lab_id=? AND name=?").run(currentLabAuthority()?.lease ? JSON.stringify(currentLabAuthority()!.lease) : null, lab.id, name);
     });
     const token = randomBytes(24).toString("hex");
     const logPath = labOwnedPath(path.resolve(lab.root, "../../.."), path.join(lab.root, "logs", `${name}.log`));
     mkdirSync(path.dirname(logPath), { recursive: true });
+    assertLabEffect();
     const fd = openSync(logPath, "a");
     const child = spawn(process.execPath, ["-e", HOST_SOURCE, "--", `--sy-lab-token=${token}`], { cwd: repo.worktree, env: { ...labEnvironment(lab), SWITCHYARD_LAB_COMMAND: JSON.stringify({ command: substitute(recipe.command, labValues(lab)), cwd: repo.worktree }) }, detached: true, windowsHide: true, stdio: ["ignore", fd, fd] });
     closeSync(fd);
@@ -94,8 +100,10 @@ export class LabServices {
       record.pid = child.pid;
       record.token = token;
       this.store.saveService(record);
+      assertLabEffect();
       child.unref();
       await this.ready(lab, name, child.pid, token);
+      assertLabEffect();
       await captureOwnedProcessTree(child.pid, token, this.proofPath(lab, name));
       record.state = "running";
       record.owner_until = Date.now() + LEASE_MS;
@@ -128,6 +136,7 @@ export class LabServices {
     const readiness = lab.recipe.services[name]!.ready;
     const deadline = Date.now() + this.config.service_ready_timeout_seconds * 1000;
     do {
+      assertLabEffect();
       if (this.signal?.aborted)
         throw new Error("lab service start cancelled");
       let ready = !readiness;
@@ -136,7 +145,8 @@ export class LabServices {
           const url = new URL(substitute(readiness.http, labValues(lab)));
           if (url.hostname !== "127.0.0.1" || url.protocol !== "http:" || url.username || url.password || !Object.values(lab.ports).includes(Number(url.port)))
             throw new Error("readiness must target this lab's allocated loopback ports");
-          const r = await fetch(url, { signal: AbortSignal.timeout(1000), redirect: "error" });
+          assertLabEffect();
+          const r = await fetch(url, { signal: AbortSignal.any([AbortSignal.timeout(1000), ...(labEffectSignal(this.signal) ? [labEffectSignal(this.signal)!] : [])]), redirect: "error" });
           await r.body?.cancel();
           ready = r.ok;
         }
@@ -145,6 +155,7 @@ export class LabServices {
       }
       if (readiness && "tcp" in readiness)
         ready = await new Promise<boolean>(resolve => {
+          assertLabEffect();
           const socket = net.connect({ host: "127.0.0.1", port: lab.ports[readiness.tcp]! });
           socket.setTimeout(500);
           const done = (v: boolean) => {
@@ -156,6 +167,7 @@ export class LabServices {
           socket.once("timeout", () => done(false));
         });
       if (ready) {
+        assertLabEffect();
         await inspectLabListeners(pid, token, Object.values(lab.ports));
         return;
       }
@@ -182,7 +194,8 @@ export class LabServices {
     this.store.event(lab.id, "service_adopted", { name: s.name, pid: s.pid });
     return s;
   }
-  async stop(lab: LabRecord, name: string): Promise<void> {
+  async stop(lab: LabRecord, name: string, cleanup = false): Promise<void> {
+    if (!cleanup) assertLabEffect();
     const s = this.store.service(lab.id, name);
     if (!s)
       return;
@@ -202,6 +215,11 @@ export class LabServices {
   async monitor(lab: LabRecord): Promise<void> {
     if(lab.kind==="task_attempt")return;
     for (const s of this.store.services(lab.id)) {
+      const origin = serviceLabAuthority(this.store.db, lab.id, s.name);
+      if (origin) {
+        try { if (!this.hostConfig) throw new Error("model service authority cannot be proved"); assertLabSupervisor(this.store.db, this.hostConfig, lab.project, origin); }
+        catch { if (s.owner_id === this.owner || s.owner_until <= Date.now()) await this.stop(lab, s.name, true); continue; }
+      }
       this.logs(lab, s.name, 1);
       if (s.owner_id !== this.owner) {
         if (s.owner_until > Date.now())
@@ -264,7 +282,8 @@ export class LabServices {
       }
       this.store.saveService(s);
       if (s.state === "backoff" && s.next_restart !== null && s.next_restart <= Date.now()) {
-        await this.start(lab, s.name, true).catch(err => this.store.event(lab.id, "restart_failed", { name: s.name, error: (err as Error).message }));
+        const restart = () => this.start(lab, s.name, true);
+        await (origin && this.hostConfig ? withLabAuthority(this.store.db, this.hostConfig, lab.project, origin, this.signal, restart) : restart()).catch(err => this.store.event(lab.id, "restart_failed", { name: s.name, error: (err as Error).message }));
       }
     }
   }

@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { ensurePanel, findPanelApp, markPanelStopped, PANEL_DIR_ENV, panelListening, panelStopFile, resetPanelRevive, revivePanel } from "../src/operations/panel.js";
+import { ensurePanel, panelBuildStale, routerBuildFingerprint, PANEL_ROUTER_FINGERPRINT, PANEL_ROUTER_FINGERPRINT_ALGORITHM, findPanelApp, markPanelStopped, PANEL_DIR_ENV, panelListening, panelStopFile, resetPanelRevive, revivePanel } from "../src/operations/panel.js";
 import { baseConfig, makeEnv, type Env } from "./helpers.js";
 
 // The panel stays reachable while agents use SwitchYard: ensurePanel starts it (detached) when
@@ -183,5 +183,65 @@ describe("ensurePanel", () => {
     rmSync(dir!, { recursive: true, force: true });
     fakePanel({ built: false });
     expect(findPanelApp()).toEqual({ problem: expect.stringMatching(/not built: run pnpm -r build/) });
+  });
+});
+
+
+describe("packaged panel router fingerprint", () => {
+  function fixture() {
+    dir = mkdtempSync(path.join(tmpdir(), "switchyard-panel-fingerprint-"));
+    const panel = path.join(dir, "panel"), router = path.join(dir, "dist");
+    mkdirSync(path.join(panel, ".next"), { recursive: true });mkdirSync(path.join(router, "core"), { recursive: true });
+    writeFileSync(path.join(panel, ".next", "BUILD_ID"), "fixture-build");
+    writeFileSync(path.join(router, "cli.js"), "export const version=1;\n");writeFileSync(path.join(router, "core", "task.js"), "export const task=true;\n");
+    const manifest = path.join(panel, ".next", PANEL_ROUTER_FINGERPRINT);
+    const value = { version: 1, algorithm: PANEL_ROUTER_FINGERPRINT_ALGORITHM, buildId: "fixture-build", ...routerBuildFingerprint(router) };
+    writeFileSync(manifest, JSON.stringify(value));
+    return { panel, router, manifest, value };
+  }
+  it("matches extracted package content despite changed mtimes and absolute location", () => {
+    const f = fixture();
+    const time = Date.now() / 1000;
+    utimesSync(path.join(f.panel, ".next", "BUILD_ID"), time - 300, time - 300);
+    utimesSync(path.join(f.router, "cli.js"), time + 300, time + 300);
+    expect(panelBuildStale(f.panel, f.router)).toBeNull();
+    const relocated = path.join(dir!, "extracted", "dist");cpSync(f.router, relocated, { recursive: true });
+    expect(routerBuildFingerprint(relocated)).toEqual(routerBuildFingerprint(f.router));
+    expect(panelBuildStale(f.panel, relocated)).toBeNull();
+    writeFileSync(path.join(relocated, "cli.d.ts"), "export declare const version: number;\n");writeFileSync(path.join(relocated, "cli.js.map"), "{\"sources\":[\"different-install-path\"]}");
+    expect(routerBuildFingerprint(relocated)).toEqual(routerBuildFingerprint(f.router));
+    expect(panelBuildStale(f.panel, relocated)).toBeNull();
+  });
+  it("detects changed content, path inventory and BUILD_ID independently of timestamps", () => {
+    const f = fixture(), cli = path.join(f.router, "cli.js");
+    const original = readFileSync(cli, "utf8");writeFileSync(cli, `${original}// changed\n`);
+    expect(panelBuildStale(f.panel, f.router)).toMatch(/different router content/);
+    writeFileSync(cli, original);expect(panelBuildStale(f.panel, f.router)).toBeNull();
+    writeFileSync(path.join(f.router, "extra.js"), original);expect(panelBuildStale(f.panel, f.router)).toMatch(/different router content/);
+    rmSync(path.join(f.router, "extra.js"));
+    const longId = "x".repeat(200);writeFileSync(path.join(f.panel, ".next", "BUILD_ID"), `${longId}\n`);writeFileSync(f.manifest, JSON.stringify({ ...f.value, buildId: longId }));
+    expect(panelBuildStale(f.panel, f.router)).toBeNull();
+    writeFileSync(f.manifest, JSON.stringify(f.value));writeFileSync(path.join(f.panel, ".next", "BUILD_ID"), "other-build");
+    expect(panelBuildStale(f.panel, f.router)).toMatch(/does not match its router fingerprint/);
+  });
+  it("rejects malformed, oversized and unsupported metadata instead of hiding stale state", () => {
+    const f = fixture();
+    for (const value of [{ ...f.value, version: 2 }, { ...f.value, algorithm: "mtime" }, { ...f.value, digest: "bad" }, { ...f.value, files: -1 }, { ...f.value, path: "../private" }]) {
+      writeFileSync(f.manifest, JSON.stringify(value));expect(panelBuildStale(f.panel, f.router)).toMatch(/fingerprint is invalid/);
+    }
+    writeFileSync(f.manifest, "{bad json");expect(panelBuildStale(f.panel, f.router)).toMatch(/fingerprint is invalid/);
+    writeFileSync(f.manifest, " ".repeat(5000));expect(panelBuildStale(f.panel, f.router)).toMatch(/fingerprint is invalid/);
+  });
+  it("does not follow linked router files outside the fingerprint root", () => {
+    const f = fixture(), outside = path.join(dir!, "outside");mkdirSync(outside);writeFileSync(path.join(outside, "private.js"), "private");
+    symlinkSync(outside, path.join(f.router, "linked"), process.platform === "win32" ? "junction" : "dir");
+    expect(panelBuildStale(f.panel, f.router)).toMatch(/fingerprint is invalid or unreadable/);
+    expect(readFileSync(path.join(outside, "private.js"), "utf8")).toBe("private");
+  });
+  it("retains the workspace mtime fallback when no packaged fingerprint exists", () => {
+    const f = fixture();rmSync(f.manifest);
+    const build = path.join(f.panel, ".next", "BUILD_ID"), time = Date.now() / 1000;
+    utimesSync(build, time - 300, time - 300);expect(panelBuildStale(f.panel, f.router)).toMatch(/older than the router build/);
+    utimesSync(build, time + 300, time + 300);expect(panelBuildStale(f.panel, f.router)).toBeNull();
   });
 });

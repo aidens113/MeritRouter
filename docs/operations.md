@@ -730,6 +730,13 @@ or workers.
   explanation. The daemon also does not pass a shell's `SWITCHYARD_PROJECT` on to its worker.
 - A second daemon for the same storage directory is refused.
 - MCP servers for individual projects run beside the daemon with `--no-worker`.
+- An MCP server runs a worker unless `--no-worker` is set. If a queue tick fails, it reports the
+  error and restarts the scheduler with bounded backoff; tasks acquired by the failed tick are
+  recovered before retrying, rather than remaining queued until a manual process restart.
+- A provider's `not_in_plan` response is specific to that model/key, not temporary capacity. The
+  gate continues to fallback models; if the last available route still refuses the model, the
+  task fails with `gateway_not_in_plan` instead of retrying a known permanent refusal as
+  `waiting_for_capacity`.
 
 ## Labs: isolated services and checked promotion
 
@@ -865,3 +872,56 @@ acceptance remain outstanding.
 - Line attribution for external agents (OpenCode) is per model request, not per tool call, and can
   blur when the agent sends several requests at once.
 
+## Repository boundaries and outside actions
+
+Set this in the configuration, or use **Settings > Security**:
+
+```yaml
+security:
+  outside_repository: human_only
+```
+
+`human_only` is the default when omitted. Every model-controlled host command requires an
+operator's exact approval, including commands requested by a supervisor. `supervisor` allows
+supervisors to execute host actions and approve their own workers' requests. `disabled` blocks
+outside actions entirely. These settings do not disable fixed, guarded repository/brain/artifact
+service operations, or explicit trusted operator maintenance such as backup and restore.
+
+A working directory, command allowlist and Git worktree are not OS sandboxes. Workers therefore
+never launch arbitrary host processes directly. They can use bounded repository tools or file an
+exact request using `request_supervisor_action`; jobs and task pages show pending actions and
+decision history. Read the command, cwd, source identity and timeout before approving. Approval
+executes only that captured action as operator/supervisor and does not grant worker host access.
+Generic network/Lab responses are explicitly supervisor reports, not independent check evidence.
+
+Approval checks current configuration, project, task incarnation, source identity and live lease.
+Policy revocation/cancellation aborts owned running actions; stale pending requests are cancelled.
+Unknown running outcomes are not automatically replayed. Operator APIs accept no client-supplied
+actor identity, and panel mutations reject cross-origin browser requests.
+
+External coding agents remain disabled until an accepted OS sandbox is available. Automatic
+worker Task Lab checks likewise fail closed without durable supervisor execution proof; a typed
+approval response cannot fabricate that proof. Ordinary native file edits and exact approved
+checks remain supported. Declared check results and their scoped artifact citations survive
+resume and failed/budget outcomes; pinned reads cannot silently use another working tree.
+
+Internal Git does not run repository hooks, fsmonitor, signing or external diff/textconv. Custom
+executable filter, merge and trailer configurations and config includes fail closed, including
+LFS conversion programs. Automatic operations also reject worktree redirection outside their
+authorized repository. Use an explicitly reviewed operator workflow for repositories requiring
+those programs; changing a command allowlist does not bypass the boundary.
+
+Nested brain mounts keep their original path boundary when resolving Git history or committing
+documents. A document commit preserves unrelated staged work. Automatic brain push is unavailable
+under the guarded Git policy: network Git commands are refused. Operator backup uses its separate
+trusted workflow. A custom supervisor profile is permitted only while its persisted task, original
+lease and current configured supervisor mode remain valid; role text grants no authority.
+
+Installed packages check panel/router freshness with a bounded content fingerprint tied to the
+panel build ID; extraction timestamps cannot cause a false stale warning. Invalid metadata or
+different runtime files still warn. Development builds retain the modification-time check.
+
+Usage displays distinguish measured zero cache tokens from unknown usage. Task new-input totals
+are unknown if any cache share is unknown; aggregate known cache totals are lower bounds and
+new-input totals are upper bounds until every contributing request reports cache usage. These
+labels do not alter provider billing or conservative paid reservations.

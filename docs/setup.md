@@ -568,3 +568,21 @@ node packages/router/dist/cli.js qualify status
 
 A running worker executes and grades the runs. Set `qualification.required: true` once your
 models have results.
+
+## Security settings
+
+Open `/all/settings?tab=security` to choose outside-repository access:
+
+- **Human approval only** (default): exact host actions wait for your approval on their job/task page.
+- **Supervisor approval allowed**: supervisors can execute host actions and decide owned worker requests.
+- **Disabled**: agents cannot execute outside-repository actions.
+
+Repository file tools and scoped task/project services remain available. There is no general
+worker OS shell sandbox: shell/check commands are executed only as explicitly approved actions,
+not by giving a worker blanket host permission. Current policy is checked again when decisions
+execute. See [operations](operations.md#repository-boundaries-and-outside-actions) for boundaries,
+revocation, evidence and unsupported external-runner/automatic Task Lab behavior.
+
+Job overview shows delegated tasks and sub-jobs. Its Requests tab includes the supervisor and
+all descendants; the full request log keeps job filters and pagination. Task, job, request and
+session links retain project scope, with pending action decisions visible above detail tabs.

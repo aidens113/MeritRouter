@@ -23,6 +23,7 @@ export function normalizeRelPath(rel: string): string {
   const posix = rel.replace(/\\/g, "/").replace(/^\.\/+/, "");
   if (!posix || posix.startsWith("/") || /^[A-Za-z]:/.test(posix)) throw new Error(`path must be repository-relative: ${rel}`);
   const norm = path.posix.normalize(posix).replace(/\/+$/, "");
+  if (/[\x00-\x1f:]/.test(norm) || norm.split("/").some(segment => /[. ]$/.test(segment) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(segment))) throw new Error(`path uses reserved filesystem syntax: ${rel}`);
   if (norm === ".." || norm.startsWith("../")) throw new Error(`path escapes the repository: ${rel}`);
   if (norm.split("/").some(isGitSegment)) throw new Error(`paths inside or named .git are not accessible: ${rel}`);
   return norm === "." ? "" : norm;

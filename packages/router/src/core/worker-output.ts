@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { ValidateFunction } from "ajv";
-import { FILE_REF_RE } from "./task.js";
+import { ARTIFACT_EVIDENCE_REF_RE, FILE_REF_RE } from "./task.js";
 
 /** What a worker model must return (directly, per batch item, or via submit_result). */
 export const WorkerOutputSchema = z
@@ -36,6 +36,19 @@ export function evidenceUniverse(entries: Array<{ baseRef: string; totalLines: n
 /** Return an error when `ref` does not point into material the worker actually received. */
 export function checkEvidenceRef(ref: string, universe: EvidenceUniverse): string | null {
   if (universe.refs.has(ref)) return null;
+  const artifact = ARTIFACT_EVIDENCE_REF_RE.exec(ref);
+  if (artifact) {
+    const base = `artifact:${artifact[1]}`;
+    if (!universe.refs.has(base)) return `evidence ref ${ref} cites an artifact that was not provided or read`;
+    const lines = universe.refs.get(base);
+    const start = artifact[2] ? Number(artifact[2]) : null;
+    const end = artifact[3] ? Number(artifact[3]) : start;
+    if (start !== null && end !== null) {
+      if (start < 1 || end < start) return `evidence ref ${ref} has an invalid line range`;
+      if (lines !== null && lines !== undefined && end > lines) return `evidence ref ${ref} is past the end of ${base} (${lines} lines)`;
+    }
+    return null;
+  }
   const m = FILE_REF_RE.exec(ref);
   if (!m) return `evidence ref ${ref} is not a recognised reference`;
   const base = `${m[1]}:${m[2]}`;

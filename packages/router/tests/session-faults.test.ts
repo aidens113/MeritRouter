@@ -7,7 +7,7 @@ import type { ChatMessage, ChatRequest } from "../src/gateway/types.js";
 import type { SessionEvent, SessionEventOf } from "../src/sessions/events.js";
 import type { SessionRecord } from "../src/sessions/store.js";
 import { FAULT_ENV, resetFaults, simulatedCrashCount } from "../src/core/faults.js";
-import { baseConfig, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, summarizeTask, type Env, type ScriptedRequest } from "./helpers.js";
+import { baseConfig, goodOutput, makeEnv, open, openWithTestSupervisor, reply, ScriptedClient, servedFor, summarizeTask, type Env, type ScriptedRequest } from "./helpers.js";
 
 /**
  * Fault injection (S2): a run dies at a named point (SWITCHYARD_FAULT_AT), leaving its session
@@ -61,7 +61,9 @@ function runs(taskId: string): SessionRecord[] {
 async function crashThenRecover(o: { client: ScriptedClient; fault: string; submit: (s: Switchyard) => Promise<string>; opts?: SwitchyardOptions; operator?: (s: Switchyard, taskId: string) => void }): Promise<string> {
   const before = simulatedCrashCount();
   process.env[FAULT_ENV] = o.fault;
-  sy = open(env!, o.client, { worker: true, ...o.opts });
+  // Explicit fixture operator approves only this exact declared native/supervisor check.
+  // openWithTestSupervisor stops and drains its approval task before the simulated process closes.
+  sy = openWithTestSupervisor(env!, o.client, { worker: true, ...o.opts }, [check]);
   const id = await o.submit(sy);
   for (let i = 0; i < 600 && simulatedCrashCount() === before; i++) await sleep(20);
   expect(simulatedCrashCount()).toBe(before + 1);
@@ -78,7 +80,7 @@ async function crashThenRecover(o: { client: ScriptedClient; fault: string; subm
     o.operator(sy, id);
     await sy.close();
   }
-  sy = open(env!, o.client, { worker: true, now: () => Date.now() + LATER, ...o.opts });
+  sy = openWithTestSupervisor(env!, o.client, { worker: true, now: () => Date.now() + LATER, ...o.opts }, [check]);
   return id;
 }
 
@@ -233,7 +235,7 @@ describe("native coding worker", () => {
     const task = { profile: "implement", label: "sub", goal: "Add subtract(a, b) to src/app.ts", repositoryAliases: ["core"], writableRepository: "core", hints: { difficulty: "T2" }, constraints: { acceptanceCriteria: ["subtract exists"], allowedPaths: ["src/**"], checks: [check] } };
     const id = await crashThenRecover({ client, fault: "after_tool_intent:1:replace_in_file", submit: async (s) => (await s.submitTasks([task]))[0]!.taskId });
     const r = (await sy!.awaitResults([id], { timeoutSeconds: 60 })).completed[0]!;
-    expect(r).toMatchObject({ executionStatus: "completed", acceptanceStatus: "met" });
+    expect(r, JSON.stringify(r)).toMatchObject({ executionStatus: "completed", acceptanceStatus: "met" });
     const [s] = runs(id);
     const wt = s!.workspace!.repos[0]!.worktree;
     expect(count(readFileSync(path.join(wt, "src/app.ts"), "utf8"), "export function subtract")).toBe(1);
@@ -352,7 +354,7 @@ describe("operator resume", () => {
       },
     });
     const r = (await sy!.awaitResults([id], { timeoutSeconds: 60 })).completed[0]!;
-    expect(r).toMatchObject({ executionStatus: "completed", acceptanceStatus: "met" });
+    expect(r, JSON.stringify(r)).toMatchObject({ executionStatus: "completed", acceptanceStatus: "met" });
     const [old, fresh, ...rest] = runs(id);
     expect(rest).toEqual([]);
     expect(old).toMatchObject({ status: "interrupted", stopReason: "process_died" });
@@ -377,7 +379,7 @@ describe("operator resume", () => {
       },
     });
     const r = (await sy!.awaitResults([id], { timeoutSeconds: 60 })).completed[0]!;
-    expect(r).toMatchObject({ executionStatus: "completed", acceptanceStatus: "met" });
+    expect(r, JSON.stringify(r)).toMatchObject({ executionStatus: "completed", acceptanceStatus: "met" });
     const [only, ...rest] = runs(id);
     expect(rest).toEqual([]);
     expect(only).toMatchObject({ id: sessionId, status: "completed" });

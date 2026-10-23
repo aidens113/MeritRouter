@@ -1,7 +1,7 @@
 import { taskLabEvidenceProblem, type TaskLabAuthority } from "../runners/coding/task-lab.js";
 import type { ProfileMode } from "../config/schema.js";
 import { checkEvidenceRef, type EvidenceUniverse, type WorkerOutput } from "../core/worker-output.js";
-import { ARTIFACT_REF_RE, FILE_REF_RE, type CheckOutcome, type CriterionOutcome, type CriterionVerify, type WorkerResult } from "../core/task.js";
+import { ARTIFACT_EVIDENCE_REF_RE, FILE_REF_RE, type CheckOutcome, type CriterionOutcome, type CriterionVerify, type WorkerResult } from "../core/task.js";
 import type { AcceptanceContract } from "./contract.js";
 
 /** The deterministic checks this version implements. Any other required name is not_implemented. */
@@ -98,7 +98,7 @@ export function checkRunOutcome(command: string, records: CheckRecord[], revisio
 }
 
 function refWellFormed(ref: string): boolean {
-  return FILE_REF_RE.test(ref) || ARTIFACT_REF_RE.test(ref);
+  return FILE_REF_RE.test(ref) || ARTIFACT_EVIDENCE_REF_RE.test(ref);
 }
 
 /** Run every named check (they are cheap and deterministic) and mark which ones are required. */

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import Database from "better-sqlite3";
 import type { Switchyard } from "../src/core/service.js";
+import { WorkerActionRequests } from "../src/harness/worker-actions.js";
 import { GatewayError } from "../src/core/errors.js";
 import type { ChatMessage, ChatRequest, ChatResponse } from "../src/gateway/types.js";
 import { CircuitBreakers, countsAsProviderFailure, openDurationMs, readBreakerRecords, type BreakerSettings } from "../src/gateway/breaker.js";
@@ -384,6 +385,42 @@ async function killHard(child: ChildProcess): Promise<void> {
   await exited;
 }
 
+/** A live trusted operator survives child CLI restarts, but approves only this fixture's exact check. */
+function fixtureOperator(e: Env, taskId: string, check: string) {
+  const root = realpathSync(e.dir);
+  const relative = path.relative(realpathSync(tmpdir()), root);
+  if (relative.startsWith("..") || path.isAbsolute(relative) || !path.basename(root).startsWith("switchyard-test-")) throw new Error("resilience operator requires a temporary test fixture");
+  const operator = open(e, new ScriptedClient(() => reply("unused")), { worker: false });
+  const actions = new WorkerActionRequests(operator.db);
+  const task = operator.tasks.get(taskId)!;
+  let stopped = false, closed = false, approved = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let active: Promise<void> = Promise.resolve();
+  const failures: unknown[] = [];
+  const tick = async () => {
+    for (const request of actions.list({ project: task.row.project_id, status: "pending" })) {
+      if (stopped) return;
+      const cwd = path.relative(root, realpathSync(request.action.cwd));
+      const contained = cwd !== ".." && !cwd.startsWith(`..${path.sep}`) && !path.isAbsolute(cwd);
+      const current = operator.tasks.get(request.taskId);
+      const approve = request.taskId === taskId && current?.row.project_id === task.row.project_id && contained &&
+        !request.action.operation && request.action.command === check && current.spec.constraints.checks?.includes(check) === true && approved < 4;
+      if (approve) approved++;
+      await actions.decide({ project: task.row.project_id, id: request.id, decision: approve ? "approve" : "deny", reason: approve ? "Explicit R1 fixture operator approves its exact declared check" : "R1 operator refuses generic, unrelated or out-of-fixture action", actor: { kind: "operator" }, config: e.cfg });
+      if (!approve) throw new Error("R1 worker requested an unexpected fixture action");
+    }
+  };
+  const schedule = () => { if (!stopped) timer = setTimeout(() => { active = tick().catch(error => { failures.push(error); stopped = true; }).finally(schedule); }, 10); };
+  schedule();
+  const stop = async () => {
+    if (closed) return;
+    closed = true; stopped = true; clearTimeout(timer); await active; await operator.close();
+    if (failures.length) throw new AggregateError(failures, "R1 fixture operator failed");
+  };
+  cleanups.push(stop);
+  return { stop, approved: () => approved };
+}
+
 describe("R1 acceptance: kill and restart a worker process", () => {
   it.skipIf(!existsSync(CLI))("a native coding run killed mid-request resumes its session in a restarted worker, with the edit made once (needs dist/cli.js: pnpm --filter switchyard-router build)", async () => {
     const edit = call("replace_in_file", { path: "src/app.ts", old_text: "export function add", new_text: "export function subtract(a: number, b: number) {\n  return a - b;\n}\n\nexport function add" }, "edit0");
@@ -411,6 +448,7 @@ describe("R1 acceptance: kill and restart a worker process", () => {
     const [t] = await submitter.submitTasks([{ profile: "implement", label: "sub", goal: "Add subtract(a, b) to src/app.ts", repositoryAliases: ["core"], writableRepository: "core", constraints: { acceptanceCriteria: ["subtract exists"], allowedPaths: ["src/**"], checks: [check] } }]);
     await submitter.close();
     const id = t!.taskId;
+    const operator = fixtureOperator(env, id, check);
 
     const children: ChildProcess[] = [];
     cleanups.push(async () => {
@@ -437,6 +475,8 @@ describe("R1 acceptance: kill and restart a worker process", () => {
     children.push(second);
     await until(`the task to finish in the restarted worker (${describeChild(second)})`, () => ["completed", "failed", "cancelled"].includes(row().state), 40_000, 100);
     await killHard(second);
+    await operator.stop();
+    expect(operator.approved()).toBe(1);
     db.close();
     db = undefined;
 

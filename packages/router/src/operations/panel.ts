@@ -1,5 +1,7 @@
+import { createHash } from "node:crypto";
+import { z } from "zod";
 import { spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, lstatSync, rmSync, statSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -137,16 +139,67 @@ function newestFileMtime(dir: string): number {
   return newest;
 }
 
+/** Written only into the generated packaged panel, never the development checkout build. */
+export const PANEL_ROUTER_FINGERPRINT = "router-build.json";
+export const PANEL_ROUTER_FINGERPRINT_ALGORITHM = "sha256-runtime-path-content-v1";
+const RouterFingerprintSchema = z.object({
+  version: z.literal(1), algorithm: z.literal(PANEL_ROUTER_FINGERPRINT_ALGORITHM),
+  buildId: z.string().min(1).max(200), digest: z.string().regex(/^[a-f0-9]{64}$/),
+  files: z.number().int().positive().max(20000),
+}).strict();
+
+/** Deterministic path/content inventory; extraction mtimes and absolute installation paths are irrelevant. */
+export function routerBuildFingerprint(dir: string): { digest: string; files: number } {
+  const entries: Array<{ name: string; digest: string }> = [];
+  let bytes = 0;
+  const walk = (relative: string) => {
+    for (const entry of readdirSync(path.join(dir, relative), { withFileTypes: true })) {
+      const name = relative ? `${relative}/${entry.name}` : entry.name;
+      const file = path.join(dir, ...name.split("/"));
+      if (entry.isSymbolicLink()) throw new Error("router build contains a symbolic link");
+      if (entry.isDirectory()) { walk(name); continue; }
+      if (!entry.isFile()) throw new Error("router build contains a non-regular file");
+      // Declaration/source-map changes do not change executable packaged router behavior.
+      if (/\.d\.[cm]?ts$/.test(name) || name.endsWith(".map")) continue;
+      const size = statSync(file).size;
+      bytes += size;
+      if (entries.length >= 20000 || bytes > 256 * 1024 * 1024) throw new Error("router build exceeds fingerprint limits");
+      entries.push({ name, digest: createHash("sha256").update(readFileSync(file)).digest("hex") });
+    }
+  };
+  walk("");
+  if (!entries.length) throw new Error("router build is empty");
+  entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+  const hash = createHash("sha256");
+  for (const entry of entries) hash.update(JSON.stringify([entry.name, entry.digest])).update("\n");
+  return { digest: hash.digest("hex"), files: entries.length };
+}
+
 /**
  * Why the panel's production build is out of date, or null. Turbopack bundles the router into
  * the panel's server chunks although `next.config.ts` lists it in `serverExternalPackages`: it
  * externalizes only modules whose real path is under `node_modules`, and the pnpm workspace link
  * resolves to `packages/router`. So a router change reaches the panel only through a panel
- * rebuild; a build (`.next/BUILD_ID`) older than the newest router build file is stale.
+ * rebuild. Packaged builds carry a content fingerprint bound to their BUILD_ID; checkout builds
+ * without one retain the BUILD_ID-versus-router mtime check.
  */
 export function panelBuildStale(panelDir: string, routerDir = routerBuildDir()): string | null {
   const id = path.join(panelDir, ".next", "BUILD_ID");
   if (!existsSync(id)) return null;
+  const fingerprint = path.join(panelDir, ".next", PANEL_ROUTER_FINGERPRINT);
+  if (existsSync(fingerprint)) {
+    const repair = "reinstall switchyard-router, or rebuild the router and packaged panel together";
+    try {
+      const metadata = lstatSync(fingerprint), build = lstatSync(id);
+      if (!metadata.isFile() || metadata.size > 4096 || !build.isFile() || build.size > 4096) return `the panel's router build fingerprint is invalid: ${repair}`;
+      const expected = RouterFingerprintSchema.parse(JSON.parse(readFileSync(fingerprint, "utf8")));
+      if (expected.buildId !== readFileSync(id, "utf8").trim()) return `the panel build does not match its router fingerprint: ${repair}`;
+      const actual = routerBuildFingerprint(routerDir);
+      return actual.digest === expected.digest && actual.files === expected.files ? null : `the panel build bundles different router content: ${repair}`;
+    } catch {
+      return `the panel's router build fingerprint is invalid or unreadable: ${repair}`;
+    }
+  }
   const built = statSync(id).mtimeMs;
   const router = newestFileMtime(routerDir);
   if (router <= built) return null;
@@ -159,7 +212,7 @@ export function panelBuildCheck(): { ok: boolean; detail: string } {
   const app = findPanelApp();
   if ("problem" in app) return { ok: false, detail: app.problem };
   const stale = panelBuildStale(app.dir);
-  return stale ? { ok: false, detail: stale } : { ok: true, detail: `built at ${app.dir}, after the router build` };
+  return stale ? { ok: false, detail: stale } : { ok: true, detail: `built at ${app.dir}, matching the router build` };
 }
 
 /**

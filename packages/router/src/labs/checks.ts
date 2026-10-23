@@ -10,6 +10,7 @@ import type { LabRecord } from "./store.js";
 import { LabsStore } from "./store.js";
 import { labEnvironment, labValues } from "./environment.js";
 import { LabNameSchema, substitute } from "./recipe.js";
+import { assertLabEffect, labEffectSignal } from "./control-authority.js";
 export const LabCheckResultSchema = z.object({ id: z.string(), name: z.string(), repository: z.string(), revision: z.string().regex(/^[a-f0-9]{40,64}$/), exitCode: z.number().int().nullable(), stdout: z.string(), stderr: z.string(), killed: z.string().nullable(), durationMs: z.number(), createdAt: z.number(), browser: BrowserEvidenceSchema.optional() });
 export type LabCheckResult = z.infer<typeof LabCheckResultSchema>;
 /** Browser evidence covers the whole environment, including repositories other than its service. */
@@ -21,6 +22,8 @@ export function labCheckMatchesHeads(check: Pick<LabCheckResult, "repository" | 
     && Object.entries(heads).every(([alias, head]) => head !== null && checked[alias] === head);
 }
 export async function runLabCheck(store: LabsStore, lab: LabRecord, name: string, timeoutSeconds: number, signal?: AbortSignal, manager?: LabManager): Promise<LabCheckResult> {
+  assertLabEffect();
+  signal = labEffectSignal(signal);
   if(lab.kind==="task_attempt")throw new SwitchyardError("lab_scope_denied","task checks require their persisted attempt lifecycle");
   LabNameSchema.parse(name);
   const check = lab.recipe.checks[name];
@@ -37,9 +40,11 @@ export async function runLabCheck(store: LabsStore, lab: LabRecord, name: string
   const command=typeof check==="string"?check:"command" in check?check.command:null;
   if(command===null&&!manager)throw new SwitchyardError("lab_invalid_state","browser check requires its scoped lab manager");
   const browser=command===null?BrowserCheckSchema.parse(check):null;
+  assertLabEffect();
   const result=browser
     ?await runBrowserCheck(manager!,lab,id,{...browser,timeout_seconds:Math.min(browser.timeout_seconds,timeoutSeconds)},signal)
     :await runProcess(substitute(command!,labValues(lab)),[],{cwd:repo.worktree,env:labEnvironment(lab),timeoutMs:timeoutSeconds*1000,shell:true,signal});
+  assertLabEffect();
   const record = LabCheckResultSchema.parse({ id, name, repository: repo.alias, revision, ...result, createdAt: Date.now() });
   if ((await git(repo.worktree, ["rev-parse", "HEAD"])).trim() !== revision || (await dirtyPaths(repo.worktree)).length) {
     record.exitCode = 1;

@@ -176,7 +176,7 @@ function treeOf(sy: Switchyard, t: StoredTask, depth: number, carve: BudgetCarve
   const job = isJob(t);
   const used = sy.admission.taskTotals(t.row.id).requests;
   const carves = job ? new Map(carvesOf(sy.db, t.row.id).map((c) => [c.childTaskId, c])) : new Map<string, BudgetCarve>();
-  const kids = job && depth <= MAX_TREE_DEPTH ? sy.tasks.childrenOf(t.row.id).filter((c) => !guard.has(c.row.id)) : [];
+  const kids = job && depth <= MAX_TREE_DEPTH ? sy.tasks.childrenOf(t.row.id).filter((c) => c.row.project_id === t.row.project_id && !guard.has(c.row.id)) : [];
   return {
     taskId: t.row.id,
     label: t.spec.label ?? null,

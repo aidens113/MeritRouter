@@ -8,7 +8,7 @@ import { blame } from "../src/attribution/index.js";
 import { carvedRequests, carvesOf, childRequestBudget } from "../src/admission/admission.js";
 import { FAULT_ENV, isSimulatedCrash, resetFaults, simulatedCrashCount } from "../src/core/faults.js";
 import { MERGE_PICK_FAULT, MergeQueue, pickedSources, type MergeHooks, type MergeItem } from "../src/workspaces/merge-queue.js";
-import { baseConfig, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, summarizeTask, type Env } from "./helpers.js";
+import { baseConfig, goodOutput, makeEnv, openWithTestSupervisor as open, reply, ScriptedClient, servedFor, summarizeTask, type Env } from "./helpers.js";
 
 /**
  * Agent teams (T2): sub-supervisors (a job delegating a `supervise` sub-job on its own branch with
@@ -59,12 +59,13 @@ const CHILD_GOAL = "Implement subtract() with your own worker";
 
 describe("sub-supervisors", () => {
   it("a parent job delegates a sub-job that runs its own worker; the parent integrates the sub-job's branch with the worker's attribution intact", async () => {
-    env = makeEnv({ config: teamConfig() });
+    // This fixture scripts nested team behavior, independently of provider AIMD slots.
+    env = makeEnv({ config: teamConfig({ team: { provider_concurrency_enabled: false } }) });
     const parentScript = [
       () => [call("delegate", { tasks: [{ label: "sub", profile: "supervise", goal: CHILD_GOAL, acceptance_criteria: ["subtract exists"], checks: [check] }] })],
       () => [call("await_tasks", { timeout_seconds: 120 })],
       () => [call("integrate_task", { task_id: "sub" })],
-      () => [call("integrate_task", { task_id: "sub" })],
+      () => [call("integrate_task", { task_id: "sub", repository: "core" })],
       () => [call("finish_job", { status: "completed", summary: "subtract delivered by the sub-team", verified: [{ claim: "subtract on the job branch", evidence: "job checks after integration" }], not_verified: [] })],
     ];
     const childScript = [
@@ -76,14 +77,26 @@ describe("sub-supervisors", () => {
       () => [call("brain_set_job_section", { body: "w1 integrated; subtract exists on the sub-job branch." })],
       () => [call("finish_job", { status: "completed", summary: "subtract added", verified: [{ claim: "subtract exists", evidence: "check" }], not_verified: [] })],
     ];
-    const client = new ScriptedClient((req) => {
+    const client = new ScriptedClient(async (req) => {
       if (!isSupervisor(req)) return worker(req);
       const script = goalOf(req).includes(CHILD_GOAL) ? childScript : parentScript;
-      return reply(null, { ...servedFor(sy!, req), toolCalls: script[turns(req)]!() });
+      const calls = script[turns(req)]!();
+      // await_tasks deliberately returns for pending operator actions. Do not advance
+      // this fixed script into integration until the fixture operator finishes them.
+      if (calls.some(tool => tool.function.name === "integrate_task")) {
+        const jobId = /Job id: (\S+)/.exec(String(req.messages[0]!.content))![1]!;
+        const label = JSON.parse(calls[0]!.function.arguments).task_id;
+        const child = sy!.tasks.childrenOf(jobId).find(task => task.spec.label === label)!;
+        const finished = await sy!.awaitResults([child.row.id], { timeoutSeconds: 120 });
+        expect(finished.timedOut, JSON.stringify(finished.pending)).toBe(false);
+      }
+      return reply(null, { ...servedFor(sy!, req), toolCalls: calls });
     });
     sy = open(env, client, { worker: true });
     const job = await sy.startJob({ goal: PARENT_GOAL, repositories: ["core"], checks: [check], label: "parent" });
-    const r = (await sy.awaitResults([job.taskId], { timeoutSeconds: 170 })).completed[0]!;
+    const awaited = await sy.awaitResults([job.taskId], { timeoutSeconds: 170 });
+    expect(awaited.timedOut, JSON.stringify({ pending: awaited.pending, states: sy.listTasks(undefined, 50).map(({ taskId, state, stateReason, goal }) => ({ taskId, state, stateReason, goal })), actions: sy.db.prepare("SELECT task_id, json_extract(value_json,'$.status') AS status FROM worker_action_requests").all(), last: client.requests.slice(-8).map(request => ({ goal: String(request.messages[1]?.content).slice(0, 100), tools: request.messages.filter(message => message.role === "tool").slice(-3) })) }, null, 2)).toBe(false);
+    const r = awaited.completed[0]!;
     expect(r.stopReason).toBe("supervisor_completed");
     expect(r.acceptanceStatus).toBe("met");
 

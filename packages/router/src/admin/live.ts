@@ -87,6 +87,15 @@ function jobAncestors(db: Db, taskIds: string[]): string[] {
 }
 
 const SOURCES: Record<string, Source & { topic: LiveTopic }> = {
+  workerActions: {
+    topic: "tasks",
+    mark: ({ db, project }) => {
+      const s = scoped(project);
+      const r = db.prepare(`SELECT MAX(created_at) AS m, COUNT(*) AS n FROM worker_action_requests WHERE ${s.sql}`).get(...s.args) as { m: number | null; n: number };
+      return [num(r.m), r.n];
+    },
+    topics: () => ["tasks", "jobs", "tasks:*", "jobs:*"],
+  },
   labs: {
     topic: "labs",
     mark: ({ db, project }) => {
@@ -369,6 +378,7 @@ function readMarks(c: Ctx, only?: (s: Source) => boolean): Record<string, Mark> 
 
 const MUTABLE_TABLES: Record<string, string[]> = {
   tasks: ["tasks"], sessions: ["sessions"], requests: ["model_requests"],
+  workerActions: ["worker_action_requests"],
   jobs: ["job_state", "job_plans"],
   web: ["web_requests"], brainAccess: ["brain_access_requests", "brain_grants"],
 };

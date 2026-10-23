@@ -157,6 +157,9 @@ export function channelTools(): HarnessTool[] {
       ["kind", "text"],
     ),
     sideEffect: "brain",
+    // ChannelStore reconciles by journal identity and author/kind/text before inserting.
+    // A lost outcome must reach that durable dedupe; unchanged results remain bounded.
+    repeatBehavior: "observe",
     available: inJob,
     async run(args, env) {
       const input = ChannelPostInputSchema.safeParse(args);

@@ -12,9 +12,12 @@ import { loadConfig } from "../../config/load.js";
 import { ProjectRegistry } from "../../projects/registry.js";
 import { ProjectConfigSchema } from "../../projects/schema.js";
 import { canonicalJson } from "../../storage/tasks.js";
+import { awaitWorkerAction, outsideRepositoryPolicy, WorkerActionRequests } from "../../harness/worker-actions.js";
+import { prepareGitProcess } from "../../workspaces/git-process-policy.js";
 import type { WorkerTask } from "../../core/task.js";
 import type { RunContext } from "../types.js";
 import type { Workspace } from "../../workspaces/worktree.js";
+import { currentSupervisorAuthority } from "../../core/supervisor-authority.js";
 const Sha = z.string().regex(/^[a-f0-9]{40,64}$/);
 const Count = z.number().int().nonnegative();
 export const TaskLabAuthoritySchema = z.object({
@@ -92,10 +95,10 @@ export function taskLabAuthority(labs: LabManager, taskId: string, evidence: unk
       const remaining = deadline - Date.now();
       if (remaining <= 0)
         throw new Error("task evidence inspection deadline");
-      const output = execFileSync("git", args, {
-        cwd, encoding: "utf8", windowsHide: true, timeout: Math.min(5000, remaining), maxBuffer: 256 * 1024, env: {
-          ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0"
-        }
+      const prepared = prepareGitProcess(cwd, args);
+      const output = execFileSync("git", prepared.args, {
+        env: prepared.env,
+        cwd, encoding: "utf8", windowsHide: true, timeout: Math.min(5000, remaining), maxBuffer: 256 * 1024,
       });
       inspectedBytes += Buffer.byteLength(output, "utf8");
       if (inspectedBytes > 2 * 1024 * 1024) throw new Error("task evidence inspection output limit");
@@ -150,6 +153,12 @@ export function taskLabAuthority(labs: LabManager, taskId: string, evidence: unk
 }
 /** Called only after the attributed coding outcome and its ordinary command checks exist. */
 export async function runTaskLabChecks(ctx: RunContext, workspace: Workspace, executionId: string, tree: string, digest: string): Promise<TaskLabEvidence> {
+  if (!ctx.taskLease || !currentSupervisorAuthority(ctx.tasks.db, ctx.cfg, ctx.taskLease, ctx.now()) || outsideRepositoryPolicy(ctx.cfg) !== "supervisor") {
+    if (outsideRepositoryPolicy(ctx.cfg) === "disabled") throw new Error("Task Lab effects are disabled by security.outside_repository");
+    const action = await new WorkerActionRequests(ctx.tasks.db, ctx.now).fileOperation(ctx, { operation: "lab_check", args: { taskId: ctx.taskId, checks: ctx.spec.constraints.labChecks ?? [], tree, artifactDigest: digest }, reason: "Task Lab execution requires supervisor authority; a reported response cannot replace durable Task Lab execution proof." });
+    await awaitWorkerAction(ctx, action, Math.max(1, (ctx.tasks.get(ctx.taskId)?.row.deadline_at ?? ctx.now() + 60000) - ctx.now()));
+    throw new Error("Task Lab execution remains unavailable to workers until supervisor-executed durable attempt proof is supported; no Lab was started and supervisor responses are not check evidence");
+  }
   if (!ctx.taskLabs || !ctx.ensureLabsSupervisor || !ctx.session || ctx.claimedRunCount === undefined)
     throw new Error("task Lab execution requires its persisted session, claimed generation and supervisor");
   await ctx.ensureLabsSupervisor();
