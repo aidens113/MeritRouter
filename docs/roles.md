@@ -65,7 +65,9 @@ strongest reasoning and the most reliable tool use you can afford, and a large c
 - Set `supervisor.endpoints` to the models to use, in order (catalog ids, e.g.
   `paid:anthropic/<model>` or `groq/openai/gpt-oss-120b`). Empty means "the most capable eligible
   model at T3".
-- `supervisor.paid_policy`: `never` (free models only), `on_free_exhaustion`, or `preferred`.
+- `supervisor.paid_policy`: `never` (free models only), `on_free_exhaustion` (default), or
+  `preferred`. Eligible paid supervisor calls share the paid budgets; the `standalone-free`
+  preset explicitly selects `never`.
 - Budget: no job-wide request cap by default. Set `profiles.supervise.max_model_requests`,
   `verification.max_total_requests_per_task`, or a task budget to impose one (waiting on workers
   costs no requests); paid limits such as `maxPaidUsd` remain separate.
@@ -109,7 +111,11 @@ Workers are routed per task by **task type** and **difficulty tier**:
   Example: force your best free model for `implement/T3`, block a weak one for `analyze`.
 - Turn on `qualification.required` once models have been qualified, so only models that passed
   the private eval suite for a task family and tier are used.
-- Paid workers follow `paid.tiers` (`never` by default).
+- Paid workers follow `paid.tiers`: T1-T3 default to `on_free_exhaustion`; T4 defaults to
+  `never` and returns work to the supervisor. Paid routing is enabled with a $5 rolling weekly
+  cap for new configuration; credentials, known prices and all applicable budgets still gate
+  every paid request. Explicit existing policies remain authoritative. See
+  [cost controls](setup.md#cost-controls-and-routing-defaults).
 
 ## Supervisor rules (summary of its charter)
 

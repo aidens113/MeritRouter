@@ -1,5 +1,14 @@
 # MeritRouter
 
+MeritRouter routes each task to the right model to reduce your AI costs.
+It matches task requirements to the capabilities of your configured paid and free models,
+within your routing policies and spending budgets.
+
+It also gives coding agents a framework for testing and reviewing delegated work:
+repository-scoped tasks, executable checks, independent review and recorded evidence.
+The panel shows where requests and tokens went. Keep your current agent as supervisor,
+or use MeritRouter's own.
+
 **Want your agent to use MeritRouter? Copy this prompt into your agent’s chat:**
 
 ```text
@@ -9,15 +18,12 @@ the MeritRouter MCP tools are connected. If setup is needed, help me build
 it, register this repository and connect my agent; preserve existing configuration.
 Keep my current agent as the supervisor. Delegate small, clearly scoped tasks to
 MeritRouter, review the returned evidence and integrate only verified changes.
-Keep paid routing off and outside-repository access on human approval only.
+Reduce model costs using capable free and paid routes within configured budgets.
+Keep outside-repository access on human approval only.
 Guide me to enter credentials in the panel and ask for required approvals.
 Never put secrets in chat or Git.
 Start by explaining what is ready and proposing one small task to verify setup.
 ```
-
-MeritRouter lets your coding agent delegate bounded work to the models you choose.
-It routes tasks, limits spending and access, and records what each worker did so your
-agent can review the result. You can also run MeritRouter’s own supervisor.
 
 ## Get started
 
@@ -55,8 +61,13 @@ In the panel:
 2. Open **Models** to review discovered models and confirm any unknown model sizes.
 3. Open **Security settings** and keep **Human approval only** while getting started.
 
-Paid routing is off by default. Free-tier availability depends on your provider and key.
-An existing paid coding-agent subscription does not supply worker API credentials.
+Paid routing is enabled by default with a **$5 rolling weekly cap**. T1-T3 workers can use
+paid routes when eligible free routes are exhausted; T4 goes back to the supervisor.
+Paid requests still require an eligible credential, known prices and budget headroom.
+Free-tier availability depends on your provider and key. An existing coding-agent subscription
+does not supply worker API credentials. Existing explicit policies and budgets are preserved.
+For strictly free routing, choose `--preset standalone-free` or set `paid.enabled: false`.
+See [cost controls](docs/setup.md#cost-controls-and-routing-defaults) before submitting work.
 
 ### 3. Connect your agent
 
@@ -86,8 +97,11 @@ host access wait for an exact approval on the task or job page.
 
 - **Controlled delegation:** role-specific workers, repository-scoped file tools, budgets,
   deadlines, cancellation and explicit outside-action approval.
+- **Cost controls:** capable free and paid models, prompt-cache reuse, spending caps and
+  per-task routing policies.
 - **Model routing:** provider discovery, eligibility checks, task scoring and fallback.
 - **Reviewable results:** task evidence, check logs, resumable sessions and attributed commits.
+- **Usage visibility:** token and request graphs in global/project Overview, with hour/day/week/month ranges.
 - **A connected workspace:** projects, jobs, delegated tasks, requests and a shared Markdown brain.
 - **Local visibility:** a web panel for progress, keys, models, routing and security settings.
 

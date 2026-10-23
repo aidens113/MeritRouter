@@ -4,6 +4,21 @@ Written for the next agent (Codex or Claude Code) picking this repository up col
 then `AGENTS.md`, then the `Current State` of the effort you work on. Every effort below has its
 own working document with decisions, phases, ledger, and reports.
 
+## Current effort (2026-10-23)
+
+[Cost-first routing](cost-first-routing.md) is complete: cost reduction across paid and free
+routes, enabled paid defaults ($5 rolling weekly cap; T1-T3/standalone supervisor free-exhaustion;
+T4 escalation). Explicit stored settings and the free-only preset remain supported. README now
+opens with the cost-saving/model-selection and testing-framework pitch, followed by agent prompt.
+Global/project Overview have actual charts, 1h/24h/7d/30d ranges and timelines fitted to recorded
+data, preserving interior gaps. Project dropdown stacking and refresh validation are corrected.
+Recursive build/typecheck, offline demo, 75 affected tests and installed production/browser
+acceptance pass. Full snapshot had 1200 passes, five obsolete-default fixture failures and two
+skips; all five corrected and rerun. Supervisor fully restarted the real panel with user
+permission; readonly live acceptance passes. Existing config/data/security/paid-disabled values
+preserved. No real-provider requests or npm publication. See supervisor report for evidence.
+The coherent feature is published through dev/main; Git history records final accepted heads.
+
 ## Latest accepted effort (2026-10-23)
 
 [MeritRouter rename](meritrouter-rename.md) is complete: canonical MeritRouter product/runtime,

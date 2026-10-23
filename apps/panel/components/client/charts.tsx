@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useState, type RefCallback } from "react";
 import { Table2, BarChart3 } from "lucide-react";
 import { buttonClass } from "../ui";
 
@@ -18,18 +18,19 @@ export interface Series {
   values: number[];
 }
 
-function useWidth<T extends HTMLElement>(): [RefObject<T | null>, number] {
-  const ref = useRef<T | null>(null);
-  const [w, setW] = useState(0);
+function useWidth<T extends HTMLElement>(): [RefCallback<T>, number] {
+  const [element, setElement] = useState<T | null>(null);
+  const [width, setWidth] = useState(0);
+  const ref = useCallback((node: T | null) => setElement(node), []);
   useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const ro = new ResizeObserver((entries) => setW(Math.floor(entries[0]?.contentRect.width ?? 0)));
-    ro.observe(el);
-    setW(Math.floor(el.getBoundingClientRect().width));
-    return () => ro.disconnect();
-  }, []);
-  return [ref, w];
+    if (!element) return;
+    const measure = () => setWidth(Math.floor(element.getBoundingClientRect().width));
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    measure();
+    return () => observer.disconnect();
+  }, [element]);
+  return [ref, width];
 }
 
 function niceMax(v: number): { max: number; step: number } {
@@ -45,7 +46,7 @@ function fmtBucket(ms: number, short: boolean, bucketMinutes: number): string {
   const d = new Date(ms);
   if (bucketMinutes >= 1440) return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
   const hm = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-  if (short) return hm;
+  if (short) return bucketMinutes >= 360 ? `${d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })} ${hm}` : hm;
   const end = new Date(ms + bucketMinutes * 60_000).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
   return `${d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })} ${hm}–${end}`;
 }
@@ -109,7 +110,7 @@ export function StackedColumns({
   const y = (v: number) => padT + plotH - (v / max) * plotH;
   const ticks: number[] = [];
   for (let v = 0; v <= max + 1e-9; v += step) ticks.push(v);
-  const labelEvery = Math.max(1, Math.ceil(buckets.length / Math.max(1, Math.floor(plotW / 64))));
+  const labelEvery = Math.max(1, Math.ceil(buckets.length / Math.max(1, Math.floor(plotW / (bucketMinutes >= 360 && bucketMinutes < 1440 ? 120 : 64)))));
 
   return (
     <div>

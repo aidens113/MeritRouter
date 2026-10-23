@@ -1,6 +1,8 @@
 import { BudgetRequestsCard } from "@/components/budget-requests";
 import { Tabs, pickTab } from "@/components/tabs";
 import type { ReactNode } from "react";
+import { UsageOverview } from "@/components/usage-overview";
+import { usageRange } from "@/lib/usage-range";
 import Link from "next/link";
 import { BookOpenText, CheckCircle2, CircleAlert, Hourglass, MessageCircleQuestion, Network, Server, TriangleAlert } from "lucide-react";
 import { insights } from "meritrouter";
@@ -17,6 +19,7 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "All projects" };
 
 type Usage = insights.ProjectUsage;
+
 
 /** Where to act on an attention item: a project's page for its items, an install page for the rest. */
 function attentionLink(project: string | null, text: string, onlyJob: string | null): { href: string; cta: string } | null {
@@ -59,7 +62,7 @@ function tokenTitle(u: insights.ProjectUsage): string {
 
 export default async function AllProjectsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const sp = await searchParams;
-  const tab = pickTab(sp, ["projects", "activity", "usage", "health"]);
+  const tab = pickTab(sp, ["overview", "projects", "activity", "health"]);
   const r = getSy();
   if (!r.sy) return <SetupScreen error={r.error} configPath={r.configPath} />;
   const sy = r.sy;
@@ -128,7 +131,7 @@ export default async function AllProjectsPage({ searchParams }: { searchParams: 
         description="Every project's jobs, queues, and usage on this install, and what needs you. The pages in the sidebar (models, routing, provider keys, knowledge, settings) are shared by all projects."
         live={["tasks", "jobs", "requests", "workers", "keys", "brain", "projects", "budget"]}
       />
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+      {tab !== "overview" ? <><div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat label="Jobs" value={`${num(d.totals.runningJobs)} running`} sub={`${num(d.totals.queuedJobs)} queued across ${d.projects.length} project${d.projects.length === 1 ? "" : "s"}`} />
         <Stat label="Tasks" value={`${num(d.totals.runningTasks)} running`} sub={`${num(d.totals.queuedTasks)} queued`} />
         <Stat label="Model requests (24h)" help="requests" value={compact(d.totals.usage24h.requests)} sub={`${num(d.totals.usage24h.failedRequests)} failed · ${compact(d.totals.usage7d.requests)} in 7 days`} />
@@ -187,7 +190,9 @@ export default async function AllProjectsPage({ searchParams }: { searchParams: 
         </Callout>
       )}
       {budgetPending.length ? <BudgetRequestsCard requests={budgetPending} pendingOnly /> : null}
-      <Tabs items={[{ "id": "projects", "label": "Projects" }, { "id": "activity", "label": "Activity" }, { "id": "usage", "label": "Usage" }, { "id": "health", "label": "Health" }]} active={tab} path={"/all"} label="Page sections" anchors={{}} />
+      </> : null}
+      <Tabs items={[{ "id": "overview", "label": "Overview" }, { "id": "projects", "label": "Projects" }, { "id": "activity", "label": "Activity" }, { "id": "health", "label": "Health" }]} active={tab} path={"/all"} label="Page sections" keep={{ range: usageRange(sp.range).id }} anchors={{}} />
+      {tab === "overview" ? <UsageOverview sy={sy} path="/all" searchParams={sp} /> : null}
       {tab === "projects" ? <div className="space-y-6"><Card>
         <CardHeader title="Queues by project" description="Every task (jobs, their workers, and standalone tasks) running or waiting to run." />
         <div className="overflow-x-auto">
@@ -274,7 +279,7 @@ export default async function AllProjectsPage({ searchParams }: { searchParams: 
           </EmptyState>
         )}
       </Card></div> : null}
-      {tab === "usage" ? <div className="space-y-6"><Card>
+      {tab === "projects" ? <div className="space-y-6"><Card>
         <CardHeader
           title="Usage and paid spend by project"
           help="requests"

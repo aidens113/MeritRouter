@@ -75,7 +75,7 @@ brain:
 # Standalone jobs (used when profiles.supervise exists; see the standalone presets).
 supervisor:
   endpoints: []                 # models for the supervisor, in order; empty = most capable eligible T3 model
-  paid_policy: never            # never | on_free_exhaustion | preferred
+  paid_policy: on_free_exhaustion # never | on_free_exhaustion | preferred
   max_concurrent_jobs: 1
   job_timeout_seconds: 14400
   branch_prefix: meritrouter/job-
@@ -184,10 +184,10 @@ verification:
 # follows this section, including the priced models a paid key under providers can reach.
 # paid.providers and paid.models declare paid models by hand, with prices.
 paid:
-  enabled: false
-  budgets: { per_week_usd: 0 }          # required > 0 to enable
+  enabled: true
+  budgets: { per_week_usd: 5 }          # shared weekly spending cap; requires > 0 when enabled
   # never | on_free_exhaustion | preferred ; T4 accepts never | premium (paid instead of returning to the supervisor)
-  tiers: { T1: never, T2: never, T3: never, T4: never }
+  tiers: { T1: on_free_exhaustion, T2: on_free_exhaustion, T3: on_free_exhaustion, T4: never }
   max_paid_attempts: 2
   providers: {}
   #  anthropic:   { kind: anthropic, base_url: https://api.anthropic.com }

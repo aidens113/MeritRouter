@@ -6,7 +6,7 @@ import { toAnthropic } from "../src/providers/anthropic.js";
 import { GatewayError } from "../src/core/errors.js";
 import { planRoute } from "../src/routing/select.js";
 import type { ChatResponse } from "../src/gateway/types.js";
-import { baseConfig, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, summarizeTask, type Env, type ScriptedRequest } from "./helpers.js";
+import { baseConfig, endpoint, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, summarizeTask, type Env, type ScriptedRequest } from "./helpers.js";
 
 let env: Env | undefined;
 let sy: MeritRouter | undefined;
@@ -92,6 +92,24 @@ describe("paid routing policy", () => {
 });
 
 describe("paid execution", () => {
+  it.each(["default", "over-budget", "disabled"])("enforces %s policy with an omitted paid block and a priced direct endpoint", async (mode) => {
+    const raw = baseConfig({ providers: { openrouter: { keys: [{ api_key: "fake-paid-key", billing_class: "paid_credits" }] } }, ...(mode === "disabled" ? { paid: { enabled: false, budgets: { per_week_usd: 0 } } } : {}) });
+    if (mode !== "disabled") expect(raw).not.toHaveProperty("paid");
+    const price = mode === "over-budget" ? 10_000 : 2;
+    env = makeEnv({ config: raw, endpoints: [endpoint({ gatewayModelId: "vendor/priced", pricing: { inputUsdPerMillion: price, outputUsdPerMillion: price, freeVerified: false } })] });
+    let calls = 0;
+    sy = open(env, new ScriptedClient((req) => { calls++; return reply(JSON.stringify(goodOutput()), { model: req.model, provider: "openrouter" }); }), { worker: true });
+    const [task] = await sy.submitTasks([summarizeTask()]);
+    const result = (await sy.awaitResults([task!.taskId], { timeoutSeconds: 10 })).completed[0]!;
+    if (mode === "default") {
+      expect(result.executionStatus).toBe("completed");
+      expect(calls).toBe(1);
+      expect(sy.spend.summary().week).toBeGreaterThan(0);
+    } else {
+      expect(calls).toBe(0);
+      expect(result.executionStatus).not.toBe("completed");
+    }
+  });
   it("uses paid only after free capacity fails, reserves the worst case, and settles to the billed cost", async () => {
     env = makeEnv({ config: paidCfg() });
     const { client, paidCalls } = providers(() => {

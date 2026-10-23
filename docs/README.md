@@ -2,7 +2,10 @@
 
 Start with [setup](setup.md): build from source or a locally built package, create one project,
 add a provider key in the panel, connect your MCP client and try a small read-only task.
-No published npm package is assumed.
+No published npm package is assumed. MeritRouter aims to reduce the cost of capable results
+across paid and free models. Paid routing is enabled by default with a $5 rolling weekly cap;
+read [cost controls](setup.md#cost-controls-and-routing-defaults) for tier policies, credential
+requirements and strictly free operation.
 
 | Goal | Read |
 | --- | --- |

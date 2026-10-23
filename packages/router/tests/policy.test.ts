@@ -37,6 +37,7 @@ describe("size floors and eligibility", () => {
 
   it("stale metadata, unverified pricing, disabled models and missing modalities are excluded with reasons", () => {
     env = makeEnv({
+      config: baseConfig({ paid: { enabled: false } }),
       endpoints: [
         endpoint({ gatewayModelId: "stale", checkedAt: "2020-01-01T00:00:00Z" }),
         endpoint({ gatewayModelId: "paid", pricing: { inputUsdPerMillion: 0.2, outputUsdPerMillion: 0.8, freeVerified: false } }),
@@ -46,15 +47,16 @@ describe("size floors and eligibility", () => {
       ],
     });
     const { db, catalog } = catalogFor(env);
-    const plan = planRoute(env.cfg, catalog.endpoints(), [], { profile: "summarize", tier: "T1", inputModalities: ["text", "image"], needsStructuredOutput: false }, { now: new Date(), qualification: noQual });
-    expect(plan.candidates.map((c) => c.gatewayModelId)).toEqual(["vision"]);
-    const reasons = plan.explanations.flatMap((e) => e.reasons).join("\n");
-    expect(reasons).toMatch(/metadata is \d+ days old/);
-    // A priced model is paid: excluded while paid routing is off.
-    expect(reasons).toMatch(/paid routing is disabled/);
-    expect(reasons).toMatch(/disabled/);
-    expect(reasons).toMatch(/cannot read image input/);
-    db.close();
+    try {
+      const plan = planRoute(env.cfg, catalog.endpoints(), [], { profile: "summarize", tier: "T1", inputModalities: ["text", "image"], needsStructuredOutput: false }, { now: new Date(), qualification: noQual });
+      expect(plan.candidates.map((c) => c.gatewayModelId)).toEqual(["vision"]);
+      const reasons = plan.explanations.flatMap((e) => e.reasons).join("\n");
+      expect(reasons).toMatch(/metadata is \d+ days old/);
+      // A priced model is paid: excluded while paid routing is off.
+      expect(reasons).toMatch(/paid routing is disabled/);
+      expect(reasons).toMatch(/disabled/);
+      expect(reasons).toMatch(/cannot read image input/);
+    } finally { db.close(); }
   });
 
   it("prefers the smallest sufficient model for T1/T2 and the most capable for T3", () => {
@@ -109,9 +111,9 @@ describe("size floors and eligibility", () => {
 });
 
 describe("configuration policy", () => {
-  it("requires a weekly budget before paid routing can be enabled, and known providers", () => {
+  it("rejects zero weekly paid budgets and unknown providers", () => {
     env = makeEnv();
-    expect(() => parseConfig(baseConfig({ paid: { enabled: true } }), env!.cfg.configPath)).toThrow(/weekly paid budget/);
+    expect(() => parseConfig(baseConfig({ paid: { enabled: true, budgets: { per_week_usd: 0 } } }), env!.cfg.configPath)).toThrow(/weekly paid budget/);
     expect(() => parseConfig(baseConfig({ paid: { models: [{ provider: "nope", model: "m", context_limit_tokens: 1000, output_limit_tokens: 100 }] } }), env!.cfg.configPath)).toThrow(/unknown paid provider/);
   });
 
@@ -127,11 +129,12 @@ describe("configuration policy", () => {
     expect(() => parseConfig(bad, env!.cfg.configPath)).toThrow(/must increase/);
   });
 
-  it("a task cannot opt into paid routing", async () => {
-    env = makeEnv();
+  it("a task cannot bypass disabled paid routing", async () => {
+    env = makeEnv({ config: baseConfig({ paid: { enabled: false } }) });
     const sy = open(env, new ScriptedClient(() => reply("{}")));
-    await expect(sy.submitTasks([summarizeTask({ budget: { maxPaidUsd: 1 } })])).rejects.toThrow(/paid routing is disabled/);
-    await sy.close();
+    try {
+      await expect(sy.submitTasks([summarizeTask({ budget: { maxPaidUsd: 1 } })])).rejects.toThrow(/paid routing is disabled/);
+    } finally { await sy.close(); }
   });
 
   it("rejects unresolved aliases, unknown artifacts, unknown forced endpoints and dependency cycles", async () => {

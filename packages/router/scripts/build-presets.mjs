@@ -36,7 +36,7 @@ const claudeModel = {
 
 const presets = {
   "claude-code": {
-    header: "Preset: claude-code. Claude Code is the supervisor (via MCP); MeritRouter runs free workers.",
+    header: "Preset: claude-code. Claude Code is the supervisor (via MCP); MeritRouter reduces worker cost with free routes and budgeted paid routes.",
     edits: [[["brain", "project"], "my-project"]],
   },
   "standalone-free": {
@@ -45,6 +45,7 @@ const presets = {
       [["profiles", "supervise"], supervise],
       [["brain", "project"], "my-project"],
       [["supervisor"], { endpoints: [], paid_policy: "never", max_concurrent_jobs: 1 }],
+      [["paid"], { enabled: false, budgets: { per_week_usd: 0 }, tiers: { T1: "never", T2: "never", T3: "never", T4: "never" }, max_paid_attempts: 2, providers: {}, models: [] }],
     ],
   },
   "standalone-hybrid": {

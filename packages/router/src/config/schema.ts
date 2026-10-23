@@ -540,7 +540,7 @@ export const SupervisorConfigSchema = z
   .object({
     /** Endpoint ids to use, in order. Empty: route like any T3 task (most capable). */
     endpoints: z.array(z.string().min(1)).default([]),
-    paid_policy: PaidPolicySchema.default("never"),
+    paid_policy: PaidPolicySchema.default("on_free_exhaustion"),
     max_concurrent_jobs: z.number().int().positive().default(1),
     /** Alias of `team.max_agents` (which wins when both are set); see `maxAgentsPerJob`. */
     max_workers_per_job: z.number().int().positive().optional(),
@@ -919,19 +919,19 @@ export const ConfigSchema = z
     /** Paid routing: policy, budgets, and configured paid models. Keys live in the vault or under providers. */
     paid: z
       .object({
-        enabled: z.boolean().default(false),
+        enabled: z.boolean().default(true),
         providers: z.record(z.string().regex(/^[a-z0-9-]+$/), PaidProviderSchema).default({}),
         models: z.array(PaidModelSchema).default([]),
         budgets: z
           .object({
             per_day_usd: z.number().min(0).optional(),
-            per_week_usd: z.number().min(0).default(0),
+            per_week_usd: z.number().min(0).default(5),
             per_month_usd: z.number().min(0).optional(),
           })
           .strict()
           .prefault({}),
         tiers: z
-          .object({ T1: PaidPolicySchema.default("never"), T2: PaidPolicySchema.default("never"), T3: PaidPolicySchema.default("never"), T4: PaidPolicySchema.default("never") })
+          .object({ T1: PaidPolicySchema.default("on_free_exhaustion"), T2: PaidPolicySchema.default("on_free_exhaustion"), T3: PaidPolicySchema.default("on_free_exhaustion"), T4: PaidPolicySchema.default("never") })
           .strict()
           .prefault({}),
         /** Paid endpoints tried per request after free ones (they never count toward free fallbacks). */

@@ -10,7 +10,8 @@ import { jobHref, projectBase } from "@/lib/links";
 import { SetupScreen } from "@/components/setup";
 import { Badge, buttonClass, Callout, Card, CardHeader, EmptyState, Mono, Stat } from "@/components/ui";
 import { PageHeader } from "@/components/page-header";
-import { StackedBars, StackedColumns, type Series } from "@/components/client/charts";
+import { UsageOverview } from "@/components/usage-overview";
+import { usageRange } from "@/lib/usage-range";
 import { ago, compact, dateTime, num, pct, shortId } from "@/lib/format";
 import { TASK_STATE_LABEL, TaskStateBadge } from "@/components/task-badges";
 import { AgentLink } from "@/components/entity-links";
@@ -20,8 +21,6 @@ import { usd } from "@/components/job-metrics";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Project overview" };
 
-const HOUR = 3_600_000;
-const SLOTS = ["var(--series-1)", "var(--series-2)", "var(--series-3)", "var(--series-4)", "var(--series-5)"];
 
 /** Where to act on one of the project's attention items. */
 function attentionLink(base: string, text: string, onlyJob: string | null): { href: string; cta: string } | null {
@@ -50,46 +49,7 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
   const labs = insights.labsListView(sy, p.slug);
   const budgetPending = insights.budgetRequestsView(sy, { project: p.slug, status: "pending", limit: 1000 });
   const now = Date.now();
-  // Re-bucket on our side: the library's SQL bucket expression can return raw timestamps when
-  // the bucket size is bound as a float, so align every point to its hour here.
-  const ts = insights.timeseries(sy, { hours: 24, bucketMinutes: 60, project: p.slug }).map((x) => ({ ...x, bucketStart: Math.floor(x.bucketStart / HOUR) * HOUR }));
-  const tiers = insights.tierDistribution(sy, now - 7 * 24 * HOUR, p.slug);
-  const names = new Map(sy.catalog.endpoints().map((e) => [e.id, e.displayName ?? e.gatewayModelId]));
-
-  const first = Math.floor((now - 24 * HOUR) / HOUR) * HOUR + HOUR;
-  const buckets = Array.from({ length: 24 }, (_, i) => first + i * HOUR);
-  const byEp = new Map<string, number>();
-  for (const x of ts) byEp.set(x.endpointId, (byEp.get(x.endpointId) ?? 0) + x.requests);
-  const top = [...byEp.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([id]) => id)
-    .sort();
-  const series: Series[] = top.map((id, i) => ({
-    key: id,
-    label: id === "(none)" ? "No model (refused before dispatch)" : (names.get(id) ?? id),
-    color: SLOTS[i]!,
-    values: buckets.map((b) => ts.filter((x) => x.endpointId === id && x.bucketStart === b).reduce((s, x) => s + x.requests, 0)),
-  }));
-  const otherIds = [...byEp.keys()].filter((id) => !top.includes(id));
-  if (otherIds.length)
-    series.push({
-      key: "__other",
-      label: `Other (${otherIds.length} model${otherIds.length > 1 ? "s" : ""})`,
-      color: "var(--series-other)",
-      values: buckets.map((b) => ts.filter((x) => otherIds.includes(x.endpointId) && x.bucketStart === b).reduce((s, x) => s + x.requests, 0)),
-    });
-
-  const tokenSeries: Series[] = [
-    { key: "input", label: "Input (including cached)", color: "var(--series-1)", values: buckets.map(bucket => ts.filter(point => point.bucketStart === bucket).reduce((total, point) => total + point.inputTokens, 0)) },
-    { key: "output", label: "Output", color: "var(--series-2)", values: buckets.map(bucket => ts.filter(point => point.bucketStart === bucket).reduce((total, point) => total + point.outputTokens, 0)) },
-  ];
   const u = ov.usage24h;
-  const tierOrder = ["T1", "T2", "T3", "T4", "unclassified"];
-  const tierRows = tierOrder
-    .map((t) => tiers.find((x) => x.tier === t) ?? (t === "unclassified" ? null : { tier: t, tasks: 0, completed: 0 }))
-    .filter((x): x is { tier: string; tasks: number; completed: number } => x !== null);
-  const tierHint: Record<string, string> = { T1: "easy", T2: "moderate", T3: "hard", T4: "to supervisor", unclassified: "not scored yet" };
   const states = Object.entries(ov.tasksByState).sort((a, b) => b[1] - a[1]);
   const asking = [...new Set(sy.questions({ pendingOnly: true, project: p.slug }).map((q) => q.taskId))];
   const onlyJob = asking.length === 1 ? asking[0]! : null;
@@ -103,7 +63,7 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
         live={["tasks", "jobs", "requests", "sessions", "workers", "brain", "budget", "labs"]}
         description={
           <>
-            What this project is doing now, what it used in the last 24 hours, and what needs you. Project <Mono>{p.slug}</Mono>
+            Usage over your selected time range, with current jobs and decisions in Activity. Project <Mono>{p.slug}</Mono>
             {p.primary ? " (primary: work submitted without a project lands here)" : ""}.
           </>
         }
@@ -155,7 +115,7 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
           No questions, decisions, access requests, or interrupted tasks in this project, and every repository is in place.
         </Callout>
       )}</> : null}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {tab === "activity" ? <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Model requests (24h)" help="requests" value={compact(u.modelRequests)} sub={`${compact(ov.usage7d.modelRequests)} in the last 7 days`} />
         <Stat
           label="Success rate (24h)"
@@ -166,48 +126,10 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
         <Stat label="Tasks (24h)" value={`${num(u.logicalTasks.completed)} done`} sub={`${num(u.logicalTasks.failed)} failed · ${num(u.logicalTasks.other)} other · ${num(u.logicalTasks.submitted)} submitted`} tone={u.logicalTasks.failed > u.logicalTasks.completed ? "bad" : undefined} />
         <Stat label="Paid spend (24h)" value={usd(ov.paidSpendUsd.last24h)} sub={`${usd(ov.paidSpendUsd.last7d)} in the last 7 days · ${u.cacheUsageKnown ? "" : "up to "}${compact(u.uncachedInputTokens + u.outputTokens)} new tokens today${u.cacheUsageKnown ? ` (${compact(u.cachedInputTokens)} cached)` : ` (at least ${compact(u.cachedInputTokens)} cached; ${u.requestsWithUnknownCacheUsage} unknown)`}`} />
       </div>
+      : null}
       {tab === "activity" && budgetPending.length ? <BudgetRequestsCard requests={budgetPending} pendingOnly /> : null}
-      <Tabs items={[{ "id": "overview", "label": "Overview" }, { "id": "activity", "label": "Activity" }]} active={tab} path={base} label="Page sections" anchors={{}} />
-      {tab === "overview" ? <div className="space-y-6">      <div className="grid gap-3 sm:grid-cols-3">
-        <Stat label="Reported tokens (24h)" value={compact(u.inputTokens + u.outputTokens)} sub="Input and output, cached input included" />
-        <Stat label="Input tokens (24h)" value={compact(u.inputTokens)} sub={u.cacheUsageKnown ? `${compact(u.cachedInputTokens)} cached` : "Cache breakdown partly reported"} />
-        <Stat label="Output tokens (24h)" value={compact(u.outputTokens)} />
-      </div>
-      <Card>
-        <CardHeader title="Tokens over the last 24 hours" description="Reported input and output per hour. Input includes tokens served from the prompt cache." actions={<Link href={`${base}/requests`} className="text-xs text-accent-ink hover:underline">Request log</Link>} />
-        <div className="p-4">{ts.length ? <StackedColumns buckets={buckets} series={tokenSeries} bucketMinutes={60} unit="tokens" /> : <EmptyState title="No token usage in the last 24 hours">Reported input and output appear as this project's model requests finish.</EmptyState>}</div>
-      </Card>
-      <div className="grid gap-6 xl:grid-cols-[2fr_1fr]">
-        <Card>
-          <CardHeader title="Requests over the last 24 hours" description="This project's physical model requests per hour, stacked by the model that was targeted." help="requests" actions={<Link className="text-xs text-accent-ink hover:underline" href={`${base}/requests`}>Request log →</Link>} />
-          <div className="p-4">
-            {ts.length ? (
-              <StackedColumns buckets={buckets} series={series} bucketMinutes={60} />
-            ) : (
-              <EmptyState icon={<Cpu size={22} />} title="No model requests in the last 24 hours">
-                Requests appear here once a worker runs this project&apos;s tasks. Start Claude Code with the MeritRouter MCP server, or run <Mono>meritrouter worker</Mono>.
-              </EmptyState>
-            )}
-          </div>
-        </Card>
-
-        <Card>
-          <CardHeader title="Tasks by tier (7 days)" help="tier" description="How difficult this project's delegated work was, and how much of it completed." />
-          <div className="p-4">
-            {tierRows.some((t) => t.tasks) ? (
-              <StackedBars
-                rows={tierRows.map((t) => ({ key: t.tier, label: t.tier === "unclassified" ? "Unscored" : t.tier, hint: tierHint[t.tier] ?? "" }))}
-                series={[
-                  { key: "completed", label: "Completed", color: "var(--series-1)", values: tierRows.map((t) => t.completed) },
-                  { key: "other", label: "Not completed", color: "var(--series-other)", values: tierRows.map((t) => t.tasks - t.completed) },
-                ]}
-              />
-            ) : (
-              <EmptyState title="No tasks in the last 7 days">Tasks are scored into tiers T1–T3 (or T4, returned to the supervisor).</EmptyState>
-            )}
-          </div>
-        </Card>
-      </div></div> : null}
+      <Tabs items={[{ "id": "overview", "label": "Overview" }, { "id": "activity", "label": "Activity" }]} active={tab} path={base} label="Page sections" keep={{ range: usageRange(sp.range).id }} anchors={{}} />
+      {tab === "overview" ? <UsageOverview sy={sy} path={base} project={p.slug} searchParams={sp} /> : null}
       {tab === "activity" ? <div className="space-y-6"><Card><CardHeader title="Labs" description="Isolated branches and runtimes for this project." actions={<Link href={`${base}/labs`} className="text-xs text-accent-ink hover:underline">Open labs</Link>} /><div className="flex flex-wrap gap-3 p-4">{labs.labs.length ? labs.labs.map(l => <Link key={l.name} href={`${base}/labs/${encodeURIComponent(l.name)}`} className="text-sm text-accent-ink hover:underline">{l.name} / {l.status?.lab.state ?? "queued"}</Link>) : <p className="text-sm text-ink-3">No labs yet.</p>}</div></Card><div className="grid gap-6 xl:grid-cols-[2fr_1fr]">
         <Card>
           <CardHeader title="Running and queued jobs" description="This project's top-level jobs that have not finished, newest first." actions={<Link className="text-xs text-accent-ink hover:underline" href={`${base}/jobs`}>All jobs →</Link>} />

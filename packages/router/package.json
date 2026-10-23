@@ -1,7 +1,7 @@
 {
   "name": "meritrouter",
   "version": "0.1.0",
-  "description": "MeritRouter: bounded model delegation with enforced repository scope, budgets and verification.",
+  "description": "MeritRouter: reduce model costs across paid and free routes with enforced scope, budgets and verification.",
   "homepage": "https://github.com/aidens113/MeritRouter#readme",
   "repository": { "type": "git", "url": "https://github.com/aidens113/MeritRouter.git" },
   "bugs": { "url": "https://github.com/aidens113/MeritRouter/issues" },

@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { z } from "zod";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { Check, ChevronsUpDown, FolderGit2, Globe, LayoutGrid, Plus, Network } from "lucide-react";
 import { cx } from "../ui";
-import { ALL, projectBase } from "@/lib/links";
+import { ALL, projectBase, SLUG_RE } from "@/lib/links";
 
 /** A project as the switcher lists it (lib/project.ts `switcherProjects`). */
 export interface SwitcherProject {
@@ -17,6 +18,19 @@ export interface SwitcherProject {
   /** Archived metadata identifies the current settings page but never appears in the picker. */
   archived?: boolean;
 }
+
+// Preserve the last good menu when a refresh returns an error or malformed rows.
+const SwitcherResponse = z.object({
+  ok: z.literal(true),
+  projects: z.array(z.object({
+    slug: z.string().regex(SLUG_RE),
+    name: z.string().min(1),
+    live: z.boolean(),
+    queued: z.boolean(),
+    attention: z.number().int().nonnegative(),
+    archived: z.boolean().optional(),
+  })).max(10_000),
+});
 
 /** Where the person is: inside a project, the install-wide section, or the projects grid. */
 export type Scope = { kind: "project"; slug: string } | { kind: "all" } | { kind: "home" };
@@ -73,8 +87,9 @@ export function ProjectSwitcher({ scope, initial }: { scope: Scope; initial: Swi
     let live = true;
     fetch("/api/projects", { cache: "no-store" })
       .then((r) => r.json())
-      .then((d: { ok?: boolean; projects?: SwitcherProject[] }) => {
-        if (live && d.ok && Array.isArray(d.projects)) setProjects(d.projects);
+      .then((data: unknown) => {
+        const parsed = SwitcherResponse.safeParse(data);
+        if (live && parsed.success) setProjects(parsed.data.projects);
       })
       .catch(() => undefined);
     return () => {

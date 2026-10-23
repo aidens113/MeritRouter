@@ -1,7 +1,7 @@
 {
   "name": "meritrouter-workspace",
   "private": true,
-  "description": "MeritRouter: delegate bounded tasks from your agent to approved model pools with enforced scope, budgets and verification.",
+  "description": "MeritRouter: reduce model costs across paid and free routes with bounded delegation, budgets and verification.",
   "packageManager": "pnpm@10.5.0",
   "engines": {
     "node": ">=22.11.0"

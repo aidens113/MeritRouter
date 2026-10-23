@@ -11,6 +11,16 @@ Verified interfaces, routing boundaries, and every departure from the original p
 (`plan.md`, written for "fluxiq-workers"). Dates are 2026-10-19 unless noted. FreeLLMAPI, the
 gateway MeritRouter used until 2026-10-20, appears here only as history (last section).
 
+## Cost-first defaults (user decision, 2026-10-23)
+
+The product emphasizes reducing cost across paid and free routes. New configuration enables
+paid routing with a $5 rolling weekly cap. Worker T1-T3 and the standalone supervisor default
+to `on_free_exhaustion`; worker T4 remains `never` for supervisor escalation. Credentials,
+known prices and all applicable budget checks remain required. The explicit `standalone-free`
+preset stays free-only. Explicit saved settings are preserved; omitted settings resolve to
+new defaults. This changes policy defaults and positioning, not model ranking or a promise
+of globally optimal cost. See [setup](setup.md#cost-controls-and-routing-defaults).
+
 ## Direct providers (user decision, 2026-10-19; implemented 2026-10-20)
 
 The user enters provider keys in MeritRouter (panel, CLI, or config) and never installs or runs

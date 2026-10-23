@@ -54,7 +54,8 @@ describe("installed setup and config discovery", () => {
     expect(cfg.brain.path).toBe(".meritrouter/brain");
     expect(cfg.storageDir).toBe(path.join(root, "application", ".meritrouter"));
     expect(cfg.panel.port).toBe(4598);
-    expect(cfg.paid.enabled).toBe(false);
+    expect(cfg.paid).toMatchObject({ enabled: true, budgets: { per_week_usd: 5 }, tiers: { T1: "on_free_exhaustion", T2: "on_free_exhaustion", T3: "on_free_exhaustion", T4: "never" } });
+    expect(cfg.supervisor.paid_policy).toBe("on_free_exhaustion");
     const original = readFileSync(configPath, "utf8");
     expect(initializeConfig({ ...opts, project: "different" })).toEqual([`kept existing ${configPath}`, `kept existing ${path.join(path.dirname(configPath), "models.yaml")}`]);
     expect(readFileSync(configPath, "utf8")).toBe(original);
