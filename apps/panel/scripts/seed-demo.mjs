@@ -921,6 +921,14 @@ async function phase(hoursAgo, label, tasks, opts = {}) {
   const subs = await sy.submitTasks(tasks, opts.purpose ? { purpose: opts.purpose } : { project: opts.project ?? "demo" });
   startWorker();
   const out = await sy.awaitResults(subs.map((s) => s.taskId), { timeoutSeconds: opts.timeout ?? 60 });
+  if (out.timedOut || out.pending.length) {
+    const message = `${label}: historical phase did not finish; pending ${JSON.stringify(out.pending)}`;
+    expectFixture(false, message);
+    // Closing drains/aborts owned work while this phase's clock is still unchanged.
+    // Never advance historical time with a live lease from the previous phase.
+    await sy.close();
+    throw new Error(message);
+  }
   const states = out.completed.map((r) => `${r.executionStatus}${r.acceptanceStatus !== "not_verified" ? `/${r.acceptanceStatus}` : ""}`);
   console.log(`  ${label.padEnd(44)} ${states.join(", ")}${out.timedOut ? " (timed out)" : ""}`);
   return out;
@@ -1161,7 +1169,7 @@ const rounding = await phase(1.6, "deep review overruled by a person", [
     importanceReason: "Invoices sum fractional amounts; rounding would change totals.",
     constraints: { acceptanceCriteria: [{ id: "rounding", text: "states whether add() rounds, citing the lines", verify: "evidence" }] },
   },
-]);
+], { timeout: 120 }); // T2 + failed review took ~49s; T3 read began ~55s, before its next review.
 for (const r of rounding.completed) {
   if (r.acceptanceStatus === "needs_supervisor") insights.decideTaskAcceptance(sy, r.taskId, "accept", { kind: "human", id: "cli:demo" }, "add() returns a + b unrounded; the gateway passes the string through. The reviewer is wrong here.");
   else console.warn(`  warning: the rounding analysis ended ${r.acceptanceStatus}, not needs_supervisor`);
