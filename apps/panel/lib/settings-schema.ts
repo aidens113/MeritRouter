@@ -185,26 +185,26 @@ export const SECTIONS: Section[] = [
 
 const POLICY_HELP: Record<string, string> = {
   never: "Never: free models only at this tier.",
-  on_free_exhaustion: "On free exhaustion: paid models serve only after every free model failed or was busy.",
-  preferred: "Preferred: paid models are tried before free ones (spends money on routine work).",
-  premium: "Premium: work too hard for free workers goes to a paid model instead of back to the supervisor.",
+  on_free_exhaustion: "On free exhaustion: paid models may serve when eligible free routes are unavailable or unsuccessful.",
+  preferred: "Preferred: eligible paid models are tried before free ones, within the configured budgets.",
+  premium: "Premium: T4 work uses an eligible paid model instead of returning to the supervisor.",
 };
 
 /** Sections for the paid, brain, and supervisor settings (their list editors are separate forms). */
 export const PAID_SECTION: Section = {
   id: "paid",
   title: "Paid routing",
-  description: "When paid models and paid keys may be used, and the budgets they spend within. Off by default. Keys are added on the Provider keys page and stored encrypted, never here.",
+  description: "Control costs across paid and free models. New configurations enable paid routing with a $5 weekly cap and try eligible free routes first for T1-T3. Keys are added on the Provider keys page and stored encrypted, never here.",
   fields: [
     f("paid.enabled", "Paid routing on", "bool", "Master switch. Off means no paid request is ever made, whatever the tier policies say. Needs a weekly budget above $0."),
     f("paid.budgets.per_day_usd", "Daily budget", "optNumber", "Most paid spend in any 24 hours. Empty: no daily limit.", { min: 0, unit: "USD", placeholder: "no limit" }),
-    f("paid.budgets.per_week_usd", "Weekly budget", "number", "Most paid spend in any 7 days. Required (above $0) to turn paid routing on.", { min: 0, unit: "USD" }),
+    f("paid.budgets.per_week_usd", "Weekly budget", "number", "Most paid spend in any 7 days. New configurations default to $5. A positive weekly budget is required while paid routing is enabled.", { min: 0, unit: "USD" }),
     f("paid.budgets.per_month_usd", "Monthly budget", "optNumber", "Most paid spend in any 30 days. Empty: no monthly limit.", { min: 0, unit: "USD", placeholder: "no limit" }),
     ...(["T1", "T2", "T3"] as const).map((t) =>
       f(`paid.tiers.${t}`, `${t} paid policy`, "enum", `When paid models may serve ${t} tasks.`, { options: ["never", "on_free_exhaustion", "preferred"], optionHelp: POLICY_HELP }),
     ),
-    f("paid.tiers.T4", "T4 paid policy", "enum", "What happens to work too hard for free workers.", { options: ["never", "premium"], optionHelp: { never: "Never: T4 work goes back to the supervisor.", premium: POLICY_HELP.premium! } }),
-    f("paid.max_paid_attempts", "Paid models tried per request", "int", "Paid endpoints tried per request after free ones; they never count toward free fallbacks.", { min: 1, max: 5 }),
+    f("paid.tiers.T4", "T4 paid policy", "enum", "Whether T4 work returns to the supervisor or uses an eligible paid model.", { options: ["never", "premium"], optionHelp: { never: "Never: T4 work goes back to the supervisor.", premium: POLICY_HELP.premium! } }),
+    f("paid.max_paid_attempts", "Paid models tried per request", "int", "Maximum paid endpoints tried per request, in the order chosen by the tier policy. Separate from the free-attempt limit.", { min: 1, max: 5 }),
   ],
 };
 

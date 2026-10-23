@@ -4,6 +4,14 @@ Written for the next agent (Codex or Claude Code) picking this repository up col
 then `AGENTS.md`, then the `Current State` of the effort you work on. Every effort below has its
 own working document with decisions, phases, ledger, and reports.
 
+## Current effort (2026-10-23)
+
+[Cost-first routing](cost-first-routing.md) implements the user's new direction: reduce cost
+across paid and free routes, with paid routing enabled by default. New defaults are enabled,
+$5 rolling weekly cap, T1-T3 and standalone supervisor on_free_exhaustion, T4 escalation.
+Explicit stored settings and the named free-only preset remain supported. Runtime, docs and
+panel wording are being validated on feat/cost-first-routing; no user install is modified.
+
 ## Latest accepted effort (2026-10-23)
 
 [MeritRouter rename](meritrouter-rename.md) is complete: canonical MeritRouter product/runtime,

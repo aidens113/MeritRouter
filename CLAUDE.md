@@ -3,7 +3,7 @@
 # MeritRouter: Claude Code specifics
 
 Multi-agent framework: a supervisor (Claude Code over MCP, or MeritRouter's own on models you
-choose) delegates bounded work to free and optionally paid worker models, with routing, budgets,
+choose) delegates bounded work to paid and free worker models to reduce costs, with routing, budgets,
 roles, a shared brain, and per-line attribution enforced in code. `AGENTS.md` (imported above)
 holds the binding agent rules: roles, workflow modes, delegation, boundaries, validation,
 branches, and pushing.

@@ -54,9 +54,9 @@ export const GLOSSARY = {
   billingClass:
     "How a key is paid for. Free tier: no charge. Paid credits: a prepaid balance is drawn down. Billed to card: usage is charged after the fact. Trial: free credits that run out. Only a free-tier key makes a model free to use; any other key follows the paid policy and budgets.",
   premium:
-    "For T4 work (too hard for free workers), 'premium' sends the task to a paid model instead of returning it to the supervisor. 'Never' keeps T4 with the supervisor.",
+    "For T4 work, 'premium' sends the task to an eligible paid model instead of returning it to the supervisor. 'Never' keeps T4 with the supervisor.",
   paidPolicy:
-    "When paid models may serve a tier. Never: free models only. On free exhaustion: only after every free model failed or was busy. Preferred: paid models are tried before free ones.",
+    "Cost policy for paid and free routes at each tier. New configurations enable paid routing with a $5 weekly cap. Never: free models only. On free exhaustion: paid models may serve when eligible free routes are unavailable or unsuccessful. Preferred: paid models are tried before free ones.",
   branch:
     "Each job commits to its own branch (by default meritrouter/job-<id>) in an integration worktree. Nothing is merged or pushed for you: review the branch, then merge it yourself.",
   session:

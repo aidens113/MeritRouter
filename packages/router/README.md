@@ -5,12 +5,14 @@
 ```text
 Use MeritRouter for this repository. Check its MCP connection and setup guide first.
 Keep my current agent as supervisor, delegate small tasks and review their evidence.
-Keep paid routing off and outside-repository actions on human approval only.
+Reduce model costs using capable free and paid routes within configured budgets.
+Keep outside-repository actions on human approval only.
 Guide me to enter credentials in the panel; never put secrets in chat or Git.
 ```
 
-MeritRouter routes bounded work to approved models and records results for your supervisor
-to review. This package contains the library, `meritrouter` CLI, MCP server and web panel.
+MeritRouter helps reduce model costs across paid and free routes, delegates bounded work
+to approved models and records results for your supervisor to review. This package contains
+the library, `meritrouter` CLI, MCP server and web panel.
 
 After installing a locally built tarball, register a project:
 
@@ -23,7 +25,13 @@ agent using the absolute config path printed by setup. Reconnect the agent and t
 read-only task. Use the [setup guide](https://github.com/aidens113/MeritRouter/blob/main/docs/setup.md)
 for exact MCP registration and other client options.
 
-Paid routing is off by default. Human approval is required for host commands by default.
+Paid routing is enabled by default with a $5 rolling weekly cap: T1-T3 workers can use paid
+routes when eligible free routes are exhausted; T4 returns to the supervisor. Paid requests
+still require eligible credentials, known prices and budget headroom. Existing explicit
+settings are preserved. Set `paid.enabled: false` for strictly free routing; the
+`standalone-free` preset also selects a free-only supervisor. See the setup guide for
+[cost controls](https://github.com/aidens113/MeritRouter/blob/main/docs/setup.md#cost-controls-and-routing-defaults).
+Human approval is required for host commands by default.
 External autonomous coding runners and automatic worker Task Lab execution remain unavailable
 without their enforced sandbox or durable execution proof. Use the native runner.
 

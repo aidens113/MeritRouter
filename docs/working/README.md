@@ -6,6 +6,7 @@ lines, worker briefs, append-only ledger with real validation, open questions).
 
 | Document | Status | Scope |
 | --- | --- | --- |
+| [cost-first-routing.md](cost-first-routing.md) | Active | Cost reduction across paid/free routing, enabled paid defaults, presets and onboarding. |
 | [meritrouter-rename.md](meritrouter-rename.md) | Complete | Complete MeritRouter identity, safe existing-install migration, readable docs and agent-first README onboarding. |
 | [correctness-and-panel-flows.md](correctness-and-panel-flows.md) | Complete | Accepted audit fixes, repository containment/security policy, supervisor approvals and connected panel flows; no live deployment. |
 | [post-change-fix-audit.md](post-change-fix-audit.md) | Superseded | Audit findings implemented by correctness-and-panel-flows; historical baseline and fix plan. |

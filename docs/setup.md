@@ -25,7 +25,8 @@ Use [the documentation index](README.md) to find the detailed operating contract
 
 Watch the task's **Sessions** and **Requests** in the panel. A job's **Overview** links its
 delegated tasks and sub-jobs; **Requests** includes supervisor and descendant calls.
-If routing refuses the task, inspect its eligibility reason rather than enabling paid routes.
+If routing refuses the task, inspect its eligibility reason: check credentials, prices, tier
+policy and budget headroom before changing any limits.
 Host checks wait for an exact approval under **Settings → Security**; default policy is human
 approval only. External coding runners are currently unavailable. See [security settings](#security-settings).
 
@@ -141,7 +142,7 @@ pnpm --filter meritrouter-panel start
 
 | Preset | Supervisor | Workers | Paid |
 | --- | --- | --- | --- |
-| `claude-code` (default) | Claude Code, over MCP | free | off |
+| `claude-code` (default) | Claude Code, over MCP | free and bounded paid fallback at T1-T3 | on, $5/week |
 | `standalone-free` | MeritRouter, on the best free model | free | off |
 | `standalone-hybrid` | MeritRouter, on a paid model you set | free; paid fallback at T3 | supervisor, T3 fallback |
 | `standalone-paid` | MeritRouter, on a paid model | paid preferred at T2-T3, premium for T4 | on, budgeted |
@@ -379,6 +380,33 @@ check them against your account.
 Providers that cannot be added this way (OAuth or request signing, retired APIs) are listed in
 [decisions.md](decisions.md#wider-coverage-p4-2026-10-20).
 
+## Cost controls and routing defaults
+
+MeritRouter aims to reduce the cost of capable results across paid and free models. Free
+routes, task sizing, prompt-cache reuse and bounded paid routes all contribute. Routing follows
+eligibility, tier policy and model ranking; it does not promise the globally cheapest model.
+
+New configuration enables paid routing with `paid.enabled: true` and a **$5 rolling weekly
+cap** (`paid.budgets.per_week_usd: 5`). T1-T3 default to `on_free_exhaustion`: eligible free
+routes are tried before paid routes. T4 defaults to `never`, returning work to the supervisor
+unless you explicitly select a premium policy. The standalone supervisor defaults to
+`supervisor.paid_policy: on_free_exhaustion`; it shares the paid spending controls.
+
+Enabling paid routing does not provide credentials or waive checks: a paid call needs an
+eligible key, known prices and headroom in every applicable global, project, key and task
+budget. Add keys with their actual billing class. Review current prices and your cap before
+submitting work. Other presets have explicit policies; inspect their generated configuration.
+
+For strictly free operation, set `paid.enabled: false`. The `standalone-free` preset also
+sets a zero paid cap and `never` policies, including its supervisor. Enabling paid routing
+with a zero weekly cap is rejected during configuration validation. A zero daily or monthly
+cap blocks spend, and `never` keeps a tier unavailable for paid routing.
+
+Existing explicit `false`, zero budgets and `never` policies are preserved. Omitted fields
+use the new defaults, including when loading an older minimal configuration. To keep an
+installation strictly free, write `paid.enabled: false` explicitly before upgrading. Changing
+source defaults never rewrites your saved configuration.
+
 ## 3b. Configure and run
 
 Edit `meritrouter.config.yaml`, or use the panel: global settings are at `/all/settings`, a
@@ -389,9 +417,10 @@ project's at `/p/<slug>/settings`.
 - `brain.path` (default `~/.meritrouter/brain`): one brain repository for every project. To mount
   an existing `docs/working/` folder, use `projects.<slug>.brain.mounts` for one project or
   `brain.mounts` for every project.
-- Standalone and paid presets: set the paid model id and **current prices** in `paid.models` and
-  `supervisor.endpoints`, and add a paid key for that provider
-  (`keys add anthropic --billing paid_credits --balance 20`).
+- Paid routes: set model ids and **current prices** in `paid.models`; for a pinned standalone
+  supervisor also configure `supervisor.endpoints`. Add an eligible paid key for the provider.
+  For example, `keys add anthropic --billing paid_credits --balance 20` adds a prepaid
+  credential; use the billing class and balance that match your account.
 - Prompt caching: `routing.sticky_endpoints` (default true) keeps a conversation on the model
   that served its last turn while it is healthy, so the provider's prompt cache keeps working;
   it never moves a paid model ahead of a free one. `providers.<id>.prompt_cache:

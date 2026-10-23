@@ -200,25 +200,16 @@ verification:
 # paid.providers and paid.models declare paid models by hand, with prices.
 paid:
   enabled: false
-  budgets: { per_week_usd: 0 } # required > 0 to enable
-  # never | on_free_exhaustion | preferred ; T4 accepts never | premium (paid instead of returning to the supervisor)
-  tiers: { T1: never, T2: never, T3: never, T4: never }
+  budgets:
+    per_week_usd: 0
+  tiers:
+    T1: never
+    T2: never
+    T3: never
+    T4: never
   max_paid_attempts: 2
   providers: {}
-  #  anthropic:   { kind: anthropic, base_url: https://api.anthropic.com }
-  #  deepseek:    { kind: openai_compatible, base_url: https://api.deepseek.com/v1 }
-  #  gemini:      { kind: openai_compatible, base_url: https://generativelanguage.googleapis.com/v1beta/openai }
-  #  openrouter:  { kind: openai_compatible, base_url: https://openrouter.ai/api/v1, pricing_url: https://openrouter.ai/api/v1/models }
   models: []
-  #  - provider: anthropic
-  #    model: <model id>
-  #    input_usd_per_million: <check the provider's current price>
-  #    output_usd_per_million: <check the provider's current price>
-  #    context_limit_tokens: 200000
-  #    output_limit_tokens: 32000
-  #    input_modalities: [text, image]
-  #    ignore_size_floor: true          # closed models publish no parameter count
-
 coding:
   runner: native # native (MeritRouter harness) | opencode | command
   command: opencode # executable for runner: opencode, or the full command for runner: command

@@ -8,6 +8,20 @@ explains evidence; [recovery](#recovery) covers interrupted work; and
 commands. [Teams](#teams-plans-leases-and-capacity) and [Labs](#labs-isolated-services-and-checked-promotion)
 describe optional coordination and environment features.
 
+## Cost reduction and spending controls
+
+MeritRouter supports paid and free routes to reduce the cost of capable results. New
+configuration enables paid routing with a $5 rolling weekly cap, T1-T3 `on_free_exhaustion`
+and T4 `never` (supervisor escalation). The standalone supervisor defaults to
+`on_free_exhaustion` too. Eligible free routes come first under these policies; paid routes
+remain available within your limits. Selection follows capability and policy rather than a
+guarantee of the lowest possible price. Prompt-cache reuse can also reduce repeated input cost.
+
+Paid requests require eligible credentials, known prices and all applicable budget headroom.
+Set `paid.enabled: false` for strictly free routing. Existing explicit disabled switches,
+zero caps and `never` policies remain effective; omitted fields take new defaults. See
+[setup cost controls](setup.md#cost-controls-and-routing-defaults) for presets and configuration.
+
 ## Which limits are hard, estimated, or external
 
 | Limit | Kind | Where |
@@ -18,7 +32,7 @@ describe optional coordination and environment features.
 | Requests for more per task, and the run cap an approval raises | Hard | `request_more_budget` (`team.max_budget_requests_per_task`); the executor adds approved extras to every later run |
 | Supervisor edits under `supervisor.implementation: delegate` | Hard | The edit tools refuse everything but coordination files (`harness/coordination-edits.ts`) |
 | Implementers' own check runs (`run_check`) | Hard | Only the task's declared checks, exactly as declared; `coding.max_check_runs_per_task` per task |
-| Only verified-free, eligible models (unless paid policy allows); one model per request; served model must match | Hard | Route plan, gate |
+| Eligible free and paid models under configured policy; one model per request; served model must match | Hard | Route plan, gate |
 | Size floors, modalities, tool support, metadata age | Hard | Route plan |
 | Paid spend | Hard | Worst-case cost reserved per request against global, per-key, prepaid-balance, and per-task budgets before dispatch; settled to billed cost |
 | Paid policy | Hard | Paid models (priced models, or any model through a paid key) only where `paid.tiers` / `supervisor.paid_policy` allow |
