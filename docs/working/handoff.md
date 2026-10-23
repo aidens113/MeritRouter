@@ -16,7 +16,8 @@ settings and job-wide task/request navigation from the corrective release remain
 Full suite: 117 files, 1193 passed, 2 Linux-only skips. Final affected suites: 49/49. Recursive
 build/typecheck, hardened offline demo, installed CLI/MCP42tools/bundled panel and production
 browser/mobile acceptance pass. Hosted repository is now https://github.com/aidens113/MeritRouter;
-origin updated and fetch verified. Supervisor is publishing accepted work to dev/main.
+origin updated and fetch verified. Accepted merge dac9429 was pushed to both dev/main;
+local/remote heads verified after publication. This receipt is a documentation-only followup.
 See the effort report for staging restoration, clock correction and exact acceptance evidence.
 
 Existing user services/MCP clients were not upgraded or restarted. Follow the setup migration:

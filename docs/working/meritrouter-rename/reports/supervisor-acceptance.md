@@ -58,7 +58,7 @@ not get old CLI/env/package aliases. No applied storage migration was edited.
 No automatic movement/deletion of user installation data, no npm publication, no user-service
 or MCP registration change and no live provider work. Existing client registrations must be
 reconnected/re-registered using the upgrade guide. Hosted GitHub repository renamed to aidens113/MeritRouter after local acceptance; origin
-updated and fetched successfully. Authorized dev/main publication follows.
+updated and fetched successfully. Accepted merge dac9429 pushed to dev and main, with main fast-forwarded.
 
 ## Final integrated checks
 

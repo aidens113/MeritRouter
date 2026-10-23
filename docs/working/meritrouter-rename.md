@@ -37,7 +37,8 @@ The clock fix has 3 regressions; demo phases now fail/settle unfinished tasks be
 historical time. No user configuration or running service was changed.
 
 Hosted repository is now https://github.com/aidens113/MeritRouter; origin updated and fetch
-verified. Local acceptance is complete; supervisor is publishing dev/main. No npm publication
+verified. Accepted merge dac9429 is published to both dev/main; this receipt is a
+documentation-only followup. No npm publication
 or live deployment. User services remain unchanged; follow setup migration before upgrading.
 
 
@@ -114,6 +115,14 @@ or live deployment. User services remain unchanged; follow setup migration befor
   Fix injected-clock reconciliation and reject seed time changes with unfinished tasks.
 - Outcome: final visual refinement passes; tarball SHA1 924b1f3fa33088c47fa3adbd58d399962324c7de
   reinstalled and smoke-tested. Hosted repository renamed, origin updated and fetch succeeds.
+
+### 2026-10-23 - Publication
+- Agent: senior supervisor
+- Evidence: GitHub repository name/URL verified as aidens113/MeritRouter; origin fetch succeeds.
+- Outcome: accepted feature merged without squash as dac9429; pushed dev, fast-forwarded main
+  and pushed main, returned to dev. No force, remote deletion, PR or npm publication.
+- Validation: remote refs and clean local state checked after publication; test panels and
+  headless Chrome stopped. Existing user services were preserved.
 
 ## Open Questions
 
