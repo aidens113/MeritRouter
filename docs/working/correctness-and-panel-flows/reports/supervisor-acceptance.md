@@ -67,3 +67,6 @@ Source commit:1092881. Final unchanged-dev premerge outside-operation10/10 passe
 final `pnpm -r build` also passed after the fingerprint correction. Acceptance temp repositories,
 package install and Chrome profile were recycled after owned processes stopped; measured results
 are retained here. No unrelated worktrees or runtime state were removed.
+
+Publication: merge4e0138b pushed to dev and main on2026-10-23. The local feature branch was
+deleted after merge; no remote branch deletion, history rewrite, npm publish or live deployment.

@@ -17,7 +17,9 @@ suite1150passed/15failed/2Linuxskips was corrected; final affected162/162 pass. 
 CLI/MCP42tools/bundled panel and live approval pass (1324ms, no reload/browser errors). Final
 native/resume61/61 and package operations16/16 pass. Final fingerprinted package reinstalls
 without warning; live approval1220ms passes. Owned demo/package panels and Chrome stopped.
-Corrective source commit1092881 is accepted; publication receipt follows. No live deployment.
+Corrective source commit1092881 is accepted and merged as4e0138b; dev/main both published
+4e0138b on2026-10-23. Local feature branch removed; source working tree clean before this
+publication receipt. No live deployment or npm publication occurred.
 External autonomous coding runners and automatic worker Task Lab execution
 remain deliberately unavailable without enforced sandbox/durable execution proof. Native editing
 and exact approved ordinary checks remain supported. Read the execution document's current state.

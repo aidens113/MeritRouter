@@ -71,7 +71,8 @@ Final1220ms insertion-to-DOM, exact command exit0, settled history without reloa
 Screenshot inspected. Additional native/resume/evidence61/61 pass; packaged build-age false
 warning fixed with validated content fingerprints and warning-free reinstalled acceptance.
 All owned temporary panels/Chrome stopped, ports4489/4491/9335 closed. Accepted source commit1092881;
-publication follows after final docs receipt and unchanged-dev merge verification.
+merged as4e0138b and published to dev/main on2026-10-23 after unchanged-dev merge verification.
+Local feature branch removed. No live panel/MCP restart or npm publication.
 No deployment acceptance claimed. See reports/supervisor-acceptance.md for exact evidence/limits.
 Network Git verbs remain denied (automatic brain push unavailable under guarded Git; trusted
 operator backup uses its separate fixed path). No user config, user stores or actual4477 touched.
