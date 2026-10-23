@@ -1,8 +1,8 @@
 {
-  "name": "switchyard-panel",
+  "name": "meritrouter-panel",
   "version": "0.1.0",
   "private": true,
-  "description": "Web panel for SwitchYard Router: models, routing, tasks, requests, provider keys, settings.",
+  "description": "Web panel for MeritRouter: models, routing, tasks, requests, provider keys, settings.",
   "type": "module",
   "engines": {
     "node": ">=22.11.0"
@@ -23,7 +23,7 @@
     "react": "^19.2",
     "react-dom": "^19.2",
     "server-only": "^0.0.1",
-    "switchyard-router": "workspace:*",
+    "meritrouter": "workspace:*",
     "yaml": "^2.9.1",
     "zod": "^4.6.7"
   },

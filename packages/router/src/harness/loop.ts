@@ -312,7 +312,7 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
       const previous = signature && !fresh ? effects.get(signature) : undefined;
       const r = await journaled(session, call, args, t ? { sideEffect: t.sideEffect, idempotent: t.idempotent } : { sideEffect: "none" }, async () => {
         if (!t) return { ok: false, output: `error: unknown or unavailable tool ${call.function.name}` };
-        if (previous) return { ok: false, output: `the exact call already ran; SwitchYard did not repeat it to avoid duplicating its side effect. Its previous outcome was: ${previous.output}` };
+        if (previous) return { ok: false, output: `the exact call already ran; MeritRouter did not repeat it to avoid duplicating its side effect. Its previous outcome was: ${previous.output}` };
         try {
           if (args === undefined) throw new Error(`${call.function.name} arguments are not valid JSON`);
           const previousInvocation = env.toolInvocationId;

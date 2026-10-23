@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import YAML from "yaml";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { brainWrite, inspectRepositoryPath } from "../src/admin/insights.js";
 import { backupStorage, restoreStorage } from "../src/operations/backup.js";
 import { BRAIN_BUNDLE } from "../src/operations/brain-backup.js";
@@ -16,13 +16,13 @@ const faults = vi.hoisted(() => ({ brain: "", store: "" }));
 vi.mock("node:fs", async original => {
   const fs = await original<typeof import("node:fs")>();
   return { ...fs, renameSync: (from: import("node:fs").PathLike, to: import("node:fs").PathLike) => {
-    if ((faults.brain && String(to) === faults.brain && String(from).startsWith(`${faults.brain}.restore-`)) || (faults.store && String(to) === faults.store && String(from).includes(".switchyard-restore-"))) throw new Error("simulated final swap failure");
+    if ((faults.brain && String(to) === faults.brain && String(from).startsWith(`${faults.brain}.restore-`)) || (faults.store && String(to) === faults.store && String(from).includes(".meritrouter-restore-"))) throw new Error("simulated final swap failure");
     return fs.renameSync(from, to);
   } };
 });
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => { faults.brain = ""; faults.store = ""; await sy?.close(); sy = undefined; env?.cleanup(); env = undefined; });
 
 const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: "pipe" }).trim();

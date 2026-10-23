@@ -33,7 +33,7 @@ export const ACTIVE_MERGE_STATES: ReadonlySet<MergeState> = new Set(["queued", "
 /** Attempts an item gets: the first, and one retry after a crash mid-integration. */
 export const MAX_MERGE_ATTEMPTS = 2;
 
-/** Fault-hook name (`SWITCHYARD_FAULT_AT=after_tool_run:<n>:merge_queue_pick`): after the n-th pick. */
+/** Fault-hook name (`MERITROUTER_FAULT_AT=after_tool_run:<n>:merge_queue_pick`): after the n-th pick. */
 export const MERGE_PICK_FAULT = "merge_queue_pick";
 
 /** Who decided to integrate a result that needed acceptance, and why (recorded once the picks succeed). */

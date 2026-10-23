@@ -2,7 +2,7 @@ import { afterEach, expect, it } from 'vitest';
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import type { Switchyard } from '../src/core/service.js';
+import type { MeritRouter } from '../src/core/service.js';
 import type { RunContext } from '../src/runners/types.js';
 import { prepareWorkspace } from '../src/runners/coding/finish.js';
 import { createCodingRunner } from '../src/runners/coding/index.js';
@@ -12,7 +12,7 @@ import { WorkerActionRequests, type WorkerActionRequest } from '../src/harness/w
 import { LabSupervisorLease } from '../src/operations/lab-supervisor.js';
 import { baseConfig, makeEnv, open, openWithTestSupervisor, reply, goodOutput, servedFor, ScriptedClient, type Env } from './helpers.js';
 
-let env: Env | undefined, sy: Switchyard | undefined;
+let env: Env | undefined, sy: MeritRouter | undefined;
 let captured: RunContext | undefined;
 afterEach(async () => {
   // These worker tests never start an engine or dedicated Lab daemon. Closing cancels pending waits.

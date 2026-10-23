@@ -1,4 +1,4 @@
-import { insights } from "switchyard-router";
+import { insights } from "meritrouter";
 import { handle } from "@/lib/api";
 
 export const dynamic = "force-dynamic";

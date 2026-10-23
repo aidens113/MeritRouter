@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { purposeCategory, REQUEST_PURPOSES, type RequestPurpose } from "../admission/admission.js";
-import type { Switchyard } from "../core/service.js";
+import type { MeritRouter } from "../core/service.js";
 import type { TaskState } from "../core/task.js";
 import { criticalPath as plannedPath, PlanStore } from "../storage/plans.js";
 import { WAITING_FOR_FILE_LEASE, WAITING_FOR_PROJECT_CAP, type StoredTask } from "../storage/tasks.js";
@@ -114,7 +114,7 @@ function chunks<T>(xs: T[], n = 400): T[][] {
 }
 
 /** The task and every task under it (sub-jobs' tasks included), root first. */
-function treeOf(sy: Switchyard, root: StoredTask): StoredTask[] {
+function treeOf(sy: MeritRouter, root: StoredTask): StoredTask[] {
   const all = [root];
   let level = [root];
   for (let depth = 0; depth < 8 && level.length; depth++) {
@@ -124,7 +124,7 @@ function treeOf(sy: Switchyard, root: StoredTask): StoredTask[] {
   return all;
 }
 
-function eventsByTask(sy: Switchyard, ids: string[]): Map<string, Array<{ ts: number; type: string; data: string | null }>> {
+function eventsByTask(sy: MeritRouter, ids: string[]): Map<string, Array<{ ts: number; type: string; data: string | null }>> {
   const out = new Map<string, Array<{ ts: number; type: string; data: string | null }>>();
   for (const part of chunks(ids)) {
     const rows = sy.db.prepare(`SELECT task_id, ts, type, data_json FROM events WHERE task_id IN (${part.map(() => "?").join(",")}) ORDER BY id`).all(...part);
@@ -291,7 +291,7 @@ export function longestChain(nodes: Array<{ id: string; label: string; agentMs: 
   return { labels, agentMs: best.get(end)!.ms };
 }
 
-function requestTotals(sy: Switchyard, taskIds: string[]): { total: number; failed: number; costUsd: number; byPurpose: Record<RequestPurpose, number> } {
+function requestTotals(sy: MeritRouter, taskIds: string[]): { total: number; failed: number; costUsd: number; byPurpose: Record<RequestPurpose, number> } {
   const byPurpose = Object.fromEntries(REQUEST_PURPOSES.map((p) => [p, 0])) as Record<RequestPurpose, number>;
   const seen = new Set<string>();
   let failed = 0;
@@ -317,7 +317,7 @@ function requestTotals(sy: Switchyard, taskIds: string[]): { total: number; fail
 }
 
 /** Metrics for a job and everything under it, or for one agent's task; null for an unknown id. */
-export function jobMetrics(sy: Switchyard, id: string, opts: { now?: number } = {}): JobMetrics | null {
+export function jobMetrics(sy: MeritRouter, id: string, opts: { now?: number } = {}): JobMetrics | null {
   const root = sy.tasks.get(id);
   if (!root) return null;
   const now = opts.now ?? Date.now();
@@ -430,7 +430,7 @@ export function summaryOf(m: JobMetrics): JobMetricsSummary {
 }
 
 /** Metric summaries of the newest jobs (sub-jobs included), newest first; `project` limits them to one project's jobs. */
-export function teamMetrics(sy: Switchyard, opts: { limit?: number; now?: number; project?: string } = {}): JobMetricsSummary[] {
+export function teamMetrics(sy: MeritRouter, opts: { limit?: number; now?: number; project?: string } = {}): JobMetricsSummary[] {
   const rows = (
     opts.project
       ? sy.db.prepare("SELECT id FROM tasks WHERE profile = 'supervise' AND project_id = ? ORDER BY created_at DESC LIMIT ?").all(opts.project, opts.limit ?? 50)

@@ -92,7 +92,7 @@ export function validateComposeCanonical(raw: unknown, authorityInput: unknown) 
     const mounts = service.volumes.map(m => ({ source: m.source, target: m.target, readOnly: m.read_only }));
     if (composeCanonicalHash(mounts) !== composeCanonicalHash(approved.mounts)) throw new Error("compose_mount_denied");
     for (const mount of mounts) {
-      if (/docker\.sock|(?:^|[\\/])\.git(?:[\\/]|$)|(?:^|[\\/])\.switchyard(?:[\\/]|$)/i.test(mount.target + " " + mount.source) || path.resolve(mount.source) === path.resolve(authority.worktree)) throw new Error("compose_mount_denied");
+      if (/docker\.sock|(?:^|[\\/])\.git(?:[\\/]|$)|(?:^|[\\/])\.meritrouter(?:[\\/]|$)/i.test(mount.target + " " + mount.source) || path.resolve(mount.source) === path.resolve(authority.worktree)) throw new Error("compose_mount_denied");
       const permitted = [authority.worktree, ...authority.dataRoots].some(root => {
         try { composeOwnedPath(root, mount.source); return true; } catch { return false; }
       });

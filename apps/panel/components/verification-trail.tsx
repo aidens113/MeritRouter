@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { ArrowRight, FlaskConical, RefreshCcw, ShieldAlert, ShieldCheck, TrendingUp } from "lucide-react";
-import type { insights } from "switchyard-router";
+import type { insights } from "meritrouter";
 import { Badge, cx, HelpTip, Mono, type Tone } from "./ui";
 import { ArtifactViewer } from "./client/artifact-viewer";
 import { dateTime, humanize, modelHref, shortId } from "@/lib/format";

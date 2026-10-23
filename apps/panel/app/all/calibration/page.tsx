@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Scale } from "lucide-react";
-import { insights } from "switchyard-router";
+import { insights } from "meritrouter";
 import { getSy } from "@/lib/sy";
 import { SetupScreen } from "@/components/setup";
 import { Badge, Card, CardHeader, cx, EmptyState, Stat, type Tone } from "@/components/ui";

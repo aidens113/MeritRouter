@@ -6,7 +6,7 @@ import type { ProviderRuntime } from "./runtime.js";
 
 /**
  * Testing a key: list the provider's models with it (no chat request, no completion quota). The
- * panel's Test button and `switchyard keys test` / `keys add --test` both use this, so a stored
+ * panel's Test button and `meritrouter keys test` / `keys add --test` both use this, so a stored
  * key's state changes the same way from either: a key the provider rejects (or reports out of
  * credits) is recorded as a failed request would record it, and a key recorded as invalid whose
  * listing now works is cleared. Error messages arrive with secrets already masked by the

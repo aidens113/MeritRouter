@@ -1,11 +1,11 @@
 import { afterEach, expect, it, vi } from "vitest";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { Scheduler } from "../src/core/scheduler.js";
 import type { Executor } from "../src/core/executor.js";
 import { WorkerTaskSchema } from "../src/core/task.js";
 import { baseConfig, makeEnv, open, reply, ScriptedClient, summarizeTask, type Env } from "./helpers.js";
 
-let env: Env | undefined, sy: Switchyard | undefined, scheduler: Scheduler | undefined;
+let env: Env | undefined, sy: MeritRouter | undefined, scheduler: Scheduler | undefined;
 const releases: Array<() => void> = [];
 afterEach(async () => { releases.splice(0).forEach(release => release()); await scheduler?.stop(); scheduler = undefined; await sy?.close(); sy = undefined; env?.cleanup(); env = undefined; vi.restoreAllMocks(); });
 function barrier() { let release!: () => void; const promise = new Promise<void>(r => { release = r; }); releases.push(release); return { promise, release }; }

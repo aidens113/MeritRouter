@@ -1,3 +1,4 @@
+import { labOwnershipMarker } from "./ownership-marker.js";
 import { TaskLabLifecycle } from "./task-attempt.js";
 import { taskLabUsesCapacity } from "./task-attempt-runner.js";
 import { readBrowserScreenshot } from "./browser-artifacts.js";
@@ -11,7 +12,7 @@ import type { TaskStore } from "../storage/tasks.js";
 import type { WorkerTask } from "../core/task.js";
 import { worktreeHead } from "./revisions.js";
 import { pruneTaskWorktrees, type LabRetentionResult } from "./retention.js";
-import { SwitchyardError } from "../core/errors.js";
+import { MeritRouterError } from "../core/errors.js";
 import path from "node:path";
 import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
@@ -76,9 +77,9 @@ export class LabManager {
   }
   private async track<T>(fn: () => Promise<T>, key: string): Promise<T> {
     if (this.closed)
-      throw new SwitchyardError("lab_invalid_state", "lab manager is closed");
+      throw new MeritRouterError("lab_invalid_state", "lab manager is closed");
     if (this.busyLabs.has(key))
-      throw new SwitchyardError("lab_invalid_state", "another operation is in progress for this lab");
+      throw new MeritRouterError("lab_invalid_state", "another operation is in progress for this lab");
     this.busyLabs.add(key);
     const operation = fn();
     this.operations.add(operation);
@@ -169,7 +170,7 @@ export class LabManager {
   }
   private assertRetained(project: string, name: string): void {
     if (this.require(project, name).kind !== "retained")
-      throw new SwitchyardError("lab_scope_denied", "task Labs are managed only by their exact attempt lifecycle");
+      throw new MeritRouterError("lab_scope_denied", "task Labs are managed only by their exact attempt lifecycle");
   }
   private async executeControl(project: string, name: string, input: LabOperationInput): Promise<unknown> {
     if(input.kind!=="create")this.assertRetained(project,name);
@@ -217,7 +218,7 @@ export class LabManager {
     const parsed = z.record(z.string(), z.string().regex(/^[a-f0-9]{40,64}$/)).parse(expectedHeads);
     for (const [alias, head] of Object.entries(parsed))
       if (before.heads[alias] !== head)
-        throw new SwitchyardError("lab_revision_changed", "lab advanced before its integration hook could run");
+        throw new MeritRouterError("lab_revision_changed", "lab advanced before its integration hook could run");
     const order: string[] = [];
     const visit = (service: string) => {
       if (order.includes(service))
@@ -236,7 +237,7 @@ export class LabManager {
         out.push(await this.checkLab(project, name, nameOfCheck));
     for (const [alias, head] of Object.entries(parsed))
       if (this.status(project, name).heads[alias] !== head)
-        throw new SwitchyardError("lab_revision_changed", "lab advanced while its integration checks ran");
+        throw new MeritRouterError("lab_revision_changed", "lab advanced while its integration checks ran");
     return out;
   }
   claimJob(project: string, name: string, jobId: string, tasks: TaskStore): LabRunContext {
@@ -307,10 +308,10 @@ export class LabManager {
     const status=this.status(project,name);
     z.string().max(100).regex(/^lc_[a-z0-9]+$/).parse(checkId);z.string().max(100).regex(/^lba_[a-z0-9]+$/).parse(artifactId);
     const row=z.object({result_json:z.string()}).optional().parse(this.options.db.prepare("SELECT result_json FROM lab_checks WHERE id=? AND lab_id=?").get(checkId,status.lab.id));
-    if(!row)throw new SwitchyardError("not_found","unknown browser check artifact");
+    if(!row)throw new MeritRouterError("not_found","unknown browser check artifact");
     const result=LabCheckResultSchema.parse(JSON.parse(row.result_json));
     const artifact=result.browser?.artifacts.find(item=>item.id===artifactId);
-    if(!artifact)throw new SwitchyardError("not_found","unknown browser check artifact");
+    if(!artifact)throw new MeritRouterError("not_found","unknown browser check artifact");
     return {metadata:artifact,bytes:readBrowserScreenshot(status.lab,checkId,artifact)};
   }
   private require(project: string, name: string): LabRecord {
@@ -319,13 +320,13 @@ export class LabManager {
     this.options.project(project);
     const lab = this.store.get(project, name);
     if (!lab || lab.state === "destroyed")
-      throw new SwitchyardError("not_found", `unknown lab ${project}/${name}`);
+      throw new MeritRouterError("not_found", `unknown lab ${project}/${name}`);
     const expected = path.resolve(this.options.storageDir, "labs", project, name);
     if (path.resolve(lab.root) !== expected)
       throw new Error("recorded lab root does not match its project and name");
     labOwnedPath(this.options.storageDir, lab.root);
     if (existsSync(lab.root)) {
-      const marker = labOwnedPath(this.options.storageDir, path.join(lab.root, ".switchyard-lab.json"));
+      const marker = labOwnedPath(this.options.storageDir, labOwnershipMarker(lab.root));
       const proof = z.object({ id: z.literal(lab.id), project: z.literal(project), name: z.literal(name) }).safeParse(JSON.parse(readFileSync(marker, "utf8")));
       if (!proof.success)
         throw new Error("lab directory ownership marker does not match persisted identity");
@@ -377,10 +378,10 @@ export class LabManager {
     const ctx = this.options.project(project);
     const projectConfig = ProjectConfigSchema.parse(this.options.cfg.projects[project] ?? {});
     if (!projectConfig.lab)
-      throw new SwitchyardError("lab_not_configured", `project ${project} has no configured lab recipe`);
+      throw new MeritRouterError("lab_not_configured", `project ${project} has no configured lab recipe`);
     for (const alias of Object.keys(input.targetBranches ?? {}))
       if (!Object.hasOwn(ctx.repositoryPaths, alias))
-        throw new SwitchyardError("lab_invalid_input", `unknown target repository ${alias}`);
+        throw new MeritRouterError("lab_invalid_input", `unknown target repository ${alias}`);
     const recipe = validateRecipe(projectConfig.lab, Object.keys(ctx.repositoryPaths));
     if (!Object.keys(ctx.repositoryPaths).length)
       throw new Error("a lab needs a project repository");
@@ -393,9 +394,9 @@ export class LabManager {
     immediate(this.options.db, () => {
       const all = this.store.list().filter(l => taskLabUsesCapacity(this,l));
       if (all.length >= cfg.max_active || all.filter(l => l.project === project).length >= (projectConfig.labs.max_active ?? cfg.max_active))
-        throw new SwitchyardError("lab_limit_reached", "active lab limit reached");
+        throw new MeritRouterError("lab_limit_reached", "active lab limit reached");
       if (this.store.get(project, name))
-        throw new SwitchyardError("lab_conflict", "lab name already exists; destroyed lab branches are preserved, choose a new name");
+        throw new MeritRouterError("lab_conflict", "lab name already exists; destroyed lab branches are preserved, choose a new name");
       this.store.insert(lab);
       this.options.db.prepare("UPDATE labs SET creation_owner=?,creation_until=? WHERE id=?").run(this.owner, Date.now() + 120000, lab.id);
     });
@@ -406,7 +407,7 @@ export class LabManager {
         throw new Error("lab directory already exists and is not adopted during creation");
       mkdirSync(path.dirname(root), { recursive: true });
       mkdirSync(root);
-      writeFileSync(path.join(root, ".switchyard-lab.json"), JSON.stringify({ id: lab.id, project, name }), { flag: "wx" });
+      writeFileSync(path.join(root, ".meritrouter-lab.json"), JSON.stringify({ id: lab.id, project, name }), { flag: "wx" });
       mkdirSync(path.join(root, "logs"), { recursive: true });
       for (const data of [...recipe.data, "home", "cache"])
         mkdirSync(path.join(root, "data", data), { recursive: true });
@@ -420,7 +421,7 @@ export class LabManager {
         await git(source.path, ["show-ref", "--verify", `refs/heads/${target}`]);
         const base = (await git(source.path, ["rev-parse", "--verify", "--end-of-options", `${target}^{commit}`])).trim();
         const projectPart = project.replace(/[^a-z0-9-]/g, "-");
-        const branch = `switchyard/lab-${projectPart}-${name}-${lab.id.slice(-6)}`;
+        const branch = `meritrouter/lab-${projectPart}-${name}-${lab.id.slice(-6)}`;
         const worktree = labOwnedPath(this.options.storageDir, path.join(root, "repos", alias));
         mkdirSync(path.dirname(worktree), { recursive: true });
         lab.repositories.push({ alias, source: source.path, worktree, branch, target, base });
@@ -461,7 +462,7 @@ export class LabManager {
   private async startLab(project: string, name: string): Promise<LabStatus> {
     const lab = this.require(project, name);
     if (["creating", "starting"].includes(lab.state))
-      throw new SwitchyardError("lab_invalid_state", "lab creation is incomplete");
+      throw new MeritRouterError("lab_invalid_state", "lab creation is incomplete");
     lab.state = "starting";
     lab.updatedAt = Date.now();
     this.store.save(lab);
@@ -499,7 +500,7 @@ export class LabManager {
   private async stopLab(project: string, name: string): Promise<LabStatus> {
     const lab = this.require(project, name);
     if (["creating", "starting"].includes(lab.state))
-      throw new SwitchyardError("lab_invalid_state", "lab operation is still in progress");
+      throw new MeritRouterError("lab_invalid_state", "lab operation is still in progress");
     for (const service of this.store.services(lab.id).reverse())
       await this.services.stop(lab, service.name);
     lab.state = "stopped";
@@ -511,7 +512,7 @@ export class LabManager {
   private async restartLab(project: string, name: string, service?: string): Promise<LabStatus> {
     const lab = this.require(project, name);
     if (["creating", "starting"].includes(lab.state))
-      throw new SwitchyardError("lab_invalid_state", "lab operation is still in progress");
+      throw new MeritRouterError("lab_invalid_state", "lab operation is still in progress");
     if (service) {
       if (!Object.hasOwn(lab.recipe.services, service))
         throw new Error("unknown lab service");
@@ -540,17 +541,17 @@ export class LabManager {
   private async refreshLab(project: string, name: string): Promise<LabStatus> {
     let lab = this.require(project, name);
     if (["creating", "starting"].includes(lab.state))
-      throw new SwitchyardError("lab_invalid_state", "lab operation is still in progress");
+      throw new MeritRouterError("lab_invalid_state", "lab operation is still in progress");
     for (const repo of lab.repositories)
       if ((await dirtyPaths(repo.worktree)).length)
-        throw new SwitchyardError("lab_dirty", "lab has uncommitted changes; commit them before refreshing");
+        throw new MeritRouterError("lab_dirty", "lab has uncommitted changes; commit them before refreshing");
     const running = lab.state === "running";
     if (running)
       await this.stopLab(project, name);
     lab = this.require(project, name);
     try {
       for (const repo of lab.repositories) {
-        await git(repo.worktree, ["-c", "user.name=SwitchYard", "-c", "user.email=switchyard@localhost", "merge", "--no-edit", `refs/heads/${repo.target}`]);
+        await git(repo.worktree, ["-c", "user.name=MeritRouter", "-c", "user.email=meritrouter@localhost", "merge", "--no-edit", `refs/heads/${repo.target}`]);
         repo.base = (await git(repo.source, ["rev-parse", "--verify", "--end-of-options", `${repo.target}^{commit}`])).trim();
       }
       lab.state = "stopped";
@@ -573,10 +574,10 @@ export class LabManager {
   private async destroyLab(project: string, name: string): Promise<void> {
     const lab = this.require(project, name);
     if (["creating", "starting"].includes(lab.state))
-      throw new SwitchyardError("lab_invalid_state", "lab operation is still in progress");
+      throw new MeritRouterError("lab_invalid_state", "lab operation is still in progress");
     for (const repo of lab.repositories)
       if (existsSync(repo.worktree) && (await dirtyPaths(repo.worktree)).length)
-        throw new SwitchyardError("lab_dirty", "lab has uncommitted changes; commit them before destroying so the branch retains the work");
+        throw new MeritRouterError("lab_dirty", "lab has uncommitted changes; commit them before destroying so the branch retains the work");
     await this.stopLab(project, name);
     for (const repo of lab.repositories) {
       labOwnedPath(this.options.storageDir, repo.worktree);

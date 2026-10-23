@@ -6,13 +6,13 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
-import { insights, loadConfig, Switchyard } from "switchyard-router";
+import { insights, loadConfig, MeritRouter } from "meritrouter";
 
 const app = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const demo = path.join(app, ".demo"), config = path.join(demo, "switchyard.config.yaml");
+const demo = path.join(app, ".demo"), config = path.join(demo, "meritrouter.config.yaml");
 const cfg = loadConfig(config); assert(path.resolve(cfg.storageDir).startsWith(demo + path.sep));
 assert(path.resolve(path.dirname(config), cfg.brain.path).startsWith(demo + path.sep));
-const sy = new Switchyard(cfg, { worker: false });
+const sy = new MeritRouter(cfg, { worker: false });
 for (const project of sy.projects.list()) for (const repo of Object.values(project.repositoryPaths)) assert(path.resolve(repo.path).startsWith(demo + path.sep));
 const port = 4497, cdpPort = 9373, base = `http://127.0.0.1:${port}`;
 const require = createRequire(import.meta.url), profile = mkdtempSync(path.join(demo, "historical-session-browser-"));
@@ -45,7 +45,7 @@ try {
  sy.db.prepare('DELETE FROM request_charges WHERE request_id=? AND task_id=?').run(request,foreign.id);
  sy.db.prepare('DELETE FROM execution_members WHERE execution_id=? AND task_id=?').run(execution,foreign.id);
  const count=sy.db.prepare('SELECT COUNT(*) n FROM model_requests').get().n;
- server = spawn(process.execPath, [require.resolve('next/dist/bin/next'),'start','-H','127.0.0.1','-p',String(port)],{cwd:app,env:{...process.env,SWITCHYARD_CONFIG:config,SWITCHYARD_PROJECT:'',SWITCHYARD_PANEL_TOKEN:''},stdio:'ignore',windowsHide:true});
+ server = spawn(process.execPath, [require.resolve('next/dist/bin/next'),'start','-H','127.0.0.1','-p',String(port)],{cwd:app,env:{...process.env,MERITROUTER_CONFIG:config,MERITROUTER_PROJECT:'',MERITROUTER_PANEL_TOKEN:''},stdio:'ignore',windowsHide:true});
  await until(async()=>{try{return(await fetch(base+'/p/demo/sessions')).ok;}catch{return false;}},'production server');
  for(const query of ['', '?after=2','?after=999','?tab=details','?tab=requests']){
    const html=await http(`/p/demo/sessions/${recorder.id}${query}`);assert(html.includes('Historical timeline unavailable'));assert(!html.includes('FOREIGN_HISTORICAL_SENTINEL'));assert(!html.includes(foreign.id));

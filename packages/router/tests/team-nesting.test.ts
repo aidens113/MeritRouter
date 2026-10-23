@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import type { ChatRequest } from "../src/gateway/types.js";
 import { blame } from "../src/attribution/index.js";
 import { carvedRequests, carvesOf, childRequestBudget } from "../src/admission/admission.js";
@@ -17,7 +17,7 @@ import { baseConfig, goodOutput, makeEnv, openWithTestSupervisor as open, reply,
  */
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 beforeEach(() => resetFaults());
 afterEach(async () => {
   delete process.env[FAULT_ENV];
@@ -114,7 +114,7 @@ describe("sub-supervisors", () => {
     // The budget: half of what the parent had left (30 - 1 used) when it delegated.
     expect(child!.spec.budget?.maxModelRequests).toBe(14);
     expect(carvesOf(sy.db, job.taskId)).toEqual([expect.objectContaining({ childTaskId: child!.row.id, requests: 14, parentRemaining: 29, share: 0.5, depth: 2 })]);
-    expect(toolOutputs(parentLast)[0]).toMatch(/sub -> t_\w+ \(queued\); sub-supervisor with 14 requests on branch switchyard\/job-t_/);
+    expect(toolOutputs(parentLast)[0]).toMatch(/sub -> t_\w+ \(queued\); sub-supervisor with 14 requests on branch meritrouter\/job-t_/);
     // A finished sub-job counts the supervisor and its workers, not its whole carve.
     const childWorkerRequests = sy!.tasks.childrenOf(child!.row.id).reduce((used, task) => used + sy!.admission.taskTotals(task.row.id).requests, 0);
     expect(carvedRequests(sy.db, job.taskId)).toBe(sy.admission.taskTotals(child!.row.id).requests + childWorkerRequests);
@@ -133,8 +133,8 @@ describe("sub-supervisors", () => {
     expect(String(childLast.messages[0]!.content)).toMatch(/Sub-job of job t_\w+ \(supervisor level 2 of at most 2\)/);
 
     // Branches: the sub-job's forks from the parent's as it was at delegation.
-    const parentBranch = `switchyard/job-${job.taskId}`;
-    const childBranch = `switchyard/job-${child!.row.id}`;
+    const parentBranch = `meritrouter/job-${job.taskId}`;
+    const childBranch = `meritrouter/job-${child!.row.id}`;
     const parentBase = sy.sessions.forTask(job.taskId).at(-1)!.workspace!.repos[0]!.baseCommit!;
     expect(child!.spec.context.baseCommits).toEqual({ core: parentBase });
     expect(gitOut(env.repo, "merge-base", childBranch, parentBranch).trim()).toBe(parentBase);
@@ -155,9 +155,9 @@ describe("sub-supervisors", () => {
     expect(parentQueue.forJob(job.taskId)).toEqual([expect.objectContaining({ kind: "job", taskId: child!.row.id, branch: parentBranch, state: "integrated", commits: expect.any(Array) })]);
     expect(parentQueue.forJob(child!.row.id)).toEqual([expect.objectContaining({ kind: "task", taskId: w1!.row.id, branch: childBranch, state: "integrated" })]);
     expect(parentQueue.forJob(job.taskId)[0]!.detail.checks).toEqual([expect.objectContaining({ command: check, exitCode: 0 })]);
-    expect(toolOutputs(parentLast)[2]).toMatch(/integrated \d+ commit\(s\) from t_\w+ onto switchyard\/job-.*job checks after it: 1 passed/);
+    expect(toolOutputs(parentLast)[2]).toMatch(/integrated \d+ commit\(s\) from t_\w+ onto meritrouter\/job-.*job checks after it: 1 passed/);
     // Integrating again picks nothing twice.
-    expect(toolOutputs(parentLast)[3]).toMatch(/already integrated onto switchyard\/job-.*nothing was picked again/);
+    expect(toolOutputs(parentLast)[3]).toMatch(/already integrated onto meritrouter\/job-.*nothing was picked again/);
     expect(sy.tasks.events(child!.row.id, 200).map((e) => e.type)).toEqual(expect.arrayContaining(["merge_queued", "merge_integrating", "merge_integrated", "merge_checks", "integrated"]));
 
     // Sessions link the tree: the sub-job's session's parent is the parent job's session.
@@ -223,7 +223,7 @@ function enqueue(q: MergeQueue, f: Fixture, taskId: string, w: { wt: string; hea
 
 function hooks(o: { integrated?: string[]; redelegated?: string[]; redelegateTo?: string; checksMs?: number; active?: { now: number; max: number } } = {}): MergeHooks {
   return {
-    committer: { name: "supervisor:test", email: "supervisor@switchyard.local" },
+    committer: { name: "supervisor:test", email: "supervisor@meritrouter.local" },
     integrated: (item) => o.integrated?.push(item.taskId),
     checks: async () => {
       if (o.active) o.active.max = Math.max(o.active.max, ++o.active.now);
@@ -390,7 +390,7 @@ describe("merge queue under supervisor resume", () => {
     const item = new MergeQueue(sy.db, sy.tasks, "reader").forJob(job.taskId)[0]!;
     expect(item).toMatchObject({ state: "integrated", attempts: 2 });
     expect(sy.tasks.events(w!.row.id, 200).find((e) => e.type === "merge_recovered")?.data).toMatchObject({ outcome: "retried", present: 1, missing: 1 });
-    expect(notices.join("\n")).toMatch(new RegExp(`- ${w!.row.id} onto switchyard/job-${job.taskId}: integrated \\(2 commit\\(s\\)`));
+    expect(notices.join("\n")).toMatch(new RegExp(`- ${w!.row.id} onto meritrouter/job-${job.taskId}: integrated \\(2 commit\\(s\\)`));
     const sup = client.requests.filter(isSupervisor).at(-1)!;
     expect(toolOutputs(sup).at(-1)).toMatch(/already integrated onto .*nothing was picked again/);
     // Each worker commit is on the job branch exactly once.

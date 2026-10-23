@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { insights } from "switchyard-router";
+import { insights } from "meritrouter";
 import { body, handle, HttpError } from "@/lib/api";
 
 const Body = z.object({ id: z.string().min(1).max(1000), reason: z.string().trim().min(1).max(2000) }).strict();

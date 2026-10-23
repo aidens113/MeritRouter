@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { GatewayError } from "../src/core/errors.js";
 import { WorkerTaskSchema } from "../src/core/task.js";
 import { narrowedScope, taskWriteScope } from "../src/harness/task-scope.js";
 import { baseConfig, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, summarizeTask, type Env } from "./helpers.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => { await sy?.close(); sy = undefined; env?.cleanup(); env = undefined; });
 const start = () => (sy as unknown as { startWorker(ms: number): void }).startWorker(25);
 

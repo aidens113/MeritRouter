@@ -1,8 +1,8 @@
 // Stand-in coding agent for tests. Talks only to the job gateway it is given.
 import { readFileSync, writeFileSync } from "node:fs";
 
-const base = process.env.SWITCHYARD_BASE_URL;
-const token = process.env.SWITCHYARD_JOB_TOKEN;
+const base = process.env.MERITROUTER_BASE_URL;
+const token = process.env.MERITROUTER_JOB_TOKEN;
 const mode = process.argv[2] ?? "good";
 
 async function chat(content) {

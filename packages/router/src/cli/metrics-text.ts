@@ -3,8 +3,8 @@ import { WAIT_REASONS } from "../admin/job-metrics.js";
 import type { ComparisonPlan, ComparisonRecord, ComparisonRunRecord } from "../qualification/comparison.js";
 import { duration, oneLine, plural, table } from "./terminal.js";
 
-// Team metrics and team-vs-single comparisons as terminal text (`switchyard metrics`,
-// `switchyard compare`).
+// Team metrics and team-vs-single comparisons as terminal text (`meritrouter metrics`,
+// `meritrouter compare`).
 
 const ms = (v: number | null) => (v === null ? "-" : duration(v));
 const usd = (v: number | null) => (v === null ? "-" : `$${v.toFixed(4)}`);
@@ -33,7 +33,7 @@ function sparkline(m: JobMetrics, width = 48): string {
   return cols.map((v) => glyphs[Math.round((v / m.parallelism.peak) * (glyphs.length - 1))]).join("");
 }
 
-/** `switchyard metrics <job>`. */
+/** `meritrouter metrics <job>`. */
 export function metricsText(m: JobMetrics): string {
   const waits = WAIT_REASONS.filter((r) => m.waiting.byReason[r] > 0).map((r) => `${r.replace("_", " ")} ${duration(m.waiting.byReason[r])}`);
   const spark = sparkline(m);
@@ -71,7 +71,7 @@ function summaryRow(s: JobMetricsSummary): Record<string, unknown> {
   };
 }
 
-/** The plan `switchyard compare` states before it runs (and all of `--dry-run`). */
+/** The plan `meritrouter compare` states before it runs (and all of `--dry-run`). */
 export function comparisonPlanText(p: ComparisonPlan): string {
   const rows = p.goals.map((g) => ({ goal: g.id, source: g.source, profile: g.profile, "single cap": g.singleRequests, "team cap": g.teamRequests, repository: g.repository ?? "fixture copy" }));
   return [
@@ -113,7 +113,7 @@ export function comparisonText(c: ComparisonRecord): string {
   ].join("\n");
 }
 
-/** `switchyard compare list`. */
+/** `meritrouter compare list`. */
 export function comparisonsTable(list: ComparisonRecord[]): string {
   return table(
     list.map((c) => {

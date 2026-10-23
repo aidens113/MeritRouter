@@ -2,11 +2,11 @@ import { afterEach, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { LabManager } from "../src/labs/lab.js";
 import { baseConfig, goodOutput, makeEnv, openWithTestSupervisor, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 let owner: LabManager | undefined;
 afterEach(async () => {
   await owner?.close();

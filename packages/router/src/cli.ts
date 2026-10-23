@@ -6,13 +6,13 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { loadConfig, resolveConfigPath, DEFAULT_CONFIG_NAME } from "./config/load.js";
 import { PROFILE_NAMES, TIER_NAMES, type ProfileName, type TierName } from "./config/schema.js";
-import { Switchyard } from "./core/service.js";
+import { MeritRouter } from "./core/service.js";
 import { createCodingRunner } from "./runners/coding/index.js";
 import { z } from "zod";
 import { brainAccessRequests, brainRead, brainSearch, brainTree, budgetRequestsView, CHANNEL_KINDS, decideBrainAccess, decideBudgetRequest, decideTaskAcceptance, jobChannel, jobDetail, jobMetrics, jobPlan, jobsView, jobTeam, modelsView, routingPreview, selectableProjects, sessionDetail, sessionsView } from "./admin/insights.js";
 import { comparison, comparisons, planComparison, runComparison } from "./qualification/comparison.js";
 import { blame } from "./attribution/index.js";
-import { SwitchyardError } from "./core/errors.js";
+import { MeritRouterError } from "./core/errors.js";
 import { BUDGET_REQUEST_STATUSES, type BudgetRequestStatus } from "./admission/budget-requests.js";
 import { countFlag, repoFlags, statusFlag, withImportance } from "./cli/args.js";
 import { doctorChecks, doctorText } from "./cli/doctor.js";
@@ -34,7 +34,7 @@ import { ensurePanel, revivePanel } from "./operations/panel.js";
 import { mcpOptions, runMcpServer } from "./mcp/serve.js";
 import type { ScanSummary } from "./models/scanner.js";
 
-// The `switchyard` command: argument parsing and dispatch. Terminal rendering lives in src/cli/.
+// The `meritrouter` command: argument parsing and dispatch. Terminal rendering lives in src/cli/.
 
 /** Who accepts from this terminal: `cli:<os user>`. */
 function cliActor(): string {
@@ -53,7 +53,7 @@ const CLI_PATH = fileURLToPath(import.meta.url);
 function scanText(s: ScanSummary): string {
   return [
     s.providers.length ? `listed ${s.providers.length} provider(s): ${s.providers.join(", ")}; ${s.scanned} model(s), ${s.added.length} new, ${s.unavailable.length} now unavailable` : "no provider was listed",
-    ...(s.pendingConfirmation.length ? [`${s.pendingConfirmation.length} model(s) wait for parameter confirmation: switchyard models confirm <id>`] : []),
+    ...(s.pendingConfirmation.length ? [`${s.pendingConfirmation.length} model(s) wait for parameter confirmation: meritrouter models confirm <id>`] : []),
     ...s.errors.map((e) => `error: ${e}`),
   ].join("\n");
 }
@@ -114,7 +114,7 @@ async function main(): Promise<number> {
       "team-factor": { type: "string" },
       "team-requests": { type: "string" },
       yes: { type: "boolean", default: false },
-      // switchyard mcp (mcp/serve.ts)
+      // meritrouter mcp (mcp/serve.ts)
       "no-worker": { type: "boolean", default: false },
       "no-panel": { type: "boolean", default: false },
       http: { type: "boolean", default: false },
@@ -131,7 +131,7 @@ async function main(): Promise<number> {
   const json = values.json ?? false;
 
   if (cmd === "init" || cmd === "setup") {
-    if (args[0] && values.config) throw new SwitchyardError("usage", "choose a directory or --config, not both");
+    if (args[0] && values.config) throw new MeritRouterError("usage", "choose a directory or --config, not both");
     const configPath = values.config ? resolveConfigPath(values.config) : cmd === "init"
       ? path.join(path.resolve(args[0] ?? "."), DEFAULT_CONFIG_NAME)
       : args[0] ? path.join(path.resolve(args[0]), DEFAULT_CONFIG_NAME) : resolveConfigPath(values.config);
@@ -151,7 +151,7 @@ async function main(): Promise<number> {
     return 0;
   }
 
-  // The MCP server opens its own Switchyard (with or without a worker) and serves until its
+  // The MCP server opens its own MeritRouter (with or without a worker) and serves until its
   // client disconnects (stdio) or it is interrupted (HTTP).
   if (cmd === "mcp") {
     await runMcpServer(mcpOptions(values));
@@ -159,13 +159,13 @@ async function main(): Promise<number> {
   }
 
   const cfg = loadConfig(values.config);
-  // Operations work on the storage directory directly and must not open a Switchyard (restore
+  // Operations work on the storage directory directly and must not open a MeritRouter (restore
   // replaces the database; the daemon's worker runs in a child process).
   if (cmd === "backup" || cmd === "restore" || cmd === "daemon" || cmd === "service") return operationsCommand(cmd, args, values, cfg, json, CLI_PATH);
   const compareRun = cmd === "compare" && args[0] !== "list" && args[0] !== "show" && values.yes && !values["dry-run"];
   const worker = cmd === "worker" || (cmd === "submit" && values.wait) || compareRun;
-  const sy = new Switchyard(cfg, { worker, coding: createCodingRunner(cfg) });
-  // The project a command works in: --project, then SWITCHYARD_PROJECT, then the only project,
+  const sy = new MeritRouter(cfg, { worker, coding: createCodingRunner(cfg) });
+  // The project a command works in: --project, then MERITROUTER_PROJECT, then the only project,
   // then the project whose repository contains the working directory (see cli/project-select.ts).
   const explicit = values.project ?? process.env[PROJECT_ENV];
   const select: SelectOptions = { flag: values.project, env: process.env[PROJECT_ENV], cwd: process.cwd() };
@@ -183,7 +183,7 @@ async function main(): Promise<number> {
         return await projectsCommand(sy, args, values, json, select);
       case "labs": {
         const action = args[0] ?? "list";
-        if (explicit && ["serve", "supervisor-start", "supervisor-stop", "supervisor-status"].includes(action)) throw new SwitchyardError("usage", "Labs supervision serves every project in this installation; remove --project and SWITCHYARD_PROJECT");
+        if (explicit && ["serve", "supervisor-start", "supervisor-stop", "supervisor-status"].includes(action)) throw new MeritRouterError("usage", "Labs supervision serves every project in this installation; remove --project and MERITROUTER_PROJECT");
         if (action === "serve") { await serveLabs(sy); return 0; }
         if (action === "supervisor-start") { await ensureLabSupervisor(sy, CLI_PATH); out({ running: true }, json); return 0; }
         if (action === "supervisor-stop") { out({ stopped: await stopLabSupervisor(sy) }, json); return 0; }
@@ -198,7 +198,7 @@ async function main(): Promise<number> {
       }
       case "doctor": {
         // Reads stored state only: per-provider keys, health, and last listing; never calls a provider.
-        // Repositories are prepared first (created, set up with git), so only what SwitchYard cannot fix fails.
+        // Repositories are prepared first (created, set up with git), so only what MeritRouter cannot fix fails.
         const projects = explicit ? [project()] : undefined;
         const prepared = await sy.prepareRepositories(projects ? { projects } : {});
         const checks = doctorChecks(sy, { ...(projects ? { projects } : {}), prepared });
@@ -215,7 +215,7 @@ async function main(): Promise<number> {
         }
         if (sub === "show") {
           const m = modelsView(sy).find((x) => x.endpoint.id === args[1]);
-          if (!m) throw new SwitchyardError("not_found", `unknown model ${args[1]}`);
+          if (!m) throw new MeritRouterError("not_found", `unknown model ${args[1]}`);
           out(m, true);
           return 0;
         }
@@ -255,7 +255,7 @@ async function main(): Promise<number> {
       }
       case "route": {
         const [profile, tier] = args as [ProfileName, TierName];
-        if (!PROFILE_NAMES.includes(profile) || !TIER_NAMES.includes(tier)) throw new SwitchyardError("usage", "usage: route <profile> <T1|T2|T3>");
+        if (!PROFILE_NAMES.includes(profile) || !TIER_NAMES.includes(tier)) throw new MeritRouterError("usage", "usage: route <profile> <T1|T2|T3>");
         const p = routingPreview(sy, profile, tier);
         const rows = p.explanations.map((e) => ({ rank: e.rank ?? "-", model: e.endpointId, params: e.totalParametersB ?? "?", via: e.via ?? "", why: e.eligible ? "eligible" : e.reasons.join("; ") }));
         out(json ? p : `size floor ${p.floorB}B${p.forced ? " (forced by override)" : ""}\n${table(rows)}`, json);
@@ -309,7 +309,7 @@ async function main(): Promise<number> {
         return 0;
       case "resume": {
         const id = args[0];
-        if (!id) throw new SwitchyardError("usage", "usage: switchyard resume <session-id|task-id>");
+        if (!id) throw new MeritRouterError("usage", "usage: meritrouter resume <session-id|task-id>");
         // A session id continues that session; anything else is a task id. Output is JSON, as before.
         if (sy.sessions.get(id) || (id.startsWith("s_") && !sy.tasks.get(id))) out({ sessionId: id, ...sy.resumeSession(id, idScope()) }, true);
         else out({ taskId: id, state: sy.resumeTask(id, idScope()) }, true);
@@ -318,14 +318,14 @@ async function main(): Promise<number> {
       case "accept":
       case "reject": {
         const id = args[0];
-        if (!id) throw new SwitchyardError("usage", `usage: switchyard ${cmd} <task id> ${cmd === "reject" ? "--reason" : "[--reason]"} "<why>"`);
+        if (!id) throw new MeritRouterError("usage", `usage: meritrouter ${cmd} <task id> ${cmd === "reject" ? "--reason" : "[--reason]"} "<why>"`);
         const r = decideTaskAcceptance(sy, id, cmd, { kind: "human", id: cliActor() }, values.reason?.trim() || null, idScope());
         out(json ? r : `${r.taskId}: ${r.decision.decision} by ${r.decision.by.id}; acceptance ${r.acceptanceStatus}`, json);
         return 0;
       }
       case "artifact": {
         const a = sy.artifacts.read(args[0]!);
-        if (!a) throw new SwitchyardError("not_found", `unknown artifact ${args[0]}`);
+        if (!a) throw new MeritRouterError("not_found", `unknown artifact ${args[0]}`);
         process.stdout.write(a.content);
         return 0;
       }
@@ -339,7 +339,7 @@ ${table(rows)}`, json);
           return 0;
         }
         const run = await sy.qualifier.start(args[0], { ...(values.trials ? { trials: Number(values.trials) } : {}) });
-        out(json ? run : `started ${run.runId}: ${run.tasks} task(s) for ${run.endpointId}; a running worker executes and grades them (check with \`switchyard qualify status\`)`, json);
+        out(json ? run : `started ${run.runId}: ${run.tasks} task(s) for ${run.endpointId}; a running worker executes and grades them (check with \`meritrouter qualify status\`)`, json);
         return 0;
       }
       case "keys":
@@ -348,10 +348,10 @@ ${table(rows)}`, json);
         // Agents are about to work: bring back a panel the user turned off (panel.auto_start permitting).
         await revivePanel(cfg);
         const goal = args.join(" ").trim();
-        if (!goal || !values.repo?.length) throw new SwitchyardError("usage", 'usage: switchyard run "<goal>" --repo <alias> [--repo ...] [--check "<command>"] [--criteria "<text>"] [--wait]');
+        if (!goal || !values.repo?.length) throw new MeritRouterError("usage", 'usage: meritrouter run "<goal>" --repo <alias> [--repo ...] [--check "<command>"] [--criteria "<text>"] [--wait]');
         const job = await sy.startJob({ goal, project: project(), repositories: values.repo.flatMap((r) => r.split(",")), ...(values.lab ? { lab: values.lab } : {}), ...(values.check ? { checks: values.check } : {}), ...(values.criteria ? { acceptanceCriteria: values.criteria } : {}) });
         if (!values.wait) {
-          out(json ? job : `job ${job.taskId} ${job.state}. A worker runs it (switchyard worker, or the MCP server). Follow with: switchyard job ${job.taskId}`, json);
+          out(json ? job : `job ${job.taskId} ${job.state}. A worker runs it (meritrouter worker, or the MCP server). Follow with: meritrouter job ${job.taskId}`, json);
           return 0;
         }
         const r = await sy.awaitResults([job.taskId], { timeoutSeconds: Number(values.timeout ?? cfg.supervisor.job_timeout_seconds) });
@@ -365,13 +365,13 @@ ${table(rows)}`, json);
       }
       case "job": {
         const j = jobDetail(sy, args[0] ?? "");
-        if (!j) throw new SwitchyardError("not_found", `unknown job ${args[0]}`);
+        if (!j) throw new MeritRouterError("not_found", `unknown job ${args[0]}`);
         const team = jobTeam(sy, j.taskId)!;
         out(json ? { ...j, team } : [
           `${j.taskId} ${j.state}: ${j.goal}`,
           ...j.branches.map((b) => `branch ${b.branch} in ${b.alias} (${j.parentJobId ? "the parent job integrates it" : `merge with: git merge --no-ff ${b.branch}`})`),
           ...j.children.map((c) => `  ${c.label ?? c.taskId} [${c.profile}] ${c.state}${c.acceptance ? ` / ${c.acceptance}` : ""}`),
-          ...j.questions.filter((q) => !q.answer).map((q) => `  QUESTION ${q.id}: ${q.question}${q.options ? ` (${q.options.join(" / ")})` : ""}  -> switchyard answer ${q.id} "<answer>"`),
+          ...j.questions.filter((q) => !q.answer).map((q) => `  QUESTION ${q.id}: ${q.question}${q.options ? ` (${q.options.join(" / ")})` : ""}  -> meritrouter answer ${q.id} "<answer>"`),
           `working document: brain:${j.workingDoc}`,
           ...(j.result ? [`result: ${j.result.stopReason}, acceptance ${j.result.acceptanceStatus}`, j.result.summary] : []),
           ...jobTeamLines(team),
@@ -379,21 +379,21 @@ ${table(rows)}`, json);
         return 0;
       }
       case "channel": {
-        if (!args[0]) throw new SwitchyardError("usage", "usage: switchyard channel <job-id> [--after <post id>] [--limit <n>] [--kind finding,blocker,interface_contract] [--json]");
+        if (!args[0]) throw new MeritRouterError("usage", "usage: meritrouter channel <job-id> [--after <post id>] [--limit <n>] [--kind finding,blocker,interface_contract] [--json]");
         const kinds = values.kind === undefined ? undefined : z.array(z.enum(CHANNEL_KINDS)).min(1).safeParse(values.kind.split(",").map((k) => k.trim()).filter(Boolean));
-        if (kinds && !kinds.success) throw new SwitchyardError("usage", `--kind takes ${CHANNEL_KINDS.join(", ")} (comma-separated), got ${JSON.stringify(values.kind)}`);
+        if (kinds && !kinds.success) throw new MeritRouterError("usage", `--kind takes ${CHANNEL_KINDS.join(", ")} (comma-separated), got ${JSON.stringify(values.kind)}`);
         const after = countFlag("after", values.after);
         const limit = countFlag("limit", values.limit, 1);
         const c = jobChannel(sy, args[0], { ...(after !== undefined ? { afterId: after } : {}), ...(limit ? { limit } : {}), ...(kinds?.success ? { kinds: kinds.data } : {}) });
-        if (!c) throw new SwitchyardError("not_found", `unknown job ${args[0]}`);
+        if (!c) throw new MeritRouterError("not_found", `unknown job ${args[0]}`);
         out(json ? c : channelText(c), json);
         return 0;
       }
       case "metrics": {
         const id = args[0];
-        if (!id) throw new SwitchyardError("usage", "usage: switchyard metrics <job-id|task-id> [--json]");
+        if (!id) throw new MeritRouterError("usage", "usage: meritrouter metrics <job-id|task-id> [--json]");
         const m = jobMetrics(sy, id);
-        if (!m) throw new SwitchyardError("not_found", `unknown job or task ${id}`);
+        if (!m) throw new MeritRouterError("not_found", `unknown job or task ${id}`);
         out(json ? m : metricsText(m), json);
         return 0;
       }
@@ -405,7 +405,7 @@ ${table(rows)}`, json);
         }
         if (args[0] === "show") {
           const c = comparison(sy, args[1] ?? "");
-          if (!c) throw new SwitchyardError("not_found", `unknown comparison ${args[1] ?? ""}`);
+          if (!c) throw new MeritRouterError("not_found", `unknown comparison ${args[1] ?? ""}`);
           out(json ? c : comparisonText(c), json);
           return 0;
         }
@@ -420,7 +420,7 @@ ${table(rows)}`, json);
 ${values["dry-run"] ? "dry run: nothing ran" : `nothing ran: add --yes to run it (up to ${plan.plannedRequests} requests)`}`, json);
           return plan.fits ? 0 : 1;
         }
-        if (!plan.fits) throw new SwitchyardError("budget", `${comparisonPlanText(plan)}
+        if (!plan.fits) throw new MeritRouterError("budget", `${comparisonPlanText(plan)}
 the planned budget does not fit what is left of today's qualification allocation`);
         if (!json) out(comparisonPlanText(plan), false);
         sy.recover();
@@ -432,9 +432,9 @@ the planned budget does not fit what is left of today's qualification allocation
       }
       case "plan": {
         const id = args[0];
-        if (!id) throw new SwitchyardError("usage", "usage: switchyard plan <job-id> [--json]");
+        if (!id) throw new MeritRouterError("usage", "usage: meritrouter plan <job-id> [--json]");
         const p = jobPlan(sy, id);
-        if (!p) throw new SwitchyardError("not_found", `unknown job ${id}`);
+        if (!p) throw new MeritRouterError("not_found", `unknown job ${id}`);
         out(json ? p : planText(p), json);
         return 0;
       }
@@ -463,30 +463,30 @@ the planned budget does not fit what is left of today's qualification allocation
         } else if (sub === "approve" || sub === "deny") {
           const r = decideBrainAccess(sy, Number(args[1]), sub === "approve", args.slice(2).join(" ") || `${sub}d by the user`, idScope());
           out(`request ${r.id}: ${r.status}`, json);
-        } else throw new SwitchyardError("usage", "usage: brain ls [prefix] | read <path> | search <query> | requests | approve|deny <id> [reason]");
+        } else throw new MeritRouterError("usage", "usage: brain ls [prefix] | read <path> | search <query> | requests | approve|deny <id> [reason]");
         return 0;
       }
       case "budget": {
         const sub = args[0] ?? "list";
         if (sub === "list") {
           const status = values.status === "all" ? undefined : ((values.status ?? "pending") as BudgetRequestStatus);
-          if (status && !(BUDGET_REQUEST_STATUSES as readonly string[]).includes(status)) throw new SwitchyardError("usage", `--status is one of ${BUDGET_REQUEST_STATUSES.join(", ")}, or all`);
+          if (status && !(BUDGET_REQUEST_STATUSES as readonly string[]).includes(status)) throw new MeritRouterError("usage", `--status is one of ${BUDGET_REQUEST_STATUSES.join(", ")}, or all`);
           const reqs = budgetRequestsView(sy, { ...(status ? { status } : {}), ...(values.job ? { jobId: values.job } : {}), ...(listScope() ? { project: listScope()! } : {}) });
           const rows = reqs.map((r) => ({ id: r.id, task: r.label, job: r.jobId ?? "", status: r.status, asks: r.requests, used: `${r.used}/${r.cap}`, approver: r.approver, granted: r.granted || "", pool: r.pool ? (r.pool.cap === null ? "uncapped" : `${r.pool.available} of ${r.pool.cap}`) : "", reason: r.reason.slice(0, 60) }));
           out(json ? reqs : table(rows), json);
         } else if (sub === "approve" || sub === "deny") {
           const id = Number(args[1]);
-          if (!Number.isInteger(id) || id < 1) throw new SwitchyardError("usage", `usage: switchyard budget ${sub} <id> ${sub === "approve" ? "[--grant N] " : ""}[--reason "<why>"]`);
+          if (!Number.isInteger(id) || id < 1) throw new MeritRouterError("usage", `usage: meritrouter budget ${sub} <id> ${sub === "approve" ? "[--grant N] " : ""}[--reason "<why>"]`);
           const grant = values.grant !== undefined ? Number(values.grant) : null;
           const r = decideBudgetRequest(sy, id, { approve: sub === "approve", grant, reason: values.reason?.trim() || args.slice(2).join(" ") || `${sub === "approve" ? "approved" : "denied"} by the user`, by: { kind: "human", id: cliActor() } }, idScope());
           out(json ? r : `budget request ${r.id}: ${r.status}${r.status === "approved" ? ` (+${r.granted} requests for ${r.taskId})` : ""}`, json);
-        } else throw new SwitchyardError("usage", "usage: switchyard budget list [--status pending|approved|denied|expired|all] [--job <id>] | approve <id> [--grant N] [--reason ...] | deny <id> [--reason ...]");
+        } else throw new MeritRouterError("usage", "usage: meritrouter budget list [--status pending|approved|denied|expired|all] [--job <id>] | approve <id> [--grant N] [--reason ...] | deny <id> [--reason ...]");
         return 0;
       }
       case "blame": {
         // The alias is the project's (two projects may both have an `app`).
         const repo = sy.projectContext(project()).repositoryPaths[args[0] ?? ""];
-        if (!repo || !args[1]) throw new SwitchyardError("usage", "usage: switchyard blame <repo-alias> <path> [--ref <branch or commit>]");
+        if (!repo || !args[1]) throw new MeritRouterError("usage", "usage: meritrouter blame <repo-alias> <path> [--ref <branch or commit>]");
         const lines = await blame(repo.path, args[1], values.ref ?? "HEAD");
         const rows = lines.map((l) => ({ line: l.line, agent: l.agent ?? l.authorName, model: l.model ?? "", role: l.role ?? "", commit: l.commit.slice(0, 10), text: l.text.slice(0, 80) }));
         out(json ? lines : table(rows), json);
@@ -501,11 +501,11 @@ the planned budget does not fit what is left of today's qualification allocation
       }
       case "session": {
         const id = args[0];
-        if (!id) throw new SwitchyardError("usage", "usage: switchyard session <id> [--after <seq>] [--limit <n>] [--json]");
+        if (!id) throw new MeritRouterError("usage", "usage: meritrouter session <id> [--after <seq>] [--limit <n>] [--json]");
         const after = countFlag("after", values.after) ?? 0;
         const limit = countFlag("limit", values.limit, 1);
         const d = sessionDetail(sy, id, { afterSeq: after, ...(limit ? { limit } : {}) });
-        if (!d) throw new SwitchyardError("not_found", `unknown session ${id}`);
+        if (!d) throw new MeritRouterError("not_found", `unknown session ${id}`);
         out(json ? d : sessionTimeline(d, after), json);
         return 0;
       }
@@ -524,7 +524,7 @@ the planned budget does not fit what is left of today's qualification allocation
 main().then(
   (code) => process.exit(code),
   (err) => {
-    process.stderr.write(`switchyard: ${(err as Error).message}\n`);
+    process.stderr.write(`meritrouter: ${(err as Error).message}\n`);
     process.exit(1);
   },
 );

@@ -13,7 +13,7 @@
  */
 
 /** The cookie that remembers the last project opened (set by proxy.ts on `/p/<slug>` requests). */
-export const LAST_PROJECT_COOKIE = "sy_project";
+export const LAST_PROJECT_COOKIE = "meritrouter_project";
 
 /** The install-wide section. */
 export const ALL = "/all";
@@ -33,7 +33,7 @@ export function itemBase(project: string): string {
 }
 
 /** Request header proxy.ts sets to the request's path (read by layouts). */
-export const PATH_HEADER = "x-switchyard-path";
+export const PATH_HEADER = "x-meritrouter-path";
 
 /** Base path of one project's pages, e.g. `/p/shop`. */
 export function projectBase(slug: string): string {

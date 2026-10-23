@@ -2,12 +2,12 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 import * as insights from "../src/admin/insights.js";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { ProviderError } from "../src/providers/errors.js";
 import { baseConfig, FakeProvider, makeEnv, open, providerJson, providerModels, type Env } from "./helpers.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => {
   await sy?.close();
   sy = undefined;
@@ -30,7 +30,7 @@ function groqFake(): FakeProvider {
   });
 }
 
-function setup(config: Record<string, unknown> = {}, fake = groqFake()): { sy: Switchyard; fake: FakeProvider } {
+function setup(config: Record<string, unknown> = {}, fake = groqFake()): { sy: MeritRouter; fake: FakeProvider } {
   env = makeEnv({
     config: baseConfig({
       providers: {

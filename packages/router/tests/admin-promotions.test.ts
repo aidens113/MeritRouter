@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import type { Principal } from "../src/brain/access.js";
 import type { PromotionReviewPort } from "../src/brain/promotion.js";
 import { PROMOTION_RUBRIC_VERSION } from "../src/verification/promotion-review.js";
@@ -11,7 +11,7 @@ import { decideGlobalPromotion, globalKnowledge, globalReverts, parseGlobalProve
 import { baseConfig, commitAll, endpoint, FakeProvider, makeEnv, open, type Env } from "./helpers.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => {
   await sy?.close();
   sy = undefined;
@@ -33,7 +33,7 @@ function gitRepo(dir: string, files: Record<string, string>): void {
 }
 
 /** Two projects with a temp brain; `approval` turns on brain.global_requires_approval. */
-function setup(approval: boolean): Switchyard {
+function setup(approval: boolean): MeritRouter {
   const cfg = {
     ...baseConfig(),
     repositories: {},
@@ -51,7 +51,7 @@ function setup(approval: boolean): Switchyard {
 }
 
 /** Replace the service's reviewer with one whose reviews pass (`running` keeps them running). */
-function fakeReviewer(s: Switchyard, opts: { running?: boolean } = {}): void {
+function fakeReviewer(s: MeritRouter, opts: { running?: boolean } = {}): void {
   let n = 0;
   const port: PromotionReviewPort = {
     async start() {
@@ -66,7 +66,7 @@ function fakeReviewer(s: Switchyard, opts: { running?: boolean } = {}): void {
 }
 
 const actorOf = (p: string): Actor => ({ agent: `supervisor:${p}-job`, role: "supervisor", model: SUPERVISOR_EP.id, job: `${p}-job` });
-const supervisorOf = (s: Switchyard, project: string): Principal =>
+const supervisorOf = (s: MeritRouter, project: string): Principal =>
   s.brainAccessFor(project).principalFor("supervisor", { project, effort: "job-1", task: null, repos: Object.keys(s.projects.require(project).repositoryPaths), jobId: null, tier: "T3" });
 
 const LESSONS = [
@@ -74,7 +74,7 @@ const LESSONS = [
   { title: "Pin dependency versions in lock files", body: "Commit the lock file so every machine installs the same dependency tree; upgrade deliberately, one change at a time." },
 ];
 
-async function promote(s: Switchyard, project: string, lesson: { title: string; body: string }): Promise<string> {
+async function promote(s: MeritRouter, project: string, lesson: { title: string; body: string }): Promise<string> {
   const brain = s.brainFor(project);
   const sup = supervisorOf(s, project);
   const source = `projects/${project}/decisions/notes-${lesson.title.length}.md`;
@@ -203,7 +203,7 @@ describe("admin promotions: global knowledge for people (D9)", () => {
     await expect(revertGlobalEntry(s, rel, "panel", "again")).rejects.toMatchObject({ code: "not_found" });
   });
 
-  it("reverts an entry a person added outside SwitchYard (never committed) and reads hand-written entries without provenance", async () => {
+  it("reverts an entry a person added outside MeritRouter (never committed) and reads hand-written entries without provenance", async () => {
     const s = setup(false);
     await s.brain.ensure();
     const rel = "global/facts/timezones.md";

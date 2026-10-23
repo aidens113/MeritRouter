@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { insights } from "switchyard-router";
+import { insights } from "meritrouter";
 import { Card, CardHeader, Badge, Callout, KeyValue } from "./ui";
 import { CommitLink, TaskLink } from "./entity-links";
 import { sessionHref, taskHref } from "@/lib/links";

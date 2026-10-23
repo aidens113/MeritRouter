@@ -2,7 +2,7 @@ import { Tabs, pickTab } from "@/components/tabs";
 import Link from "next/link";
 import YAML from "yaml";
 import { Globe, Network, SlidersHorizontal } from "lucide-react";
-import { insights, MODALITIES, ROLE_NAMES, RulebookSchema, WEB_SEARCH_BACKENDS, type Rulebook } from "switchyard-router";
+import { insights, MODALITIES, ROLE_NAMES, RulebookSchema, WEB_SEARCH_BACKENDS, type Rulebook } from "meritrouter";
 import { getSy } from "@/lib/sy";
 import { projectBase } from "@/lib/links";
 import { BRAIN_SECTION, type Field, getIn, PAID_SECTION, PROFILE_FIELDS, PROFILE_HELP, ROLE_HELP, SECTIONS, SUPERVISE_PROFILE_DEFAULT, SUPERVISOR_SECTION, type Section, WEB_SECTION } from "@/lib/settings-schema";
@@ -141,7 +141,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             {tab === "web" ? <><RowsForm
               id="web-limits"
               title="Web search caps"
-              description="Optional caps per search backend, counted from SwitchYard's own record of web requests (for ollama, page fetches count too). A backend at its cap is skipped until its UTC day or month resets. Set them to your plan's allowance: SwitchYard has no built-in numbers."
+              description="Optional caps per search backend, counted from MeritRouter's own record of web requests (for ollama, page fetches count too). A backend at its cap is skipped until its UTC day or month resets. Set them to your plan's allowance: MeritRouter has no built-in numbers."
               path={["web", "search", "limits"]}
               keyField="backend"
               columns={WEB_LIMIT_COLUMNS}
@@ -206,7 +206,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         </div>
       ) : tab === "yaml" ? (
         <Card>
-          <CardHeader title="Raw YAML" description="Edit the whole file. Validate checks it against the same rules SwitchYard uses at startup; saving keeps the previous version as a .bak file." />
+          <CardHeader title="Raw YAML" description="Edit the whole file. Validate checks it against the same rules MeritRouter uses at startup; saving keeps the previous version as a .bak file." />
           <div className="p-4">
             <YamlEditor initial={insights.readConfigText(sy)} endpoint="/api/config/raw" saveLabel="Save config" rows={32} />
           </div>
@@ -219,7 +219,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
 }
 
 /** Agents' web search now: the backend pool and its state, or how to turn it on. */
-function WebStatus({ sy }: { sy: import("switchyard-router").Switchyard }) {
+function WebStatus({ sy }: { sy: import("meritrouter").MeritRouter }) {
   const s = insights.webSearchView(sy, { recent: 0 }).status;
   return (
     <Callout tone={s.on ? "good" : "accent"} icon={<Globe size={16} />} title={s.on ? `Web search is on (${s.strategy})` : "Web search is off"}>
@@ -251,7 +251,7 @@ function WebStatus({ sy }: { sy: import("switchyard-router").Switchyard }) {
   );
 }
 
-function RulebookTab({ sy }: { sy: import("switchyard-router").Switchyard }) {
+function RulebookTab({ sy }: { sy: import("meritrouter").MeritRouter }) {
   const rb = insights.rulebookText(sy);
   let parsed: Rulebook | null = null;
   let parseError: string | null = null;
@@ -323,7 +323,7 @@ const WEB_LIMIT_COLUMNS: Column[] = [
 const MOUNT_COLUMNS: Column[] = [
   { key: "prefix", label: "Brain prefix", kind: "text", placeholder: "projects/demo/working" },
   { key: "path", label: "Folder", kind: "text", wide: true, placeholder: "../my-repo/docs/working", help: "Relative to the config file." },
-  { key: "commit", label: "SwitchYard commits there", kind: "bool", help: "Off: you commit changes in that repository yourself." },
+  { key: "commit", label: "MeritRouter commits there", kind: "bool", help: "Off: you commit changes in that repository yourself." },
 ];
 
 const AUTO_APPROVE_COLUMNS: Column[] = [

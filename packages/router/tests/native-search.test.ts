@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { ProvidersSectionSchema } from "../src/config/schema.js";
 import { createProviderClient, discoverModels, ProviderCredentials, resolveProviders, type FetchLike, type ProviderRequest } from "../src/providers/index.js";
 import { detectNativeWebSearch } from "../src/providers/native-search.js";
@@ -7,7 +7,7 @@ import { insights } from "../src/index.js";
 import { baseConfig, endpoint, FakeProvider, goodOutput, makeEnv, open, providerChat, providerJson, summarizeTask, type Env, type FakeProviderCall } from "./helpers.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => {
   await sy?.close();
   sy = undefined;

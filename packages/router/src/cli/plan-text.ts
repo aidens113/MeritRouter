@@ -1,7 +1,7 @@
 import type { JobPlanView } from "../admin/insights.js";
 import { oneLine, stamp, table } from "./terminal.js";
 
-/** A job's plan for the terminal (`switchyard plan`): header, one row per node (critical path marked *), leases. */
+/** A job's plan for the terminal (`meritrouter plan`): header, one row per node (critical path marked *), leases. */
 export function planText(p: JobPlanView): string {
   const head = [`job ${p.jobId} ${p.jobState}: ${oneLine(p.goal)}`];
   if (!p.plan) {

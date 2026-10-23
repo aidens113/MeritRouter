@@ -1,7 +1,10 @@
 {
-  "name": "switchyard-router",
+  "name": "meritrouter",
   "version": "0.1.0",
-  "description": "Policy-enforcing task router for delegating bounded work to approved external model pools.",
+  "description": "MeritRouter: bounded model delegation with enforced repository scope, budgets and verification.",
+  "homepage": "https://github.com/aidens113/MeritRouter#readme",
+  "repository": { "type": "git", "url": "https://github.com/aidens113/MeritRouter.git" },
+  "bugs": { "url": "https://github.com/aidens113/MeritRouter/issues" },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -12,18 +15,18 @@
     }
   },
   "bin": {
-    "switchyard": "./dist/cli.js"
+    "meritrouter": "./dist/cli.js"
   },
   "files": [
     "dist",
     "examples",
     "evals",
     "charters",
-    "panel/.next",
-    "panel/package.json",
-    "panel/next.config.mjs",
-    "panel/public",
-    "panel/runtime-modules"
+    "bundled-panel/.next",
+    "bundled-panel/package.json",
+    "bundled-panel/next.config.mjs",
+    "bundled-panel/public",
+    "bundled-panel/runtime-modules"
   ],
   "engines": {
     "node": ">=22.11.0"

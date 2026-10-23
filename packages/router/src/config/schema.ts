@@ -255,7 +255,7 @@ export const ProvidersSectionSchema = z.record(z.string(), z.unknown()).transfor
       continue;
     }
     if ((SEARCH_SERVICE_IDS as readonly string[]).includes(id)) {
-      ctx.addIssue({ code: "custom", message: `${id} is a web search service, not a model provider: put its key under web.search.${id} (api_key_env), or add it with switchyard keys add ${id}`, path: [id] });
+      ctx.addIssue({ code: "custom", message: `${id} is a web search service, not a model provider: put its key under web.search.${id} (api_key_env), or add it with meritrouter keys add ${id}`, path: [id] });
       continue;
     }
     const parsed = ProviderEntrySchema.safeParse(value ?? {});
@@ -508,7 +508,7 @@ export type VerificationConfig = z.infer<typeof VerificationConfigSchema>;
 export const BrainConfigSchema = z
   .object({
     /** Brain repository directory (created and git-initialised when missing). `~` expands to home. */
-    path: z.string().min(1).default("~/.switchyard/brain"),
+    path: z.string().min(1).default("~/.meritrouter/brain"),
     /**
      * Project scope of a single-project config (brain/projects/<project>/): with no `projects`
      * section, the config is read as one project of this name. With `projects`, it names the
@@ -516,7 +516,7 @@ export const BrainConfigSchema = z
      */
     project: z.string().regex(PROJECT_SLUG_RE).default("default"),
     /** Map brain path prefixes to existing folders (e.g. a repository's docs/working). */
-    /** commit: let SwitchYard commit into the mounted folder's repository (off: you commit). */
+    /** commit: let MeritRouter commit into the mounted folder's repository (off: you commit). */
     mounts: z.array(z.object({ prefix: z.string().min(1), path: z.string().min(1), commit: z.boolean().default(false) }).strict()).default([]),
     commit: z.boolean().default(true),
     /** Write each worker's report into its working document's reports/ folder. */
@@ -548,8 +548,8 @@ export const SupervisorConfigSchema = z
     job_timeout_seconds: z.number().int().positive().default(14_400),
     /** Commands the supervisor may run in its integration worktree (plus its briefs' checks). */
     allowed_commands: z.array(z.string().min(1)).default([]),
-    /** Supervisors commit to switchyard/job-<id>; pushing is never automatic. */
-    branch_prefix: z.string().regex(/^[A-Za-z0-9._/-]+$/).default("switchyard/job-"),
+    /** Supervisors commit to meritrouter/job-<id>; pushing is never automatic. */
+    branch_prefix: z.string().regex(/^[A-Za-z0-9._/-]+$/).default("meritrouter/job-"),
     /** How long ask_user waits for an answer before the job pauses as interrupted. */
     question_timeout_seconds: z.number().int().positive().default(86_400),
     /**
@@ -703,7 +703,7 @@ export const WebConfigSchema = z
     fetch: z
       .object({
         /**
-         * The fetch chain, in order: builtin (SwitchYard's own SSRF-guarded fetch, free) and
+         * The fetch chain, in order: builtin (MeritRouter's own SSRF-guarded fetch, free) and
          * ollama (Ollama's web_fetch, with an ollama-cloud key). A URL the SSRF guard refuses is
          * never sent to any backend.
          */
@@ -761,13 +761,13 @@ export const ClientSupervisionSchema = z.object({
 export const ConfigSchema = z
   .object({
     version: z.literal(1),
-    /** Removed with the external gateway: SwitchYard calls providers directly. */
+    /** Removed with the external gateway: MeritRouter calls providers directly. */
     gateway: z
-      .never({ error: "the gateway section is no longer supported: SwitchYard calls providers directly. Delete it and add your provider keys under providers (or in the panel's Provider keys page); request_timeout_seconds now lives under providers" })
+      .never({ error: "the gateway section is no longer supported: MeritRouter calls providers directly. Delete it and add your provider keys under providers (or in the panel's Provider keys page); request_timeout_seconds now lives under providers" })
       .optional(),
     storage: z
       .object({
-        directory: z.string().min(1).default(".switchyard"),
+        directory: z.string().min(1).default(".meritrouter"),
         /**
          * SQLite durability: `normal` (synchronous=NORMAL; a power loss may drop the last commits)
          * or `full` (synchronous=FULL; every commit is on disk first). Session logs are fsynced
@@ -962,7 +962,7 @@ export const ConfigSchema = z
         /** Start the panel when the MCP server or a worker starts and nothing answers on the port. */
         auto_start: z.boolean().default(true),
         /** Env var holding a login token for the panel; unset means localhost-only, no login. */
-        token_env: z.string().min(1).default("SWITCHYARD_PANEL_TOKEN"),
+        token_env: z.string().min(1).default("MERITROUTER_PANEL_TOKEN"),
       })
       .strict()
       .prefault({}),

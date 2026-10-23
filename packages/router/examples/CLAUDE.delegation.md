@@ -1,7 +1,7 @@
-## External worker delegation (SwitchYard)
+## External worker delegation (MeritRouter)
 
-You are the supervisor. SwitchYard's MCP tools run bounded tasks on external worker models and
-share memory through the brain. See SwitchYard's `docs/roles.md` for the full role model.
+You are the supervisor. MeritRouter's MCP tools run bounded tasks on external worker models and
+share memory through the brain. See MeritRouter's `docs/roles.md` for the full role model.
 
 **The web panel** (its URL is in the server's instructions; default http://127.0.0.1:4477)
 shows every job, task, and request live. The MCP server starts it when it is not running; tell
@@ -22,7 +22,7 @@ verification, integration, and decisions that need the user.
 - Results are claims: `acceptanceStatus: met` only comes from passing checks with in-scope
   changes. Read `findings`, `patchRefs`, and `checks`, then apply patches yourself (each names its
   base commit).
-- `blame` shows which agent and model wrote each line of a SwitchYard change.
+- `blame` shows which agent and model wrote each line of a MeritRouter change.
 
 **Brain** (shared knowledge, markdown in git):
 - Start an effort with `brain_start_working_doc`; keep its `Current State` current with
@@ -34,7 +34,7 @@ verification, integration, and decisions that need the user.
 - Decide workers' access requests (`brain_access_requests`, `brain_decide_request`) on
   need-to-know.
 
-**Whole jobs**: `start_job` hands a goal to SwitchYard's own supervisor; follow it with
+**Whole jobs**: `start_job` hands a goal to MeritRouter's own supervisor; follow it with
 `job_status` and answer its questions with `answer_question`.
 
 

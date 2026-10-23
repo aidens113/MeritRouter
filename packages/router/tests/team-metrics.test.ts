@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import type { ChatRequest } from "../src/gateway/types.js";
 import { WorkerTaskSchema, type WorkerResult } from "../src/core/task.js";
 import { syntheticResult, type ClaimLimits } from "../src/storage/tasks.js";
@@ -12,11 +12,11 @@ import { agentTimeline, jobMetrics, teamMetrics, WAITING_FOR_PROVIDER_SLOT } fro
 import { comparisonRequestsToday, comparisons, planComparison, runComparison } from "../src/qualification/comparison.js";
 import { baseConfig, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
 
-// The CLI runs from dist/ (build first: pnpm --filter switchyard-router build).
+// The CLI runs from dist/ (build first: pnpm --filter meritrouter build).
 const cliJs = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "dist", "cli.js");
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => {
   await sy?.close();
   sy = undefined;
@@ -25,7 +25,7 @@ afterEach(async () => {
 });
 
 function cleanEnv(): NodeJS.ProcessEnv {
-  return Object.fromEntries(Object.entries(process.env).filter(([k]) => !/KEY|TOKEN|SECRET|FREELLMAPI|SWITCHYARD/i.test(k)));
+  return Object.fromEntries(Object.entries(process.env).filter(([k]) => !/KEY|TOKEN|SECRET|FREELLMAPI|MERITROUTER/i.test(k)));
 }
 function cli(e: Env, ...args: string[]) {
   const r = spawnSync(process.execPath, [cliJs, ...args, "--config", e.cfg.configPath], { encoding: "utf8", env: cleanEnv(), timeout: 60_000 });
@@ -53,7 +53,7 @@ const coding = (id: string, parent: string, allowedPaths: string[], dependsOn: s
 const node = (label: string, dependsOn: string[], difficulty: "T1" | "T2" | "T3", weight: number): PlanNodeInput => ({ label, profile: "inspect", goal: `do ${label}`, acceptanceCriteria: ["x"], dependsOn, requiresAcceptedInputs: false, weight, difficulty });
 
 /** Insert a model request charged to `taskIds` (the request ledger, as the gate records it). */
-function request(s: Switchyard, id: string, purpose: string, taskIds: string[], o: { status?: string; reported?: number; estimated?: number } = {}) {
+function request(s: MeritRouter, id: string, purpose: string, taskIds: string[], o: { status?: string; reported?: number; estimated?: number } = {}) {
   s.db.prepare("INSERT OR IGNORE INTO executions (id, kind, profile, status, created_at) VALUES ('x_metrics', 'task', 'inspect', 'finished', ?)").run(T0);
   s.db
     .prepare("INSERT INTO model_requests (id, execution_id, purpose, gateway_model, status, reserved_at, est_input_tokens, reserved_output_tokens, reported_cost_usd, estimated_cost_usd, served_endpoint_id) VALUES (?, 'x_metrics', ?, 'auto:x', ?, ?, 10, 10, ?, ?, 'ep-1')")
@@ -67,7 +67,7 @@ function request(s: Switchyard, id: string, purpose: string, taskIds: string[], 
  * for B's file lease 14-25, runs 25-27, is deferred for capacity 27-30, and runs 30-40; D
  * depends on B and C and runs 41-45.
  */
-function seedJob(s: Switchyard, job = "t_job") {
+function seedJob(s: MeritRouter, job = "t_job") {
   at(0);
   s.tasks.submit([WorkerTaskSchema.parse({ id: job, label: "metrics-job", profile: "supervise", goal: "A diamond with known intervals", repositoryAliases: ["core"], constraints: { acceptanceCriteria: ["x"] } })]);
   at(1);
@@ -244,7 +244,7 @@ describe("job metrics", () => {
     const missing = cli(env, "metrics", "nope");
     expect(missing.code).toBe(1);
     expect(missing.stderr).toContain("unknown job or task nope");
-    expect(cli(env, "metrics").stderr).toContain("usage: switchyard metrics <job-id|task-id>");
+    expect(cli(env, "metrics").stderr).toContain("usage: meritrouter metrics <job-id|task-id>");
   }, 60_000);
 });
 

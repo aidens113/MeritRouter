@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { appendFileSync, readFileSync } from "node:fs";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import type { ChatMessage, ChatToolCall } from "../src/gateway/types.js";
 import type { GateResponse } from "../src/gateway/gate.js";
 import type { ModelEndpoint } from "../src/models/catalog.js";
@@ -10,7 +10,7 @@ import { editRecoveryMessage, planResume, RESUME_TEXT } from "../src/sessions/re
 import { makeEnv, open, reply, ScriptedClient, type Env } from "./helpers.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => {
   await sy?.close();
   sy = undefined;
@@ -18,7 +18,7 @@ afterEach(async () => {
   env = undefined;
 });
 
-function start(): Switchyard {
+function start(): MeritRouter {
   env = makeEnv();
   sy = open(env, new ScriptedClient(() => reply("unused")));
   return sy;
@@ -54,7 +54,7 @@ function intent(rec: SessionRecorder, c: ChatToolCall, sideEffect: ToolSideEffec
 
 const WORKSPACE = { repos: [{ alias: "core", worktree: "/w/core", branch: "job/x", baseCommit: "aaa", head: "bbb" }] };
 
-function eventsOf(s: Switchyard, id: string): SessionEvent[] {
+function eventsOf(s: MeritRouter, id: string): SessionEvent[] {
   return s.sessions.events(id, { limit: 10_000 })!.events;
 }
 
@@ -166,7 +166,7 @@ describe("transcript", () => {
 
 describe("planResume", () => {
   /** One turn whose tool calls cover every side-effect class, interrupted mid-tools. */
-  function interruptedTurn(s: Switchyard, opts: { workspace?: boolean } = {}) {
+  function interruptedTurn(s: MeritRouter, opts: { workspace?: boolean } = {}) {
     const rec = s.sessions.create({ taskId: "t_1", role: "implementer", agentLabel: "implementer-1" });
     if (opts.workspace !== false) rec.setWorkspace(WORKSPACE);
     const calls = {

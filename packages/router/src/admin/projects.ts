@@ -2,8 +2,8 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
 import { PROJECT_SLUG_RE, REPOSITORY_ALIAS_RE } from "../config/schema.js";
-import { SwitchyardError } from "../core/errors.js";
-import type { Switchyard } from "../core/service.js";
+import { MeritRouterError } from "../core/errors.js";
+import type { MeritRouter } from "../core/service.js";
 import type { ProjectContext } from "../projects/context.js";
 import type { SelectableProject } from "../cli/project-select.js";
 import { recordPreparation, repositoryNotices, repositoryProblems } from "../projects/repository-setup.js";
@@ -61,7 +61,7 @@ function repoViews(ctx: ProjectContext): ProjectRepositoryView[] {
   return Object.entries(ctx.repositoryPaths).map(([alias, r]) => ({ alias, path: r.path, writable: r.writable, exists: existsSync(path.join(r.path, ".git")) }));
 }
 
-function summary(sy: Switchyard, ctx: ProjectContext): ProjectSummary {
+function summary(sy: MeritRouter, ctx: ProjectContext): ProjectSummary {
   const row = sy.projects.rows().find((r) => r.id === ctx.project.slug);
   return {
     slug: ctx.project.slug,
@@ -76,7 +76,7 @@ function summary(sy: Switchyard, ctx: ProjectContext): ProjectSummary {
 }
 
 /** Configured projects in config order; archived ones only with `includeArchived`. */
-export function projectList(sy: Switchyard, opts: { includeArchived?: boolean } = {}): ProjectSummary[] {
+export function projectList(sy: MeritRouter, opts: { includeArchived?: boolean } = {}): ProjectSummary[] {
   return sy.projects
     .list()
     .map((c) => summary(sy, c))
@@ -84,9 +84,9 @@ export function projectList(sy: Switchyard, opts: { includeArchived?: boolean } 
 }
 
 /** One configured project; throws not_found for an unknown slug. */
-export function projectInfo(sy: Switchyard, slug: string): ProjectSummary {
+export function projectInfo(sy: MeritRouter, slug: string): ProjectSummary {
   const ctx = sy.projects.get(slug);
-  if (!ctx) throw new SwitchyardError("not_found", `unknown project ${slug}; projects: ${sy.projects.slugs().join(", ") || "none"}`);
+  if (!ctx) throw new MeritRouterError("not_found", `unknown project ${slug}; projects: ${sy.projects.slugs().join(", ") || "none"}`);
   return summary(sy, ctx);
 }
 
@@ -96,23 +96,23 @@ export function projectInfo(sy: Switchyard, slug: string): ProjectSummary {
  * work), or the primary project's for a task whose project is unassigned or no longer configured
  * (views never fail on old rows).
  */
-export function contextOfTask(sy: Switchyard, taskId: string): ProjectContext {
+export function contextOfTask(sy: MeritRouter, taskId: string): ProjectContext {
   const p = sy.tasks.projectOf(taskId);
   return (p ? sy.projects.context(p) : undefined) ?? sy.projects.primary;
 }
 
 /** Every configured project as the CLI and MCP choose among them (archived ones included, marked). */
-export function selectableProjects(sy: Switchyard): SelectableProject[] {
+export function selectableProjects(sy: MeritRouter): SelectableProject[] {
   return projectList(sy, { includeArchived: true }).map((p) => ({ slug: p.slug, archived: p.archived, repositoryPaths: Object.fromEntries(p.repositories.map((r) => [r.alias, { path: r.path }])) }));
 }
 
 /**
  * What needs a person in one project: questions supervisors wait on, results waiting for an
- * acceptance decision, brain access requests, interrupted tasks, and repositories SwitchYard
+ * acceptance decision, brain access requests, interrupted tasks, and repositories MeritRouter
  * could not set up itself (git missing, a file where the folder should be, permissions). A
- * missing folder or one without git is not listed: SwitchYard prepares it (see `projectNotices`).
+ * missing folder or one without git is not listed: MeritRouter prepares it (see `projectNotices`).
  */
-export function projectAttention(sy: Switchyard, slug: string): string[] {
+export function projectAttention(sy: MeritRouter, slug: string): string[] {
   const out: string[] = [];
   const questions = sy.questions({ project: slug }).length;
   if (questions) out.push(`${questions} question(s) from supervisors are waiting for an answer.`);
@@ -127,17 +127,17 @@ export function projectAttention(sy: Switchyard, slug: string): string[] {
   return out;
 }
 
-/** Information for the project overview: repositories SwitchYard recently created or set up with git. */
-export function projectNotices(sy: Switchyard, slug: string, now = Date.now()): string[] {
+/** Information for the project overview: repositories MeritRouter recently created or set up with git. */
+export function projectNotices(sy: MeritRouter, slug: string, now = Date.now()): string[] {
   const ctx = sy.projects.get(slug);
   return ctx ? repositoryNotices(sy.db, ctx, now) : [];
 }
 
 /**
  * Prepare repository folders (absolute paths) for a project being created or saved, recording each
- * preparation; returns the problems SwitchYard could not fix, by alias.
+ * preparation; returns the problems MeritRouter could not fix, by alias.
  */
-export async function prepareRepositoryFolders(sy: Switchyard, slug: string, repos: Array<{ alias: string; path: string }>): Promise<{ problems: Map<string, string>; done: string[] }> {
+export async function prepareRepositoryFolders(sy: MeritRouter, slug: string, repos: Array<{ alias: string; path: string }>): Promise<{ problems: Map<string, string>; done: string[] }> {
   const problems = new Map<string, string>();
   const done: string[] = [];
   for (const r of repos) {
@@ -150,7 +150,7 @@ export async function prepareRepositoryFolders(sy: Switchyard, slug: string, rep
 }
 
 /** Running and queued counts of one project (all tasks, and top-level jobs). */
-export function projectActivity(sy: Switchyard, slug: string): Pick<ProjectCard, "runningJobs" | "queuedJobs" | "runningTasks" | "queuedTasks" | "lastActivityAt"> {
+export function projectActivity(sy: MeritRouter, slug: string): Pick<ProjectCard, "runningJobs" | "queuedJobs" | "runningTasks" | "queuedTasks" | "lastActivityAt"> {
   const r = sy.db
     .prepare(
       `SELECT SUM(state IN (${inList(RUNNING_STATES)})) AS runningTasks, SUM(state IN (${inList(QUEUED_STATES)})) AS queuedTasks,
@@ -166,7 +166,7 @@ export function projectActivity(sy: Switchyard, slug: string): Pick<ProjectCard,
 }
 
 /** The projects grid: every project with its repositories, activity, and attention. */
-export function projectsGrid(sy: Switchyard, opts: { includeArchived?: boolean } = {}): ProjectCard[] {
+export function projectsGrid(sy: MeritRouter, opts: { includeArchived?: boolean } = {}): ProjectCard[] {
   return projectList(sy, opts).map((p) => {
     const attentionItems = projectAttention(sy, p.slug);
     return { ...p, ...projectActivity(sy, p.slug), attention: attentionItems.length, attentionItems };
@@ -184,13 +184,13 @@ export interface CreateProjectInput {
   mounts?: Array<{ prefix: string; path: string; commit?: boolean }>;
 }
 
-export type CreateProjectResult = { ok: true; project: ProjectSummary; convertedLegacy: string | null; /** What preparing the repositories did ("repository app: SwitchYard created ..."). */ prepared: string[] } | { ok: false; errors: string[] };
+export type CreateProjectResult = { ok: true; project: ProjectSummary; convertedLegacy: string | null; /** What preparing the repositories did ("repository app: MeritRouter created ..."). */ prepared: string[] } | { ok: false; errors: string[] };
 
 /**
  * Check a new project's slug and repositories. A repository folder that does not exist or is not
  * a git repository is fine (`createProject` prepares it); a path that is a file is not.
  */
-export function validateNewProject(sy: Switchyard, input: CreateProjectInput): string[] {
+export function validateNewProject(sy: MeritRouter, input: CreateProjectInput): string[] {
   const errors: string[] = [];
   if (!PROJECT_SLUG_RE.test(input.slug)) errors.push(`slug ${JSON.stringify(input.slug)}: lower-case letters, digits, '.', '_', '-', starting with a letter or digit`);
   if (sy.projects.get(input.slug)) errors.push(`project ${input.slug} already exists`);
@@ -219,7 +219,7 @@ export function validateNewProject(sy: Switchyard, input: CreateProjectInput): s
  * under `projects.<its slug>` (the slug every existing row already carries), and nothing else
  * changes.
  */
-export async function createProject(sy: Switchyard, input: CreateProjectInput): Promise<CreateProjectResult> {
+export async function createProject(sy: MeritRouter, input: CreateProjectInput): Promise<CreateProjectResult> {
   const errors = validateNewProject(sy, input);
   if (errors.length) return { ok: false, errors };
   const base = path.dirname(sy.cfg.configPath);
@@ -247,7 +247,7 @@ export async function createProject(sy: Switchyard, input: CreateProjectInput): 
   if (!r.ok) return r;
   if (!sy.projects.get(input.slug)) sy.reloadIfChanged();
   const ctx = sy.projects.get(input.slug);
-  if (!ctx) return { ok: false, errors: ["the config was written but this process did not reload it; restart SwitchYard"] };
+  if (!ctx) return { ok: false, errors: ["the config was written but this process did not reload it; restart MeritRouter"] };
   sy.db.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").run(input.slug);
   await sy.brainFor(input.slug).ensure();
   return { ok: true, project: summary(sy, ctx), convertedLegacy: legacy ? legacy.project.slug : null, prepared };
@@ -257,19 +257,19 @@ export async function createProject(sy: Switchyard, input: CreateProjectInput): 
  * Archive a project: it leaves the grid, project pickers, and implicit selection, and keeps its
  * settings, tasks, sessions, and brain. Refused while it has running or queued tasks.
  */
-export function archiveProject(sy: Switchyard, slug: string, now = Date.now()): ProjectSummary {
+export function archiveProject(sy: MeritRouter, slug: string, now = Date.now()): ProjectSummary {
   return immediate(sy.db, () => {
     sy.reloadIfChanged();
     const info = projectInfo(sy, slug);
     const a = projectActivity(sy, slug);
-    if (a.runningTasks + a.queuedTasks > 0) throw new SwitchyardError("usage", `project ${slug} has ${a.runningTasks} running and ${a.queuedTasks} queued task(s); cancel them or let them finish before archiving`);
+    if (a.runningTasks + a.queuedTasks > 0) throw new MeritRouterError("usage", `project ${slug} has ${a.runningTasks} running and ${a.queuedTasks} queued task(s); cancel them or let them finish before archiving`);
     if (!info.archived) sy.db.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").run(now, slug);
     return projectInfo(sy, slug);
   });
 }
 
 /** Bring an archived project back. */
-export function unarchiveProject(sy: Switchyard, slug: string): ProjectSummary {
+export function unarchiveProject(sy: MeritRouter, slug: string): ProjectSummary {
   return immediate(sy.db, () => {
     sy.reloadIfChanged();
     projectInfo(sy, slug);
@@ -322,7 +322,7 @@ export interface ProjectDeletionResult {
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /** Why a project cannot be deleted now: running or queued tasks, the last live project, or the single-project config. */
-function deletionBlockers(sy: Switchyard, info: ProjectSummary, allowTaskPrune = false): string[] {
+function deletionBlockers(sy: MeritRouter, info: ProjectSummary, allowTaskPrune = false): string[] {
   const out: string[] = [];
   const holds = new RequestReceipts(sy.db).blockers(info.slug);
   if (holds.requests || holds.slots) out.push(`it has ${holds.requests} unresolved model request(s) and ${holds.slots} retained transport hold(s); reconcile them before deletion`);
@@ -337,12 +337,12 @@ function deletionBlockers(sy: Switchyard, info: ProjectSummary, allowTaskPrune =
   return out;
 }
 
-function footprintOf(sy: Switchyard, ctx: ProjectContext) {
+function footprintOf(sy: MeritRouter, ctx: ProjectContext) {
   return projectFootprint(sy.db, sy.cfg.storageDir, ctx.project.slug, Object.values(ctx.repositoryPaths).map((r) => r.path));
 }
 
 /** What deleting a project removes and keeps, with counts, and whether it can be deleted now. */
-export async function previewProjectDeletion(sy: Switchyard, slug: string): Promise<ProjectDeletionPreview> {
+export async function previewProjectDeletion(sy: MeritRouter, slug: string): Promise<ProjectDeletionPreview> {
   const info = projectInfo(sy, slug);
   const fp = await footprintOf(sy, sy.projects.get(slug)!);
   const counts: ProjectDeletionCounts = { tasks: fp.taskIds.length, jobs: fp.jobs, sessions: fp.sessions, artifacts: fp.artifacts, brainEntries: sy.brain.projectFolderFiles(slug), worktrees: fp.worktrees.length };
@@ -360,7 +360,7 @@ export async function previewProjectDeletion(sy: Switchyard, slug: string): Prom
       `${plural(counts.sessions, "session")} with ${counts.sessions === 1 ? "its log" : "their logs"}, and ${plural(counts.artifacts, "artifact")}.`,
       `${plural(fp.requestCaptures.captures, "private model request capture")} (${fp.requestCaptures.bytes.toLocaleString()} bytes), including shared payloads containing this project's data. Accounting history stays.`,
       "Stopped task verification Labs are removed only after terminal-task, resource ownership and clean Git identity checks; unresolved cleanup blocks deletion.",
-      `${plural(counts.worktrees, "worktree")} SwitchYard made for its tasks (their branches stay).`,
+      `${plural(counts.worktrees, "worktree")} MeritRouter made for its tasks (their branches stay).`,
       `Its brain folder projects/${slug}/ (${plural(counts.brainEntries, "file")}), removed in one brain commit.`,
     ],
     keeps: [
@@ -377,14 +377,14 @@ export async function previewProjectDeletion(sy: Switchyard, slug: string): Prom
  * and for the last live project. The config edit is validated first; then its rows go in one
  * transaction (see `purgeProjectRows`), `projects.<slug>` is removed through the config editor
  * (previous file backed up; when it was the primary project, `brain.project` moves to another),
- * and its session logs, artifacts, SwitchYard worktrees (branches kept), and brain folder (one
+ * and its session logs, artifacts, MeritRouter worktrees (branches kept), and brain folder (one
  * commit) are removed. Repository folders are never touched.
  */
-export async function deleteProject(sy: Switchyard, slug: string, opts: { confirm: string }): Promise<ProjectDeletionResult> {
+export async function deleteProject(sy: MeritRouter, slug: string, opts: { confirm: string }): Promise<ProjectDeletionResult> {
   const info = projectInfo(sy, slug);
-  if (opts.confirm !== slug) throw new SwitchyardError("usage", `type the project's slug to confirm: expected ${JSON.stringify(slug)}, got ${JSON.stringify(opts.confirm)}`);
+  if (opts.confirm !== slug) throw new MeritRouterError("usage", `type the project's slug to confirm: expected ${JSON.stringify(slug)}, got ${JSON.stringify(opts.confirm)}`);
   const blockers = deletionBlockers(sy, info, true);
-  if (blockers.length) throw new SwitchyardError("usage", `project ${slug} cannot be deleted: ${blockers.join("; ")}`);
+  if (blockers.length) throw new MeritRouterError("usage", `project ${slug} cannot be deleted: ${blockers.join("; ")}`);
 
   // The config without the project, validated before anything is removed.
   const original = readConfigText(sy);
@@ -397,14 +397,14 @@ export async function deleteProject(sy: Switchyard, slug: string, opts: { confir
   }
   const text = doc.toString();
   const valid = validateConfigText(text, sy.cfg.configPath);
-  if (!valid.ok) throw new SwitchyardError("config_invalid", `the config without projects.${slug} does not validate:\n  ${valid.errors.join("\n  ")}`);
+  if (!valid.ok) throw new MeritRouterError("config_invalid", `the config without projects.${slug} does not validate:\n  ${valid.errors.join("\n  ")}`);
 
   // Confirmed deletion may bypass retention age, never positive ownership checks.
   // Validate config first; the prune keeps recovery proof on any partial refusal.
   const cleanup = await sy.labs.taskAttempts.pruneProject(slug);
-  if (cleanup.blocked) throw new SwitchyardError("usage", `project ${slug} has ${cleanup.blocked} task Lab cleanup(s) that could not be proved safe; recovery evidence was retained`);
+  if (cleanup.blocked) throw new MeritRouterError("usage", `project ${slug} has ${cleanup.blocked} task Lab cleanup(s) that could not be proved safe; recovery evidence was retained`);
   const afterCleanup = deletionBlockers(sy, projectInfo(sy, slug));
-  if (afterCleanup.length) throw new SwitchyardError("usage", `project ${slug} cannot be deleted: ${afterCleanup.join("; ")}`);
+  if (afterCleanup.length) throw new MeritRouterError("usage", `project ${slug} cannot be deleted: ${afterCleanup.join("; ")}`);
   const fp = await footprintOf(sy, sy.projects.get(slug)!);
   const brainEntries = sy.brain.projectFolderFiles(slug);
   let configWritten = false;
@@ -413,12 +413,12 @@ export async function deleteProject(sy: Switchyard, slug: string, opts: { confir
     purged = immediate(sy.db, () => {
       // Footprint discovery yields to other services. Serialize the final lifecycle/config
       // checks with archive writes, submissions, and other deletions before removing anything.
-      if (readConfigText(sy) !== original) throw new SwitchyardError("config_changed", "The config changed during project deletion; reload it and retry.");
+      if (readConfigText(sy) !== original) throw new MeritRouterError("config_changed", "The config changed during project deletion; reload it and retry.");
       sy.reloadIfChanged();
       const currentBlockers = deletionBlockers(sy, projectInfo(sy, slug));
-      if (currentBlockers.length) throw new SwitchyardError("usage", `project ${slug} cannot be deleted: ${currentBlockers.join("; ")}`);
+      if (currentBlockers.length) throw new MeritRouterError("usage", `project ${slug} cannot be deleted: ${currentBlockers.join("; ")}`);
       const written = writeConfigText(sy, text, { expectedText: original });
-      if (!written.ok) throw new SwitchyardError("config_write_failed", `the config could not be written: ${written.errors.join("; ")}`);
+      if (!written.ok) throw new MeritRouterError("config_write_failed", `the config could not be written: ${written.errors.join("; ")}`);
       configWritten = true;
       return purgeProjectRows(sy.db, slug, ACTIVE_STATES);
     });
@@ -427,7 +427,7 @@ export async function deleteProject(sy: Switchyard, slug: string, opts: { confir
     // exact file we wrote; an intervening external editor must never be overwritten.
     if (configWritten) {
       const restored = writeConfigText(sy, original, { expectedText: text });
-      if (!restored.ok) throw new SwitchyardError("config_restore_failed", `${(error as Error).message}; the config could not be restored: ${restored.errors.join("; ")}`);
+      if (!restored.ok) throw new MeritRouterError("config_restore_failed", `${(error as Error).message}; the config could not be restored: ${restored.errors.join("; ")}`);
     }
     throw error;
   }

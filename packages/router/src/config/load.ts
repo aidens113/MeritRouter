@@ -24,19 +24,19 @@ export interface ResolvedConfig extends RawConfig {
   rulebookPath: string | null;
 }
 
-export const CONFIG_ENV = "SWITCHYARD_CONFIG";
-export const DEFAULT_CONFIG_NAME = "switchyard.config.yaml";
+export const CONFIG_ENV = "MERITROUTER_CONFIG";
+export const DEFAULT_CONFIG_NAME = "meritrouter.config.yaml";
 
 /** The application directory used when no project-local config exists. */
 export function defaultConfigDirectory(env: NodeJS.ProcessEnv = process.env, home = homedir(), platform = process.platform): string {
-  if (env.SWITCHYARD_HOME) return path.resolve(env.SWITCHYARD_HOME);
-  if (platform === "win32") return path.resolve(env.LOCALAPPDATA || path.join(home, "AppData", "Local"), "SwitchYard");
-  if (platform === "darwin") return path.resolve(home, "Library", "Application Support", "SwitchYard");
-  return path.resolve(env.XDG_CONFIG_HOME || path.join(home, ".config"), "switchyard");
+  if (env.MERITROUTER_HOME) return path.resolve(env.MERITROUTER_HOME);
+  if (platform === "win32") return path.resolve(env.LOCALAPPDATA || path.join(home, "AppData", "Local"), "MeritRouter");
+  if (platform === "darwin") return path.resolve(home, "Library", "Application Support", "MeritRouter");
+  return path.resolve(env.XDG_CONFIG_HOME || path.join(home, ".config"), "meritrouter");
 }
 
 /**
- * Explicit argument, SWITCHYARD_CONFIG, nearest ancestor config, then the user config.
+ * Explicit argument, MERITROUTER_CONFIG, nearest ancestor config, then the user config.
  * Relative paths inside the file always resolve against that file's directory.
  */
 export function resolveConfigPath(explicit?: string, cwd = process.cwd()): string {
@@ -87,7 +87,7 @@ export function parseConfig(raw: unknown, configPath: string): ResolvedConfig {
 
 export function readConfigFile(configPath: string): unknown {
   if (!existsSync(configPath)) {
-    throw new ConfigError(`config not found at ${configPath}; pass --config, set ${CONFIG_ENV}, or run switchyard setup`);
+    throw new ConfigError(`config not found at ${configPath}; pass --config, set ${CONFIG_ENV}, or run meritrouter setup`);
   }
   try {
     return YAML.parse(readFileSync(configPath, "utf8"));

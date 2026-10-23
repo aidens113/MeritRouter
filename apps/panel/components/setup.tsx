@@ -12,7 +12,7 @@ export function SetupScreen({ error, configPath }: { error: string; configPath: 
             <FileWarning size={20} aria-hidden />
           </span>
           <div className="min-w-0">
-            <h1 className="text-lg font-semibold text-ink">{missing ? "SwitchYard needs a config file" : "The SwitchYard config could not be loaded"}</h1>
+            <h1 className="text-lg font-semibold text-ink">{missing ? "MeritRouter needs a config file" : "The MeritRouter config could not be loaded"}</h1>
             <p className="mt-1 text-sm text-ink-2">
               The panel looked for <Mono>{configPath}</Mono>.
             </p>
@@ -24,11 +24,11 @@ export function SetupScreen({ error, configPath }: { error: string; configPath: 
         </div>
         <ol className="mt-5 list-decimal space-y-2 pl-5 text-sm text-ink-2">
           <li>
-            Copy <Mono>packages/router/examples/switchyard.config.example.yaml</Mono> to <Mono>switchyard.config.yaml</Mono> at the repository root and edit it, or point the panel at an existing file with{" "}
-            <Mono>SWITCHYARD_CONFIG=/path/to/switchyard.config.yaml</Mono>.
+            Copy <Mono>packages/router/examples/meritrouter.config.example.yaml</Mono> to <Mono>meritrouter.config.yaml</Mono> at the repository root and edit it, or point the panel at an existing file with{" "}
+            <Mono>MERITROUTER_CONFIG=/path/to/meritrouter.config.yaml</Mono>.
           </li>
           <li>
-            To try the panel with sample data, run <Mono>pnpm --filter switchyard-panel seed:demo</Mono> and start it with <Mono>SWITCHYARD_CONFIG=apps/panel/.demo/switchyard.config.yaml</Mono>.
+            To try the panel with sample data, run <Mono>pnpm --filter meritrouter-panel seed:demo</Mono> and start it with <Mono>MERITROUTER_CONFIG=apps/panel/.demo/meritrouter.config.yaml</Mono>.
           </li>
           <li>Fix the error above and reload this page; the panel retries automatically.</li>
         </ol>

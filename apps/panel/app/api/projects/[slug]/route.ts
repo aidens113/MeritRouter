@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { insights } from "switchyard-router";
+import { insights } from "meritrouter";
 import { body, handle } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
@@ -23,7 +23,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
 }
 
 /**
- * Delete a project permanently: its settings, tasks, sessions, artifacts, SwitchYard worktrees,
+ * Delete a project permanently: its settings, tasks, sessions, artifacts, MeritRouter worktrees,
  * and brain folder (requests and paid spend are kept for accounting; repository folders and
  * branches are never touched). `confirm` must be the slug. Refused (409) while it has running or
  * queued tasks, and for the last live project. GET ./deletion previews it.

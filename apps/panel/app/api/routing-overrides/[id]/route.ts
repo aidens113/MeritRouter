@@ -7,7 +7,7 @@ type Ctx = { params: Promise<{ id: string }> };
 
 const Patch = z.object({ enabled: z.boolean().optional(), note: z.string().max(500).optional() }).refine((p) => p.enabled !== undefined || p.note !== undefined, "send enabled and/or note");
 
-async function idOf(ctx: Ctx, sy: import("switchyard-router").Switchyard): Promise<number> {
+async function idOf(ctx: Ctx, sy: import("meritrouter").MeritRouter): Promise<number> {
   const id = Number((await ctx.params).id);
   if (!Number.isInteger(id) || !sy.catalog.routingOverrides().some((o) => o.id === id)) throw new HttpError(404, "No such routing rule");
   return id;

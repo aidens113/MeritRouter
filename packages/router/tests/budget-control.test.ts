@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import type { ChatRequest } from "../src/gateway/types.js";
 import { createCodingRunner } from "../src/runners/coding/index.js";
 import { BudgetRequests, jobPool } from "../src/admission/budget-requests.js";
@@ -15,7 +15,7 @@ import { verificationTrail } from "../src/verification/trail.js";
 import { baseConfig, goodOutput, makeEnv, openWithTestSupervisor as open, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => {
   await sy?.close();
   sy = undefined;

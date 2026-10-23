@@ -2,7 +2,7 @@ import Link from "next/link";
 import { RequestEvidenceView } from "./request-evidence";
 import { RequestCapturePanel } from "./request-capture";
 import { notFound } from "next/navigation";
-import { insights, type Switchyard } from "switchyard-router";
+import { insights, type MeritRouter } from "meritrouter";
 import { itemBase, sessionHref, QUALIFICATION_SLUG } from "@/lib/links";
 import { dateTime, duration } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
@@ -11,7 +11,7 @@ import { RelatedPanel } from "@/components/related";
 import { Disclosure } from "@/components/disclosure";
 import { Card, KeyValue, Badge, Callout } from "@/components/ui";
 
-export function RequestDetailView({ sy, slug, id, name }: { sy: Switchyard; slug: string; id: string; name: string }) {
+export function RequestDetailView({ sy, slug, id, name }: { sy: MeritRouter; slug: string; id: string; name: string }) {
   const q = insights.requestDetail(sy, id, slug);
   if (!q || q.project !== slug) notFound();
   const base = slug ? itemBase(slug) : "";

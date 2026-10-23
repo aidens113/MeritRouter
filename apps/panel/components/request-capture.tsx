@@ -1,4 +1,4 @@
-import type { RequestCaptureView } from "switchyard-router";
+import type { RequestCaptureView } from "meritrouter";
 import { Badge, Callout, Card, CardHeader, KeyValue } from "./ui";
 
 function Text({ value }: { value: unknown }) {

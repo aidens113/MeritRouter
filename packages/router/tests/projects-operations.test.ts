@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { brainRead, brainWrite } from "../src/admin/insights.js";
 import { backupStorage, restoreStorage } from "../src/operations/backup.js";
 import { BRAIN_BUNDLE, brainMountsOf, brainPathOf } from "../src/operations/brain-backup.js";
@@ -22,7 +22,7 @@ const CLI = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
 
 const envs: Env[] = [];
 const cleanups: Array<() => Promise<void> | void> = [];
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => {
   await sy?.close();
   sy = undefined;
@@ -108,8 +108,8 @@ async function httpProvider(): Promise<{ baseUrl: string; chats: () => number; c
 /** Run the built CLI; resolves on exit (a detached daemon it starts never holds the pipes open). */
 function cli(args: string[], cwd: string, timeoutMs = 60_000): Promise<{ code: number | null; stdout: string; stderr: string }> {
   const env = { ...process.env };
-  delete env.SWITCHYARD_PROJECT;
-  delete env.SWITCHYARD_CONFIG;
+  delete env.MERITROUTER_PROJECT;
+  delete env.MERITROUTER_CONFIG;
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [CLI, ...args], { cwd, env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     let stdout = "";
@@ -118,7 +118,7 @@ function cli(args: string[], cwd: string, timeoutMs = 60_000): Promise<{ code: n
     child.stderr.on("data", (c: Buffer) => (stderr += c.toString("utf8")));
     const timer = setTimeout(() => {
       child.kill();
-      reject(new Error(`switchyard ${args.join(" ")} did not exit within ${timeoutMs}ms: ${stdout}${stderr}`));
+      reject(new Error(`meritrouter ${args.join(" ")} did not exit within ${timeoutMs}ms: ${stdout}${stderr}`));
     }, timeoutMs);
     child.on("exit", (code) => {
       clearTimeout(timer);
@@ -235,7 +235,7 @@ async function backedUpInstall(): Promise<{ source: Env; backupDir: string; mani
   await sy.submitTasks([summarizeTask({ goal: "beta work" })], { project: "beta" });
   await brainWrite(sy, "projects/alpha/facts/alpha-fact.md", "# Alpha fact\n\nAlpha ships on Mondays.\n", "alpha");
   await brainWrite(sy, "projects/beta/facts/beta-fact.md", "# Beta fact\n\nBeta ships on Fridays.\n", "beta");
-  const backupDir = path.join(mkdtempSync(path.join(tmpdir(), "switchyard-pops-")), "backup");
+  const backupDir = path.join(mkdtempSync(path.join(tmpdir(), "meritrouter-pops-")), "backup");
   cleanups.push(() => rmSync(path.dirname(backupDir), { recursive: true, force: true }));
   // Online: the store is open while the backup runs.
   const manifest = await backupStorage({ storageDir: source.cfg.storageDir, targetDir: backupDir, brainPath: brainPathOf(source.cfg), brainMounts: brainMountsOf(source.cfg) });

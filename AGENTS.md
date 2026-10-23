@@ -1,7 +1,7 @@
 # Agent Instructions
 
 These rules govern agents developing this repository. They are adapted from FluxIQ's
-`AGENTS.md`. SwitchYard also implements supervisors and workers as product features; those
+`AGENTS.md`. MeritRouter also implements supervisors and workers as product features; those
 runtime roles are described in [docs/roles.md](docs/roles.md) and mirror the rules below.
 
 ## Agent Roles
@@ -59,7 +59,7 @@ only channel through which one agent's knowledge reaches the next.
 The [agent working document protocol](docs/working/agent-working-doc-protocol.md)
 defines layout, status vocabulary, ledger format, compaction, brief format,
 and the worker return contract. Read it when creating or restructuring a
-working document, not for routine updates. SwitchYard's brain enforces the same
+working document, not for routine updates. MeritRouter's brain enforces the same
 protocol at runtime (`packages/router/src/brain/protocol.ts`); keep the two in
 step when either changes.
 
@@ -119,7 +119,7 @@ substantial; a new working document is not required for every focused edit.
 
 For testing existing behaviour, verifying completed work, reproducing a
 problem live, operating the web panel for a testing session, or running
-SwitchYard against real providers.
+MeritRouter against real providers.
 
 - Establish the expected behaviour, then choose the narrowest useful
   combination of unit, integration, MCP, CLI, panel, and live-provider tests.
@@ -160,12 +160,12 @@ against it must be told which library API is stable.
 
 ## Repository Boundary
 
-SwitchYard is a standalone, domain-neutral framework. It does not contain code
+MeritRouter is a standalone, domain-neutral framework. It does not contain code
 or data specific to any downstream project, including FluxIQ.
 
 - Never commit secrets, API keys, FreeLLMAPI tokens, or paid-provider keys;
-  tests use fakes. Never commit `.switchyard/`, databases, worktrees, brains,
-  `.env` files, or `apps/panel/.demo`.
+  tests use fakes. Never commit `.meritrouter/`, databases, worktrees, brains,
+  `.env` files, or `apps/panel/.demo`. Legacy runtime state directories remain private too.
 - External projects (FreeLLMAPI, OpenCode, provider APIs) are integrated
   through adapters and verified from their source or documentation; record
   verified behaviour in [docs/decisions.md](docs/decisions.md). Do not vendor
@@ -228,7 +228,7 @@ read their output:
 
 ```bash
 pnpm -r typecheck
-cd packages/router && npx vitest run    # router tests (the MCP test needs dist/: pnpm --filter switchyard-router build)
+cd packages/router && npx vitest run    # router tests (the MCP test needs dist/: pnpm --filter meritrouter build)
 pnpm -r build
 ```
 
@@ -240,7 +240,7 @@ Agents may start a temporary panel against the demo data for verification and
 must stop it afterwards. Do not leave the panel running, or run it against the
 user's real configuration, unless the user has explicitly authorized panel
 management for the session; otherwise tell the user to run
-`pnpm --filter switchyard-panel dev` themselves.
+`pnpm --filter meritrouter-panel dev` themselves.
 
 ## Branches And Worktrees
 
@@ -265,7 +265,7 @@ The supervisor picks the tier when it writes the brief:
 
 Commits produced from a worker's change carry `Worker: <agent-label>`. Merge
 commits read `Merge feat/<slug>: <title>`. Commits are never squashed: they
-are the step-by-step record. (SwitchYard's own runtime commits additionally
+are the step-by-step record. (MeritRouter's own runtime commits additionally
 carry `Agent`, `Model`, and `Task` trailers; keep that convention intact.)
 
 Merge `dev` into a feature branch and re-run the narrowest relevant checks

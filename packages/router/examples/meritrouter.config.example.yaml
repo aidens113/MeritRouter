@@ -1,17 +1,17 @@
-# SwitchYard Router configuration. Relative paths resolve against this file's directory.
+# MeritRouter Router configuration. Relative paths resolve against this file's directory.
 # Every setting here can also be edited from the web panel (Settings).
 version: 1
 
-# Model providers. SwitchYard calls each provider directly with your keys and finds the models
+# Model providers. MeritRouter calls each provider directly with your keys and finds the models
 # they can use. Add keys in the panel (Provider keys) or with
-#   SWITCHYARD_NEW_KEY=<key> switchyard keys add groq --billing free_tier
+#   MERITROUTER_NEW_KEY=<key> meritrouter keys add groq --billing free_tier
 # (both store them encrypted), or declare them here. Built-in providers: groq, google, nvidia,
 # openrouter, mistral, cerebras, cohere, cloudflare, sambanova, together, huggingface, anthropic,
 # openai, deepseek, fireworks, deepinfra, nebius, scaleway, ovhcloud, zai, moonshot, vercel,
 # ollama-cloud, and the local servers ollama, lmstudio, llamacpp. billing_class is required:
 # free_tier keys never cost money; paid_credits, paid_postpaid, and trial keys are paid and follow
 # the paid section below. Prefer api_key_env; a literal api_key puts the secret in this file
-# (switchyard doctor warns about it).
+# (meritrouter doctor warns about it).
 providers:
   request_timeout_seconds: 300
   # groq:
@@ -59,11 +59,11 @@ providers:
   # Azure, Bedrock) with their base URLs and caveats: docs/setup.md, "Custom providers".
 
 storage:
-  directory: .switchyard
+  directory: .meritrouter
 
 # Shared knowledge: a git repository of markdown working documents (FluxIQ protocol).
 brain:
-  path: ~/.switchyard/brain     # shared across projects; created and git-initialised on first use
+  path: ~/.meritrouter/brain     # shared across projects; created and git-initialised on first use
   project: my-project           # the primary project (system tasks); each project's brain is brain/projects/<slug>/
   mounts: []                    # e.g. [{ prefix: projects/my-project/working, path: ../my-app/docs/working }]
   commit: true                  # every write is a commit under the writing agent's identity
@@ -78,7 +78,7 @@ supervisor:
   paid_policy: never            # never | on_free_exhaustion | preferred
   max_concurrent_jobs: 1
   job_timeout_seconds: 14400
-  branch_prefix: switchyard/job-
+  branch_prefix: meritrouter/job-
   allowed_commands: []          # commands the supervisor may run besides its briefs' checks
   # delegate: the supervisor edits only coordination files (coordination_paths, its briefs'
   # shared_files, integration conflicts) and delegates all code; allowed: it may edit anything.
@@ -146,7 +146,7 @@ qualification:
 # A project may also override brain (mounts, access_approver, auto_approve), verification, team
 # (max_agents, max_depth, ...), coding (allowed_commands, protected_paths), supervisor
 # (allowed_commands, branch_prefix), and roles. Add one with
-# `switchyard projects create <slug> --repo <alias>=<path>`, or in the panel.
+# `meritrouter projects create <slug> --repo <alias>=<path>`, or in the panel.
 projects:
   my-project:
     name: My project
@@ -158,7 +158,7 @@ projects:
     # max_concurrent_tasks: 2     # running tasks of this project at once
     # request_share: 0.5          # fraction of the allocation below this project may use
     # paid_budgets: { per_day_usd: 1, per_week_usd: 5, per_month_usd: 15 }
-  # Add more projects here, in the panel (New project), or with `switchyard projects create`.
+  # Add more projects here, in the panel (New project), or with `meritrouter projects create`.
 
 execution:
   max_concurrent_tasks: 2
@@ -205,7 +205,7 @@ paid:
   #    ignore_size_floor: true          # closed models publish no parameter count
 
 coding:
-  runner: native               # native (SwitchYard harness) | opencode | command
+  runner: native               # native (MeritRouter harness) | opencode | command
   command: opencode            # executable for runner: opencode, or the full command for runner: command
   allowed_commands: []         # e.g. ["npm test*", "pnpm test*"]
   allow_repo_agent_config: false
@@ -214,7 +214,7 @@ coding:
 panel:
   port: 4477
   auto_start: true # the MCP server and workers start the panel when nothing answers on the port
-  token_env: SWITCHYARD_PANEL_TOKEN
+  token_env: MERITROUTER_PANEL_TOKEN
 
 profiles:
   summarize:

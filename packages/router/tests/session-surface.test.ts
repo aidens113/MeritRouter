@@ -12,7 +12,7 @@ import { WorkerTaskSchema } from "../src/core/task.js";
 import { jobDetail, jobsView, sessionsView } from "../src/admin/insights.js";
 import { baseConfig, makeEnv, open, reply, ScriptedClient, summarizeTask, type Env } from "./helpers.js";
 
-// Both surfaces run from dist/ (build first: pnpm --filter switchyard-router build).
+// Both surfaces run from dist/ (build first: pnpm --filter meritrouter build).
 const dist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "dist");
 const cliJs = path.join(dist, "cli.js");
 const mcpJs = path.join(dist, "mcp.js");
@@ -83,7 +83,7 @@ function authorizeExecution(sy: ReturnType<typeof open>, execution: string, task
 
 /** The environment without secrets, so the CLI never sees a real gateway or provider key. */
 function cleanEnv(): NodeJS.ProcessEnv {
-  return Object.fromEntries(Object.entries(process.env).filter(([k]) => !/KEY|TOKEN|SECRET|FREELLMAPI|SWITCHYARD/i.test(k)));
+  return Object.fromEntries(Object.entries(process.env).filter(([k]) => !/KEY|TOKEN|SECRET|FREELLMAPI|MERITROUTER/i.test(k)));
 }
 
 function cli(e: Env, ...args: string[]) {
@@ -160,7 +160,7 @@ describe("session CLI", () => {
     expect(page.stdout).toMatch(/^\s*4 {2}.*model_request/m);
     expect(page.stdout).toMatch(/^\s*5 {2}.*model_response/m);
     expect(page.stdout).not.toMatch(/^\s*6 {2}/m);
-    expect(page.stdout).toContain(`more events: switchyard session ${root} --after 5`);
+    expect(page.stdout).toContain(`more events: meritrouter session ${root} --after 5`);
     expect(cli(env, "session", root, "--after", String(rootEvents)).stdout).toContain(`(no events after seq ${rootEvents})`);
 
     // --json prints the raw page.
@@ -172,7 +172,7 @@ describe("session CLI", () => {
     const missing = cli(env, "session", "s_missing");
     expect(missing.code).toBe(1);
     expect(missing.stderr).toContain("unknown session s_missing");
-    expect(cli(env, "session").stderr).toContain("usage: switchyard session <id>");
+    expect(cli(env, "session").stderr).toContain("usage: meritrouter session <id>");
     expect(cli(env, "session", root, "--after", "x").stderr).toMatch(/--after must be an integer >= 0/);
   }, 60_000);
 });
@@ -300,7 +300,7 @@ describe("session resume surfaces", () => {
     expect(done.stderr).toContain(`session ${ids.done} is completed; only interrupted sessions can be resumed`);
     expect(cli(env, "resume", "s_missing").stderr).toContain("unknown session s_missing");
     expect(cli(env, "resume", "t_missing").stderr).toContain("unknown task t_missing");
-    expect(cli(env, "resume").stderr).toContain("usage: switchyard resume <session-id|task-id>");
+    expect(cli(env, "resume").stderr).toContain("usage: meritrouter resume <session-id|task-id>");
 
     // The directive names the session, so the worker continues that session.
     const sy = open(env, new ScriptedClient(() => reply("unused")));
@@ -350,12 +350,12 @@ describe("job detail from sessions", () => {
         { role: "assistant", content: "Delegating.", tool_calls: [delegate] },
         { role: "tool", tool_call_id: "d1", content: "nothing delegated" },
       ]);
-      first.setWorkspace({ repos: [{ alias: "core", worktree: "/wt/job", branch: `switchyard/job-${job}`, baseCommit: "a".repeat(40), head: "b".repeat(40) }] });
+      first.setWorkspace({ repos: [{ alias: "core", worktree: "/wt/job", branch: `meritrouter/job-${job}`, baseCommit: "a".repeat(40), head: "b".repeat(40) }] });
       first.end("interrupted", "process_died");
 
       const d = jobDetail(sy, job)!;
       expect(d.sessionId).toBe(first.id);
-      expect(d.branches).toEqual([{ alias: "core", branch: `switchyard/job-${job}`, baseSha: "a".repeat(40), worktree: "/wt/job" }]);
+      expect(d.branches).toEqual([{ alias: "core", branch: `meritrouter/job-${job}`, baseSha: "a".repeat(40), worktree: "/wt/job" }]);
       expect(d.transcript).toEqual([
         { role: "user", content: "Goal: Add subtract()" },
         { role: "assistant", content: "Delegating.", tools: ['delegate({"tasks":[]})'] },
@@ -380,8 +380,8 @@ describe("job detail from sessions", () => {
       const legacy = (await sy.startJob({ goal: "Old job", repositories: ["core"], label: "old" })).taskId;
       sy.db
         .prepare("INSERT INTO job_state (task_id, messages_json, detail_json, updated_at) VALUES (?, ?, ?, ?)")
-        .run(legacy, JSON.stringify([{ role: "system", content: "charter" }, { role: "user", content: "Old goal" }]), JSON.stringify({ repos: [{ alias: "core", branch: "switchyard/job-old", baseSha: "c".repeat(40), worktree: "/wt/old" }] }), Date.now());
-      expect(jobDetail(sy, legacy)).toMatchObject({ sessionId: null, transcript: [{ role: "user", content: "Old goal" }], branches: [{ branch: "switchyard/job-old", worktree: "/wt/old" }] });
+        .run(legacy, JSON.stringify([{ role: "system", content: "charter" }, { role: "user", content: "Old goal" }]), JSON.stringify({ repos: [{ alias: "core", branch: "meritrouter/job-old", baseSha: "c".repeat(40), worktree: "/wt/old" }] }), Date.now());
+      expect(jobDetail(sy, legacy)).toMatchObject({ sessionId: null, transcript: [{ role: "user", content: "Old goal" }], branches: [{ branch: "meritrouter/job-old", worktree: "/wt/old" }] });
 
       // The list view carries the branches and session but not the transcript.
       const list = jobsView(sy);

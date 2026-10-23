@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
-import { SwitchyardError } from "../core/errors.js";
+import { MeritRouterError } from "../core/errors.js";
 import { immediate, type Db } from "../storage/db.js";
 import { git } from "../workspaces/git.js";
 import { RequestCaptures } from "../storage/request-captures.js";
@@ -9,11 +9,11 @@ import { z } from "zod";
 
 // Deleting a project (the mechanics; `admin/projects.ts` checks, confirms, and edits the config):
 // what a project leaves in the store and on disk, and removing it. Its per-project rows, session
-// logs, artifacts, and SwitchYard's worktrees go; model requests, their charges, and paid spend
+// logs, artifacts, and MeritRouter's worktrees go; model requests, their charges, and paid spend
 // stay for accounting (requests are unlinked from the project); branches and the repository
 // folders are never touched.
 
-/** A git worktree SwitchYard made for one of the project's tasks or jobs. */
+/** A git worktree MeritRouter made for one of the project's tasks or jobs. */
 export interface WorktreeRef {
   /** The repository it is registered in; null for a leftover folder git no longer knows. */
   repo: string | null;
@@ -86,7 +86,7 @@ export async function projectFootprint(db: Db, storageDir: string, slug: string,
   };
 }
 
-/** SwitchYard's worktrees for these tasks: registered in one of `repositories`, or leftover folders. */
+/** MeritRouter's worktrees for these tasks: registered in one of `repositories`, or leftover folders. */
 async function projectWorktrees(storageDir: string, taskIds: string[], repositories: string[]): Promise<WorktreeRef[]> {
   const root = path.join(storageDir, "worktrees");
   const owned = new Set(taskIds);
@@ -132,12 +132,12 @@ export function purgeProjectRows(db: Db, slug: string, activeStates: readonly st
     // Settled private bindings go with the project; opaque consumed-ID keys remain.
     new RequestReceipts(db).purgeProject(slug);
     const active = db.prepare("SELECT COUNT(*) FROM tasks WHERE project_id = ? AND state IN (SELECT value FROM json_each(?))").pluck().get(slug, JSON.stringify(activeStates)) as number;
-    if (active) throw new SwitchyardError("usage", `project ${slug} has ${active} running or queued task(s); cancel them or let them finish before deleting it`);
+    if (active) throw new MeritRouterError("usage", `project ${slug} has ${active} running or queued task(s); cancel them or let them finish before deleting it`);
     const p = { slug, ids: ids(db.prepare("SELECT id FROM tasks WHERE project_id = ?").pluck().all(slug) as string[]) };
     const run = (sql: string) => db.prepare(sql).run(p).changes;
     if (db.prepare(`SELECT 1 FROM task_workspace_attempts WHERE task_id IN ${IN_TASKS} AND project_id!=@slug LIMIT 1`).get(p)
       || db.prepare(`SELECT 1 FROM lab_teams t JOIN labs l ON l.id=t.lab_id WHERE t.root_job_id IN ${IN_TASKS} AND l.project_id!=@slug LIMIT 1`).get(p)) {
-      throw new SwitchyardError("usage", "Project cleanup cannot prove exclusive Lab ownership; recovery evidence was retained");
+      throw new MeritRouterError("usage", "Project cleanup cannot prove exclusive Lab ownership; recovery evidence was retained");
     }
     // Private runtime ownership records may only go after their resources were proved removed.
     // In particular, removing a task must not orphan a recoverable task-Lab process intent.
@@ -146,7 +146,7 @@ export function purgeProjectRows(db: Db, slug: string, activeStates: readonly st
       || db.prepare(`SELECT 1 FROM task_lab_operations WHERE attempt_id IN (SELECT id FROM task_workspace_attempts WHERE task_id IN ${IN_TASKS}) AND state IN ('pending','running') LIMIT 1`).get(p)
       || db.prepare(`SELECT 1 FROM lab_attempt_processes WHERE attempt_id IN (SELECT id FROM task_workspace_attempts WHERE task_id IN ${IN_TASKS}) AND state!='stopped' LIMIT 1`).get(p)
       || db.prepare("SELECT 1 FROM lab_operations WHERE project_id=? AND state IN ('pending','running') LIMIT 1").get(slug)) {
-      throw new SwitchyardError("usage", `project ${slug} still has Lab resources or pending cleanup; finish owned Lab cleanup before deleting it`);
+      throw new MeritRouterError("usage", `project ${slug} still has Lab resources or pending cleanup; finish owned Lab cleanup before deleting it`);
     }
     // Payloads include private participant scope; purge before charges/tasks are removed or
     // accounting rows are anonymized, including any historical mixed-project capture.

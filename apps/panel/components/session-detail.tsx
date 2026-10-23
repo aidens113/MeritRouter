@@ -7,7 +7,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { ArrowLeft, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, FileWarning } from "lucide-react";
-import { insights, type SessionEvent, type Switchyard } from "switchyard-router";
+import { insights, type SessionEvent, type MeritRouter } from "meritrouter";
 import { jobHref, repoHref, sessionHref } from "@/lib/links";
 import type { DetailScope } from "@/components/detail-scope";
 import { buttonClass, Callout, Card, CardHeader, cx, KeyValue, Mono, Stat } from "@/components/ui";
@@ -26,7 +26,7 @@ type Outcome = Extract<SessionEvent, { type: "tool_outcome" }>;
  * One session's page: its event timeline (paged), the task's other sessions, and its children.
  * The caller has checked that the session belongs to `scope.project`.
  */
-export function SessionDetailView({ sy, id, sp, scope }: { sy: Switchyard; id: string; sp: Record<string, string | string[] | undefined>; scope: DetailScope }) {
+export function SessionDetailView({ sy, id, sp, scope }: { sy: MeritRouter; id: string; sp: Record<string, string | string[] | undefined>; scope: DetailScope }) {
   const base = scope.base;
   const rawAfter = typeof sp.after === "string" ? Number(sp.after) : 0;
   const after = Number.isInteger(rawAfter) && rawAfter > 0 ? rawAfter : 0;

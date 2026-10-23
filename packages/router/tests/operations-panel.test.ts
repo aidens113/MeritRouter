@@ -6,7 +6,7 @@ import path from "node:path";
 import { ensurePanel, panelBuildStale, routerBuildFingerprint, PANEL_ROUTER_FINGERPRINT, PANEL_ROUTER_FINGERPRINT_ALGORITHM, findPanelApp, markPanelStopped, PANEL_DIR_ENV, panelListening, panelStopFile, resetPanelRevive, revivePanel } from "../src/operations/panel.js";
 import { baseConfig, makeEnv, type Env } from "./helpers.js";
 
-// The panel stays reachable while agents use SwitchYard: ensurePanel starts it (detached) when
+// The panel stays reachable while agents use MeritRouter: ensurePanel starts it (detached) when
 // nothing answers on panel.port. A fake panel app stands in for `next start`.
 
 let env: Env | undefined;
@@ -36,9 +36,9 @@ function envOnPort(port: number, autoStart: boolean): Env {
   return makeEnv({ config: baseConfig({ panel: { port, auto_start: autoStart } }) });
 }
 
-/** A fake panel app: `next start -H host -p port` listens and records its pid and SWITCHYARD_CONFIG. */
+/** A fake panel app: `next start -H host -p port` listens and records its pid and MERITROUTER_CONFIG. */
 function fakePanel(opts: { built?: boolean; deps?: boolean } = {}): string {
-  dir = mkdtempSync(path.join(tmpdir(), "switchyard-panel-"));
+  dir = mkdtempSync(path.join(tmpdir(), "meritrouter-panel-"));
   writeFileSync(path.join(dir, "package.json"), "{}");
   if (opts.deps !== false) {
     const bin = path.join(dir, "node_modules", "next", "dist", "bin");
@@ -47,7 +47,7 @@ function fakePanel(opts: { built?: boolean; deps?: boolean } = {}): string {
       path.join(bin, "next"),
       `const fs = require("fs"); const net = require("net"); const a = process.argv;
 const port = Number(a[a.indexOf("-p") + 1]); const host = a[a.indexOf("-H") + 1];
-fs.writeFileSync("started.json", JSON.stringify({ pid: process.pid, host, config: process.env.SWITCHYARD_CONFIG }));
+fs.writeFileSync("started.json", JSON.stringify({ pid: process.pid, host, config: process.env.MERITROUTER_CONFIG }));
 net.createServer((s) => s.end()).listen(port, host);`,
     );
   }
@@ -135,7 +135,7 @@ describe("ensurePanel", () => {
     expect(existsSync(path.join(app, "started.json"))).toBe(false);
   });
 
-  it("agents using SwitchYard revive a panel the user turned off, at most once per 30 s per process", async () => {
+  it("agents using MeritRouter revive a panel the user turned off, at most once per 30 s per process", async () => {
     const port = await freePort();
     env = envOnPort(port, true);
     const app = fakePanel();
@@ -170,13 +170,13 @@ describe("ensurePanel", () => {
   it("does nothing when panel.auto_start is off", async () => {
     env = envOnPort(await freePort(), false);
     const app = fakePanel();
-    expect(await ensurePanel(env.cfg)).toMatchObject({ state: "disabled", detail: expect.stringMatching(/panel\.auto_start is off: start it with switchyard panel/) });
+    expect(await ensurePanel(env.cfg)).toMatchObject({ state: "disabled", detail: expect.stringMatching(/panel\.auto_start is off: start it with meritrouter panel/) });
     expect(existsSync(path.join(app, "started.json"))).toBe(false);
   });
 
   it("says how to fix a panel that is missing, not installed, or not built", async () => {
     env = envOnPort(await freePort(), true);
-    process.env[PANEL_DIR_ENV] = path.join(tmpdir(), "switchyard-no-panel-here");
+    process.env[PANEL_DIR_ENV] = path.join(tmpdir(), "meritrouter-no-panel-here");
     expect(await ensurePanel(env.cfg)).toMatchObject({ state: "unavailable", detail: expect.stringMatching(/no panel app at/) });
     fakePanel({ deps: false });
     expect(findPanelApp()).toEqual({ problem: expect.stringMatching(/dependencies are not installed.*pnpm install/) });
@@ -187,9 +187,34 @@ describe("ensurePanel", () => {
 });
 
 
+describe("panel app discovery", () => {
+  function builtApp(app: string) {
+    mkdirSync(path.join(app, ".next"), { recursive: true });writeFileSync(path.join(app, "package.json"), "{}");writeFileSync(path.join(app, ".next", "BUILD_ID"), "discovery-fixture");
+    const bin = path.join(app, "node_modules", "next", "dist", "bin");mkdirSync(bin, { recursive: true });writeFileSync(path.join(bin, "next"), "// fixture only\n");
+  }
+  it("prefers the checkout app over current and legacy package staging", () => {
+    dir = mkdtempSync(path.join(tmpdir(), "meritrouter-panel-discovery-"));delete process.env[PANEL_DIR_ENV];
+    const pkg = path.join(dir, "workspace", "packages", "router"), checkout = path.join(dir, "workspace", "apps", "panel");
+    builtApp(checkout);builtApp(path.join(pkg, "bundled-panel"));builtApp(path.join(pkg, "panel"));
+    expect(findPanelApp(pkg)).toMatchObject({ dir: checkout, nextBin: path.join(checkout, "node_modules", "next", "dist", "bin", "next") });
+    rmSync(path.join(checkout, ".next", "BUILD_ID"));
+    expect(findPanelApp(pkg)).toEqual({ problem: expect.stringMatching(/panel is not built/) });
+  });
+  it("discovers only the canonical bundled app when installed without a checkout", () => {
+    dir = mkdtempSync(path.join(tmpdir(), "meritrouter-installed-panel-"));delete process.env[PANEL_DIR_ENV];
+    const pkg = path.join(dir, "installation", "node_modules", "meritrouter"), bundled = path.join(pkg, "bundled-panel");builtApp(bundled);
+    const aliases = path.join(bundled, "runtime-modules");mkdirSync(aliases);
+    expect(findPanelApp(pkg)).toMatchObject({ dir: bundled, runtimeModules: aliases });
+    const explicit = path.join(dir, "explicit-panel");builtApp(explicit);process.env[PANEL_DIR_ENV] = explicit;
+    expect(findPanelApp(pkg)).toMatchObject({ dir: explicit });
+    delete process.env[PANEL_DIR_ENV];rmSync(bundled, { recursive: true, force: true });builtApp(path.join(pkg, "panel"));
+    expect(findPanelApp(pkg)).toEqual({ problem: expect.stringContaining(path.join(pkg, "bundled-panel")) });
+  });
+});
+
 describe("packaged panel router fingerprint", () => {
   function fixture() {
-    dir = mkdtempSync(path.join(tmpdir(), "switchyard-panel-fingerprint-"));
+    dir = mkdtempSync(path.join(tmpdir(), "meritrouter-panel-fingerprint-"));
     const panel = path.join(dir, "panel"), router = path.join(dir, "dist");
     mkdirSync(path.join(panel, ".next"), { recursive: true });mkdirSync(path.join(router, "core"), { recursive: true });
     writeFileSync(path.join(panel, ".next", "BUILD_ID"), "fixture-build");

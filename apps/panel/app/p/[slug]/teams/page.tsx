@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { FlaskConical, UsersRound } from "lucide-react";
-import { insights, isTerminal } from "switchyard-router";
+import { insights, isTerminal } from "meritrouter";
 import { getSy } from "@/lib/sy";
 import { project, taskProject } from "@/lib/project";
 import { projectBase, taskHref } from "@/lib/links";
@@ -86,7 +86,7 @@ export default async function TeamsPage({ params, searchParams }: { params: Prom
         />
         {comparisons.length === 0 ? (
           <EmptyState icon={<FlaskConical size={22} />} title="No comparisons recorded">
-            See the planned request budget with <Mono>switchyard compare --dry-run</Mono>, then run it with <Mono>switchyard compare --yes</Mono>. Nothing runs on its own. Comparisons on evaluation goals are on the{" "}
+            See the planned request budget with <Mono>meritrouter compare --dry-run</Mono>, then run it with <Mono>meritrouter compare --yes</Mono>. Nothing runs on its own. Comparisons on evaluation goals are on the{" "}
             <Link href="/all/qualification#comparisons" className="text-accent-ink hover:underline">
               Qualification
             </Link>{" "}

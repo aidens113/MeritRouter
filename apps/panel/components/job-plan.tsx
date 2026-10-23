@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Copy, Hourglass, Lock, ShieldCheck, Users } from "lucide-react";
-import { insights, type JobPlanView, type PlanNodeView, type PlanWait } from "switchyard-router";
+import { insights, type JobPlanView, type PlanNodeView, type PlanWait } from "meritrouter";
 import { Badge, Card, CardHeader, HelpTip, Mono } from "./ui";
 import { AcceptanceBadge, ImportanceBadge, TASK_STATE_LABEL, TaskStateBadge, TierBadge } from "./task-badges";
 import { dateTime, humanize, shortId } from "@/lib/format";

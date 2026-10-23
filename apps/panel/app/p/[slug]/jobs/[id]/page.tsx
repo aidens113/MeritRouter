@@ -10,7 +10,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { ArrowLeft, BookOpenText, Bot, ChevronRight, GitBranch, MessageCircleQuestion, Network, Terminal, User, Wrench } from "lucide-react";
-import { criterionTexts, insights, isTerminal } from "switchyard-router";
+import { criterionTexts, insights, isTerminal } from "meritrouter";
 import { getSy } from "@/lib/sy";
 import { project, requireTaskIn } from "@/lib/project";
 import { brainHref, jobHref, projectBase, sessionHref, taskHref } from "@/lib/links";
@@ -118,7 +118,7 @@ export default async function JobDetailPage({ params, searchParams }: { params: 
         </Callout>
       ) : job.state === "queued" ? (
         <Callout tone="accent" title="Queued">
-          The job starts when a worker is running: the MCP server inside Claude Code, or <Mono>switchyard worker</Mono>. <HelpTip term="worker" />
+          The job starts when a worker is running: the MCP server inside Claude Code, or <Mono>meritrouter worker</Mono>. <HelpTip term="worker" />
         </Callout>
       ) : null}
       {job.questions.length ? (
@@ -432,7 +432,7 @@ function Transcript({ turns }: { turns: Turn[] }) {
         <li key={i} className="relative">
           <Dot tone="bg-good" />
           <div className="flex items-center gap-1.5 text-xs font-medium text-ink-3">
-            <User size={13} aria-hidden /> {first ? "Job brief" : "SwitchYard"}
+            <User size={13} aria-hidden /> {first ? "Job brief" : "MeritRouter"}
           </div>
           {first ? (
             <details className="mt-1 rounded-lg border border-line">

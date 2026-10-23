@@ -3,7 +3,7 @@ import { Tabs, pickTab } from "@/components/tabs";
 import { Disclosure } from "@/components/disclosure";
 import Link from "next/link";
 import { CheckCircle2, CircleAlert, Cpu, FolderGit2, Info, MessageCircleQuestion, Network, Play, TriangleAlert } from "lucide-react";
-import { insights } from "switchyard-router";
+import { insights } from "meritrouter";
 import { getSy } from "@/lib/sy";
 import { project } from "@/lib/project";
 import { jobHref, projectBase } from "@/lib/links";
@@ -42,7 +42,7 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
   const p0 = project(sy, slug);
   // Set up this project's repositories first (create a missing folder, set up git, commit a first
   // snapshot); a repository that is already a git repository with history is not touched. Only what
-  // SwitchYard cannot fix itself is left for the attention list.
+  // MeritRouter cannot fix itself is left for the attention list.
   if (!p0.archived) await sy.prepareRepositories({ projects: [p0.slug] }).catch(() => undefined);
   const p = project(sy, slug);
   const base = projectBase(p.slug);
@@ -231,7 +231,7 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
               <StackedColumns buckets={buckets} series={series} bucketMinutes={60} />
             ) : (
               <EmptyState icon={<Cpu size={22} />} title="No model requests in the last 24 hours">
-                Requests appear here once a worker runs this project&apos;s tasks. Start Claude Code with the SwitchYard MCP server, or run <Mono>switchyard worker</Mono>.
+                Requests appear here once a worker runs this project&apos;s tasks. Start Claude Code with the MeritRouter MCP server, or run <Mono>meritrouter worker</Mono>.
               </EmptyState>
             )}
           </div>
@@ -277,7 +277,7 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
               <>
                 <Badge tone="neutral">No worker running</Badge>
                 <p className="text-ink-2">
-                  Tasks run while a worker is active: the MCP server inside Claude Code, or <Mono>switchyard worker</Mono>. Queued tasks wait until one starts.
+                  Tasks run while a worker is active: the MCP server inside Claude Code, or <Mono>meritrouter worker</Mono>. Queued tasks wait until one starts.
                 </p>
               </>
             )}

@@ -15,7 +15,7 @@ import type { ResumePlan } from "./resume.js";
  * resume, and end a session without letting a recording failure change the task's outcome.
  */
 
-/** Task event written when a session delegates the task (see `Switchyard.submitTasks`). */
+/** Task event written when a session delegates the task (see `MeritRouter.submitTasks`). */
 export const DELEGATED_BY_SESSION = "delegated_by_session";
 const DelegatedBySchema = z.object({ sessionId: z.string().min(1) });
 

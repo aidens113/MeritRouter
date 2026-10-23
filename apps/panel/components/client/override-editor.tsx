@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { CheckCircle2, RotateCcw, Save } from "lucide-react";
-import type { EndpointOverride } from "switchyard-router";
+import type { EndpointOverride } from "meritrouter";
 import { ActionStatus, useAction } from "./actions";
 import { Badge, buttonClass, cx, HelpTip } from "../ui";
 

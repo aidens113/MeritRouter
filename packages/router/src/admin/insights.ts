@@ -8,10 +8,10 @@ import { formatIssues } from "../config/load.js";
 import { patchConfig } from "./config-edit.js";
 import { contextOfTask } from "./projects.js";
 import { providerKeysView } from "./provider-keys.js";
-import type { Switchyard } from "../core/service.js";
+import type { MeritRouter } from "../core/service.js";
 import { criteria as taskCriteria, type Criterion, type SupervisorDecision, type TaskState, type VerificationRecord, type WorkerResult, type WorkerTask } from "../core/task.js";
 import { verificationTrail, type TaskVerificationTrail } from "../verification/trail.js";
-import { SwitchyardError } from "../core/errors.js";
+import { MeritRouterError } from "../core/errors.js";
 import type { AcceptanceDecisionOutcome } from "../runners/types.js";
 import type { StoredContract } from "../verification/contract.js";
 import { resolveLevel } from "../verification/policy.js";
@@ -34,7 +34,7 @@ export interface WorkerInfo {
   lastSeen: number;
 }
 
-export function workers(sy: Switchyard, withinMs = 15_000): WorkerInfo[] {
+export function workers(sy: MeritRouter, withinMs = 15_000): WorkerInfo[] {
   const rows = sy.db.prepare("SELECT key, value FROM meta WHERE key LIKE 'worker:%'").all() as { key: string; value: string }[];
   const now = Date.now();
   return rows
@@ -52,11 +52,11 @@ export interface Overview {
   tasksByState: Record<string, number>;
   models: Record<"active" | "pending_confirmation" | "disabled" | "removed", number> & { routable: number };
   providers: ProviderStatus[];
-  lastScan: ReturnType<Switchyard["scanner"]["lastScan"]>;
+  lastScan: ReturnType<MeritRouter["scanner"]["lastScan"]>;
   attention: string[];
 }
 
-export async function overview(sy: Switchyard): Promise<Overview> {
+export async function overview(sy: MeritRouter): Promise<Overview> {
   await sy.health.refresh().catch(() => undefined);
   const now = Date.now();
   const tasksByState = Object.fromEntries(
@@ -106,7 +106,7 @@ export interface ProviderHealthView {
 }
 
 /** Provider health: reported cooldowns plus circuit breaker state, for the panel and the CLI. */
-export async function providerHealth(sy: Switchyard): Promise<ProviderHealthView> {
+export async function providerHealth(sy: MeritRouter): Promise<ProviderHealthView> {
   await sy.health.refresh().catch(() => undefined);
   const now = Date.now();
   // Records from the store cover worker processes; this process's own state is newer when it has one.
@@ -137,7 +137,7 @@ export interface EndpointStats {
   tasksFailed: number;
 }
 
-function endpointStats(sy: Switchyard, id: string, sinceMs: number): EndpointStats {
+function endpointStats(sy: MeritRouter, id: string, sinceMs: number): EndpointStats {
   const r = sy.db
     .prepare(
       `SELECT COUNT(*) AS requests, SUM(status='succeeded') AS ok, SUM(status='failed') AS failed, SUM(status='uncertain') AS uncertain,
@@ -190,7 +190,7 @@ export interface ModelView {
   headline: string;
 }
 
-function matrix(sy: Switchyard): Map<string, EligibilityCell[]> {
+function matrix(sy: MeritRouter): Map<string, EligibilityCell[]> {
   const out = new Map<string, EligibilityCell[]>();
   const qual = qualificationLookup(sy.db, sy.cfg);
   const eps = sy.catalog.endpoints();
@@ -219,7 +219,7 @@ function headline(ep: ModelEndpoint, cells: EligibilityCell[], quarantined: stri
   return `Eligible for ${types.join(", ")} at ${byTier.join("/")}.`;
 }
 
-export function modelsView(sy: Switchyard): ModelView[] {
+export function modelsView(sy: MeritRouter): ModelView[] {
   const m = matrix(sy);
   const since = Date.now() - 7 * DAY;
   const families = [...new Set(Object.values(sy.cfg.profiles).map((p) => p.mode))];
@@ -284,7 +284,7 @@ const RequestLogOptionsSchema = z.object({
   status: z.string().max(100).optional(), project: z.string().max(1000).optional(), purpose: z.string().max(100).optional(),
   tier: z.string().max(100).optional(), problems: z.boolean().optional(),
 }).strict();
-function requestLogScope(sy: Switchyard, opts: RequestLogOptions): { where: string[]; args: unknown[] } {
+function requestLogScope(sy: MeritRouter, opts: RequestLogOptions): { where: string[]; args: unknown[] } {
   opts = RequestLogOptionsSchema.parse(opts);
   const where: string[] = [];
   const args: unknown[] = [];
@@ -310,12 +310,12 @@ function requestLogScope(sy: Switchyard, opts: RequestLogOptions): { where: stri
 }
 
 /** Matching physical requests, before pagination; batches count once. */
-export function requestLogCount(sy: Switchyard, opts: RequestLogOptions = {}): number {
+export function requestLogCount(sy: MeritRouter, opts: RequestLogOptions = {}): number {
   const { where, args } = requestLogScope(sy, opts);
   return (sy.db.prepare(`SELECT COUNT(*) AS n FROM model_requests r ${where.length ? `WHERE ${where.join(" AND ")}` : ""}`).get(...args) as { n: number }).n;
 }
 
-export function requestLog(sy: Switchyard, opts: RequestLogOptions = {}): RequestRow[] {
+export function requestLog(sy: MeritRouter, opts: RequestLogOptions = {}): RequestRow[] {
   const { where, args } = requestLogScope(sy, opts);
   const rows = sy.db
     .prepare(
@@ -362,7 +362,7 @@ export interface TimeseriesPoint {
 }
 
 /** Requests per time bucket per endpoint, for charts. */
-export function timeseries(sy: Switchyard, opts: { hours?: number; bucketMinutes?: number; project?: string } = {}): TimeseriesPoint[] {
+export function timeseries(sy: MeritRouter, opts: { hours?: number; bucketMinutes?: number; project?: string } = {}): TimeseriesPoint[] {
   const hours = opts.hours ?? 24;
   const bucket = (opts.bucketMinutes ?? 60) * 60_000;
   const since = Date.now() - hours * 3_600_000;
@@ -377,7 +377,7 @@ export function timeseries(sy: Switchyard, opts: { hours?: number; bucketMinutes
   ).map((r) => ({ bucketStart: r.bucket, endpointId: r.ep, requests: r.n, failed: r.failed, inputTokens: r.inTok, outputTokens: r.outTok }));
 }
 
-export function tierDistribution(sy: Switchyard, sinceMs: number, project?: string): Array<{ tier: string; tasks: number; completed: number }> {
+export function tierDistribution(sy: MeritRouter, sinceMs: number, project?: string): Array<{ tier: string; tasks: number; completed: number }> {
   return sy.db
     .prepare(
       `SELECT COALESCE(tier, 'unclassified') AS tier, COUNT(*) AS tasks, SUM(state = 'completed') AS completed FROM tasks WHERE created_at > ?${project ? " AND project_id = ?" : ""} GROUP BY tier ORDER BY tier`,
@@ -385,7 +385,7 @@ export function tierDistribution(sy: Switchyard, sinceMs: number, project?: stri
     .all(sinceMs, ...(project ? [project] : [])) as Array<{ tier: string; tasks: number; completed: number }>;
 }
 
-export function routingPreview(sy: Switchyard, profile: ProfileName, tier: TierName, modalities: Modality[] = ["text"]): { floorB: number; forced: boolean; explanations: CandidateExplanation[] } {
+export function routingPreview(sy: MeritRouter, profile: ProfileName, tier: TierName, modalities: Modality[] = ["text"]): { floorB: number; forced: boolean; explanations: CandidateExplanation[] } {
   const plan = planRoute(
     sy.cfg,
     sy.catalog.endpoints(),
@@ -397,7 +397,7 @@ export function routingPreview(sy: Switchyard, profile: ProfileName, tier: TierN
 }
 
 export interface TaskDetail {
-  status: ReturnType<Switchyard["getStatus"]>[number];
+  status: ReturnType<MeritRouter["getStatus"]>[number];
   spec: WorkerTask;
   result: WorkerResult | null;
   classification: Classification | null;
@@ -438,7 +438,7 @@ export interface TaskAcceptanceView {
   decisions: SupervisorDecision[];
 }
 
-export function taskDetail(sy: Switchyard, id: string): TaskDetail | null {
+export function taskDetail(sy: MeritRouter, id: string): TaskDetail | null {
   const t = sy.tasks.get(id);
   if (!t) return null;
   const row = t.row as typeof t.row & { classification_json?: string | null };
@@ -491,18 +491,18 @@ function importanceView(spec: WorkerTask, contract: StoredContract | null, verif
  * (`{kind: "human", id: "panel"}`) are human. The MCP client is normally an agent (Claude Code)
  * acting as the user's supervisor, so it records `{kind: "supervisor", id: "mcp:<client>"}` and,
  * with `verification.strict_acceptor: human`, cannot accept a strict result. Refusals are
- * SwitchyardErrors with the library's code (reason_required, cannot_accept_unmet,
+ * MeritRouterErrors with the library's code (reason_required, cannot_accept_unmet,
  * human_acceptance_required, task_invalid, not_found).
  */
-export function decideTaskAcceptance(sy: Switchyard, id: string, decision: "accept" | "reject", by: SupervisorDecision["by"], reason: string | null, project?: string): AcceptanceDecisionOutcome {
+export function decideTaskAcceptance(sy: MeritRouter, id: string, decision: "accept" | "reject", by: SupervisorDecision["by"], reason: string | null, project?: string): AcceptanceDecisionOutcome {
   const t = sy.tasks.get(id);
   // With a project, another project's task reads as unknown (as `getStatus` does).
-  if (!t || (project && t.row.project_id !== project)) throw new SwitchyardError("not_found", `unknown task ${id}${project ? ` in project ${project}` : ""}`);
+  if (!t || (project && t.row.project_id !== project)) throw new MeritRouterError("not_found", `unknown task ${id}${project ? ` in project ${project}` : ""}`);
   const input = { by, reason };
   return decision === "accept" ? sy.acceptTask(id, input, project) : sy.rejectTask(id, input, project);
 }
 
-export function artifactText(sy: Switchyard, ref: string, maxBytes = 200_000): { row: ArtifactRow; text: string; truncated: boolean } | null {
+export function artifactText(sy: MeritRouter, ref: string, maxBytes = 200_000): { row: ArtifactRow; text: string; truncated: boolean } | null {
   const a = sy.artifacts.read(ref);
   if (!a) return null;
   const truncated = a.content.length > maxBytes;
@@ -518,7 +518,7 @@ export function configSchemaInfo() {
   return { profiles: PROFILE_NAMES, tiers: TIER_NAMES, modalities: MODALITIES };
 }
 
-export function rulebookText(sy: Switchyard): { path: string | null; text: string; isDefault: boolean } {
+export function rulebookText(sy: MeritRouter): { path: string | null; text: string; isDefault: boolean } {
   if (sy.cfg.rulebookPath && existsSync(sy.cfg.rulebookPath)) return { path: sy.cfg.rulebookPath, text: readFileSync(sy.cfg.rulebookPath, "utf8"), isDefault: false };
   return { path: sy.cfg.rulebookPath, text: YAML.stringify(DEFAULT_RULEBOOK), isDefault: true };
 }
@@ -528,7 +528,7 @@ export function rulebookText(sy: Switchyard): { path: string | null; text: strin
  * and scoring.rulebook_file is set. Takes effect for newly classified tasks after a restart of
  * workers (the rulebook version is recorded on every classification).
  */
-export function writeRulebook(sy: Switchyard, text: string): { ok: true; path: string } | { ok: false; errors: string[] } {
+export function writeRulebook(sy: MeritRouter, text: string): { ok: true; path: string } | { ok: false; errors: string[] } {
   let raw: unknown;
   try {
     raw = YAML.parse(text);
@@ -549,12 +549,12 @@ export function writeRulebook(sy: Switchyard, text: string): { ok: true; path: s
 
 // ---------- overrides ----------
 
-export function setModelOverride(sy: Switchyard, id: string, override: EndpointOverride | null): void {
+export function setModelOverride(sy: MeritRouter, id: string, override: EndpointOverride | null): void {
   if (!sy.catalog.get(id)) throw new Error(`unknown model ${id}`);
   sy.catalog.setOverride(id, override);
 }
 
-export function addRoutingOverride(sy: Switchyard, o: RoutingOverride): number {
+export function addRoutingOverride(sy: MeritRouter, o: RoutingOverride): number {
   if (!sy.catalog.get(o.endpointId)) throw new Error(`unknown model ${o.endpointId}`);
   return sy.catalog.addRoutingOverride(o);
 }
@@ -576,7 +576,7 @@ export interface QualificationBoard {
   dailyAllocation: number;
 }
 
-export function qualificationBoard(sy: Switchyard): QualificationBoard {
+export function qualificationBoard(sy: MeritRouter): QualificationBoard {
   const suite = sy.qualifier.suite();
   const families = [...new Set(suite.evals.map((e) => e.family))];
   const rows: QualificationBoard["rows"] = [];
@@ -612,7 +612,7 @@ export function qualificationBoard(sy: Switchyard): QualificationBoard {
 }
 
 /** Start a qualification run; a running worker executes it and grades results as they finish. */
-export function startQualification(sy: Switchyard, endpointId: string, opts: { evalIds?: string[]; trials?: number } = {}) {
+export function startQualification(sy: MeritRouter, endpointId: string, opts: { evalIds?: string[]; trials?: number } = {}) {
   return sy.qualifier.start(endpointId, opts);
 }
 
@@ -651,48 +651,48 @@ export * from "./entities.js";
 
 const HUMAN = { kind: "human" } as const;
 const humanActor = { agent: "human", role: "human" };
-const brainOf = (sy: Switchyard, project?: string) => (project ? sy.brainFor(project) : sy.brain);
+const brainOf = (sy: MeritRouter, project?: string) => (project ? sy.brainFor(project) : sy.brain);
 
-export async function brainTree(sy: Switchyard, prefix = "", project?: string) {
+export async function brainTree(sy: MeritRouter, prefix = "", project?: string) {
   const brain = brainOf(sy, project);
   await brain.ensure();
   return brain.list(HUMAN, prefix);
 }
 
-export function brainRead(sy: Switchyard, path: string, project?: string) {
+export function brainRead(sy: MeritRouter, path: string, project?: string) {
   return brainOf(sy, project).read(HUMAN, path);
 }
 
-export async function brainSearch(sy: Switchyard, query: string, prefix?: string, project?: string) {
+export async function brainSearch(sy: MeritRouter, query: string, prefix?: string, project?: string) {
   const brain = brainOf(sy, project);
   await brain.refreshIndex();
   return brain.search(HUMAN, query, { ...(prefix ? { prefix } : {}), limit: 30 });
 }
 
-export function brainHistory(sy: Switchyard, path: string, project?: string) {
+export function brainHistory(sy: MeritRouter, path: string, project?: string) {
   return brainOf(sy, project).history(path);
 }
 
 export { brainCommitDetail, brainDocumentBlame, brainDocumentHistory, brainDocumentRelated, brainDocumentVisible, type BrainCommitDetail, type BrainHistoryEntry } from "./brain-entities.js";
 export * from "./plan-recovery.js";
 
-export function brainBlame(sy: Switchyard, path: string, project?: string) {
+export function brainBlame(sy: MeritRouter, path: string, project?: string) {
   return brainOf(sy, project).blame(path);
 }
 
 /** Save a brain file as the user (protocol validation still applies to working docs and reports). */
-export function brainWrite(sy: Switchyard, path: string, content: string, project?: string) {
+export function brainWrite(sy: MeritRouter, path: string, content: string, project?: string) {
   return brainOf(sy, project).write(HUMAN, humanActor, path, content, `Edit ${path} in the panel`);
 }
 
 /** The project a brain access request belongs to ('' when unassigned), or null for an unknown request. */
-function accessRequestProject(sy: Switchyard, id: number): string | null {
+function accessRequestProject(sy: MeritRouter, id: number): string | null {
   const r = sy.db.prepare("SELECT project_id FROM brain_access_requests WHERE id = ?").get(id) as { project_id: string } | undefined;
   return r ? r.project_id : null;
 }
 
 /** Workers' brain access requests; `project` limits them to one project's (all projects when omitted). */
-export function brainAccessRequests(sy: Switchyard, status?: "pending" | "approved" | "denied", project?: string) {
+export function brainAccessRequests(sy: MeritRouter, status?: "pending" | "approved" | "denied", project?: string) {
   const all = (project ? sy.brainAccessFor(project) : sy.brainAccess).list(status ? { status } : {});
   if (!project) return all;
   const mine = new Set((sy.db.prepare("SELECT id FROM brain_access_requests WHERE project_id = ?").all(project) as Array<{ id: number }>).map((r) => r.id));
@@ -700,9 +700,9 @@ export function brainAccessRequests(sy: Switchyard, status?: "pending" | "approv
 }
 
 /** Decide a request through its own project's brain access; with `project`, another project's request is refused. */
-export function decideBrainAccess(sy: Switchyard, id: number, approve: boolean, reason: string, project?: string) {
+export function decideBrainAccess(sy: MeritRouter, id: number, approve: boolean, reason: string, project?: string) {
   const owner = accessRequestProject(sy, id);
-  if (project && owner !== null && owner !== project) throw new SwitchyardError("not_found", `unknown brain access request ${id} in project ${project}`);
+  if (project && owner !== null && owner !== project) throw new MeritRouterError("not_found", `unknown brain access request ${id} in project ${project}`);
   const access = owner && sy.projects.get(owner) ? sy.brainAccessFor(owner) : sy.brainAccess;
   return access.decide(id, approve, "human", reason);
 }

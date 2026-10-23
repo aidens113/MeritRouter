@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { BookOpenText, FileText, Inbox, Search, ShieldQuestion, Sparkles } from "lucide-react";
-import { insights, type PromotionRecord, type Switchyard } from "switchyard-router";
+import { insights, type PromotionRecord, type MeritRouter } from "meritrouter";
 import { getSy } from "@/lib/sy";
 import { project } from "@/lib/project";
 import { brainHref, jobHref, projectBase, taskHref } from "@/lib/links";
@@ -240,7 +240,7 @@ function Tree({ sc, entries, current, project }: { sc: Sc; entries: Entry[]; cur
   );
 }
 
-async function SearchResults({ sc, sy, q }: { sc: Sc; sy: Switchyard; q: string }) {
+async function SearchResults({ sc, sy, q }: { sc: Sc; sy: MeritRouter; q: string }) {
   let hits: Awaited<ReturnType<typeof insights.brainSearch>> = [];
   let error: string | null = null;
   try {
@@ -290,7 +290,7 @@ function snippet(s: string) {
   );
 }
 
-async function DocPanel({ sc, sy, path, tab, entries, knownAgents }: { sc: Sc; sy: Switchyard; path: string; tab: string; entries: Entry[]; knownAgents: Set<string> }) {
+async function DocPanel({ sc, sy, path, tab, entries, knownAgents }: { sc: Sc; sy: MeritRouter; path: string; tab: string; entries: Entry[]; knownAgents: Set<string> }) {
   if (!inScope(sc, path)) {
     const owner = ownerOf(path);
     return (
@@ -378,7 +378,7 @@ async function DocPanel({ sc, sy, path, tab, entries, knownAgents }: { sc: Sc; s
 }
 
 function History({ rows, slug, path, knownAgents }: { rows: Awaited<ReturnType<typeof insights.brainDocumentHistory>>; slug: string; path: string; knownAgents: Set<string> }) {
-  if (!rows.length) return <p className="text-sm text-ink-3">No commits recorded for this file. Files in mounted folders without <Mono>commit: true</Mono> are committed by you, not SwitchYard.</p>;
+  if (!rows.length) return <p className="text-sm text-ink-3">No commits recorded for this file. Files in mounted folders without <Mono>commit: true</Mono> are committed by you, not MeritRouter.</p>;
   return (
     <div className="overflow-x-auto">
       <table className="data-table">
@@ -407,7 +407,7 @@ function History({ rows, slug, path, knownAgents }: { rows: Awaited<ReturnType<t
   );
 }
 
-async function Blame({ sy, slug, path, knownAgents }: { sy: Switchyard; slug: string; path: string; knownAgents: Set<string> }) {
+async function Blame({ sy, slug, path, knownAgents }: { sy: MeritRouter; slug: string; path: string; knownAgents: Set<string> }) {
   let lines: BlameLine[] = [];
   try {
     lines = await insights.brainDocumentBlame(sy, slug, path);

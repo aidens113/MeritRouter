@@ -1,10 +1,10 @@
 import { afterEach, expect, it } from "vitest";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { RequestCaptures } from "../src/storage/request-captures.js";
 import { CAPTURE_LIMITS as L, RequestCaptureViewSchema, captureBytes, projectCaptureInput, projectCaptureOutput, type CaptureOutcome } from "../src/gateway/request-capture.js";
 import { WorkerTaskSchema } from "../src/core/task.js";
 import { baseConfig, makeEnv, open, reply, ScriptedClient, summarizeTask, type Env } from "./helpers.js";
-let env: Env | undefined, sy: Switchyard | undefined;
+let env: Env | undefined, sy: MeritRouter | undefined;
 afterEach(async () => { await sy?.close(); sy = undefined; env?.cleanup(); env = undefined; });
 const outcome: CaptureOutcome = { kind: "succeeded", httpStatus: 200, errorKind: null, possiblyConsumed: true, policyViolation: false };
 function setup() {

@@ -207,7 +207,7 @@ export interface EvidenceInput {
   /** Coding: the patch against the base (ref null when given inline only). */
   patch: { ref: string | null; text: string } | null;
   checks: Array<{ command: string; exitCode: number | null; revision: string | null; logRef: string | null; logTail: string }>;
-  /** SwitchYard's own deterministic checks on the result. */
+  /** MeritRouter's own deterministic checks on the result. */
   deterministic: Array<{ name: string; outcome: string; detail: string }>;
   /** Non-coding: the answer under review. */
   work: { summary: string; findings: Array<{ description: string; evidenceRefs: string[] }>; data?: unknown } | null;
@@ -229,7 +229,7 @@ export function renderEvidencePackage(e: EvidenceInput): string {
   out.push(
     `## Contract\nGoal: ${e.goal}\nVerification level: ${e.level}\npolicyVersion: ${e.policyVersion}\nexaminedRevision: ${e.revision}\nScope: repositories ${e.scope.repositoryAliases.join(", ") || "(none)"}${e.scope.writableRepository ? `; writable ${e.scope.writableRepository}` : ""}${e.scope.allowedPaths ? `; allowed paths ${e.scope.allowedPaths.join(", ")}` : ""}\nBase commits: ${Object.entries(e.baseCommits).map(([a, c]) => `${a}@${c.slice(0, 12)}`).join(", ") || "(none)"}\nCriteria (assess each id exactly once):\n${e.criteria.map((c) => `- ${c.id} [verify: ${c.verify}]: ${c.text}`).join("\n")}`,
   );
-  if (e.deterministic.length) out.push(`## Deterministic checks (run by SwitchYard, not the author)\n${e.deterministic.map((c) => `- ${c.name}: ${c.outcome} (${c.detail.slice(0, 300)})`).join("\n")}`);
+  if (e.deterministic.length) out.push(`## Deterministic checks (run by MeritRouter, not the author)\n${e.deterministic.map((c) => `- ${c.name}: ${c.outcome} (${c.detail.slice(0, 300)})`).join("\n")}`);
   if (e.checks.length) {
     out.push(
       `## Check runs\n${e.checks

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Db } from "../storage/db.js";
-import { SwitchyardError } from "../core/errors.js";
+import { MeritRouterError } from "../core/errors.js";
 import { TaskAttemptRecordSchema, TaskLabRecordSchema, type TaskAttemptRecord, type TaskLabRecord } from "./task-attempt-schema.js";
 const AttemptRow = z.object({ id: z.string(), task_id: z.string(), project_id: z.string(), run_count: z.number(), lease_owner: z.string(), execution_id: z.string(), source_worktree: z.string(), writable_alias: z.string(), repositories_json: z.string(), submitted_commit: z.string().nullable(), submitted_tree: z.string().nullable(), patch_digest: z.string().nullable(), state: z.string(), created_at: z.number() });
 const LabRow = z.object({ attempt_id: z.string(), lab_id: z.string().nullable(), desired_state: z.string(), phase: z.string(), checks_json: z.string(), recipe_json: z.string(), recipe_digest: z.string(), deadline_at: z.number(), result_json: z.string().nullable(), cleanup_error: z.string().nullable(), created_at: z.number(), updated_at: z.number() });
@@ -10,7 +10,7 @@ export class TaskAttemptStore {
   get(id: string): TaskAttemptRecord {
     const raw = this.db.prepare("SELECT * FROM task_workspace_attempts WHERE id=?").get(id);
     if (!raw)
-      throw new SwitchyardError("not_found", "unknown task workspace attempt");
+      throw new MeritRouterError("not_found", "unknown task workspace attempt");
     const r = AttemptRow.parse(raw);
     return TaskAttemptRecordSchema.parse({ id: r.id, taskId: r.task_id, project: r.project_id, runCount: r.run_count, leaseOwner: r.lease_owner, executionId: r.execution_id, sourceWorktree: r.source_worktree, writableAlias: r.writable_alias, repositories: JSON.parse(r.repositories_json), submittedCommit: r.submitted_commit, submittedTree: r.submitted_tree, patchDigest: r.patch_digest, state: r.state, createdAt: r.created_at });
   }

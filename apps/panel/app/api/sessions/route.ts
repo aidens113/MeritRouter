@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { insights, SESSION_STATUSES } from "switchyard-router";
+import { insights, SESSION_STATUSES } from "meritrouter";
 import { handle, HttpError } from "@/lib/api";
 
 export const dynamic = "force-dynamic";

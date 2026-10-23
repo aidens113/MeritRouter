@@ -2,11 +2,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_RULEBOOK } from "../src/scoring/rulebook.js";
 import { classifierCouldMatter, decide, type TaskFeatures } from "../src/scoring/score.js";
 import { WorkerTaskSchema } from "../src/core/task.js";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { endpoint, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => {
   await sy?.close();
   sy = undefined;

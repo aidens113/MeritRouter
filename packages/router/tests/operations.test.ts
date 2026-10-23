@@ -4,7 +4,7 @@ import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFi
 import { tmpdir } from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { parseConfig } from "../src/config/load.js";
 import { DB_FILE, openDatabase } from "../src/storage/db.js";
 import { backupStorage, liveLeases, MANIFEST_FILE, readBackupManifest, restoreStorage } from "../src/operations/backup.js";
@@ -14,7 +14,7 @@ import { sessionDetail } from "../src/admin/insights.js";
 import { baseConfig, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, summarizeTask, type Env } from "./helpers.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 const temps: string[] = [];
 afterEach(async () => {
   await sy?.close();
@@ -25,7 +25,7 @@ afterEach(async () => {
 });
 
 function tempDir(): string {
-  const d = mkdtempSync(path.join(tmpdir(), "switchyard-ops-"));
+  const d = mkdtempSync(path.join(tmpdir(), "meritrouter-ops-"));
   temps.push(d);
   return d;
 }
@@ -45,7 +45,7 @@ async function runOneTask(): Promise<string> {
 
 describe("storage durability", () => {
   it("defaults to normal and accepts full; rejects anything else", () => {
-    const at = path.join(tmpdir(), "switchyard.config.yaml");
+    const at = path.join(tmpdir(), "meritrouter.config.yaml");
     expect(parseConfig(baseConfig(), at).storage.durability).toBe("normal");
     expect(parseConfig(baseConfig({ storage: { directory: ".s", durability: "full" } }), at).storage.durability).toBe("full");
     expect(() => parseConfig(baseConfig({ storage: { directory: ".s", durability: "extra" } }), at)).toThrow(/durability/);
@@ -85,14 +85,14 @@ describe("backup and restore", () => {
     await sy!.close();
     sy = undefined;
 
-    // Restore into a fresh storage directory and open SwitchYard on it.
+    // Restore into a fresh storage directory and open MeritRouter on it.
     const restoredDir = path.join(env!.dir, "restored");
     const r = restoreStorage({ backupDir: target, storageDir: restoredDir });
     expect(r).toMatchObject({ previousMovedTo: null, leasesReleased: 0 });
     const cfg = parseConfig(baseConfig({ storage: { directory: "restored" } }), env!.cfg.configPath);
     expect(cfg.storageDir).toBe(restoredDir);
-    const { Switchyard } = await import("../src/core/service.js");
-    sy = new Switchyard(cfg, { providerFetch: new ScriptedClient(() => reply("unused")).fetch });
+    const { MeritRouter } = await import("../src/core/service.js");
+    sy = new MeritRouter(cfg, { providerFetch: new ScriptedClient(() => reply("unused")).fetch });
     expect(sy.getStatus([taskId])[0]).toMatchObject({ taskId, state: "completed" });
     expect(sy.collectResults([taskId]).completed[0]).toMatchObject({ taskId, executionStatus: "completed" });
     expect(sy.artifacts.read(artifact)?.content.toString("utf8")).toBe("artifact body\n");
@@ -178,7 +178,7 @@ describe("backup and restore", () => {
     expect(liveLeases(fresh)).toEqual([]);
 
     rmSync(path.join(target, MANIFEST_FILE));
-    expect(() => restoreStorage({ backupDir: target, storageDir: path.join(tempDir(), "x") })).toThrow(/not a complete SwitchYard backup/);
+    expect(() => restoreStorage({ backupDir: target, storageDir: path.join(tempDir(), "x") })).toThrow(/not a complete MeritRouter backup/);
   });
 
   it("refuses a backup from a newer schema", async () => {
@@ -337,52 +337,52 @@ describe("service definitions (dry run only; nothing is installed)", () => {
     platform,
     nodePath: platform === "win32" ? "C:\\Program Files\\nodejs\\node.exe" : "/usr/bin/node",
     cliPath: platform === "win32" ? "C:\\sy\\dist\\cli.js" : "/opt/sy/dist/cli.js",
-    configPath: platform === "win32" ? "C:\\Users\\me\\sy\\switchyard.config.yaml" : "/home/me/sy 100%/switchyard.config.yaml",
+    configPath: platform === "win32" ? "C:\\Users\\me\\sy\\meritrouter.config.yaml" : "/home/me/sy 100%/meritrouter.config.yaml",
     workingDir: platform === "win32" ? "C:\\Users\\me\\sy" : "/home/me/sy 100%",
-    storageDir: platform === "win32" ? "C:\\Users\\me\\sy\\.switchyard" : "/home/me/sy/.switchyard",
-    logsDir: platform === "win32" ? "C:\\Users\\me\\sy\\.switchyard\\logs" : "/home/me/sy/.switchyard/logs",
+    storageDir: platform === "win32" ? "C:\\Users\\me\\sy\\.meritrouter" : "/home/me/sy/.meritrouter",
+    logsDir: platform === "win32" ? "C:\\Users\\me\\sy\\.meritrouter\\logs" : "/home/me/sy/.meritrouter/logs",
     homeDir: platform === "win32" ? "C:\\Users\\me" : "/home/me",
     ...extra,
   });
 
   it("writes a systemd user unit that restarts on failure", () => {
     const p = servicePlan(spec("linux"));
-    expect(p.definitionPath).toBe("/home/me/.config/systemd/user/switchyard.service");
-    expect(p.definition).toContain('ExecStart="/usr/bin/node" "/opt/sy/dist/cli.js" "daemon" "--config" "/home/me/sy 100%%/switchyard.config.yaml"');
+    expect(p.definitionPath).toBe("/home/me/.config/systemd/user/meritrouter.service");
+    expect(p.definition).toContain('ExecStart="/usr/bin/node" "/opt/sy/dist/cli.js" "daemon" "--config" "/home/me/sy 100%%/meritrouter.config.yaml"');
     expect(p.definition).toContain("Restart=on-failure");
     expect(p.definition).toContain("WantedBy=default.target");
-    expect(p.install.filter((s) => s.kind === "run").map((s) => s.kind === "run" && s.args.join(" "))).toEqual(["--user daemon-reload", "--user enable --now switchyard.service"]);
+    expect(p.install.filter((s) => s.kind === "run").map((s) => s.kind === "run" && s.args.join(" "))).toEqual(["--user daemon-reload", "--user enable --now meritrouter.service"]);
     const text = describeServiceSteps(p, "install");
-    expect(text).toContain("write /home/me/.config/systemd/user/switchyard.service");
-    expect(text).toContain("run systemctl --user enable --now switchyard.service");
+    expect(text).toContain("write /home/me/.config/systemd/user/meritrouter.service");
+    expect(text).toContain("run systemctl --user enable --now meritrouter.service");
   });
 
   it("writes a launchd agent that keeps the daemon alive on failure", () => {
     const p = servicePlan(spec("darwin", { uid: 501, name: "sy-dev" }));
-    expect(p.definitionPath).toBe("/home/me/Library/LaunchAgents/dev.switchyard.sy-dev.plist");
-    expect(p.definition).toContain("<key>Label</key><string>dev.switchyard.sy-dev</string>");
+    expect(p.definitionPath).toBe("/home/me/Library/LaunchAgents/dev.meritrouter.sy-dev.plist");
+    expect(p.definition).toContain("<key>Label</key><string>dev.meritrouter.sy-dev</string>");
     expect(p.definition).toContain("<string>daemon</string>");
     expect(p.definition).toContain("<dict><key>SuccessfulExit</key><false/></dict>");
     expect(p.install.at(-1)).toEqual({ kind: "run", command: "launchctl", args: ["bootstrap", "gui/501", p.definitionPath], allowFailure: false });
-    expect(p.status[0]).toMatchObject({ args: ["print", "gui/501/dev.switchyard.sy-dev"] });
+    expect(p.status[0]).toMatchObject({ args: ["print", "gui/501/dev.meritrouter.sy-dev"] });
     expect(() => servicePlan(spec("darwin"))).toThrow(/uid/);
   });
 
   it("writes a Task Scheduler XML task (logon trigger, least privilege, restart on failure)", () => {
     const p = servicePlan(spec("win32", { windowsUser: "PC\\me" }));
-    expect(p.definitionPath).toBe("C:\\Users\\me\\sy\\.switchyard\\service\\switchyard.xml");
+    expect(p.definitionPath).toBe("C:\\Users\\me\\sy\\.meritrouter\\service\\meritrouter.xml");
     expect(p.definition).toContain('encoding="UTF-16"');
     expect(p.definition).toContain("<LogonTrigger><Enabled>true</Enabled><UserId>PC\\me</UserId></LogonTrigger>");
     expect(p.definition).toContain("<RunLevel>LeastPrivilege</RunLevel>");
     expect(p.definition).toContain("<RestartOnFailure><Interval>PT1M</Interval><Count>999</Count></RestartOnFailure>");
     expect(p.definition).toContain("<Command>C:\\Program Files\\nodejs\\node.exe</Command>");
-    expect(p.definition).toContain("<Arguments>C:\\sy\\dist\\cli.js daemon --config C:\\Users\\me\\sy\\switchyard.config.yaml</Arguments>");
+    expect(p.definition).toContain("<Arguments>C:\\sy\\dist\\cli.js daemon --config C:\\Users\\me\\sy\\meritrouter.config.yaml</Arguments>");
     expect(p.install[0]).toMatchObject({ kind: "write_file", encoding: "utf16le" });
     expect(p.install.slice(1)).toEqual([
-      { kind: "run", command: "schtasks", args: ["/Create", "/TN", "switchyard", "/XML", p.definitionPath, "/F"], allowFailure: false },
-      { kind: "run", command: "schtasks", args: ["/Run", "/TN", "switchyard"], allowFailure: false },
+      { kind: "run", command: "schtasks", args: ["/Create", "/TN", "meritrouter", "/XML", p.definitionPath, "/F"], allowFailure: false },
+      { kind: "run", command: "schtasks", args: ["/Run", "/TN", "meritrouter"], allowFailure: false },
     ]);
-    expect(describeServiceSteps(p, "uninstall")).toContain("run schtasks /Delete /TN switchyard /F");
+    expect(describeServiceSteps(p, "uninstall")).toContain("run schtasks /Delete /TN meritrouter /F");
     // Quoting: a path with spaces is quoted and XML-escaped.
     const spaced = servicePlan(spec("win32", { cliPath: "C:\\My Tools\\cli.js" }));
     expect(spaced.definition).toContain("<Arguments>&quot;C:\\My Tools\\cli.js&quot; daemon");
@@ -401,10 +401,10 @@ describe("service definitions (dry run only; nothing is installed)", () => {
       removeFile: (f) => void seen.push(`remove ${path.win32.basename(f)}`),
     };
     expect(runServiceSteps(p, "install", io).ok).toBe(false);
-    expect(seen).toEqual(["write switchyard.xml", "schtasks /Create", "schtasks /Run"]);
+    expect(seen).toEqual(["write meritrouter.xml", "schtasks /Create", "schtasks /Run"]);
     seen.length = 0;
     const un = runServiceSteps(p, "uninstall", { ...io, run: (c, a) => (seen.push(`${c} ${a[0]}`), { code: a[0] === "/End" ? 1 : 0, output: "" }) });
     expect(un.ok).toBe(true);
-    expect(seen).toEqual(["schtasks /End", "schtasks /Delete", "remove switchyard.xml"]);
+    expect(seen).toEqual(["schtasks /End", "schtasks /Delete", "remove meritrouter.xml"]);
   });
 });

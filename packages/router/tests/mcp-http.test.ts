@@ -28,7 +28,7 @@ afterEach(async () => {
   env = undefined;
 });
 
-/** Start `switchyard mcp --http --port 0` and wait for the URL it prints. */
+/** Start `meritrouter mcp --http --port 0` and wait for the URL it prints. */
 async function startHttp(extraArgs: string[] = [], extraEnv: Record<string, string> = {}): Promise<{ url: string; stderr: () => string }> {
   env = makeEnv();
   let stderr = "";
@@ -136,6 +136,6 @@ describe("MCP over Streamable HTTP", () => {
     child.stderr!.on("data", (d: Buffer) => (stderr += d.toString()));
     const code = await new Promise<number | null>((resolve) => child!.once("exit", resolve));
     expect(code).toBe(1);
-    expect(stderr).toMatch(/0\.0\.0\.0 \(not loopback\) needs a bearer token: set SWITCHYARD_MCP_TOKEN/);
+    expect(stderr).toMatch(/0\.0\.0\.0 \(not loopback\) needs a bearer token: set MERITROUTER_MCP_TOKEN/);
   }, 30_000);
 });

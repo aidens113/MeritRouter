@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 // Browser acceptance against the generated demo only. Start a production demo panel on 4489
 // and headless Chrome with --remote-debugging-port=9335 first. Never uses real provider calls.
-// pnpm --filter switchyard-panel validate:live [http://127.0.0.1:4489] [9335]
+// pnpm --filter meritrouter-panel validate:live [http://127.0.0.1:4489] [9335]
 import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { insights, loadConfig, Switchyard } from "switchyard-router";
+import { insights, loadConfig, MeritRouter } from "meritrouter";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const demo = path.resolve(here, "../.demo");
@@ -14,9 +14,9 @@ const base = z.string().url().parse(process.argv[2] ?? "http://127.0.0.1:4489");
 const parsedUrl = new URL(base);
 assert(["127.0.0.1", "localhost"].includes(parsedUrl.hostname) && parsedUrl.port !== "4477", "Use a spare loopback demo port, never the live panel");
 const port = z.coerce.number().int().min(1024).max(65535).parse(process.argv[3] ?? 9335);
-const cfg = loadConfig(path.join(demo, "switchyard.config.yaml"));
+const cfg = loadConfig(path.join(demo, "meritrouter.config.yaml"));
 assert(path.resolve(cfg.storageDir).startsWith(demo + path.sep), "Demo storage must remain under .demo");
-const sy = new Switchyard(cfg, { worker: false });
+const sy = new MeritRouter(cfg, { worker: false });
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const results = [];
 let ws;

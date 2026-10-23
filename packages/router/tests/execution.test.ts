@@ -6,11 +6,11 @@ import { Admission } from "../src/admission/admission.js";
 import { openDatabase } from "../src/storage/db.js";
 import { TaskStore } from "../src/storage/tasks.js";
 import { WorkerTaskSchema } from "../src/core/task.js";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { baseConfig, endpoint, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, summarizeTask, type Env } from "./helpers.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => {
   await sy?.close();
   sy = undefined;
@@ -18,7 +18,7 @@ afterEach(async () => {
 });
 
 /** Reply as whichever endpoint the request targeted. */
-function asServed(get: () => Switchyard, content: (n: number, req: Parameters<ScriptedClient["handler"]>[0]) => string) {
+function asServed(get: () => MeritRouter, content: (n: number, req: Parameters<ScriptedClient["handler"]>[0]) => string) {
   return new ScriptedClient((req, n) => reply(content(n, req), servedFor(get(), req)));
 }
 

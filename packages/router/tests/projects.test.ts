@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import Database from "better-sqlite3";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { parseConfig } from "../src/config/load.js";
 import { DB_FILE } from "../src/storage/db.js";
 import { MIGRATIONS } from "../src/storage/migrations.js";
@@ -17,7 +17,7 @@ import { baseResult, type RunContext, type RunOutcome } from "../src/runners/typ
 import { baseConfig, commitAll, FakeProvider, makeEnv, open, summarizeTask, type Env } from "./helpers.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => {
   await sy?.close();
   sy = undefined;
@@ -125,7 +125,7 @@ describe("project configuration", () => {
     expect(alpha.verification.default_importance).toBe("high");
     expect(alpha.verification.levels).toEqual(cfg.verification.levels);
     expect(cfg.verification.default_importance).toBe("normal");
-    expect([alpha.supervisor.branch_prefix, beta.supervisor.branch_prefix, cfg.supervisor.branch_prefix]).toEqual(["switchyard/job-", "beta/job-", "switchyard/job-"]);
+    expect([alpha.supervisor.branch_prefix, beta.supervisor.branch_prefix, cfg.supervisor.branch_prefix]).toEqual(["meritrouter/job-", "beta/job-", "meritrouter/job-"]);
     expect([alpha.team.max_agents, beta.team.max_agents]).toEqual([undefined, 3]);
     expect(beta.team.provider_concurrency_enabled).toBe(false);
     expect(alpha.profiles).toBe(cfg.profiles);
@@ -176,10 +176,10 @@ describe("projects in one worker", () => {
 
     // Merge locks are per project repository too: the same alias and branch queue separately.
     const q = new MergeQueue(sy.db, sy.tasks, "test");
-    const item = (jobId: string) => q.enqueue({ jobId, taskId: jobId, kind: "task", repo: "app", branch: "switchyard/job-x", integrationWorktree: env!.dir, sourceWorktree: null, sourceBase: "a".repeat(40), sourceHead: "b".repeat(40), commits: [], acceptance: null });
+    const item = (jobId: string) => q.enqueue({ jobId, taskId: jobId, kind: "task", repo: "app", branch: "meritrouter/job-x", integrationWorktree: env!.dir, sourceWorktree: null, sourceBase: "a".repeat(40), sourceHead: "b".repeat(40), commits: [], acceptance: null });
     const qa = item(a!.taskId);
     const qb = item(b!.taskId);
-    expect([qa.lockKey, qb.lockKey]).toEqual(["alpha/app:switchyard/job-x", "beta/app:switchyard/job-x"]);
+    expect([qa.lockKey, qb.lockKey]).toEqual(["alpha/app:meritrouter/job-x", "beta/app:meritrouter/job-x"]);
     const ahead = (taskId: string) => (sy!.tasks.events(taskId, 200).find((e) => e.type === "merge_queued")!.data as { ahead: number }).ahead;
     expect([ahead(a!.taskId), ahead(b!.taskId)]).toEqual([0, 0]);
 
@@ -250,7 +250,7 @@ describe("store upgrade to projects", () => {
     old.prepare("INSERT INTO sessions (id, task_id, role, agent_label, status, log_path, created_at, updated_at) VALUES ('s1', 't1', 'implementer', 'x', 'completed', 'x.jsonl', 1, 1), ('s2', NULL, 'supervisor', 'cc', 'completed', 'y.jsonl', 1, 1)").run();
     old.prepare("INSERT INTO job_state (task_id, messages_json, updated_at) VALUES ('job1', '[]', 1)").run();
     old.prepare("INSERT INTO file_leases (job_id, task_id, repository, globs_json, mode, acquired_at, released_at) VALUES ('job1', 't1', 'core', '[\"src/**\"]', 'write', 1, 2)").run();
-    old.prepare("INSERT INTO merge_queue (id, job_id, task_id, kind, repo_alias, branch, lock_key, integration_worktree, source_base, source_head, commits_json, state, created_at, updated_at) VALUES ('mq1', 'job1', 't1', 'task', 'core', 'switchyard/job-job1', 'core:switchyard/job-job1', 'w', 'a', 'b', '[]', 'integrated', 1, 1)").run();
+    old.prepare("INSERT INTO merge_queue (id, job_id, task_id, kind, repo_alias, branch, lock_key, integration_worktree, source_base, source_head, commits_json, state, created_at, updated_at) VALUES ('mq1', 'job1', 't1', 'task', 'core', 'meritrouter/job-job1', 'core:meritrouter/job-job1', 'w', 'a', 'b', '[]', 'integrated', 1, 1)").run();
     old.prepare("INSERT INTO brain_grants (task_id, pattern, mode, granted_by, created_at) VALUES ('t1', 'projects/demo/**', 'read', 'supervisor', 1)").run();
     old.prepare("INSERT INTO brain_access_requests (task_id, job_id, role, pattern, mode, reason, status, created_at) VALUES (NULL, 'job1', 'implementer', 'p', 'read', 'r', 'pending', 1)").run();
     old.prepare("INSERT INTO job_plans (job_id, version, plan_json, created_at) VALUES ('job1', 1, '{}', 1)").run();
@@ -275,7 +275,7 @@ describe("store upgrade to projects", () => {
     expect(one("SELECT id, project_id FROM sessions ORDER BY id")).toEqual([{ id: "s1", project_id: "demo" }, { id: "s2", project_id: "demo" }]);
     expect(one("SELECT project_id FROM job_state")).toEqual([{ project_id: "demo" }]);
     expect(one("SELECT repository FROM file_leases")).toEqual([{ repository: "demo/core" }]);
-    expect(one("SELECT repo_alias, lock_key FROM merge_queue")).toEqual([{ repo_alias: "core", lock_key: "demo/core:switchyard/job-job1" }]);
+    expect(one("SELECT repo_alias, lock_key FROM merge_queue")).toEqual([{ repo_alias: "core", lock_key: "demo/core:meritrouter/job-job1" }]);
     expect(one("SELECT project_id FROM brain_grants")).toEqual([{ project_id: "demo" }]);
     expect(one("SELECT project_id FROM brain_access_requests")).toEqual([{ project_id: "demo" }]);
     expect(one("SELECT project_id FROM job_plans")).toEqual([{ project_id: "demo" }]);

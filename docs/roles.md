@@ -1,6 +1,12 @@
 # Supervisors, workers, and the brain
 
-How SwitchYard divides work between a **supervisor** and **workers**, how to choose models for
+Start with [setup](setup.md) to connect a client. Read [who supervises](#who-supervises)
+to choose between client-led delegation and standalone jobs, then [worker models](#worker-models)
+for supported task types and enforced access. [Budgets](#budgets-and-requests-for-more),
+[shared memory](#the-brain-shared-knowledge) and [attribution](#attribution-and-undo)
+explain how to review and recover work. Detailed charter rules below are reference material.
+
+How MeritRouter divides work between a **supervisor** and **workers**, how to choose models for
 each role, what each role may and may not do, and how they share memory. The model follows
 FluxIQ's agent protocol (`AGENTS.md`, working-document protocol), with every rule that can be
 enforced in code enforced in code.
@@ -9,11 +15,11 @@ enforced in code enforced in code.
 
 | | Supervisor | Worker |
 | --- | --- | --- |
-| Who | External MCP client (Claude Code, Codex, etc.) or SwitchYard's own supervisor (standalone presets) | A model SwitchYard routes to for one brief |
+| Who | External MCP client (Claude Code, Codex, etc.) or MeritRouter's own supervisor (standalone presets) | A model MeritRouter routes to for one brief |
 | Owns | The goal, the plan, delegation, verification, integration, the job's working document, the final report | One bounded brief |
 | Reads | Its project's brain folder and `global/`; its project's repositories | Only what its brief names and grants |
 | Writes | Its project's brain entries; the job branch; `global/` only through a reviewed promotion | Its own report; files under its `allowedPaths` in an isolated worktree |
-| Commits | To `switchyard/job-<id>` (never pushes) | Each editing response is committed in its worktree under its own identity |
+| Commits | To `meritrouter/job-<id>` (never pushes) | Each editing response is committed in its worktree under its own identity |
 | Undo | Any change in its job: by task, model, agent, commit, or line | Nothing |
 
 A worker's report is a **claim**. The supervisor verifies it (reads the patch and evidence, runs
@@ -21,23 +27,23 @@ checks itself, or dispatches a `review`) before treating anything as done.
 
 ## Who supervises
 
-- **External MCP client** (`switchyard init --preset claude-code`): Claude Code, Codex or another client is the supervisor and talks
-  to SwitchYard through MCP. It submits tasks, waits, reads results, uses the brain, and
+- **External MCP client** (`meritrouter init --preset claude-code`): Claude Code, Codex or another client is the supervisor and talks
+  to MeritRouter through MCP. It submits tasks, waits, reads results, uses the brain, and
   integrates patches itself. Merge [`packages/router/examples/CLAUDE.delegation.md`](../packages/router/examples/CLAUDE.delegation.md)
   into the project's `CLAUDE.md`.
-- **SwitchYard's supervisor** (standalone presets): you give a goal (`switchyard run`, the
+- **MeritRouter's supervisor** (standalone presets): you give a goal (`meritrouter run`, the
   Jobs page of a project in the panel, or `sy.startJob()`), and a supervisor model you choose
   does the whole job.
 
 Over MCP, `client_supervision.dispatch_final_supervisor` defaults to **false**. The external
 client owns the project's plan, integration, final review/tests and iteration. It should
-delegate as much practical bounded work as possible; SwitchYard sub-supervisors remain available.
+delegate as much practical bounded work as possible; MeritRouter sub-supervisors remain available.
 `start_job` and supervisor-mode `submit_tasks` default to `supervisionScope: subtask`, which
 completes a delegated component rather than declaring the entire project finished.
 
 Allow explicit `supervisionScope: project` dispatch in Settings → General → Claude/Codex
 supervision, or ask the connected model to use `set_supervision_policy` with a reason. The
-setting permits project-level SwitchYard supervision; it never disables bounded delegation.
+setting permits project-level MeritRouter supervision; it never disables bounded delegation.
 `get_supervision_policy` reads the effective guidance. Custom instructions are optional.
 Existing MCP connections receive a changed policy once on their next tool call; new connections
 receive it during initialization. Direct task submission and resume calls obey the same MCP
@@ -97,7 +103,7 @@ Workers are routed per task by **task type** and **difficulty tier**:
 - Tiers set size floors (T1 >= 30B, T2/T3 >= 100B by default) and request budgets. The rulebook
   scores each task; a supervisor can set `hints.difficulty` to skip scoring. T4 means "too hard to
   delegate": it goes back to the supervisor, or to paid models when `paid.tiers.T4: premium`.
-- Within a tier, SwitchYard prefers the smallest sufficient free model (T1/T2) or the most capable
+- Within a tier, MeritRouter prefers the smallest sufficient free model (T1/T2) or the most capable
   (T3), falls back across models on rate limits, and escalates a failed task one tier once.
 - Pin, prefer, or block models per task type and tier with routing overrides (panel: `/all/routing`).
   Example: force your best free model for `implement/T3`, block a weak one for `analyze`.
@@ -194,7 +200,7 @@ Budgets are set by the supervisor that delegates and enforced by admission, neve
   `decide_budget_request`, `await_tasks` returning early on a pending request; tasks with no job,
   such as MCP `submit_tasks`, are decided by the MCP client with `budget_requests` and
   `decide_budget_request`, or by a person), `auto` (granted up to `team.auto_grant_max` while the
-  pool has room, denied when it is empty), or `human` (`switchyard budget approve|deny`, or the
+  pool has room, denied when it is empty), or `human` (`meritrouter budget approve|deny`, or the
   panel). A person may decide any request; an MCP client any but a person's.
 - **Records.** Each request is a `budget_requests` row and `budget_requested` /
   `budget_request_decided` / `budget_granted` events on the task and its job, a post on the job's
@@ -203,7 +209,7 @@ Budgets are set by the supervisor that delegates and enforced by admission, neve
 
 ## The brain (shared knowledge)
 
-A git repository of markdown files (default `~/.switchyard/brain`), one for every project of
+A git repository of markdown files (default `~/.meritrouter/brain`), one for every project of
 the install:
 
 ```text
@@ -218,11 +224,11 @@ projects/<project>/
   labs/<lab>.md                         persistent Lab lane working document
   decisions/  facts/  repos/<alias>.md
   decisions/lessons/                     lessons kept in the project (including rejected promotions)
-  promotions/<id>.md                     promotion records (written only by SwitchYard)
+  promotions/<id>.md                     promotion records (written only by MeritRouter)
 ```
 
 A project's folders are created when the project is created or first used. Both indexes are
-regenerated by SwitchYard; agents may read their own project's index but never write either one.
+regenerated by MeritRouter; agents may read their own project's index but never write either one.
 
 A Lab-bound supervisor uses its lane document for Current State and ledger updates. Its workers
 receive a read grant for that exact lane; they continue writing only their own effort report.
@@ -250,7 +256,7 @@ project's slug, so the default grants never reach another project's folder.
 - **Another project's folder** is reachable only through an access request. A worker calls
   `brain_request_access(pattern, mode, reason)`. The request is decided by the project's
   `brain.access_approver`: the supervisor (default), you (panel or
-  `switchyard brain approve|deny`), or the auto-approval rules (`brain.auto_approve`). A project
+  `meritrouter brain approve|deny`), or the auto-approval rules (`brain.auto_approve`). A project
   may override both. Grants end with the task.
 - **`global/**` and `projects/*/promotions/**` are system-managed.** No agent can write them,
   whatever its grants say: role `brain_grants` (even `**` with admin mode), brief grants, and
@@ -325,15 +331,15 @@ Where to see and decide promotions:
 
 **Existing working docs**: mount a repository's `docs/working/` into a project with
 `projects.<slug>.brain.mounts` (or `brain.mounts` for every project), so those documents are the
-project's brain. Mounted folders are not committed by SwitchYard unless `commit: true` is set on
+project's brain. Mounted folders are not committed by MeritRouter unless `commit: true` is set on
 the mount, and they are not part of a backup ([operations.md](operations.md#backup-and-restore)).
 
-**Your edits**: edit any file directly; before SwitchYard's next write, your changes are committed
+**Your edits**: edit any file directly; before MeritRouter's next write, your changes are committed
 as `human`.
 
 ## Attribution and undo
 
-Every change SwitchYard makes is a commit under the agent's own git identity (for example
+Every change MeritRouter makes is a commit under the agent's own git identity (for example
 `implementer subtract (groq/openai/gpt-oss-120b)`) with trailers:
 
 ```text
@@ -346,14 +352,14 @@ Tier: T2
 Request: r_...
 ```
 
-- `switchyard blame <repo> <path> --ref switchyard/job-<id>`, the panel's blame view, or MCP
+- `meritrouter blame <repo> <path> --ref meritrouter/job-<id>`, the panel's blame view, or MCP
   `blame` show which agent and model wrote each line.
 - Native workers commit once per model response that edits files, so attribution is exact even
   when a task falls back to another model mid-way; external agents are snapshotted before each new
   model request.
 - Supervisors undo by task, model, agent, commit, or line (`undo` tool). Undos are new commits
   with a reason; history is never rewritten, and lines older than the job are never touched.
-- Merge a finished job with `git merge --no-ff switchyard/job-<id>` to keep the per-commit
+- Merge a finished job with `git merge --no-ff meritrouter/job-<id>` to keep the per-commit
   history (a squash merge erases attribution).
 
 ## Customizing

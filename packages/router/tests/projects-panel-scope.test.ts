@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { teamMetrics } from "../src/admin/job-metrics.js";
 import { planComparison } from "../src/qualification/comparison.js";
 import { baseConfig, commitAll, makeEnv, open, ScriptedClient, reply, type Env } from "./helpers.js";
@@ -11,7 +11,7 @@ import { baseConfig, commitAll, makeEnv, open, ScriptedClient, reply, type Env }
 // comparisons (system work in the primary project) resolving repositories in that project.
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => {
   await sy?.close();
   sy = undefined;

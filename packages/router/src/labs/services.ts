@@ -18,8 +18,8 @@ import { assertLabEffect, assertLabSupervisor, currentLabAuthority, labEffectSig
 // command line before another manager adopts or terminates it. Declared services run foreground.
 const HOST_SOURCE = `// ${HOST_MARKER}
 const{spawn}=require('node:child_process');
-const cfg=JSON.parse(process.env.SWITCHYARD_LAB_COMMAND);
-delete process.env.SWITCHYARD_LAB_COMMAND;
+const cfg=JSON.parse(process.env.MERITROUTER_LAB_COMMAND);
+delete process.env.MERITROUTER_LAB_COMMAND;
 const child=spawn(cfg.command,[],{shell:true,cwd:cfg.cwd,env:process.env,stdio:'inherit',windowsHide:true});
 child.on('error',e=>{console.error(e.message);process.exitCode=1});
 child.on('close',code=>process.exit(code===null?1:code));
@@ -87,7 +87,7 @@ export class LabServices {
     mkdirSync(path.dirname(logPath), { recursive: true });
     assertLabEffect();
     const fd = openSync(logPath, "a");
-    const child = spawn(process.execPath, ["-e", HOST_SOURCE, "--", `--sy-lab-token=${token}`], { cwd: repo.worktree, env: { ...labEnvironment(lab), SWITCHYARD_LAB_COMMAND: JSON.stringify({ command: substitute(recipe.command, labValues(lab)), cwd: repo.worktree }) }, detached: true, windowsHide: true, stdio: ["ignore", fd, fd] });
+    const child = spawn(process.execPath, ["-e", HOST_SOURCE, "--", `--sy-lab-token=${token}`], { cwd: repo.worktree, env: { ...labEnvironment(lab), MERITROUTER_LAB_COMMAND: JSON.stringify({ command: substitute(recipe.command, labValues(lab)), cwd: repo.worktree }) }, detached: true, windowsHide: true, stdio: ["ignore", fd, fd] });
     closeSync(fd);
     try {
       await new Promise<void>((resolve, reject) => {

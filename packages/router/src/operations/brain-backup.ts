@@ -4,7 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 import type { ResolvedConfig } from "../config/load.js";
 import { expandHome } from "../brain/brain.js";
-import { SwitchyardError } from "../core/errors.js";
+import { MeritRouterError } from "../core/errors.js";
 
 /**
  * The brain half of a backup: the brain repository (every project's folder and `global/`) as a
@@ -70,7 +70,7 @@ function git(cwd: string, args: string[]): string {
     return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" } });
   } catch (err) {
     const e = err as { stderr?: string; message: string };
-    throw new SwitchyardError("internal", `git ${args[0]} failed in ${cwd}: ${(e.stderr || e.message).trim()}`);
+    throw new MeritRouterError("internal", `git ${args[0]} failed in ${cwd}: ${(e.stderr || e.message).trim()}`);
   }
 }
 
@@ -149,12 +149,12 @@ export function planBrainRestore(manifest: BrainManifest | null | undefined, bac
   if (!manifest) return { action: "skip", brainPath: target, detail: "this backup has no brain (taken before brain backups); the brain was left as it is" };
   if (!manifest.included || !manifest.bundle) return { action: "skip", brainPath: target, detail: `the backup does not include the brain (${manifest.reason ?? "not included"}); the brain was left as it is` };
   const bundle = path.join(backupDir, manifest.bundle);
-  if (!existsSync(bundle)) throw new SwitchyardError("not_found", `backup ${backupDir} lists the brain but has no ${manifest.bundle}`);
+  if (!existsSync(bundle)) throw new MeritRouterError("not_found", `backup ${backupDir} lists the brain but has no ${manifest.bundle}`);
   if (!isNonEmptyDir(target)) return { action: "create", brainPath: target };
   if (isRepoRoot(target)) {
     const dirty = uncommittedBrainPaths(target);
     if (dirty.length) {
-      throw new SwitchyardError(
+      throw new MeritRouterError(
         "conflict",
         `refusing to restore: the brain at ${target} has ${dirty.length} uncommitted change(s) (${dirty.slice(0, 5).join(", ")}${dirty.length > 5 ? ", ..." : ""}); commit or discard them first (a restore never overwrites uncommitted brain work)`,
       );
@@ -163,7 +163,7 @@ export function planBrainRestore(manifest: BrainManifest | null | undefined, bac
     const head = tryGit(target, ["symbolic-ref", "-q", "--short", "HEAD"]) || null;
     if (commit && commit === manifest.commit && head === manifest.head) return { action: "same", brainPath: target, detail: `the brain at ${target} is already at the backup's commit ${commit.slice(0, 12)}` };
   }
-  if (!force) throw new SwitchyardError("conflict", `refusing to restore over the existing brain at ${target}; pass --force to move it aside first`);
+  if (!force) throw new MeritRouterError("conflict", `refusing to restore over the existing brain at ${target}; pass --force to move it aside first`);
   return { action: "replace", brainPath: target };
 }
 
@@ -193,7 +193,7 @@ export function stageBrainRestore(plan: BrainRestorePlan, manifest: BrainManifes
       git(staging, ["reset", "-q", "--hard", m.commit!]);
     } else git(staging, ["checkout", "-q", "-f", "--detach", m.commit!]);
     staged.commit = tryGit(staging, ["rev-parse", "--verify", "-q", "HEAD"]);
-    if (!staged.commit || staged.commit !== m.commit) throw new SwitchyardError("internal", `restored brain HEAD ${staged.commit ?? "(none)"} does not match the backup's ${m.commit}`);
+    if (!staged.commit || staged.commit !== m.commit) throw new MeritRouterError("internal", `restored brain HEAD ${staged.commit ?? "(none)"} does not match the backup's ${m.commit}`);
     return staged;
   } catch (error) {
     discardStagedBrainRestore(staged);
@@ -228,9 +228,9 @@ export function restoreBrain(plan: BrainRestorePlan, manifest: BrainManifest | n
         renameSync(previousMovedTo, target);
       } else if (removedEmpty) mkdirSync(target);
     } catch (rollback) {
-      throw new SwitchyardError("conflict", `brain restore failed (${(error as Error).message}); rollback failed (${(rollback as Error).message}). Previous brain remains at ${previousMovedTo ?? target}; recover it before restarting`);
+      throw new MeritRouterError("conflict", `brain restore failed (${(error as Error).message}); rollback failed (${(rollback as Error).message}). Previous brain remains at ${previousMovedTo ?? target}; recover it before restarting`);
     }
-    throw new SwitchyardError("conflict", `brain restore failed (${(error as Error).message}); previous brain was preserved`);
+    throw new MeritRouterError("conflict", `brain restore failed (${(error as Error).message}); previous brain was preserved`);
   } finally {
     discardStagedBrainRestore(staged);
   }

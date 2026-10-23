@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EventEmitter } from "node:events";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, summarizeTask, type Env } from "./helpers.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => {
   vi.useRealTimers();
   await sy?.close();
@@ -27,7 +27,7 @@ function service(worker = false) {
 }
 
 /** Simulate a brain transaction still committing after its readable result has appeared. */
-function holdSettlement(s: Switchyard) {
+function holdSettlement(s: MeritRouter) {
   const started = deferred<void>();
   const release = deferred<void>();
   vi.spyOn(s.brain.promotions, "settle").mockImplementation(async () => {

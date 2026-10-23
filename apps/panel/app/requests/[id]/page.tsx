@@ -1,5 +1,5 @@
 import { notFound, redirect } from "next/navigation";
-import { insights } from "switchyard-router";
+import { insights } from "meritrouter";
 import { getSy } from "@/lib/sy";
 import { itemBase, requestHref } from "@/lib/links";
 import { SetupScreen } from "@/components/setup";

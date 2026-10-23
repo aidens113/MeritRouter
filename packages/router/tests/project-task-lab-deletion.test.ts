@@ -2,13 +2,13 @@ import { afterEach, expect, it } from "vitest";
 import path from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { WorkerTaskSchema } from "../src/core/task.js";
 import { deleteProject, previewProjectDeletion } from "../src/admin/insights.js";
 import { Worktrees } from "../src/workspaces/worktree.js";
 import { git } from "../src/workspaces/git.js";
 import { baseConfig, makeEnv, open, reply, ScriptedClient, commitAll, type Env } from "./helpers.js";
-let env: Env | undefined, sy: Switchyard | undefined;
+let env: Env | undefined, sy: MeritRouter | undefined;
 afterEach(async () => { await sy?.close(); sy = undefined; env?.cleanup(); env = undefined; });
 async function retained() {
   const node = JSON.stringify(process.execPath);

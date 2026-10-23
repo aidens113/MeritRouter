@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import Database from "better-sqlite3";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { WorkerActionRequests } from "../src/harness/worker-actions.js";
 import { GatewayError } from "../src/core/errors.js";
 import type { ChatMessage, ChatRequest, ChatResponse } from "../src/gateway/types.js";
@@ -26,7 +26,7 @@ import { baseConfig, endpoint, goodOutput, makeEnv, open, reply, ScriptedClient,
  */
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 let db: Db | undefined;
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => {
@@ -128,7 +128,7 @@ describe("circuit breaker", () => {
 });
 
 function openDb(): Db {
-  const dir = mkdtempSync(path.join(tmpdir(), "switchyard-breaker-"));
+  const dir = mkdtempSync(path.join(tmpdir(), "meritrouter-breaker-"));
   const d = openDatabase(dir);
   cleanups.push(() => {
     d.close();
@@ -359,7 +359,7 @@ async function fakeHttpProvider(answer: (body: { model: string; messages: ChatMe
 
 function startWorker(configPath: string, cwd: string): ChildProcess {
   const childEnv: NodeJS.ProcessEnv = { ...process.env };
-  delete childEnv.SWITCHYARD_FAULT_AT;
+  delete childEnv.MERITROUTER_FAULT_AT;
   const child = spawn(process.execPath, [CLI, "worker", "--config", configPath], { cwd, env: childEnv, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   let log = "";
   child.stdout?.on("data", (c: Buffer) => (log += c.toString("utf8")));
@@ -389,7 +389,7 @@ async function killHard(child: ChildProcess): Promise<void> {
 function fixtureOperator(e: Env, taskId: string, check: string) {
   const root = realpathSync(e.dir);
   const relative = path.relative(realpathSync(tmpdir()), root);
-  if (relative.startsWith("..") || path.isAbsolute(relative) || !path.basename(root).startsWith("switchyard-test-")) throw new Error("resilience operator requires a temporary test fixture");
+  if (relative.startsWith("..") || path.isAbsolute(relative) || !path.basename(root).startsWith("meritrouter-test-")) throw new Error("resilience operator requires a temporary test fixture");
   const operator = open(e, new ScriptedClient(() => reply("unused")), { worker: false });
   const actions = new WorkerActionRequests(operator.db);
   const task = operator.tasks.get(taskId)!;
@@ -422,7 +422,7 @@ function fixtureOperator(e: Env, taskId: string, check: string) {
 }
 
 describe("R1 acceptance: kill and restart a worker process", () => {
-  it.skipIf(!existsSync(CLI))("a native coding run killed mid-request resumes its session in a restarted worker, with the edit made once (needs dist/cli.js: pnpm --filter switchyard-router build)", async () => {
+  it.skipIf(!existsSync(CLI))("a native coding run killed mid-request resumes its session in a restarted worker, with the edit made once (needs dist/cli.js: pnpm --filter meritrouter build)", async () => {
     const edit = call("replace_in_file", { path: "src/app.ts", old_text: "export function add", new_text: "export function subtract(a: number, b: number) {\n  return a - b;\n}\n\nexport function add" }, "edit0");
     let hangs = 0;
     const gw = await fakeHttpProvider((body) => {
@@ -456,7 +456,7 @@ describe("R1 acceptance: kill and restart a worker process", () => {
     });
     const first = startWorker(configPath, env.dir);
     children.push(first);
-    db = new Database(path.join(env.cfg.storageDir, "switchyard.db"), { readonly: true, fileMustExist: false });
+    db = new Database(path.join(env.cfg.storageDir, "meritrouter.db"), { readonly: true, fileMustExist: false });
     const describeChild = (c: ChildProcess) => `exit=${c.exitCode} log=${(c as ChildProcess & { log: () => string }).log()}`;
     await until(`the worker's second model request (${describeChild(first)})`, () => hangs === 1, 30_000);
     const sessionId = (db.prepare("SELECT id FROM sessions WHERE task_id = ? AND role != 'classifier'").get(id) as { id: string }).id;

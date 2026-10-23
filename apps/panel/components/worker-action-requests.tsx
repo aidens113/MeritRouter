@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { insights } from "switchyard-router";
+import type { insights } from "meritrouter";
 import { itemBase } from "@/lib/links";
 import { dateTime } from "@/lib/format";
 import { Badge, Card, CardHeader } from "./ui";

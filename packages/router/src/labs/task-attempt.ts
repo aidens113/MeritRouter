@@ -3,7 +3,7 @@ import type { LabManager } from "./lab.js";
 import { ProjectConfigSchema } from "../projects/schema.js";
 import { TaskAttemptPruner, TASK_PRUNE_OPERATION } from "./task-attempt-prune.js";
 import { immediate, newId } from "../storage/db.js";
-import { SwitchyardError } from "../core/errors.js";
+import { MeritRouterError } from "../core/errors.js";
 import { LabNameSchema, validateRecipe } from "./recipe.js";
 import { TaskAttemptProcesses, type TaskProcessRecord } from "./task-attempt-processes.js";
 import { TaskAttemptRunner } from "./task-attempt-runner.js";
@@ -31,10 +31,10 @@ export class TaskLabLifecycle {
   }
   private assertRunning(id: string): void {
     if (this.closed || this.active.get(id)?.signal.aborted)
-      throw new SwitchyardError("lab_scope_denied", "task lifecycle is stopping");
+      throw new MeritRouterError("lab_scope_denied", "task lifecycle is stopping");
     this.source.identity(this.store.get(id));
     if (this.store.lab(id)?.desiredState !== "running" || !this.store.db.prepare("SELECT 1 FROM task_lab_operations WHERE attempt_id=? AND owner_id=? AND state='running' AND lease_until>?").get(id, this.manager.owner, Date.now()))
-      throw new SwitchyardError("lab_scope_denied", "task operation owner generation was lost");
+      throw new MeritRouterError("lab_scope_denied", "task operation owner generation was lost");
   }
   get store() {
     return this.source.store;
@@ -53,12 +53,12 @@ export class TaskLabLifecycle {
   }): TaskLabOperation {
     const record = this.get(handle), task = this.source.identity(record);
     if (record.state !== "submitted")
-      throw new SwitchyardError("lab_invalid_state", "submit attempt before runtime checks");
+      throw new MeritRouterError("lab_invalid_state", "submit attempt before runtime checks");
     const checks = z.object({ checks: z.array(LabNameSchema).min(1).max(10) }).strict().parse(input).checks, project = ProjectConfigSchema.parse(this.manager.options.cfg.projects[record.project]), policy = project.labs.ephemeral;
     if (!policy.enabled || new Set(checks).size !== checks.length || checks.some(name => !policy.checks.includes(name)))
-      throw new SwitchyardError("lab_scope_denied", "runtime check is outside human project allowlist");
+      throw new MeritRouterError("lab_scope_denied", "runtime check is outside human project allowlist");
     if (!project.lab)
-      throw new SwitchyardError("lab_not_configured", "project has no Lab recipe");
+      throw new MeritRouterError("lab_not_configured", "project has no Lab recipe");
     const recipe = validateRecipe(project.lab, record.repositories.map(r => r.alias));
     const needsDefault = recipe.setup.some(step => typeof step === "string") || checks.some(name => {
       const check = recipe.checks[name];
@@ -66,19 +66,19 @@ export class TaskLabLifecycle {
     });
     const defaultAlias = Object.keys(this.manager.options.project(record.project).repositoryPaths)[0];
     if (needsDefault && record.repositories[0]?.alias !== defaultAlias)
-      throw new SwitchyardError("lab_scope_denied", "task scope must include the recipe's configured default repository");
+      throw new MeritRouterError("lab_scope_denied", "task scope must include the recipe's configured default repository");
     for (const name of checks) {
       const check = recipe.checks[name];
       if (!check)
-        throw new SwitchyardError("not_found", "unknown runtime check");
+        throw new MeritRouterError("not_found", "unknown runtime check");
       if (typeof check !== "string" && "kind" in check)
-        throw new SwitchyardError("lab_invalid_state", "task browser checks require durable browser recovery; not enabled");
+        throw new MeritRouterError("lab_invalid_state", "task browser checks require durable browser recovery; not enabled");
     }
     const id = newId("tlo"), now = Date.now();
     immediate(this.store.db, () => {
       this.source.identity(record);
       if (this.store.lab(record.id))
-        throw new SwitchyardError("lab_invalid_state", "attempt runtime check already requested");
+        throw new MeritRouterError("lab_invalid_state", "attempt runtime check already requested");
       this.store.db.prepare("INSERT INTO lab_task_attempts(attempt_id,desired_state,phase,checks_json,recipe_json,recipe_digest,deadline_at,created_at,updated_at) VALUES(?,'running','queued',?,?,?,?,?,?)").run(record.id, JSON.stringify(checks), JSON.stringify(recipe), taskHash(JSON.stringify(recipe)), task.deadline_at, now, now);
       this.enqueue(id, record.id, "check");
     });
@@ -87,7 +87,7 @@ export class TaskLabLifecycle {
   cleanup(handle: TaskAttemptHandle, reason = "task completed"): TaskLabOperation {
     const record = this.get(handle), lab = this.store.lab(record.id);
     if (!lab)
-      throw new SwitchyardError("not_found", "attempt has no task Lab");
+      throw new MeritRouterError("not_found", "attempt has no task Lab");
     z.string().max(2000).parse(reason);
     const id = newId("tlo");
     immediate(this.store.db, () => {
@@ -110,18 +110,18 @@ export class TaskLabLifecycle {
     for (;;) {
       if (opts.signal?.aborted) {
         this.cleanup(handle, "wait cancelled");
-        throw new SwitchyardError("lab_invalid_state", "task wait cancelled");
+        throw new MeritRouterError("lab_invalid_state", "task wait cancelled");
       }
       const op = Operation.optional().parse(this.store.db.prepare("SELECT * FROM task_lab_operations WHERE id=? AND attempt_id=?").get(id, record.id));
       if (!op)
-        throw new SwitchyardError("not_found", "unknown task runtime operation");
+        throw new MeritRouterError("not_found", "unknown task runtime operation");
       if (op.state === "failed")
-        throw new SwitchyardError("lab_invalid_state", op.error ?? "task runtime operation failed");
+        throw new MeritRouterError("lab_invalid_state", op.error ?? "task runtime operation failed");
       if (op.state === "completed")
         return TaskLabEvidenceSchema.parse(JSON.parse(op.result_json!));
       if (Date.now() >= deadline) {
         this.cleanup(handle, "wait timed out");
-        throw new SwitchyardError("lab_invalid_state", "task runtime operation wait timed out");
+        throw new MeritRouterError("lab_invalid_state", "task runtime operation wait timed out");
       }
       await new Promise(r => setTimeout(r, 50));
     }
@@ -270,7 +270,7 @@ export class TaskLabLifecycle {
   }
   /** Internal confirmed-project-deletion cleanup; never relaxes task Lab ownership. */
   async pruneProject(project: string): Promise<{ removed: string[]; blocked: number }> {
-    if (this.closed) throw new SwitchyardError("unavailable", "Task Lab lifecycle is closed; project cleanup is unavailable");
+    if (this.closed) throw new MeritRouterError("unavailable", "Task Lab lifecycle is closed; project cleanup is unavailable");
     return this.runPrune(z.string().min(1).parse(project));
   }
   async close() {

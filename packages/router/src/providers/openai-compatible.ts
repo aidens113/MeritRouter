@@ -9,7 +9,7 @@ import { openAiCitations, openAiSearchFields, reportedSearches, searchOutcome } 
 
 /**
  * Extra OpenAI request parameters a caller may pass in `ProviderRequest.params`. Anything else
- * is dropped. `n` is never sent: SwitchYard reads only the first choice (and Groq and Cerebras
+ * is dropped. `n` is never sent: MeritRouter reads only the first choice (and Groq and Cerebras
  * require n = 1).
  */
 export const PASS_THROUGH_PARAMS: ReadonlySet<string> = new Set(["seed", "top_p", "stop", "presence_penalty", "frequency_penalty", "parallel_tool_calls", "logprobs", "top_logprobs", "logit_bias", "user"]);

@@ -1,7 +1,7 @@
 import { closeSync, fstatSync, lstatSync, openSync, readSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import type { Switchyard } from "../core/service.js";
+import type { MeritRouter } from "../core/service.js";
 import { SessionEventSchema, type SessionEvent } from "../sessions/events.js";
 
 const Id = z.string().regex(/^[A-Za-z0-9_-]{1,200}$/);
@@ -11,7 +11,7 @@ const MAX_EVENTS = 50_000;
 export const SESSION_SCOPE_UNAVAILABLE = "This historical timeline is unavailable because its complete participant project scope could not be verified. Accounting and safe session metadata remain available.";
 
 /** Validate the entire historical cohort before exposing any page, including failures and pre-response input. */
-export function scopedSessionTimeline(sy: Switchyard, id: string, project: string): SessionEvent[] | null {
+export function scopedSessionTimeline(sy: MeritRouter, id: string, project: string): SessionEvent[] | null {
   if (!Id.safeParse(id).success) return null;
   const owner = z.object({task_id:Id.nullable(),project_id:z.string().max(200)}).safeParse(sy.db.prepare("SELECT task_id, project_id FROM sessions WHERE id=?").get(id)).data;
   if (!owner || owner.project_id !== project || !owner.task_id) return null;

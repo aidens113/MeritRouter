@@ -1,10 +1,10 @@
 import { z } from "zod";
-import type { Switchyard } from "../core/service.js";
+import type { MeritRouter } from "../core/service.js";
 import { keyScanText, scanAfterKeyChange } from "../admin/provider-keys.js";
 import { addSearchKey, searchKeys } from "../admin/web-search.js";
 import { isSearchService } from "../web/services.js";
 
-import { SwitchyardError } from "../core/errors.js";
+import { MeritRouterError } from "../core/errors.js";
 import type { ProviderErrorKind } from "../providers/errors.js";
 import { providerHealth } from "../providers/health.js";
 import { keyTestTimeoutMs, testKeyListing, type KeyTestOutcome } from "../providers/key-test.js";
@@ -16,15 +16,15 @@ import { countFlag } from "./args.js";
 import { readHiddenLine } from "./secret-input.js";
 import { out, stamp, table } from "./terminal.js";
 
-// `switchyard keys`: provider keys in the vault (added here or in the panel) and keys declared in
+// `meritrouter keys`: provider keys in the vault (added here or in the panel) and keys declared in
 // the config, for every built-in, custom, and paid provider. Secrets are read from the
 // environment or a hidden prompt, never from argv, and only their last four characters are shown.
 
 /** Environment variable `keys add` reads the new secret from. */
-export const NEW_KEY_ENV = "SWITCHYARD_NEW_KEY";
+export const NEW_KEY_ENV = "MERITROUTER_NEW_KEY";
 
 /** `keys add --no-scan`: the key is stored and its provider is not listed. */
-const NOT_SCANNED = "models not listed (--no-scan): run switchyard models scan";
+const NOT_SCANNED = "models not listed (--no-scan): run meritrouter models scan";
 
 export type KeyStatus = "available" | "unusable" | "invalid" | "out_of_credits" | "cooling" | "exhausted" | "free_quota" | "limit";
 
@@ -60,7 +60,7 @@ const STATUS: Record<NonNullable<KeyAvailability["reason"]>, KeyStatus> = {
 };
 
 /** Availability of every credential (of one provider, or all), from key state and configured limits. */
-export function keyAvailability(sy: Switchyard, providerId?: string): Array<{ cred: ProviderCredential; availability: KeyAvailability }> {
+export function keyAvailability(sy: MeritRouter, providerId?: string): Array<{ cred: ProviderCredential; availability: KeyAvailability }> {
   const creds = sy.providers.credentials().list(providerId);
   const byRef = new Map<string, KeyAvailability>();
   for (const id of new Set(creds.map((c) => c.provider))) {
@@ -75,7 +75,7 @@ export function keyAvailability(sy: Switchyard, providerId?: string): Array<{ cr
 }
 
 /** Every vault and config key with its status (`keys list`). */
-export function keyRows(sy: Switchyard, providerId?: string): KeyRow[] {
+export function keyRows(sy: MeritRouter, providerId?: string): KeyRow[] {
   return keyAvailability(sy, providerId).map(({ cred, availability: a }) => ({
     ref: cred.ref,
     provider: cred.provider,
@@ -93,12 +93,12 @@ export function keyRows(sy: Switchyard, providerId?: string): KeyRow[] {
 }
 
 /** A provider a key can be added for: built-in, custom (`providers:`), or `paid.providers`. */
-export function keyProvider(sy: Switchyard, id: string | undefined): ResolvedProvider {
+export function keyProvider(sy: MeritRouter, id: string | undefined): ResolvedProvider {
   const known = [...sy.providers.providers().keys()].sort();
-  if (!id) throw new SwitchyardError("usage", `name a provider: ${known.join(", ")}`);
+  if (!id) throw new MeritRouterError("usage", `name a provider: ${known.join(", ")}`);
   const p = sy.providers.provider(id);
-  if (!p) throw new SwitchyardError("usage", `unknown provider ${id}: choose one of ${known.join(", ")}, or add a custom OpenAI-compatible provider under providers.${id} with base_url in the config`);
-  if (p.noKey) throw new SwitchyardError("usage", `${id} is configured with no_key: it takes no keys`);
+  if (!p) throw new MeritRouterError("usage", `unknown provider ${id}: choose one of ${known.join(", ")}, or add a custom OpenAI-compatible provider under providers.${id} with base_url in the config`);
+  if (p.noKey) throw new MeritRouterError("usage", `${id} is configured with no_key: it takes no keys`);
   return p;
 }
 
@@ -122,7 +122,7 @@ const FLAG_OF: Record<string, string> = { secret: "the secret", label: "--label"
 function usdFlag(name: string, value: string | undefined, allowZero = false): number | null {
   if (value === undefined) return null;
   const r = (allowZero ? z.coerce.number().min(0) : UsdFlag).safeParse(value);
-  if (!r.success) throw new SwitchyardError("usage", `--${name} must be a number of US dollars${allowZero ? " >= 0" : " > 0"}, got ${JSON.stringify(value)}`);
+  if (!r.success) throw new MeritRouterError("usage", `--${name} must be a number of US dollars${allowZero ? " >= 0" : " > 0"}, got ${JSON.stringify(value)}`);
   return r.data;
 }
 
@@ -132,9 +132,9 @@ function usdFlag(name: string, value: string | undefined, allowZero = false): nu
  */
 export function newKeyInput(provider: ResolvedProvider, secret: string, f: AddKeyFlags) {
   const billing = BillingClassSchema.safeParse(f.billing);
-  if (!billing.success) throw new SwitchyardError("usage", `--billing is required: ${BillingClassSchema.options.join(", ")} (free_tier: the key never costs money; the others are paid and follow paid.* policy and budgets)`);
+  if (!billing.success) throw new MeritRouterError("usage", `--billing is required: ${BillingClassSchema.options.join(", ")} (free_tier: the key never costs money; the others are paid and follow paid.* policy and budgets)`);
   const accountId = f["account-id"] ?? null;
-  if (provider.urlParams.includes("account_id") && !accountId && !provider.accountId) throw new SwitchyardError("usage", `${provider.id} keys need --account-id (or providers.${provider.id}.account_id in the config)`);
+  if (provider.urlParams.includes("account_id") && !accountId && !provider.accountId) throw new MeritRouterError("usage", `${provider.id} keys need --account-id (or providers.${provider.id}.account_id in the config)`);
   const input = {
     provider: provider.id,
     secret,
@@ -150,12 +150,12 @@ export function newKeyInput(provider: ResolvedProvider, secret: string, f: AddKe
     tpd: countFlag("tpd", f.tpd, 1) ?? null,
   };
   const r = NewKeySchema.safeParse(input);
-  if (!r.success) throw new SwitchyardError("usage", r.error.issues.map((i) => `${FLAG_OF[String(i.path[0])] ?? String(i.path[0])}: ${i.message}`).join("; "));
+  if (!r.success) throw new MeritRouterError("usage", r.error.issues.map((i) => `${FLAG_OF[String(i.path[0])] ?? String(i.path[0])}: ${i.message}`).join("; "));
   return r.data;
 }
 
 /** Store a new key in the vault (encrypted) after validating the provider and flags. */
-export function addKey(sy: Switchyard, providerId: string | undefined, secret: string, f: AddKeyFlags): PaidKey {
+export function addKey(sy: MeritRouter, providerId: string | undefined, secret: string, f: AddKeyFlags): PaidKey {
   const provider = keyProvider(sy, providerId);
   return sy.vault.add(newKeyInput(provider, secret, f));
 }
@@ -169,7 +169,7 @@ export interface KeyTest {
   ok: boolean;
   /** Model ids the key's listing returned (chat models only where the provider says). */
   models: string[];
-  /** Models the listing returned that SwitchYard cannot use (not chat models), with why. */
+  /** Models the listing returned that MeritRouter cannot use (not chat models), with why. */
   excluded: Array<{ model: string; reason: string }>;
   pages: number;
   /** Why the key was not tested (disabled, env var unset, ...). */
@@ -186,16 +186,16 @@ function keyTest(base: KeyTest, o: KeyTestOutcome): KeyTest {
   return { ...base, ok: true, models: o.listing.models.map((m) => m.id).sort(), excluded: o.listing.excluded, pages: o.listing.pages, cleared: o.cleared };
 }
 
-const testOpts = (sy: Switchyard) => ({ timeoutMs: keyTestTimeoutMs(sy.cfg.providers.request_timeout_seconds) });
+const testOpts = (sy: MeritRouter) => ({ timeoutMs: keyTestTimeoutMs(sy.cfg.providers.request_timeout_seconds) });
 
 /** The credentials `keys test <target>` covers: every key, one provider's, a vault id, or a ref. */
-export function testTargets(sy: Switchyard, target: string | undefined): ProviderCredential[] {
+export function testTargets(sy: MeritRouter, target: string | undefined): ProviderCredential[] {
   const creds = sy.providers.credentials();
   if (target === undefined) return creds.list();
   if (sy.providers.provider(target)) return creds.list(target);
   const ref = /^\d+$/.test(target) ? `vault:${target}` : target;
   const one = creds.get(ref);
-  if (!one) throw new SwitchyardError("not_found", `no provider or key ${target}: give a provider id, a vault key id, or a ref from switchyard keys list`);
+  if (!one) throw new MeritRouterError("not_found", `no provider or key ${target}: give a provider id, a vault key id, or a ref from meritrouter keys list`);
   return [one];
 }
 
@@ -206,7 +206,7 @@ export function testTargets(sy: Switchyard, target: string | undefined): Provide
  * works is cleared. Provider messages arrive with the secret masked. Nothing is written to the
  * catalog: `models scan` does that.
  */
-export async function testKeys(sy: Switchyard, target?: string): Promise<KeyTest[]> {
+export async function testKeys(sy: MeritRouter, target?: string): Promise<KeyTest[]> {
   const results: KeyTest[] = [];
   for (const cred of testTargets(sy, target)) {
     const base: KeyTest = { ref: cred.ref, provider: cred.provider, label: cred.label, last4: cred.last4, ok: false, models: [], excluded: [], pages: 0, skipped: null, error: null, cleared: false };
@@ -216,7 +216,7 @@ export async function testKeys(sy: Switchyard, target?: string): Promise<KeyTest
 }
 
 /** List models with a secret that is not stored yet (`keys add --test`). Nothing is recorded. */
-export async function testSecret(sy: Switchyard, provider: ResolvedProvider, secret: string, accountId: string | null): Promise<KeyTest> {
+export async function testSecret(sy: MeritRouter, provider: ResolvedProvider, secret: string, accountId: string | null): Promise<KeyTest> {
   const base: KeyTest = { ref: null, provider: provider.id, label: "new key", last4: secret.slice(-4), ok: false, models: [], excluded: [], pages: 0, skipped: null, error: null, cleared: false };
   return keyTest(base, await testKeyListing(sy.providers, { provider, secret, accountId }, testOpts(sy)));
 }
@@ -239,13 +239,13 @@ function statusText(r: KeyRow): string {
   return `${names[r.status]}${until}`;
 }
 
-/** The secret for `keys add`: SWITCHYARD_NEW_KEY, else a hidden prompt on an interactive terminal. */
+/** The secret for `keys add`: MERITROUTER_NEW_KEY, else a hidden prompt on an interactive terminal. */
 async function newSecret(provider: string): Promise<string> {
   const env = process.env[NEW_KEY_ENV];
   if (env) return env.trim();
-  if (!process.stdin.isTTY) throw new SwitchyardError("usage", `set ${NEW_KEY_ENV} to the secret, or run keys add in an interactive terminal to type it (the secret is never taken from the command line)`);
+  if (!process.stdin.isTTY) throw new MeritRouterError("usage", `set ${NEW_KEY_ENV} to the secret, or run keys add in an interactive terminal to type it (the secret is never taken from the command line)`);
   const secret = (await readHiddenLine(`${provider} API key (input hidden): `)).trim();
-  if (!secret) throw new SwitchyardError("usage", "no key entered");
+  if (!secret) throw new MeritRouterError("usage", "no key entered");
   return secret;
 }
 
@@ -256,8 +256,8 @@ export interface KeysFlags extends AddKeyFlags {
 
 const USAGE = "usage: keys list [provider] | add <provider> --billing <class> [options] | test [provider|id|ref] | enable|disable|remove <id> | spend";
 
-/** `switchyard keys ...`. Returns the exit code. */
-export async function keysCommand(sy: Switchyard, args: string[], flags: KeysFlags, json: boolean): Promise<number> {
+/** `meritrouter keys ...`. Returns the exit code. */
+export async function keysCommand(sy: MeritRouter, args: string[], flags: KeysFlags, json: boolean): Promise<number> {
   const sub = args[0] ?? "list";
   if (sub === "list") {
     // Search-service keys (Tavily, Brave, Exa) are listed after the model provider keys.
@@ -311,7 +311,7 @@ export async function keysCommand(sy: Switchyard, args: string[], flags: KeysFla
   }
   if (sub === "test") {
     const results = await testKeys(sy, args[1]);
-    out(json ? results : results.length ? results.map((t) => keyTestText(t)).join("\n") : "no keys: add one with switchyard keys add <provider> --billing <class>", json);
+    out(json ? results : results.length ? results.map((t) => keyTestText(t)).join("\n") : "no keys: add one with meritrouter keys add <provider> --billing <class>", json);
     return results.some((t) => t.error) ? 1 : 0;
   }
   if (sub === "enable" || sub === "disable" || sub === "remove") {
@@ -339,16 +339,16 @@ export async function keysCommand(sy: Switchyard, args: string[], flags: KeysFla
     out(sy.spend.summary(), true);
     return 0;
   }
-  throw new SwitchyardError("usage", USAGE);
+  throw new MeritRouterError("usage", USAGE);
 }
 
 /** A vault key id from `<id>` or `vault:<id>`; config keys are changed in the config file. */
-function vaultId(sy: Switchyard, arg: string | undefined, sub: string): number {
-  if (!arg) throw new SwitchyardError("usage", `usage: switchyard keys ${sub} <id>  (a vault key id or vault:<id> from switchyard keys list)`);
-  if (arg.startsWith("config:") || arg.startsWith("none:")) throw new SwitchyardError("usage", `${arg} is declared in ${sy.cfg.configPath}: change it there`);
+function vaultId(sy: MeritRouter, arg: string | undefined, sub: string): number {
+  if (!arg) throw new MeritRouterError("usage", `usage: meritrouter keys ${sub} <id>  (a vault key id or vault:<id> from meritrouter keys list)`);
+  if (arg.startsWith("config:") || arg.startsWith("none:")) throw new MeritRouterError("usage", `${arg} is declared in ${sy.cfg.configPath}: change it there`);
   const m = /^(?:vault:)?(\d+)$/.exec(arg);
-  if (!m) throw new SwitchyardError("usage", `not a vault key id: ${arg}`);
+  if (!m) throw new MeritRouterError("usage", `not a vault key id: ${arg}`);
   const id = Number(m[1]);
-  if (!sy.vault.get(id)) throw new SwitchyardError("not_found", `unknown key vault:${id}`);
+  if (!sy.vault.get(id)) throw new MeritRouterError("not_found", `unknown key vault:${id}`);
   return id;
 }

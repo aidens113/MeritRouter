@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Switchyard } from "../core/service.js";
+import type { MeritRouter } from "../core/service.js";
 import { normalizeBrainPath } from "../brain/brain.js";
 import { git } from "../workspaces/git.js";
 
@@ -27,7 +27,7 @@ export interface BrainCommitDetail {
 }
 
 /** Stored task/job links named by this document's line attribution, filtered by project. */
-export async function brainDocumentRelated(sy: Switchyard, project: string, path: string): Promise<{ tasks: string[]; jobs: string[] }> {
+export async function brainDocumentRelated(sy: MeritRouter, project: string, path: string): Promise<{ tasks: string[]; jobs: string[] }> {
   const empty = { tasks: [] as string[], jobs: [] as string[] };
   if (!brainDocumentVisible(project, path) || !sy.projects.get(project)) return empty;
   const lines = await brainDocumentBlame(sy, project, path);
@@ -47,7 +47,7 @@ export interface BrainHistoryEntry {
 }
 
 /** Read history once, tracking historical paths without exposing private rename ancestors. */
-async function documentHistory(sy: Switchyard, project: string, path: string) {
+async function documentHistory(sy: MeritRouter, project: string, path: string) {
   if (!brainDocumentVisible(project, path) || !sy.projects.get(project)) return null;
   const resolved = await sy.brainFor(project).resolveGitDocument(path);
   if (!resolved) return null;
@@ -91,7 +91,7 @@ async function documentHistory(sy: Switchyard, project: string, path: string) {
  * A subject is shown only when a whole-commit path inventory proves all changed paths are
  * visible. Bodies are never returned. One bounded batch covers the 50 displayed commits.
  */
-export async function brainDocumentHistory(sy: Switchyard, project: string, path: string): Promise<BrainHistoryEntry[]> {
+export async function brainDocumentHistory(sy: MeritRouter, project: string, path: string): Promise<BrainHistoryEntry[]> {
   try {
     const history = await documentHistory(sy, project, path);
     const entries = (history?.entries ?? []).slice(0, 50).map(({ repoPath: _repoPath, ...entry }) => entry);
@@ -128,7 +128,7 @@ export async function brainDocumentHistory(sy: Switchyard, project: string, path
 }
 
 /** Keep visible document text while masking attribution inherited from private history. */
-export async function brainDocumentBlame(sy: Switchyard, project: string, path: string) {
+export async function brainDocumentBlame(sy: MeritRouter, project: string, path: string) {
   if (!brainDocumentVisible(project, path) || !sy.projects.get(project)) return [];
   try {
     const history = await documentHistory(sy, project, path);
@@ -149,7 +149,7 @@ export async function brainDocumentBlame(sy: Switchyard, project: string, path: 
 }
 
 /** Return a document-only diff, never whole-commit metadata or private rename sources. */
-export async function brainCommitDetail(sy: Switchyard, project: string, path: string, hash: string): Promise<BrainCommitDetail | null> {
+export async function brainCommitDetail(sy: MeritRouter, project: string, path: string, hash: string): Promise<BrainCommitDetail | null> {
   if (!hashSchema.safeParse(hash).success) return null;
   try {
     const history = await documentHistory(sy, project, path);

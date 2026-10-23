@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Check, RefreshCw, Trash2, X } from "lucide-react";
-import type { insights } from "switchyard-router";
+import type { insights } from "meritrouter";
 import { buttonClass, Mono } from "../ui";
 import { callApi } from "./actions";
 import { ConfirmDialog } from "./confirm-dialog";
@@ -84,7 +84,7 @@ export function DangerZone({ slug, name }: { slug: string; name: string }) {
           setSecond(true);
         }}
         title={`Delete ${name}?`}
-        description="Deleting removes the project from SwitchYard. Read what goes and what stays."
+        description="Deleting removes the project from MeritRouter. Read what goes and what stays."
         confirmLabel="Continue"
         tone="danger"
         confirmDisabled={!preview || blocked}

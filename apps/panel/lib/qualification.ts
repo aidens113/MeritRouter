@@ -1,6 +1,6 @@
 import "server-only";
 import { notFound } from "next/navigation";
-import { insights, type Switchyard } from "switchyard-router";
+import { insights, type MeritRouter } from "meritrouter";
 import type { DetailScope } from "@/components/detail-scope";
 import { QUALIFICATION_BASE, QUALIFICATION_SLUG } from "./links";
 
@@ -17,12 +17,12 @@ export const QUALIFICATION_SCOPE: DetailScope = {
 };
 
 /** 404 unless task `taskId` is the qualification project's. */
-export function requireQualificationTask(sy: Switchyard, taskId: string): void {
+export function requireQualificationTask(sy: MeritRouter, taskId: string): void {
   if (!insights.isQualificationTask(sy, taskId)) notFound();
 }
 
 /** 404 unless session `sessionId` is of a qualification project task. */
-export function requireQualificationSession(sy: Switchyard, sessionId: string): void {
+export function requireQualificationSession(sy: MeritRouter, sessionId: string): void {
   const s = sy.sessions.get(sessionId);
   if (!s?.taskId || !insights.isQualificationTask(sy, s.taskId)) notFound();
 }

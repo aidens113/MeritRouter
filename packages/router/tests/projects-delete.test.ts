@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import YAML from "yaml";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { archiveProject, deleteProject, previewProjectDeletion, requestDetail } from "../src/admin/insights.js";
 import { backfillProjects } from "../src/projects/backfill.js";
 import { purgeProjectRows } from "../src/projects/deletion.js";
@@ -12,12 +12,12 @@ import { ensurePanel, panelBuildStale, panelStopFile, turnPanelOff } from "../sr
 import { baseConfig, commitAll, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, summarizeTask, type Env } from "./helpers.js";
 
 // Deleting a project: refused while it has running or queued tasks, for the last live project, and
-// on a confirmation that is not its slug; otherwise its rows, logs, artifacts, SwitchYard
+// on a confirmation that is not its slug; otherwise its rows, logs, artifacts, MeritRouter
 // worktrees, settings, and brain folder go, while requests, charges, paid spend, branches, and the
 // repository folders stay. Also the panel's power button (turnPanelOff) and the stale-build check.
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 const extra: string[] = [];
 afterEach(async () => {
   await sy?.close();
@@ -130,12 +130,12 @@ describe("deleting a project", () => {
     const betaJob = path.join(wtRoot, `job-${betaTask}-app`);
     const alphaCoding = path.join(wtRoot, `${alphaTask}-r1-abc`);
     git(betaApp, "worktree", "add", "-q", "--detach", betaCoding, "HEAD");
-    git(betaApp, "worktree", "add", "-q", "-b", `switchyard/job-${betaTask}`, betaJob, "HEAD");
+    git(betaApp, "worktree", "add", "-q", "-b", `meritrouter/job-${betaTask}`, betaJob, "HEAD");
     git(alphaApp, "worktree", "add", "-q", "--detach", alphaCoding, "HEAD");
     const brain = sy.brainFor("beta");
     await brain.ensure();
     await sy.brainFor("alpha").ensure();
-    writeFileSync(path.join(brain.root, "projects", "beta", "working", "notes.md"), "# Notes\n\nwritten outside SwitchYard\n");
+    writeFileSync(path.join(brain.root, "projects", "beta", "working", "notes.md"), "# Notes\n\nwritten outside MeritRouter\n");
     const sessionLogs = (sy.db.prepare("SELECT log_path FROM sessions WHERE project_id = 'beta'").pluck().all() as string[]).map((f) => path.resolve(storage, f));
     expect(sessionLogs.length).toBeGreaterThan(0);
     expect(sessionLogs.every((f) => existsSync(f))).toBe(true);
@@ -191,11 +191,11 @@ describe("deleting a project", () => {
     expect(sessionLogs.some((f) => existsSync(f))).toBe(false);
     expect(existsSync(path.join(storage, "artifacts", betaTask))).toBe(false);
 
-    // Worktrees: SwitchYard's are removed, the branch and the repository folder stay; alpha's stays.
+    // Worktrees: MeritRouter's are removed, the branch and the repository folder stay; alpha's stays.
     expect(existsSync(betaCoding)).toBe(false);
     expect(existsSync(betaJob)).toBe(false);
     expect(git(betaApp, "worktree", "list", "--porcelain")).not.toMatch(new RegExp(betaTask));
-    expect(git(betaApp, "branch", "--list", `switchyard/job-${betaTask}`).trim()).not.toBe("");
+    expect(git(betaApp, "branch", "--list", `meritrouter/job-${betaTask}`).trim()).not.toBe("");
     expect(readFileSync(path.join(betaApp, "README.md"), "utf8")).toBe("# repo\n");
     expect(existsSync(alphaCoding)).toBe(true);
 
@@ -205,7 +205,7 @@ describe("deleting a project", () => {
     const log = git(brain.root, "log", "-1", "--format=%s%n%b", "--", "projects/beta");
     expect(log).toMatch(/Remove project beta/);
     expect(log).toMatch(/Remove-Reason: project beta was deleted/);
-    expect(git(brain.root, "log", "--format=%s", "--", "projects/beta/working/notes.md")).toMatch(/Record edits made outside SwitchYard/);
+    expect(git(brain.root, "log", "--format=%s", "--", "projects/beta/working/notes.md")).toMatch(/Record edits made outside MeritRouter/);
     expect(readFileSync(path.join(brain.root, "README.md"), "utf8")).not.toMatch(/projects\/beta/);
     expect(count("SELECT COUNT(*) FROM brain_files WHERE path LIKE 'projects/beta/%'")).toBe(0);
 
@@ -267,7 +267,7 @@ describe("panel power and build freshness", () => {
   });
 
   it("reports a panel build older than the router build", () => {
-    const dir = mkdtempSync(path.join(tmpdir(), "switchyard-stale-"));
+    const dir = mkdtempSync(path.join(tmpdir(), "meritrouter-stale-"));
     extra.push(dir);
     const panel = path.join(dir, "panel");
     const router = path.join(dir, "dist");

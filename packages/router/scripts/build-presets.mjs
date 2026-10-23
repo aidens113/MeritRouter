@@ -1,4 +1,4 @@
-// Generates examples/presets/*.yaml from examples/switchyard.config.example.yaml.
+// Generates examples/presets/*.yaml from examples/meritrouter.config.example.yaml.
 // Run: node scripts/build-presets.mjs   (keeps the example's comments; presets differ only where noted)
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const example = readFileSync(path.join(root, "examples/switchyard.config.example.yaml"), "utf8");
+const example = readFileSync(path.join(root, "examples/meritrouter.config.example.yaml"), "utf8");
 const out = path.join(root, "examples/presets");
 mkdirSync(out, { recursive: true });
 
@@ -36,11 +36,11 @@ const claudeModel = {
 
 const presets = {
   "claude-code": {
-    header: "Preset: claude-code. Claude Code is the supervisor (via MCP); SwitchYard runs free workers.",
+    header: "Preset: claude-code. Claude Code is the supervisor (via MCP); MeritRouter runs free workers.",
     edits: [[["brain", "project"], "my-project"]],
   },
   "standalone-free": {
-    header: "Preset: standalone-free. SwitchYard's own supervisor runs on the most capable eligible free model; workers are free.",
+    header: "Preset: standalone-free. MeritRouter's own supervisor runs on the most capable eligible free model; workers are free.",
     edits: [
       [["profiles", "supervise"], supervise],
       [["brain", "project"], "my-project"],
@@ -69,7 +69,7 @@ const presets = {
 
 for (const [name, p] of Object.entries(presets)) {
   const doc = YAML.parseDocument(example);
-  doc.commentBefore = ` ${p.header}\n Generated from switchyard.config.example.yaml by scripts/build-presets.mjs.\n${doc.commentBefore ?? ""}`;
+  doc.commentBefore = ` ${p.header}\n Generated from meritrouter.config.example.yaml by scripts/build-presets.mjs.\n${doc.commentBefore ?? ""}`;
   for (const [keyPath, value] of p.edits) doc.setIn(keyPath, doc.createNode(value));
   writeFileSync(path.join(out, `${name}.yaml`), doc.toString());
   console.log(`wrote examples/presets/${name}.yaml`);

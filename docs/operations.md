@@ -1,5 +1,13 @@
 # Operations
 
+For a first installation, follow [setup](setup.md). This page is the operating reference:
+[provider keys](#provider-keys) covers credentials and limits; [verification](#verification)
+explains evidence; [recovery](#recovery) covers interrupted work; and
+[backup and restore](#backup-and-restore) protects state. Read
+[repository boundaries](#repository-boundaries-and-outside-actions) before approving host
+commands. [Teams](#teams-plans-leases-and-capacity) and [Labs](#labs-isolated-services-and-checked-promotion)
+describe optional coordination and environment features.
+
 ## Which limits are hard, estimated, or external
 
 | Limit | Kind | Where |
@@ -25,24 +33,22 @@
 | Per-item tokens inside a prompt batch | Estimated | Proportional share, labelled `estimated` |
 | Provider calls, including a retry on the provider's next key | Hard | Each call is admitted and recorded before it is sent; attempts are exact |
 | Configured key limits (`rpm`, `rpd`, `tpm`, `tpd`) and known per-model rate limits | Hard | Sliding windows in the store, reserved with the key (`providers/limits.ts`) |
-| Provider rate limits and quotas | External, tracked | The provider decides; SwitchYard keeps per-key state from 429s, `retry-after`, rate-limit headers, and OpenRouter's free daily quota |
+| Provider rate limits and quotas | External, tracked | The provider decides; MeritRouter keeps per-key state from 429s, `retry-after`, rate-limit headers, and OpenRouter's free daily quota |
 
-Allowed commands (`coding.allowed_commands`, `supervisor.allowed_commands`) refuse shell
-operators, so a pattern cannot be extended with `&& ...`, but an allowed command such as
-`npm test` still runs scripts the worker can edit (`package.json`, test files). Treat any allowed
-command as arbitrary code execution and use an OS-level sandbox or container if that matters.
-
-A worktree is not a sandbox. Containment for coding agents is: a provider allowlist that only
-reaches the job gateway, stripped credentials, denied shell by default, and diff validation
-against `allowedPaths` afterwards. Out-of-scope edits are reported and make acceptance `unmet`;
-they are not reverted in the worktree.
+Native file tools enforce repository and task path limits. A worktree and a command
+allowlist are not OS sandboxes: workers never launch arbitrary host processes directly.
+Shell commands and declared checks require an exact persisted outside-action approval,
+even when an allowlist permits the command. The default policy requires a human operator.
+External coding runners fail closed until an accepted OS sandbox is available. See
+[repository boundaries and outside actions](#repository-boundaries-and-outside-actions)
+for policy, approval, cancellation and evidence rules.
 
 ## Provider keys
 
-SwitchYard calls every provider directly with your keys: keys in the encrypted vault (added in
-the panel or with `switchyard keys add`) and keys declared under `providers` in the config.
-`switchyard keys list` shows every key with its source, billing class, status, and last four
-characters; `switchyard doctor` adds one line per provider.
+MeritRouter calls every provider directly with your keys: keys in the encrypted vault (added in
+the panel or with `meritrouter keys add`) and keys declared under `providers` in the config.
+`meritrouter keys list` shows every key with its source, billing class, status, and last four
+characters; `meritrouter doctor` adds one line per provider.
 
 - **Rotation between keys.** Each request takes the provider's next available key, least
   recently chosen first. A key is skipped while it is cooling down, disabled, at a rate limit its
@@ -57,8 +63,8 @@ characters; `switchyard doctor` adds one line per provider.
   request whose provider has no available key moves on to the next ranked model.
 - **Invalid keys.** A 401 or 403 marks the key invalid until you fix it. It stays visible as
   INVALID in `keys list`, `doctor`, and the panel. Fix it by replacing the secret (a different
-  secret under the same env var or vault entry counts as a new key), by `switchyard keys enable
-  <id>`, or by a `switchyard keys test` whose listing now works; each clears the mark.
+  secret under the same env var or vault entry counts as a new key), by `meritrouter keys enable
+  <id>`, or by a `meritrouter keys test` whose listing now works; each clears the mark.
 - **Out of credits.** A 402 or a spend-cap refusal disables only that key. After 6 hours one
   request may check it again; `keys enable <id>` clears it at once.
 - **Limits.** Optional `rpm`, `rpd`, `tpm`, `tpd` on a provider (`providers.<id>.rpm`), on a key
@@ -72,7 +78,7 @@ characters; `switchyard doctor` adds one line per provider.
   (keys will return; `resumeAt` when known), `invalid` (every key needs you), `unknown` (no
   usable key: none added, disabled, or an unset env var). The circuit breakers and adaptive
   slots in [Teams](#teams-plans-leases-and-capacity) and [Recovery](#recovery) work on top of it.
-- **Discovery.** Adding, re-keying, or re-enabling a key lists its provider at once; `switchyard
+- **Discovery.** Adding, re-keying, or re-enabling a key lists its provider at once; `meritrouter
   models scan`, the panel's Scan button, and a running worker every
   `discovery.interval_minutes` (60) list the models of each provider with a usable key, using
   the first key whose listing works. Each model is enriched with recorded provenance: the
@@ -81,21 +87,21 @@ characters; `switchyard doctor` adds one line per provider.
   overrides. A model whose context limit, output limit, or tool support stays unknown is not used
   for work that needs it. A provider whose listing failed keeps its stored models; models a
   successful listing no longer includes become unavailable. The same run refreshes OpenRouter's
-  free daily quota for each key and fetches paid prices. `switchyard keys test` lists what one
+  free daily quota for each key and fetches paid prices. `meritrouter keys test` lists what one
   key can use without changing the catalog.
-- **Replacing a key.** Add the new key, `switchyard keys test vault:<new id>`, then
-  `switchyard keys remove <old id>` (a removed key with recorded spend keeps its row, without the
+- **Replacing a key.** Add the new key, `meritrouter keys test vault:<new id>`, then
+  `meritrouter keys remove <old id>` (a removed key with recorded spend keeps its row, without the
   secret). For a config key, change the environment variable and restart the worker and panel,
   which read the environment when they start.
 - **Secrets.** Vault secrets are AES-256-GCM encrypted with the master key from
-  `SWITCHYARD_MASTER_KEY` or `<storage>/.master-key`. Without that key the vault cannot be read:
-  back it up (`switchyard backup --include-master-key` copies it; keep that backup private) or add
+  `MERITROUTER_MASTER_KEY` or `<storage>/.master-key`. Without that key the vault cannot be read:
+  back it up (`meritrouter backup --include-master-key` copies it; keep that backup private) or add
   the keys again. A literal `api_key` in the config file works, but `doctor` warns that the file
   holds a secret; prefer `api_key_env` or the vault.
-- **Upgrading from a FreeLLMAPI setup** (history: SwitchYard used FreeLLMAPI as its gateway before
+- **Upgrading from a FreeLLMAPI setup** (history: MeritRouter used FreeLLMAPI as its gateway before
   2026-10-20). A config that still has a `gateway` section fails to load and says what to do:
   delete it, move `request_timeout_seconds` under `providers`, add your keys, and run
-  `switchyard models scan`. Stored FreeLLMAPI-discovered models are deleted by the upgrade and come
+  `meritrouter models scan`. Stored FreeLLMAPI-discovered models are deleted by the upgrade and come
   back from that scan.
 
 ## Web search and fetch
@@ -122,10 +128,10 @@ With no backend at all the tools are not offered, so no agent sees a tool that c
   credits" when none of its keys can be tried; when nothing in the pool can serve, the tool error
   lists each backend and when it is back.
 - **Caps (optional).** `web.search.limits.<backend>: { per_day, per_month }` caps attempts on a
-  backend per UTC day and month, counted from SwitchYard's own record (for ollama, page fetches
-  count too). A capped backend is skipped until its window resets. SwitchYard has no built-in
+  backend per UTC day and month, counted from MeritRouter's own record (for ollama, page fetches
+  count too). A capped backend is skipped until its window resets. MeritRouter has no built-in
   allowance numbers: set your plan's.
-- **Fetch chain.** `web.fetch.backends` (default `[builtin, ollama]`): SwitchYard's own fetch
+- **Fetch chain.** `web.fetch.backends` (default `[builtin, ollama]`): MeritRouter's own fetch
   first (free), then Ollama's `web_fetch` when the built-in fetch fails (an HTTP error, a
   timeout, too many redirects) or refuses the content (not a text page). A URL the SSRF guard
   refuses is never sent to any backend.
@@ -235,15 +241,15 @@ projects:
   allocation denial. With no `allocation` configured, a share has no effect.
 
 The panel's dashboard (`/all`) shows each project's running and waiting tasks, its oldest wait,
-and its requests and paid spend for 24 hours and 7 days. `switchyard daemon status` prints the
+and its requests and paid spend for 24 hours and 7 days. `meritrouter daemon status` prints the
 queue and running counts per project.
 
 ### Repository setup
 
-SwitchYard makes each configured repository folder a git repository with at least one commit
+MeritRouter makes each configured repository folder a git repository with at least one commit
 (what it does to each kind of folder is in [setup.md](setup.md#projects)). It is idempotent and
 safe to run from several processes at once: a lock file in the system temp folder
-(`switchyard-prepare-<hash>.lock`, never inside the repository) serialises preparation of one
+(`meritrouter-prepare-<hash>.lock`, never inside the repository) serialises preparation of one
 folder, the state is read again under the lock, and a lock older than two minutes is taken over.
 A caller that waits a minute without getting the lock reports `busy` and the next run retries.
 
@@ -261,22 +267,22 @@ service reload or overview load does.
 
 ### Archiving a project
 
-`switchyard projects archive <slug>`, or Archive on the project's Settings page, hides a project:
+`meritrouter projects archive <slug>`, or Archive on the project's Settings page, hides a project:
 - Archiving is refused while the project has running or queued tasks.
 - Nothing is deleted. The project's settings stay in the config, and its tasks, sessions, and
   brain folder stay where they are.
 - An archived project is left off the projects grid's main list, the switcher, and the
   dashboard. Its panel pages answer 404, except its Settings page, which shows the settings
   read-only with Unarchive. The CLI and MCP never pick it implicitly.
-- `switchyard projects unarchive <slug>`, or Unarchive in the grid's "Archived projects" list or
+- `meritrouter projects unarchive <slug>`, or Unarchive in the grid's "Archived projects" list or
   on its Settings page, brings it back.
 
 The archived flag is kept in the store (`projects` table), not in the config file.
 
 ### Deleting a project
 
-`switchyard projects delete <slug>` shows what deleting removes and keeps, with counts, and
-whether it can be deleted now; `switchyard projects delete <slug> --confirm <slug>` deletes it. In
+`meritrouter projects delete <slug>` shows what deleting removes and keeps, with counts, and
+whether it can be deleted now; `meritrouter projects delete <slug> --confirm <slug>` deletes it. In
 the panel, the Danger zone at the end of the project's Settings page does the same in two steps:
 a dialog listing what goes and what stays, then one that asks for the slug before "Delete
 permanently". Archived projects can be deleted too.
@@ -284,13 +290,13 @@ permanently". Archived projects can be deleted too.
   archived, and for a single-project config (it is the install's only project). The confirmation
   must equal the slug.
 - Removed: `projects.<slug>` from the config (through the config editor: validated first, the
-  previous file kept as `switchyard.config.yaml.bak`); the project's tasks and everything stored
+  previous file kept as `meritrouter.config.yaml.bak`); the project's tasks and everything stored
   for them (results, contracts, verdicts, plans, leases, merge queue, team channel, questions,
   supervisor transcripts), its sessions and their logs, artifacts, events, brain access requests
-  and grants, and its `projects` row, in one transaction; the worktrees SwitchYard made for its
+  and grants, and its `projects` row, in one transaction; the worktrees MeritRouter made for its
   tasks and jobs under `<storage>/worktrees` (`git worktree remove`, then `prune`); and its brain
   folder `projects/<slug>/`, in one brain commit with a `Remove-Reason` trailer (edits made
-  outside SwitchYard are committed first, so the text stays in the brain's history).
+  outside MeritRouter are committed first, so the text stays in the brain's history).
 - Kept: the repository folders and every branch in them (job branches included), model requests
   with their per-task charges and paid spend (for accounting; the requests no longer belong to a
   project, so they count only in install-wide views, and their charges name tasks that no longer
@@ -301,8 +307,8 @@ permanently". Archived projects can be deleted too.
 
 ### The reserved `_qualification` project
 
-Qualification runs (`switchyard qualify`) and comparison runs on the eval goals
-(`switchyard compare`) run in an internal project, `_qualification`:
+Qualification runs (`meritrouter qualify`) and comparison runs on the eval goals
+(`meritrouter compare`) run in an internal project, `_qualification`:
 - It holds the fixture repositories those runs check out (`q-...`, `c-...`), so no user project
   lists them.
 - Its supervisor working documents go to `projects/_qualification/` in the brain.
@@ -325,8 +331,8 @@ in the primary project (`brain.project`). Audits run in the audited task's proje
   `needs_supervisor` (the supervisor must accept or reject). See "Verification" below.
 - `classification` shows the score breakdown (rulebook version included); `routing.attempts`
   shows every model tried and why it was skipped or failed.
-- `artifactRefs` / `patchRefs` point at files under `.switchyard/artifacts/`
-  (`switchyard artifact <ref>`). Patches include the base commit in `baseCommits`; apply them
+- `artifactRefs` / `patchRefs` point at files under `.meritrouter/artifacts/`
+  (`meritrouter artifact <ref>`). Patches include the base commit in `baseCommits`; apply them
   with `git apply` after checking the base.
 - **Tokens.** `usage.inputTokens` is every input token the provider read, cached ones included;
   `cachedInputTokens` is the part served from its prompt cache (null when not reported);
@@ -362,7 +368,7 @@ and policy fingerprints.
   an endpoint that classified, executed, or repaired the task, and prefer another model family.
   `verification.reviewer_qualification: preferred` (default) falls back to a size-floor reviewer
   and marks the verdict `reviewer_unqualified`; strict always requires a qualified reviewer.
-  Qualify reviewers with the `review` eval family (`switchyard qualify`).
+  Qualify reviewers with the `review` eval family (`meritrouter qualify`).
 - **Decision:** all mandatory items pass -> `met`; a concrete defect gets one repair at the next
   tier, starting from the submitted revision, then a re-review; missing evidence can trigger one
   targeted check; otherwise `needs_supervisor`. Failed checks stay `unmet`; a defect only a
@@ -376,7 +382,7 @@ and policy fingerprints.
   `reject_task`, judged against the job's goal and the specifications it was given, and
   `integrate_task` refuses `unmet` results and requires an explicit acceptance for
   `not_verified` ones. With `verification.strict_acceptor: human`, strict results need a person:
-  `switchyard accept|reject <task> --reason ...` or the panel's Accept/Reject buttons (MCP
+  `meritrouter accept|reject <task> --reason ...` or the panel's Accept/Reject buttons (MCP
   `accept_result` acts as the supervisor and is refused for them).
 
 ### Calibration
@@ -421,7 +427,7 @@ not enable PostgreSQL or multiple hosts.
 - **Plans.** A supervisor's `plan_work` records the job's decomposition as an immutable,
   versioned, acyclic plan (`job_plans`) and dispatches every node through the normal delegate
   path; re-planning adds a version and keeps nodes already dispatched. The plan reports its
-  critical path (tier-weighted: T1=1, T2=2, T3=4). See it with `switchyard plan <job>`, MCP
+  critical path (tier-weighted: T1=1, T2=2, T3=4). See it with `meritrouter plan <job>`, MCP
   `get_plan`, or the panel's job page.
 - **Upstream results.** When a dependent first runs, its upstreams' summaries, findings, artifact
   and patch refs, and acceptance/verification status are saved as one artifact and shown to it as
@@ -449,8 +455,8 @@ not enable PostgreSQL or multiple hosts.
   `await_tasks` returns early and it calls `decide_budget_request`; a top-level task's MCP client
   uses the MCP tools `budget_requests` and `decide_budget_request`), `auto` (up to
   `team.auto_grant_max` per request while the pool has room), or `human`. From a terminal:
-  `switchyard budget list [--status ...] [--job <id>]`, `switchyard budget approve <id> [--grant N]
-  [--reason ...]`, `switchyard budget deny <id> [--reason ...]`. A request whose task finished
+  `meritrouter budget list [--status ...] [--job <id>]`, `meritrouter budget approve <id> [--grant N]
+  [--reason ...]`, `meritrouter budget deny <id> [--reason ...]`. A request whose task finished
   expires; an interrupted wait leaves it pending, and an approval then applies to the resumed run.
   Paid budgets never grow with extra requests.
   The panel shows pending decisions on the task, job, project and install dashboard. Supply a
@@ -472,7 +478,7 @@ not enable PostgreSQL or multiple hosts.
   results are informational, the post-submission checks still decide acceptance.
 - **Sub-supervisors.** A supervisor may hand a sub-goal to a child supervisor (`delegate` or a
   `plan_work` node with profile `supervise`) while the job tree is shallower than
-  `team.max_depth` (2). The child works on `switchyard/job-<child>` forked from the parent's job
+  `team.max_depth` (2). The child works on `meritrouter/job-<child>` forked from the parent's job
   branch as integrated so far, keeps its own section of the parent's working document, and runs on
   a carved share of the parent's remaining request budget (`team.child_budget_share`, 0.5;
   unused requests return when it finishes, an interrupted child keeps its share). Sub-supervisors
@@ -505,9 +511,9 @@ not enable PostgreSQL or multiple hosts.
   slots in use; the charter keeps strong models for supervision and Deep/Strict review.
 - **Metrics.** Per job (sub-jobs included), derived from stored data: wall-clock, parallelism
   over time (peak and mean), planned and actual critical path, requests and cost per completed
-  task, verification share, and waiting time by reason. `switchyard metrics <job>`, MCP
+  task, verification share, and waiting time by reason. `meritrouter metrics <job>`, MCP
   `get_job_metrics`, a project's Teams page (`/p/<slug>/teams`) and job pages.
-- **Team vs single agent.** `switchyard compare` runs the same goals as a team job and as one
+- **Team vs single agent.** `meritrouter compare` runs the same goals as a team job and as one
   agent with the same models and records both metric sets. It prints the plan and its request
   budget first, `--dry-run` stops there, and nothing runs without `--yes`; runs are capped and
   share `qualification.max_requests_per_day` with `qualify`. The team cap inside a comparison
@@ -518,7 +524,7 @@ not enable PostgreSQL or multiple hosts.
 
 ## Recovery
 
-- State lives in `.switchyard/switchyard.db` (SQLite, WAL). It is written before every
+- State lives in `.meritrouter/meritrouter.db` (SQLite, WAL). It is written before every
   acknowledgement and at every state change.
 - When a worker dies, its leases expire (`execution.lease_seconds`). The next worker marks those
   tasks `interrupted` and their still-running sessions `interrupted` (`process_died`), then
@@ -530,10 +536,9 @@ not enable PostgreSQL or multiple hosts.
     agent's identity, or discarded with `sessions.recover_edits: reset`; a pending `ask_user`
     is answered from the stored question). A submission accepted before the crash finishes
     without another model request. Coding work continues in the same worktree.
-  - external coding agents (OpenCode) are relaunched in the same worktree with a summary of the
-    interrupted session.
+  - external coding runner recovery is unavailable: those runners fail closed without an accepted OS sandbox.
   - completion, batch, and classification runs re-run fresh in a new linked session.
-- Manual resume: `switchyard resume <session-id>` continues that session; `switchyard resume
+- Manual resume: `meritrouter resume <session-id>` continues that session; `meritrouter resume
   <task-id>` restarts the task (a coding task in a fresh worktree; the old one stays as
   evidence). MCP `resume_session` / `resume_task` and the panel's Resume buttons do the same.
 - Stuck runs: a run whose session records nothing for `execution.watchdog_minutes` (default 10;
@@ -568,7 +573,7 @@ Every model-driven run is an agent session: each run of a task (a recovery re-ru
 escalation is a new session linked to the one before it), each classification, and each batch
 item. A delegated task's session names the supervisor session that delegated it as its parent.
 
-- The log is `.switchyard/sessions/<session id>.jsonl`, one event per line, fsynced as it is
+- The log is `.meritrouter/sessions/<session id>.jsonl`, one event per line, fsynced as it is
   written: the transcript (`message`), model requests, responses and errors, a tool journal
   (`tool_intent` written before a tool runs, `tool_outcome` after, with the tool's side-effect
   class), notes, workspace changes (worktree, branch, base commit, head), and the end state.
@@ -577,17 +582,11 @@ item. A delegated task's session names the supervisor session that delegated it 
 - Statuses: `running`, `completed`, `failed` (budget exhaustion is `failed` with stop reason
   `budget_exhausted`), `interrupted` (shutdown, lost lease, or deferral for capacity), and
   `cancelled`.
-- Read them with `switchyard sessions [--status s] [--task id] [--job id]` and
-  `switchyard session <id> [--after seq] [--limit n] [--json]`, the MCP tools `list_sessions` and
+- Read them with `meritrouter sessions [--status s] [--task id] [--job id]` and
+  `meritrouter session <id> [--after seq] [--limit n] [--json]`, the MCP tools `list_sessions` and
   `get_session`, or a project's Sessions page (`/p/<slug>/sessions`, also linked from task and job pages).
-- External agents (OpenCode) run their tools inside their own process: their sessions record the
-  model traffic through the policy gateway. Their calls to SwitchYard's task-scoped MCP checks
-  and budget tools record journal intent and outcome; other built-in agent tools remain visible
-  only through the transcript. The bridge authenticates one execution lease, exposes declared
-  checks with enforced run limits, and closes with the runner. Approved request increases reach
-  later gateway requests; token and paid caps remain in force. Command agents receive
-  `SWITCHYARD_TASK_TOOLS_URL` and `SWITCHYARD_TASK_TOOLS_TOKEN` and must implement that MCP
-  connection explicitly. OpenCode receives the remote MCP configuration inline.
+- Historical external-runner sessions can contain gateway model traffic and task-tool bridge
+  events. These records remain readable, but external runners are currently unavailable.
 - A resume appends a `resumed` event recording what was settled and the notice the agent got.
 
 ### Historical request evidence
@@ -625,17 +624,17 @@ displayed separately and is not backfilled with invented inputs.
 - The power button at the top of the panel, beside the project switcher, turns the panel off
   after a confirmation: `POST /api/panel/stop` writes `<storage>/panel.stopped`, answers, and the
   panel process exits; the page then shows "Panel turned off". Agents and workers keep running.
-  It comes back on its own as soon as agents use SwitchYard again: any MCP tool call (checked at
-  most every 30 seconds per server, in the background), a new MCP session, `switchyard run`, or
-  `switchyard submit` clears the marker and starts it (unless `panel.auto_start` is off). Only the
-  idle background checks (the MCP server's minute check, `switchyard worker` starting) leave it
-  off. `switchyard panel` and the MCP `panel` tool start it even with `panel.auto_start` off. The
+  It comes back on its own as soon as agents use MeritRouter again: any MCP tool call (checked at
+  most every 30 seconds per server, in the background), a new MCP session, `meritrouter run`, or
+  `meritrouter submit` clears the marker and starts it (unless `panel.auto_start` is off). Only the
+  idle background checks (the MCP server's minute check, `meritrouter worker` starting) leave it
+  off. `meritrouter panel` and the MCP `panel` tool start it even with `panel.auto_start` off. The
   route accepts only same-origin requests.
-- The panel's production build contains the router code: Turbopack bundles `switchyard-router`
+- The panel's production build contains the router code: Turbopack bundles `meritrouter`
   although `next.config.ts` lists it in `serverExternalPackages`, because it externalizes only
   modules whose real path is under `node_modules`, and the pnpm workspace link resolves to
   `packages/router`. A router change therefore reaches the panel only after `pnpm -r build` (or
-  `pnpm --filter switchyard-panel build`) and a panel restart. When `.next/BUILD_ID` is older than
+  `pnpm --filter meritrouter-panel build`) and a panel restart. When `.next/BUILD_ID` is older than
   the newest file in the router's `dist/`, starting or checking the panel reports it
   (`ensurePanel`'s `warning`; `panelBuildCheck` for `doctor`).
 
@@ -656,13 +655,13 @@ A backup covers the whole install: every project's rows and the brain repository
 project's folder and `global/`. There is no per-project backup, so `backup` and `restore` refuse
 `--project`.
 
-`switchyard backup <dir>` writes a new directory while workers keep running:
-- `switchyard.db`: an online SQLite snapshot of the store, consistent while workers run.
+`meritrouter backup <dir>` writes a new directory while workers keep running:
+- `meritrouter.db`: an online SQLite snapshot of the store, consistent while workers run.
 - The session logs and artifacts that the snapshot indexes.
 - `brain.bundle`: the brain repository as a git bundle of all its refs.
   - Only committed history is in the bundle.
   - Uncommitted brain changes are listed in the manifest (`brain.uncommitted`) and printed as a
-    warning. SwitchYard commits edits made outside it on its next brain write, so take the
+    warning. MeritRouter commits edits made outside it on its next brain write, so take the
     backup after that, or commit them yourself.
   - A brain that does not exist yet or has no commits is recorded as not included, with the
     reason.
@@ -674,16 +673,16 @@ project's folder and `global/`. There is no per-project backup, so `backup` and 
   lists each one (prefix, path, and the project that adds it, or global) under
   `brain.mountsNotIncluded`, and the CLI prints them. Back those repositories up themselves.
 
-`switchyard restore <dir> [--force]` restores the store and the brain into the configured
+`meritrouter restore <dir> [--force]` restores the store and the brain into the configured
 storage directory and `brain.path`. Every refusal happens before anything is changed. A restore
 is refused:
 - while any task holds a live lease or a daemon runs;
 - when the brain has uncommitted changes, even with `--force`, so a restore never overwrites
-  uncommitted brain work (SwitchYard's lock file does not count);
+  uncommitted brain work (MeritRouter's lock file does not count);
 - over an existing store, or a brain with other history, unless `--force` is given.
 
 With `--force`:
-- the old store entries move to `.switchyard/pre-restore-<time>/`;
+- the old store entries move to `.meritrouter/pre-restore-<time>/`;
 - the old brain moves to `<brain>.pre-restore-<time>`, next to it.
 
 Replacement store files are copied and migrated in staging, and the brain bundle is fetched
@@ -713,21 +712,21 @@ while the already-picked commits are retained.
 
 An install runs one worker for all of its projects; there are no per-project daemons, services,
 or workers.
-- `switchyard daemon` (or `daemon run`) runs the worker in the foreground and restarts it with
+- `meritrouter daemon` (or `daemon run`) runs the worker in the foreground and restarts it with
   backoff (`--max-restarts`, `--window`, `--max-delay`).
-- `switchyard daemon start` runs the same in the background. Its output goes to
+- `meritrouter daemon start` runs the same in the background. Its output goes to
   `<storage>/logs/daemon.out`, its lifecycle to `daemon.log`, and the worker's output to
   `worker.log`.
-- `switchyard daemon status` prints the daemon's process id and start time. Under it, a table
+- `meritrouter daemon status` prints the daemon's process id and start time. Under it, a table
   gives each project's queued and running tasks, read from the store. Internal or removed
   projects appear when they have work, and archived projects are marked. It also works when no
   daemon runs.
-- `switchyard daemon stop` asks the daemon to stop. The daemon gives its worker 30 s to stop,
+- `meritrouter daemon stop` asks the daemon to stop. The daemon gives its worker 30 s to stop,
   then exits. If the daemon has not exited within `--timeout` seconds (default 45), its
   process tree is ended; the worker's tasks are recovered on the next start.
-- `switchyard service install` registers the same daemon with the platform's service manager.
+- `meritrouter service install` registers the same daemon with the platform's service manager.
 - `daemon`, `daemon start`, and `service` take the global config and refuse `--project` with an
-  explanation. The daemon also does not pass a shell's `SWITCHYARD_PROJECT` on to its worker.
+  explanation. The daemon also does not pass a shell's `MERITROUTER_PROJECT` on to its worker.
 - A second daemon for the same storage directory is refused.
 - MCP servers for individual projects run beside the daemon with `--no-worker`.
 - An MCP server runs a worker unless `--no-worker` is set. If a queue tick fails, it reports the
@@ -756,7 +755,7 @@ Inspect promotion evidence loads exact checked revisions, conflict paths and man
 instructions on demand; a completed control request can still contain a failed promotion.
 Services never start from page reads, and these controls do not start a model worker.
 
-`switchyard labs serve` owns a renewable install-wide service-supervision lease. Explicit
+`meritrouter labs serve` owns a renewable install-wide service-supervision lease. Explicit
 CLI/panel controls can start it independently of task execution. `labs supervisor-start`,
 `supervisor-status` and `supervisor-stop` manage that owner; they take the install configuration
 and reject project selection. Per-lab commands take `--project`: `labs list`, `create`, `status`,
@@ -786,7 +785,7 @@ supervisor delegation tools use `lab_checks`. Only isolated coding profiles qual
 selection cannot widen repository scope or choose arbitrary commands. Recipe edits preserve
 this policy. Browser task checks remain unavailable pending durable browser recovery.
 
-SwitchYard pins all task repository heads before dispatch, including read-only context, and
+MeritRouter pins all task repository heads before dispatch, including read-only context, and
 starts the dedicated Labs supervisor before waiting for runtime checks. The coding runner
 queues work rather than executing the service queue itself. The result's separate `taskLab`
 evidence binds the exact attempt/commit/tree/patch, declared recipe and checked heads. Cleanup
@@ -834,7 +833,7 @@ acceptance remain outstanding.
 
 - The brain is one git repository (`brain.path`) for every project: `projects/<slug>/` per
   project and `global/` for knowledge shared by all of them (see [roles.md](roles.md#the-brain-shared-knowledge)).
-  `switchyard brain ls|read|search` (in the selected project, or every project when none is
+  `meritrouter brain ls|read|search` (in the selected project, or every project when none is
   chosen) and each project's Brain page browse it. Every change is a commit under the writing
   agent, so `git log` and `git blame` inside it show who (and which model) wrote what.
   Initialization and writes share the brain lock, including when several projects initialize
@@ -845,31 +844,31 @@ acceptance remain outstanding.
   Panel document history and blame are project scoped: private paths and rename ancestry from
   another project are unavailable. Commit subjects are retained only when every changed path is
   visible; mixed commits expose only the selected document's changes, without shared metadata.
-- Job branches live in your repositories as `switchyard/job-<id>`; integration worktrees under
-  `.switchyard/worktrees/job-<id>-<alias>`. Review, then `git merge --no-ff` (not squash).
-- `switchyard blame <repo> <path> --ref <branch>` attributes lines to agents and models.
+- Job branches live in your repositories as `meritrouter/job-<id>`; integration worktrees under
+  `.meritrouter/worktrees/job-<id>-<alias>`. Review, then `git merge --no-ff` (not squash).
+- `meritrouter blame <repo> <path> --ref <branch>` attributes lines to agents and models.
 
 ## Known limitations
 
 - Ollama Cloud discovery, free calls and web search have recorded live evidence. Other provider
-  and installed OpenCode behavior remains unverified; policy regressions use fake providers
+  behavior remains unverified; policy regressions use fake providers
   behind an injectable HTTP fetch and scripted coding agents. Still to confirm live: rate-limit
   header formats (OpenRouter reset, SambaNova `-day`, Anthropic periods), OpenAI
   `insufficient_quota` as out of credits, Cloudflare and Cohere list pagination, Anthropic model
   `capabilities`, and the shape of OpenRouter's `/api/v1/key`.
 - Quarantine acknowledgements permit retries without independently proving the provider is
   fixed; the next response still passes served-model validation.
-- OpenCode's JSON event format is undocumented; its output is stored as evidence, not parsed.
+- Historical OpenCode output is stored as evidence, not treated as a supported execution path.
 - Paid routes have not been exercised against real providers yet; prices are yours to keep
   current (OpenRouter prices are fetched when `pricing_url` is set).
 - Audio/video inputs are routed only to models that accept them; there is no transcription or
   frame-extraction preprocessing yet.
 - Tasks and jobs run only while a worker process is running (the MCP server stops with the
-  Claude session; run `switchyard worker`, `switchyard daemon start`, or
-  `switchyard service install` for unattended work, and the MCP servers with `--no-worker`).
+  Claude session; run `meritrouter worker`, `meritrouter daemon start`, or
+  `meritrouter service install` for unattended work, and the MCP servers with `--no-worker`).
 - Idempotency keys are unique per install, not per project: a key already used in one project
   is refused in another.
-- Line attribution for external agents (OpenCode) is per model request, not per tool call, and can
+- Historical line attribution for external agents (OpenCode) is per model request, not per tool call, and can
   blur when the agent sends several requests at once.
 
 ## Repository boundaries and outside actions

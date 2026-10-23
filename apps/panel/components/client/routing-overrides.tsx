@@ -30,7 +30,7 @@ export function OverridesList({ rows }: { rows: OverrideRow[] }) {
   if (!rows.length)
     return (
       <EmptyState title="No manual routing rules">
-        SwitchYard is choosing models automatically everywhere. Add a rule below to force, prefer, or block a model for a task type or tier.
+        MeritRouter is choosing models automatically everywhere. Add a rule below to force, prefer, or block a model for a task type or tier.
       </EmptyState>
     );
   return (

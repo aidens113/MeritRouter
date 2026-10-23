@@ -9,8 +9,8 @@ import { runNamedChecks } from '../src/verification/checks.js';
 import { reevaluateOnResult } from '../src/verification/policy.js';
 import { decide } from '../src/verification/decide.js';
 import { makeEnv, open, ScriptedClient, reply, type Env } from './helpers.js';
-import type { Switchyard } from '../src/core/service.js';
-let env: Env | undefined, sy: Switchyard | undefined;
+import type { MeritRouter } from '../src/core/service.js';
+let env: Env | undefined, sy: MeritRouter | undefined;
 afterEach(async () => {
   await sy?.close();
   env?.cleanup();

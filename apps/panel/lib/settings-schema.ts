@@ -1,5 +1,5 @@
 /**
- * Form description of the SwitchYard config. Help texts paraphrase the comments in
+ * Form description of the MeritRouter config. Help texts paraphrase the comments in
  * packages/router/src/config/schema.ts. Shared by the settings page (server) and form (client).
  */
 
@@ -48,16 +48,16 @@ export const SECTIONS: Section[] = [
   {
     id: "client-supervision",
     title: "Claude/Codex supervision",
-    description: "Choose whether MCP may dispatch SwitchYard as the final project supervisor. The external Claude/Codex client remains final supervisor by default and can delegate bounded sub-supervisors. This is separate from SwitchYard's internal job supervisors and grants no permissions. Existing MCP connections receive changes on their next tool call.",
+    description: "Choose whether MCP may dispatch MeritRouter as the final project supervisor. The external Claude/Codex client remains final supervisor by default and can delegate bounded sub-supervisors. This is separate from MeritRouter's internal job supervisors and grants no permissions. Existing MCP connections receive changes on their next tool call.",
     fields: [
-      f("client_supervision.dispatch_final_supervisor", "Allow SwitchYard final project-supervisor dispatch", "bool", "Off by default: Claude/Codex owns final project review, testing and completion. Bounded SwitchYard sub-supervisors remain available. Turn on to permit explicitly project-scoped MCP jobs; you can also explicitly ask your connected model to change this setting."),
+      f("client_supervision.dispatch_final_supervisor", "Allow MeritRouter final project-supervisor dispatch", "bool", "Off by default: Claude/Codex owns final project review, testing and completion. Bounded MeritRouter sub-supervisors remain available. Turn on to permit explicitly project-scoped MCP jobs; you can also explicitly ask your connected model to change this setting."),
       f("client_supervision.instructions", "Custom supervision instructions", "optText", "Optional human workflow guidance, up to 8000 characters. Explicit user and repository instructions, permissions and budgets retain their authority.", { multiline: true }),
     ],
   },
   {
     id: "providers",
     title: "Providers",
-    description: "SwitchYard calls each provider directly. Keys are added on the Provider keys page (or under providers in the config file).",
+    description: "MeritRouter calls each provider directly. Keys are added on the Provider keys page (or under providers in the config file).",
     fields: [f("providers.request_timeout_seconds", "Request timeout", "int", "Give up on a single model request after this long.", { min: 1, unit: "seconds" })],
   },
   {
@@ -67,7 +67,7 @@ export const SECTIONS: Section[] = [
     fields: [
       f("models.file", "Models file", "optText", "Optional YAML with manual models and per-model corrections, relative to the config file. Leave empty for none.", { placeholder: "models.yaml" }),
       f("models.max_metadata_age_days", "Maximum metadata age", "int", "Models whose size, price, and limits were last checked longer ago than this are not routed until rescanned.", { min: 1, unit: "days" }),
-      f("storage.directory", "Storage directory", "text", "Where the database, artifacts, and worktrees live (relative to the config file). Cannot change while SwitchYard is running: edit the YAML and restart.", { readOnly: true }),
+      f("storage.directory", "Storage directory", "text", "Where the database, artifacts, and worktrees live (relative to the config file). Cannot change while MeritRouter is running: edit the YAML and restart.", { readOnly: true }),
     ],
   },
   {
@@ -145,10 +145,10 @@ export const SECTIONS: Section[] = [
   {
     id: "allocation",
     title: "Capacity allocation",
-    description: "How many model requests SwitchYard may send across all providers. Leave empty for no limit.",
+    description: "How many model requests MeritRouter may send across all providers. Leave empty for no limit.",
     fields: [
-      f("allocation.max_model_requests_per_hour", "Requests per hour", "optInt", "Most model requests SwitchYard may send in any hour, across all tasks.", { min: 1, placeholder: "no limit" }),
-      f("allocation.max_model_requests_per_day", "Requests per day", "optInt", "Most model requests SwitchYard may send in any 24 hours.", { min: 1, placeholder: "no limit" }),
+      f("allocation.max_model_requests_per_hour", "Requests per hour", "optInt", "Most model requests MeritRouter may send in any hour, across all tasks.", { min: 1, placeholder: "no limit" }),
+      f("allocation.max_model_requests_per_day", "Requests per day", "optInt", "Most model requests MeritRouter may send in any 24 hours.", { min: 1, placeholder: "no limit" }),
     ],
   },
   {
@@ -159,8 +159,8 @@ export const SECTIONS: Section[] = [
       f("coding.runner", "Runner", "enum", "Which agent performs implement tasks.", {
         options: ["native", "opencode", "command"],
         optionHelp: {
-          native: "SwitchYard's own coding loop: edits are contained to allowed paths in code and every edit is committed with the agent and model that made it.",
-          opencode: "Runs the OpenCode agent in the worktree, talking to models only through SwitchYard's per-task gateway.",
+          native: "MeritRouter's own coding loop: edits are contained to allowed paths in code and every edit is committed with the agent and model that made it.",
+          opencode: "Runs the OpenCode agent in the worktree, talking to models only through MeritRouter's per-task gateway.",
           command: "Runs any agent command you give below, with the same per-task gateway and worktree.",
         },
       }),
@@ -177,7 +177,7 @@ export const SECTIONS: Section[] = [
     description: "This web panel. It always listens on 127.0.0.1 only.",
     fields: [
       f("panel.port", "Port", "int", "Port for the panel. The pnpm scripts use 4477; change both together.", { min: 1, max: 65535 }),
-      f("panel.token_env", "Login token variable", "text", "Environment variable holding a login token. The panel currently reads SWITCHYARD_PANEL_TOKEN; when it is unset there is no login."),
+      f("panel.token_env", "Login token variable", "text", "Environment variable holding a login token. The panel currently reads MERITROUTER_PANEL_TOKEN; when it is unset there is no login."),
     ],
   },
 ];
@@ -263,7 +263,7 @@ export const WEB_SECTION: Section = {
       },
     }),
     f("web.search.searxng.base_url", "SearXNG instance", "optText", "URL of a SearXNG instance. Its settings.yml must allow the json format.", { placeholder: "https://searx.example.org" }),
-    f("web.fetch.backends", "Page fetch chain", "list", "In order: builtin (SwitchYard's own fetch, free; http(s) only, every address checked against local and private ranges, also after each redirect) and ollama (Ollama's web_fetch with an ollama-cloud key). The next one is tried when one fails; a URL the guard refused is never sent anywhere.", { placeholder: "builtin" }),
+    f("web.fetch.backends", "Page fetch chain", "list", "In order: builtin (MeritRouter's own fetch, free; http(s) only, every address checked against local and private ranges, also after each redirect) and ollama (Ollama's web_fetch with an ollama-cloud key). The next one is tried when one fails; a URL the guard refused is never sent anywhere.", { placeholder: "builtin" }),
     f("web.roles", "Roles with web access", "list", "Roles that get web_search and web_fetch: supervisor, inspector, analyst, implementer, reviewer. Summarize tasks never have tools.", { placeholder: "analyst" }),
     f("web.max_requests_per_task", "Web calls per task", "int", "web_search and web_fetch calls one task may make (a call that moves on to a second backend counts once). Past it, the tool tells the agent to continue with what it has.", { min: 0, unit: "calls" }),
     f("web.max_requests_per_day", "Web calls per day", "int", "Calls the whole install may make per UTC day.", { min: 0, unit: "calls" }),

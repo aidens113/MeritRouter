@@ -129,7 +129,7 @@ function workspacePath(env: HarnessEnv, input: unknown): { rel: string; abs: str
   const refused = ws.guard?.(rel);
   if (refused) throw new Error(`${refused} The edit was refused.`);
   const abs = path.join(ws.root, ...rel.split("/"));
-  if (path.resolve(abs).toLowerCase() === path.resolve(env.ctx.cfg.configPath).toLowerCase()) throw new Error("agents cannot edit the trusted SwitchYard configuration through repository tools");
+  if (path.resolve(abs).toLowerCase() === path.resolve(env.ctx.cfg.configPath).toLowerCase()) throw new Error("agents cannot edit the trusted MeritRouter configuration through repository tools");
   const rootReal = realpathSync(ws.root);
   let probe = path.dirname(abs);
   while (!existsSync(probe)) probe = path.dirname(probe);

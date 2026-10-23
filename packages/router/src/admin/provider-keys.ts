@@ -1,6 +1,6 @@
 import { z } from "zod";
-import type { Switchyard } from "../core/service.js";
-import { SwitchyardError } from "../core/errors.js";
+import type { MeritRouter } from "../core/service.js";
+import { MeritRouterError } from "../core/errors.js";
 import type { ProviderStatus } from "../gateway/types.js";
 import type { ModelEndpoint } from "../models/catalog.js";
 import type { ProviderCredential } from "../providers/credentials.js";
@@ -15,7 +15,7 @@ import { BillingClassSchema, KeyPatchSchema, NewKeySchema, type BillingClass, ty
 import { patchConfig } from "./config-edit.js";
 
 /**
- * The panel's Provider keys page: every provider SwitchYard can call (the registry, custom
+ * The panel's Provider keys page: every provider MeritRouter can call (the registry, custom
  * providers from config, and `paid.providers`), every key from the vault and the config with its
  * health from key state, models found per provider, and paid spend per key. Secrets never leave
  * this module: views carry only the last four characters, and provider error messages arrive
@@ -130,7 +130,7 @@ function keyStatus(cred: ProviderCredential, a: Pick<KeyAvailability, "reason"> 
 }
 
 /** Where a config credential is declared, and how its secret arrives. */
-function origin(sy: Switchyard, cred: ProviderCredential): { origin: string | null; secretSource: string } {
+function origin(sy: MeritRouter, cred: ProviderCredential): { origin: string | null; secretSource: string } {
   if (cred.source === "vault") return { origin: null, secretSource: "encrypted vault" };
   if (cred.source === "none") return { origin: `providers.${cred.provider}.no_key`, secretSource: "no key (local or open server)" };
   const keys = sy.cfg.providers.byId[cred.provider]?.keys ?? [];
@@ -142,7 +142,7 @@ function origin(sy: Switchyard, cred: ProviderCredential): { origin: string | nu
   return { origin: `providers.${cred.provider}.keys[${n}]`, secretSource: "api_key written in the config file" };
 }
 
-function keyView(sy: Switchyard, cred: ProviderCredential, a: KeyAvailability | null, state: KeyState | undefined, vaultKey: PaidKey | undefined, now: number): ProviderKeyView {
+function keyView(sy: MeritRouter, cred: ProviderCredential, a: KeyAvailability | null, state: KeyState | undefined, vaultKey: PaidKey | undefined, now: number): ProviderKeyView {
   const spent30dUsd = round(sy.spend.keySpendSince(cred.ref, now - 30 * DAY));
   const status = keyStatus(cred, a);
   return {
@@ -216,7 +216,7 @@ function modelCounts(eps: ModelEndpoint[], id: string): ProviderKeysEntry["model
 }
 
 /** Everything the Provider keys page shows. No secret is included. */
-export function providerKeysView(sy: Switchyard): ProviderKeysView {
+export function providerKeysView(sy: MeritRouter): ProviderKeysView {
   const now = sy.providers.now();
   const providers = sy.providers.providers();
   const creds = sy.providers.credentials().list();
@@ -278,23 +278,23 @@ export function providerKeysView(sy: Switchyard): ProviderKeysView {
 }
 
 /** One key's view by ref (null when no credential has that ref). */
-export function providerKeyView(sy: Switchyard, ref: string): ProviderKeyView | null {
+export function providerKeyView(sy: MeritRouter, ref: string): ProviderKeyView | null {
   for (const p of providerKeysView(sy).providers) for (const k of p.keys) if (k.ref === ref) return k;
   return null;
 }
 
-function bad(message: string): SwitchyardError {
-  return new SwitchyardError("config_invalid", message);
+function bad(message: string): MeritRouterError {
+  return new MeritRouterError("config_invalid", message);
 }
 
-function vaultKey(sy: Switchyard, id: number): PaidKey {
+function vaultKey(sy: MeritRouter, id: number): PaidKey {
   const k = sy.vault.get(id);
-  if (!k) throw new SwitchyardError("not_found", `unknown key ${id}`);
+  if (!k) throw new MeritRouterError("not_found", `unknown key ${id}`);
   return k;
 }
 
 /** The provider a key would be added to, refusing providers that cannot take one. */
-function keyProvider(sy: Switchyard, id: string, accountId: string | null): ResolvedProvider {
+function keyProvider(sy: MeritRouter, id: string, accountId: string | null): ResolvedProvider {
   const p = sy.providers.provider(id);
   if (!p) throw bad(`unknown provider ${id}: pick a built-in provider (${BUILTIN_PROVIDER_IDS.join(", ")}) or add a custom one first`);
   if (p.noKey) throw bad(`${id} is configured with no_key: it takes no key`);
@@ -306,7 +306,7 @@ function keyProvider(sy: Switchyard, id: string, accountId: string | null): Reso
  * Add a key to the encrypted vault for any registry provider, custom provider from config, or
  * provider under `paid.providers`. Returns the key's view (last four characters only).
  */
-export function addProviderKey(sy: Switchyard, input: NewKey): ProviderKeyView {
+export function addProviderKey(sy: MeritRouter, input: NewKey): ProviderKeyView {
   const k = NewKeySchema.parse(input);
   keyProvider(sy, k.provider, k.accountId);
   const added = sy.vault.add(k);
@@ -318,7 +318,7 @@ export function addProviderKey(sy: Switchyard, input: NewKey): ProviderKeyView {
  * cooldown, so the next request tries it again. A removed key (secret wiped, kept for spend
  * history) cannot be edited.
  */
-export function updateProviderKey(sy: Switchyard, id: number, patch: KeyPatch): ProviderKeyView {
+export function updateProviderKey(sy: MeritRouter, id: number, patch: KeyPatch): ProviderKeyView {
   const current = vaultKey(sy, id);
   if (current.removed) throw bad(`key ${id} was removed (its secret is gone); add a new key instead`);
   const p = KeyPatchSchema.parse(patch);
@@ -333,7 +333,7 @@ export function updateProviderKey(sy: Switchyard, id: number, patch: KeyPatch): 
 }
 
 /** Remove a vault key. One with recorded paid spend keeps its row (secret wiped, disabled) so spend history stays complete. */
-export function removeProviderKey(sy: Switchyard, id: number): { removed: number; keptForHistory: boolean } {
+export function removeProviderKey(sy: MeritRouter, id: number): { removed: number; keptForHistory: boolean } {
   vaultKey(sy, id);
   sy.vault.remove(id);
   sy.providers.keys.forget(`vault:${id}`);
@@ -386,7 +386,7 @@ export interface KeyTestResult {
  * rejects is recorded as such, and one that lists while recorded as invalid is cleared. Never
  * throws for a provider failure.
  */
-export async function testProviderKey(sy: Switchyard, input: KeyTestInput): Promise<KeyTestResult> {
+export async function testProviderKey(sy: MeritRouter, input: KeyTestInput): Promise<KeyTestResult> {
   const t = KeyTestSchema.parse(input);
   let provider: ResolvedProvider | null;
   let billing: BillingClass;
@@ -394,7 +394,7 @@ export async function testProviderKey(sy: Switchyard, input: KeyTestInput): Prom
   const opts = { timeoutMs: keyTestTimeoutMs(sy.cfg.providers.request_timeout_seconds) };
   if ("ref" in t) {
     const cred = sy.providers.credentials().get(t.ref);
-    if (!cred) throw new SwitchyardError("not_found", `unknown key ${t.ref}`);
+    if (!cred) throw new MeritRouterError("not_found", `unknown key ${t.ref}`);
     provider = sy.providers.provider(cred.provider);
     billing = cred.billingClass;
     outcome = await testKeyListing(sy.providers, { credential: cred }, opts);
@@ -427,9 +427,9 @@ export interface ProviderScanResult {
 }
 
 /** List and save one provider's models now (the page's "Find models"). */
-export async function scanProviderModels(sy: Switchyard, id: string): Promise<ProviderScanResult> {
+export async function scanProviderModels(sy: MeritRouter, id: string): Promise<ProviderScanResult> {
   const p = sy.providers.provider(id);
-  if (!p) throw new SwitchyardError("not_found", `unknown provider ${id}`);
+  if (!p) throw new MeritRouterError("not_found", `unknown provider ${id}`);
   if (!sy.providers.discoverable().includes(id)) {
     if (!Object.hasOwn(sy.cfg.providers.byId, id) && !p.builtIn && Object.hasOwn(sy.cfg.paid.providers, id)) throw bad(`${id} is only a paid provider: it routes the models listed under paid.models`);
     throw bad(`${p.displayName} has no usable key${p.enabled ? "" : " (the provider is disabled)"}`);
@@ -451,7 +451,7 @@ export async function scanProviderModels(sy: Switchyard, id: string): Promise<Pr
  * re-enabled, so routing can use them without a separate "Find models". A failed listing never
  * undoes the key change: it comes back as a `failed` result to show.
  */
-export async function scanAfterKeyChange(sy: Switchyard, provider: string): Promise<ProviderScanResult> {
+export async function scanAfterKeyChange(sy: MeritRouter, provider: string): Promise<ProviderScanResult> {
   try {
     return await scanProviderModels(sy, provider);
   } catch (err) {
@@ -462,7 +462,7 @@ export async function scanAfterKeyChange(sy: Switchyard, provider: string): Prom
 /** A one-line account of a scan after a key change, for the panel and the CLI. */
 export function keyScanText(s: ProviderScanResult): string {
   if (s.status === "listed") return `Found ${s.kept} model${s.kept === 1 ? "" : "s"}${s.added.length ? ` (${s.added.length} new)` : ""}; routing can use them now.`;
-  return `The model list failed: ${s.errors[0] ?? s.status}. Use Find models (switchyard models scan) to retry.`;
+  return `The model list failed: ${s.errors[0] ?? s.status}. Use Find models (meritrouter models scan) to retry.`;
 }
 
 // ---------- custom providers ----------
@@ -484,7 +484,7 @@ export const CustomProviderSchema = z
 export type CustomProviderInput = z.input<typeof CustomProviderSchema>;
 
 /** Add an OpenAI-compatible (or Anthropic-style) provider under `providers.<id>` in the config file. */
-export function addCustomProvider(sy: Switchyard, input: CustomProviderInput): { id: string } {
+export function addCustomProvider(sy: MeritRouter, input: CustomProviderInput): { id: string } {
   const c = CustomProviderSchema.parse(input);
   if (BUILTIN_PROVIDER_IDS.includes(c.id)) throw bad(`${c.id} is a built-in provider: add its key directly`);
   if (Object.hasOwn(sy.cfg.providers.byId, c.id)) throw bad(`${c.id} is already configured`);
@@ -500,9 +500,9 @@ export function addCustomProvider(sy: Switchyard, input: CustomProviderInput): {
 }
 
 /** Remove a custom provider from the config file once it has no keys left. */
-export function removeCustomProvider(sy: Switchyard, id: string): { removed: string } {
+export function removeCustomProvider(sy: MeritRouter, id: string): { removed: string } {
   const e = sy.cfg.providers.byId[id];
-  if (!e || BUILTIN_PROVIDER_IDS.includes(id)) throw new SwitchyardError("not_found", `${id} is not a custom provider in the config`);
+  if (!e || BUILTIN_PROVIDER_IDS.includes(id)) throw new MeritRouterError("not_found", `${id} is not a custom provider in the config`);
   if (e.keys.length) throw bad(`${id} has keys in the config file: remove them there first`);
   if (sy.vault.list(id).some((k) => !k.removed)) throw bad(`remove ${id}'s keys first`);
   const r = patchConfig(sy, [{ path: ["providers", id], value: null }]);
@@ -513,7 +513,7 @@ export function removeCustomProvider(sy: Switchyard, id: string): { removed: str
 // ---------- paid spend ----------
 
 /** Paid routing at a glance: the master switch, tier policies, and spend against budgets. */
-export function paidSummary(sy: Switchyard) {
+export function paidSummary(sy: MeritRouter) {
   const s = sy.spend.summary();
   return {
     enabled: sy.cfg.paid.enabled,

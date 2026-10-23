@@ -6,7 +6,7 @@ import type { WebCitation } from "../gateway/types.js";
 import { parseCitations } from "./request-citations.js";
 import { existsSync } from "node:fs";
 import { ROLE_NAMES } from "../config/schema.js";
-import type { Switchyard } from "../core/service.js";
+import type { MeritRouter } from "../core/service.js";
 import type { TaskState } from "../core/task.js";
 import type { SessionRecord } from "../sessions/store.js";
 import type { SessionEvent } from "../sessions/events.js";
@@ -60,7 +60,7 @@ export interface AgentRow extends AgentId {
 }
 
 /** Agents (grouped sessions), most recently active first; `project` limits them to one project's. */
-export function agentsView(sy: Switchyard, opts: { project?: string; role?: string; limit?: number } = {}): AgentRow[] {
+export function agentsView(sy: MeritRouter, opts: { project?: string; role?: string; limit?: number } = {}): AgentRow[] {
   const where: string[] = [];
   const args: unknown[] = [];
   if (opts.project) {
@@ -159,7 +159,7 @@ export interface AgentDetail {
   totals: { sessions: number; running: number; tasks: number; requests: number; failedRequests: number; inputTokens: number; outputTokens: number; costUsd: number; paidUsd: number; commits: number; linesAdded: number; linesRemoved: number };
 }
 
-function taskRows(sy: Switchyard, ids: string[]): EntityTask[] {
+function taskRows(sy: MeritRouter, ids: string[]): EntityTask[] {
   const out: EntityTask[] = [];
   const q = sy.db.prepare(
     `SELECT id, profile, state, tier, project_id, created_at, finished_at, json_extract(spec_json, '$.label') AS label,
@@ -186,7 +186,7 @@ function taskRows(sy: Switchyard, ids: string[]): EntityTask[] {
 }
 
 /** The requests a session made: ids named by its log's model responses, plus failed ones of its executions while it ran. */
-function sessionRequestIds(sy: Switchyard, session: SessionRecord): string[] {
+function sessionRequestIds(sy: MeritRouter, session: SessionRecord): string[] {
   const page = sy.sessions.events(session.id, { limit: 100_000 });
   if (!page) return [];
   const ids = new Set<string>();
@@ -207,7 +207,7 @@ function sessionRequestIds(sy: Switchyard, session: SessionRecord): string[] {
   return [...ids];
 }
 
-function requestRows(sy: Switchyard, ids: string[], sessionOf: Map<string, string> = new Map()): EntityRequest[] {
+function requestRows(sy: MeritRouter, ids: string[], sessionOf: Map<string, string> = new Map()): EntityRequest[] {
   if (!ids.length) return [];
   const out: EntityRequest[] = [];
   for (let i = 0; i < ids.length; i += 400) {
@@ -262,7 +262,7 @@ function modelUse(requests: EntityRequest[]): ModelUse[] {
 }
 
 /** An agent's page: its tasks, sessions, models, requests, commits (with lines), and jobs. Null when it never ran in `project`. */
-export async function agentDetail(sy: Switchyard, project: string, rawId: string): Promise<AgentDetail | null> {
+export async function agentDetail(sy: MeritRouter, project: string, rawId: string): Promise<AgentDetail | null> {
   const agent = parseAgentId(rawId);
   if (!agent) return null;
   const ids = sy.db.prepare("SELECT id FROM sessions WHERE agent_label = ? AND project_id = ? ORDER BY created_at DESC").all(agent.id, project) as Array<{ id: string }>;
@@ -335,7 +335,7 @@ export interface RequestDetail extends EntityRequest {
 }
 
 /** One model request with everything it connects to; null for an unknown id. */
-export function requestDetail(sy: Switchyard, id: string, project?: string): RequestDetail | null {
+export function requestDetail(sy: MeritRouter, id: string, project?: string): RequestDetail | null {
   const r = sy.db.prepare(`SELECT * FROM model_requests WHERE id = ?${project === undefined ? "" : " AND project_id = ?"}`).get(...(project === undefined ? [id] : [id, project])) as Record<string, unknown> | undefined;
   if (!r) return null;
   const charges = (sy.db.prepare("SELECT c.task_id,c.input_tokens,c.output_tokens,c.tokens_exact FROM request_charges c JOIN tasks t ON t.id=c.task_id WHERE c.request_id=? AND t.project_id=? LIMIT 50").all(id, String(r.project_id)) as Array<Record<string, number | string>>).map((c) => ({
@@ -375,7 +375,7 @@ export function requestDetail(sy: Switchyard, id: string, project?: string): Req
 }
 
 /** The requests one session made (newest first). */
-export function sessionRequests(sy: Switchyard, sessionId: string): EntityRequest[] {
+export function sessionRequests(sy: MeritRouter, sessionId: string): EntityRequest[] {
   const s = sy.sessions.get(sessionId);
   if (!s) return [];
   const owner = sy.db.prepare("SELECT project_id FROM sessions WHERE id=?").get(sessionId) as {project_id:string}|undefined;
@@ -438,7 +438,7 @@ function parseLog(repository: string, raw: string): EntityCommit[] {
   return out;
 }
 
-function projectRepos(sy: Switchyard, project: string): Record<string, { path: string; writable: boolean }> {
+function projectRepos(sy: MeritRouter, project: string): Record<string, { path: string; writable: boolean }> {
   return sy.projects.get(project)?.repositoryPaths ?? {};
 }
 
@@ -446,7 +446,7 @@ function projectRepos(sy: Switchyard, project: string): Record<string, { path: s
  * Commits in a project's repositories (every branch, newest first) whose attribution trailers
  * match every given value: an agent, a task, or a job.
  */
-export async function projectCommits(sy: Switchyard, project: string, filter: { agent?: string; task?: string; job?: string; repository?: string }, limit = MAX_COMMITS): Promise<{ commits: EntityCommit[]; errors: string[] }> {
+export async function projectCommits(sy: MeritRouter, project: string, filter: { agent?: string; task?: string; job?: string; repository?: string }, limit = MAX_COMMITS): Promise<{ commits: EntityCommit[]; errors: string[] }> {
   const greps = [filter.agent ? `Agent: ${filter.agent}` : null, filter.task ? `Task: ${filter.task}` : null, filter.job ? `Job: ${filter.job}` : null].filter((g): g is string => !!g);
   const commits: EntityCommit[] = [];
   const errors: string[] = [];
@@ -477,7 +477,7 @@ export interface CommitDetail extends EntityCommit {
 }
 
 /** One commit of a project's repository, with its attribution, files, branches, and diff; null when unknown. */
-export async function commitDetail(sy: Switchyard, project: string, alias: string, sha: string): Promise<CommitDetail | null> {
+export async function commitDetail(sy: MeritRouter, project: string, alias: string, sha: string): Promise<CommitDetail | null> {
   const repositories = projectRepos(sy, project);
   const repo = Object.hasOwn(repositories, alias) ? repositories[alias] : undefined;
   if (!repo || !SHA_RE.test(sha) || !existsSync(repo.path)) return null;
@@ -546,7 +546,7 @@ export interface RepositoryView {
 }
 
 /** A project's repository: where it is, its branches, and its newest commits with attribution. Null for an unknown alias. */
-export async function repositoryView(sy: Switchyard, project: string, alias: string, limit = 50): Promise<RepositoryView | null> {
+export async function repositoryView(sy: MeritRouter, project: string, alias: string, limit = 50): Promise<RepositoryView | null> {
   const repositories = projectRepos(sy, project);
   const repo = Object.hasOwn(repositories, alias) ? repositories[alias] : undefined;
   if (!repo) return null;
@@ -589,7 +589,7 @@ export interface TaskRelated {
 }
 
 /** Everything a task connects to, for its page's Related panel. Null for an unknown task. */
-export async function taskRelated(sy: Switchyard, taskId: string): Promise<TaskRelated | null> {
+export async function taskRelated(sy: MeritRouter, taskId: string): Promise<TaskRelated | null> {
   const t = sy.tasks.get(taskId);
   if (!t) return null;
   const project = t.row.project_id;
@@ -639,7 +639,7 @@ export interface ModelUsage {
 }
 
 /** Who used a model recently: the tasks charged for its newest requests, their agents, and projects. */
-export function modelUsage(sy: Switchyard, endpointId: string, limit = 200): ModelUsage {
+export function modelUsage(sy: MeritRouter, endpointId: string, limit = 200): ModelUsage {
   const rows = sy.db
     .prepare(
       `SELECT r.id, r.reserved_at, r.project_id, c.task_id FROM model_requests r JOIN request_charges c ON c.request_id = r.id

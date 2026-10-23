@@ -1,5 +1,5 @@
-import type { Switchyard } from "switchyard-router";
-import { insights } from "switchyard-router";
+import type { MeritRouter } from "meritrouter";
+import { insights } from "meritrouter";
 import { body, handle, HttpError } from "@/lib/api";
 import { KeyPatchBody } from "@/lib/key-schemas";
 
@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 type Ctx = { params: Promise<{ id: string }> };
 
 /** Vault key id from the path. Config keys are edited in the config file, never here. */
-async function keyId(sy: Switchyard, ctx: Ctx): Promise<number> {
+async function keyId(sy: MeritRouter, ctx: Ctx): Promise<number> {
   const id = Number((await ctx.params).id);
   if (!Number.isInteger(id) || id <= 0) throw new HttpError(400, "Key id must be a number (config keys are edited in the config file)");
   if (!sy.vault.get(id)) throw new HttpError(404, `Unknown key ${id}`);

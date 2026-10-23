@@ -3,10 +3,10 @@ import { appendFileSync, createWriteStream, existsSync, mkdirSync, readFileSync,
 import path from "node:path";
 import type { Readable } from "node:stream";
 import { z } from "zod";
-import { SwitchyardError } from "../core/errors.js";
+import { MeritRouterError } from "../core/errors.js";
 
 /**
- * `switchyard daemon`: runs `switchyard worker` as a child process and restarts it when it dies,
+ * `meritrouter daemon`: runs `meritrouter worker` as a child process and restarts it when it dies,
  * with exponential backoff and a cap on restarts per window. When the cap is hit the daemon exits
  * non-zero so the service manager (systemd, launchd, Task Scheduler) applies its own policy.
  * Logs go to `<storage>/logs/`: `daemon.log` (lifecycle) and `worker.log` (the worker's output).
@@ -18,9 +18,9 @@ export const LOGS_DIR = "logs";
 export const DAEMON_LOG = "daemon.log";
 export const WORKER_LOG = "worker.log";
 export const DAEMON_LOCK = "daemon.pid";
-/** `switchyard daemon stop` writes this file; a running daemon sees it, stops its worker, and exits. */
+/** `meritrouter daemon stop` writes this file; a running daemon sees it, stops its worker, and exits. */
 export const DAEMON_STOP = "daemon.stop";
-/** Output of a daemon started in the background by `switchyard daemon start`. */
+/** Output of a daemon started in the background by `meritrouter daemon start`. */
 export const DAEMON_OUT = "daemon.out";
 const ROTATE_BYTES = 10 * 1024 * 1024;
 
@@ -285,7 +285,7 @@ export function readDaemonLock(logsDir: string): (DaemonLock & { alive: boolean 
 export function acquireDaemonLock(logsDir: string, configPath: string, pid = process.pid): () => void {
   const existing = readDaemonLock(logsDir);
   if (existing && existing.alive && existing.pid !== pid) {
-    throw new SwitchyardError("conflict", `a daemon (pid ${existing.pid}, started ${existing.startedAt}) is already running for this storage directory`);
+    throw new MeritRouterError("conflict", `a daemon (pid ${existing.pid}, started ${existing.startedAt}) is already running for this storage directory`);
   }
   mkdirSync(logsDir, { recursive: true });
   const file = path.join(logsDir, DAEMON_LOCK);

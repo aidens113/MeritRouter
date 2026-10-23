@@ -8,7 +8,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { makeEnv, summarizeTask, type Env } from "./helpers.js";
 
 /** The panel tool forces a start: point it at a folder with no panel app so a test never launches one. */
-const NO_PANEL = path.join(tmpdir(), "switchyard-no-panel-app");
+const NO_PANEL = path.join(tmpdir(), "meritrouter-no-panel-app");
 
 const dist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "dist");
 const server = path.join(dist, "mcp.js");
@@ -45,7 +45,7 @@ describe("MCP server", () => {
   it("exposes the task tools and persists submissions before acknowledging", async () => {
     env = makeEnv();
     client = new Client({ name: "test", version: "1" });
-    await client.connect(new StdioClientTransport({ command: process.execPath, args: [server, "--config", env.cfg.configPath], env: { PATH: process.env.PATH ?? "", SWITCHYARD_PANEL_DIR: NO_PANEL } }));
+    await client.connect(new StdioClientTransport({ command: process.execPath, args: [server, "--config", env.cfg.configPath], env: { PATH: process.env.PATH ?? "", MERITROUTER_PANEL_DIR: NO_PANEL } }));
     const listed = (await client.listTools()).tools;
     // Every input schema suits OpenAI clients (Codex, ChatGPT): portable keywords only, typed
     // nodes, and open objects that say additionalProperties: true. Empty inputs are objects.
@@ -122,10 +122,10 @@ describe("MCP server", () => {
     expect(body.completed[0].stopReason).toMatch(/gateway_auth|no_eligible_endpoint/);
   }, 60_000);
 
-  it("runs as `switchyard mcp` on stdio, so an installed package needs no dist path", async () => {
+  it("runs as `meritrouter mcp` on stdio, so an installed package needs no dist path", async () => {
     env = makeEnv();
     client = new Client({ name: "test", version: "1" });
-    await client.connect(new StdioClientTransport({ command: process.execPath, args: [path.join(dist, "cli.js"), "mcp", "--config", env.cfg.configPath, "--no-worker"], env: { PATH: process.env.PATH ?? "", SWITCHYARD_PANEL_DIR: NO_PANEL } }));
+    await client.connect(new StdioClientTransport({ command: process.execPath, args: [path.join(dist, "cli.js"), "mcp", "--config", env.cfg.configPath, "--no-worker"], env: { PATH: process.env.PATH ?? "", MERITROUTER_PANEL_DIR: NO_PANEL } }));
     const names = (await client.listTools()).tools.map((t) => t.name);
     expect(names).toContain("submit_tasks");
     expect(names).toHaveLength(42);

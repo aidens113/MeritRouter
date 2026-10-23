@@ -4,8 +4,8 @@ import { homedir } from "node:os";
 import path from "node:path";
 import YAML from "yaml";
 import { REPOSITORY_ALIAS_RE, ROLE_NAMES } from "../config/schema.js";
-import { SwitchyardError } from "../core/errors.js";
-import type { Switchyard } from "../core/service.js";
+import { MeritRouterError } from "../core/errors.js";
+import type { MeritRouter } from "../core/service.js";
 import { PROJECT_CODING_KEYS, PROJECT_SUPERVISOR_KEYS, PROJECT_TEAM_KEYS, ProjectConfigSchema } from "../projects/schema.js";
 import { expandHome } from "../brain/brain.js";
 import { patchConfig, readConfigText } from "./config-edit.js";
@@ -43,7 +43,7 @@ export interface GlobalSettings {
 }
 
 /** Every global section's effective values; `projects` (and, with projects, `repositories`) are left out. */
-export function globalSettings(sy: Switchyard): GlobalSettings {
+export function globalSettings(sy: MeritRouter): GlobalSettings {
   const multiProject = !sy.projects.list().some((c) => c.project.legacy);
   const cfg = sy.cfg as unknown as Record<string, unknown>;
   const sections: Record<string, unknown> = {};
@@ -79,9 +79,9 @@ export interface ProjectSettings {
 const pick = (o: Record<string, unknown>, keys: readonly string[]) => Object.fromEntries(keys.filter((k) => k in o).map((k) => [k, o[k]]));
 
 /** One project's settings, as written and as effective. */
-export function projectSettings(sy: Switchyard, slug: string): ProjectSettings {
+export function projectSettings(sy: MeritRouter, slug: string): ProjectSettings {
   const ctx = sy.projects.get(slug);
-  if (!ctx) throw new SwitchyardError("not_found", `unknown project ${slug}`);
+  if (!ctx) throw new MeritRouterError("not_found", `unknown project ${slug}`);
   const legacy = ctx.project.legacy;
   const doc = YAML.parseDocument(readConfigText(sy));
   const node = (p: string[]) => (doc.getIn(p) as YAML.Node | undefined)?.toJSON?.() ?? (doc.getIn(p) as unknown);
@@ -114,7 +114,7 @@ export type SettingsPatch = Array<{ path: Array<string | number>; value: unknown
  * removes the key (the global value applies again). In a single-project config the project's
  * settings are the top-level sections, so paths are written there. Validated before writing.
  */
-export function patchProjectSettings(sy: Switchyard, slug: string, patch: SettingsPatch): { ok: true } | { ok: false; errors: string[] } {
+export function patchProjectSettings(sy: MeritRouter, slug: string, patch: SettingsPatch): { ok: true } | { ok: false; errors: string[] } {
   const ctx = sy.projects.get(slug);
   if (!ctx) return { ok: false, errors: [`unknown project ${slug}`] };
   const errors: string[] = [];
@@ -158,7 +158,7 @@ export function removedAliases(current: string[], patch: SettingsPatch): string[
  * Unfinished tasks of a project that name a repository alias (read or written): queued, running,
  * waiting, and interrupted ones, since an interrupted task can be resumed.
  */
-export function tasksUsingRepository(sy: Switchyard, slug: string, alias: string): string[] {
+export function tasksUsingRepository(sy: MeritRouter, slug: string, alias: string): string[] {
   const states = [...TERMINAL_STATES];
   const rows = sy.db
     .prepare(
@@ -174,7 +174,7 @@ export function tasksUsingRepository(sy: Switchyard, slug: string, alias: string
  * Removing a repository is refused while unfinished tasks of the project use its alias: they
  * would fail when they run or resume. Each message names the tasks (or, past five, how many).
  */
-export function repositoryRemovalErrors(sy: Switchyard, slug: string, aliases: string[]): string[] {
+export function repositoryRemovalErrors(sy: MeritRouter, slug: string, aliases: string[]): string[] {
   return aliases.flatMap((alias) => {
     const ids = tasksUsingRepository(sy, slug, alias);
     if (!ids.length) return [];
@@ -199,7 +199,7 @@ function patchedMounts(patch: SettingsPatch): Array<{ field: string; path: unkno
 }
 
 /** Brain mount folders must exist when they are saved (relative paths resolve against the config file's folder). */
-export function mountFolderErrors(sy: Switchyard, patch: SettingsPatch): string[] {
+export function mountFolderErrors(sy: MeritRouter, patch: SettingsPatch): string[] {
   const base = path.dirname(sy.cfg.configPath);
   return patchedMounts(patch).flatMap(({ field, path: p }) => {
     if (typeof p !== "string" || !p.trim()) return []; // the config schema reports a missing path
@@ -229,15 +229,15 @@ export interface RepositoryPathCheck {
   isGit: boolean;
   state: FolderState;
   /**
-   * What SwitchYard will do when the repository is saved (a missing folder is created and set up
+   * What MeritRouter will do when the repository is saved (a missing folder is created and set up
    * with git; a folder without git is set up and its files committed), or null when nothing is needed.
    */
   hint: string | null;
-  /** Plain-language problem SwitchYard cannot fix itself (no folder given, a file), or null. */
+  /** Plain-language problem MeritRouter cannot fix itself (no folder given, a file), or null. */
   problem: string | null;
 }
 
-export function inspectRepositoryPath(sy: Switchyard, input: string): RepositoryPathCheck {
+export function inspectRepositoryPath(sy: MeritRouter, input: string): RepositoryPathCheck {
   const trimmed = input.trim();
   const resolved = path.resolve(path.dirname(sy.cfg.configPath), trimmed || ".");
   const state = folderState(resolved);
@@ -280,7 +280,7 @@ const flatErrors = (fe: FieldErrors) => Object.entries(fe).flatMap(([k, v]) => v
  * Check a project's repository rows: aliases valid and unique, a folder given that is not a file.
  * A folder that does not exist or has no git is fine: saving prepares it.
  */
-export function validateProjectRepositories(sy: Switchyard, rows: ProjectRepositoryInput[]): FieldErrors {
+export function validateProjectRepositories(sy: MeritRouter, rows: ProjectRepositoryInput[]): FieldErrors {
   const errors: FieldErrors = {};
   const seen = new Map<string, number>();
   rows.forEach((r, i) => {
@@ -298,10 +298,10 @@ export function validateProjectRepositories(sy: Switchyard, rows: ProjectReposit
 /**
  * Replace a project's repositories with `rows` (add, remove, change folder or writable). Each
  * folder is prepared first (created, set up with git, first snapshot committed, as needed); what
- * SwitchYard cannot fix comes back keyed by row and field. Other entries of the file, and
+ * MeritRouter cannot fix comes back keyed by row and field. Other entries of the file, and
  * comments around them, are kept.
  */
-export async function saveProjectRepositories(sy: Switchyard, slug: string, rows: ProjectRepositoryInput[]): Promise<SettingsSaveResult> {
+export async function saveProjectRepositories(sy: MeritRouter, slug: string, rows: ProjectRepositoryInput[]): Promise<SettingsSaveResult> {
   if (!sy.projects.get(slug)) return { ok: false, errors: [`unknown project ${slug}`], fieldErrors: { form: [`unknown project ${slug}`] } };
   // A removed repository has no row left to mark, so its refusal is a form-level error.
   const current = Object.keys((projectSettings(sy, slug).raw.repositories ?? {}) as Record<string, unknown>);
@@ -335,7 +335,7 @@ export async function saveProjectRepositories(sy: Switchyard, slug: string, rows
  * `projects.<slug>.team.max_agents` (inside an "invalid config" block), and
  * `patchProjectSettings`'s own refusals name `team.max_agents`. Anything else goes under `form`.
  */
-export function projectFieldErrors(sy: Switchyard, slug: string, errors: string[]): FieldErrors {
+export function projectFieldErrors(sy: MeritRouter, slug: string, errors: string[]): FieldErrors {
   const legacy = sy.projects.get(slug)?.project.legacy ?? false;
   const prefix = `projects.${slug}.`;
   const out: FieldErrors = {};
@@ -350,12 +350,12 @@ export function projectFieldErrors(sy: Switchyard, slug: string, errors: string[
   return out;
 }
 
-function withFieldErrors(sy: Switchyard, slug: string, r: { ok: true } | { ok: false; errors: string[] }): SettingsSaveResult {
+function withFieldErrors(sy: MeritRouter, slug: string, r: { ok: true } | { ok: false; errors: string[] }): SettingsSaveResult {
   return r.ok ? r : { ok: false, errors: r.errors, fieldErrors: projectFieldErrors(sy, slug, r.errors) };
 }
 
 /** `patchProjectSettings` with its errors also keyed by project-relative field, for forms. */
-export function saveProjectSettings(sy: Switchyard, slug: string, patch: SettingsPatch): SettingsSaveResult {
+export function saveProjectSettings(sy: MeritRouter, slug: string, patch: SettingsPatch): SettingsSaveResult {
   return withFieldErrors(sy, slug, patchProjectSettings(sy, slug, patch));
 }
 
@@ -407,7 +407,7 @@ const budgetsOf = (o: unknown): Budgets => {
 const mountRows = (ms: Array<{ prefix: string; path: string; commit?: boolean }>): MountRow[] => ms.map((m) => ({ prefix: m.prefix, path: m.path, commit: m.commit ?? false }));
 
 /** Everything the project settings page shows, each override beside the value it would inherit. */
-export function projectSettingsView(sy: Switchyard, slug: string): ProjectSettingsView {
+export function projectSettingsView(sy: MeritRouter, slug: string): ProjectSettingsView {
   const base = projectSettings(sy, slug);
   const info = projectInfo(sy, slug);
   const act = projectActivity(sy, slug);

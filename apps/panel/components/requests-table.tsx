@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Globe, ShieldAlert } from "lucide-react";
-import type { insights } from "switchyard-router";
+import type { insights } from "meritrouter";
 import { RequestStatusBadge, TierBadge } from "./task-badges";
 import { Badge, EmptyState } from "./ui";
 import { dateTime, duration, humanize, modelHref, num, pct, shortDateTime, shortId } from "@/lib/format";

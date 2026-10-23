@@ -2,8 +2,8 @@ import { closeSync, copyFileSync, cpSync, existsSync, fsyncSync, mkdirSync, mkdt
 import path from "node:path";
 import Database from "better-sqlite3";
 import { z } from "zod";
-import { DB_FILE, SCHEMA_VERSION, openDatabase, type Db } from "../storage/db.js";
-import { SwitchyardError } from "../core/errors.js";
+import { DB_FILE, LEGACY_DB_FILE, databasePath, SCHEMA_VERSION, openDatabase, type Db } from "../storage/db.js";
+import { MeritRouterError } from "../core/errors.js";
 import { logsDirFor, readDaemonLock } from "./daemon.js";
 import { backupBrain, BrainManifestSchema, planBrainRestore, stageBrainRestore, discardStagedBrainRestore, restoreBrain, type BrainMountNote, type BrainRestoreResult } from "./brain-backup.js";
 
@@ -118,12 +118,12 @@ export async function backupStorage(input: BackupOptions): Promise<BackupManifes
   const opts = BackupOptionsSchema.parse(input);
   const storageDir = path.resolve(opts.storageDir);
   const targetDir = path.resolve(opts.targetDir);
-  const dbPath = path.join(storageDir, DB_FILE);
-  if (!existsSync(dbPath)) throw new SwitchyardError("not_found", `no database at ${dbPath}; nothing to back up`);
+  const dbPath = databasePath(storageDir);
+  if (!existsSync(dbPath)) throw new MeritRouterError("not_found", `no database at ${dbPath}; nothing to back up`);
   if (targetDir === storageDir || targetDir.startsWith(storageDir + path.sep)) {
-    throw new SwitchyardError("usage", `backup directory ${targetDir} must be outside the storage directory ${storageDir}`);
+    throw new MeritRouterError("usage", `backup directory ${targetDir} must be outside the storage directory ${storageDir}`);
   }
-  if (isNonEmptyDir(targetDir)) throw new SwitchyardError("usage", `backup directory ${targetDir} is not empty; choose a new directory`);
+  if (isNonEmptyDir(targetDir)) throw new MeritRouterError("usage", `backup directory ${targetDir} is not empty; choose a new directory`);
   mkdirSync(targetDir, { recursive: true });
 
   // 1. Online snapshot. A plain connection (no migrations) so the backup never changes the source.
@@ -147,7 +147,7 @@ export async function backupStorage(input: BackupOptions): Promise<BackupManifes
   try {
     snap.pragma("journal_mode = DELETE");
     const check = snap.pragma("quick_check", { simple: true });
-    if (check !== "ok") throw new SwitchyardError("internal", `snapshot failed its integrity check: ${String(check)}`);
+    if (check !== "ok") throw new MeritRouterError("internal", `snapshot failed its integrity check: ${String(check)}`);
     schemaVersion = snap.pragma("user_version", { simple: true }) as number;
     if (hasTable(snap, "tasks")) tasks = countRows(snap, "tasks");
     if (hasTable(snap, "sessions")) {
@@ -226,21 +226,21 @@ function countFiles(dir: string): number {
 /** Read and validate a backup's manifest. */
 export function readBackupManifest(backupDir: string): BackupManifest {
   const file = path.join(path.resolve(backupDir), MANIFEST_FILE);
-  if (!existsSync(file)) throw new SwitchyardError("not_found", `${backupDir} is not a complete SwitchYard backup (no ${MANIFEST_FILE})`);
+  if (!existsSync(file)) throw new MeritRouterError("not_found", `${backupDir} is not a complete MeritRouter backup (no ${MANIFEST_FILE})`);
   let raw: unknown;
   try {
     raw = JSON.parse(readFileSync(file, "utf8"));
   } catch (err) {
-    throw new SwitchyardError("usage", `cannot parse ${file}: ${(err as Error).message}`);
+    throw new MeritRouterError("usage", `cannot parse ${file}: ${(err as Error).message}`);
   }
   const r = BackupManifestSchema.safeParse(raw);
-  if (!r.success) throw new SwitchyardError("usage", `invalid backup manifest ${file}: ${r.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ")}`);
+  if (!r.success) throw new MeritRouterError("usage", `invalid backup manifest ${file}: ${r.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ")}`);
   return r.data;
 }
 
 /** Tasks a live worker holds (an unexpired lease) in the database under `storageDir`. */
 export function liveLeases(storageDir: string, now = Date.now()): Array<{ id: string; owner: string | null; expiresAt: number }> {
-  const dbPath = path.join(storageDir, DB_FILE);
+  const dbPath = databasePath(storageDir);
   if (!existsSync(dbPath)) return [];
   const db = new Database(dbPath, { fileMustExist: true });
   try {
@@ -257,7 +257,7 @@ export function liveLeases(storageDir: string, now = Date.now()): Array<{ id: st
 }
 
 /** Storage entries a restore replaces. */
-const RESTORED_ENTRIES = [DB_FILE, ...DB_SIDECARS, SESSIONS_DIR, ARTIFACTS_DIR];
+const RESTORED_ENTRIES = [DB_FILE, ...DB_SIDECARS, LEGACY_DB_FILE, `${LEGACY_DB_FILE}-wal`, `${LEGACY_DB_FILE}-shm`, `${LEGACY_DB_FILE}-journal`, SESSIONS_DIR, ARTIFACTS_DIR];
 
 /**
  * Restore a backup into `storageDir` and, given `brainPath`, its brain. Refused while a worker
@@ -274,19 +274,19 @@ export function restoreStorage(input: RestoreOptions): RestoreResult {
   const backupDir = path.resolve(opts.backupDir);
   const storageDir = path.resolve(opts.storageDir);
   const manifest = readBackupManifest(backupDir);
-  const snapshot = path.join(backupDir, DB_FILE);
-  if (!existsSync(snapshot)) throw new SwitchyardError("not_found", `backup ${backupDir} has no ${DB_FILE}`);
+  const snapshot = databasePath(backupDir);
+  if (!existsSync(snapshot)) throw new MeritRouterError("not_found", `backup ${backupDir} has no ${DB_FILE}`);
   if (manifest.schemaVersion > SCHEMA_VERSION) {
-    throw new SwitchyardError("usage", `backup schema version ${manifest.schemaVersion} is newer than this build (${SCHEMA_VERSION}); upgrade SwitchYard first`);
+    throw new MeritRouterError("usage", `backup schema version ${manifest.schemaVersion} is newer than this build (${SCHEMA_VERSION}); upgrade MeritRouter first`);
   }
 
   const daemon = readDaemonLock(logsDirFor(storageDir));
   if (daemon?.alive && daemon.pid !== process.pid) {
-    throw new SwitchyardError("conflict", `refusing to restore: a daemon (pid ${daemon.pid}) is running for ${storageDir}; stop it first`);
+    throw new MeritRouterError("conflict", `refusing to restore: a daemon (pid ${daemon.pid}) is running for ${storageDir}; stop it first`);
   }
   const live = liveLeases(storageDir, now);
   if (live.length) {
-    throw new SwitchyardError(
+    throw new MeritRouterError(
       "conflict",
       `refusing to restore: a worker holds live leases on ${live.length} task(s) (${live.slice(0, 5).map((l) => l.id).join(", ")}); stop the worker, MCP server, and daemon first`,
     );
@@ -294,14 +294,14 @@ export function restoreStorage(input: RestoreOptions): RestoreResult {
   const existing = RESTORED_ENTRIES.filter((e) => existsSync(path.join(storageDir, e)));
   const occupied = existing.some((e) => e !== SESSIONS_DIR && e !== ARTIFACTS_DIR) || existing.some((e) => isNonEmptyDir(path.join(storageDir, e)));
   if (occupied && !opts.force) {
-    throw new SwitchyardError("conflict", `refusing to restore over existing state in ${storageDir} (${existing.join(", ")}); pass --force to move it aside first`);
+    throw new MeritRouterError("conflict", `refusing to restore over existing state in ${storageDir} (${existing.join(", ")}); pass --force to move it aside first`);
   }
   // Decided before anything moves: a dirty or occupied brain refuses the whole restore.
   const brainPlan = planBrainRestore(manifest.brain, backupDir, opts.brainPath, opts.force);
 
   // Stage migration, copied files and the verified brain before any live entry moves.
   mkdirSync(path.dirname(storageDir), { recursive: true });
-  const staging = mkdtempSync(path.join(path.dirname(storageDir), ".switchyard-restore-"));
+  const staging = mkdtempSync(path.join(path.dirname(storageDir), ".meritrouter-restore-"));
   let stagedBrain: ReturnType<typeof stageBrainRestore> | undefined;
   let previousMovedTo: string | null = null;
   let leasesReleased = 0;
@@ -347,7 +347,7 @@ export function restoreStorage(input: RestoreOptions): RestoreResult {
       if (previousMovedTo) rmdirSync(previousMovedTo);
       if (!storageExisted && existsSync(storageDir) && !readdirSync(storageDir).length) rmdirSync(storageDir);
     } catch (rollback) {
-      throw new SwitchyardError("conflict", `restore failed (${(error as Error).message}); store rollback failed (${(rollback as Error).message}). Previous entries remain at ${previousMovedTo ?? storageDir}; recover them before restarting`);
+      throw new MeritRouterError("conflict", `restore failed (${(error as Error).message}); store rollback failed (${(rollback as Error).message}). Previous entries remain at ${previousMovedTo ?? storageDir}; recover them before restarting`);
     }
     throw error;
   } finally {

@@ -1,6 +1,6 @@
 import { z } from "zod";
-import type { Switchyard } from "../core/service.js";
-import { SwitchyardError } from "../core/errors.js";
+import type { MeritRouter } from "../core/service.js";
+import { MeritRouterError } from "../core/errors.js";
 import { isSearchService, SEARCH_SERVICE_IDS, SEARCH_SERVICES, type SearchServiceId } from "../web/services.js";
 import type { WebBackendStatus, WebBackendView, WebStatus } from "../web/access.js";
 export type { WebAttempt, WebBackendStatus, WebBackendView, WebKeyView, WebStatus } from "../web/access.js";
@@ -46,7 +46,7 @@ export interface WebSearchView {
 }
 
 /** Search-service keys of one service (or all): config first, then vault. No secret is included. */
-export function searchKeys(sy: Switchyard, service?: SearchServiceId): SearchKeyView[] {
+export function searchKeys(sy: MeritRouter, service?: SearchServiceId): SearchKeyView[] {
   const out: SearchKeyView[] = [];
   const now = sy.providers.now();
   for (const id of service ? [service] : SEARCH_SERVICE_IDS) {
@@ -75,7 +75,7 @@ export function searchKeys(sy: Switchyard, service?: SearchServiceId): SearchKey
 }
 
 /** Everything the panel shows about web search. */
-export function webSearchView(sy: Switchyard, opts: { project?: string; recent?: number } = {}): WebSearchView {
+export function webSearchView(sy: MeritRouter, opts: { project?: string; recent?: number } = {}): WebSearchView {
   const keys = searchKeys(sy);
   return {
     status: sy.web.status(),
@@ -87,7 +87,7 @@ export function webSearchView(sy: Switchyard, opts: { project?: string; recent?:
 }
 
 /** A task's web searches and fetches, oldest first (the task page's usage). */
-export function taskWebRequests(sy: Switchyard, taskId: string): WebRequestRow[] {
+export function taskWebRequests(sy: MeritRouter, taskId: string): WebRequestRow[] {
   return sy.web.ledger.forTask(taskId);
 }
 
@@ -100,29 +100,29 @@ export const NewSearchKeySchema = z
   .strict();
 
 /** Store a search-service key in the encrypted vault. */
-export function addSearchKey(sy: Switchyard, input: z.input<typeof NewSearchKeySchema>): SearchKeyView {
+export function addSearchKey(sy: MeritRouter, input: z.input<typeof NewSearchKeySchema>): SearchKeyView {
   const parsed = NewSearchKeySchema.safeParse(input);
-  if (!parsed.success) throw new SwitchyardError("config_invalid", parsed.error.issues.map((i) => `${i.path.join(".") || "input"}: ${i.message}`).join("; "));
+  if (!parsed.success) throw new MeritRouterError("config_invalid", parsed.error.issues.map((i) => `${i.path.join(".") || "input"}: ${i.message}`).join("; "));
   const k = sy.vault.add({ provider: parsed.data.service, secret: parsed.data.secret, label: parsed.data.label, billingClass: "free_tier" });
   return searchKeys(sy, parsed.data.service).find((v) => v.id === k.id)!;
 }
 
-function searchVaultKey(sy: Switchyard, id: number) {
+function searchVaultKey(sy: MeritRouter, id: number) {
   const k = sy.vault.get(id);
-  if (!k || !isSearchService(k.provider)) throw new SwitchyardError("not_found", `unknown search key ${id}`);
+  if (!k || !isSearchService(k.provider)) throw new MeritRouterError("not_found", `unknown search key ${id}`);
   return k;
 }
 
-export function setSearchKeyEnabled(sy: Switchyard, id: number, enabled: boolean): SearchKeyView {
+export function setSearchKeyEnabled(sy: MeritRouter, id: number, enabled: boolean): SearchKeyView {
   const k = searchVaultKey(sy, id);
-  if (k.removed) throw new SwitchyardError("config_invalid", `key ${id} was removed; add a new key instead`);
+  if (k.removed) throw new MeritRouterError("config_invalid", `key ${id} was removed; add a new key instead`);
   sy.vault.update(id, { enabled });
   // Re-enabling is the user saying the key is fixed: clear its cooldown, invalid, or credits mark.
   if (enabled) sy.web.clearSearchKey(k.provider, id);
   return searchKeys(sy, k.provider as SearchServiceId).find((v) => v.id === id)!;
 }
 
-export function removeSearchKey(sy: Switchyard, id: number): { removed: number } {
+export function removeSearchKey(sy: MeritRouter, id: number): { removed: number } {
   searchVaultKey(sy, id);
   const k = sy.vault.get(id)!;
   sy.vault.remove(id);

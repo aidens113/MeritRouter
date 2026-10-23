@@ -11,7 +11,7 @@ import type { LabRecord } from "./store.js";
 import { browserCheckDirectory } from "./browser-artifacts.js";
 const HOST = `// ${HOST_MARKER}
 const {spawn}=require('node:child_process');
-const cfg=JSON.parse(process.env.SWITCHYARD_BROWSER_COMMAND);delete process.env.SWITCHYARD_BROWSER_COMMAND;
+const cfg=JSON.parse(process.env.MERITROUTER_BROWSER_COMMAND);delete process.env.MERITROUTER_BROWSER_COMMAND;
 const child=spawn(cfg.executable,cfg.args,{stdio:['ignore','ignore','inherit'],windowsHide:true});
 child.on('error',error=>{console.error(error.message);process.exit(1)});child.on('close',code=>{console.error('browser exit '+code);process.exit(code??1)});
 `;
@@ -60,7 +60,7 @@ export async function launchOwnedBrowser(lab: LabRecord, checkId: string, execut
   ];
   const child = spawn(process.execPath, ["-e", HOST, "--", `--sy-lab-token=${token}`], {
     detached: process.platform !== "win32", windowsHide: true, stdio: ["ignore", "ignore", "pipe"], cwd: directory,
-    env: minimalEnv({ HOME: profile, USERPROFILE: profile, LOCALAPPDATA: local, APPDATA: roaming, SWITCHYARD_BROWSER_COMMAND: JSON.stringify({ executable, args }) }),
+    env: minimalEnv({ HOME: profile, USERPROFILE: profile, LOCALAPPDATA: local, APPDATA: roaming, MERITROUTER_BROWSER_COMMAND: JSON.stringify({ executable, args }) }),
   });
   child.unref();
   let diagnostics = "";

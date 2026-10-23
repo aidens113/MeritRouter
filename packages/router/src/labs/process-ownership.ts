@@ -3,7 +3,12 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { readFileSync, readdirSync, readlinkSync, existsSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 const exec = promisify(execFile);
-export const HOST_MARKER = "SWITCHYARD_LAB_HOST_V1";
+export const HOST_MARKER = "MERITROUTER_LAB_HOST_V1";
+// Persisted live-process protocol: keep exact token verification for both generations.
+const LEGACY_HOST_MARKER = "SWITCHYARD_LAB_HOST_V1";
+function isOwnedCommand(command: string | null | undefined, token: string): boolean {
+  return !!command && (command.includes(HOST_MARKER) || command.includes(LEGACY_HOST_MARKER)) && command.includes(`--sy-lab-token=${token}`);
+}
 export function processAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -26,7 +31,7 @@ export async function processOwnership(pid: number, token: string): Promise<"own
       command = readFileSync(`/proc/${pid}/cmdline`, "utf8").replace(/\0/g, " ");
     else
       command = (await exec("ps", ["-p", String(pid), "-o", "command="], { timeout: 10000 })).stdout;
-    return command.includes(HOST_MARKER) && command.includes(`--sy-lab-token=${token}`) ? "owned" : "foreign";
+    return isOwnedCommand(command, token) ? "owned" : "foreign";
   }
   catch {
     return processAlive(pid) ? "foreign" : "missing";
@@ -38,7 +43,7 @@ export type WindowsProcessSnapshot = z.infer<typeof WindowsProcessSnapshotSchema
 export function ownedWindowsProcessTree(raw: unknown, pid: number, token: string): WindowsProcessSnapshot {
   const rows = WindowsProcessSnapshotSchema.parse(raw);
   const root = rows.find(row => row.ProcessId === pid);
-  if (!root?.CommandLine?.includes(HOST_MARKER) || !root.CommandLine.includes(`--sy-lab-token=${token}`))
+  if (!root || !isOwnedCommand(root.CommandLine, token))
     throw new Error("root process snapshot ownership changed");
   if (new Set(rows.map(row => row.ProcessId)).size !== rows.length)
     throw new Error("ambiguous process snapshot");
@@ -64,7 +69,7 @@ function readWindowsProof(pid: number, token: string, proofPath: string): Window
   if (!existsSync(proofPath))
     return undefined;
   const saved = z.object({ pid: z.literal(pid), token: z.literal(token), rows: WindowsProcessSnapshotSchema }).parse(JSON.parse(readFileSync(proofPath, "utf8")));
-  const root = saved.rows.find(row => row.ProcessId === pid && row.CommandLine?.includes(HOST_MARKER) && row.CommandLine.includes(`--sy-lab-token=${token}`));
+  const root = saved.rows.find(row => row.ProcessId === pid && isOwnedCommand(row.CommandLine, token));
   if (!root)
     throw new Error("stored root identity does not match process proof");
   return saved.rows;
@@ -128,7 +133,7 @@ export async function stopOwnedProcess(pid: number, token: string, proofPath?: s
     const payload = JSON.stringify([...tree].reverse()).replace(/'/g, "''");
     // Re-query creation time and command identity immediately before each individual kill.
     // Never ask taskkill /T to reconstruct a PID-only tree.
-    const script = `$ErrorActionPreference='Stop'; $targets=ConvertFrom-Json '${payload}'; foreach($target in $targets){ $root=Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}'; if($null -eq $root){ continue }; if($root.CreationDate.ToUniversalTime().Ticks.ToString() -ne '${tree[0]!.CreatedTicks}' -or $root.CommandLine -notlike '*${HOST_MARKER}*' -or $root.CommandLine -notlike '*--sy-lab-token=${token}*'){ continue }; $current=Get-CimInstance Win32_Process -Filter ('ProcessId = '+$target.ProcessId); if($null -eq $current){continue}; if($current.CreationDate.ToUniversalTime().Ticks.ToString() -ne $target.CreatedTicks -or $current.CommandLine -cne $target.CommandLine){continue}; try { Stop-Process -Id $target.ProcessId -Force -ErrorAction Stop } catch { continue } }; '[]'`;
+    const script = `$ErrorActionPreference='Stop'; $targets=ConvertFrom-Json '${payload}'; foreach($target in $targets){ $root=Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}'; if($null -eq $root){ continue }; if($root.CreationDate.ToUniversalTime().Ticks.ToString() -ne '${tree[0]!.CreatedTicks}' -or ($root.CommandLine -notlike '*${HOST_MARKER}*' -and $root.CommandLine -notlike '*${LEGACY_HOST_MARKER}*') -or $root.CommandLine -notlike '*--sy-lab-token=${token}*'){ continue }; $current=Get-CimInstance Win32_Process -Filter ('ProcessId = '+$target.ProcessId); if($null -eq $current){continue}; if($current.CreationDate.ToUniversalTime().Ticks.ToString() -ne $target.CreatedTicks -or $current.CommandLine -cne $target.CommandLine){continue}; try { Stop-Process -Id $target.ProcessId -Force -ErrorAction Stop } catch { continue } }; '[]'`;
     const result = await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script], { windowsHide: true, timeout: 15000 });
     z.array(z.never()).parse(JSON.parse(result.stdout.trim()));
     await assertWindowsTargetsGone(known);

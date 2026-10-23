@@ -11,7 +11,7 @@ import {
   type VerificationConfig,
   type VerificationLevel,
 } from "../config/schema.js";
-import { SwitchyardError } from "../core/errors.js";
+import { MeritRouterError } from "../core/errors.js";
 import { criteria, CriterionVerifySchema, type WorkerTask } from "../core/task.js";
 import { TagsSchema, type Tags } from "../scoring/rulebook.js";
 import type { Db } from "../storage/db.js";
@@ -361,7 +361,7 @@ export class ContractStore {
     const sha256 = createHash("sha256").update(json).digest("hex");
     const existing = this.db.prepare("SELECT sha256 FROM task_contracts WHERE task_id = ?").get(parsed.taskId) as { sha256: string } | undefined;
     if (existing) {
-      if (existing.sha256 !== sha256) throw new SwitchyardError("contract_immutable", `task ${parsed.taskId} already has a contract (${existing.sha256.slice(0, 12)}); contracts never change`);
+      if (existing.sha256 !== sha256) throw new MeritRouterError("contract_immutable", `task ${parsed.taskId} already has a contract (${existing.sha256.slice(0, 12)}); contracts never change`);
       return { sha256, created: false };
     }
     this.db.prepare("INSERT INTO task_contracts (task_id, contract_json, sha256, created_at) VALUES (?, ?, ?, ?)").run(parsed.taskId, json, sha256, parsed.createdAt);
@@ -375,7 +375,7 @@ export class ContractStore {
       | undefined;
     if (!row) return null;
     const actual = createHash("sha256").update(row.contract_json).digest("hex");
-    if (actual !== row.sha256) throw new SwitchyardError("contract_corrupt", `task ${taskId} contract does not match its digest`);
+    if (actual !== row.sha256) throw new MeritRouterError("contract_corrupt", `task ${taskId} contract does not match its digest`);
     const contract = AcceptanceContractSchema.parse(JSON.parse(row.contract_json));
     return { contract, sha256: row.sha256, createdAt: row.created_at };
   }

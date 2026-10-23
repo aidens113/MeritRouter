@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { ChatRequest } from "../src/gateway/types.js";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { baseConfig, makeEnv, openWithTestSupervisor as open, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
 import { WORKER_CHECK_EVENT } from "../src/harness/tools.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 
 afterEach(async () => {
   await sy?.close();

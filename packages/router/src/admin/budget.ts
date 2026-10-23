@@ -1,5 +1,5 @@
-import type { Switchyard } from "../core/service.js";
-import { SwitchyardError } from "../core/errors.js";
+import type { MeritRouter } from "../core/service.js";
+import { MeritRouterError } from "../core/errors.js";
 import { BudgetRequests, jobPool, type BudgetRequest, type BudgetRequestStatus, type JobPool } from "../admission/budget-requests.js";
 import { extraRequests, grantOf, grantsOf, taskHold } from "../admission/job-pool.js";
 
@@ -15,16 +15,16 @@ export interface BudgetRequestView extends BudgetRequest {
   pool: JobPool | null;
 }
 
-function cfgOf(sy: Switchyard, taskId: string) {
+function cfgOf(sy: MeritRouter, taskId: string) {
   return sy.projectContext(sy.tasks.projectOf(taskId) ?? "");
 }
 
-function labelOf(sy: Switchyard, taskId: string): string {
+function labelOf(sy: MeritRouter, taskId: string): string {
   return sy.tasks.get(taskId)?.spec.label ?? taskId;
 }
 
 /** Requests for more budget, newest first; `project` limits them to one project's. */
-export function budgetRequestsView(sy: Switchyard, opts: { status?: BudgetRequestStatus; jobId?: string; taskId?: string; project?: string; limit?: number } = {}): BudgetRequestView[] {
+export function budgetRequestsView(sy: MeritRouter, opts: { status?: BudgetRequestStatus; jobId?: string; taskId?: string; project?: string; limit?: number } = {}): BudgetRequestView[] {
   const pools = new Map<string, JobPool | null>();
   return new BudgetRequests(sy.db).list(opts).map((r) => {
     let pool: JobPool | null = null;
@@ -41,15 +41,15 @@ export type BudgetDecider = { kind: "human"; id: string } | { kind: "external"; 
 
 /**
  * Decide a pending request on behalf of a person or an external supervisor. With `project`,
- * another project's request is refused. Throws a SwitchyardError with the reason (pool too
+ * another project's request is refused. Throws a MeritRouterError with the reason (pool too
  * small, already decided, task finished, a person's decision required).
  */
-export function decideBudgetRequest(sy: Switchyard, id: number, input: { approve: boolean; grant?: number | null; reason: string; by: BudgetDecider }, project?: string): BudgetRequest {
+export function decideBudgetRequest(sy: MeritRouter, id: number, input: { approve: boolean; grant?: number | null; reason: string; by: BudgetDecider }, project?: string): BudgetRequest {
   const store = new BudgetRequests(sy.db);
   const req = store.get(id);
-  if (!req || (project !== undefined && req.project !== project)) throw new SwitchyardError("not_found", `unknown budget request ${id}${project ? ` in project ${project}` : ""}`);
-  if (input.by.kind === "external" && req.approver === "human") throw new SwitchyardError("human_decision_required", `budget request ${id} is decided by a person (team.budget_approver: human): switchyard budget approve|deny ${id}, or the panel`);
-  if (!input.reason.trim()) throw new SwitchyardError("reason_required", "say why");
+  if (!req || (project !== undefined && req.project !== project)) throw new MeritRouterError("not_found", `unknown budget request ${id}${project ? ` in project ${project}` : ""}`);
+  if (input.by.kind === "external" && req.approver === "human") throw new MeritRouterError("human_decision_required", `budget request ${id} is decided by a person (team.budget_approver: human): meritrouter budget approve|deny ${id}, or the panel`);
+  if (!input.reason.trim()) throw new MeritRouterError("reason_required", "say why");
   return store.decide(id, { approve: input.approve, grant: input.grant ?? null, by: `${input.by.kind}:${input.by.id}`, reason: input.reason, cfg: cfgOf(sy, req.taskId) });
 }
 
@@ -60,7 +60,7 @@ export interface JobBudgetView {
 }
 
 /** A job's pool and every task's grant (null when the task is not a supervisor job). */
-export function jobBudget(sy: Switchyard, jobId: string): JobBudgetView | null {
+export function jobBudget(sy: MeritRouter, jobId: string): JobBudgetView | null {
   const pool = jobPool(sy.db, cfgOf(sy, jobId), jobId);
   if (!pool) return null;
   const tasks = grantsOf(sy.db, jobId).map((g) => {
@@ -72,7 +72,7 @@ export function jobBudget(sy: Switchyard, jobId: string): JobBudgetView | null {
 }
 
 /** A task's grant and extras (null when it was not delegated by a supervisor). */
-export function taskBudget(sy: Switchyard, taskId: string): { granted: number; source: string; extra: number; jobId: string } | null {
+export function taskBudget(sy: MeritRouter, taskId: string): { granted: number; source: string; extra: number; jobId: string } | null {
   const g = grantOf(sy.db, taskId);
   return g ? { granted: g.requests, source: g.source, extra: extraRequests(sy.db, taskId), jobId: g.jobId } : null;
 }

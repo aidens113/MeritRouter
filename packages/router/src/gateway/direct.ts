@@ -20,7 +20,7 @@ import type { GateAttempt, GateRequest, ProviderHealth } from "./gate.js";
 
 /**
  * The direct path: every `{kind:"direct"}` endpoint, free or paid, goes to its provider through
- * SwitchYard's own keys. Per endpoint: choose the provider's next usable key (round-robin, with
+ * MeritRouter's own keys. Per endpoint: choose the provider's next usable key (round-robin, with
  * cooldowns, disables, rate-limit snapshots, and configured limits reserved atomically), reserve
  * the request (and for a paid model its worst-case cost), call the provider once, record the
  * outcome on the key, and verify the served model. A key-level failure (429, invalid key, out of

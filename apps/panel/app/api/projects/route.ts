@@ -1,6 +1,6 @@
 import path from "node:path";
 import { z } from "zod";
-import { insights, PROJECT_SLUG_RE, REPOSITORY_ALIAS_RE } from "switchyard-router";
+import { insights, PROJECT_SLUG_RE, REPOSITORY_ALIAS_RE } from "meritrouter";
 import { handle, HttpError, json } from "@/lib/api";
 import { switcherProjects } from "@/lib/project";
 

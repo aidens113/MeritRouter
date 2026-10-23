@@ -1,7 +1,7 @@
 import { Tabs, pickTab } from "@/components/tabs";
 import Link from "next/link";
 import { Archive, ArchiveRestore } from "lucide-react";
-import { insights } from "switchyard-router";
+import { insights } from "meritrouter";
 import { getSy } from "@/lib/sy";
 import { project } from "@/lib/project";
 import { SetupScreen } from "@/components/setup";

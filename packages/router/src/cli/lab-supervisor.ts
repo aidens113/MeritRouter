@@ -1,10 +1,10 @@
-import type { Switchyard } from "../core/service.js";
-import { SwitchyardError } from "../core/errors.js";
+import type { MeritRouter } from "../core/service.js";
+import { MeritRouterError } from "../core/errors.js";
 import { LabSupervisorLease } from "../operations/lab-supervisor.js";
 
 const pause = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
-export async function serveLabs(sy: Switchyard): Promise<void> {
+export async function serveLabs(sy: MeritRouter): Promise<void> {
   const lease = new LabSupervisorLease(sy.db, sy.cfg.configPath);
   lease.claim();
   let stopped = false;
@@ -36,7 +36,7 @@ export async function serveLabs(sy: Switchyard): Promise<void> {
   }
 }
 
-export async function stopLabSupervisor(sy: Switchyard): Promise<boolean> {
+export async function stopLabSupervisor(sy: MeritRouter): Promise<boolean> {
   const lease = new LabSupervisorLease(sy.db, sy.cfg.configPath);
   const previous = lease.read();
   if (!previous || !lease.requestStop()) return false;
@@ -46,5 +46,5 @@ export async function stopLabSupervisor(sy: Switchyard): Promise<boolean> {
     if (!state || state.owner !== previous.owner || state.expiresAt <= Date.now()) return true;
     await pause(100);
   }
-  throw new SwitchyardError("lab_invalid_state", "Labs supervisor is still shutting down; no process was forcibly terminated");
+  throw new MeritRouterError("lab_invalid_state", "Labs supervisor is still shutting down; no process was forcibly terminated");
 }

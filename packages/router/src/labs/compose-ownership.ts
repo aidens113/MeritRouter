@@ -7,7 +7,7 @@ class Refused extends Error { constructor(readonly code:Code){super(code);} }
 function refuse(code:Code):never{throw new Refused(code);}
 const equal=(a:unknown,b:unknown)=>composeCanonicalHash(a)===composeCanonicalHash(b);
 const sorted=<T>(values:T[])=>[...values].sort((a,b)=>composeCanonicalHash(a).localeCompare(composeCanonicalHash(b)));
-const LABEL="io.switchyard.";
+const LABEL="io.meritrouter.";
 function labels(identity:z.infer<typeof ComposeResourceProofInputSchema>["current"],projectName:string,kind:string){
  return {[LABEL+"install"]:identity.installId,[LABEL+"lab"]:identity.labId,[LABEL+"run"]:identity.runId,[LABEL+"generation"]:String(identity.generation),[LABEL+"spec"]:identity.specSha256,[LABEL+"nonce"]:identity.nonceSha256,[LABEL+"request"]:identity.requestSha256,[LABEL+"intent"]:identity.intentId,[LABEL+"resource"]:kind,"com.docker.compose.project":projectName};
 }
@@ -78,7 +78,7 @@ function validateApproval(approval:Approval,current:Identity){
    for(const port of spec.ports){if(published.has(port.published))refuse("approval_mismatch");published.add(port.published);}
    const targets=new Set<string>();
    for(const mount of spec.volumes){
-    if(targets.has(mount.target)||[mount.source,mount.target].some(value=>/docker\.sock|(?:^|[\\/])\.git(?:[\\/]|$)|(?:^|[\\/])\.switchyard(?:[\\/]|$)/i.test(value))||path.resolve(mount.source)===path.resolve(authority.worktree)||path.resolve(mount.source)===path.resolve(authority.labRoot))refuse("approval_mismatch");
+    if(targets.has(mount.target)||[mount.source,mount.target].some(value=>/docker\.sock|(?:^|[\\/])\.git(?:[\\/]|$)|(?:^|[\\/])\.meritrouter(?:[\\/]|$)/i.test(value))||path.resolve(mount.source)===path.resolve(authority.worktree)||path.resolve(mount.source)===path.resolve(authority.labRoot))refuse("approval_mismatch");
     targets.add(mount.target);
     if(![authority.worktree,...authority.dataRoots].some(root=>{const rel=path.relative(path.resolve(root),path.resolve(mount.source));return rel!==".."&&!rel.startsWith(".."+path.sep)&&!path.isAbsolute(rel);}))refuse("approval_mismatch");
    }

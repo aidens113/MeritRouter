@@ -8,7 +8,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { ArrowLeft, CheckCircle2, CircleDashed, CircleX, Globe, Terminal } from "lucide-react";
-import { insights, isTerminal, type Classification, type Switchyard, type VerificationRecord } from "switchyard-router";
+import { insights, isTerminal, type Classification, type MeritRouter, type VerificationRecord } from "meritrouter";
 import { brainHref, sessionHref, jobHref, taskHref, repoHref } from "@/lib/links";
 import type { DetailScope } from "@/components/detail-scope";
 import { RequestsTable } from "@/components/requests-table";
@@ -54,7 +54,7 @@ const BASIS: Record<string, string> = {
  * artifacts, requests, sessions, and timeline. The caller has checked that the task belongs to
  * `scope.project`.
  */
-export async function TaskDetailView({ sy, taskId, scope, sp = {} }: { sy: Switchyard; taskId: string; scope: DetailScope; sp?: Record<string, string | string[] | undefined> }) {
+export async function TaskDetailView({ sy, taskId, scope, sp = {} }: { sy: MeritRouter; taskId: string; scope: DetailScope; sp?: Record<string, string | string[] | undefined> }) {
   const base = scope.base;
   const related = await insights.taskRelated(sy, taskId);
   const d = insights.taskDetail(sy, taskId);
@@ -444,7 +444,7 @@ function describeEvent(data: unknown): string {
   return String(data);
 }
 
-function ClassificationView({ c, sy, profile }: { c: Classification; sy: Switchyard; profile: string }) {
+function ClassificationView({ c, sy, profile }: { c: Classification; sy: MeritRouter; profile: string }) {
   const t = sy.cfg.tiers;
   const max = Math.max(t.T3.max_score + 3, c.score + 1);
   const bands = [

@@ -10,8 +10,8 @@ import { panelToken, safeEqual, sessionValue, SESSION_COOKIE } from "@/lib/auth"
 import { THEME_BOOT } from "@/lib/theme";
 
 export const metadata: Metadata = {
-  title: { default: "SwitchYard", template: "%s · SwitchYard" },
-  description: "Projects, jobs, tasks, models, routing, requests and provider keys for SwitchYard Router.",
+  title: { default: "MeritRouter", template: "%s · MeritRouter" },
+  description: "Projects, jobs, tasks, models, routing, requests and provider keys for MeritRouter.",
 };
 
 export const dynamic = "force-dynamic";

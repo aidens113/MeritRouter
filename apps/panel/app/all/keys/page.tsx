@@ -2,7 +2,7 @@ import { Tabs, pickTab } from "@/components/tabs";
 import { Disclosure } from "@/components/disclosure";
 import Link from "next/link";
 import { CreditCard, Globe, KeyRound, Power, Radar } from "lucide-react";
-import { insights, WEB_BACKEND_NAMES } from "switchyard-router";
+import { insights, WEB_BACKEND_NAMES } from "meritrouter";
 import { getSy } from "@/lib/sy";
 import { SetupScreen } from "@/components/setup";
 import { Badge, Callout, Card, CardHeader, cx, Mono, type Tone } from "@/components/ui";
@@ -45,7 +45,7 @@ const KEY_STATE: Record<insights.WebKeyView["state"], { label: string; tone: Ton
 const POLICY_LABEL: Record<string, string> = { never: "never", on_free_exhaustion: "on free exhaustion", preferred: "preferred", premium: "premium" };
 
 /**
- * Provider keys: every key SwitchYard uses to call providers directly (vault keys added here,
+ * Provider keys: every key MeritRouter uses to call providers directly (vault keys added here,
  * config keys read-only), their health, the models each provider offers, and paid spend.
  * Secrets never reach the browser: the server sends only last four characters.
  */
@@ -76,7 +76,7 @@ export default async function KeysPage({ searchParams }: { searchParams: Promise
       <PageHeader
         live={["keys", "models", "web", "requests"]}
         title="Provider keys"
-        description="Keys SwitchYard uses to call each provider directly. Several keys per provider are rotated; a key that is rate limited cools down while the next one serves. Secrets are never shown again after you add them."
+        description="Keys MeritRouter uses to call each provider directly. Several keys per provider are rotated; a key that is rate limited cools down while the next one serves. Secrets are never shown again after you add them."
         actions={
           <ActionButton url="/api/scan" success="Scan finished">
             <Radar size={14} aria-hidden /> Scan all providers

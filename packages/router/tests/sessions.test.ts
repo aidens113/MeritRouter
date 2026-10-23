@@ -3,7 +3,7 @@ import { WorkerTaskSchema } from "../src/core/task.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import type { ChatMessage } from "../src/gateway/types.js";
 import type { GateRequest, GateResponse } from "../src/gateway/gate.js";
 import type { ModelEndpoint } from "../src/models/catalog.js";
@@ -14,7 +14,7 @@ import { sessionDetail, sessionsView } from "../src/admin/insights.js";
 import { makeEnv, open, reply, ScriptedClient, summarizeTask, type Env } from "./helpers.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => {
   await sy?.close();
   sy = undefined;
@@ -22,7 +22,7 @@ afterEach(async () => {
   env = undefined;
 });
 
-function start(): Switchyard {
+function start(): MeritRouter {
   env = makeEnv();
   sy = open(env, new ScriptedClient(() => reply("unused")));
   return sy;
@@ -220,7 +220,7 @@ describe("session store", () => {
 });
 
 describe("ask() with a session", () => {
-  function ctxWith(s: Switchyard, request: () => Promise<GateResponse>): RunContext {
+  function ctxWith(s: MeritRouter, request: () => Promise<GateResponse>): RunContext {
     s.tasks.submit([WorkerTaskSchema.parse(summarizeTask({ id: "t_1" }))]);
     s.tasks.claim("owner", { maxConcurrent: 1, maxWritersPerRepo: 1, leaseMs: 60000, defaultTimeoutMs: 60000 });
     const taskLease = capturedLease(s.tasks.get("t_1")!);

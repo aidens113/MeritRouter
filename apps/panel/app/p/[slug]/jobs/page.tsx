@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { MessageCircleQuestion, Network, Settings2 } from "lucide-react";
-import { insights, isTerminal } from "switchyard-router";
+import { insights, isTerminal } from "meritrouter";
 import { getSy } from "@/lib/sy";
 import { project } from "@/lib/project";
 import { jobHref, projectBase } from "@/lib/links";
@@ -34,7 +34,7 @@ export default async function JobsPage({ params }: { params: Promise<{ slug: str
         title="Jobs"
         description={
           <>
-            This project's standalone work, run by a SwitchYard supervisor: it plans, delegates tasks to workers, verifies them, and commits the result to a job branch for you to review. <HelpTip term="job" />
+            This project's standalone work, run by a MeritRouter supervisor: it plans, delegates tasks to workers, verifies them, and commits the result to a job branch for you to review. <HelpTip term="job" />
           </>
         }
         live={["jobs", "tasks", "labs"]}
@@ -67,7 +67,7 @@ export default async function JobsPage({ params }: { params: Promise<{ slug: str
         <CardHeader title="Jobs in this project" description="Newest first. A job's children are the worker tasks its supervisor delegated." />
         {jobs.length === 0 ? (
           <EmptyState icon={<Network size={22} />} title="No jobs yet">
-            {enabled ? "Start one with the form above. It waits in the queue until a worker (the MCP server or switchyard worker) is running." : "Enable the supervise task type in Settings, then start a job here."}
+            {enabled ? "Start one with the form above. It waits in the queue until a worker (the MCP server or meritrouter worker) is running." : "Enable the supervise task type in Settings, then start a job here."}
           </EmptyState>
         ) : (
           <div className="overflow-x-auto">

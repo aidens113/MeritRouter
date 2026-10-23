@@ -1,4 +1,4 @@
-import type { Switchyard } from "../core/service.js";
+import type { MeritRouter } from "../core/service.js";
 import type { TaskState } from "../core/task.js";
 import type { UsageSummary } from "../storage/usage.js";
 import { QUALIFICATION_PROJECT } from "../qualification/registry.js";
@@ -45,7 +45,7 @@ export interface ProjectUsage {
 }
 
 /** Running and queued top-level jobs, newest first; `project` limits them to one project. */
-export function activeJobs(sy: Switchyard, project?: string, limit = 50): ActiveJob[] {
+export function activeJobs(sy: MeritRouter, project?: string, limit = 50): ActiveJob[] {
   const states = [...RUNNING_STATES, ...QUEUED_STATES];
   const rows = sy.db
     .prepare(
@@ -61,7 +61,7 @@ export function activeJobs(sy: Switchyard, project?: string, limit = 50): Active
 }
 
 /** Paid spend per project since `sinceMs` ('' = requests charged to no task, such as probes). */
-export function paidSpendByProject(sy: Switchyard, sinceMs: number): Map<string, number> {
+export function paidSpendByProject(sy: MeritRouter, sinceMs: number): Map<string, number> {
   const rows = sy.db
     .prepare("SELECT COALESCE(m.project_id, '') AS project, SUM(COALESCE(s.actual_usd, s.reserved_usd)) AS usd FROM paid_spend s LEFT JOIN model_requests m ON m.id = s.request_id WHERE s.created_at > ? GROUP BY project")
     .all(sinceMs) as Array<{ project: string; usd: number | null }>;
@@ -87,7 +87,7 @@ function projectUsage(s: UsageSummary, paid: number): ProjectUsage {
 }
 
 /** Requests in a window that no project owns (provider probes, scans, classification without a task). */
-function unattributedUsage(sy: Switchyard, sinceMs: number, paid: number): ProjectUsage {
+function unattributedUsage(sy: MeritRouter, sinceMs: number, paid: number): ProjectUsage {
   const r = sy.db
     .prepare(
       `SELECT COUNT(*) AS n, SUM(status = 'failed') AS failed, COALESCE(SUM(input_tokens),0) AS inTok,
@@ -99,13 +99,13 @@ function unattributedUsage(sy: Switchyard, sinceMs: number, paid: number): Proje
   return { requests: r.n, failedRequests: r.failed ?? 0, inputTokens: r.inTok, cachedInputTokens: r.cachedTok, cacheUsageKnown: r.unknownCache === 0, requestsWithUnknownCacheUsage: r.unknownCache, uncachedInputTokens: r.newTok, outputTokens: r.outTok, tasksSubmitted: 0, tasksCompleted: 0, tasksFailed: 0, reportedCostUsd: r.cost, paidSpendUsd: paid };
 }
 
-function tasksByState(sy: Switchyard, project?: string): Record<string, number> {
+function tasksByState(sy: MeritRouter, project?: string): Record<string, number> {
   const rows = sy.db.prepare(`SELECT state, COUNT(*) AS n FROM tasks${project ? " WHERE project_id = ?" : ""} GROUP BY state`).all(...(project ? [project] : [])) as Array<{ state: string; n: number }>;
   return Object.fromEntries(rows.map((r) => [r.state, r.n]));
 }
 
 /** Submission time of a project's oldest queued task (how long its queue has been waiting). */
-function oldestQueuedAt(sy: Switchyard, project: string): number | null {
+function oldestQueuedAt(sy: MeritRouter, project: string): number | null {
   const r = sy.db.prepare(`SELECT MIN(created_at) AS t FROM tasks WHERE project_id = ? AND state IN (${QUEUED_STATES.map(() => "?").join(",")})`).get(project, ...QUEUED_STATES) as { t: number | null };
   return r.t ?? null;
 }
@@ -139,7 +139,7 @@ export interface GlobalDashboard {
  * The global dashboard: every project's running and queued jobs, its queue, what needs
  * attention, and usage and paid spend by project, plus the install-wide overview.
  */
-export async function globalDashboard(sy: Switchyard, opts: { includeArchived?: boolean } = {}): Promise<GlobalDashboard> {
+export async function globalDashboard(sy: MeritRouter, opts: { includeArchived?: boolean } = {}): Promise<GlobalDashboard> {
   const install = await overview(sy);
   const now = install.generatedAt;
   const paid1 = paidSpendByProject(sy, now - DAY);
@@ -194,7 +194,7 @@ export interface ProjectOverview {
   activity: ReturnType<typeof projectActivity>;
   jobs: ActiveJob[];
   attention: string[];
-  /** Information, not problems: repositories SwitchYard recently created or set up with git. */
+  /** Information, not problems: repositories MeritRouter recently created or set up with git. */
   notices: string[];
   usage24h: UsageSummary;
   usage7d: UsageSummary;
@@ -202,7 +202,7 @@ export interface ProjectOverview {
 }
 
 /** One project's overview: its jobs and queue, attention items, usage, and paid spend. */
-export function projectOverview(sy: Switchyard, slug: string): ProjectOverview {
+export function projectOverview(sy: MeritRouter, slug: string): ProjectOverview {
   const project = projectInfo(sy, slug);
   const now = Date.now();
   return {

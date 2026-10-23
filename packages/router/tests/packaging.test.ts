@@ -15,9 +15,9 @@ afterEach(() => {
   root = undefined;
 });
 function fixture() {
-  root = mkdtempSync(path.join(tmpdir(), "switchyard-packaging-"));
-  vi.stubEnv("SWITCHYARD_CONFIG", undefined);
-  vi.stubEnv("SWITCHYARD_HOME", path.join(root, "application"));
+  root = mkdtempSync(path.join(tmpdir(), "meritrouter-packaging-"));
+  vi.stubEnv("MERITROUTER_CONFIG", undefined);
+  vi.stubEnv("MERITROUTER_HOME", path.join(root, "application"));
   const cwd = path.join(root, "repository", "nested");
   mkdirSync(cwd, { recursive: true });
   return { root, cwd };
@@ -25,24 +25,24 @@ function fixture() {
 describe("installed setup and config discovery", () => {
   it("uses explicit/env config, nearest ancestor, then the user directory without creating files", () => {
     const { root, cwd } = fixture();
-    const global = path.join(root, "application", "switchyard.config.yaml");
+    const global = path.join(root, "application", "meritrouter.config.yaml");
     expect(resolveConfigPath(undefined, cwd)).toBe(global);
     expect(existsSync(path.dirname(global))).toBe(false);
-    const parent = path.join(root, "repository", "switchyard.config.yaml");
+    const parent = path.join(root, "repository", "meritrouter.config.yaml");
     writeFileSync(parent, "version: 1");
     expect(resolveConfigPath(undefined, cwd)).toBe(parent);
-    const nearest = path.join(cwd, "switchyard.config.yaml");
+    const nearest = path.join(cwd, "meritrouter.config.yaml");
     writeFileSync(nearest, "version: 1");
     expect(resolveConfigPath(undefined, cwd)).toBe(nearest);
-    vi.stubEnv("SWITCHYARD_CONFIG", "env.yaml");
+    vi.stubEnv("MERITROUTER_CONFIG", "env.yaml");
     expect(resolveConfigPath(undefined, cwd)).toBe(path.join(cwd, "env.yaml"));
     expect(resolveConfigPath("explicit.yaml", cwd)).toBe(path.join(cwd, "explicit.yaml"));
   });
   it("chooses stable per-platform default application directories", () => {
-    expect(defaultConfigDirectory({ LOCALAPPDATA: "/local" }, "/home", "win32")).toBe(path.resolve("/local", "SwitchYard"));
-    expect(defaultConfigDirectory({}, "/home", "darwin")).toBe(path.resolve("/home", "Library", "Application Support", "SwitchYard"));
-    expect(defaultConfigDirectory({ XDG_CONFIG_HOME: "/xdg" }, "/home", "linux")).toBe(path.resolve("/xdg", "switchyard"));
-    expect(defaultConfigDirectory({}, "/home", "linux")).toBe(path.resolve("/home", ".config", "switchyard"));
+    expect(defaultConfigDirectory({ LOCALAPPDATA: "/local" }, "/home", "win32")).toBe(path.resolve("/local", "MeritRouter"));
+    expect(defaultConfigDirectory({}, "/home", "darwin")).toBe(path.resolve("/home", "Library", "Application Support", "MeritRouter"));
+    expect(defaultConfigDirectory({ XDG_CONFIG_HOME: "/xdg" }, "/home", "linux")).toBe(path.resolve("/xdg", "meritrouter"));
+    expect(defaultConfigDirectory({}, "/home", "linux")).toBe(path.resolve("/home", ".config", "meritrouter"));
   });
   it("creates a valid isolated setup with no placeholder repos and never replaces existing settings", () => {
     const { root, cwd } = fixture();
@@ -51,8 +51,8 @@ describe("installed setup and config discovery", () => {
     expect(initializeConfig(opts)).toHaveLength(2);
     const cfg = loadConfig(configPath);
     expect(cfg.projects.example).toMatchObject({ repositories: {} });
-    expect(cfg.brain.path).toBe(".switchyard/brain");
-    expect(cfg.storageDir).toBe(path.join(root, "application", ".switchyard"));
+    expect(cfg.brain.path).toBe(".meritrouter/brain");
+    expect(cfg.storageDir).toBe(path.join(root, "application", ".meritrouter"));
     expect(cfg.panel.port).toBe(4598);
     expect(cfg.paid.enabled).toBe(false);
     const original = readFileSync(configPath, "utf8");
@@ -69,7 +69,7 @@ describe("installed setup and config discovery", () => {
     await new Promise<void>(resolve => listener.listen(0, "127.0.0.1", resolve));
     cfg.panel.port = (listener.address() as net.AddressInfo).port;
     await new Promise<void>(resolve => listener.close(() => resolve()));
-    const app = path.join(root, "installed", "panel");
+    const app = path.join(root, "installed", "bundled-panel");
     const bin = path.join(app, "node_modules", "next", "dist", "bin");
     const aliases = path.join(app, "runtime-modules");
     const native = path.join(aliases, "native-test-alias");
@@ -88,7 +88,7 @@ describe("installed setup and config discovery", () => {
       server.listen(port, "127.0.0.1");
       setTimeout(() => server.close(), 1000);
     `);
-    vi.stubEnv("SWITCHYARD_PANEL_DIR", app);
+    vi.stubEnv("MERITROUTER_PANEL_DIR", app);
     try {
       expect((await ensurePanel(cfg, { force: true, waitMs: 2000 })).state).toBe("started");
       const loaded = JSON.parse(readFileSync(path.join(app, "loaded.json"), "utf8"));

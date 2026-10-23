@@ -21,8 +21,8 @@ const ImageInspectSchema = z.array(z.object({
 })).length(1);
 const CLI_WRAPPER = `// ${HOST_MARKER}
 const{spawn}=require('node:child_process');
-const{executable,args}=JSON.parse(process.env.SWITCHYARD_COMPOSE_READONLY);
-delete process.env.SWITCHYARD_COMPOSE_READONLY;
+const{executable,args}=JSON.parse(process.env.MERITROUTER_COMPOSE_READONLY);
+delete process.env.MERITROUTER_COMPOSE_READONLY;
 const child=spawn(executable,args,{shell:false,windowsHide:true,stdio:'inherit',env:process.env});
 let exitCode=1;
 child.on('error',()=>{if(process.send)process.send({finished:true})});
@@ -43,7 +43,7 @@ async function readonlyCommand(options: z.infer<typeof OptionsSchema>, args: str
     const child = spawn(process.execPath, ["-e", CLI_WRAPPER, "--", `--sy-lab-token=${token}`], {
       cwd, windowsHide: true, shell: false, detached: process.platform !== "win32",
       env: { PATH: process.env.PATH ?? "", ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}), HOME: cwd, USERPROFILE: cwd, DOCKER_CONFIG: cwd,
-        SWITCHYARD_COMPOSE_READONLY: JSON.stringify({ executable: options.executable, args: [...options.launcherArgs, ...args] }) },
+        MERITROUTER_COMPOSE_READONLY: JSON.stringify({ executable: options.executable, args: [...options.launcherArgs, ...args] }) },
       stdio: ["ignore", "pipe", "pipe", "ipc"],
     });
     let stdout = "", bytes = 0, failure: string | undefined, stopping: Promise<void> | undefined;

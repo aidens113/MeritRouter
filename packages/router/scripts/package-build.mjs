@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 // Produce the package's runtime panel, without copying platform-specific node_modules.
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, realpathSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const pkg = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const pkg = realpathSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."));
 const root = path.resolve(pkg, "../..");
 const app = path.join(root, "apps", "panel");
-const target = path.join(pkg, "panel");
+const target = path.join(pkg, "bundled-panel");
 const dependencies = JSON.parse(readFileSync(path.join(pkg, "package.json"), "utf8")).dependencies;
 const requireApp = createRequire(path.join(app, "package.json"));
 for (const name of ["next", "react", "react-dom"]) {
@@ -17,14 +17,19 @@ for (const name of ["next", "react", "react-dom"]) {
   if (dependencies[name] !== version) throw new Error(`Pin router ${name} to the panel build's ${version} before packaging`);
 }
 const run = (args) => execFileSync(process.platform === "win32" ? "pnpm.cmd" : "pnpm", args, { cwd: root, stdio: "inherit", ...(process.platform === "win32" ? { shell: true } : {}) });
-run(["--filter", "switchyard-router", "build"]);
+run(["--filter", "meritrouter", "build"]);
 const { routerBuildFingerprint, PANEL_ROUTER_FINGERPRINT, PANEL_ROUTER_FINGERPRINT_ALGORITHM } = await import(pathToFileURL(path.join(pkg, "dist", "operations", "panel.js")).href);
 const routerFingerprint = routerBuildFingerprint(path.join(pkg, "dist"));
-run(["--filter", "switchyard-panel", "build"]);
+run(["--filter", "meritrouter-panel", "build"]);
 const afterPanelBuild = routerBuildFingerprint(path.join(pkg, "dist"));
 if (routerFingerprint.digest !== afterPanelBuild.digest || routerFingerprint.files !== afterPanelBuild.files) throw new Error("Router content changed while building the panel; rebuild a stable source tree");
 // This target is a fixed generated directory inside this package, never a configured user path.
-if (path.dirname(target) !== pkg || path.basename(target) !== "panel") throw new Error("invalid panel staging directory");
+if (path.dirname(target) !== pkg || path.basename(target) !== "bundled-panel") throw new Error("invalid panel staging directory");
+if (existsSync(target)) {
+  const canonical = value => process.platform === "win32" ? value.toLowerCase() : value;
+  if (lstatSync(target).isSymbolicLink() || canonical(realpathSync(target)) !== canonical(target)) throw new Error("panel staging directory must not redirect outside its fixed package path");
+}
+// Legacy packages/router/panel may be serving an existing user process; never mutate it here.
 rmSync(target, { recursive: true, force: true });
 mkdirSync(target, { recursive: true });
 cpSync(path.join(app, ".next"), path.join(target, ".next"), {

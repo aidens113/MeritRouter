@@ -73,7 +73,7 @@ export const ProjectConfigSchema = z
     name: z.string().min(1).max(80).optional(),
     lab: LabRecipeSchema.optional(),
     labs: ProjectLabsSchema.prefault({}),
-    /** Repositories by alias; users write the bare alias, SwitchYard keys it `<project>/<alias>` internally. */
+    /** Repositories by alias; users write the bare alias, MeritRouter keys it `<project>/<alias>` internally. */
     repositories: z.record(z.string().regex(REPOSITORY_ALIAS_RE), RepositorySchema).default({}),
     brain: z
       .object({

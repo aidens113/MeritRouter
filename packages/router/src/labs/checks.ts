@@ -3,7 +3,7 @@ import { runBrowserCheck } from "./browser-check.js";
 import { BrowserCheckSchema, BrowserEvidenceSchema } from "./browser-schema.js";
 import { z } from "zod";
 import { newId } from "../storage/db.js";
-import { SwitchyardError } from "../core/errors.js";
+import { MeritRouterError } from "../core/errors.js";
 import { dirtyPaths, git } from "../workspaces/git.js";
 import { runProcess } from "../runners/coding/process.js";
 import type { LabRecord } from "./store.js";
@@ -24,21 +24,21 @@ export function labCheckMatchesHeads(check: Pick<LabCheckResult, "repository" | 
 export async function runLabCheck(store: LabsStore, lab: LabRecord, name: string, timeoutSeconds: number, signal?: AbortSignal, manager?: LabManager): Promise<LabCheckResult> {
   assertLabEffect();
   signal = labEffectSignal(signal);
-  if(lab.kind==="task_attempt")throw new SwitchyardError("lab_scope_denied","task checks require their persisted attempt lifecycle");
+  if(lab.kind==="task_attempt")throw new MeritRouterError("lab_scope_denied","task checks require their persisted attempt lifecycle");
   LabNameSchema.parse(name);
   const check = lab.recipe.checks[name];
   if (!Object.hasOwn(lab.recipe.checks, name) || !check)
-    throw new SwitchyardError("not_found", `unknown declared lab check ${name}`);
+    throw new MeritRouterError("not_found", `unknown declared lab check ${name}`);
   const alias = typeof check === "string" ? lab.repositories[0]?.alias : check.repo ?? ("kind" in check ? lab.recipe.services[check.service]?.repo : undefined) ?? lab.repositories[0]?.alias;
   const repo = lab.repositories.find(r => r.alias === alias);
   if (!repo)
     throw new Error("lab check repository is unavailable");
   if ((await dirtyPaths(repo.worktree)).length)
-    throw new SwitchyardError("lab_dirty", "commit lab changes before running revision-bound checks");
+    throw new MeritRouterError("lab_dirty", "commit lab changes before running revision-bound checks");
   const revision = (await git(repo.worktree, ["rev-parse", "HEAD"])).trim();
   const id = newId("lc");
   const command=typeof check==="string"?check:"command" in check?check.command:null;
-  if(command===null&&!manager)throw new SwitchyardError("lab_invalid_state","browser check requires its scoped lab manager");
+  if(command===null&&!manager)throw new MeritRouterError("lab_invalid_state","browser check requires its scoped lab manager");
   const browser=command===null?BrowserCheckSchema.parse(check):null;
   assertLabEffect();
   const result=browser

@@ -4,10 +4,10 @@ import { LabManager } from "../src/labs/lab.js";
 import { patchConfig, readConfigText, writePreparedConfigText } from "../src/admin/config-edit.js";
 import { previewProjectDeletion } from "../src/admin/projects.js";
 import { baseConfig, makeEnv, open, reply, ScriptedClient, type Env } from "./helpers.js";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 let labs: LabManager | undefined;
 afterEach(async () => { await labs?.close(); await sy?.close(); env?.cleanup(); labs = undefined; sy = undefined; env = undefined; });
 

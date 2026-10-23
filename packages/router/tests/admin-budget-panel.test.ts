@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { WorkerTaskSchema } from "../src/core/task.js";
 import { BudgetRequests } from "../src/admission/budget-requests.js";
 import { recordGrant } from "../src/admission/job-pool.js";
@@ -7,7 +7,7 @@ import { budgetRequestsView, decideBudgetRequest, jobBudget, taskBudget } from "
 import { baseConfig, makeEnv, open, reply, ScriptedClient, type Env } from "./helpers.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => { await sy?.close(); sy = undefined; env?.cleanup(); env = undefined; });
 const human = { kind: "human", id: "panel" } as const;
 function setup() {

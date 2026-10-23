@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Switchyard } from "../core/service.js";
+import type { MeritRouter } from "../core/service.js";
 import { isTerminal, type TaskState } from "../core/task.js";
 import { carvedRequests, carvesOf, type BudgetCarve } from "../admission/admission.js";
 import { ACTIVE_MERGE_STATES, MergeQueue, type MergeItem, type MergeState } from "../workspaces/merge-queue.js";
@@ -144,7 +144,7 @@ const MAX_TREE_DEPTH = 8;
 const isJob = (t: StoredTask) => t.spec.profile === "supervise";
 
 /** Supervisor level of a job (1 at the top), and its ancestor chain, nearest first. */
-function ancestry(sy: Switchyard, taskId: string): { depth: number; parents: StoredTask[] } {
+function ancestry(sy: MeritRouter, taskId: string): { depth: number; parents: StoredTask[] } {
   const parents: StoredTask[] = [];
   const seen = new Set<string>([taskId]);
   let cur = sy.tasks.get(taskId);
@@ -159,19 +159,19 @@ function ancestry(sy: Switchyard, taskId: string): { depth: number; parents: Sto
 }
 
 /** A job's branches, from the last workspace its supervisor sessions recorded. */
-function branchesOf(sy: Switchyard, jobId: string): Array<{ alias: string; branch: string }> {
+function branchesOf(sy: MeritRouter, jobId: string): Array<{ alias: string; branch: string }> {
   const ws = [...sy.sessions.forTask(jobId)].reverse().find((s) => s.role === "supervisor" && s.workspace?.repos.length)?.workspace;
   return (ws?.repos ?? []).flatMap((r) => (r.branch ? [{ alias: r.alias, branch: r.branch }] : []));
 }
 
-function budgetOf(sy: Switchyard, carve: BudgetCarve | undefined, child: StoredTask, used: number): TeamBudgetView | null {
+function budgetOf(sy: MeritRouter, carve: BudgetCarve | undefined, child: StoredTask, used: number): TeamBudgetView | null {
   if (!carve) return null;
   const finished = isTerminal(child.row.state);
   const held = finished ? Math.min(carve.requests, used + carvedRequests(sy.db, child.row.id)) : carve.requests;
   return { carved: carve.requests, parentRemaining: carve.parentRemaining, share: carve.share, used, held, returned: finished ? carve.requests - held : null };
 }
 
-function treeOf(sy: Switchyard, t: StoredTask, depth: number, carve: BudgetCarve | undefined, guard: Set<string>): TeamTreeNode {
+function treeOf(sy: MeritRouter, t: StoredTask, depth: number, carve: BudgetCarve | undefined, guard: Set<string>): TeamTreeNode {
   guard.add(t.row.id);
   const job = isJob(t);
   const used = sy.admission.taskTotals(t.row.id).requests;
@@ -267,7 +267,7 @@ function itemView(item: MergeItem, ahead: number, labelOf: (id: string) => strin
 }
 
 /** The merge queue of one job: its items grouped per branch, oldest first. */
-export function mergeQueueOf(sy: Switchyard, jobId: string): MergeBranchView[] {
+export function mergeQueueOf(sy: MeritRouter, jobId: string): MergeBranchView[] {
   const labelOf = labeler(sy);
   const items = new MergeQueue(sy.db, sy.tasks, "reader").forJob(jobId);
   const groups = new Map<string, MergeItem[]>();
@@ -299,7 +299,7 @@ function postView(p: ChannelPost, labelOf: (id: string) => string | null): Chann
   };
 }
 
-function channelCounts(sy: Switchyard, jobIds: string[]): { total: number; byKind: Record<ChannelKind, number> } {
+function channelCounts(sy: MeritRouter, jobIds: string[]): { total: number; byKind: Record<ChannelKind, number> } {
   const byKind = Object.fromEntries(CHANNEL_KINDS.map((k) => [k, 0])) as Record<ChannelKind, number>;
   if (!jobIds.length) return { total: 0, byKind };
   const rows = sy.db.prepare(`SELECT kind, COUNT(*) AS n FROM job_channel WHERE job_id IN (${jobIds.map(() => "?").join(",")}) GROUP BY kind`).all(...jobIds) as Array<{ kind: string; n: number }>;
@@ -311,7 +311,7 @@ function channelCounts(sy: Switchyard, jobIds: string[]): { total: number; byKin
   return { total, byKind };
 }
 
-function labeler(sy: Switchyard): (id: string) => string | null {
+function labeler(sy: MeritRouter): (id: string) => string | null {
   const cache = new Map<string, string | null>();
   return (id) => {
     if (!cache.has(id)) cache.set(id, sy.tasks.get(id)?.spec.label ?? null);
@@ -324,7 +324,7 @@ function labeler(sy: Switchyard): (id: string) => string | null {
  * oldest first, at most `limit` (50) after `afterId`, optionally only some kinds; `hasMore` says
  * to read again with `afterId` set to the last id shown. Null when the id is not a job.
  */
-export function jobChannel(sy: Switchyard, jobId: string, opts: { afterId?: number; limit?: number; kinds?: ChannelKind[] } = {}): JobChannelView | null {
+export function jobChannel(sy: MeritRouter, jobId: string, opts: { afterId?: number; limit?: number; kinds?: ChannelKind[] } = {}): JobChannelView | null {
   const job = sy.tasks.get(jobId);
   if (!job || !isJob(job)) return null;
   const labelOf = labeler(sy);
@@ -350,7 +350,7 @@ export function jobChannel(sy: Switchyard, jobId: string, opts: { afterId?: numb
  * the merge queue of every job branch in that tree, and its recent channel posts
  * (`channelLimit`, default 20). Null when the id is not a job.
  */
-export function jobTeam(sy: Switchyard, jobId: string, opts: { channelLimit?: number } = {}): JobTeamView | null {
+export function jobTeam(sy: MeritRouter, jobId: string, opts: { channelLimit?: number } = {}): JobTeamView | null {
   const job = sy.tasks.get(jobId);
   if (!job || !isJob(job)) return null;
   const { depth, parents } = ancestry(sy, jobId);

@@ -193,7 +193,7 @@ for (const phase of ['spawn_before_registration', 'granted'])
     if (!foreignAddress || typeof foreignAddress === 'string')
       throw new Error('fixture failed');
     const fixture = fileURLToPath(new URL('./fixtures/task-lab-owner.mjs', import.meta.url));
-    const child = spawn(process.execPath, [fixture, env!.cfg.configPath, phase, barrier, 'SWITCHYARD_LAB_HOST_V1', `--sy-lab-token=${token}`], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [fixture, env!.cfg.configPath, phase, barrier, 'MERITROUTER_LAB_HOST_V1', `--sy-lab-token=${token}`], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     let diagnostics = '';
     child.stderr.on('data', b => diagnostics += b);
     let killed = false;

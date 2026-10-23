@@ -1,7 +1,7 @@
-// Running SwitchYard's MCP server: options, project choice, the panel, and the transport.
+// Running MeritRouter's MCP server: options, project choice, the panel, and the transport.
 //
 // One process serves one project of the install (decision D8 of docs/working/projects.md):
-// `--project <slug>`, else SWITCHYARD_PROJECT, else the only project, else the project whose
+// `--project <slug>`, else MERITROUTER_PROJECT, else the only project, else the project whose
 // repository contains the working directory; with none, it refuses to start and lists the
 // projects. Tools default to that project (and the brain tools work in its brain). It runs the
 // worker loop in-process unless `--no-worker` (when a daemon already runs the worker for every
@@ -10,12 +10,12 @@
 // runs (`panel.auto_start`; see operations/panel.ts).
 //
 // Transports: stdio (default; the client launches this process) or Streamable HTTP (`--http`,
-// see mcp/http.ts). Both are started by `switchyard mcp` and by `node dist/mcp.js`.
+// see mcp/http.ts). Both are started by `meritrouter mcp` and by `node dist/mcp.js`.
 import { parseArgs } from "node:util";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { loadConfig } from "../config/load.js";
-import { Switchyard } from "../core/service.js";
-import { SwitchyardError } from "../core/errors.js";
+import { MeritRouter } from "../core/service.js";
+import { MeritRouterError } from "../core/errors.js";
 import { selectableProjects } from "../admin/insights.js";
 import { PROJECT_ENV, requireProject } from "../cli/project-select.js";
 import { ensurePanel } from "../operations/panel.js";
@@ -52,7 +52,7 @@ export function mcpOptions(values: Record<string, unknown>): McpOptions {
   const host = str(values.host);
   const portText = str(values.port);
   const port = portText === undefined ? MCP_DEFAULT_PORT : Number(portText);
-  if (!Number.isInteger(port) || port < 0 || port > 65_535) throw new SwitchyardError("usage", `--port takes 0-65535, got ${JSON.stringify(portText)}`);
+  if (!Number.isInteger(port) || port < 0 || port > 65_535) throw new MeritRouterError("usage", `--port takes 0-65535, got ${JSON.stringify(portText)}`);
   return {
     ...(str(values.config) ? { config: str(values.config)! } : {}),
     ...(str(values.project) ? { project: str(values.project)! } : {}),
@@ -70,7 +70,7 @@ export function parseMcpArgv(argv: string[]): McpOptions {
 }
 
 /** Diagnostics go to stderr: on stdio, stdout carries the protocol. */
-const log = (line: string) => process.stderr.write(`switchyard mcp: ${line}\n`);
+const log = (line: string) => process.stderr.write(`meritrouter mcp: ${line}\n`);
 
 /**
  * Serve until the client disconnects (stdio), or until SIGINT/SIGTERM. Resolves after the
@@ -80,10 +80,10 @@ export async function runMcpServer(opts: McpOptions, env: NodeJS.ProcessEnv = pr
   const token = env[MCP_TOKEN_ENV]?.trim() || undefined;
   // Refuse an unsafe HTTP setup before opening anything.
   const problem = opts.http ? httpAccessProblem(opts.host, token) : null;
-  if (problem) throw new SwitchyardError("usage", problem);
+  if (problem) throw new MeritRouterError("usage", problem);
 
   const cfg = loadConfig(opts.config);
-  const sy = new Switchyard(cfg, { worker: opts.worker });
+  const sy = new MeritRouter(cfg, { worker: opts.worker });
   let project: string;
   try {
     project = requireProject(selectableProjects(sy), { flag: opts.project, env: env[PROJECT_ENV], cwd: process.cwd() }).slug;

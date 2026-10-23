@@ -1,6 +1,6 @@
 import YAML from "yaml";
 import { z } from "zod";
-import { insights, type Switchyard } from "switchyard-router";
+import { insights, type MeritRouter } from "meritrouter";
 import { body, handle, HttpError } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
@@ -48,7 +48,7 @@ const NOT_ROUND_TRIPPABLE = new Set(["providers"]);
  * `tiers: { T1: { max_score: 5 } }` would drop the other required tier fields. In that case write
  * the nearest missing ancestor with its effective values (defaults included) plus the change.
  */
-function expand(sy: Switchyard, patch: Patch[]): Patch[] {
+function expand(sy: MeritRouter, patch: Patch[]): Patch[] {
   const doc = YAML.parseDocument(insights.readConfigText(sy));
   const expanded = new Map<string, Patch>();
   const out: Patch[] = [];
@@ -82,7 +82,7 @@ function expand(sy: Switchyard, patch: Patch[]): Patch[] {
 export async function POST(req: Request) {
   return handle(async (sy) => {
     const { patch } = await body(req, Body);
-    if (patch.some((p) => p.path[0] === "storage")) throw new HttpError(400, "storage.directory cannot change while SwitchYard is running; edit the YAML and restart", ["storage.directory: cannot change while running"]);
+    if (patch.some((p) => p.path[0] === "storage")) throw new HttpError(400, "storage.directory cannot change while MeritRouter is running; edit the YAML and restart", ["storage.directory: cannot change while running"]);
     if (patch.some((p) => p.path[0] === "version")) throw new HttpError(400, "version cannot be edited");
     const r = await insights.patchPreparedConfig(sy, expand(sy, patch));
     if (!r.ok) throw new HttpError(400, "The config was not saved: validation or repository setup failed.", r.errors);

@@ -2,11 +2,11 @@ import { afterEach, expect, it } from "vitest";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { baseConfig, commitAll, makeEnv, open, reply, ScriptedClient, type Env } from "./helpers.js";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { LabRecipeSchema } from "../src/labs/recipe.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => { await sy?.close(); sy = undefined; env?.cleanup(); env = undefined; });
 
 it("reads creating and failed partial labs before their endpoint ports are allocated", async () => {

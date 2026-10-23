@@ -2,13 +2,13 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import type { ResolvedConfig } from "../config/load.js";
-import { DB_FILE } from "../storage/db.js";
+import { databasePath } from "../storage/db.js";
 import { logsDirFor, readDaemonLock, type DaemonLock } from "./daemon.js";
 
 /**
- * `switchyard daemon status`: the install's daemon (from its lock file) and, per project, the
+ * `meritrouter daemon status`: the install's daemon (from its lock file) and, per project, the
  * tasks its one worker has queued and running. Read straight from the store, read-only, so it
- * works whether or not a daemon runs and never opens a Switchyard.
+ * works whether or not a daemon runs and never opens a MeritRouter.
  */
 
 /** The same state groups the panel's project cards count (admin/projects.ts). */
@@ -37,7 +37,7 @@ export function daemonStatus(cfg: Pick<ResolvedConfig, "storageDir" | "configPat
   const configured = new Map(cfg.projectResolution.projects.map((p) => [p.slug, p.name]));
   const counts = new Map<string, { queued: number; running: number }>();
   const archived = new Set<string>();
-  const dbPath = path.join(cfg.storageDir, DB_FILE);
+  const dbPath = databasePath(cfg.storageDir);
   if (existsSync(dbPath)) {
     const db = new Database(dbPath, { readonly: true, fileMustExist: true });
     try {

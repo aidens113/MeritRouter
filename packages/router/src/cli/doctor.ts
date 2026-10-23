@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import type { Switchyard } from "../core/service.js";
+import type { MeritRouter } from "../core/service.js";
 import { providerHealth } from "../providers/health.js";
 import { builtinProvider } from "../providers/registry.js";
 import { keyAvailability } from "./keys.js";
@@ -12,7 +12,7 @@ import { stamp } from "./terminal.js";
 import { webBackendText, webStatusText } from "../admin/web-search.js";
 import { SEARCH_SERVICE_IDS } from "../web/services.js";
 
-// `switchyard doctor`: configuration, provider keys (one check per provider), secrets held in the
+// `meritrouter doctor`: configuration, provider keys (one check per provider), secrets held in the
 // config file, models, and per project its repositories and brain folders. It reads only stored
 // state and never calls a provider.
 
@@ -41,7 +41,7 @@ const DiscoveryEventSchema = z.object({
 });
 
 /** The latest stored listing result per provider (from `provider_discovery` events and scans). */
-export function lastListings(sy: Switchyard, providers: Iterable<string>): Map<string, LastListing> {
+export function lastListings(sy: MeritRouter, providers: Iterable<string>): Map<string, LastListing> {
   const wanted = new Set(providers);
   const found = new Map<string, LastListing>();
   const rows = sy.db.prepare("SELECT ts, data_json FROM events WHERE task_id IS NULL AND type = 'provider_discovery' ORDER BY id DESC LIMIT 500").all() as Array<{ ts: number; data_json: string | null }>;
@@ -78,7 +78,7 @@ export function lastListings(sy: Switchyard, providers: Iterable<string>): Map<s
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
 /** One check per provider that has a key or is configured: keys, health, last listing, models. */
-export function providerChecks(sy: Switchyard): DoctorCheck[] {
+export function providerChecks(sy: MeritRouter): DoctorCheck[] {
   const cfg = sy.cfg;
   const declared = Object.keys(cfg.providers.byId);
   const paid = Object.keys(cfg.paid.providers);
@@ -106,7 +106,7 @@ export function providerChecks(sy: Switchyard): DoctorCheck[] {
     // Keys and their state.
     if (provider.noKey) parts.push("no key needed");
     else if (!keys.length) {
-      parts.push(paid.includes(id) && !declared.includes(id) ? "no key: paid.models on this provider cannot run (switchyard keys add)" : "no key: add one with switchyard keys add, or under providers in the config");
+      parts.push(paid.includes(id) && !declared.includes(id) ? "no key: paid.models on this provider cannot run (meritrouter keys add)" : "no key: add one with meritrouter keys add, or under providers in the config");
       raise(paid.includes(id) && !declared.includes(id) ? "warn" : "fail");
     } else {
       const by = (s: string | null) => keys.filter((k) => k.availability.reason === s);
@@ -130,7 +130,7 @@ export function providerChecks(sy: Switchyard): DoctorCheck[] {
     const last = listings.get(id);
     if (fromPaidOnly) parts.push("models from paid.models (not listed)");
     else if (!last) {
-      parts.push("never listed: run switchyard models scan");
+      parts.push("never listed: run meritrouter models scan");
       if (keys.length || provider.noKey) raise("warn");
     } else if (last.status === "listed") parts.push(`last listing ${stamp(last.at)}: ${plural(last.kept, "model")}`);
     else if (last.status === "failed") {
@@ -145,24 +145,24 @@ export function providerChecks(sy: Switchyard): DoctorCheck[] {
 }
 
 /** A warning per config file entry that holds a literal secret (`api_key`). */
-export function literalSecretChecks(sy: Switchyard): DoctorCheck[] {
+export function literalSecretChecks(sy: MeritRouter): DoctorCheck[] {
   const found: string[] = [];
   for (const [id, entry] of Object.entries(sy.cfg.providers.byId)) {
     for (const [n, k] of entry.keys.entries()) if (k.api_key !== undefined) found.push(`providers.${id}.keys[${n}]${k.label ? ` (${k.label})` : ""}`);
   }
   for (const id of SEARCH_SERVICE_IDS) if (sy.cfg.web.search[id]?.api_key !== undefined) found.push(`web.search.${id}`);
   if (!found.length) return [];
-  return [{ check: "secrets in config", ok: true, level: "warn", detail: `${sy.cfg.configPath} holds a literal api_key at ${found.join(", ")}: use api_key_env, or move the key to the encrypted vault (switchyard keys add)` }];
+  return [{ check: "secrets in config", ok: true, level: "warn", detail: `${sy.cfg.configPath} holds a literal api_key at ${found.join(", ")}: use api_key_env, or move the key to the encrypted vault (meritrouter keys add)` }];
 }
 
 /**
  * Per project: each repository is a usable git repository, and its brain folders exist (missing
  * folders are a warning: they are created when the project is created or first written; a missing
  * mount is a failure). With `prepared` (the CLI prepares repositories before doctor runs), a
- * repository SwitchYard just created or set up is ok with what was done, and one it could not set
+ * repository MeritRouter just created or set up is ok with what was done, and one it could not set
  * up fails with the fix; without it, a folder not set up yet is a warning saying what will happen.
  */
-export function projectChecks(sy: Switchyard, slug: string, prepared: RepositoryPreparation[] = []): DoctorCheck[] {
+export function projectChecks(sy: MeritRouter, slug: string, prepared: RepositoryPreparation[] = []): DoctorCheck[] {
   const ctx = sy.projects.require(slug);
   const archived = sy.projects.rows().find((r) => r.id === slug)?.archivedAt != null;
   const checks: DoctorCheck[] = [];
@@ -176,13 +176,13 @@ export function projectChecks(sy: Switchyard, slug: string, prepared: Repository
       continue;
     }
     if (prep?.ok && prep.action !== "unchanged") {
-      checks.push({ check, ok: true, level: "ok", detail: `${repo.path} (${prep.message.replace(/^SwitchYard /, "")})` });
+      checks.push({ check, ok: true, level: "ok", detail: `${repo.path} (${prep.message.replace(/^MeritRouter /, "")})` });
       continue;
     }
     const state = folderState(repo.path);
     if (state === "repository" || state === "unknown") checks.push({ check, ok: true, level: "ok", detail: repo.path });
     else if (state === "file") checks.push({ check, ok: false, level: "fail", detail: `${repo.path} is a file, not a folder: choose a folder in the project settings` });
-    else checks.push({ check, ok: true, level: "warn", detail: `${repo.path}: ${preparationHint(state)} when SwitchYard starts` });
+    else checks.push({ check, ok: true, level: "warn", detail: `${repo.path}: ${preparationHint(state)} when MeritRouter starts` });
   }
   const brain = sy.brainFor(slug);
   const dirs = ["working", "decisions"].map((d) => `projects/${slug}/${d}`);
@@ -207,19 +207,19 @@ export function projectChecks(sy: Switchyard, slug: string, prepared: Repository
  * Every doctor check, in display order; `projects` limits the per-project checks (default: every
  * project); `prepared` is what preparing the repositories just did (see `projectChecks`).
  */
-export function doctorChecks(sy: Switchyard, opts: { projects?: string[]; prepared?: RepositoryPreparation[] } = {}): DoctorCheck[] {
+export function doctorChecks(sy: MeritRouter, opts: { projects?: string[]; prepared?: RepositoryPreparation[] } = {}): DoctorCheck[] {
   const cfg = sy.cfg;
   const checks: DoctorCheck[] = [{ check: "config", ok: true, level: "ok", detail: cfg.configPath }];
   const usable = sy.providers.credentials().list().filter((c) => c.unusableReason === null);
   checks.push(
     usable.length
       ? { check: "provider keys", ok: true, level: "ok", detail: `${plural(usable.length, "usable key")}: ${[...new Set(usable.map((c) => c.provider))].join(", ")}` }
-      : { check: "provider keys", ok: false, level: "fail", detail: "none: add one with switchyard keys add <provider> --billing <class>, under providers in the config, or in the panel's Provider keys page" },
+      : { check: "provider keys", ok: false, level: "fail", detail: "none: add one with meritrouter keys add <provider> --billing <class>, under providers in the config, or in the panel's Provider keys page" },
   );
   checks.push(...providerChecks(sy), ...literalSecretChecks(sy));
   const eps = sy.catalog.endpoints();
   const active = eps.filter((e) => e.status === "active").length;
-  checks.push({ check: "models", ok: active > 0, level: active > 0 ? "ok" : "fail", detail: `${active} active of ${eps.length}${eps.length ? "" : ": run switchyard models scan once a key is added"}` });
+  checks.push({ check: "models", ok: active > 0, level: active > 0 ? "ok" : "fail", detail: `${active} active of ${eps.length}${eps.length ? "" : ": run meritrouter models scan once a key is added"}` });
   if (!sy.projects.primary.project.legacy) {
     for (const m of sy.cfg.brain.mounts) {
       const abs = sy.brain.resolve(m.prefix).abs;
@@ -241,11 +241,11 @@ export function doctorChecks(sy: Switchyard, opts: { projects?: string[]; prepar
  * config without a key is a warning (it is skipped), and so is a pool where no backend can serve
  * right now.
  */
-export function webChecks(sy: Switchyard): DoctorCheck[] {
+export function webChecks(sy: MeritRouter): DoctorCheck[] {
   const s = sy.web.status();
   const out: DoctorCheck[] = [];
   if (!sy.cfg.web.enabled) out.push({ check: "web search", ok: true, level: "ok", detail: "off (web.enabled: false)" });
-  else if (!s.on) out.push({ check: "web search", ok: true, level: "ok", detail: `off: ${s.reason}. To give agents web search, add an ollama-cloud key (switchyard keys add ollama-cloud), a Tavily, Brave, or Exa key (switchyard keys add tavily, or the panel's Provider keys page), or web.search.searxng.base_url` });
+  else if (!s.on) out.push({ check: "web search", ok: true, level: "ok", detail: `off: ${s.reason}. To give agents web search, add an ollama-cloud key (meritrouter keys add ollama-cloud), a Tavily, Brave, or Exa key (meritrouter keys add tavily, or the panel's Provider keys page), or web.search.searxng.base_url` });
   else {
     const serving = s.search.some((v) => v.status === "healthy");
     out.push({ check: "web search", ok: true, level: serving ? "ok" : "warn", detail: serving ? webStatusText(s) : `no search backend can serve now: ${s.search.filter((v) => v.configured).map(webBackendText).join("; ")}` });

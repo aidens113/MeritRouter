@@ -1,7 +1,7 @@
 import "server-only";
 import { NextResponse } from "next/server";
 import type { z } from "zod";
-import type { Switchyard } from "switchyard-router";
+import type { MeritRouter } from "meritrouter";
 import { NotConfigured, requireSy } from "./sy";
 
 export class HttpError extends Error {
@@ -19,17 +19,17 @@ export function json(data: unknown, status = 200) {
 }
 
 /** Run a route handler body with the shared instance; errors become `{ ok: false, error }`. */
-export async function handle(fn: (sy: Switchyard) => Promise<unknown> | unknown): Promise<NextResponse> {
+export async function handle(fn: (sy: MeritRouter) => Promise<unknown> | unknown): Promise<NextResponse> {
   try {
     const sy = requireSy();
     const out = await fn(sy);
     if (out instanceof NextResponse) return out;
     return json({ ok: true, ...(out && typeof out === "object" ? out : { result: out }) });
   } catch (err) {
-    if (err instanceof NotConfigured) return json({ ok: false, error: `SwitchYard is not configured: ${err.message}` }, 503);
+    if (err instanceof NotConfigured) return json({ ok: false, error: `MeritRouter is not configured: ${err.message}` }, 503);
     if (err instanceof HttpError) return json({ ok: false, error: err.message, ...(err.errors ? { errors: err.errors } : {}) }, err.status);
     const e = err as Error & { code?: unknown };
-    // Library errors carry a stable code (SwitchyardError). Match on it rather than instanceof:
+    // Library errors carry a stable code (MeritRouterError). Match on it rather than instanceof:
     // Turbopack bundles the workspace library per route, so class identities can differ.
     const code = typeof e.code === "string" ? e.code : "";
     const status =

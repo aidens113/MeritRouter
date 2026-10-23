@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { toAnthropic } from "../src/providers/anthropic.js";
 import { GatewayError } from "../src/core/errors.js";
 import { planRoute } from "../src/routing/select.js";
@@ -9,7 +9,7 @@ import type { ChatResponse } from "../src/gateway/types.js";
 import { baseConfig, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, summarizeTask, type Env, type ScriptedRequest } from "./helpers.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => {
   await sy?.close();
   sy = undefined;
@@ -56,7 +56,7 @@ describe("vault", () => {
     expect(k).toMatchObject({ last4: "-123", billingClass: "paid_credits", prepaidBalanceUsd: 10 });
     expect(JSON.stringify(sy.vault.list())).not.toContain("very-secret");
     expect(sy.vault.secret(k.id)).toBe("sk-acme-very-secret-123");
-    const dbBytes = readFileSync(path.join(env.cfg.storageDir, "switchyard.db"));
+    const dbBytes = readFileSync(path.join(env.cfg.storageDir, "meritrouter.db"));
     expect(dbBytes.includes(Buffer.from("very-secret"))).toBe(false);
   });
 });

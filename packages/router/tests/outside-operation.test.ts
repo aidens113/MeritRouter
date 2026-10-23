@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { readFileSync, writeFileSync } from "node:fs";
 import YAML from "yaml";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { WorkerTaskSchema } from "../src/core/task.js";
 import { capturedLease } from "../src/storage/task-leases.js";
 import { mediateOutsideOperation, withOutsideAuthority } from "../src/harness/outside-operation.js";
@@ -10,7 +10,7 @@ import { webTools } from "../src/harness/web-tools.js";
 import type { HarnessEnv } from "../src/harness/tools.js";
 import { baseConfig, makeEnv, open, reply, ScriptedClient, type Env } from "./helpers.js";
 
-let fixture: Env | undefined, sy: Switchyard | undefined;
+let fixture: Env | undefined, sy: MeritRouter | undefined;
 afterEach(async () => { await sy?.close(); sy = undefined; fixture?.cleanup(); fixture = undefined; });
 
 function setup(policy: "disabled" | "human_only" | "supervisor", supervisor = false) {

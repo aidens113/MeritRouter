@@ -109,7 +109,7 @@ describe("external client supervision", () => {
     const cfg = baseConfig();
     env = makeEnv({ config: { ...cfg, profiles: { ...cfg.profiles, supervise: { mode: "supervisor", tools: "supervisor", min_total_parameters_b: 30, max_model_requests: 10 }, inspect: { ...cfg.profiles.inspect, mode: "supervisor", tools: "supervisor" } } } }); const client = new Client({ name: "supervision-policy-test", version: "1" }); let child: ChildProcess | undefined;
     const args = [path.resolve("dist/cli.js"), "mcp", "--config", env.cfg.configPath, "--no-worker"];
-    const processEnv = { PATH: process.env.PATH ?? "", SWITCHYARD_PANEL_DIR: path.join(env.dir, "no-panel") };
+    const processEnv = { PATH: process.env.PATH ?? "", MERITROUTER_PANEL_DIR: path.join(env.dir, "no-panel") };
     try {
       if (transport === "stdio") await client.connect(new StdioClientTransport({ command: process.execPath, args, env: processEnv }));
       else {
@@ -134,7 +134,7 @@ describe("external client supervision", () => {
       for (const call of [{ name: "resume_task", arguments: { taskId: legacyId! } }, { name: "resume_session", arguments: { sessionId: sessionId! } }]) { const resumed = await client.callTool(call); expect(resumed.isError).toBe(true); expect(content(resumed)[0]!.text).toContain("disabled"); }
       result = await client.callTool({ name: "set_supervision_policy", arguments: { dispatch_final_supervisor: true, reason: "Explicit user request" } }); expect(result.isError).toBeFalsy(); expect(content(result)).toHaveLength(1); expect(JSON.parse(content(result)[0]!.text).dispatch_final_supervisor).toBe(true);
       result = await client.callTool({ name: "get_supervision_policy", arguments: {} }); expect(content(result)).toHaveLength(1);
-      const finalJob = await client.callTool({ name: "start_job", arguments: { goal: "Explicitly authorized final project job", repositories: ["core"], supervisionScope: "project" } }); expect(finalJob.isError).toBeFalsy(); expect(JSON.parse(content(finalJob)[0]!.text)).toMatchObject({ supervisionScope: "project", finalOwner: "switchyard" });
+      const finalJob = await client.callTool({ name: "start_job", arguments: { goal: "Explicitly authorized final project job", repositories: ["core"], supervisionScope: "project" } }); expect(finalJob.isError).toBeFalsy(); expect(JSON.parse(content(finalJob)[0]!.text)).toMatchObject({ supervisionScope: "project", finalOwner: "meritrouter" });
       const disabledClient = new Client({ name: "disabled-initialize", version: "1" });
       try { await disabledClient.connect(new StdioClientTransport({ command: process.execPath, args, env: processEnv })); expect(disabledClient.getInstructions()).toContain("final supervisors are permitted"); expect(disabledClient.getInstructions()).toContain("Delegate as much practical work"); } finally { await disabledClient.close(); }
       const raw = YAML.parseDocument(readFileSync(env.cfg.configPath, "utf8")); raw.setIn(["client_supervision", "dispatch_final_supervisor"], false); raw.setIn(["client_supervision", "instructions"], "UI-originated custom plan"); writeFileSync(env.cfg.configPath, raw.toString());

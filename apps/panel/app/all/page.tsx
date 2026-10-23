@@ -3,7 +3,7 @@ import { Tabs, pickTab } from "@/components/tabs";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { BookOpenText, CheckCircle2, CircleAlert, Hourglass, MessageCircleQuestion, Network, Server, TriangleAlert } from "lucide-react";
-import { insights } from "switchyard-router";
+import { insights } from "meritrouter";
 import { getSy } from "@/lib/sy";
 import { ALL, jobHref, projectBase } from "@/lib/links";
 import { SetupScreen } from "@/components/setup";
@@ -375,7 +375,7 @@ export default async function AllProjectsPage({ searchParams }: { searchParams: 
               <>
                 <Badge tone={d.totals.queuedTasks ? "warn" : "neutral"}>No worker running</Badge>
                 <p className="text-ink-2">
-                  Tasks run while a worker is active: the MCP server inside Claude Code, or <Mono>switchyard worker</Mono>.
+                  Tasks run while a worker is active: the MCP server inside Claude Code, or <Mono>meritrouter worker</Mono>.
                   {d.totals.queuedTasks ? ` ${num(d.totals.queuedTasks)} queued task${d.totals.queuedTasks === 1 ? "" : "s"} wait until one starts.` : ""}
                 </p>
               </>
@@ -386,7 +386,7 @@ export default async function AllProjectsPage({ searchParams }: { searchParams: 
         <Card className="lg:col-span-2">
           <CardHeader
             title="Provider health"
-            description="From SwitchYard's own key state (cooldowns, invalid keys, limits) and circuit breakers."
+            description="From MeritRouter's own key state (cooldowns, invalid keys, limits) and circuit breakers."
             actions={
               <Link className="text-xs text-accent-ink hover:underline" href={`${ALL}/keys`}>
                 Provider keys →

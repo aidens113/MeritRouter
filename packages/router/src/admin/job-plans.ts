@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { maxAgentsPerJob, type Importance, type ProfileName } from "../config/schema.js";
-import type { Switchyard } from "../core/service.js";
+import type { MeritRouter } from "../core/service.js";
 import { isTerminal, type TaskState } from "../core/task.js";
 import { UPSTREAM_CONTEXT_EVENT, UpstreamContextEventSchema, type BaseChoice } from "../context/upstream.js";
 import { FileLeaseStore, type FileLease } from "../storage/file-leases.js";
@@ -165,7 +165,7 @@ const TwinSettledSchema = z
 const TwinSkippedSchema = z.object({ reason: z.string() }).passthrough();
 
 /** A redundant node's twin runs, from its task events (validated: stored rows are runtime input) and sessions. */
-function twinsOf(sy: Switchyard, t: StoredTask): TwinRunsView | null {
+function twinsOf(sy: MeritRouter, t: StoredTask): TwinRunsView | null {
   const events = sy.tasks.events(t.row.id, 500);
   const last = (type: string) => events.filter((e) => e.type === type).at(-1);
   const started = TwinStartedSchema.safeParse(last(REDUNDANCY_STARTED)?.data);
@@ -196,7 +196,7 @@ function twinsOf(sy: Switchyard, t: StoredTask): TwinRunsView | null {
   return { status: s ? s.outcome : "racing", reason: null, cap: started.data.cap, runs };
 }
 
-function upstreamOf(sy: Switchyard, taskId: string): PlanNodeView["upstream"] {
+function upstreamOf(sy: MeritRouter, taskId: string): PlanNodeView["upstream"] {
   const e = sy.tasks.events(taskId, 500).filter((x) => x.type === UPSTREAM_CONTEXT_EVENT).at(-1);
   const p = e ? UpstreamContextEventSchema.safeParse(e.data) : null;
   return p?.success ? { artifactRef: p.data.artifactRef, baseCommits: p.data.baseCommits } : null;
@@ -207,7 +207,7 @@ function upstreamOf(sy: Switchyard, taskId: string): PlanNodeView["upstream"] {
  * path, file leases, and waiting reasons. Null when the job does not exist; `plan` is null when
  * the job has not recorded a plan (its tasks are then all in `otherTasks`).
  */
-export function jobPlan(sy: Switchyard, jobId: string, opts: { version?: number } = {}): JobPlanView | null {
+export function jobPlan(sy: MeritRouter, jobId: string, opts: { version?: number } = {}): JobPlanView | null {
   const job = sy.tasks.get(jobId);
   if (!job || job.spec.profile !== "supervise") return null;
   const store = new PlanStore(sy.db);

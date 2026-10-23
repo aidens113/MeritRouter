@@ -69,26 +69,26 @@ export function openCodeConfig(gatewayUrl: string, model: string, ctx: RunContex
     $schema: "https://opencode.ai/config.json",
     autoupdate: false,
     share: "disabled",
-    enabled_providers: ["switchyard"],
+    enabled_providers: ["meritrouter"],
     provider: {
-      switchyard: {
+      meritrouter: {
         npm: "@ai-sdk/openai-compatible",
-        name: "SwitchYard job gateway",
-        options: { baseURL: gatewayUrl, apiKey: "{env:SWITCHYARD_JOB_TOKEN}" },
+        name: "MeritRouter job gateway",
+        options: { baseURL: gatewayUrl, apiKey: "{env:MERITROUTER_JOB_TOKEN}" },
         models: {
           [model]: {
-            name: "SwitchYard worker",
+            name: "MeritRouter worker",
             limit: { context: limits?.contextLimitTokens ?? 32000, output: Math.min(limits?.outputLimitTokens ?? 4096, ctx.profile.max_output_tokens) },
           },
         },
       },
     },
-    model: `switchyard/${model}`,
-    small_model: `switchyard/${model}`,
-    permission: { edit: "allow", bash, webfetch: "deny", ...(bridge ? { "switchyard_task_*": "allow" } : {}) },
-    mcp: bridge ? { switchyard_task: {
+    model: `meritrouter/${model}`,
+    small_model: `meritrouter/${model}`,
+    permission: { edit: "allow", bash, webfetch: "deny", ...(bridge ? { "meritrouter_task_*": "allow" } : {}) },
+    mcp: bridge ? { meritrouter_task: {
       type: "remote", url: bridge.url, enabled: true, oauth: false,
-      headers: { Authorization: "Bearer {env:SWITCHYARD_TASK_TOOLS_TOKEN}" },
+      headers: { Authorization: "Bearer {env:MERITROUTER_TASK_TOOLS_TOKEN}" },
       timeout: Math.max(ctx.cfg.team.budget_request_wait_seconds, ctx.cfg.execution.check_timeout_seconds) * 1000 + 5000,
     } } : {},
   };

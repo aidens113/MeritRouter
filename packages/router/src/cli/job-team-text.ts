@@ -1,7 +1,7 @@
 import type { ChannelPostView, JobChannelView, JobTeamView, MergeBranchView, TeamTreeNode } from "../admin/job-team.js";
 import { plural, stamp } from "./terminal.js";
 
-// The team view as terminal text (`switchyard job` and `switchyard channel`). Channel posts are
+// The team view as terminal text (`meritrouter job` and `meritrouter channel`). Channel posts are
 // model output: each is printed as `> `-quoted lines under a header naming its author, never as
 // a line of its own that could pass for the CLI's output. Control characters were stripped when
 // the post was stored.
@@ -44,7 +44,7 @@ const kindCounts = (byKind: Record<string, number>) =>
     .map(([k, n]) => `${k} ${n}`)
     .join(", ");
 
-/** The team part of `switchyard job <id>`: the sub-job tree, the merge queues, and recent channel posts. */
+/** The team part of `meritrouter job <id>`: the sub-job tree, the merge queues, and recent channel posts. */
 export function jobTeamLines(v: JobTeamView, recentPosts = 5): string[] {
   const out: string[] = [];
   if (v.parentJobId) out.push(`sub-job of ${v.parentLabel ?? v.parentJobId} (${v.parentJobId}); reports into its working document`);
@@ -57,15 +57,15 @@ export function jobTeamLines(v: JobTeamView, recentPosts = 5): string[] {
     const shown = v.channel.posts.slice(-recentPosts);
     out.push(`team channel: ${plural(v.channel.total, "post")} (${kindCounts(v.channel.byKind)}); latest ${shown.length}. ${v.channel.notice}`);
     out.push(...shown.flatMap((p) => postLines(p, v.subJobs > 0)));
-    out.push(`  all posts: switchyard channel ${v.jobId}`);
+    out.push(`  all posts: meritrouter channel ${v.jobId}`);
   }
   return out;
 }
 
-/** `switchyard channel <job>`. */
+/** `meritrouter channel <job>`. */
 export function channelText(v: JobChannelView): string {
   const head = `team channel of job ${v.jobLabel ? `${v.jobLabel} (${v.jobId})` : v.jobId}: ${plural(v.total, "post")}${v.total ? ` (${kindCounts(v.byKind)})` : ""}`;
   if (!v.posts.length) return [head, v.total ? "(no posts after that id)" : "(no posts yet)"].join("\n");
   const last = v.posts.at(-1)!.id;
-  return [head, v.notice, "", ...v.posts.flatMap((p) => postLines(p, false)), ...(v.hasMore ? ["", `more posts: switchyard channel ${v.jobId} --after ${last}`] : [])].join("\n");
+  return [head, v.notice, "", ...v.posts.flatMap((p) => postLines(p, false)), ...(v.hasMore ? ["", `more posts: meritrouter channel ${v.jobId} --after ${last}`] : [])].join("\n");
 }

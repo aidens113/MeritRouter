@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { insights, PROFILE_NAMES, TIER_NAMES } from "switchyard-router";
+import { insights, PROFILE_NAMES, TIER_NAMES } from "meritrouter";
 import { body, handle, HttpError } from "@/lib/api";
 
 export const dynamic = "force-dynamic";

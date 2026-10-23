@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import YAML from "yaml";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import type { ChatRequest } from "../src/gateway/types.js";
 import { Brain } from "../src/brain/brain.js";
 import { BrainAccess, type Principal } from "../src/brain/access.js";
@@ -16,7 +16,7 @@ import type { Actor } from "../src/attribution/index.js";
 import { baseConfig, commitAll, endpoint, FakeProvider, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 let db: Db | undefined;
 afterEach(async () => {
   await sy?.close();
@@ -224,7 +224,7 @@ describe("gated promotion to global/ (D9)", () => {
     expect(globalLessons(brain)).toEqual([]);
     expect(started).toEqual([]); // the check rejects before any review is spent
     const [rec] = brain.promotions.list();
-    expect(rec).toMatchObject({ status: "rejected", lesson_path: r.path, decided_by: "switchyard (project-specificity check)" });
+    expect(rec).toMatchObject({ status: "rejected", lesson_path: r.path, decided_by: "meritrouter (project-specificity check)" });
     expect(rec!.reason).toContain("a path inside repository web");
 
     // The slug, a repository alias, and a missing project source are each refused too.
@@ -253,7 +253,7 @@ describe("gated promotion to global/ (D9)", () => {
 
     expect(await brain.promotions.settle()).toBe(1);
     const rec = brain.promotions.get(r.id!)!;
-    expect(rec).toMatchObject({ status: "approved", global_path: "global/lessons/retry-idempotent-calls-with-jittered-backoff.md", decided_by: "switchyard (review passed)" });
+    expect(rec).toMatchObject({ status: "approved", global_path: "global/lessons/retry-idempotent-calls-with-jittered-backoff.md", decided_by: "meritrouter (review passed)" });
     const text = readFileSync(path.join(brain.root, rec.global_path!), "utf8");
     expect(text).toContain(GENERIC.body);
     expect(frontMatterOf(text)).toMatchObject({
@@ -264,7 +264,7 @@ describe("gated promotion to global/ (D9)", () => {
       supervisor_model: SUPERVISOR_EP.id,
       sources: [source],
       review: { verdict: "pass", reviewer: REVIEWER_EP.id, reviewer_model: "beta/beta-2", review_task: "t_review1", rubric: PROMOTION_RUBRIC_VERSION },
-      approved_by: "switchyard (review passed)",
+      approved_by: "meritrouter (review passed)",
     });
     // Settling again changes nothing; the lesson is readable by every project's agents.
     expect(await brain.promotions.settle()).toBe(0);

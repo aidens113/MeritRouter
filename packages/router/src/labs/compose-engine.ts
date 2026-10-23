@@ -63,11 +63,11 @@ function creation(identity: Input["current"]) {
 function resourceLabels(input: Input, kind: "network" | "container") {
   const id = input.original;
   return {
-    "io.switchyard.install": id.installId, "io.switchyard.lab": id.labId,
-    "io.switchyard.run": id.runId, "io.switchyard.generation": String(id.generation),
-    "io.switchyard.spec": id.specSha256, "io.switchyard.nonce": id.nonceSha256,
-    "io.switchyard.request": id.requestSha256, "io.switchyard.intent": id.intentId,
-    "io.switchyard.resource": kind, "com.docker.compose.project": input.approval.canonical.name,
+    "io.meritrouter.install": id.installId, "io.meritrouter.lab": id.labId,
+    "io.meritrouter.run": id.runId, "io.meritrouter.generation": String(id.generation),
+    "io.meritrouter.spec": id.specSha256, "io.meritrouter.nonce": id.nonceSha256,
+    "io.meritrouter.request": id.requestSha256, "io.meritrouter.intent": id.intentId,
+    "io.meritrouter.resource": kind, "com.docker.compose.project": input.approval.canonical.name,
   };
 }
 
@@ -112,7 +112,7 @@ function validateApproval(input: Input) {
     const mounts = new Set<string>();
     for (const mount of spec.volumes) {
       if (mounts.has(mount.target) || [mount.source, mount.target].some(value =>
-        /docker\.sock|(?:^|[\\/])\.git(?:[\\/]|$)|(?:^|[\\/])\.switchyard(?:[\\/]|$)/i.test(value)) ||
+        /docker\.sock|(?:^|[\\/])\.git(?:[\\/]|$)|(?:^|[\\/])\.meritrouter(?:[\\/]|$)/i.test(value)) ||
         path.resolve(mount.source) === path.resolve(authority.worktree) ||
         path.resolve(mount.source) === path.resolve(authority.labRoot) ||
         ![authority.worktree, ...authority.dataRoots].some(root => inside(root, mount.source))) refuse("approval_mismatch");
@@ -139,7 +139,7 @@ function effectiveConfig(approval: Approval, name: string) {
       entry.some(arg => arg === "")) refuse("unsupported_config");
   // Engine merges image labels: omitting a reserved image label would NOT erase it.
   const labels = image.Config.Labels ?? {};
-  if (Object.keys(labels).some(key => key.startsWith("io.switchyard.") || key.startsWith("com.docker.compose."))) {
+  if (Object.keys(labels).some(key => key.startsWith("io.meritrouter.") || key.startsWith("com.docker.compose."))) {
     refuse("unsupported_config");
   }
   // Empty Entrypoint requests inherit image defaults; [""] explicitly clears them in Engine API.

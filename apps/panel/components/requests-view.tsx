@@ -1,6 +1,6 @@
 import Link from "next/link";
-import type { Switchyard } from "switchyard-router";
-import { insights } from "switchyard-router";
+import type { MeritRouter } from "meritrouter";
+import { insights } from "meritrouter";
 import { cacheSaving, purposeLabel, RequestsTable } from "@/components/requests-table";
 import { Card, HelpTip, Stat } from "@/components/ui";
 import { PageHeader } from "@/components/page-header";
@@ -14,7 +14,7 @@ const LIMITS = ["50", "100", "200", "500"];
  * The request log with its filters: one project's requests (`project`), or every project's (the
  * install-wide page, `project` null, which also shows requests charged to no task).
  */
-export function RequestsView({ sy, project, sp }: { sy: Switchyard; project: { slug: string; name: string } | null; sp: Record<string, string | string[] | undefined> }) {
+export function RequestsView({ sy, project, sp }: { sy: MeritRouter; project: { slug: string; name: string } | null; sp: Record<string, string | string[] | undefined> }) {
   const str = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : "");
   const status = str("status");
   const endpoint = str("endpoint");
@@ -56,7 +56,7 @@ export function RequestsView({ sy, project, sp }: { sy: Switchyard; project: { s
         title="Requests"
         description={
           <>
-            {project ? `Every physical model request this project's tasks made at SwitchYard's gate, newest first.` : "Every physical model request admitted at SwitchYard's gate, from every project (and requests charged to no task, such as scans and probes), newest first."} A batched request answers several tasks at once and is counted once. <HelpTip term="requests" />
+            {project ? `Every physical model request this project's tasks made at MeritRouter's gate, newest first.` : "Every physical model request admitted at MeritRouter's gate, from every project (and requests charged to no task, such as scans and probes), newest first."} A batched request answers several tasks at once and is counted once. <HelpTip term="requests" />
           </>
         }
         live={["requests"]}

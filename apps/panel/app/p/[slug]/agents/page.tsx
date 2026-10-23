@@ -1,4 +1,4 @@
-import { insights } from "switchyard-router";
+import { insights } from "meritrouter";
 import { getSy } from "@/lib/sy";
 import { project } from "@/lib/project";
 import { projectBase } from "@/lib/links";

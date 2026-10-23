@@ -1,0 +1,155 @@
+# MeritRouter panel rename
+Status: Implemented and frozen
+
+## Changes
+- Public library imports meritrouter; service/type symbols MeritRouter; panel package meritrouter-panel and workspace dependency meritrouter.
+- Product titles, descriptions, login/setup text, glossary/help, commands, comments and panel README now MeritRouter/meritrouter.
+- MERITROUTER_* environment/config/CLI references, meritrouter.config.yaml and .meritrouter demo/storage/script paths. Existing runtime demo/user data was not touched or moved.
+- Browser identity: meritrouter_panel_session cookie; meritrouter_project cookie; meritrouter-theme preference; x-meritrouter-path internal request header; meritrouter-panel-session hash namespace; meritrouter.panel.instance singleton symbol.
+- Full rename deliberately changes old browser sessions/project/theme preferences; existing browser cookies are neither reused as an alias nor silently migrated. Security token hashing/equality and same-origin approval protections retain behavior.
+- Project switcher brand glyph changes from rail track to Network; favicon is a vector routing graph titled MeritRouter. No raster generation or new dependency.
+- Internal sy variables/getSy function and lib/sy.ts remain implementation identifiers, not product names or public aliases. No unrelated external protocols/provider names changed. No panel source hosted URLs referenced previous brand, so no hosted repository URLs invented.
+
+## Verification
+- No case-insensitive previous-brand matches remain in tracked panel source; no sy-theme/sy_panel_session/sy_project/TrainTrack branding keys remain.
+-114 changed TS/TSX files passed TypeScript transpile syntax checks;8 changed .mjs scripts passed node --check.
+- Executed isolated in-memory assertions: new token env/cookie names; SHA256 session value uses new namespace; safeEqual retains match/mismatch behavior; project cookie/path header; theme key/boot script; package name/workspace dependency. All passed. Favicon parsed as valid XML.
+-125 tracked files changed. No builds or full tests while router/docs workers edit; supervisor owns integrated typecheck/build/demo/browser/package acceptance after freeze.
+- No real providers, actual4477, user configs/installs, .demo mutation or physical checkout move. All commands ran from repository root. No commits.
+
+## Inventory
+- apps/panel/README.md
+- apps/panel/app/all/calibration/page.tsx
+- apps/panel/app/all/keys/page.tsx
+- apps/panel/app/all/knowledge/page.tsx
+- apps/panel/app/all/models/detail/page.tsx
+- apps/panel/app/all/models/page.tsx
+- apps/panel/app/all/page.tsx
+- apps/panel/app/all/qualification/page.tsx
+- apps/panel/app/all/routing/page.tsx
+- apps/panel/app/all/settings/page.tsx
+- apps/panel/app/api/artifacts/route.ts
+- apps/panel/app/api/brain/access/[id]/route.ts
+- apps/panel/app/api/brain/route.ts
+- apps/panel/app/api/budget/requests/[id]/route.ts
+- apps/panel/app/api/comparisons/route.ts
+- apps/panel/app/api/config/raw/route.ts
+- apps/panel/app/api/config/route.ts
+- apps/panel/app/api/jobs/[id]/channel/route.ts
+- apps/panel/app/api/jobs/[id]/metrics/route.ts
+- apps/panel/app/api/jobs/[id]/plan/route.ts
+- apps/panel/app/api/jobs/[id]/team/route.ts
+- apps/panel/app/api/jobs/route.ts
+- apps/panel/app/api/keys/[id]/route.ts
+- apps/panel/app/api/keys/providers/[id]/route.ts
+- apps/panel/app/api/keys/providers/route.ts
+- apps/panel/app/api/keys/route.ts
+- apps/panel/app/api/keys/scan/route.ts
+- apps/panel/app/api/keys/test/route.ts
+- apps/panel/app/api/labs/[name]/logs/route.ts
+- apps/panel/app/api/labs/[name]/route.ts
+- apps/panel/app/api/labs/recipe/route.ts
+- apps/panel/app/api/labs/route.ts
+- apps/panel/app/api/live/route.ts
+- apps/panel/app/api/models/override/route.ts
+- apps/panel/app/api/models/quarantine/route.ts
+- apps/panel/app/api/panel/stop/route.ts
+- apps/panel/app/api/projects/[slug]/deletion/route.ts
+- apps/panel/app/api/projects/[slug]/promotions/route.ts
+- apps/panel/app/api/projects/[slug]/repositories/route.ts
+- apps/panel/app/api/projects/[slug]/route.ts
+- apps/panel/app/api/projects/[slug]/settings/route.ts
+- apps/panel/app/api/projects/route.ts
+- apps/panel/app/api/promotions/revert/route.ts
+- apps/panel/app/api/promotions/route.ts
+- apps/panel/app/api/qualification/route.ts
+- apps/panel/app/api/routing-overrides/[id]/route.ts
+- apps/panel/app/api/routing-overrides/route.ts
+- apps/panel/app/api/rulebook/route.ts
+- apps/panel/app/api/sessions/[id]/resume/route.ts
+- apps/panel/app/api/sessions/[id]/route.ts
+- apps/panel/app/api/sessions/route.ts
+- apps/panel/app/api/tasks/accept/route.ts
+- apps/panel/app/api/tasks/reject/route.ts
+- apps/panel/app/api/tasks/resume/route.ts
+- apps/panel/app/api/web-search/keys/[id]/route.ts
+- apps/panel/app/api/web-search/route.ts
+- apps/panel/app/api/worker-actions/[id]/route.ts
+- apps/panel/app/icon.svg
+- apps/panel/app/layout.tsx
+- apps/panel/app/login/page.tsx
+- apps/panel/app/p/[slug]/agents/[id]/page.tsx
+- apps/panel/app/p/[slug]/agents/page.tsx
+- apps/panel/app/p/[slug]/brain/commits/[sha]/page.tsx
+- apps/panel/app/p/[slug]/brain/page.tsx
+- apps/panel/app/p/[slug]/jobs/[id]/page.tsx
+- apps/panel/app/p/[slug]/jobs/page.tsx
+- apps/panel/app/p/[slug]/labs/[name]/page.tsx
+- apps/panel/app/p/[slug]/labs/page.tsx
+- apps/panel/app/p/[slug]/page.tsx
+- apps/panel/app/p/[slug]/repos/[alias]/commits/[sha]/page.tsx
+- apps/panel/app/p/[slug]/repos/[alias]/page.tsx
+- apps/panel/app/p/[slug]/sessions/page.tsx
+- apps/panel/app/p/[slug]/settings/forms.tsx
+- apps/panel/app/p/[slug]/settings/page.tsx
+- apps/panel/app/p/[slug]/tasks/page.tsx
+- apps/panel/app/p/[slug]/teams/page.tsx
+- apps/panel/app/page.tsx
+- apps/panel/app/requests/[id]/page.tsx
+- apps/panel/components/budget-requests.tsx
+- apps/panel/components/client/delete-project.tsx
+- apps/panel/components/client/labs.tsx
+- apps/panel/components/client/override-editor.tsx
+- apps/panel/components/client/project-switcher.tsx
+- apps/panel/components/client/provider-keys.tsx
+- apps/panel/components/client/routing-overrides.tsx
+- apps/panel/components/client/rulebook-editor.tsx
+- apps/panel/components/client/shell.tsx
+- apps/panel/components/comparisons.tsx
+- apps/panel/components/job-metrics.tsx
+- apps/panel/components/job-plan.tsx
+- apps/panel/components/job-team.tsx
+- apps/panel/components/model-badges.tsx
+- apps/panel/components/request-capture.tsx
+- apps/panel/components/request-detail.tsx
+- apps/panel/components/request-evidence.tsx
+- apps/panel/components/requests-table.tsx
+- apps/panel/components/requests-view.tsx
+- apps/panel/components/session-detail.tsx
+- apps/panel/components/session-timeline.tsx
+- apps/panel/components/sessions-table.tsx
+- apps/panel/components/setup.tsx
+- apps/panel/components/task-detail.tsx
+- apps/panel/components/verification-trail.tsx
+- apps/panel/components/worker-action-requests.tsx
+- apps/panel/lib/api.ts
+- apps/panel/lib/auth.ts
+- apps/panel/lib/glossary.ts
+- apps/panel/lib/links.ts
+- apps/panel/lib/live-hub.ts
+- apps/panel/lib/models.ts
+- apps/panel/lib/project.ts
+- apps/panel/lib/qualification.ts
+- apps/panel/lib/settings-schema.ts
+- apps/panel/lib/sy.ts
+- apps/panel/lib/theme.ts
+- apps/panel/next.config.ts
+- apps/panel/package.json
+- apps/panel/scripts/model-navigation-check.mjs
+- apps/panel/scripts/seed-demo.mjs
+- apps/panel/scripts/validate-client-supervision.mjs
+- apps/panel/scripts/validate-historical-sessions.mjs
+- apps/panel/scripts/validate-labs-legacy.mjs
+- apps/panel/scripts/validate-labs.mjs
+- apps/panel/scripts/validate-live.mjs
+- apps/panel/scripts/validate-request-evidence.mjs
+
+## Packaging staging safety correction (explicit supervisor extension)
+Status: Implemented and frozen
+- Trigger: supervisor observed legacy generated packages/router/panel held as cwd by an existing user4477 process. Worker did not inspect/stop that process or read/change its config, and did not attempt to restore/delete legacy staging.
+- Approved inventory: packages/router/src/operations/panel.ts; packages/router/scripts/package-build.mjs; packages/router/.gitignore; packages/router/tests/operations-panel.test.ts; packages/router/tests/packaging.test.ts. Supervisor owns package.json files allowlist switch.
+- New canonical generated package panel is packages/router/bundled-panel. Packaging mutates only that fixed absolute directory, rejects existing symlink/junction redirection, and never mutates legacy panel. Runtime fingerprint/portable aliases retained.
+- Runtime discovery respects explicit MERITROUTER_PANEL_DIR, then chooses checkout apps/panel whenever it exists, otherwise installed bundled-panel. Workspace cannot silently auto-launch disposable staging; an unbuilt checkout reports unbuilt rather than falling back. No implicit legacy generated-panel selection.
+- findPanelApp accepts an optional packageRoot for deterministic installed/workspace fixture discovery; default remains module-derived package root. Existing callers unchanged.
+- Tests prove checkout selection with both canonical+legacy staging present, no unbuilt-checkout fallback, installed canonical bundle+runtime aliases, explicit operator override and legacy-only rejection. Packaged launch fixture updated to canonical name.
+- Focused operations-panel14 + packaging4 passed (18tests), script node --check passed. No builds/full suite, no userprocess/config/data operations, no commits. Source frozen; root handles final packagebuild/reinstall and legacy generated-content investigation.

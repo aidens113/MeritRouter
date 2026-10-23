@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import path from "node:path";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { createCodingRunner } from "../src/runners/coding/index.js";
 import { evalsDir, gradeReadOnly, loadSuite } from "../src/qualification/runner.js";
 import { cpSync, mkdtempSync, rmSync } from "node:fs";
@@ -11,7 +11,7 @@ import { emptyUsage } from "../src/core/task.js";
 import { baseConfig, goodOutput, makeEnv, openWithTestSupervisor as open, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => {
   await sy?.close();
   sy = undefined;

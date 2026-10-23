@@ -146,13 +146,13 @@ describe("brain: working documents in git", () => {
     expect(brain.search(worker(), "discount").map((r) => r.path)).toEqual(["projects/demo/working/job-j1.md"]);
   });
 
-  it("edits made outside SwitchYard are committed as the user before SwitchYard writes", async () => {
+  it("edits made outside MeritRouter are committed as the user before MeritRouter writes", async () => {
     const { brain, supervisor } = setup();
     await brain.createWorkingDoc(supervisor, supActor, "job-j1", { title: "T", statusDetail: "s", owner: "o", scope: "s", currentState: "state" });
     writeFileSync(path.join(brain.root, "global/glossary.md"), "# Glossary\n\nhand-written term\n");
     await brain.appendLedger(supervisor, supActor, "projects/demo/working/job-j1.md", goodLedger);
     const log = execFileSync("git", ["log", "--format=%(trailers:key=Agent,valueonly)%x09%s", "-3"], { cwd: brain.root }).toString();
-    expect(log).toMatch(/human\s*\tRecord edits made outside SwitchYard/);
+    expect(log).toMatch(/human\s*\tRecord edits made outside MeritRouter/);
   });
 
   it("mounts map a prefix to an existing folder and do not commit by default", async () => {

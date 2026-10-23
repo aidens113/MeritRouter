@@ -61,7 +61,7 @@ export interface ListedWebSearch {
 
 /** OpenAI models that search on every request ("Chat Completions search models always search before responding"). */
 const OPENAI_SEARCH_MODEL = /(^|\/)gpt-[\w.-]*-search-(preview|api)([-:].*)?$/i;
-/** Perplexity's models on OpenRouter: native search by default (OpenRouter web-search guide); SwitchYard never turns it off. */
+/** Perplexity's models on OpenRouter: native search by default (OpenRouter web-search guide); MeritRouter never turns it off. */
 const OPENROUTER_PERPLEXITY = /^perplexity\//i;
 
 /**
@@ -89,7 +89,7 @@ export function detectNativeWebSearch(providerId: string, modelId: string, liste
       usdPerSearch: price,
       priceDetail: listedPrice !== null ? "OpenRouter pricing.web_search" : price !== null ? "OpenRouter pricing.request (one search per request assumed)" : "not listed: set it in an override",
       source: "registry",
-      detail: "OpenRouter: Perplexity models search natively by default; SwitchYard never sends the switch that turns it off",
+      detail: "OpenRouter: Perplexity models search natively by default; MeritRouter never sends the switch that turns it off",
       sourceUrl: OPENROUTER_WEB_SEARCH_DOC,
       checkedAt: NATIVE_SEARCH_CHECKED,
     };

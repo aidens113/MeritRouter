@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { parseConfig, type ResolvedConfig } from "../src/config/load.js";
 import { openDatabase, type Db } from "../src/storage/db.js";
 import { syntheticResult, TaskStore, type ClaimLimits } from "../src/storage/tasks.js";
@@ -13,7 +13,7 @@ import type { ChatResponse } from "../src/gateway/types.js";
 import { baseConfig, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, summarizeTask, type Env, type ScriptedRequest } from "./helpers.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 let db: Db | undefined;
 afterEach(async () => {
   await sy?.close();

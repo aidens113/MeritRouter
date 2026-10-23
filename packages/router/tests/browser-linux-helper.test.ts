@@ -10,7 +10,7 @@ describe("Linux browser fixture launch prerequisite",()=>{
  it("rejects malformed/cyclic/accessor/oversized input before executing getters",()=>{let called=false;for(const f of [null,{...fixture(),nonce:"x".repeat(9000)},Object.defineProperty({},"version",{enumerable:true,get(){called=true;throw Error("secret");}})])expect(()=>planLinuxBrowserFixture(f)).toThrow();const cyclic:any={};cyclic.self=cyclic;expect(()=>planLinuxBrowserFixture(cyclic)).toThrow();expect(called).toBe(false);});
  it("has no extra release authority",()=>{expect(LinuxBrowserFixtureReleaseSchema.safeParse({op:"release",generation:"1".repeat(32),nonce:"2".repeat(64),argv:["sh"]}).success).toBe(false);});
 });
-const native=process.env.SWITCHYARD_TEST_LINUX_HELPER==="1";
+const native=process.env.MERITROUTER_TEST_LINUX_HELPER==="1";
 it.skipIf(!native).each(["root","ordinary"])("runs owned installed Linux namespace/helper fixtures as %s",mode=>{
  const root=path.resolve(".");
  const linux=(p:string)=>process.platform==="win32"?"/mnt/"+p[0]!.toLowerCase()+p.slice(2).replaceAll("\\","/"):p;

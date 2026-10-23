@@ -4,7 +4,18 @@ Written for the next agent (Codex or Claude Code) picking this repository up col
 then `AGENTS.md`, then the `Current State` of the effort you work on. Every effort below has its
 own working document with decisions, phases, ledger, and reports.
 
-## Current audit (2026-10-23)
+## Current effort (2026-10-23)
+
+[MeritRouter rename](meritrouter-rename.md) owns the user's new request: full product/runtime
+rename and readable setup docs with a copyable agent prompt at the top of README. Clean baseline
+dev3c06c69, branch feat/meritrouter-rename. Router, panel and authored docs are partitioned among
+workers; supervisor owns README/root metadata and acceptance. New canonical package/CLI is
+meritrouter; env MERITROUTER_*, config meritrouter.config.yaml, class MeritRouter. Existing data
+must remain usable by explicit old --config without silent moves. Hosted GitHub rename will be
+performed only after local acceptance (ADMIN capability verified); no npm/live deployment implied.
+Historical records below retain former product names and real paths; do not change user installs.
+
+## Previous corrective release (2026-10-23)
 
 [Correctness and panel flows](correctness-and-panel-flows.md) owns user-authorized execution of
 the [post-change fix audit](post-change-fix-audit.md). Source on feat/post-change-corrections

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { EndpointOverrideSchema, insights } from "switchyard-router";
+import { EndpointOverrideSchema, insights } from "meritrouter";
 import { body, handle, HttpError } from "@/lib/api";
 
 export const dynamic = "force-dynamic";

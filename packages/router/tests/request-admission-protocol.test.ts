@@ -1,14 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it, vi } from "vitest";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import type { GateRequest } from "../src/gateway/gate.js";
 import { WorkerTaskSchema } from "../src/core/task.js";
 import { capturedLease } from "../src/storage/task-leases.js";
 import { RequestPersistenceError, type ReserveRequestDTO, type ReservationDTO, type RequestOutcomeDTO } from "../src/admission/request-ledger.js";
 import { RequestReceipts } from "../src/admission/request-receipts.js";
 import { baseConfig, endpoint, makeEnv, open, reply, ScriptedClient, summarizeTask, type Env } from "./helpers.js";
-let env: Env | undefined, sy: Switchyard | undefined;
+let env: Env | undefined, sy: MeritRouter | undefined;
 const releases: Array<() => void> = [];
 afterEach(async () => { for (const release of releases.splice(0)) release(); await sy?.close(); vi.restoreAllMocks(); env?.cleanup(); sy = undefined; env = undefined; });
 function barrier() { let release!: () => void; const promise = new Promise<void>(r => release = r); releases.push(release); return { promise, release }; }

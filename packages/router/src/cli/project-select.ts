@@ -1,12 +1,12 @@
 import path from "node:path";
-import { SwitchyardError } from "../core/errors.js";
+import { MeritRouterError } from "../core/errors.js";
 
 // Which project a CLI command or the MCP server works in (docs/working/projects.md, D8 and the
-// CLI design): an explicit flag, then SWITCHYARD_PROJECT, then the only project, then the
+// CLI design): an explicit flag, then MERITROUTER_PROJECT, then the only project, then the
 // project whose repository contains the working directory. Archived projects are never chosen
 // implicitly, but an explicit flag may still name one (its data stays readable).
 
-export const PROJECT_ENV = "SWITCHYARD_PROJECT";
+export const PROJECT_ENV = "MERITROUTER_PROJECT";
 
 /** What the selection needs to know about a project. */
 export interface SelectableProject {
@@ -25,7 +25,7 @@ export interface ProjectChoice {
 export interface SelectOptions {
   /** `--project <slug>`. */
   flag?: string | undefined;
-  /** `SWITCHYARD_PROJECT` (pass `undefined` to ignore the environment). */
+  /** `MERITROUTER_PROJECT` (pass `undefined` to ignore the environment). */
   env?: string | undefined;
   /** The working directory to infer from. */
   cwd: string;
@@ -68,7 +68,7 @@ export function describeProjects(projects: SelectableProject[]): string {
  */
 export function chooseProject(projects: SelectableProject[], opts: SelectOptions): ProjectChoice | null {
   const known = (slug: string, from: string): string => {
-    if (!projects.some((p) => p.slug === slug)) throw new SwitchyardError("usage", `unknown project ${slug} (from ${from}); projects: ${describeProjects(projects)}`);
+    if (!projects.some((p) => p.slug === slug)) throw new MeritRouterError("usage", `unknown project ${slug} (from ${from}); projects: ${describeProjects(projects)}`);
     return slug;
   };
   if (opts.flag) return { slug: known(opts.flag, "--project"), source: "flag" };
@@ -88,5 +88,5 @@ export function requireProject(projects: SelectableProject[], opts: SelectOption
   if (c) return c;
   const inside = projectsContaining(projects.filter((p) => !p.archived), opts.cwd);
   const why = inside.length ? `the working directory is inside repositories of several projects (${[...new Set(inside.map((h) => h.slug))].join(", ")})` : "the working directory is not inside any project's repository";
-  throw new SwitchyardError("usage", `this install has several projects and ${why}; pass --project <slug> or set ${PROJECT_ENV}. Projects: ${describeProjects(projects)}`);
+  throw new MeritRouterError("usage", `this install has several projects and ${why}; pass --project <slug> or set ${PROJECT_ENV}. Projects: ${describeProjects(projects)}`);
 }

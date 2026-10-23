@@ -1,6 +1,6 @@
 /**
  * Test-only fault injection: simulate process death at a named point of a run, so recovery can
- * be exercised in-process. Set `SWITCHYARD_FAULT_AT=<point>[:<n>][:<name>]`:
+ * be exercised in-process. Set `MERITROUTER_FAULT_AT=<point>[:<n>][:<name>]`:
  * - `point`: one of `FAULT_POINTS`;
  * - `n` (default 1): crash on the n-th hit of that point (counted per process, reset when the
  *   variable's value changes or a point is passed while it is unset);
@@ -9,7 +9,7 @@
  * A `SimulatedCrash` is thrown; the executor lets it pass its cleanup, so the session stays
  * `running` and the task lease stays held until it expires, as after a real crash.
  */
-export const FAULT_ENV = "SWITCHYARD_FAULT_AT";
+export const FAULT_ENV = "MERITROUTER_FAULT_AT";
 
 export const FAULT_POINTS = ["after_tool_intent", "after_tool_run", "after_model_request", "after_model_response"] as const;
 export type FaultPoint = (typeof FAULT_POINTS)[number];
@@ -36,7 +36,7 @@ export function simulatedCrashCount(): number {
   return crashes;
 }
 
-/** Crash here when `SWITCHYARD_FAULT_AT` names this point (and hit count and name). A no-op otherwise. */
+/** Crash here when `MERITROUTER_FAULT_AT` names this point (and hit count and name). A no-op otherwise. */
 export function faultPoint(point: FaultPoint, name?: string): void {
   const spec = process.env[FAULT_ENV];
   if (!spec) {

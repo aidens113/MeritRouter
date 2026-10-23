@@ -1,5 +1,5 @@
 import { Radar } from "lucide-react";
-import { insights, MODALITIES } from "switchyard-router";
+import { insights, MODALITIES } from "meritrouter";
 import { getSy } from "@/lib/sy";
 import { keyedProviders, toRow } from "@/lib/models";
 import { SetupScreen } from "@/components/setup";
@@ -27,7 +27,7 @@ export default async function ModelsPage({ searchParams }: { searchParams: Promi
         title="Models"
         description={
           <>
-            Every model SwitchYard knows about, whether it can be used, and why. Click a model for its full eligibility, evidence, and controls. Manual entries come from <Mono>{sy.cfg.models.file ?? "no models file"}</Mono>.
+            Every model MeritRouter knows about, whether it can be used, and why. Click a model for its full eligibility, evidence, and controls. Manual entries come from <Mono>{sy.cfg.models.file ?? "no models file"}</Mono>.
           </>
         }
         actions={

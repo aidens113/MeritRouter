@@ -1,14 +1,14 @@
 import { capturedLease } from "../src/storage/task-leases.js";
 import { afterEach, expect, it, vi } from "vitest";
 import Database from "better-sqlite3";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import type { GateRequest } from "../src/gateway/gate.js";
 import { WorkerTaskSchema } from "../src/core/task.js";
 import { AdmissionDenied, GatewayError } from "../src/core/errors.js";
 import { RequestPersistenceError } from "../src/admission/request-ledger.js";
 import { baseConfig, endpoint, goodOutput, makeEnv, open, reply, ScriptedClient, summarizeTask, type Env, type ScriptedRequest } from "./helpers.js";
 
-let env: Env | undefined, sy: Switchyard | undefined;
+let env: Env | undefined, sy: MeritRouter | undefined;
 const releases: Array<() => void> = [];
 afterEach(async () => { for (const release of releases.splice(0)) release(); await sy?.close(); sy = undefined; vi.restoreAllMocks(); env?.cleanup(); env = undefined; });
 function barrier() { let release!: () => void; const promise = new Promise<void>(r => { release = r; }); releases.push(release); return { promise, release }; }

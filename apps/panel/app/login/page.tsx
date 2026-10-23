@@ -17,7 +17,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
             <LockKeyhole size={18} aria-hidden />
           </span>
           <div>
-            <h1 className="text-base font-semibold text-ink">Sign in to SwitchYard</h1>
+            <h1 className="text-base font-semibold text-ink">Sign in to MeritRouter</h1>
             <p className="text-xs text-ink-3">Enter the panel token ({TOKEN_ENV}).</p>
           </div>
         </div>

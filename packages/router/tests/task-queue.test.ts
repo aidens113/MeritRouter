@@ -1,12 +1,12 @@
 import { afterEach, expect, it, vi } from "vitest";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { PlanStore } from "../src/storage/plans.js";
 import { syntheticResult } from "../src/storage/tasks.js";
 import { SqliteTaskQueue } from "../src/storage/sqlite-task-queue.js";
 import { QueueClaimSchema, QueueCompanionsSchema, QueueTasksSchema } from "../src/storage/task-queue.js";
 import { WorkerTaskSchema } from "../src/core/task.js";
 import { baseConfig, goodOutput, makeEnv, open, reply, ScriptedClient, summarizeTask, type Env } from "./helpers.js";
-let env: Env | undefined, sy: Switchyard | undefined;
+let env: Env | undefined, sy: MeritRouter | undefined;
 afterEach(async () => { await sy?.close(); sy = undefined; env?.cleanup(); env = undefined; vi.restoreAllMocks(); });
 function setup() {
   env = makeEnv({ config: baseConfig({ execution: { max_concurrent_tasks: 1, lease_seconds: 30 } }) });

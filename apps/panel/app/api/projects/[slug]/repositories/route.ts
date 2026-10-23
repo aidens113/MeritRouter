@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { insights } from "switchyard-router";
+import { insights } from "meritrouter";
 import { handle, HttpError, json } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
@@ -39,7 +39,7 @@ const Body = z.object({
 
 /**
  * Replace the project's repositories (add, remove, change a folder or the writable flag). Each
- * folder is prepared first (created and set up with git as needed); what SwitchYard cannot fix
+ * folder is prepared first (created and set up with git as needed); what MeritRouter cannot fix
  * comes back keyed by row and field (`fieldErrors["repositories.1.path"]`).
  */
 export async function PUT(req: Request, ctx: Ctx) {
