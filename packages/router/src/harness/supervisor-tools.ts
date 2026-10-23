@@ -643,10 +643,10 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
       let r: Awaited<ReturnType<typeof svc.awaitResults>>;
       for (;;) {
         r = await svc.awaitResults(ids, { timeoutSeconds: Math.max(1, Math.min(3, Math.ceil((until - Date.now()) / 1000))), signal: s.ctx.signal, uncapped: true });
-        if (!r.pending.length || Date.now() >= until || s.ctx.signal.aborted || blockedOnAcceptance(s, r.pending) || supervisorAsked(s.db, jobId) || new WorkerActionRequests(s.db).list({project: s.ctx.taskProject ?? s.ctx.cfg.brain.project, jobId, status: "pending"}).length > 0) break;
+        if (!r.pending.length || Date.now() >= until || s.ctx.signal.aborted || blockedOnAcceptance(s, r.pending) || supervisorAsked(s.db, jobId) || new WorkerActionRequests(s.db, s.ctx.now).list({project: s.ctx.taskProject ?? s.ctx.cfg.brain.project, jobId, status: "pending"}).length > 0) break;
       }
       const budget = pendingBudgetLines(s.db, s.ctx.cfg, jobId);
-      const actions = new WorkerActionRequests(s.db).list({ project: s.ctx.taskProject ?? s.ctx.cfg.brain.project, jobId, status: "pending" });
+      const actions = new WorkerActionRequests(s.db, s.ctx.now).list({ project: s.ctx.taskProject ?? s.ctx.cfg.brain.project, jobId, status: "pending" });
       return cap([...actions.map(row => `worker action ${row.id} from ${row.taskId}: ${row.action.operation?.name ?? row.action.command}; decide_worker_action`), ...budget, ...r.completed.map((c) => summarizeResult(c.taskId, s)), ...r.pending.map((p) => {
         const why = stateReason(s, p.taskId);
         return `${p.taskId}: still ${p.state}${why && why !== "resumed" ? ` (${why}${why.startsWith(AWAITING_ACCEPTANCE) ? "; accept_task or reject_task the upstream result" : ""})` : ""}`;
