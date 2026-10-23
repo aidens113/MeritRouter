@@ -164,7 +164,7 @@ export function Shell({ children, configPath, loginEnabled, projects }: { childr
 
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-[15rem_1fr]">
-      <aside className="sticky top-0 hidden h-screen flex-col gap-4 overflow-y-auto border-r border-line bg-surface px-3 py-4 lg:flex">
+      <aside className="sticky top-0 z-40 hidden h-screen flex-col gap-4 overflow-y-auto border-r border-line bg-surface px-3 py-4 lg:flex">
         <div className="flex items-start gap-1">
           <div className="min-w-0 flex-1">
             <ProjectSwitcher scope={scope} initial={projects} />

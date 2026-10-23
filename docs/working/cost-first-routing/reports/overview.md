@@ -30,3 +30,25 @@ Owner: overview_horizons worker
 - Worker did not seed or access primary demo, run providers, or manage user processes.
 - Root owns actual browser graphs, table/chart switching, resize, screenshots, final
   integrated checks and publication. No commits or pushes by worker.
+
+## Project selector followup
+- Supervisor physically reproduced packaged candidate failure after scrolling a table
+  header beneath the desktop menu: menu item right edge hit TH Time, so pointer clicks
+  did not navigate. Sidebar sticky stacking context at auto/0 trapped descendant z50
+  below main-table sticky th z1.
+- Added z40 to desktop sidebar stacking context; no portal/focus/outside dismissal changes.
+- Runtime refresh now validates ok/project rows with bounded zod schema and preserves the
+  last good list on malformed/error responses. Existing archived filtering stays intact.
+- Isolated pnpm -r build and ordered pnpm -r typecheck passed; logs:
+  node_modules/overview-switcher-build.log and overview-switcher-typecheck.log.
+  Supervisor owns physical hit tests, pointer/keyboard/mobile navigation and explicit
+  user-authorized live-panel restart.
+
+## Supervisor review and physical acceptance
+- Reproduced on a production packaged panel: at x300 inside Storefront menu row,
+  elementFromPoint returned TH Time; physical selection stayed on the original page.
+- After z40 correction the same point hits the Storefront span and physical selection
+  navigates to that project. Desktop/mobile keyboard, Enter/arrows/Escape focus, outside
+  dismissal, archived exclusion and malformed refresh preservation pass with 0 exceptions.
+- Supervisor aligned slug validation with existing SLUG_RE, removing artificial64-character
+  and display-name bounds so legal fallback labels remain accepted. Final parent build pending.
