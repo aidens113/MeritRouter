@@ -70,7 +70,8 @@ pass. Outside-checkout tarball install/CLI/MCP42tools/bundled panel and live app
 Final1220ms insertion-to-DOM, exact command exit0, settled history without reload,0browser exceptions.
 Screenshot inspected. Additional native/resume/evidence61/61 pass; packaged build-age false
 warning fixed with validated content fingerprints and warning-free reinstalled acceptance.
-All owned temporary panels/Chrome stopped, ports4489/4491/9335 closed. Publication follows below.
+All owned temporary panels/Chrome stopped, ports4489/4491/9335 closed. Accepted source commit1092881;
+publication follows after final docs receipt and unchanged-dev merge verification.
 No deployment acceptance claimed. See reports/supervisor-acceptance.md for exact evidence/limits.
 Network Git verbs remain denied (automatic brain push unavailable under guarded Git; trusted
 operator backup uses its separate fixed path). No user config, user stores or actual4477 touched.
