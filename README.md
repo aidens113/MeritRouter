@@ -1,5 +1,14 @@
 # MeritRouter
 
+MeritRouter routes each task to the right model to reduce your AI costs.
+It matches task requirements to the capabilities of your configured paid and free models,
+within your routing policies and spending budgets.
+
+It also gives coding agents a framework for testing and reviewing delegated work:
+repository-scoped tasks, executable checks, independent review and recorded evidence.
+The panel shows where requests and tokens went. Keep your current agent as supervisor,
+or use MeritRouter's own.
+
 **Want your agent to use MeritRouter? Copy this prompt into your agent’s chat:**
 
 ```text
@@ -15,11 +24,6 @@ Guide me to enter credentials in the panel and ask for required approvals.
 Never put secrets in chat or Git.
 Start by explaining what is ready and proposing one small task to verify setup.
 ```
-
-MeritRouter helps reduce the cost of capable model work across paid and free routes.
-Your coding agent delegates bounded tasks to the models you choose; MeritRouter applies
-routing policies, spending and access limits, and records evidence for your agent to review.
-You can also run MeritRouter’s own supervisor.
 
 ## Get started
 
@@ -97,6 +101,7 @@ host access wait for an exact approval on the task or job page.
   per-task routing policies.
 - **Model routing:** provider discovery, eligibility checks, task scoring and fallback.
 - **Reviewable results:** task evidence, check logs, resumable sessions and attributed commits.
+- **Usage visibility:** token and request graphs in global/project Overview, with hour/day/week/month ranges.
 - **A connected workspace:** projects, jobs, delegated tasks, requests and a shared Markdown brain.
 - **Local visibility:** a web panel for progress, keys, models, routing and security settings.
 

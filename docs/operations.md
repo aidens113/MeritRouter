@@ -611,7 +611,13 @@ Historical request/session payloads require complete same-project task and execu
 
 ## The web panel: turning it off, and rebuilding it
 
-Project **Overview** shows reported token totals and usage charts directly. **Activity** holds
+The global **Dashboard > Overview** and each project's **Overview** show reported token
+totals and usage graphs directly. Choose **Last hour**, **Last 24 hours**, **Last 7 days** or
+**Last 30 days**; the URL preserves the range, and totals and graphs use the same window.
+The timeline crops empty edges to fit recorded data within that range, retaining gaps between
+records. Empty ranges keep visible axes and a no-data message. **Table / Chart** switches
+between exact values and visual data. The global **Projects** tab
+retains the fixed 24-hour/7-day per-project spend breakdown. **Activity** holds
 operational details such as attention items, budget requests, running jobs, repositories and workers. The task workspace's
 **Agents** page includes roles, session activity, task assignments and first/last activity times,
 with links to each agent's detail page. The Jobs page lists existing work first; expand

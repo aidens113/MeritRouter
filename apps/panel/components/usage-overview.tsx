@@ -14,7 +14,11 @@ export function UsageOverview({ sy, path, project, searchParams }: {
   const now = Date.now();
   const points = insights.timeseries(sy, { hours: range.hours, bucketMinutes: range.bucketMinutes, project });
   const tiers = insights.tierDistribution(sy, now - range.hours * 3_600_000, project);
-  const buckets = usageBuckets(now, range.hours, range.bucketMinutes);
+  const bounds = points.length ? points.reduce((span, point) => ({
+    first: Math.min(span.first, point.bucketStart),
+    last: Math.max(span.last, point.bucketStart),
+  }), { first: points[0]!.bucketStart, last: points[0]!.bucketStart }) : undefined;
+  const buckets = usageBuckets(now, range.hours, range.bucketMinutes, bounds);
   const step = range.bucketMinutes * 60_000;
   const totals = points.reduce((sum, point) => ({ requests: sum.requests + point.requests, failed: sum.failed + point.failed, input: sum.input + point.inputTokens, output: sum.output + point.outputTokens }), { requests: 0, failed: 0, input: 0, output: 0 });
   const slots = ["var(--series-1)", "var(--series-2)", "var(--series-3)", "var(--series-4)", "var(--series-5)"];
@@ -58,7 +62,7 @@ export function UsageOverview({ sy, path, project, searchParams }: {
       <Stat label="Successful requests" value={totals.requests ? pct(totals.requests - totals.failed, totals.requests) : "-"} sub={`${num(totals.failed)} not succeeded (failed, pending or uncertain)`} />
       <Stat label="Tasks submitted" value={compact(tiers.reduce((sum, tier) => sum + tier.tasks, 0))} sub={range.label} />
     </div>
-    <p className="text-xs text-ink-3">Rolling window; first and current buckets can be partial. Times use your browser's local time. Reported tokens may be incomplete when a provider omits usage.</p>
+    <p className="text-xs text-ink-3">The timeline fits recorded data within the selected window; edge buckets can be partial. Times use your browser's local time. Reported tokens may be incomplete when a provider omits usage.</p>
     <Card><CardHeader title={`Tokens - ${range.label.toLowerCase()}`} description="Reported input and output, including cached input." actions={<Link href={`${path}/requests`} className="text-xs text-accent-ink hover:underline">Request log</Link>} /><div className="p-4"><StackedColumns buckets={buckets} series={tokenSeries} bucketMinutes={range.bucketMinutes} unit="tokens" />{!totals.requests ? <p className="mt-2 text-xs text-ink-3">No requests in this time range. Choose a longer range to see older usage.</p> : null}</div></Card>
     <div className="grid gap-6 xl:grid-cols-[2fr_1fr]">
       <Card><CardHeader title={`Requests - ${range.label.toLowerCase()}`} description="Physical model requests, stacked by targeted model." help="requests" /><div className="p-4"><StackedColumns buckets={buckets} series={requestSeries} bucketMinutes={range.bucketMinutes} /></div></Card>

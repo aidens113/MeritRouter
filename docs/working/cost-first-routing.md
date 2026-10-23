@@ -1,6 +1,6 @@
 # Cost-first routing defaults and positioning
-Status: Active
-Status detail: Implementing user-requested cost reduction positioning and enabled paid routing defaults.
+Status: Complete
+Status detail: Implemented and verified; publication receipt recorded in repository history.
 Created: 2026-10-23
 Last updated: 2026-10-23
 Owner: Senior supervisor agent
@@ -10,18 +10,21 @@ Related: [handoff](handoff.md)
 
 ## Current State
 
-Baseline dev f19ff34; branch feat/cost-first-routing. User wants cost reduction across free and paid models as the
-product's purpose, with paid routing enabled by default. Schema/example/presets and docs now agree on new defaults: enabled true, $5 weekly cap,
-T1-T3 on_free_exhaustion, T4 never (retain supervisor escalation). Omitted supervisor paid
-policy also becomes on_free_exhaustion, with explicit free-only supervisor policy preserved. Explicit old false/zero/
-never values remain authoritative. Free-only named preset remains an explicit alternative.
-Runtime and documentation workers are frozen. Supervisor reviewed their diffs, including
-actual fake-provider dispatch/budget/disable coverage and generated init preservation. Panel
-copy now emphasizes cost controls, enabled defaults and neutral paid policy descriptions.
-Recursive production build and ordered typecheck pass. Compiled CLI init defaults verified.
-Full router suite and hardened offline demo are running; browser acceptance follows seed
-completion. User explicitly reiterated push after completion; publish dev/main after acceptance.
-No real provider execution or changes to the user's installation configuration.
+Cost-first defaults and documentation are implemented: paid enabled, $5 rolling weekly cap,
+T1-T3 and standalone supervisor on_free_exhaustion, T4 escalation. Explicit existing settings
+and the named free-only preset remain authoritative. No ranking algorithm change.
+README opens with the cost-saving/model-selection and testing-framework pitch, then agent prompt.
+Global and project Overview share visible usage charts and 1h/24h/7d/30d URL-backed ranges.
+Chart timelines crop empty outer buckets, retain interior gaps and keep full axes for empty ranges.
+The selector now sits above sticky table headers; refreshed projects are validated without
+replacing a good list on malformed responses. Physical pointer interception was reproduced
+and corrected; keyboard, mobile, scopes, links and range changes were verified in production.
+Full router snapshot: 1200 passed, five old-default fixture assertions failed, two skips.
+All five assumptions corrected without weakening production guards; affected eight suites
+passed 75/75. Recursive build/typecheck, hardened offline demo, CLI defaults, installed package
+and browser acceptance passed. Final crop rebuild, recursive typecheck and installed/live browser verification pass.
+The user authorized restarting the real panel. Its configuration, explicit paid-disabled policy,
+data and key paths are preserved; no real provider requests were submitted. Publication follows the accepted merge into dev and fast-forward of main; remote heads are checked after push.
 
 ## Worker Briefs
 
@@ -70,6 +73,19 @@ No real provider execution or changes to the user's installation configuration.
   work or user config/processes. Root owns integrated final build, demo browser/screenshots
   and publication. All commands confined to repository; no commits.
 
+### Isolated project selector followup
+- Extend overview_horizons worker ownership in the SAME child worktree to ONLY
+  apps/panel/components/client/project-switcher.tsx and shell.tsx if causally needed, plus
+  own overview report. Root owns integrated runtime/browser testing and live panel restart.
+- User reports dropdown doesn't work; reproduce or trace before fixing. Check fixed-menu
+  clipping/stacking, physical pointer hit tests, focus/outside dismissal, navigation/global
+  fallback, API refresh validation and mobile/desktop behavior. Keep scope and saved data.
+- Coordinate with supervisor's actual Chrome reproduction. No primary edits, commits,
+  real user config, providers or user-process management. Build/typecheck only in child.
+- User explicitly authorized full restart of the real panel after implementation. Supervisor
+  will preserve actual config/port/env and restart only the identified panel after acceptance;
+  no worker restart/kill/service or config migration authority.
+
 ## Work Ledger
 
 ### 2026-10-23 - Inspection
@@ -90,3 +106,30 @@ No real provider execution or changes to the user's installation configuration.
 ## Open Questions
 
 None. Supervisor owns panel wording and integrated acceptance/publication.
+
+### Supervisor follow-up: timeline cropping
+
+- User requested fitting chart axes to recorded data within the selected range. Both usage
+  charts now derive shared bounds from scoped request points; interior empty buckets remain.
+- Direct helper assertions pass: 7-day empty axes, cropped outer buckets, interior gap,
+  single bucket and selected-window clamping. Production/package browser checks pass.
+- Full-suite fixture corrections and 75/75 affected tests are supervisor-verified; no runtime
+  containment, routing budget or paid-disable guard was relaxed.
+
+### 2026-10-23 - Final supervisor acceptance
+- Agent: Codex (supervisor)
+- Validation: recursive production build/typecheck pass; offline demo exits 0. Full router
+  run: 119 files, 1200 passed, five obsolete-default assertions failed, two platform skips.
+  Corrected fixtures explicitly disable paid or set zero budgets; affected eight suites pass
+  75/75, including fake dispatch, price/budget guards, init/preset preservation and packaging.
+- Installed final tarball: 2680 files, SHA1 e0d557be82ab6eee33a695ec1dc5287cc4fe72d9.
+  Bundled production panel starts without stale-build warning. Browser acceptance covers both
+  scopes, four horizons, totals, URL fallback/persistence, chart resize, operational tabs,
+  keyboard/pointer/mobile project selection and invalid-refresh preservation. Zero exceptions.
+- Cropped 7-day charts show six actual demo-data buckets instead of 29 full-window buckets.
+  Desktop/mobile screenshots inspected. Direct helper assertions cover single bucket, empty
+  axes, interior gaps and range clamping. Cost settings: three routes, four inspected images.
+- Real panel fully stopped and restarted after final build; readonly live browser acceptance
+  confirms graphs, horizons and physical project switching. Existing configuration, stored
+  data and paid-disabled setting preserved. No real provider calls or npm publication.
+- Outcome: Complete. Detailed evidence in reports/supervisor.md; publish dev/main together.

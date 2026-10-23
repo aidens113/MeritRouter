@@ -12,9 +12,12 @@ export function usageRange(raw: string | string[] | undefined) {
   const id = RangeSchema.parse(raw);
   return USAGE_RANGES.find(range => range.id === id) ?? USAGE_RANGES[1];
 }
-export function usageBuckets(now: number, hours: number, bucketMinutes: number): number[] {
+/** Trim empty edges while retaining gaps between data points; empty windows retain their axes. */
+export function usageBuckets(now: number, hours: number, bucketMinutes: number, data?: { first: number; last: number }): number[] {
   const step = bucketMinutes * 60_000;
-  const first = Math.floor((now - hours * 3_600_000) / step) * step;
-  const last = Math.floor(now / step) * step;
-  return Array.from({ length: Math.round((last - first) / step) + 1 }, (_, i) => first + i * step);
+  const lower = Math.floor((now - hours * 3_600_000) / step) * step;
+  const upper = Math.floor(now / step) * step;
+  const first = data ? Math.max(lower, Math.floor(data.first / step) * step) : lower;
+  const last = data ? Math.min(upper, Math.floor(data.last / step) * step) : upper;
+  return Array.from({ length: Math.max(0, Math.round((last - first) / step) + 1) }, (_, i) => first + i * step);
 }

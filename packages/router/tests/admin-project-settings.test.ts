@@ -158,7 +158,7 @@ describe("project settings (admin)", () => {
     const s = setup();
     const before = projectSettingsView(s, "alpha").limits;
     expect(before).toMatchObject({ priority: null, max_concurrent_tasks: null, request_share: null, paid_budgets: { per_day_usd: null, per_week_usd: null, per_month_usd: null } });
-    expect(before.global).toMatchObject({ maxConcurrentTasks: 4, requestsPerHour: 100, requestsPerDay: null, paidEnabled: false });
+    expect(before.global).toMatchObject({ maxConcurrentTasks: 4, requestsPerHour: 100, requestsPerDay: null, paidEnabled: true });
 
     expect(saveProjectSettings(s, "alpha", [
       { path: ["priority"], value: 2 },

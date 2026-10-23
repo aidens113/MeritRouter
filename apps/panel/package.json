@@ -2,7 +2,7 @@
   "name": "meritrouter-panel",
   "version": "0.1.0",
   "private": true,
-  "description": "Web panel for MeritRouter: models, routing, tasks, requests, provider keys, settings.",
+  "description": "Web panel for MeritRouter: model costs, routing, tasks, requests, provider keys and settings.",
   "type": "module",
   "engines": {
     "node": ">=22.11.0"

@@ -1,5 +1,10 @@
 # MeritRouter
 
+MeritRouter routes tasks to suitable paid and free models to help reduce your AI costs.
+It matches task requirements to model capabilities within your policies and budgets,
+and gives coding agents a framework for executable checks, independent review and
+recorded evidence before accepting delegated work.
+
 **Ask your coding agent:**
 
 ```text
@@ -10,9 +15,7 @@ Keep outside-repository actions on human approval only.
 Guide me to enter credentials in the panel; never put secrets in chat or Git.
 ```
 
-MeritRouter helps reduce model costs across paid and free routes, delegates bounded work
-to approved models and records results for your supervisor to review. This package contains
-the library, `meritrouter` CLI, MCP server and web panel.
+This package contains the library, `meritrouter` CLI, MCP server and web panel.
 
 After installing a locally built tarball, register a project:
 
