@@ -3,7 +3,7 @@ import { Tabs, pickTab } from "@/components/tabs";
 import { Disclosure } from "@/components/disclosure";
 import Link from "next/link";
 import { CheckCircle2, CircleAlert, Cpu, FolderGit2, Info, MessageCircleQuestion, Network, Play, TriangleAlert } from "lucide-react";
-import { insights } from "switchyard-router";
+import { insights } from "meritrouter";
 import { getSy } from "@/lib/sy";
 import { project } from "@/lib/project";
 import { jobHref, projectBase } from "@/lib/links";
@@ -42,7 +42,7 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
   const p0 = project(sy, slug);
   // Set up this project's repositories first (create a missing folder, set up git, commit a first
   // snapshot); a repository that is already a git repository with history is not touched. Only what
-  // SwitchYard cannot fix itself is left for the attention list.
+  // MeritRouter cannot fix itself is left for the attention list.
   if (!p0.archived) await sy.prepareRepositories({ projects: [p0.slug] }).catch(() => undefined);
   const p = project(sy, slug);
   const base = projectBase(p.slug);
@@ -80,6 +80,10 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
       values: buckets.map((b) => ts.filter((x) => otherIds.includes(x.endpointId) && x.bucketStart === b).reduce((s, x) => s + x.requests, 0)),
     });
 
+  const tokenSeries: Series[] = [
+    { key: "input", label: "Input (including cached)", color: "var(--series-1)", values: buckets.map(bucket => ts.filter(point => point.bucketStart === bucket).reduce((total, point) => total + point.inputTokens, 0)) },
+    { key: "output", label: "Output", color: "var(--series-2)", values: buckets.map(bucket => ts.filter(point => point.bucketStart === bucket).reduce((total, point) => total + point.outputTokens, 0)) },
+  ];
   const u = ov.usage24h;
   const tierOrder = ["T1", "T2", "T3", "T4", "unclassified"];
   const tierRows = tierOrder
@@ -90,7 +94,7 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
   const asking = [...new Set(sy.questions({ pendingOnly: true, project: p.slug }).map((q) => q.taskId))];
   const onlyJob = asking.length === 1 ? asking[0]! : null;
 
-  const tab = pickTab(sp, ["overview", "activity", "usage"]);
+  const tab = pickTab(sp, ["overview", "activity"]);
   const recentAgents = tab === "activity" ? insights.agentsView(sy, { project: p.slug, limit: 5 }) : [];
   return (
     <div className="space-y-6">
@@ -122,7 +126,7 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
           </ul>
         </Callout>
       ) : null}
-      {ov.attention.length || budgetPending.length ? (
+      {tab === "activity" ? <>{ov.attention.length || budgetPending.length ? (
         <Card className="border-warn/40">
           <div className="flex items-center gap-2 border-b border-line px-4 py-3 text-sm font-semibold text-ink">
             <TriangleAlert size={16} className="text-warn-ink" aria-hidden /> Needs your attention
@@ -150,9 +154,8 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
         <Callout tone="good" icon={<CheckCircle2 size={16} />} title="Nothing needs your attention">
           No questions, decisions, access requests, or interrupted tasks in this project, and every repository is in place.
         </Callout>
-      )}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <Stat label="Jobs" value={`${num(ov.activity.runningJobs)} running`} sub={`${num(ov.activity.queuedJobs)} queued · ${num(ov.activity.runningTasks)} tasks running, ${num(ov.activity.queuedTasks)} queued`} />
+      )}</> : null}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Model requests (24h)" help="requests" value={compact(u.modelRequests)} sub={`${compact(ov.usage7d.modelRequests)} in the last 7 days`} />
         <Stat
           label="Success rate (24h)"
@@ -163,9 +166,49 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
         <Stat label="Tasks (24h)" value={`${num(u.logicalTasks.completed)} done`} sub={`${num(u.logicalTasks.failed)} failed · ${num(u.logicalTasks.other)} other · ${num(u.logicalTasks.submitted)} submitted`} tone={u.logicalTasks.failed > u.logicalTasks.completed ? "bad" : undefined} />
         <Stat label="Paid spend (24h)" value={usd(ov.paidSpendUsd.last24h)} sub={`${usd(ov.paidSpendUsd.last7d)} in the last 7 days · ${u.cacheUsageKnown ? "" : "up to "}${compact(u.uncachedInputTokens + u.outputTokens)} new tokens today${u.cacheUsageKnown ? ` (${compact(u.cachedInputTokens)} cached)` : ` (at least ${compact(u.cachedInputTokens)} cached; ${u.requestsWithUnknownCacheUsage} unknown)`}`} />
       </div>
-      {budgetPending.length ? <BudgetRequestsCard requests={budgetPending} pendingOnly /> : null}
-      <Tabs items={[{ "id": "overview", "label": "Overview" }, { "id": "activity", "label": "Activity" }, { "id": "usage", "label": "Usage" }]} active={tab} path={base} label="Page sections" anchors={{}} />
-      {tab === "overview" ? <div className="space-y-6"><Card><CardHeader title="Labs" description="Isolated branches and runtimes for this project." actions={<Link href={`${base}/labs`} className="text-xs text-accent-ink hover:underline">Open labs</Link>} /><div className="flex flex-wrap gap-3 p-4">{labs.labs.length ? labs.labs.map(l => <Link key={l.name} href={`${base}/labs/${encodeURIComponent(l.name)}`} className="text-sm text-accent-ink hover:underline">{l.name} / {l.status?.lab.state ?? "queued"}</Link>) : <p className="text-sm text-ink-3">No labs yet.</p>}</div></Card><div className="grid gap-6 xl:grid-cols-[2fr_1fr]">
+      {tab === "activity" && budgetPending.length ? <BudgetRequestsCard requests={budgetPending} pendingOnly /> : null}
+      <Tabs items={[{ "id": "overview", "label": "Overview" }, { "id": "activity", "label": "Activity" }]} active={tab} path={base} label="Page sections" anchors={{}} />
+      {tab === "overview" ? <div className="space-y-6">      <div className="grid gap-3 sm:grid-cols-3">
+        <Stat label="Reported tokens (24h)" value={compact(u.inputTokens + u.outputTokens)} sub="Input and output, cached input included" />
+        <Stat label="Input tokens (24h)" value={compact(u.inputTokens)} sub={u.cacheUsageKnown ? `${compact(u.cachedInputTokens)} cached` : "Cache breakdown partly reported"} />
+        <Stat label="Output tokens (24h)" value={compact(u.outputTokens)} />
+      </div>
+      <Card>
+        <CardHeader title="Tokens over the last 24 hours" description="Reported input and output per hour. Input includes tokens served from the prompt cache." actions={<Link href={`${base}/requests`} className="text-xs text-accent-ink hover:underline">Request log</Link>} />
+        <div className="p-4">{ts.length ? <StackedColumns buckets={buckets} series={tokenSeries} bucketMinutes={60} unit="tokens" /> : <EmptyState title="No token usage in the last 24 hours">Reported input and output appear as this project's model requests finish.</EmptyState>}</div>
+      </Card>
+      <div className="grid gap-6 xl:grid-cols-[2fr_1fr]">
+        <Card>
+          <CardHeader title="Requests over the last 24 hours" description="This project's physical model requests per hour, stacked by the model that was targeted." help="requests" actions={<Link className="text-xs text-accent-ink hover:underline" href={`${base}/requests`}>Request log →</Link>} />
+          <div className="p-4">
+            {ts.length ? (
+              <StackedColumns buckets={buckets} series={series} bucketMinutes={60} />
+            ) : (
+              <EmptyState icon={<Cpu size={22} />} title="No model requests in the last 24 hours">
+                Requests appear here once a worker runs this project&apos;s tasks. Start Claude Code with the MeritRouter MCP server, or run <Mono>meritrouter worker</Mono>.
+              </EmptyState>
+            )}
+          </div>
+        </Card>
+
+        <Card>
+          <CardHeader title="Tasks by tier (7 days)" help="tier" description="How difficult this project's delegated work was, and how much of it completed." />
+          <div className="p-4">
+            {tierRows.some((t) => t.tasks) ? (
+              <StackedBars
+                rows={tierRows.map((t) => ({ key: t.tier, label: t.tier === "unclassified" ? "Unscored" : t.tier, hint: tierHint[t.tier] ?? "" }))}
+                series={[
+                  { key: "completed", label: "Completed", color: "var(--series-1)", values: tierRows.map((t) => t.completed) },
+                  { key: "other", label: "Not completed", color: "var(--series-other)", values: tierRows.map((t) => t.tasks - t.completed) },
+                ]}
+              />
+            ) : (
+              <EmptyState title="No tasks in the last 7 days">Tasks are scored into tiers T1–T3 (or T4, returned to the supervisor).</EmptyState>
+            )}
+          </div>
+        </Card>
+      </div></div> : null}
+      {tab === "activity" ? <div className="space-y-6"><Card><CardHeader title="Labs" description="Isolated branches and runtimes for this project." actions={<Link href={`${base}/labs`} className="text-xs text-accent-ink hover:underline">Open labs</Link>} /><div className="flex flex-wrap gap-3 p-4">{labs.labs.length ? labs.labs.map(l => <Link key={l.name} href={`${base}/labs/${encodeURIComponent(l.name)}`} className="text-sm text-accent-ink hover:underline">{l.name} / {l.status?.lab.state ?? "queued"}</Link>) : <p className="text-sm text-ink-3">No labs yet.</p>}</div></Card><div className="grid gap-6 xl:grid-cols-[2fr_1fr]">
         <Card>
           <CardHeader title="Running and queued jobs" description="This project's top-level jobs that have not finished, newest first." actions={<Link className="text-xs text-accent-ink hover:underline" href={`${base}/jobs`}>All jobs →</Link>} />
           {ov.jobs.length ? (
@@ -222,39 +265,8 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
             <EmptyState title="No repositories">Tasks in this project can only work on text you give them until you add one.</EmptyState>
           )}
         </Card>
-      </div></div> : null}
-      {tab === "usage" ? <div className="space-y-6"><div className="grid gap-6 xl:grid-cols-[2fr_1fr]">
-        <Card>
-          <CardHeader title="Requests over the last 24 hours" description="This project's physical model requests per hour, stacked by the model that was targeted." help="requests" actions={<Link className="text-xs text-accent-ink hover:underline" href={`${base}/requests`}>Request log →</Link>} />
-          <div className="p-4">
-            {ts.length ? (
-              <StackedColumns buckets={buckets} series={series} bucketMinutes={60} />
-            ) : (
-              <EmptyState icon={<Cpu size={22} />} title="No model requests in the last 24 hours">
-                Requests appear here once a worker runs this project&apos;s tasks. Start Claude Code with the SwitchYard MCP server, or run <Mono>switchyard worker</Mono>.
-              </EmptyState>
-            )}
-          </div>
-        </Card>
-
-        <Card>
-          <CardHeader title="Tasks by tier (7 days)" help="tier" description="How difficult this project's delegated work was, and how much of it completed." />
-          <div className="p-4">
-            {tierRows.some((t) => t.tasks) ? (
-              <StackedBars
-                rows={tierRows.map((t) => ({ key: t.tier, label: t.tier === "unclassified" ? "Unscored" : t.tier, hint: tierHint[t.tier] ?? "" }))}
-                series={[
-                  { key: "completed", label: "Completed", color: "var(--series-1)", values: tierRows.map((t) => t.completed) },
-                  { key: "other", label: "Not completed", color: "var(--series-other)", values: tierRows.map((t) => t.tasks - t.completed) },
-                ]}
-              />
-            ) : (
-              <EmptyState title="No tasks in the last 7 days">Tasks are scored into tiers T1–T3 (or T4, returned to the supervisor).</EmptyState>
-            )}
-          </div>
-        </Card>
-      </div></div> : null}
-      {tab === "activity" ? <div className="space-y-6"><Card>
+      </div>
+<Card>
         <CardHeader title="Worker" help="worker" description="Workers serve every project at once, sharing capacity fairly." />
         <div className="grid gap-4 p-4 text-sm md:grid-cols-2">
           <div className="space-y-2">
@@ -277,7 +289,7 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
               <>
                 <Badge tone="neutral">No worker running</Badge>
                 <p className="text-ink-2">
-                  Tasks run while a worker is active: the MCP server inside Claude Code, or <Mono>switchyard worker</Mono>. Queued tasks wait until one starts.
+                  Tasks run while a worker is active: the MCP server inside Claude Code, or <Mono>meritrouter worker</Mono>. Queued tasks wait until one starts.
                 </p>
               </>
             )}

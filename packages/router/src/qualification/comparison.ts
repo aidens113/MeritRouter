@@ -2,8 +2,8 @@ import { cpSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { jobMetrics, summaryOf, WAIT_REASONS, type JobMetrics, type WaitReason } from "../admin/job-metrics.js";
-import type { Switchyard } from "../core/service.js";
-import { SwitchyardError } from "../core/errors.js";
+import type { MeritRouter } from "../core/service.js";
+import { MeritRouterError } from "../core/errors.js";
 import { isTerminal } from "../core/task.js";
 import { newId } from "../storage/db.js";
 import { registerRepository } from "./registry.js";
@@ -27,7 +27,7 @@ const DEFAULT_SINGLE_REQUESTS = 8;
 const GOAL_ID = /^[a-z0-9][a-z0-9-]{0,40}$/;
 const SupplierProfile = z.enum(["inspect", "analyze", "implement"]);
 
-/** A supplied goal (`switchyard compare --goals <file>`): run against a configured repository. */
+/** A supplied goal (`meritrouter compare --goals <file>`): run against a configured repository. */
 export const ComparisonGoalInputSchema = z
   .object({
     id: z.string().regex(GOAL_ID),
@@ -73,7 +73,7 @@ export interface ComparisonPlan {
 }
 
 /** Requests charged in the last 24 hours to comparison runs and everything they delegated. */
-export function comparisonRequestsToday(sy: Switchyard, now = Date.now()): number {
+export function comparisonRequestsToday(sy: MeritRouter, now = Date.now()): number {
   const since = now - 86_400_000;
   const row = sy.db
     .prepare(
@@ -88,7 +88,7 @@ export function comparisonRequestsToday(sy: Switchyard, now = Date.now()): numbe
   return row.n;
 }
 
-function budgetState(sy: Switchyard): { dailyAllocation: number; usedToday: number; remaining: number } {
+function budgetState(sy: MeritRouter): { dailyAllocation: number; usedToday: number; remaining: number } {
   const dailyAllocation = sy.cfg.qualification.max_requests_per_day;
   const usedToday = sy.qualifier.requestsUsedToday(); // qualification + comparison requests
   return { dailyAllocation, usedToday, remaining: Math.max(0, dailyAllocation - usedToday) };
@@ -98,23 +98,23 @@ function budgetState(sy: Switchyard): { dailyAllocation: number; usedToday: numb
  * The goals a comparison would run and the most requests it may use. Goals are the eval suite's
  * coding and read-only goals (or `evalIds` of them), or a supplied set. Nothing runs here.
  */
-export function planComparison(sy: Switchyard, input: { evalIds?: string[]; goals?: unknown; teamFactor?: number; teamRequests?: number } = {}): ComparisonPlan {
-  if (!sy.cfg.profiles.supervise) throw new SwitchyardError("usage", "a comparison needs the supervise task type (profiles.supervise) for its team runs");
+export function planComparison(sy: MeritRouter, input: { evalIds?: string[]; goals?: unknown; teamFactor?: number; teamRequests?: number } = {}): ComparisonPlan {
+  if (!sy.cfg.profiles.supervise) throw new MeritRouterError("usage", "a comparison needs the supervise task type (profiles.supervise) for its team runs");
   const factor = input.teamFactor ?? DEFAULT_TEAM_FACTOR;
-  if (!(factor >= 1 && factor <= 20)) throw new SwitchyardError("usage", `the team factor must be between 1 and 20, got ${factor}`);
+  if (!(factor >= 1 && factor <= 20)) throw new MeritRouterError("usage", `the team factor must be between 1 and 20, got ${factor}`);
   const teamCap = (single: number, own?: number) => own ?? input.teamRequests ?? single * factor;
   const notes: string[] = [];
   let goals: ComparisonGoal[];
   if (input.goals !== undefined) {
     const parsed = ComparisonGoalsSchema.safeParse(input.goals);
-    if (!parsed.success) throw new SwitchyardError("usage", `invalid goals: ${parsed.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ")}`);
+    if (!parsed.success) throw new MeritRouterError("usage", `invalid goals: ${parsed.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ")}`);
     const ids = parsed.data.map((g) => g.id);
     const dup = ids.find((id, i) => ids.indexOf(id) !== i);
-    if (dup) throw new SwitchyardError("usage", `goal id ${dup} is used more than once`);
+    if (dup) throw new MeritRouterError("usage", `goal id ${dup} is used more than once`);
     goals = parsed.data.map((g) => {
       // A supplied goal runs in the primary project (see runOne): its repositories are the ones it can use.
-      if (!sy.projects.primary.repositoryPaths[g.repository]) throw new SwitchyardError("usage", `goal ${g.id}: unknown repository ${g.repository} in project ${sy.projects.primary.project.slug}`);
-      if (!sy.cfg.profiles[g.profile]) throw new SwitchyardError("usage", `goal ${g.id}: the ${g.profile} task type is not configured`);
+      if (!sy.projects.primary.repositoryPaths[g.repository]) throw new MeritRouterError("usage", `goal ${g.id}: unknown repository ${g.repository} in project ${sy.projects.primary.project.slug}`);
+      if (!sy.cfg.profiles[g.profile]) throw new MeritRouterError("usage", `goal ${g.id}: the ${g.profile} task type is not configured`);
       const single = g.singleRequests ?? DEFAULT_SINGLE_REQUESTS;
       return { id: g.id, source: "supplied", goal: g.goal, profile: g.profile, acceptanceCriteria: g.acceptanceCriteria, allowedPaths: g.allowedPaths ?? null, checks: g.checks ?? [], repository: g.repository, fixture: null, singleRequests: single, teamRequests: teamCap(single, g.teamRequests) };
     });
@@ -123,7 +123,7 @@ export function planComparison(sy: Switchyard, input: { evalIds?: string[]; goal
     const suite = loadSuite(sy.qualifier.suiteDir);
     const evals = suite.evals.filter((e) => e.family !== "review" && (!input.evalIds || input.evalIds.includes(e.id)));
     const unknown = (input.evalIds ?? []).filter((id) => !suite.evals.some((e) => e.id === id && e.family !== "review"));
-    if (unknown.length) throw new SwitchyardError("usage", `unknown or review-only evals: ${unknown.join(", ")}`);
+    if (unknown.length) throw new MeritRouterError("usage", `unknown or review-only evals: ${unknown.join(", ")}`);
     goals = evals
       .filter((e) => {
         const ok = Boolean(sy.cfg.profiles[e.profile]);
@@ -145,7 +145,7 @@ export function planComparison(sy: Switchyard, input: { evalIds?: string[]; goal
       }));
     notes.push("eval goals run on fresh copies of their fixtures; results are not graded with the hidden tests");
   }
-  if (!goals.length) throw new SwitchyardError("usage", "no goals to compare");
+  if (!goals.length) throw new MeritRouterError("usage", "no goals to compare");
   notes.push(
     "a team run's cap covers its supervisor and every task under it; the runner checks it every half second and cancels the team once it is reached, so requests made in that window can exceed it slightly",
     "runs go one after another (team, then single) so they do not compete for capacity",
@@ -215,7 +215,7 @@ export interface ComparisonRecord {
 }
 
 /** Recorded comparisons, newest first. */
-export function comparisons(sy: Switchyard, opts: { limit?: number } = {}): ComparisonRecord[] {
+export function comparisons(sy: MeritRouter, opts: { limit?: number } = {}): ComparisonRecord[] {
   const rows = sy.db
     .prepare("SELECT ts, type, data_json FROM events WHERE task_id IS NULL AND type IN (?, ?, ?) ORDER BY id")
     .all(COMPARISON_STARTED, COMPARISON_RUN, COMPARISON_FINISHED) as Array<{ ts: number; type: string; data_json: string | null }>;
@@ -243,7 +243,7 @@ export function comparisons(sy: Switchyard, opts: { limit?: number } = {}): Comp
   return [...byId.values()].reverse().slice(0, opts.limit ?? 20);
 }
 
-export function comparison(sy: Switchyard, id: string): ComparisonRecord | null {
+export function comparison(sy: MeritRouter, id: string): ComparisonRecord | null {
   return comparisons(sy, { limit: 10_000 }).find((c) => c.id === id) ?? null;
 }
 
@@ -270,7 +270,7 @@ function snapshot(m: JobMetrics): MetricsSnapshot {
   };
 }
 
-function servedEndpoints(sy: Switchyard, m: JobMetrics): string[] {
+function servedEndpoints(sy: MeritRouter, m: JobMetrics): string[] {
   const ids = [m.jobId, ...m.agents.map((a) => a.taskId)];
   const rows = sy.db
     .prepare(`SELECT DISTINCT r.served_endpoint_id AS e FROM model_requests r JOIN request_charges c ON c.request_id = r.id WHERE c.task_id IN (${ids.map(() => "?").join(",")}) AND r.served_endpoint_id IS NOT NULL ORDER BY e`)
@@ -293,10 +293,10 @@ export interface RunComparisonOptions {
  * worker in-process). Refuses when the plan no longer fits today's allocation. Each goal runs as
  * a team job, then as a single agent; both metric sets are recorded as the runs finish.
  */
-export async function runComparison(sy: Switchyard, plan: ComparisonPlan, opts: RunComparisonOptions = {}): Promise<ComparisonRecord> {
+export async function runComparison(sy: MeritRouter, plan: ComparisonPlan, opts: RunComparisonOptions = {}): Promise<ComparisonRecord> {
   const b = budgetState(sy);
   if (plan.plannedRequests > b.remaining) {
-    throw new SwitchyardError("budget", `the comparison could use up to ${plan.plannedRequests} requests but only ${b.remaining} of today's qualification allocation (${b.dailyAllocation}) remain; compare fewer goals or lower the caps`);
+    throw new MeritRouterError("budget", `the comparison could use up to ${plan.plannedRequests} requests but only ${b.remaining} of today's qualification allocation (${b.dailyAllocation}) remain; compare fewer goals or lower the caps`);
   }
   const id = newId("cmp");
   sy.tasks.event(null, COMPARISON_STARTED, { id, plannedRequests: plan.plannedRequests, goals: plan.goals.map((g) => ({ id: g.id, goal: g.goal, source: g.source, singleRequests: g.singleRequests, teamRequests: g.teamRequests })) });
@@ -321,7 +321,7 @@ export async function runComparison(sy: Switchyard, plan: ComparisonPlan, opts: 
   return comparison(sy, id)!;
 }
 
-async function repositoryFor(sy: Switchyard, comparisonId: string, g: ComparisonGoal, kind: "team" | "single"): Promise<string> {
+async function repositoryFor(sy: MeritRouter, comparisonId: string, g: ComparisonGoal, kind: "team" | "single"): Promise<string> {
   if (g.repository) return g.repository;
   const dir = path.join(sy.cfg.storageDir, "comparisons", comparisonId, `${g.id}-${kind}`);
   mkdirSync(dir, { recursive: true });
@@ -332,7 +332,7 @@ async function repositoryFor(sy: Switchyard, comparisonId: string, g: Comparison
   return alias;
 }
 
-async function runOne(sy: Switchyard, comparisonId: string, g: ComparisonGoal, kind: "team" | "single", timeoutMs: number, opts: RunComparisonOptions): Promise<ComparisonRunRecord> {
+async function runOne(sy: MeritRouter, comparisonId: string, g: ComparisonGoal, kind: "team" | "single", timeoutMs: number, opts: RunComparisonOptions): Promise<ComparisonRunRecord> {
   const alias = await repositoryFor(sy, comparisonId, g, kind);
   const cap = kind === "team" ? g.teamRequests : g.singleRequests;
   const label = `cmp-${g.id}-${kind}`.slice(0, 41);

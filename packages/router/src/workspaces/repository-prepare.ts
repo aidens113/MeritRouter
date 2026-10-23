@@ -11,7 +11,7 @@ import { git, GitError } from "./git.js";
 // git. A missing folder is created and initialised with an empty first commit; a plain folder is
 // initialised (with a default .gitignore when it has none) and its files committed as a first
 // snapshot; a repository without commits gets that snapshot; a repository with history is never
-// touched. What is left as an error is what SwitchYard cannot fix itself: git not installed, a
+// touched. What is left as an error is what MeritRouter cannot fix itself: git not installed, a
 // path that is a file, and permissions. Two folders are refused rather than prepared: one holding
 // files another git repository tracks (a monorepo package: a nested repository would split them
 // off), and a drive root or the home folder (a first snapshot would commit everything in it).
@@ -32,9 +32,9 @@ export type PrepareResult =
 export const DEFAULT_GITIGNORE = ["node_modules/", ".env", ".env.*", "*.log", "dist/", "build/", ".venv/", "__pycache__/", ".DS_Store", ""].join("\n");
 
 /** The commit identity preparation uses, so it works when the user has no git identity configured. */
-const IDENTITY = ["-c", "user.name=SwitchYard", "-c", "user.email=switchyard@localhost", "-c", "commit.gpgsign=false"];
-const CREATED_MESSAGE = "SwitchYard: initial commit";
-const SNAPSHOT_MESSAGE = "SwitchYard: initial snapshot";
+const IDENTITY = ["-c", "user.name=MeritRouter", "-c", "user.email=meritrouter@localhost", "-c", "commit.gpgsign=false"];
+const CREATED_MESSAGE = "MeritRouter: initial commit";
+const SNAPSHOT_MESSAGE = "MeritRouter: initial snapshot";
 
 /**
  * What is at a repository folder, from the file system alone (no git process): `missing`,
@@ -86,17 +86,17 @@ const isPermission = (code: unknown, text = "") => code === "EACCES" || code ===
 function failure(dir: string, error: PrepareErrorKind, detail = ""): PrepareResult {
   const message =
     error === "git_missing"
-      ? "git is not installed or not on PATH. Install git (https://git-scm.com/downloads) and restart SwitchYard; the folder is set up automatically after that."
+      ? "git is not installed or not on PATH. Install git (https://git-scm.com/downloads) and restart MeritRouter; the folder is set up automatically after that."
       : error === "not_a_folder"
         ? `${dir} is a file, not a folder. Choose a folder for this repository (a folder that does not exist yet is created).`
         : error === "inside_repository"
           ? `${dir} holds files tracked by the git repository ${detail}. Use ${detail} as the repository, or choose a folder outside it.`
           : error === "too_broad"
-            ? `${dir} is ${detail}; SwitchYard will not commit everything in it. Choose the project's own folder.`
+            ? `${dir} is ${detail}; MeritRouter will not commit everything in it. Choose the project's own folder.`
             : error === "permission"
-          ? `SwitchYard cannot write to ${dir} (permission denied). Give your user account write access to it, or choose a folder you own.`
+          ? `MeritRouter cannot write to ${dir} (permission denied). Give your user account write access to it, or choose a folder you own.`
           : error === "busy"
-            ? `Another SwitchYard process is still setting up ${dir}. Try again in a minute.`
+            ? `Another MeritRouter process is still setting up ${dir}. Try again in a minute.`
             : `git could not set up ${dir}: ${detail || "unknown error"}`;
   return { ok: false, path: dir, error, message };
 }
@@ -104,11 +104,11 @@ function failure(dir: string, error: PrepareErrorKind, detail = ""): PrepareResu
 function done(dir: string, action: PrepareAction, gitignore: boolean): PrepareResult {
   const message =
     action === "created"
-      ? `SwitchYard created ${dir} and set up git`
+      ? `MeritRouter created ${dir} and set up git`
       : action === "initialized"
-        ? `SwitchYard set up git in ${dir}${gitignore ? ", added a default .gitignore," : ""} and committed a first snapshot`
+        ? `MeritRouter set up git in ${dir}${gitignore ? ", added a default .gitignore," : ""} and committed a first snapshot`
         : action === "snapshot"
-          ? `SwitchYard committed a first snapshot of ${dir} (the repository had no commits)`
+          ? `MeritRouter committed a first snapshot of ${dir} (the repository had no commits)`
           : `${dir} is a git repository`;
   return { ok: true, path: dir, action, gitignore, message };
 }
@@ -165,6 +165,7 @@ const LOCK_WAIT_MS = 60_000;
  */
 async function withFolderLock<T>(dir: string, fn: () => Promise<T>): Promise<T | null> {
   const key = process.platform === "win32" ? dir.toLowerCase() : dir;
+  // Stable cross-version exclusion while preparing an explicitly selected existing repository.
   const lock = path.join(tmpdir(), `switchyard-prepare-${createHash("sha1").update(key).digest("hex").slice(0, 16)}.lock`);
   const deadline = Date.now() + LOCK_WAIT_MS;
   for (;;) {
@@ -197,7 +198,7 @@ async function withFolderLock<T>(dir: string, fn: () => Promise<T>): Promise<T |
 /**
  * Make `dir` (an absolute path) a git repository with at least one commit. Idempotent: a
  * repository with history is never touched, and two callers preparing the same folder at once
- * (in one process or two) produce one first commit. Commits use SwitchYard's own identity.
+ * (in one process or two) produce one first commit. Commits use MeritRouter's own identity.
  */
 export async function prepareRepository(dir: string): Promise<PrepareResult> {
   const abs = path.resolve(dir);
@@ -249,7 +250,7 @@ async function prepareLocked(dir: string): Promise<PrepareResult> {
       }
     } else if (await hasCommit(dir)) return done(dir, "unchanged", false);
     if (!created) await git(dir, ["add", "-A"]);
-    // Re-check under the commit: a commit made meanwhile (outside SwitchYard) wins.
+    // Re-check under the commit: a commit made meanwhile (outside MeritRouter) wins.
     if (await hasCommit(dir)) return done(dir, "unchanged", false);
     await git(dir, [...IDENTITY, "commit", "-q", "--allow-empty", "-m", created ? CREATED_MESSAGE : SNAPSHOT_MESSAGE]);
   } catch (err) {

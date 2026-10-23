@@ -18,7 +18,7 @@ const Result = z.object({ exitCode: z.number().int().nullable(), stdout: z.strin
 // The wrapper stays alive after child exit, so recovery can still prove its process tree.
 const HOST = `// ${HOST_MARKER}
 const fs=require('node:fs');const{spawn}=require('node:child_process');
-const cfg=JSON.parse(process.env.SWITCHYARD_TASK_COMMAND);delete process.env.SWITCHYARD_TASK_COMMAND;
+const cfg=JSON.parse(process.env.MERITROUTER_TASK_COMMAND);delete process.env.MERITROUTER_TASK_COMMAND;
 let started=false;let child;let out='';let err='';
 const timer=setInterval(()=>{if(started||!fs.existsSync(cfg.grant))return;started=true;
 child=spawn(cfg.command,[],{shell:true,cwd:cfg.cwd,env:process.env,windowsHide:true,stdio:['ignore','pipe','pipe']});
@@ -41,7 +41,7 @@ export class TaskAttemptProcesses {
     mkdirSync(directory, { recursive: true });
     const row: TaskProcessRecord = { id, lab_id: lab.id, attempt_id: attemptId, kind, logical_name: name, token, pid: null, directory, state: "intent", created_at: now, updated_at: now };
     this.db.prepare("INSERT INTO lab_attempt_processes(id,lab_id,attempt_id,kind,logical_name,token,pid,directory,state,created_at,updated_at) VALUES(?,?,?,?,?,?,NULL,?,'intent',?,?)").run(id, lab.id, attemptId, kind, name, token, directory, now, now);
-    const child = spawn(process.execPath, ["-e", HOST, "--", `--sy-lab-token=${token}`], { cwd, env: minimalEnv({ ...env, SWITCHYARD_TASK_COMMAND: JSON.stringify({ command, cwd, grant: path.join(directory, "grant"), result: path.join(directory, "result.json") }) }), detached: true, windowsHide: true, stdio: "ignore" });
+    const child = spawn(process.execPath, ["-e", HOST, "--", `--sy-lab-token=${token}`], { cwd, env: minimalEnv({ ...env, MERITROUTER_TASK_COMMAND: JSON.stringify({ command, cwd, grant: path.join(directory, "grant"), result: path.join(directory, "result.json") }) }), detached: true, windowsHide: true, stdio: "ignore" });
     await new Promise<void>((resolve, reject) => {
       child.once("spawn", resolve);
       child.once("error", reject);

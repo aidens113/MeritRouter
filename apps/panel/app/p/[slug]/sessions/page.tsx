@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ScrollText } from "lucide-react";
-import { insights, SESSION_STATUSES, type SessionStatus } from "switchyard-router";
+import { insights, SESSION_STATUSES, type SessionStatus } from "meritrouter";
 import { getSy } from "@/lib/sy";
 import { project } from "@/lib/project";
 import { jobHref, projectBase, sessionHref, taskHref } from "@/lib/links";
@@ -108,7 +108,7 @@ export default async function SessionsPage({ params, searchParams }: { params: P
               "Clear a filter to see more."
             ) : (
               <>
-                Sessions are recorded as workers run tasks: start one through the MCP tools, <Mono>switchyard submit</Mono>, or a job.
+                Sessions are recorded as workers run tasks: start one through the MCP tools, <Mono>meritrouter submit</Mono>, or a job.
               </>
             )}
           </EmptyState>

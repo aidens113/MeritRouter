@@ -1,4 +1,4 @@
-import type { insights } from "switchyard-router";
+import type { insights } from "meritrouter";
 import { itemBase } from "@/lib/links";
 import { dateTime, humanize, num } from "@/lib/format";
 import { Badge, Card, CardHeader, EmptyState, Stat } from "./ui";

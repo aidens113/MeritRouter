@@ -2,13 +2,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import type { ChatRequest } from "../src/gateway/types.js";
 import { blame } from "../src/attribution/index.js";
 import { baseConfig, goodOutput, makeEnv, open, openWithTestSupervisor, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => {
   await sy?.close();
   sy = undefined;
@@ -61,7 +61,7 @@ describe("standalone supervisor", () => {
     const actions = sy.db.prepare("SELECT value_json FROM worker_action_requests WHERE project_id=?").all(sy.tasks.projectOf(job.taskId)) as Array<{ value_json: string }>;
     expect(actions.length).toBeGreaterThanOrEqual(2);
     for (const row of actions) expect(JSON.parse(row.value_json)).toMatchObject({ status: "completed", decidedBy: "operator", action: { command: check } });
-    expect(r.summary).toMatch(/git merge --no-ff switchyard\/job-/);
+    expect(r.summary).toMatch(/git merge --no-ff meritrouter\/job-/);
     // Status reports the cap the executor applied: a supervisor's profile cap, not its tier's.
     const st = sy.getStatus([job.taskId])[0] as { tier: "T1" | "T2" | "T3"; maxModelRequests: number };
     expect(st.maxModelRequests).toBe(sy.cfg.profiles.supervise!.max_model_requests);
@@ -73,7 +73,7 @@ describe("standalone supervisor", () => {
     expect(toolOutputs.filter((o) => o.startsWith("error:"))).toEqual([]);
 
     // The job branch exists in the source repository and the subtract lines are attributed to the worker.
-    const branch = `switchyard/job-${job.taskId}`;
+    const branch = `meritrouter/job-${job.taskId}`;
     // The integration worktree is recorded in the job's session (job_state is no longer written).
     const integration = sy.sessions.forTask(job.taskId).at(-1)!.workspace!.repos[0]!.worktree;
     expect(sy.db.prepare("SELECT 1 FROM job_state WHERE task_id = ?").get(job.taskId)).toBeUndefined();
@@ -115,7 +115,7 @@ describe("standalone supervisor", () => {
     const client = new ScriptedClient((req) => (isSupervisor(req) ? reply(null, { ...servedFor(sy!, req), toolCalls: script[turns(req)]!() }) : worker(req)));
     sy = open(env, client, { worker: true });
     const job = await sy.startJob({ goal: "Two overlapping edits", repositories: ["core"] });
-    let q: ReturnType<Switchyard["questions"]> = [];
+    let q: ReturnType<MeritRouter["questions"]> = [];
     for (let i = 0; i < 100 && !q.length; i++) {
       await new Promise((res) => setTimeout(res, 100));
       q = sy.questions();

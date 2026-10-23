@@ -2,7 +2,7 @@ import { constants, copyFileSync, existsSync, mkdirSync, readFileSync, writeFile
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
-import { SwitchyardError } from "../core/errors.js";
+import { MeritRouterError } from "../core/errors.js";
 import { parseConfig } from "../config/load.js";
 import { initConfigText } from "./projects.js";
 
@@ -22,7 +22,7 @@ export function initializeConfig(opts: InitOptions): string[] {
   const examples = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../examples");
   const preset = opts.preset ?? "claude-code";
   if (!["claude-code", "standalone-free", "standalone-hybrid", "standalone-paid"].includes(preset)) {
-    throw new SwitchyardError("usage", `unknown preset ${preset}; choose claude-code, standalone-free, standalone-hybrid, or standalone-paid`);
+    throw new MeritRouterError("usage", `unknown preset ${preset}; choose claude-code, standalone-free, standalone-hybrid, or standalone-paid`);
   }
   const dir = path.dirname(opts.configPath);
   const messages: string[] = [];
@@ -32,7 +32,7 @@ export function initializeConfig(opts: InitOptions): string[] {
     if (opts.setup) {
       const doc = YAML.parseDocument(text);
       if (!opts.repositories || !Object.keys(opts.repositories).length) doc.setIn(["projects", opts.project, "repositories"], {});
-      doc.setIn(["brain", "path"], ".switchyard/brain");
+      doc.setIn(["brain", "path"], ".meritrouter/brain");
       if (opts.port !== undefined) doc.setIn(["panel", "port"], opts.port);
       text = doc.toString();
     }

@@ -11,22 +11,22 @@ import path from "node:path";
 import net from "node:net";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const tarball = path.resolve(process.argv[2] || "switchyard-router-0.1.0.tgz");
+const tarball = path.resolve(process.argv[2] || "meritrouter-0.1.0.tgz");
 assert(existsSync(tarball), `missing tarball ${tarball}`);
 const manager = process.argv[3] || process.env.npm_execpath;
 assert(manager && existsSync(manager), "pass the pnpm CLI script as the third argument, or run through a package script");
 const reuse = process.argv[4];
-const root = reuse ? path.resolve(reuse) : mkdtempSync(path.join(tmpdir(), "switchyard-package-install-"));
-assert(path.dirname(root) === path.resolve(tmpdir()) && path.basename(root).startsWith("switchyard-package-install-"), "not an owned smoke install directory");
+const root = reuse ? path.resolve(reuse) : mkdtempSync(path.join(tmpdir(), "meritrouter-package-install-"));
+assert(path.dirname(root) === path.resolve(tmpdir()) && path.basename(root).startsWith("meritrouter-package-install-"), "not an owned smoke install directory");
 if (reuse) {
   const integrity = "sha512-" + createHash("sha512").update(readFileSync(tarball)).digest("base64");
   assert(readFileSync(path.join(root, "pnpm-lock.yaml"), "utf8").includes(integrity), "reuse install does not match this tarball");
 }
-const env = { ...process.env, SWITCHYARD_HOME: path.join(root, "application"), SWITCHYARD_PACKAGE_FORBID_ROOT: path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..") };
+const env = { ...process.env, MERITROUTER_HOME: path.join(root, "application"), MERITROUTER_PACKAGE_FORBID_ROOT: path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..") };
 const guard = path.join(root, "forbid-checkout.cjs");
 writeFileSync(guard, `
   const fs = require("node:fs"), path = require("node:path"), url = require("node:url");
-  const root = path.resolve(process.env.SWITCHYARD_PACKAGE_FORBID_ROOT).toLowerCase();
+  const root = path.resolve(process.env.MERITROUTER_PACKAGE_FORBID_ROOT).toLowerCase();
   function check(value) {
     if (value instanceof URL && value.protocol === "file:") value = url.fileURLToPath(value);
     if (Buffer.isBuffer(value)) value = value.toString();
@@ -52,13 +52,13 @@ writeFileSync(guard, `
   }
   require("node:module").syncBuiltinESMExports();
 `);
-for (const key of ["SWITCHYARD_CONFIG", "SWITCHYARD_PANEL_DIR", "SWITCHYARD_PROJECT", "NODE_PATH", "NODE_OPTIONS"]) delete env[key];
-writeFileSync(path.join(root, "package.json"), JSON.stringify({ private: true, dependencies: { "switchyard-router": `file:${tarball.replaceAll("\\", "/")}` }, pnpm: { onlyBuiltDependencies: ["better-sqlite3"] } }, null, 2));
+for (const key of ["MERITROUTER_CONFIG", "MERITROUTER_PANEL_DIR", "MERITROUTER_PROJECT", "NODE_PATH", "NODE_OPTIONS"]) delete env[key];
+writeFileSync(path.join(root, "package.json"), JSON.stringify({ private: true, dependencies: { "meritrouter": `file:${tarball.replaceAll("\\", "/")}` }, pnpm: { onlyBuiltDependencies: ["better-sqlite3"] } }, null, 2));
 console.log(`Temporary install: ${root}`);
 // pnpm's default store is drive-local on Windows; reuse this checkout's cache across drives.
 const storeDirectory = path.dirname(execFileSync(process.execPath, [manager, "store", "path"], { env, encoding: "utf8" }).trim());
 if (!reuse) execFileSync(process.execPath, [manager, "install", "--offline", "--prod", "--store-dir", storeDirectory], { cwd: root, env, stdio: "inherit" });
-const installed = realpathSync(path.join(root, "node_modules", "switchyard-router"));
+const installed = realpathSync(path.join(root, "node_modules", "meritrouter"));
 assert(installed.startsWith(root + path.sep), "package resolves outside the temporary install");
 const requireInstalled = createRequire(path.join(installed, "package.json"));
 const sqlite = requireInstalled("better-sqlite3");
@@ -70,13 +70,13 @@ const cli = path.join(installed, "dist", "cli.js");
 const run = (...args) => execFileSync(process.execPath, ["--require", guard, cli, ...args], { cwd: root, env, encoding: "utf8", timeout: 30_000 });
 assert.match(run("--help"), /setup \[dir\]/);
 run("init", path.join(root, "local-init"));
-assert(existsSync(path.join(root, "local-init", "switchyard.config.yaml")));
+assert(existsSync(path.join(root, "local-init", "meritrouter.config.yaml")));
 const listener = net.createServer();
 await new Promise(resolve => listener.listen(0, "127.0.0.1", resolve));
 const port = listener.address().port;
 await new Promise(resolve => listener.close(resolve));
 run("setup", "--no-panel", "--port", String(port), "--project", "package-smoke");
-const cfg = path.join(env.SWITCHYARD_HOME, "switchyard.config.yaml");
+const cfg = path.join(env.MERITROUTER_HOME, "meritrouter.config.yaml");
 const yaml = requireInstalled("yaml");
 const raw = yaml.parse(readFileSync(cfg, "utf8"));
 raw.panel.auto_start = false;
@@ -98,7 +98,7 @@ const { findPanelApp } = await import(pathToFileURL(path.join(installed, "dist",
 const app = findPanelApp();
 assert(!("problem" in app), app.problem);
 assert.equal(realpathSync(app.dir), path.join(realpathSync(installed), "panel"));
-const panel = spawn(process.execPath, ["--require", guard, app.nextBin, "start", "-H", "127.0.0.1", "-p", String(port)], { cwd: app.dir, env: { ...env, SWITCHYARD_CONFIG: cfg, ...(app.runtimeModules ? { NODE_PATH: app.runtimeModules } : {}) }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+const panel = spawn(process.execPath, ["--require", guard, app.nextBin, "start", "-H", "127.0.0.1", "-p", String(port)], { cwd: app.dir, env: { ...env, MERITROUTER_CONFIG: cfg, ...(app.runtimeModules ? { NODE_PATH: app.runtimeModules } : {}) }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
 let output = "";
 panel.stdout.on("data", chunk => { output += chunk; });
 panel.stderr.on("data", chunk => { output += chunk; });
@@ -138,7 +138,7 @@ try {
   const response = await fetch(url + "/api/projects");
   assert.equal(response.status, 200);
   assert.match(await response.text(), /package-smoke/);
-  assert(!readFileSync(path.join(env.SWITCHYARD_HOME, ".switchyard", "logs", "panel.log"), "utf8").includes("PACKAGING_CHECKOUT_ACCESS"));
+  assert(!readFileSync(path.join(env.MERITROUTER_HOME, ".meritrouter", "logs", "panel.log"), "utf8").includes("PACKAGING_CHECKOUT_ACCESS"));
   console.log(`Installed setup launched the bundled panel at ${url}`);
 } finally {
   if (launched) {

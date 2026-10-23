@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import type { Switchyard, SwitchyardOptions } from "../src/core/service.js";
+import type { MeritRouter, MeritRouterOptions } from "../src/core/service.js";
 import type { ChatMessage, ChatRequest } from "../src/gateway/types.js";
 import type { SessionEvent, SessionEventOf } from "../src/sessions/events.js";
 import type { SessionRecord } from "../src/sessions/store.js";
@@ -10,14 +10,14 @@ import { FAULT_ENV, resetFaults, simulatedCrashCount } from "../src/core/faults.
 import { baseConfig, goodOutput, makeEnv, open, openWithTestSupervisor, reply, ScriptedClient, servedFor, summarizeTask, type Env, type ScriptedRequest } from "./helpers.js";
 
 /**
- * Fault injection (S2): a run dies at a named point (SWITCHYARD_FAULT_AT), leaving its session
- * running and its lease held as a crashed process would. A fresh Switchyard on the same storage,
+ * Fault injection (S2): a run dies at a named point (MERITROUTER_FAULT_AT), leaving its session
+ * running and its lease held as a crashed process would. A fresh MeritRouter on the same storage,
  * with the clock past the lease, must finish the task without repeating edits, delegations, or
  * paid charges.
  */
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 beforeEach(() => resetFaults());
 afterEach(async () => {
   delete process.env[FAULT_ENV];
@@ -58,7 +58,7 @@ function runs(taskId: string): SessionRecord[] {
  * process. Checks the crash left the task running and its session running (as a dead process
  * would), then opens a fresh worker whose clock is past the lease, so recovery takes over.
  */
-async function crashThenRecover(o: { client: ScriptedClient; fault: string; submit: (s: Switchyard) => Promise<string>; opts?: SwitchyardOptions; operator?: (s: Switchyard, taskId: string) => void }): Promise<string> {
+async function crashThenRecover(o: { client: ScriptedClient; fault: string; submit: (s: MeritRouter) => Promise<string>; opts?: MeritRouterOptions; operator?: (s: MeritRouter, taskId: string) => void }): Promise<string> {
   const before = simulatedCrashCount();
   process.env[FAULT_ENV] = o.fault;
   // Explicit fixture operator approves only this exact declared native/supervisor check.

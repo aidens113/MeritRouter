@@ -9,19 +9,19 @@ import { fileURLToPath } from "node:url";
 import type { ResolvedConfig } from "../config/load.js";
 import { logsDirFor } from "./daemon.js";
 
-// The web panel stays reachable while agents use SwitchYard: the MCP server and `switchyard
+// The web panel stays reachable while agents use MeritRouter: the MCP server and `meritrouter
 // worker` start it when nothing answers on `panel.port` (`panel.auto_start`), and the MCP server
 // checks again every minute. It runs as its own detached process (`next start` on 127.0.0.1), so
 // it outlives the session that started it; two processes starting it at once is harmless (the
 // second cannot bind the port and exits). Its output goes to `<storage>/logs/panel.log`.
 //
 // Turning the panel off (its power button) leaves a marker, `<storage>/panel.stopped`: idle
-// background checks then leave it off. Agents using SwitchYard again bring it back on their own
-// (`revivePanel`: every MCP tool call, a new MCP session, `switchyard run` and `submit`), as does an
-// explicit start (`force`: `switchyard panel`, the MCP `panel` tool).
+// background checks then leave it off. Agents using MeritRouter again bring it back on their own
+// (`revivePanel`: every MCP tool call, a new MCP session, `meritrouter run` and `submit`), as does an
+// explicit start (`force`: `meritrouter panel`, the MCP `panel` tool).
 
 /** Overrides where the built panel app lives (default: `apps/panel` of the checkout this package runs from). */
-export const PANEL_DIR_ENV = "SWITCHYARD_PANEL_DIR";
+export const PANEL_DIR_ENV = "MERITROUTER_PANEL_DIR";
 /** How long a start waits for the panel to answer before reporting it as still starting. */
 const START_WAIT_MS = 20_000;
 
@@ -35,7 +35,7 @@ export const REVIVE_EVERY_MS = 30_000;
 let lastRevive = 0;
 
 /**
- * Agents are using SwitchYard: bring the panel back if nothing answers, even one the user turned
+ * Agents are using MeritRouter: bring the panel back if nothing answers, even one the user turned
  * off (the marker is cleared), unless `panel.auto_start` is off. Throttled per process, never
  * throws, and never blocks the caller (the start runs in the background).
  */
@@ -59,7 +59,7 @@ export function markPanelStopped(cfg: Pick<ResolvedConfig, "storageDir">, by = "
 /**
  * The power button: record the stop (`markPanelStopped`), then end this process once the response
  * has had time to leave (`exit` after `delayMs`). Agents keep running; a new agent session or
- * `switchyard panel` starts the panel again.
+ * `meritrouter panel` starts the panel again.
  */
 export function turnPanelOff(cfg: Pick<ResolvedConfig, "storageDir">, opts: { delayMs?: number; exit?: () => void } = {}): { stoppedAt: string; marker: string } {
   markPanelStopped(cfg);
@@ -94,12 +94,13 @@ export function panelListening(port: number, timeoutMs = 800): Promise<boolean> 
 }
 
 /** The built panel (a production build and its `next` binary), or why it cannot start. */
-export function findPanelApp(): { dir: string; nextBin: string; runtimeModules?: string } | { problem: string } {
-  const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-  const bundled = path.join(packageRoot, "panel");
+export function findPanelApp(packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")): { dir: string; nextBin: string; runtimeModules?: string } | { problem: string } {
+  const bundled = path.join(packageRoot, "bundled-panel");
   const checkout = path.resolve(packageRoot, "../../apps/panel");
-  const dir = process.env[PANEL_DIR_ENV] || (existsSync(path.join(bundled, "package.json")) ? bundled : checkout);
-  if (!existsSync(path.join(dir, "package.json"))) return { problem: `no panel app at ${dir} (reinstall switchyard-router, or set ${PANEL_DIR_ENV} to a built checkout panel)` };
+  // A workspace runs its real app; generated package staging may be replaced during prepack.
+  // An explicit operator override still wins. Installed packages have no checkout app.
+  const dir = process.env[PANEL_DIR_ENV] || (existsSync(path.join(checkout, "package.json")) ? checkout : bundled);
+  if (!existsSync(path.join(dir, "package.json"))) return { problem: `no panel app at ${dir} (reinstall meritrouter, or set ${PANEL_DIR_ENV} to a built checkout panel)` };
   let nextBin: string;
   try {
     nextBin = dir === bundled || existsSync(path.join(dir, "runtime-modules"))
@@ -107,7 +108,7 @@ export function findPanelApp(): { dir: string; nextBin: string; runtimeModules?:
       : path.join(dir, "node_modules", "next", "dist", "bin", "next");
     if (!existsSync(nextBin)) throw new Error("missing Next runtime");
   } catch {
-    return { problem: `the panel's dependencies are not installed in ${dir}: reinstall switchyard-router (checkout: pnpm install at the repository root)` };
+    return { problem: `the panel's dependencies are not installed in ${dir}: reinstall meritrouter (checkout: pnpm install at the repository root)` };
   }
   if (!existsSync(path.join(dir, ".next", "BUILD_ID"))) return { problem: `the panel is not built: run pnpm -r build at the repository root` };
   const runtimeModules = path.join(dir, "runtime-modules");
@@ -188,7 +189,7 @@ export function panelBuildStale(panelDir: string, routerDir = routerBuildDir()):
   if (!existsSync(id)) return null;
   const fingerprint = path.join(panelDir, ".next", PANEL_ROUTER_FINGERPRINT);
   if (existsSync(fingerprint)) {
-    const repair = "reinstall switchyard-router, or rebuild the router and packaged panel together";
+    const repair = "reinstall meritrouter, or rebuild the router and packaged panel together";
     try {
       const metadata = lstatSync(fingerprint), build = lstatSync(id);
       if (!metadata.isFile() || metadata.size > 4096 || !build.isFile() || build.size > 4096) return `the panel's router build fingerprint is invalid: ${repair}`;
@@ -204,10 +205,10 @@ export function panelBuildStale(panelDir: string, routerDir = routerBuildDir()):
   const router = newestFileMtime(routerDir);
   if (router <= built) return null;
   const at = (ms: number) => new Date(ms).toISOString().replace("T", " ").slice(0, 19);
-  return `the panel build (${at(built)} UTC) is older than the router build (${at(router)} UTC) and runs the older router code: rebuild it with pnpm -r build (or pnpm --filter switchyard-panel build), then restart the panel`;
+  return `the panel build (${at(built)} UTC) is older than the router build (${at(router)} UTC) and runs the older router code: rebuild it with pnpm -r build (or pnpm --filter meritrouter-panel build), then restart the panel`;
 }
 
-/** For `switchyard doctor`: whether the panel is built, and built after the router. */
+/** For `meritrouter doctor`: whether the panel is built, and built after the router. */
 export function panelBuildCheck(): { ok: boolean; detail: string } {
   const app = findPanelApp();
   if ("problem" in app) return { ok: false, detail: app.problem };
@@ -231,8 +232,8 @@ export async function ensurePanel(cfg: ResolvedConfig, opts: { waitMs?: number; 
   if (await panelListening(cfg.panel.port)) return warned({ state: "running", url, detail: `the panel is running at ${url}` });
   // resume (a new agent session): forget a power-off, but keep panel.auto_start's say.
   if (opts.force || opts.resume) rmSync(panelStopFile(cfg), { force: true });
-  else if (existsSync(panelStopFile(cfg))) return { state: "stopped", url, detail: `the panel was turned off from its power button; switchyard panel or a new agent session starts it again` };
-  if (!cfg.panel.auto_start && !opts.force) return { state: "disabled", url, detail: `nothing answers at ${url} and panel.auto_start is off: start it with switchyard panel` };
+  else if (existsSync(panelStopFile(cfg))) return { state: "stopped", url, detail: `the panel was turned off from its power button; meritrouter panel or a new agent session starts it again` };
+  if (!cfg.panel.auto_start && !opts.force) return { state: "disabled", url, detail: `nothing answers at ${url} and panel.auto_start is off: start it with meritrouter panel` };
   const app = findPanelApp();
   if ("problem" in app) return { state: "unavailable", url, detail: `the panel cannot start: ${app.problem}` };
   let logFile: string;
@@ -249,8 +250,8 @@ export async function ensurePanel(cfg: ResolvedConfig, opts: { waitMs?: number; 
         stdio: ["ignore", out, out],
         env: {
           ...process.env,
-          SWITCHYARD_CONFIG: cfg.configPath,
-          SWITCHYARD_ROUTER_CLI: path.join(routerBuildDir(), "cli.js"),
+          MERITROUTER_CONFIG: cfg.configPath,
+          MERITROUTER_ROUTER_CLI: path.join(routerBuildDir(), "cli.js"),
           ...(app.runtimeModules ? { NODE_PATH: [app.runtimeModules, process.env.NODE_PATH].filter(Boolean).join(path.delimiter) } : {}),
         },
       });

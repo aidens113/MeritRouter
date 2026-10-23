@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { MIGRATIONS } from "../src/storage/migrations.js";
 import { DB_FILE, openDatabase } from "../src/storage/db.js";
 import { Catalog } from "../src/models/catalog.js";
@@ -12,7 +12,7 @@ import { insights } from "../src/index.js";
 import { baseConfig, directEndpoint, endpoint, FakeProvider, goodOutput, makeEnv, open, providerChat, providerJson, providerModels, summarizeTask, type Env } from "./helpers.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => {
   await sy?.close();
   sy = undefined;
@@ -40,7 +40,7 @@ const acmeCfg = (entry: Record<string, unknown> = {}, extra: Record<string, unkn
     ...extra,
   });
 
-const requestRows = (s: Switchyard) => s.db.prepare("SELECT gateway_model, endpoint_id, status, error_kind, route_note FROM model_requests ORDER BY reserved_at").all() as Array<{ gateway_model: string; endpoint_id: string; status: string; error_kind: string | null; route_note: string | null }>;
+const requestRows = (s: MeritRouter) => s.db.prepare("SELECT gateway_model, endpoint_id, status, error_kind, route_note FROM model_requests ORDER BY reserved_at").all() as Array<{ gateway_model: string; endpoint_id: string; status: string; error_kind: string | null; route_note: string | null }>;
 
 describe("direct free requests", () => {
   it("serve a free model through a free_tier key, with no paid spend", async () => {
@@ -420,7 +420,7 @@ describe("direct discovery", () => {
 
 describe("store upgrade", () => {
   it("drops the old gateway's tables and chain-routed rows, and records paid spend by credential ref", () => {
-    const dir = mkdtempSync(path.join(tmpdir(), "switchyard-upgrade-"));
+    const dir = mkdtempSync(path.join(tmpdir(), "meritrouter-upgrade-"));
     try {
       // A store at the schema version before this migration, with rows the old gateway wrote.
       const at = MIGRATIONS.findIndex((m) => m.includes("DROP TABLE IF EXISTS fl_key_billing"));

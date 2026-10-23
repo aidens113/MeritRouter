@@ -16,6 +16,9 @@ importers:
       lucide-react:
         specifier: ^1.59.0
         version: 1.59.0(@types/react@19.3.0)(react@19.3.1)
+      meritrouter:
+        specifier: workspace:*
+        version: link:../../packages/router
       next:
         specifier: ~16.4.2
         version: 16.4.2(@types/node@22.20.5)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
@@ -28,9 +31,6 @@ importers:
       server-only:
         specifier: ^0.0.1
         version: 0.0.1
-      switchyard-router:
-        specifier: workspace:*
-        version: link:../../packages/router
       yaml:
         specifier: ^2.9.1
         version: 2.9.1

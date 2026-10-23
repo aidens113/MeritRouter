@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { createCodingRunner } from "../src/runners/coding/index.js";
 import { blame } from "../src/attribution/index.js";
 import { GatewayError } from "../src/core/errors.js";
@@ -13,7 +13,7 @@ import { baseConfig, endpoint, goodOutput, makeEnv, openWithTestSupervisor as op
 
 const agent = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "fake-agent.mjs");
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => {
   await sy?.close();
   sy = undefined;

@@ -45,7 +45,7 @@ export type PromptCacheStyle = "cache_control" | "prompt_cache_key" | "none";
 /** Who a provider's quota belongs to: each key, the project a key is in, or the account. */
 export type QuotaScope = "key" | "project" | "account";
 
-/** The value sent for each SwitchYard `tool_choice`; null omits `tool_choice` from the request. */
+/** The value sent for each MeritRouter `tool_choice`; null omits `tool_choice` from the request. */
 export interface ToolChoiceMap {
   auto: string | null;
   none: string | null;

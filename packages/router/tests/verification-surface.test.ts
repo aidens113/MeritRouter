@@ -5,18 +5,18 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { decideTaskAcceptance, taskDetail } from "../src/admin/insights.js";
-import { SwitchyardError } from "../src/core/errors.js";
+import { MeritRouterError } from "../src/core/errors.js";
 import { baseConfig, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, summarizeTask, type Env } from "./helpers.js";
 
-// The CLI and MCP surfaces run from dist/ (build first: pnpm --filter switchyard-router build).
+// The CLI and MCP surfaces run from dist/ (build first: pnpm --filter meritrouter build).
 const dist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "dist");
 const cliJs = path.join(dist, "cli.js");
 const mcpJs = path.join(dist, "mcp.js");
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 let client: Client | undefined;
 afterEach(async () => {
   await client?.close();
@@ -57,7 +57,7 @@ async function finished(e: Env, tasks: Array<Record<string, unknown>>): Promise<
 
 /** The environment without secrets, so the CLI never sees a real gateway or provider key. */
 function cleanEnv(): NodeJS.ProcessEnv {
-  return Object.fromEntries(Object.entries(process.env).filter(([k]) => !/KEY|TOKEN|SECRET|FREELLMAPI|SWITCHYARD/i.test(k)));
+  return Object.fromEntries(Object.entries(process.env).filter(([k]) => !/KEY|TOKEN|SECRET|FREELLMAPI|MERITROUTER/i.test(k)));
 }
 
 function cli(e: Env, ...args: string[]) {
@@ -92,7 +92,7 @@ describe("insights task detail", () => {
     } catch (e) {
       refused = e;
     }
-    expect((refused as SwitchyardError).code).toBe("human_acceptance_required");
+    expect((refused as MeritRouterError).code).toBe("human_acceptance_required");
 
     const out = decideTaskAcceptance(sy, id!, "accept", { kind: "human", id: "panel" }, "compared the summary with the log");
     expect(out).toMatchObject({ acceptanceStatus: "met", decision: { decision: "accepted", by: { kind: "human", id: "panel" }, reason: "compared the summary with the log" } });
@@ -107,7 +107,7 @@ describe("insights task detail", () => {
     } catch (e) {
       err = e;
     }
-    expect((err as SwitchyardError).code).toBe("not_found");
+    expect((err as MeritRouterError).code).toBe("not_found");
   });
 
   it("shows the requested importance before the contract is compiled", async () => {
@@ -132,7 +132,7 @@ describe("CLI acceptance and importance", () => {
     const noReason = cli(env, "reject", b!);
     expect(noReason.code).toBe(1);
     expect(noReason.stderr).toMatch(/needs a reason/);
-    expect(cli(env, "accept").stderr).toContain("usage: switchyard accept <task id>");
+    expect(cli(env, "accept").stderr).toContain("usage: meritrouter accept <task id>");
 
     const accepted = cli(env, "accept", a!, "--reason", "checked against the log");
     expect(accepted.stderr).toBe("");

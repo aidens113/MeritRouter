@@ -1,4 +1,4 @@
-export { Switchyard, type SwitchyardOptions, type TaskStatus, type AwaitOutcome } from "./core/service.js";
+export { MeritRouter, type MeritRouterOptions, type TaskStatus, type AwaitOutcome } from "./core/service.js";
 export { loadConfig, parseConfig, resolveConfigPath, CONFIG_ENV, DEFAULT_CONFIG_NAME, type ResolvedConfig } from "./config/load.js";
 export * from "./config/schema.js";
 export { ProjectConfigSchema, PROJECT_TEAM_KEYS, PROJECT_CODING_KEYS, PROJECT_SUPERVISOR_KEYS, type ProjectConfig } from "./projects/schema.js";
@@ -148,7 +148,7 @@ export { extraRequests, grantOf, grantsOf, workerHeld, type TaskGrant } from "./
 export { REVIEW_FAMILY, reviewerQualification } from "./qualification/stats.js";
 export { gradeReview, reviewEvalPackage } from "./qualification/runner.js";
 export { QUALIFICATION_PROJECT } from "./qualification/registry.js";
-export { SwitchyardError, ConfigError, TaskValidationError, AdmissionDenied, GatewayError, PAID_BUDGET_DENIALS } from "./core/errors.js";
+export { MeritRouterError, ConfigError, TaskValidationError, AdmissionDenied, GatewayError, PAID_BUDGET_DENIALS } from "./core/errors.js";
 export { Catalog, endpointIdFor, EndpointOverrideSchema, RoutingOverrideSchema, type ModelEndpoint, type EndpointOverride, type RoutingOverride, type EndpointStatus, type ParamEvidence, NATIVE_WEB_SEARCH_VIAS, type NativeWebSearch, type NativeWebSearchVia } from "./models/catalog.js";
 export { modelFamily, planRoute, type RoutePlan, type CandidateExplanation, type ReviewerQualificationRequirement } from "./routing/select.js";
 export { DEFAULT_RULEBOOK, RulebookSchema, TAG_GROUPS, type Rulebook } from "./scoring/rulebook.js";

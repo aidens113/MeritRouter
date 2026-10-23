@@ -268,7 +268,7 @@ export function RepositoriesCard({ slug, rows: initialRows }: { slug: string; ro
 const MOUNT_COLUMNS: Column[] = [
   { key: "prefix", label: "Brain prefix", kind: "text", placeholder: "projects/<slug>/working" },
   { key: "path", label: "Folder", kind: "text", wide: true, placeholder: "../my-repo/docs/working", help: "Relative to the config file." },
-  { key: "commit", label: "SwitchYard commits there", kind: "bool", help: "Off: you commit changes in that repository yourself." },
+  { key: "commit", label: "MeritRouter commits there", kind: "bool", help: "Off: you commit changes in that repository yourself." },
 ];
 
 type Mount = { prefix: string; path: string; commit: boolean };

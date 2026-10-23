@@ -23,7 +23,7 @@ import { agentHome, finishCoding, prepareWorkspace, resumeWorkspace, sourceDirty
 import { WorkspacePointer } from "../session-workspace.js";
 
 /**
- * SwitchYard's own coding worker. Edits go through tools that refuse paths outside
+ * MeritRouter's own coding worker. Edits go through tools that refuse paths outside
  * allowedPaths (containment in code), every model response that edits files is committed under
  * the agent's identity and serving model, and acceptance comes from the diff and checks.
  */

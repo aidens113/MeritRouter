@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { insights } from "switchyard-router";
+import { insights } from "meritrouter";
 import { body, handle, HttpError } from "@/lib/api";
 export const dynamic = "force-dynamic";
 function project(req: Request) { const p = new URL(req.url).searchParams.get("project"); if (!p) throw new HttpError(400, "Choose a project"); return p; }

@@ -1,11 +1,11 @@
 import { afterEach, expect, it } from "vitest";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { WorkerTaskSchema } from "../src/core/task.js";
 import { taskUsage, usageSummary } from "../src/storage/usage.js";
 import { globalDashboard } from "../src/admin/dashboards.js";
 import { makeEnv, open, reply, ScriptedClient, summarizeTask, type Env } from "./helpers.js";
 
-let env: Env | undefined, sy: Switchyard | undefined;
+let env: Env | undefined, sy: MeritRouter | undefined;
 afterEach(async () => { await sy?.close(); sy = undefined; env?.cleanup(); env = undefined; });
 
 function setup() {

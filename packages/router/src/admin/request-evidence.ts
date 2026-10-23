@@ -2,7 +2,7 @@ import { closeSync, fstatSync, lstatSync, openSync, readSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { createHash } from "node:crypto";
-import type { Switchyard } from "../core/service.js";
+import type { MeritRouter } from "../core/service.js";
 import { SessionEventSchema, type SessionEvent, type SessionEventOf } from "../sessions/events.js";
 import { maskSecrets, requestSecrets } from "../providers/secret-masking.js";
 
@@ -33,7 +33,7 @@ export interface RequestEvidence {
 }
 
 /** A separate bounded reader: SessionStore.events currently reads the whole file before paging. */
-function journal(sy: Switchyard, id: string, remaining: { bytes: number }, warnings: string[]) {
+function journal(sy: MeritRouter, id: string, remaining: { bytes: number }, warnings: string[]) {
   let fd: number | undefined;
   const events: SessionEvent[] = [];
   try {
@@ -169,7 +169,7 @@ function exchange(events: SessionEvent[], row: z.infer<typeof SessionRow>, reque
 }
 
 /** Exact request-id journal correlation. Related task evidence is deliberately not causal. */
-function recordedMembersExclusive(sy: Switchyard, project: string, execution: string, events: SessionEvent[], budget: {remaining: number}): boolean {
+function recordedMembersExclusive(sy: MeritRouter, project: string, execution: string, events: SessionEvent[], budget: {remaining: number}): boolean {
   let sharedProof = false;
   const proof = new Set<string>();
   const current = z.array(z.object({ task_id: Id, item_id: z.string(), project_id: z.string().nullable() })).max(10_000).safeParse(sy.db.prepare("SELECT m.task_id,m.item_id,t.project_id FROM execution_members m LEFT JOIN tasks t ON t.id=m.task_id WHERE m.execution_id=? LIMIT 10001").all(execution));
@@ -194,7 +194,7 @@ function recordedMembersExclusive(sy: Switchyard, project: string, execution: st
     && (!sharedProof || current.data.every(member => member.project_id === project && proof.has(JSON.stringify([member.task_id, member.item_id]))));
 }
 
-export function requestEvidence(sy: Switchyard, project: string, id: string): RequestEvidence | null {
+export function requestEvidence(sy: MeritRouter, project: string, id: string): RequestEvidence | null {
   const parsed = RequestRow.safeParse(sy.db.prepare("SELECT id,execution_id,project_id,status FROM model_requests WHERE id=? AND project_id=?").get(id, project));
   if (!parsed.success) return null;
   const request = parsed.data, warnings: string[] = [], remaining = { bytes: REQUEST_EVIDENCE_LIMITS.totalJournalBytes };

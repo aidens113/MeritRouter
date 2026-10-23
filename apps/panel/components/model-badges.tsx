@@ -1,6 +1,6 @@
 import type { ComponentType, ReactNode } from "react";
 import { AudioLines, Ban, CircleCheck, CircleDashed, FileText, Globe, Image as ImageIcon, ShieldAlert, Trash2, TriangleAlert, Type, Video } from "lucide-react";
-import type { ModelEndpoint } from "switchyard-router";
+import type { ModelEndpoint } from "meritrouter";
 import { Badge, type Tone } from "./ui";
 
 export type StatusKey = "active" | "pending_confirmation" | "disabled" | "removed" | "quarantined";

@@ -1,4 +1,4 @@
-import { insights } from "switchyard-router";
+import { insights } from "meritrouter";
 import { handle, HttpError } from "@/lib/api";
 export const dynamic = "force-dynamic";
 export async function GET(req: Request, ctx: { params: Promise<{ name: string }> }) {

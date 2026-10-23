@@ -36,7 +36,7 @@ describe("attribution", () => {
     const bl = await blame(r, "app.txt");
     expect(bl.map((l) => l.agent)).toEqual(["human", "implementer:t_a", "human", "implementer:t_b", "implementer:t_b"]);
     expect(bl[1]).toMatchObject({ model: "groq/model-a", task: "t_a", role: "implementer" });
-    expect(execFileSync("git", ["log", "-1", "--format=%an <%ae>"], { cwd: r }).toString().trim()).toBe("implementer t_b (kilo/model-b) <implementer.t_b@switchyard.local>");
+    expect(execFileSync("git", ["log", "-1", "--format=%an <%ae>"], { cwd: r }).toString().trim()).toBe("implementer t_b (kilo/model-b) <implementer.t_b@meritrouter.local>");
     expect((await commitsMatching(r, `${base}..HEAD`, { Model: "groq/model-a" })).map((c) => c.subject)).toEqual(["a edits two"]);
   });
 

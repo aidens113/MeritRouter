@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, it } from "vitest";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import type { CodingRunner } from "../src/core/executor.js";
 import { baseResult, type RunContext, type RunOutcome, type SupervisorServices } from "../src/runners/types.js";
 import { supervisorTools, type SupervisorState } from "../src/harness/supervisor-tools.js";
 import type { HarnessEnv } from "../src/harness/tools.js";
-import { SwitchyardError } from "../src/core/errors.js";
+import { MeritRouterError } from "../src/core/errors.js";
 import { baseConfig, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, summarizeTask, type Env } from "./helpers.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => {
   await sy?.close();
   sy = undefined;
@@ -145,8 +145,8 @@ describe("contract and verification in the executor", () => {
     } catch (e) {
       err = e;
     }
-    expect(err).toBeInstanceOf(SwitchyardError);
-    expect((err as SwitchyardError).code).toBe("human_acceptance_required");
+    expect(err).toBeInstanceOf(MeritRouterError);
+    expect((err as MeritRouterError).code).toBe("human_acceptance_required");
     expect(sy.tasks.get(sub!.taskId)!.result!.acceptanceStatus).toBe("needs_supervisor");
     expect(sy.acceptTask(sub!.taskId, { by: { kind: "human", id: "aiden" }, reason: "reviewed in the panel" }).acceptanceStatus).toBe("met");
   });

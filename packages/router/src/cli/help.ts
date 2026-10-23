@@ -1,11 +1,11 @@
-// The CLI's help text (`switchyard --help`).
+// The CLI's help text (`meritrouter --help`).
 
-export const HELP = `switchyard - delegate bounded tasks to the models your provider keys can use
+export const HELP = `meritrouter - delegate bounded tasks to the models your provider keys can use
 
-Usage: switchyard <command> [options]   (global: --config <file>, --project <slug>, --json)
+Usage: meritrouter <command> [options]   (global: --config <file>, --project <slug>, --json)
 
 Projects (one install holds many; providers, models, routing, and budgets are global)
-  The project a command works in: --project, else SWITCHYARD_PROJECT, else the only project,
+  The project a command works in: --project, else MERITROUTER_PROJECT, else the only project,
   else the project whose repository contains the working directory; otherwise commands that
   need one fail and list the projects. Lists (status, jobs, sessions, questions, usage, brain)
   show every project when none can be chosen.
@@ -16,7 +16,7 @@ Projects (one install holds many; providers, models, routing, and budgets are gl
                                 or set up with git as needed) and create its brain folders; a single-project
                                 config is converted first (its repositories move under its slug)
   projects delete <slug> --confirm <slug>   delete a project: its settings, tasks, sessions,
-                                SwitchYard worktrees, and brain folder (repositories, branches,
+                                MeritRouter worktrees, and brain folder (repositories, branches,
                                 and request and spend history stay); refused while it has running
                                 or queued tasks, and for the last project; without --confirm it
                                 prints what would be removed
@@ -24,13 +24,13 @@ Projects (one install holds many; providers, models, routing, and budgets are gl
                                 are kept); refused while it has running or queued tasks
 
 Setup
-  Config: --config, else SWITCHYARD_CONFIG, else nearest ancestor switchyard.config.yaml,
-          else platform user config directory (override its directory with SWITCHYARD_HOME).
+  Config: --config, else MERITROUTER_CONFIG, else nearest ancestor meritrouter.config.yaml,
+          else platform user config directory (override its directory with MERITROUTER_HOME).
   setup [dir] [--preset <name>] [--repo <alias>=<path> ...] [--port <n>] [--no-panel]
                                 create the discovered/default config and start the bundled panel;
                                 no placeholder repositories, existing files kept; --no-panel only initializes
   init [dir] [--preset <name>] [--project <slug>] [--name "<name>"] [--repo <alias>=<path> ...]
-                                write switchyard.config.yaml (global settings plus a first
+                                write meritrouter.config.yaml (global settings plus a first
                                 project, default my-project) and models.yaml
                                 presets: claude-code (default), standalone-free,
                                 standalone-hybrid, standalone-paid
@@ -45,7 +45,7 @@ Setup
                                 clients, serving one project; stdio by default (the client
                                 launches it); --http serves Streamable HTTP at
                                 http://127.0.0.1:4478/mcp (--host or --port imply --http).
-                                SWITCHYARD_MCP_TOKEN, when set, is required on every request
+                                MERITROUTER_MCP_TOKEN, when set, is required on every request
                                 (Authorization: Bearer <token>, or the URL /mcp/<token>); it
                                 must be set for a non-loopback --host. --no-worker leaves the
                                 worker to a daemon
@@ -100,7 +100,7 @@ Provider keys (stored encrypted in the vault; keys under providers in the config
   keys add <provider> --billing free_tier|paid_credits|paid_postpaid|trial [--label x]
            [--rpm n] [--rpd n] [--tpm n] [--tpd n] [--quota-group g] [--account-id id]
            [--balance usd] [--cap usd] [--test] [--no-scan]
-                                the secret comes from SWITCHYARD_NEW_KEY or a hidden prompt,
+                                the secret comes from MERITROUTER_NEW_KEY or a hidden prompt,
                                 never the command line; --test lists its models first and
                                 stores the key only if that works; the provider's models are
                                 then listed for routing (--no-scan skips it, e.g. offline)
@@ -112,7 +112,7 @@ Provider keys (stored encrypted in the vault; keys under providers in the config
   keys enable|disable|remove <id>   vault keys (config keys are changed in the config file)
   keys spend                    paid spend against budgets
 
-Standalone jobs (a SwitchYard supervisor plans, delegates, verifies, integrates)
+Standalone jobs (a MeritRouter supervisor plans, delegates, verifies, integrates)
   run "<goal>" --repo <alias> [--lab <name>] [--check "<cmd>"] [--criteria "<text>"] [--wait]
   jobs                          list jobs
   job <id>                      job status, workers, branch, questions; sub-jobs (tree with

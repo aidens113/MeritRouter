@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { actualUsd, endpointPrice, worstCaseUsd } from "../src/paid/spend.js";
 import { ModelResponseDataSchema } from "../src/sessions/events.js";
 import { quarantineReason } from "../src/gateway/quarantine.js";
@@ -7,7 +7,7 @@ import { planRoute } from "../src/routing/select.js";
 import { baseConfig, makeEnv, open, type Env } from "./helpers.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => { await sy?.close(); sy = undefined; env?.cleanup(); env = undefined; });
 
 const chat = {

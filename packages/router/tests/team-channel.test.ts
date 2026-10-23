@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import type { ChatRequest } from "../src/gateway/types.js";
 import type { WorkerTask } from "../src/core/task.js";
 import type { HarnessEnv } from "../src/harness/tools.js";
@@ -18,7 +18,7 @@ import { FAULT_ENV, resetFaults, simulatedCrashCount } from "../src/core/faults.
 import { baseConfig, endpoint, makeEnv, open, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 let db: Db | undefined;
 let tmp: string | undefined;
 afterEach(async () => {
@@ -41,7 +41,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const lastTool = (req: ChatRequest) => String([...req.messages].reverse().find((m) => m.role === "tool")?.content ?? "");
 
 function store(): { tasks: TaskStore; channel: ChannelStore } {
-  tmp = mkdtempSync(path.join(tmpdir(), "switchyard-channel-"));
+  tmp = mkdtempSync(path.join(tmpdir(), "meritrouter-channel-"));
   db = openDatabase(tmp);
   const tasks = new TaskStore(db, () => 1_000_000);
   const spec = (id: string, extra: Partial<WorkerTask> = {}) => ({ id, profile: "inspect", goal: `look at ${id}`, repositoryAliases: ["core"], context: {}, constraints: { acceptanceCriteria: ["x"] }, ...extra }) as WorkerTask;

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { GatewayError } from "../src/core/errors.js";
 import type { ChatMessage, ChatRequest, ChatResponse } from "../src/gateway/types.js";
 import { ProvidersSectionSchema } from "../src/config/schema.js";
@@ -18,7 +18,7 @@ import { baseConfig, endpoint, goodOutput, makeEnv, open, reply, ScriptedClient,
  */
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => {
   await sy?.close();
   sy = undefined;
@@ -90,8 +90,8 @@ describe("provider cache hints (C1)", () => {
 describe("endpoint stickiness (C1)", () => {
   const small = endpoint({ providerId: "groq", gatewayModelId: "small:free", totalParametersB: 70 });
   const big = endpoint();
-  const plan = (s: Switchyard) => planRoute(s.cfg, s.catalog.endpoints(), [], { profile: "summarize", tier: "T1", inputModalities: ["text"], needsStructuredOutput: false }, { now: new Date(), qualification: () => null });
-  const ask = (s: Switchyard, preferEndpointId: string | null) =>
+  const plan = (s: MeritRouter) => planRoute(s.cfg, s.catalog.endpoints(), [], { profile: "summarize", tier: "T1", inputModalities: ["text"], needsStructuredOutput: false }, { now: new Date(), qualification: () => null });
+  const ask = (s: MeritRouter, preferEndpointId: string | null) =>
     s.gate.request({ plan: plan(s), executionId: s.gate.admission.createExecution("task", "summarize", []), purpose: "completion", participants: [], chat: { messages: [{ role: "user", content: "hi" }], max_tokens: 10 }, preferEndpointId });
 
   it("a healthy previous endpoint is tried first; an unhealthy one is not", async () => {

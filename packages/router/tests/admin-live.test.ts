@@ -6,7 +6,7 @@ import Database from "better-sqlite3";
 import { BudgetRequests } from "../src/admission/budget-requests.js";
 import { recordGrant } from "../src/admission/job-pool.js";
 import { WorkerTaskSchema } from "../src/core/task.js";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import {
   agentDetail,
   agentsView,
@@ -33,7 +33,7 @@ import { baseConfig, commitAll, goodOutput, makeEnv, open, reply, ScriptedClient
 // project scoping. The SSE route in the panel polls liveChanges about once a second.
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 const extra: Database.Database[] = [];
 afterEach(async () => {
   for (const d of extra.splice(0)) d.close();
@@ -72,7 +72,7 @@ function twoProjects(): Env {
 }
 
 /** Check, and return the topics and the cursor to continue from. */
-function step(s: Switchyard, cursor: LiveCursor): { topics: string[]; cursor: LiveCursor } {
+function step(s: MeritRouter, cursor: LiveCursor): { topics: string[]; cursor: LiveCursor } {
   const r = liveChanges(s, cursor);
   return { topics: r.topics, cursor: r.cursor };
 }
@@ -252,7 +252,7 @@ describe("live change watcher", () => {
 
   it("sees a run's requests and sessions, written by the worker", async () => {
     env = makeEnv();
-    let me: Switchyard | undefined;
+    let me: MeritRouter | undefined;
     const client = new ScriptedClient((req) => reply(JSON.stringify(goodOutput()), servedFor(me!, req)));
     sy = me = open(env, client, { worker: true });
     const c = liveCursor(sy, "all");
@@ -371,7 +371,7 @@ describe("entity queries", () => {
 
   it("an agent's page lists its tasks, sessions, models, and requests (from its own session logs)", async () => {
     env = makeEnv();
-    let me: Switchyard | undefined;
+    let me: MeritRouter | undefined;
     const client = new ScriptedClient((req) => reply(JSON.stringify(goodOutput()), servedFor(me!, req)));
     sy = me = open(env, client, { worker: true });
     const [sub] = await sy.submitTasks([summarizeTask({ label: "notes" })]);

@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { Bot, CircleAlert, CornerDownRight, Cpu, Flag, FolderGit2, Globe, MessageSquare, Play, RotateCcw, Send, StickyNote, User, Wrench } from "lucide-react";
 import { AgentLink, CommitLink, RequestLink, TaskLink } from "./entity-links";
 import { repoHref } from "@/lib/links";
-import type { SessionEvent } from "switchyard-router";
+import type { SessionEvent } from "meritrouter";
 import { Badge, cx, Mono, type Tone } from "./ui";
 import { SessionStatusBadge } from "./sessions-table";
 import { purposeLabel } from "./requests-table";
@@ -36,7 +36,7 @@ const SIDE_EFFECT: Record<string, { label: string; tone: Tone; title: string }> 
   command: { label: "runs a command", tone: "warn", title: "Runs a command or check" },
   delegate: { label: "delegates", tone: "accent", title: "Starts other tasks (idempotent by label)" },
   brain: { label: "writes the brain", tone: "accent", title: "Commits to the shared brain" },
-  external: { label: "external", tone: "serious", title: "Acts outside SwitchYard; the effect cannot be checked on resume" },
+  external: { label: "external", tone: "serious", title: "Acts outside MeritRouter; the effect cannot be checked on resume" },
 };
 
 export interface TimelineProps {
@@ -367,7 +367,7 @@ function NoteView({ text, data }: { text: string; data: unknown }) {
 
 function MessageView({ index, message }: { index: number; message: Ev<"message">["data"]["message"] }) {
   const text = typeof message.content === "string" ? message.content : Array.isArray(message.content) ? message.content.map((p) => ("text" in p ? p.text : "[image]")).join("") : "";
-  const who = message.role === "system" ? "System prompt" : message.role === "user" ? (index <= 1 ? "Brief" : "SwitchYard") : message.role === "assistant" ? "Assistant" : "Tool output";
+  const who = message.role === "system" ? "System prompt" : message.role === "user" ? (index <= 1 ? "Brief" : "MeritRouter") : message.role === "assistant" ? "Assistant" : "Tool output";
   const calls = message.role === "assistant" ? (message.tool_calls ?? []) : [];
   const collapsed = message.role === "system" || message.role === "tool" || text.length > 600;
   return (

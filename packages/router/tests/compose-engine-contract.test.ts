@@ -77,10 +77,10 @@ describe("pure private Compose Engine plans", () => {
       Name: "sy-private-fixture_default", Driver: "bridge", Scope: "local", Internal: false, Attachable: false,
       Ingress: false, EnableIPv6: false, Options: {}, IPAM: { Driver: "default", Options: {} },
       Labels: {
-        "io.switchyard.install": "fixture", "io.switchyard.lab": "private-lab", "io.switchyard.run": input.original.runId,
-        "io.switchyard.generation": "2", "io.switchyard.spec": input.original.specSha256,
-        "io.switchyard.nonce": input.original.nonceSha256, "io.switchyard.request": input.original.requestSha256,
-        "io.switchyard.intent": "original-intent", "io.switchyard.resource": "network",
+        "io.meritrouter.install": "fixture", "io.meritrouter.lab": "private-lab", "io.meritrouter.run": input.original.runId,
+        "io.meritrouter.generation": "2", "io.meritrouter.spec": input.original.specSha256,
+        "io.meritrouter.nonce": input.original.nonceSha256, "io.meritrouter.request": input.original.requestSha256,
+        "io.meritrouter.intent": "original-intent", "io.meritrouter.resource": "network",
         "com.docker.compose.project": "sy-private-fixture", "com.docker.compose.network": "default",
       },
     } });
@@ -193,7 +193,7 @@ describe("pure private Compose Engine plans", () => {
       input.approval.authority.services.web!.mounts[0]!.source = path.resolve("foreign-secret");
       input.approval.canonical.services.web!.volumes[0]!.source = path.resolve("foreign-secret");
     }
-    if (kind === "reserved-label") input.approval.images.web!.Config.Labels = { "io.switchyard.forged": "secret-canary" };
+    if (kind === "reserved-label") input.approval.images.web!.Config.Labels = { "io.meritrouter.forged": "secret-canary" };
     if (kind === "udp") input.approval.images.web!.Config.ExposedPorts = { "53/udp": {} };
     if (!["seal", "current", "profile"].includes(kind)) reseal(input);
     expect(buildComposeEnginePlan(input).state).toBe("refused");

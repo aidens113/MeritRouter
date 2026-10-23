@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { insights } from "switchyard-router";
+import type { insights } from "meritrouter";
 import { Badge, Mono } from "@/components/ui";
 import { share, usd } from "@/components/job-metrics";
 import { AcceptanceBadge, TaskStateBadge } from "@/components/task-badges";

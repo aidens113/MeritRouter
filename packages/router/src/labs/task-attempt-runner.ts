@@ -1,3 +1,4 @@
+import { labOwnershipMarker } from "./ownership-marker.js";
 import path from "node:path";
 import { mkdirSync, writeFileSync, existsSync, readFileSync, rmSync, readdirSync } from "node:fs";
 import { z } from "zod";
@@ -16,6 +17,11 @@ import { TaskLabPruneRefusal } from "./task-attempt-prune.js";
 import { TaskAttemptProcesses } from "./task-attempt-processes.js";
 import { TaskAttemptSource, taskCommonDirectory, assertRegisteredTaskWorktree, taskHash } from "./task-attempt-source.js";
 import { TaskLabEvidenceSchema, type TaskAttemptRecord, type TaskLabRecord, type TaskLabEvidence } from "./task-attempt-schema.js";
+/** Cleanup may recognize a persisted pre-rename branch, never an arbitrary legacy ref. */
+export function taskLabBranchOwned(project: string, attemptId: string, alias: string, branch: string, target: string): boolean {
+  const suffix = `task-lab-${taskHash(project).slice(0, 8)}-${attemptId.slice(-12)}-${taskHash(alias).slice(0, 8)}`;
+  return target === branch && [`meritrouter/${suffix}`, `switchyard/${suffix}`].includes(branch);
+}
 export function taskLabUsesCapacity(manager: LabManager, lab: LabRecord): boolean {
   if (lab.state === "destroyed")
     return false;
@@ -57,7 +63,7 @@ export class TaskAttemptRunner {
     if (existsSync(root))
       throw new Error("task Lab root exists; refusing adoption");
     mkdirSync(root, { recursive: true });
-    writeFileSync(path.join(root, ".switchyard-lab.json"), JSON.stringify({ id: lab.id, project: lab.project, name, attemptId: attempt.id }), { flag: "wx", mode: 0o600 });
+    writeFileSync(path.join(root, ".meritrouter-lab.json"), JSON.stringify({ id: lab.id, project: lab.project, name, attemptId: attempt.id }), { flag: "wx", mode: 0o600 });
     for (const name of ["home", "cache", ...lab.recipe.data])
       mkdirSync(path.join(root, "data", name), { recursive: true });
     mkdirSync(path.join(root, "logs"), { recursive: true });
@@ -69,7 +75,7 @@ export class TaskAttemptRunner {
         throw new Error("project repository scope changed before task Lab creation");
       if (await taskCommonDirectory(repo.sourcePath) !== repo.commonDirectory)
         throw new Error("task source physical repository changed");
-      const head = repo.alias === attempt.writableAlias ? attempt.submittedCommit! : repo.head, branch = `switchyard/task-lab-${taskHash(attempt.project).slice(0, 8)}-${attempt.id.slice(-12)}-${taskHash(repo.alias).slice(0, 8)}`, worktree = labOwnedPath(this.manager.options.storageDir, path.join(root, "repos", repo.alias));
+      const head = repo.alias === attempt.writableAlias ? attempt.submittedCommit! : repo.head, branch = `meritrouter/task-lab-${taskHash(attempt.project).slice(0, 8)}-${attempt.id.slice(-12)}-${taskHash(repo.alias).slice(0, 8)}`, worktree = labOwnedPath(this.manager.options.storageDir, path.join(root, "repos", repo.alias));
       lab.repositories.push({ alias: repo.alias, source: repo.sourcePath, worktree, branch, target: branch, base: head });
       this.manager.store.save(lab);
       await git(repo.sourcePath, ["worktree", "add", "-b", branch, worktree, head]);
@@ -232,14 +238,13 @@ export class TaskAttemptRunner {
     const aliases = new Set<string>();
     for (const repo of lab.repositories) {
       const source = attempt.repositories.find(r => r.alias === repo.alias);
-      const branch = `switchyard/task-lab-${taskHash(attempt.project).slice(0, 8)}-${attempt.id.slice(-12)}-${taskHash(repo.alias).slice(0, 8)}`;
-      if (!source || aliases.has(repo.alias) || path.resolve(repo.source) !== path.resolve(source.sourcePath) || path.resolve(repo.worktree) !== path.resolve(lab.root, "repos", repo.alias) || repo.branch !== branch || repo.target !== branch || repo.base !== (repo.alias === attempt.writableAlias ? attempt.submittedCommit : source.head))
+      if (!source || aliases.has(repo.alias) || path.resolve(repo.source) !== path.resolve(source.sourcePath) || path.resolve(repo.worktree) !== path.resolve(lab.root, "repos", repo.alias) || !taskLabBranchOwned(attempt.project, attempt.id, repo.alias, repo.branch, repo.target) || repo.base !== (repo.alias === attempt.writableAlias ? attempt.submittedCommit : source.head))
         throw new Error("task Lab repository is outside exact attempt ownership");
       aliases.add(repo.alias);
       labOwnedPath(this.manager.options.storageDir, repo.worktree);
     }
     if (existsSync(lab.root))
-      z.object({ id: z.literal(lab.id), project: z.literal(attempt.project), name: z.literal(lab.name), attemptId: z.literal(attempt.id) }).parse(JSON.parse(readFileSync(path.join(lab.root, ".switchyard-lab.json"), "utf8")));
+      z.object({ id: z.literal(lab.id), project: z.literal(attempt.project), name: z.literal(lab.name), attemptId: z.literal(attempt.id) }).parse(JSON.parse(readFileSync(labOwnedPath(this.manager.options.storageDir, labOwnershipMarker(lab.root)), "utf8")));
   }
   async stop(attempt: TaskAttemptRecord): Promise<TaskLabEvidence> {
     const request = this.store.lab(attempt.id)!;

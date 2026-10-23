@@ -1,6 +1,6 @@
 import YAML from "yaml";
 import { z } from "zod";
-import { insights, RulebookSchema } from "switchyard-router";
+import { insights, RulebookSchema } from "meritrouter";
 import { body, handle, HttpError } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
@@ -20,7 +20,7 @@ export async function POST(req: Request) {
     if ("rulebook" in b) {
       const parsed = RulebookSchema.safeParse(b.rulebook);
       if (!parsed.success) throw new HttpError(400, "The rulebook is invalid.", issues(parsed.error));
-      text = `# SwitchYard difficulty rulebook (edited in the panel)\n${YAML.stringify(parsed.data)}`;
+      text = `# MeritRouter difficulty rulebook (edited in the panel)\n${YAML.stringify(parsed.data)}`;
     } else {
       text = b.text;
       let raw: unknown;

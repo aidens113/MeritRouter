@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import type { ChatRequest } from "../src/gateway/types.js";
 import type { WorkerTask } from "../src/core/task.js";
 import type { RunContext } from "../src/runners/types.js";
@@ -29,7 +29,7 @@ import { baseConfig, goodOutput, makeEnv, openWithTestSupervisor as open, reply,
  */
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 let db: Db | undefined;
 let tmp: string | undefined;
 afterEach(async () => {
@@ -119,11 +119,11 @@ describe("plan_work with sub-supervisors", () => {
     expect(carvesOf(sy.db, job.taskId)).toEqual([expect.objectContaining({ childTaskId: child!.row.id, requests: 14, parentRemaining: 29, depth: 2 })]);
     const parentReqs = client.requests.filter((q) => isSupervisor(q) && !goalOf(q).includes(CHILD_GOAL));
     const childReqs = client.requests.filter((q) => isSupervisor(q) && goalOf(q).includes(CHILD_GOAL));
-    expect(toolOutputs(parentReqs.at(-1)!)[0]).toMatch(/plan v1 recorded: 1 node\(s\); 1 dispatched now[\s\S]*sub -> t_\w+ \(queued\); sub-supervisor with 14 requests on branch switchyard\/job-t_/);
+    expect(toolOutputs(parentReqs.at(-1)!)[0]).toMatch(/plan v1 recorded: 1 node\(s\); 1 dispatched now[\s\S]*sub -> t_\w+ \(queued\); sub-supervisor with 14 requests on branch meritrouter\/job-t_/);
 
     // The sub-job's branch forks from the parent's.
-    const parentBranch = `switchyard/job-${job.taskId}`;
-    const childBranch = `switchyard/job-${child!.row.id}`;
+    const parentBranch = `meritrouter/job-${job.taskId}`;
+    const childBranch = `meritrouter/job-${child!.row.id}`;
     const parentWs = sy.sessions.forTask(job.taskId).at(-1)!.workspace!.repos[0]!;
     const parentBase = parentWs.baseCommit!;
     expect(child!.spec.context.baseCommits).toEqual({ core: parentBase });
@@ -174,7 +174,7 @@ describe("plan_work with sub-supervisors", () => {
     expect(() => PlanNodeSchema.parse({ ...node, redundancy: 2 })).toThrow(/redundancy is not for sub-supervisors/);
 
     // plan_work over a stubbed delegate service: the node's redundancy is recorded and read back at run time.
-    tmp = mkdtempSync(path.join(tmpdir(), "switchyard-team-int-"));
+    tmp = mkdtempSync(path.join(tmpdir(), "meritrouter-team-int-"));
     db = openDatabase(tmp);
     const tasks = new TaskStore(db, () => 1_000_000);
     tasks.submit([{ id: "job", profile: "supervise", goal: "job", repositoryAliases: ["core"], context: {}, constraints: { acceptanceCriteria: ["x"] }, label: "job" } as WorkerTask]);
@@ -238,7 +238,7 @@ describe("team channel integration", () => {
     expect(() => parseConfig(baseConfig({ team: { channel_max_post_chars: CHANNEL_MAX_TEXT_CHARS + 1 } }), path.join(tmpdir(), "x.yaml"))).toThrow();
     const cfg = parseConfig(baseConfig({ team: { channel_max_posts_per_task: 2, channel_max_posts_per_supervisor: 3, channel_max_post_chars: 100 } }), path.join(tmpdir(), "x.yaml"));
 
-    tmp = mkdtempSync(path.join(tmpdir(), "switchyard-team-int-"));
+    tmp = mkdtempSync(path.join(tmpdir(), "meritrouter-team-int-"));
     db = openDatabase(tmp);
     const tasks = new TaskStore(db, () => 1_000_000);
     const spec = (id: string, profile: string, parentTaskId?: string) => ({ id, profile, goal: id, repositoryAliases: ["core"], context: {}, constraints: { acceptanceCriteria: ["x"] }, label: id, ...(parentTaskId ? { parentTaskId } : {}) }) as WorkerTask;
@@ -259,7 +259,7 @@ describe("team channel integration", () => {
 describe("watchdog and integrate_task", () => {
   it("allows integrate_task one check timeout per job check (fake clock)", () => {
     let clock = 5_000_000;
-    tmp = mkdtempSync(path.join(tmpdir(), "switchyard-team-int-"));
+    tmp = mkdtempSync(path.join(tmpdir(), "meritrouter-team-int-"));
     db = openDatabase(tmp);
     const sessions = new SessionStore(db, tmp, () => clock);
     const cfg = parseConfig(baseConfig({ execution: { watchdog_minutes: 10, check_timeout_seconds: 900 } }), path.join(tmp, "x.yaml"));

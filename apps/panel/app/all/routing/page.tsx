@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Clock, Pin, Star, TriangleAlert } from "lucide-react";
-import { insights, MODALITIES, TIER_NAMES, type Modality, type ProfileName, type TierName } from "switchyard-router";
+import { insights, MODALITIES, TIER_NAMES, type Modality, type ProfileName, type TierName } from "meritrouter";
 import { getSy } from "@/lib/sy";
 import { SetupScreen } from "@/components/setup";
 import { Badge, Card, CardHeader, cx, EmptyState, HelpTip, Mono } from "@/components/ui";
@@ -52,7 +52,7 @@ export default async function RoutingPage({ searchParams }: { searchParams: Prom
       <PageHeader title="Routing" description="Which model each kind of task goes to, in what order, and why the others are skipped. Add rules to force, prefer, or block a model." />
 
       <Card>
-        <CardHeader title="How SwitchYard picks a model" help="tier" />
+        <CardHeader title="How MeritRouter picks a model" help="tier" />
         <div className="grid gap-4 p-4 lg:grid-cols-[3fr_2fr]">
           <div className="overflow-x-auto">
             <table className="data-table tabular">
@@ -167,7 +167,7 @@ export default async function RoutingPage({ searchParams }: { searchParams: Prom
   );
 }
 
-function TierColumn({ sy, profile, tier, modalities }: { sy: import("switchyard-router").Switchyard; profile: ProfileName; tier: TierName; modalities: Modality[] }) {
+function TierColumn({ sy, profile, tier, modalities }: { sy: import("meritrouter").MeritRouter; profile: ProfileName; tier: TierName; modalities: Modality[] }) {
   const plan = insights.routingPreview(sy, profile, tier, modalities);
   const minTier = sy.cfg.profiles[profile]!.min_tier;
   const unused = TIER_NAMES.indexOf(tier) < TIER_NAMES.indexOf(minTier);

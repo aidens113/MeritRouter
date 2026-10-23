@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
-import { Check, ChevronsUpDown, FolderGit2, Globe, LayoutGrid, Plus, TrainTrack } from "lucide-react";
+import { Check, ChevronsUpDown, FolderGit2, Globe, LayoutGrid, Plus, Network } from "lucide-react";
 import { cx } from "../ui";
 import { ALL, projectBase } from "@/lib/links";
 
@@ -99,7 +99,7 @@ export function ProjectSwitcher({ scope, initial }: { scope: Scope; initial: Swi
 
   const current = scope.kind === "project" ? projects.find((p) => p.slug === scope.slug) : undefined;
   const available = projects.filter(p => !p.archived);
-  const title = scope.kind === "project" ? (current?.name ?? scope.slug) : scope.kind === "all" ? "All projects" : "SwitchYard";
+  const title = scope.kind === "project" ? (current?.name ?? scope.slug) : scope.kind === "all" ? "All projects" : "MeritRouter";
   const subtitle = scope.kind === "project" ? `${scope.slug}${current?.archived ? " · archived" : ""}` : scope.kind === "all" ? "Install-wide pages" : "Projects";
 
   const openMenu = (focus: "first" | "last" | "current") => {
@@ -156,7 +156,7 @@ export function ProjectSwitcher({ scope, initial }: { scope: Scope; initial: Swi
         className="flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-surface-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
       >
         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-accent text-white">
-          {scope.kind === "project" ? <FolderGit2 size={15} aria-hidden /> : scope.kind === "all" ? <Globe size={15} aria-hidden /> : <TrainTrack size={16} aria-hidden />}
+          {scope.kind === "project" ? <FolderGit2 size={15} aria-hidden /> : scope.kind === "all" ? <Globe size={15} aria-hidden /> : <Network size={16} aria-hidden />}
         </span>
         <span className="min-w-0 flex-1 leading-tight">
           <span className="flex items-center gap-1.5">

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import type { ChatRequest } from "../src/gateway/types.js";
 import type { WorkerResult, WorkerTask } from "../src/core/task.js";
 import { maxAgentsPerJob } from "../src/config/schema.js";
@@ -17,7 +17,7 @@ import { loadSources, renderSources } from "../src/context/sources.js";
 import { baseConfig, makeEnv, open, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 let db: Db | undefined;
 let tmp: string | undefined;
 afterEach(async () => {
@@ -74,7 +74,7 @@ describe("plan graph", () => {
 // ---------- the task store: file leases, per-job cap, accepted inputs ----------
 
 function store(): { tasks: TaskStore; clock: { now: number } } {
-  tmp = mkdtempSync(path.join(tmpdir(), "switchyard-team-"));
+  tmp = mkdtempSync(path.join(tmpdir(), "meritrouter-team-"));
   db = openDatabase(tmp);
   const clock = { now: 1_000_000 };
   return { tasks: new TaskStore(db, () => clock.now), clock };

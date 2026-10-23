@@ -1,4 +1,4 @@
-import { insights, PROMOTION_STATUSES, type PromotionStatus } from "switchyard-router";
+import { insights, PROMOTION_STATUSES, type PromotionStatus } from "meritrouter";
 import { handle, HttpError } from "@/lib/api";
 
 export const dynamic = "force-dynamic";

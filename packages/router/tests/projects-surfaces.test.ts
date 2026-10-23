@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { parseConfig } from "../src/config/load.js";
 import { chooseProject, requireProject, type SelectableProject } from "../src/cli/project-select.js";
 import { initConfigText } from "../src/cli/projects.js";
@@ -32,7 +32,7 @@ const cliJs = path.resolve(here, "..", "dist", "cli.js");
 const mcpJs = path.resolve(here, "..", "dist", "mcp.js");
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 let client: Client | undefined;
 afterEach(async () => {
   await client?.close();
@@ -74,10 +74,10 @@ function makeTwoProjects(): Env {
   return e;
 }
 
-/** A clean environment for child processes: no SWITCHYARD_* variables from the test runner. */
+/** A clean environment for child processes: no MERITROUTER_* variables from the test runner. */
 function childEnv(extra: Record<string, string> = {}): Record<string, string> {
   const e: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith("SWITCHYARD_")) e[k] = v;
+  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith("MERITROUTER_")) e[k] = v;
   return { ...e, ...extra };
 }
 
@@ -106,11 +106,11 @@ describe("project selection", () => {
   });
 
   it("fails with the list of projects when it cannot choose, and on an unknown project", () => {
-    expect(() => requireProject(projects, { cwd: cwd("/elsewhere") })).toThrow(/several projects and the working directory is not inside any project's repository; pass --project <slug> or set SWITCHYARD_PROJECT\. Projects: alpha, beta, old \(archived\)/);
+    expect(() => requireProject(projects, { cwd: cwd("/elsewhere") })).toThrow(/several projects and the working directory is not inside any project's repository; pass --project <slug> or set MERITROUTER_PROJECT\. Projects: alpha, beta, old \(archived\)/);
     // The same folder configured in two projects is ambiguous.
     expect(() => requireProject(projects, { cwd: cwd("/work/shared/x") })).toThrow(/inside repositories of several projects \(alpha, beta\)/);
     expect(() => chooseProject(projects, { flag: "nope", cwd: cwd("/work/alpha") })).toThrow(/unknown project nope \(from --project\); projects: alpha, beta, old \(archived\)/);
-    expect(() => chooseProject(projects, { env: "nope", cwd: cwd("/work/alpha") })).toThrow(/from SWITCHYARD_PROJECT/);
+    expect(() => chooseProject(projects, { env: "nope", cwd: cwd("/work/alpha") })).toThrow(/from MERITROUTER_PROJECT/);
   });
 
   it("parses --repo flags and writes init configs in the projects shape", () => {
@@ -125,7 +125,7 @@ describe("project selection", () => {
       expect(raw.projects.shop).toMatchObject({ name: "Shop", repositories: { web: { path: "../web" } } });
       expect(raw.brain.project).toBe("shop");
       expect(raw.repositories).toBeUndefined();
-      const cfg = parseConfig(raw, path.join(tmpdir(), "x", "switchyard.config.yaml"));
+      const cfg = parseConfig(raw, path.join(tmpdir(), "x", "meritrouter.config.yaml"));
       expect(cfg.projectResolution.primary).toBe("shop");
     }
     // A preset still in the single-project shape is converted.
@@ -144,7 +144,7 @@ describe("CLI with projects", () => {
     // Outside every repository with two projects: a write fails and lists the projects.
     const ambiguous = cli(["submit", "-"], { input: task });
     expect(ambiguous.status).toBe(1);
-    expect(ambiguous.stderr).toMatch(/several projects .*pass --project <slug> or set SWITCHYARD_PROJECT\. Projects: alpha, beta/);
+    expect(ambiguous.stderr).toMatch(/several projects .*pass --project <slug> or set MERITROUTER_PROJECT\. Projects: alpha, beta/);
     const unknown = cli(["status", "--project", "nope"]);
     expect(unknown.status).toBe(1);
     expect(unknown.stderr).toMatch(/unknown project nope/);
@@ -156,8 +156,8 @@ describe("CLI with projects", () => {
     const inAlpha = cli(["submit", "-", "--json"], { input: task, cwd: path.join(env.dir, "alpha-app") });
     expect(inAlpha.status, inAlpha.stderr).toBe(0);
     const alphaId = (JSON.parse(inAlpha.stdout) as Array<{ taskId: string }>)[0]!.taskId;
-    // SWITCHYARD_PROJECT works too.
-    const viaEnv = cli(["submit", "-", "--json"], { input: task, env: { SWITCHYARD_PROJECT: "beta" } });
+    // MERITROUTER_PROJECT works too.
+    const viaEnv = cli(["submit", "-", "--json"], { input: task, env: { MERITROUTER_PROJECT: "beta" } });
     expect(viaEnv.status, viaEnv.stderr).toBe(0);
 
     const all = JSON.parse(cli(["status", "--json"]).stdout) as Array<{ taskId: string; project: string }>;
@@ -228,15 +228,15 @@ describe("CLI with projects", () => {
   }, 120_000);
 
   it("init writes a global config plus a first project", () => {
-    const dir = mkdtempSync(path.join(tmpdir(), "switchyard-init-"));
+    const dir = mkdtempSync(path.join(tmpdir(), "meritrouter-init-"));
     try {
       const r = spawnSync(process.execPath, [cliJs, "init", dir, "--project", "shop", "--repo", "web=../web"], { encoding: "utf8", env: childEnv(), timeout: 30_000 });
       expect(r.status, r.stderr).toBe(0);
-      const raw = YAML.parse(readFileSync(path.join(dir, "switchyard.config.yaml"), "utf8")) as { brain: { project: string }; projects: Record<string, unknown>; repositories?: unknown };
+      const raw = YAML.parse(readFileSync(path.join(dir, "meritrouter.config.yaml"), "utf8")) as { brain: { project: string }; projects: Record<string, unknown>; repositories?: unknown };
       expect(raw.projects).toEqual({ shop: { name: "shop", repositories: { web: { path: "../web" } } } });
       expect(raw.brain.project).toBe("shop");
       expect(raw.repositories).toBeUndefined();
-      expect(() => parseConfig(raw, path.join(dir, "switchyard.config.yaml"))).not.toThrow();
+      expect(() => parseConfig(raw, path.join(dir, "meritrouter.config.yaml"))).not.toThrow();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -257,7 +257,7 @@ describe("MCP with projects", () => {
   };
   const submitOne = async (goal: string) => ((await call("submit_tasks", { tasks: [summarizeTask({ goal })] })) as { submitted: Array<{ taskId: string }> }).submitted[0]!.taskId;
 
-  it("serves the project from --project, SWITCHYARD_PROJECT, or the working directory; --no-worker runs no worker", async () => {
+  it("serves the project from --project, MERITROUTER_PROJECT, or the working directory; --no-worker runs no worker", async () => {
     env = makeTwoProjects();
     await connect(["--project", "beta", "--no-worker"]);
     const id = await submitOne("In beta");
@@ -275,7 +275,7 @@ describe("MCP with projects", () => {
     expect(((await call("get_task_status", { taskIds: [id] })) as Array<{ state: string }>)[0]!.state).toBe("queued");
     await client!.close();
 
-    await connect(["--no-worker"], { env: { SWITCHYARD_PROJECT: "alpha" } });
+    await connect(["--no-worker"], { env: { MERITROUTER_PROJECT: "alpha" } });
     expect(((await call("get_task_status", {})) as Array<{ taskId: string }>).map((t) => t.taskId)).toEqual([alphaId]);
     await client!.close();
 
@@ -288,13 +288,13 @@ describe("MCP with projects", () => {
     // Nothing to choose from: the server refuses to start and lists the projects.
     const r = spawnSync(process.execPath, [mcpJs, "--config", env.cfg.configPath, "--no-worker"], { encoding: "utf8", cwd: env.dir, env: childEnv(), input: "", timeout: 30_000 });
     expect(r.status).toBe(1);
-    expect(r.stderr).toMatch(/switchyard mcp: .*several projects.*Projects: alpha, beta/);
+    expect(r.stderr).toMatch(/meritrouter mcp: .*several projects.*Projects: alpha, beta/);
   }, 120_000);
 });
 
 describe("admin API across projects", () => {
   /** A finished physical request charged to `taskId` (or to no task), with optional paid spend. */
-  function request(s: Switchyard, id: string, taskId: string | null, paid?: { reserved: number; actual: number | null }) {
+  function request(s: MeritRouter, id: string, taskId: string | null, paid?: { reserved: number; actual: number | null }) {
     const now = Date.now();
     s.db.prepare("INSERT INTO executions (id, kind, profile, status, created_at) VALUES (?, 'task', 'summarize', 'finished', ?)").run(`x_${id}`, now);
     s.db
@@ -366,7 +366,7 @@ describe("admin API across projects", () => {
     expect(ps.configKeyPath).toEqual(["projects", "beta"]);
     expect(ps.effective.supervisor.branch_prefix).toBe("beta/job-");
     expect(ps.effective.team.max_agents).toBe(3);
-    expect(projectSettings(sy, "alpha").effective.supervisor.branch_prefix).toBe("switchyard/job-");
+    expect(projectSettings(sy, "alpha").effective.supervisor.branch_prefix).toBe("meritrouter/job-");
     expect(patchProjectSettings(sy, "beta", [{ path: ["execution", "max_concurrent_tasks"], value: 9 }])).toMatchObject({ ok: false, errors: [expect.stringMatching(/not a project setting/)] });
     expect(patchProjectSettings(sy, "beta", [{ path: ["team", "provider_concurrency_enabled"], value: true }])).toMatchObject({ ok: false });
     expect(patchProjectSettings(sy, "beta", [{ path: ["team", "max_agents"], value: 5 }])).toEqual({ ok: true });

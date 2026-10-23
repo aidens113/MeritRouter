@@ -2,13 +2,13 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import { SwitchyardError } from "../core/errors.js";
+import { MeritRouterError } from "../core/errors.js";
 
 /**
- * `switchyard service install | uninstall | status`: registers `switchyard daemon` with the
+ * `meritrouter service install | uninstall | status`: registers `meritrouter daemon` with the
  * platform's per-user service manager, so the worker starts at logon and restarts on failure.
  * - Linux: a systemd user unit (`~/.config/systemd/user/<name>.service`).
- * - macOS: a launchd agent (`~/Library/LaunchAgents/dev.switchyard.<name>.plist`).
+ * - macOS: a launchd agent (`~/Library/LaunchAgents/dev.meritrouter.<name>.plist`).
  * - Windows: a Task Scheduler task registered with `schtasks /XML` (logon trigger for the current
  *   user, least privilege, restart on failure), so no administrator rights are needed.
  * A plan is pure data; `--dry-run` prints it, and only `runServiceSteps` touches the system.
@@ -23,7 +23,7 @@ export const ServiceSpecSchema = z
   .object({
     platform: ServicePlatformSchema,
     /** Service, unit, or task name. */
-    name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/, "letters, digits, '.', '_', '-' (max 64)").default("switchyard"),
+    name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/, "letters, digits, '.', '_', '-' (max 64)").default("meritrouter"),
     nodePath: z.string().min(1),
     cliPath: z.string().min(1),
     configPath: z.string().min(1),
@@ -82,7 +82,7 @@ function systemdPlan(s: z.infer<typeof ServiceSpecSchema>): ServicePlan {
   const definitionPath = path.posix.join(s.homeDir.split(path.sep).join("/"), ".config", "systemd", "user", unit);
   const definition = [
     "[Unit]",
-    "Description=SwitchYard daemon (worker under a restart policy)",
+    "Description=MeritRouter daemon (worker under a restart policy)",
     "After=network-online.target",
     "StartLimitIntervalSec=600",
     "StartLimitBurst=5",
@@ -117,7 +117,7 @@ function systemdPlan(s: z.infer<typeof ServiceSpecSchema>): ServicePlan {
 }
 
 function launchdPlan(s: z.infer<typeof ServiceSpecSchema>): ServicePlan {
-  const label = `dev.switchyard.${s.name}`;
+  const label = `dev.meritrouter.${s.name}`;
   const definitionPath = path.posix.join(s.homeDir.split(path.sep).join("/"), "Library", "LaunchAgents", `${label}.plist`);
   const logFile = path.join(s.logsDir, "launchd.log");
   const definition = [
@@ -141,7 +141,7 @@ function launchdPlan(s: z.infer<typeof ServiceSpecSchema>): ServicePlan {
     "</plist>",
     "",
   ].join("\n");
-  if (s.uid === undefined) throw new SwitchyardError("usage", "a launchd agent needs the user id (uid) for its gui/<uid> domain");
+  if (s.uid === undefined) throw new MeritRouterError("usage", "a launchd agent needs the user id (uid) for its gui/<uid> domain");
   const domain = `gui/${s.uid}`;
   return {
     platform: "darwin",
@@ -163,7 +163,7 @@ function windowsPlan(s: z.infer<typeof ServiceSpecSchema>): ServicePlan {
     '<?xml version="1.0" encoding="UTF-16"?>',
     '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">',
     "  <RegistrationInfo>",
-    "    <Description>SwitchYard daemon (worker under a restart policy)</Description>",
+    "    <Description>MeritRouter daemon (worker under a restart policy)</Description>",
     "  </RegistrationInfo>",
     "  <Triggers>",
     `    <LogonTrigger><Enabled>true</Enabled>${userId}</LogonTrigger>`,

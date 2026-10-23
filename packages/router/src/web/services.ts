@@ -23,7 +23,7 @@ export type WebSearchBackendSetting = (typeof WEB_SEARCH_BACKEND_SETTINGS)[numbe
 export const WEB_SEARCH_STRATEGIES = ["spread", "fallback"] as const;
 export type WebSearchStrategy = (typeof WEB_SEARCH_STRATEGIES)[number];
 
-/** Page fetch backends: SwitchYard's own SSRF-guarded fetch, and Ollama's web_fetch. */
+/** Page fetch backends: MeritRouter's own SSRF-guarded fetch, and Ollama's web_fetch. */
 export const WEB_FETCH_BACKENDS = ["builtin", "ollama"] as const;
 export type WebFetchBackend = (typeof WEB_FETCH_BACKENDS)[number];
 

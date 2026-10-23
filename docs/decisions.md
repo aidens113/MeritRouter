@@ -1,18 +1,25 @@
 # Decision record
 
+This is a dated architecture/history record, not the onboarding guide. Start with
+[setup](setup.md) or the [documentation index](README.md). Product names and current command
+examples use MeritRouter; older decisions predate the rename from SwitchYard. Provider facts
+below retain their recorded observation dates and sources and are not promises of today's
+prices, quotas or availability. Existing installations need the explicit
+[upgrade procedure](setup.md#upgrading-from-switchyard).
+
 Verified interfaces, routing boundaries, and every departure from the original plan
 (`plan.md`, written for "fluxiq-workers"). Dates are 2026-10-19 unless noted. FreeLLMAPI, the
-gateway SwitchYard used until 2026-10-20, appears here only as history (last section).
+gateway MeritRouter used until 2026-10-20, appears here only as history (last section).
 
 ## Direct providers (user decision, 2026-10-19; implemented 2026-10-20)
 
-The user enters provider keys in SwitchYard (panel, CLI, or config) and never installs or runs
-anything else; SwitchYard calls each provider and finds the models those keys can use. FreeLLMAPI
+The user enters provider keys in MeritRouter (panel, CLI, or config) and never installs or runs
+anything else; MeritRouter calls each provider and finds the models those keys can use. FreeLLMAPI
 was removed from the package rather than kept as an optional adapter. Plan and phase reports:
 [docs/working/direct-providers.md](working/direct-providers.md).
 
 - **D1. One key store, one direct path.** Every key lives in the encrypted vault
-  (`src/providers/vault.ts`, AES-256-GCM, master key from `SWITCHYARD_MASTER_KEY` or
+  (`src/providers/vault.ts`, AES-256-GCM, master key from `MERITROUTER_MASTER_KEY` or
   `<storage>/.master-key`) or in config (`providers.<id>.keys[]` with `api_key_env`, or a literal
   `api_key`, which `doctor` flags). Every model request, free or paid, goes through the gate's
   direct path (`src/gateway/direct.ts`) and one provider client with `openai_compatible` and
@@ -54,7 +61,7 @@ was removed from the package rather than kept as an optional adapter. Plan and p
   requested is discarded and quarantines the endpoint. An explicit human acknowledgement with
   a reason permits retries for that recorded violation without deleting evidence. A later
   violation quarantines again; discovery never clears it implicitly (2026-10-22).
-- **D10. CLI.** `switchyard keys add <provider>` reads the secret from `SWITCHYARD_NEW_KEY` or a
+- **D10. CLI.** `meritrouter keys add <provider>` reads the secret from `MERITROUTER_NEW_KEY` or a
   hidden prompt, never from argv; `keys test` lists the models a key can use and marks a
   rejected key invalid; `keys list` shows vault and config keys with status and last four only;
   `models scan` needs no admin token; `doctor` reports each provider (keys, cooldowns, invalid
@@ -103,7 +110,7 @@ documentation, fetched 2026-10-20); worker report
 - **D12. Budgets use a local server's effective context.** Ollama: `num_ctx` from `/api/show`,
   else a loaded model's context from `/api/ps`, else `providers.ollama.default_context_tokens`,
   else 4096, the smallest documented server default (the real default depends on VRAM and
-  `OLLAMA_CONTEXT_LENGTH`, which SwitchYard cannot see), always capped at the trained maximum.
+  `OLLAMA_CONTEXT_LENGTH`, which MeritRouter cannot see), always capped at the trained maximum.
   A local server's output is bounded by that context (Ollama: `num_predict` when set). LM Studio
   uses a loaded instance's context; an unloaded model's load-time context is undocumented, so it
   stays unknown unless configured. `/api/show` answers are cached per process by digest.
@@ -160,7 +167,7 @@ whether Z.ai and Moonshot serve `/models`, LM Studio's `key` as the chat model i
 
 ### Upgrade notes (from a FreeLLMAPI-based install)
 
-- **A config with a `gateway` section fails to load**, with a message saying SwitchYard calls
+- **A config with a `gateway` section fails to load**, with a message saying MeritRouter calls
   providers directly: delete the section and add provider keys under `providers` or in the panel;
   `request_timeout_seconds` moves to `providers.request_timeout_seconds`.
   `discovery.free_platforms` and `discovery.default_output_limit_tokens` fail the same way, each
@@ -182,8 +189,11 @@ whether Z.ai and Moonshot serve `/models`, LM Studio's `key` as the chat model i
 
 ## The panel starts itself (user request, 2026-10-21)
 
-The panel must be reachable whenever agents use SwitchYard, without anyone remembering to start
-it. It is enforced in code, not in prompt text: the MCP server and `switchyard worker` check
+Packaging update: locally built installable tarballs now include the production panel. The
+checkout-only limitation recorded below describes the original implementation, not current setup.
+
+The panel must be reachable whenever agents use MeritRouter, without anyone remembering to start
+it. It is enforced in code, not in prompt text: the MCP server and `meritrouter worker` check
 `panel.port` on 127.0.0.1 at start (the MCP server again every minute) and start the built
 panel detached when nothing answers (`panel.auto_start`, default on; tests turn it off). It
 runs as its own process so it outlives the session; a second starter cannot bind the port and
@@ -259,7 +269,7 @@ how to get one instead of failing (see the packaging question in the working doc
 - Ollama (https://docs.ollama.com/capabilities/web-search): `POST https://ollama.com/api/web_search`
   `{query, max_results}` (default 5, max 10) returns `{results: [{title, url, content}]}`;
   `POST https://ollama.com/api/web_fetch` `{url}` returns `{title, content, links}`; both take
-  `Authorization: Bearer <Ollama API key>`. SwitchYard calls them on the `ollama-cloud`
+  `Authorization: Bearer <Ollama API key>`. MeritRouter calls them on the `ollama-cloud`
   provider's server root, so a `base_url` override moves them too.
 - Tavily (https://docs.tavily.com/documentation/api-reference/endpoint/search):
   `POST https://api.tavily.com/search`, `Authorization: Bearer <key>`, body `{query, max_results
@@ -271,18 +281,18 @@ how to get one instead of failing (see the packaging question in the working doc
 - Exa (https://exa.ai/docs/reference/search, redirected from docs.exa.ai):
   `POST https://api.exa.ai/search`, `x-api-key` (or Bearer), body `{query, numResults (1-100,
   default 10), contents: {highlights | text}}`; results `[{title, url, text, highlights, summary,
-  ...}]`. SwitchYard asks for highlights.
+  ...}]`. MeritRouter asks for highlights.
 - SearXNG (https://docs.searxng.org/dev/search_api.html): `GET /search?q=&format=json`; the json
   format must be enabled in the instance's `settings.yml` (otherwise 403). The page does not
   document the result fields; `results[].title/url/content` come from the instance's JSON output
-  as commonly consumed (not verified against SearXNG source here), and SwitchYard parses them
+  as commonly consumed (not verified against SearXNG source here), and MeritRouter parses them
   defensively (missing fields become empty, non-http URLs are dropped).
 - Free allowances (Tavily credits, Brave's monthly credit, Exa's credit) are third-party
   summaries and change: they are shown as notes only, never enforced as facts.
 
 **Decisions (from `docs/working/web-search.md` D1-D7, revised by the user on 2026-10-21).**
 The first build chose one backend (`web.search.backend`); the user rejected that: web search
-must use every configured backend the way SwitchYard treats model providers. Now:
+must use every configured backend the way MeritRouter treats model providers. Now:
 `web.search.backends` is an ordered pool (`auto` = ollama, tavily, brave, exa, searxng, each
 when it has a key); `web.search.strategy` is `spread` (least recently used healthy backend first,
 so free allowances add up; default) or `fallback` (in order); a failed attempt moves on to the
@@ -310,7 +320,7 @@ key of the same backend is used on the next call, not within the call). A 400-cl
 than 401/402/403/429 moves the call on without marking the backend. Ollama's cap counts its
 searches and fetches together (one account). Web tools are journaled with side effect `read`, so
 a resumed session re-runs an interrupted web call (counting it again). OpenCode and command
-coding runners have no web tools (only SwitchYard's own harness does).
+coding runners have no web tools (only MeritRouter's own harness does).
 
 ## Native web search in model calls (W3, 2026-10-21)
 
@@ -334,7 +344,7 @@ coding runners have no web tools (only SwitchYard's own harness does).
   `url_citation`. Pricing (https://developers.openai.com/api/docs/pricing): web search $10 per 1k
   calls (and for preview on reasoning models), $25 per 1k calls for preview on non-reasoning
   models; the page does not say which row a Chat Completions search model pays. The page did not
-  render the `web_search_options` field shape; SwitchYard sends `web_search_options: {}` only where
+  render the `web_search_options` field shape; MeritRouter sends `web_search_options: {}` only where
   an override names that switch.
 - Anthropic (https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool,
   redirected from docs.anthropic.com): the server tool `{type: "web_search_20250305", name:
@@ -346,11 +356,11 @@ coding runners have no web tools (only SwitchYard's own harness does).
   tokens; a failed search is not billed; an administrator can disable it (400). Long turns may
   stop with `pause_turn`. The models API reports `capabilities.server_tools.web_search.supported`
   (https://platform.claude.com/docs/en/models/overview).
-- Not used, and why. Gemini grounding: the OpenAI-compatible endpoint (which SwitchYard's `google`
+- Not used, and why. Gemini grounding: the OpenAI-compatible endpoint (which MeritRouter's `google`
   provider uses) documents `tools: [{google_search: {}}]` in `extra_body` only for an image model
   (https://ai.google.dev/gemini-api/docs/openai); native grounding
   (https://ai.google.dev/gemini-api/docs/google-search, $14 per 1,000 search queries after 5,000
-  free per month on Gemini 3) needs the native API, which SwitchYard does not call. Perplexity
+  free per month on Gemini 3) needs the native API, which MeritRouter does not call. Perplexity
   Sonar as a provider: its docs now describe the Agent API as Sonar's successor and no longer
   document the Sonar chat endpoint, and Perplexity is not a built-in provider. Groq compound
   (`groq/compound`, `groq/compound-mini`): deprecated on 2026-09-21, requests return errors
@@ -436,7 +446,7 @@ switcher, per-project pages, and a global dashboard. Plan and phase reports:
      free ones;
    - `project_allocation_exhausted` defers the task to the window's reopening.
 8. **D8. MCP per project.** `mcp.js --project <slug>` chooses the project. Without the flag, the
-   server takes `SWITCHYARD_PROJECT`, then the only project, then the project whose repository
+   server takes `MERITROUTER_PROJECT`, then the only project, then the project whose repository
    contains the working directory. `--no-worker` is for running beside a daemon. Brain tools
    work in the server's project. The CLI uses the same selection order.
 9. **D9. Gated global knowledge** (user decision). Only supervisors and people add to `global/`,
@@ -485,8 +495,8 @@ switcher, per-project pages, and a global dashboard. Plan and phase reports:
   rather than start per-project workers. `daemon status` reports per-project queues from the
   store.
 - **Repository folders are prepared, not refused** (user request, 2026-10-21). A missing folder,
-  a plain folder, and a repository with no commits are set up by SwitchYard (git init, a default
-  `.gitignore` for plain folders, a first commit as `SwitchYard <switchyard@localhost>`) instead
+  a plain folder, and a repository with no commits are set up by MeritRouter (git init, a default
+  `.gitignore` for plain folders, a first commit as `MeritRouter <meritrouter@localhost>`) instead
   of blocking project creation or showing as attention. A repository with history is never
   touched. Two folders are refused rather than prepared: one holding files another repository
   tracks (a nested repository would split a monorepo package off; a parent that tracks nothing
@@ -499,7 +509,7 @@ switcher, per-project pages, and a global dashboard. Plan and phase reports:
 ## Departures from the plan
 
 1. **Per-model routing instead of per-profile pools.** The plan used one curated chain per profile
-   and let the gateway pick. SwitchYard ranks endpoints itself and falls back across them; every
+   and let the gateway pick. MeritRouter ranks endpoints itself and falls back across them; every
    attempt is admitted at our gate, so the per-task request cap covers fallbacks exactly. (User
    decision, 2026-10-18.) Until 2026-10-20 each endpoint was a single-model FreeLLMAPI chain,
    with hidden retries inside one model's keys; since then each endpoint is a provider model
@@ -520,17 +530,18 @@ switcher, per-project pages, and a global dashboard. Plan and phase reports:
    OpenAI-compatible endpoint, one attempt per key, worst-case cost reserved before dispatch and
    settled to billed cost, keys in an encrypted vault with billing classes. Since 2026-10-20 free
    routes are direct too, through the same vault and client (D1).
-6. **SwitchYard has its own agent harness** for every role: read-only workers, the native coding
+6. **MeritRouter has its own agent harness** for every role: read-only workers, the native coding
    worker (default), and the standalone supervisor. Tools enforce scope in code; OpenCode remains
-   an optional runner.
+   an optional runner in the original design. Current security policy disables external
+   runners until an accepted OS sandbox exists; use the native runner.
 7. **`await_results` waits up to `execution.await_max_seconds` (240 s)** and returns a bounded
    "still waiting" response; the installed Claude Code version's MCP backgrounding behaviour was
    not verified here.
-8. **Package and storage naming:** `switchyard-router`, `.switchyard/`, MCP server `switchyard`.
+8. **Package and storage naming:** `meritrouter`, `.meritrouter/`, MCP server `meritrouter`.
 9. **better-sqlite3 pinned to 12.x**: 13.0.3's N-API prebuild segfaults on Node 22.11 (Windows).
    **Vitest 3.2 + Vite 6**: Vitest 4/5 need Node >= 22.12.
 
-10. **Standalone operation** (user decision): Claude Code is one preset. SwitchYard runs its own
+10. **Standalone operation** (user decision): Claude Code is one preset. MeritRouter runs its own
     supervisor on models chosen per role; presets `claude-code`, `standalone-free`,
     `standalone-hybrid`, `standalone-paid`.
 11. **The brain is markdown working documents in git**, not a database (user decision): FluxIQ's
@@ -540,7 +551,7 @@ switcher, per-project pages, and a global dashboard. Plan and phase reports:
 12. **Per-agent, per-line attribution via git** (user request): commits under the agent's identity
     with Agent/Model/Task trailers, one commit per editing model response, cherry-picked onto job
     branches (no squash); supervisors undo by task, model, agent, commit, or line as new commits.
-13. **Supervisors commit only to local `switchyard/job-<id>` branches and never push**; the brain
+13. **Supervisors commit only to local `meritrouter/job-<id>` branches and never push**; the brain
     repository pushes only when `brain.push` is set.
 14. **Every model-driven run is a durable agent session** (user requirement, 2026-10-19): an
     append-only JSONL event log per session, fsynced per event, indexed in SQLite; a tool journal
@@ -588,7 +599,7 @@ and pull-never policy. Initial support uses human-approved preloaded digest imag
 ambient interpolation are outside that first contract.
 
 [Compose down](https://docs.docker.com/reference/cli/docker/compose/down/) removes project
-containers/networks and has additional resource-removal options. SwitchYard's proposed recovery
+containers/networks and has additional resource-removal options. MeritRouter's proposed recovery
 instead journals exact immutable resource IDs and proves ownership before each destructive call.
 Name/label discovery alone cannot authorize removal after replacement or an ambiguous lost response.
 Unproven resources remain quarantined. A trusted local engine is a prerequisite; Docker-admin
@@ -598,19 +609,19 @@ acceptance remains required; no engine or containers were started during this in
 ## History: verified FreeLLMAPI behaviour (server v0.2.1, commit 0c456ea)
 
 FreeLLMAPI was removed on 2026-10-20 (see Direct providers). None of this applies to the current
-code; it is kept as the record of why SwitchYard routed the way it did before. Read from source,
+code; it is kept as the record of why MeritRouter routed the way it did before. Read from source,
 not documentation. Paths are relative to `server/src/`.
 
 | Topic | Fact | Consequence then |
 | --- | --- | --- |
 | Inference | `POST /v1/chat/completions`, Bearer auth (unified key or `sk-cp-` client key). Body `model` is overwritten with the routed id; `_routed_via {platform, model}` and `X-Routed-Via: platform/model` identify the served route. | The gate verified every response's served (platform, model). |
 | Usage | OpenAI `usage`; `cached_tokens`/`reasoning_tokens` are subsets. When the upstream sends none, FreeLLMAPI fills a chars/4 estimate flagged `estimated: true`. No cost field. | Estimated usage was labelled `unknown` basis, never reported as provider usage. |
-| Named chains | `auto:<name>` resolves global sort aliases first (`smart`, `fast`, `cheap`, `reliable`, `balanced`, ...) to a **whole-catalog** sort, then profiles. Disabled rows are skipped. An exhausted chain returns 429/503; it never falls through to other models. | Pool names were validated; SwitchYard only ever sent `auto:sy-<hash>`. |
+| Named chains | `auto:<name>` resolves global sort aliases first (`smart`, `fast`, `cheap`, `reliable`, `balanced`, ...) to a **whole-catalog** sort, then profiles. Disabled rows are skipped. An exhausted chain returns 429/503; it never falls through to other models. | Pool names were validated; MeritRouter only ever sent `auto:sy-<hash>`. |
 | `auto_include_new_models` | Defaults to 1 for non-empty profiles: catalog sync adds new models to the chain **enabled**. Profiles created with `empty: true` get 0. | Chains were created empty and verified to contain exactly one model. |
 | Raw model ids | Route over that model's whole provider group, ignoring chain flags. | The adapter refused anything that was not `auto:<chain>`. |
 | Retries | Up to 20 attempts within a 45 s budget; `X-Fallback-Attempts` (failed hops) and `X-Fallback-Trail` report them after the fact. | Provider attempts were reported with `providerAttemptsExact: false`. |
 | Keys | `api_keys` table: multiple keys per platform, AES-GCM at rest, `/api/keys` CRUD, `groupLabel`, per-key monthly caps. Keys rotate within a platform. | The panel managed free keys through FreeLLMAPI. |
-| Client keys | `sk-cp-` keys carry only a name and system prompt; they cannot be scoped to a chain. | Per-job scoping was done by SwitchYard's own job gateway (still the case). |
+| Client keys | `sk-cp-` keys carry only a name and system prompt; they cannot be scoped to a chain. | Per-job scoping was done by MeritRouter's own job gateway (still the case). |
 | Cache | Exact-match cache, off by default; key ignores the client key (shared). `X-FreeLLM-Cache: bypass` skips it. | `gateway.bypass_cache: true` was the default. |
 | Admin API | `/api/*` needs a dashboard session token (`POST /api/auth/login`, 30 days). `GET /api/models`, `/api/profiles`, `/api/profiles/:id/models`, `PUT /api/profiles/:id/reorder` (replaces members). Profile names: `[A-Za-z0-9_-]{1,20}`. | Chain names were `sy-` + 10 hex chars. |
 | Health | `GET /v1/providers` (unified key): per-platform status, cooldown resume time. | Route ordering moved cooling-down platforms to the end. |

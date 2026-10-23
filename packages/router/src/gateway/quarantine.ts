@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { SwitchyardError } from "../core/errors.js";
+import { MeritRouterError } from "../core/errors.js";
 import { immediate, type Db } from "../storage/db.js";
 
 const Violation = z.object({ id: z.string(), policy_violation: z.string() });
@@ -29,7 +29,7 @@ export function quarantineReason(db: Db, endpointId: string): string | null {
 export function acknowledgeQuarantine(db: Db, endpointId: string, input: { actor: string; reason: string }, now = Date.now()) {
   return immediate(db, () => {
     const violation = latest(db, endpointId);
-    if (!violation || !quarantineReason(db, endpointId)) throw new SwitchyardError("not_quarantined", "This model has no pending quarantine to acknowledge");
+    if (!violation || !quarantineReason(db, endpointId)) throw new MeritRouterError("not_quarantined", "This model has no pending quarantine to acknowledge");
     const ack = Acknowledgement.parse({ ...input, endpointId, requestId: violation.id, at: now });
     db.prepare("INSERT INTO meta (key, value) VALUES (?, ?)").run(key(violation.id), JSON.stringify(ack));
     return ack;

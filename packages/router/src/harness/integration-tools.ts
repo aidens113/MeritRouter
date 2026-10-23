@@ -180,7 +180,7 @@ export function integrationHooks(s: SupervisorState, env: HarnessEnv, seam: Inte
         throw new Error("refused: merge queue source differs from checked winning attempt");
       }
     },
-    committer: { name: s.actor.agent, email: `${s.actor.agent.replace(/[^A-Za-z0-9._-]+/g, ".")}@switchyard.local` },
+    committer: { name: s.actor.agent, email: `${s.actor.agent.replace(/[^A-Za-z0-9._-]+/g, ".")}@meritrouter.local` },
     accept: (item) => {
       // Idempotent: a recovered item whose acceptance was already recorded is not accepted twice.
       if (svc.getTask(item.taskId)?.result?.acceptanceStatus === "met") return;

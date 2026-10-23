@@ -11,7 +11,7 @@ const Body = z.object({ project: z.string().trim().min(1).max(100).optional() })
 /**
  * Requeue the task of an interrupted session so its next run continues that session (a coding
  * session in its own worktree; completion work re-runs fresh, linked to it). The panel's instance
- * never runs tasks (its scheduler is stopped): a worker, the MCP server or `switchyard worker`,
+ * never runs tasks (its scheduler is stopped): a worker, the MCP server or `meritrouter worker`,
  * picks the task up on its next poll.
  */
 export async function POST(req: Request, ctx: Ctx) {

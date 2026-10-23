@@ -99,7 +99,7 @@ export function StackedColumns({
   const [table, setTable] = useState(false);
   const totals = useMemo(() => buckets.map((_, i) => series.reduce((s, x) => s + (x.values[i] ?? 0), 0)), [buckets, series]);
   const { max, step } = niceMax(Math.max(0, ...totals));
-  const padL = 36;
+  const padL = Math.max(36, max.toLocaleString("en-US").length * 7 + 10);
   const padB = 22;
   const padT = 8;
   const plotW = Math.max(0, width - padL - 4);

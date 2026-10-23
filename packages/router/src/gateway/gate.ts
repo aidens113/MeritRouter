@@ -62,7 +62,7 @@ export interface GateResponse {
 const STATUS_TTL_MS = 1000;
 
 /**
- * Provider health for routing: each provider's health derived from SwitchYard's own key state
+ * Provider health for routing: each provider's health derived from MeritRouter's own key state
  * (`ProviderRuntime.statuses`) and this process's per-provider circuit breakers, so route
  * ordering can push cooling or failing providers to the end and the gate can skip providers
  * whose breaker is open.
@@ -176,7 +176,7 @@ export class ProviderHealth {
 
 /**
  * The single path for every model request: per-endpoint fit, atomic admission (one reservation
- * per attempt), dispatch to the endpoint's provider through SwitchYard's keys (see
+ * per attempt), dispatch to the endpoint's provider through MeritRouter's keys (see
  * gateway/direct.ts), served-model verification, and reconciliation. Falls back across ranked
  * endpoints only for capacity-type failures, up to routing.max_endpoint_fallbacks free and
  * paid.max_paid_attempts paid dispatched endpoints.

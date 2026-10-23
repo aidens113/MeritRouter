@@ -10,7 +10,7 @@ import { isTerminal } from "../core/task.js";
 import { dirtyPaths, git as unguardedGit } from "../workspaces/git.js";
 import { quoteShellArg } from "../runners/coding/process.js";
 import { LabCheckResultSchema, type LabCheckResult } from "./checks.js";
-import { SwitchyardError } from "../core/errors.js";
+import { MeritRouterError } from "../core/errors.js";
 export const LabPromotionInputSchema = z.object({ by: z.enum(["human", "supervisor", "auto"]), reason: z.string().max(2000).optional() }).strict();
 export type LabPromotionInput = z.infer<typeof LabPromotionInputSchema>;
 export const LabPromotionResultSchema = z.object({ id: z.string(), state: z.enum(["prepared", "promoted", "conflict", "failed", "partial"]), policy: z.enum(["manual", "supervisor", "auto"]), heads: z.record(z.string(), z.string()), targets: z.record(z.string(), z.string()), checks: z.array(LabCheckResultSchema), commands: z.array(z.string()), conflicts: z.record(z.string(), z.array(z.string())), error: z.string().nullable() });
@@ -27,13 +27,13 @@ async function ownHeads(manager: LabManager, project: string, name: string): Pro
   for (const repo of s.lab.repositories) {
     const branch = (await git(repo.worktree, ["symbolic-ref", "--quiet", "HEAD"])).trim();
     if (branch !== `refs/heads/${repo.branch}`)
-      throw new SwitchyardError("lab_scope_denied", "lab worktree no longer owns its recorded branch");
+      throw new MeritRouterError("lab_scope_denied", "lab worktree no longer owns its recorded branch");
     if ((await dirtyPaths(repo.worktree)).length)
-      throw new SwitchyardError("lab_dirty", "lab promotion requires clean committed worktrees");
+      throw new MeritRouterError("lab_dirty", "lab promotion requires clean committed worktrees");
     const head = (await git(repo.worktree, ["rev-parse", "HEAD"])).trim();
     const ref = (await git(repo.source, ["rev-parse", "--verify", `refs/heads/${repo.branch}`])).trim();
     if (head !== ref)
-      throw new SwitchyardError("lab_scope_denied", "lab branch and checkout revision differ");
+      throw new MeritRouterError("lab_scope_denied", "lab branch and checkout revision differ");
     heads[repo.alias] = head;
   }
   return heads;
@@ -46,10 +46,10 @@ function assertTeamSettled(manager: LabManager, labId: string): void {
   while (pending.length) {
     const t = pending.pop()!;
     if (seen.has(t.row.id) || seen.size >= 5000)
-      throw new SwitchyardError("lab_team_busy", "invalid or oversized lab team ancestry");
+      throw new MeritRouterError("lab_team_busy", "invalid or oversized lab team ancestry");
     seen.add(t.row.id);
     if (!isTerminal(t.row.state))
-      throw new SwitchyardError("lab_team_busy", `finish lab task ${t.row.id} before promotion`);
+      throw new MeritRouterError("lab_team_busy", `finish lab task ${t.row.id} before promotion`);
     pending.push(...tasks.childrenOf(t.row.id));
   }
 }
@@ -73,26 +73,26 @@ async function assertReadOnlyHeads(manager: LabManager, project: string, status:
       continue;
     const head = status.heads[repo.alias];
     if (!head)
-      throw new SwitchyardError("lab_scope_denied", "read-only lab repository has no verified head");
+      throw new MeritRouterError("lab_scope_denied", "read-only lab repository has no verified head");
     try {
       await git(repo.source, ["merge-base", "--is-ancestor", head, `refs/heads/${repo.target}`]);
     }
     catch {
-      throw new SwitchyardError("lab_scope_denied", `read-only repository ${repo.alias} contains lab changes and cannot be promoted`);
+      throw new MeritRouterError("lab_scope_denied", `read-only repository ${repo.alias} contains lab changes and cannot be promoted`);
     }
   }
 }
 export async function promoteLab(manager: LabManager, project: string, name: string, raw: LabPromotionInput, actions: PromotionActions): Promise<LabPromotionResult> {
   const input = LabPromotionInputSchema.parse(raw);
   const status = manager.status(project, name);
-  if(status.lab.kind!=="retained")throw new SwitchyardError("lab_scope_denied","task-owned Labs cannot be promoted");
+  if(status.lab.kind!=="retained")throw new MeritRouterError("lab_scope_denied","task-owned Labs cannot be promoted");
   const policy = ProjectConfigSchema.parse(manager.options.cfg.projects[project] ?? {}).labs.promotion;
   if (policy === "supervisor" && input.by === "auto")
-    throw new SwitchyardError("lab_promotion_policy", "this project requires a supervisor or person to promote");
+    throw new MeritRouterError("lab_promotion_policy", "this project requires a supervisor or person to promote");
   assertTeamSettled(manager, status.lab.id);
   await assertReadOnlyHeads(manager, project, status);
   if (!Object.keys(status.lab.recipe.checks).length)
-    throw new SwitchyardError("lab_checks_required", "configure declared lab checks before preparing a promotion");
+    throw new MeritRouterError("lab_checks_required", "configure declared lab checks before preparing a promotion");
   const id = newId("lprom"), locks: Array<{
     repository: string;
     target: string;
@@ -107,7 +107,7 @@ export async function promoteLab(manager: LabManager, project: string, name: str
     const common = (await git(repo.source, ["rev-parse", "--path-format=absolute", "--git-common-dir"])).trim();
     const lock = { repository: realpathSync(common), target: repo.target };
     if (locks.some(x => x.repository === lock.repository && x.target === lock.target))
-      throw new SwitchyardError("lab_promotion_conflict", "multiple aliases share the same physical promotion target");
+      throw new MeritRouterError("lab_promotion_conflict", "multiple aliases share the same physical promotion target");
     locks.push(lock);
     locksByAlias.set(repo.alias, lock);
   }
@@ -116,7 +116,7 @@ export async function promoteLab(manager: LabManager, project: string, name: str
     for (const lock of locks) {
       const old = z.object({ holder_id: z.string(), lease_until: z.number() }).optional().parse(manager.options.db.prepare("SELECT holder_id,lease_until FROM lab_target_locks WHERE repository=? AND target=?").get(lock.repository, lock.target));
       if (old && old.lease_until > Date.now())
-        throw new SwitchyardError("lab_promotion_busy", "another lab is promoting to this target");
+        throw new MeritRouterError("lab_promotion_busy", "another lab is promoting to this target");
       manager.options.db.prepare("INSERT INTO lab_target_locks(repository,target,holder_id,lease_until) VALUES(?,?,?,?) ON CONFLICT(repository,target) DO UPDATE SET holder_id=excluded.holder_id,lease_until=excluded.lease_until").run(lock.repository, lock.target, id, Date.now() + LEASE);
     }
     manager.options.db.prepare("INSERT INTO lab_promotions(id,lab_id,state,policy,created_at,updated_at) VALUES(?,?,'checking',?,?,?)").run(id, status.lab.id, policy, Date.now(), Date.now());
@@ -152,16 +152,16 @@ export async function promoteLab(manager: LabManager, project: string, name: str
       const checked = await actions.check(check);
       result.checks.push(checked);
       if (checked.exitCode !== 0 || checked.killed)
-        throw new SwitchyardError("lab_checks_failed", `lab check ${check} did not pass on the candidate revision`);
+        throw new MeritRouterError("lab_checks_failed", `lab check ${check} did not pass on the candidate revision`);
     }
     await assertReadOnlyHeads(manager, project, manager.status(project, name));
     const actual = await ownHeads(manager, project, name);
     if (JSON.stringify(actual) !== JSON.stringify(result.heads))
-      throw new SwitchyardError("lab_revision_changed", "lab revision changed after its checks");
+      throw new MeritRouterError("lab_revision_changed", "lab revision changed after its checks");
     for (const repo of manager.status(project, name).lab.repositories) {
       const expected = result.targets[repo.alias]!;
       if ((await git(repo.source, ["rev-parse", "--verify", `refs/heads/${repo.target}`])).trim() !== expected)
-        throw new SwitchyardError("lab_target_changed", "target advanced during promotion; refresh and check again");
+        throw new MeritRouterError("lab_target_changed", "target advanced during promotion; refresh and check again");
       await git(repo.source, ["merge-base", "--is-ancestor", expected, result.heads[repo.alias]!]);
       if (!writable(manager, project, repo.alias))
         continue;
@@ -179,17 +179,17 @@ export async function promoteLab(manager: LabManager, project: string, name: str
       await assertReadOnlyHeads(manager, project, manager.status(project, name));
       const lock = locksByAlias.get(repo.alias);
       if (!lock || !(manager.options.db.prepare("SELECT holder_id FROM lab_target_locks WHERE repository=? AND target=? AND holder_id=? AND lease_until>?").get(lock.repository, lock.target, id, Date.now())))
-        throw new SwitchyardError("lab_promotion_lease_lost", "promotion target lock expired");
+        throw new MeritRouterError("lab_promotion_lease_lost", "promotion target lock expired");
       const latest = await ownHeads(manager, project, name);
       if (latest[repo.alias] !== result.heads[repo.alias])
-        throw new SwitchyardError("lab_revision_changed", "lab head changed before target mutation");
+        throw new MeritRouterError("lab_revision_changed", "lab head changed before target mutation");
       const expected = result.targets[repo.alias]!, candidate = result.heads[repo.alias]!;
       const checkout = await targetWorktree(repo.source, repo.target);
       if (checkout) {
         if ((await dirtyPaths(checkout)).length)
-          throw new SwitchyardError("lab_target_dirty", "target checkout has uncommitted user changes; they were preserved");
+          throw new MeritRouterError("lab_target_dirty", "target checkout has uncommitted user changes; they were preserved");
         if ((await git(checkout, ["symbolic-ref", "--quiet", "HEAD"])).trim() !== `refs/heads/${repo.target}` || (await git(checkout, ["rev-parse", "HEAD"])).trim() !== expected)
-          throw new SwitchyardError("lab_target_changed", "target checkout changed before promotion");
+          throw new MeritRouterError("lab_target_changed", "target checkout changed before promotion");
         await git(checkout, ["merge", "--ff-only", "--no-edit", candidate]);
       }
       else

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { afterEach, expect, it, vi } from "vitest";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { WorkerTaskSchema } from "../src/core/task.js";
 import { capturedLease } from "../src/storage/task-leases.js";
 import { RequestPersistenceError } from "../src/admission/request-ledger.js";
@@ -9,7 +9,7 @@ import { deleteProject, previewProjectDeletion } from "../src/admin/insights.js"
 import { purgeProjectRows } from "../src/projects/deletion.js";
 import { baseConfig, endpoint, makeEnv, open, reply, ScriptedClient, summarizeTask, type Env } from "./helpers.js";
 
-let env: Env | undefined, sy: Switchyard | undefined;
+let env: Env | undefined, sy: MeritRouter | undefined;
 afterEach(async () => { await sy?.close(); vi.restoreAllMocks(); env?.cleanup(); sy = undefined; env = undefined; });
 function setup() {
   env = makeEnv({ endpoints: [endpoint()], config: baseConfig({ repositories: {},

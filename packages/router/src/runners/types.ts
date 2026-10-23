@@ -19,7 +19,7 @@ import type { SessionRecorder } from "../sessions/recorder.js";
 import type { AcceptanceContract } from "../verification/contract.js";
 import type { WebAccess } from "../web/access.js";
 
-/** Who decides a result and why (see `Switchyard.acceptTask`). */
+/** Who decides a result and why (see `MeritRouter.acceptTask`). */
 export interface AcceptanceDecisionInput {
   by: SupervisorDecision["by"];
   reason?: string | null;

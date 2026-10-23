@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { Check, FlaskConical, KeyRound, Pencil, Plus, Radar, RefreshCw, Server, Trash2, X } from "lucide-react";
-import type { insights } from "switchyard-router";
+import type { insights } from "meritrouter";
 import { ActionStatus, callApi, useAction } from "./actions";
 import { Badge, buttonClass, cx, HelpTip, type Tone } from "../ui";
 import { ago, dateTime, num } from "@/lib/format";
@@ -105,7 +105,7 @@ function ExtrasFields({ value, onChange, billing }: { value: Extras; onChange: (
           <input type="date" value={value.expires} onChange={(e) => onChange({ ...value, expires: e.target.value })} className="field mt-1" />
         </Field>
       </div>
-      <p className="mt-2 text-[11px] text-ink-3">Limits are enforced by SwitchYard as sliding windows on top of what the provider&apos;s rate-limit headers report.</p>
+      <p className="mt-2 text-[11px] text-ink-3">Limits are enforced by MeritRouter as sliding windows on top of what the provider&apos;s rate-limit headers report.</p>
     </details>
   );
 }
@@ -231,7 +231,7 @@ export function AddKeyForm({ providers, billingClasses }: { providers: ProviderO
           <>
             <ExtrasFields value={extras} onChange={setExtras} billing={billing} />
             <p id="key-storage-note" className="text-xs text-ink-3">
-              The key is encrypted at rest (AES-256-GCM) in SwitchYard&apos;s vault and sent only to this provider. It is never shown again; the panel shows its last four characters. A free-tier key on a model the provider lists at $0 is free; any other key follows the paid policy and budgets in Settings.
+              The key is encrypted at rest (AES-256-GCM) in MeritRouter&apos;s vault and sent only to this provider. It is never shown again; the panel shows its last four characters. A free-tier key on a model the provider lists at $0 is free; any other key follows the paid policy and budgets in Settings.
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <button type="button" className={buttonClass("secondary")} disabled={testing || busy || !p || secret.trim().length < 8 || (needsAccount && !accountId.trim())} onClick={() => void runTest()}>
@@ -304,7 +304,7 @@ function LocalServerForm({ provider, local, select }: { provider: ProviderOption
         )}
       </div>
       <p className="text-xs text-ink-3">
-        A local server runs on your machine or network and costs nothing per request. SwitchYard writes <code className="font-mono">providers.{provider.id}</code> to the config file and reads the server&apos;s own model list, including each model&apos;s context and tool support where the server reports them.
+        A local server runs on your machine or network and costs nothing per request. MeritRouter writes <code className="font-mono">providers.{provider.id}</code> to the config file and reads the server&apos;s own model list, including each model&apos;s context and tool support where the server reports them.
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <button type="submit" className={buttonClass("primary")} disabled={busy || (required && !baseUrl.trim())}>

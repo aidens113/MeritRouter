@@ -4,11 +4,11 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
 import { parseConfig } from "../src/config/load.js";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { baseConfig, FakeProvider, makeEnv, open, providerJson, providerModels, testProviders, type Env } from "./helpers.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => {
   await sy?.close();
   sy = undefined;
@@ -85,7 +85,7 @@ describe("models scan", () => {
 describe("removed configuration", () => {
   it("a config with a gateway section fails and says to add provider keys instead", () => {
     const withGateway = baseConfig({ gateway: { adapter: "freellmapi", base_url: "http://127.0.0.1:9/v1", request_timeout_seconds: 60 } });
-    expect(() => parseConfig(withGateway, "/tmp/sy.yaml")).toThrow(/gateway: the gateway section is no longer supported: SwitchYard calls providers directly\. Delete it and add your provider keys under providers/);
+    expect(() => parseConfig(withGateway, "/tmp/sy.yaml")).toThrow(/gateway: the gateway section is no longer supported: MeritRouter calls providers directly\. Delete it and add your provider keys under providers/);
     expect(() => parseConfig(baseConfig({ discovery: { free_platforms: ["groq"] } }), "/tmp/sy.yaml")).toThrow(/discovery\.free_platforms: .*billing_class: free_tier/);
     expect(() => parseConfig(baseConfig({ discovery: { default_output_limit_tokens: 4096 } }), "/tmp/sy.yaml")).toThrow(/discovery\.default_output_limit_tokens: .*outputLimitTokens/);
   });
@@ -94,7 +94,7 @@ describe("removed configuration", () => {
 describe("shipped configuration", () => {
   it("the example config and every preset `init` writes parse without a gateway", () => {
     const examples = path.resolve(import.meta.dirname, "../examples");
-    const files = [path.join(examples, "switchyard.config.example.yaml"), ...readdirSync(path.join(examples, "presets")).map((f) => path.join(examples, "presets", f))];
+    const files = [path.join(examples, "meritrouter.config.example.yaml"), ...readdirSync(path.join(examples, "presets")).map((f) => path.join(examples, "presets", f))];
     expect(files.length).toBeGreaterThan(1);
     for (const file of files) {
       const raw = YAML.parse(readFileSync(file, "utf8")) as Record<string, unknown>;

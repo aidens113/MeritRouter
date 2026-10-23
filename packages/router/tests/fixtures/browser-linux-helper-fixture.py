@@ -31,7 +31,7 @@ def pin(path):
 
 class HelperFixture(unittest.TestCase):
     def setUp(self):
-        self.root = tempfile.mkdtemp(prefix="switchyard-helper-fixture-")
+        self.root = tempfile.mkdtemp(prefix="meritrouter-helper-fixture-")
         os.chmod(self.root, 0o700)
         self.path = os.path.join(self.root, "entry.py")
         shutil.copyfile(source, self.path)
@@ -50,7 +50,7 @@ class HelperFixture(unittest.TestCase):
                 if stream:
                     stream.close()
         # Only this directly created mkdtemp root is removed; helper never removes proof paths.
-        assert os.path.basename(self.root).startswith("switchyard-helper-fixture-") and os.path.dirname(self.root) == tempfile.gettempdir()
+        assert os.path.basename(self.root).startswith("meritrouter-helper-fixture-") and os.path.dirname(self.root) == tempfile.gettempdir()
         shutil.rmtree(self.root)
 
     def start(self, patch=None, env=None, extra_fds=(), control=None):

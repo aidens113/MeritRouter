@@ -46,14 +46,14 @@ import { LabManager } from "../labs/lab.js";
 import { LabNameSchema } from "../labs/recipe.js";
 import { taskLabSelectionIssues } from "./task-lab-validation.js";
 import { taskLabAuthority, taskLabEvidenceProblem } from "../runners/coding/task-lab.js";
-import { SwitchyardError } from "./errors.js";
+import { MeritRouterError } from "./errors.js";
 import { ProjectConfigSchema } from "../projects/schema.js";
 import { prepareProjectRepositories, type RepositoryPreparation } from "../projects/repository-setup.js";
 import type { ProjectContext } from "../projects/context.js";
 import { Scheduler } from "./scheduler.js";
 import { isTerminal, type TaskState, type WorkerResult, type WorkerTask } from "./task.js";
 
-export interface SwitchyardOptions {
+export interface MeritRouterOptions {
   coding?: CodingRunner | null;
   /** Runner for supervise tasks (standalone supervisor jobs). */
   supervisor?: CodingRunner | null;
@@ -66,7 +66,7 @@ export interface SwitchyardOptions {
   /** The built-in page fetch's transport and DNS resolver (tests use fakes). */
   webPage?: { transport?: PageTransport; resolve?: Resolver };
   now?: () => number;
-  /** Run the in-process worker loop (MCP server and `switchyard worker`). */
+  /** Run the in-process worker loop (MCP server and `meritrouter worker`). */
   worker?: boolean;
   /** Supervise lab services independently of model workers; off for ordinary API instances. */
   labsMonitor?: boolean;
@@ -102,7 +102,7 @@ export interface AwaitOutcome {
 const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
 
 /**
- * Task purposes SwitchYard submits itself. Without a named project, qualification and comparison
+ * Task purposes MeritRouter submits itself. Without a named project, qualification and comparison
  * runs go to the reserved qualification project (their fixture repositories live only there);
  * audits go to the primary project (the auditor names the audited task's project).
  */
@@ -110,7 +110,7 @@ const SYSTEM_PURPOSES = new Set(["qualification", "comparison", "audit"]);
 const QUALIFICATION_PURPOSES = new Set(["qualification", "comparison"]);
 
 /** Library entry point shared by the CLI, the MCP server, and the web panel. */
-export class Switchyard {
+export class MeritRouter {
   readonly db: Db;
   readonly tasks: TaskStore;
   readonly artifacts: ArtifactStore;
@@ -165,7 +165,7 @@ export class Switchyard {
 
   constructor(
     readonly cfg: ResolvedConfig,
-    opts: SwitchyardOptions = {},
+    opts: MeritRouterOptions = {},
   ) {
     this.now = opts.now ?? Date.now;
     this.configMtime = mtime(cfg.configPath);
@@ -730,7 +730,7 @@ export class Switchyard {
    * Accept a finished task's result on behalf of its job's supervisor or a human. Who accepted
    * and why are recorded on the result. Unmet results are refused, not_verified and
    * needs_supervisor ones need a reason, and with `verification.strict_acceptor: human` only a
-   * human accepts a strict result. Throws a SwitchyardError with the refusal code.
+   * human accepts a strict result. Throws a MeritRouterError with the refusal code.
    */
   acceptTask(id: string, input: AcceptanceDecisionInput, project?: string): AcceptanceDecisionOutcome {
     this.assertInProject(id, project);
@@ -741,7 +741,7 @@ export class Switchyard {
       // A human/reviewer decision cannot waive exact, current runtime-check evidence.
       // Bounded Git inspection happens before the acceptance writer's DB transaction.
       const problem = taskLabEvidenceProblem(task.spec, evidence, authority);
-      if (problem) throw new SwitchyardError("acceptance_refused", problem);
+      if (problem) throw new MeritRouterError("acceptance_refused", problem);
     }
     const beforeAccept = (current: StoredTask) => {
       if (!task?.spec.constraints.labChecks?.length) return;
@@ -750,21 +750,21 @@ export class Switchyard {
         || canonicalJson(this.labs.taskAttempts.store.get(authority.attempt.id)) !== canonicalJson(authority.attempt)
         || canonicalJson(this.labs.taskAttempts.store.lab(authority.attempt.id)) !== canonicalJson(authority.request)
         || canonicalJson(this.labs.store.byId(authority.lab.id)) !== canonicalJson(authority.lab)) {
-        throw new SwitchyardError("acceptance_refused", "Task Lab authority changed during acceptance; inspect and retry");
+        throw new MeritRouterError("acceptance_refused", "Task Lab authority changed during acceptance; inspect and retry");
       }
       const fresh = new ProjectRegistry(loadConfig(this.cfg.configPath)).get(current.row.project_id);
       if (!fresh || fresh.storageDir !== this.cfg.storageDir || taskLabSelectionIssues(fresh, current.spec).length
         || canonicalJson(Object.keys(fresh.repositoryPaths).filter(alias => current.spec.repositoryAliases.includes(alias))) !== canonicalJson(authority.attempt.repositories.map(repo => repo.alias))
         || authority.attempt.repositories.some(repo => fresh.repositoryPaths[repo.alias]?.path !== repo.sourcePath)
         || canonicalJson(ProjectConfigSchema.parse(fresh.projects[current.row.project_id]).lab) !== canonicalJson(authority.request.recipe)) {
-        throw new SwitchyardError("acceptance_refused", "Task Lab authorization or recipe changed during acceptance");
+        throw new MeritRouterError("acceptance_refused", "Task Lab authorization or recipe changed during acceptance");
       }
       const lab = authority.lab.id;
       if (this.db.prepare("SELECT 1 FROM task_lab_operations WHERE attempt_id=? AND state IN ('pending','running') LIMIT 1").get(authority.attempt.id)
         || this.db.prepare("SELECT 1 FROM lab_ports WHERE lab_id=? LIMIT 1").get(lab)
         || this.db.prepare("SELECT 1 FROM lab_attempt_processes WHERE lab_id=? AND state!='stopped' LIMIT 1").get(lab)
         || this.db.prepare("SELECT 1 FROM lab_services WHERE lab_id=? AND (state!='stopped' OR pid IS NOT NULL OR token IS NOT NULL) LIMIT 1").get(lab)) {
-        throw new SwitchyardError("acceptance_refused", "Task Lab resources changed during acceptance");
+        throw new MeritRouterError("acceptance_refused", "Task Lab resources changed during acceptance");
       }
     };
     const out = recordAcceptanceDecision({ cfg: this.contextOfTask(id), tasks: this.tasks, contracts: this.contracts, now: this.now, beforeAccept }, id, "accept", input);

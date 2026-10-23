@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { insights, PROJECT_SLUG_RE } from "switchyard-router";
+import { insights, PROJECT_SLUG_RE } from "meritrouter";
 import { body, handle, HttpError } from "@/lib/api";
 
 export const dynamic = "force-dynamic";

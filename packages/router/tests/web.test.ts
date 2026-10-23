@@ -2,7 +2,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { gzipSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { ConfigSchema } from "../src/config/schema.js";
 import type { FetchLike } from "../src/providers/transport.js";
 import { blockedAddress, checkHostResolves, checkWebUrl, fetchPage, guardedLookup, htmlToText, nodeTransport, ollamaFetch, searchWith, WEB_REQUEST_EVENT, type PageResponse, type PageTransport, type SearchTarget } from "../src/web/index.js";
@@ -19,7 +19,7 @@ import { WorkerActionRequests } from "../src/harness/worker-actions.js";
  */
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => {
   await sy?.close();
   sy = undefined;
@@ -206,7 +206,7 @@ describe("SSRF guard and the built-in fetch", () => {
   });
 });
 
-// ---------- WebAccess inside a Switchyard ----------
+// ---------- WebAccess inside a MeritRouter ----------
 
 const searxConfig = (web: Record<string, unknown> = {}) => baseConfig({ web: { search: { searxng: { base_url: "https://searx.example" } }, ...web } });
 const searxAnswer = (s: Seen) => (s.url.includes("/search") ? { results: [{ title: "Result", url: "https://r.example/", content: "snippet" }] } : {});

@@ -8,9 +8,9 @@ import { parseConfig } from "../src/config/load.js";
 import * as validation from "../src/core/validate.js";
 import { saveLabRecipe } from "../src/admin/labs.js";
 import { baseConfig, makeEnv, open, ScriptedClient, reply, commitAll, type Env } from "./helpers.js";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 
-let env: Env | undefined, sy: Switchyard | undefined;
+let env: Env | undefined, sy: MeritRouter | undefined;
 afterEach(async () => { vi.restoreAllMocks(); await sy?.close(); sy = undefined; env?.cleanup(); env = undefined; });
 const task = () => ({ profile: "implement", goal: "Change the scoped application", repositoryAliases: ["core"], writableRepository: "core", constraints: { acceptanceCriteria: ["Works"], allowedPaths: ["src/**"], labChecks: ["health"] } });
 function setup(enabled = true) {

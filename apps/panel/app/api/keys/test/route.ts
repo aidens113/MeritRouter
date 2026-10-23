@@ -1,4 +1,4 @@
-import { insights } from "switchyard-router";
+import { insights } from "meritrouter";
 import { body, handle } from "@/lib/api";
 import { KeyTestBody } from "@/lib/key-schemas";
 

@@ -1,6 +1,6 @@
 import Link from "next/link";
-import type { Switchyard } from "switchyard-router";
-import { insights } from "switchyard-router";
+import type { MeritRouter } from "meritrouter";
+import { insights } from "meritrouter";
 import { cacheSaving, purposeLabel, RequestsTable } from "@/components/requests-table";
 import { Card, HelpTip, Stat } from "@/components/ui";
 import { PageHeader } from "@/components/page-header";
@@ -14,7 +14,7 @@ const LIMITS = ["50", "100", "200", "500"];
  * The request log with its filters: one project's requests (`project`), or every project's (the
  * install-wide page, `project` null, which also shows requests charged to no task).
  */
-export function RequestsView({ sy, project, sp }: { sy: Switchyard; project: { slug: string; name: string } | null; sp: Record<string, string | string[] | undefined> }) {
+export function RequestsView({ sy, project, sp }: { sy: MeritRouter; project: { slug: string; name: string } | null; sp: Record<string, string | string[] | undefined> }) {
   const str = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : "");
   const status = str("status");
   const endpoint = str("endpoint");
@@ -46,6 +46,7 @@ export function RequestsView({ sy, project, sp }: { sy: Switchyard; project: { s
   const tokCached = rows.reduce((s, x) => s + (x.cachedInputTokens ?? 0), 0);
   const unknownCache = rows.filter(x => x.cachedInputTokens === null).length;
   const cacheKnown = unknownCache === 0;
+  const reportedUsage = rows.some(row => row.inputTokens !== null || row.outputTokens !== null);
   const tokOut = rows.reduce((s, x) => s + (x.outputTokens ?? 0), 0);
   const saving = cacheSaving(rows, new Map(eps.map((e) => [e.id, e.pricing])));
   const violations = rows.filter((x) => x.policyViolation).length;
@@ -56,7 +57,7 @@ export function RequestsView({ sy, project, sp }: { sy: Switchyard; project: { s
         title="Requests"
         description={
           <>
-            {project ? `Every physical model request this project's tasks made at SwitchYard's gate, newest first.` : "Every physical model request admitted at SwitchYard's gate, from every project (and requests charged to no task, such as scans and probes), newest first."} A batched request answers several tasks at once and is counted once. <HelpTip term="requests" />
+            {project ? `Every physical model request this project's tasks made at MeritRouter's gate, newest first.` : "Every physical model request admitted at MeritRouter's gate, from every project (and requests charged to no task, such as scans and probes), newest first."} A batched request answers several tasks at once and is counted once. <HelpTip term="requests" />
           </>
         }
         live={["requests"]}
@@ -64,7 +65,7 @@ export function RequestsView({ sy, project, sp }: { sy: Switchyard; project: { s
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat label="Requests shown" value={num(rows.length)} sub={`${num(total)} matching | page ${page}`} />
         <Stat label="Succeeded" value={rows.length ? pct(ok, rows.length) : "–"} sub={`${num(rows.length - ok)} failed or uncertain`} />
-        <Stat label="New tokens" value={cacheKnown ? compact(tokIn - tokCached + tokOut) : "Unknown"} sub={cacheKnown ? `${compact(tokIn - tokCached)} in | ${compact(tokOut)} out | ${compact(tokCached)} cached` : `${unknownCache} requests have unknown cache usage | ${compact(tokIn + tokOut)} total reported tokens`} />
+        <Stat label={cacheKnown ? "New tokens" : "Reported tokens"} value={cacheKnown ? compact(tokIn - tokCached + tokOut) : reportedUsage ? `~${compact(tokIn + tokOut)}` : "Unknown"} sub={cacheKnown ? `${compact(tokIn - tokCached)} in | ${compact(tokOut)} out | ${compact(tokCached)} cached` : reportedUsage ? "Input + output; cached input included" : "No token usage reported"} />
         <Stat label="Prompt cache" value={cacheKnown && tokIn ? pct(tokCached, tokIn) : cacheKnown ? "0" : "Unknown"} sub={`${compact(tokCached)} known cached tokens${unknownCache ? ` | ${unknownCache} unknown requests` : ""} | ${saving.known ? `known savings $${saving.usd.toFixed(4)}` : "saving unknown (no cached price)"}`} />
         <Stat label="Policy violations" value={num(violations)} tone={violations ? "bad" : undefined} sub="served by a different model than routed" />
       </div>

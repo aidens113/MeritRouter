@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { BookOpenText, CheckCircle2, Clock, GitCommitHorizontal, History, ShieldCheck, Undo2, UserCheck } from "lucide-react";
-import { insights } from "switchyard-router";
+import { insights } from "meritrouter";
 import { getSy } from "@/lib/sy";
 import { ALL, brainHref, projectBase } from "@/lib/links";
 import { SetupScreen } from "@/components/setup";

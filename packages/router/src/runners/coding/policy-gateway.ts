@@ -112,7 +112,7 @@ export async function startPolicyGateway(
       if (!authorized(req)) return sendJson(res, 401, { error: { message: "invalid job token", type: "authentication_error" } });
       const url = (req.url ?? "").replace(/\?.*$/, "").replace(/\/+$/, "");
       if (req.method === "GET" && url.endsWith("/models")) {
-        return sendJson(res, 200, { object: "list", data: [{ id: model, object: "model", owned_by: "switchyard" }] });
+        return sendJson(res, 200, { object: "list", data: [{ id: model, object: "model", owned_by: "meritrouter" }] });
       }
       if (req.method !== "POST" || !url.endsWith("/chat/completions")) return sendJson(res, 404, { error: { message: "not found" } });
 
@@ -177,7 +177,7 @@ export async function startPolicyGateway(
           if (["task_request_budget_exhausted", "task_token_budget_exhausted", "cancel_requested", "lease_lost", "deadline_exceeded", "task_not_active"].includes(err.reason)) {
             opts.onStop(err.reason);
           } else if (consecutiveDenied >= opts.maxDenied) opts.onStop(`denied ${consecutiveDenied} consecutive requests: ${err.reason}`);
-          return sendJson(res, 429, { error: { message: err.message, type: "switchyard_denied", code: err.reason } });
+          return sendJson(res, 429, { error: { message: err.message, type: "meritrouter_denied", code: err.reason } });
         }
         if (consecutiveDenied >= opts.maxDenied) opts.onStop(`${consecutiveDenied} consecutive failed requests`);
         const ge = err instanceof GatewayError ? err : null;

@@ -11,7 +11,7 @@ import { LabManager } from "../src/labs/lab.js";
 import { processAlive } from "../src/labs/process-ownership.js";
 import { portAvailable } from "../src/labs/ports.js";
 import { BrowserCheckSchema } from "../src/labs/browser-schema.js";
-const chrome = process.env.SWITCHYARD_TEST_CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe';
+const chrome = process.env.MERITROUTER_TEST_CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 let env: Env | undefined;
 let db: Db | undefined;
 let manager: LabManager | undefined;

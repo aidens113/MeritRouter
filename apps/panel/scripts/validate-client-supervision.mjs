@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import YAML from "yaml";
 
-import { Switchyard, loadConfig } from "switchyard-router";
+import { MeritRouter, loadConfig } from "meritrouter";
 const app = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const routerRequire = createRequire(path.resolve(app,"../../packages/router/package.json"));
 const { Client } = await import(pathToFileURL(routerRequire.resolve("@modelcontextprotocol/sdk/client/index.js")).href);
@@ -15,10 +15,10 @@ const { StdioClientTransport } = await import(pathToFileURL(routerRequire.resolv
 const demo = path.join(app, ".demo"); mkdirSync(demo, {recursive:true});
 const fixture = mkdtempSync(path.join(demo, "client-supervision-"));
 const screenshots = path.join(demo, "client-supervision-screenshots"); mkdirSync(screenshots,{recursive:true});
-const config = path.join(fixture, "switchyard.config.yaml"); const repo = path.join(fixture, "repo"); mkdirSync(repo);
+const config = path.join(fixture, "meritrouter.config.yaml"); const repo = path.join(fixture, "repo"); mkdirSync(repo);
 execFileSync("git", ["init", "-q", repo]); execFileSync("git", ["-C",repo,"-c","user.name=Fixture","-c","user.email=fixture@example.test","commit","--allow-empty","-qm","fixture"]);
-writeFileSync(config,YAML.stringify({version:1,profiles:{},providers:{},storage:{directory:".switchyard"},brain:{project:"demo",path:"brain"},repositories:{core:{path:"repo"}},discovery:{interval_minutes:0},panel:{auto_start:false,port:4499},paid:{enabled:false}})+"# preserved policy fixture comment\n");
-const before = YAML.parse(readFileSync(config,"utf8")); const sy = new Switchyard(loadConfig(config),{worker:false});
+writeFileSync(config,YAML.stringify({version:1,profiles:{},providers:{},storage:{directory:".meritrouter"},brain:{project:"demo",path:"brain"},repositories:{core:{path:"repo"}},discovery:{interval_minutes:0},panel:{auto_start:false,port:4499},paid:{enabled:false}})+"# preserved policy fixture comment\n");
+const before = YAML.parse(readFileSync(config,"utf8")); const sy = new MeritRouter(loadConfig(config),{worker:false});
 const client = new Client({name:"production-policy-browser",version:"1"});
 const require = createRequire(import.meta.url); const port=4499, cdpPort=9371, base=`http://127.0.0.1:${port}`;
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
@@ -28,9 +28,9 @@ function command(method,params={}){return new Promise((resolve,reject)=>{const k
 async function evaluate(expression){const r=await command("Runtime.evaluate",{expression,returnByValue:true,awaitPromise:true});assert(!r.exceptionDetails,JSON.stringify(r.exceptionDetails));return r.result?.value;}
 const blocks=r=>r.content;
 try{
- await client.connect(new StdioClientTransport({command:process.execPath,args:[path.resolve(app,"../../packages/router/dist/cli.js"),"mcp","--config",config,"--no-worker"],env:{PATH:process.env.PATH??"",SWITCHYARD_PANEL_DIR:path.join(fixture,"no-panel")}}));
+ await client.connect(new StdioClientTransport({command:process.execPath,args:[path.resolve(app,"../../packages/router/dist/cli.js"),"mcp","--config",config,"--no-worker"],env:{PATH:process.env.PATH??"",MERITROUTER_PANEL_DIR:path.join(fixture,"no-panel")}}));
  assert(client.getInstructions().includes("Delegate as much practical work"));
- server=spawn(process.execPath,[require.resolve("next/dist/bin/next"),"start","-H","127.0.0.1","-p",String(port)],{cwd:app,env:{...process.env,SWITCHYARD_CONFIG:config,SWITCHYARD_PROJECT:"",SWITCHYARD_PANEL_TOKEN:""},stdio:"ignore",windowsHide:true});
+ server=spawn(process.execPath,[require.resolve("next/dist/bin/next"),"start","-H","127.0.0.1","-p",String(port)],{cwd:app,env:{...process.env,MERITROUTER_CONFIG:config,MERITROUTER_PROJECT:"",MERITROUTER_PANEL_TOKEN:""},stdio:"ignore",windowsHide:true});
  await until(async()=>{try{return(await fetch(base+"/all/settings")).ok;}catch{return false;}},"panel readiness");
  const invalid=await fetch(base+"/api/config",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({patch:[{path:["client_supervision","instructions"],value:"x".repeat(8001)}]})});assert.equal(invalid.status,400);
  const chromePath=[process.env.CHROME_PATH,"C:/Program Files/Google/Chrome/Application/chrome.exe"].find(p=>p&&existsSync(p));assert(chromePath);
@@ -50,7 +50,7 @@ try{
  await command("Page.reload");await until(async()=>await evaluate("document.getElementById('f-client_supervision.instructions')?.value==='Browser customized final checks\\nReview browser evidence'"),"UI reload");assert.equal(await evaluate("document.getElementById('f-client_supervision.dispatch_final_supervisor').checked"),true);
  result=await client.callTool({name:"set_supervision_policy",arguments:{dispatch_final_supervisor:false,instructions:"",reason:"Explicit fixture user resets defaults"}});assert.equal(JSON.parse(blocks(result)[0].text).dispatch_final_supervisor,false);
  await command("Page.reload");await until(async()=>await evaluate("document.getElementById('f-client_supervision.dispatch_final_supervisor')?.checked === false && document.getElementById('f-client_supervision.instructions')?.value === ''"),"MCP policy displayed by UI");
- for(const width of [1440,390])for(const theme of ["light","dark"]){await command("Emulation.setDeviceMetricsOverride",{width,height:1000,deviceScaleFactor:1,mobile:width===390});await evaluate(`localStorage.setItem('sy-theme',${JSON.stringify(theme)});document.documentElement.setAttribute('data-theme',${JSON.stringify(theme)});document.getElementById('client-supervision').scrollIntoView()`);await delay(250);assert(await evaluate("document.documentElement.scrollWidth<=innerWidth+1"));const image=await command("Page.captureScreenshot",{format:"png",captureBeyondViewport:false});writeFileSync(path.join(screenshots,`policy-${width}-${theme}.png`),Buffer.from(image.data,"base64"));}
+ for(const width of [1440,390])for(const theme of ["light","dark"]){await command("Emulation.setDeviceMetricsOverride",{width,height:1000,deviceScaleFactor:1,mobile:width===390});await evaluate(`localStorage.setItem('meritrouter-theme',${JSON.stringify(theme)});document.documentElement.setAttribute('data-theme',${JSON.stringify(theme)});document.getElementById('client-supervision').scrollIntoView()`);await delay(250);assert(await evaluate("document.documentElement.scrollWidth<=innerWidth+1"));const image=await command("Page.captureScreenshot",{format:"png",captureBeyondViewport:false});writeFileSync(path.join(screenshots,`policy-${width}-${theme}.png`),Buffer.from(image.data,"base64"));}
  const after=YAML.parse(readFileSync(config,"utf8"));delete after.client_supervision;assert.deepEqual(after,before);assert(readFileSync(config,"utf8").includes("# preserved policy fixture comment"));assert.equal(sy.db.prepare("SELECT COUNT(*) n FROM model_requests").get().n,0);assert.deepEqual(errors,[]);
  console.log(JSON.stringify({ok:true,port,cdpPort,panelPid:server.pid,chromePid:chrome.pid,config,screenshots,checks:"production UI save/reload, default final dispatch off/project dispatch permission toggle, custom text, MCP existing-connection UI-originated update once, MCP reset reflected in UI, invalid API400, unrelated config/comment preservation, zero model calls,4desktop/phone light/dark screenshots"},null,2));
 }finally{

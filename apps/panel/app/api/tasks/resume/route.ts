@@ -6,11 +6,11 @@ export const dynamic = "force-dynamic";
 const Body = z.object({ project: z.string().trim().min(1).max(100).optional(), id: z.string().min(1) });
 
 /**
- * Requeue an interrupted task, as `switchyard resume <task>` does: agent-loop roles (read-only
+ * Requeue an interrupted task, as `meritrouter resume <task>` does: agent-loop roles (read-only
  * workers, supervisors) continue their latest interrupted session, and a coding task starts over
  * in a fresh worktree. The scheduler kick inside resumeTask() is a no-op here: the panel's
  * instance has its scheduler stopped (lib/sy.ts), so a worker (the MCP server or
- * `switchyard worker`) picks the task up on its next poll.
+ * `meritrouter worker`) picks the task up on its next poll.
  */
 export async function POST(req: Request) {
   return handle(async (sy) => {

@@ -6,7 +6,7 @@ import { checkHostResolves, checkWebUrl, guardedLookup, SsrfRefusal, systemResol
 import { htmlToText } from "./html-text.js";
 
 /**
- * SwitchYard's own page fetch (used when Ollama's web_fetch is not available): http(s) only,
+ * MeritRouter's own page fetch (used when Ollama's web_fetch is not available): http(s) only,
  * every host checked against the SSRF guard before the request and at connection time, each
  * redirect target checked again (at most `maxRedirects`), a timeout, and a byte cap on the
  * decoded body. HTML is reduced to readable text.
@@ -44,7 +44,7 @@ export interface PageFetchOptions {
   signal?: AbortSignal;
 }
 
-const USER_AGENT = "SwitchYard/1 (agent web_fetch)";
+const USER_AGENT = "MeritRouter/1 (agent web_fetch)";
 const TEXTUAL = /^(?:text\/|application\/(?:xhtml\+xml|xml|json|ld\+json|javascript|rss\+xml|atom\+xml)|[a-z]+\/[a-z0-9.+-]*\+(?:json|xml)$)/i;
 
 /** The real transport: node http(s) with the guarded DNS lookup, a timeout, and a decoded-byte cap. */
@@ -127,7 +127,7 @@ function decode(body: Buffer, contentType: string): string {
   }
 }
 
-/** Fetch one page with SwitchYard's own client (see the module comment). */
+/** Fetch one page with MeritRouter's own client (see the module comment). */
 export async function fetchPage(rawUrl: string, o: PageFetchOptions): Promise<FetchedPage> {
   const transport = o.transport ?? nodeTransport;
   const resolve = o.resolve ?? systemResolver;

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import type { ChatRequest } from "../src/gateway/types.js";
 import { baseResult, type RunContext, type SupervisorServices } from "../src/runners/types.js";
 import type { HarnessEnv } from "../src/harness/tools.js";
@@ -16,7 +16,7 @@ import { calibrationOverview, usageByPurpose } from "../src/admin/calibration.js
 import { baseConfig, commitAll, endpoint, goodOutput, makeEnv, openWithTestSupervisor as open, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => {
   await sy?.close();
   sy = undefined;

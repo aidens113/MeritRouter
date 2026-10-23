@@ -1,12 +1,12 @@
 import { z } from "zod";
-import type { Switchyard } from "../core/service.js";
-import { SwitchyardError } from "../core/errors.js";
+import type { MeritRouter } from "../core/service.js";
+import { MeritRouterError } from "../core/errors.js";
 import { ensureLabSupervisor } from "../operations/lab-supervisor.js";
 import { LabNameSchema } from "../labs/recipe.js";
 import type { LabOperationInput } from "../labs/control.js";
 import { out, table } from "./terminal.js";
 
-export async function labsCommand(sy: Switchyard, args: string[], flags: { timeout?: string; confirm?: string; reason?: string }, json: boolean, scope: { project: () => string; list: () => string | undefined }, cliPath: string): Promise<number> {
+export async function labsCommand(sy: MeritRouter, args: string[], flags: { timeout?: string; confirm?: string; reason?: string }, json: boolean, scope: { project: () => string; list: () => string | undefined }, cliPath: string): Promise<number> {
   const action = args[0] ?? "list";
   if (action === "list") {
     const labs = sy.labs.list(scope.list());
@@ -32,9 +32,9 @@ export async function labsCommand(sy: Switchyard, args: string[], flags: { timeo
     case "refresh": input = { kind: "refresh" }; break;
     case "promote": input = { kind: "promote", by: "human", ...(flags.reason ? { reason: flags.reason } : {}) }; break;
     case "destroy":
-      if (flags.confirm !== name) throw new SwitchyardError("usage", `destroy removes this Lab's owned services, worktrees and data; repeat with --confirm ${name}. Branches remain.`);
+      if (flags.confirm !== name) throw new MeritRouterError("usage", `destroy removes this Lab's owned services, worktrees and data; repeat with --confirm ${name}. Branches remain.`);
       input = { kind: "destroy" }; break;
-    default: throw new SwitchyardError("usage", "labs: list, create, status, start, stop, restart, check, logs, refresh, promote, destroy, operations, serve, supervisor-start, supervisor-stop, supervisor-status");
+    default: throw new MeritRouterError("usage", "labs: list, create, status, start, stop, restart, check, logs, refresh, promote, destroy, operations, serve, supervisor-start, supervisor-stop, supervisor-status");
   }
   const timeoutMs = flags.timeout === undefined ? 600_000 : z.coerce.number().int().min(1).max(3600).parse(flags.timeout) * 1000;
   await ensureLabSupervisor(sy, cliPath);

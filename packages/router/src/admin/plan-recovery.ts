@@ -1,6 +1,6 @@
 import picomatch from "picomatch";
 import { z } from "zod";
-import type { Switchyard } from "../core/service.js";
+import type { MeritRouter } from "../core/service.js";
 import { parseTrailers } from "../attribution/index.js";
 import { git } from "../workspaces/git.js";
 import { jobDetail } from "./jobs.js";
@@ -32,7 +32,7 @@ const Commit = z.object({ hash: Hash, seconds: z.coerce.number().int().nonnegati
  * failed segment passed. Keep the task's original failure and acceptance intact. Git commit
  * times have one-second precision: same-second changes cannot establish ordering and are omitted.
  */
-export async function planRecovery(sy: Switchyard, jobId: string): Promise<PlanRecoveryView> {
+export async function planRecovery(sy: MeritRouter, jobId: string): Promise<PlanRecoveryView> {
   const out: PlanRecoveryView = { evidence: [], errors: [], commitLimit: 500 };
   const plan = jobPlan(sy, jobId);
   const job = jobDetail(sy, jobId, { transcript: false });

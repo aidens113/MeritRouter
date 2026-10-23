@@ -1,7 +1,7 @@
 // The MCP server over Streamable HTTP, for clients that cannot launch a local process (ChatGPT
 // through a tunnel, Codex or another agent pointed at a URL).
 //
-// Access: with a token (SWITCHYARD_MCP_TOKEN) every request must carry it, as
+// Access: with a token (MERITROUTER_MCP_TOKEN) every request must carry it, as
 // `Authorization: Bearer <token>` or as the last path segment (`/mcp/<token>`, for ChatGPT,
 // which cannot send custom headers). A token is required whenever the server listens on a
 // non-loopback address. Without a token the server listens on loopback only and also refuses
@@ -9,7 +9,7 @@
 // a tunnel can reach a tokenless server.
 //
 // Each client session gets its own McpServer (an McpServer serves one transport); all of them
-// share the process's Switchyard.
+// share the process's MeritRouter.
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -18,7 +18,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 
 export const MCP_PATH = "/mcp";
-export const MCP_TOKEN_ENV = "SWITCHYARD_MCP_TOKEN";
+export const MCP_TOKEN_ENV = "MERITROUTER_MCP_TOKEN";
 /** Largest request body accepted (submit_tasks may carry up to 50 tasks with inline text). */
 const MAX_BODY_BYTES = 32 * 1024 * 1024;
 
@@ -94,7 +94,7 @@ export async function serveHttp(opts: HttpServeOptions): Promise<HttpHandle> {
       const bearer = /^Bearer\s+(.+)$/i.exec(auth)?.[1]?.trim();
       const presented = bearer ?? pathToken;
       if (presented && sameSecret(presented, token)) return true;
-      rpcError(res, 401, -32001, "unauthorized: send the token as Authorization: Bearer <token>", { "www-authenticate": 'Bearer realm="switchyard"' });
+      rpcError(res, 401, -32001, "unauthorized: send the token as Authorization: Bearer <token>", { "www-authenticate": 'Bearer realm="meritrouter"' });
       return false;
     }
     const host = req.headers.host;

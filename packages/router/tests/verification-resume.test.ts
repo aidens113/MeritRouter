@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { Switchyard, SwitchyardOptions } from "../src/core/service.js";
+import type { MeritRouter, MeritRouterOptions } from "../src/core/service.js";
 import type { ChatRequest, ChatResponse } from "../src/gateway/types.js";
 import type { SessionEvent, SessionEventOf } from "../src/sessions/events.js";
 import type { SessionRecord } from "../src/sessions/store.js";
@@ -16,7 +16,7 @@ import { baseConfig, endpoint, goodOutput, makeEnv, openWithTestSupervisor as op
  */
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 beforeEach(() => resetFaults());
 afterEach(async () => {
   delete process.env[FAULT_ENV];
@@ -92,7 +92,7 @@ const byRole = (id: string, role: string): SessionRecord[] => sy!.sessions.forTa
 const taskEvents = (id: string, type: string) => sy!.tasks.events(id, 1000).filter((e) => e.type === type);
 
 /** Run with the fault armed until the simulated crash, then reopen with the clock past the lease. */
-async function crashThenRecover(client: ScriptedClient, fault: string, opts: SwitchyardOptions = {}): Promise<string> {
+async function crashThenRecover(client: ScriptedClient, fault: string, opts: MeritRouterOptions = {}): Promise<string> {
   const before = simulatedCrashCount();
   process.env[FAULT_ENV] = fault;
   sy = open(env!, client, { worker: true, coding: createCodingRunner(env!.cfg), ...opts });

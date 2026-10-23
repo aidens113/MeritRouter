@@ -1,14 +1,14 @@
-﻿import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { labsListView, labPromotionView, labDetailView, labLogs, labRecipeView, saveLabRecipe, requestLabControl } from "../src/admin/labs.js";
 import { archiveProject } from "../src/admin/projects.js";
 import { ensureLabSupervisor } from "../src/operations/lab-supervisor.js";
 import { baseConfig, makeEnv, open, ScriptedClient, reply, type Env } from "./helpers.js";
 vi.mock("../src/operations/lab-supervisor.js", () => ({ ensureLabSupervisor: vi.fn(async () => ({ started: false })) }));
-let env: Env | undefined; let sy: Switchyard | undefined;
+let env: Env | undefined; let sy: MeritRouter | undefined;
 afterEach(async () => { await sy?.close(); sy = undefined; env?.cleanup(); env = undefined; vi.clearAllMocks(); });
 function setup() {
   env = makeEnv({ config: baseConfig({ repositories: {}, brain: { project: "alpha", path: ".brain" }, projects: {

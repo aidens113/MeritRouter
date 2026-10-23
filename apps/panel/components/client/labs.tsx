@@ -70,7 +70,7 @@ export function LabLogViewer({ project, name, services }: { project: string; nam
 
 export function LabPromotionDetail({ project, name, operationId }: { project: string; name: string; operationId: string }) {
   const a = useAction();
-  const [detail, setDetail] = useState<ReturnType<typeof import("switchyard-router").insights.labPromotionView> | null>(null);
+  const [detail, setDetail] = useState<ReturnType<typeof import("meritrouter").insights.labPromotionView> | null>(null);
   return <div className="mt-3 space-y-2"><button className={buttonClass("secondary")} disabled={a.busy} onClick={async () => {
     const r = await a.run(`${endpoint(project, name)}&operationId=${encodeURIComponent(operationId)}`, "GET", undefined, { refresh: false });
     if (r.ok) setDetail(r as unknown as NonNullable<typeof detail>);

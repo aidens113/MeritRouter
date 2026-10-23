@@ -8,7 +8,7 @@ import type { ChatRequest, ChatResponse } from "../src/gateway/types.js";
 import { GatewayError } from "../src/core/errors.js";
 import { BUILTIN_PROVIDERS } from "../src/providers/registry.js";
 import type { FetchLike } from "../src/providers/transport.js";
-import { Switchyard, type SwitchyardOptions } from "../src/core/service.js";
+import { MeritRouter, type MeritRouterOptions } from "../src/core/service.js";
 import { WorkerActionRequests } from "../src/harness/worker-actions.js";
 
 export const NOW_ISO = new Date().toISOString();
@@ -45,7 +45,7 @@ export function baseConfig(overrides: Record<string, unknown> = {}) {
   return {
     version: 1,
     providers: testProviders(),
-    storage: { directory: ".switchyard" },
+    storage: { directory: ".meritrouter" },
     brain: { path: "brain", project: "demo" },
     models: { file: "models.yaml" },
     // Scheduled discovery is off in tests; `scan()` runs it on demand.
@@ -83,7 +83,7 @@ export function commitAll(repo: string, message = "change") {
 }
 
 export function makeEnv(opts: { config?: Record<string, unknown>; endpoints?: unknown[]; overrides?: Record<string, unknown>; files?: Record<string, string> } = {}): Env {
-  const dir = mkdtempSync(path.join(tmpdir(), "switchyard-test-"));
+  const dir = mkdtempSync(path.join(tmpdir(), "meritrouter-test-"));
   const repo = path.join(dir, "repo");
   mkdirSync(repo);
   const files = opts.files ?? {
@@ -98,7 +98,7 @@ export function makeEnv(opts: { config?: Record<string, unknown>; endpoints?: un
   commitAll(repo, "init");
   writeFileSync(path.join(dir, "models.yaml"), YAML.stringify({ version: 1, endpoints: opts.endpoints ?? [endpoint()], overrides: opts.overrides ?? {} }));
   const raw = opts.config ?? baseConfig();
-  const configPath = path.join(dir, "switchyard.config.yaml");
+  const configPath = path.join(dir, "meritrouter.config.yaml");
   writeFileSync(configPath, YAML.stringify(raw));
   const cfg = parseConfig(raw, configPath);
   return { dir, repo, cfg, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
@@ -171,7 +171,7 @@ function recordCall(url: string, init: { method: string; headers: Record<string,
 }
 
 /**
- * A fake provider behind an injectable fetch (`SwitchyardOptions.providerFetch`). By default it
+ * A fake provider behind an injectable fetch (`MeritRouterOptions.providerFetch`). By default it
  * answers chat completions with a good result for the requested model, lists no models, and
  * returns 404 for anything else (the OpenRouter catalog, Hugging Face).
  */
@@ -292,16 +292,16 @@ export function goodOutput(criteria = 1, ref = "inline", extra: Record<string, u
   };
 }
 
-/** Open a Switchyard whose providers are the given fake (a ScriptedClient or FakeProvider). */
-export function open(env: Env, client: { fetch: FetchLike }, opts: SwitchyardOptions = {}): Switchyard {
-  return new Switchyard(env.cfg, { providerFetch: client.fetch, pollIntervalMs: 50, ...opts });
+/** Open a MeritRouter whose providers are the given fake (a ScriptedClient or FakeProvider). */
+export function open(env: Env, client: { fetch: FetchLike }, opts: MeritRouterOptions = {}): MeritRouter {
+  return new MeritRouter(env.cfg, { providerFetch: client.fetch, pollIntervalMs: 50, ...opts });
 }
 
 /** Explicit trusted operator for temporary fixtures; production open() never approves actions. */
-export function openWithTestSupervisor(env: Env, client: { fetch: FetchLike }, opts: SwitchyardOptions = {}, fixtureCommands: readonly string[] = []): Switchyard {
+export function openWithTestSupervisor(env: Env, client: { fetch: FetchLike }, opts: MeritRouterOptions = {}, fixtureCommands: readonly string[] = []): MeritRouter {
   const root = realpathSync(env.dir);
   const relative = path.relative(realpathSync(tmpdir()), root);
-  if (relative.startsWith("..") || path.isAbsolute(relative) || !path.basename(root).startsWith("switchyard-test-")) throw new Error("test supervisor requires a temporary switchyard-test fixture");
+  if (relative.startsWith("..") || path.isAbsolute(relative) || !path.basename(root).startsWith("meritrouter-test-")) throw new Error("test supervisor requires a temporary meritrouter-test fixture");
   const sy = open(env, client, opts);
   const broker = new WorkerActionRequests(sy.db, opts.now);
   let stopped = false, decisions = 0;
@@ -344,7 +344,7 @@ export function summarizeTask(extra: Record<string, unknown> = {}) {
 }
 
 /** The endpoint a request was sent to, so a reply can claim the right served model. */
-export function servedFor(sy: Switchyard, req: Pick<ChatRequest, "model">): { model: string; provider: string } {
+export function servedFor(sy: MeritRouter, req: Pick<ChatRequest, "model">): { model: string; provider: string } {
   const provider = (req as Partial<ScriptedRequest>).provider;
   const eps = sy.catalog.endpoints().filter((e) => e.route.model === req.model);
   const ep = eps.find((e) => e.route.provider === provider) ?? eps[0];

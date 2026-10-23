@@ -6,6 +6,7 @@ coverage/
 
 # Local state: job databases, artifacts, worktrees, logs, secrets
 .switchyard/
+.meritrouter/
 *.db
 *.db-journal
 *.db-wal
@@ -14,4 +15,5 @@ coverage/
 .env.*
 !.env.example
 switchyard.config.yaml
+meritrouter.config.yaml
 models.local.yaml

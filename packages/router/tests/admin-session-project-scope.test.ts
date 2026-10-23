@@ -3,8 +3,8 @@ import { appendFileSync } from "node:fs";
 import { sessionDetail } from "../src/admin/sessions.js";
 import { sessionRequests } from "../src/admin/entities.js";
 import { baseConfig, makeEnv, open, reply, ScriptedClient, summarizeTask, type Env } from "./helpers.js";
-import type { Switchyard } from "../src/core/service.js";
-let env: Env | undefined, sy: Switchyard | undefined;
+import type { MeritRouter } from "../src/core/service.js";
+let env: Env | undefined, sy: MeritRouter | undefined;
 afterEach(async()=>{await sy?.close();sy=undefined;env?.cleanup();env=undefined;vi.restoreAllMocks();});
 async function fixture(mixed=false, failed=false){
  env=makeEnv({config:baseConfig({ repositories: {}, brain: { project: "alpha", path: "brain" }, projects: { alpha: { repositories: { core: { path: "repo" } } }, beta: { repositories: { core: { path: "repo" } } } } }) });

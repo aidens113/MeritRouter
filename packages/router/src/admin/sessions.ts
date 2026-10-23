@@ -1,5 +1,5 @@
 import { scopedSessionTimeline, SESSION_SCOPE_UNAVAILABLE } from "./session-project-scope.js";
-import type { Switchyard } from "../core/service.js";
+import type { MeritRouter } from "../core/service.js";
 import type { TaskState } from "../core/task.js";
 import type { SessionEventsPage, SessionListFilter, SessionRecord } from "../sessions/store.js";
 import type { CorruptLine, SessionEvent, SessionStatus } from "../sessions/events.js";
@@ -12,7 +12,7 @@ export interface SessionView extends SessionRecord {
   /** Wall-clock duration so far (to `endedAt`, else the last event). */
   durationMs: number;
   /**
-   * `Switchyard.resumeSession` would continue this session: it is `interrupted`, its task is
+   * `MeritRouter.resumeSession` would continue this session: it is `interrupted`, its task is
    * `interrupted`, and it is the task's latest agent session (not a classifier call).
    */
   resumable: boolean;
@@ -27,7 +27,7 @@ export interface SessionDetail extends Omit<SessionEventsPage, "sessionId"> {
   taskSessions: SessionView[];
 }
 
-function sessionViews(sy: Switchyard, records: SessionRecord[]): SessionView[] {
+function sessionViews(sy: MeritRouter, records: SessionRecord[]): SessionView[] {
   const tasks = new Map<string, { label: string | null; state: TaskState | null }>();
   const task = (taskId: string) => {
     if (!tasks.has(taskId)) {
@@ -55,7 +55,7 @@ export interface SessionViewFilter extends SessionListFilter {
 }
 
 /** Sessions matching the filter, newest first; `project` limits them to one project's (all projects when omitted). */
-export function sessionsView(sy: Switchyard, filter: SessionViewFilter = {}): SessionView[] {
+export function sessionsView(sy: MeritRouter, filter: SessionViewFilter = {}): SessionView[] {
   const { project, ...rest } = filter;
   if (!project) return sessionViews(sy, sy.sessions.list(rest));
   // The store has no project filter: read the newest sessions of the filter and keep this project's.
@@ -65,7 +65,7 @@ export function sessionsView(sy: Switchyard, filter: SessionViewFilter = {}): Se
 }
 
 /** One session with a page of its timeline (events after `afterSeq`), its children, and its task's other sessions. */
-export function sessionDetail(sy: Switchyard, id: string, opts: { afterSeq?: number; limit?: number; project?: string } = {}): SessionDetail | null {
+export function sessionDetail(sy: MeritRouter, id: string, opts: { afterSeq?: number; limit?: number; project?: string } = {}): SessionDetail | null {
   const owner = sy.db.prepare("SELECT project_id FROM sessions WHERE id=?").get(id) as {project_id:string}|undefined;
   if (!owner || (opts.project !== undefined && owner.project_id !== opts.project)) return null;
   const project = owner.project_id;

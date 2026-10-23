@@ -2,14 +2,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { WorkerTaskSchema } from "../src/core/task.js";
 import { PlanStore } from "../src/storage/plans.js";
 import { planRecovery } from "../src/admin/plan-recovery.js";
 import { makeEnv, open, reply, ScriptedClient, type Env } from "./helpers.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => { await sy?.close(); sy = undefined; env?.cleanup(); env = undefined; });
 const JOB = "job_recovery";
 const FAILED_AT = 1_700_000_100_500;
@@ -33,7 +33,7 @@ describe("plan supervisor recovery evidence", () => {
     sy.tasks.submit(labels.map((label) => WorkerTaskSchema.parse({ id: `t_${label}`, label, parentTaskId: JOB, profile: "implement", goal: label, repositoryAliases: ["core"], writableRepository: "core", constraints: { allowedPaths: [`${label}.txt`], acceptanceCriteria: ["done"] } })));
     for (const label of labels) sy.db.prepare("UPDATE tasks SET state = 'failed', finished_at = ? WHERE id = ?").run(FAILED_AT, `t_${label}`);
     const base = git("rev-parse", "HEAD");
-    const branch = "switchyard/job-recovery";
+    const branch = "meritrouter/job-recovery";
     git("checkout", "-q", "-b", branch);
     const recorder = sy.sessions.create({ taskId: JOB, jobId: JOB, role: "supervisor", agentLabel: "supervisor:recorded", profile: "supervise" });
     recorder.setWorkspace({ repos: [{ alias: "core", worktree: env.repo, branch, baseCommit: base, head: base }] });

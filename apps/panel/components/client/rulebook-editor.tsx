@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { Plus, RotateCcw, Save, Trash2 } from "lucide-react";
-import type { Rulebook } from "switchyard-router";
+import type { Rulebook } from "meritrouter";
 import { ActionStatus, useAction } from "./actions";
 import { buttonClass, cx } from "../ui";
 

@@ -3,7 +3,7 @@
 // a config with three projects (demo: the calculator service, with `core` and `app` repositories;
 // storefront, whose repository is also aliased `app`; legacy-billing, archived at the end), their
 // git fixture repositories, manual models, and real task/request history produced by
-// running tasks through Switchyard with a scripted in-process provider client (no network, no
+// running tasks through MeritRouter with a scripted in-process provider client (no network, no
 // quota). Every provider (built-in ones with fake keys, a custom keyless "lab" server, and the paid
 // Anthropic route) points at 127.0.0.1 on a closed port, as do the OpenRouter catalog and Hugging
 // Face lookups, so pressing Scan or Test in the panel never leaves the machine: listings just fail.
@@ -28,15 +28,15 @@
 // (Tavily answers 429 and cools down, SearXNG answers) and fetches a page through fake web
 // transports (no request leaves the machine), so tasks, sessions, and the keys page show web calls.
 //
-//   pnpm --filter switchyard-router build
-//   pnpm --filter switchyard-panel seed:demo
-//   SWITCHYARD_CONFIG=.demo/switchyard.config.yaml pnpm --filter switchyard-panel dev
+//   pnpm --filter meritrouter build
+//   pnpm --filter meritrouter-panel seed:demo
+//   MERITROUTER_CONFIG=.demo/meritrouter.config.yaml pnpm --filter meritrouter-panel dev
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
-import { BudgetRequests, GatewayError, ProviderError, Switchyard, WorkerTaskSchema, WorkerActionRequests, insights, parseConfig, planComparison, runComparison } from "switchyard-router";
+import { BudgetRequests, GatewayError, ProviderError, MeritRouter, WorkerTaskSchema, WorkerActionRequests, insights, parseConfig, planComparison, runComparison } from "meritrouter";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const demo = path.resolve(here, "..", ".demo");
@@ -72,7 +72,7 @@ const files = {
   "src/app.ts": "export function add(a: number, b: number) {\n  return a + b;\n}\n",
   "src/server.ts":
     'import { add } from "./app";\n\nexport function handle(query: Record<string, string>) {\n  const a = Number(query.a);\n  const b = Number(query.b);\n  if (Number.isNaN(a) || Number.isNaN(b)) throw new Error("bad input");\n  return { sum: add(a, b) };\n}\n',
-  "README.md": "# Calculator service\n\nA tiny fixture repository used by the SwitchYard panel demo.\n",
+  "README.md": "# Calculator service\n\nA tiny fixture repository used by the MeritRouter panel demo.\n",
 };
 /** A git fixture repository with one commit. */
 function fixtureRepo(dir, contents) {
@@ -247,7 +247,7 @@ const endpoints = [
     outputLimitSource: "provider",
     supportsTools: false,
     pricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 1, freeVerified: false, source: "openrouter_price" },
-    nativeWebSearch: { via: "always_on", usdPerSearch: 0.005, priceDetail: "OpenRouter pricing.request (one search per request assumed)", source: "registry", detail: "OpenRouter: Perplexity models search natively by default; SwitchYard never sends the switch that turns it off", sourceUrl: "https://openrouter.ai/docs/guides/features/web-search", checkedAt: "2026-10-21" },
+    nativeWebSearch: { via: "always_on", usdPerSearch: 0.005, priceDetail: "OpenRouter pricing.request (one search per request assumed)", source: "registry", detail: "OpenRouter: Perplexity models search natively by default; MeritRouter never sends the switch that turns it off", sourceUrl: "https://openrouter.ai/docs/guides/features/web-search", checkedAt: "2026-10-21" },
     sourceUrls: ["https://openrouter.ai/perplexity/sonar"],
   }),
 ];
@@ -274,7 +274,7 @@ const raw = {
     // A custom keyless server (a local Ollama or llama.cpp would look like this).
     lab: { display_name: "Lab server (demo)", base_url: `${OFFLINE}/lab/v1`, no_key: true },
   },
-  storage: { directory: ".switchyard" },
+  storage: { directory: ".meritrouter" },
   models: { file: "models.yaml" },
   // Enrichment sources are offline too: the demo never fetches the OpenRouter catalog or Hugging Face.
   discovery: { interval_minutes: 0, openrouter_models_url: `${OFFLINE}/openrouter-catalog/models`, huggingface_api_url: `${OFFLINE}/huggingface/api/models` },
@@ -289,7 +289,7 @@ const raw = {
   // Explicit seed-only policy: scripted supervisors run deterministic integration checks.
   // Worker commands still need the bounded fixture operator below; reset to human_only at the end.
   security: { outside_repository: "supervisor" },
-  // The brain lives inside the demo folder so seeding never touches ~/.switchyard/brain.
+  // The brain lives inside the demo folder so seeding never touches ~/.meritrouter/brain.
   brain: { path: "brain", project: "demo", access_approver: "supervisor", global_requires_approval: true },
   supervisor: { question_timeout_seconds: 86400 },
   // Agents' web search: a pool of a (fake) Tavily key and a SearXNG instance, both on the closed
@@ -324,10 +324,10 @@ raw.projects.demo.lab = {
   checks: { health: { repo: "core", command: `node -e "fetch('http://127.0.0.1:'+process.env.PORT).then(r=>{if(!r.ok)process.exit(1);console.log('Lab health passed')}).catch(()=>process.exit(1))"` } },
 };
 raw.projects.demo.labs = { promotion: "manual" };
-const configPath = path.join(demo, "switchyard.config.yaml");
+const configPath = path.join(demo, "meritrouter.config.yaml");
 writeFileSync(
   configPath,
-  `# SwitchYard demo configuration (generated by apps/panel/scripts/seed-demo.mjs).\n# The provider keys are fake: the demo data was produced by a scripted in-process provider client.\n${YAML.stringify(raw)}`,
+  `# MeritRouter demo configuration (generated by apps/panel/scripts/seed-demo.mjs).\n# The provider keys are fake: the demo data was produced by a scripted in-process provider client.\n${YAML.stringify(raw)}`,
 );
 const cfg = parseConfig(raw, configPath);
 
@@ -402,7 +402,7 @@ const client = {
 
     // Standalone job supervisors (scripted per job, keyed on the goal in the brief).
     if (sys.startsWith("# Supervisor charter")) return supervisorTurn(req, s);
-    // SwitchYard's native coding worker: edit, then submit.
+    // MeritRouter's native coding worker: edit, then submit.
     // The final budgeted request exposes only submit_result; keep the coding script then too.
     if (req.tools?.some((t) => t.function.name === "replace_in_file") || sys.includes("# Implementer")) return codingTurn(req, s, user);
     // Independent reviewers: one verdict per review, decided by the task's goal.
@@ -837,7 +837,7 @@ const directClient = {
 };
 
 /**
- * The scripted client and the fake paid client behind SwitchYard's provider-client seam: requests
+ * The scripted client and the fake paid client behind MeritRouter's provider-client seam: requests
  * still go through key selection, limits, and key state, but never over the network.
  */
 const NO_RATE_LIMITS = { family: "none", observedAt: 0, retryAfterMs: null, windows: [] };
@@ -869,7 +869,7 @@ const webPage = {
   transport: async () => ({ status: 200, headers: { "content-type": "text/html; charset=utf-8" }, body: Buffer.from(REFERENCE_PAGE), truncated: false }),
 };
 
-sy = new Switchyard(cfg, { providerClient, now: clock, pollIntervalMs: 40, webFetch, webPage });
+sy = new MeritRouter(cfg, { providerClient, now: clock, pollIntervalMs: 40, webFetch, webPage });
 // Explicit trusted operator for this generated offline fixture only. Production code never auto-approves.
 const fixtureRoot = realpathSync(demo);
 let approvalStopped = false, approvalCount = 0, approvalTimer;
@@ -921,6 +921,14 @@ async function phase(hoursAgo, label, tasks, opts = {}) {
   const subs = await sy.submitTasks(tasks, opts.purpose ? { purpose: opts.purpose } : { project: opts.project ?? "demo" });
   startWorker();
   const out = await sy.awaitResults(subs.map((s) => s.taskId), { timeoutSeconds: opts.timeout ?? 60 });
+  if (out.timedOut || out.pending.length) {
+    const message = `${label}: historical phase did not finish; pending ${JSON.stringify(out.pending)}`;
+    expectFixture(false, message);
+    // Closing drains/aborts owned work while this phase's clock is still unchanged.
+    // Never advance historical time with a live lease from the previous phase.
+    await sy.close();
+    throw new Error(message);
+  }
   const states = out.completed.map((r) => `${r.executionStatus}${r.acceptanceStatus !== "not_verified" ? `/${r.acceptanceStatus}` : ""}`);
   console.log(`  ${label.padEnd(44)} ${states.join(", ")}${out.timedOut ? " (timed out)" : ""}`);
   return out;
@@ -934,7 +942,7 @@ const summarize = (goal, extra = {}) => ({
   ...extra,
 });
 const accessLog = (lines) =>
-  Array.from({ length: lines }, (_, i) => `2026-10-1${i % 7}T0${i % 10}:00:00Z GET /v1/chat/completions 200 ${300 + (i % 97)}ms key=${i % 4} model=auto:sy-${(i * 7919).toString(16).padStart(6, "0")}`).join(String.fromCharCode(10));
+  Array.from({ length: lines }, (_, i) => `2026-10-1${i % 7}T0${i % 10}:00:00Z GET /v1/chat/completions 200 ${300 + (i % 97)}ms key=${i % 4} model=auto:meritrouter-${(i * 7919).toString(16).padStart(6, "0")}`).join(String.fromCharCode(10));
 const inspect = (goal) => ({ profile: "inspect", goal, repositoryAliases: ["core"], context: { fileRefs: ["core:src/server.ts"] }, constraints: { acceptanceCriteria: ["cites the exact lines"] } });
 
 console.log(`Seeding demo workspace in ${demo}`);
@@ -1161,7 +1169,7 @@ const rounding = await phase(1.6, "deep review overruled by a person", [
     importanceReason: "Invoices sum fractional amounts; rounding would change totals.",
     constraints: { acceptanceCriteria: [{ id: "rounding", text: "states whether add() rounds, citing the lines", verify: "evidence" }] },
   },
-]);
+], { timeout: 120 }); // T2 + failed review took ~49s; T3 read began ~55s, before its next review.
 for (const r of rounding.completed) {
   if (r.acceptanceStatus === "needs_supervisor") insights.decideTaskAcceptance(sy, r.taskId, "accept", { kind: "human", id: "cli:demo" }, "add() returns a + b unrounded; the gateway passes the string through. The reviewer is wrong here.");
   else console.warn(`  warning: the rounding analysis ended ${r.acceptanceStatus}, not needs_supervisor`);
@@ -1256,7 +1264,7 @@ await sy.close();
 // Tasks left in non-terminal states for the Tasks page. They go straight into the store:
 // submitTasks() would kick the scheduler and run them in this process.
 offset = 0;
-const idle = new Switchyard(cfg, { providerClient, worker: false, now: clock });
+const idle = new MeritRouter(cfg, { providerClient, worker: false, now: clock });
 const store = (specs, project = "demo") => idle.tasks.submit(specs.map((x) => WorkerTaskSchema.parse(x)), { project });
 // Budget decisions are genuine pending records on idle tasks, like the queued fixtures below.
 // No scheduler runs: these examples reserve grants without spending model requests.
@@ -1294,7 +1302,7 @@ if (!idle.sessions.forTask(interrupted.taskId).length) {
     offset = Date.now() - (t0 + ms);
   };
   const messages = [
-    { role: "system", content: "You are a bounded read-only worker (inspector) for SwitchYard. Use the repository tools, cite exact lines, and finish with submit_result." },
+    { role: "system", content: "You are a bounded read-only worker (inspector) for MeritRouter. Use the repository tools, cite exact lines, and finish with submit_result." },
     { role: "user", content: ["Goal:", "List every exported function (interrupted when the worker stopped)", "", "Acceptance criteria (assess each by index):", "  [0] cites the exact lines", "", "Files: core:src/server.ts"].join("\n") },
   ];
   const tools = ["read_file", "list_files", "search", "submit_result"].map((name) => ({ type: "function", function: { name, description: name, parameters: { type: "object" } } }));
@@ -1391,16 +1399,16 @@ raw.security = { outside_repository: "human_only" };
 raw.verification = { ...(raw.verification ?? {}), audit_sample_rate: 0.2 };
 writeFileSync(
   configPath,
-  `# SwitchYard demo configuration (generated by apps/panel/scripts/seed-demo.mjs).\n# The provider keys are fake: the demo data was produced by a scripted in-process provider client.\n${YAML.stringify(raw)}`,
+  `# MeritRouter demo configuration (generated by apps/panel/scripts/seed-demo.mjs).\n# The provider keys are fake: the demo data was produced by a scripted in-process provider client.\n${YAML.stringify(raw)}`,
 );
 
 console.log(
-  `\nDemo ready. Start the panel against it with:\n  SWITCHYARD_CONFIG="${configPath}" pnpm --filter switchyard-panel dev\n(a relative SWITCHYARD_CONFIG resolves against apps/panel, e.g. SWITCHYARD_CONFIG=.demo/switchyard.config.yaml)`,
+  `\nDemo ready. Start the panel against it with:\n  MERITROUTER_CONFIG="${configPath}" pnpm --filter meritrouter-panel dev\n(a relative MERITROUTER_CONFIG resolves against apps/panel, e.g. MERITROUTER_CONFIG=.demo/meritrouter.config.yaml)`,
 );
-for (const name of readdirSync(path.join(demo, ".switchyard", "sessions"))) {
+for (const name of readdirSync(path.join(demo, ".meritrouter", "sessions"))) {
   if (!name.endsWith(".jsonl")) continue;
-  const log = readFileSync(path.join(demo, ".switchyard", "sessions", name), "utf8");
+  const log = readFileSync(path.join(demo, ".meritrouter", "sessions", name), "utf8");
   expectFixture(!/index\.lock|brain is locked by another process/.test(log), `brain/git lock failure in session ${name}`);
 }
 if (fixtureFailures.length) console.error(`Demo fixture validation failed: ${fixtureFailures.length} expectation(s).`);
-if (!existsSync(path.join(demo, ".switchyard")) || fixtureFailures.length) process.exitCode = 1;
+if (!existsSync(path.join(demo, ".meritrouter")) || fixtureFailures.length) process.exitCode = 1;

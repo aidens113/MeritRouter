@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { git, GitError } from "../workspaces/git.js";
 
-/** Who made a change. Every SwitchYard commit records this as git identity plus trailers. */
+/** Who made a change. Every MeritRouter commit records this as git identity plus trailers. */
 export interface Actor {
   /** Stable agent identity, e.g. `implementer:t_abc`, `supervisor:t_job`, `human`. */
   agent: string;
@@ -19,7 +19,7 @@ export const TRAILER_KEYS = ["Agent", "Role", "Model", "Task", "Job", "Tier", "R
 export function actorIdentity(a: Actor): { name: string; email: string } {
   const slug = a.agent.replace(/[^A-Za-z0-9._-]+/g, ".").replace(/^\.+|\.+$/g, "") || "agent";
   const model = a.model ? ` (${a.model})` : "";
-  return { name: `${a.agent.replace(":", " ")}${model}`.slice(0, 120), email: `${slug}@switchyard.local` };
+  return { name: `${a.agent.replace(":", " ")}${model}`.slice(0, 120), email: `${slug}@meritrouter.local` };
 }
 
 export function trailerArgs(a: Actor, extra: Record<string, string> = {}): string[] {

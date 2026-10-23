@@ -1,4 +1,4 @@
-import { insights } from "switchyard-router";
+import { insights } from "meritrouter";
 import { json } from "@/lib/api";
 import { getSy } from "@/lib/sy";
 import { findProject } from "@/lib/project";
@@ -22,7 +22,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const scope = url.searchParams.get("scope") || "all";
   const r = getSy();
-  if (!r.sy) return json({ ok: false, error: `SwitchYard is not configured: ${r.error}` }, 503);
+  if (!r.sy) return json({ ok: false, error: `MeritRouter is not configured: ${r.error}` }, 503);
   const sy = r.sy;
   if (scope !== "all" && !findProject(sy, scope, { archived: true })) return json({ ok: false, error: `No project ${scope}` }, 404);
   const resume = req.headers.get("last-event-id") || url.searchParams.get("cursor") || "";

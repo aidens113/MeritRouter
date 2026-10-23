@@ -1,6 +1,6 @@
-/** Optional panel login: enabled only when SWITCHYARD_PANEL_TOKEN is set. */
-export const TOKEN_ENV = "SWITCHYARD_PANEL_TOKEN";
-export const SESSION_COOKIE = "sy_panel_session";
+/** Optional panel login: enabled only when MERITROUTER_PANEL_TOKEN is set. */
+export const TOKEN_ENV = "MERITROUTER_PANEL_TOKEN";
+export const SESSION_COOKIE = "meritrouter_panel_session";
 
 export function panelToken(): string | null {
   const t = process.env[TOKEN_ENV];
@@ -9,7 +9,7 @@ export function panelToken(): string | null {
 
 /** Cookie value derived from the token, so the token itself is never stored in the browser. */
 export async function sessionValue(token: string): Promise<string> {
-  const data = new TextEncoder().encode(`switchyard-panel-session:${token}`);
+  const data = new TextEncoder().encode(`meritrouter-panel-session:${token}`);
   const digest = await crypto.subtle.digest("SHA-256", data);
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 }

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { GitBranch, GitMerge, MessagesSquare, Network, Quote, Wrench } from "lucide-react";
 import { getSy } from "@/lib/sy";
-import { insights } from "switchyard-router";
+import { insights } from "meritrouter";
 import { Badge, Card, CardHeader, Mono, type Tone } from "./ui";
 import { AcceptanceBadge, TaskStateBadge } from "./task-badges";
 import { dateTime, humanize, shortId } from "@/lib/format";

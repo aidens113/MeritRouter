@@ -22,7 +22,7 @@ const Body = z.object({
 
 /**
  * Start a standalone job in a project (its repositories are that project's). The job is only queued here: the panel never runs tasks, so a worker
- * (the MCP server or `switchyard worker`) picks it up.
+ * (the MCP server or `meritrouter worker`) picks it up.
  */
 export async function POST(req: Request) {
   return handle(async (sy) => {

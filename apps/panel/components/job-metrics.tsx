@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Gauge } from "lucide-react";
-import type { insights } from "switchyard-router";
+import type { insights } from "meritrouter";
 import { Card, CardHeader, EmptyState, HelpTip, Stat } from "@/components/ui";
 import { StackedBars, StepChart } from "@/components/client/charts";
 import { TaskStateBadge } from "@/components/task-badges";

@@ -20,7 +20,7 @@ export interface WebRequestRow {
   projectId: string;
   sessionId: string | null;
   kind: WebRequestKind;
-  /** The backend this attempt went to (`builtin` for SwitchYard's own fetch). */
+  /** The backend this attempt went to (`builtin` for MeritRouter's own fetch). */
   backend: string;
   /** The backend key used (`vault:3`, `env:TAVILY_API_KEY`, ...); null when keyless. */
   keyRef: string | null;

@@ -3,14 +3,14 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { DEFAULT_GITIGNORE, folderState, prepareRepository } from "../src/workspaces/repository-prepare.js";
 import { REPOSITORY_PREPARE_EVENT } from "../src/projects/repository-setup.js";
 import { createProject, inspectRepositoryPath, projectAttention, projectOverview, saveProjectRepositories } from "../src/admin/insights.js";
 import { doctorChecks } from "../src/cli/doctor.js";
 import { baseConfig, commitAll, makeEnv, open, reply, ScriptedClient, type Env } from "./helpers.js";
 
-// Repository preparation: SwitchYard makes a project's repository folder a usable git repository
+// Repository preparation: MeritRouter makes a project's repository folder a usable git repository
 // itself (create, init, first snapshot), never touches one with history, and leaves only what it
 // cannot fix (git missing, a file, permissions) as an error.
 
@@ -21,7 +21,7 @@ let home: string;
 beforeAll(() => {
   // No global or system git identity: an empty-identity global config that also forbids git
   // guessing one from the host name, so a commit without an explicit identity fails.
-  home = mkdtempSync(path.join(tmpdir(), "switchyard-prepare-home-"));
+  home = mkdtempSync(path.join(tmpdir(), "meritrouter-prepare-home-"));
   const globalConfig = path.join(home, "gitconfig");
   writeFileSync(globalConfig, "[user]\n\tuseConfigOnly = true\n");
   for (const k of IDENTITY_VARS) {
@@ -42,7 +42,7 @@ afterAll(() => {
 
 let dir: string | undefined;
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => {
   await sy?.close();
   sy = undefined;
@@ -52,19 +52,19 @@ afterEach(async () => {
   dir = undefined;
 });
 
-const temp = () => (dir = mkdtempSync(path.join(tmpdir(), "switchyard-prepare-")));
+const temp = () => (dir = mkdtempSync(path.join(tmpdir(), "meritrouter-prepare-")));
 const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, stdio: "pipe", encoding: "utf8" }).trim();
 const commits = (repo: string) => Number(git(repo, "rev-list", "--count", "HEAD"));
 const tracked = (repo: string) => git(repo, "ls-files").split(/\r?\n/).filter(Boolean).sort();
 
 describe("prepareRepository", () => {
-  it("creates a missing folder, sets up git, and makes an empty first commit as SwitchYard", async () => {
+  it("creates a missing folder, sets up git, and makes an empty first commit as MeritRouter", async () => {
     const target = path.join(temp(), "nested", "my-app");
     const r = await prepareRepository(target);
     expect(r).toMatchObject({ ok: true, action: "created", path: target, gitignore: false });
-    expect(r.message).toBe(`SwitchYard created ${target} and set up git`);
+    expect(r.message).toBe(`MeritRouter created ${target} and set up git`);
     expect(commits(target)).toBe(1);
-    expect(git(target, "log", "-1", "--format=%an <%ae>|%s")).toBe("SwitchYard <switchyard@localhost>|SwitchYard: initial commit");
+    expect(git(target, "log", "-1", "--format=%an <%ae>|%s")).toBe("MeritRouter <meritrouter@localhost>|MeritRouter: initial commit");
     expect(tracked(target)).toEqual([]);
     expect(folderState(target)).toBe("repository");
   });
@@ -84,7 +84,7 @@ describe("prepareRepository", () => {
     for (const line of ["node_modules/", ".env", ".env.*", "*.log", "dist/", "build/", ".venv/", "__pycache__/", ".DS_Store"]) expect(DEFAULT_GITIGNORE.split("\n")).toContain(line);
     expect(tracked(target)).toEqual([".gitignore", "src/index.ts"]);
     expect(commits(target)).toBe(1);
-    expect(git(target, "log", "-1", "--format=%s")).toBe("SwitchYard: initial snapshot");
+    expect(git(target, "log", "-1", "--format=%s")).toBe("MeritRouter: initial snapshot");
   });
 
   it("keeps an existing .gitignore and commits what it allows", async () => {
@@ -199,7 +199,7 @@ describe("prepareRepository", () => {
     try {
       const r = await prepareRepository(fakeHome);
       expect(r).toMatchObject({ ok: false, error: "too_broad" });
-      expect(!r.ok && r.message).toMatch(/is your home folder; SwitchYard will not commit everything/);
+      expect(!r.ok && r.message).toMatch(/is your home folder; MeritRouter will not commit everything/);
     } finally {
       for (const [k, v] of Object.entries(saved)) {
         if (v === undefined) delete process.env[k];
@@ -216,7 +216,7 @@ function projectEnv(folder: string): Env {
   return env;
 }
 
-const prepareEvents = (s: Switchyard) =>
+const prepareEvents = (s: MeritRouter) =>
   (s.db.prepare("SELECT data_json FROM events WHERE type = ? ORDER BY id").all(REPOSITORY_PREPARE_EVENT) as Array<{ data_json: string }>).map((r) => JSON.parse(r.data_json) as Record<string, unknown>);
 
 describe("where repositories are prepared", () => {
@@ -227,17 +227,17 @@ describe("where repositories are prepared", () => {
     sy = open(e, new ScriptedClient(() => reply("{}")), { worker: true });
     const deadline = Date.now() + 20_000;
     while (!prepareEvents(sy).length && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
-    expect(prepareEvents(sy)).toEqual([{ project: "alpha", alias: "app", path: target, action: "created", message: `SwitchYard created ${target} and set up git` }]);
+    expect(prepareEvents(sy)).toEqual([{ project: "alpha", alias: "app", path: target, action: "created", message: `MeritRouter created ${target} and set up git` }]);
     expect(folderState(target)).toBe("repository");
     const ov = projectOverview(sy, "alpha");
-    expect(ov.notices).toEqual([`Repository app: SwitchYard created ${target} and set up git.`]);
+    expect(ov.notices).toEqual([`Repository app: MeritRouter created ${target} and set up git.`]);
     expect(ov.attention).toEqual([]);
     // A second start finds it ready and records nothing more.
     expect((await sy.prepareRepositories()).map((p) => p.result.ok && p.result.action)).toEqual(["unchanged"]);
     expect(prepareEvents(sy)).toHaveLength(1);
   });
 
-  it("no longer lists a missing or non-git repository as attention; only what SwitchYard cannot fix", async () => {
+  it("no longer lists a missing or non-git repository as attention; only what MeritRouter cannot fix", async () => {
     const e = projectEnv("plain");
     mkdirSync(path.join(e.dir, "plain"));
     sy = open(e, new ScriptedClient(() => reply("{}")));
@@ -267,7 +267,7 @@ describe("where repositories are prepared", () => {
     sy = open(e, new ScriptedClient(() => reply("{}")));
     expect(inspectRepositoryPath(sy, "gamma-app")).toMatchObject({ problem: null, hint: "will be created and set up with git" });
     const made = await createProject(sy, { slug: "gamma", repositories: { app: { path: "gamma-app" } } });
-    expect(made).toMatchObject({ ok: true, prepared: [expect.stringMatching(/^repository app: SwitchYard created/)] });
+    expect(made).toMatchObject({ ok: true, prepared: [expect.stringMatching(/^repository app: MeritRouter created/)] });
     expect(folderState(path.join(e.dir, "gamma-app"))).toBe("repository");
 
     writeFileSync(path.join(e.dir, "a-file"), "x");

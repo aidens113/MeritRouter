@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import type { ChatRequest } from "../src/gateway/types.js";
 import type { SessionEvent, SessionEventOf } from "../src/sessions/events.js";
 import type { SessionRecord } from "../src/sessions/store.js";
@@ -10,7 +10,7 @@ import { baseConfig, endpoint, goodOutput, makeEnv, openWithTestSupervisor as op
 
 const agent = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "fake-agent.mjs");
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => {
   await sy?.close();
   sy = undefined;
@@ -250,7 +250,7 @@ describe("supervisor sessions", () => {
     const ev = eventsOf(sup!.id);
     expect(journal(ev).map((x) => `${x.name}:${x.sideEffect}:${x.ok}`)).toEqual(["delegate:delegate:true", "await_tasks:none:true", "integrate_task:edit:true", "finish_job:none:true"]);
     const ws = ofType(ev, "workspace").map((w) => w.data.repos[0]!);
-    expect(ws[0]).toMatchObject({ alias: "core", branch: `switchyard/job-${job.taskId}`, head: ws[0]!.baseCommit });
+    expect(ws[0]).toMatchObject({ alias: "core", branch: `meritrouter/job-${job.taskId}`, head: ws[0]!.baseCommit });
     // integrate_task cherry-picked the worker's commit: the recorded head moved.
     expect(ws.at(-1)!.head).not.toBe(ws[0]!.head);
 

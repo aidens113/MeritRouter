@@ -6,9 +6,9 @@ import { SqliteTaskLeases } from "../src/storage/sqlite-task-leases.js";
 import { capturedLease, recoveryOperationId, leaseOperationId, type TaskLeases, type LeaseReceipt } from "../src/storage/task-leases.js";
 import { WorkerTaskSchema } from "../src/core/task.js";
 import { baseResult } from "../src/runners/types.js";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { baseConfig, makeEnv, open, reply, goodOutput, summarizeTask, ScriptedClient, type Env } from "./helpers.js";
-let env: Env | undefined, sy: Switchyard | undefined, executor: Executor | undefined;
+let env: Env | undefined, sy: MeritRouter | undefined, executor: Executor | undefined;
 let now: number;
 const releases: Array<() => void> = [];
 function barrier() {

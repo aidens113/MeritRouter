@@ -6,13 +6,13 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, ExternalLink, Radar, ShieldAlert } from "lucide-react";
-import { insights, MODALITIES, TIER_NAMES } from "switchyard-router";
+import { insights, MODALITIES, TIER_NAMES } from "meritrouter";
 import { projectBase, itemBase } from "@/lib/links";
 import { getSy } from "@/lib/sy";
 import { isFree, keyedProviders, reachable, type ModelView } from "@/lib/models";
 import { SetupScreen } from "@/components/setup";
 import { Modalities, ProvenanceBadge, StatusBadge, statusKey, WEB_SEARCH_VIA_LABEL, WebSearchBadge, webSearchPrice } from "@/components/model-badges";
-import type { ModelEndpoint } from "switchyard-router";
+import type { ModelEndpoint } from "meritrouter";
 import { RequestsTable } from "@/components/requests-table";
 import { Badge, Callout, Card, CardHeader, cx, EmptyState, HelpTip, KeyValue, Mono, Stat } from "@/components/ui";
 import { PageHeader } from "@/components/page-header";
@@ -168,7 +168,7 @@ export default async function ModelDetailPage({ searchParams }: { searchParams: 
         </div>
       </Card>
         <Disclosure summary="Parameter evidence"><Card>
-          <CardHeader title="Parameter evidence" help="provenance" description="Every source SwitchYard found for this model's size." />
+          <CardHeader title="Parameter evidence" help="provenance" description="Every source MeritRouter found for this model's size." />
           <div className="p-4">
             {ep.params.evidence.length ? (
               <ul className="space-y-2">

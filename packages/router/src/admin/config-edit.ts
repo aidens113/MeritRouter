@@ -2,7 +2,7 @@ import { copyFileSync, readFileSync, writeFileSync } from "node:fs";
 import YAML from "yaml";
 import { ConfigSchema } from "../config/schema.js";
 import { formatIssues, parseConfig } from "../config/load.js";
-import type { Switchyard } from "../core/service.js";
+import type { MeritRouter } from "../core/service.js";
 import { ProjectRegistry } from "../projects/registry.js";
 import { recordPreparation } from "../projects/repository-setup.js";
 import { prepareRepository } from "../workspaces/repository-prepare.js";
@@ -15,7 +15,7 @@ import { immediate } from "../storage/db.js";
  * providers).
  */
 
-export function readConfigText(sy: Switchyard): string {
+export function readConfigText(sy: MeritRouter): string {
   return readFileSync(sy.cfg.configPath, "utf8");
 }
 
@@ -37,7 +37,7 @@ export function validateConfigText(text: string, configPath: string): { ok: true
 }
 
 /** Validate, back up the previous file, and write. Running workers reload it automatically. */
-export function writeConfigText(sy: Switchyard, text: string, options: { expectedText?: string } = {}): { ok: true } | { ok: false; errors: string[] } {
+export function writeConfigText(sy: MeritRouter, text: string, options: { expectedText?: string } = {}): { ok: true } | { ok: false; errors: string[] } {
   const v = validateConfigText(text, sy.cfg.configPath);
   if (!v.ok) return v;
   return immediate(sy.db, () => {
@@ -52,7 +52,7 @@ export function writeConfigText(sy: Switchyard, text: string, options: { expecte
 }
 
 /** Apply a structured patch (e.g. from a settings form) to the YAML, preserving comments. */
-export function patchConfig(sy: Switchyard, patch: Array<{ path: Array<string | number>; value: unknown }>): { ok: true } | { ok: false; errors: string[] } {
+export function patchConfig(sy: MeritRouter, patch: Array<{ path: Array<string | number>; value: unknown }>): { ok: true } | { ok: false; errors: string[] } {
   const original = readConfigText(sy);
   const doc = YAML.parseDocument(original);
   for (const p of patch) {
@@ -63,7 +63,7 @@ export function patchConfig(sy: Switchyard, patch: Array<{ path: Array<string | 
 }
 
 /** Generic panel saves prepare changed/new repository paths before acknowledging the config. */
-export async function writePreparedConfigText(sy: Switchyard, text: string): Promise<{ ok: true } | { ok: false; errors: string[] }> {
+export async function writePreparedConfigText(sy: MeritRouter, text: string): Promise<{ ok: true } | { ok: false; errors: string[] }> {
   const validation = validateConfigText(text, sy.cfg.configPath);
   if (!validation.ok) return validation;
   const labErrors = retainedLabConfigErrors(sy.db, parseConfig(YAML.parse(text), sy.cfg.configPath));
@@ -86,7 +86,7 @@ export async function writePreparedConfigText(sy: Switchyard, text: string): Pro
 }
 
 /** The async generic settings patch path; synchronous internal config editing stays compatible. */
-export async function patchPreparedConfig(sy: Switchyard, patch: Array<{ path: Array<string | number>; value: unknown }>): Promise<{ ok: true } | { ok: false; errors: string[] }> {
+export async function patchPreparedConfig(sy: MeritRouter, patch: Array<{ path: Array<string | number>; value: unknown }>): Promise<{ ok: true } | { ok: false; errors: string[] }> {
   const doc = YAML.parseDocument(readConfigText(sy));
   for (const item of patch) {
     if (item.value === undefined || item.value === null) doc.deleteIn(item.path);

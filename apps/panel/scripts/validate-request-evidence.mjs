@@ -6,13 +6,13 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
-import { insights, loadConfig, Switchyard } from "switchyard-router";
+import { insights, loadConfig, MeritRouter } from "meritrouter";
 
 const app = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const demo = path.join(app, ".demo"), config = path.join(demo, "switchyard.config.yaml");
+const demo = path.join(app, ".demo"), config = path.join(demo, "meritrouter.config.yaml");
 const cfg = loadConfig(config); assert(path.resolve(cfg.storageDir).startsWith(demo + path.sep));
 assert(path.resolve(path.dirname(config), cfg.brain.path).startsWith(demo + path.sep));
-const sy = new Switchyard(cfg, { worker: false });
+const sy = new MeritRouter(cfg, { worker: false });
 for (const project of sy.projects.list()) for (const repo of Object.values(project.repositoryPaths)) assert(path.resolve(repo.path).startsWith(demo + path.sep));
 const port = 4497, cdpPort = 9373, base = `http://127.0.0.1:${port}`;
 const require = createRequire(import.meta.url), profile = mkdtempSync(path.join(demo, "request-evidence-browser-"));
@@ -40,7 +40,7 @@ try {
   assert(failure, "Seeded failed endpoint history must explain unavailable input/output");
   assert(captured, "Seeded admitted tool request must have a normalized input capture");
   const count = sy.db.prepare("SELECT COUNT(*) n FROM model_requests").get().n;
-  server = spawn(process.execPath, [require.resolve("next/dist/bin/next"), "start", "-H", "127.0.0.1", "-p", String(port)], { cwd: app, env: { ...process.env, SWITCHYARD_CONFIG: config, SWITCHYARD_PROJECT: "", SWITCHYARD_PANEL_TOKEN: "" }, stdio: "ignore", windowsHide: true });
+  server = spawn(process.execPath, [require.resolve("next/dist/bin/next"), "start", "-H", "127.0.0.1", "-p", String(port)], { cwd: app, env: { ...process.env, MERITROUTER_CONFIG: config, MERITROUTER_PROJECT: "", MERITROUTER_PANEL_TOKEN: "" }, stdio: "ignore", windowsHide: true });
   await until(async () => { try { return (await fetch(base + "/p/demo/requests")).ok; } catch { return false; } }, "production server");
   for (const id of [selected.id, batch.id, failure.id]) { const html = await http(`/p/demo/requests/${id}`); assert(html.includes("Related files and task evidence")); assert(html.includes("Usage accounting")); }
   const selectedHtml = await http(`/p/demo/requests/${selected.id}`); assert(selectedHtml.includes("Request input")); assert(selectedHtml.includes("Model response")); assert(selectedHtml.includes("Actions from this response")); assert(selectedHtml.includes("not the serialized provider HTTP body"));
@@ -68,7 +68,7 @@ try {
     await command("Emulation.setDeviceMetricsOverride", { width, height: width === 390 ? 844 : 1000, deviceScaleFactor: 1, mobile: width === 390 });
     await command("Page.navigate", { url: base + `/p/demo/requests/${selected.id}` });
     await until(async () => await evaluate(`location.pathname === ${JSON.stringify(`/p/demo/requests/${selected.id}`)} && !!document.querySelector('[data-request-evidence]')`), "detail render");
-    await evaluate(`localStorage.setItem('sy-theme',${JSON.stringify(theme)});document.documentElement.setAttribute('data-theme',${JSON.stringify(theme)})`);
+    await evaluate(`localStorage.setItem('meritrouter-theme',${JSON.stringify(theme)});document.documentElement.setAttribute('data-theme',${JSON.stringify(theme)})`);
     for (const section of ["input", "actions"]) {
       await evaluate((section === "input" ? "document.querySelector('[data-request-evidence]').scrollIntoView();" : "Array.from(document.querySelectorAll('h2')).find(h=>h.textContent==='Actions from this response').closest('section').scrollIntoView();") + "window.scrollBy(0,-80)"); await delay(250);
       assert(await evaluate("document.documentElement.scrollWidth<=innerWidth+1"), `${width}/${theme}/${section} page overflow`);
@@ -81,7 +81,7 @@ try {
     await command("Emulation.setDeviceMetricsOverride", { width, height: width === 390 ? 844 : 1000, deviceScaleFactor: 1, mobile: width === 390 });
     await command("Page.navigate", { url: base + `/p/demo/requests/${captured.id}` });
     await until(async () => await evaluate("!!document.querySelector('[data-request-capture]')"), "normalized capture render");
-    await evaluate(`localStorage.setItem('sy-theme',${JSON.stringify(theme)});document.documentElement.setAttribute('data-theme',${JSON.stringify(theme)});document.querySelector('[data-request-capture]').scrollIntoView();window.scrollBy(0,-80)`);
+    await evaluate(`localStorage.setItem('meritrouter-theme',${JSON.stringify(theme)});document.documentElement.setAttribute('data-theme',${JSON.stringify(theme)});document.querySelector('[data-request-capture]').scrollIntoView();window.scrollBy(0,-80)`);
     assert(await evaluate("document.documentElement.scrollWidth<=innerWidth+1"), `${width}/${theme} capture overflow`);
     assert(await evaluate("document.querySelector('[data-request-capture]').textContent.includes('Captured observed response')"));
     const image = await command("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });

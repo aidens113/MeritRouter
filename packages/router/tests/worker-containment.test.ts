@@ -130,7 +130,7 @@ describe("worker containment and supervisor actions", () => {
     const configPath = path.join(env.repo, "trusted-config.yaml");
     writeFileSync(configPath, "security: human_only");
     ctx.cfg.configPath = configPath;
-    await expect(write.run({ path: "trusted-config.yaml", content: "security: supervisor" }, harness)).rejects.toThrow(/trusted SwitchYard/);
+    await expect(write.run({ path: "trusted-config.yaml", content: "security: supervisor" }, harness)).rejects.toThrow(/trusted MeritRouter/);
     expect(readFileSync(sentinel, "utf8")).toBe("preserved");
   });
   it("files an undeclared command request without executing or granting access", async () => {

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Archive, CircleAlert, Clock, FolderGit2, FolderPlus, Network, Plus } from "lucide-react";
-import { insights } from "switchyard-router";
+import { insights } from "meritrouter";
 import { getSy } from "@/lib/sy";
 import { projectBase } from "@/lib/links";
 import { SetupScreen } from "@/components/setup";
@@ -133,7 +133,7 @@ export default async function ProjectsPage() {
               </Link>
             }
           >
-            A project groups the repositories SwitchYard works in with their jobs, tasks, and knowledge.
+            A project groups the repositories MeritRouter works in with their jobs, tasks, and knowledge.
           </EmptyState>
         </Card>
       )}

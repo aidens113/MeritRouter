@@ -1,16 +1,16 @@
 /** Plain-language explanations for the jargon shown in the panel (used by help popovers). */
 export const GLOSSARY = {
   tier:
-    "Difficulty level SwitchYard assigns to each task from its rulebook score. T1 is easy (models of at least 30B parameters), T2 is moderate, T3 is hard (largest models first). T4 means 'too hard for workers': the task goes back to the supervisor.",
+    "Difficulty level MeritRouter assigns to each task from its rulebook score. T1 is easy (models of at least 30B parameters), T2 is moderate, T3 is hard (largest models first). T4 means 'too hard for workers': the task goes back to the supervisor.",
   t4: "T4 is not a model tier. It means the task scored above the T3 limit (or was too large or ambiguous), so it is returned to the Claude Code supervisor instead of being sent to a free model.",
   sizeFloor:
     "The smallest model (total parameters, in billions) allowed for a task type and tier. It is the larger of the task type's floor and the tier's floor. Smaller models are never used unless a force override explicitly allows it.",
   provenance:
     "Where the parameter count came from. Exact: read from Hugging Face model files or entered by you. Agreed: two independent sources agree. From name only: guessed from the model's name or description and needs your confirmation. Unknown: no source found.",
   available:
-    "Reachable: at least one usable key exists for the model's provider and the provider still lists the model. SwitchYard sends every request directly to the provider, rotating that provider's keys.",
+    "Reachable: at least one usable key exists for the model's provider and the provider still lists the model. MeritRouter sends every request directly to the provider, rotating that provider's keys.",
   quarantine:
-    "A model is quarantined when its provider reported that a different model actually served a request. SwitchYard discards that answer and stops using the model.",
+    "A model is quarantined when its provider reported that a different model actually served a request. MeritRouter discards that answer and stops using the model.",
   taskType:
     "What the supervisor asked for: summarize (answer from supplied text), inspect (simple repository lookups), analyze (cross-file reasoning), review (check a patch or evidence), implement (edit code in an isolated worktree).",
   prefer:
@@ -20,27 +20,27 @@ export const GLOSSARY = {
   qualification:
     "Short evaluation tasks run against a model to measure its pass rate per task family and tier. Results carry a 95% confidence interval. Qualification uses your free quota.",
   quotaScope:
-    "Keys on the same provider account or project share one allowance. Give them the same quota group so SwitchYard does not assume two keys means twice the quota.",
+    "Keys on the same provider account or project share one allowance. Give them the same quota group so MeritRouter does not assume two keys means twice the quota.",
   override:
     "A manual correction you made in the panel. Overrides sit on top of what was discovered and survive rescans. Reset removes them.",
   eligibility:
     "For every task type and tier, whether this model can be picked and at what position. Green numbers are its rank in the candidate list; red cells list why it is excluded.",
   fallback:
-    "When a model is rate limited or fails with a capacity error, SwitchYard tries the next ranked model, up to routing.max_endpoint_fallbacks per request. Every attempt counts against the task budget.",
+    "When a model is rate limited or fails with a capacity error, MeritRouter tries the next ranked model, up to routing.max_endpoint_fallbacks per request. Every attempt counts against the task budget.",
   forceOverride:
     "Force: only the chosen model is used for that task type and tier. Prefer: the model is tried first, others remain as fallbacks. Block: the model is never used there.",
   belowFloor:
     "Lets a forced model run even though it is smaller than the size floor. Every such request is recorded. Use only when you have checked the model can do the work.",
   worker:
-    "Tasks run only while a worker is active: the MCP server inside Claude Code, or `switchyard worker` in a terminal. The panel itself never runs tasks.",
+    "Tasks run only while a worker is active: the MCP server inside Claude Code, or `meritrouter worker` in a terminal. The panel itself never runs tasks.",
   requests:
-    "One model request is one physical call admitted at SwitchYard's gate. A batch of several tasks answered in one call counts once.",
+    "One model request is one physical call admitted at MeritRouter's gate. A batch of several tasks answered in one call counts once.",
   outputDefault:
     "No provider reported this model's output limit, so the value shown was assumed. Set the real limit in an override; a model whose output limit is unknown is left out of work that needs it.",
   job:
-    "A standalone piece of work handed to a SwitchYard supervisor: it plans, delegates bounded tasks to workers, checks their results, and integrates their commits onto a job branch for you to review and merge.",
+    "A standalone piece of work handed to a MeritRouter supervisor: it plans, delegates bounded tasks to workers, checks their results, and integrates their commits onto a job branch for you to review and merge.",
   supervisor:
-    "The model (or Claude Code) that plans the work and delegates tasks to workers. In a job, SwitchYard runs the supervisor itself using the models you configured under supervisor.",
+    "The model (or Claude Code) that plans the work and delegates tasks to workers. In a job, MeritRouter runs the supervisor itself using the models you configured under supervisor.",
   brain:
     "Shared knowledge for supervisors and workers: markdown documents in a git repository (working documents, reports, decisions, facts, lessons). Every edit is committed with the agent and model that made it.",
   workingDoc:
@@ -58,7 +58,7 @@ export const GLOSSARY = {
   paidPolicy:
     "When paid models may serve a tier. Never: free models only. On free exhaustion: only after every free model failed or was busy. Preferred: paid models are tried before free ones.",
   branch:
-    "Each job commits to its own branch (by default switchyard/job-<id>) in an integration worktree. Nothing is merged or pushed for you: review the branch, then merge it yourself.",
+    "Each job commits to its own branch (by default meritrouter/job-<id>) in an integration worktree. Nothing is merged or pushed for you: review the branch, then merge it yourself.",
   session:
     "One agent's run, whatever its role: a classifier call, a worker attempt at a task, or a supervisor. Everything it does is appended to a durable event log: each transcript message, model request and response, and every tool call as an intent written before it runs and an outcome written after. A retry or escalation is a new session linked to the previous one.",
   importance:
@@ -98,7 +98,7 @@ export const GLOSSARY = {
   waitReason:
     "Why a task was not running, replayed from its events: dependencies (upstream tasks unfinished), acceptance (an upstream result awaits acceptance), file lease (another task holds overlapping paths), provider slot (no provider in its route had a free concurrency slot), capacity (deferred while models were cooling down), queue (ready, waiting for a worker or the job's agent cap), interrupted (waiting to be resumed).",
   comparison:
-    "The same goals run twice: once as a team job (a supervisor that plans and delegates) and once as a single agent, with the same configuration and model pools. Both metric sets are recorded. A comparison runs only when you start it (switchyard compare --yes) and its planned request budget must fit what is left of today's qualification allocation.",
+    "The same goals run twice: once as a team job (a supervisor that plans and delegates) and once as a single agent, with the same configuration and model pools. Both metric sets are recorded. A comparison runs only when you start it (meritrouter compare --yes) and its planned request budget must fit what is left of today's qualification allocation.",
 } as const;
 
 export type GlossaryKey = keyof typeof GLOSSARY;

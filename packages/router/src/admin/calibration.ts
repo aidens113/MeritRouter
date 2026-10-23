@@ -1,4 +1,4 @@
-import type { Switchyard } from "../core/service.js";
+import type { MeritRouter } from "../core/service.js";
 import { purposeCategory } from "../admission/admission.js";
 import { modelFamily } from "../routing/select.js";
 import { VERIFICATION_LEVELS } from "../config/schema.js";
@@ -131,7 +131,7 @@ export interface CalibrationOverview {
 }
 
 /** Model requests by purpose since `sinceMs`. A batched request counts once per purpose. */
-export function usageByPurpose(sy: Switchyard, sinceMs = Date.now() - DEFAULT_WINDOW_MS): PurposeUsage[] {
+export function usageByPurpose(sy: MeritRouter, sinceMs = Date.now() - DEFAULT_WINDOW_MS): PurposeUsage[] {
   const rows = sy.db
     .prepare(
       `SELECT r.id AS id, r.purpose AS rp, t.purpose AS tp, c.input_tokens AS inTok, c.output_tokens AS outTok, COALESCE(r.reported_cost_usd, r.estimated_cost_usd, 0) AS cost
@@ -156,7 +156,7 @@ export function usageByPurpose(sy: Switchyard, sinceMs = Date.now() - DEFAULT_WI
   return [...out.values()].map(({ seen: _seen, ...u }) => u).sort((a, b) => order.indexOf(a.purpose) - order.indexOf(b.purpose));
 }
 
-export function calibrationOverview(sy: Switchyard, opts: { sinceMs?: number } = {}): CalibrationOverview {
+export function calibrationOverview(sy: MeritRouter, opts: { sinceMs?: number } = {}): CalibrationOverview {
   const sinceMs = opts.sinceMs ?? Date.now() - DEFAULT_WINDOW_MS;
   const deps = { db: sy.db, tasks: sy.tasks, artifacts: sy.artifacts };
   const confirmations = new Map<string, TaskConfirmation | null>();

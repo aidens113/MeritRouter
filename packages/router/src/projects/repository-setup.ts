@@ -110,7 +110,7 @@ export async function prepareProjectRepositories(deps: RepositorySetupDeps, opts
 
 /**
  * The project overview's notices: each configured repository's latest successful preparation
- * from the last `PREPARE_NOTICE_MS` ("SwitchYard created D:\my-app and set up git").
+ * from the last `PREPARE_NOTICE_MS` ("MeritRouter created D:\my-app and set up git").
  */
 export function repositoryNotices(db: Db, ctx: ProjectContext, now: number): string[] {
   const events = prepareEvents(db, ctx.project.slug);

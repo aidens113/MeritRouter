@@ -3,13 +3,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createCodingRunner } from "../src/runners/coding/index.js";
 import { afterEach, expect, it, vi } from "vitest";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import type { GateRequest } from "../src/gateway/gate.js";
 import { GatewayError, AdmissionDenied } from "../src/core/errors.js";
 import { RequestPersistenceError } from "../src/admission/request-ledger.js";
 import { WorkerTaskSchema } from "../src/core/task.js";
 import { baseConfig, endpoint, goodOutput, makeEnv, open, reply, ScriptedClient, summarizeTask, type Env } from "./helpers.js";
-let env: Env | undefined, sy: Switchyard | undefined;
+let env: Env | undefined, sy: MeritRouter | undefined;
 const releases: Array<() => void> = [];
 afterEach(async () => { releases.splice(0).forEach(release => release()); await sy?.close(); sy = undefined; vi.restoreAllMocks(); env?.cleanup(); env = undefined; });
 function barrier() { let release!: () => void; const promise = new Promise<void>(r => { release = r; }); releases.push(release); return { promise, release }; }

@@ -1,4 +1,4 @@
-import { insights } from "switchyard-router";
+import { insights } from "meritrouter";
 import { body, handle, HttpError } from "@/lib/api";
 export const dynamic = "force-dynamic";
 type Ctx = { params: Promise<{ name: string }> };

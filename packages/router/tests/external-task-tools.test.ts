@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import type { RunContext } from "../src/runners/types.js";
 import { BudgetRequests } from "../src/admission/budget-requests.js";
 import { WorkerActionRequests } from "../src/harness/worker-actions.js";
@@ -13,7 +13,7 @@ import { startTaskTools, taskToolsBrief, type TaskToolsBridge } from "../src/run
 import { baseConfig, goodOutput, makeEnv, open, reply, ScriptedClient, type Env } from "./helpers.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 let bridge: TaskToolsBridge | undefined;
 let client: Client | undefined;
 afterEach(async () => { await client?.close(); client = undefined; await bridge?.close(); bridge = undefined; await sy?.close(); sy = undefined; env?.cleanup(); env = undefined; });

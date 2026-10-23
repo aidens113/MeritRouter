@@ -70,7 +70,7 @@ export async function startTaskTools(ctx: RunContext, worktree: string, home: st
   const token = `sy-task-${randomBytes(24).toString("hex")}`;
   try {
     const http = await serveHttp({ host: "127.0.0.1", port: 0, token, build: () => {
-      const server = new McpServer({ name: "switchyard-task", version: "0.1.0" });
+      const server = new McpServer({ name: "meritrouter-task", version: "0.1.0" });
       for (const tool of tools) {
         const name = tool.def.function.name;
         const description = tool.def.function.description;
@@ -96,5 +96,5 @@ export async function startTaskTools(ctx: RunContext, worktree: string, home: st
 
 /** No token is written to TASK.md; command agents must deliberately connect with these env vars. */
 export function taskToolsBrief(bridge: TaskToolsBridge): string {
-  return `\n## SwitchYard task tools\n\nA task-scoped MCP server exposes ${bridge.tools.join(", ") || "no optional tools"}. OpenCode is configured to connect as switchyard_task; its tool names have that prefix. Command agents can connect using SWITCHYARD_TASK_TOOLS_URL and the bearer token in SWITCHYARD_TASK_TOOLS_TOKEN. These credentials authorize this task only; do not print or persist them.\nUse run_check with an exactly declared command; other commands and excess check runs are refused. Ask request_more_budget before your model requests run out; it waits for approval without spending model requests. An approval raises only the request cap, never token or paid caps. A command agent must implement this MCP connection itself; the runner does not assume it uses these tools.\n`;
+  return `\n## MeritRouter task tools\n\nA task-scoped MCP server exposes ${bridge.tools.join(", ") || "no optional tools"}. OpenCode is configured to connect as meritrouter_task; its tool names have that prefix. Command agents can connect using MERITROUTER_TASK_TOOLS_URL and the bearer token in MERITROUTER_TASK_TOOLS_TOKEN. These credentials authorize this task only; do not print or persist them.\nUse run_check with an exactly declared command; other commands and excess check runs are refused. Ask request_more_budget before your model requests run out; it waits for approval without spending model requests. An approval raises only the request cap, never token or paid caps. A command agent must implement this MCP connection itself; the runner does not assume it uses these tools.\n`;
 }

@@ -15,7 +15,7 @@ import { utcDayStart, utcMonth, WebLedger, type AttemptInput, type WebRequestKin
 import { isSearchService, WEB_SEARCH_BACKENDS, type SearchServiceId, type WebFetchBackend, type WebSearchBackend } from "./services.js";
 
 /**
- * Agents' web access as a pool of backends, the way SwitchYard treats model providers: every
+ * Agents' web access as a pool of backends, the way MeritRouter treats model providers: every
  * configured search backend serves (`web.search.backends`, `auto` = all of them), chosen by
  * `web.search.strategy` (`spread`: least recently used first, so free allowances add up;
  * `fallback`: in order). A call that fails moves on to the next backend within the same tool call,

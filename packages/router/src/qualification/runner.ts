@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { ProfileNameSchema, TierNameSchema, type TierName } from "../config/schema.js";
-import type { Switchyard } from "../core/service.js";
+import type { MeritRouter } from "../core/service.js";
 import { isTerminal, type WorkerResult } from "../core/task.js";
 import { newId } from "../storage/db.js";
 import { FILE_REF_RE } from "../core/task.js";
@@ -113,7 +113,7 @@ export class Qualifier {
   private grading = false;
 
   constructor(
-    private readonly sy: Switchyard,
+    private readonly sy: MeritRouter,
     readonly suiteDir = evalsDir(),
   ) {}
 
@@ -322,7 +322,7 @@ export function gradeReview(e: EvalCase, result: Pick<WorkerResult, "executionSt
 export async function initRepo(dir: string): Promise<void> {
   if (!existsSync(path.join(dir, ".git"))) await git(dir, ["init", "-q", "-b", "main"]);
   await git(dir, ["add", "-A"]);
-  await git(dir, ["-c", "user.email=qualification@switchyard.local", "-c", "user.name=switchyard", "commit", "-q", "--allow-empty", "-m", "fixture"]);
+  await git(dir, ["-c", "user.email=qualification@meritrouter.local", "-c", "user.name=meritrouter", "commit", "-q", "--allow-empty", "-m", "fixture"]);
 }
 
 export type { TierName };

@@ -1,4 +1,4 @@
-import type { Switchyard } from "../core/service.js";
+import type { MeritRouter } from "../core/service.js";
 import type { TaskState, WorkerResult } from "../core/task.js";
 import { contextOfTask } from "./projects.js";
 
@@ -49,7 +49,7 @@ function jobTurns(messages: TranscriptMessage[]): JobTurn[] {
  * recorded). `job_state`, which supervisors no longer write, is read only as a fallback for jobs
  * that predate sessions.
  */
-function jobRecord(sy: Switchyard, taskId: string, withTranscript: boolean): { sessionId: string | null; branches: JobView["branches"]; transcript: JobTurn[] } {
+function jobRecord(sy: MeritRouter, taskId: string, withTranscript: boolean): { sessionId: string | null; branches: JobView["branches"]; transcript: JobTurn[] } {
   const sessions = sy.sessions.forTask(taskId).filter((s) => s.role === "supervisor");
   const latest = sessions.at(-1) ?? null;
   const prefix = contextOfTask(sy, taskId).supervisor.branch_prefix;
@@ -68,7 +68,7 @@ function jobRecord(sy: Switchyard, taskId: string, withTranscript: boolean): { s
 }
 
 /** Jobs, newest first; `project` limits them to one project's (all projects when omitted). */
-export function jobsView(sy: Switchyard, limit = 50, project?: string): JobView[] {
+export function jobsView(sy: MeritRouter, limit = 50, project?: string): JobView[] {
   const rows = sy.db.prepare(`SELECT id FROM tasks WHERE profile = 'supervise'${project ? " AND project_id = ?" : ""} ORDER BY created_at DESC LIMIT ?`).all(...(project ? [project] : []), limit) as { id: string }[];
   return rows.flatMap((r) => {
     const j = jobDetail(sy, r.id, { transcript: false });
@@ -79,7 +79,7 @@ export function jobsView(sy: Switchyard, limit = 50, project?: string): JobView[
 }
 
 /** One job with its supervisor transcript (empty when `opts.transcript` is false) and every question it asked. */
-export function jobDetail(sy: Switchyard, id: string, opts: { transcript?: boolean } = {}): (JobView & { transcript: JobTurn[]; questions: ReturnType<Switchyard["questions"]> }) | null {
+export function jobDetail(sy: MeritRouter, id: string, opts: { transcript?: boolean } = {}): (JobView & { transcript: JobTurn[]; questions: ReturnType<MeritRouter["questions"]> }) | null {
   const t = sy.tasks.get(id);
   if (!t || t.spec.profile !== "supervise") return null;
   const rec = jobRecord(sy, id, opts.transcript !== false);

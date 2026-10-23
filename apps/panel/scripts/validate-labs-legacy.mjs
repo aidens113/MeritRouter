@@ -7,16 +7,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import YAML from "yaml";
-import { loadConfig, Switchyard, LabSupervisorLease } from "switchyard-router";
+import { loadConfig, MeritRouter, LabSupervisorLease } from "meritrouter";
 const app = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const demo = path.join(app, ".demo");
-const raw = YAML.parse(readFileSync(path.join(demo, "switchyard.config.yaml"), "utf8"));
+const raw = YAML.parse(readFileSync(path.join(demo, "meritrouter.config.yaml"), "utf8"));
 raw.repositories = raw.projects.demo.repositories; delete raw.projects;
-raw.storage = { ...raw.storage, directory: ".switchyard-legacy-panel" };
+raw.storage = { ...raw.storage, directory: ".meritrouter-legacy-panel" };
 raw.brain = { ...raw.brain, project: "demo", path: "brain-legacy-panel" };
 const configPath = path.join(demo, "legacy-labs.config.yaml");
 writeFileSync(configPath, YAML.stringify(raw));
-const sy = new Switchyard(loadConfig(configPath), { worker: false });
+const sy = new MeritRouter(loadConfig(configPath), { worker: false });
 const beforeRow = sy.projects.rows().find(p => p.id === "demo");
 const paths = structuredClone(sy.projects.primary.repositoryPaths);
 const port = Number(process.argv[2] ?? 4498); assert(port >= 1024 && port !== 4477);
@@ -31,7 +31,7 @@ async function request(method, body, status = 200) {
   const text = await r.text(); assert.equal(r.status, status, text.slice(0, 800)); return JSON.parse(text);
 }
 try {
-  server = spawn(process.execPath, [require.resolve("next/dist/bin/next"), "start", "-H", "127.0.0.1", "-p", String(port)], { cwd: app, env: { ...process.env, SWITCHYARD_CONFIG: configPath, SWITCHYARD_PANEL_TOKEN: "", SWITCHYARD_PROJECT: "" }, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+  server = spawn(process.execPath, [require.resolve("next/dist/bin/next"), "start", "-H", "127.0.0.1", "-p", String(port)], { cwd: app, env: { ...process.env, MERITROUTER_CONFIG: configPath, MERITROUTER_PANEL_TOKEN: "", MERITROUTER_PROJECT: "" }, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
   let output = ""; server.stdout.on("data", d => output += d); server.stderr.on("data", d => output += d);
   await until(async () => { if (exited(server)) throw new Error(output); try { return (await fetch(base + "/api/labs/recipe?project=demo")).ok; } catch { return false; } });
   const before = await request("GET"); assert(before.legacy && !before.readOnly && !before.configured);
@@ -54,7 +54,7 @@ try {
 } finally {
   if (server && !exited(server)) { server.kill(); await until(() => exited(server)); }
   await sy.close();
-  for (const target of [configPath, configPath + ".bak", path.join(demo, ".switchyard-legacy-panel"), path.join(demo, "brain-legacy-panel")]) {
+  for (const target of [configPath, configPath + ".bak", path.join(demo, ".meritrouter-legacy-panel"), path.join(demo, "brain-legacy-panel")]) {
     assert(path.resolve(target).startsWith(path.resolve(demo) + path.sep));
     rmSync(target, { force: true, recursive: true, maxRetries: 3, retryDelay: 200 });
   }

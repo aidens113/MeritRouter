@@ -2,7 +2,7 @@ import type { SessionDetail, SessionView } from "../admin/insights.js";
 import type { SessionEvent, SessionEventData } from "../sessions/events.js";
 import { clock, duration, oneLine, stamp } from "./terminal.js";
 
-// Agent sessions as terminal text: `switchyard sessions` (a table) and `switchyard session <id>`
+// Agent sessions as terminal text: `meritrouter sessions` (a table) and `meritrouter session <id>`
 // (a timeline: one line per event, with paging hints).
 
 const compact = (v: unknown): string => (typeof v === "string" ? v : (JSON.stringify(v) ?? ""));
@@ -75,7 +75,7 @@ function sessionLine(s: SessionView): string {
   return `${s.id} ${s.agentLabel} (${s.role}) ${s.status}${s.stopReason ? `: ${s.stopReason}` : ""}`;
 }
 
-/** The rows of `switchyard sessions`, for `table`. */
+/** The rows of `meritrouter sessions`, for `table`. */
 export function sessionRows(list: SessionView[]): Array<Record<string, unknown>> {
   return list.map((s) => ({
     session: s.id,
@@ -115,7 +115,7 @@ export function sessionTimeline(d: SessionDetail, after: number): string {
     cols,
     ...(rows.length ? rows : [`(no events after seq ${after})`]),
     ...d.corrupt.map((c) => `CORRUPT ${c.line ? `line ${c.line}` : "log"}: ${c.error}${c.excerpt ? ` [${oneLine(c.excerpt, 60)}]` : ""}`),
-    ...(d.hasMore ? [`more events: switchyard session ${s.id} --after ${lastShown}`] : []),
+    ...(d.hasMore ? [`more events: meritrouter session ${s.id} --after ${lastShown}`] : []),
     ...(d.children.length ? ["", "delegated sessions:", ...d.children.map((c) => `  ${sessionLine(c)}`)] : []),
     ...(d.taskSessions.length > 1 ? ["", "sessions of this task:", ...d.taskSessions.map((t) => `  ${t.id === s.id ? "*" : " "} ${sessionLine(t)}`)] : []),
   ].join("\n").trimEnd();

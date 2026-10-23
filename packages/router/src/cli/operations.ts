@@ -3,7 +3,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:f
 import { homedir, userInfo } from "node:os";
 import path from "node:path";
 import type { ResolvedConfig } from "../config/load.js";
-import { SwitchyardError } from "../core/errors.js";
+import { MeritRouterError } from "../core/errors.js";
 import { backupStorage, restoreStorage } from "../operations/backup.js";
 import { brainMountsOf, brainPathOf } from "../operations/brain-backup.js";
 import { Daemon, DAEMON_OUT, acquireDaemonLock, logsDirFor, processAlive, readDaemonLock, requestDaemonStop } from "../operations/daemon.js";
@@ -14,7 +14,7 @@ import { countFlag } from "./args.js";
 import { out, table } from "./terminal.js";
 
 // Operations commands (backup, restore, daemon, service). They work on the storage directory
-// directly and never open a Switchyard: restore replaces the database, and the daemon's worker
+// directly and never open a MeritRouter: restore replaces the database, and the daemon's worker
 // runs in a child process. They are install-wide: one store, one brain, and one daemon whose one
 // worker serves every project, so `--project` is refused rather than silently ignored.
 
@@ -37,7 +37,7 @@ const PROJECT_REFUSAL: Record<string, string> = {
   restore: "a restore replaces the whole install (every project's tasks and the brain); there is no per-project restore. Drop --project",
 };
 
-/** The worker's environment: every project, so a shell's SWITCHYARD_PROJECT is not passed on. */
+/** The worker's environment: every project, so a shell's MERITROUTER_PROJECT is not passed on. */
 function workerEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
   delete env[PROJECT_ENV];
@@ -53,10 +53,10 @@ function tail(file: string, lines = 15): string {
 
 /** `cliPath` is the CLI entry point (dist/cli.js) the daemon and the service run. */
 export async function operationsCommand(cmd: string, args: string[], values: OperationsFlags, cfg: ResolvedConfig, json: boolean, cliPath: string): Promise<number> {
-  if (values.project !== undefined) throw new SwitchyardError("usage", `switchyard ${cmd} does not take --project: ${PROJECT_REFUSAL[cmd] ?? "this command is install-wide"}`);
+  if (values.project !== undefined) throw new MeritRouterError("usage", `meritrouter ${cmd} does not take --project: ${PROJECT_REFUSAL[cmd] ?? "this command is install-wide"}`);
   switch (cmd) {
     case "backup": {
-      if (!args[0]) throw new SwitchyardError("usage", "usage: switchyard backup <dir> [--include-master-key]");
+      if (!args[0]) throw new MeritRouterError("usage", "usage: meritrouter backup <dir> [--include-master-key]");
       const m = await backupStorage({
         storageDir: cfg.storageDir,
         targetDir: args[0],
@@ -68,16 +68,16 @@ export async function operationsCommand(cmd: string, args: string[], values: Ope
       out(json ? m : [
         `backed up ${cfg.storageDir} to ${path.resolve(args[0])}`,
         `schema ${m.schemaVersion}; ${m.tasks} task(s), ${m.sessions} session(s) with ${m.sessionLogs} log(s), ${m.artifacts} artifact(s)`,
-        m.includesMasterKey ? "includes the vault master key: keep this backup private" : "the vault master key is not included; provider keys in the vault need SWITCHYARD_MASTER_KEY or the original .master-key to decrypt",
+        m.includesMasterKey ? "includes the vault master key: keep this backup private" : "the vault master key is not included; provider keys in the vault need MERITROUTER_MASTER_KEY or the original .master-key to decrypt",
         ...(b?.included ? [`brain ${b.sourcePath}: ${b.commits} commit(s), ${b.head ?? "detached"} at ${b.commit?.slice(0, 12)} (bundle ${b.bundle})`] : b ? [`brain not included: ${b.reason}`] : []),
-        ...(b?.uncommitted.length ? [`WARNING ${b.uncommitted.length} uncommitted brain change(s) are not in the backup (${b.uncommitted.slice(0, 5).join(", ")}${b.uncommitted.length > 5 ? ", ..." : ""}); SwitchYard commits them on its next brain write`] : []),
+        ...(b?.uncommitted.length ? [`WARNING ${b.uncommitted.length} uncommitted brain change(s) are not in the backup (${b.uncommitted.slice(0, 5).join(", ")}${b.uncommitted.length > 5 ? ", ..." : ""}); MeritRouter commits them on its next brain write`] : []),
         ...(b?.mountsNotIncluded ?? []).map((x) => `brain mount ${x.prefix} -> ${x.path}${x.project ? ` (project ${x.project})` : " (global)"} is not included: back up that repository itself`),
         ...m.missing.map((f) => `MISSING ${f}`),
       ].join("\n"), json);
       return m.missing.length ? 1 : 0;
     }
     case "restore": {
-      if (!args[0]) throw new SwitchyardError("usage", "usage: switchyard restore <dir> [--force]");
+      if (!args[0]) throw new MeritRouterError("usage", "usage: meritrouter restore <dir> [--force]");
       const r = restoreStorage({ backupDir: args[0], storageDir: cfg.storageDir, force: values.force ?? false, brainPath: brainPathOf(cfg) });
       out(json ? r : [
         `restored ${path.resolve(args[0])} (taken ${r.manifest.createdAt}) into ${r.storageDir}; schema ${r.schemaVersion}`,
@@ -93,9 +93,9 @@ export async function operationsCommand(cmd: string, args: string[], values: Ope
       return daemonCommand(args, values, cfg, json, cliPath);
     case "service": {
       const action = ServiceActionSchema.safeParse(args[0]);
-      if (!action.success) throw new SwitchyardError("usage", "usage: switchyard service install|uninstall|status [--name n] [--dry-run]");
+      if (!action.success) throw new MeritRouterError("usage", "usage: meritrouter service install|uninstall|status [--name n] [--dry-run]");
       const platform = ServicePlatformSchema.safeParse(process.platform);
-      if (!platform.success) throw new SwitchyardError("usage", `service install supports linux, macOS, and Windows, not ${process.platform}`);
+      if (!platform.success) throw new MeritRouterError("usage", `service install supports linux, macOS, and Windows, not ${process.platform}`);
       const user = userInfo();
       const plan = servicePlan({
         platform: platform.data,
@@ -124,7 +124,7 @@ export async function operationsCommand(cmd: string, args: string[], values: Ope
       return r.ok ? 0 : 1;
     }
     default:
-      throw new SwitchyardError("usage", `unknown operations command ${cmd}`);
+      throw new MeritRouterError("usage", `unknown operations command ${cmd}`);
   }
 }
 
@@ -151,7 +151,7 @@ async function daemonCommand(args: string[], values: OperationsFlags, cfg: Resol
       const stop = () => void daemon.stop();
       process.once("SIGINT", stop);
       process.once("SIGTERM", stop);
-      out(`daemon ${process.pid} supervising one worker for every project (${slugs()}); logs in ${logsDir}; Ctrl+C or switchyard daemon stop to stop`, false);
+      out(`daemon ${process.pid} supervising one worker for every project (${slugs()}); logs in ${logsDir}; Ctrl+C or meritrouter daemon stop to stop`, false);
       try {
         const r = await daemon.run();
         out(json ? r : `daemon ${r.reason}: ${r.detail}`, json);
@@ -162,7 +162,7 @@ async function daemonCommand(args: string[], values: OperationsFlags, cfg: Resol
     }
     case "start": {
       const running = readDaemonLock(logsDir);
-      if (running?.alive) throw new SwitchyardError("conflict", `a daemon (pid ${running.pid}, started ${running.startedAt}) is already running for ${cfg.storageDir}; see switchyard daemon status`);
+      if (running?.alive) throw new MeritRouterError("conflict", `a daemon (pid ${running.pid}, started ${running.startedAt}) is already running for ${cfg.storageDir}; see meritrouter daemon status`);
       mkdirSync(logsDir, { recursive: true });
       const outFile = path.join(logsDir, DAEMON_OUT);
       const fd = openSync(outFile, "a");
@@ -182,7 +182,7 @@ async function daemonCommand(args: string[], values: OperationsFlags, cfg: Resol
       while (Date.now() < deadline && exited === null) {
         const lock = readDaemonLock(logsDir);
         if (lock?.alive && lock.pid === child.pid) {
-          out(json ? { started: true, pid: lock.pid, logsDir, output: outFile } : `daemon ${lock.pid} started in the background: one worker for every project (${slugs()}); logs in ${logsDir}; stop it with switchyard daemon stop`, json);
+          out(json ? { started: true, pid: lock.pid, logsDir, output: outFile } : `daemon ${lock.pid} started in the background: one worker for every project (${slugs()}); logs in ${logsDir}; stop it with meritrouter daemon stop`, json);
           return 0;
         }
         await sleep(200);
@@ -231,6 +231,6 @@ async function daemonCommand(args: string[], values: OperationsFlags, cfg: Resol
       return 0;
     }
     default:
-      throw new SwitchyardError("usage", "usage: switchyard daemon [run|start|status|stop] [--max-restarts n] [--window s] [--max-delay s] [--timeout s]");
+      throw new MeritRouterError("usage", "usage: meritrouter daemon [run|start|status|stop] [--max-restarts n] [--window s] [--max-delay s] [--timeout s]");
   }
 }

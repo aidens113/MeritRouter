@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { MessageCircleQuestion, Network, Settings2 } from "lucide-react";
-import { insights, isTerminal } from "switchyard-router";
+import { insights, isTerminal } from "meritrouter";
 import { getSy } from "@/lib/sy";
 import { project } from "@/lib/project";
 import { jobHref, projectBase } from "@/lib/links";
 import { SetupScreen } from "@/components/setup";
 import { Badge, Callout, Card, CardHeader, cx, EmptyState, HelpTip, Mono } from "@/components/ui";
 import { PageHeader } from "@/components/page-header";
+import { JobCreateSection } from "@/components/client/job-create-section";
 import { NewJobForm } from "@/components/client/jobs";
 import { ACCEPTANCE_LABEL, TaskStateBadge } from "@/components/task-badges";
 import { ago, dateTime, shortId } from "@/lib/format";
@@ -34,7 +35,7 @@ export default async function JobsPage({ params }: { params: Promise<{ slug: str
         title="Jobs"
         description={
           <>
-            This project's standalone work, run by a SwitchYard supervisor: it plans, delegates tasks to workers, verifies them, and commits the result to a job branch for you to review. <HelpTip term="job" />
+            This project's standalone work, run by a MeritRouter supervisor: it plans, delegates tasks to workers, verifies them, and commits the result to a job branch for you to review. <HelpTip term="job" />
           </>
         }
         live={["jobs", "tasks", "labs"]}
@@ -46,28 +47,11 @@ export default async function JobsPage({ params }: { params: Promise<{ slug: str
         </Callout>
       ) : null}
 
-      <Card id="new">
-        <CardHeader title="New job" help="supervisor" description="Describe the goal; the supervisor writes a plan in the job's working document and delegates from there." />
-        <div className="p-4">
-          {!enabled ? (
-            <div className="mb-4">
-              <Callout tone="warn" icon={<Settings2 size={16} />} title="Jobs are not set up in this config">
-                Starting a job needs the <Mono>supervise</Mono> task type (<Mono>profiles.supervise</Mono>), which says which models may supervise and how many requests they get.{" "}
-                <Link href="/all/settings#supervisor" className="font-medium text-accent-ink hover:underline">
-                  Enable it in Settings →
-                </Link>
-              </Callout>
-            </div>
-          ) : null}
-          <NewJobForm project={p.slug} repos={repos} enabled={enabled} labs={labs} />
-        </div>
-      </Card>
-
       <Card>
         <CardHeader title="Jobs in this project" description="Newest first. A job's children are the worker tasks its supervisor delegated." />
         {jobs.length === 0 ? (
           <EmptyState icon={<Network size={22} />} title="No jobs yet">
-            {enabled ? "Start one with the form above. It waits in the queue until a worker (the MCP server or switchyard worker) is running." : "Enable the supervise task type in Settings, then start a job here."}
+            {enabled ? "Open New job below to start one. It waits in the queue until a worker (the MCP server or meritrouter worker) is running." : "Enable the supervise task type in Settings, then start a job here."}
           </EmptyState>
         ) : (
           <div className="overflow-x-auto">
@@ -157,6 +141,21 @@ export default async function JobsPage({ params }: { params: Promise<{ slug: str
           </div>
         )}
       </Card>
+      <JobCreateSection>
+        <div className="p-4">
+          {!enabled ? (
+            <div className="mb-4">
+              <Callout tone="warn" icon={<Settings2 size={16} />} title="Jobs are not set up in this config">
+                Starting a job needs the <Mono>supervise</Mono> task type (<Mono>profiles.supervise</Mono>), which says which models may supervise and how many requests they get.{" "}
+                <Link href="/all/settings#supervisor" className="font-medium text-accent-ink hover:underline">
+                  Enable it in Settings →
+                </Link>
+              </Callout>
+            </div>
+          ) : null}
+          <NewJobForm project={p.slug} repos={repos} enabled={enabled} labs={labs} />
+        </div>
+      </JobCreateSection>
     </div>
   );
 }

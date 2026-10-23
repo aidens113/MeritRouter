@@ -3,7 +3,7 @@ import type { LabManager } from "./lab.js";
 import { LabNameSchema, substitute } from "./recipe.js";
 import { labValues } from "./environment.js";
 import { inspectLabListeners, processOwnership } from "./process-ownership.js";
-import { SwitchyardError } from "../core/errors.js";
+import { MeritRouterError } from "../core/errors.js";
 import { assertLabEffect, labEffectSignal } from "./control-authority.js";
 export const LabHttpInputSchema = z.object({ service: LabNameSchema, method: z.enum(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]).default("GET"), path: z.string().min(1).max(2000).default("/"), headers: z.record(z.string(), z.string().max(2048)).default({}), body: z.string().max(65536).optional(), timeoutMs: z.number().int().min(100).max(10000).default(5000) }).strict();
 export type LabHttpInput = z.input<typeof LabHttpInputSchema>;
@@ -16,39 +16,39 @@ export interface LabHttpResult {
 }
 export async function labHttp(manager: LabManager, project: string, name: string, raw: LabHttpInput, options: { signal?: AbortSignal } = {}): Promise<LabHttpResult> {
   const signal = labEffectSignal(options.signal);
-  const current = () => { assertLabEffect(); if (signal?.aborted) throw new SwitchyardError("lab_control_cancelled", "Lab HTTP cancelled"); };
+  const current = () => { assertLabEffect(); if (signal?.aborted) throw new MeritRouterError("lab_control_cancelled", "Lab HTTP cancelled"); };
   current();
   const input = LabHttpInputSchema.parse(raw);
   const before = manager.status(project, name);
   const s = before.services.find(x => x.name === input.service);
   const recipe = before.lab.recipe.services[input.service];
   if (before.lab.state !== "running" || !s || s.state !== "running" || !s.pid || !s.token || !recipe?.ready || !("http" in recipe.ready))
-    throw new SwitchyardError("lab_http_unavailable", "HTTP requires a running declared HTTP service in this lab");
+    throw new MeritRouterError("lab_http_unavailable", "HTTP requires a running declared HTTP service in this lab");
   if (await processOwnership(s.pid, s.token) !== "owned")
-    throw new SwitchyardError("lab_process_ownership", "HTTP service process ownership could not be verified");
+    throw new MeritRouterError("lab_process_ownership", "HTTP service process ownership could not be verified");
   current();
   const base = new URL(substitute(recipe.ready.http, labValues(before.lab)));
   const port = Number(base.port);
   if (base.protocol !== "http:" || base.hostname !== "127.0.0.1" || base.username || base.password || !Object.values(before.lab.ports).includes(port))
-    throw new SwitchyardError("lab_scope_denied", "HTTP service is not on this lab's allocated loopback ports");
+    throw new MeritRouterError("lab_scope_denied", "HTTP service is not on this lab's allocated loopback ports");
   if (!input.path.startsWith("/") || input.path.startsWith("//") || /[\\\r\n\u0000]/.test(input.path))
-    throw new SwitchyardError("lab_scope_denied", "HTTP path must be relative to this service, without URL or header escapes");
+    throw new MeritRouterError("lab_scope_denied", "HTTP path must be relative to this service, without URL or header escapes");
   const url = new URL(input.path, base.origin);
   if (url.origin !== base.origin || url.username || url.password)
-    throw new SwitchyardError("lab_scope_denied", "HTTP target escaped the service origin");
+    throw new MeritRouterError("lab_scope_denied", "HTTP target escaped the service origin");
   const listeners = await inspectLabListeners(s.pid, s.token, Object.values(before.lab.ports));
   current();
   if (!listeners.some(x => x.port === port))
-    throw new SwitchyardError("lab_process_ownership", "allocated HTTP port is not currently owned by this service's process tree");
+    throw new MeritRouterError("lab_process_ownership", "allocated HTTP port is not currently owned by this service's process tree");
   const headers: Record<string, string> = {};
   for (const [key, value] of Object.entries(input.headers)) {
     const lower = key.toLowerCase();
     if (!["accept", "content-type", "if-none-match", "if-modified-since"].includes(lower) || /[\r\n\u0000]/.test(value))
-      throw new SwitchyardError("lab_scope_denied", `HTTP header ${key} is not allowed`);
+      throw new MeritRouterError("lab_scope_denied", `HTTP header ${key} is not allowed`);
     headers[lower] = value;
   }
   if ((input.method === "GET" || input.method === "HEAD") && input.body !== undefined)
-    throw new SwitchyardError("lab_invalid_input", "GET and HEAD cannot carry a body");
+    throw new MeritRouterError("lab_invalid_input", "GET and HEAD cannot carry a body");
   manager.touch(project, name);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort("lab HTTP timed out"), input.timeoutMs);
@@ -58,7 +58,7 @@ export async function labHttp(manager: LabManager, project: string, name: string
     current();
     if (response.status >= 300 && response.status < 400) {
       await response.body?.cancel();
-      throw new SwitchyardError("lab_http_redirect", "lab HTTP redirects are not followed; use an explicit path on this service");
+      throw new MeritRouterError("lab_http_redirect", "lab HTTP redirects are not followed; use an explicit path on this service");
     }
     const chunks: Buffer[] = [];
     let size = 0;
@@ -85,11 +85,11 @@ export async function labHttp(manager: LabManager, project: string, name: string
     }
     const after = manager.status(project, name).services.find(x => x.name === input.service);
     if (after?.state !== "running" || after.pid !== s.pid || after.token !== s.token || await processOwnership(s.pid, s.token) !== "owned")
-      throw new SwitchyardError("lab_process_ownership", "HTTP service ownership changed during the request");
+      throw new MeritRouterError("lab_process_ownership", "HTTP service ownership changed during the request");
     const listenersAfter = await inspectLabListeners(s.pid, s.token, Object.values(before.lab.ports));
     current();
     if (!listenersAfter.some(listener => listener.port === port))
-      throw new SwitchyardError("lab_process_ownership", "HTTP listening socket ownership changed during the request");
+      throw new MeritRouterError("lab_process_ownership", "HTTP listening socket ownership changed during the request");
     return { status: response.status, headers: Object.fromEntries([...response.headers].filter(([key]) => ["content-type", "content-length", "etag", "last-modified"].includes(key))), body: Buffer.concat(chunks).toString("utf8"), truncated, url: url.href };
   }
   finally {

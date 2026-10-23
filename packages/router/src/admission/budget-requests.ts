@@ -3,7 +3,7 @@ import type { Db } from "../storage/db.js";
 import { immediate } from "../storage/db.js";
 import type { ResolvedConfig } from "../config/load.js";
 import { TIER_NAMES, type ProfileName, type TierName } from "../config/schema.js";
-import { SwitchyardError } from "../core/errors.js";
+import { MeritRouterError } from "../core/errors.js";
 import { TaskStore } from "../storage/tasks.js";
 import { ChannelStore, type ChannelKind } from "../storage/channel.js";
 import { ContractStore } from "../verification/contract.js";
@@ -199,9 +199,9 @@ export class BudgetRequests {
 
   /** File a request; it waits for its approver (see `decide`, `autoDecide`). */
   file(input: { taskId: string; jobId: string | null; role: string; requests: number; reason: string; used: number; cap: number; approver: BudgetApprover }): BudgetRequest {
-    if (!Number.isInteger(input.requests) || input.requests < 1 || input.requests > MAX_BUDGET_REQUEST) throw new SwitchyardError("invalid_request", `requests must be a whole number from 1 to ${MAX_BUDGET_REQUEST}`);
+    if (!Number.isInteger(input.requests) || input.requests < 1 || input.requests > MAX_BUDGET_REQUEST) throw new MeritRouterError("invalid_request", `requests must be a whole number from 1 to ${MAX_BUDGET_REQUEST}`);
     const reason = input.reason.trim().slice(0, 2000);
-    if (!reason) throw new SwitchyardError("invalid_request", "a reason is required");
+    if (!reason) throw new MeritRouterError("invalid_request", "a reason is required");
     const id = Number(
       this.db
         .prepare("INSERT INTO budget_requests (task_id, job_id, role, requests, reason, used, cap, approver, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)")
@@ -220,19 +220,19 @@ export class BudgetRequests {
   /**
    * Decide a pending request. An approval grants `grant` (default: what was asked) from the job's
    * pool, refused when the pool has less available; a task that already finished cannot be
-   * granted more (the request expires). Throws a SwitchyardError with the reason.
+   * granted more (the request expires). Throws a MeritRouterError with the reason.
    */
   decide(id: number, d: DecideInput): BudgetRequest {
     let finished: string | null = null;
     const decided = immediate(this.db, () => {
       const req = this.get(id);
-      if (!req) throw new SwitchyardError("not_found", `unknown budget request ${id}`);
-      if (req.status !== "pending") throw new SwitchyardError("already_decided", `budget request ${id} is already ${req.status}${req.decidedBy ? ` (by ${req.decidedBy})` : ""}`);
+      if (!req) throw new MeritRouterError("not_found", `unknown budget request ${id}`);
+      if (req.status !== "pending") throw new MeritRouterError("already_decided", `budget request ${id} is already ${req.status}${req.decidedBy ? ` (by ${req.decidedBy})` : ""}`);
       const state = this.tasks.get(req.taskId)?.row.state ?? "unknown";
       if (TERMINAL.has(state)) {
         // Recorded (not rolled back), then refused below.
         finished = state;
-        this.settle(id, "expired", 0, "switchyard", `task already ${state}`);
+        this.settle(id, "expired", 0, "meritrouter", `task already ${state}`);
         return this.get(id)!;
       }
       const reason = d.reason.trim().slice(0, 2000) || (d.approve ? "approved" : "denied");
@@ -241,16 +241,16 @@ export class BudgetRequests {
         return this.get(id)!;
       }
       const grant = d.grant ?? req.requests;
-      if (!Number.isInteger(grant) || grant < 1 || grant > MAX_BUDGET_REQUEST) throw new SwitchyardError("invalid_request", `grant must be a whole number from 1 to ${MAX_BUDGET_REQUEST}`);
+      if (!Number.isInteger(grant) || grant < 1 || grant > MAX_BUDGET_REQUEST) throw new MeritRouterError("invalid_request", `grant must be a whole number from 1 to ${MAX_BUDGET_REQUEST}`);
       if (req.jobId) {
         const pool = jobPool(this.db, d.cfg, req.jobId);
-        if (pool?.available !== null && pool && grant > pool.available) throw new SwitchyardError("budget_pool_exhausted", `grant ${grant} does not fit: ${poolLine(pool)}; grant at most ${pool.available}, or deny`);
+        if (pool?.available !== null && pool && grant > pool.available) throw new MeritRouterError("budget_pool_exhausted", `grant ${grant} does not fit: ${poolLine(pool)}; grant at most ${pool.available}, or deny`);
       }
       this.settle(id, "approved", grant, d.by, reason);
       return this.get(id)!;
     });
     this.announce(decided);
-    if (finished) throw new SwitchyardError("task_finished", `task ${decided.taskId} already ${finished}; its budget request ${id} expired`);
+    if (finished) throw new MeritRouterError("task_finished", `task ${decided.taskId} already ${finished}; its budget request ${id} expired`);
     return decided;
   }
 
@@ -260,7 +260,7 @@ export class BudgetRequests {
    */
   autoDecide(id: number, cfg: ResolvedConfig): BudgetRequest {
     const req = this.get(id);
-    if (!req) throw new SwitchyardError("not_found", `unknown budget request ${id}`);
+    if (!req) throw new MeritRouterError("not_found", `unknown budget request ${id}`);
     const pool = req.jobId ? jobPool(this.db, cfg, req.jobId) : null;
     const grant = Math.min(req.requests, cfg.team.auto_grant_max, pool?.available ?? UNLIMITED_REQUESTS);
     if (grant < 1) return this.decide(id, { approve: false, by: "auto", reason: `the job's request pool is exhausted (${pool ? poolLine(pool) : "no pool"})`, cfg });
@@ -269,7 +269,7 @@ export class BudgetRequests {
 
   /** A request nobody decided in time: it expires (a decision that won the race stands). */
   expire(id: number, why: string): BudgetRequest {
-    const r = this.db.prepare("UPDATE budget_requests SET status = 'expired', decided_by = 'switchyard', decision_reason = ?, decided_at = ? WHERE id = ? AND status = 'pending'").run(why.slice(0, 500), this.now(), id);
+    const r = this.db.prepare("UPDATE budget_requests SET status = 'expired', decided_by = 'meritrouter', decision_reason = ?, decided_at = ? WHERE id = ? AND status = 'pending'").run(why.slice(0, 500), this.now(), id);
     const req = this.get(id)!;
     if (r.changes) this.announce(req);
     return req;

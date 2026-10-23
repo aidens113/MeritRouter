@@ -13,7 +13,7 @@ import { runNamedChecks, checkRunOutcome, type CheckedResult } from "../src/veri
 import { applySupervisorDecision, decide, verificationRecord } from "../src/verification/decide.js";
 import { baseConfig } from "./helpers.js";
 
-const CONFIG_PATH = path.join(tmpdir(), "switchyard-verification", "switchyard.config.yaml");
+const CONFIG_PATH = path.join(tmpdir(), "meritrouter-verification", "meritrouter.config.yaml");
 
 function policy(verification: Record<string, unknown> = {}): VerificationConfig {
   return parseConfig(baseConfig({ verification }), CONFIG_PATH).verification;
@@ -251,7 +251,7 @@ describe("contract: budget allocation, digest, immutability", () => {
     });
 
     it("stores once, refuses a different contract and row updates, and verifies the digest", () => {
-      dir = mkdtempSync(path.join(tmpdir(), "switchyard-contract-"));
+      dir = mkdtempSync(path.join(tmpdir(), "meritrouter-contract-"));
       db = openDatabase(dir);
       new TaskStore(db).submit([spec({ id: "t1" })]);
       const store = new ContractStore(db);

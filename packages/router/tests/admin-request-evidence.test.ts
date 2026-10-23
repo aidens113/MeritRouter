@@ -4,10 +4,10 @@ import path from "node:path";
 import { requestEvidence, REQUEST_EVIDENCE_LIMITS } from "../src/admin/request-evidence.js";
 import { requestDetail } from "../src/admin/entities.js";
 import { baseConfig, makeEnv, open, reply, ScriptedClient, summarizeTask, type Env } from "./helpers.js";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import type { SessionRecorder } from "../src/sessions/recorder.js";
 import type { ChatMessage } from "../src/gateway/types.js";
-let env: Env | undefined, sy: Switchyard | undefined;
+let env: Env | undefined, sy: MeritRouter | undefined;
 afterEach(async () => { await sy?.close(); sy = undefined; env?.cleanup(); env = undefined; vi.restoreAllMocks(); });
 async function setup() {
   env = makeEnv({ config: baseConfig({ repositories: {}, brain: { project: "alpha", path: "brain" }, projects: { alpha: { repositories: { core: { path: "repo" } } }, beta: { repositories: { core: { path: "repo" } } } } }) });

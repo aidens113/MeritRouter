@@ -1,34 +1,121 @@
-# Setup
+# Set up MeritRouter
+
+Start with one project, one repository and the default `claude-code` preset. Your connected
+MCP client stays the final supervisor: it delegates bounded work and reviews the result.
+Follow steps 1–4 first; local servers, custom providers and standalone jobs are optional.
+Use [the documentation index](README.md) to find the detailed operating contracts.
+
+## Quick path
+
+1. Build the source using step 1. This does not require a published npm package.
+2. Run `node packages/router/dist/cli.js init . --preset claude-code --project my-app --repo app=/absolute/path/to/my-app`
+   from the checkout. On Windows, use a path such as `app=D:/code/my-app`.
+3. Run `node packages/router/dist/cli.js panel --config /absolute/path/to/meritrouter.config.yaml`
+   and open **http://127.0.0.1:4477**. In **All projects → Provider keys**, choose a provider,
+   paste its key, test it, set its actual billing class and limits, then save. Testing contacts
+   that provider. Inspect **Models** and **Routing** before submitting work.
+4. Register the [stdio MCP server](#4-connect-an-mcp-client-claude-code-codex-chatgpt)
+   with absolute executable/config paths and `--project my-app`, then reconnect your client.
+5. Ask the connected client:
+
+   > Use MeritRouter project `my-app`, repository `app`, for one read-only task: inspect the
+   > README and report confusing setup instructions. Use at most three model requests.
+   > Do not edit files, run commands or use the network. Read the result and explain what
+   > you verified.
+
+Watch the task's **Sessions** and **Requests** in the panel. A job's **Overview** links its
+delegated tasks and sub-jobs; **Requests** includes supervisor and descendant calls.
+If routing refuses the task, inspect its eligibility reason rather than enabling paid routes.
+Host checks wait for an exact approval under **Settings → Security**; default policy is human
+approval only. External coding runners are currently unavailable. See [security settings](#security-settings).
+
+## Troubleshooting
+
+| Symptom | Next step |
+| --- | --- |
+| Wrong config or project | Pass absolute `--config` and explicit `--project`; run `doctor`. |
+| No eligible model | Inspect Models, Routing, key health, metadata and request budget. |
+| Task stays queued | Keep MCP or a worker/daemon running; check capacity and key cooldowns. |
+| Task waits for a check | Inspect its pending exact command approval on the task/job page. |
+| Panel unavailable | Run `panel` with the same config; inspect `<storage>/logs/panel.log`. |
+| MCP tools missing | Check absolute paths, build output and client registration; reconnect. |
+| Vault unreadable | Restore the matching master key; generating a new one cannot decrypt old keys. |
+
+## Upgrading from SwitchYard
+
+The new executable/package is `meritrouter`, configuration is `meritrouter.config.yaml`,
+environment variables use `MERITROUTER_*`, and new runtime directories use `.meritrouter`.
+Old environment variables and default config filenames are not discovery aliases.
+
+1. Stop old workers, MCP servers, panels and services. Back up configuration, storage/database,
+   vault and its matching master key, brain repositories and working repositories. See
+   [backup and restore](operations.md#backup-and-restore).
+   Uninstall old service registrations with the old executable before replacing it, or retain
+   that executable until you have removed those registrations.
+2. Rename built-in runtime `SWITCHYARD_*` environment variables to `MERITROUTER_*`, preserving
+   values, especially the master key, before opening the installation with the new executable.
+   Keep the encrypted vault and `.master-key` together when using a file key. User-chosen provider
+   environment names referenced by `api_key_env` stay valid: keep those names, or update both
+   the configuration reference and the environment variable together.
+3. Keep the old config in place. Before running the new executable, preserve storage, brain,
+   repository, worktree and branch-prefix settings. Pin any previously omitted defaults to their
+   old resolved paths so new defaults do not select an empty install. Then open it explicitly:
+   `meritrouter doctor --config /absolute/path/to/switchyard.config.yaml`.
+   In explicitly selected storage, an existing `switchyard.db` is reused when `meritrouter.db`
+   does not exist; if both exist, `meritrouter.db` takes precedence. Do not manually rename
+   database files, vaults or brain directories.
+4. Re-register MCP as `meritrouter`, with the new executable and explicit old config path.
+   Remove or disable the old registration and reconnect clients. Inspect
+   `meritrouter service install --dry-run --config <old-config>`
+   before installing the new service. Update daemon/startup commands too.
+5. Verify projects, task history and vault access before resuming. If you later move or rename
+   the config, adjust relative paths to preserve their exact targets: paths resolve against
+   the config file's directory.
+
+Keep historical Git refs and `.switchyard` worktrees/artifacts needed for recovery. The rename
+does not automatically move or delete user data. The panel uses new login/preferences cookies;
+sign in again with the configured token and reselect your project if necessary.
+
+Library users should import from `meritrouter` and replace `Switchyard`, `SwitchyardOptions`
+and `SwitchyardError` with `MeritRouter`, `MeritRouterOptions` and `MeritRouterError`.
+The old package, executable and public class names are not compatibility aliases.
 
 Local, single user. Tested on Windows 10 with Node 22.11; Linux/WSL use the same commands.
 
 ## 1. Install
 
+Check prerequisites with `node --version`, `git --version` and `pnpm --version`.
+The router declares Node.js >=22.11.0. If pnpm is missing, install the workspace's pinned
+version with `npm install --global pnpm@10.5.0`, then reopen your terminal if needed.
+
 ```bash
-git clone https://github.com/aidens113/SwitchYardRouter.git
-cd SwitchYardRouter
+git clone https://github.com/aidens113/MeritRouter.git
+cd MeritRouter
 pnpm install
 pnpm -r build
 ```
 
-Node 22.11 works; 22.12+ or 24 LTS is recommended.
+Use a Node version that also meets the panel framework's installation requirements.
 
 ### Build an installable package
 
-From the checkout, `pnpm --filter switchyard-router package:build` builds the router and
+From the checkout, `pnpm --filter meritrouter package:build` builds the router and
 bundled production panel. Run `npm pack` in `packages/router`, then install the resulting
 tarball with `npm install -g <path-to-tarball>`. This does not publish to npm.
 The consumer installation installs its own platform's native SQLite dependency.
 
-Run `switchyard setup` to create the default configuration and start the bundled panel, or
-`switchyard setup --no-panel` to create only the configuration. Existing files are retained.
-Setup begins with no placeholder repositories; add them in project settings or supply
-`--repo app=<path>`. `switchyard init <directory>` still creates a local configuration.
+After installing the tarball, use `meritrouter` wherever this guide shows
+`node packages/router/dist/cli.js`. Source-checkout users keep the full `node` command.
 
-Configuration discovery uses `--config`, then `SWITCHYARD_CONFIG`, then the nearest ancestor's
-`switchyard.config.yaml`, then the application directory. Its defaults are
-`%LOCALAPPDATA%/SwitchYard` on Windows, `~/Library/Application Support/SwitchYard` on macOS,
-and `$XDG_CONFIG_HOME/switchyard` (or `~/.config/switchyard`) on Linux. `SWITCHYARD_HOME`
+Run `meritrouter setup` to create the default configuration and start the bundled panel, or
+`meritrouter setup --no-panel` to create only the configuration. Existing files are retained.
+Setup begins with no placeholder repositories; add them in project settings or supply
+`--repo app=<path>`. `meritrouter init <directory>` still creates a local configuration.
+
+Configuration discovery uses `--config`, then `MERITROUTER_CONFIG`, then the nearest ancestor's
+`meritrouter.config.yaml`, then the application directory. Its defaults are
+`%LOCALAPPDATA%/MeritRouter` on Windows, `~/Library/Application Support/MeritRouter` on macOS,
+and `$XDG_CONFIG_HOME/meritrouter` (or `~/.config/meritrouter`) on Linux. `MERITROUTER_HOME`
 overrides that directory. Relative configuration paths resolve beside the selected file.
 The tarball was verified on Windows outside the checkout; Linux/macOS installation remains
 separate acceptance work.
@@ -37,17 +124,17 @@ separate acceptance work.
 
 ```bash
 node packages/router/dist/cli.js init . --preset claude-code --project my-app --repo app=../my-app
-SWITCHYARD_CONFIG=$PWD/switchyard.config.yaml pnpm --filter switchyard-panel start   # http://127.0.0.1:4477
+MERITROUTER_CONFIG=$PWD/meritrouter.config.yaml pnpm --filter meritrouter-panel start   # http://127.0.0.1:4477
 ```
 
-`init` writes `switchyard.config.yaml` and `models.yaml`: one global config plus a first project.
-- `--project <slug>` names the project (default `my-project`, or `SWITCHYARD_PROJECT`).
+`init` writes `meritrouter.config.yaml` and `models.yaml`: one global config plus a first project.
+- `--project <slug>` names the project (default `my-project`, or `MERITROUTER_PROJECT`).
 - `--name "<name>"` gives it a display name.
 - Each `--repo <alias>=<path>` replaces the preset's placeholder repository.
 
 ```powershell
-$env:SWITCHYARD_CONFIG = "D:\SwitchYardRouter\switchyard.config.yaml"   # use setx for persistence
-pnpm --filter switchyard-panel start
+$env:MERITROUTER_CONFIG = "D:\MeritRouter\meritrouter.config.yaml"   # use setx for persistence
+pnpm --filter meritrouter-panel start
 ```
 
 `--preset` chooses who supervises and what may be paid (see [roles.md](roles.md) for each role):
@@ -55,12 +142,12 @@ pnpm --filter switchyard-panel start
 | Preset | Supervisor | Workers | Paid |
 | --- | --- | --- | --- |
 | `claude-code` (default) | Claude Code, over MCP | free | off |
-| `standalone-free` | SwitchYard, on the best free model | free | off |
-| `standalone-hybrid` | SwitchYard, on a paid model you set | free; paid fallback at T3 | supervisor, T3 fallback |
-| `standalone-paid` | SwitchYard, on a paid model | paid preferred at T2-T3, premium for T4 | on, budgeted |
+| `standalone-free` | MeritRouter, on the best free model | free | off |
+| `standalone-hybrid` | MeritRouter, on a paid model you set | free; paid fallback at T3 | supervisor, T3 fallback |
+| `standalone-paid` | MeritRouter, on a paid model | paid preferred at T2-T3, premium for T4 | on, budgeted |
 
-The panel binds to 127.0.0.1. Set `SWITCHYARD_PANEL_TOKEN` to require a login. Nothing else has
-to be installed or running: SwitchYard calls each provider's API itself.
+The panel binds to 127.0.0.1. Set `MERITROUTER_PANEL_TOKEN` to require a login. Nothing else has
+to be installed or running: MeritRouter calls each provider's API itself.
 
 ### Projects
 
@@ -94,9 +181,9 @@ projects:
 A slug is lower-case letters, digits, `.`, `_`, and `-`, starting with a letter or digit.
 
 **Repository folders are set up for you.** A repository's folder does not have to exist or be a
-git repository already. SwitchYard prepares it when the project is created, when its
+git repository already. MeritRouter prepares it when the project is created, when its
 repositories are saved, when a worker, the MCP server, or the daemon starts or reloads the
-config, when the panel opens a project's overview, and before `switchyard doctor` checks it:
+config, when the panel opens a project's overview, and before `meritrouter doctor` checks it:
 - a missing folder is created, set up with git, and given an empty first commit;
 - a folder without git is set up with git, gets a default `.gitignore` if it has none
   (`node_modules/`, `.env`, `.env.*`, `*.log`, `dist/`, `build/`, `.venv/`, `__pycache__/`,
@@ -104,11 +191,11 @@ config, when the panel opens a project's overview, and before `switchyard doctor
 - a git repository with no commits gets that snapshot (without a `.gitignore`);
 - a repository with history is never touched.
 
-These commits are made as `SwitchYard <switchyard@localhost>`, so no git identity is needed. The
-project overview shows what was done for seven days. What SwitchYard cannot fix stays an
+These commits are made as `MeritRouter <meritrouter@localhost>`, so no git identity is needed. The
+project overview shows what was done for seven days. What MeritRouter cannot fix stays an
 attention item with the fix: git not installed, a file where the folder should be, no write
 permission, a folder holding files another repository tracks (a monorepo package: use the
-monorepo's top folder), and a drive root or your home folder (SwitchYard will not commit
+monorepo's top folder), and a drive root or your home folder (MeritRouter will not commit
 everything in it).
 
 **In the panel.**
@@ -118,7 +205,7 @@ everything in it).
   - its running and queued jobs and tasks;
   - its last activity;
   - an attention badge: questions, results awaiting a decision, brain requests, interrupted
-    tasks, repositories SwitchYard could not set up.
+    tasks, repositories MeritRouter could not set up.
 - **New project** (`/new`) takes a name, a slug (derived from the name until you edit it),
   repositories, and optional brain mounts. Each folder is checked as you leave its field and
   says what will happen to it; on create the folders are prepared (see above), then
@@ -143,15 +230,15 @@ everything in it).
     `/all/...`.
 
 **On the command line.**
-- `switchyard projects` lists the projects. `*` marks the selected one, and `--all` adds
+- `meritrouter projects` lists the projects. `*` marks the selected one, and `--all` adds
   archived ones.
-- `switchyard projects create <slug> --name "<name>" --repo <alias>=<path>` adds a project. It
+- `meritrouter projects create <slug> --name "<name>" --repo <alias>=<path>` adds a project. It
   prepares each repository folder (see above) and prints what it did.
-- `switchyard projects archive|unarchive <slug>` archives a project or brings it back; see
+- `meritrouter projects archive|unarchive <slug>` archives a project or brings it back; see
   [operations.md](operations.md#archiving-a-project).
-- Commands that work inside one project take `--project <slug>`. Without the flag, SwitchYard
+- Commands that work inside one project take `--project <slug>`. Without the flag, MeritRouter
   picks the project in this order:
-  1. `SWITCHYARD_PROJECT`;
+  1. `MERITROUTER_PROJECT`;
   2. the only project that is not archived;
   3. the project whose repository contains the current directory (the innermost one wins).
 - `submit`, `run`, and `blame` need a project. With several projects and no way to choose, they
@@ -184,11 +271,11 @@ servers (Ollama, LM Studio, llama.cpp) need no key: see [Local servers](#local-s
 
 - **Panel**: Provider keys, pick the provider, paste the key, Test (lists the models it can
   use), choose the billing class and optional limits, save. Keys are stored encrypted.
-- **CLI**: the secret comes from `SWITCHYARD_NEW_KEY` or a hidden prompt, never from the
+- **CLI**: the secret comes from `MERITROUTER_NEW_KEY` or a hidden prompt, never from the
   command line, and is stored encrypted in the same vault:
 
   ```bash
-  SWITCHYARD_NEW_KEY=gsk_... node packages/router/dist/cli.js keys add groq --billing free_tier --label main
+  MERITROUTER_NEW_KEY=gsk_... node packages/router/dist/cli.js keys add groq --billing free_tier --label main
   node packages/router/dist/cli.js keys add mistral --billing free_tier --test   # prompts; stores only if the key lists models
   node packages/router/dist/cli.js keys add cloudflare --billing free_tier --account-id <account id>
   node packages/router/dist/cli.js keys list    # source, billing class, status, last four only
@@ -196,11 +283,11 @@ servers (Ollama, LM Studio, llama.cpp) need no key: see [Local servers](#local-s
   ```
 
   In PowerShell, set the variable for one command and clear it afterwards:
-  `$env:SWITCHYARD_NEW_KEY = "gsk_..."; node packages/router/dist/cli.js keys add groq --billing free_tier; Remove-Item Env:SWITCHYARD_NEW_KEY`.
+  `$env:MERITROUTER_NEW_KEY = "gsk_..."; node packages/router/dist/cli.js keys add groq --billing free_tier; Remove-Item Env:MERITROUTER_NEW_KEY`.
   Without the variable, `keys add` asks for the key with a hidden prompt when it runs in an
   interactive terminal.
 
-- **Config**: under `providers` in `switchyard.config.yaml`, preferably naming an environment
+- **Config**: under `providers` in `meritrouter.config.yaml`, preferably naming an environment
   variable (a literal `api_key` works, but `doctor` warns that the file then holds a secret):
 
   ```yaml
@@ -218,16 +305,16 @@ servers (Ollama, LM Studio, llama.cpp) need no key: see [Local servers](#local-s
 `paid_credits`, `paid_postpaid`, and `trial` keys are paid and follow `paid.*` policy and
 budgets. A model is free only when it is priced at $0, has a `:free` id, or is served by a
 `free_tier` key (then only free_tier keys serve it). Several keys per provider are normal:
-SwitchYard rotates between them. Keys of one provider quota (a Google project, a Cloudflare
+MeritRouter rotates between them. Keys of one provider quota (a Google project, a Cloudflare
 account) share a `quota_group` (`--quota-group`). Optional `rpm`, `rpd`, `tpm`, `tpd`
 limits apply per key, per quota group, or per provider. See [operations.md](operations.md#provider-keys).
 
-Vault secrets are encrypted with a master key from `SWITCHYARD_MASTER_KEY` (64 hex characters)
-or a generated `.switchyard/.master-key` file; back that file up (or set the variable) or the
+Vault secrets are encrypted with a master key from `MERITROUTER_MASTER_KEY` (64 hex characters)
+or a generated `.meritrouter/.master-key` file; back that file up (or set the variable) or the
 vault keys cannot be decrypted.
 
 Some providers limit requests in flight rather than per minute (DeepSeek per account, DeepInfra
-per model, Ollama Cloud per plan). The number depends on the account, so SwitchYard never assumes
+per model, Ollama Cloud per plan). The number depends on the account, so MeritRouter never assumes
 it: set `team.provider_concurrency_limits: { deepseek: 4 }` and the gate's provider slots enforce
 it across every process.
 
@@ -245,7 +332,7 @@ that is not configured. Discovery reads each server's own metadata:
 
 Budgets use the context the server actually runs a model with, not the model's maximum. Ollama
 uses `num_ctx` from the model's parameters, else the context a loaded model was given, else the
-server default (4k, 32k, or 256k depending on VRAM, or `OLLAMA_CONTEXT_LENGTH`). SwitchYard cannot
+server default (4k, 32k, or 256k depending on VRAM, or `OLLAMA_CONTEXT_LENGTH`). MeritRouter cannot
 see that default, so it assumes the smallest (4096) unless you set
 `providers.ollama.default_context_tokens` to your server's value. LM Studio and llama.cpp models
 whose context is not reported take `default_context_tokens` too, and stay unroutable without it.
@@ -294,12 +381,12 @@ Providers that cannot be added this way (OAuth or request signing, retired APIs)
 
 ## 3b. Configure and run
 
-Edit `switchyard.config.yaml`, or use the panel: global settings are at `/all/settings`, a
+Edit `meritrouter.config.yaml`, or use the panel: global settings are at `/all/settings`, a
 project's at `/p/<slug>/settings`.
 
 - `projects.<slug>.repositories`: the repositories that project's workers may read (and, for
   `implement`, edit).
-- `brain.path` (default `~/.switchyard/brain`): one brain repository for every project. To mount
+- `brain.path` (default `~/.meritrouter/brain`): one brain repository for every project. To mount
   an existing `docs/working/` folder, use `projects.<slug>.brain.mounts` for one project or
   `brain.mounts` for every project.
 - Standalone and paid presets: set the paid model id and **current prices** in `paid.models` and
@@ -319,7 +406,7 @@ project's at `/p/<slug>/settings`.
   do: an `ollama-cloud` provider key (Ollama's web search and web fetch), Tavily, Brave, and Exa
   keys, and a SearXNG instance (`web.search.searxng.base_url`; its `settings.yml` must allow the
   `json` format). Add search keys in the panel (Provider keys, "Web search backends") or with
-  `SWITCHYARD_NEW_KEY=... switchyard keys add tavily` (also `brave`, `exa`; several keys per
+  `MERITROUTER_NEW_KEY=... meritrouter keys add tavily` (also `brave`, `exa`; several keys per
   service rotate); in the config use `web.search.tavily.api_key_env`. Search keys are never used
   for chat. `web.search.backends` (default `[auto]`: ollama, tavily, brave, exa, searxng) is the
   pool's order; `web.search.strategy: spread` (default) spreads calls across backends so their
@@ -357,20 +444,20 @@ Adding a key (panel or `keys add`), giving a key a new secret, or re-enabling it
 provider's models at once, and so does setting up a keyless local server in the panel. The
 panel's Scan button does the same as `models scan` for every provider; a running worker repeats it every
 `discovery.interval_minutes` (60). Point the CLI at the config with `--config` or
-`SWITCHYARD_CONFIG` when you run it from another directory.
+`MERITROUTER_CONFIG` when you run it from another directory.
 
 ## 4. Connect an MCP client (Claude Code, Codex, ChatGPT)
 
 The connected client is the final project supervisor by default and receives instructions to
-delegate bounded work, review/integrate the results, test and iterate. SwitchYard can run bounded
+delegate bounded work, review/integrate the results, test and iterate. MeritRouter can run bounded
 sub-supervisors without taking that final role. Settings → General → Claude/Codex supervision
-controls permission to dispatch a SwitchYard final project supervisor; it starts off. You can
+controls permission to dispatch a MeritRouter final project supervisor; it starts off. You can
 also explicitly ask the model to change it through the policy tool. See [supervisor ownership](roles.md#who-supervises).
 
-`switchyard mcp` is SwitchYard's MCP server. It is the same as `node
+`meritrouter mcp` is MeritRouter's MCP server. It is the same as `node
 packages/router/dist/cli.js mcp`, or `node packages/router/dist/mcp.js` for older registrations.
-The server reads `SWITCHYARD_CONFIG`, or you pass `--config`. Paths below are examples. Use
-`switchyard` when the package is installed or linked, otherwise `node <checkout>/packages/router/dist/cli.js`.
+The server reads `MERITROUTER_CONFIG`, or you pass `--config`. Paths below are examples. Use
+`meritrouter` when the package is installed or linked, otherwise `node <checkout>/packages/router/dist/cli.js`.
 
 It speaks two transports:
 - **stdio** (default). The client launches the server and talks over its stdin and stdout. Use
@@ -378,7 +465,7 @@ It speaks two transports:
 - **Streamable HTTP** (`--http`). The server listens at `http://127.0.0.1:4478/mcp` and clients
   connect to that URL. Change the address with `--host` and `--port`; either one alone also turns
   on HTTP. Use this for ChatGPT, through a tunnel, or for several clients sharing one server.
-  - `SWITCHYARD_MCP_TOKEN`: when set, every request must carry it, either as
+  - `MERITROUTER_MCP_TOKEN`: when set, every request must carry it, either as
     `Authorization: Bearer <token>` or as the last part of the URL, `/mcp/<token>`.
   - A `--host` other than loopback (for example `0.0.0.0`) refuses to start without the token.
   - Without a token, the server answers only requests addressed to a loopback name (Host and
@@ -391,7 +478,7 @@ One MCP server serves one project:
 
 The server picks its project in this order:
 1. `--project <slug>`;
-2. `SWITCHYARD_PROJECT`;
+2. `MERITROUTER_PROJECT`;
 3. the only project;
 4. the project whose repository contains the client's working directory.
 
@@ -412,14 +499,14 @@ its native requests.
 Run from the project you want Claude to work in:
 
 ```powershell
-claude mcp add --transport stdio --scope local switchyard -- node "D:/SwitchYardRouter/packages/router/dist/cli.js" mcp --config "D:/path/to/switchyard.config.yaml" --project my-app
+claude mcp add --transport stdio --scope local meritrouter -- node "D:/MeritRouter/packages/router/dist/cli.js" mcp --config "D:/path/to/meritrouter.config.yaml" --project my-app
 ```
 
 ```bash
-claude mcp add --transport stdio --scope local switchyard -- node /abs/SwitchYardRouter/packages/router/dist/cli.js mcp --config /abs/path/switchyard.config.yaml --project my-app
+claude mcp add --transport stdio --scope local meritrouter -- node /abs/MeritRouter/packages/router/dist/cli.js mcp --config /abs/path/meritrouter.config.yaml --project my-app
 ```
 
-Check with `claude mcp get switchyard` and `/mcp` inside Claude Code. Merge
+Check with `claude mcp get meritrouter` and `/mcp` inside Claude Code. Merge
 `packages/router/examples/CLAUDE.delegation.md` into the project's `CLAUDE.md`.
 
 A `--scope local` entry is keyed by the folder path exactly as written. If your editor opens the
@@ -427,7 +514,7 @@ folder with another spelling (`d:\repo` against `D:/repo`), the entry does not l
 `.mcp.json` at the repository root avoids this:
 
 ```json
-{ "mcpServers": { "switchyard": { "command": "node", "args": ["D:/SwitchYardRouter/packages/router/dist/cli.js", "mcp", "--config", "D:/path/to/switchyard.config.yaml", "--project", "my-app"] } } }
+{ "mcpServers": { "meritrouter": { "command": "node", "args": ["D:/MeritRouter/packages/router/dist/cli.js", "mcp", "--config", "D:/path/to/meritrouter.config.yaml", "--project", "my-app"] } } }
 ```
 
 ### Codex (CLI, IDE extension, app)
@@ -436,67 +523,47 @@ Codex keeps MCP servers in `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`)
 CLI and the IDE extension. Register the stdio server:
 
 ```bash
-codex mcp add switchyard -- node /abs/SwitchYardRouter/packages/router/dist/cli.js mcp --config /abs/path/switchyard.config.yaml --project my-app
+codex mcp add meritrouter -- node /abs/MeritRouter/packages/router/dist/cli.js mcp --config /abs/path/meritrouter.config.yaml --project my-app
 codex mcp list
-codex mcp get switchyard
+codex mcp get meritrouter
 ```
 
 This writes:
 
 ```toml
-[mcp_servers.switchyard]
+[mcp_servers.meritrouter]
 command = "node"
-args = ["/abs/SwitchYardRouter/packages/router/dist/cli.js", "mcp", "--config", "/abs/path/switchyard.config.yaml", "--project", "my-app"]
+args = ["/abs/MeritRouter/packages/router/dist/cli.js", "mcp", "--config", "/abs/path/meritrouter.config.yaml", "--project", "my-app"]
 ```
 
-To use an HTTP server that is already running (`switchyard mcp --http`, with the token in
-`SWITCHYARD_MCP_TOKEN` for both processes):
+To use an HTTP server that is already running (`meritrouter mcp --http`, with the token in
+`MERITROUTER_MCP_TOKEN` for both processes):
 
 ```bash
-codex mcp add switchyard-http --url http://127.0.0.1:4478/mcp --bearer-token-env-var SWITCHYARD_MCP_TOKEN
+codex mcp add meritrouter-http --url http://127.0.0.1:4478/mcp --bearer-token-env-var MERITROUTER_MCP_TOKEN
 ```
 
 Inside Codex, `/mcp` lists the servers and their tools. Codex reads a reduced form of JSON Schema
-for tool inputs. SwitchYard's tool inputs stay inside that form, and the service still checks
+for tool inputs. MeritRouter's tool inputs stay inside that form, and the service still checks
 every task in full. So a task Codex fills in wrongly is refused with the reason, not run.
 
-### ChatGPT (developer mode)
+### Remote MCP clients
 
-ChatGPT connects only to a remote HTTPS URL, and it cannot send a bearer header: a connector
-uses OAuth or no authentication. So the token goes in the URL, and the tunnel's address plus
-the token is the secret.
-
-1. Start the HTTP server with a token:
-
-   ```bash
-   export SWITCHYARD_MCP_TOKEN=$(openssl rand -hex 32)       # PowerShell: $env:SWITCHYARD_MCP_TOKEN = "<long random string>"
-   switchyard mcp --http --config /abs/path/switchyard.config.yaml --project my-app
-   ```
-
-2. Expose port 4478 over HTTPS with a tunnel, for example
-   `cloudflared tunnel --url http://127.0.0.1:4478` or `ngrok http 4478`. Note the
-   `https://...` address it prints.
-3. In ChatGPT, open Settings, then Apps & Connectors, then Advanced settings, and turn on
-   Developer mode. Create a connector:
-   - MCP server URL: `https://<tunnel address>/mcp/<token>`;
-   - Authentication: No authentication.
-4. In a chat, choose Developer mode and the connector. Each tool call shows its arguments before
-   it runs.
-
-Anyone with that URL can submit tasks that spend your provider quota, write to the project's
-brain, and accept results. Keep it private. Stop the tunnel when you are done, and change the
-token if the URL leaked. A tunnel to a server without a token gets 403 for every request, because
-the tunnel's host name is not loopback.
+The HTTP transport can serve remote clients through a separately managed HTTPS tunnel.
+Set `MERITROUTER_MCP_TOKEN` and use a bearer header or `/mcp/<token>` URL according to
+the client's supported authentication. Follow that client's current MCP setup instructions;
+its UI and account requirements are outside MeritRouter. Anyone with the token can invoke
+the server's tools. Keep it secret and stop the tunnel when finished.
 
 Without `--no-worker`, the MCP process runs the worker loop, so tasks run while the Claude Code
 session is open. For work that should continue after closing Claude, run
 `node packages/router/dist/cli.js worker` in a terminal; any number of processes can share the
 store. To keep a worker running across crashes and logins:
-- `switchyard daemon start` runs the daemon in the background. It restarts the worker with
-  backoff and logs under `.switchyard/logs/`. `daemon status` shows the daemon and each
-  project's queued and running tasks, and `daemon stop` stops it. `switchyard daemon` alone runs
+- `meritrouter daemon start` runs the daemon in the background. It restarts the worker with
+  backoff and logs under `.meritrouter/logs/`. `daemon status` shows the daemon and each
+  project's queued and running tasks, and `daemon stop` stops it. `meritrouter daemon` alone runs
   it in the foreground.
-- `switchyard service install` installs the daemon as a user service: a systemd user unit, a
+- `meritrouter service install` installs the daemon as a user service: a systemd user unit, a
   launchd agent, or a Windows scheduled task at logon. `--dry-run` prints the definition first,
   and `service status` / `service uninstall` manage it.
 
@@ -505,38 +572,35 @@ project's MCP server with `--no-worker`.
 
 ## 5. Coding workers
 
-The default `coding.runner: native` is SwitchYard's own harness: edits are confined to
-`allowedPaths` by the tools themselves and each editing response is committed under the agent's
-identity. Shell commands are available only for patterns in `coding.allowed_commands`.
-
-Alternatives: `runner: opencode` (install OpenCode so `opencode` is on PATH; it runs with an inline
-config whose only provider is SwitchYard's per-job policy gateway, isolated HOME/XDG
-directories, and no inherited provider keys) or `runner: command` for any other agent, which receives `SWITCHYARD_BASE_URL`,
-`SWITCHYARD_JOB_TOKEN`, `SWITCHYARD_MODEL`, and `SWITCHYARD_PROMPT_FILE`.
+Use the default `coding.runner: native`. Its repository tools enforce task paths.
+There is no general worker OS shell sandbox. Every host command, including a declared
+check, requires an exact outside-action approval under the security policy below.
+External `opencode` and `command` coding runners currently fail closed with
+`worker_sandbox_unavailable`; a worktree or allowlist does not make them safe to enable.
 
 ## 5b. Standalone jobs
 
-With a standalone preset, give SwitchYard a whole goal:
+With a standalone preset, give MeritRouter a whole goal:
 
 ```bash
 node packages/router/dist/cli.js worker &                         # or keep the MCP server running
 node packages/router/dist/cli.js run "Add CSV export to the report page" --project my-app --repo app --check "npm test"
 node packages/router/dist/cli.js job <id>                         # workers, branch, questions
 node packages/router/dist/cli.js answer <question-id> "use semicolons"
-git -C path/to/app merge --no-ff switchyard/job-<id>               # after you review the branch
+git -C path/to/app merge --no-ff meritrouter/job-<id>               # after you review the branch
 ```
 
 ## 6. Web panel
 
 ```bash
-pnpm --filter switchyard-router build
-SWITCHYARD_CONFIG=/path/to/switchyard.config.yaml pnpm --filter switchyard-panel start   # http://127.0.0.1:4477
+pnpm --filter meritrouter build
+MERITROUTER_CONFIG=/path/to/meritrouter.config.yaml pnpm --filter meritrouter-panel start   # http://127.0.0.1:4477
 ```
 
-You rarely start it by hand: while the MCP server or `switchyard worker` runs, SwitchYard
+You rarely start it by hand: while the MCP server or `meritrouter worker` runs, MeritRouter
 starts the panel when nothing answers on `panel.port` and checks again every minute
 (`panel.auto_start`, default on). It runs detached on 127.0.0.1, outlives the session that
-started it, and logs to `<storage>/logs/panel.log`. `switchyard panel` starts it on demand, and
+started it, and logs to `<storage>/logs/panel.log`. `meritrouter panel` starts it on demand, and
 the MCP server's `panel` tool does the same for Claude, whose server instructions carry the URL.
 It needs the built panel from this repository checkout (`pnpm -r build`).
 

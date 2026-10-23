@@ -5,8 +5,8 @@ import { z } from "zod";
 import { parseTrailers } from "../attribution/index.js";
 import { BrainError, normalizeBrainPath } from "../brain/brain.js";
 import type { PromotionRecord, PromotionStatus } from "../brain/promotion.js";
-import { SwitchyardError } from "../core/errors.js";
-import type { Switchyard } from "../core/service.js";
+import { MeritRouterError } from "../core/errors.js";
+import type { MeritRouter } from "../core/service.js";
 import { git } from "../workspaces/git.js";
 
 // Global knowledge for the panel (decision D9): what landed in `global/` and where it came from,
@@ -136,7 +136,7 @@ export function parseGlobalProvenance(text: string): { provenance: GlobalProvena
   };
 }
 
-function entryOf(sy: Switchyard, rel: string): GlobalEntry | null {
+function entryOf(sy: MeritRouter, rel: string): GlobalEntry | null {
   const r = sy.brain.resolve(rel);
   if (!existsSync(r.abs)) return null;
   const text = readFileSync(r.abs, "utf8");
@@ -146,7 +146,7 @@ function entryOf(sy: Switchyard, rel: string): GlobalEntry | null {
 }
 
 /** The global brain's entries with provenance, and the history of removed ones. */
-export async function globalKnowledge(sy: Switchyard, opts: { revertLimit?: number } = {}): Promise<GlobalKnowledge> {
+export async function globalKnowledge(sy: MeritRouter, opts: { revertLimit?: number } = {}): Promise<GlobalKnowledge> {
   const brain = sy.brain;
   await brain.ensure();
   const entries = brain
@@ -165,7 +165,7 @@ export async function globalKnowledge(sy: Switchyard, opts: { revertLimit?: numb
 }
 
 /** Global entries removed from the brain (by a revert, or by hand), newest first. */
-export async function globalReverts(sy: Switchyard, limit = 50): Promise<GlobalRevert[]> {
+export async function globalReverts(sy: MeritRouter, limit = 50): Promise<GlobalRevert[]> {
   const r = sy.brain.resolve("global");
   if (!r.repo || !r.commit || !existsSync(path.join(r.repo, ".git"))) return [];
   const raw = await git(r.repo, ["log", `-${Math.max(1, Math.min(limit, 500))}`, "--diff-filter=D", "--name-only", "--format=%x1e%H%x1f%aI%x1f%s%x1f%(trailers:unfold)%x1f", "--", r.repoRel || "."]).catch(() => "");
@@ -203,7 +203,7 @@ export interface PromotionView extends PromotionRecord {
 }
 
 /** Promotions across projects (or one project), newest first; `status` filters them. */
-export function promotionsView(sy: Switchyard, opts: { project?: string; status?: PromotionStatus | "awaiting_person" } = {}): PromotionView[] {
+export function promotionsView(sy: MeritRouter, opts: { project?: string; status?: PromotionStatus | "awaiting_person" } = {}): PromotionView[] {
   if (opts.project !== undefined) requireProject(sy, opts.project);
   const status = opts.status === "awaiting_person" ? undefined : opts.status;
   const all = sy.promotions({ ...(opts.project ? { project: opts.project } : {}), ...(status ? { status } : {}) }).map((r) => ({ ...r, awaitingPerson: awaitingPerson(r) }));
@@ -214,30 +214,30 @@ function awaitingPerson(r: PromotionRecord): boolean {
   return r.status === "pending_approval" || (r.status === "pending_review" && !r.review.task_id);
 }
 
-function requireProject(sy: Switchyard, project: string): void {
-  if (!sy.projects.get(project)) throw new SwitchyardError("not_found", `unknown project ${project}`);
+function requireProject(sy: MeritRouter, project: string): void {
+  if (!sy.projects.get(project)) throw new MeritRouterError("not_found", `unknown project ${project}`);
 }
 
 /**
  * A person approves or rejects a waiting promotion of `project`. A rejection needs a reason; the
  * lesson is then kept in the project. Only waiting promotions can be decided.
  */
-export async function decideGlobalPromotion(sy: Switchyard, project: string, id: string, approve: boolean, by: string, reason = ""): Promise<PromotionView> {
+export async function decideGlobalPromotion(sy: MeritRouter, project: string, id: string, approve: boolean, by: string, reason = ""): Promise<PromotionView> {
   requireProject(sy, project);
-  if (!PROMOTION_ID_RE.test(id)) throw new SwitchyardError("task_invalid", `invalid promotion id ${id}`);
+  if (!PROMOTION_ID_RE.test(id)) throw new MeritRouterError("task_invalid", `invalid promotion id ${id}`);
   const current = sy.brainFor(project).promotions.get(id);
-  if (!current) throw new SwitchyardError("not_found", `unknown promotion ${id} in project ${project}`);
-  if (!approve && !reason.trim()) throw new SwitchyardError("reason_required", "a rejection needs a reason; it is kept with the lesson in the project");
+  if (!current) throw new MeritRouterError("not_found", `unknown promotion ${id} in project ${project}`);
+  if (!approve && !reason.trim()) throw new MeritRouterError("reason_required", "a rejection needs a reason; it is kept with the lesson in the project");
   if (!awaitingPerson(current)) {
     const why = current.status === "pending_review" ? `it is under review (task ${current.review.task_id})` : `it was already ${current.status}${current.decided_by ? ` by ${current.decided_by}` : ""}`;
-    throw new SwitchyardError("usage", `promotion ${id} cannot be decided now: ${why}`);
+    throw new MeritRouterError("usage", `promotion ${id} cannot be decided now: ${why}`);
   }
   try {
     const r = await sy.decidePromotion(project, id, approve, by, reason.trim());
     return { ...r, awaitingPerson: awaitingPerson(r) };
   } catch (err) {
     const e = err as Error & { code?: unknown };
-    if (e.code === "brain_rejected") throw new SwitchyardError("usage", e.message);
+    if (e.code === "brain_rejected") throw new MeritRouterError("usage", e.message);
     throw err;
   }
 }
@@ -260,10 +260,10 @@ function revertPath(input: string): string {
   try {
     rel = normalizeBrainPath(input);
   } catch (err) {
-    throw new SwitchyardError("task_invalid", (err as Error).message);
+    throw new MeritRouterError("task_invalid", (err as Error).message);
   }
-  if (!rel.startsWith("global/") || !rel.endsWith(".md")) throw new SwitchyardError("task_invalid", `only global entries (global/**/*.md) can be reverted: ${input}`);
-  if (rel === GLOSSARY) throw new SwitchyardError("task_invalid", "the glossary is one shared file; edit its terms on a project's Brain page instead of reverting it");
+  if (!rel.startsWith("global/") || !rel.endsWith(".md")) throw new MeritRouterError("task_invalid", `only global entries (global/**/*.md) can be reverted: ${input}`);
+  if (rel === GLOSSARY) throw new MeritRouterError("task_invalid", "the glossary is one shared file; edit its terms on a project's Brain page instead of reverting it");
   return rel;
 }
 
@@ -274,16 +274,16 @@ function revertPath(input: string): string {
  * entry and its removal stay in the brain's history. The promotion record (if any) becomes
  * `reverted` with who, when, and why; `settle()` never writes a reverted lesson again.
  */
-export async function revertGlobalEntry(sy: Switchyard, input: string, by: string, reason: string): Promise<RevertOutcome> {
+export async function revertGlobalEntry(sy: MeritRouter, input: string, by: string, reason: string): Promise<RevertOutcome> {
   const rel = revertPath(input);
   const why = reason.trim().replace(/\s+/g, " ");
-  if (!why) throw new SwitchyardError("reason_required", "say why the entry is reverted; the reason is recorded in the brain's history");
+  if (!why) throw new MeritRouterError("reason_required", "say why the entry is reverted; the reason is recorded in the brain's history");
   const who = by.trim() || "user";
   const brain = sy.brain;
   await brain.ensure();
   const r = brain.resolve(rel);
-  if (!r.repo || !r.commit) throw new SwitchyardError("usage", `${rel} is not committed by SwitchYard (brain.commit is off, or its mount does not commit), so a revert could not be recorded`);
-  if (!existsSync(r.abs)) throw new SwitchyardError("not_found", `${rel} does not exist (already reverted?)`);
+  if (!r.repo || !r.commit) throw new MeritRouterError("usage", `${rel} is not committed by MeritRouter (brain.commit is off, or its mount does not commit), so a revert could not be recorded`);
+  if (!existsSync(r.abs)) throw new MeritRouterError("not_found", `${rel} does not exist (already reverted?)`);
   let removed: { title: string; provenance: GlobalProvenance | null } = { title: path.posix.basename(rel, ".md"), provenance: null };
   let res: { path: string; commit: string | null };
   try {
@@ -299,10 +299,10 @@ export async function revertGlobalEntry(sy: Switchyard, input: string, by: strin
       },
     });
   } catch (err) {
-    if (err instanceof BrainError) throw new SwitchyardError(existsSync(r.abs) ? "usage" : "not_found", err.message);
+    if (err instanceof BrainError) throw new MeritRouterError(existsSync(r.abs) ? "usage" : "not_found", err.message);
     throw err;
   }
-  if (!res.commit) throw new SwitchyardError("usage", `removing ${rel} produced no commit`);
+  if (!res.commit) throw new MeritRouterError("usage", `removing ${rel} produced no commit`);
   const promotion = removed.provenance?.promotion ?? null;
   const project = removed.provenance?.project ?? null;
   return { path: rel, commit: res.commit, revertedBy: who, reason: why, title: removed.title, promotion, project, promotionStatus: await markPromotionReverted(sy, project, promotion, who, why) };
@@ -312,7 +312,7 @@ export async function revertGlobalEntry(sy: Switchyard, input: string, by: strin
  * Mark the reverted lesson's promotion record `reverted`. Returns the record's status afterwards,
  * or null when there is no record (a person's own lesson, or its project is no longer configured).
  */
-async function markPromotionReverted(sy: Switchyard, project: string | null, id: string | null, who: string, why: string): Promise<PromotionStatus | null> {
+async function markPromotionReverted(sy: MeritRouter, project: string | null, id: string | null, who: string, why: string): Promise<PromotionStatus | null> {
   if (!project || !id || !PROMOTION_ID_RE.test(id) || !sy.projects.context(project)) return null;
   const promotions = sy.brainFor(project).promotions;
   const marked = await promotions.markReverted(id, who, why);

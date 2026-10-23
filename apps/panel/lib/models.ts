@@ -1,6 +1,6 @@
 import "server-only";
-import type { Switchyard } from "switchyard-router";
-import { insights } from "switchyard-router";
+import type { MeritRouter } from "meritrouter";
+import { insights } from "meritrouter";
 
 export type ModelView = ReturnType<typeof insights.modelsView>[number];
 
@@ -41,7 +41,7 @@ export function isFree(ep: ModelView["endpoint"]): boolean {
 }
 
 /** Providers with at least one usable key (before cooldowns and limits). */
-export function keyedProviders(sy: Switchyard): Set<string> {
+export function keyedProviders(sy: MeritRouter): Set<string> {
   return new Set(sy.providers.credentials().list().filter((c) => c.unusableReason === null).map((c) => c.provider));
 }
 
@@ -50,7 +50,7 @@ export function reachable(ep: ModelView["endpoint"], keyed: Set<string>): boolea
   return ep.available && keyed.has(ep.route.provider);
 }
 
-export function toRow(sy: Switchyard, v: ModelView, keyed: Set<string> = keyedProviders(sy)): ModelRow {
+export function toRow(sy: MeritRouter, v: ModelView, keyed: Set<string> = keyedProviders(sy)): ModelRow {
   const ep = v.endpoint;
   return {
     id: ep.id,

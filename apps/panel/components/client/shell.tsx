@@ -207,7 +207,7 @@ export function Shell({ children, configPath, loginEnabled, projects }: { childr
         title="Turn the panel off?"
         description={
           <>
-            Agents keep running; the panel starts again when a new agent session begins or you run <Mono>switchyard panel</Mono>.
+            Agents keep running; the panel starts again when a new agent session begins or you run <Mono>meritrouter panel</Mono>.
           </>
         }
         confirmLabel="Turn off"
@@ -232,7 +232,7 @@ function PanelOff() {
         <h1 className="mt-3 text-lg font-semibold tracking-tight text-ink">Panel turned off</h1>
         <p className="mt-2 text-sm leading-relaxed text-ink-2">
           Agents keep running. The panel starts again when a new agent session begins, or when you run{" "}
-          <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[0.85em]">switchyard panel</code>.
+          <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[0.85em]">meritrouter panel</code>.
         </p>
       </div>
     </main>

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { insights } from "switchyard-router";
+import type { insights } from "meritrouter";
 import { Badge, EmptyState, type Tone } from "./ui";
 import { AgentLink } from "./entity-links";
 import { ago, dateTime, duration, humanize, shortId } from "@/lib/format";

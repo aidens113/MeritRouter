@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import Database from "better-sqlite3";
@@ -6,7 +6,14 @@ import { MIGRATIONS } from "./migrations.js";
 
 export type Db = Database.Database;
 
-export const DB_FILE = "switchyard.db";
+export const DB_FILE = "meritrouter.db";
+/** Legacy explicit-storage compatibility; never discover or move an old installation. */
+export const LEGACY_DB_FILE = "switchyard.db";
+export function databasePath(storageDir: string): string {
+  const canonical = path.join(storageDir, DB_FILE);
+  const legacy = path.join(storageDir, LEGACY_DB_FILE);
+  return !existsSync(canonical) && existsSync(legacy) ? legacy : canonical;
+}
 
 /**
  * `storage.durability`: `normal` (SQLite `synchronous=NORMAL`; in WAL mode a power loss can drop
@@ -23,7 +30,7 @@ export interface OpenDatabaseOptions {
 
 export function openDatabase(storageDir: string, opts: OpenDatabaseOptions = {}): Db {
   mkdirSync(storageDir, { recursive: true });
-  const db = new Database(path.join(storageDir, DB_FILE), { readonly: opts.readonly ?? false });
+  const db = new Database(databasePath(storageDir), { readonly: opts.readonly ?? false });
   db.pragma("busy_timeout = 10000");
   if (!opts.readonly) {
     db.pragma("journal_mode = WAL");

@@ -7,15 +7,15 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
-import { insights, loadConfig, Switchyard, LabSupervisorLease } from "switchyard-router";
+import { insights, loadConfig, MeritRouter, LabSupervisorLease } from "meritrouter";
 const exec = promisify(execFile);
 const app = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const demo = path.join(app, ".demo");
-const config = path.join(demo, "switchyard.config.yaml");
+const config = path.join(demo, "meritrouter.config.yaml");
 const cfg = loadConfig(config);
 assert(path.resolve(cfg.storageDir).startsWith(demo + path.sep));
 assert(path.resolve(path.dirname(config), cfg.brain.path).startsWith(demo + path.sep), "Demo brain must stay in .demo");
-const sy = new Switchyard(cfg, { worker: false });
+const sy = new MeritRouter(cfg, { worker: false });
 for (const project of sy.projects.list()) for (const repo of Object.values(project.repositoryPaths)) assert(path.resolve(repo.path).startsWith(demo + path.sep), "Demo repositories must stay in .demo");
 const modelRequestsBefore = sy.db.prepare("SELECT COUNT(*) AS n FROM model_requests").get().n;
 const routerCli = path.resolve(app, "../../packages/router/dist/cli.js");
@@ -42,7 +42,7 @@ async function evaluate(expression) { const r = await command("Runtime.evaluate"
 async function waitOperation(name, id) { let last; await until(async () => { last = await request(`/api/labs/${name}?project=demo`); const op = last.operations.find(o => o.id === id); if (op?.state === "failed") throw new Error(`${op.errorCode}: ${op.errorMessage}`); return op?.state === "completed"; }, `operation ${id}`); return last; }
 async function action(name, body) { startedSupervisor = true; const out = await request(`/api/labs/${name}?project=demo`, "POST", body); assert(["pending", "running", "completed"].includes(out.operation.state)); assert(!("result" in out.operation)); return waitOperation(name, out.operation.id); }
 try {
-  server = spawn(process.execPath, [require.resolve("next/dist/bin/next"), "start", "-H", "127.0.0.1", "-p", String(port)], { cwd: app, env: { ...process.env, SWITCHYARD_CONFIG: config, SWITCHYARD_PANEL_TOKEN: "", SWITCHYARD_PROJECT: "" }, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+  server = spawn(process.execPath, [require.resolve("next/dist/bin/next"), "start", "-H", "127.0.0.1", "-p", String(port)], { cwd: app, env: { ...process.env, MERITROUTER_CONFIG: config, MERITROUTER_PANEL_TOKEN: "", MERITROUTER_PROJECT: "" }, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
   let serverOutput = ""; server.stdout.on("data", d => { serverOutput += d; }); server.stderr.on("data", d => { serverOutput += d; });
   await until(async () => { try { return (await fetch(base + "/api/labs?project=demo")).ok; } catch { if ((server.exitCode !== null || server.signalCode !== null)) throw new Error(serverOutput); return false; } }, "production panel");
   for (const route of ["/p/demo", "/p/demo/jobs", "/p/demo/settings?tab=labs", "/p/demo/labs", "/p/demo/labs/calculator-preview", "/p/demo/labs/validation-fix"]) {
@@ -135,7 +135,7 @@ try {
     for (const [label, route] of [["labs", "/p/demo/labs"], ["detail", "/p/demo/labs/calculator-preview"], ["recipe", "/p/demo/settings?tab=labs"], ["jobs", "/p/demo/jobs"]]) {
       await command("Page.navigate", { url: base + route });
       await until(async () => await evaluate(`document.readyState === 'complete' && location.href === ${JSON.stringify(base + route)}`), "page load");
-      await evaluate(`localStorage.setItem('sy-theme',${JSON.stringify(theme)});document.documentElement.setAttribute('data-theme',${JSON.stringify(theme)})`);
+      await evaluate(`localStorage.setItem('meritrouter-theme',${JSON.stringify(theme)});document.documentElement.setAttribute('data-theme',${JSON.stringify(theme)})`);
       await delay(350);
       if (label === "detail" && width === 1440 && theme === "light") {
         await evaluate("Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='Inspect promotion evidence').click()");
@@ -159,7 +159,7 @@ try {
     await sy.labs.stop("demo", createdName).catch(() => {});
     await sy.labs.destroy("demo", createdName).catch(e => console.error("fixture cleanup failed", e.message));
   }
-  if (startedSupervisor) await exec(process.execPath, [routerCli, "labs", "supervisor-stop", "--config", config], { windowsHide: true, env: { ...process.env, SWITCHYARD_PROJECT: "" } }).catch(e => console.error("supervisor cleanup failed", e.message));
+  if (startedSupervisor) await exec(process.execPath, [routerCli, "labs", "supervisor-stop", "--config", config], { windowsHide: true, env: { ...process.env, MERITROUTER_PROJECT: "" } }).catch(e => console.error("supervisor cleanup failed", e.message));
   if (ws?.readyState === WebSocket.OPEN) { await command("Browser.close").catch(() => {}); ws.close(); }
   if (chrome && (chrome.exitCode === null && chrome.signalCode === null)) await until(() => (chrome.exitCode !== null || chrome.signalCode !== null), "browser stop", 5000).catch(() => chrome.kill());
   if (server && (server.exitCode === null && server.signalCode === null)) { server.kill(); await until(() => (server.exitCode !== null || server.signalCode !== null), "panel stop", 10000); }

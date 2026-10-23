@@ -1,4 +1,4 @@
-# Optional. Models are normally discovered by `switchyard models scan` (or the panel).
+# Optional. Models are normally discovered by `meritrouter models scan` (or the panel).
 # Use this file to correct discovered metadata or to add models by hand.
 version: 1
 

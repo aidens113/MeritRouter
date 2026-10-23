@@ -3,13 +3,13 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
-import type { Switchyard } from "../src/core/service.js";
+import type { MeritRouter } from "../src/core/service.js";
 import { projectLimits } from "../src/projects/schema.js";
 import { inspectRepositoryPath, projectInfo, projectSettingsView, saveProjectRepositories, saveProjectSettings } from "../src/admin/insights.js";
 import { baseConfig, commitAll, makeEnv, open, reply, ScriptedClient, summarizeTask, type Env } from "./helpers.js";
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => {
   await sy?.close();
   sy = undefined;
@@ -25,7 +25,7 @@ function gitRepo(dir: string): void {
 }
 
 /** Two projects; the global config sets a supervisor branch prefix and a coding allow-list to inherit. */
-function setup(): Switchyard {
+function setup(): MeritRouter {
   const base = baseConfig();
   env = makeEnv({
     config: {
@@ -49,7 +49,7 @@ function setup(): Switchyard {
 }
 
 const fileEntry = (slug: string) => (YAML.parse(readFileSync(env!.cfg.configPath, "utf8")) as { projects: Record<string, Record<string, unknown>> }).projects[slug]!;
-const override = (s: Switchyard, slug: string, id: string) => projectSettingsView(s, slug).overrides.find((o) => o.id === id)!;
+const override = (s: MeritRouter, slug: string, id: string) => projectSettingsView(s, slug).overrides.find((o) => o.id === id)!;
 
 describe("project settings (admin)", () => {
   it("round-trips an override beside the inherited global value, then resets it to global", () => {

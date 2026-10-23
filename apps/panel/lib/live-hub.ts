@@ -1,5 +1,5 @@
 import "server-only";
-import { insights } from "switchyard-router";
+import { insights } from "meritrouter";
 import { getSy } from "./sy";
 
 /**
@@ -21,7 +21,7 @@ type Watcher = { scope: string; cursor: insights.LiveCursor | null; listeners: S
 
 export const LIVE_POLL_MS = 1000;
 
-const KEY = Symbol.for("switchyard.panel.live");
+const KEY = Symbol.for("meritrouter.panel.live");
 const g = globalThis as unknown as Record<symbol, Map<string, Watcher> | undefined>;
 const watchers = (g[KEY] ??= new Map<string, Watcher>());
 

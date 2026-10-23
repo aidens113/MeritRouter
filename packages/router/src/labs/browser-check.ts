@@ -75,7 +75,7 @@ export async function runBrowserCheck(manager: LabManager, lab: LabRecord, check
       const address = probe.address();
       if (!address || typeof address === "string")
         throw new Error("browser offline probe unavailable");
-      const navigation = Navigation.parse(await client.call("Page.navigate", { url: `http://127.0.0.1:${address.port}/switchyard-offline-probe` }, session));
+      const navigation = Navigation.parse(await client.call("Page.navigate", { url: `http://127.0.0.1:${address.port}/meritrouter-offline-probe` }, session));
       if (contacted || navigation.errorText !== "net::ERR_INTERNET_DISCONNECTED")
         throw new Error("browser offline enforcement could not be verified");
     }

@@ -1,13 +1,13 @@
 import YAML from "yaml";
 import { PROJECT_SLUG_RE } from "../config/schema.js";
-import { SwitchyardError } from "../core/errors.js";
-import type { Switchyard } from "../core/service.js";
+import { MeritRouterError } from "../core/errors.js";
+import type { MeritRouter } from "../core/service.js";
 import { archiveProject, createProject, deleteProject, previewProjectDeletion, projectsGrid, selectableProjects, unarchiveProject } from "../admin/insights.js";
 import { repoFlags } from "./args.js";
 import { chooseProject, type SelectOptions } from "./project-select.js";
 import { out, stamp, table } from "./terminal.js";
 
-// `switchyard projects list|create|archive|unarchive`, and the config `init` writes (a global
+// `meritrouter projects list|create|archive|unarchive`, and the config `init` writes (a global
 // config plus a first project in the `projects` shape).
 
 export interface ProjectsFlags {
@@ -18,9 +18,9 @@ export interface ProjectsFlags {
   confirm?: string;
 }
 
-const USAGE = 'usage: switchyard projects [list [--all]] | create <slug> [--name "<name>"] [--repo <alias>=<path> ...] | archive <slug> | unarchive <slug> | delete <slug> [--confirm <slug>]';
+const USAGE = 'usage: meritrouter projects [list [--all]] | create <slug> [--name "<name>"] [--repo <alias>=<path> ...] | archive <slug> | unarchive <slug> | delete <slug> [--confirm <slug>]';
 
-export async function projectsCommand(sy: Switchyard, args: string[], values: ProjectsFlags, json: boolean, select: SelectOptions): Promise<number> {
+export async function projectsCommand(sy: MeritRouter, args: string[], values: ProjectsFlags, json: boolean, select: SelectOptions): Promise<number> {
   const sub = args[0] ?? "list";
   if (sub === "list") {
     const current = (() => {
@@ -47,9 +47,9 @@ export async function projectsCommand(sy: Switchyard, args: string[], values: Pr
   }
   if (sub === "create") {
     const slug = args[1];
-    if (!slug) throw new SwitchyardError("usage", USAGE);
+    if (!slug) throw new MeritRouterError("usage", USAGE);
     const r = await createProject(sy, { slug, ...(values.name ? { name: values.name } : {}), repositories: repoFlags(values.repo) });
-    if (!r.ok) throw new SwitchyardError("usage", `project ${slug} was not created:\n  ${r.errors.join("\n  ")}`);
+    if (!r.ok) throw new MeritRouterError("usage", `project ${slug} was not created:\n  ${r.errors.join("\n  ")}`);
     out(
       json
         ? r
@@ -65,14 +65,14 @@ export async function projectsCommand(sy: Switchyard, args: string[], values: Pr
   }
   if (sub === "archive" || sub === "unarchive") {
     const slug = args[1];
-    if (!slug) throw new SwitchyardError("usage", USAGE);
+    if (!slug) throw new MeritRouterError("usage", USAGE);
     const p = sub === "archive" ? archiveProject(sy, slug) : unarchiveProject(sy, slug);
     out(json ? p : `${p.slug}: ${p.archived ? "archived (hidden; its settings, tasks, sessions, and brain are kept)" : "active"}`, json);
     return 0;
   }
   if (sub === "delete") {
     const slug = args[1];
-    if (!slug) throw new SwitchyardError("usage", USAGE);
+    if (!slug) throw new MeritRouterError("usage", USAGE);
     if (values.confirm === undefined) {
       // Without --confirm: what deleting would remove and keep, and how to confirm.
       const p = await previewProjectDeletion(sy, slug);
@@ -84,7 +84,7 @@ export async function projectsCommand(sy: Switchyard, args: string[], values: Pr
               ...p.removes.map((l) => `  - ${l}`),
               "It keeps:",
               ...p.keeps.map((l) => `  - ${l}`),
-              p.blockers.length ? `It cannot be deleted now: ${p.blockers.join("; ")}.` : `This cannot be undone. To delete it: switchyard projects delete ${p.slug} --confirm ${p.slug}`,
+              p.blockers.length ? `It cannot be deleted now: ${p.blockers.join("; ")}.` : `This cannot be undone. To delete it: meritrouter projects delete ${p.slug} --confirm ${p.slug}`,
             ].join("\n"),
         json,
       );
@@ -104,7 +104,7 @@ export async function projectsCommand(sy: Switchyard, args: string[], values: Pr
     );
     return 0;
   }
-  throw new SwitchyardError("usage", USAGE);
+  throw new MeritRouterError("usage", USAGE);
 }
 
 /**
@@ -113,7 +113,7 @@ export async function projectsCommand(sy: Switchyard, args: string[], values: Pr
  * repositories moved under `projects.<slug>`. `repositories` replaces the preset's placeholder.
  */
 export function initConfigText(presetText: string, opts: { slug: string; name?: string; repositories?: Record<string, { path: string }> }): string {
-  if (!PROJECT_SLUG_RE.test(opts.slug)) throw new SwitchyardError("usage", `--project ${JSON.stringify(opts.slug)}: lower-case letters, digits, '.', '_', '-', starting with a letter or digit`);
+  if (!PROJECT_SLUG_RE.test(opts.slug)) throw new MeritRouterError("usage", `--project ${JSON.stringify(opts.slug)}: lower-case letters, digits, '.', '_', '-', starting with a letter or digit`);
   const doc = YAML.parseDocument(presetText);
   const projects = doc.get("projects");
   if (YAML.isMap(projects) && projects.items.length) {

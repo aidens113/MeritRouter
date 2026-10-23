@@ -3,8 +3,8 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import type { Switchyard } from "../src/core/service.js";
-import { SwitchyardError } from "../src/core/errors.js";
+import type { MeritRouter } from "../src/core/service.js";
+import { MeritRouterError } from "../src/core/errors.js";
 import { ProviderError } from "../src/providers/errors.js";
 import { addKey, keyRows, keysCommand, testKeys, NEW_KEY_ENV } from "../src/cli/keys.js";
 import { doctorChecks, doctorText } from "../src/cli/doctor.js";
@@ -14,7 +14,7 @@ import { baseConfig, FakeProvider, makeEnv, open, providerJson, providerModels, 
 // run of the built CLI to check the secret travels only through the environment.
 
 let env: Env | undefined;
-let sy: Switchyard | undefined;
+let sy: MeritRouter | undefined;
 afterEach(async () => {
   vi.restoreAllMocks();
   delete process.env[NEW_KEY_ENV];
@@ -58,7 +58,7 @@ async function keys(args: string[], flags: Record<string, unknown> = {}, json = 
 }
 
 describe("keys add", () => {
-  it("reads the secret from SWITCHYARD_NEW_KEY, stores it encrypted, and prints only the last four", async () => {
+  it("reads the secret from MERITROUTER_NEW_KEY, stores it encrypted, and prints only the last four", async () => {
     env = makeEnv({ config: baseConfig({ providers: {} }), endpoints: [] });
     sy = open(env, fakeProviders());
     process.env[NEW_KEY_ENV] = GOOD;
@@ -90,13 +90,13 @@ describe("keys add", () => {
     expect(sy.vault.list().map((k) => k.provider)).toEqual(["cloudflare"]);
   });
 
-  it("with no SWITCHYARD_NEW_KEY and no terminal, says how to give the secret", async () => {
+  it("with no MERITROUTER_NEW_KEY and no terminal, says how to give the secret", async () => {
     env = makeEnv({ config: baseConfig({ providers: {} }), endpoints: [] });
     sy = open(env, fakeProviders());
     const tty = process.stdin.isTTY;
     Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
     try {
-      await expect(keysCommand(sy, ["add", "groq"], { billing: "free_tier" }, true)).rejects.toThrow(/set SWITCHYARD_NEW_KEY/);
+      await expect(keysCommand(sy, ["add", "groq"], { billing: "free_tier" }, true)).rejects.toThrow(/set MERITROUTER_NEW_KEY/);
     } finally {
       Object.defineProperty(process.stdin, "isTTY", { value: tty, configurable: true });
     }
@@ -179,7 +179,7 @@ describe("keys list, test, remove", () => {
     expect(all.code).toBe(1);
     const results = JSON.parse(all.printed) as Array<{ provider: string; ok: boolean }>;
     expect(results.map((t) => [t.provider, t.ok])).toEqual([["cerebras", false], ["groq", true], ["groq", true]]);
-    await expect(testKeys(sy, "vault:99")).rejects.toThrow(SwitchyardError);
+    await expect(testKeys(sy, "vault:99")).rejects.toThrow(MeritRouterError);
   });
 
   it("remove deletes a vault key and its state; config keys are refused", async () => {
@@ -191,7 +191,7 @@ describe("keys list, test, remove", () => {
     expect(r.code).toBe(0);
     expect(sy.vault.get(k.id)).toBeNull();
     expect(sy.providers.keys.get(`vault:${k.id}`)).toBeNull();
-    await expect(keysCommand(sy, ["remove", "config:groq:literal:0"], {}, true)).rejects.toThrow(/declared in .*switchyard\.config\.yaml/);
+    await expect(keysCommand(sy, ["remove", "config:groq:literal:0"], {}, true)).rejects.toThrow(/declared in .*meritrouter\.config\.yaml/);
     await expect(keysCommand(sy, ["remove", "42"], {}, true)).rejects.toThrow(/unknown key vault:42/);
   });
 });
@@ -204,7 +204,7 @@ describe("doctor", () => {
     });
     sy = open(env, fakeProviders());
     const before = doctorChecks(sy);
-    expect(before.find((c) => c.check === "provider groq")).toMatchObject({ level: "warn", detail: expect.stringMatching(/never listed: run switchyard models scan/) });
+    expect(before.find((c) => c.check === "provider groq")).toMatchObject({ level: "warn", detail: expect.stringMatching(/never listed: run meritrouter models scan/) });
 
     await sy.scan();
     const groqKey = sy.providers.credentials().get("config:groq:literal:0")!;
@@ -247,20 +247,20 @@ describe("doctor", () => {
     env = makeEnv({ config: baseConfig({ providers: {} }), endpoints: [] });
     sy = open(env, fakeProviders());
     const keysCheck = doctorChecks(sy).find((c) => c.check === "provider keys")!;
-    expect(keysCheck).toMatchObject({ ok: false, level: "fail", detail: expect.stringMatching(/switchyard keys add <provider> --billing <class>/) });
+    expect(keysCheck).toMatchObject({ ok: false, level: "fail", detail: expect.stringMatching(/meritrouter keys add <provider> --billing <class>/) });
     expect(doctorChecks(sy).some((c) => c.check === "secrets in config")).toBe(false);
   });
 });
 
-// The built CLI (pnpm --filter switchyard-router build): the secret goes in through the environment only.
+// The built CLI (pnpm --filter meritrouter build): the secret goes in through the environment only.
 const cliJs = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "dist", "cli.js");
 
 describe("keys through the built CLI", () => {
-  it.skipIf(!existsSync(cliJs))("keys add reads SWITCHYARD_NEW_KEY and keys list never prints the secret", () => {
+  it.skipIf(!existsSync(cliJs))("keys add reads MERITROUTER_NEW_KEY and keys list never prints the secret", () => {
     env = makeEnv({ config: baseConfig({ providers: {} }), endpoints: [] });
     const run = (args: string[], extra: Record<string, string> = {}) => {
       const e: Record<string, string> = {};
-      for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k !== NEW_KEY_ENV && k !== "SWITCHYARD_MASTER_KEY") e[k] = v;
+      for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k !== NEW_KEY_ENV && k !== "MERITROUTER_MASTER_KEY") e[k] = v;
       return spawnSync(process.execPath, [cliJs, ...args, "--config", env!.cfg.configPath], { encoding: "utf8", env: { ...e, ...extra }, timeout: 30_000 });
     };
     // --no-scan: the built CLI has no fake provider, and a test never reaches the network.
@@ -274,6 +274,6 @@ describe("keys through the built CLI", () => {
     expect(list.stdout + add.stdout + add.stderr).not.toContain(GOOD);
     const noSecret = run(["keys", "add", "groq", "--billing", "free_tier", "--no-scan"]);
     expect(noSecret.status).toBe(1);
-    expect(noSecret.stderr).toMatch(/set SWITCHYARD_NEW_KEY/);
+    expect(noSecret.stderr).toMatch(/set MERITROUTER_NEW_KEY/);
   });
 });

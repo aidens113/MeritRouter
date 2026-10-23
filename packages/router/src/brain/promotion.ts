@@ -19,7 +19,7 @@ import type { Principal } from "./access.js";
  *
  * A rejected lesson is saved to the project (`projects/<p>/decisions/lessons/`) with the reason.
  * Every promotion has a record under `projects/<p>/promotions/<id>.md` (written only by
- * SwitchYard), which is what the panel lists; a global lesson's front matter carries its project,
+ * MeritRouter), which is what the panel lists; a global lesson's front matter carries its project,
  * supervisor, sources, and review verdict with the reviewer's model.
  */
 
@@ -234,7 +234,7 @@ export interface PromotionHost {
   scope(): ProjectScope;
   /** Whether a brain path exists. */
   exists(rel: string): boolean;
-  /** A brain file's text (no access check: SwitchYard's own read), or null. */
+  /** A brain file's text (no access check: MeritRouter's own read), or null. */
   readText(rel: string): string | null;
   /** Markdown file names directly inside a brain folder. */
   listDir(rel: string): string[];
@@ -247,7 +247,7 @@ export interface PromotionHost {
   now(): number;
 }
 
-const SYSTEM: Actor = { agent: "switchyard", role: "tool" };
+const SYSTEM: Actor = { agent: "meritrouter", role: "tool" };
 const SOURCE_TEXT_MAX = 4000;
 
 export class GlobalPromotions {
@@ -319,7 +319,7 @@ export class GlobalPromotions {
     const issues = projectSpecificIssues(candidate, this.h.scope(), { brainHas: (rel) => this.h.exists(rel), repoHas: (root, rel) => this.h.repoHas(root, rel) });
     if (issues.length) {
       const reason = `not global knowledge: ${issues.join("; ")}`;
-      const rejected = await this.rejectTo({ ...record, status: "rejected", reason: reason.slice(0, 4000), decided_by: "switchyard (project-specificity check)", decided_at: this.iso() }, candidate.body);
+      const rejected = await this.rejectTo({ ...record, status: "rejected", reason: reason.slice(0, 4000), decided_by: "meritrouter (project-specificity check)", decided_at: this.iso() }, candidate.body);
       return { id, status: "rejected", path: rejected.lesson_path!, commit: null, reason, issues };
     }
     const rel = `${this.dir()}/${id}.md`;
@@ -397,7 +397,7 @@ export class GlobalPromotions {
         await this.transition(r.id, "pending_review", (x) => ({ ...x, status: "pending_approval", review, reason: "the review passed; waiting for a person's approval (brain.global_requires_approval)" }));
         continue;
       }
-      const cur = await this.transition(r.id, "pending_review", (x) => ({ ...x, status: "approved", review, reason: null, decided_by: "switchyard (review passed)", decided_at: this.iso() }));
+      const cur = await this.transition(r.id, "pending_review", (x) => ({ ...x, status: "approved", review, reason: null, decided_by: "meritrouter (review passed)", decided_at: this.iso() }));
       if (cur) await this.finishApproval(cur);
     }
     return changed;

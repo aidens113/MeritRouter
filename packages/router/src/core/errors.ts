@@ -1,5 +1,5 @@
 /** Base class for errors that carry a stable, machine-readable code. */
-export class SwitchyardError extends Error {
+export class MeritRouterError extends Error {
   constructor(
     readonly code: string,
     message: string,
@@ -9,13 +9,13 @@ export class SwitchyardError extends Error {
   }
 }
 
-export class ConfigError extends SwitchyardError {
+export class ConfigError extends MeritRouterError {
   constructor(message: string) {
     super("config_invalid", message);
   }
 }
 
-export class TaskValidationError extends SwitchyardError {
+export class TaskValidationError extends MeritRouterError {
   constructor(
     message: string,
     readonly issues: string[] = [],
@@ -46,7 +46,7 @@ export type AdmissionDenialReason =
 /** Denials of a paid route's budget: the paid endpoint is skipped and free routes are tried instead. */
 export const PAID_BUDGET_DENIALS: ReadonlySet<AdmissionDenialReason> = new Set<AdmissionDenialReason>(["paid_budget_exhausted", "project_paid_budget_exhausted"]);
 
-export class AdmissionDenied extends SwitchyardError {
+export class AdmissionDenied extends MeritRouterError {
   constructor(
     readonly reason: AdmissionDenialReason,
     message: string,
@@ -71,7 +71,7 @@ export type GatewayErrorKind =
   | "server"
   | "policy_violation";
 
-export class GatewayError extends SwitchyardError {
+export class GatewayError extends MeritRouterError {
   constructor(
     readonly kind: GatewayErrorKind,
     message: string,

@@ -11,7 +11,7 @@ import { runNamedChecks, selfReportFromOutput } from "../verification/checks.js"
 import { applySupervisorDecision, decide, verificationRecord, type Decision, type ReviewOutcome } from "../verification/decide.js";
 import { declaredPaths } from "../verification/match.js";
 import { baseResult, type AcceptanceDecisionInput, type AcceptanceDecisionOutcome, type RetryContext, type RunOutcome, type RunnerResult } from "../runners/types.js";
-import { SwitchyardError, TaskValidationError } from "./errors.js";
+import { MeritRouterError, TaskValidationError } from "./errors.js";
 import { criteria, criterionTexts, isTerminal, type ReviewRecord, type WorkerResult, type WorkerTask } from "./task.js";
 
 /**
@@ -246,7 +246,7 @@ export interface DecisionDeps {
 /**
  * Accept or reject a finished task's result on behalf of the job's supervisor or a human.
  * The decision (who, why, when) is appended to the result's verification record and written as
- * a task event. Refusals throw a SwitchyardError with the library's code.
+ * a task event. Refusals throw a MeritRouterError with the library's code.
  */
 export function recordAcceptanceDecision(d: DecisionDeps, id: string, decision: "accept" | "reject", input: AcceptanceDecisionInput): AcceptanceDecisionOutcome {
   return d.tasks.updateResult(id, (t) => {
@@ -258,7 +258,7 @@ export function recordAcceptanceDecision(d: DecisionDeps, id: string, decision: 
     const raisedToSupervisor = t.result.verification ? resolveLevel(d.cfg.verification, t.result.verification.level).acceptance === "supervisor" : false;
     const contract = stored ? { verification: { ...stored.contract.verification, acceptance: raisedToSupervisor ? ("supervisor" as const) : stored.contract.verification.acceptance } } : null;
     const res = applySupervisorDecision(t.result, contract, { decision, by: input.by, reason: input.reason ?? null, at: d.now() });
-    if (!res.ok) throw new SwitchyardError(res.code, res.message);
+    if (!res.ok) throw new MeritRouterError(res.code, res.message);
     const v = t.result.verification;
     const result: WorkerResult = { ...t.result, acceptanceStatus: res.acceptanceStatus, ...(v ? { verification: { ...v, decisions: [...v.decisions, res.record] } } : {}) };
     return {

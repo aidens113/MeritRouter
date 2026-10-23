@@ -1,4 +1,4 @@
-import type { Switchyard } from "../core/service.js";
+import type { MeritRouter } from "../core/service.js";
 import type { TaskState } from "../core/task.js";
 import { comparisons, type ComparisonRecord } from "../qualification/comparison.js";
 import { QUALIFICATION_PROJECT } from "../qualification/registry.js";
@@ -24,12 +24,12 @@ export interface QualificationTaskRow {
 }
 
 /** Whether a task belongs to the qualification project. */
-export function isQualificationTask(sy: Switchyard, taskId: string): boolean {
+export function isQualificationTask(sy: MeritRouter, taskId: string): boolean {
   return sy.tasks.projectOf(taskId) === QUALIFICATION_PROJECT;
 }
 
 /** The qualification project's top-level tasks, newest first (`purpose` limits them to one kind). */
-export function qualificationTasks(sy: Switchyard, opts: { limit?: number; purpose?: "qualification" | "comparison" } = {}): QualificationTaskRow[] {
+export function qualificationTasks(sy: MeritRouter, opts: { limit?: number; purpose?: "qualification" | "comparison" } = {}): QualificationTaskRow[] {
   const rows = sy.db
     .prepare(
       `SELECT t.id, t.purpose, q.run_id, q.eval_id, q.trial, q.endpoint_id FROM tasks t LEFT JOIN qualification_tasks q ON q.task_id = t.id
@@ -61,7 +61,7 @@ export function qualificationTasks(sy: Switchyard, opts: { limit?: number; purpo
  * started yet whose goals all come from the eval suite. Newest first. A comparison of supplied
  * goals runs in a user project and is shown on that project's Teams page instead.
  */
-export function qualificationComparisons(sy: Switchyard, opts: { limit?: number } = {}): ComparisonRecord[] {
+export function qualificationComparisons(sy: MeritRouter, opts: { limit?: number } = {}): ComparisonRecord[] {
   const inQualification = (id: string) => isQualificationTask(sy, id);
   return comparisons(sy, { limit: 10_000 })
     .filter((c) => (c.results.length ? c.results.some((r) => inQualification(r.team.taskId) || inQualification(r.single.taskId)) : c.goals.length > 0 && c.goals.every((g) => g.source === "eval")))

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ListChecks } from "lucide-react";
-import { TASK_STATES, isTerminal, type TaskState } from "switchyard-router";
+import { TASK_STATES, isTerminal, type TaskState } from "meritrouter";
 import { getSy } from "@/lib/sy";
 import { project } from "@/lib/project";
 import { projectBase, taskHref } from "@/lib/links";
@@ -65,7 +65,7 @@ export default async function TasksPage({ params, searchParams }: { params: Prom
               "Clear a filter to see more."
             ) : (
               <>
-                Tasks appear when Claude Code delegates work through the SwitchYard MCP tools, or with <Mono>switchyard submit</Mono>.
+                Tasks appear when Claude Code delegates work through the MeritRouter MCP tools, or with <Mono>meritrouter submit</Mono>.
               </>
             )}
           </EmptyState>

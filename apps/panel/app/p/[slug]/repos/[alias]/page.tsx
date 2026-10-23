@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { insights } from "switchyard-router";
+import { insights } from "meritrouter";
 import { getSy } from "@/lib/sy";
 import { project } from "@/lib/project";
 import { projectBase, repoHref } from "@/lib/links";
@@ -21,7 +21,7 @@ export default async function RepositoryPage({ params }: { params: Promise<{ slu
   const repo = await insights.repositoryView(r.sy, p.slug, alias);
   if (!repo) notFound();
   const base = projectBase(p.slug);
-  const branches = [...repo.branches].sort((a, b) => Number(b.name.startsWith("switchyard/")) - Number(a.name.startsWith("switchyard/")) || b.date.localeCompare(a.date));
+  const branches = [...repo.branches].sort((a, b) => Number(b.name.startsWith("meritrouter/")) - Number(a.name.startsWith("meritrouter/")) || b.date.localeCompare(a.date));
   const commits = repo.commits.map(c => <li key={c.commit} className="space-y-1 p-3 text-sm"><CommitLink base={base} repository={alias} sha={c.commit} /> {c.subject}<div className="flex flex-wrap gap-2 text-xs text-ink-3">{dateTime(c.date)} · +{c.added} −{c.removed} {c.agent && <AgentLink base={base} agent={c.agent} />} {c.task && <TaskLink base={base} id={c.task} />} {c.job && <TaskLink base={base} id={c.job} job />}</div></li>);
   return <div className="space-y-4"><PageHeader title={alias} description={repo.path} back={{ href: `${base}/repos`, label: "Repositories" }} live={["tasks", "brain"]} />
     {!repo.exists && <Callout tone="warn">This repository's directory does not exist.</Callout>}{repo.error && <Callout tone="warn">{repo.error}</Callout>}

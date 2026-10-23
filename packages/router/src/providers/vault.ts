@@ -7,7 +7,7 @@ import type { Db } from "../storage/db.js";
 export const BillingClassSchema = z.enum(["free_tier", "paid_credits", "paid_postpaid", "trial"]);
 export type BillingClass = z.infer<typeof BillingClassSchema>;
 
-export const MASTER_KEY_ENV = "SWITCHYARD_MASTER_KEY";
+export const MASTER_KEY_ENV = "MERITROUTER_MASTER_KEY";
 const KEY_FILE = ".master-key";
 
 /** Key metadata. The secret never leaves the vault except to the provider request itself. */
@@ -84,7 +84,7 @@ export const KeyPatchSchema = z
 export type KeyPatch = z.infer<typeof KeyPatchSchema>;
 
 /**
- * Master key from SWITCHYARD_MASTER_KEY (64 hex chars) or a generated key file in the storage
+ * Master key from MERITROUTER_MASTER_KEY (64 hex chars) or a generated key file in the storage
  * directory (owner-only permissions where the platform supports them).
  */
 export function loadMasterKey(storageDir: string): Buffer {

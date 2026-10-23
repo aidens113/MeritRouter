@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { BadgeCheck, FlaskConical, ListChecks } from "lucide-react";
-import { insights, TIER_NAMES, type Switchyard } from "switchyard-router";
+import { insights, TIER_NAMES, type MeritRouter } from "meritrouter";
 import { getSy } from "@/lib/sy";
 import { SetupScreen } from "@/components/setup";
 import { Badge, Callout, Card, CardHeader, cx, EmptyState, HelpTip, Mono, Stat } from "@/components/ui";
@@ -34,7 +34,7 @@ interface Board {
 }
 
 /** Prefer the library's leaderboard; fall back to per-model stats when the suite is unavailable. */
-function loadBoard(sy: Switchyard): Board {
+function loadBoard(sy: MeritRouter): Board {
   try {
     const b = insights.qualificationBoard(sy);
     return { ...b, fallbackReason: null };
@@ -259,7 +259,7 @@ export default function QualificationPage() {
           </div>
         ) : (
           <EmptyState icon={<ListChecks size={22} />} title="No qualification tasks yet">
-            Run qualification for a model above, or a comparison on evaluation goals with <Mono>switchyard compare</Mono>.
+            Run qualification for a model above, or a comparison on evaluation goals with <Mono>meritrouter compare</Mono>.
           </EmptyState>
         )}
       </Card>
@@ -274,7 +274,7 @@ export default function QualificationPage() {
           <ComparisonsList comparisons={comparisons} teamHref={taskLink} singleHref={taskLink} />
         ) : (
           <EmptyState icon={<FlaskConical size={22} />} title="No comparisons on evaluation goals">
-            See the planned request budget with <Mono>switchyard compare --dry-run</Mono>, then run it with <Mono>switchyard compare --yes</Mono>. Nothing runs on its own.
+            See the planned request budget with <Mono>meritrouter compare --dry-run</Mono>, then run it with <Mono>meritrouter compare --yes</Mono>. Nothing runs on its own.
           </EmptyState>
         )}
       </Card>

@@ -4,7 +4,26 @@ Written for the next agent (Codex or Claude Code) picking this repository up col
 then `AGENTS.md`, then the `Current State` of the effort you work on. Every effort below has its
 own working document with decisions, phases, ledger, and reports.
 
-## Current audit (2026-10-23)
+## Latest accepted effort (2026-10-23)
+
+[MeritRouter rename](meritrouter-rename.md) is complete: canonical MeritRouter product/runtime,
+package/CLI, env MERITROUTER_*, config meritrouter.config.yaml, class MeritRouter; README starts
+with an agent prompt and readable setup/migration docs. Requested UI refinements include
+bottom collapsed Jobs form, usage-focused Overview with token charts, detailed Agents and
+approximate reported tokens when cache accounting is partial. Existing containment/security
+settings and job-wide task/request navigation from the corrective release remain enforced.
+
+Full suite: 117 files, 1193 passed, 2 Linux-only skips. Final affected suites: 49/49. Recursive
+build/typecheck, hardened offline demo, installed CLI/MCP42tools/bundled panel and production
+browser/mobile acceptance pass. Hosted repository is now https://github.com/aidens113/MeritRouter;
+origin updated and fetch verified. Supervisor is publishing accepted work to dev/main.
+See the effort report for staging restoration, clock correction and exact acceptance evidence.
+
+Existing user services/MCP clients were not upgraded or restarted. Follow the setup migration:
+preserve explicit data/config/vault/master-key paths and rename runtime env before opening old
+data. Historical records below retain real previous paths. No npm publication/live deployment.
+
+## Previous corrective release (2026-10-23)
 
 [Correctness and panel flows](correctness-and-panel-flows.md) owns user-authorized execution of
 the [post-change fix audit](post-change-fix-audit.md). Source on feat/post-change-corrections
