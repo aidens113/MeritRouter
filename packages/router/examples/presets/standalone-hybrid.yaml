@@ -89,6 +89,8 @@ team:
   max_agents: 8 # most tasks of one job running at once
   # A job's budget is one request pool: each delegated task holds its budget (the brief's
   # max_requests, else default_task_requests, else its tier's cap) while open; unused requests return.
+  # No job-wide request cap is set by default. Set profiles.supervise.max_model_requests,
+  # verification.max_total_requests_per_task, or the job's budget explicitly to impose one.
   # default_task_requests: 40
   supervisor_reserve_requests: 4 # never granted to tasks: kept for the supervisor's own turns
   # Workers running low ask for more (request_more_budget) and wait for a decision.
@@ -186,10 +188,10 @@ allocation:
   max_model_requests_per_hour: 1000
   max_model_requests_per_day: 10000
 
-# Verification and the per-task total: every request of a task (execution, review, repair) counts
-# against max_total_requests_per_task, a runaway guard; workers can ask their supervisor for more.
+# Verification and the optional per-task total: every request of a task (execution, review, repair)
+# counts against max_total_requests_per_task when configured. Unset/null means no task-wide ceiling.
 verification:
-  max_total_requests_per_task: 300
+  max_total_requests_per_task: null
   budget:
     review_requests: { deep: 12, strict: 16 } # an independent reviewer reads the change before judging it
 
@@ -270,7 +272,7 @@ profiles:
     mode: supervisor
     tools: supervisor
     min_total_parameters_b: 100
-    max_model_requests: 1000
+    max_model_requests: null
     max_output_tokens: 8000
     classify: never
     min_tier: T3

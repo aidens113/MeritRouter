@@ -60,8 +60,9 @@ strongest reasoning and the most reliable tool use you can afford, and a large c
   `paid:anthropic/<model>` or `groq/openai/gpt-oss-120b`). Empty means "the most capable eligible
   model at T3".
 - `supervisor.paid_policy`: `never` (free models only), `on_free_exhaustion`, or `preferred`.
-- Budget: `profiles.supervise.max_model_requests` (waiting on workers costs no requests) and, per
-  job, `maxPaidUsd`.
+- Budget: no job-wide request cap by default. Set `profiles.supervise.max_model_requests`,
+  `verification.max_total_requests_per_task`, or a task budget to impose one (waiting on workers
+  costs no requests); paid limits such as `maxPaidUsd` remain separate.
 - Presets: `standalone-free` uses the best free model; `standalone-hybrid` and `standalone-paid`
   expect a paid model (set its id and current prices in `paid.models`).
 
@@ -155,12 +156,13 @@ task's budget; served-model mismatches are discarded and the model quarantined.
 Budgets are set by the supervisor that delegates and enforced by admission, never by prompt text
 (decisions D1-D7 of `docs/working/budget-control.md`).
 
-- **The pool.** A job's budget (`profiles.supervise.max_model_requests`, or a sub-job's carve) is
-  one pool: the supervisor's own requests, each worker task's grant (`task_request_grants`), and
-  each sub-supervisor's carve come out of it. Admission refuses the supervisor's next request when
-  its own requests plus what its tasks hold would pass the budget. An open task holds its grant
-  plus approved extras (or what it used, if review and repair took it further); a finished task
-  holds what it used, so the rest returns.
+- **The pool.** A job's pool is uncapped unless the caller explicitly sets a request cap in
+  `profiles.supervise.max_model_requests`, `verification.max_total_requests_per_task`, or the
+  task budget. The supervisor's own requests, each worker task's grant (`task_request_grants`),
+  and each sub-supervisor's carve come out of that pool. Finite caps are enforced by admission;
+  with no cap, the supervisor keeps iterating until it finishes or hits a separate stop condition.
+  An open task holds its grant plus approved extras (or what it used, if review and repair took it
+  further); a finished task holds what it used, so the rest returns.
 - **Grants.** `delegate` and `plan_work` briefs take `max_requests`, which becomes the task's
   `budget.maxModelRequests` (execution and its verification total). Without it the task gets
   `team.default_task_requests` as its budget, or, when that is unset, keeps its usual caps and

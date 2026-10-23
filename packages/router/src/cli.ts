@@ -293,7 +293,7 @@ async function main(): Promise<number> {
       }
       case "status": {
         const rows = args.length ? sy.getStatus(args, idScope()) : sy.listTasks(undefined, 30, listScope());
-        out(json ? rows : table(rows.map((s) => ("profile" in s ? { task: s.taskId, ...(multi ? { project: s.project } : {}), type: s.profile, tier: s.tier ?? "", state: s.state, requests: `${s.modelRequestsUsed}/${s.maxModelRequests}`, goal: s.goal } : { task: s.taskId, state: s.state }))), json);
+        out(json ? rows : table(rows.map((s) => ("profile" in s ? { task: s.taskId, ...(multi ? { project: s.project } : {}), type: s.profile, tier: s.tier ?? "", state: s.state, requests: `${s.modelRequestsUsed}/${s.maxModelRequests ?? "uncapped"}`, goal: s.goal } : { task: s.taskId, state: s.state }))), json);
         return 0;
       }
       case "await": {
@@ -472,7 +472,7 @@ the planned budget does not fit what is left of today's qualification allocation
           const status = values.status === "all" ? undefined : ((values.status ?? "pending") as BudgetRequestStatus);
           if (status && !(BUDGET_REQUEST_STATUSES as readonly string[]).includes(status)) throw new SwitchyardError("usage", `--status is one of ${BUDGET_REQUEST_STATUSES.join(", ")}, or all`);
           const reqs = budgetRequestsView(sy, { ...(status ? { status } : {}), ...(values.job ? { jobId: values.job } : {}), ...(listScope() ? { project: listScope()! } : {}) });
-          const rows = reqs.map((r) => ({ id: r.id, task: r.label, job: r.jobId ?? "", status: r.status, asks: r.requests, used: `${r.used}/${r.cap}`, approver: r.approver, granted: r.granted || "", pool: r.pool ? `${r.pool.available} of ${r.pool.cap}` : "", reason: r.reason.slice(0, 60) }));
+          const rows = reqs.map((r) => ({ id: r.id, task: r.label, job: r.jobId ?? "", status: r.status, asks: r.requests, used: `${r.used}/${r.cap}`, approver: r.approver, granted: r.granted || "", pool: r.pool ? (r.pool.cap === null ? "uncapped" : `${r.pool.available} of ${r.pool.cap}`) : "", reason: r.reason.slice(0, 60) }));
           out(json ? reqs : table(rows), json);
         } else if (sub === "approve" || sub === "deny") {
           const id = Number(args[1]);

@@ -368,7 +368,8 @@ and policy fingerprints.
   targeted check; otherwise `needs_supervisor`. Failed checks stay `unmet`; a defect only a
   reviewer found goes to `needs_supervisor` so the supervisor can overrule it.
 - **Budget:** review and repair reserves are added to the execution caps, bounded by
-  `verification.max_total_requests_per_task` (24) or an explicit task budget. A level raised by
+  `verification.max_total_requests_per_task` when configured or by an explicit task budget. The
+  task-wide ceiling is unset by default. A level raised by
   the result may draw from the remaining room; if none is left the result is `skipped_budget` /
   `needs_supervisor`. The level is never lowered to fit.
 - **Acceptance:** the supervisor decides `needs_supervisor` results with `accept_task` /
@@ -434,13 +435,14 @@ not enable PostgreSQL or multiple hosts.
   whose globs overlap a live lease in the same repository waits (`waiting_for_file_lease`).
 - **Capacity.** `team.max_agents` (default 8; `supervisor.max_workers_per_job` is an older alias)
   caps running tasks per job; `execution.max_concurrent_tasks` bounds everything.
-- **Request budgets (one pool per job).** Each task a supervisor delegates holds a grant from the
-  job's budget while it is open: the brief's `max_requests` (its `budget.maxModelRequests`), else
-  `team.default_task_requests`, else its tier's execution cap. A finished task holds what it used;
-  the rest returns. A brief that does not fit (budget minus the supervisor's requests, open holds,
-  and `team.supervisor_reserve_requests`, default 4) is refused with the number available, and the
-  supervisor's own next request is refused when it would eat into what its tasks hold. Size the
-  supervise profile's `max_model_requests` for the team it runs (the presets use 1000).
+- **Request budgets (one pool per job).** The pool has no request-count cap unless configured in
+  `profiles.supervise.max_model_requests`, `verification.max_total_requests_per_task`, or the
+  explicit task budget. Each delegated task holds a grant while open: the brief's `max_requests`,
+  else `team.default_task_requests`, else its tier's execution cap. A finished task holds what it
+  used; the rest returns. Finite caps are checked against the supervisor's usage, open holds, and
+  `team.supervisor_reserve_requests` (default 4); an uncapped pool does not refuse work for
+  exhausting a request count. Capacity, provider allocation, timeouts, paid-spend budgets, and
+  other configured limits remain enforced.
 - **Requests for more.** A worker running low calls `request_more_budget(requests, reason)` and
   waits (no model requests; exempt from the watchdog) up to `team.budget_request_wait_seconds`
   (300). `team.budget_approver` decides who answers: `supervisor` (the job's supervisor:
@@ -862,5 +864,4 @@ acceptance remain outstanding.
   is refused in another.
 - Line attribution for external agents (OpenCode) is per model request, not per tool call, and can
   blur when the agent sends several requests at once.
-
 

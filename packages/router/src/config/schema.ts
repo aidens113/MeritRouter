@@ -5,6 +5,9 @@ import { BillingClassSchema } from "../providers/vault.js";
 import { BUILTIN_PROVIDER_IDS } from "../providers/registry.js";
 import { SEARCH_SERVICE_IDS, WEB_FETCH_BACKENDS, WEB_SEARCH_BACKEND_SETTINGS, WEB_SEARCH_BACKENDS, WEB_SEARCH_STRATEGIES } from "../web/services.js";
 
+/** Internal numeric sentinel for request counts whose configured limit is absent. */
+export const UNLIMITED_REQUESTS = Number.MAX_SAFE_INTEGER;
+
 export const PROFILE_NAMES = ["summarize", "inspect", "analyze", "implement", "review", "supervise"] as const;
 export const ProfileNameSchema = z.enum(PROFILE_NAMES);
 /** Task type chosen by the supervisor: decides tools, sandbox, and output handling. */
@@ -35,7 +38,8 @@ const ProfileSchema = z
     mode: ProfileModeSchema,
     /** Size floor for this task type regardless of tier. */
     min_total_parameters_b: z.number().positive().default(30),
-    max_model_requests: z.number().int().positive().default(1),
+    /** Null: no profile-level request cap. Worker tier/execution caps still apply. */
+    max_model_requests: z.number().int().positive().nullable().optional(),
     max_input_tokens: z.number().int().positive().optional(),
     /** Output tokens reserved per request; default 16000 for coding task types (whole files), 4000 otherwise. */
     max_output_tokens: z.number().int().positive().optional(),
@@ -71,7 +75,11 @@ const ProfileSchema = z
     }
   })
   // A coding agent writes whole files in one reply: 4000 tokens cut them off (live check 2026-10-21).
-  .transform((p) => ({ ...p, max_output_tokens: p.max_output_tokens ?? (p.mode === "coding" ? CODING_OUTPUT_TOKENS : DEFAULT_OUTPUT_TOKENS) }));
+  .transform((p) => ({
+    ...p,
+    max_model_requests: p.max_model_requests === undefined ? (p.mode === "supervisor" ? null : 1) : p.max_model_requests,
+    max_output_tokens: p.max_output_tokens ?? (p.mode === "coding" ? CODING_OUTPUT_TOKENS : DEFAULT_OUTPUT_TOKENS),
+  }));
 export type ProfileConfig = z.infer<typeof ProfileSchema>;
 
 const TierSchema = z
@@ -423,7 +431,8 @@ export const VerificationConfigSchema = z
      * repair). Review and repair reserves sit on top of the profile and tier execution caps,
      * within this total; an explicit task budget.maxModelRequests narrows it.
      */
-    max_total_requests_per_task: z.number().int().positive().default(24),
+    /** Null (default): no configured task-wide request ceiling; profile/task budgets still apply. */
+    max_total_requests_per_task: z.number().int().positive().nullable().default(null),
     /**
      * preferred: qualified reviewers are chosen first; without one, deep review uses a reviewer
      * at the size floor and the verdict is marked reviewer_unqualified. required: deep review
@@ -486,7 +495,7 @@ export const VerificationConfigSchema = z
         ctx.addIssue({ code: "custom", path: ["budget", "review_requests", level], message: `level ${level} requires review; reserve at least 1 review request` });
       }
       const reserve = required ? (v.budget.review_requests[level] ?? 0) : 0;
-      if (reserve + 1 > v.max_total_requests_per_task) {
+      if (v.max_total_requests_per_task !== null && reserve + 1 > v.max_total_requests_per_task) {
         ctx.addIssue({ code: "custom", path: ["max_total_requests_per_task"], message: `level ${level} reserves ${reserve} review request(s); max_total_requests_per_task must leave at least one for execution` });
       }
     }

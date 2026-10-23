@@ -5,6 +5,7 @@ import {
   ProfileNameSchema,
   TierNameSchema,
   VerificationLevelSchema,
+  UNLIMITED_REQUESTS,
   type Importance,
   type TierName,
   type VerificationConfig,
@@ -38,7 +39,7 @@ export const BudgetAllocationSchema = z
     /** Reserved for quality retries (repairs and escalations). */
     repair: count,
     /** Room left under the ceiling; never spent. */
-    unallocated: count,
+    unallocated: count.nullable(),
   })
   .strict();
 export type BudgetAllocation = z.infer<typeof BudgetAllocationSchema>;
@@ -152,7 +153,7 @@ export function allocateBudget(policy: VerificationConfig, ev: Pick<PolicyEvalua
   const total = b.classificationUsed + execution + review + extraReview + repair;
   return {
     ok: true,
-    allocation: { total, classification: b.classificationUsed, execution, review: review + extraReview, repair, unallocated: b.total - total },
+    allocation: { total, classification: b.classificationUsed, execution, review: review + extraReview, repair, unallocated: b.total === UNLIMITED_REQUESTS ? null : b.total - total },
   };
 }
 
@@ -166,7 +167,7 @@ export function allocateBudget(policy: VerificationConfig, ev: Pick<PolicyEvalua
 export function reviewAllowance(policy: Pick<VerificationConfig, "budget">, budget: BudgetAllocation, level: VerificationLevel, required: boolean): number {
   if (!required) return budget.review;
   const wanted = policy.budget.review_requests[level] ?? 0;
-  return Math.max(budget.review, Math.min(wanted, budget.review + budget.unallocated));
+  return budget.unallocated === null ? Math.max(budget.review, wanted) : Math.max(budget.review, Math.min(wanted, budget.review + budget.unallocated));
 }
 
 /** The reserve adjustment a raised level needs: review requests drawn from the unallocated room. */

@@ -5,7 +5,7 @@ import { hostname } from "node:os";
 import { randomBytes } from "node:crypto";
 import { statSync } from "node:fs";
 import { loadConfig, parseConfig, readConfigFile, type ResolvedConfig } from "../config/load.js";
-import type { ProfileName, TierName } from "../config/schema.js";
+import { UNLIMITED_REQUESTS, type ProfileName, type TierName } from "../config/schema.js";
 import { immediate, openDatabase, type Db } from "../storage/db.js";
 import { TaskStore, canonicalJson, type StoredTask, type SubmitOutcome } from "../storage/tasks.js";
 import { ArtifactStore } from "../storage/artifacts.js";
@@ -87,7 +87,7 @@ export interface TaskStatus {
   startedAt: string | null;
   finishedAt: string | null;
   modelRequestsUsed: number;
-  maxModelRequests: number;
+  maxModelRequests: number | null;
   goal: string;
   recentEvents: Array<{ at: string; type: string; data: unknown }>;
 }
@@ -585,15 +585,16 @@ export class Switchyard {
     const row = t.row as StoredTask["row"] & { tier?: string | null; purpose?: string };
     const tierCfg = row.tier && row.tier in this.cfg.tiers ? this.cfg.tiers[row.tier as TierName] : null;
     // With a contract, "allowed" is its total: execution, review, and repair all count against it.
-    let contractTotal: number | null = null;
+    let contractBudget: { total: number; unallocated: number | null } | null = null;
     try {
-      contractTotal = this.contracts.get(t.row.id)?.contract.budget.total ?? null;
+      contractBudget = this.contracts.get(t.row.id)?.contract.budget ?? null;
     } catch {
-      contractTotal = null; // a corrupt contract is reported where it is read, not in a status line
+      contractBudget = null; // a corrupt contract is reported where it is read, not in a status line
     }
-    // The same cap the executor applies (a supervisor is bounded by its profile, not the tier).
-    // Approved requests for more (budget control) raise it.
-    const budget = (contractTotal ?? (this.cfg.profiles[t.spec.profile] ? effectiveBudget(this.cfg, t.spec, tierCfg ? (row.tier as TierName) : null).maxModelRequests : 0)) + extraRequests(this.db, t.row.id);
+    const configuredBudget = contractBudget
+      ? contractBudget.unallocated === null ? null : contractBudget.total
+      : this.cfg.profiles[t.spec.profile] ? effectiveBudget(this.cfg, t.spec, tierCfg ? (row.tier as TierName) : null).maxModelRequests : 0;
+    const budget = configuredBudget === null || configuredBudget === UNLIMITED_REQUESTS ? null : configuredBudget + extraRequests(this.db, t.row.id);
     return {
       taskId: t.row.id,
       project: t.row.project_id,

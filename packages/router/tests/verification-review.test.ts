@@ -329,7 +329,7 @@ describe("reviewer independence and qualification", () => {
 
 describe("budget", () => {
   it("the total is what is reserved (classification + execution + review + repair); 24 is only the ceiling", () => {
-    env = makeEnv();
+    env = makeEnv({ config: baseConfig({ verification: { max_total_requests_per_task: 24 } }) });
     const total = (raw: Record<string, unknown>, tier: "T1" | "T2" | "T3") => {
       const spec = WorkerTaskSchema.parse(raw);
       const r = compileContract({ taskId: "t", spec, tier, tags: null, rulebookFingerprint: null, policy: env!.cfg.verification, budget: budgetInputFor(env!.cfg, spec, tier, 0), now: 0 });
@@ -354,7 +354,13 @@ describe("budget", () => {
     // Standard T2 coding with same-tier repairs (no T3 review reserved up front); a changed path
     // under src/auth/** raises it to deep on the result.
     env = makeEnv({
-      config: baseConfig({ routing: { escalate_on_failure: false }, verification: { rules: [{ id: "auth-deep", when: { changed_paths: ["src/auth/**"] }, require_at_least: "deep" }] } }),
+      config: baseConfig({
+        routing: { escalate_on_failure: false },
+        verification: {
+          max_total_requests_per_task: 24,
+          rules: [{ id: "auth-deep", when: { changed_paths: ["src/auth/**"] }, require_at_least: "deep" }],
+        },
+      }),
       endpoints: [AUTHOR, REVIEWER],
     });
     const coding = {
@@ -387,6 +393,7 @@ describe("budget", () => {
     const used1 = sy.gate.admission.taskTotalsByPurpose(roomy!.taskId);
     expect(used1.verification).toBeGreaterThan(0);
     expect(used1.verification).toBeLessThanOrEqual(4);
+    if (b1.unallocated === null) throw new Error("fixture expected a finite contract allocation");
     expect(sy.gate.admission.taskTotals(roomy!.taskId).requests).toBeLessThanOrEqual(b1.total + b1.unallocated);
 
     // An explicit budget of 16 leaves no room: the level stays deep and the review is skipped.

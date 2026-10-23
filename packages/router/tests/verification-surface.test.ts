@@ -78,11 +78,12 @@ describe("insights task detail", () => {
     expect(d.verification).toMatchObject({ level: "strict", contractSha256: d.contract!.sha256 });
     expect(d.importance).toEqual({ level: "critical", requested: "critical", reason: "billing data", source: "task", compiled: true });
     expect(d.acceptance).toEqual({ awaitingDecision: true, supervisorAcceptance: true, strictAcceptor: "human", decisions: [] });
-    // "Allowed" is the contract's total (execution, review, and repair), not the run cap.
+    // The contract has a finite initial allocation but no task-wide ceiling by default.
     const total = d.contract!.contract.budget.total;
     expect(total).toBeGreaterThan(sy.cfg.tiers.T1.max_model_requests); // differs from the T1 run cap
-    expect(d.status).toMatchObject({ maxModelRequests: total });
-    expect(sy.listTasks().find((t) => t.taskId === id)!.maxModelRequests).toBe(total);
+    expect(d.contract!.contract.budget.unallocated).toBeNull();
+    expect(d.status).toMatchObject({ maxModelRequests: null });
+    expect(sy.listTasks().find((t) => t.taskId === id)!.maxModelRequests).toBeNull();
 
     // A supervisor (or an agent over MCP) cannot accept a strict result when the acceptor is human.
     let refused: unknown;
@@ -127,10 +128,6 @@ describe("CLI acceptance and importance", () => {
   it("accept and reject record the OS user; reject needs a reason", async () => {
     env = strictHumanEnv();
     const [a, b] = await finished(env, [critical({ id: "a" }), critical({ id: "b" })]);
-    sy = open(env, new ScriptedClient(() => reply("{}")));
-    const total = sy.contract(a!)!.contract.budget.total;
-    await sy.close();
-    sy = undefined;
 
     const noReason = cli(env, "reject", b!);
     expect(noReason.code).toBe(1);
@@ -141,9 +138,9 @@ describe("CLI acceptance and importance", () => {
     expect(accepted.stderr).toBe("");
     expect(accepted.code).toBe(0);
     expect(accepted.stdout).toMatch(new RegExp(`^${a}: accepted by cli:\\S+; acceptance met`));
-    // The CLI status shows the contract's total as allowed, like the panel.
-    expect(JSON.parse(cli(env, "status", a!, "--json").stdout)[0]).toMatchObject({ taskId: a, maxModelRequests: total });
-    expect(cli(env, "status", a!).stdout).toMatch(new RegExp(` \\d+/${total} `));
+    // The CLI status preserves the uncapped task ceiling instead of substituting its current allocation.
+    expect(JSON.parse(cli(env, "status", a!, "--json").stdout)[0]).toMatchObject({ taskId: a, maxModelRequests: null });
+    expect(cli(env, "status", a!).stdout).toMatch(/\d+\/uncapped/);
 
     const rejected = cli(env, "reject", b!, "--reason", "misses the step number", "--json");
     expect(rejected.code).toBe(0);

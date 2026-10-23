@@ -220,7 +220,7 @@ describe("coding verification", () => {
   });
 
   it("the escalation retry gets the failing check log, the unresolved criteria, and the repair budget", async () => {
-    env = makeEnv({ config: baseConfig({ profiles: profilesWith({ implement: { max_model_requests: 16 } }) }) });
+    env = makeEnv({ config: baseConfig({ profiles: profilesWith({ implement: { max_model_requests: 16 } }), verification: { max_total_requests_per_task: 24 } }) });
     const coding = stubCoding((ctx, n) => (n === 1 ? codingOutcome(ctx, { exitCode: 1, log: "AssertionError: subtract is not defined" }) : codingOutcome(ctx, { revision: "tree-2" })));
     sy = open(env, noModel(), { worker: true, coding });
     const [sub] = await sy.submitTasks([implement()]);

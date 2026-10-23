@@ -3,12 +3,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config/load.js";
-import type { Importance, TierName, VerificationConfig } from "../src/config/schema.js";
+import { UNLIMITED_REQUESTS, type Importance, type TierName, type VerificationConfig } from "../src/config/schema.js";
 import { criteria, criterionTexts, WorkerResultSchema, WorkerTaskSchema, type WorkerResult, type WorkerTaskInput } from "../src/core/task.js";
 import { openDatabase, type Db } from "../src/storage/db.js";
 import { TaskStore } from "../src/storage/tasks.js";
 import { evaluatePolicy, reevaluateOnResult, resolveLevel, policyFingerprint } from "../src/verification/policy.js";
-import { allocateBudget, compileContract, contractDigest, ContractStore, type AcceptanceContract, type BudgetInput } from "../src/verification/contract.js";
+import { allocateBudget, compileContract, contractDigest, ContractStore, reviewAllowance, type AcceptanceContract, type BudgetInput } from "../src/verification/contract.js";
 import { runNamedChecks, checkRunOutcome, type CheckedResult } from "../src/verification/checks.js";
 import { applySupervisorDecision, decide, verificationRecord } from "../src/verification/decide.js";
 import { baseConfig } from "./helpers.js";
@@ -198,6 +198,12 @@ describe("policy: matrix, floors, rules, merge", () => {
 });
 
 describe("contract: budget allocation, digest, immutability", () => {
+  it("represents an uncapped allocation without persisting a numeric placeholder", () => {
+    const contract = compile({ budget: { total: UNLIMITED_REQUESTS } });
+    expect(contract.budget.unallocated).toBeNull();
+    expect(reviewAllowance(policy(), contract.budget, "deep", true)).toBe(4);
+  });
+
   it("allocates classification, review, execution, then repair out of the total", () => {
     const p = policy();
     const std = { level: "standard" as const, review: resolveLevel(p, "standard").review };

@@ -612,8 +612,8 @@ function ContractAndVerification({ d, names, base }: { d: insights.TaskDetail; n
                 [
                   "Request budget",
                   <span key="b" className="tabular text-xs text-ink-2">
-                    {c.budget.total} total: {c.budget.classification} classification · {c.budget.execution} execution · {c.budget.review} review · {c.budget.repair} repair
-                    {c.budget.unallocated ? ` · ${c.budget.unallocated} unallocated` : ""}
+                    {c.budget.total} allocated: {c.budget.classification} classification · {c.budget.execution} execution · {c.budget.review} review · {c.budget.repair} repair
+                    {c.budget.unallocated === null ? " · uncapped total" : c.budget.unallocated ? ` · ${c.budget.unallocated} unallocated` : ""}
                   </span>,
                 ],
                 ["Fingerprints", <span key="f" className="text-xs text-ink-2">rulebook {c.fingerprints.rulebook ?? "none"} · policy {c.fingerprints.policy}</span>],

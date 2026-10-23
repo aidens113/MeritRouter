@@ -64,7 +64,7 @@ export function planRedundancy(i: RedundancyInput): RedundancyPlan {
   const perRun = Math.max(0, i.runCap - i.used);
   const room = i.contract.contract.budget.unallocated;
   if (perRun < 1) return { kind: "skip", reason: "no execution requests left" };
-  if (room < perRun) {
+  if (room !== null && room < perRun) {
     return {
       kind: "refuse",
       reason: `redundancy 2 needs a second execution allowance of ${perRun} model request(s), but the acceptance contract leaves ${room} unallocated (total ${i.contract.contract.budget.total}); raise budget.maxModelRequests or verification.max_total_requests_per_task, or drop redundancy`,

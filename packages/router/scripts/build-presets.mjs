@@ -10,13 +10,13 @@ const example = readFileSync(path.join(root, "examples/switchyard.config.example
 const out = path.join(root, "examples/presets");
 mkdirSync(out, { recursive: true });
 
-// A job's budget is its request pool (budget control D2): the supervisor's own requests and every
-// task it delegates (each holds its tier's cap, 60 at T2, while open) come out of it.
+// A job has no request-count ceiling unless the user configures one; tier/profile limits still
+// bound ordinary worker grants.
 const supervise = {
   mode: "supervisor",
   tools: "supervisor",
   min_total_parameters_b: 100,
-  max_model_requests: 1000,
+  max_model_requests: null,
   max_output_tokens: 8000,
   classify: "never",
   min_tier: "T3",

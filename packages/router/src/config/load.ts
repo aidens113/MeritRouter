@@ -68,7 +68,7 @@ export function parseConfig(raw: unknown, configPath: string): ResolvedConfig {
   if (projects.issues.length) throw new ConfigError(`invalid config ${configPath}:\n  ${formatIssues(projects.issues).join("\n  ")}`);
   for (const [name, profile] of Object.entries(cfg.profiles) as [ProfileName, ProfileConfig][]) {
     // Supervisors have their own (larger) request budget; the per-task cap applies to workers.
-    if (profile.mode !== "supervisor" && profile.max_model_requests > cfg.execution.max_model_requests_per_task) {
+    if (profile.mode !== "supervisor" && profile.max_model_requests !== null && profile.max_model_requests > cfg.execution.max_model_requests_per_task) {
       throw new ConfigError(
         `profile ${name}: max_model_requests (${profile.max_model_requests}) exceeds execution.max_model_requests_per_task (${cfg.execution.max_model_requests_per_task})`,
       );

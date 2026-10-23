@@ -30,6 +30,7 @@ import { criterionTexts } from "../core/task.js";
 import { maxAgentsPerJob } from "../config/schema.js";
 import picomatch from "picomatch";
 import { taskWriteScope } from "../harness/task-scope.js";
+import { UNLIMITED_REQUESTS } from "../admission/admission.js";
 
 interface Finish {
   status: "completed" | "blocked";
@@ -311,10 +312,11 @@ export class SupervisorRunner implements CodingRunner {
         : depth < ctx.cfg.team.max_depth
           ? `\n- You may delegate sub-goals to sub-supervisors (profile supervise); each gets ${ctx.cfg.team.child_budget_share} of your remaining request budget and its own branch forked from yours`
           : "";
+      const requestBudget = ctx.budget.maxModelRequests === UNLIMITED_REQUESTS ? "uncapped" : String(ctx.budget.maxModelRequests);
       messages = [
         {
           role: "system",
-          content: `${charterFor(ctx.cfg, "supervisor")}\n\n## This job\n- Job id: ${ctx.taskId}\n- Working document: brain:${brain?.workingDoc ?? "(brain disabled)"}\n- Repositories:\n${repoNotes || "- none writable (read-only job)"}\n- Model request budget: ${ctx.budget.maxModelRequests} (await_tasks costs none). It is the job's pool: each task you delegate holds its budget (max_requests, default ${ctx.cfg.team.default_task_requests ?? "its tier's cap"}) from it while open, and approved requests for more come out of it\n- ${ctx.cfg.supervisor.implementation === "delegate" ? `Implementation: delegate. Your edit tools change only coordination files (${ctx.cfg.supervisor.coordination_paths.join(", ")}, files your briefs name in shared_files, and files of an integration conflict you fix); delegate every other change, and re-delegate when a worker fails or runs out` : "Implementation: allowed. You may edit files in your integration worktree, but prefer delegating"}\n- Tasks of this job running at once (team.max_agents): ${maxAgentsPerJob(ctx.cfg)}; more wait queued${subNote}${boundedNote}\n\nEnd with finish_job.`,
+          content: `${charterFor(ctx.cfg, "supervisor")}\n\n## This job\n- Job id: ${ctx.taskId}\n- Working document: brain:${brain?.workingDoc ?? "(brain disabled)"}\n- Repositories:\n${repoNotes || "- none writable (read-only job)"}\n- Model request budget: ${requestBudget} (await_tasks costs none). It is the job's pool: each task you delegate holds its budget (max_requests, default ${ctx.cfg.team.default_task_requests ?? "its tier's cap"}) from it while open, and approved requests for more come out of it\n- ${ctx.cfg.supervisor.implementation === "delegate" ? `Implementation: delegate. Your edit tools change only coordination files (${ctx.cfg.supervisor.coordination_paths.join(", ")}, files your briefs name in shared_files, and files of an integration conflict you fix); delegate every other change, and re-delegate when a worker fails or runs out` : "Implementation: allowed. You may edit files in your integration worktree, but prefer delegating"}\n- Tasks of this job running at once (team.max_agents): ${maxAgentsPerJob(ctx.cfg)}; more wait queued${subNote}${boundedNote}\n\nEnd with finish_job.`,
         },
         {
           role: "user",

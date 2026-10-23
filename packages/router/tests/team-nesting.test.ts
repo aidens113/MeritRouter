@@ -102,8 +102,9 @@ describe("sub-supervisors", () => {
     expect(child!.spec.budget?.maxModelRequests).toBe(14);
     expect(carvesOf(sy.db, job.taskId)).toEqual([expect.objectContaining({ childTaskId: child!.row.id, requests: 14, parentRemaining: 29, share: 0.5, depth: 2 })]);
     expect(toolOutputs(parentLast)[0]).toMatch(/sub -> t_\w+ \(queued\); sub-supervisor with 14 requests on branch switchyard\/job-t_/);
-    // A finished sub-job counts what it used, not its whole carve.
-    expect(carvedRequests(sy.db, job.taskId)).toBe(sy.admission.taskTotals(child!.row.id).requests);
+    // A finished sub-job counts the supervisor and its workers, not its whole carve.
+    const childWorkerRequests = sy!.tasks.childrenOf(child!.row.id).reduce((used, task) => used + sy!.admission.taskTotals(task.row.id).requests, 0);
+    expect(carvedRequests(sy.db, job.taskId)).toBe(sy.admission.taskTotals(child!.row.id).requests + childWorkerRequests);
     expect(childReqs.length).toBe(6);
 
     // Depth: only the parent is offered `supervise`, and the sub-job's attempt is refused by the tool.

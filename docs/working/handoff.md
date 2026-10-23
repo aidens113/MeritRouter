@@ -60,9 +60,13 @@ Leave authorized panel4477 running. Automated tests still use temp/demo data, ne
 
 - Config `D:\SwitchYard\switchyard.config.yaml`, store `D:\SwitchYard\.switchyard\`, brain
   `C:\Users\mrjoh\.switchyard\brain`. One Ollama Cloud key (free plan) in the vault.
-- Request caps raised for free models (T1 20, T2 60, T3 100, 150 per task attempt, 300 total,
-  supervise 300, review deep 12 / strict 16); a backup of the earlier config is
-  `switchyard.config.yaml.bak` next to it.
+- Request caps raised for free models (T1 20, T2 60, T3 100, 150 per task attempt; review deep 12 /
+  strict 16). The uncapped-default change is built and deployed to the panel: `supervise.max_model_requests`
+  and `verification.max_total_requests_per_task` are null in the live config; finite worker tier
+  and per-task limits remain. The original `switchyard.config.yaml.bak` was preserved, and a
+  separate pre-change rollback snapshot was saved beside the live config. Panel 4477 was restarted
+  on the new build and project task routes returned HTTP 200. The existing MCP process was not
+  restarted; reconnect its client to load the new Router build. No live-provider job was run.
 - Panel: `node packages/router/dist/cli.js panel` (port 4477; it also auto-starts from MCP use).
   The panel bundles router code: after router changes run `pnpm -r build` and restart the panel.
 - MCP: Claude Code via the repo-root `.mcp.json` (git-excluded; VS Code keys local MCP config by a

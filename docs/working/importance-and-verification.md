@@ -53,7 +53,7 @@ changed or deferred where they do not (see "Adjustments to the proposal").
   contracts (`task_contracts`) with budget allocation, named deterministic checks, decision,
   reviewer phase (`review.ts`, `phase.ts`, `followup.ts`), and the panel trail (`trail.ts`).
 - Execution: contract after classification; reserves on top of execution caps under
-  `verification.max_total_requests_per_task` (24); a raised level may draw unallocated room;
+  `verification.max_total_requests_per_task` when explicitly configured (unset by default); a raised level may draw unallocated room;
   checks bound to the revision; re-evaluation at the tier actually run; one quality repair across
   the task (all modes) from the submitted revision; retry state survives restarts.
 - Review: a reviewer child session never served by an endpoint that worked on the task,

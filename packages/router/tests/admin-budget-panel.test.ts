@@ -42,8 +42,10 @@ describe("panel budget service", () => {
     const r = request(store);
     const before = jobBudget(sy!, "job_a")!;
     const specBefore = sy!.tasks.get("task_a")!.spec;
-    expect(before.pool.available).toBeGreaterThan(2);
-    expect(() => decideBudgetRequest(sy!, r.id, { approve: true, grant: before.pool.available + 1, reason: "over-ask", by: human }, "alpha")).toThrow(/does not fit/);
+    const available = before.pool.available;
+    if (available === null) throw new Error("fixture expected a finite job pool");
+    expect(available).toBeGreaterThan(2);
+    expect(() => decideBudgetRequest(sy!, r.id, { approve: true, grant: available + 1, reason: "over-ask", by: human }, "alpha")).toThrow(/does not fit/);
     expect(store.get(r.id)?.status).toBe("pending");
     expect(jobBudget(sy!, "job_a")!.pool).toEqual(before.pool);
     expect(() => decideBudgetRequest(sy!, r.id, { approve: true, grant: 1.5, reason: "bad grant", by: human }, "alpha")).toThrow(/whole number/);
@@ -51,7 +53,7 @@ describe("panel budget service", () => {
     expect(decideBudgetRequest(sy!, r.id, { approve: true, grant: 2, reason: "Two more files", by: human }, "alpha")).toMatchObject({ granted: 2, status: "approved", decisionReason: "Two more files" });
     expect(taskBudget(sy!, "task_a")).toMatchObject({ granted: 2, extra: 2, jobId: "job_a" });
     const after = jobBudget(sy!, "job_a")!;
-    expect(after.pool.available).toBe(before.pool.available - 2);
+    expect(after.pool.available).toBe(available - 2);
     expect(after.pool.held).toBe(before.pool.held + 2);
     expect(after.tasks[0]).toMatchObject({ granted: 2, extra: 2, held: 4, used: 0 });
     expect(sy!.tasks.get("task_a")!.spec.budget).toEqual(specBefore.budget);

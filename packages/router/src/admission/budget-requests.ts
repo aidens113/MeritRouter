@@ -7,7 +7,7 @@ import { SwitchyardError } from "../core/errors.js";
 import { TaskStore } from "../storage/tasks.js";
 import { ChannelStore, type ChannelKind } from "../storage/channel.js";
 import { ContractStore } from "../verification/contract.js";
-import { effectiveBudget, heldRequests } from "./admission.js";
+import { effectiveBudget, heldRequests, UNLIMITED_REQUESTS, verificationTotal } from "./admission.js";
 import { extraRequests, grantOf } from "./job-pool.js";
 
 /**
@@ -95,8 +95,8 @@ function hydrate(raw: unknown): BudgetRequest {
 /** A job's request pool: its budget, its own requests, what its tasks hold, and what is left to grant. */
 export interface JobPool {
   jobId: string;
-  /** The job's request budget (the supervise profile's cap, or the carve of a sub-job). */
-  cap: number;
+  /** Null when no job-wide request cap is configured. */
+  cap: number | null;
   /** Requests the job's supervisor itself used. */
   used: number;
   /** Requests its open tasks and sub-supervisors hold (finished ones count what they used). */
@@ -104,23 +104,28 @@ export interface JobPool {
   /** Kept for the supervisor's own turns (team.supervisor_reserve_requests). */
   reserve: number;
   /** What new grants and approvals may still take. */
-  available: number;
+  /** Null when uncapped. */
+  available: number | null;
 }
 
 /** The pool of a supervising task (null for a task that is not a supervisor job). */
 export function jobPool(db: Db, cfg: ResolvedConfig, jobId: string): JobPool | null {
   const job = new TaskStore(db).get(jobId);
   if (!job || cfg.profiles[job.spec.profile]?.mode !== "supervisor") return null;
-  const cap = effectiveBudget(cfg, job.spec, null).maxModelRequests;
+  const limit = Math.min(effectiveBudget(cfg, job.spec, null).maxModelRequests, verificationTotal(cfg, job.spec));
   const used = (db.prepare("SELECT COUNT(*) AS n FROM request_charges WHERE task_id = ?").get(jobId) as { n: number }).n;
   const held = heldRequests(db, jobId);
   const reserve = cfg.team.supervisor_reserve_requests;
-  return { jobId, cap, used, held, reserve, available: Math.max(0, cap - used - held - reserve) };
+  const cap = limit === UNLIMITED_REQUESTS ? null : limit;
+  const available = cap === null ? null : Math.max(0, cap - used - held - reserve);
+  return { jobId, cap, used, held, reserve, available };
 }
 
 /** One line describing a pool, for supervisors and the CLI. */
 export function poolLine(p: JobPool): string {
-  return `job ${p.jobId} pool: ${p.available} available of ${p.cap} (supervisor used ${p.used}, tasks hold ${p.held}, ${p.reserve} kept for the supervisor)`;
+  return p.cap === null
+    ? `job ${p.jobId} pool: uncapped (supervisor used ${p.used}, tasks hold ${p.held}, ${p.reserve} reserved for the supervisor)`
+    : `job ${p.jobId} pool: ${p.available} available of ${p.cap} (supervisor used ${p.used}, tasks hold ${p.held}, ${p.reserve} kept for the supervisor)`;
 }
 
 /**
@@ -135,7 +140,7 @@ export function defaultTaskGrant(cfg: ResolvedConfig, profile: ProfileName, diff
   const named = difficulty === "T4" ? "T3" : difficulty;
   const floor = p && TIER_NAMES.indexOf(p.min_tier) > TIER_NAMES.indexOf("T2") ? p.min_tier : "T2";
   const tier: TierName = named && (TIER_NAMES as readonly string[]).includes(named) ? (named as TierName) : floor;
-  return Math.min(p?.max_model_requests ?? Number.MAX_SAFE_INTEGER, cfg.tiers[tier].max_model_requests, cfg.execution.max_model_requests_per_task);
+  return Math.min(p?.max_model_requests ?? UNLIMITED_REQUESTS, cfg.tiers[tier].max_model_requests, cfg.execution.max_model_requests_per_task);
 }
 
 /** The supervising job a task's pool belongs to: its parent, when that is a supervisor job. */
@@ -239,7 +244,7 @@ export class BudgetRequests {
       if (!Number.isInteger(grant) || grant < 1 || grant > MAX_BUDGET_REQUEST) throw new SwitchyardError("invalid_request", `grant must be a whole number from 1 to ${MAX_BUDGET_REQUEST}`);
       if (req.jobId) {
         const pool = jobPool(this.db, d.cfg, req.jobId);
-        if (pool && grant > pool.available) throw new SwitchyardError("budget_pool_exhausted", `grant ${grant} does not fit: ${poolLine(pool)}; grant at most ${pool.available}, or deny`);
+        if (pool?.available !== null && pool && grant > pool.available) throw new SwitchyardError("budget_pool_exhausted", `grant ${grant} does not fit: ${poolLine(pool)}; grant at most ${pool.available}, or deny`);
       }
       this.settle(id, "approved", grant, d.by, reason);
       return this.get(id)!;
@@ -257,9 +262,9 @@ export class BudgetRequests {
     const req = this.get(id);
     if (!req) throw new SwitchyardError("not_found", `unknown budget request ${id}`);
     const pool = req.jobId ? jobPool(this.db, cfg, req.jobId) : null;
-    const grant = Math.min(req.requests, cfg.team.auto_grant_max, pool ? pool.available : Number.MAX_SAFE_INTEGER);
+    const grant = Math.min(req.requests, cfg.team.auto_grant_max, pool?.available ?? UNLIMITED_REQUESTS);
     if (grant < 1) return this.decide(id, { approve: false, by: "auto", reason: `the job's request pool is exhausted (${pool ? poolLine(pool) : "no pool"})`, cfg });
-    return this.decide(id, { approve: true, grant, by: "auto", reason: grant < req.requests ? `granted ${grant} of ${req.requests} (auto_grant_max ${cfg.team.auto_grant_max}${pool ? `, ${pool.available} available` : ""})` : "within the job's pool", cfg });
+    return this.decide(id, { approve: true, grant, by: "auto", reason: grant < req.requests ? `granted ${grant} of ${req.requests} (auto_grant_max ${cfg.team.auto_grant_max}${pool?.available !== null && pool ? `, ${pool.available} available` : ""})` : "within the job's pool", cfg });
   }
 
   /** A request nobody decided in time: it expires (a decision that won the race stands). */

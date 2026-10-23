@@ -109,7 +109,7 @@ export function grantBriefs(db: Db, cfg: ResolvedConfig, jobId: string, briefs: 
     const explicit = it.max_requests !== undefined && it.max_requests !== null;
     const requests = explicit ? Number(it.max_requests) : defaultTaskGrant(cfg, String(it.profile) as ProfileName, typeof it.difficulty === "string" ? it.difficulty : null);
     if (!Number.isInteger(requests) || requests < 1) throw new Error(`${label}: max_requests must be a whole number of at least 1`);
-    if (pool && total + requests > pool.available) {
+    if (pool?.available !== null && pool && total + requests > pool.available) {
       throw new Error(
         `${label}: needs ${requests} model requests but your job has ${Math.max(0, pool.available - total)} left for new tasks (budget ${pool.cap}: you used ${pool.used}, open tasks hold ${pool.held}, ${pool.reserve} kept for your own requests${total ? `, ${total} granted earlier in this call` : ""}); nothing was dispatched. Lower max_requests, dispatch fewer tasks now, or await running tasks first.`,
       );

@@ -3,7 +3,7 @@ import type { Db } from "../storage/db.js";
 import { immediate, newId } from "../storage/db.js";
 import type { TaskStore } from "../storage/tasks.js";
 import type { ResolvedConfig } from "../config/load.js";
-import { TIER_NAMES, type ProfileName, type TierName } from "../config/schema.js";
+import { TIER_NAMES, UNLIMITED_REQUESTS, type ProfileName, type TierName } from "../config/schema.js";
 import type { BudgetInput } from "../verification/contract.js";
 import type { WorkerTask } from "../core/task.js";
 import { AdmissionDenied } from "../core/errors.js";
@@ -12,6 +12,8 @@ import { projectLimits } from "../projects/schema.js";
 import { workerHeld } from "./job-pool.js";
 import { SqliteRequestAccounting } from "./sqlite-request-ledger.js";
 import type { RequestOutcomeDTO } from "./request-ledger.js";
+
+export { UNLIMITED_REQUESTS } from "../config/schema.js";
 
 /** Effective per-task limits: task budgets may narrow configured policy, never widen it. */
 export interface EffectiveBudget {
@@ -25,17 +27,19 @@ export interface EffectiveBudget {
 export function effectiveBudget(cfg: ResolvedConfig, spec: WorkerTask, tier: TierName | null = null): EffectiveBudget {
   const profile = cfg.profiles[spec.profile]!;
   const supervisor = profile.mode === "supervisor";
-  const tierCap = tier && !supervisor ? cfg.tiers[tier].max_model_requests : Number.MAX_SAFE_INTEGER;
+  const tierCap = tier && !supervisor ? cfg.tiers[tier].max_model_requests : UNLIMITED_REQUESTS;
+  const supervisorTotal = supervisor ? verificationTotal(cfg, spec) : UNLIMITED_REQUESTS;
   const narrow = (configured: number | undefined, requested: number | undefined): number | null => {
     if (configured === undefined) return requested ?? null;
     return requested === undefined ? configured : Math.min(configured, requested);
   };
   return {
     maxModelRequests: Math.min(
-      profile.max_model_requests,
+      profile.max_model_requests ?? UNLIMITED_REQUESTS,
       tierCap,
-      supervisor ? Number.MAX_SAFE_INTEGER : cfg.execution.max_model_requests_per_task,
-      spec.budget?.maxModelRequests ?? Number.MAX_SAFE_INTEGER,
+      supervisor ? UNLIMITED_REQUESTS : cfg.execution.max_model_requests_per_task,
+      supervisorTotal,
+      spec.budget?.maxModelRequests ?? UNLIMITED_REQUESTS,
     ),
     maxInputTokens: narrow(profile.max_input_tokens, spec.budget?.maxInputTokens),
     maxOutputTokens: spec.budget?.maxOutputTokens ?? null,
@@ -50,7 +54,7 @@ export function effectiveBudget(cfg: ResolvedConfig, spec: WorkerTask, tier: Tie
  * reserves sit on top of them inside this total.
  */
 export function verificationTotal(cfg: ResolvedConfig, spec: WorkerTask): number {
-  return Math.min(cfg.verification.max_total_requests_per_task, spec.budget?.maxModelRequests ?? Number.MAX_SAFE_INTEGER);
+  return Math.min(cfg.verification.max_total_requests_per_task ?? UNLIMITED_REQUESTS, spec.budget?.maxModelRequests ?? UNLIMITED_REQUESTS);
 }
 
 /**
@@ -91,9 +95,9 @@ function requestsCharged(db: Db, taskId: string): number {
 }
 
 /**
- * Requests a parent job has handed to its sub-supervisors: an open sub-job holds its whole
- * carve; a finished one counts what it (and its own sub-jobs) actually used, so the unused rest
- * returns to the parent.
+ * Requests a parent job has handed to its sub-supervisors: a finite open sub-job holds its whole
+ * carve; an uncapped one contributes its current usage and holds, and a finished one counts what
+ * it, its workers, and its own sub-jobs used, so unused finite grants return to the parent.
  */
 export function carvedRequests(db: Db, parentTaskId: string, depth = 0): number {
   if (depth > 8) return 0;
@@ -101,7 +105,10 @@ export function carvedRequests(db: Db, parentTaskId: string, depth = 0): number 
     .prepare("SELECT c.child_task_id AS child, c.requests AS requests, t.state AS state FROM job_budget_carves c JOIN tasks t ON t.id = c.child_task_id WHERE c.parent_task_id = ?")
     .all(parentTaskId) as Array<{ child: string; requests: number; state: string }>;
   let total = 0;
-  for (const r of rows) total += TERMINAL_TASK_STATES.has(r.state) ? Math.min(r.requests, requestsCharged(db, r.child) + carvedRequests(db, r.child, depth + 1)) : r.requests;
+  for (const r of rows) {
+    const used = requestsCharged(db, r.child) + workerHeld(db, r.child) + carvedRequests(db, r.child, depth + 1);
+    total += TERMINAL_TASK_STATES.has(r.state) ? Math.min(r.requests, used) : r.requests === UNLIMITED_REQUESTS ? used : r.requests;
+  }
   return total;
 }
 
@@ -118,6 +125,7 @@ export function heldRequests(db: Db, jobId: string): number {
  * requests and its open carves, rounded down; null when that is below `min`.
  */
 export function childRequestBudget(o: { parentCap: number; parentUsed: number; carved: number; share: number; min: number }): { requests: number; remaining: number } | null {
+  if (o.parentCap === UNLIMITED_REQUESTS) return { requests: UNLIMITED_REQUESTS, remaining: UNLIMITED_REQUESTS };
   const remaining = Math.max(0, o.parentCap - o.parentUsed - o.carved);
   const requests = Math.floor(remaining * o.share);
   return requests >= o.min ? { requests, remaining } : null;

@@ -5,6 +5,8 @@ import type { Switchyard } from "../src/core/service.js";
 import type { ChatRequest } from "../src/gateway/types.js";
 import { createCodingRunner } from "../src/runners/coding/index.js";
 import { BudgetRequests, jobPool } from "../src/admission/budget-requests.js";
+import { childRequestBudget, effectiveBudget, UNLIMITED_REQUESTS, verificationTotal } from "../src/admission/admission.js";
+import { grantBriefs } from "../src/harness/budget-tools.js";
 import { grantOf } from "../src/admission/job-pool.js";
 import { budgetRequestsView, decideBudgetRequest, jobBudget } from "../src/admin/budget.js";
 import { coordinationGuard } from "../src/harness/coordination-edits.js";
@@ -52,6 +54,43 @@ function scripted(script: Array<(req: ChatRequest) => ReturnType<typeof call>[]>
 }
 
 describe("budget control: supervisor-set budgets (D1, D2)", () => {
+  it("lets an uncapped supervisor continue beyond 300 requests and reports the pool as uncapped", async () => {
+    const config = jobConfig({}, { execution: { max_concurrent_tasks: 4, lease_seconds: 120 }, verification: { max_total_requests_per_task: null } });
+    (config.profiles as Record<string, Record<string, unknown>>).supervise!.max_model_requests = null;
+    env = makeEnv({ config });
+    const turnsBeforeFinish = 301;
+    const script = Array.from({ length: turnsBeforeFinish }, () => () => [call("await_tasks", { timeout_seconds: 1 })]);
+    script.push(() => [finish()]);
+    const client = scripted(script, readThenSubmit);
+    sy = open(env, client, { worker: true });
+    const { taskId: job } = await sy.startJob({ goal: "Keep iterating", repositories: ["core"] });
+    const result = (await sy.awaitResults([job], { timeoutSeconds: 120 })).completed[0]!;
+    expect(result.stopReason).toBe("supervisor_completed");
+    expect(client.requests.filter(isSupervisor)).toHaveLength(turnsBeforeFinish + 1);
+    expect(String(client.requests.find(isSupervisor)!.messages[0]!.content)).toContain("Model request budget: uncapped");
+    expect(jobPool(sy.db, sy.cfg, job)).toMatchObject({ cap: null, available: null, used: turnsBeforeFinish + 1 });
+    expect(env.cfg.profiles.supervise!.max_model_requests).toBeNull();
+    expect(env.cfg.verification.max_total_requests_per_task).toBeNull();
+  }, 120_000);
+
+  it("continues enforcing an explicitly configured task-wide request cap", async () => {
+    env = makeEnv({ config: jobConfig({}, { verification: { max_total_requests_per_task: 7 } }) });
+    sy = open(env, new ScriptedClient(() => reply("unused")), { worker: false });
+    const { taskId: job } = await sy.startJob({ goal: "Respect the configured cap", repositories: ["core"] });
+    const spec = sy.tasks.get(job)!.spec;
+    expect(effectiveBudget(sy.cfg, spec).maxModelRequests).toBe(7);
+    expect(verificationTotal(sy.cfg, spec)).toBe(7);
+    expect(jobPool(sy.db, sy.cfg, job)).toMatchObject({ cap: 7, available: 3, used: 0 });
+    expect(() => grantBriefs(sy!.db, sy!.cfg, job, [{ it: { ...brief("over"), max_requests: 4 }, label: "over" }])).toThrow(/4 model requests but your job has 3 left/);
+  }, 120_000);
+
+  it("does not split an uncapped parent's budget into a finite sub-job carve", () => {
+    expect(childRequestBudget({ parentCap: UNLIMITED_REQUESTS, parentUsed: 10, carved: 100, share: 0.5, min: 4 })).toEqual({
+      requests: UNLIMITED_REQUESTS,
+      remaining: UNLIMITED_REQUESTS,
+    });
+  });
+
   it("sets a child's budget, refuses an over-ask with the number left, and returns unused requests to the pool", async () => {
     env = makeEnv({ config: jobConfig() });
     let pending: unknown;

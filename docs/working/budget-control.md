@@ -1,7 +1,7 @@
 # Budget control: supervisor-set budgets and requests for more
 
 Status: Active
-Status detail: B1 and B2 done; panel acceptance passes; real-provider job/CLI/MCP transport validation remains outstanding.
+Status detail: Uncapped defaults implemented, configured in the user's live install, and panel restarted; MCP reconnect and live-job verification remain outstanding.
 Created: 2026-10-21
 Last updated: 2026-10-22
 Owner: Senior supervisor agent
@@ -14,33 +14,51 @@ Related: [live-validation](./live-validation.md), [agent-sessions-and-teams](./a
 
 ## Current State
 
-**Why (live 2026-10-21):** in the Pomodoro and Facebook-clone jobs, implementers stopped with
-"model request budget (N) exhausted" while the provider quota was 99% unused: SwitchYard's own
-caps (T2 8, T3 12, 16 per task, 24 total) starved real coding work. The presets now use much
-higher caps (T2 60, T3 100, 150 per task, 300 total; commit 7537187) and coding runs get a stall
-nudge and a repeat-call note. The user asked for the next step: "a supervisor should set the
-budget limit (which has a default value) when it spawns subagents", and "if a submodel hits a
-limit, it should be able to request more from a supervisor".
+**Why:** coding workers previously exhausted low per-task limits while provider allocation remained
+available, so B1 added supervisor-granted task budgets and requests for more. The Facebook-clone
+job later exhausted its configured shared pool at exactly 300 requests (84 supervisor requests
+plus 216 held/used by children); the supervisor's own run was stopped before it finished. The user
+clarified that jobs must have no global request-count cap by default: the supervisor should keep
+iterating until done unless a user explicitly sets a cap.
 
-**What exists:** a task's cap is `effectiveBudget` (profile, tier, execution ceiling, the spec's
-`budget.maxModelRequests`) inside the verification contract's total
-(`verification.max_total_requests_per_task`); sub-jobs get a carved share of the parent's
-remaining requests (`team.child_budget_share`, `job_budget_carves`); a contract's budget is fixed
-when the task starts. Workers already ask supervisors for brain access (`brain_request_access`,
-`brain_access_requests`, `brain_decide_request`), the pattern this plan reuses.
+**Current behavior:** profile and task limits are optional; a supervisor profile without a request
+cap and an unset/null `verification.max_total_requests_per_task` produce an uncapped job pool.
+Finite configured values still constrain admission. Worker tier/execution limits and per-brief
+grants remain in force, and workers can request more from their supervisor. Sub-supervisor carves
+inherit an uncapped pool rather than splitting an arbitrary numeric placeholder; their reported
+holds reflect current usage rather than the internal arithmetic sentinel. Status and contract
+surfaces report the limit as null/“uncapped”, not as a large number. Provider/hour/day allocation,
+capacity, timeouts, and paid-spend safeguards are separate and remain enforced.
 
 **Done (B1, merged 7f8d2df, report `reports/budget-control-b1.md`):** job request pool with
 `max_requests` on briefs (default: the tier cap held from the pool), `team.supervisor_reserve_requests`
 (4), `request_more_budget` with supervisor / auto / human decisions (MCP `budget_requests`,
 `decide_budget_request`; CLI `switchyard budget`), delegate-only supervisors
 (`supervisor.implementation: delegate`, `coordination_paths`, brief `shared_files`, conflict files),
-`run_check` for implementers' declared checks (`coding.max_check_runs_per_task` 20). Presets:
-supervise 1000. Supervisor accepted the worker's three choices (held default, 1000, reserve 4).
+`run_check` for implementers' declared checks (`coding.max_check_runs_per_task` 20). Historical
+B1 presets set `supervise` to 1000 (superseded by the uncapped defaults below). Supervisor accepted
+the worker's three choices (held default, 1000, reserve 4).
 Validation: worker 587 tests; supervisor reviewed the edit gate and run_check, merged dev into the
 branch, 587 passed, `pnpm -r build` and typecheck pass on dev.
 
 **Not verified:** a live job; the CLI `budget` command run; MCP budget tools over a transport;
 OpenCode/command runners lack the new tools; `**/*.md` coordination paths may be wider than wanted.
+
+**Uncapped-default follow-up:** omitted supervisor profile and task-total request limits now resolve
+to uncapped; explicit finite values remain enforced. Regression coverage proves a supervisor can
+make more than 300 requests, and nested job holds count workers' actual usage instead of an
+uncapped arithmetic sentinel. `pnpm -r typecheck` and the Router build passed. The full Router run
+had 1,088 passing and 2 timing failures under parallel load; both failed tests passed when rerun
+individually. Focused budget, verification, and nested-team tests passed. A production panel build
+and browser check passed in a disposable copy seeded with fake demo data. The recursive workspace
+build also passed. The user's two explicit 300-request caps were changed to null after preserving a
+separate rollback snapshot; the existing `.bak` was not overwritten. Panel 4477 was restarted on
+the new build, and project task pages returned HTTP 200. The existing MCP process was not restarted;
+its client must reconnect to load the updated code. No live-provider requests or jobs were run.
+
+Other installations with explicit finite values must remove or set them to null in both
+`profiles.supervise.max_model_requests` and `verification.max_total_requests_per_task` after
+upgrading; code defaults do not override explicit configuration.
 
 **Done (B2, 901161a; integrated 6927dba):** pending requests on job/task/project/install pages,
 approve/deny with reasons and partial grants, job pool/held/reserve/available totals, task grants
@@ -66,9 +84,10 @@ Full integrated suite 622/622, recursive typecheck and build pass. Worker report
   `max_requests`; without it the task gets `team.default_task_requests` (default: the tier cap).
   It must fit in what the job has left (its own budget minus requests held by running and queued
   children), checked in code; an over-ask is refused with the number available.
-- **D2. A job has one request pool.** The supervisor's own requests and every child's grant come out
-  of the job's budget (`profiles.supervise.max_model_requests`, or the parent's carve for a
-  sub-job). Unused grants return to the pool when a child finishes.
+- **D2. A job has one request pool, uncapped by default.** The supervisor's own requests and every
+  child's grant come out of it. A finite `profiles.supervise.max_model_requests`,
+  `verification.max_total_requests_per_task`, or explicit task budget caps the pool; a sub-job
+  inherits an uncapped parent pool. Unused grants return to the pool when a child finishes.
 - **D3. A worker can ask for more.** Tool `request_more_budget(requests, reason)` for every worker
   role (offered when it has a supervisor or an external approver). The run waits (no model
   requests) up to `team.budget_request_wait_seconds` (default 300) for a decision.

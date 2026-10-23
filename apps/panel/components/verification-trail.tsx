@@ -9,7 +9,7 @@ import { sessionHref } from "@/lib/links";
 
 type Trail = insights.TaskVerificationTrail;
 type Review = insights.ReviewView;
-type Budget = { classification: number; execution: number; review: number; repair: number; unallocated?: number; total: number };
+type Budget = { classification: number; execution: number; review: number; repair: number; unallocated?: number | null; total: number };
 
 const VERDICT_TONE: Record<string, Tone> = { pass: "good", fail: "bad", inconclusive: "serious" };
 const ACTION_LABEL: Record<string, string> = {
@@ -48,7 +48,7 @@ export function RequestsByPurpose({ used, budget }: { used: Trail["requestsByPur
         <tr>
           <td className="font-semibold text-ink">Total</td>
           <td className="text-right font-semibold text-ink">{total}</td>
-          <td className="text-right text-ink-3">{budget ? `${budget.total}${budget.unallocated ? ` (${budget.unallocated} unallocated)` : ""}` : ""}</td>
+          <td className="text-right text-ink-3">{budget ? `${budget.total}${budget.unallocated === null ? " (uncapped)" : budget.unallocated ? ` (${budget.unallocated} unallocated)` : ""}` : ""}</td>
         </tr>
       </tbody>
     </table>
