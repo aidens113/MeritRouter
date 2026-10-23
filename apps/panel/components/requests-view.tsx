@@ -46,6 +46,7 @@ export function RequestsView({ sy, project, sp }: { sy: MeritRouter; project: { 
   const tokCached = rows.reduce((s, x) => s + (x.cachedInputTokens ?? 0), 0);
   const unknownCache = rows.filter(x => x.cachedInputTokens === null).length;
   const cacheKnown = unknownCache === 0;
+  const reportedUsage = rows.some(row => row.inputTokens !== null || row.outputTokens !== null);
   const tokOut = rows.reduce((s, x) => s + (x.outputTokens ?? 0), 0);
   const saving = cacheSaving(rows, new Map(eps.map((e) => [e.id, e.pricing])));
   const violations = rows.filter((x) => x.policyViolation).length;
@@ -64,7 +65,7 @@ export function RequestsView({ sy, project, sp }: { sy: MeritRouter; project: { 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat label="Requests shown" value={num(rows.length)} sub={`${num(total)} matching | page ${page}`} />
         <Stat label="Succeeded" value={rows.length ? pct(ok, rows.length) : "–"} sub={`${num(rows.length - ok)} failed or uncertain`} />
-        <Stat label="New tokens" value={cacheKnown ? compact(tokIn - tokCached + tokOut) : "Unknown"} sub={cacheKnown ? `${compact(tokIn - tokCached)} in | ${compact(tokOut)} out | ${compact(tokCached)} cached` : `${unknownCache} requests have unknown cache usage | ${compact(tokIn + tokOut)} total reported tokens`} />
+        <Stat label={cacheKnown ? "New tokens" : "Reported tokens"} value={cacheKnown ? compact(tokIn - tokCached + tokOut) : reportedUsage ? `~${compact(tokIn + tokOut)}` : "Unknown"} sub={cacheKnown ? `${compact(tokIn - tokCached)} in | ${compact(tokOut)} out | ${compact(tokCached)} cached` : reportedUsage ? "Input + output; cached input included" : "No token usage reported"} />
         <Stat label="Prompt cache" value={cacheKnown && tokIn ? pct(tokCached, tokIn) : cacheKnown ? "0" : "Unknown"} sub={`${compact(tokCached)} known cached tokens${unknownCache ? ` | ${unknownCache} unknown requests` : ""} | ${saving.known ? `known savings $${saving.usd.toFixed(4)}` : "saving unknown (no cached price)"}`} />
         <Stat label="Policy violations" value={num(violations)} tone={violations ? "bad" : undefined} sub="served by a different model than routed" />
       </div>
