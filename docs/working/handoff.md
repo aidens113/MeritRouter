@@ -4,6 +4,15 @@ Written for the next agent (Codex or Claude Code) picking this repository up col
 then `AGENTS.md`, then the `Current State` of the effort you work on. Every effort below has its
 own working document with decisions, phases, ledger, and reports.
 
+## Current audit (2026-10-23)
+
+[Post-change fix audit](post-change-fix-audit.md) owns the newest corrective plan for dev 371875a
+and the uncommitted live-run fixes. Fresh recursive typecheck passes; focused Router checks
+are 83 passed / 1 failed. Repeat-cache stale reads are reproduced; read-only shell containment and
+revision/evidence recovery require fixes. No product changes or live deployment in this audit.
+Older source/deployment/active-worker snapshots below are historical; current live processes
+were not inspected. Read the audit before treating those snapshots as current acceptance.
+
 ## Repository state
 
 - Active local integration now includes recovery-retention943a74a, request protocol2b22160
