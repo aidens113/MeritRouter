@@ -6,7 +6,7 @@ import type { ChatRequest } from "../src/gateway/types.js";
 import type { SessionEvent, SessionEventOf } from "../src/sessions/events.js";
 import type { SessionRecord } from "../src/sessions/store.js";
 import { createCodingRunner } from "../src/runners/coding/index.js";
-import { baseConfig, endpoint, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, summarizeTask, type Env } from "./helpers.js";
+import { baseConfig, endpoint, goodOutput, makeEnv, openWithTestSupervisor as open, reply, ScriptedClient, servedFor, summarizeTask, type Env } from "./helpers.js";
 
 const agent = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "fake-agent.mjs");
 let env: Env | undefined;
@@ -101,7 +101,7 @@ describe("read-only runner sessions", () => {
 
   it("a spent request budget ends the session as failed with stopReason budget_exhausted", async () => {
     env = makeEnv();
-    sy = open(env, new ScriptedClient((req) => reply(null, { ...servedFor(sy!, req), toolCalls: [call("read_file", { alias: "core", path: "README.md" }, `r${turns(req)}`)] })), { worker: true });
+    sy = open(env, new ScriptedClient((req) => reply(null, { ...servedFor(sy!, req), toolCalls: [call("read_file", { alias: "core", path: "README.md", start_line: turns(req) + 1 }, `r${turns(req)}`)] })), { worker: true });
     const [sub] = await sy.submitTasks([{ profile: "inspect", goal: "Read forever", repositoryAliases: ["core"], constraints: { acceptanceCriteria: ["x"] }, budget: { maxModelRequests: 2 } }]);
     const r = (await sy.awaitResults([sub!.taskId], { timeoutSeconds: 20 })).completed[0]!;
     expect(r.executionStatus).toBe("budget_exhausted");
@@ -205,18 +205,18 @@ describe("coding runner sessions", () => {
     expect(s!.workspace!.repos[0]!.head).toBe(after!.head);
   }, 90_000);
 
-  it("external agent: its gateway requests are recorded and the final snapshot moves the head", async () => {
+  it("external agent: records refusal without a workspace or gateway requests", async () => {
     env = makeEnv({ config: baseConfig({ coding: { runner: "command", command: `node "${agent}" good` } }) });
-    sy = open(env, new ScriptedClient((req) => reply(JSON.stringify(goodOutput()), servedFor(sy!, req))), { worker: true, coding: createCodingRunner(env.cfg) });
+    const client = new ScriptedClient((req) => reply(JSON.stringify(goodOutput()), servedFor(sy!, req)));
+    sy = open(env, client, { worker: true, coding: createCodingRunner(env.cfg) });
     const [sub] = await sy.submitTasks([implement()]);
-    await sy.awaitResults([sub!.taskId], { timeoutSeconds: 60 });
-    const [s] = runs(sub!.taskId);
-    expect(s).toMatchObject({ role: "implementer", status: "completed", modelRequests: 2, toolCalls: 0 });
-    const ev = eventsOf(s!.id);
-    expect(ofType(ev, "model_request").every((e) => e.data.purpose === "runner")).toBe(true);
-    expect(ofType(ev, "note")[0]!.data.text).toMatch(/^external coding agent/);
-    const ws = ofType(ev, "workspace").map((w) => w.data.repos[0]!);
-    expect(ws.at(-1)!.head).not.toBe(ws[0]!.head);
+    const result = (await sy.awaitResults([sub!.taskId], { timeoutSeconds: 60 })).completed[0]!;
+    expect(result.stopReason).toBe("worker_sandbox_unavailable");
+    expect(client.requests).toHaveLength(0);
+    const [session] = runs(sub!.taskId);
+    expect(session).toMatchObject({ status: "failed", stopReason: "worker_sandbox_unavailable", modelRequests: 0 });
+    expect(ofType(eventsOf(session!.id), "model_request")).toHaveLength(0);
+    expect(ofType(eventsOf(session!.id), "workspace")).toHaveLength(0);
   }, 90_000);
 });
 
@@ -275,8 +275,9 @@ describe("supervisor sessions", () => {
     sy = open(env, client, { worker: false });
     const [first] = runs(job.taskId);
     expect(first).toMatchObject({ status: "interrupted", stopReason: "shutdown" });
-    // The ask_user call was in flight: its intent is logged with an error outcome (interrupted while waiting).
-    expect(journal(eventsOf(first!.id)).map((x) => `${x.name}:${x.sideEffect}:${x.ok}`)).toEqual(["ask_user:external:false"]);
+    // An aborted in-flight effect retains an unresolved intent for resume reconciliation.
+    expect(journal(eventsOf(first!.id)).map((x) => `${x.name}:${x.sideEffect}:${x.ok}`)).toEqual(["ask_user:external:undefined"]);
+    expect(ofType(eventsOf(first!.id), "tool_outcome")).toHaveLength(0);
     sy.answerQuestion(sy.questions()[0]!.id, "CSV");
     await sy.close();
     sy = open(env, client, { worker: true });

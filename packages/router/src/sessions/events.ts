@@ -188,6 +188,14 @@ export const ResumeActionSchema = z.discriminatedUnion("kind", [
 ]);
 export type ResumeAction = z.infer<typeof ResumeActionSchema>;
 
+/** Runtime proof that one exact transcript tool occurrence had no applied effect. */
+export const NotAppliedToolProofSchema = z.object({
+  messageIndex: z.number().int().nonnegative(),
+  callId: z.string(),
+  transcriptSha256: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict();
+export type NotAppliedToolProof = z.infer<typeof NotAppliedToolProofSchema>;
+
 export const ResumedDataSchema = z.object({
   /** What the model was told. */
   summary: z.string(),
@@ -197,6 +205,8 @@ export const ResumedDataSchema = z.object({
   resolvedIntentSeqs: z.array(z.number().int().positive()),
   /** `model_request` events that got no response and were dropped. */
   droppedRequestSeqs: z.array(z.number().int().positive()),
+  /** Optional for old logs; only the trusted resume service writes these absence proofs. */
+  notAppliedTools: z.array(NotAppliedToolProofSchema).max(10000).optional(),
 });
 
 const envelope = <T extends string, D extends z.ZodType>(type: T, data: D) =>

@@ -11,7 +11,9 @@ import { MergeQueue, ACTIVE_MERGE_STATES, type MergeHooks, type MergeItem } from
 import { resolveLevel } from "../verification/policy.js";
 import { git } from "../workspaces/git.js";
 import { recordIntegration, recordJobCheck } from "../verification/calibration.js";
-import { minimalEnv, runProcess } from "../runners/coding/process.js";
+import { minimalEnv } from "../runners/coding/process.js";
+import { executeSupervisorCommand } from "./worker-actions.js";
+import { mediateOutsideOperation, withOutsideAuthority } from "./outside-operation.js";
 import type { HarnessEnv, HarnessTool } from "./tools.js";
 import type { IntegrationRepo, SupervisorState } from "./supervisor-tools.js";
 
@@ -193,7 +195,7 @@ export function integrationHooks(s: SupervisorState, env: HarnessEnv, seam: Inte
     checks: async (item) => {
       const out: Array<{ command: string; exitCode: number | null; logRef?: string }> = [];
       for (const command of s.ctx.spec?.constraints.checks ?? []) {
-        const r = await runProcess(command, [], { cwd: item.integrationWorktree, env: minimalEnv({ CI: "1" }), timeoutMs: s.ctx.cfg.execution.check_timeout_seconds * 1000, signal: s.ctx.signal, shell: true });
+        const r = await executeSupervisorCommand(s.ctx, { command, cwd: item.integrationWorktree, invocationId: `integration_check:${item.id}:${item.attempts}:${out.length}`, env: minimalEnv({ CI: "1" }), timeoutMs: s.ctx.cfg.execution.check_timeout_seconds * 1000, reason: `Verify integration of task ${item.taskId}` });
         const logRef = s.ctx.artifacts?.write({ taskId: jobId, kind: "check_log", label: `${command} (after integrating ${item.taskId})`, content: `$ ${command}\nexit ${r.exitCode}\n${r.stdout}\n${r.stderr}`, extension: ".log" });
         const exitCode = r.killed ? null : r.exitCode;
         recordJobCheck(s.db, { jobId, repo: item.repo, command, exitCode, now: Date.now() });
@@ -201,7 +203,10 @@ export function integrationHooks(s: SupervisorState, env: HarnessEnv, seam: Inte
       }
       if (s.ctx.lab && s.ctx.lab.rootJobId === jobId && item.afterHead) {
         const binding = s.ctx.lab;
-        const op = await binding.manager.control(binding.project, binding.name, {kind:"after_integrate",expectedHeads:{[item.repo]:item.afterHead}}, `task:${jobId}`, {signal:s.ctx.signal});
+        const input = {kind:"after_integrate" as const,expectedHeads:{[item.repo]:item.afterHead}};
+        const mediated = await mediateOutsideOperation(env, "lab_check", { phase: "after_integrate", ...input });
+        if (mediated !== null) throw new Error(`Lab integration checks require supervisor host authority; operator reports cannot replace execution proof: ${mediated}`);
+        const op = await withOutsideAuthority(env, signal => binding.manager.control(binding.project, binding.name, input, `task:${jobId}`, {signal,taskLease:s.ctx.taskLease}));
         const results = z.array(LabCheckResultSchema).parse(op.result);
         for (const result of results) {
           const command = `lab:${result.name}`;
@@ -325,6 +330,9 @@ export function integrationTools(s: SupervisorState, seam: IntegrationSeam): Har
         },
       },
       sideEffect: "edit",
+      // MergeQueue reconciles original operations durably. A resumed call must reach it;
+      // stable repeated outcomes are still bounded by the loop's observation guard.
+      repeatBehavior: "observe",
       run: async (a, env) => integrate(s, seam, a, env),
     },
   ];

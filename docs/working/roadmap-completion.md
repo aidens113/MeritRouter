@@ -10,6 +10,15 @@ Related: [handoff](handoff.md), [labs](labs.md), [budget-control](budget-control
 
 ## Current State
 
+2026-10-23 correction: the snapshots below are historical, not current process inspection.
+[Correctness and panel flows](correctness-and-panel-flows.md) owns the current corrective source
+and acceptance. It implements default human-only outside actions, disabled/supervisor settings,
+scoped worker escalation, connected job/request UX and repeat/evidence fixes. Final recursive
+typecheck/build pass; full suite found15 failures now corrected with affected reruns in progress.
+No live provider work or deployment occurred in this corrective effort. Request-hold recovery,
+canonical session writer authority, Compose runtime, hydrated browser and PostgreSQL remain open.
+Automatic worker Task Lab and external coding runners fail closed without enforced proof/sandbox.
+
 Accepted/pushed dev/main663626d includes rich historical request inputs/parameters/responses,
 correlated tool actions/file edits, related task/session/commit links, authoritative classifier
 project partition and historical session scope privacy. Full783/783 tests in88files (943.08s),
@@ -31,7 +40,7 @@ Legitimate T4 stored-row validation fixed and unchanged paid/queue18/18 pass; re
 wording assertion updated and1/1 pass; Windows CLI-worker fixture cleanup EBUSY did not recur
 on independent1/1 recheck. Recovery retention943a74a independently10/10 passed67.41s with
 two-day cadence301 receipts; public exports/typecheck and lifecycle42/42 passed13.75s.
-Combined full acceptance/package remains pending.
+That combined acceptance snapshot is superseded by the corrective effort linked above.
 
 Normalized future request capture is implemented locally with bounded private SQLite payloads,
 project-scoped purge and normalized input/tool/response UI. Supervisor29 capture checks plus

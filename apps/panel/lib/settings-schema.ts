@@ -33,6 +33,19 @@ const f = (path: string, label: string, kind: FieldKind, help: string, extra: Pa
 
 export const SECTIONS: Section[] = [
   {
+    id: "security",
+    title: "Repository sandbox and outside access",
+    description: "Workers stay inside their assigned repositories. Actions beyond that boundary require a recorded decision; approval never grants a worker blanket host access.",
+    fields: [f("security.outside_repository", "Outside-repository actions", "enum", "Who can approve and perform an action beyond a worker's repository sandbox.", {
+      options: ["disabled", "human_only", "supervisor"],
+      optionHelp: {
+        disabled: "Disabled: nobody can run requested actions outside the repository, including supervisors.",
+        human_only: "Human approval only (default): you review and execute each exact request in the panel. Automated supervisors cannot approve it.",
+        supervisor: "Supervisors and humans: an active owning supervisor may approve and perform an exact requested action. Workers remain contained.",
+      },
+    })],
+  },
+  {
     id: "client-supervision",
     title: "Claude/Codex supervision",
     description: "Choose whether MCP may dispatch SwitchYard as the final project supervisor. The external Claude/Codex client remains final supervisor by default and can delegate bounded sub-supervisors. This is separate from SwitchYard's internal job supervisors and grants no permissions. Existing MCP connections receive changes on their next tool call.",

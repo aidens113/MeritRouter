@@ -1,3 +1,6 @@
+import { executeSupervisorCommand, WorkerActionRequests } from "./worker-actions.js";
+import { supervisorActionTools } from "./worker-action-tools.js";
+import { z } from "zod";
 import type { Db } from "../storage/db.js";
 import { newId } from "../storage/db.js";
 import { globsOverlap } from "../storage/file-leases.js";
@@ -17,7 +20,7 @@ import { blame, commitsMatching, commitsOfTasks, revertCommits, undoLines, type 
 import { calibrationUndoHook, recordJobCheck } from "../verification/calibration.js";
 import { formatBrief, parseDoc, replaceSection, section } from "../brain/protocol.js";
 import type { ToolSideEffect } from "../sessions/events.js";
-import { minimalEnv, runProcess } from "../runners/coding/process.js";
+import { minimalEnv } from "../runners/coding/process.js";
 import { commandAllowed, type HarnessEnv, type HarnessTool } from "./tools.js";
 import { integrationHooks, integrationTools, type IntegrationSeam } from "./integration-tools.js";
 import { rulebookTier } from "../routing/staffing.js";
@@ -55,6 +58,23 @@ export interface SupervisorState {
 
 /** Marker before a sub-job's own status in its section (the brief above it is the parent's). */
 const SUB_JOB_STATUS = "**Sub-job status:**";
+
+const ObjectArray = z.array(z.record(z.string(), z.unknown()));
+
+function parseObjectArray(value: unknown, name: string): Array<Record<string, unknown>> {
+  let input = value;
+  if (typeof value === "string") {
+    try {
+      input = JSON.parse(value) as unknown;
+    } catch (error) {
+      if (error instanceof SyntaxError) throw new Error(`${name} must be a JSON array of objects`);
+      throw error;
+    }
+  }
+  const parsed = ObjectArray.safeParse(input);
+  if (!parsed.success) throw new Error(`${name} must be an array of objects`);
+  return parsed.data;
+}
 
 /**
  * A sub-job's section in two parts: the record (its brief from the parent, branches, budget, and
@@ -536,7 +556,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
       { tasks: { type: "array", items: { type: "object", properties: briefProperties(maySupervise(s)), required: ["label", "profile", "goal", "acceptance_criteria"] } } },
       ["tasks"],
       async (a, env) => {
-        const items = Array.isArray(a.tasks) ? (a.tasks as Array<Record<string, unknown>>) : [];
+        const items = parseObjectArray(a.tasks, "tasks");
         if (!items.length) throw new Error("tasks is empty");
         return dispatchBriefs(s, items, env);
       },
@@ -552,7 +572,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
       },
       ["nodes"],
       async (a, env) => {
-        const items = Array.isArray(a.nodes) ? (a.nodes as Array<Record<string, unknown>>).map((it) => ({ ...it })) : [];
+        const items = parseObjectArray(a.nodes, "nodes").map((it) => ({ ...it }));
         if (!items.length) throw new Error("nodes is empty");
         if (items.length > MAX_PLAN_NODES) throw new Error(`a plan holds at most ${MAX_PLAN_NODES} nodes`);
         const { tiers: plannedTiers, notes: staffed } = await staffNodes(s, items);
@@ -613,7 +633,8 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
       },
     ),
 
-    tool("await_tasks", "none", "Wait (without model requests) until the given tasks, or all of this job's active tasks, finish or the timeout passes. Returns early when everything still open waits for you to accept or reject an upstream result, and when a worker asks you for more model requests (decide it with decide_budget_request). Returns compact results.", { task_ids: { type: "array", items: { type: "string" } }, timeout_seconds: { type: "integer" } }, [], async (a) => {
+    {
+      ...tool("await_tasks", "none", "Wait (without model requests) until the given tasks, or all of this job's active tasks, finish or the timeout passes. Returns early when everything still open waits for you to accept or reject an upstream result, and when a worker asks you for more model requests (decide it with decide_budget_request). Returns compact results.", { task_ids: { type: "array", items: { type: "string" } }, timeout_seconds: { type: "integer" } }, [], async (a) => {
       const ids = Array.isArray(a.task_ids) && a.task_ids.length ? (a.task_ids as string[]).map((x) => ownTask(s, x)) : [...s.children.values()];
       if (!ids.length) return "no tasks dispatched yet";
       const until = Date.now() + Math.min(Number(a.timeout_seconds) || 1800, 3600) * 1000;
@@ -622,14 +643,17 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
       let r: Awaited<ReturnType<typeof svc.awaitResults>>;
       for (;;) {
         r = await svc.awaitResults(ids, { timeoutSeconds: Math.max(1, Math.min(3, Math.ceil((until - Date.now()) / 1000))), signal: s.ctx.signal, uncapped: true });
-        if (!r.pending.length || Date.now() >= until || s.ctx.signal.aborted || blockedOnAcceptance(s, r.pending) || supervisorAsked(s.db, jobId)) break;
+        if (!r.pending.length || Date.now() >= until || s.ctx.signal.aborted || blockedOnAcceptance(s, r.pending) || supervisorAsked(s.db, jobId) || new WorkerActionRequests(s.db).list({project: s.ctx.taskProject ?? s.ctx.cfg.brain.project, jobId, status: "pending"}).length > 0) break;
       }
       const budget = pendingBudgetLines(s.db, s.ctx.cfg, jobId);
-      return cap([...budget, ...r.completed.map((c) => summarizeResult(c.taskId, s)), ...r.pending.map((p) => {
+      const actions = new WorkerActionRequests(s.db).list({ project: s.ctx.taskProject ?? s.ctx.cfg.brain.project, jobId, status: "pending" });
+      return cap([...actions.map(row => `worker action ${row.id} from ${row.taskId}: ${row.action.operation?.name ?? row.action.command}; decide_worker_action`), ...budget, ...r.completed.map((c) => summarizeResult(c.taskId, s)), ...r.pending.map((p) => {
         const why = stateReason(s, p.taskId);
         return `${p.taskId}: still ${p.state}${why && why !== "resumed" ? ` (${why}${why.startsWith(AWAITING_ACCEPTANCE) ? "; accept_task or reject_task the upstream result" : ""})` : ""}`;
       })].join("\n"));
-    }),
+      }),
+      repeatBehavior: "execute",
+    },
 
     tool("task_result", "read", "Full result of one task (findings, evidence, checks, patch references).", { task_id: { type: "string" } }, ["task_id"], async (a) => {
       const id = ownTask(s, a.task_id);
@@ -672,13 +696,14 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
     ...integrationTools(s, seamOf(s)),
 
     ...supervisorBudgetTools(jobId),
+    ...supervisorActionTools(jobId),
 
-    tool("run_check", "command", "Run a check command in the job's integration worktree (commands from your briefs' checks or the supervisor allowlist).", { command: { type: "string" }, repository: { type: "string" } }, ["command"], async (a) => {
+    tool("run_check", "command", "Run a check command in the job's integration worktree (commands from your briefs' checks or the supervisor allowlist).", { command: { type: "string" }, repository: { type: "string" } }, ["command"], async (a, env) => {
       const repo = repoFor(s, a.repository);
       const command = str(a.command, "command");
       const allowed = s.briefChecks.has(command) || commandAllowed(command, [...s.ctx.cfg.supervisor.allowed_commands, ...s.ctx.cfg.coding.allowed_commands]);
       if (!allowed) throw new Error("command not allowed: use a check from one of your briefs or add it to supervisor.allowed_commands");
-      const r = await runProcess(command, [], { cwd: repo.worktree, env: minimalEnv({ CI: "1" }), timeoutMs: s.ctx.cfg.execution.check_timeout_seconds * 1000, signal: s.ctx.signal, shell: true });
+      const r = await executeSupervisorCommand(s.ctx, { command, cwd: repo.worktree, invocationId: env.toolInvocationId, env: minimalEnv({ CI: "1" }), timeoutMs: s.ctx.cfg.execution.check_timeout_seconds * 1000, reason: "Supervisor declared integration check" });
       const log = s.ctx.artifacts.write({ taskId: jobId, kind: "check_log", label: command, content: `$ ${command}\nexit ${r.exitCode}\n${r.stdout}\n${r.stderr}`, extension: ".log" });
       recordJobCheck(s.db, { jobId, repo: repo.alias, command, exitCode: r.killed ? null : r.exitCode, now: Date.now() });
       return cap(`$ ${command}\nexit ${r.exitCode}${r.killed ? ` (killed: ${r.killed})` : ""} (log ${log})\n${r.stdout.slice(-6000)}\n${r.stderr.slice(-3000)}`);

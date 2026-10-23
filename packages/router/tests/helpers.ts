@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -9,6 +9,7 @@ import { GatewayError } from "../src/core/errors.js";
 import { BUILTIN_PROVIDERS } from "../src/providers/registry.js";
 import type { FetchLike } from "../src/providers/transport.js";
 import { Switchyard, type SwitchyardOptions } from "../src/core/service.js";
+import { WorkerActionRequests } from "../src/harness/worker-actions.js";
 
 export const NOW_ISO = new Date().toISOString();
 
@@ -294,6 +295,42 @@ export function goodOutput(criteria = 1, ref = "inline", extra: Record<string, u
 /** Open a Switchyard whose providers are the given fake (a ScriptedClient or FakeProvider). */
 export function open(env: Env, client: { fetch: FetchLike }, opts: SwitchyardOptions = {}): Switchyard {
   return new Switchyard(env.cfg, { providerFetch: client.fetch, pollIntervalMs: 50, ...opts });
+}
+
+/** Explicit trusted operator for temporary fixtures; production open() never approves actions. */
+export function openWithTestSupervisor(env: Env, client: { fetch: FetchLike }, opts: SwitchyardOptions = {}, fixtureCommands: readonly string[] = []): Switchyard {
+  const root = realpathSync(env.dir);
+  const relative = path.relative(realpathSync(tmpdir()), root);
+  if (relative.startsWith("..") || path.isAbsolute(relative) || !path.basename(root).startsWith("switchyard-test-")) throw new Error("test supervisor requires a temporary switchyard-test fixture");
+  const sy = open(env, client, opts);
+  const broker = new WorkerActionRequests(sy.db, opts.now);
+  let stopped = false, decisions = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let active: Promise<void> = Promise.resolve();
+  const failures: unknown[] = [];
+  const tick = async (): Promise<void> => {
+    const projects = sy.db.prepare("SELECT DISTINCT project_id FROM worker_action_requests").all() as Array<{ project_id: string }>;
+    for (const { project_id: project } of projects) for (const request of broker.list({ project, status: "pending" })) {
+      if (stopped) return;
+      const task = sy.tasks.get(request.taskId);
+      const cwd = path.relative(root, realpathSync(request.action.cwd));
+      const contained = !cwd.startsWith("..") && !path.isAbsolute(cwd);
+      const declared = task?.spec.constraints.checks?.includes(request.action.command) || fixtureCommands.includes(request.action.command);
+      const approve = contained && declared && !request.action.operation && ++decisions <= 256;
+      await broker.decide({ project, id: request.id, decision: approve ? "approve" : "deny", reason: approve ? "Explicit temporary fixture operator approves this exact declared test check" : "Fixture operator refuses undeclared or out-of-fixture action", actor: { kind: "operator" }, config: env.cfg });
+    }
+  };
+  const schedule = () => { if (!stopped) timer = setTimeout(() => { active = tick().catch(error => { failures.push(error); }).finally(schedule); }, 10); };
+  schedule();
+  const close = sy.close.bind(sy);
+  sy.close = async () => {
+    stopped = true;
+    clearTimeout(timer);
+    await active;
+    await close();
+    if (failures.length) throw new AggregateError(failures, "test supervisor approval failed");
+  };
+  return sy;
 }
 
 export function summarizeTask(extra: Record<string, unknown> = {}) {

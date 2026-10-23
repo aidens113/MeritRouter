@@ -6,7 +6,7 @@ import type { SessionRecord } from "../src/sessions/store.js";
 import { GatewayError } from "../src/core/errors.js";
 import { FAULT_ENV, resetFaults, simulatedCrashCount } from "../src/core/faults.js";
 import { createCodingRunner } from "../src/runners/coding/index.js";
-import { baseConfig, endpoint, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, testProviders, type Env } from "./helpers.js";
+import { baseConfig, endpoint, goodOutput, makeEnv, openWithTestSupervisor as open, reply, ScriptedClient, servedFor, testProviders, type Env } from "./helpers.js";
 
 /**
  * Resume and verification together: a task interrupted while its result is being reviewed

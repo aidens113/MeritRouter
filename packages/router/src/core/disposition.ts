@@ -3,6 +3,7 @@ import type { RunOutcome } from "../runners/types.js";
 import type { SessionEndStatus } from "../sessions/events.js";
 import { sessionEnd } from "../sessions/run-sessions.js";
 import { AdmissionDenied, GatewayError } from "./errors.js";
+import { ProviderError } from "../providers/errors.js";
 
 /**
  * What becomes of a run that ended without an outcome (an error or an abort): a final state,
@@ -65,6 +66,9 @@ export function classifyFailure(err: unknown, signal: AbortSignal, f: FailureCon
       default:
         return { kind: "final", state: "failed", stopReason: `${err.reason}: ${err.message}` };
     }
+  }
+  if (err instanceof ProviderError && err.reason === "not_in_plan") {
+    return { kind: "final", state: "failed", stopReason: `gateway_not_in_plan: ${err.message}` };
   }
   if (err instanceof GatewayError) {
     switch (err.kind) {

@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import type { Switchyard } from "../src/core/service.js";
 import { createCodingRunner } from "../src/runners/coding/index.js";
 import { evalsDir, gradeReadOnly, loadSuite } from "../src/qualification/runner.js";
@@ -9,9 +8,8 @@ import { tmpdir } from "node:os";
 import { minimalEnv, runProcess } from "../src/runners/coding/process.js";
 import { qualificationBoard } from "../src/admin/insights.js";
 import { emptyUsage } from "../src/core/task.js";
-import { baseConfig, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
+import { baseConfig, goodOutput, makeEnv, openWithTestSupervisor as open, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
 
-const agent = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "fake-agent.mjs");
 let env: Env | undefined;
 let sy: Switchyard | undefined;
 afterEach(async () => {
@@ -55,15 +53,22 @@ describe("qualification", () => {
   }, 120_000);
 
   it("runs pinned to one model, grades coding with hidden tests and read-only with citations", async () => {
-    env = makeEnv({ config: baseConfig({ coding: { runner: "command", command: `node "${agent}" fixrange` }, qualification: { required: true, min_trials: 1, pass_threshold: 0.5 } }) });
+    env = makeEnv({ config: baseConfig({ coding: { runner: "native" }, qualification: { required: true, min_trials: 1, pass_threshold: 0.5 } }) });
+    const call = (name: string, args: unknown) => ({ id: name, type: "function" as const, function: { name, arguments: JSON.stringify(args) } });
     const client = new ScriptedClient((req) => {
-      if (req.tools?.length) {
-        return reply(null, {
-          ...servedFor(sy!, req),
-          toolCalls: [{ id: "1", type: "function", function: { name: "submit_result", arguments: JSON.stringify({ summary: "checkAddress in src/validation/address.js decides it", findings: [{ description: "checkAddress validates emails", evidenceRefs: [`${req.messages[1] && JSON.stringify(req.messages[1]).match(/q-[a-z0-9-]+/)?.[0]}:src/validation/address.js#L5-L9`] }], criteria: [0, 1].map((index) => ({ index, status: "met", evidenceRefs: ["inline"] })) }) } }],
-        });
-      }
-      return reply(JSON.stringify(goodOutput()), servedFor(sy!, req));
+      const source = JSON.stringify(req.messages);
+      const range = source.match(/q-[a-z0-9]+-fix-range-1/)?.[0];
+      const locate = source.match(/q-[a-z0-9]+-locate-validator-1/)?.[0];
+      const first = !req.messages.some(message => message.role === "tool");
+      if (range) return reply(null, { ...servedFor(sy!, req), toolCalls: [first
+        ? call("replace_in_file", { path: "src/range.js", old_text: "i <= end", new_text: "i < end" })
+        : call("submit_result", goodOutput(3, `${range}:src/range.js#L1-L6`))] });
+      if (first) return reply(null, { ...servedFor(sy!, req), toolCalls: [call("read_file", { alias: locate, path: "src/validation/address.js" })] });
+      return reply(null, { ...servedFor(sy!, req), toolCalls: [call("submit_result", {
+        summary: "checkAddress in src/validation/address.js decides it",
+        findings: [{ description: "checkAddress validates emails", evidenceRefs: [`${locate}:src/validation/address.js#L5-L9`] }],
+        criteria: [0, 1].map(index => ({ index, status: "met", evidenceRefs: [`${locate}:src/validation/address.js#L5-L9`] })),
+      })] });
     });
     sy = open(env, client, { worker: true, coding: createCodingRunner(env.cfg) });
     const run = await sy.qualifier.start("openrouter/vendor/big-a:free", { evalIds: ["fix-range", "locate-validator"], trials: 1 });
@@ -78,11 +83,22 @@ describe("qualification", () => {
   }, 120_000);
 
   it("a coding run that changes nothing fails grading", async () => {
-    env = makeEnv({ config: baseConfig({ coding: { runner: "command", command: `node "${agent}" noop` } }) });
-    sy = open(env, new ScriptedClient((req) => reply("{}", servedFor(sy!, req))), { worker: true, coding: createCodingRunner(env.cfg) });
+    env = makeEnv({ config: baseConfig({ coding: { runner: "native" } }) });
+    const client = new ScriptedClient(req => {
+      const alias = JSON.stringify(req.messages).match(/q-[a-z0-9]+-fix-range-1/)?.[0];
+      const first = !req.messages.some(message => message.role === "tool");
+      return reply(null, { ...servedFor(sy!, req), toolCalls: [{ id: first ? "read" : "submit", type: "function", function: {
+        name: first ? "read_file" : "submit_result", arguments: JSON.stringify(first ? { alias, path: "src/range.js" } : goodOutput(3, `${alias}:src/range.js#L1-L6`)),
+      } }] });
+    });
+    sy = open(env, client, { worker: true, coding: createCodingRunner(env.cfg) });
     const run = await sy.qualifier.start("openrouter/vendor/big-a:free", { evalIds: ["fix-range"], trials: 1 });
     await waitForRun(run.runId);
-    expect(qualificationBoard(sy).results[0]!.outcome).toBe("fail");
+    expect(qualificationBoard(sy).results[0]!).toMatchObject({ outcome: "fail", detail: { detail: expect.stringContaining("no patch") } });
+    expect(client.requests.filter(request => request.tools?.some(tool => tool.function.name === "read_file"))).toHaveLength(2);
+    const result = sy.tasks.get(qualificationBoard(sy).results[0]!.taskId!)!.result!;
+    expect(result.stopReason).toBe("worker_submitted");
+    expect(result.patchRefs).toHaveLength(0);
   }, 120_000);
 
   it("refuses to start beyond the daily qualification allocation", async () => {

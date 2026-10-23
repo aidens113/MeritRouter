@@ -48,6 +48,9 @@ export async function handle(fn: (sy: Switchyard) => Promise<unknown> | unknown)
 }
 
 export async function body<T extends z.ZodType>(req: Request, schema: T): Promise<z.infer<T>> {
+  if (req.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") {
+    throw new HttpError(415, "request body must use application/json");
+  }
   let raw: unknown;
   try {
     raw = await req.json();

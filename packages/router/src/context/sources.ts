@@ -92,18 +92,18 @@ export async function loadSources(
     });
   }
   for (const ref of spec.context.artifactRefs ?? []) {
-    const a = artifacts.read(ref);
-    if (!a) throw new Error(`unknown artifact ${ref}`);
+    const a = artifacts.readScoped(ref, cfg.brain.project);
     const text = a.content.toString("utf8");
     const pkg = a.row.kind === UPSTREAM_RESULTS_KIND ? parseUpstreamPackage(text) : null;
     if (pkg) {
+      if (pkg.taskId !== spec.id || pkg.dependencies.some(dependency => !(spec.dependsOn ?? []).includes(dependency.taskId))) throw new Error("upstream artifact does not belong to this task's declared dependencies");
       const block = renderUpstream(pkg, ref);
       sources.push({ ref, baseRef: ref, text: block, sha256: a.row.sha256, commit: null, dirty: false, totalLines: block.split("\n").length, upstream: true });
       // The upstreams' artifacts and patches join the evidence universe without being inlined.
-      for (const r of pkg.dependencies.flatMap((d) => [...d.artifactRefs, ...d.patchRefs])) {
+      for (const dependency of pkg.dependencies) for (const r of [...dependency.artifactRefs, ...dependency.patchRefs]) {
         if (sources.some((x) => x.baseRef === r)) continue;
-        const up = artifacts.read(r);
-        if (!up) continue;
+        const up = artifacts.readScoped(r, cfg.brain.project);
+        if (up.row.task_id !== dependency.taskId) throw new Error("upstream artifact owner differs from the declared dependency");
         sources.push({ ref: r, baseRef: r, text: "", sha256: up.row.sha256, commit: null, dirty: false, totalLines: up.content.toString("utf8").split("\n").length, referenceOnly: true });
       }
       continue;

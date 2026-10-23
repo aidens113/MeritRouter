@@ -215,8 +215,8 @@ describe("upstream results", () => {
     const tasks = new TaskStore(db);
     const artifacts = new ArtifactStore(db, env.cfg.storageDir);
     const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd }).toString().trim();
-    tasks.submit([{ id: "job", profile: "supervise", goal: "the job", repositoryAliases: ["core"], context: {}, constraints: { acceptanceCriteria: ["x"] } } as WorkerTask]);
-    tasks.submit([coding("up", ["src/**"], { label: "up" }), coding("down", ["src/**"], { label: "down", dependsOn: ["up"] }), inspect("reader", { dependsOn: ["up"] })]);
+    tasks.submit([{ id: "job", profile: "supervise", goal: "the job", repositoryAliases: ["core"], context: {}, constraints: { acceptanceCriteria: ["x"] } } as WorkerTask], { project: "demo" });
+    tasks.submit([coding("up", ["src/**"], { label: "up" }), coding("down", ["src/**"], { label: "down", dependsOn: ["up"] }), inspect("reader", { dependsOn: ["up"] })], { project: "demo" });
     tasks.claim("w", LIMITS);
 
     // The upstream worked in its own worktree and committed.
@@ -266,7 +266,7 @@ describe("upstream results", () => {
     const branch = `${env.cfg.supervisor.branch_prefix}job`;
     git(env.repo, "branch", branch, upHead);
     tasks.event("up", INTEGRATED_EVENT, { repository: "core", branch, head: upHead });
-    tasks.submit([coding("later", ["src/**"], { label: "later", dependsOn: ["up"] })]);
+    tasks.submit([coding("later", ["src/**"], { label: "later", dependsOn: ["up"] })], { project: "demo" });
     const later = await withUpstreamContext({ cfg: env.cfg, tasks, artifacts }, tasks.get("later")!);
     expect(tasks.events("later").find((e) => e.type === UPSTREAM_CONTEXT_EVENT)!.data).toMatchObject({ baseCommits: [{ alias: "core", commit: upHead, rule: "job_branch" }] });
     expect(renderSources(await loadSources(env.cfg, later.spec, artifacts))).toContain(`Integrated onto ${branch} (core)`);

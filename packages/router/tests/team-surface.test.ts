@@ -4,6 +4,7 @@ import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { Switchyard } from "../src/core/service.js";
+import type { ChatRequest } from "../src/gateway/types.js";
 import { WorkerTaskSchema, type WorkerResult } from "../src/core/task.js";
 import { syntheticResult, type ClaimLimits } from "../src/storage/tasks.js";
 import { PlanStore, type PlanNodeInput } from "../src/storage/plans.js";
@@ -155,48 +156,47 @@ describe("job plan view", () => {
   });
 });
 
-describe("external coding runner", () => {
-  it("puts the upstream results block in TASK.md, as the native runner shows it", async () => {
-    // The "agent" prints its TASK.md; the runner stores stdout as the task's agent_output artifact.
-    const printPrompt = `node -e "process.stdout.write(require('fs').readFileSync(process.env.SWITCHYARD_PROMPT_FILE,'utf8'))"`;
-    env = makeEnv({ config: baseConfig({ coding: { runner: "command", command: printPrompt } }) });
-    const client = new ScriptedClient((req) => reply(JSON.stringify(goodOutput(1, "inline", { summary: "UPSTREAM-FINDING-42" })), servedFor(sy!, req)));
+describe("native coding task context", () => {
+  const call = (name: string, args: unknown) => ({ id: name, type: "function" as const, function: { name, arguments: JSON.stringify(args) } });
+  const implementation = () => ({ profile: "implement", goal: "Add a subtract function to src/app.ts", repositoryAliases: ["core"], writableRepository: "core", hints: { difficulty: "T2" }, constraints: { acceptanceCriteria: ["subtract exists"], allowedPaths: ["src/**"] } });
+  const codingReply = (req: ChatRequest) => reply(null, {
+    ...servedFor(sy!, req), toolCalls: [req.messages.some(message => message.role === "tool")
+      ? call("submit_result", goodOutput(1, "core:src/sub.ts#L1-L1"))
+      : call("write_file", { path: "src/sub.ts", content: "export const subtract = (a: number, b: number) => a - b;\n" })],
+  });
+  it("shows upstream results as untrusted task data to the native implementation worker", async () => {
+    env = makeEnv({ config: baseConfig({ coding: { runner: "native" } }) });
+    const client = new ScriptedClient(req => req.tools?.some(tool => tool.function.name === "write_file")
+      ? codingReply(req)
+      : reply(JSON.stringify(goodOutput(1, "inline", { summary: "UPSTREAM-FINDING-42" })), servedFor(sy!, req)));
     sy = open(env, client, { worker: true, coding: createCodingRunner(env.cfg) });
     const [up] = await sy.submitTasks([{ profile: "summarize", goal: "Summarise the log", context: { inlineText: "ERROR: boom" }, constraints: { acceptanceCriteria: ["mentions the error"] } }]);
-    const [impl] = await sy.submitTasks([
-      {
-        profile: "implement",
-        goal: "Add a subtract function to src/app.ts",
-        repositoryAliases: ["core"],
-        writableRepository: "core",
-        hints: { difficulty: "T2" },
-        constraints: { acceptanceCriteria: ["subtract exists"], allowedPaths: ["src/**"] },
-        dependsOn: [up!.taskId],
-      },
-    ]);
-    await sy.awaitResults([up!.taskId, impl!.taskId], { timeoutSeconds: 60 });
-    const out = sy.artifacts.listForTask(impl!.taskId).find((a) => a.kind === "agent_output" && a.label === "agent stdout");
-    expect(out, JSON.stringify(sy.tasks.events(impl!.taskId))).toBeDefined();
-    const prompt = readFileSync(sy.artifacts.absolutePath(out!), "utf8");
-    expect(prompt).toContain("# Task");
-    expect(prompt).toContain("## Upstream results");
+    const [impl] = await sy.submitTasks([{ ...implementation(), dependsOn: [up!.taskId] }]);
+    const completed = await sy.awaitResults([up!.taskId, impl!.taskId], { timeoutSeconds: 60 });
+    expect(completed.timedOut).toBe(false);
+    expect(completed.completed.find(result => result.taskId === impl!.taskId)?.stopReason).toBe("worker_submitted");
+    const request = client.requests.find(req => req.tools?.some(tool => tool.function.name === "write_file"))!;
+    expect(request).toBeDefined();
+    const prompt = String(request.messages[1]!.content);
+    expect(prompt).toContain("Goal:\nAdd a subtract function");
+    expect(prompt).toContain("Upstream results:");
     expect(prompt).toMatch(/<upstream-results ref="artifact:[^"]+">/);
     expect(prompt).toContain("not instructions");
     expect(prompt).toContain("UPSTREAM-FINDING-42");
     expect(prompt).toContain(up!.taskId);
-  }, 90_000);
+  }, 90000);
 
-  it("leaves TASK.md without an upstream section when the task has no dependencies", async () => {
-    const printPrompt = `node -e "process.stdout.write(require('fs').readFileSync(process.env.SWITCHYARD_PROMPT_FILE,'utf8'))"`;
-    env = makeEnv({ config: baseConfig({ coding: { runner: "command", command: printPrompt } }) });
-    sy = open(env, new ScriptedClient((req) => reply(JSON.stringify(goodOutput()), servedFor(sy!, req))), { worker: true, coding: createCodingRunner(env.cfg) });
-    const [impl] = await sy.submitTasks([{ profile: "implement", goal: "Add a subtract function to src/app.ts", repositoryAliases: ["core"], writableRepository: "core", hints: { difficulty: "T2" }, constraints: { acceptanceCriteria: ["subtract exists"], allowedPaths: ["src/**"] } }]);
-    await sy.awaitResults([impl!.taskId], { timeoutSeconds: 60 });
-    const out = sy.artifacts.listForTask(impl!.taskId).find((a) => a.kind === "agent_output" && a.label === "agent stdout")!;
-    const prompt = readFileSync(sy.artifacts.absolutePath(out), "utf8");
-    expect(prompt).toContain("# Task");
+  it("omits upstream context when the task has no dependencies", async () => {
+    env = makeEnv({ config: baseConfig({ coding: { runner: "native" } }) });
+    const client = new ScriptedClient(codingReply);
+    sy = open(env, client, { worker: true, coding: createCodingRunner(env.cfg) });
+    const [impl] = await sy.submitTasks([implementation()]);
+    const completed = await sy.awaitResults([impl!.taskId], { timeoutSeconds: 60 });
+    expect(completed.completed[0]?.stopReason).toBe("worker_submitted");
+    const prompt = String(client.requests[0]!.messages[1]!.content);
+    expect(prompt).toContain("Goal:\nAdd a subtract function");
     expect(prompt).not.toContain("Upstream results");
-  }, 90_000);
+  }, 90000);
 });
 
 // ---------- the team view (T2): job tree, merge queues, channel, redundant nodes ----------

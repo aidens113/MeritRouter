@@ -30,7 +30,7 @@ describe("roadmap team correctness", () => {
 
   it("inherits parent scope and rejects wider nested delegation and direct supervisor edits", async () => {
     let command = "";
-    const cfg = baseConfig({ supervisor: { implementation: "allowed", allowed_commands: ["node *"] }, team: { max_depth: 3, default_task_requests: 2 }, routing: { escalate_on_failure: false } });
+    const cfg = baseConfig({ security: { outside_repository: "supervisor" }, supervisor: { implementation: "allowed", allowed_commands: ["node *"] }, team: { max_depth: 3, default_task_requests: 2 }, routing: { escalate_on_failure: false } });
     (cfg.profiles as Record<string, unknown>).supervise = { mode: "supervisor", tools: "supervisor", min_total_parameters_b: 100, max_model_requests: 40, max_output_tokens: 4000, classify: "never", min_tier: "T3" };
     env = makeEnv({ config: cfg });
     const script = path.join(env.dir, "write-outside.cjs");
@@ -96,15 +96,15 @@ describe("roadmap team correctness", () => {
     expect(out.pending).toEqual([]);
   });
 
-  it("passes explicit inline, pinned file slices and artifacts to an external TASK.md", async () => {
+  it("passes explicit inline, pinned file slices and scoped artifacts to a native worker", async () => {
     env = makeEnv({ config: baseConfig({ repositories: { core: { path: "repo" }, reference: { path: "repo", writable: false } } }) });
-    const script = path.join(env.dir, "context-agent.mjs");
-    writeFileSync(script, `import {readFileSync,appendFileSync} from 'node:fs'; console.log(readFileSync(process.env.SWITCHYARD_PROMPT_FILE,'utf8')); appendFileSync('src/app.ts','\\n// external edit\\n');`);
-    env.cfg.coding.runner = "command";
-    env.cfg.coding.command = `"${process.execPath}" "${script}"`;
+    env.cfg.coding.runner = "native";
     env.cfg.routing.escalate_on_failure = false;
-    sy = open(env, new ScriptedClient(() => { throw new Error("no provider calls expected"); }));
-    const artifact = sy.artifacts.write({ taskId: null, kind: "context", label: "explicit context", content: "ARTIFACT_CONTEXT_SENTINEL" });
+    const client = new ScriptedClient(req => reply(null, { ...servedFor(sy!, req), toolCalls: [{ id: "submit", type: "function", function: { name: "submit_result", arguments: JSON.stringify(goodOutput(1, "core:src/app.ts#L2-L2")) } }] }));
+    sy = open(env, client);
+    const owner = sy.tasks.submit([WorkerTaskSchema.parse(summarizeTask({ id: "context-owner" }))], { project: "demo" })[0]!.taskId;
+    sy.db.prepare("UPDATE tasks SET state='cancelled' WHERE id=?").run(owner);
+    const artifact = sy.artifacts.write({ taskId: owner, kind: "context", label: "explicit context", content: "ARTIFACT_CONTEXT_SENTINEL" });
     const [sub] = await sy.submitTasks([{
       profile: "implement", goal: "Read provided context", repositoryAliases: ["core", "reference"], writableRepository: "core", hints: { difficulty: "T2" },
       context: { inlineText: "INLINE_CONTEXT_SENTINEL", fileRefs: ["core:src/app.ts#L2-L2", "reference:README.md#L1-L1"], artifactRefs: [artifact] },
@@ -115,7 +115,8 @@ describe("roadmap team correctness", () => {
     start();
     const result = (await sy.awaitResults([sub!.taskId], { timeoutSeconds: 20 })).completed[0]!;
     expect(result).toBeDefined();
-    const output = result.artifactRefs.map(ref => sy!.artifacts.read(ref)).find(a => a?.row.kind === "agent_output" && a.row.label === "agent stdout")!.content.toString();
+    expect(result.stopReason).toBe("worker_submitted");
+    const output = String(client.requests[0]!.messages[1]!.content);
     expect(output).toContain("INLINE_CONTEXT_SENTINEL");
     expect(output).toContain("ARTIFACT_CONTEXT_SENTINEL");
     expect(output).toContain('ref="core:src/app.ts#L2-L2"');
@@ -123,6 +124,6 @@ describe("roadmap team correctness", () => {
     expect(output).toContain('ref="reference:README.md#L1-L1"');
     expect(output).toContain("# Fixture");
     expect(output).not.toContain("DIRTY_SOURCE_SHOULD_NOT_LEAK");
-    expect(result.usage.modelRequests).toBe(0);
+    expect(result.usage.modelRequests).toBe(client.requests.length);
   }, 30_000);
 });

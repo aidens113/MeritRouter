@@ -18,8 +18,9 @@ import { reviewerQualification } from "../qualification/stats.js";
 import { RepoReader } from "../context/repo-reader.js";
 import { loadSources, readersFor, renderSources } from "../context/sources.js";
 import { checkEvidenceRef, evidenceUniverse, type EvidenceUniverse } from "../core/worker-output.js";
-import { ARTIFACT_REF_RE, FILE_REF_RE, type ReviewRecord, type WorkerResult } from "../core/task.js";
+import { ARTIFACT_EVIDENCE_REF_RE, FILE_REF_RE, type ReviewRecord, type WorkerResult } from "../core/task.js";
 import { runAgentLoop, type TerminalTool } from "../harness/loop.js";
+import { workerActionTools } from "../harness/worker-action-tools.js";
 import { artifactTool, repoTools, type HarnessEnv, type HarnessTool } from "../harness/tools.js";
 import { agentLabel, charterFor } from "../roles/index.js";
 import type { RunContext, RunOutcome } from "../runners/types.js";
@@ -113,7 +114,7 @@ export interface VerdictExpectations {
 }
 
 function refWellFormed(ref: string): boolean {
-  return ref === "inline" || FILE_REF_RE.test(ref) || ARTIFACT_REF_RE.test(ref);
+  return ref === "inline" || FILE_REF_RE.test(ref) || ARTIFACT_EVIDENCE_REF_RE.test(ref);
 }
 
 /** Validate a verdict: shape (zod), then coverage, binding, evidence, and internal consistency. */
@@ -279,7 +280,7 @@ export async function runReviewSession(i: ReviewSessionInput): Promise<ReviewSes
   const { ctx } = i;
   const universe = evidenceUniverse(i.given);
   const env: HarnessEnv = { ctx, role: "reviewer", readers: i.readers, universe, allowArtifacts: true, edits: new Set() };
-  const tools: HarnessTool[] = [...(i.readers.size ? repoTools([...i.readers.keys()]) : []), artifactTool(), ...webTools()];
+  const tools: HarnessTool[] = [...(i.readers.size ? repoTools([...i.readers.keys()]) : []), artifactTool(), ...webTools(), ...workerActionTools()];
   const maxTokens = Math.min(ctx.profile.max_output_tokens, 4000);
   const limits = planLimits(ctx.plan, ctx.cfg.routing.max_endpoint_fallbacks);
   const inputBudget = Math.max(2000, limits.contextLimitTokens - maxTokens - estimateTokens([], [...tools.map((t) => t.def), SUBMIT_VERDICT_DEF]) - 500);
@@ -305,7 +306,7 @@ export async function runReviewSession(i: ReviewSessionInput): Promise<ReviewSes
   ctx.gate.admission.finishExecution(executionId, loop.kind);
   if (loop.kind === "terminal") return { kind: "verdict", verdict: loop.value, transcript: loop.messages };
   if (loop.kind === "budget_exhausted") return { kind: "budget_exhausted", transcript: loop.messages };
-  return { kind: "invalid", errors: loop.errors, transcript: loop.messages };
+  return { kind: "invalid", errors: loop.kind === "stalled" ? [loop.reason] : loop.errors, transcript: loop.messages };
 }
 
 // ---------- the review phase ----------

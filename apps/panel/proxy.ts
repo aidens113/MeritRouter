@@ -22,6 +22,22 @@ async function gate(req: NextRequest): Promise<NextResponse | null> {
 }
 
 export async function proxy(req: NextRequest) {
+  // Settings and operator approvals are human authority. A page on another origin must
+  // never be able to submit them with the user's panel session (or loopback access).
+  if (!["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+    const origin = req.headers.get("origin");
+    const site = req.headers.get("sec-fetch-site");
+    // Next normalizes nextUrl's host to localhost on loopback deployments. The browser
+    // sends its actual request authority in Host; compare against that authority.
+    let sameOrigin = origin === null;
+    if (origin !== null) {
+      try { sameOrigin = origin === new URL(`${req.nextUrl.protocol}//${req.headers.get("host") ?? req.nextUrl.host}`).origin; }
+      catch { sameOrigin = false; }
+    }
+    if (!sameOrigin || site === "cross-site") {
+      return NextResponse.json({ ok: false, error: "Cross-origin actions are not allowed" }, { status: 403 });
+    }
+  }
   const stopped = await gate(req);
   if (stopped) return stopped;
   // The request's path, for layouts (they are not given it): app/p/[slug]/layout.tsx lets an

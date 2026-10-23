@@ -6,9 +6,11 @@ import { git } from "../workspaces/git.js";
 import { commitAs } from "../attribution/index.js";
 import { agentLabel } from "../roles/index.js";
 import { commandAllowed } from "../harness/tools.js";
-import { minimalEnv, runProcess } from "../runners/coding/process.js";
+// A reviewer is a worker: no reviewer-authored command may execute on the host without a supervisor.
 import type { ReviewRecord, WorkerResult } from "../core/task.js";
 import type { RetryContext } from "../runners/types.js";
+import type { RunContext } from "../runners/types.js";
+import { awaitWorkerCommand, workerSourceIdentity } from "../harness/worker-actions.js";
 
 /**
  * What verification does after a verdict: one bounded repair that continues from the submitted
@@ -117,7 +119,7 @@ export function targetedCheckAllowed(cfg: ResolvedConfig, declared: string[]): (
  * records (appended to the result's checks) or an explanation.
  */
 export async function runTargetedChecks(
-  d: { cfg: ResolvedConfig; db: Db; artifacts: ArtifactStore; signal: AbortSignal },
+  d: { cfg: ResolvedConfig; db: Db; artifacts: ArtifactStore; signal: AbortSignal; context?: RunContext },
   task: StoredTask,
   result: Pick<WorkerResult, "checks">,
   revision: string | null,
@@ -138,9 +140,11 @@ export async function runTargetedChecks(
   const records: WorkerResult["checks"] = [];
   for (const command of commands.slice(0, 3)) {
     if (!allowed(command)) continue;
-    const r = await runProcess(command, [], { cwd: ws.worktree_path, env: minimalEnv({ CI: "1" }), timeoutMs: d.cfg.execution.check_timeout_seconds * 1000, signal: d.signal, shell: true });
-    const logRef = d.artifacts.write({ taskId: task.row.id, kind: "check_log", label: `targeted: ${command}`, content: `$ ${command}\nexit ${r.exitCode}${r.killed ? ` (killed: ${r.killed})` : ""}\nrevision ${revision}\n(targeted check requested by the reviewer)\n\n${r.stdout}\n${r.stderr}`, extension: ".log" });
-    records.push({ command, exitCode: r.killed ? null : r.exitCode, logRef, revision, ...(artifactDigest ? { artifactDigest } : {}) });
+    if (!d.context) return { records, note: "targeted check lacks its captured execution context; no host command ran" };
+    const action = await awaitWorkerCommand(d.context, { command, cwd: ws.worktree_path, invocationId: `targeted:${d.context.session?.id ?? task.row.run_count}:${result.checks.length}:${records.length}`, timeoutMs: d.cfg.execution.check_timeout_seconds * 1000, reason: "Independent reviewer requested this exact targeted check; supervisor host authority is required." });
+    const unchanged = action.action.source === await workerSourceIdentity(ws.worktree_path);
+    const logRef = d.artifacts.write({ taskId: task.row.id, kind: "check_log", label: `targeted: ${command}`, content: `${action.output ?? `Supervisor action ${action.id}: ${action.status}`}\nrevision ${revision}`, extension: ".log" });
+    records.push({ command, exitCode: unchanged && action.status === "completed" ? action.exitCode : null, logRef, revision, ...(artifactDigest ? { artifactDigest } : {}) });
   }
   return { records, note: records.length ? `targeted check(s) ran on ${revision.slice(0, 12)}: ${records.map((c) => `${c.command} -> ${c.exitCode ?? "killed"}`).join("; ")}` : "no requested check is declared or allowed; nothing ran" };
 }

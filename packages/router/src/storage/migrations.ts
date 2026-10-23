@@ -931,4 +931,18 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE request_charges ADD COLUMN lease_incarnation TEXT;
   ALTER TABLE request_charges ADD COLUMN run_count INTEGER;
   `,
+  // Exact, generation-bound supervisor actions; never a blanket worker host permission.
+  `
+  CREATE TABLE worker_action_requests(
+    id TEXT PRIMARY KEY, project_id TEXT NOT NULL, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    request_key TEXT NOT NULL, value_json TEXT NOT NULL CHECK(length(CAST(value_json AS BLOB))<=100000),
+    created_at INTEGER NOT NULL, UNIQUE(project_id,request_key)
+  );
+  CREATE INDEX worker_actions_scope ON worker_action_requests(project_id,task_id,created_at);
+  `,
+  // Persist original model authority through queued Lab dispatch and service restarts.
+  `
+  ALTER TABLE lab_operations ADD COLUMN authority_json TEXT;
+  ALTER TABLE lab_services ADD COLUMN authority_json TEXT;
+  `,
 ];

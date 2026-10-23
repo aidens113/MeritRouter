@@ -4,6 +4,8 @@ import { SwitchyardError } from "../core/errors.js";
 import { LabNameSchema } from "./recipe.js";
 import type { LabRecord } from "./store.js";
 import { LabsStore } from "./store.js";
+import { LeaseRefSchema, type LeaseRef } from "../storage/lease-ref.js";
+import { parseLabAuthority } from "./control-authority.js";
 export const LabControlProjectSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]*$/);
 const Heads = z.record(z.string().min(1), z.string().regex(/^[a-f0-9]{40,64}$/));
 export const LabOperationInputSchema = z.discriminatedUnion("kind", [
@@ -16,6 +18,7 @@ export const LabOperationInputSchema = z.discriminatedUnion("kind", [
 export type LabOperationInput = z.infer<typeof LabOperationInputSchema>;
 const Row = z.object({ id: z.string(), lab_id: z.string().nullable(), project_id: LabControlProjectSchema, lab_name: LabNameSchema, kind: z.string(), input_json: z.string(), state: z.enum(["pending", "running", "completed", "failed"]), requested_by: z.string(), owner_id: z.string().nullable(), lease_until: z.number(), result_json: z.string().nullable(), error_code: z.string().nullable(), error_message: z.string().nullable(), created_at: z.number(), updated_at: z.number() });
 export interface LabOperation {
+  taskLease: LeaseRef | null;
   id: string;
   labId: string | null;
   project: string;
@@ -31,11 +34,12 @@ export interface LabOperation {
 }
 function hydrate(raw: unknown): LabOperation {
   const r = Row.parse(raw);
-  return { id: r.id, labId: r.lab_id, project: r.project_id, name: r.lab_name, input: LabOperationInputSchema.parse(JSON.parse(r.input_json)), state: r.state, requestedBy: r.requested_by, result: r.result_json ? JSON.parse(r.result_json) : null, errorCode: r.error_code, errorMessage: r.error_message, createdAt: r.created_at, updatedAt: r.updated_at };
+  const proof = z.object({ authority_json: z.string().nullable() }).parse(raw);
+  return { taskLease: parseLabAuthority(proof.authority_json), id: r.id, labId: r.lab_id, project: r.project_id, name: r.lab_name, input: LabOperationInputSchema.parse(JSON.parse(r.input_json)), state: r.state, requestedBy: r.requested_by, result: r.result_json ? JSON.parse(r.result_json) : null, errorCode: r.error_code, errorMessage: r.error_message, createdAt: r.created_at, updatedAt: r.updated_at };
 }
 export class LabControl {
   private processing = new Set<string>();
-  constructor(readonly store: LabsStore, readonly owner: string, readonly execute: (project: string, name: string, input: LabOperationInput) => Promise<unknown>, readonly available: (project: string, name: string) => boolean = () => true) {
+  constructor(readonly store: LabsStore, readonly owner: string, readonly execute: (project: string, name: string, input: LabOperationInput, taskLease: LeaseRef | null, requestedBy: string) => Promise<unknown>, readonly available: (project: string, name: string) => boolean = () => true, readonly authorize: (project: string, taskLease: LeaseRef | null) => void = (_project, lease) => { if (lease) throw new SwitchyardError("lab_scope_denied", "model controls require a trusted authority validator"); }) {
   }
   activeOwner(labId: string): string | null {
     const owners = new Set(this.store.services(labId).filter(s => s.owner_id && s.owner_until > Date.now() && ["running", "starting", "backoff"].includes(s.state)).map(s => s.owner_id!));
@@ -46,11 +50,15 @@ export class LabControl {
       throw new SwitchyardError("lab_owner_conflict", "lab services have conflicting live owners");
     return [...owners][0] ?? null;
   }
-  submit(project: string, name: string, input: LabOperationInput, by: string): LabOperation {
+  submit(project: string, name: string, input: LabOperationInput, by: string, taskLease?: LeaseRef): LabOperation {
     LabControlProjectSchema.parse(project);
     LabNameSchema.parse(name);
     const parsed = LabOperationInputSchema.parse(input);
     z.string().min(1).max(200).parse(by);
+    const lease = taskLease ? LeaseRefSchema.parse(taskLease) : null;
+    if (by.startsWith("task:") && (!lease || by !== `task:${lease.taskId}` || project !== lease.project)) throw new SwitchyardError("lab_scope_denied", "model Lab controls require their original captured task lease");
+    if (lease && by !== `task:${lease.taskId}`) throw new SwitchyardError("lab_scope_denied", "Lab actor and captured task authority differ");
+    if (lease && parsed.kind === "promote" && parsed.by !== "supervisor") throw new SwitchyardError("lab_scope_denied", "model Lab promotion cannot impersonate a human or automatic operator");
     const lab = this.store.get(project, name);
     if(lab?.kind==="task_attempt")throw new SwitchyardError("lab_scope_denied","public controls cannot mutate a task-owned Lab");
     if (parsed.kind !== "create" && (!lab || lab.state === "destroyed"))
@@ -58,7 +66,7 @@ export class LabControl {
     if (parsed.kind === "create" && lab)
       throw new SwitchyardError("lab_conflict", "lab name already exists");
     const id = newId("lop"), now = Date.now();
-    this.store.db.prepare("INSERT INTO lab_operations(id,lab_id,project_id,lab_name,kind,input_json,state,requested_by,created_at,updated_at) VALUES(?,?,?,?,?,?,'pending',?,?,?)").run(id, lab?.id ?? null, project, name, parsed.kind, JSON.stringify(parsed), by, now, now);
+    this.store.db.prepare("INSERT INTO lab_operations(id,lab_id,project_id,lab_name,kind,input_json,state,requested_by,created_at,updated_at,authority_json) VALUES(?,?,?,?,?,?,'pending',?,?,?,?)").run(id, lab?.id ?? null, project, name, parsed.kind, JSON.stringify(parsed), by, now, now, lease ? JSON.stringify(lease) : null);
     if (lab)
       this.store.event(lab.id, "operation_requested", { id, kind: parsed.kind, by });
     return this.get(project, name, id)!;
@@ -96,8 +104,11 @@ export class LabControl {
     const timer = setInterval(() => this.store.db.prepare("UPDATE lab_operations SET lease_until=?,updated_at=? WHERE id=? AND owner_id=? AND state='running'").run(Date.now() + 120000, Date.now(), claimed.id, this.owner), 10000);
     timer.unref();
     try {
+      if (claimed.requestedBy.startsWith("task:") && (!claimed.taskLease || claimed.requestedBy !== `task:${claimed.taskLease.taskId}`)) throw new SwitchyardError("lab_scope_denied", "legacy model Lab operation has no trustworthy captured authority");
+      if (claimed.taskLease && claimed.input.kind === "promote" && claimed.input.by !== "supervisor") throw new SwitchyardError("lab_scope_denied", "queued model promotion cannot impersonate a human or automatic operator");
+      this.authorize(project, claimed.taskLease);
       const recoveredCreate = claimed.state === "running" && claimed.input.kind === "create" && lab && ["stopped", "running"].includes(lab.state);
-      const result = recoveredCreate ? { recovered: true, labId: lab.id } : lab?.state === "destroyed" && claimed.input.kind === "destroy" ? { destroyed: true } : await this.execute(project, name, claimed.input);
+      const result = recoveredCreate ? { recovered: true, labId: lab.id } : lab?.state === "destroyed" && claimed.input.kind === "destroy" ? { destroyed: true } : await this.execute(project, name, claimed.input, claimed.taskLease, claimed.requestedBy);
       const actual = this.store.get(project, name);
       this.store.db.prepare("UPDATE lab_operations SET state='completed',lab_id=?,result_json=?,lease_until=0,updated_at=? WHERE id=? AND owner_id=?").run(actual?.id ?? null, JSON.stringify(result ?? null), Date.now(), claimed.id, this.owner);
       if (actual)

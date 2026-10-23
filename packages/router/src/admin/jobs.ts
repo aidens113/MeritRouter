@@ -83,7 +83,7 @@ export function jobDetail(sy: Switchyard, id: string, opts: { transcript?: boole
   const t = sy.tasks.get(id);
   if (!t || t.spec.profile !== "supervise") return null;
   const rec = jobRecord(sy, id, opts.transcript !== false);
-  const children = (sy.db.prepare("SELECT id FROM tasks WHERE json_extract(spec_json, '$.parentTaskId') = ? ORDER BY created_at").all(id) as { id: string }[]).map((c) => {
+  const children = (sy.db.prepare("SELECT id FROM tasks WHERE json_extract(spec_json, '$.parentTaskId') = ? AND project_id = ? ORDER BY created_at").all(id, t.row.project_id) as { id: string }[]).map((c) => {
     const ct = sy.tasks.get(c.id)!;
     return { taskId: c.id, label: ct.spec.label ?? null, profile: ct.spec.profile, state: ct.row.state, acceptance: ct.result?.acceptanceStatus ?? null };
   });

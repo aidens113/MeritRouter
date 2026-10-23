@@ -1,4 +1,4 @@
-# Handoff: state of every effort (2026-10-22)
+# Handoff: state of every effort (2026-10-23)
 
 Written for the next agent (Codex or Claude Code) picking this repository up cold. Read this,
 then `AGENTS.md`, then the `Current State` of the effort you work on. Every effort below has its
@@ -6,10 +6,21 @@ own working document with decisions, phases, ledger, and reports.
 
 ## Current audit (2026-10-23)
 
-[Post-change fix audit](post-change-fix-audit.md) owns the newest corrective plan for dev 371875a
-and the uncommitted live-run fixes. Fresh recursive typecheck passes; focused Router checks
-are 83 passed / 1 failed. Repeat-cache stale reads are reproduced; read-only shell containment and
-revision/evidence recovery require fixes. No product changes or live deployment in this audit.
+[Correctness and panel flows](correctness-and-panel-flows.md) owns user-authorized execution of
+the [post-change fix audit](post-change-fix-audit.md). Source on feat/post-change-corrections
+includes the preserved live-run fixes, default human-only outside-action policy, disabled and
+supervisor alternatives, one-shot broker decisions, worker/external-runner fail-closed containment,
+queued Lab authority, fresh repeat observations and recovered evidence. Job overview links children;
+job-wide Requests and scoped task/request/session navigation plus Security settings are implemented.
+Recursive typecheck/build pass; production-demo browser/API and live DOM acceptance pass. Full
+suite1150passed/15failed/2Linuxskips was corrected; final affected162/162 pass. Installed package
+CLI/MCP42tools/bundled panel and live approval pass (1324ms, no reload/browser errors). Final
+native/resume61/61 and package operations16/16 pass. Final fingerprinted package reinstalls
+without warning; live approval1220ms passes. Owned demo/package panels and Chrome stopped.
+Corrective source commit1092881 is accepted; publication receipt follows. No live deployment.
+External autonomous coding runners and automatic worker Task Lab execution
+remain deliberately unavailable without enforced sandbox/durable execution proof. Native editing
+and exact approved ordinary checks remain supported. Read the execution document's current state.
 Older source/deployment/active-worker snapshots below are historical; current live processes
 were not inspected. Read the audit before treating those snapshots as current acceptance.
 

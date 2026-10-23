@@ -1,3 +1,4 @@
+import { assertLabEffect } from "./control-authority.js";
 import path from "node:path";
 import { realpathSync } from "node:fs";
 import { z } from "zod";
@@ -6,7 +7,7 @@ import { ProjectConfigSchema } from "../projects/schema.js";
 import { immediate, newId } from "../storage/db.js";
 import { TaskStore } from "../storage/tasks.js";
 import { isTerminal } from "../core/task.js";
-import { dirtyPaths, git } from "../workspaces/git.js";
+import { dirtyPaths, git as unguardedGit } from "../workspaces/git.js";
 import { quoteShellArg } from "../runners/coding/process.js";
 import { LabCheckResultSchema, type LabCheckResult } from "./checks.js";
 import { SwitchyardError } from "../core/errors.js";
@@ -210,4 +211,11 @@ export async function promoteLab(manager: LabManager, project: string, name: str
     manager.options.db.prepare("DELETE FROM lab_target_locks WHERE holder_id=?").run(id);
     manager.store.event(status.lab.id, "promotion_finished", { id, state: result.state });
   }
+}
+
+async function git(...args: Parameters<typeof unguardedGit>): Promise<string> {
+  assertLabEffect();
+  const result = await unguardedGit(...args);
+  assertLabEffect();
+  return result;
 }

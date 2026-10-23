@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { z } from "zod";
 import path from "node:path";
 import type { Db } from "./db.js";
 import { newId } from "./db.js";
@@ -80,6 +81,20 @@ export class ArtifactStore {
     const row = this.get(ref);
     if (!row) return undefined;
     return { row, content: readFileSync(this.absolutePath(row)) };
+  }
+
+  /** Authorize the indexed owner before touching artifact bytes; null/shared owners grant no project access. */
+  readScoped(ref: string, project: string): { row: ArtifactRow; content: Buffer } {
+    const row = this.get(ref);
+    const owner = row?.task_id ? z.object({ project_id: z.string() }).safeParse(this.db.prepare("SELECT project_id FROM tasks WHERE id=?").get(row.task_id)) : null;
+    if (!row || !owner?.success || owner.data.project_id !== project) throw new Error("artifact is unavailable in this project");
+    const root = realpathSync(this.root);
+    const file = realpathSync(this.absolutePath(row));
+    const relative = path.relative(root, file);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("artifact is unavailable in this project");
+    const content = readFileSync(file);
+    if (content.length !== row.bytes || createHash("sha256").update(content).digest("hex") !== row.sha256) throw new Error("artifact integrity check failed");
+    return { row, content };
   }
 
   listForTask(taskId: string): ArtifactRow[] {

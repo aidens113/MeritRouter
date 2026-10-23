@@ -8,6 +8,12 @@
 
 ## Current State
 
+2026-10-23: latest corrective source and offline acceptance are recorded in
+[Correctness and panel flows](correctness-and-panel-flows.md). Earlier live results below are
+historical and do not establish current panel/MCP process versions. This corrective effort used
+only temp repositories/configuration and the demo; no real providers, downstream projects or
+actual4477 deployment were operated. Outside actions now default to human-only approval.
+
 **Environment (2026-10-21):** the user's install at `D:\SwitchYard` (config
 `switchyard.config.yaml`, standalone-free preset, paid routing off), one Ollama Cloud key
 (`free_tier`, free plan), projects `my-project` (`D:\my-app`) and `tetris` (`D:\SwitchYardTests`).
@@ -39,6 +45,80 @@ from git locally (`.git/info/exclude`): the `claude mcp add --scope local` entry
 - 1ba099c panel auto-start: the MCP server and `switchyard worker` start the panel when
   nothing answers on `panel.port`; `switchyard panel`; MCP `panel` tool; URL in the server's
   instructions.
+- Current follow-up (2026-10-22, uncommitted): user observed an Ollama Cloud 402 plan refusal
+  shown as `waiting_for_capacity`. The existing HTTP classifier already recognizes the message
+  as `not_in_plan`; the disposition layer incorrectly treats its shared `pool_exhausted` gateway
+  kind as retryable capacity after fallback. The fix preserves fallback, then ends an exhausted
+  model-plan refusal as `gateway_not_in_plan`. Separately, scheduler tick failures were silently
+  swallowed and permanently stopped claims; the worker now logs and retries with bounded backoff.
+  Focused validation: 39 tests across scheduler, provider errors, and project disposition pass.
+  The optional LLM diagnosis for genuinely unrecognized provider messages is not implemented:
+  these known status/code patterns remain deterministic, and any model-based diagnosis must use
+  Gate and must never override authoritative HTTP/status/accounting facts. Router typecheck/build
+  and the new execution regression pass. Two default-parallel full-suite runs each hit the
+  120-second timeout in the existing long `task-recovery-retention.test.ts` case; it passed alone
+  (10/10, 59.95 s). The full suite then passed with bounded parallelism:
+  `npx vitest run --maxWorkers=2 --minWorkers=2` (107 files, 1,092 passed, 2 skipped).
+- Supervisor submission incident (2026-10-22): SwitchYard job
+  `t_0mvkcn4s2a693fac65bd2` surfaced a workflow defect while the user's requested clone work was
+  active. The `inspect` worker had repository-only tools, so it searched for a *declared*
+  Node version rather than obtaining the running runtime; it repeated overlapping searches and
+  exhausted its 20-request execution budget before `submit_result`. A second inspect task had
+  no command tool either and reported that limitation correctly in two requests. A later
+  `implement` probe successfully ran `node --version` and `pnpm --version` in its first two
+  command calls, but its first result cited check-log artifacts in unsupported
+  `artifact:<id>#L<n>` form; `checkEvidenceRef` accepted only file refs. After reading the logs
+  and submitting valid refs, verification treated
+  the report-only implement task's zero-file diff as `output_contract` failure, escalated it, and
+  the retry edited `package.json` despite the goal being only to report versions. This is the
+  substantive failure: SwitchYard had the answer but its tool and task contracts prevented the
+  answer from completing cleanly. Model size was not the primary cause.
+  The first inspect task used 41 requests across its T1-to-T2 retry; the second used 3. The
+  implement probe then used 20 requests in its T2-to-T3 retry path before cancellation.
+  Task-level usage for the first inspect task showed 413,773 input / 14,400 output tokens and zero cached; the
+  panel also showed 285,165 new input, which does not reconcile with total input and zero cached
+  and remains a metrics discrepancy. The supervisor itself had an uncapped request pool.
+  Fix: read-only tasks may run only exact checks declared in their brief (single repository),
+  and their check result is retained for verification. The log can now be cited as `artifact:<id>`
+  evidence. Inspector and supervisor instructions distinguish runtime queries from repository
+  metadata and prohibit repeated searches when the necessary capability is absent. Shell remains
+  policy-gated; no arbitrary shell access is granted. Regression test:
+  `packages/router/tests/readonly-checks.test.ts` passes, including refusal of an undeclared
+  compound command, exact `node --version` execution, and artifact-evidence acceptance. The
+  existing `ollama-cloud` provider config
+  has `promptCache: "none"`, so zero cached input is expected for that provider; this does not
+  explain the inconsistent “new input” aggregate.
+  The redundant version-probe child and clone parent were cancellation-requested; the installed
+  worker was stopped to prevent further requests. The clone repository itself was left untouched.
+- Repeat-loop follow-up (2026-10-23): the models could see prior tool results; the harness was
+  executing exact duplicate calls before warning the model, so the warning alone could not stop
+  wasted requests. The guard now canonicalizes JSON argument keys and stops stable exact repeats
+  before execution, while explicit dynamic tools (`await_tasks`, budget requests) retain their
+  own state-aware behavior. Successful edits/commands invalidate older signatures so a failed
+  check can be retried after the workspace changes, but an immediate duplicate remains blocked.
+  A live clone attempt exposed this edge: `pnpm build` failed, install succeeded, and the identical
+  build was then incorrectly blocked; the invalidation fix covers it. That root job ended failed
+  with `repeated_tool_call:run_check` after 68 model requests/75 tool calls. Its status could not
+  be resumed because it was already failed. After the authorized MCP process restart, its tool
+  catalog did not reconnect; the same configured SwitchYard install is being operated through
+  the local CLI instead. Full router suite: 108 files, 1,096 passed, 2 skipped; typecheck and
+  build passed. Fresh job `t_0mvkoxhjr81f88ce4245a` started from the empty `e307174` baseline
+  with `pnpm test` and `pnpm build` declared as checks. Initial status: running, 3 execution
+  requests, $0 reported, no child tasks yet; project-scoped worker PID 8508 is confirmed active.
+  The fresh job failed after 46 model requests ($0 reported; no provider request failures): the
+  scaffold session stopped on `repeated_tool_call:read_file`, and the supervisor stopped on
+  `repeated_tool_call:delegate`. The guard prevented re-execution but its immediate stop made both
+  tasks fail. The delegate transcript shows the model sent a JSON-stringified task array while the
+  handler accepted arrays only, returning `tasks is empty`; the scaffold reread unchanged
+  `package.json` after a successful read. The 13-file scaffold remains only in the failed,
+  isolated SwitchYard worktree; the target repository is still the clean `e307174` baseline.
+  Follow-up fix: delegate/plan parsing now accepts JSON-stringified object arrays with Zod
+  validation; a first exact replay of a successful read/idempotent result returns the cached
+  result and allows progress, while a further repeat still stops. Side-effecting calls remain
+  protected. Initial timeline also showed two distinct undeclared supervisor environment checks
+  and an undeclared `pnpm typecheck` in the scaffold task; they were refused without execution.
+  Focused regression tests (28) and `pnpm -r typecheck` pass; the full Router suite is running.
+  No job-wide request cap was added; paid routing remains off.
 
 **Ollama Cloud free plan (probed 2026-10-21, one 1-token request per model):** included: beam,
 minimax-m3.1-flash, nemotron-3-super, gpt-oss:120b (all >= 100B), gemma4:31b,
@@ -187,6 +267,43 @@ Packaging and Labs decisions remain separately scoped; see handoff.md Remaining-
   on demo ports 4591 with screenshots (reviewed); Codex `mcp list`/`get` with a temp CODEX_HOME;
   live panel models page: 0 "Quarantined", 28 "Not available with your keys".
 - Outcome: Accepted
+
+### 2026-10-23 — stop exact repeat calls and recover the clone run
+- Agent: senior supervisor
+- Changed: `packages/router/src/harness/loop.ts`, tool repeat policies, runner/verification
+  propagation, related regression tests, and the live-run error handling documented above.
+- Why: the clone supervisor repeated a failed `run_check` despite having its output, consuming
+  requests without progressing; the user asked to fix the loop rather than cap the job.
+- Validation: full Router suite, 108 files / 1,096 passed / 2 skipped; `pnpm -r typecheck`;
+  `pnpm -r build`; `git diff --check` passed before adding the ledger and will be rerun after it.
+- Outcome: repeat guard validated; fresh clone job `t_0mvkoxhjr81f88ce4245a` started and is being
+  monitored. It failed before completing any task; its isolated scaffold was not merged into the
+  target repository.
+
+### 2026-10-23 — fresh clone job checkpoint
+- Agent: senior supervisor
+- Changed: no clone files in the source repository; SwitchYard writes only to its isolated job
+  worktrees. Recorded the new runtime findings above.
+- Why: verify the exact-repeat guard and watch the requested fresh clone job without imposing a
+  job-wide request cap.
+- Validation: CLI job/session/metrics inspection confirms the root remains based on `e307174`;
+  after 46 requests the job failed before any task completed. Two identical-call stops were
+  observed; the tool calls were not re-executed. Three distinct undeclared `run_check` commands
+  were refused. Reported cost $0; paid routing remains off.
+- Outcome: failed; no clone acceptance, tests, build, or browser behavior verified.
+
+### 2026-10-23 — recover from cached-read and serialized-delegation failures
+- Agent: senior supervisor
+- Changed: `src/harness/loop.ts` now gives one cached replay of a successful replay-safe tool call
+  before stopping further repeats; `src/harness/supervisor-tools.ts` parses model-stringified task
+  and plan arrays with Zod. Added regression tests in `tests/native.test.ts` and
+  `tests/budget-control.test.ts`.
+- Why: the live job failed when one repeated successful read immediately failed the scaffold, and
+  model-encoded `delegate.tasks` as a string caused an empty-array error followed by repeated
+  delegate calls.
+- Validation: focused tests in `native.test.ts` and `budget-control.test.ts` pass (28); recursive
+  typecheck passes. Full Router suite is running; build and final diff checks remain.
+- Outcome: fix is focused-tested; fresh job restart is pending full validation.
 
 ---
 

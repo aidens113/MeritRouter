@@ -311,7 +311,7 @@ describe("team vs single comparison", () => {
       }
       if (/Read every file/.test(JSON.stringify(req.messages))) {
         await new Promise((r) => setTimeout(r, 150));
-        return reply(null, { ...s, toolCalls: [call("read_file", { alias: "core", path: "src/app.ts" }, `read${turns(req)}`)] });
+        return reply(null, { ...s, toolCalls: [call("read_file", { alias: "core", path: "src/app.ts", start_line: turns(req) + 1 }, `read${turns(req)}`)] });
       }
       if (turns(req) === 0) return reply(null, { ...s, toolCalls: [call("read_file", { alias: "core", path: "src/app.ts" })] });
       return reply(null, { ...s, toolCalls: [call("submit_result", goodOutput(1, "core:src/app.ts#L1-L3"))] });

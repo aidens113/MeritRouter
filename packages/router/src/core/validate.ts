@@ -53,7 +53,10 @@ export async function validateTask(
     if (!spec.constraints.allowedPaths?.length) issues.push("coding tasks must list constraints.allowedPaths");
   } else {
     if (spec.writableRepository) issues.push(`profile ${spec.profile} is read-only; writableRepository is not allowed`);
-    if (spec.constraints.checks?.length && profile.mode !== "supervisor") issues.push(`profile ${spec.profile} cannot run checks; use a coding profile`);
+    if (spec.constraints.checks?.length && profile.mode !== "supervisor" && profile.mode !== "read_only") issues.push(`profile ${spec.profile} cannot run checks; use a read-only or coding profile`);
+    if (spec.constraints.checks?.length && profile.mode === "read_only" && spec.repositoryAliases.length !== 1) {
+      issues.push(`read-only checks require exactly one repository alias so the command has an unambiguous working directory`);
+    }
   }
   for (const glob of spec.constraints.allowedPaths ?? []) {
     try {

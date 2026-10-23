@@ -78,6 +78,22 @@ Workers are routed per task by **task type** and **difficulty tier**:
 | `implement` | implementer | Bounded edits in an isolated worktree, with checks | T2-T3 |
 | `review` | reviewer | Checking a patch or result against its criteria | T2-T3 |
 
+- Worker file tools stay within assigned repositories; read-only roles cannot edit them. Scoped
+  brain, channel and artifact services enforce their own task/project grants. Foreign or unowned
+  context artifacts are refused before their contents are read.
+- Worker shell commands and declared checks require an exact supervisor/operator action because
+  there is no general OS process sandbox. `request_supervisor_action` requests an action without
+  executing it; `await_supervisor_action` waits without model requests. Approval executes the
+  captured action as supervisor/operator; it never grants the worker host access.
+- `security.outside_repository` selects `disabled`, `human_only` (default), or `supervisor`.
+  Human-only requires an operator decision even for a supervisor's host commands. Disabled
+  forbids those actions. Supervisor mode permits supervisor execution and decisions for owned
+  worker requests. Neither workers nor supervisors may rewrite this policy through file tools.
+  Custom supervisor profiles require a matching persisted task, original live lease and current
+  configured supervisor mode; changing role text cannot elevate a worker.
+- Read-only declared checks target exactly one repository, retain their supervisor-executed
+  check logs for verification, and do not run a separate post-submission shell command. A pinned
+  read revision cannot be checked against a different or dirty working tree.
 - Tiers set size floors (T1 >= 30B, T2/T3 >= 100B by default) and request budgets. The rulebook
   scores each task; a supervisor can set `hints.difficulty` to skip scoring. T4 means "too hard to
   delegate": it goes back to the supervisor, or to paid models when `paid.tiers.T4: premium`.

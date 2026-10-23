@@ -1,5 +1,6 @@
 import type { HarnessEnv, HarnessTool } from "./tools.js";
 import type { WebAttempt } from "../web/access.js";
+import { mediateOutsideOperation, withOutsideAuthority } from "./outside-operation.js";
 
 /**
  * `web_search` and `web_fetch`: offered only to the roles in `web.roles` while a search backend
@@ -45,7 +46,9 @@ export function webTools(): HarnessTool[] {
       run: async (a, env) => {
         const web = webOf(env);
         if (typeof a.query !== "string" || !a.query.trim()) throw new Error("query is required");
-        const r = await web.search(caller(env), a.query, Number(a.max_results) || 0);
+        const mediated = await mediateOutsideOperation(env, "web_search", a);
+        if (mediated !== null) return mediated;
+        const r = await withOutsideAuthority(env, signal => web.search({ ...caller(env), signal }, String(a.query), Number(a.max_results) || 0));
         const body = r.results.length ? r.results.map((x, i) => `${i + 1}. ${neutralise(x.title) || "(untitled)"}\n   ${neutralise(x.url)}\n   ${neutralise(x.snippet).replace(/\s+/g, " ")}`).join("\n") : "(no results)";
         const ref = env.ctx.artifacts.writeJson({ taskId: env.ctx.taskId, kind: "web_search", label: `web search: ${a.query.slice(0, 120)}`, value: { query: a.query, backend: r.backend, results: r.results } });
         env.universe.refs.set(ref, null);
@@ -66,7 +69,9 @@ export function webTools(): HarnessTool[] {
       run: async (a, env) => {
         const web = webOf(env);
         if (typeof a.url !== "string" || !a.url.trim()) throw new Error("url is required");
-        const r = await web.fetch(caller(env), a.url);
+        const mediated = await mediateOutsideOperation(env, "web_fetch", a);
+        if (mediated !== null) return mediated;
+        const r = await withOutsideAuthority(env, signal => web.fetch({ ...caller(env), signal }, String(a.url)));
         const p = r.page;
         const full = `${p.title ? `# ${p.title}\n` : ""}${p.url}\n\n${p.content}${p.links.length ? `\n\nLinks:\n${p.links.map((l) => `- ${l}`).join("\n")}` : ""}`;
         const ref = env.ctx.artifacts.write({ taskId: env.ctx.taskId, kind: "web_page", label: `web page: ${p.url.slice(0, 200)}`, content: full, mediaType: "text/plain" });

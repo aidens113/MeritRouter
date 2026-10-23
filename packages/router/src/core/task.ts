@@ -10,6 +10,7 @@ import { LabNameSchema } from "../labs/recipe.js";
  */
 export const FILE_REF_RE = /^([A-Za-z0-9._-]+):([^#]+?)(?:#L(\d+)(?:-L(\d+))?)?$/;
 export const ARTIFACT_REF_RE = /^artifact:([A-Za-z0-9_-]+)$/;
+export const ARTIFACT_EVIDENCE_REF_RE = /^artifact:([A-Za-z0-9_-]+)(?:#L(\d+)(?:-L(\d+))?)?$/;
 
 /** How a criterion is verified: by declared checks, by an independent review, or by cited evidence. */
 export const CRITERION_VERIFY_KINDS = ["check", "review", "evidence"] as const;
@@ -223,8 +224,9 @@ export const UsageSchema = z
     /** Input tokens the provider served from its prompt cache (null when not reported). */
     cachedInputTokens: z.number().int().min(0).nullable(),
     /**
-     * New input: input minus cached, per request; a request whose cache is unknown (or a batch
-     * share) counts all of its input. Results stored before this field read as null.
+     * New input: input minus cached, per request; null when any cache share is unknown.
+     * Historical results may have counted unknown cache shares as ordinary input; consumers
+     * must also check cachedInputTokens before presenting those totals as measured new input.
      */
     uncachedInputTokens: z.number().int().min(0).nullable().default(null),
     reportedCostUsd: z.number().min(0).nullable(),

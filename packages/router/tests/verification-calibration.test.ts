@@ -6,12 +6,14 @@ import type { ChatRequest } from "../src/gateway/types.js";
 import { baseResult, type RunContext, type SupervisorServices } from "../src/runners/types.js";
 import type { HarnessEnv } from "../src/harness/tools.js";
 import { supervisorTools, type SupervisorState } from "../src/harness/supervisor-tools.js";
+import { WorkerTaskSchema } from "../src/core/task.js";
+import { capturedLease } from "../src/storage/task-leases.js";
 import { createCodingRunner } from "../src/runners/coding/index.js";
 import { revertCommits } from "../src/attribution/index.js";
 import { auditSampled } from "../src/verification/audit.js";
 import { cachedVerdict, calibrationUndoHook, sameRevision, taskConfirmation, verdictOutcome, verdictRecords } from "../src/verification/calibration.js";
 import { calibrationOverview, usageByPurpose } from "../src/admin/calibration.js";
-import { baseConfig, commitAll, endpoint, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
+import { baseConfig, commitAll, endpoint, goodOutput, makeEnv, openWithTestSupervisor as open, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
 
 let env: Env | undefined;
 let sy: Switchyard | undefined;
@@ -157,7 +159,11 @@ describe("confirmation signals", () => {
   }
 
   it("integration and a passing job check confirm a passed result; a seeded undo makes the pass a false approval", async () => {
-    env = envWith();
+    // This synthetic supervisor exercises explicitly trusted host policy; worker checks still request operator approval.
+    env = envWith({ security: { outside_repository: "supervisor" }, profiles: {
+      ...(baseConfig().profiles as Record<string, unknown>),
+      supervise: { mode: "supervisor", tools: "supervisor", min_total_parameters_b: 100, max_model_requests: 30, classify: "never" },
+    } });
     sy = open(env, new ScriptedClient((req) => (isReviewer(req) ? reply(null, { ...servedFor(sy!, req), toolCalls: [call("submit_verdict", verdict(req, "pass"))] }) : codingAuthor(req))), { worker: true, coding: createCodingRunner(env.cfg) });
     const [sub] = await sy.submitTasks([
       {
@@ -204,8 +210,11 @@ describe("confirmation signals", () => {
       acceptTask: (x, i) => s.acceptTask(x, i),
       rejectTask: (x, i) => s.rejectTask(x, i),
     };
+    s.tasks.submit([WorkerTaskSchema.parse({ id: "job-1", profile: "supervise", goal: "Verify integration", repositoryAliases: ["core"], constraints: { acceptanceCriteria: ["integration is correct"] } })], { project: "demo" });
+    const supervisor = s.tasks.claim("test-supervisor", { maxConcurrent: 1, maxWritersPerRepo: 1, leaseMs: 60000, defaultTimeoutMs: 60000 })[0]!;
+    expect(supervisor.row.id).toBe("job-1");
     const st: SupervisorState = {
-      ctx: { services, taskId: "job-1", cfg: env.cfg, signal: new AbortController().signal, tasks: s.tasks, artifacts: s.artifacts } as unknown as RunContext,
+      ctx: { services, spec: supervisor.spec, taskLease: capturedLease(supervisor), leaseOwner: "test-supervisor", now: Date.now, taskId: "job-1", cfg: env.cfg, signal: new AbortController().signal, tasks: s.tasks, artifacts: s.artifacts } as unknown as RunContext,
       db: s.db,
       actor: { agent: "supervisor:job", role: "supervisor", model: null, job: "job-1", task: "job-1", tier: "T3" },
       repos: new Map([["core", { alias: "core", worktree: wt, branch: "job", baseSha: base }]]),

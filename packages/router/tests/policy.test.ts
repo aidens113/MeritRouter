@@ -137,11 +137,12 @@ describe("configuration policy", () => {
   it("rejects unresolved aliases, unknown artifacts, unknown forced endpoints and dependency cycles", async () => {
     env = makeEnv();
     const sy = open(env, new ScriptedClient(() => reply("{}")));
-    await expect(sy.submitTasks([summarizeTask({ repositoryAliases: ["nope"] })])).rejects.toThrow(/unknown repository alias/);
-    await expect(sy.submitTasks([summarizeTask({ context: { artifactRefs: ["artifact:missing"] } })])).rejects.toThrow(/unknown artifact/);
-    await expect(sy.submitTasks([summarizeTask({ routing: { endpointId: "x/y" } })])).rejects.toThrow(/not in the model catalog/);
-    await expect(sy.submitTasks([summarizeTask({ id: "a", dependsOn: ["b"] }), summarizeTask({ id: "b", dependsOn: ["a"] })])).rejects.toThrow(/dependency cycle/);
-    await sy.close();
+    try {
+      await expect(sy.submitTasks([summarizeTask({ repositoryAliases: ["nope"] })])).rejects.toThrow(/unknown repository alias/);
+      await expect(sy.submitTasks([summarizeTask({ context: { artifactRefs: ["artifact:missing"] } })])).rejects.toThrow(/artifact is unavailable in this project/);
+      await expect(sy.submitTasks([summarizeTask({ routing: { endpointId: "x/y" } })])).rejects.toThrow(/not in the model catalog/);
+      await expect(sy.submitTasks([summarizeTask({ id: "a", dependsOn: ["b"] }), summarizeTask({ id: "b", dependsOn: ["a"] })])).rejects.toThrow(/dependency cycle/);
+    } finally { await sy.close(); }
   });
 
   it("rejects a task that cannot fit any model before dispatch", async () => {

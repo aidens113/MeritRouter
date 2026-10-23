@@ -32,14 +32,21 @@
 //   pnpm --filter switchyard-panel seed:demo
 //   SWITCHYARD_CONFIG=.demo/switchyard.config.yaml pnpm --filter switchyard-panel dev
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
-import { BudgetRequests, GatewayError, ProviderError, Switchyard, WorkerTaskSchema, insights, parseConfig, planComparison, runComparison } from "switchyard-router";
+import { BudgetRequests, GatewayError, ProviderError, Switchyard, WorkerTaskSchema, WorkerActionRequests, insights, parseConfig, planComparison, runComparison } from "switchyard-router";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const demo = path.resolve(here, "..", ".demo");
+const panelRoot = realpathSync(path.resolve(here, ".."));
+const canonical = value => process.platform === "win32" ? value.toLowerCase() : value;
+const expectedDemo = path.join(panelRoot, ".demo");
+if (canonical(demo) !== canonical(expectedDemo) || (existsSync(demo) && canonical(realpathSync(demo)) !== canonical(expectedDemo))) {
+  throw new Error(`Refusing demo cleanup outside the exact panel fixture directory: ${demo}`);
+}
+console.log(`Verified demo fixture directory: ${demo}`);
 const HOUR = 3_600_000;
 const fixtureFailures = [];
 const expectFixture = (condition, message) => {
@@ -279,6 +286,9 @@ const raw = {
   execution: { max_concurrent_tasks: 4, lease_seconds: 30 },
   scoring: { batch_window_ms: 50 },
   coding: { runner: "native" },
+  // Explicit seed-only policy: scripted supervisors run deterministic integration checks.
+  // Worker commands still need the bounded fixture operator below; reset to human_only at the end.
+  security: { outside_repository: "supervisor" },
   // The brain lives inside the demo folder so seeding never touches ~/.switchyard/brain.
   brain: { path: "brain", project: "demo", access_approver: "supervisor", global_requires_approval: true },
   supervisor: { question_timeout_seconds: 86400 },
@@ -860,6 +870,44 @@ const webPage = {
 };
 
 sy = new Switchyard(cfg, { providerClient, now: clock, pollIntervalMs: 40, webFetch, webPage });
+// Explicit trusted operator for this generated offline fixture only. Production code never auto-approves.
+const fixtureRoot = realpathSync(demo);
+let approvalStopped = false, approvalCount = 0, approvalTimer;
+let approvalActive = Promise.resolve();
+const approvalFailures = [];
+const fixtureActions = new WorkerActionRequests(sy.db, clock);
+const approveFixtureChecks = async () => {
+  const projects = sy.db.prepare("SELECT DISTINCT project_id FROM worker_action_requests").all();
+  for (const { project_id: project } of projects) {
+    for (const request of fixtureActions.list({ project, status: "pending" })) {
+      if (approvalStopped) return;
+      const task = sy.tasks.get(request.taskId);
+      const relative = path.relative(fixtureRoot, realpathSync(request.action.cwd));
+      const contained = relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+      const declaredCheck = task?.row.project_id === project && task.spec.constraints.checks?.includes(request.action.command);
+      const approve = contained && declaredCheck && !request.action.operation && ++approvalCount <= 256;
+      await fixtureActions.decide({
+        project, id: request.id, decision: approve ? "approve" : "deny",
+        reason: approve ? "Explicit offline demo operator approves this exact task-declared fixture check" : "Demo operator refuses generic, undeclared, out-of-fixture or over-limit action",
+        actor: { kind: "operator" }, config: cfg,
+      });
+    }
+  }
+};
+const scheduleApprovals = () => {
+  if (!approvalStopped) approvalTimer = setTimeout(() => {
+    approvalActive = approveFixtureChecks().catch(error => { approvalFailures.push(error); approvalStopped = true; }).finally(scheduleApprovals);
+  }, 10);
+};
+scheduleApprovals();
+const closeSeedService = sy.close.bind(sy);
+sy.close = async () => {
+  approvalStopped = true;
+  clearTimeout(approvalTimer);
+  await approvalActive;
+  await closeSeedService();
+  if (approvalFailures.length) throw new AggregateError(approvalFailures, "Offline demo fixture operator failed");
+};
 const started = { v: false };
 const startWorker = () => {
   if (!started.v) sy.startWorker(40);
@@ -1337,6 +1385,8 @@ console.log("  Labs: two real fixture labs, health checks and logs retained; ser
 insights.archiveProject(idle, "legacy-billing");
 await idle.close();
 
+// Browsing the finished demo uses the production security default. The fixture broker is stopped.
+raw.security = { outside_repository: "human_only" };
 // The demo config samples 20% of passed results for audit (seeding forced its two audits instead).
 raw.verification = { ...(raw.verification ?? {}), audit_sample_rate: 0.2 };
 writeFileSync(

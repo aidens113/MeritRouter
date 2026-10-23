@@ -140,7 +140,7 @@ describe("session CLI", () => {
     // Multi-line content collapses to one line.
     expect(row(3)).toMatch(/message\s+user\s+#1 Find the bug in app\.ts$/);
     expect(row(4)).toMatch(/model_request\s+runner\s+2 msgs, max 500 tok, tools read_file/);
-    expect(row(5)).toMatch(/model_response\s+openrouter\/vendor\/big-a:free ok\s+stop, in 100 \/ out 50 tok: -> read_file/);
+    expect(row(5)).toMatch(/model_response\s+openrouter\/vendor\/big-a:free ok\s+stop, in 100 \(cache unknown\) \/ out 50 tok: -> read_file/);
     expect(row(6)).toMatch(/tool_intent\s+read_file\s+\[read\] \{"path":"src\/app\.ts"\}/);
     expect(row(7)).toMatch(/tool_outcome\s+read_file ok\s+intent #6: export function add\(a, b\) \{ return a \+ b; \}/);
     expect(row(8)).toMatch(/note\s+checkpoint reached/);

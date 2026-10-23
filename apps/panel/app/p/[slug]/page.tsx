@@ -161,7 +161,7 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
           sub={u.modelRequests ? `${num(u.failedRequests)} failed · ${num(u.uncertainRequests)} uncertain` : "No requests yet"}
         />
         <Stat label="Tasks (24h)" value={`${num(u.logicalTasks.completed)} done`} sub={`${num(u.logicalTasks.failed)} failed · ${num(u.logicalTasks.other)} other · ${num(u.logicalTasks.submitted)} submitted`} tone={u.logicalTasks.failed > u.logicalTasks.completed ? "bad" : undefined} />
-        <Stat label="Paid spend (24h)" value={usd(ov.paidSpendUsd.last24h)} sub={`${usd(ov.paidSpendUsd.last7d)} in the last 7 days · ${compact(u.uncachedInputTokens + u.outputTokens)} new tokens today${u.cachedInputTokens ? ` (+${compact(u.cachedInputTokens)} cached)` : ""}`} />
+        <Stat label="Paid spend (24h)" value={usd(ov.paidSpendUsd.last24h)} sub={`${usd(ov.paidSpendUsd.last7d)} in the last 7 days · ${u.cacheUsageKnown ? "" : "up to "}${compact(u.uncachedInputTokens + u.outputTokens)} new tokens today${u.cacheUsageKnown ? ` (${compact(u.cachedInputTokens)} cached)` : ` (at least ${compact(u.cachedInputTokens)} cached; ${u.requestsWithUnknownCacheUsage} unknown)`}`} />
       </div>
       {budgetPending.length ? <BudgetRequestsCard requests={budgetPending} pendingOnly /> : null}
       <Tabs items={[{ "id": "overview", "label": "Overview" }, { "id": "activity", "label": "Activity" }, { "id": "usage", "label": "Usage" }]} active={tab} path={base} label="Page sections" anchors={{}} />

@@ -35,11 +35,12 @@ export function trailerArgs(a: Actor, extra: Record<string, string> = {}): strin
  */
 export async function commitAs(repo: string, actor: Actor, message: string, opts: { paths?: string[]; extraTrailers?: Record<string, string>; allowEmpty?: boolean } = {}): Promise<string | null> {
   await git(repo, ["add", "-A", ...(opts.paths?.length ? ["--", ...opts.paths] : [])]);
-  const staged = await git(repo, ["diff", "--cached", "--name-only"]);
+  const paths = opts.paths?.length ? opts.paths : undefined;
+  const staged = await git(repo, ["diff", "--cached", "--name-only", ...(paths ? ["--", ...paths] : [])]);
   if (!staged.trim() && !opts.allowEmpty) return null;
   const id = actorIdentity(actor);
   const env = { GIT_AUTHOR_NAME: id.name, GIT_AUTHOR_EMAIL: id.email, GIT_COMMITTER_NAME: id.name, GIT_COMMITTER_EMAIL: id.email };
-  await git(repo, ["commit", "-q", "--no-verify", ...(opts.allowEmpty ? ["--allow-empty"] : []), "-m", message, ...trailerArgs(actor, opts.extraTrailers)], { env });
+  await git(repo, ["commit", "-q", "--no-verify", ...(opts.allowEmpty ? ["--allow-empty"] : []), "-m", message, ...trailerArgs(actor, opts.extraTrailers), ...(paths ? ["--only", "--", ...paths] : [])], { env });
   return (await git(repo, ["rev-parse", "HEAD"])).trim();
 }
 

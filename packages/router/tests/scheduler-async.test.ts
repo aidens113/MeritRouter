@@ -82,12 +82,22 @@ it.each(["claim", "claimCompanions"] as const)("rejection after %s commits recov
   await scheduler!.tick(); expect(executor.runSingle).toHaveBeenCalledTimes(1);
 });
 
-it("timer-driven rejection fails closed without unhandled rejection or repeated claims", async () => {
+it("reports a timer-driven queue failure and resumes queued work after backoff", async () => {
   const { executor, queue } = setup(); submit("one");
-  const failed = barrier(); const spy = vi.spyOn(queue, "claim").mockImplementation(async () => { failed.release(); throw new Error("fixture offline"); });
-  scheduler!.start(1); await failed.promise; await scheduler!.stop();
-  expect(spy).toHaveBeenCalledTimes(1); expect(executor.runSingle).not.toHaveBeenCalled();
-  expect(sy!.tasks.get("one")!.row.state).toBe("queued");
+  const error = new Error("fixture offline");
+  const originalClaim = queue.claim.bind(queue);
+  const spy = vi.spyOn(queue, "claim")
+    .mockRejectedValueOnce(error)
+    .mockImplementation(input => originalClaim(input));
+  const report = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  scheduler!.start();
+
+  await vi.waitFor(() => expect(executor.runSingle).toHaveBeenCalledTimes(1), { timeout: 5_000, interval: 10 });
+  await scheduler!.stop();
+
+  expect(spy).toHaveBeenCalledTimes(2);
+  expect(report).toHaveBeenCalledWith(expect.stringContaining("stopped after a tick error; retrying"), error);
+  expect(sy!.tasks.get("one")!.row.state).toBe("running");
 });
 
 

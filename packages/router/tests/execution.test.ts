@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { acknowledgeModelQuarantine } from "../src/admin/quarantine.js";
 import { GatewayError } from "../src/core/errors.js";
+import { ProviderError } from "../src/providers/errors.js";
 import { Admission } from "../src/admission/admission.js";
 import { openDatabase } from "../src/storage/db.js";
 import { TaskStore } from "../src/storage/tasks.js";
@@ -115,6 +116,26 @@ describe("routing fallback and policy", () => {
     expect(status.state).toBe("waiting_for_capacity");
     const targeted = new Set(client.requests.map((r) => `${r.provider}/${r.model}`));
     expect([...targeted]).toEqual(["openrouter/only"]);
+  });
+
+  it("fails an exhausted model-plan refusal instead of waiting for temporary capacity", async () => {
+    env = makeEnv();
+    const refusal = "this model is not included in your free usage, add usage credits to pay as you go. Try gemma4:31b-cloud, which is in the Free plan.";
+    const client = new ScriptedClient(() => {
+      throw new ProviderError("not_in_plan", `ollama-cloud HTTP 402: ${refusal} (model not in this key's plan)`, {
+        provider: "ollama-cloud",
+        status: 402,
+        possiblyConsumed: false,
+      });
+    });
+    sy = open(env, client, { worker: true });
+
+    const [sub] = await sy.submitTasks([summarizeTask()]);
+    const result = (await sy.awaitResults([sub!.taskId], { timeoutSeconds: 10 })).completed[0]!;
+
+    expect(result.executionStatus).toBe("failed");
+    expect(result.stopReason).toMatch(/^gateway_not_in_plan: /);
+    expect(result.stopReason).toContain("model not in this key's plan");
   });
 
   it("a served-model mismatch discards the response, fails the task, and quarantines the model", async () => {

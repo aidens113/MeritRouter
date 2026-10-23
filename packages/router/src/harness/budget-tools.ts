@@ -31,7 +31,8 @@ function outcomeText(req: BudgetRequest, env: HarnessEnv): string {
 
 /** Worker tool: ask the job's supervisor (or the configured approver) for more model requests. */
 export function requestBudgetTool(): HarnessTool {
-  return tool(
+  return {
+    ...tool(
     "request_more_budget",
     "external",
     "Ask for more model requests when the ones you have left will not finish the brief. Say how many you need and why (what is done, what remains). You wait, without spending requests, for the decision; approved requests raise your limit at once. Ask early (a few requests before you run out), not for padding; the number of asks per task is limited.",
@@ -74,7 +75,9 @@ export function requestBudgetTool(): HarnessTool {
       return `budget request ${req.id} ${outcomeText(req, env)}`;
     },
     (env) => env.role !== "supervisor" && env.ctx.purpose !== "verification" && env.ctx.cfg.team.max_budget_requests_per_task > 0,
-  );
+    ),
+    repeatBehavior: "execute",
+  };
 }
 
 /** The job's pool, or null when no task store is behind it (a stubbed supervisor in tests). */

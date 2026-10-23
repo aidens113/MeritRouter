@@ -8,6 +8,8 @@ import { availableTools, type HarnessEnv, type HarnessTool } from "./tools.js";
 import { journaled, parseArgs } from "./journal.js";
 import { applyResume, type ResumeInput } from "./resume.js";
 import { compact } from "./compaction.js";
+import { RepeatObservations, type RepeatOutcome } from "./repeat-policy.js";
+import { assertRunAuthority } from "./task-authority.js";
 
 export { compact } from "./compaction.js";
 
@@ -50,6 +52,7 @@ export interface LoopOptions<T> {
 export type LoopResult<T> =
   | { kind: "terminal"; value: T; messages: ChatMessage[] }
   | { kind: "budget_exhausted"; messages: ChatMessage[] }
+  | { kind: "stalled"; reason: string; messages: ChatMessage[] }
   | { kind: "invalid_terminal"; errors: string[]; messages: ChatMessage[] };
 
 /** Sent after a reply cut off at the output limit with no tool calls; the two parts are joined. */
@@ -57,6 +60,14 @@ export const CONTINUE_TEXT = "Your previous reply was cut off at the output limi
 
 /** Headroom kept below an endpoint's context when the budget follows the serving endpoint. */
 const BUDGET_MARGIN_TOKENS = 500;
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
 
 /** The retry of a turn whose tool call was cut short: a larger output allowance, or another endpoint. */
 interface TurnRetry {
@@ -80,6 +91,7 @@ interface TurnRetry {
  */
 export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>> {
   const { env, messages } = o;
+  assertRunAuthority(env.ctx);
   const session = env.ctx.session;
   /** Log transcript messages the session has not seen (the next request would; the last turn has none). */
   const sync = () => session?.syncMessages(messages);
@@ -107,23 +119,50 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
   let retry: TurnRetry | null = null;
   let retriedThisTurn = false;
 
+  let notAppliedToolIndexes: ReadonlySet<number> = new Set();
   if (o.resume) {
     const r = await applyResume({ env, messages, tools, terminal: o.terminal }, o.resume);
+    assertRunAuthority(env.ctx);
     if (r.kind === "finished") {
       sync();
       return { kind: "terminal", value: r.value, messages };
     }
+    notAppliedToolIndexes = r.notAppliedToolIndexes;
   }
 
   // Progress guards (live 2026-10-21: coding workers spent whole budgets reading and searching):
-  // a coding run that has edited nothing by half its requests is told to write now, and an exact
-  // repeat of an earlier read is marked as such.
+  // a coding run that has edited nothing by half its requests is told to write now. One exact
+  // repeated observation is always fresh; three unchanged observations stop a stalled run.
   const canEdit = byName.has("write_file");
   const runStart = env.ctx.gate.admission.taskTotals(env.ctx.taskId).requests;
   const allowance = env.ctx.budget.maxModelRequests - runStart;
   let edited = false;
   let stallNudged = false;
-  const seenCalls = new Map<string, number>();
+  const effects = new Map<string, RepeatOutcome>();
+  const observations = new RepeatObservations();
+  // Restore completed/uncertain effect protection across resume. Fresh reads start a new
+  // observation window; pending effects remain governed by applyResume's reconciliation.
+  if (o.resume) {
+    const calls = new Map<string, ChatToolCall>();
+    for (const [messageIndex, message] of messages.entries()) {
+      if (message.role === "assistant") for (const call of message.tool_calls ?? []) calls.set(call.id, call);
+      if (message.role !== "tool") continue;
+      const call = calls.get(message.tool_call_id);
+      const tool = call && byName.get(call.function.name);
+      const args = call && parseArgs(call.function.arguments);
+      if (!call || !tool || args === undefined || tool.sideEffect === "read" || tool.sideEffect === "none") continue;
+      if (notAppliedToolIndexes?.has(messageIndex)) continue;
+      const behavior = typeof tool.repeatBehavior === "function" ? tool.repeatBehavior(args as Record<string, unknown>) : tool.repeatBehavior;
+      if (behavior) continue;
+      const ok = !String(message.content).startsWith("error:");
+      if (ok && tool.sideEffect === "edit") {
+        for (const key of effects.keys()) {
+          if (byName.get(key.slice(0, key.indexOf(" ")))?.sideEffect === "edit") effects.delete(key);
+        }
+      }
+      effects.set(`${call.function.name} ${canonicalJson(args)}`, { ok, output: String(message.content) });
+    }
+  }
   // Budget control: a worker that may ask for more is told once when it runs low (again after a grant).
   const canAsk = byName.has("request_more_budget");
   let lowNoticeAt: number | null = null;
@@ -244,7 +283,9 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
     }
 
     let finished: T | undefined;
+    let repeatedToolCall: string | null = null;
     for (const call of calls) {
+      assertRunAuthority(env.ctx);
       const args = parseArgs(call.function.arguments);
       if (call.function.name === terminalName) {
         const r = await journaled(session, call, args, { sideEffect: "none" }, async () => {
@@ -260,31 +301,75 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
         messages.push({ role: "tool", tool_call_id: call.id, content: r.output });
         continue;
       }
-      const t = byName.get(call.function.name);
+      // The final request offers only the terminal tool, even if a provider invents others.
+      const t = remaining === 1 ? undefined : byName.get(call.function.name);
+      const signature = t && args !== undefined
+        ? `${call.function.name} ${canonicalJson(args)}` : null;
+      const behavior = t && args !== undefined
+        ? typeof t.repeatBehavior === "function" ? t.repeatBehavior(args as Record<string, unknown>) : t.repeatBehavior
+        : undefined;
+      const fresh = !!t && (t.sideEffect === "read" || t.sideEffect === "none" || !!behavior);
+      const previous = signature && !fresh ? effects.get(signature) : undefined;
       const r = await journaled(session, call, args, t ? { sideEffect: t.sideEffect, idempotent: t.idempotent } : { sideEffect: "none" }, async () => {
-        if (!t) return { ok: false, output: `error: unknown tool ${call.function.name}` };
+        if (!t) return { ok: false, output: `error: unknown or unavailable tool ${call.function.name}` };
+        if (previous) return { ok: false, output: `the exact call already ran; SwitchYard did not repeat it to avoid duplicating its side effect. Its previous outcome was: ${previous.output}` };
         try {
           if (args === undefined) throw new Error(`${call.function.name} arguments are not valid JSON`);
-          return { ok: true, output: await t.run(args as Record<string, unknown>, env) };
+          const previousInvocation = env.toolInvocationId;
+          env.toolInvocationId = `${session?.id ?? o.executionId}:${call.id}`;
+          try {
+            return { ok: true, output: await t.run(args as Record<string, unknown>, env) };
+          } finally {
+            if (previousInvocation === undefined) delete env.toolInvocationId;
+            else env.toolInvocationId = previousInvocation;
+          }
         } catch (err) {
+          if (env.ctx.signal.aborted) throw err;
           return { ok: false, output: `error: ${(err as Error).message}` };
         }
       });
       if (r.ok && t?.sideEffect === "edit") edited = true;
-      // An exact repeat of an earlier read: the answer cannot have changed unless a file was edited since.
       let output = r.output;
-      if (t && t.sideEffect !== "edit" && args !== undefined) {
-        const key = `${call.function.name} ${JSON.stringify(args)}`;
-        const n = (seenCalls.get(key) ?? 0) + 1;
-        seenCalls.set(key, n);
-        if (n > 1) output += `\n[You made this exact ${call.function.name} call ${n} times; the result is the same. Use it and move on.]`;
+      if (previous) {
+        output += `\n[Repeated identical effect. No action was repeated; the task is stopping for reconciliation.]`;
+        repeatedToolCall ??= call.function.name;
+      } else if (signature && fresh && (behavior !== "execute" || !r.ok)) {
+        const state = observations.observe(signature, r);
+        if (state.warn) output += `\n[Repeated identical observation. The tool ran freshly but returned unchanged state; repeating it again will stop the task unless state changes.]`;
+        if (state.stalled) {
+          output += `\n[Three fresh observations returned unchanged state. The task is stopping because no progress was observed.]`;
+          repeatedToolCall ??= call.function.name;
+        }
+      } else if (signature && !fresh) {
+        // Even an error may have happened after an effect. Never blindly retry it.
+        if (r.ok && t?.sideEffect === "edit") {
+          // A different successful edit changes the workspace revision. An earlier edit
+          // may now be intentional again (A -> B -> A), while its immediate repeat is not.
+          for (const key of effects.keys()) {
+            const name = key.slice(0, key.indexOf(" "));
+            if (byName.get(name)?.sideEffect === "edit") effects.delete(key);
+          }
+        }
+        effects.set(signature, r);
       }
-      if (t?.sideEffect === "edit" && r.ok) seenCalls.clear();
+      if (!previous && r.ok && t && behavior !== "observe" && t.sideEffect !== "read" && t.sideEffect !== "none") {
+        observations.progress();
+        // A successful edit, install, or service lifecycle operation can change what a
+        // prior command observes. Keep the current command protected against an immediate
+        // duplicate, but permit check -> repair/install/restart -> same check.
+        for (const key of effects.keys()) {
+          if (key === signature) continue;
+          const name = key.slice(0, key.indexOf(" "));
+          if (byName.get(name)?.sideEffect === "command") effects.delete(key);
+        }
+      }
       messages.push({ role: "tool", tool_call_id: call.id, content: output });
     }
+    assertRunAuthority(env.ctx);
     if (env.edits.size) await o.onResponse?.({ endpointId, requestId, edits: [...env.edits] });
     sync();
     if (finished !== undefined) return { kind: "terminal", value: finished, messages };
+    if (repeatedToolCall) return { kind: "stalled", reason: `repeated_tool_call:${repeatedToolCall}`, messages };
     if (invalid > o.maxInvalidTerminal) return { kind: "invalid_terminal", errors: lastErrors, messages };
   }
 }

@@ -27,8 +27,9 @@ const GLOBAL_APPROVAL_FIELD: Field = {
   help: "Supervisors' lessons that pass the project check and the independent review wait on the Knowledge page until you approve or reject them. Off: they are added at once, and you can revert them there.",
 };
 
-const TABS = [{ id: "general", label: "General" }, { id: "routing", label: "Routing" }, { id: "types", label: "Task types" }, { id: "web", label: "Web and paid" }, { id: "brain", label: "Brain and roles" }, { id: "rulebook", label: "Rulebook" }, { id: "yaml", label: "Raw YAML" }];
+const TABS = [{ id: "general", label: "General" }, { id: "security", label: "Security" }, { id: "routing", label: "Routing" }, { id: "types", label: "Task types" }, { id: "web", label: "Web and paid" }, { id: "brain", label: "Brain and roles" }, { id: "rulebook", label: "Rulebook" }, { id: "yaml", label: "Raw YAML" }];
 function sectionTab(id: string): string {
+  if (id === "security") return "security";
   if (["tiers", "routing", "scoring", "qualification", "allocation", "capacity"].includes(id)) return "routing";
   if (["execution", "coding", "supervisor"].includes(id) || id.startsWith("profile-")) return "types";
   if (id.startsWith("web") || id.startsWith("paid")) return "web";

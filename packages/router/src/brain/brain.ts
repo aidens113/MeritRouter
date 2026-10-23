@@ -4,6 +4,7 @@ import path from "node:path";
 import type { ResolvedConfig } from "../config/load.js";
 import type { BrainMode } from "../config/schema.js";
 import type { Db } from "../storage/db.js";
+import { assertBrainGitPath, brainMountHistory, brainMountPathspecs, resolveBrainGitDocument, type BrainGitDocument } from "./mount-git.js";
 import { git } from "../workspaces/git.js";
 import { isGitSegment } from "../context/repo-reader.js";
 import { blame, commitAs, type Actor, type BlameLine } from "../attribution/index.js";
@@ -212,6 +213,11 @@ export class Brain {
     return { rel, abs: path.join(this.root, ...rel.split("/").filter(Boolean)), repo: this.root, repoRel: rel, commit: this.cfg.brain.commit };
   }
 
+  /** Resolve a configured document mount to its verified Git root without broadening mount visibility. */
+  async resolveGitDocument(relInput: string): Promise<BrainGitDocument | null> {
+    return resolveBrainGitDocument(this.resolve(relInput));
+  }
+
   private check(p: Principal, rel: string, mode: BrainMode): void {
     const d = denial(p, rel, mode);
     if (d) throw new BrainError(d);
@@ -252,10 +258,11 @@ export class Brain {
   }
 
   /** Commit edits made outside SwitchYard (editor, scripts) as the user, before SwitchYard writes. */
-  private async adoptExternalEdits(repo: string): Promise<void> {
-    const status = await git(repo, ["status", "--porcelain", "--", "."]);
+  private async adoptExternalEdits(repo: string, binding?: BrainGitDocument): Promise<void> {
+    const paths = binding ? brainMountPathspecs(binding) : [".", ":(exclude).switchyard-brain.lock"];
+    const status = await git(repo, ["status", "--porcelain", "--", ...paths]);
     const changed = status.split("\n").filter((l) => l.trim() && !l.endsWith(".switchyard-brain.lock"));
-    if (changed.length) await commitAs(repo, { agent: "human", role: "human" }, "Record edits made outside SwitchYard", { paths: [".", ":(exclude).switchyard-brain.lock"] });
+    if (changed.length) await commitAs(repo, { agent: "human", role: "human" }, "Record edits made outside SwitchYard", { paths });
   }
 
   /**
@@ -265,8 +272,9 @@ export class Brain {
   private async writeFile(rel: string, contentOrFn: string | ((current: string | null) => string | null), actor: Actor, message: string): Promise<{ path: string; commit: string | null }> {
     await this.ensure();
     const r = this.resolve(rel);
+    const binding = r.repo && r.commit ? await this.resolveGitDocument(rel) : null;
     const doWrite = async () => {
-      if (r.repo && r.commit) await this.adoptExternalEdits(r.repo);
+      if (binding) { assertBrainGitPath(binding, r.abs); await this.adoptExternalEdits(binding.repo, binding); }
       const content = typeof contentOrFn === "string" ? contentOrFn : contentOrFn(existsSync(r.abs) ? readFileSync(r.abs, "utf8") : null);
       if (content === null) return { path: rel, commit: null };
       mkdirSync(path.dirname(r.abs), { recursive: true });
@@ -274,9 +282,9 @@ export class Brain {
       writeFileSync(tmp, content.endsWith("\n") ? content : `${content}\n`);
       renameSync(tmp, r.abs);
       let commit: string | null = null;
-      if (r.repo && r.commit) {
-        commit = await commitAs(r.repo, actor, message.slice(0, 200), { paths: [r.repoRel || "."] });
-        if (this.cfg.brain.push && commit) await git(r.repo, ["push", "-q"]).catch(() => undefined);
+      if (binding) {
+        commit = await commitAs(binding.repo, actor, message.slice(0, 200), { paths: [`:(literal)${binding.repoRel}`] });
+        if (this.cfg.brain.push && commit) await git(binding.repo, ["push", "-q"]).catch(() => undefined);
       }
       this.indexFile(rel);
       return { path: rel, commit };
@@ -488,18 +496,20 @@ export class Brain {
     const why = reason.trim().replace(/\s+/g, " ");
     if (!why) throw new BrainError("say why the entry is removed; the reason is recorded in the brain's history");
     await this.ensure();
+    const binding = r.repo && r.commit ? await this.resolveGitDocument(r.rel) : null;
     const doRemove = async () => {
+      if (binding) assertBrainGitPath(binding, r.abs);
       if (!existsSync(r.abs) || !statSync(r.abs).isFile()) throw new BrainError(`${r.rel} does not exist`);
       // A file written outside SwitchYard and never committed is recorded first, so its text stays in the history.
-      if (r.repo && r.commit) await this.adoptExternalEdits(r.repo);
+      if (binding) await this.adoptExternalEdits(binding.repo, binding);
       const text = readFileSync(r.abs, "utf8");
       const who = p.kind === "human" ? (p.name ?? actor.agent) : actor.agent;
       const trailers = typeof opts.trailers === "function" ? opts.trailers(text) : (opts.trailers ?? { "Removed-By": who.slice(0, 200), "Remove-Reason": why.slice(0, 1000) });
       unlinkSync(r.abs);
       let commit: string | null = null;
-      if (r.repo && r.commit) {
-        commit = await commitAs(r.repo, actor, (opts.message ?? `Remove ${r.rel}`).slice(0, 200), { paths: [r.repoRel], extraTrailers: trailers });
-        if (this.cfg.brain.push && commit) await git(r.repo, ["push", "-q"]).catch(() => undefined);
+      if (binding) {
+        commit = await commitAs(binding.repo, actor, (opts.message ?? `Remove ${r.rel}`).slice(0, 200), { paths: [`:(literal)${binding.repoRel}`], extraTrailers: trailers });
+        if (this.cfg.brain.push && commit) await git(binding.repo, ["push", "-q"]).catch(() => undefined);
       }
       this.indexFile(r.rel);
       return { path: r.rel, commit, text };
@@ -634,23 +644,17 @@ export class Brain {
   // ---------- history ----------
 
   async history(rel: string, limit = 50): Promise<Array<{ commit: string; date: string; agent: string | null; model: string | null; subject: string }>> {
-    const r = this.resolve(rel);
-    if (!r.repo || !r.commit) return [];
-    const raw = await git(r.repo, ["log", `-${limit}`, "--follow", "--format=%H%x1f%aI%x1f%s%x1f%(trailers:key=Agent,valueonly)%x1f%(trailers:key=Model,valueonly)%x1e", "--", r.repoRel]).catch(() => "");
-    return raw
-      .split("\x1e")
-      .map((x) => x.trim())
-      .filter(Boolean)
-      .map((x) => {
-        const [commit, date, subject, agent, model] = x.split("\x1f");
-        return { commit: commit!, date: date!, subject: subject!, agent: agent?.trim() || null, model: model?.trim() || null };
-      });
+    try {
+      const binding = await this.resolveGitDocument(rel);
+      return binding ? await brainMountHistory(binding, limit) : [];
+    } catch { return []; }
   }
 
   async blame(rel: string): Promise<BlameLine[]> {
-    const r = this.resolve(rel);
-    if (!r.repo || !r.commit) throw new BrainError(`${r.rel} is not tracked by SwitchYard`);
-    return blame(r.repo, r.repoRel);
+    const r = await this.resolveGitDocument(rel);
+    if (!r) throw new BrainError(`${rel} is not tracked by SwitchYard`);
+    const lines = await blame(r.repo, r.repoRel);
+    return lines.map(line => ({ ...line, origPath: line.origPath.startsWith(r.mountPrefix) ? line.origPath.slice(r.mountPrefix.length) : line.origPath }));
   }
 
   // ---------- index document ----------

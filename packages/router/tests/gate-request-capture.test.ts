@@ -166,6 +166,13 @@ it.each(["native", "command"])("captures actual %s coding calls through the defa
   sy = open(env, client, { worker: true, coding: createCodingRunner(env.cfg) });
   const [task] = await sy.submitTasks([{ profile: "implement", goal: "Add subtract", repositoryAliases: ["core"], writableRepository: "core", hints: { difficulty: "T2" }, context: { fileRefs: ["core:src/app.ts"] }, constraints: { acceptanceCriteria: ["subtract exists"], allowedPaths: ["src/**"] } }]);
   const result = await sy.awaitResults([task!.taskId], { timeoutSeconds: 60 });
+  if (runner === "command") {
+    expect(result.completed[0]!.stopReason).toBe("worker_sandbox_unavailable");
+    expect(client.requests).toHaveLength(0);
+    expect(rows()).toHaveLength(0);
+    expect(sy.db.prepare("SELECT COUNT(*) AS n FROM request_captures").get()).toEqual({ n: 0 });
+    return;
+  }
   expect(result.completed[0]!.executionStatus).toBe("completed");
   expect(client.requests.length).toBeGreaterThan(0);
   expect(rows()).toHaveLength(client.requests.length);

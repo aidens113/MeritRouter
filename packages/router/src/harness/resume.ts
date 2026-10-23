@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { ChatMessage, ChatToolCall } from "../gateway/types.js";
 import type { ResumePlan } from "../sessions/resume.js";
-import { editRecoveryMessage, RESUME_TEXT } from "../sessions/resume.js";
+import { editRecoveryMessage, RESUME_TEXT, notAppliedToolProof, validNotAppliedToolProof } from "../sessions/resume.js";
 import type { ResumeAction, ResumeToolRef, WorkspaceRepo } from "../sessions/events.js";
 import type { WorkspacePointer } from "../runners/session-workspace.js";
 import { commitAs, type Actor } from "../attribution/index.js";
@@ -11,6 +11,8 @@ import { normalizeRelPath } from "../context/repo-reader.js";
 import type { HarnessEnv, HarnessTool } from "./tools.js";
 import type { TerminalTool } from "./loop.js";
 import { journaled, parseArgs } from "./journal.js";
+import { assertRunAuthority } from "./task-authority.js";
+import { scopedArtifact } from "./check-evidence.js";
 
 /**
  * What a runner hands the agent loop to continue an interrupted session (S2). The loop's
@@ -28,7 +30,11 @@ export interface ResumeInput {
   notice?: string;
 }
 
-export type ResumeOutcome<T> = { kind: "finished"; value: T } | { kind: "continue" };
+export type ResumeOutcome<T> = { kind: "finished"; value: T } | {
+  kind: "continue";
+  /** Pending edits proven absent by successful workspace reconciliation, never inferred from tool prose. */
+  notAppliedToolIndexes: ReadonlySet<number>;
+};
 
 /** A tool message slot in the plan's transcript. */
 function setTool(messages: ChatMessage[], index: number | null, content: string): void {
@@ -69,7 +75,7 @@ export function restoreEvidence(env: HarnessEnv, messages: ChatMessage[]): void 
       case "read_artifact": {
         if (typeof args.ref !== "string" || !args.ref) break;
         const ref = args.ref.startsWith("artifact:") ? args.ref : `artifact:${args.ref}`;
-        env.universe.refs.set(ref, m.content.split("\n").length);
+        try { const artifact = scopedArtifact(env, ref); env.universe.refs.set(ref, artifact.content.toString("utf8").split(/\r?\n/).length); } catch { /* unavailable or foreign artifact is not evidence */ }
         break;
       }
       case "write_file":
@@ -112,33 +118,37 @@ async function abortSequencer(worktree: string): Promise<string | null> {
  * it. Commits made after the recorded head (a per-response commit whose workspace event was
  * lost) are kept either way. Returns the files the reconciliation concerned.
  */
-async function reconcileRepo(repo: WorkspaceRepo, policy: "commit" | "reset", actor: Actor, pointer: WorkspacePointer | null): Promise<{ files: string[]; note: string | null }> {
-  if (!existsSync(repo.worktree)) return { files: [], note: `${repo.alias}: worktree ${repo.worktree} is gone; nothing to reconcile` };
+async function reconcileRepo(repo: WorkspaceRepo, policy: "commit" | "reset", actor: Actor, pointer: WorkspacePointer | null): Promise<{ files: string[]; note: string | null; unchanged: boolean }> {
+  if (!existsSync(repo.worktree)) return { files: [], note: `${repo.alias}: worktree ${repo.worktree} is gone; nothing to reconcile`, unchanged: false };
   const aborted = await abortSequencer(repo.worktree);
   const note = aborted ? `${repo.alias}: an interrupted ${aborted} was aborted` : null;
   await git(repo.worktree, ["add", "-A"]);
   const dirty = (await git(repo.worktree, ["diff", "--cached", "--name-only", "HEAD"])).split(/\r?\n/).filter(Boolean);
   const actual = (await git(repo.worktree, ["rev-parse", "HEAD"])).trim();
+  const unchanged = dirty.length === 0 && !!repo.head && actual === repo.head && !aborted;
   if (policy === "reset") {
     if (dirty.length) await git(repo.worktree, ["reset", "-q", "--hard", "HEAD"]);
     pointer?.setHead(repo.alias, actual);
-    return { files: dirty, note };
+    return { files: dirty, note, unchanged };
   }
   const head = dirty.length ? ((await commitAs(repo.worktree, actor, `${actor.role ?? "agent"}: recovered edits after interruption`)) ?? actual) : actual;
   pointer?.setHead(repo.alias, head);
   const since = repo.head && repo.head !== head ? (await git(repo.worktree, ["diff", "--name-only", repo.head, head]).catch(() => "")).split(/\r?\n/).filter(Boolean) : [];
-  return { files: [...new Set([...since, ...dirty])].sort(), note };
+  return { files: [...new Set([...since, ...dirty])].sort(), note, unchanged };
 }
 
-async function reconcileEdits(action: Extract<ResumeAction, { kind: "reconcile_edits" }>, messages: ChatMessage[], r: ResumeInput): Promise<string> {
+async function reconcileEdits(action: Extract<ResumeAction, { kind: "reconcile_edits" }>, messages: ChatMessage[], r: ResumeInput): Promise<{ text: string; unchanged: boolean }> {
   const files: string[] = [];
   const notes: string[] = [];
+  let unchanged = action.repos.length > 0;
   for (const repo of action.repos) {
     try {
       const out = await reconcileRepo(repo, action.policy, r.actor, r.pointer);
       files.push(...(action.repos.length > 1 ? out.files.map((f) => `${repo.alias}:${f}`) : out.files));
+      unchanged &&= out.unchanged;
       if (out.note) notes.push(out.note);
     } catch (err) {
+      unchanged = false;
       notes.push(`${repo.alias}: reconciliation failed (${(err as Error).message.slice(0, 200)}); re-read the files before editing`);
     }
   }
@@ -146,7 +156,7 @@ async function reconcileEdits(action: Extract<ResumeAction, { kind: "reconcile_e
   if (action.policy === "reset" && action.completedCallIds.length && files.length) text += ` This also reverted the edits of call(s) ${action.completedCallIds.join(", ")}, which had finished but were not committed.`;
   if (notes.length) text += ` (${notes.join("; ")})`;
   for (const c of action.calls) setTool(messages, c.messageIndex, text);
-  return text;
+  return { text, unchanged };
 }
 
 /** The terminal call of the last assistant turn, with the index of its tool message. */
@@ -183,7 +193,9 @@ export async function applyResume<T>(o: { env: HarnessEnv; messages: ChatMessage
 
   const byName = new Map(o.tools.map((t) => [t.def.function.name, t]));
   const done: ResumeAction[] = [];
+  const notAppliedToolIndexes = new Set((plan.notAppliedTools ?? []).filter(proof => validNotAppliedToolProof(messages, proof)).map(proof => proof.messageIndex));
   for (const action of plan.actions) {
+    assertRunAuthority(env.ctx);
     if (action.kind === "rerun_tool") {
       const tool = byName.get(action.name);
       const args = argsOf(action);
@@ -191,7 +203,10 @@ export async function applyResume<T>(o: { env: HarnessEnv; messages: ChatMessage
         if (!tool) return { ok: false, output: `error: unknown tool ${action.name}` };
         try {
           if (args === undefined || args === null || typeof args !== "object") throw new Error(`${action.name} arguments are not valid JSON`);
-          return { ok: true, output: await tool.run(args as Record<string, unknown>, env) };
+          const previousInvocation = env.toolInvocationId;
+          env.toolInvocationId = `${session?.id ?? env.ctx.taskId}:${action.callId}`;
+          try { return { ok: true, output: await tool.run(args as Record<string, unknown>, env) }; }
+          finally { env.toolInvocationId = previousInvocation; }
         } catch (err) {
           return { ok: false, output: `error: ${(err as Error).message}` };
         }
@@ -199,14 +214,23 @@ export async function applyResume<T>(o: { env: HarnessEnv; messages: ChatMessage
       setTool(messages, action.messageIndex, res.output);
       done.push({ ...action, result: res.output });
     } else if (action.kind === "reconcile_edits") {
-      done.push({ ...action, result: await reconcileEdits(action, messages, r) });
+      const reconciled = await reconcileEdits(action, messages, r);
+      if (reconciled.unchanged) for (const call of action.calls) {
+        if (!plan.notAppliedCandidateIntents?.includes(call.intentSeq)) continue;
+        if (call.messageIndex !== null && messages[call.messageIndex]?.role === "tool" && (messages[call.messageIndex] as Extract<ChatMessage, { role: "tool" }>).tool_call_id === call.callId) notAppliedToolIndexes.add(call.messageIndex);
+      }
+      done.push({ ...action, result: reconciled.text });
     } else {
       const text = r.external?.(action) ?? "interrupted; outcome unknown; ask again if you still need the answer";
       setTool(messages, action.messageIndex, text);
       done.push({ ...action, result: text });
     }
   }
-  session?.resumed(plan.summary, done, plan);
+  const notAppliedTools = [...notAppliedToolIndexes].map(index => notAppliedToolProof(messages, index)).filter(proof => proof !== null);
+  // Persist the exact reconciled transcript before its proof, so another interruption
+  // immediately after this resume can verify the same occurrence without reading prose.
+  session?.syncMessages(messages);
+  session?.resumed(plan.summary, done, { ...plan, notAppliedTools });
 
   // A submission made before the interruption: finish with it rather than asking the model again.
   const terminalName = o.terminal.def.function.name;
@@ -218,7 +242,7 @@ export async function applyResume<T>(o: { env: HarnessEnv; messages: ChatMessage
       const v = args === undefined ? null : await o.terminal.accept(args, env);
       if (v?.ok) return { kind: "finished", value: v.value };
       messages.push({ role: "user", content: `${plan.summary}\nYour ${terminalName} submission was accepted before the interruption but no longer validates:\n- ${v ? v.errors.join("\n- ") : "arguments are not valid JSON"}\nFix and call ${terminalName} again.${r.notice ? `\n${r.notice}` : ""}` });
-      return { kind: "continue" };
+      return { kind: "continue", notAppliedToolIndexes };
     }
     if (slot.content === RESUME_TEXT.retry || slot.content === RESUME_TEXT.notRun) {
       let value: T | undefined;
@@ -235,5 +259,5 @@ export async function applyResume<T>(o: { env: HarnessEnv; messages: ChatMessage
     }
   }
   messages.push({ role: "user", content: `${plan.summary}${r.notice ? `\n${r.notice}` : ""}` });
-  return { kind: "continue" };
+  return { kind: "continue", notAppliedToolIndexes };
 }

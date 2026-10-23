@@ -23,7 +23,8 @@ import { MergeQueue, type MergeItem } from "../workspaces/merge-queue.js";
 import { newId } from "../storage/db.js";
 import { isSimulatedCrash } from "../core/faults.js";
 import { parseDoc, replaceSection, section, workingDocTemplate } from "../brain/protocol.js";
-import { minimalEnv, runProcess } from "./coding/process.js";
+import { minimalEnv } from "./coding/process.js";
+import { executeSupervisorCommand } from "../harness/worker-actions.js";
 import { baseResult, type RunContext, type RunOutcome } from "./types.js";
 import { WorkspacePointer } from "./session-workspace.js";
 import { criterionTexts } from "../core/task.js";
@@ -366,7 +367,7 @@ export class SupervisorRunner implements CodingRunner {
     }
     if (primary && !ctx.signal.aborted) {
       for (const command of spec.constraints.checks ?? []) {
-        const res = await runProcess(command, [], { cwd: primary.worktree, env: minimalEnv({ CI: "1" }), timeoutMs: ctx.cfg.execution.check_timeout_seconds * 1000, signal: ctx.signal, shell: true });
+        const res = await executeSupervisorCommand(ctx, { command, cwd: primary.worktree, invocationId: `final_job_check:${executionId}:${checks.length}`, env: minimalEnv({ CI: "1" }), timeoutMs: ctx.cfg.execution.check_timeout_seconds * 1000, reason: "Final supervisor verification check" });
         const logRef = ctx.artifacts.write({ taskId: ctx.taskId, executionId, kind: "check_log", label: command, content: `$ ${command}\nexit ${res.exitCode}\n${res.stdout}\n${res.stderr}`, extension: ".log" });
         checks.push({ command, exitCode: res.killed ? null : res.exitCode, logRef });
       }
@@ -411,8 +412,8 @@ export class SupervisorRunner implements CodingRunner {
       result: baseResult({
         executionStatus: state2 === "completed" ? "completed" : state2 === "budget_exhausted" ? "budget_exhausted" : "failed",
         acceptanceStatus: acceptance,
-        stopReason: finish ? `supervisor_${finish.status}` : loop.kind === "budget_exhausted" ? "supervisor request budget exhausted" : "invalid_finish",
-        summary: `${finish?.summary ?? "The supervisor did not finish."}${branchNote ? `\n\n${branchNote}` : ""}`,
+        stopReason: finish ? `supervisor_${finish.status}` : loop.kind === "budget_exhausted" ? "supervisor request budget exhausted" : loop.kind === "stalled" ? loop.reason : "invalid_finish",
+        summary: `${finish?.summary ?? (loop.kind === "stalled" ? `Stopped after a repeated identical tool call without progress (${loop.reason}).` : "The supervisor did not finish.")}${branchNote ? `\n\n${branchNote}` : ""}`,
         findings: [...(finish?.verified ?? []).map((v) => ({ description: `Verified: ${v.claim} (${v.evidence})`, evidenceRefs: [] })), ...(scopeViolation.length ? [{ description: `Out-of-scope changes (not allowed by allowedPaths): ${scopeViolation.join(", ")}`, evidenceRefs: [] }] : [])],
         ...(scopeViolation.length ? { scopeViolation } : {}),
         artifactRefs: [transcriptRef],

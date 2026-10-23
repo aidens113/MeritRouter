@@ -27,7 +27,8 @@ export function RequestDetailView({ sy, slug, id, name }: { sy: Switchyard; slug
     ]} /></div></Card>
     <RelatedPanel groups={[
       { label: "Project", items: [{ key: slug, node: <Link href={base || "/all"}>{name}</Link> }] },
-      { label: "Tasks charged", items: q.tasks.map(t => ({ key: t.taskId, node: <TaskLink base={itemBase(t.project)} id={t.taskId} label={t.label} /> })) },
+      { label: "Tasks charged", items: q.tasks.map(t => ({ key: t.taskId, node: <TaskLink base={itemBase(t.project)} id={t.taskId} label={t.label} job={t.profile === "supervise"} /> })) },
+      { label: "Jobs", items: [...new Set(q.tasks.flatMap(t => t.profile === "supervise" ? [t.taskId] : t.parentTaskId ? [t.parentTaskId] : []))].map(id => ({ key: id, node: <TaskLink base={base} id={id} job /> })) },
       { label: "Sessions", items: q.sessions.map(s => ({ key: s.sessionId, node: <Link href={sessionHref(base, s.sessionId)}>{s.sessionId}</Link> })) },
       { label: "Agents", items: [...new Set(q.sessions.map(s => s.agent))].map(a => ({ key: a, node: <AgentLink base={base} agent={a} /> })) },
     ]} />

@@ -10,6 +10,14 @@ Related: [roadmap completion](roadmap-completion.md), [Labs](labs.md), [sessions
 
 ## Current State
 
+2026-10-23 correction: current source/acceptance belongs to
+[Correctness and panel flows](correctness-and-panel-flows.md); the snapshots below are historical.
+Queued Lab work now revalidates original persisted lease and current trusted supervisor mode.
+Workers request outside actions under default human-only policy; automatic worker Task Lab
+execution remains unavailable without durable execution proof. Compose transport/lifecycle,
+hydrated browser isolation and PostgreSQL/multi-host remain unfinished. No live deployment or
+engine/provider acceptance was performed by this corrective effort.
+
 Request-only release663626d is now pushed to dev/main after783/783 (88files,943.08s),
 recursive typecheck/build and production browser acceptance. Authorized4477 update completed:
 accepted663626d rebuilt at root, livePID24040 and populated recorded exchange verified; config unchanged.
