@@ -64,6 +64,40 @@ describe("external worker refusal", () => {
 });
 
 describe("direct task-scoped bridge", () => {
+  it("accepts operation-specific offset ranges in a real MCP batch", async () => {
+    const { ctx } = await directBridge();
+    const ref = sy!.artifacts.write({ taskId: ctx.taskId, kind: "tool_output", label: "large fixture", content: "x".repeat(1_000_005) + "tail", extension: ".txt" });
+    const page = JSON.parse(text(await client!.callTool({ name: "batch", arguments: { items: [
+      { id: "page", operation: "read_output_page", args: { ref, offset: 1_000_005, length: 4 } },
+    ] } })));
+    expect(page.status).toBe("succeeded");
+    expect(page.data[0].result.data.text).toBe("tail");
+    // The portable superset must not weaken the original listing operation's limit.
+    const invalid = JSON.parse(text(await client!.callTool({ name: "batch", arguments: { items: [
+      { id: "paths", operation: "list_paths", args: { offset: 1_000_005 } },
+    ] } })));
+    expect(invalid.status).toBe("failed");
+  });
+  it("advertises usable nested read and batch schemas over actual MCP", async () => {
+    await directBridge();
+    const listed = await client!.listTools();
+    const read = listed.tools.find(tool => tool.name === "read_files")!.inputSchema as any;
+    expect(read.properties.files.items.type).toBe("object");
+    expect(read.properties.files.items.required).toContain("path");
+    const batch = listed.tools.find(tool => tool.name === "batch")!.inputSchema as any;
+    expect(batch.properties.items.items.properties.operation.enum).toContain("read_files");
+    expect(batch.properties.items.items.properties.args.properties.files.items.properties.path.type).toBe("string");
+    const result = JSON.parse(text(await client!.callTool({ name: "batch", arguments: { items: [
+      { id: "files", operation: "read_files", args: { files: [{ path: "src/app.ts" }, { path: "missing" }] } },
+      { id: "paths", operation: "list_paths", args: {} },
+    ] } })));
+    expect(result.status).toBe("succeeded");
+    expect(result.data[0].result.data.map((file: any) => file.status)).toEqual(["succeeded", "failed"]);
+    expect(result.data[1].result.status).toBe("succeeded");
+    const legacy = JSON.parse(text(await client!.callTool({ name: "read_files", arguments: { files: ["src/app.ts"] } })));
+    expect(legacy.data[0].status).toBe("succeeded");
+    expect(taskToolsBrief(bridge!)).toContain("Do not spend one model turn per known file or check");
+  });
   it("waits for a running approved recipe to stop before settling timeout", async () => {
     const { ctx } = await directBridge("node slow-check.cjs");
     const marker=path.join(env!.repo,"late-write");

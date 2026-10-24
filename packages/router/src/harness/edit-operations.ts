@@ -14,7 +14,15 @@ const Edit = z.discriminatedUnion("action", [
 ]);
 export function editOperations(): OperationDefinition[] {
   return [{
-    name: "apply_edits", description: "Preflight all exact edits before writing. Existing files require sha256 from read_files; full replacements require whole_file:true. Sequential effects are individually journaled; partial application is explicitly returned.", args: z.object({ ...DeadlineArgs, edits: z.array(Edit).min(1).max(64) }), sideEffect: "edit", available: env => !!env.workspace, async run(a, env) {
+    name: "apply_edits", description: 'Submit up to 64 edits together, each with required action and path. Create example: {"edits":[{"action":"create","path":"src/new.ts","content":"complete file"}]}. Patch requires expected_sha256, old_text and new_text; replace requires expected_sha256, content and whole_file:true; delete requires expected_sha256. Preflight all edits before writing. Sequential effects are individually journaled; partial application is explicitly returned.', args: z.object({ ...DeadlineArgs, edits: z.array(Edit).min(1).max(64) }),
+    // Clients that drop anyOf/oneOf otherwise lose every field of the discriminated
+    // union, including action. Keep the advertised shape flat and validate the union.
+    modelArgs: z.object({ ...DeadlineArgs, edits: z.array(z.object({
+      action: z.enum(["create", "patch", "replace", "delete"]), path: z.string().min(1),
+      content: z.string().optional(), expected_sha256: z.string().optional(),
+      old_text: z.string().optional(), new_text: z.string().optional(),
+      replace_all: z.boolean().optional(), whole_file: z.boolean().optional(),
+    })).min(1).max(64) }), sideEffect: "edit", available: env => !!env.workspace, async run(a, env) {
       const edits = a.edits as z.infer<typeof Edit>[];
       const seen = new Set<string>();
       const preflight = (edit: z.infer<typeof Edit>) => {

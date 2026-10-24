@@ -9,7 +9,7 @@ import { labHarnessTools } from "../../labs/tools.js";
 import { evidenceUniverse } from "../../core/worker-output.js";
 import type { RunContext } from "../types.js";
 import { minimalEnv } from "./process.js";
-import { harnessV2Tools } from "../../harness/operation-dispatch.js";
+import { harnessV2Tools, HARNESS_V2_GUIDANCE } from "../../harness/operation-dispatch.js";
 import { operationRegistry } from "../../harness/operation-registry.js";
 import { RepoReader } from "../../context/repo-reader.js";
 
@@ -40,7 +40,7 @@ export async function startTaskTools(ctx: RunContext, worktree: string, home: st
   const alias = ctx.spec.writableRepository;
   if (alias) env.readers.set(alias, new RepoReader(alias, worktree, null));
   const tools = availableTools([...harnessV2Tools(env), declaredCheckTool(), requestBudgetTool(), ...labHarnessTools()], env);
-  const operationSchemas = new Map(operationRegistry().map(def => [def.name, def.args]));
+  const operationSchemas = new Map(operationRegistry().map(def => [def.name, def.modelArgs ?? def.args]));
   let closing = false;
   let serial: Promise<void> = Promise.resolve();
 
@@ -105,5 +105,5 @@ export async function startTaskTools(ctx: RunContext, worktree: string, home: st
 
 /** No token is written to TASK.md; command agents must deliberately connect with these env vars. */
 export function taskToolsBrief(bridge: TaskToolsBridge): string {
-  return `\n## MeritRouter task tools\n\nA task-scoped MCP server exposes ${bridge.tools.join(", ") || "no optional tools"}. OpenCode is configured to connect as meritrouter_task; its tool names have that prefix. Command agents can connect using MERITROUTER_TASK_TOOLS_URL and the bearer token in MERITROUTER_TASK_TOOLS_TOKEN. These credentials authorize this task only; do not print or persist them.\nUse run_check with an exactly declared command; other commands and excess check runs are refused. Ask request_more_budget before your model requests run out; it waits for approval without spending model requests. An approval raises only the request cap, never token or paid caps. A command agent must implement this MCP connection itself; the runner does not assume it uses these tools.\n`;
+  return `\n## MeritRouter task tools\n\nA task-scoped MCP server exposes ${bridge.tools.join(", ") || "no optional tools"}. OpenCode is configured to connect as meritrouter_task; its tool names have that prefix. Command agents can connect using MERITROUTER_TASK_TOOLS_URL and the bearer token in MERITROUTER_TASK_TOOLS_TOKEN. These credentials authorize this task only; do not print or persist them.\n${HARNESS_V2_GUIDANCE}\nUse run_check with an exactly declared command; other commands and excess check runs are refused. Ask request_more_budget before your model requests run out; it waits for approval without spending model requests. An approval raises only the request cap, never token or paid caps. A command agent must implement this MCP connection itself; the runner does not assume it uses these tools.\n`;
 }

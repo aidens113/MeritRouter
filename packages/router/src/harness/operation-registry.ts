@@ -10,8 +10,25 @@ const BatchItem = z.object({ id: z.string().min(1).max(100), operation: z.string
 export function operationRegistry(): OperationDefinition[] {
   const definitions = [...repositoryOperations(), ...editOperations(), ...recipeOperations()];
   const byName = new Map(definitions.map(x => [x.name, x]));
+  // A portable superset retains nested argument names even in clients that discard
+  // union schemas. The actual operation's args validator remains authoritative.
+  const variants = new Map<string, z.ZodType[]>();
+  for (const definition of definitions) {
+    for (const [name, schema] of Object.entries((definition.modelArgs ?? definition.args).shape)) {
+      variants.set(name, [...(variants.get(name) ?? []), schema]);
+    }
+  }
+  const fields: Record<string, z.ZodType> = {};
+  for (const [name, schemas] of variants) {
+    // Shared names need the union of accepted values, never the first operation's
+    // bounds (e.g. listing offset max1M versus unbounded artifact page offset).
+    const types = schemas.map(schema => z.toJSONSchema(schema).type);
+    fields[name] = (schemas.length === 1 ? schemas[0]! : z.union(schemas as [z.ZodType, z.ZodType, ...z.ZodType[]])
+      .meta(types.every(type => type === types[0]) && types[0] ? { type: types[0] } : {})).optional();
+  }
+  const modelItem = z.object({ id: z.string(), operation: z.enum(definitions.map(def => def.name) as [string, ...string[]]), args: z.object(fields), depends_on: z.array(z.string()).optional() });
   definitions.push({
-    name: "batch", description: "Up to 64 operations with stable IDs and dependency IDs. Independent reads run four at a time; mutations run sequentially. No nested batches. Child outcomes remain independent and individually journaled. Any effect can be partial; never retry uncertain commands.", args: z.object({ ...DeadlineArgs, items: z.array(BatchItem).min(1).max(64) }), sideEffect: "command", async run(a, env) {
+    name: "batch", description: 'Up to 64 operations with stable IDs and dependency IDs. Example: {"items":[{"id":"files","operation":"read_files","args":{"files":[{"path":"src/a.ts"},{"path":"src/b.ts"}]}},{"id":"find","operation":"search_text","args":{"pattern":"TODO"}}]}. Up to four read operation invocations run concurrently; each read_files invocation may read four files concurrently. Mutations run sequentially. No nested batches. Child outcomes remain independent and individually journaled. Any effect can be partial; never retry uncertain commands.', args: z.object({ ...DeadlineArgs, items: z.array(BatchItem).min(1).max(64) }), modelArgs: z.object({ ...DeadlineArgs, items: z.array(modelItem).min(1).max(64) }), sideEffect: "command", async run(a, env) {
       const items = a.items as z.infer<typeof BatchItem>[];
       const ids = new Set<string>();
       // Validate the whole graph and schemas before the first effect. Dependencies must precede children.

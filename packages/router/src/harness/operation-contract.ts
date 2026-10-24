@@ -10,6 +10,8 @@ export interface OperationDefinition {
   name: string;
   description: string;
   args: z.ZodObject;
+  /** Portable model-facing shape; args remains the strict execution validator. */
+  modelArgs?: z.ZodObject;
   sideEffect: ToolSideEffect;
   available?: (env: HarnessEnv) => boolean;
   run(args: Record<string, unknown>, env: HarnessEnv): Promise<unknown>;

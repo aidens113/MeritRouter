@@ -9,6 +9,7 @@ import type { HarnessEnv } from "../src/harness/tools.js";
 import { harnessV2Tools } from "../src/harness/operation-dispatch.js";
 import { executeOperation, operationStatus } from "../src/harness/operation-lifecycle.js";
 import { operationRegistry } from "../src/harness/operation-registry.js";
+import * as tools from "../src/harness/tools.js";
 import { FAULT_ENV, resetFaults } from "../src/core/faults.js";
 import { runProcess, minimalEnv } from "../src/runners/coding/process.js";
 const roots: string[] = [];
@@ -45,6 +46,76 @@ function fixture() {
   return { root, env, invoke, events, stored };
 }
 describe("Harness v2 executable contract", () => {
+  it("advertises nested edit/read/batch fields without requiring union-aware clients", async () => {
+    const { env, invoke } = fixture();
+    const definitions = new Map(harnessV2Tools(env).map(tool => [tool.def.function.name, tool.def.function.parameters]));
+    // Match the documented restricted client projection: union branches/const are lost.
+    const portable = (schema: any): any => Object.fromEntries(Object.entries(schema).filter(([key]) =>
+      ["type", "properties", "required", "items", "enum", "additionalProperties"].includes(key)).map(([key, value]) =>
+        [key, key === "properties" ? Object.fromEntries(Object.entries(value as object).map(([name, child]) => [name, portable(child)])) : key === "items" ? portable(value) : value]));
+    const edits = portable(definitions.get("apply_edits")).properties.edits.items;
+    expect(edits.type).toBe("object");
+    expect(edits.required).toEqual(["action", "path"]);
+    expect(edits.properties.action.enum).toEqual(["create", "patch", "replace", "delete"]);
+    expect(edits.properties.old_text.type).toBe("string");
+    expect(portable(definitions.get("read_files")).properties.files.items.required).toContain("path");
+    const batch = portable(definitions.get("batch")).properties.items.items;
+    expect(batch.properties.operation.enum).toContain("apply_edits");
+    expect(batch.properties.args.properties.edits.items.required).toContain("action");
+    expect(batch.properties.args.properties.files.items.properties.path.type).toBe("string");
+    expect((await invoke("apply_edits", { edits: [{ path: "src/new", content: "missing action" }] })).status).toBe("failed");
+    expect((await invoke("apply_edits", { edits: [{ action: "patch", path: "src/a.txt", old_text: "first", new_text: "changed" }] })).status).toBe("failed");
+    expect((await invoke("list_paths")).data.files).not.toContain("src/new");
+  });
+  it("runs independent batch reads four at a time and preserves failed file outcomes", async () => {
+    const { env, invoke } = fixture();
+    const reader = env.readers.get("app")!, read = reader.readFile.bind(reader);
+    let active = 0, peak = 0;
+    let release!: () => void;
+    const together = new Promise<void>(resolve => { release = resolve; });
+    vi.spyOn(reader, "readFile").mockImplementation(async (...args) => {
+      active++; peak = Math.max(peak, active);
+      if (active === 4) release();
+      try { await together; return await read(...args); }
+      finally { active--; }
+    });
+    const result = await invoke("batch", { items: Array.from({ length: 7 }, (_, i) => ({ id: `read:${i}`, operation: "read_files", args: { files: [{ path: i === 2 ? "missing" : "src/a.txt" }] } })) });
+    expect(peak).toBe(4);
+    expect(active).toBe(0);
+    expect(result.data.map((item: any) => item.id)).toEqual(Array.from({ length: 7 }, (_, i) => `read:${i}`));
+    expect(result.data[2].result.data[0].status).toBe("failed");
+    expect(result.data[6].result.data[0].status).toBe("succeeded");
+  });
+  it("groups checks in one call while keeping commands serial and stopping at pending approval", async () => {
+    const { env, invoke } = fixture();
+    const commands = ["check one", "check two", "check three"];
+    env.checks = { commands, cwd: env.workspace!.root, env: {}, timeoutMs: 1000, maxRuns: 10 };
+    env.checkResults = [];
+    const calls: string[] = []; let active = 0, peak = 0, pending = false;
+    const spy = vi.spyOn(tools, "declaredCheckTool").mockReturnValue({
+      def: { type: "function", function: { name: "run_check", description: "fixture", parameters: {} } }, sideEffect: "command",
+      async run(args, child) {
+        active++; peak = Math.max(peak, active); calls.push(args.command as string);
+        await new Promise(resolve => setTimeout(resolve, 5)); active--;
+        if (pending) return JSON.stringify({ status: "pending" });
+        child.checkResults!.push({ command: args.command as string, exitCode: args.command === "check one" ? 1 : 0, logRef: "artifact:fixture" });
+        return "completed check";
+      },
+    });
+    try {
+      const all = await invoke("run_checks", { stop_on_failure: false });
+      expect(all.data.results).toHaveLength(3); expect(all.status).toBe("failed");
+      expect(calls).toEqual(commands); expect(peak).toBe(1);
+      calls.length = 0;
+      const stop = await invoke("run_checks");
+      expect(stop.data.notStarted).toEqual(["check:2", "check:3"]);
+      pending = true; calls.length = 0;
+      const approval = await invoke("run_checks", { stop_on_failure: false });
+      expect(approval.status).toBe("waiting_approval");
+      expect(approval.data.notStarted).toEqual(["check:2", "check:3"]);
+      expect(calls).toEqual(["check one"]);
+    } finally { spy.mockRestore(); }
+  });
   it("pages listings and literal search without omission", async () => {
     const { root, invoke } = fixture();
     for (let i = 0;i < 7;i++)
