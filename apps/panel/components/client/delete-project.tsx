@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Check, RefreshCw, Trash2, X } from "lucide-react";
 import type { insights } from "meritrouter";
@@ -17,9 +17,19 @@ type Preview = insights.ProjectDeletionPreview;
  * (DELETE /api/projects/<slug>). Afterwards the panel goes to the projects grid.
  */
 export function DangerZone({ slug, name }: { slug: string; name: string }) {
+  return <DeleteProjectAction slug={slug} name={name} />;
+}
+
+/** Shared staged deletion for project settings and compact project-grid actions. */
+export function DeleteProjectAction({ slug, name, compact = false }: { slug: string; name: string; compact?: boolean }) {
   const router = useRouter();
+  const id = useId();
+  const titleId = `${id}-danger-title`;
+  const inputId = `${id}-slug`;
+  const errorId = `${id}-error`;
   const opener = useRef<HTMLButtonElement>(null);
   const input = useRef<HTMLInputElement>(null);
+  const previewRequest = useRef(0);
   const [first, setFirst] = useState(false);
   const [second, setSecond] = useState(false);
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -28,10 +38,15 @@ export function DangerZone({ slug, name }: { slug: string; name: string }) {
   const [error, setError] = useState<string | null>(null);
 
   const start = async () => {
+    const request = ++previewRequest.current;
     setPreview(null);
     setLoadError(null);
+    setTyped("");
+    setError(null);
+    setSecond(false);
     setFirst(true);
     const r = await callApi(`/api/projects/${encodeURIComponent(slug)}/deletion`, "GET");
+    if (request !== previewRequest.current) return;
     if (!r.ok) return setLoadError(r.error ?? "The counts could not be read.");
     setPreview(r.preview as Preview);
   };
@@ -55,29 +70,40 @@ export function DangerZone({ slug, name }: { slug: string; name: string }) {
 
   const blocked = Boolean(preview?.blockers.length);
   return (
-    // Not <Card>: its neutral border class would compete with the red one.
-    <section id="danger" aria-labelledby="danger-title" className="min-w-0 scroll-mt-28 rounded-xl border border-bad/50 bg-surface shadow-[0_1px_2px_rgba(0,0,0,0.03)] xl:scroll-mt-6">
-      <div className="border-b border-bad/30 px-4 py-3">
-        <h2 id="danger-title" className="text-sm font-semibold text-bad-ink">
-          Danger zone
-        </h2>
-        <p className="mt-0.5 text-xs text-ink-3">Actions here cannot be undone.</p>
-      </div>
-      <div className="flex flex-wrap items-center justify-between gap-3 p-4">
-        <div className="min-w-0 max-w-prose">
-          <div className="text-sm font-medium text-ink">Delete this project</div>
-          <p className="mt-0.5 text-xs text-ink-3">
-            Removes its settings, tasks, sessions, worktrees, and brain folder. Its repository folders and branches are not touched, and its model requests and spend stay in the accounting. To hide it instead, archive it.
-          </p>
-        </div>
-        <button ref={opener} type="button" className={buttonClass("danger")} onClick={start}>
+    <>
+      {compact ? (
+        <button ref={opener} type="button" className={buttonClass("danger", true)} onClick={start} aria-label={`Delete project ${name}`}>
           <Trash2 size={14} aria-hidden /> Delete project
         </button>
-      </div>
+      ) : (
+        // Not <Card>: its neutral border class would compete with the red one.
+        <section id="danger" aria-labelledby={titleId} className="min-w-0 scroll-mt-28 rounded-xl border border-bad/50 bg-surface shadow-[0_1px_2px_rgba(0,0,0,0.03)] xl:scroll-mt-6">
+          <div className="border-b border-bad/30 px-4 py-3">
+            <h2 id={titleId} className="text-sm font-semibold text-bad-ink">
+              Danger zone
+            </h2>
+            <p className="mt-0.5 text-xs text-ink-3">Actions here cannot be undone.</p>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 p-4">
+            <div className="min-w-0 max-w-prose">
+              <div className="text-sm font-medium text-ink">Delete this project</div>
+              <p className="mt-0.5 text-xs text-ink-3">
+                Removes its settings, tasks, sessions, worktrees, and brain folder. Its repository folders and branches are not touched, and its model requests and spend stay in the accounting. To hide it instead, archive it.
+              </p>
+            </div>
+            <button ref={opener} type="button" className={buttonClass("danger")} onClick={start}>
+              <Trash2 size={14} aria-hidden /> Delete project
+            </button>
+          </div>
+        </section>
+      )}
 
       <ConfirmDialog
         open={first}
-        onClose={() => setFirst(false)}
+        onClose={() => {
+          previewRequest.current++;
+          setFirst(false);
+        }}
         onConfirm={() => {
           setTyped("");
           setError(null);
@@ -131,12 +157,12 @@ export function DangerZone({ slug, name }: { slug: string; name: string }) {
         tone="destructive"
         confirmDisabled={typed !== slug}
       >
-        <label htmlFor="delete-project-slug" className="block text-sm text-ink-2">
+        <label htmlFor={inputId} className="block text-sm text-ink-2">
           Type <Mono>{slug}</Mono> to confirm
         </label>
         <input
           ref={input}
-          id="delete-project-slug"
+          id={inputId}
           value={typed}
           onChange={(e) => setTyped(e.target.value)}
           autoComplete="off"
@@ -144,15 +170,15 @@ export function DangerZone({ slug, name }: { slug: string; name: string }) {
           spellCheck={false}
           className="field mt-1 font-mono"
           aria-invalid={Boolean(error)}
-          aria-describedby={error ? "delete-project-error" : undefined}
+          aria-describedby={error ? errorId : undefined}
         />
         {error ? (
-          <p id="delete-project-error" role="alert" className="mt-2 text-sm text-bad-ink">
+          <p id={errorId} role="alert" className="mt-2 text-sm text-bad-ink">
             {error}
           </p>
         ) : null}
       </ConfirmDialog>
-    </section>
+    </>
   );
 }
 

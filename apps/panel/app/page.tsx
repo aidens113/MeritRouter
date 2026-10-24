@@ -7,6 +7,7 @@ import { SetupScreen } from "@/components/setup";
 import { Badge, buttonClass, Card, EmptyState } from "@/components/ui";
 import { PageHeader } from "@/components/page-header";
 import { ActionButton } from "@/components/client/actions";
+import { DeleteProjectAction } from "@/components/client/delete-project";
 import { ago, dateTime } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -26,10 +27,10 @@ function Count({ n, label, tone }: { n: number; label: string; tone?: "live" | "
 function ProjectTile({ p, now }: { p: ProjectCard; now: number }) {
   const live = p.runningTasks > 0;
   return (
-    <li className="min-w-0">
+    <li className="flex min-w-0 flex-col rounded-xl border border-line bg-surface shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
       <Link
         href={projectBase(p.slug)}
-        className="group flex h-full flex-col rounded-xl border border-line bg-surface p-4 shadow-[0_1px_2px_rgba(0,0,0,0.03)] transition-colors hover:border-accent/50 hover:bg-surface-2/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+        className="group flex flex-1 flex-col rounded-t-xl p-4 transition-colors hover:bg-surface-2/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
       >
         <div className="flex items-start gap-2">
           <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent-ink">
@@ -81,6 +82,9 @@ function ProjectTile({ p, now }: { p: ProjectCard; now: number }) {
           <Clock size={12} aria-hidden /> {p.lastActivityAt ? `active ${ago(p.lastActivityAt, now)}` : "no activity yet"}
         </div>
       </Link>
+      <div className="flex justify-end border-t border-line px-4 py-2.5">
+        <DeleteProjectAction slug={p.slug} name={p.name} compact />
+      </div>
     </li>
   );
 }
@@ -157,6 +161,7 @@ export default async function ProjectsPage() {
                 <ActionButton url={`/api/projects/${encodeURIComponent(p.slug)}`} method="PATCH" payload={{ archived: false }} small success="Unarchived">
                   Unarchive
                 </ActionButton>
+                <DeleteProjectAction slug={p.slug} name={p.name} compact />
               </li>
             ))}
           </ul>
