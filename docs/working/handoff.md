@@ -6,6 +6,20 @@ own working document with decisions, phases, ledger, and reports.
 
 ## Current effort (2026-10-23)
 
+User requested default four workers while supervising a new standalone Instagram clone.
+Schema/example/presets now use execution.max_concurrent_tasks=4 and
+max_concurrent_writers_per_repository=4; explicit lower settings remain authoritative and
+overlapping file leases still serialize writers. Live configuration explicitly changed to 4/4
+with user authorization; auto reload observed both Instagram tasks running. Paid stays disabled.
+Defaults/preset and four-disjoint-writer regression checks pass; recursive typecheck/build pass.
+Full router suite passes119files/1207tests/2platformskips (979.07s). Source publication follows.
+Clone source/data remain outside this framework at D:/SwitchYardProjects/instagram-clone;
+project instagram-clone, alias app. See its docs/working/instagram-clone.md for task IDs/contract.
+User clarified supervisor must never implement clone files: worker-only validation now uses
+D:/SwitchYardProjects/instagram-clone-worker-validation, branch feat/worker-only-instagram.
+Prior uncommitted supervisor repairs in original clone excluded. Active trial and framework
+findings are in [instagram-meritrouter-trial.md](instagram-meritrouter-trial.md).
+
 [Cost-first routing](cost-first-routing.md) is complete: cost reduction across paid and free
 routes, enabled paid defaults ($5 rolling weekly cap; T1-T3/standalone supervisor free-exhaustion;
 T4 escalation). Explicit stored settings and the free-only preset remain supported. README now

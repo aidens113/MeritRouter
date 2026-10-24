@@ -16,6 +16,15 @@ const policies = { T1: "on_free_exhaustion", T2: "on_free_exhaustion", T3: "on_f
 const parse = (extra = {}) => ConfigSchema.parse({ version: 1, profiles: {}, ...extra });
 
 describe("cost-first paid defaults", () => {
+  it("initializes four worker and repository writer slots while retaining explicit limits", () => {
+    expect(parse().execution).toMatchObject({ max_concurrent_tasks: 4, max_concurrent_writers_per_repository: 4 });
+    expect(parse({ execution: { max_concurrent_tasks: 1, max_concurrent_writers_per_repository: 1 } }).execution)
+      .toMatchObject({ max_concurrent_tasks: 1, max_concurrent_writers_per_repository: 1 });
+    for (const preset of ["claude-code", "standalone-free", "standalone-hybrid", "standalone-paid"]) {
+      const cfg = ConfigSchema.parse(YAML.parse(readFileSync(path.resolve(import.meta.dirname, `../examples/presets/${preset}.yaml`), "utf8")));
+      expect(cfg.execution).toMatchObject({ max_concurrent_tasks: 4, max_concurrent_writers_per_repository: 4 });
+    }
+  });
   it("defaults to bounded paid routing, including the standalone supervisor", () => {
     const cfg = parse();
     expect(cfg.paid).toMatchObject({ enabled: true, budgets: { per_week_usd: 5 }, tiers: policies, providers: {}, models: [] });

@@ -875,8 +875,8 @@ export const ConfigSchema = z
     projects: z.record(z.string().regex(PROJECT_SLUG_RE), z.unknown()).default({}),
     execution: z
       .object({
-        max_concurrent_tasks: z.number().int().positive().default(2),
-        max_concurrent_writers_per_repository: z.number().int().positive().default(1),
+        max_concurrent_tasks: z.number().int().positive().default(4),
+        max_concurrent_writers_per_repository: z.number().int().positive().default(4),
         max_model_requests_per_task: z.number().int().positive().default(16),
         job_timeout_seconds: z.number().int().positive().default(1200),
         lease_seconds: z.number().int().min(10).default(60),

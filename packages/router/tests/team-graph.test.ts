@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import type { MeritRouter } from "../src/core/service.js";
 import type { ChatRequest } from "../src/gateway/types.js";
 import type { WorkerResult, WorkerTask } from "../src/core/task.js";
-import { maxAgentsPerJob } from "../src/config/schema.js";
+import { ConfigSchema, maxAgentsPerJob } from "../src/config/schema.js";
 import { openDatabase, type Db } from "../src/storage/db.js";
 import { TaskStore, syntheticResult, type ClaimLimits } from "../src/storage/tasks.js";
 import { ArtifactStore } from "../src/storage/artifacts.js";
@@ -104,6 +104,17 @@ const done = (id: string, acceptanceStatus: WorkerResult["acceptanceStatus"]): W
 const claimedIds = (tasks: TaskStore, limits: ClaimLimits = LIMITS) => tasks.claim("w", limits).map((t) => t.row.id).sort();
 
 describe("team-wide file leases", () => {
+  it("admits four disjoint writers with default limits and holds the fifth until a slot frees", () => {
+    const { tasks } = store();
+    const cfg = ConfigSchema.parse({ version: 1, profiles: {} });
+    const limits = { ...LIMITS, maxConcurrent: cfg.execution.max_concurrent_tasks,
+      maxWritersPerRepo: cfg.execution.max_concurrent_writers_per_repository };
+    tasks.submit([1, 2, 3, 4, 5].map((i) => coding(`writer${i}`, [`part${i}/**`])));
+    expect(claimedIds(tasks, limits)).toEqual(["writer1", "writer2", "writer3", "writer4"]);
+    expect(claimedIds(tasks, limits)).toEqual([]);
+    tasks.finish("writer1", "w", done("writer1", "met"), "completed");
+    expect(claimedIds(tasks, limits)).toEqual(["writer5"]);
+  });
   it("overlapping write globs never run at the same time; disjoint ones do", () => {
     const { tasks } = store();
     tasks.submit([coding("a", ["src/**"]), coding("b", ["src/app.ts"]), coding("c", ["docs/**"]), coding("d", undefined)]);

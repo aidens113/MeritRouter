@@ -208,6 +208,11 @@ or your override); the model page shows it with its source link.
 
 ## Projects: fairness and limits
 
+New configurations allow four concurrent worker tasks and four writers per repository
+(`execution.max_concurrent_tasks` and `execution.max_concurrent_writers_per_repository`).
+Explicit configured limits still take precedence. File leases continue to serialize tasks
+whose allowed write paths overlap, even when writer capacity is available.
+
 One worker serves every project of an install. It takes turns between projects; the global caps
 (`execution.max_concurrent_tasks`, `allocation`, `paid.budgets`, provider slots, file leases)
 still apply on top of everything below. Every field is optional and set per project under

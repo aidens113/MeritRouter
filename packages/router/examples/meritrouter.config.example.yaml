@@ -161,8 +161,8 @@ projects:
   # Add more projects here, in the panel (New project), or with `meritrouter projects create`.
 
 execution:
-  max_concurrent_tasks: 2
-  max_concurrent_writers_per_repository: 1
+  max_concurrent_tasks: 4
+  max_concurrent_writers_per_repository: 4
   max_model_requests_per_task: 150 # a runaway guard per attempt; workers can ask their supervisor for more
   job_timeout_seconds: 1200
   on_capacity_exhausted: queue
