@@ -9,6 +9,8 @@ Paired document: D:/SwitchYardProjects/instagram-clone/docs/working/instagram-cl
 Related: [live validation](live-validation.md), [handoff](handoff.md)
 
 ## Current State
+Full run/panel review: [supervisor assessment](instagram-meritrouter-assessment.md), including
+all18tasks/19sessions,364physical requests, defects, limitations and prioritized improvements.
 The supervised build trial is complete. User requires supervisor to assign/integrate/validate,
 never implement clone source. After correction, all accepted application repairs came from workers.
 Validated app: D:/SwitchYardProjects/instagram-clone-worker-validation, branch
@@ -63,7 +65,8 @@ are investigated/recorded, not represented as fixed. No paid routing or approval
   failed gateway_not_in_plan without paid fallback. Correct free-plan enforcement.
 - Frontend split tasks t_0mvlnptqxaa149cc06c8b (shell), ...0425ebaa79eb (social),
   ...5ecbd1137ba5 (overlays) returned implementations with integration defects; later workers repaired them.
-- Backend t_0mvlnilssaf0186e3f733 exhausted100 requests across T2/T3, acceptance unmet;
+- Backend t_0mvlnilssaf0186e3f733 had100total budget, used87physical requests across T2/T3
+  (47execution/40repair; repair allowance exhausted with13initial execution requests unused), acceptance unmet;
   generated tracked tsconfig.tsbuildinfo outside declared allowedPaths. Scope guard caught it.
 - MCP lifecycle inconsistency reproduced: submit_tasks/get_task_status accept project; cancel_tasks
   does not and refused Instagram task with belongs-to-project error under my-project MCP.

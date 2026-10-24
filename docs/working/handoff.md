@@ -19,6 +19,9 @@ User clarified supervisor must never implement clone files: worker-only validati
 D:/SwitchYardProjects/instagram-clone-worker-validation, branch feat/worker-only-instagram.
 Prior uncommitted supervisor repairs in original clone excluded. Completed trial and framework
 findings are in [instagram-meritrouter-trial.md](instagram-meritrouter-trial.md).
+The [full supervisor assessment](instagram-meritrouter-assessment.md) reviews all18tasks,
+19sessions/2736events and364physical requests, with live panel evidence and prioritized fixes.
+It corrects the original backend accounting to87used of100total (phase repair cap reached).
 Final app head e28cd8f: worker-only production build/typecheck,10unit tests,21contract+34security
 checks and desktop/mobile browser flows pass, including restart persistence. Project app now
 points to validated checkout. Original uncommitted manual repairs preserved separately.

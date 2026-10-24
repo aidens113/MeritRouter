@@ -6,6 +6,7 @@ lines, worker briefs, append-only ledger with real validation, open questions).
 
 | Document | Status | Scope |
 | --- | --- | --- |
+| [instagram-meritrouter-assessment.md](instagram-meritrouter-assessment.md) | Complete | All18tasks/19sessions and live panel reviewed;364requests reconciled; framework defects, supervision limits and prioritized operating improvements. |
 | [instagram-meritrouter-trial.md](instagram-meritrouter-trial.md) | Complete | Worker-only local app acceptance, observed framework gaps, and published four-worker defaults. |
 | [cost-first-routing.md](cost-first-routing.md) | Complete | Cost-first defaults/docs; visible cropped Overview charts with ranges; project selector and authorized panel restart. |
 | [meritrouter-rename.md](meritrouter-rename.md) | Complete | Complete MeritRouter identity, safe existing-install migration, readable docs and agent-first README onboarding. |
