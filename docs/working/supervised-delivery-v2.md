@@ -1,6 +1,6 @@
 # Supervised delivery v2: specification and execution plan
 Status: Active
-Status detail: Implementation integrated; production panel acceptance and release regression fixes in progress. Genuine isolated interactive acceptance blocked by absent Docker engine/image.
+Status detail: Source implementation and corrective release checks verified; physical interactive/live product acceptance and cold indexing target remain open.
 Created: 2026-10-23
 Last updated: 2026-10-23
 Owner: Senior supervisor agent
@@ -13,7 +13,8 @@ Related: [trial assessment](instagram-meritrouter-assessment.md), [index](README
 User authorized execution. Feature branch feat/supervised-delivery-v2 in
 D:/SwitchYardRouter-delivery-v2 contains the integrated implementation. No downstream clone,
 real user configuration/Brain, paid routing policy or live panel4477 was changed. No live
-provider calls or paid spending occurred. Feature is not yet published.
+provider calls or paid spending occurred. Source is cleared for dev/main publication;
+the live installation has not been restarted or migrated.
 
 Implemented: FINAL initiator plus delegated delivery defaults; four-worker defaults;
 quality-evidence supervisor selection; conserved600/80/80 request budgets and upward requests;
@@ -38,20 +39,25 @@ control proof, not runtime/product proof. Actual fake-provider repair runtime pa
 project layouts; independent integrated repair/report/resume selection passed31/32 initially,
 with only obsolete MCP tool-count failure; corrected inventory rerun2/2 passed.
 
-Full snapshot61d572c:1,348 passed, one failed, three skipped (141 files,1,352 tests,949.61s).
-Remaining failure is classifier batching50ms arrival timing; diagnosis assigned with no
-production relaxation authorized. New P9 changes need final frozen release regression gate.
-Historical checkpoint counts/details are archived below; never treat earlier failures as green.
+Final full snapshot d17890a:1,354 passed, two failed, three skipped (143 files,1,359 tests,
+827.18s). Both failures were stale HTTP tool counts47 vs48; corrected actual stdio/HTTP,
+product and repair rerun passed12/12. Earlier classifier batching fixture now synchronizes
+real classification admission, retaining actual queue/Gate/cache and unchanged50ms window;
+it passed in the final full run. Final stored repair-row zod validation passed delivery/repair
+6/6, then final12/12; recursive typecheck/build also passed. All observed failures are resolved.
+This is full-run plus focused corrections, not a fabricated green exit for d17890a. See
+[release acceptance](supervised-delivery-v2/reports/release-acceptance.md) for exact evidence.
 
 Remaining limitations: Docker client has no working engine/image, so real container interactive
 journeys/isolation and Linux physical containment are unverified. No qualified live-provider
 product pilot or request/cost-reduction claim. Quality onboarding requires manual dated
-capability evidence; it is fail-closed rather than turnkey frontier discovery. Initial10k-file
-indexing measured5.68s on loaded host, above2s target; warm production navigation p95 was281ms.
+capability evidence; it is fail-closed rather than turnkey frontier discovery. Latest10k-file
+benchmark passed1/1: initial indexing4.59s, above2s target; existing-index new-instance p95
+264ms and warm catalog/search p95 .392/4.304ms. Warm production navigation p95 was281ms.
 No cold10k/50k browser acceptance claim. Automatic worker Task Labs and FINAL waiver UI remain
 unsupported; retained Labs/MCP FINAL decisions are the implemented paths. Entire P0–P10 is
-not marked complete from offline tests. Finish unblocked release checks, preserve these gates,
-then publish only coherent verified source and document remaining acceptance work.
+not marked complete from offline tests. Preserve these gates when publishing the verified
+source unit. Temporary QA servers4480/4481/4482 are stopped; user panel4477 is untouched.
 
 Historical checkpoint notes: [archive](supervised-delivery-v2/archive/2026-10-23-release-checkpoints.md).
 ## Decision: failed product acceptance, new default ownership

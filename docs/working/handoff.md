@@ -14,7 +14,11 @@ memory; runtime/product acceptance; responsive complete Brain panel. Four resear
 are incorporated. User authorized execution. Implementation is on feat/supervised-delivery-v2
 in D:/SwitchYardRouter-delivery-v2, with isolated validation snapshots. Contracts, delegated
 defaults, quality/budget gates, defensive harness, typed automatic memory, actual evaluator
-review and Brain UI/index changes are implemented; release validation remains in progress.
+review and Brain UI/index changes are implemented. Final full run1354pass/2stale HTTP inventory
+failures/3skips; corrected inventory and actual stdio/HTTP/product/repair selection passed12/12.
+All observed regressions resolved; recursive typecheck/build and production17/17 scenarios
+plus rebuilt mobile/settings/P9 views and confirmed repair controls passed. Source release
+is verified; see the effort's release-acceptance report for exact run boundaries and limits.
 The Docker-backed interactive adapter has offline contract coverage but real-engine acceptance
 is blocked by the absent local Docker engine. No live paid/authority/config changes or clone
 edits. Prior test records below do not establish user acceptance. Read the effort's Current

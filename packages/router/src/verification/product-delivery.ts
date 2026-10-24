@@ -25,7 +25,8 @@ export class ProductDeliveries {
   }
   /** Eligibility is checked again inside the task's atomic queue transition. */
   rejectedCompleted(taskId:string,project:string) {
-    const task=this.db.prepare("SELECT state,profile FROM tasks WHERE id=? AND project_id=?").get(taskId,project) as {state:string;profile:string}|undefined;
+    const rawTask=this.db.prepare("SELECT state,profile FROM tasks WHERE id=? AND project_id=?").get(taskId,project);
+    const task=rawTask?z.object({state:z.string(),profile:z.string()}).strict().parse(rawTask):null;
     const status=this.status(taskId,project);
     if(task?.state!=="completed"||task.profile!=="supervise"||!status?.candidate||status.finalDecision?.decision!=="reject"||status.finalDecision.specDigest!==deliverySpecDigest(status.spec)||status.finalDecision.candidateDigest!==productCandidateDigest(status.candidate))return null;
     return {spec:status.spec,candidate:status.candidate,rejection:status.finalDecision};
