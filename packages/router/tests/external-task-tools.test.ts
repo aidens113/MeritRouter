@@ -67,15 +67,24 @@ describe("direct task-scoped bridge", () => {
   it("waits for a running approved recipe to stop before settling timeout", async () => {
     const { ctx } = await directBridge("node slow-check.cjs");
     const marker=path.join(env!.repo,"late-write");
-    writeFileSync(path.join(env!.repo,"slow-check.cjs"),`setTimeout(()=>require('node:fs').writeFileSync(${JSON.stringify(marker)},'late'),2000);`);
-    const pending=client!.callTool({name:"run_recipe",arguments:{id:"check:1",timeout_ms:1000}});
+    const started=path.join(env!.dir,"recipe-started");
+    // Keep the startup marker outside the pinned repository so observing real
+    // execution does not itself revoke the command's source authority.
+    writeFileSync(path.join(env!.repo,"slow-check.cjs"),`const fs=require('node:fs');fs.writeFileSync(${JSON.stringify(started)},String(Date.now()));setTimeout(()=>fs.writeFileSync(${JSON.stringify(marker)},'late'),8000);`);
+    const invokedAt=Date.now();
+    const pending=client!.callTool({name:"run_recipe",arguments:{id:"check:1",timeout_ms:5000}});
     const actions=new WorkerActionRequests(sy!.db);
     const request=await until(()=>actions.list({project:ctx.taskLease!.project,taskId:ctx.taskId,status:"pending"})[0],Boolean);
     const executing=actions.decide({project:ctx.taskLease!.project,id:request!.id,decision:"approve",reason:"fixture operator authorized captured command",actor:{kind:"operator"},config:env!.cfg});
+    await until(()=>existsSync(started),Boolean);
+    const startedAt=Number(readFileSync(started,"utf8"));
+    expect(startedAt).toBeGreaterThanOrEqual(invokedAt);
+    expect(startedAt).toBeLessThan(invokedAt+5000);
     const result=await pending,finished=await executing;
     expect(result.isError).toBe(true);expect(finished.status).toBe("uncertain");expect(finished.quiescedAt).toBeTypeOf("number");
-    await new Promise(resolve=>setTimeout(resolve,2100));expect(existsSync(marker)).toBe(false);
-  },15000);
+    expect(finished.quiescedAt!).toBeGreaterThanOrEqual(startedAt);
+    await new Promise(resolve=>setTimeout(resolve,Math.max(0,startedAt+8200-Date.now())));expect(existsSync(marker)).toBe(false);
+  },20000);
   it("cancels an expired recipe approval so it cannot execute later", async () => {
     const { ctx } = await directBridge();
     const result = await client!.callTool({name:"run_recipe",arguments:{id:"check:1",timeout_ms:700}});

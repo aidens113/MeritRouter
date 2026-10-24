@@ -10,6 +10,21 @@ Related: [trial assessment](instagram-meritrouter-assessment.md), [index](README
 
 ## Current State
 
+Latest release audit: snapshot 9c80b12 finished with 1,337 passed, seven failed,
+three skipped (139 files, 1,347 tests). This is not a green release result.
+All seven failures were traced to obsolete fixture assumptions about legal early wait
+returns, intentional memory notes, noninteractive CLI identity, or cancellation before
+actual process startup. Strengthened focused reruns pass without relaxing production
+authority or process-containment checks. Real CLI/MCP budget tests pass 2/2, including
+explicit rejection of automated human-only decisions. Independent memory/headroom and
+install-root checks pass 22/22. A final exact-revision full suite remains required.
+Production UI/API acceptance passed 17/17 scenarios with no browser exceptions.
+Supervisor rebuilt c4e85de and independently verified the mobile Markdown table fix
+(640px scrollable table, 406px height, 390px page width) and corrected supervisor
+settings copy plus actual null-cap/8000-token profile creation. Warm navigation p95
+was 281ms; cold 10k-file indexing remains above target. Genuine Docker acceptance and
+a qualified live-provider delivery pilot remain unverified; no such spending occurred.
+
 Execution authorized by user: "Ok get to it." Implementation starts on feat/supervised-delivery-v2
 in a separate worktree. Implementation briefs below supersede prior planning-only briefs for
 their named workers. FINAL supervisor coordinates/reviews/tests; workers own bounded source
@@ -553,6 +568,7 @@ checks never settles a disputed product-quality assessment.
 - Report to: docs/working/supervised-delivery-v2/reports/merge-resume-regression.md
 - Extension: also owns packages/router/tests/supervisor.test.ts first legacy standalone fixture, which reports supervisor_completed/unmet after the same scripted await_tasks -> immediate integrate sequence. Inspect actual errors and preserve its integration/check/attribution guarantees. No runtime source weakening.
 - Extension: also owns packages/router/tests/worker-containment.test.ts running-action cancellation fixture. Release run got cancelled instead of uncertain after a fixed300ms cancellation; inspect actual pre-spawn vs running distinction. Ensure the command has really started with a marker before revoking authority, preserve uncertain status for a genuinely started effect, and prove no delayed sentinel write. Do not relax the security assertion or production containment.
+- Extension: also owns packages/router/tests/external-task-tools.test.ts running approved recipe timeout fixture (same cancelled-before-spawn vs uncertain assumption under a1s total deadline). Prove actual process start before timeout, use sufficient fixture deadline and later forbidden-write timer, retain strict uncertain/quiescence/no-write assertions. This tests the running case; adjacent expired-approval case continues testing no-spawn cancellation. No production changes.
 
 ### Brief: resumed-memory-headroom
 - Repository: D:/SwitchYardRouter-delivery-v2 (not the running release snapshot).

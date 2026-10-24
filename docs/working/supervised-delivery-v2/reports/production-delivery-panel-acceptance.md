@@ -43,3 +43,14 @@ Temporary scripts: `%TEMP%/meritrouter-release9c80b12-qa.cjs` and `meritrouter-r
 - Demo fixtures retained for root independent review, including the synthetic product spec and isolated QA notes/memory/catalog documents. Server log/PID files use `%TEMP%/meritrouter-release9c80b12-panel.*`.
 
 Only this report changed in the feature worktree. No commits or pushes by this worker.
+
+## Supervisor rebuilt verification
+
+Supervisor independently built c4e85de and ran production port4481 against the isolated
+release demo. The mobile table now measures640px by406px, with rows54–74px and page
+width390px; complete content remains horizontally scrollable. Screenshot inspected.
+Corrected settings copy rendered, actual Add supervisor POST returned200, and persisted
+profile had null request cap and8000 output tokens. Original demo profile restored.
+No browser exceptions. Temporary script: `%TEMP%/meritrouter-final-panel-check.cjs`;
+screenshots: `%TEMP%/meritrouter-brain-mobile-fixed.png` and
+`%TEMP%/meritrouter-settings-copy-fixed.png`. The two defects above are resolved.
