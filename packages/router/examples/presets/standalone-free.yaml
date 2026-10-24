@@ -81,7 +81,7 @@ client_supervision:
   workflow: delegated_delivery # direct_tasks retains the legacy client-coordinated workflow
   dispatch_final_supervisor: false
 
-# Internal supervisors require current quality evidence; paid policy remains independent.
+# Internal supervisors use the strongest eligible route; paid policy remains independent.
 supervisor:
   endpoints: []
   paid_policy: never

@@ -6,7 +6,19 @@ own working document with decisions, phases, ledger, and reports.
 
 ## Current effort (2026-10-23)
 
-Latest focused change: [project-grid-deletion](project-grid-deletion.md). Grid/archived entries
+Latest corrective work: [supervised delivery](supervised-delivery-v2.md) fixes supervisor startup,
+unavailable-model fallback and actual batch tools after the new Facebook pilot exposed failures.
+Source integrated through5e1bfe2; final integrated83/83 and final schema/MCP26/26 pass;
+recursive typecheck/build pass, publication pending. Initial full1360pass/15fail/3skip plusRPC
+timeout; all15 failed cases passed serialized9-file78pass/1unrelatedskip rerun without weaker
+assertions/timeouts. Real-config fresh MCP preview has3supervisor routes and no quality blocker.
+Idle stale MCP processes stopped; final daemon26696 and panel4477 run rebuilt code, config/paid
+policy unchanged. Fresh MCP launched Facebook delivery supervisort_0mvlxbcr2902bde7859a2,
+500requests/$0paid; live supervisor tool batching/read overlap observed. Old chat transport
+closed; fresh SDK MCP works. No clone accepted; initiating agent must not code app files.
+Read that effort's Current State for final publication and job receipts as work completes.
+
+Previous focused change: [project-grid-deletion](project-grid-deletion.md). Grid/archived entries
 expose two-modal deletion. Pending requests now retire atomically rather than blocking project
 removal: conservative billing, opaque replay tombstones and anonymized exact transport holds
 remain; private bindings/captures/logs are purged. Session/capture late-write guards added.

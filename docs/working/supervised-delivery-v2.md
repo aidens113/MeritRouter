@@ -16,18 +16,26 @@ blocks every supervisor. Prior external-supervisor direct-worker fallback was re
 Corrective intent: usable best-available supervisor routing by default without invented benchmark
 scores; preserve explicit strict evidence policy, paid/access restrictions, and external FINAL ownership.
 Workers below own disjoint source files; supervisor owns integration, docs and full validation.
-Routing and submission fixes are implemented; final routing/startup/preset selection passed
-29/29. Default example and generated claude-code preset now explicitly use best_available;
-the old preset's explicit strict setting otherwise defeated the new schema default.
-Recursive typecheck/build passed (later amendments need final rebuild).
-User expanded correction to unavailable-model recovery and actual batch-tool usage. Both are
-assigned below in isolated worktrees. Main snapshot full run finished: 1,360 passed, 15 failed,
-3 skipped across147 files; one Vitest RPC timeout. Nine failed files cover load-sensitive
-throughput/recovery/promotions, Chrome cleanup, task waits and classifier/concurrency assertions.
-Failure reruns and integrated final checks remain pending. Do not claim a green full run or
-change timeout thresholds without reproduction.
+Corrective code is integrated through5e1bfe2: usable default and generated preset, atomic
+submission preflight, finite unavailable-model recovery with per-key/model refusal cache,
+portable native/MCP batch schemas, concurrent same-turn repository reads and grouped-check
+approval barriers. Explicit strict evidence and all paid/access/request limits remain enforced.
+Independent review found/fixed the batch offset-schema collision and clarified invocation/file
+concurrency. FINAL additionally removed nested dialect tags; actual-MCP/native26/26 rerun passed.
+Final integrated83/83 and final schema/MCP26/26 passed; recursive typecheck/build passed.
+Initial full snapshot:1360passed/15failed/3skipped across147files plus1VitestRPCtimeout under
+parallel load. All15 failed cases passed serialized9-file rerun78passed/1unrelatedskip (R1dist
+fixture unavailable in that worktree; it passed initial full run). Assertions/timeouts unchanged.
+Fresh real-config MCP stdio preview now has3supervisor candidates/no blocker. Config SHA256
+2963B9A8B79CD23DC2425989BAD58A1BC068E6A6E8DA8F755C0145188B9554E7 unchanged; paid disabled.
+Five idle stale MCP processes were stopped after confirming all projects had0queued/running
+tasks. Final daemon26696 and production panel4477 run rebuilt code. Original chat transport
+closed; fresh SDK MCP works. Renewed supervisor jobt_0mvlxbcr2902bde7859a2 is running with
+500requests/$0paid; its live tool events prove multiple calls per response and overlapping safe
+reads. No clone accepted/manually coded. Source publication receipt is pending; see
+[corrective acceptance](supervised-delivery-v2/reports/supervisor-recovery-batching-release.md).
 
-User authorized execution. Source merged and pushed to dev/main at cc1e0a4; the current
+Earlier release baseline: source merged and pushed to dev/main at cc1e0a4; the current
 checkout is D:/SwitchYardRouter on dev. Isolated feature/verification worktrees were temporary.
 No downstream clone,
 real user configuration/Brain, paid routing policy or live panel4477 was changed. No live
@@ -425,6 +433,15 @@ checks never settles a disputed product-quality assessment.
 
 ## Worker Briefs
 
+### Brief: batch-safety-review
+- Repository: D:/SwitchYardRouter/.claude/worktrees/harness-batch-usage (read-only implementation review)
+- Task: Independently review pending batching changes for regressions in journaling/replay/cancellation, authority and mutation barriers, model-facing schema accuracy, SDK compatibility and grouped-check approvals. Report concrete blocking findings with lines and reproduction, not speculative redesign.
+- Required reads: diff of harness/loop.ts, operation-contract/dispatch/registry.ts, edit/repository/recipe-operations.ts, runners/coding/task-tools.ts and native.ts; narrowly named tests as needed.
+- Owns (may edit): own report only at main docs/working/supervised-delivery-v2/reports/batch-safety-review.md.
+- Must not touch: source, shared working docs, live data/config; no commits or broad test runs.
+- Definition of done: explicit reviewed risks and findings; distinguish validated source observations from unrun tests.
+- Report to: docs/working/supervised-delivery-v2/reports/batch-safety-review.md.
+
 ### Brief: supervisor-routing-default
 - Repository: D:/SwitchYardRouter
 - Task: Fix empty-evidence deadlock with explicit best_available default; retain frontier_or_qualified_supervisor as opt-in strict policy. Quality evidence ranks proven candidates first; unverified candidates clearly identified, never assigned invented quality scores. Apply normal supervisor size floors to unverified candidates; evidence-qualified candidates can retain unknown-size support. Preserve paid, tools, modality, endpoint exclusions and dispatch-time strict expiry checks.
@@ -609,6 +626,14 @@ checks never settles a disputed product-quality assessment.
 - Report to: docs/working/supervised-delivery-v2/reports/memory-acceptance.md
 
 ## Work Ledger
+
+### 2026-10-23 — Accept integrated recovery/batching corrections and activate supervisor
+- Agent: supervisor; workers routing_default/startup_preflight; independent batch_safety_review
+- Changed: finite model refusal recovery/cache, native/MCP portable batch tools, safe read coalescing, grouped-check approval barrier and final nested-schema correction.
+- Why: user observed premature model failures and serial/malformed tool use after a blocked supervisor default.
+- Validation: final integrated83/83; final schema/MCP26/26; recursive typecheck/build pass. Initial full1360/15/3 plusRPCerror; all15 failed cases pass serialized78/1skip rerun without relaxed assertions. Fresh real-config MCP3candidates/no blocker; live renewed supervisor calls overlap repository reads.
+- Outcome: Accepted
+- Follow-up: source publication; oversee renewed Facebook delivery separately, preserve FINAL product acceptance and human-only command policy.
 
 ### 2026-10-23 — Repair unusable supervisor bootstrap
 - Agent: supervisor; workers routing_default and startup_preflight

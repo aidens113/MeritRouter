@@ -497,6 +497,15 @@ changes rarely.
 
 ## Defensive harness and batched operations
 
+Unavailable models do not end an otherwise routable task. Definite free-route account/model
+refusals (including not-in-plan and model-not-found responses) do not consume the ordinary
+`routing.max_endpoint_fallbacks` transient retry allowance: the Gate walks the remaining
+eligible list once. Every physical attempt still consumes admission/request budget, paid
+attempt limits remain hard, and paid-disabled tasks never gain paid authority. Model-specific
+refusals are cached per credential/model with the existing expiry; they do not disable an
+otherwise usable key. If all eligible models are unavailable, the bounded pool still fails
+with the recorded reasons rather than retrying forever.
+
 New native coding sessions use the v2 operation registry; supervisors and task-scoped MCP
 adapters share its schemas/handlers. Historical v1 sessions keep their compatible tools on resume.
 Call `workspace_info` for OS, granted aliases, pinned/writable revisions, allowed paths, declared
@@ -526,6 +535,17 @@ siblings. Hash/match conflicts require rereading current content, not fuzzy edit
 replacement needs `whole_file: true` and its old hash; omission placeholders are rejected.
 Batch graph/schema preflight precedes effects, but filesystem edits are not a multi-file atomic
 transaction: inspect every child outcome and any reported partial application.
+
+Model-facing schemas expose concrete nested fields and examples, including each edit's
+required `action` and `path`. Runtime discriminated validation remains authoritative.
+Workers can group known files with `read_files`, mixed operations with `batch`, edits with
+`apply_edits`, and declared checks with `run_checks`. The agent loop also coalesces adjacent
+repository-read calls from the same model response into groups of at most four invocations,
+retaining individual journals, outcomes and response order. Each `read_files` invocation keeps
+its own four-file worker bound. Commands and edits are barriers, and grouped checks execute
+sequentially with individual approval and authority checks. A pending approval stops subsequent
+checks even when collecting independent failures. This improves actual execution; it does not
+guarantee that every model will choose multiple operations in a response.
 
 Distinguish `failed`, `denied`, `waiting_approval`, `timed_out`, `cancelled` and `unknown_effect`.
 `cancellation_requested` is not termination proof. Command timeout/cancel waits for confirmed

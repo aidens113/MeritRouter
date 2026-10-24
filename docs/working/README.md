@@ -7,7 +7,7 @@ lines, worker briefs, append-only ledger with real validation, open questions).
 | Document | Status | Scope |
 | --- | --- | --- |
 | [project-grid-deletion.md](project-grid-deletion.md) | Complete | Grid deletion and pending-request retirement verified; both clones removed through UI, sources preserved, panel restarted. Full suite had one browser timing failure that passed isolated rerun. |
-| [supervised-delivery-v2.md](supervised-delivery-v2.md) | Active | Authorized implementation on feat/supervised-delivery-v2: FINAL/delegated supervision, quality/budgets, defensive harness, scoped memory, product evidence and Brain UI; release validation in progress, actual isolated interactive acceptance blocked by absent Docker engine. |
+| [supervised-delivery-v2.md](supervised-delivery-v2.md) | Active | Supervisor bootstrap/recovery/batching corrections verified and activated; renewed Facebook supervisor running, product acceptance pending. Earlier interactive adapter acceptance still blocked by absent Docker engine. |
 | [instagram-meritrouter-assessment.md](instagram-meritrouter-assessment.md) | Complete | All18tasks/19sessions and live panel reviewed;364requests reconciled; framework defects, supervision limits and prioritized operating improvements. |
 | [instagram-meritrouter-trial.md](instagram-meritrouter-trial.md) | Complete | Worker-only local app acceptance, observed framework gaps, and published four-worker defaults. |
 | [cost-first-routing.md](cost-first-routing.md) | Complete | Cost-first defaults/docs; visible cropped Overview charts with ranges; project selector and authorized panel restart. |
