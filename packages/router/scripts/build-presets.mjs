@@ -11,7 +11,7 @@ const out = path.join(root, "examples/presets");
 mkdirSync(out, { recursive: true });
 
 // Delegated delivery uses the configured delivery-budget ceiling (600 by default).
-// This profile adds no smaller ceiling; quality evidence and spending policy still gate dispatch.
+// This profile adds no smaller ceiling; explicit strict evidence and spending policies still gate dispatch.
 const supervise = {
   mode: "supervisor",
   tools: "supervisor",
@@ -36,7 +36,7 @@ const claudeModel = {
 
 const presets = {
   "claude-code": {
-    header: "Preset: claude-code. The MCP client is FINAL supervisor; qualified MeritRouter supervisors own delegated delivery. Configure current supervisor quality evidence before dispatch.",
+    header: "Preset: claude-code. The MCP client is FINAL supervisor; MeritRouter supervisors own delegated delivery using the strongest eligible route. Reviewed quality evidence is optional unless strict routing is configured.",
     edits: [[["brain", "project"], "my-project"], [["profiles", "supervise"], supervise]],
   },
   "standalone-free": {

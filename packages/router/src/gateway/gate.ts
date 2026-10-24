@@ -10,7 +10,7 @@ import { SqliteRequestLedger } from "../admission/sqlite-request-ledger.js";
 import { AdmissionDenied, GatewayError, MeritRouterError, type AdmissionDenialReason } from "../core/errors.js";
 import type { ModelEndpoint } from "../models/catalog.js";
 import type { RoutePlan } from "../routing/select.js";
-import { fitsEndpoint } from "../routing/select.js";
+import { sizeFloor, fitsEndpoint } from "../routing/select.js";
 import type { ChatRequest, ChatResponse, ProviderStatus } from "./types.js";
 import { estimateTokens } from "./types.js";
 import { CircuitBreakers, countsAsProviderFailure } from "./breaker.js";
@@ -234,9 +234,31 @@ export class Gate {
       // Session stickiness cannot override quality ordering, and evidence expiry/revocation
       // must be checked on every physical dispatch rather than only at session creation.
       const visual = req.chat.messages.some(m => Array.isArray(m.content) && m.content.some(part => part.type === "image_url"));
-      const eligible = list.filter(ep => assessSupervisorQuality(ep.id, this.cfg.supervisor.routing, new Date(this.direct.providers.now()), visual).eligible);
-      if (!eligible.length) throw new MeritRouterError("supervisor_quality_unavailable", "No supervisor candidate retains current qualifying quality evidence; no model request was sent");
-      return eligible;
+      const eligible = list.filter(ep => {
+        const quality = assessSupervisorQuality(ep.id, this.cfg.supervisor.routing, new Date(this.direct.providers.now()), visual);
+        if (!quality.eligible) return false;
+        return quality.classification !== null || ep.ignoreSizeFloor || req.plan.belowFloorEndpoints.has(ep.id) || (ep.totalParametersB !== null && ep.totalParametersB >= Math.max(req.plan.floorB, sizeFloor(this.cfg, req.plan.profile, req.plan.tier)));
+      });
+      if (!eligible.length) throw new MeritRouterError("supervisor_quality_unavailable", "No supervisor candidate meets the configured quality policy and size floor at dispatch; no model request was sent");
+      // Evidence can expire or be revoked during a session. Keep proven candidates ahead
+      // of best-available fallbacks without allowing stickiness to freeze the old order.
+      return eligible.sort((a, b) => {
+        const policy = req.plan.paidPolicy ?? (this.cfg.paid.enabled ? this.cfg.paid.tiers[req.plan.tier] : "never");
+        if (policy === "never" || policy === "on_free_exhaustion") {
+          const paid = Number(requestPaid(a, this.cfg, req.plan)) - Number(requestPaid(b, this.cfg, req.plan));
+          if (paid) return paid;
+        }
+        const now = new Date(this.direct.providers.now());
+        const qa = assessSupervisorQuality(a.id, this.cfg.supervisor.routing, now, visual);
+        const qb = assessSupervisorQuality(b.id, this.cfg.supervisor.routing, now, visual);
+        const quality = (qb.score ?? -1) - (qa.score ?? -1);
+        if (quality) return quality;
+        if (qa.classification === null && qb.classification === null) {
+          const qualification = (id: string) => req.plan.explanations.find(ex => ex.endpointId === id)?.qualification?.passRate ?? 0;
+          return qualification(b.id) - qualification(a.id) || (b.totalParametersB ?? 0) - (a.totalParametersB ?? 0);
+        }
+        return 0; // Preserve planned overrides and availability order for proven ties.
+      });
     }
     return this.cfg.routing.sticky_endpoints ? stickyOrder(list, req.preferEndpointId, (ep) => this.stickyHealthy(ep)) : list;
   }

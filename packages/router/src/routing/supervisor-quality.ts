@@ -12,13 +12,13 @@ export const SupervisorQualityEvidenceSchema = z.object({
 });
 export const SupervisorQualityRoutingSchema = z.object({
   strategy: z.literal("highest_eligible_quality").default("highest_eligible_quality"),
-  minimum_quality: z.literal("frontier_or_qualified_supervisor").default("frontier_or_qualified_supervisor"),
+  minimum_quality: z.enum(["best_available", "frontier_or_qualified_supervisor"]).default("best_available"),
   quality_evidence: z.array(SupervisorQualityEvidenceSchema).max(10_000).default([]),
 }).strict().prefault({});
 export type SupervisorQualityEvidence = z.infer<typeof SupervisorQualityEvidenceSchema>;
 export type SupervisorQualityRouting = z.infer<typeof SupervisorQualityRoutingSchema>;
 
-export interface SupervisorQualityAssessment { eligible: boolean; score: number; source: string | null; classification: SupervisorQualityEvidence["classification"] | null; reason: string }
+export interface SupervisorQualityAssessment { eligible: boolean; score: number | null; source: string | null; classification: SupervisorQualityEvidence["classification"] | null; reason: string }
 /** Configured provenance is reviewed/user-owned; vendor names and parameter size are never inferred quality. */
 export function assessSupervisorQuality(endpointId: string, policy: SupervisorQualityRouting, now: Date, visualRequired = false): SupervisorQualityAssessment {
   const current = policy.quality_evidence.filter(e => e.endpointId === endpointId && Date.parse(e.checkedAt) <= now.getTime() && Date.parse(e.expiresAt) > now.getTime());
@@ -29,5 +29,5 @@ export function assessSupervisorQuality(endpointId: string, policy: SupervisorQu
     return { evidence: e, floor, value };
   }).filter(e => e.floor >= 0.75 && e.evidence.confidence >= 0.75).sort((a, b) => b.value - a.value || Date.parse(b.evidence.checkedAt) - Date.parse(a.evidence.checkedAt));
   const best = scored[0];
-  return best ? { eligible: true, score: best.value, source: best.evidence.source, classification: best.evidence.classification, reason: `verified ${best.evidence.classification}; quality ${best.value.toFixed(3)} (${best.evidence.source})` } : { eligible: false, score: 0, source: null, classification: null, reason: "supervisor_quality_unavailable: no current high-confidence evidence meeting every supervisor capability floor" };
+  return best ? { eligible: true, score: best.value, source: best.evidence.source, classification: best.evidence.classification, reason: `verified ${best.evidence.classification}; quality ${best.value.toFixed(3)} (${best.evidence.source})` } : { eligible: policy.minimum_quality === "best_available", score: null, source: null, classification: null, reason: policy.minimum_quality === "best_available" ? "unverified supervisor ability; best_available uses eligible model capacity without benchmark evidence" : "supervisor_quality_unavailable: no current high-confidence evidence meeting every supervisor capability floor" };
 }
