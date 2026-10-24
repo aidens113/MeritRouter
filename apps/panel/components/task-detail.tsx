@@ -85,8 +85,9 @@ export async function TaskDetailView({ sy, taskId, scope, sp = {} }: { sy: Merit
         <CardHeader title="Product delivery" description="Execution and task acceptance are separate from the initiating FINAL supervisor's product decision."/>
         <div className="space-y-2 p-4 text-sm">
           <p>Stage: <strong>{delivery.stage}</strong> · Specification revision {delivery.spec.revision}</p>
-          <p>Readiness: <strong>{delivery.readiness?.status === "ready_for_final_review" ? "Ready for FINAL review" : "Evidence incomplete"}</strong></p>
-          <p>FINAL decision: <strong>{delivery.finalDecision?.decision ?? "Not decided"}</strong>{delivery.finalDecision?` — ${delivery.finalDecision.reason}`:""}</p>
+          <p>Recorded readiness: <strong>{delivery.readiness?.status === "ready_for_final_review" ? "Ready for FINAL review" : "Evidence incomplete"}</strong>. Current sources and runtime are rechecked when the FINAL supervisor reviews or decides.</p>
+          <p>Recorded FINAL decision: <strong>{delivery.finalDecision?.decision ?? "Not decided"}</strong>{delivery.finalDecision?` — ${delivery.finalDecision.reason}`:""}</p>
+          {delivery.finalDecision?.decision==="accept"&&!delivery.accepted?<p>Acceptance is no longer effective: current delivery requirements are unresolved.</p>:null}
           {delivery.readiness?.blockers.length?<ul className="list-disc pl-5">{delivery.readiness.blockers.map((blocker,index)=><li key={index}>{blocker.criterionId??"Delivery"}: {blocker.detail}</li>)}</ul>:null}
         </div>
       </Card>:null}

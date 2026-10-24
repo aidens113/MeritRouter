@@ -27,6 +27,7 @@ export class ProductDeliveries {
     if(!task||task.project_id!==project||task.profile!=="supervise") throw new Error("Delivery specification requires an owned supervisor task");
     if(spec.originalInstruction!==task.goal)throw new Error("Delivery specification must preserve the original task instruction exactly");
     if(spec.criteria.some(criterion=>criterion.applicability.status==="not_applicable"))throw new Error("Criterion waivers require a separate authenticated FINAL decision; model-authored approvedBy is insufficient");
+    if(!spec.criteria.some(criterion=>criterion.priority!=="optional"&&criterion.applicability.status==="applicable"))throw new Error("Delivery specification requires at least one applicable required or critical criterion");
     this.db.transaction(()=>{
       const old=this.row(taskId,project);
       if(old){
@@ -56,6 +57,11 @@ export class ProductDeliveries {
     if(!changed)return;
     this.db.prepare("UPDATE product_deliveries SET candidate_json=?, final_decision_json=CASE WHEN ? THEN NULL ELSE final_decision_json END,updated_at=? WHERE task_id=? AND project_id=?").run(JSON.stringify(candidate),changed?1:0,this.now(),taskId,project);
   }
+  /** A check changed its subject: retain history but withdraw current readiness/acceptance. */
+  invalidateCandidate(taskId:string,project:string):void {
+    this.require(taskId,project);
+    this.db.prepare("UPDATE product_deliveries SET candidate_json=NULL,final_decision_json=NULL,updated_at=? WHERE task_id=? AND project_id=?").run(this.now(),taskId,project);
+  }
   /** Callers supply authenticated runtime/reviewer receipts, never raw model claims. */
   recordEvidence(taskId:string,project:string,input:unknown):void {
     const receipt=EvidenceReceiptSchema.parse(input);
@@ -71,9 +77,15 @@ export class ProductDeliveries {
     const decision=ProductFinalDecisionSchema.parse(input),status=this.status(taskId,project);
     if(!status?.candidate||decision.specDigest!==deliverySpecDigest(status.spec)||decision.candidateDigest!==productCandidateDigest(status.candidate)) throw new Error("FINAL decision does not match current delivery");
     if(decision.decision==="accept"&&status.readiness?.status!=="ready_for_final_review") throw new Error("Cannot accept delivery with unresolved evidence");
+    if(decision.decision==="accept"){
+      const task=this.db.prepare("SELECT state FROM tasks WHERE id=? AND project_id=?").get(taskId,project) as {state:string}|undefined;
+      if(status.stage!=="handoff"||task?.state!=="completed")throw new Error("FINAL acceptance requires a completed delivery at handoff");
+      const active=this.db.prepare("WITH RECURSIVE descendants(id) AS (SELECT id FROM tasks WHERE json_extract(spec_json,'$.parentTaskId')=? AND project_id=? UNION ALL SELECT t.id FROM tasks t JOIN descendants d ON json_extract(t.spec_json,'$.parentTaskId')=d.id WHERE t.project_id=?) SELECT COUNT(*) AS n FROM tasks WHERE id IN (SELECT id FROM descendants) AND state IN ('queued','waiting_for_dependencies','waiting_for_capacity','running','cancel_requested','interrupted','budget_exhausted')").get(taskId,project,project) as {n:number};
+      if(active.n)throw new Error("FINAL acceptance requires all delegated work to be terminal");
+    }
     this.db.prepare("UPDATE product_deliveries SET final_decision_json=?,stage=CASE WHEN ?='reject' THEN 'validate' ELSE stage END,updated_at=? WHERE task_id=? AND project_id=?").run(JSON.stringify(decision),decision.decision,this.now(),taskId,project);
   }
-  status(taskId:string,project:string):{spec:DeliverySpec;stage:DeliveryStage;candidate:ProductCandidate|null;evidence:EvidenceReceipt[];finalDecision:ProductFinalDecision|null;readiness:ReturnType<typeof evaluateProductReadiness>|null}|null {
+  status(taskId:string,project:string):{spec:DeliverySpec;stage:DeliveryStage;candidate:ProductCandidate|null;evidence:EvidenceReceipt[];finalDecision:ProductFinalDecision|null;accepted:boolean;readiness:ReturnType<typeof evaluateProductReadiness>|null}|null {
     const row=this.row(taskId,project);if(!row)return null;
     const spec=DeliverySpecSchema.parse(JSON.parse(row.spec_json));
     const candidate=row.candidate_json?ProductCandidateSchema.parse(JSON.parse(row.candidate_json)):null;
@@ -84,6 +96,6 @@ export class ProductDeliveries {
       readiness.status="blocked";
       readiness.blockers.push({criterionId:null,kind:null,code:"failed_evidence",detail:`FINAL supervisor rejected this candidate: ${finalDecision.reason}`});
     }
-    return {spec,stage:DeliveryStageSchema.parse(row.stage),candidate,evidence,finalDecision,readiness};
+    return {spec,stage:DeliveryStageSchema.parse(row.stage),candidate,evidence,finalDecision,accepted:finalDecision?.decision==="accept"&&row.stage==="handoff"&&readiness?.status==="ready_for_final_review",readiness};
   }
 }

@@ -2,7 +2,7 @@ import { lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { platform, arch } from "node:os";
 import type { RunContext } from "../runners/types.js";
-import { git } from "../workspaces/git.js";
+import { dirtyPaths, git } from "../workspaces/git.js";
 import { productDigest } from "./product-spec.js";
 import { ProductCandidateSchema, type ProductCandidate } from "./product-evidence.js";
 import { resolveCurrentJourneyCandidate } from "../labs/browser-journey-current.js";
@@ -22,6 +22,7 @@ export async function currentDeliveryCandidate(ctx:Pick<RunContext,"spec"|"signa
 export async function currentProductCandidate(ctx:Pick<RunContext,"spec"|"signal">,repos:Iterable<{alias:string;worktree:string}>):Promise<ProductCandidate> {
   const repositories:Record<string,{head:string;tree:string}>={},dependencies:Record<string,string>={};
   for(const repo of repos){
+    if((await dirtyPaths(repo.worktree,{signal:ctx.signal,timeoutMs:30000})).length)throw new Error("Product candidate requires clean committed integration sources");
     repositories[repo.alias]={head:(await git(repo.worktree,["rev-parse","HEAD"],{signal:ctx.signal,timeoutMs:30000})).trim(),tree:(await git(repo.worktree,["rev-parse","HEAD^{tree}"],{signal:ctx.signal,timeoutMs:30000})).trim()};
     for(const name of ["package-lock.json","pnpm-lock.yaml","yarn.lock","package.json"]){
       const target=path.join(repo.worktree,name);

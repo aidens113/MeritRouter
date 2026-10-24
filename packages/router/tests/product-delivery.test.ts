@@ -4,6 +4,9 @@ import { deliverySpecDigest, type DeliverySpec } from "../src/verification/produ
 import { productCandidateDigest, type ProductCandidate } from "../src/verification/product-evidence.js";
 import { baseConfig, makeEnv, open, reply, ScriptedClient, type Env } from "./helpers.js";
 import type { MeritRouter } from "../src/core/service.js";
+import { currentProductCandidate } from "../src/verification/product-candidate.js";
+import { writeFileSync } from "node:fs";
+import path from "node:path";
 
 let env:Env|undefined,sy:MeritRouter|undefined;
 afterEach(async()=>{await sy?.close();env?.cleanup();sy=undefined;env=undefined;});
@@ -17,9 +20,17 @@ async function fixture(){
   return {store:new ProductDeliveries(sy.db),id:task!.taskId};
 }
 describe("persisted product delivery",()=>{
+  it("refuses uncommitted integration edits instead of reusing clean HEAD evidence",async()=>{
+    const {id}=await fixture();
+    const ctx={spec:sy!.tasks.get(id)!.spec,signal:AbortSignal.timeout(10000)},repos=[{alias:"core",worktree:env!.repo}];
+    expect((await currentProductCandidate(ctx,repos)).repositories.core?.head).toBeTruthy();
+    writeFileSync(path.join(env!.repo,"uncommitted.txt"),"unverified runtime change");
+    await expect(currentProductCandidate(ctx,repos)).rejects.toThrow(/clean committed/);
+  });
   it("blocks unobserved handoff and final accept, then preserves rejection separately",async()=>{
     const {store,id}=await fixture();store.saveSpec(id,"demo",spec);store.setCandidate(id,"demo",candidate);
     expect(()=>store.saveSpec(id,"demo",{...spec,revision:2,originalInstruction:"Easier replacement goal"},deliverySpecDigest(spec))).toThrow(/original/);
+    expect(()=>store.saveSpec(id,"demo",{...spec,revision:2,criteria:[{...spec.criteria[0],priority:"optional"}]},deliverySpecDigest(spec))).toThrow(/required or critical/);
     expect(()=>store.saveSpec(id,"demo",{...spec,revision:2,criteria:[{...spec.criteria[0],applicability:{status:"not_applicable",reason:"model waived",approvedBy:"initiator"}}]},deliverySpecDigest(spec))).toThrow(/authenticated FINAL/);
     expect(()=>store.saveSpec(id,"demo",{...spec,revision:2,criteria:[{...spec.criteria[0],requiredEvidence:["structural"]}]},deliverySpecDigest(spec))).toThrow(/weakened/);
     expect(()=>store.transition(id,"demo","handoff")).toThrow();
@@ -28,7 +39,14 @@ describe("persisted product delivery",()=>{
     const at=Date.now();store.recordEvidence(id,"demo",{schemaVersion:1,id:"journey",criterionIds:["button"],kind:"journey",specDigest:deliverySpecDigest(spec),candidateDigest:productCandidateDigest(candidate),actor:{id:"runtime",role:"runtime"},basis:"observed",outcome:"pass",startedAt:at,completedAt:at,expiresAt:null,artifactRefs:["artifact:journey"],observations:["Click changes state"],unknowns:[],subjectActorIds:["worker"]});
     expect(store.status(id,"demo")?.readiness?.status).toBe("ready_for_final_review");
     expect(()=>store.finalDecision(id,"demo",{...decision,actor:{id:"worker",role:"worker"}})).toThrow();
-    store.finalDecision(id,"demo",decision);store.finalDecision(id,"demo",{...decision,decision:"reject",reason:"Actual layout unusable"});
+    expect(()=>store.finalDecision(id,"demo",decision)).toThrow(/completed delivery/);
+    for(const stage of ["prepare","plan","implement","integrate","validate","handoff"])store.transition(id,"demo",stage);
+    sy!.db.prepare("UPDATE tasks SET state='completed' WHERE id=?").run(id);
+    store.finalDecision(id,"demo",decision);
+    expect(store.status(id,"demo")?.accepted).toBe(true);
+    store.recordEvidence(id,"demo",{...store.status(id,"demo")!.evidence[0],id:"observed-regression",outcome:"fail"});
+    expect(store.status(id,"demo")).toMatchObject({accepted:false,finalDecision:{decision:"accept"},readiness:{status:"blocked"}});
+    store.finalDecision(id,"demo",{...decision,decision:"reject",reason:"Actual layout unusable"});
     expect(store.status(id,"demo")).toMatchObject({stage:"validate",finalDecision:{decision:"reject"}});
     expect(store.status(id,"demo")?.readiness?.status).toBe("blocked");
     expect(()=>store.transition(id,"demo","handoff")).toThrow();

@@ -111,9 +111,7 @@ describe("routing fallback and policy", () => {
     });
     sy = open(env, client, { worker: true });
     const [sub] = await sy.submitTasks([summarizeTask()]);
-    await new Promise((r) => setTimeout(r, 400));
-    const status = sy.getStatus([sub!.taskId])[0] as { state: string };
-    expect(status.state).toBe("waiting_for_capacity");
+    await expect.poll(() => sy!.getStatus([sub!.taskId])[0]?.state, { timeout: 5000, interval: 25 }).toBe("waiting_for_capacity");
     const targeted = new Set(client.requests.map((r) => `${r.provider}/${r.model}`));
     expect([...targeted]).toEqual(["openrouter/only"]);
   });

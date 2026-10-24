@@ -35,9 +35,14 @@ stale or self-claimed required evidence blocks handoff. The external FINAL MCP c
 
 - Inspect `delivery_status` for the specification, candidate, coverage and blockers.
 - Call `record_delivery_observation` only for behavior it independently checked, with criterion
-  IDs, evidence kind, observations and scoped artifact references.
+  IDs, evidence kind, observations and scoped artifact references. Supply `expectedSpecDigest`
+  and `expectedCandidateDigest` from the inspected `delivery_status` readiness record; a changed
+  specification or candidate rejects the observation instead of assigning it to new code.
 - Use `decide_delivery` to accept or reject the checked candidate. Acceptance requires complete
-  current observed evidence; rejection reopens validation. Human-only authority remains enforced.
+  current observed evidence, completed work and the handoff stage, with the same expected digests.
+  Rejection moves the product back to validation; use `resume_task` explicitly to run repair.
+  Human-only authority remains enforced. `accepted` indicates effective acceptance: a historical
+  accept decision does not override subsequently blocked evidence or a reopened delivery stage.
 
 The panel separates execution status, task acceptance and the product's FINAL decision. A green
 completed task or passed structural check is not a usability verdict. Review the integrated

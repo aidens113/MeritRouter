@@ -128,7 +128,7 @@ describe("MCP server", () => {
     await client.connect(new StdioClientTransport({ command: process.execPath, args: [path.join(dist, "cli.js"), "mcp", "--config", env.cfg.configPath, "--no-worker"], env: { PATH: process.env.PATH ?? "", MERITROUTER_PANEL_DIR: NO_PANEL } }));
     const names = (await client.listTools()).tools.map((t) => t.name);
     expect(names).toContain("submit_tasks");
-    expect(names).toHaveLength(42);
+    expect(names).toHaveLength(47);
     const noJob = await client.callTool({ name: "job_status", arguments: { jobId: "no-such-job" } });
     expect((noJob.content as Array<{ text: string }>)[0]!.text).toBe("unknown job no-such-job");
   }, 60_000);

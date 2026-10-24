@@ -276,8 +276,9 @@ export class SupervisorRunner implements CodingRunner {
         const verified = Array.isArray(a.verified) ? (a.verified as Finish["verified"]) : [];
         if (a.status === "completed" && verified.length === 0) errors.push("a completed job must list what you verified and how (command and result, or evidence)");
         if(spec.deliveryVersion===2&&a.status==="completed"){
-          const readiness=new ProductDeliveries(ctx.tasks.db).status(ctx.taskId,(ctx.tasks.projectOf(ctx.taskId) ?? ctx.cfg.brain.project))?.readiness;
-          if(readiness?.status!=="ready_for_final_review")errors.push("Product readiness is missing or blocked. Set the versioned specification, complete delivery stages and validate_delivery; obtain observed criterion evidence. Report blocked with exact missing tests instead of claiming completed.");
+          const product=await synchronizeDeliveryCandidate(ctx,repos.values());
+          if(product?.stage!=="handoff")errors.push("Complete the persisted handoff stage before returning a completed delivery.");
+          if(product?.readiness?.status!=="ready_for_final_review")errors.push("Product readiness is missing or blocked. Set the versioned specification, complete delivery stages and validate_delivery; obtain observed criterion evidence. Report blocked with exact missing tests instead of claiming completed.");
         }
         const running = [...state.children.values()].filter((id) => {
           const t = ctx.services!.getTask(id);
@@ -383,17 +384,7 @@ export class SupervisorRunner implements CodingRunner {
     const patchRefs: string[] = [];
     const scopeViolation: string[] = [];
     const checks: RunOutcome["result"]["checks"] = [];
-    for (const r of repos.values()) {
-      if (writeScope) {
-        const allowed = picomatch(writeScope, { dot: true });
-        const changed = (await git(r.worktree, ["diff", "--name-only", "--no-renames", "-z", r.baseSha])).split("\0").filter(Boolean);
-        // Commands can leave tracked or untracked edits without calling an edit tool.
-        const paths = new Set([...changed, ...await dirtyPaths(r.worktree)]);
-        scopeViolation.push(...[...paths].filter(file => !allowed(file)).map(file => `${r.alias}:${file}`));
-      }
-      const patch = await git(r.worktree, ["diff", "--binary", r.baseSha, "HEAD"]);
-      if (patch) patchRefs.push(ctx.artifacts.write({ taskId: ctx.taskId, executionId, kind: "patch", label: `${r.alias} ${r.branch} vs ${r.baseSha.slice(0, 12)}`, content: patch, mediaType: "text/x-diff", extension: ".patch" }));
-    }
+    const checkHeads=new Map(await Promise.all([...repos.values()].map(async repo=>[repo.alias,await headSha(repo.worktree)] as const)));
     if (primary && !ctx.signal.aborted) {
       for (const command of spec.constraints.checks ?? []) {
         const res = await executeSupervisorCommand(ctx, { command, cwd: primary.worktree, invocationId: `final_job_check:${executionId}:${checks.length}`, env: minimalEnv({ CI: "1" }), timeoutMs: ctx.cfg.execution.check_timeout_seconds * 1000, reason: "Final supervisor verification check" });
@@ -412,10 +403,31 @@ export class SupervisorRunner implements CodingRunner {
         checks.push({command:`lab:${name}`,exitCode:result&&clean&&!result.killed?result.exitCode:null,logRef,revision:result?.revision??null});
       }
     }
+    let checkCandidateChanged=false;
+    for (const r of repos.values()) {
+      const dirty=await dirtyPaths(r.worktree);
+      if(await headSha(r.worktree)!==checkHeads.get(r.alias)||dirty.length)checkCandidateChanged=true;
+      if (writeScope) {
+        const allowed = picomatch(writeScope, { dot: true });
+        const changed = (await git(r.worktree, ["diff", "--name-only", "--no-renames", "-z", r.baseSha])).split("\0").filter(Boolean);
+        const paths = new Set([...changed, ...dirty]);
+        scopeViolation.push(...[...paths].filter(file => !allowed(file)).map(file => `${r.alias}:${file}`));
+      }
+      const patch = await git(r.worktree, ["diff", "--binary", r.baseSha, "HEAD"]);
+      if (patch) patchRefs.push(ctx.artifacts.write({ taskId: ctx.taskId, executionId, kind: "patch", label: `${r.alias} ${r.branch} vs ${r.baseSha.slice(0, 12)}`, content: patch, mediaType: "text/x-diff", extension: ".patch" }));
+    }
+    if(checkCandidateChanged){
+      const logRef=ctx.artifacts.write({taskId:ctx.taskId,executionId,kind:"check_log",label:"Final candidate binding",content:"Integration sources changed during final checks. These checks cannot validate the resulting candidate; commit/repair and validate again.",extension:".log"});
+      checks.push({command:"candidate_binding",exitCode:null,logRef});
+    }
     const finish = loop.kind === "terminal" ? loop.value : null;
     const delivery = new ProductDeliveries(ctx.tasks.db);
     let productStatus = delivery.status(ctx.taskId, (ctx.tasks.projectOf(ctx.taskId) ?? ctx.cfg.brain.project));
-    if (productStatus && repos.size && !ctx.signal.aborted) {
+    if(productStatus&&checkCandidateChanged){
+      delivery.invalidateCandidate(ctx.taskId,ctx.tasks.projectOf(ctx.taskId)??ctx.cfg.brain.project);
+      productStatus=delivery.status(ctx.taskId,ctx.tasks.projectOf(ctx.taskId)??ctx.cfg.brain.project);
+    }
+    if (productStatus && repos.size && !ctx.signal.aborted && !checkCandidateChanged) {
       await synchronizeDeliveryCandidate(ctx,repos.values());
       productStatus = delivery.status(ctx.taskId, (ctx.tasks.projectOf(ctx.taskId) ?? ctx.cfg.brain.project));
       if (productStatus?.candidate && checks.length && (await Promise.all([...repos.values()].map(r=>dirtyPaths(r.worktree)))).every(paths=>paths.length===0)) {

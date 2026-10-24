@@ -40,6 +40,16 @@ settings controls still require production acceptance. Docker client is installe
 genuine container-backed interactive acceptance on this host. Offline contract tests do
 not substitute for that missing runtime verification.
 
+Checkpoint 7152295 contains the second implementation integration. Subsequent independent
+acceptance review found and closed dirty-source reuse, FINAL observation/decision CAS races,
+source-changing final-check evidence binding, all-optional initial specifications, and stale
+acceptance display. Focused real temporary-Git/default delivery tests now cover these fixes.
+The initial snapshot full suite completed: 1,275 passed, 14 failed, 3 skipped (129 files,
+1,292 tests, 1,278 seconds). Those failures were prompt position/budget compatibility,
+intentional guidance/tool inventory changes, and a fixed-delay capacity assertion; fixes and
+targeted reruns are on the feature branch. This is NOT a passing release suite. A fresh
+release snapshot must run the complete suite and latest panel production acceptance.
+
 ## Decision: failed product acceptance, new default ownership
 
 The prior app failed product acceptance. Preserve the recorded test passes as historical facts,
@@ -514,6 +524,22 @@ checks never settles a disputed product-quality assessment.
 - Follow-up: Execute contract-first implementation sequence; numerical defaults/performance targets remain proposed until tested.
 
 ## Open Questions
+
+### 2026-10-23 — Independent acceptance review and concrete boundary fixes
+- Agent: supervisor; read-only reviewer harness-v2.
+- Changed: FINAL expected spec/candidate digests with conflict rejection; dirty integration sources refused; handoff/completed/terminal-descendant acceptance gate; original goal/mandatory criteria and no self-waivers; before/after final-check source binding with invalidation; scope/patch capture after final commands; effective accepted flag distinct from historical decision; portable MCP schema descriptions with strict runtime digest validation.
+- Validation: actual default lifecycle plus source-changing final command, stale FINAL observation/decision, dirty source, mandatory criterion/waiver/history and roadmap team tests passed 10/10. Existing verification-resume plus product/budget rerun passed 17/17; root router build passed after latest source. Full initial snapshot finished with 14 known failures (see Current State), not release acceptance. Latest MCP schema/stdio rerun passed 2/2; capacity eventual-state rerun in progress.
+- Outcome: Partial.
+- Follow-up: stable checkpoint, complete release suite/build, latest production panel/API/screenshots; actual isolated interactive runtime remains blocked by missing engine/image.
+
+### Brief: delivery-acceptance-integration-review
+- Repository: D:/SwitchYardRouter-delivery-v2 (review checkpoint 7152295 plus later fixes)
+- Task: Read-only adversarial integration review of root-owned specification/candidate/evidence/stage/FINAL controls; identify actual bypasses or unusable runtime paths.
+- Required reads: Current State; verification/product-{delivery,candidate,runtime,readiness}.ts; harness/delivery-tools.ts; runners/supervisor.ts finish/stage guards; MCP delivery controls and existing new tests.
+- Owns (may edit): docs/working/supervised-delivery-v2/reports/delivery-acceptance-integration-review.md only.
+- Must not touch: source/tests/shared docs, validation snapshot, configs, commits/pushes.
+- Definition of done: Trace default full lifecycle plus repair/rejection, dirty/revision races, model self-authored receipts/waivers, stale Lab evidence, independent acceptance and runtime/persistence mapping. Report concrete severity/file/line/repro and tested vs inferred. Do not spend provider quota or require unavailable Docker. Return findings promptly for root fixes; no speculative broad refactor.
+- Report to: docs/working/supervised-delivery-v2/reports/delivery-acceptance-integration-review.md
 
 ### 2026-10-23 — Second implementation checkpoint and regression integration
 - Agent: supervisor; workers harness-v2, delivery-contracts, brain-performance.
