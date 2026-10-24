@@ -1,6 +1,6 @@
 # Instagram build: MeritRouter supervised trial
-Status: Active
-Status detail: Worker-only build under validation; direct supervisor app edits excluded from acceptance.
+Status: Complete
+Status detail: Worker-only local app validated; framework findings retained for follow-up.
 Created: 2026-10-23
 Last updated: 2026-10-23
 Owner: Senior supervisor agent
@@ -9,37 +9,51 @@ Paired document: D:/SwitchYardProjects/instagram-clone/docs/working/instagram-cl
 Related: [live validation](live-validation.md), [handoff](handoff.md)
 
 ## Current State
-User explicitly requires supervisor to assign and validate, never implement clone source.
-Supervisor previously overstepped with direct app repairs; those remain uncommitted and are
-excluded. Patch preserved under OS TEMP/instagram-supervisor-changes.patch, outside framework.
-No downstream app source or runtime data belongs in this repository.
-Clean worker-only acceptance checkout: D:/SwitchYardProjects/instagram-clone-worker-validation
-at be26f28, containing only worker application commits integrated by supervisor. Dependencies
-are an ignored junction to the initial install. Never treat the contaminated original build
-as MeritRouter success. Original app has uncommitted supervisor changes; do not overwrite them.
-Mode: Testing And Live Validation for clone, Editing/Iteration for authorized four-worker default.
-Live execution limits changed with explicit authorization to four tasks/four repository writers;
-automatic reload observed frontend and backend running together. Paid routing remains disabled.
-Source schema/example/generated presets now 4/4; explicit overrides retained; file leases unchanged.
-Recursive typecheck/build passed. Initial targeted42/42 and new four-writer regression passed.
-Full router suite passed:119 files,1207 tests passed,2 platform skips;979.07s.
-Command: `npx vitest run --maxWorkers=2 --minWorkers=2` from packages/router.
-Four-worker source unit is verified; publication pending supervisor commit/push.
-Worker-only clone typecheck fails TS2613 Social default-vs-named export and three TS7006 callbacks.
-Independent baseline API/browser checks on8084 with DATA_DIR in OS TEMP:
-- POST auth Origin=http://localhost:9999 to http://127.0.0.1:8084 returned200 and alex session;
-  confirms cross-origin localhost acceptance defect.
-- POST profile returned200 with raw id/username/name/bio/avatar keys, missing required user wrapper.
-- Headless installed Chrome login then Explore triggers HomePage invalid element type undefined;
-  confirms import defect affects real navigation, despite HTTP200 home response.
-- Baseline feed screenshot captured before asynchronous feed completed; not visual acceptance.
-Owned Chrome and baseline dev server stopped. Screenshots retained in OS TEMP; no app accepted.
-Four bounded repair tasks dispatched on eligible free routing, each max80 requests/$0 paid.
-Two repair workers made zero edits and waited repeatedly on unnecessary Linux shell requests.
-Cancelled those attempts through supported CLI; replaced with explicit native-only Windows briefs,
-55 requests/$0 each, within the remaining approximate budget of the original attempts.
-Social replacement t_0mvlo4o0n0001cdc4db7c; backend replacement t_0mvlo4o0n41b0bab262dc.
-Shell/overlay repairs continue. Worker-only acceptance checkout is now branch feat/worker-only-instagram.
+The supervised build trial is complete. User requires supervisor to assign/integrate/validate,
+never implement clone source. After correction, all accepted application repairs came from workers.
+Validated app: D:/SwitchYardProjects/instagram-clone-worker-validation, branch
+feat/worker-only-instagram, head e28cd8f539aa74fd11ece59937c0aa75831e9f1f. Working tree clean.
+MeritRouter project instagram-clone/app now points to this checkout; doctor passes and zero
+running/queued tasks/jobs remain. No app source was pushed or published.
+Original D:/SwitchYardProjects/instagram-clone still contains earlier uncommitted supervisor
+implementation repairs. Those were excluded from acceptance and preserved, not overwritten.
+A patch is in OS TEMP/instagram-supervisor-changes.patch. Do not treat that original build as
+MeritRouter success. The accepted branch contains worker application commits and supervisor
+integration commits; supervisor-authored planning/acceptance harness is not application code.
+Dependencies are an ignored junction to the initial install; npm install supports a standalone
+checkout. Run npm start in validated checkout for localhost:8083, demo alex/demo1234.
+
+Four-worker defaults are complete: schema/example/generated presets use four worker tasks and
+four repository writers, explicit overrides retained and overlapping file leases unchanged.
+Live config explicitly4/4, paid disabled. Automatic reload observed concurrent app workers.
+Feature commit6f9c627 published to dev/main; local/remote heads verified equal at publication.
+Recursive typecheck/build and full router suite passed119files/1207tests/2platform skips,
+979.07s (`npx vitest run --maxWorkers=2 --minWorkers=2` in packages/router).
+Initial targeted42/42 plus actual four-disjoint-writer admission regression passed.
+
+Worker-only app acceptance observed independently:
+- npm run typecheck and npm run build pass; npm test10/10 passes with isolated temp data.
+-21API contract checks and34security/concurrency/upload checks pass against production8084.
+- Cross-origin login now403; duplicate case-insensitive registration serialized; ownership,
+  invalid avatars/files, unique concurrent IDs, concurrent toggles, upload bytes/media verified.
+- Chrome desktop/mobile: loaded media, feed/login, explore/post/comment, search/profile,
+  messaging, notifications, story/reel navigation, profile edit, create/upload persistence.
+- Final390px More menu: six missing actions reachable, Escape/outside dismissal, edit/logout,
+  desktop unchanged, no overflow or JS errors. Screenshots retained under OS TEMP/instagram-worker-*.
+- Restart retained credentials, uploaded post and profile edit.
+- Some QA exact-text selectors were initially wrong for combined username/caption/comment DOM;
+  corrected selectors and independent API checks proved persistence. Not application defects.
+This is a local social app: stories/reels are seeded viewing/photo slideshows. Instagram-scale
+infrastructure, video processing, email recovery, moderation and production deployment were not built.
+
+Completed backend, test-type and surgical mobile tasks accepted through a fresh project-scoped
+MCP client as supervisor mcp:codex-supervisor with specific independent evidence. Failed,
+cancelled and rejected attempts remain recorded; no unmet task was accepted. Independent model
+review was unavailable on the free plan; evaluator-change review is unimplemented, recorded below.
+Temporary app servers, Chrome and owned CLI worker stopped. Authorized panel4477 remains running.
+Prior manual app implementation never entered the accepted worker-only branch. Framework code
+changes in this trial were limited to explicitly authorized concurrency defaults; findings below
+are investigated/recorded, not represented as fixed. No paid routing or approval-policy bypass.
 
 ## Observations and distinctions
 - First frontend task t_0mvlnilss5b01f5650d07 submitted one layout file, all criteria unknown.
@@ -48,7 +62,7 @@ Shell/overlay repairs continue. Worker-only acceptance checkout is now branch fe
 - Replacement t_0mvlnoy8f48c075104735 pinned minimax-m2.7 got HTTP402 not-in-plan;
   failed gateway_not_in_plan without paid fallback. Correct free-plan enforcement.
 - Frontend split tasks t_0mvlnptqxaa149cc06c8b (shell), ...0425ebaa79eb (social),
-  ...5ecbd1137ba5 (overlays) returned implementations. Integration defects remain.
+  ...5ecbd1137ba5 (overlays) returned implementations with integration defects; later workers repaired them.
 - Backend t_0mvlnilssaf0186e3f733 exhausted100 requests across T2/T3, acceptance unmet;
   generated tracked tsconfig.tsbuildinfo outside declared allowedPaths. Scope guard caught it.
 - MCP lifecycle inconsistency reproduced: submit_tasks/get_task_status accept project; cancel_tasks
@@ -63,6 +77,18 @@ Shell/overlay repairs continue. Worker-only acceptance checkout is now branch fe
   max_requests submission correctly rejected. Explicit task budget works via open schema.
 - Worker backend initially requested more model budget to install dependencies despite remaining
   execution requests. Denied; this is model/tool confusion, not proven accounting failure.
+- Cancellation latency: test task cancel requested00:46:04.960Z; worker action wait ended8ms
+  later, but task/file lease held until00:47:03.689Z (58.729s), then cancelled on lease expiry.
+  Replacement queued on that lease. Investigate acknowledgement/lease-release path; no root cause
+  established yet. Other cancellation paths were not measured in this trial.
+- Test-file changes elevate verification to deep only after execution, so a small bounded task
+  can finish with no review reserve. evaluator_change_review reports not_implemented. Observed
+  safeguards correctly retain needs_supervisor; this is a remaining validation capability gap.
+- Native shell actions/checks still need human approval under actual policy. A declared npm test
+  request in the tiny test repair blocked despite dependencies being provided. Supervisor ran
+  exact test independently, observed9passes but7TS7006 errors and a removed projection test,
+  then delegated a second correction. Its10tests/typecheck passed. No approval policy bypass.
+  The first candidate's passing tests alone did not qualify it for acceptance.
 
 ## Worker Briefs
 All app repair briefs are persisted in task records before execution; base pinned be26f28.
@@ -93,6 +119,14 @@ Workers never own shared working docs or commits. Supervisor integrates and inde
 - Validation: `pnpm -r typecheck` -> pass; `pnpm -r build` -> pass; `npx vitest run --maxWorkers=2 --minWorkers=2` ->119 files/1207 passed/2 skipped,979.07s. Defaults/explicit overrides/presets and actual four-writer admission covered.
 - Outcome: Accepted
 - Follow-up: Publish coherent source unit; continue worker-only clone validation separately.
+
+### 2026-10-23 — Worker-only app acceptance and trial close
+- Agent: supervisor
+- Changed: integrated worker application commits in separate downstream checkout; framework trial/handoff records and active project repository path only.
+- Why: Complete the build experiment without masking MeritRouter/worker failures with supervisor implementation.
+- Validation: app `npm run typecheck`, `npm run build` -> pass; `npm test` ->10/10; `APP_URL=http://127.0.0.1:8084 node scripts/acceptance.mjs` ->21pass; stdin Node security probe ->34pass; installed Chrome desktop/mobile/menu/restart checks ->pass, screenshots inspected; CLI doctor ->all checks ok,0running/queued project tasks/jobs.
+- Outcome: Accepted
+- Follow-up: Framework findings remain open; app source not pushed/published. Three completed results accepted as mcp:codex-supervisor; failed/cancelled/rejected results retained. Owned test processes stopped and fake test data recycled safely.
 
 ## Open Questions
 No product change beyond four-worker defaults authorized by this trial alone. Record framework

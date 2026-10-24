@@ -6,7 +6,7 @@ lines, worker briefs, append-only ledger with real validation, open questions).
 
 | Document | Status | Scope |
 | --- | --- | --- |
-| [instagram-meritrouter-trial.md](instagram-meritrouter-trial.md) | Active | Worker-only Instagram build trial, observed framework gaps, and authorized four-worker defaults. |
+| [instagram-meritrouter-trial.md](instagram-meritrouter-trial.md) | Complete | Worker-only local app acceptance, observed framework gaps, and published four-worker defaults. |
 | [cost-first-routing.md](cost-first-routing.md) | Complete | Cost-first defaults/docs; visible cropped Overview charts with ranges; project selector and authorized panel restart. |
 | [meritrouter-rename.md](meritrouter-rename.md) | Complete | Complete MeritRouter identity, safe existing-install migration, readable docs and agent-first README onboarding. |
 | [correctness-and-panel-flows.md](correctness-and-panel-flows.md) | Complete | Accepted audit fixes, repository containment/security policy, supervisor approvals and connected panel flows; no live deployment. |

@@ -12,13 +12,19 @@ max_concurrent_writers_per_repository=4; explicit lower settings remain authorit
 overlapping file leases still serialize writers. Live configuration explicitly changed to 4/4
 with user authorization; auto reload observed both Instagram tasks running. Paid stays disabled.
 Defaults/preset and four-disjoint-writer regression checks pass; recursive typecheck/build pass.
-Full router suite passes119files/1207tests/2platformskips (979.07s). Source publication follows.
+Full router suite passes119files/1207tests/2platformskips (979.07s). Feature6f9c627 published dev/main.
 Clone source/data remain outside this framework at D:/SwitchYardProjects/instagram-clone;
 project instagram-clone, alias app. See its docs/working/instagram-clone.md for task IDs/contract.
 User clarified supervisor must never implement clone files: worker-only validation now uses
 D:/SwitchYardProjects/instagram-clone-worker-validation, branch feat/worker-only-instagram.
-Prior uncommitted supervisor repairs in original clone excluded. Active trial and framework
+Prior uncommitted supervisor repairs in original clone excluded. Completed trial and framework
 findings are in [instagram-meritrouter-trial.md](instagram-meritrouter-trial.md).
+Final app head e28cd8f: worker-only production build/typecheck,10unit tests,21contract+34security
+checks and desktop/mobile browser flows pass, including restart persistence. Project app now
+points to validated checkout. Original uncommitted manual repairs preserved separately.
+App servers/Chrome/owned CLI worker stopped; panel4477 left running. No paid calls/app publication.
+MCP lifecycle project inconsistency, cancellation lease delay, typed-budget discovery and
+evaluator-review gaps recorded; none silently bypassed or represented as fixed.
 
 [Cost-first routing](cost-first-routing.md) is complete: cost reduction across paid and free
 routes, enabled paid defaults ($5 rolling weekly cap; T1-T3/standalone supervisor free-exhaustion;
