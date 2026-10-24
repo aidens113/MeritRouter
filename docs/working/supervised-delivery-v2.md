@@ -10,6 +10,23 @@ Related: [trial assessment](instagram-meritrouter-assessment.md), [index](README
 
 ## Current State
 
+2026-10-23 corrective task: user explicitly authorized fixing the unusable supervisor default.
+The Facebook pilot proved delegated_delivery is configured, but an empty default quality_evidence
+blocks every supervisor. Prior external-supervisor direct-worker fallback was rejected and stopped.
+Corrective intent: usable best-available supervisor routing by default without invented benchmark
+scores; preserve explicit strict evidence policy, paid/access restrictions, and external FINAL ownership.
+Workers below own disjoint source files; supervisor owns integration, docs and full validation.
+Routing and submission fixes are implemented; final routing/startup/preset selection passed
+29/29. Default example and generated claude-code preset now explicitly use best_available;
+the old preset's explicit strict setting otherwise defeated the new schema default.
+Recursive typecheck/build passed (later amendments need final rebuild).
+User expanded correction to unavailable-model recovery and actual batch-tool usage. Both are
+assigned below in isolated worktrees. Main snapshot full run finished: 1,360 passed, 15 failed,
+3 skipped across147 files; one Vitest RPC timeout. Nine failed files cover load-sensitive
+throughput/recovery/promotions, Chrome cleanup, task waits and classifier/concurrency assertions.
+Failure reruns and integrated final checks remain pending. Do not claim a green full run or
+change timeout thresholds without reproduction.
+
 User authorized execution. Source merged and pushed to dev/main at cc1e0a4; the current
 checkout is D:/SwitchYardRouter on dev. Isolated feature/verification worktrees were temporary.
 No downstream clone,
@@ -408,6 +425,42 @@ checks never settles a disputed product-quality assessment.
 
 ## Worker Briefs
 
+### Brief: supervisor-routing-default
+- Repository: D:/SwitchYardRouter
+- Task: Fix empty-evidence deadlock with explicit best_available default; retain frontier_or_qualified_supervisor as opt-in strict policy. Quality evidence ranks proven candidates first; unverified candidates clearly identified, never assigned invented quality scores. Apply normal supervisor size floors to unverified candidates; evidence-qualified candidates can retain unknown-size support. Preserve paid, tools, modality, endpoint exclusions and dispatch-time strict expiry checks.
+- Required reads: Current State above; src routing/supervisor-quality.ts, routing/select.ts, gateway/gate.ts and tests/supervisor-quality.test.ts under packages/router.
+- Owns (may edit): packages/router/src/routing/supervisor-quality.ts, packages/router/src/routing/select.ts, packages/router/src/gateway/gate.ts, packages/router/tests/supervisor-quality.test.ts
+- Must not touch: any other source, live config/data, clone repositories, shared working docs.
+- Definition of done: regression tests prove fresh empty-evidence config routes strongest eligible supervisor, explicit strict still blocks, paid remains disabled, real Gate dispatch matches policy. Run focused tests; no commits.
+- Report to: docs/working/supervised-delivery-v2/reports/supervisor-routing-default.md
+
+### Brief: supervisor-startup-preflight
+- Repository: D:/SwitchYardRouter
+- Task: Investigate and fix supervisor startup preflight/error classification so no-route start_job returns typed actionable errors before persisting a doomed job. Cover direct supervise submission too if existing submission architecture allows a scoped fix. Do not alter qualification policy; coordinate router-default worker API if needed.
+- Required reads: Current State above; packages/router/src/core/service.ts startJob/submitTasks, supervisor runner routing and submission tests.
+- Owns (may edit): packages/router/src/core/service.ts and ONE new packages/router/tests/supervisor-startup.test.ts, plus own report.
+- Must not touch: routing files, gateway, other tests, live config/data, clone repositories, shared docs.
+- Definition of done: offline temp-config tests verify typed error/no doomed task and successful usable-default submission. No live provider calls, commits or pushes.
+- Report to: docs/working/supervised-delivery-v2/reports/supervisor-startup-preflight.md
+
+### Brief: model-unavailable-recovery
+- Repository: D:/SwitchYardRouter/.claude/worktrees/model-unavailable-recovery (isolated branch feat/model-unavailable-recovery)
+- Task: User observed whole tasks fail on unavailable/not-in-plan models. Trace Gate candidate fallback cap and terminal task errors. Fix account/endpoint unavailable refusals so remaining eligible endpoints are tried without spending paid authority or retrying rejected routes forever. Preserve finite transport retries, attempt accounting, cancellation and budget limits; exhausted pool errors remain actionable.
+- Required reads: This brief, packages/router/src/gateway/gate.ts and provider error classification, affected tests; no broad background.
+- Owns (may edit): gateway fallback and provider error handling plus narrowly affected/new tests in your worktree, own report.
+- Must not touch: main checkout, supervisor-quality policy/select.ts, harness batching, live config/data; no commits/pushes.
+- Definition of done: regressions3+unavailable then healthy succeed, full exhaustion bounded, paid0 cannot escalate; focused tests pass. Report API/compatibility details for supervisor integration with pending main Gate changes.
+- Report to: docs/working/supervised-delivery-v2/reports/model-unavailable-recovery.md in your worktree.
+
+### Brief: harness-batch-usage
+- Repository: D:/SwitchYardRouter/.claude/worktrees/harness-batch-usage (isolated branch feat/harness-batch-usage)
+- Task: User observed serial worker reads/commands despite batch tools. Inspect actual advertised tool schemas, batched execution limits and injected guidance. Reproduce malformed apply_edits missing action and repeated serial calls. Fix concrete schema/injection/execution causes and automatic coalescing where justified. Do not claim models always batch just from prompt text. Keep dependent/mutating/approval commands sequential; independent reads can parallelize, commands only when proven safe.
+- Required reads: This brief; packages/router/src/harness/tools.ts and harness v2 tools/executor; relevant tests. Inspect local session s_0mvlw7qu62723759e2107.jsonl only if needed (private evidence, never commit transcript).
+- Owns (may edit): harness batch/schema/guidance implementation and affected/new harness tests, own report. Keep original files where concerns belong.
+- Must not touch: main checkout, gateway/routing/core/service.ts, provider handling, live config/data; no commits/pushes.
+- Definition of done: schema advertises usable typed batch/edit items; test actual multiple reads/check scheduling behavior and failure independence; focused tests pass; describe remaining model-choice limitations honestly.
+- Report to: docs/working/supervised-delivery-v2/reports/harness-batch-usage.md in your worktree.
+
 ### Brief: release-scope-audit
 - Repository: D:/SwitchYardRouter-delivery-v2 at61d572c; read-only implementation review.
 - Task: Check planned P0–P10 against implemented source/reports; identify material unimplemented requirements, separately from unavailable external acceptance.
@@ -556,6 +609,14 @@ checks never settles a disputed product-quality assessment.
 - Report to: docs/working/supervised-delivery-v2/reports/memory-acceptance.md
 
 ## Work Ledger
+
+### 2026-10-23 — Repair unusable supervisor bootstrap
+- Agent: supervisor; workers routing_default and startup_preflight
+- Changed: supervisor default routing/Gate, atomic submission preflight, example/preset generation and authored setup/roles/README guidance.
+- Why: default empty evidence excluded every supervisor; shipped claude-code preset additionally persisted strict policy.
+- Validation: recursive typecheck/build passed before final amendments; final focused supervisor/startup/presets29/29 pass. Full snapshot1360pass/15fail/3skip and1RPCerror; reruns pending.
+- Outcome: Partial
+- Follow-up: integrate unavailable-model and batching fixes; final rebuild/typecheck and reproduce full-run failures without concurrent build load.
 
 ### 2026-10-23 — Initial implementation and contract checks
 - Agent: supervisor

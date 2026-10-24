@@ -408,7 +408,7 @@ use the new defaults, including when loading an older minimal configuration. To 
 installation strictly free, write `paid.enabled: false` explicitly before upgrading. Changing
 source defaults never rewrites your saved configuration.
 
-## Supervisor quality evidence: required for delivery jobs
+## Supervisor quality evidence and strict routing
 
 The default workflow is `client_supervision.workflow: delegated_delivery`. Your initiating
 client remains FINAL supervisor and normally delegates multi-step execution to a MeritRouter
@@ -430,10 +430,16 @@ profiles:
 ```
 
 This leaves the profile uncapped; the default delivery job still receives a 600-request aggregate
-envelope. Existing explicit smaller caps remain effective. Configure high-quality routes before
-starting work: `supervisor.routing.quality_evidence` is empty by default. A discovered model, an
-API key, a vendor/model name or a forced endpoint is not quality evidence. No eligible current
-record produces `supervisor_quality_unavailable`; the router does not run a weak fallback.
+envelope. Existing explicit smaller caps remain effective. Supervisor delivery works without
+manually entered benchmark scores: `supervisor.routing.minimum_quality` defaults to
+`best_available`. Current reviewed evidence ranks first; otherwise the strongest eligible route
+is used and reported as unverified, subject to supervisor size floors and existing access, tool,
+modality and paid restrictions. `supervisor.routing.quality_evidence` is empty by default.
+A discovered model, API key, vendor/model name or forced endpoint is not quality evidence.
+Set `minimum_quality: frontier_or_qualified_supervisor` to require reviewed evidence. Under that
+explicit policy, no eligible current record produces `supervisor_quality_unavailable`; the
+router does not substitute an unverified supervisor. Unusable supervisor submissions are rejected
+before queueing rather than becoming failed jobs.
 
 For each catalog endpoint, record a reviewed evaluation/source, verification and expiry dates,
 trial count, confidence and measured scores from 0 to 1. Every relevant capability and confidence
@@ -467,7 +473,9 @@ supervisor:
 
 Use exact endpoint IDs from your catalog; records are not inferred across providers. Provenance
 remains operator-owned: ordinary worker qualification does not generate supervisor evidence
-automatically. Expired/revoked evidence stops subsequent dispatch too. Review route explanations
+automatically. Under strict policy, expired/revoked evidence stops subsequent dispatch too.
+Under the default policy, such endpoints must meet the ordinary unverified-route requirements.
+Review route explanations
 with `meritrouter route supervise T3 --project <slug>` and inspect quality exclusions. Model
 quality ranking never enables paid routing or raises spending caps; paid-disabled, `never`,
 zero-dollar and explicit free-first settings still apply.

@@ -70,25 +70,30 @@ agent should change the setting only on an explicit user request.
 The supervisor plans, writes briefs, judges evidence, and resolves conflicts. It needs the
 strongest reasoning and the most reliable tool use you can afford, and a large context window.
 
-- Supervisor routing uses `supervisor.routing.quality_evidence` across eligible providers.
-  Each endpoint needs current, sourced evidence classified `frontier` or `qualified_supervisor`,
+- Supervisor routing defaults to `supervisor.routing.minimum_quality: best_available`.
+  It prefers current `supervisor.routing.quality_evidence` across eligible providers; otherwise
+  it selects the strongest eligible route using qualification and model size as heuristics,
+  explicitly reporting quality as unverified. Normal supervisor size floors apply to unverified
+  candidates. This requires no manually supplied benchmark scores to start a delivery.
+  Set `minimum_quality: frontier_or_qualified_supervisor` to require reviewed evidence.
+  Strict qualification needs current, sourced evidence classified `frontier` or `qualified_supervisor`,
   confidence at least 0.75, and scores at least 0.75 for planning, architecture, supervision,
   integration, review and product judgment. Image/video inputs also require that visual score.
   Eligible evidence is ranked by confidence-weighted mean capability. A vendor name, parameter
   count, existing key or model pin does not qualify a supervisor. See the
-  [quality evidence setup](setup.md#supervisor-quality-evidence-required-for-delivery-jobs).
+  [quality evidence setup](setup.md#supervisor-quality-evidence-and-strict-routing).
 - `supervisor.endpoints` can restrict the endpoint pool; it cannot bypass the quality floor.
-  Empty evidence, expired evidence or no otherwise eligible model blocks execution with
-  `supervisor_quality_unavailable`. The router does not silently substitute a weaker supervisor.
+  Under strict policy, empty/expired evidence blocks execution with
+  `supervisor_quality_unavailable`; it never substitutes an unverified supervisor.
 - `supervisor.paid_policy`: `never` (free models only), `on_free_exhaustion` (default), or
   `preferred`. Eligible paid supervisor calls share the paid budgets; the `standalone-free`
   preset explicitly selects `never`.
 - Default delivery jobs have a 600-request aggregate envelope, with protected supervisor and
   validation reserves; profile/task/verification caps can reduce it. Waiting on workers costs
   no model requests. Request-count grants never increase paid authorization or dollar caps.
-- Presets provide profiles and paid policies, not quality evidence. A free-only preset still
-  needs a qualified eligible free supervisor; hybrid/paid configurations need authorized keys,
-  current prices and evidence for their selected endpoints.
+- Presets provide profiles and paid policies, not quality evidence. A free-only preset needs
+  an eligible free supervisor; hybrid/paid configurations need authorized keys and current
+  prices. Explicit strict policy additionally requires evidence for selected endpoints.
 
 ### Worker models
 

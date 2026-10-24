@@ -10,7 +10,7 @@ import { SqliteRequestLedger } from "../admission/sqlite-request-ledger.js";
 import { AdmissionDenied, GatewayError, MeritRouterError, type AdmissionDenialReason } from "../core/errors.js";
 import type { ModelEndpoint } from "../models/catalog.js";
 import type { RoutePlan } from "../routing/select.js";
-import { fitsEndpoint } from "../routing/select.js";
+import { sizeFloor, fitsEndpoint } from "../routing/select.js";
 import type { ChatRequest, ChatResponse, ProviderStatus } from "./types.js";
 import { estimateTokens } from "./types.js";
 import { CircuitBreakers, countsAsProviderFailure } from "./breaker.js";
@@ -234,9 +234,31 @@ export class Gate {
       // Session stickiness cannot override quality ordering, and evidence expiry/revocation
       // must be checked on every physical dispatch rather than only at session creation.
       const visual = req.chat.messages.some(m => Array.isArray(m.content) && m.content.some(part => part.type === "image_url"));
-      const eligible = list.filter(ep => assessSupervisorQuality(ep.id, this.cfg.supervisor.routing, new Date(this.direct.providers.now()), visual).eligible);
-      if (!eligible.length) throw new MeritRouterError("supervisor_quality_unavailable", "No supervisor candidate retains current qualifying quality evidence; no model request was sent");
-      return eligible;
+      const eligible = list.filter(ep => {
+        const quality = assessSupervisorQuality(ep.id, this.cfg.supervisor.routing, new Date(this.direct.providers.now()), visual);
+        if (!quality.eligible) return false;
+        return quality.classification !== null || ep.ignoreSizeFloor || req.plan.belowFloorEndpoints.has(ep.id) || (ep.totalParametersB !== null && ep.totalParametersB >= Math.max(req.plan.floorB, sizeFloor(this.cfg, req.plan.profile, req.plan.tier)));
+      });
+      if (!eligible.length) throw new MeritRouterError("supervisor_quality_unavailable", "No supervisor candidate meets the configured quality policy and size floor at dispatch; no model request was sent");
+      // Evidence can expire or be revoked during a session. Keep proven candidates ahead
+      // of best-available fallbacks without allowing stickiness to freeze the old order.
+      return eligible.sort((a, b) => {
+        const policy = req.plan.paidPolicy ?? (this.cfg.paid.enabled ? this.cfg.paid.tiers[req.plan.tier] : "never");
+        if (policy === "never" || policy === "on_free_exhaustion") {
+          const paid = Number(requestPaid(a, this.cfg, req.plan)) - Number(requestPaid(b, this.cfg, req.plan));
+          if (paid) return paid;
+        }
+        const now = new Date(this.direct.providers.now());
+        const qa = assessSupervisorQuality(a.id, this.cfg.supervisor.routing, now, visual);
+        const qb = assessSupervisorQuality(b.id, this.cfg.supervisor.routing, now, visual);
+        const quality = (qb.score ?? -1) - (qa.score ?? -1);
+        if (quality) return quality;
+        if (qa.classification === null && qb.classification === null) {
+          const qualification = (id: string) => req.plan.explanations.find(ex => ex.endpointId === id)?.qualification?.passRate ?? 0;
+          return qualification(b.id) - qualification(a.id) || (b.totalParametersB ?? 0) - (a.totalParametersB ?? 0);
+        }
+        return 0; // Preserve planned overrides and availability order for proven ties.
+      });
     }
     return this.cfg.routing.sticky_endpoints ? stickyOrder(list, req.preferEndpointId, (ep) => this.stickyHealthy(ep)) : list;
   }
@@ -273,14 +295,14 @@ export class Gate {
 
   /**
    * Why the gate will not send to this endpoint now, for routing to leave it out: quarantine, or
-   * every usable key's plan refused the model recently (`planRefused`). Only the first is a
+   * every usable key refused the model recently (`planRefused`). Only the first is a
    * quarantine; the panel shows them apart.
    */
   excluded(ep: ModelEndpoint): string | null {
     return this.quarantined(ep) ?? this.planRefused(ep);
   }
 
-  /** "Not in the plan of any <provider> key" when every usable key's plan refused the model within the recheck window (rechecked after a day). */
+  /** Every usable key refused this model within the recheck window (rechecked after a day). */
   planRefused(ep: ModelEndpoint): string | null {
     if (ep.route.kind !== "direct") return null;
     const rt = this.direct.providers;
@@ -293,7 +315,7 @@ export class Gate {
       if (!r || r.at + NOT_IN_PLAN_RECHECK_MS <= now) return null;
       latest = Math.max(latest, r.at);
     }
-    return `not in the plan of any ${ep.route.provider} key (refused ${new Date(latest).toISOString().slice(0, 16)}Z; rechecked a day later)`;
+    return `model unavailable with every ${ep.route.provider} key (refused ${new Date(latest).toISOString().slice(0, 16)}Z; rechecked a day later)`;
   }
 
   /**
@@ -350,6 +372,7 @@ export class Gate {
     let lastCapacityError: GatewayError | null = null;
     let dispatched = 0;
     let dispatchedPaid = 0;
+    let freeFallbacks = 0;
     // Earliest time a platform skipped for its open breaker admits a probe.
     let circuitRetryAt: number | null = null;
     // Earliest time an endpoint skipped for having no usable key expects one back.
@@ -374,8 +397,10 @@ export class Gate {
 
     for (const ep of this.candidatesFor(req)) {
       const paid = requestPaid(ep, this.cfg, req.plan);
-      // Free and paid attempts are limited separately: free fallbacks never use up paid slots.
-      if (paid ? dispatchedPaid >= this.cfg.paid.max_paid_attempts : dispatched >= this.cfg.routing.max_endpoint_fallbacks) continue;
+      // Definite unavailable free routes do not exhaust the transient retry cap.
+      // This is still one finite pass; every dispatch remains admission-accounted, and
+      // paid attempts always obey their separate hard limit.
+      if (paid ? dispatchedPaid >= this.cfg.paid.max_paid_attempts : freeFallbacks >= this.cfg.routing.max_endpoint_fallbacks) continue;
       const misfit = fitsEndpoint(ep, estInput, req.chat.max_tokens);
       if (misfit) {
         attempts.push({ endpointId: ep.id, outcome: `skipped (too large): ${misfit}` });
@@ -408,7 +433,10 @@ export class Gate {
         continue;
       }
       if (paid) dispatchedPaid++;
-      else dispatched++;
+      else {
+        dispatched++;
+        if (r.kind !== "failed" || !r.unavailable) freeFallbacks++;
+      }
       if (r.kind === "failed") {
         lastCapacityError = r.error;
         continue;

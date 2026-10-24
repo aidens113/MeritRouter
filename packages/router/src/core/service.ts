@@ -555,6 +555,28 @@ export class MeritRouter {
         }
       }
       const submitted = this.tasks.submit(specs, { project: project.project.slug });
+      // Refuse impossible supervisor routes in the same transaction as submission. A
+      // retry of an existing idempotent task remains readable even if its route changed.
+      // Match TaskRouter.prepare without classification or a provider request.
+      for (const outcome of submitted) {
+        if (outcome.deduplicated) continue;
+        const task = this.tasks.get(outcome.taskId)!;
+        if (this.cfg.profiles[task.spec.profile]?.mode !== "supervisor") continue;
+        const chosen = this.cfg.supervisor.endpoints.map(endpointId => ({
+          profile: task.spec.profile, tier: null, kind: "force" as const,
+          endpointId, allowBelowFloor: true, enabled: true,
+        }));
+        const plan = this.router.plan(task.spec.profile, "T3", this.router.inputModalities(task),
+          task.spec.routing?.endpointId, false, this.cfg.supervisor.paid_policy, chosen, task.spec.hints?.web);
+        if (!plan.candidates.length) {
+          const exclusions = plan.explanations.filter(candidate => !candidate.eligible)
+            .map(candidate => `${candidate.endpointId}: ${candidate.reasons.join("; ")}`).join(" | ");
+          throw new MeritRouterError(plan.blocker?.code ?? "no_eligible_endpoint",
+            `${plan.blocker?.message ?? "No eligible supervisor endpoint is configured."} ` +
+            `Supervisor task was not submitted. Check the model catalog, supervisor routing policy, credentials and endpoint exclusions; paid routing remains subject to its configured policy.` +
+            (exclusions ? ` Exclusions: ${exclusions}` : " The model catalog has no candidate endpoints."));
+        }
+      }
       for (const outcome of submitted) {
         if (outcome.deduplicated) continue;
         const task = this.tasks.get(outcome.taskId)!;
