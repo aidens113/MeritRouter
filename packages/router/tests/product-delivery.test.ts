@@ -38,6 +38,8 @@ describe("persisted product delivery",()=>{
     expect(()=>store.finalDecision(id,"demo",decision)).toThrow(/unresolved/);
     const at=Date.now();store.recordEvidence(id,"demo",{schemaVersion:1,id:"journey",criterionIds:["button"],kind:"journey",specDigest:deliverySpecDigest(spec),candidateDigest:productCandidateDigest(candidate),actor:{id:"runtime",role:"runtime"},basis:"observed",outcome:"pass",startedAt:at,completedAt:at,expiresAt:null,artifactRefs:["artifact:journey"],observations:["Click changes state"],unknowns:[],subjectActorIds:["worker"]});
     expect(store.status(id,"demo")?.readiness?.status).toBe("ready_for_final_review");
+    expect(()=>store.recordEvidence(id,"demo",{...store.status(id,"demo")!.evidence[0],id:"typo",criterionIds:["unknown-criterion"]})).toThrow(/unknown specification criterion/);
+    expect(store.status(id,"demo")!.evidence).toHaveLength(1);
     expect(()=>store.finalDecision(id,"demo",{...decision,actor:{id:"worker",role:"worker"}})).toThrow();
     expect(()=>store.finalDecision(id,"demo",decision)).toThrow(/completed delivery/);
     for(const stage of ["prepare","plan","implement","integrate","validate","handoff"])store.transition(id,"demo",stage);

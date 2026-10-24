@@ -7,6 +7,7 @@ import type { RunContext } from "../runners/types.js";
 import type { EvidenceUniverse } from "../core/worker-output.js";
 import { normalizeRelPath, sliceLines, type RepoReader } from "../context/repo-reader.js";
 import type { Brain } from "../brain/brain.js";
+import { normalizeBrainPath } from "../brain/brain.js";
 import type { BrainAccess, Principal } from "../brain/access.js";
 import type { Actor } from "../attribution/index.js";
 import type { ToolSideEffect } from "../sessions/events.js";
@@ -334,6 +335,13 @@ function brainOf(env: HarnessEnv) {
   return env.brain;
 }
 
+/** Only canonical global preference reads may cross from a project to the trusted install. */
+export function memoryReadBrain(env: HarnessEnv, input: string): Brain {
+  const normalized = normalizeBrainPath(input);
+  return (normalized === "global/preferences" || normalized.startsWith("global/preferences/")) && env.ctx.installBrain
+    ? env.ctx.installBrain : brainOf(env).brain;
+}
+
 /**
  * Brain read tools, and the team channel (`post_channel`, `read_channel`): every role given the
  * brain (workers and supervisors) gets the channel with it, but only while its task belongs to a
@@ -344,18 +352,18 @@ export function brainReadTools(): HarnessTool[] {
     ...channelTools(),
     tool("brain_search", "read", "Search shared knowledge (working documents, decisions, lessons) you have access to.", { query: { type: "string" }, prefix: { type: "string" } }, ["query"], async (a, env) => {
       const b = brainOf(env);
-      const hits = b.brain.search(b.principal(), str(a.query, "query"), { ...(typeof a.prefix === "string" ? { prefix: a.prefix } : {}), limit: 8 });
+      const hits = memoryReadBrain(env, typeof a.prefix === "string" ? a.prefix : "").search(b.principal(), str(a.query, "query"), { ...(typeof a.prefix === "string" ? { prefix: a.prefix } : {}), limit: 8 });
       return hits.map((h) => `brain:${h.path} (${h.kind}) ${h.title ?? ""}\n  ${h.snippet}`).join("\n") || "(no results you can read; request access if you need more)";
     }),
     tool("brain_read", "read", "Read a brain entry, optionally one section (e.g. 'Current State').", { path: { type: "string" }, section: { type: "string" } }, ["path"], async (a, env) => {
       const b = brainOf(env);
-      const r = b.brain.read(b.principal(), str(a.path, "path"), typeof a.section === "string" ? { section: a.section } : {});
+      const r = memoryReadBrain(env, str(a.path, "path")).read(b.principal(), str(a.path, "path"), typeof a.section === "string" ? { section: a.section } : {});
       env.universe.refs.set(`brain:${r.path}`, r.lines);
       return cap(`ref: brain:${r.path}\n${r.content}`);
     }),
     tool("brain_list", "read", "List brain entries under a prefix that you can read.", { prefix: { type: "string" } }, [], async (a, env) => {
       const b = brainOf(env);
-      return b.brain.list(b.principal(), typeof a.prefix === "string" ? a.prefix : "").map((e) => `${e.path} (${e.kind}${e.status ? `, ${e.status}` : ""}) ${e.title ?? ""}`).join("\n") || "(nothing you can read here)";
+      return memoryReadBrain(env, typeof a.prefix === "string" ? a.prefix : "").list(b.principal(), typeof a.prefix === "string" ? a.prefix : "").map((e) => `${e.path} (${e.kind}${e.status ? `, ${e.status}` : ""}) ${e.title ?? ""}`).join("\n") || "(nothing you can read here)";
     }),
     tool(
       "brain_request_access",

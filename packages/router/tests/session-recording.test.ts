@@ -160,7 +160,8 @@ describe("classifier sessions", () => {
       expect(rest).toEqual([]);
       expect(c).toMatchObject({ role: "classifier", agentLabel: `classifier:${sub.taskId}`, status: "completed", stopReason: "classified", modelRequests: 1 });
       const ev = eventsOf(c!.id);
-      expect(ofType(ev, "note").map((n) => n.data.text)).toEqual([expect.stringMatching(/^shared classification request \(2 items\)/), "verdict"]);
+      expect(ofType(ev, "note").map((n) => n.data.text)).toEqual(["memory context omitted",expect.stringMatching(/^shared classification request \(2 items\)/), "verdict"]);
+      expect(ofType(ev,"note")[0]!.data.data).toMatchObject({memoryManifest:{schemaVersion:1,role:"classifier",project:"demo",entries:[],omissions:[{reason:"Technical task-metadata classification; product memory is not applicable"}]}});
       requestIds.add(ofType(ev, "model_response")[0]!.data.requestId);
       expect(run).toMatchObject({ role: "analyst", status: "completed", previousSessionId: null });
     }

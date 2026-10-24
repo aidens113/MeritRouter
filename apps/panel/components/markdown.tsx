@@ -101,7 +101,7 @@ export function Markdown({ text, basePath, linkBase }: { text: string; basePath:
       while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i]!)) rows.push(cells(lines[i++]!));
       out.push(
         <div key={k()} className="my-3 overflow-x-auto rounded-lg border border-line">
-          <table className="data-table">
+          <table className="data-table min-w-[40rem]">
             <thead>
               <tr>
                 {head.map((c, j) => (

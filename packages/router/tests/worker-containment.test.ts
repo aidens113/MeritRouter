@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { linkSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
 import { openDatabase, type Db } from "../src/storage/db.js";
@@ -153,12 +153,20 @@ describe("worker containment and supervisor actions", () => {
   it("cancels approved running host action when original worker authority is lost", async () => {
     const { ctx, store } = setup();
     const sentinel = path.join(env.dir, "outside.txt");
+    const started = path.join(env.dir, "action-started.txt");
     writeFileSync(sentinel, "preserved");
-    const request = await store.file(ctx, { ...input(), command: `node -e "setTimeout(()=>require('fs').writeFileSync('../outside.txt','changed'),2000)"` });
+    // The sibling marker proves execution without changing the pinned repository.
+    const request = await store.file(ctx, { ...input(), command: `node -e "const fs=require('fs');fs.writeFileSync('../action-started.txt','started');setTimeout(()=>fs.writeFileSync('../outside.txt','changed'),2000)"` });
     const pending = store.decide(decision(request.id));
-    const timer = setTimeout(() => db.prepare("UPDATE tasks SET cancel_requested=1 WHERE id=?").run(ctx.taskId), 300);
-    try { expect((await pending).status).toBe("uncertain"); }
-    finally { clearTimeout(timer); }
+    const deadline = Date.now() + 5000;
+    while (!existsSync(started) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+    const observedStart = Date.now();
+    db.prepare("UPDATE tasks SET cancel_requested=1 WHERE id=?").run(ctx.taskId);
+    const result = await pending;
+    expect(existsSync(started), JSON.stringify(result)).toBe(true);
+    expect(result.status).toBe("uncertain");
+    // Check after the original write would have fired, not merely after cancellation.
+    await new Promise(resolve => setTimeout(resolve, Math.max(0, observedStart + 2200 - Date.now())));
     expect(readFileSync(sentinel, "utf8")).toBe("preserved");
   }, 10000);
   it("requires a fresh operator approval and physical supervisor check after runtime progress at unchanged source", async () => {

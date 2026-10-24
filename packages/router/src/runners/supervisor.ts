@@ -13,7 +13,7 @@ import { dirtyPaths, git, headSha } from "../workspaces/git.js";
 import { runAgentLoop, type TerminalTool } from "../harness/loop.js";
 import type { ResumeInput } from "../harness/resume.js";
 import type { ResumeToolRef } from "../sessions/events.js";
-import { artifactTool, brainReadTools, brainSupervisorTools, commandTool, editTools, repoTools, type HarnessEnv, type HarnessTool } from "../harness/tools.js";
+import { artifactTool, availableTools, brainReadTools, brainSupervisorTools, commandTool, editTools, repoTools, type HarnessEnv, type HarnessTool } from "../harness/tools.js";
 import { labHarnessTools } from "../labs/tools.js";
 import { labCheckMatchesHeads } from "../labs/checks.js";
 import { webTools } from "../harness/web-tools.js";
@@ -354,11 +354,12 @@ export class SupervisorRunner implements CodingRunner {
       if (queueNote) messages.push({ role: "user", content: queueNote.trim() });
     }
     for (const c of spec.constraints.checks ?? []) state.briefChecks.add(c);
-    if(ctx.resume) messages=await refreshMemoryMessages(env,messages);
-    else {const memory=await memoryContext(env,{messages,tools:tools.map(tool=>tool.def)});if(memory)messages.push({role:"user",content:memory});}
     if (!ctx.resume && messages[0]) messages[0] = {...messages[0],content:`${messages[0].content ?? ""}\n\n${harnessV2StartupContext(env)}\n\nDelivery workflow: discover -> specify -> prepare -> plan -> implement -> integrate -> validate -> handoff. Use set_delivery_spec before implementation and advance_delivery_stage to persist progress. You own planning, worker dispatch, combined runtime TESTS, independent review and repair. Write observable functional/visual criteria; passing builds alone never proves usable delivery. finish_job returns a candidate to the initiating FINAL supervisor, never final project acceptance. Request additional budget upward before validation reserves are exhausted.`};
 
     const maxTokens = ctx.profile.max_output_tokens;
+    const memoryOptions = { tools: [...availableTools(tools, env).map(tool => tool.def), terminal.def], outputTokens: maxTokens, reservedTokens: 1000 };
+    if (ctx.resume) messages = await refreshMemoryMessages(env, messages, memoryOptions);
+    else { const memory = await memoryContext(env, { messages, ...memoryOptions }); if (memory) messages.push({ role: "user", content: memory }); }
     const limits = planLimits(ctx.plan, ctx.cfg.routing.max_endpoint_fallbacks);
     const inputBudget = Math.max(4000, limits.contextLimitTokens - maxTokens - estimateTokens([], tools.map((t) => t.def)) - 1000);
     const executionId = ctx.gate.admission.createExecution("task", spec.profile, [{ taskId: ctx.taskId, itemId: ctx.taskId }]);

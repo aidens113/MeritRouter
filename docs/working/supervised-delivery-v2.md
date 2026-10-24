@@ -1,6 +1,6 @@
 # Supervised delivery v2: specification and execution plan
 Status: Active
-Status detail: User authorized execution; initial contracts, harness replacement and Brain performance implementation dispatched.
+Status detail: Implementation integrated; production panel acceptance and release regression fixes in progress. Genuine isolated interactive acceptance blocked by absent Docker engine/image.
 Created: 2026-10-23
 Last updated: 2026-10-23
 Owner: Senior supervisor agent
@@ -31,7 +31,7 @@ live paid/authority settings remain authoritative. Four design reports inform P0
 Framework source is changing in the isolated feature worktree; downstream applications and
 the user's configuration/memory are untouched. No new live-provider spending is authorized.
 Checkpoint 375afc7 built successfully and passed recursive typechecking. Its isolated full
-suite is running; failures exposed first-message ordering regressions and a changed legacy
+suite finished; failures exposed first-message ordering regressions and a changed legacy
 uncapped budget default. Both causes are corrected: independently observed focused reruns
 passed 44/44. The new default delivery lifecycle also passed a real fake-provider/command
 end-to-end test, with separate FINAL acceptance. Initial isolated production Brain navigation
@@ -49,6 +49,17 @@ The initial snapshot full suite completed: 1,275 passed, 14 failed, 3 skipped (1
 intentional guidance/tool inventory changes, and a fixed-delay capacity assertion; fixes and
 targeted reruns are on the feature branch. This is NOT a passing release suite. A fresh
 release snapshot must run the complete suite and latest panel production acceptance.
+
+Release snapshot 9c80b12 completed `pnpm -r build` successfully; its full139-file suite is
+running independently. Initial snapshot fixes pass there. Additional failures found so far:
+scripted supervisors integrate before workers finish after await_tasks returns for approval;
+the classifier session test omits the intentional memory-omission note; noninteractive CLI
+identity expectations predate explicit human authority; fixed-delay cancellation can occur
+before command spawn. Fixtures are being strengthened at real lifecycle boundaries, not by
+relaxing expected product/security outcomes. Memory resume headroom and trusted install-wide
+preference reads across separate project Brain bindings are now source-complete with worker
+19/19 focused passes; supervisor independent confirmation pending. Production demo seed
+passed all expectations, including nested integration/rebase; UI/API acceptance is active.
 
 ## Decision: failed product acceptance, new default ownership
 
@@ -524,6 +535,51 @@ checks never settles a disputed product-quality assessment.
 - Follow-up: Execute contract-first implementation sequence; numerical defaults/performance targets remain proposed until tested.
 
 ## Open Questions
+
+### 2026-10-23 — Production acceptance and memory/fixture closure
+- Agent: supervisor; workers Brain QA, delivery contracts, harness.
+- Changed: actual-tool/output headroom on resume and trusted install preference binding; original security/integration fixture assumptions replaced with actual startup/terminal boundaries; classifier omission receipt and explicit noninteractive CLI authority assertions; unknown criterion inputs rejected without poisoning evidence; mobile Markdown table readable minimum width and settings copy aligned with actual defaults.
+- Validation: root independently observed 22/22 memory/global-root/headroom/product tests, 10/10 CLI/product tests and classifier recording case. Workers report team/supervisor/containment24/24 and source typecheck. Production demo seed passed all expectations. Panel17/17 functional scenarios passed, zero JS exceptions; warm30-navigation p50/p95 188/281ms. Root inspected mobile/global/product distinction screenshots and found genuine mobile index row-height defect despite passing overflow assertion; source fix needs rebuilt visual verification. Initial10k-file indexing remains above2s target (~5.68s loaded host); no false cold-browser performance claim.
+- Outcome: Partial.
+- Follow-up: checkpoint frozen source, final exact-revision suite/build and rebuilt mobile/settings acceptance; preserve Docker/real-provider acceptance blockers.
+
+### Brief: merge-resume-regression
+- Repository: Feature D:/SwitchYardRouter-delivery-v2; reproduce on own stable temporary test fixtures.
+- Task: Diagnose repeatable release full-suite team-nesting crash-resume fixture failing to reach the merge fault (simulatedCrashCount 0, expected 1).
+- Required reads: Current State; tests/team-nesting.test.ts final crash-resume case and scripted worker; relevant integration/worktree/verification paths based on actual event evidence.
+- Owns (may edit): packages/router/tests/team-nesting.test.ts, src/workspaces/merge-queue.ts if demonstrated cause, own unique report; request root for any other source ownership.
+- Must not touch: current worker-owned memory/context/executor/harness tools/runners; release snapshot; shared docs; config/data/commits/pushes.
+- Definition of done: Reproduce narrow test, inspect actual task state/result/events/tool errors before cleanup; identify cause rather than increasing polling blindly. Fix legitimate bug or obsolete fixture assumption preserving exact two-commit/crash/recovery guarantee; run focused regression. Report source owner if cause is outside scope.
+- Report to: docs/working/supervised-delivery-v2/reports/merge-resume-regression.md
+- Extension: also owns packages/router/tests/supervisor.test.ts first legacy standalone fixture, which reports supervisor_completed/unmet after the same scripted await_tasks -> immediate integrate sequence. Inspect actual errors and preserve its integration/check/attribution guarantees. No runtime source weakening.
+- Extension: also owns packages/router/tests/worker-containment.test.ts running-action cancellation fixture. Release run got cancelled instead of uncertain after a fixed300ms cancellation; inspect actual pre-spawn vs running distinction. Ensure the command has really started with a marker before revoking authority, preserve uncertain status for a genuinely started effect, and prove no delayed sentinel write. Do not relax the security assertion or production containment.
+
+### Brief: resumed-memory-headroom
+- Repository: D:/SwitchYardRouter-delivery-v2 (not the running release snapshot).
+- Task: Close actual-tool context headroom omission on resumed native/read-only/supervisor sessions.
+- Required reads: Current State; context/memory.ts and refreshMemoryMessages call sites in runners/{readonly,supervisor,coding/native}.ts.
+- Owns (may edit): those four files only, uniquely named tests/resumed-memory-headroom.test.ts and own report.
+- Must not touch: release snapshot, other source/tests/shared docs, commits/pushes. Root will not edit these owned files meanwhile.
+- Definition of done: Pass actual offered tool schemas and output margin into refreshed memory context budgeting; keep existing role caps, ACL/revocation and pinned session tool behavior. Avoid double output reservation. Add a meaningful large-tool/small-context regression ensuring fresh memory doesn't exceed available input and revocation still removes old text. Run focused memory/resume checks and router typecheck; report precise outcomes.
+- Report to: docs/working/supervised-delivery-v2/reports/resumed-memory-headroom.md
+
+### Brief extension: install-wide preferences across separate project Brains
+- Repository: D:/SwitchYardRouter-delivery-v2; serial continuation by resumed-memory-headroom worker.
+- Task: Fix confirmed global preference injection gap when a project has a distinct Brain root.
+- Required reads: Current State; core/executor.ts dependency/context construction, runners/types.ts, harness/tools.ts Brain read tools, context/memory.ts, project Brain context setup.
+- Owns (may edit): prior four files plus packages/router/src/core/executor.ts, packages/router/src/runners/types.ts, packages/router/src/harness/tools.ts; uniquely named tests/global-preferences-roots.test.ts; own report.
+- Must not touch: shared docs, release snapshot, unrelated source/tests, commits/pushes.
+- Definition of done: Wire trusted install Brain capability into actual execution contexts without model-supplied roots. Canonical typed global/preferences resolve/read from install Brain with current role ACL, while project memory stays in its own root and existing ordinary project/global document/promotion semantics remain intact. Explicit brain_read/list/search prefix global/preferences must support injected read-more refs. Test actual routed project with distinct root receives/revokes install preference, never foreign private project data, and can read the cited record. Keep role/token bounds and no raw preference writes. Verify defaults/shared-root behavior with focused tests/typecheck.
+- Report to: docs/working/supervised-delivery-v2/reports/resumed-memory-headroom.md (combined report with a distinct-root section).
+
+### Brief: production-delivery-panel-acceptance
+- Repository: Verification only D:/SwitchYardRouter-delivery-v2-release at 9c80b12; report in feature worktree.
+- Task: Exercise latest production Brain/global memory/settings/task acceptance UI and affected API routes against isolated demo only.
+- Required reads: Current State; relevant owned P8 docs/report and panel components/routes/settings definitions.
+- Owns (may edit): verification snapshot apps/panel/.demo test data, unique temporary QA scripts/screenshots outside source; feature docs/working/supervised-delivery-v2/reports/production-delivery-panel-acceptance.md only.
+- Must not touch: source/tests, shared docs, live config/Brain/provider services, port4477, commits/pushes. Never change files while full-suite source validation runs.
+- Definition of done: Wait for root production build confirmation, seed demo and inspect failures without weakening expectations, start production panel spare4480, exercise project Brain navigation/search/catalog/pages/document create/edit/CAS conflict/history/blame/related; project/global typed memory create/update/revoke including bad scope/CSRF/CAS; saved context receipt preview, settings workflow/budget/Add-supervise defaults; tasks acceptance/product distinction. Capture/inspect Chrome screenshots and browser errors/timings. No provider calls. Preserve fixtures, stop every owned temporary server/browser at end; report exact coverage/failures/limits promptly.
+- Report to: docs/working/supervised-delivery-v2/reports/production-delivery-panel-acceptance.md
 
 ### 2026-10-23 — Independent acceptance review and concrete boundary fixes
 - Agent: supervisor; read-only reviewer harness-v2.

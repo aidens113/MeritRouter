@@ -68,6 +68,8 @@ export class ProductDeliveries {
     this.db.transaction(()=>{
       const row=this.require(taskId,project),spec=DeliverySpecSchema.parse(JSON.parse(row.spec_json));
       if(!row.candidate_json||receipt.specDigest!==deliverySpecDigest(spec)||receipt.candidateDigest!==productCandidateDigest(JSON.parse(row.candidate_json))) throw new Error("Evidence does not match current delivery specification/candidate");
+      const criterionIds=new Set(spec.criteria.map(criterion=>criterion.id));
+      if(receipt.criterionIds.some(id=>!criterionIds.has(id)))throw new Error("Evidence references an unknown specification criterion");
       const receipts=z.array(EvidenceReceiptSchema).max(9999).parse(JSON.parse(row.evidence_json));
       if(receipts.some(r=>r.id===receipt.id)) throw new Error("Duplicate delivery evidence ID");
       this.db.prepare("UPDATE product_deliveries SET evidence_json=?,updated_at=? WHERE task_id=? AND project_id=?").run(JSON.stringify([...receipts,receipt]),this.now(),taskId,project);

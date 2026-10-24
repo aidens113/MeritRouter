@@ -12,11 +12,11 @@ import { charterFor } from "../../roles/index.js";
 import { commitAs } from "../../attribution/index.js";
 import { runAgentLoop } from "../../harness/loop.js";
 import { webTools } from "../../harness/web-tools.js";
-import { artifactTool, brainReadTools, commandTool, declaredCheckTool, editTools, repoTools, type HarnessEnv, type HarnessTool } from "../../harness/tools.js";
+import { artifactTool, availableTools, brainReadTools, commandTool, declaredCheckTool, editTools, repoTools, type HarnessEnv, type HarnessTool } from "../../harness/tools.js";
 import { requestBudgetTool } from "../../harness/budget-tools.js";
 import { labHarnessTools } from "../../labs/tools.js";
 import { minimalEnv } from "./process.js";
-import { brainContext, submitResultTool, workerActor, workerBrainEnv } from "../../harness/worker.js";
+import { brainContext, SUBMIT_RESULT_DEF, submitResultTool, workerActor, workerBrainEnv } from "../../harness/worker.js";
 import type { RunContext, RunOutcome } from "../types.js";
 import { taskBrief } from "../prompts.js";
 import { agentHome, finishCoding, prepareWorkspace, resumeWorkspace, sourceDirtyFinding } from "./finish.js";
@@ -94,12 +94,13 @@ export class NativeCodingRunner implements CodingRunner {
       { role: "user", content: `${taskBrief(spec, ctx.retry)}${checks}\nProvided context:\n${renderSources(sources) || "(none)"}` },
     ];
     fresh[0] = { ...fresh[0]!, content: `${fresh[0]!.content}\n\n${harnessV2StartupContext(env)}` };
+    const memoryOptions = { tools: [...availableTools(tools, env).map(tool => tool.def), SUBMIT_RESULT_DEF], outputTokens: maxTokens, reservedTokens: 500 };
     if (!ctx.resume) {
-      const memory = await brainContext(env, { messages: fresh, tools: tools.map(tool => tool.def), reservedTokens: maxTokens + 500 });
+      const memory = await brainContext(env, { messages: fresh, ...memoryOptions });
       if (memory) fresh.push({role:"user",content:memory});
     }
     const lost = ctx.resume && !reused ? "\nYour previous worktree no longer exists: this is a fresh worktree, and your earlier edits are not in it. Re-apply them." : "";
-    const messages = ctx.resume ? await refreshMemoryMessages(env, ctx.resume.plan.messages) : fresh;
+    const messages = ctx.resume ? await refreshMemoryMessages(env, ctx.resume.plan.messages, memoryOptions) : fresh;
     const executionId = ctx.gate.admission.createExecution("task", spec.profile, [{ taskId: ctx.taskId, itemId: ctx.taskId }]);
     const loop = await runAgentLoop({
       env,

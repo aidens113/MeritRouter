@@ -126,10 +126,10 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             {tab === "types" ? <>{!sy.cfg.profiles.supervise ? (
               <Callout tone="accent" icon={<Network size={16} />} title="Standalone jobs are off">
                 <p>
-                  Jobs need the <Mono>supervise</Mono> task type. Adding it writes <Mono>profiles.supervise</Mono> with the standalone preset (supervisor mode, T3 and up, models of 100B+ parameters, 30 requests); you can tune it afterwards.
+                  Jobs need the <Mono>supervise</Mono> task type. Adding it enables supervisor mode with an 8,000-token output limit and the configured delivery budget (600 requests by default). Current supervisor quality evidence is required before routing; you can tune the profile afterwards.
                 </p>
                 <div className="mt-2">
-                  <ActionButton url="/api/config" payload={{ patch: [{ path: ["profiles", "supervise"], value: SUPERVISE_PROFILE_DEFAULT }] }} variant="primary" small success="Added. Jobs can be started from the Jobs page.">
+                  <ActionButton url="/api/config" payload={{ patch: [{ path: ["profiles", "supervise"], value: SUPERVISE_PROFILE_DEFAULT }] }} variant="primary" small success="Added. Check supervisor quality evidence before starting a job.">
                     Add the supervise task type
                   </ActionButton>
                 </div>

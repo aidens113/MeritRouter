@@ -364,18 +364,31 @@ describe("merge queue under supervisor resume", () => {
       () => [call("finish_job", { status: "completed", summary: "integrated", verified: [{ claim: "subtract on the branch", evidence: "check" }], not_verified: [] })],
     ];
     const notices: string[] = [];
-    const client = new ScriptedClient((req) => {
+    const client = new ScriptedClient(async (req) => {
       if (!isSupervisor(req)) return worker(req, true);
       const last = req.messages.at(-1)!;
       if (typeof last.content === "string" && last.content.includes("Merge queue after the interruption")) notices.push(last.content);
-      return reply(null, { ...servedFor(sy!, req), toolCalls: script[turns(req)]!() });
+      const calls = script[turns(req)]!();
+      // await_tasks may return for pending operator approval. The fixture operator
+      // must finish the worker's real check before this fixed script integrates it.
+      if (calls.some(tool => tool.function.name === "integrate_task")) {
+        const jobId = /Job id: (\S+)/.exec(String(req.messages[0]!.content))![1]!;
+        const child = sy!.tasks.childrenOf(jobId).find(task => task.spec.label === "w")!;
+        const finished = await sy!.awaitResults([child.row.id], { timeoutSeconds: 120 });
+        expect(finished.timedOut, JSON.stringify({ pending: finished.pending, events: sy!.tasks.events(child.row.id, 100) })).toBe(false);
+      }
+      return reply(null, { ...servedFor(sy!, req), toolCalls: calls });
     });
     sy = open(env, client, { worker: true });
     process.env[FAULT_ENV] = `after_tool_run:1:${MERGE_PICK_FAULT}`;
     const crashes = simulatedCrashCount();
     const job = await sy.startJob({ goal: "Integrate through a crash", repositories: ["core"], label: "crashy" });
     for (let i = 0; i < 1500 && simulatedCrashCount() === crashes; i++) await sleep(20);
-    expect(simulatedCrashCount()).toBe(crashes + 1);
+    expect(simulatedCrashCount(), JSON.stringify({
+      tasks: sy.listTasks(undefined, 50).map(task => ({ task, result: sy!.tasks.get(task.taskId)?.result, events: sy!.tasks.events(task.taskId, 100) })),
+      requests: client.requests.slice(-8).map(req => ({ supervisor: isSupervisor(req), tools: req.messages.filter(message => message.role === "tool").slice(-5) })),
+      actions: sy.db.prepare("SELECT task_id,value_json FROM worker_action_requests").all(),
+    }, null, 2)).toBe(crashes + 1);
     delete process.env[FAULT_ENV];
     for (let i = 0; i < 300 && !sy.questions().length; i++) await sleep(20);
     const [w] = sy.tasks.childrenOf(job.taskId);

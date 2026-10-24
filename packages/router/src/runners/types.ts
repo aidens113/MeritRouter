@@ -84,6 +84,8 @@ export interface RunContext {
   plan: RoutePlan;
   /** Shared knowledge and the effort (working document slug) this task belongs to. */
   brain: Brain | null;
+  /** Trusted install binding, before project-specific Brain overrides; read-only global preferences. */
+  installBrain?: Brain | null;
   access: BrainAccess | null;
   effort: string;
   jobId: string | null;

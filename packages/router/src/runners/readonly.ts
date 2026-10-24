@@ -8,10 +8,10 @@ import { loadSources, readersFor, renderSources } from "../context/sources.js";
 import { planLimits } from "../routing/select.js";
 import { charterFor, roleForProfile } from "../roles/index.js";
 import { runAgentLoop } from "../harness/loop.js";
-import { artifactTool, brainReadTools, declaredCheckTool, repoTools, type HarnessEnv, type HarnessTool } from "../harness/tools.js";
+import { artifactTool, availableTools, brainReadTools, declaredCheckTool, repoTools, type HarnessEnv, type HarnessTool } from "../harness/tools.js";
 import { webTools } from "../harness/web-tools.js";
 import { requestBudgetTool } from "../harness/budget-tools.js";
-import { brainContext, submitResultTool, workerActor, workerBrainEnv } from "../harness/worker.js";
+import { brainContext, SUBMIT_RESULT_DEF, submitResultTool, workerActor, workerBrainEnv } from "../harness/worker.js";
 import { baseResult, type RunContext, type RunOutcome } from "./types.js";
 import { taskBrief } from "./prompts.js";
 import { baseCommitsFor, contextManifest } from "./completion.js";
@@ -70,9 +70,10 @@ export async function runReadOnly(ctx: RunContext): Promise<RunOutcome> {
     },
     { role: "user", content: `${taskBrief(spec, ctx.retry)}${canRunChecks ? `\nDeclared checks (run exactly as written with run_check):\n${declaredChecks.map((command) => `- ${command}`).join("\n")}` : ""}\nProvided context:\n${renderSources(sources) || "(none)"}` },
   ];
-  fresh[1]!.content = `${fresh[1]!.content}\n${await brainContext(env, { messages: fresh, tools: tools.map(tool => tool.def) })}`;
+  const memoryOptions = { tools: [...availableTools(tools, env).map(tool => tool.def), SUBMIT_RESULT_DEF], outputTokens: maxTokens, reservedTokens: 500 };
+  if (!ctx.resume) fresh[1]!.content = `${fresh[1]!.content}\n${await brainContext(env, { messages: fresh, ...memoryOptions })}`;
   // A resumed session continues its own transcript (the fresh one above still registered the evidence).
-  const messages = ctx.resume ? await refreshMemoryMessages(env, ctx.resume.plan.messages) : fresh;
+  const messages = ctx.resume ? await refreshMemoryMessages(env, ctx.resume.plan.messages, memoryOptions) : fresh;
   const executionId = ctx.gate.admission.createExecution("task", spec.profile, [{ taskId: ctx.taskId, itemId: ctx.taskId }]);
   const loop = await runAgentLoop({
     env,

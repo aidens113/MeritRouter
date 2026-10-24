@@ -1004,6 +1004,11 @@ Automatic memory context is role-budgeted and ACL-scoped, and refreshes on start
 revoked or expired records are omitted. `brain.memory_context.enabled` and `role_tokens` control
 caps (12k supervisor, 6k reviewer, 4k implementer/analyst/inspector, 2k summarizer/classifier),
 further narrowed by context/output headroom and actual grants. Memory never grants permissions.
+Resumed sessions budget the actual offered tools, terminal schema and output allowance before
+adding fresh memory. Typed global preferences use the trusted install Brain even when a host
+binds a project to a separate Brain; explicit `brain_read`, `brain_list` and `brain_search`
+under `global/preferences` resolve the same records. Unprefixed searches retain their project
+Brain scope. Ordinary global lessons retain their existing Brain/promotion binding.
 The Memory tab's lazy **What agents actually received** view reads real project-owned historical
 `memory_manifest` artifacts with hashes, caps, selection reasons and omissions. It does not
 recompute or guarantee current/future injection. See [memory authority](roles.md#automatic-context-and-typed-memory).
