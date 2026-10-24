@@ -1,7 +1,8 @@
 # Set up MeritRouter
 
 Start with one project, one repository and the default `claude-code` preset. Your connected
-MCP client stays the final supervisor: it delegates bounded work and reviews the result.
+MCP client stays the FINAL supervisor: it delegates multi-step execution to delivery supervisors
+and independently reviews the resulting product and evidence.
 Follow steps 1–4 first; local servers, custom providers and standalone jobs are optional.
 Use [the documentation index](README.md) to find the detailed operating contracts.
 
@@ -142,10 +143,10 @@ pnpm --filter meritrouter-panel start
 
 | Preset | Supervisor | Workers | Paid |
 | --- | --- | --- | --- |
-| `claude-code` (default) | Claude Code, over MCP | free and bounded paid fallback at T1-T3 | on, $5/week |
-| `standalone-free` | MeritRouter, on the best free model | free | off |
-| `standalone-hybrid` | MeritRouter, on a paid model you set | free; paid fallback at T3 | supervisor, T3 fallback |
-| `standalone-paid` | MeritRouter, on a paid model | paid preferred at T2-T3, premium for T4 | on, budgeted |
+| `claude-code` (default) | Client FINAL supervisor plus qualified MeritRouter delivery supervisors | free and bounded paid fallback at T1-T3 | on, $5/week |
+| `standalone-free` | MeritRouter delivery supervisor, with qualified eligible free evidence | free | off |
+| `standalone-hybrid` | Qualified MeritRouter delivery supervisor; operator FINAL | free; paid fallback at T3 | supervisor, T3 fallback |
+| `standalone-paid` | Qualified MeritRouter delivery supervisor; operator FINAL | paid preferred at T2-T3, premium for T4 | on, budgeted |
 
 The panel binds to 127.0.0.1. Set `MERITROUTER_PANEL_TOKEN` to require a login. Nothing else has
 to be installed or running: MeritRouter calls each provider's API itself.
@@ -407,6 +408,77 @@ use the new defaults, including when loading an older minimal configuration. To 
 installation strictly free, write `paid.enabled: false` explicitly before upgrading. Changing
 source defaults never rewrites your saved configuration.
 
+## Supervisor quality evidence: required for delivery jobs
+
+The default workflow is `client_supervision.workflow: delegated_delivery`. Your initiating
+client remains FINAL supervisor and normally delegates multi-step execution to a MeritRouter
+delivery supervisor. `dispatch_final_supervisor: false` keeps FINAL authority with the client;
+do not turn it on merely to enable delegation. Use `direct_tasks` for explicit direct coordination.
+
+The generated Claude/Codex preset includes `profiles.supervise`. Existing configurations that
+define only worker profiles must add a supervisor profile before `start_job` can run:
+
+```yaml
+profiles:
+  supervise:
+    mode: supervisor
+    tools: supervisor
+    max_model_requests: null
+    max_output_tokens: 8000
+    classify: never
+    min_tier: T3
+```
+
+This leaves the profile uncapped; the default delivery job still receives a 600-request aggregate
+envelope. Existing explicit smaller caps remain effective. Configure high-quality routes before
+starting work: `supervisor.routing.quality_evidence` is empty by default. A discovered model, an
+API key, a vendor/model name or a forced endpoint is not quality evidence. No eligible current
+record produces `supervisor_quality_unavailable`; the router does not run a weak fallback.
+
+For each catalog endpoint, record a reviewed evaluation/source, verification and expiry dates,
+trial count, confidence and measured scores from 0 to 1. Every relevant capability and confidence
+must reach 0.75. Image/video supervisor inputs additionally require `scores.visual`. This format
+example is deliberately expired/under-floor: replace its values with actual evidence, rather
+than copying scores to make routing pass.
+
+```yaml
+supervisor:
+  routing:
+    strategy: highest_eligible_quality
+    minimum_quality: frontier_or_qualified_supervisor
+    quality_evidence:
+      - schemaVersion: 1
+        endpointId: provider/model-from-your-catalog
+        source: path/to/reviewed-supervisor-evaluation.md
+        checkedAt: "2000-01-01T00:00:00.000Z"
+        expiresAt: "2000-02-01T00:00:00.000Z"
+        classification: qualified_supervisor # or frontier, supported by your evidence
+        confidence: 0.0
+        trials: 1
+        scores:
+          planning: 0.0
+          architecture: 0.0
+          supervision: 0.0
+          integration: 0.0
+          review: 0.0
+          product: 0.0
+          visual: 0.0
+```
+
+Use exact endpoint IDs from your catalog; records are not inferred across providers. Provenance
+remains operator-owned: ordinary worker qualification does not generate supervisor evidence
+automatically. Expired/revoked evidence stops subsequent dispatch too. Review route explanations
+with `meritrouter route supervise T3 --project <slug>` and inspect quality exclusions. Model
+quality ranking never enables paid routing or raises spending caps; paid-disabled, `never`,
+zero-dollar and explicit free-first settings still apply.
+
+Delivery defaults under `supervisor.delivery_budget` are `total_requests: 600`,
+`supervisor_reserve_requests: 80`, `validation_reserve_requests: 80`, and
+`extension_requests: 200` (used when a supervisor omits the requested amount, not an automatic
+grant). Workers must supply an amount; every request needs a justification. Root supervisors
+request more from the FINAL client; nested supervisors request from their parent. Justified
+request amounts, wall-clock limits, command approval and dollar budgets remain separate.
+
 ## 3b. Configure and run
 
 Edit `meritrouter.config.yaml`, or use the panel: global settings are at `/all/settings`, a
@@ -421,9 +493,10 @@ project's at `/p/<slug>/settings`.
   supervisor also configure `supervisor.endpoints`. Add an eligible paid key for the provider.
   For example, `keys add anthropic --billing paid_credits --balance 20` adds a prepaid
   credential; use the billing class and balance that match your account.
-- Prompt caching: `routing.sticky_endpoints` (default true) keeps a conversation on the model
-  that served its last turn while it is healthy, so the provider's prompt cache keeps working;
-  it never moves a paid model ahead of a free one. `providers.<id>.prompt_cache:
+- Prompt caching: `routing.sticky_endpoints` (default true) keeps worker conversations on a
+  healthy previously eligible model within the selected paid policy. Supervisor dispatch instead
+  rechecks current quality ordering; stickiness cannot preserve a weaker supervisor route.
+  `providers.<id>.prompt_cache:
   cache_control | prompt_cache_key | none` says how to ask a provider to cache the prompt prefix
   (Anthropic uses `cache_control`, OpenAI and OpenRouter `prompt_cache_key`, every other provider
   `none` unless set). `paid.models[].cached_input_usd_per_million` prices input served from the
@@ -477,9 +550,10 @@ panel's Scan button does the same as `models scan` for every provider; a running
 
 ## 4. Connect an MCP client (Claude Code, Codex, ChatGPT)
 
-The connected client is the final project supervisor by default and receives instructions to
-delegate bounded work, review/integrate the results, test and iterate. MeritRouter can run bounded
-sub-supervisors without taking that final role. Settings → General → Claude/Codex supervision
+The connected client is the FINAL project supervisor by default. Multi-step work normally runs
+through a bounded MeritRouter delivery supervisor that plans, delegates, integrates, reviews,
+tests and repairs before returning an exact candidate. The client independently inspects the
+product/evidence and decides acceptance and upward resource requests. Settings → General → Claude/Codex supervision
 controls permission to dispatch a MeritRouter final project supervisor; it starts off. You can
 also explicitly ask the model to change it through the policy tool. See [supervisor ownership](roles.md#who-supervises).
 
@@ -607,6 +681,13 @@ check, requires an exact outside-action approval under the security policy below
 External `opencode` and `command` coding runners currently fail closed with
 `worker_sandbox_unavailable`; a worktree or allowlist does not make them safe to enable.
 
+New native sessions use defensive v2 wrappers: `workspace_info`, `read_files`, `batch`,
+`apply_edits`, declared `run_recipe`/`run_checks`, paged output and operation cancellation/status.
+Read many files together instead of spending one model turn per file. Deadlines default to
+30 seconds and can request up to 300 seconds within task/check caps. Wrappers retain the exact
+approval/security policy; they cannot authorize undeclared setup or commands. See
+[harness operations](operations.md#defensive-harness-and-batched-operations).
+
 ## 5b. Standalone jobs
 
 With a standalone preset, give MeritRouter a whole goal:
@@ -651,6 +732,16 @@ changes. Task, session, job, model and request details link to related entities.
 - Under "All projects" (`/all`): the dashboard, every request, models and why each is or is not
   used, routing previews and overrides, provider keys and their status, qualification,
   calibration, global knowledge, and the global settings.
+
+Brain's **Memory & preferences** tab creates conflict-safe typed project memory and authorized
+user preferences. `/all/brain` is the standalone global preference editor; revocation retains
+history. Role-budgeted context is injected automatically within ACL/headroom limits. The lazy
+receipt view shows actual historical injection manifests rather than predicted context.
+Ordinary document editing uses expected digests and preserves conflicting drafts.
+
+For human-only task acceptance or budget decisions, use the signed-in panel or explicitly add
+`--human` to the CLI command in an interactive terminal. CLI automation is recorded as supervisor
+activity; redirected/scripted commands cannot claim human authority.
 
 ## 7. Qualify models (optional, uses your providers' quota)
 

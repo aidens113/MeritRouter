@@ -1,4 +1,5 @@
 import { BrowserCheckSchema } from "./browser-schema.js";
+import { BrowserJourneyCheckSchema } from "./browser-journey-schema.js";
 import { z } from "zod";
 export const LabNameSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,40}$/);
 const Name = LabNameSchema;
@@ -30,7 +31,7 @@ export const ProjectLabsSchema = z.object({
   promotion: z.enum(["manual", "supervisor", "auto"]).default("manual"),
   ephemeral: TaskLabPolicySchema.default({ enabled: false, checks: [] }),
 }).strict();
-const Check = z.union([BrowserCheckSchema, Command, z.object({ command: Command, repo: Name.optional(), on_integrate: z.boolean().default(false) }).strict()]);
+const Check = z.union([BrowserCheckSchema, BrowserJourneyCheckSchema, Command, z.object({ command: Command, repo: Name.optional(), on_integrate: z.boolean().default(false) }).strict()]);
 const Ready = z.union([z.object({ http: z.string().min(1).max(2000) }).strict(), z.object({ tcp: Name }).strict()]);
 export const LabRecipeSchema = z.object({
   ports: z.array(Name).max(32).default([]), data: z.array(Name).max(32).default([]),

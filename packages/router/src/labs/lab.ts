@@ -2,6 +2,7 @@ import { labOwnershipMarker } from "./ownership-marker.js";
 import { TaskLabLifecycle } from "./task-attempt.js";
 import { taskLabUsesCapacity } from "./task-attempt-runner.js";
 import { readBrowserScreenshot } from "./browser-artifacts.js";
+import { recoverDockerBrowser } from "./browser-docker.js";
 import { LabControl, type LabOperation, type LabOperationInput } from "./control.js";
 import { labCoordination, type LabCoordination } from "./coordination.js";
 import { LabPromotionResultSchema, promoteLab, type LabPromotionInput, type LabPromotionResult } from "./promotion.js";
@@ -14,7 +15,7 @@ import { worktreeHead } from "./revisions.js";
 import { pruneTaskWorktrees, type LabRetentionResult } from "./retention.js";
 import { MeritRouterError } from "../core/errors.js";
 import path from "node:path";
-import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { ResolvedConfig } from "../config/load.js";
@@ -310,7 +311,7 @@ export class LabManager {
     const row=z.object({result_json:z.string()}).optional().parse(this.options.db.prepare("SELECT result_json FROM lab_checks WHERE id=? AND lab_id=?").get(checkId,status.lab.id));
     if(!row)throw new MeritRouterError("not_found","unknown browser check artifact");
     const result=LabCheckResultSchema.parse(JSON.parse(row.result_json));
-    const artifact=result.browser?.artifacts.find(item=>item.id===artifactId);
+    const artifact=(result.browser?.artifacts??result.journey?.artifacts)?.find(item=>item.id===artifactId);
     if(!artifact)throw new MeritRouterError("not_found","unknown browser check artifact");
     return {metadata:artifact,bytes:readBrowserScreenshot(status.lab,checkId,artifact)};
   }
@@ -597,6 +598,11 @@ export class LabManager {
     for (const entry of this.list()) {
       const lab = this.require(entry.project, entry.name);
       if(lab.kind==="task_attempt")continue;
+      const checks=path.join(lab.root,"checks");
+      if(existsSync(checks))for(const check of readdirSync(checks))if(/^lc_[a-z0-9]+$/.test(check)){
+        try{await recoverDockerBrowser(lab,check);}
+        catch{this.store.event(lab.id,"browser_journey_recovery_blocked",{checkId:check,reason:"Exact owned container cleanup could not be verified; private proof retained"});}
+      }
       if (lab.state === "creating") {
         const lease = z.object({ creation_until: z.number() }).parse(this.options.db.prepare("SELECT creation_until FROM labs WHERE id=?").get(lab.id));
         if (lease.creation_until > Date.now())

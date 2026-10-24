@@ -167,7 +167,7 @@ export async function TaskDetailView({ sy, taskId, scope, sp = {} }: { sy: Merit
               const v = verified.get(c.id);
               const open = v ? OPEN_OUTCOMES.includes(v.outcome) : unresolvedIds ? unresolvedIds.has(c.id) : [...unresolved].some((u) => u.includes(c.text) || u.startsWith(`[${i}]`));
               const good = v ? v.outcome === "passed" : res?.acceptanceStatus === "met";
-              const label = v ? (CRITERION_OUTCOME[v.outcome] ?? v.outcome.replace(/_/g, " ")) : res?.acceptanceStatus === "met" ? "met, verified by checks" : "worker reports met (not verified)";
+              const label = v ? (CRITERION_OUTCOME[v.outcome] ?? v.outcome.replace(/_/g, " ")) : res?.acceptanceStatus === "met" ? "accepted; no individual verification receipt" : "worker reports met (not verified)";
               return (
                 <li key={c.id} className="flex items-start gap-2">
                   {!res || v?.outcome === "pending_review" ? (

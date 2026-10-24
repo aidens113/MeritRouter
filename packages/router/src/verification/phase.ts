@@ -15,7 +15,7 @@ import type { RetryContext, RunContext, RunOutcome, RunnerResult } from "../runn
 import { failureContext, nextTier, runCap, verifyOutcome, type VerifiedOutcome, type VerifyOptions } from "../core/acceptance.js";
 import { restoreRunState, retryStarted, RETRY_STARTED, REVIEW_RECORDED, type VerificationState } from "../core/retry-state.js";
 import { repairCap, reviewReserveAdjustment, type StoredContract } from "./contract.js";
-import type { ReviewPhaseResult } from "./review.js";
+import { reviewResult, type ReviewPhaseResult } from "./review.js";
 import { calibratedReview } from "./calibration.js";
 import { carryOverRetryContext, repairRetryContext, runTargetedChecks, submittedRevisionStart, targetedCheckAllowed, unfinishedWorkStart } from "./followup.js";
 
@@ -155,9 +155,19 @@ export async function verifyWithReview(d: PhaseDeps, task: StoredTask, contract:
     let reviewing = false;
     try {
       // Calibrated: a cached verdict for the same contract, artifact, policy, and sources is reused; every verdict is recorded.
-      phase = await calibratedReview(
-        { cfg: d.cfg, db: d.db, gate: d.gate, catalog: d.catalog, router: d.router, tasks: d.tasks, artifacts: d.artifacts, sessions: d.sessions },
+      // Legacy verdict caches do not bind evaluator snapshot identities or the structured
+      // evaluator sub-verdict. Always obtain a fresh independently attributed review here.
+      const review: typeof calibratedReview = verified.reevaluation.checks.includes("evaluator_change_review") && (outcome.result.protectedPathsChanged?.length ?? 0) > 0 ? (deps, request) => reviewResult(deps, request) : calibratedReview;
+      // The legacy cache key binds neither scoped memory digests nor reviewer ACL revisions.
+      // Preserve calibration records, but do not read/write reusable cache keys while memory
+      // is enabled: old verdicts cannot stand in for a fresh authorized context.
+      const memoryCacheUnsafe = d.cfg.brain.memory_context.enabled && d.cfg.verification.cache_verdicts;
+      const reviewConfig = memoryCacheUnsafe ? { ...d.cfg, verification: { ...d.cfg.verification, cache_verdicts: false } } : d.cfg;
+      if (memoryCacheUnsafe) d.tasks.event(task.row.id, "review_cache_bypassed", { reason: "legacy cache key does not bind scoped memory manifests and reviewer ACL revisions" });
+      phase = await review(
+        { cfg: reviewConfig, db: d.db, gate: d.gate, catalog: d.catalog, router: d.router, tasks: d.tasks, artifacts: d.artifacts, sessions: d.sessions },
         {
+          signal: run.signal,
           task,
           contract,
           outcome,

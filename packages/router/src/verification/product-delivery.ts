@@ -7,27 +7,36 @@ import { evaluateProductReadiness } from "./product-readiness.js";
 export const DELIVERY_STAGES = ["discover","specify","prepare","plan","implement","integrate","validate","handoff"] as const;
 export const DeliveryStageSchema = z.enum(DELIVERY_STAGES);
 export type DeliveryStage = z.infer<typeof DeliveryStageSchema>;
-interface Row {task_id:string;project_id:string;stage:string;spec_json:string;candidate_json:string|null;evidence_json:string;final_decision_json:string|null;updated_at:number}
+const RowSchema=z.object({task_id:z.string(),project_id:z.string(),stage:DeliveryStageSchema,spec_json:z.string(),candidate_json:z.string().nullable(),evidence_json:z.string(),final_decision_json:z.string().nullable(),updated_at:z.number().int().nonnegative()}).strict();
+type Row=z.infer<typeof RowSchema>;
 
 /** Service-owned store. Model output is never a trusted evidence receipt. */
 export class ProductDeliveries {
   constructor(private readonly db: Db, private readonly now:()=>number=Date.now) {}
   private row(taskId:string,project:string):Row|null {
-    return this.db.prepare("SELECT * FROM product_deliveries WHERE task_id=? AND project_id=?").get(taskId,project) as Row|undefined ?? null;
+    const row=this.db.prepare("SELECT * FROM product_deliveries WHERE task_id=? AND project_id=?").get(taskId,project);
+    return row?RowSchema.parse(row):null;
   }
   private require(taskId:string,project:string):Row {
     const row=this.row(taskId,project); if(!row) throw new Error(`No delivery specification for ${taskId} in project ${project}`); return row;
   }
   saveSpec(taskId:string,project:string,input:unknown,expectedDigest?:string):DeliverySpec {
     const spec=DeliverySpecSchema.parse(input);
-    const task=this.db.prepare("SELECT project_id,profile FROM tasks WHERE id=?").get(taskId) as {project_id:string;profile:string}|undefined;
+    const rawTask=this.db.prepare("SELECT project_id,profile,json_extract(spec_json,'$.goal') AS goal FROM tasks WHERE id=?").get(taskId);
+    const task=rawTask?z.object({project_id:z.string(),profile:z.string(),goal:z.string()}).strict().parse(rawTask):null;
     if(!task||task.project_id!==project||task.profile!=="supervise") throw new Error("Delivery specification requires an owned supervisor task");
+    if(spec.originalInstruction!==task.goal)throw new Error("Delivery specification must preserve the original task instruction exactly");
+    if(spec.criteria.some(criterion=>criterion.applicability.status==="not_applicable"))throw new Error("Criterion waivers require a separate authenticated FINAL decision; model-authored approvedBy is insufficient");
     this.db.transaction(()=>{
       const old=this.row(taskId,project);
       if(old){
         const previous=DeliverySpecSchema.parse(JSON.parse(old.spec_json));
         if(expectedDigest!==deliverySpecDigest(previous)) throw new Error("delivery_spec_conflict: read the current specification and provide its digest");
         if(spec.id!==previous.id||spec.revision!==previous.revision+1) throw new Error("Spec changes retain ID and increment revision by one");
+        for(const criterion of previous.criteria.filter(item=>item.priority!=="optional")){
+          const next=spec.criteria.find(item=>item.id===criterion.id);
+          if(!next||next.behavior!==criterion.behavior||next.priority!==criterion.priority||criterion.requiredEvidence.some(kind=>!next.requiredEvidence.includes(kind)))throw new Error("Required criteria cannot be removed or weakened by the delivery supervisor");
+        }
       }
       this.db.prepare("INSERT INTO product_deliveries(task_id,project_id,stage,spec_json,updated_at) VALUES(?,?,'specify',?,?) ON CONFLICT(task_id) DO UPDATE SET stage='specify',spec_json=excluded.spec_json,candidate_json=NULL,evidence_json='[]',final_decision_json=NULL,updated_at=excluded.updated_at").run(taskId,project,JSON.stringify(spec),this.now());
     }).immediate();
@@ -44,6 +53,7 @@ export class ProductDeliveries {
   setCandidate(taskId:string,project:string,input:unknown):void {
     const candidate=ProductCandidateSchema.parse(input),old=this.require(taskId,project);
     const changed=old.candidate_json===null||productCandidateDigest(JSON.parse(old.candidate_json))!==productCandidateDigest(candidate);
+    if(!changed)return;
     this.db.prepare("UPDATE product_deliveries SET candidate_json=?, final_decision_json=CASE WHEN ? THEN NULL ELSE final_decision_json END,updated_at=? WHERE task_id=? AND project_id=?").run(JSON.stringify(candidate),changed?1:0,this.now(),taskId,project);
   }
   /** Callers supply authenticated runtime/reviewer receipts, never raw model claims. */
@@ -68,6 +78,12 @@ export class ProductDeliveries {
     const spec=DeliverySpecSchema.parse(JSON.parse(row.spec_json));
     const candidate=row.candidate_json?ProductCandidateSchema.parse(JSON.parse(row.candidate_json)):null;
     const evidence=z.array(EvidenceReceiptSchema).max(10000).parse(JSON.parse(row.evidence_json));
-    return {spec,stage:DeliveryStageSchema.parse(row.stage),candidate,evidence,finalDecision:row.final_decision_json?ProductFinalDecisionSchema.parse(JSON.parse(row.final_decision_json)):null,readiness:candidate?evaluateProductReadiness({spec,candidate,evidence,now:this.now()}):null};
+    const finalDecision=row.final_decision_json?ProductFinalDecisionSchema.parse(JSON.parse(row.final_decision_json)):null;
+    const readiness=candidate?evaluateProductReadiness({spec,candidate,evidence,now:this.now()}):null;
+    if(readiness&&finalDecision?.decision==="reject"){
+      readiness.status="blocked";
+      readiness.blockers.push({criterionId:null,kind:null,code:"failed_evidence",detail:`FINAL supervisor rejected this candidate: ${finalDecision.reason}`});
+    }
+    return {spec,stage:DeliveryStageSchema.parse(row.stage),candidate,evidence,finalDecision,readiness};
   }
 }

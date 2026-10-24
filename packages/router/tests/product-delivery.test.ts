@@ -13,12 +13,15 @@ const spec:DeliverySpec={schemaVersion:1,id:"delivery",revision:1,source:{ref:"b
 async function fixture(){
   const cfg=baseConfig();env=makeEnv({config:{...cfg,profiles:{...cfg.profiles,supervise:{mode:"supervisor",tools:"supervisor",min_total_parameters_b:30,max_model_requests:20}}}});
   sy=open(env,new ScriptedClient(()=>reply("{}")));
-  const [task]=await sy.submitTasks([{profile:"supervise",goal:"Working UI",repositoryAliases:["core"],supervisionScope:"subtask",constraints:{acceptanceCriteria:["Button changes state"]}}]);
+  const [task]=await sy.submitTasks([{profile:"supervise",goal:spec.originalInstruction,repositoryAliases:["core"],supervisionScope:"subtask",constraints:{acceptanceCriteria:["Button changes state"]}}]);
   return {store:new ProductDeliveries(sy.db),id:task!.taskId};
 }
 describe("persisted product delivery",()=>{
   it("blocks unobserved handoff and final accept, then preserves rejection separately",async()=>{
     const {store,id}=await fixture();store.saveSpec(id,"demo",spec);store.setCandidate(id,"demo",candidate);
+    expect(()=>store.saveSpec(id,"demo",{...spec,revision:2,originalInstruction:"Easier replacement goal"},deliverySpecDigest(spec))).toThrow(/original/);
+    expect(()=>store.saveSpec(id,"demo",{...spec,revision:2,criteria:[{...spec.criteria[0],applicability:{status:"not_applicable",reason:"model waived",approvedBy:"initiator"}}]},deliverySpecDigest(spec))).toThrow(/authenticated FINAL/);
+    expect(()=>store.saveSpec(id,"demo",{...spec,revision:2,criteria:[{...spec.criteria[0],requiredEvidence:["structural"]}]},deliverySpecDigest(spec))).toThrow(/weakened/);
     expect(()=>store.transition(id,"demo","handoff")).toThrow();
     const decision={schemaVersion:1,decision:"accept",actor:{id:"initiator",role:"initiator"},specDigest:deliverySpecDigest(spec),candidateDigest:productCandidateDigest(candidate),reason:"reviewed",at:Date.now()};
     expect(()=>store.finalDecision(id,"demo",decision)).toThrow(/unresolved/);
@@ -27,6 +30,9 @@ describe("persisted product delivery",()=>{
     expect(()=>store.finalDecision(id,"demo",{...decision,actor:{id:"worker",role:"worker"}})).toThrow();
     store.finalDecision(id,"demo",decision);store.finalDecision(id,"demo",{...decision,decision:"reject",reason:"Actual layout unusable"});
     expect(store.status(id,"demo")).toMatchObject({stage:"validate",finalDecision:{decision:"reject"}});
+    expect(store.status(id,"demo")?.readiness?.status).toBe("blocked");
+    expect(()=>store.transition(id,"demo","handoff")).toThrow();
+    expect(()=>store.finalDecision(id,"demo",decision)).toThrow(/unresolved/);
     expect(new ProductDeliveries(sy!.db).status(id,"demo")?.finalDecision?.reason).toBe("Actual layout unusable");
   });
   it("scopes by project and invalidates evidence/decision on CAS spec changes",async()=>{
@@ -35,6 +41,10 @@ describe("persisted product delivery",()=>{
     const changed={...spec,revision:2};expect(()=>store.saveSpec(id,"demo",changed)).toThrow(/conflict/);
     store.saveSpec(id,"demo",changed,deliverySpecDigest(spec));
     expect(store.status(id,"demo")).toMatchObject({candidate:null,evidence:[],finalDecision:null,stage:"specify"});
+    const history=sy!.db.prepare("SELECT spec_json,candidate_json FROM product_delivery_history WHERE task_id=? AND project_id=? ORDER BY sequence").all(id,"demo") as {spec_json:string;candidate_json:string|null}[];
+    expect(history.map(row=>JSON.parse(row.spec_json).revision)).toEqual([1,1,2]);
+    expect(JSON.parse(history[1]!.candidate_json!)).toEqual(candidate);
+    expect(sy!.db.prepare("SELECT * FROM product_delivery_history WHERE project_id=?").all("wrong")).toEqual([]);
     expect(()=>store.transition(id,"demo","implement")).toThrow(/skip/);
   });
 });

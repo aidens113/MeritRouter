@@ -87,13 +87,13 @@ export class NativeCodingRunner implements CodingRunner {
     env.inlineOutputBytes = Math.max(1024, Math.min(128 * 1024, inputBudget * 2));
     const checks = declared.length ? `\nChecks that will be run after you finish${canCheck ? " (run them yourself first with run_check, exactly as written)" : ""}:\n${declared.map((c) => `- ${c}`).join("\n")}` : "";
     const fresh: ChatMessage[] = [
-      { role: "system", content: harnessV2StartupContext(env) },
       {
         role: "system",
         content: `${charterFor(ctx.cfg, role)}\n\n## Tools\nYour workspace is repository "${alias}" (an isolated worktree). Edit only paths matching: ${(spec.constraints.allowedPaths ?? []).join(", ")}. Prefer read_files/search_text and apply_edits (sha256-guarded); legacy read_file/search/write_file/replace_in_file/delete_file remain compatibility aliases${canCheck ? `; run your declared checks with run_check (at most ${ctx.cfg.coding.max_check_runs_per_task} runs)` : ""}${patterns.length ? "; run allowed commands with run_command" : ""}. There is no other shell. When done, call submit_result once.\n\n## Result\n${OUTPUT_CONTRACT}`,
       },
       { role: "user", content: `${taskBrief(spec, ctx.retry)}${checks}\nProvided context:\n${renderSources(sources) || "(none)"}` },
     ];
+    fresh[0] = { ...fresh[0]!, content: `${fresh[0]!.content}\n\n${harnessV2StartupContext(env)}` };
     if (!ctx.resume) {
       const memory = await brainContext(env, { messages: fresh, tools: tools.map(tool => tool.def), reservedTokens: maxTokens + 500 });
       if (memory) fresh.push({role:"user",content:memory});

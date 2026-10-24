@@ -47,11 +47,11 @@ export interface BrainHistoryEntry {
 }
 
 /** Read history once, tracking historical paths without exposing private rename ancestors. */
-async function documentHistory(sy: MeritRouter, project: string, path: string, limit?: number, revision = "HEAD") {
+async function documentHistory(sy: MeritRouter, project: string, path: string, limit?: number, revision = "HEAD", signal?: AbortSignal) {
   if (!brainDocumentVisible(project, path) || !sy.projects.get(project)) return null;
   const resolved = await sy.brainFor(project).resolveGitDocument(path);
   if (!resolved) return null;
-  const raw = await git(resolved.repo, ["log", "--follow", ...(limit ? [`--max-count=${limit}`] : []), "--relative", "--format=%x1e%H%x00%aI%x00%(trailers:key=Agent,valueonly)%x00%(trailers:key=Model,valueonly)%x00", "--name-status", "-z", revision, "--", `:(literal)${resolved.repoRel}`], { timeoutMs: 10_000, maxBuffer: 4 * 1024 * 1024 });
+  const raw = await git(resolved.repo, ["log", "--follow", ...(limit ? [`--max-count=${limit}`] : []), "--relative", "--format=%x1e%H%x00%aI%x00%(trailers:key=Agent,valueonly)%x00%(trailers:key=Model,valueonly)%x00", "--name-status", "-z", revision, "--", `:(literal)${resolved.repoRel}`], { signal, timeoutMs: 10_000, maxBuffer: 4 * 1024 * 1024 });
   let historicalPath = resolved.repoRel;
   const visiblePath = (repoPath: string) => repoPath.startsWith(resolved.mountPrefix) && brainDocumentVisible(project, `${resolved.virtualPrefix}${repoPath.slice(resolved.mountPrefix.length)}`);
   const entries: Array<BrainHistoryEntry & { repoPath: string }> = [];
@@ -95,16 +95,29 @@ export async function brainDocumentHistory(sy: MeritRouter, project: string, pat
   try { return (await brainDocumentHistoryPage(sy, project, path)).entries; } catch { return []; }
 }
 
-type HistoryPage = { entries: BrainHistoryEntry[]; next: number | null };
-const historyCache = new WeakMap<MeritRouter, Map<string, Promise<HistoryPage>>>();
+type HistoryRows = { entries: BrainHistoryEntry[]; next: number | null };
+type HistoryPage = { entries: BrainHistoryEntry[]; next: string | null; revision: string | null };
+const historyCache = new WeakMap<MeritRouter, Map<string, Promise<HistoryRows>>>();
+const historyCursor = z.object({ version: z.literal(1), project: slugSchema, path: pathSchema, head: z.string().regex(/^[a-f0-9]{40}$/), offset: z.number().int().min(1).max(1000), limit: z.number().int().min(1).max(50) }).strict();
+class HistoryCursorError extends Error { readonly code = "brain_cursor_stale"; }
 
 /** HEAD and mount/project identity bind cache entries; old revisions never overwrite a current page. */
-export async function brainDocumentHistoryPage(sy: MeritRouter, project: string, path: string, input: { offset?: number; limit?: number } = {}): Promise<HistoryPage> {
-  const paging = z.object({ offset: z.number().int().min(0).max(1000).default(0), limit: z.number().int().min(1).max(50).default(50) }).parse(input);
-  if (!brainDocumentVisible(project, path) || !sy.projects.get(project)) return { entries: [], next: null };
+export async function brainDocumentHistoryPage(sy: MeritRouter, project: string, path: string, input: { cursor?: string; limit?: number } = {}): Promise<HistoryPage> {
+  const query = z.object({ cursor: z.string().max(5000).optional(), limit: z.number().int().min(1).max(50).default(50) }).strict().parse(input);
+  if (!brainDocumentVisible(project, path) || !sy.projects.get(project)) return { entries: [], next: null, revision: null };
   const binding = await sy.brainFor(project).resolveGitDocument(path);
-  if (!binding) return { entries: [], next: null };
+  if (!binding) return { entries: [], next: null, revision: null };
   const head = (await git(binding.repo, ["rev-parse", "HEAD"], { timeoutMs: 5000, maxBuffer: 1024 })).trim();
+  let offset = 0;
+  if (query.cursor) {
+    let cursor: z.infer<typeof historyCursor>;
+    try { cursor = historyCursor.parse(JSON.parse(Buffer.from(query.cursor, "base64url").toString("utf8"))); }
+    catch { throw new HistoryCursorError("Invalid history cursor. Restart document history."); }
+    if (cursor.head !== head || cursor.project !== project || cursor.path !== path || input.limit !== undefined && cursor.limit !== query.limit) throw new HistoryCursorError("Document history changed. Restart history to see a consistent revision.");
+    query.limit = cursor.limit;
+    offset = cursor.offset;
+  }
+  const paging = { offset, limit: query.limit };
   const key = JSON.stringify([project, path, binding.repo, binding.mountPrefix, binding.virtualPrefix, head, paging]);
   let cache = historyCache.get(sy);
   if (!cache) { cache = new Map(); historyCache.set(sy, cache); }
@@ -116,10 +129,11 @@ export async function brainDocumentHistoryPage(sy: MeritRouter, project: string,
     pending.catch(() => { if (cache.get(key) === pending) cache.delete(key); });
   }
   const result = await pending;
-  return { entries: result.entries.map(entry => ({ ...entry })), next: result.next };
+  const next = result.next === null ? null : Buffer.from(JSON.stringify({ version: 1, project, path, head, offset: result.next, limit: query.limit })).toString("base64url");
+  return { entries: result.entries.map(entry => ({ ...entry })), next, revision: head };
 }
 
-async function loadHistoryPage(sy: MeritRouter, project: string, path: string, input: { offset?: number; limit?: number }, revision: string): Promise<HistoryPage> {
+async function loadHistoryPage(sy: MeritRouter, project: string, path: string, input: { offset?: number; limit?: number }, revision: string): Promise<HistoryRows> {
   const { offset, limit } = z.object({ offset: z.number().int().min(0).max(1000).default(0), limit: z.number().int().min(1).max(50).default(50) }).parse(input);
     const history = await documentHistory(sy, project, path, offset + limit + 1, revision);
     const next = (history?.entries.length ?? 0) > offset + limit && offset + limit <= 1000 ? offset + limit : null;
@@ -159,9 +173,10 @@ async function loadHistoryPage(sy: MeritRouter, project: string, path: string, i
 export async function brainDocumentBlame(sy: MeritRouter, project: string, path: string, opts: { strict?: boolean } = {}) {
   if (!brainDocumentVisible(project, path) || !sy.projects.get(project)) return [];
   try {
-    const history = await documentHistory(sy, project, path);
+    const signal = AbortSignal.timeout(10_000);
+    const history = await documentHistory(sy, project, path, undefined, "HEAD", signal);
     const visible = new Set(history?.entries.map(entry => entry.commit) ?? []);
-    const lines = await sy.brainFor(project).blame(path);
+    const lines = await sy.brainFor(project).blame(path, { signal, timeoutMs: 10_000, maxBuffer: 4 * 1024 * 1024 });
     const belongs = sy.db.prepare("SELECT id FROM tasks WHERE id = ? AND project_id = ?");
     return lines.map(line => {
       if (!visible.has(line.commit) && !line.uncommitted) return {

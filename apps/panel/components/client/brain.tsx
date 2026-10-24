@@ -14,6 +14,8 @@ export function BrainEditor({ project, path, initial, digest, kind, maxCurrentSt
   const [baseline, setBaseline] = useState({ content: initial, digest });
   const [latest, setLatest] = useState<{ content: string; digest: string } | null>(null);
   const observedDigest = useRef(digest);
+  const currentText = useRef(text);
+  currentText.current = text;
   const { run, busy, error, errors, message } = useAction();
   const dirty = text !== baseline.content;
   useEffect(() => {
@@ -38,15 +40,24 @@ export function BrainEditor({ project, path, initial, digest, kind, maxCurrentSt
   }, [dirty]);
   const loadLatest = async () => {
     const result = await callApi(`/api/brain?project=${encodeURIComponent(project)}&path=${encodeURIComponent(path)}`, "GET");
-    if (result.ok && result.document) setLatest(result.document as { content: string; digest: string });
+    if (result.ok && result.document) {
+      const saved = result.document as { content: string; digest: string };
+      if (saved.digest !== baseline.digest) setLatest(saved);
+    }
   };
   const save = async () => {
-    const result = await run("/api/brain", "PUT", { project, path, content: text, expectedDigest: baseline.digest }, { success: "Saved and committed as you.", refresh: false });
+    const submitted = text;
+    const result = await run("/api/brain", "PUT", { project, path, content: submitted, expectedDigest: baseline.digest }, { success: "Saved and committed as you.", refresh: false });
     if (!result.ok) { await loadLatest(); return; }
     const current = await callApi(`/api/brain?project=${encodeURIComponent(project)}&path=${encodeURIComponent(path)}`, "GET");
     if (current.ok && current.document) {
       const saved = current.document as { content: string; digest: string };
-      setText(saved.content); setBaseline(saved); setLatest(null);
+      const written = result.saved as { digest?: string } | undefined;
+      if (written?.digest && written.digest !== saved.digest) setLatest(saved);
+      else {
+        if (currentText.current === submitted) setText(saved.content);
+        setBaseline(saved); setLatest(null);
+      }
     }
     router.refresh();
   };

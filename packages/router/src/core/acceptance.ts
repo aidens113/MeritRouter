@@ -5,7 +5,7 @@ import { budgetInputFor, effectiveBudget, verificationTotal } from "../admission
 import type { ArtifactStore } from "../storage/artifacts.js";
 import type { StoredTask, TaskStore } from "../storage/tasks.js";
 import type { Classification } from "../scoring/score.js";
-import { compileContract, executionCap, type ContractStore, type StoredContract } from "../verification/contract.js";
+import { compileContract, declaredEvaluatorChanges, executionCap, type ContractStore, type StoredContract } from "../verification/contract.js";
 import { evaluatePolicy, reevaluateOnResult, resolveLevel, type Reevaluation } from "../verification/policy.js";
 import { runNamedChecks, selfReportFromOutput } from "../verification/checks.js";
 import { applySupervisorDecision, decide, verificationRecord, type Decision, type ReviewOutcome } from "../verification/decide.js";
@@ -70,6 +70,7 @@ export function ensureContract(d: ContractDeps, task: StoredTask, tier: TierName
     tags: classification?.tags ?? spec.hints?.tags ?? null,
     rulebookFingerprint: classification?.rulebookVersion ?? null,
     policy: d.cfg.verification,
+    evaluatorChangeExpected: declaredEvaluatorChanges(spec, d.cfg.coding.protected_paths),
     budget: budgetInputFor(d.cfg, spec, tier, d.requestsUsed(task.row.id)),
     parent: parentImportance(d.tasks, d.contracts, spec),
     now: d.now(),
@@ -125,6 +126,7 @@ export function verificationBudgetShortfall(cfg: ResolvedConfig, spec: WorkerTas
       tags: spec.hints?.tags ?? null,
       paths: declaredPaths(spec),
       protectedPathsChanged: null,
+      evaluatorChangeExpected: declaredEvaluatorChanges(spec, cfg.coding.protected_paths),
       criteria: crit,
       requestedImportance: spec.importance ?? null,
       importanceReason: spec.importanceReason ?? null,
@@ -132,7 +134,7 @@ export function verificationBudgetShortfall(cfg: ResolvedConfig, spec: WorkerTas
       atLeast: spec.verification?.atLeast ?? null,
       addChecks: spec.verification?.addChecks ?? [],
     });
-    const needed = (ev.review.required ? (policy.budget.review_requests[ev.level] ?? 0) : 0) + 1;
+    const needed = (ev.review.required ? Math.max(1, policy.budget.review_requests[ev.level] ?? 0) : 0) + 1;
     if (!least || needed < least.needed) least = { needed, level: ev.level };
   }
   const total = verificationTotal(cfg, spec);
@@ -182,6 +184,7 @@ export function verifyOutcome(policy: VerificationConfig, stored: StoredContract
     universe: ev.universe ?? null,
     selfReport: ev.output ? selfReportFromOutput(ev.output, contract) : null,
     review: opts.review?.criteria ?? null,
+    evaluatorReview: opts.review?.evaluatorChangeReview ?? null,
     taskLabAuthority: opts.taskLabAuthority,
   });
   const decision = decide({

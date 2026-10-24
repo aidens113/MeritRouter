@@ -11,11 +11,16 @@ each role, what each role may and may not do, and how they share memory. The mod
 FluxIQ's agent protocol (`AGENTS.md`, working-document protocol), with every rule that can be
 enforced in code enforced in code.
 
-## The two roles
+## FINAL supervision and delivery roles
+
+The initiating client (Claude, Codex, another MCP client, or the operator) remains the **FINAL
+supervisor** by default. MeritRouter delivery supervisors own planning, worker dispatch,
+integration, review, runtime testing and repair for their delegated goals. Workers own bounded
+briefs. A delivery supervisor returns a checked candidate; FINAL acceptance stays upstream.
 
 | | Supervisor | Worker |
 | --- | --- | --- |
-| Who | External MCP client (Claude Code, Codex, etc.) or MeritRouter's own supervisor (standalone presets) | A model MeritRouter routes to for one brief |
+| Who | MeritRouter delivery supervisor, with the initiating client/operator retaining FINAL authority | A model MeritRouter routes to for one brief |
 | Owns | The goal, the plan, delegation, verification, integration, the job's working document, the final report | One bounded brief |
 | Reads | Its project's brain folder and `global/`; its project's repositories | Only what its brief names and grants |
 | Writes | Its project's brain entries; the job branch; `global/` only through a reviewed promotion | Its own report; files under its `allowedPaths` in an isolated worktree |
@@ -27,17 +32,20 @@ checks itself, or dispatches a `review`) before treating anything as done.
 
 ## Who supervises
 
-- **External MCP client** (`meritrouter init --preset claude-code`): Claude Code, Codex or another client is the supervisor and talks
-  to MeritRouter through MCP. It submits tasks, waits, reads results, uses the brain, and
-  integrates patches itself. Merge [`packages/router/examples/CLAUDE.delegation.md`](../packages/router/examples/CLAUDE.delegation.md)
+- **External MCP client** (`meritrouter init --preset claude-code`): Claude Code, Codex or another client is the FINAL supervisor and talks
+  to MeritRouter through MCP. For multi-step work it normally starts a bounded delivery-supervisor
+  job, then inspects its candidate/evidence, answers resource requests and independently accepts
+  or rejects the product. Direct task coordination remains available for small work. Merge [`packages/router/examples/CLAUDE.delegation.md`](../packages/router/examples/CLAUDE.delegation.md)
   into the project's `CLAUDE.md`.
 - **MeritRouter's supervisor** (standalone presets): you give a goal (`meritrouter run`, the
   Jobs page of a project in the panel, or `sy.startJob()`), and a supervisor model you choose
-  does the whole job.
+  owns delivery execution; the initiating operator still decides whether the product is acceptable.
 
 Over MCP, `client_supervision.dispatch_final_supervisor` defaults to **false**. The external
-client owns the project's plan, integration, final review/tests and iteration. It should
-delegate as much practical bounded work as possible; MeritRouter sub-supervisors remain available.
+client retains product intent and FINAL review. `client_supervision.workflow` defaults to
+`delegated_delivery`: delivery supervisors own the execution loop, including integration and
+testing. `direct_tasks` selects direct client coordination. Neither workflow transfers FINAL
+authority. Existing explicit lower budgets and security policies remain authoritative.
 `start_job` and supervisor-mode `submit_tasks` default to `supervisionScope: subtask`, which
 completes a delegated component rather than declaring the entire project finished.
 
@@ -62,17 +70,25 @@ agent should change the setting only on an explicit user request.
 The supervisor plans, writes briefs, judges evidence, and resolves conflicts. It needs the
 strongest reasoning and the most reliable tool use you can afford, and a large context window.
 
-- Set `supervisor.endpoints` to the models to use, in order (catalog ids, e.g.
-  `paid:anthropic/<model>` or `groq/openai/gpt-oss-120b`). Empty means "the most capable eligible
-  model at T3".
+- Supervisor routing uses `supervisor.routing.quality_evidence` across eligible providers.
+  Each endpoint needs current, sourced evidence classified `frontier` or `qualified_supervisor`,
+  confidence at least 0.75, and scores at least 0.75 for planning, architecture, supervision,
+  integration, review and product judgment. Image/video inputs also require that visual score.
+  Eligible evidence is ranked by confidence-weighted mean capability. A vendor name, parameter
+  count, existing key or model pin does not qualify a supervisor. See the
+  [quality evidence setup](setup.md#supervisor-quality-evidence-required-for-delivery-jobs).
+- `supervisor.endpoints` can restrict the endpoint pool; it cannot bypass the quality floor.
+  Empty evidence, expired evidence or no otherwise eligible model blocks execution with
+  `supervisor_quality_unavailable`. The router does not silently substitute a weaker supervisor.
 - `supervisor.paid_policy`: `never` (free models only), `on_free_exhaustion` (default), or
   `preferred`. Eligible paid supervisor calls share the paid budgets; the `standalone-free`
   preset explicitly selects `never`.
-- Budget: no job-wide request cap by default. Set `profiles.supervise.max_model_requests`,
-  `verification.max_total_requests_per_task`, or a task budget to impose one (waiting on workers
-  costs no requests); paid limits such as `maxPaidUsd` remain separate.
-- Presets: `standalone-free` uses the best free model; `standalone-hybrid` and `standalone-paid`
-  expect a paid model (set its id and current prices in `paid.models`).
+- Default delivery jobs have a 600-request aggregate envelope, with protected supervisor and
+  validation reserves; profile/task/verification caps can reduce it. Waiting on workers costs
+  no model requests. Request-count grants never increase paid authorization or dollar caps.
+- Presets provide profiles and paid policies, not quality evidence. A free-only preset still
+  needs a qualified eligible free supervisor; hybrid/paid configurations need authorized keys,
+  current prices and evidence for their selected endpoints.
 
 ### Worker models
 
@@ -142,7 +158,7 @@ The full text ships as `packages/router/charters/supervisor.md` and can be overr
    `max_requests` from its brief (default `team.default_task_requests`, else its tier's cap) and
    holds it from the pool while open; a finished task holds only what it used. A brief that does
    not fit in what is left (budget minus the supervisor's own requests, open holds, and
-   `team.supervisor_reserve_requests`) is refused with the number available. Workers that run low
+   the applicable protected supervisor/validation reserves) is refused with the number available. Workers that run low
    ask for more; `await_tasks` returns early and the supervisor decides with
    `decide_budget_request` (see "Budgets and requests for more" below).
 7. **Verify before accepting**: read the patch and evidence, run checks, or rely on the
@@ -155,6 +171,28 @@ The full text ships as `packages/router/charters/supervisor.md` and can be overr
 10. **Ask or decide**: ask the user only when a decision is theirs; otherwise choose a default and
    record it.
 11. **Finish** with what changed, what was verified (with evidence), and what was not.
+
+### Specification and product acceptance
+
+Version-2 delivery jobs use `discover -> specify -> prepare -> plan -> implement -> integrate
+-> validate -> handoff`. The supervisor writes a versioned specification with stable criterion
+IDs, observable workflows, interface/data/security requirements, exclusions and setup references.
+Updating a specification requires its expected digest and next revision; candidate/specification
+changes invalidate evidence for a different revision. The specification must preserve the
+original submitted goal exactly. Supervisors cannot remove/weaken required criteria or claim
+`not_applicable` through a model-written `approvedBy`; no FINAL waiver UI is implemented, so
+these changes fail closed. Prior specification/candidate/evidence/decision states remain in
+durable delivery history when the current state changes.
+
+The delivery tools are `set_delivery_spec`, `advance_delivery_stage`, `validate_delivery` and
+`delivery_status`. Integrated declared checks produce structural evidence; they do not establish
+runtime journeys, persistence, visual quality or usability. Required unavailable, stale,
+self-claimed or missing evidence blocks `ready_for_final_review` and handoff.
+
+The FINAL MCP client uses `delivery_status`, `record_delivery_observation` for behavior it
+actually inspected, and `decide_delivery`. FINAL rejection reopens validation. Task execution
+completion, task acceptance and FINAL product acceptance are separate records. A passing build
+or a worker report is never proof that the product is usable. See [delivery operations](operations.md#delivery-v2-readiness-and-final-decisions).
 
 ## Worker rules (summary of the worker charter)
 
@@ -184,18 +222,23 @@ task's budget; served-model mismatches are discarded and the model quarantined.
 Budgets are set by the supervisor that delegates and enforced by admission, never by prompt text
 (decisions D1-D7 of `docs/working/budget-control.md`).
 
-- **The pool.** A job's pool is uncapped unless the caller explicitly sets a request cap in
-  `profiles.supervise.max_model_requests`, `verification.max_total_requests_per_task`, or the
-  task budget. The supervisor's own requests, each worker task's grant (`task_request_grants`),
-  and each sub-supervisor's carve come out of that pool. Finite caps are enforced by admission;
-  with no cap, the supervisor keeps iterating until it finishes or hits a separate stop condition.
+- **The pool.** Default `start_job`/`startJob` delivery-v2 jobs receive at most
+  `supervisor.delivery_budget.total_requests` (600). An explicit job cap, profile cap or
+  verification cap can narrow the effective budget. The supervisor's own requests, each worker
+  grant (`task_request_grants`) and each sub-supervisor carve come out of the same pool.
+  Legacy/direct-task jobs can remain uncapped when no request cap is configured.
   An open task holds its grant plus approved extras (or what it used, if review and repair took it
   further); a finished task holds what it used, so the rest returns.
 - **Grants.** `delegate` and `plan_work` briefs take `max_requests`, which becomes the task's
   `budget.maxModelRequests` (execution and its verification total). Without it the task gets
   `team.default_task_requests` as its budget, or, when that is unset, keeps its usual caps and
   holds its tier's execution cap (the brief's difficulty, else T2 or the profile's floor).
-- **Requests for more.** Every worker role (not reviewers inside verification) gets
+- **Protected reserves.** Delivery-v2 defaults protect 80 supervisor requests plus 80 integrated
+  validation requests, initially leaving at most 440 for child grants before usage/other limits.
+  The validation reserve becomes available at integrate/validate/handoff; the supervisor reserve
+  remains protected from child allocations. Physical dispatch also protects validation headroom
+  during earlier stages. Legacy `team.supervisor_reserve_requests` (4) remains a lower bound.
+- **Requests for more.** Workers and delivery supervisors (not reviewers inside verification) get
   `request_more_budget(requests, reason)` while `team.max_budget_requests_per_task` (default 3)
   allows. The run waits without model requests up to `team.budget_request_wait_seconds`
   (default 300) for a decision; the loop tells a worker once when it runs low. An approval raises
@@ -208,6 +251,16 @@ Budgets are set by the supervisor that delegates and enforced by admission, neve
   `decide_budget_request`, or by a person), `auto` (granted up to `team.auto_grant_max` while the
   pool has room, denied when it is empty), or `human` (`meritrouter budget approve|deny`, or the
   panel). A person may decide any request; an MCP client any but a person's.
+- **Upward supervision.** A nested supervisor asks its immediate parent; a root delivery
+  supervisor asks the external FINAL initiator, even when ordinary worker grants use `auto`.
+  Human-only policy still requires a person. Grants atomically update the parent's hold for a
+  nested supervisor. Current waits poll storage without model calls; they are not an indefinite
+  event-driven service. Supervisors may omit `requests` to ask for
+  `supervisor.delivery_budget.extension_requests` (default 200); workers must specify an amount.
+  Every request still needs a reason and approval; no automatic extension is promised.
+- **CLI authority.** CLI decisions default to supervisor identity. A real operator must pass
+  `--human` in an interactive terminal for human-only acceptance or budget decisions; scripts
+  and piped commands cannot claim that authority. The signed-in panel is the alternative.
 - **Records.** Each request is a `budget_requests` row and `budget_requested` /
   `budget_request_decided` / `budget_granted` events on the task and its job, a post on the job's
   channel, and the tool call in the worker's session. Paid budgets are unchanged: extra requests
@@ -221,6 +274,7 @@ the install:
 ```text
 README.md                generated index: global/ entries and the project names
 global/lessons/          reusable lessons (promoted through the gate below)
+global/preferences/      authorized cross-project user instructions
 global/glossary.md
 projects/<project>/
   README.md                              generated index of the project's working documents
@@ -229,6 +283,8 @@ projects/<project>/
   working/<effort>/archive/              compacted history
   labs/<lab>.md                         persistent Lab lane working document
   decisions/  facts/  repos/<alias>.md
+  memory/<id>.md                        typed project facts, decisions and lessons
+  memory/preferences/<id>.md            authorized project-specific user instructions
   decisions/lessons/                     lessons kept in the project (including rejected promotions)
   promotions/<id>.md                     promotion records (written only by MeritRouter)
 ```
@@ -253,9 +309,9 @@ project's slug, so the default grants never reach another project's folder.
 
 | Role | Reads | Writes |
 | --- | --- | --- |
-| You (panel, CLI) | everything | everything (committed as `human`), including `global/` |
+| Human operator | everything | operator-authorized edits, including global preferences; CLI human decisions require explicit interactive `--human` |
 | Supervisor | `projects/<own>/**` and `global/**` | `projects/<own>/**`; `global/` only through a promotion (below) |
-| Worker | its job's working document, `projects/<own>/repos/<alias>.md` for its repositories, `projects/<own>/decisions/**`, `global/lessons/**`, `global/glossary.md`, plus brief grants | its own report |
+| Worker | its job's working document, repository notes, project decisions/typed memory, authorized global preferences/lessons/glossary, plus brief grants | its own report |
 | Reviewer | as worker, plus its job's reports | its own report |
 | Classifier | nothing | nothing |
 
@@ -264,14 +320,39 @@ project's slug, so the default grants never reach another project's folder.
   `brain.access_approver`: the supervisor (default), you (panel or
   `meritrouter brain approve|deny`), or the auto-approval rules (`brain.auto_approve`). A project
   may override both. Grants end with the task.
-- **`global/**` and `projects/*/promotions/**` are system-managed.** No agent can write them,
+- **`global/**`, `projects/*/promotions/**` and `projects/*/memory/**` are system-managed.** No agent can write them through raw file tools,
   whatever its grants say: role `brain_grants` (even `**` with admin mode), brief grants, and
   approved requests are all refused there. A request to write them is refused before it is
-  filed. People are not affected.
+  filed. Scoped memory/promotion services provide the validated write paths; human panel edits
+  of typed memory use those services rather than the raw document editor.
 - **Search** returns only what the caller's grants can read. Each project indexes its own
   folder, `global/`, and the root, and leaves other projects' entries alone.
 - **The panel.** A project's Brain page shows that project's folder, `global/`, and the root.
   Opening another project's path shows a link to that project's Brain page, not the document.
+
+### Automatic context and typed memory
+
+Automatic context resolves live ACLs before selecting/rendering memory. Default token ceilings
+are supervisor 12,000; reviewer 6,000; implementer/analyst/inspector 4,000;
+summarizer/classifier 2,000. `brain.memory_context.role_tokens` configures them; endpoint/input,
+prompt/tools and output headroom can reduce them to zero. A ceiling does not grant read access.
+Startup/resume rebuilds context from current records, excluding revoked/expired/invalid entries.
+The context states that retrieved memory is reference data, never spending or execution authority.
+
+Typed records preserve scope, source, actor, revision, timestamps, expiry and supersession.
+`write_project_memory` lets native delivery supervisors and external MCP supervisors maintain
+project facts/decisions/lessons with
+a source reference and expected digest (null for creation). Raw agent writes cannot forge typed
+records. Workers propose memory through their reports. `write_user_preference` additionally
+requires a current trusted initiating-host capability bound to operation, ID, scope and exact
+instruction; a model-written assertion of permission is insufficient. Connections without that
+host capability return `preference_authority_unavailable`; use the panel Memory form.
+
+The project's Brain **Memory & preferences** tab creates/edits typed records and revokes user
+preferences with conflict-safe saves. `/all/brain` manages global preferences independently of
+an active project. Inferred global lessons retain the promotion/review gates below. The lazy
+"What agents actually received" view shows actual historical `memory_manifest` receipts,
+including role caps, digests, selection reasons and omissions; it does not predict future context.
 
 ### Global knowledge (D9)
 
@@ -318,8 +399,8 @@ the prompt:
      `projects/<p>/decisions/lessons/` with the reason, so nothing is lost.
    - `reverted`: a person removed the approved lesson from `global/` again. The record keeps who
      reverted it, when, and why, and the lesson is never written back.
-5. **People.** Your own edits to `global/` (panel or editor) skip the gate and are committed as
-   `human`.
+5. **People.** Operator edits to ordinary global knowledge can skip the promotion gate.
+   Typed user preferences use their separate explicit-instruction and revision-safe workflow.
 
 Where to see and decide promotions:
 - **`/all/knowledge`** in the panel lists:

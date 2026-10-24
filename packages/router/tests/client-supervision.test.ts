@@ -27,8 +27,26 @@ describe("external client supervision", () => {
       expect(() => ConfigSchema.parse({ ...original, client_supervision: { dispatch_final_supervisor: "yes" } })).toThrow();
       expect(setSupervisionPolicy(sy, { dispatch_final_supervisor: true, reason: "User permits project supervisor" })).toMatchObject({ dispatch_final_supervisor: true, reason: "User permits project supervisor" });
       expect(setSupervisionPolicy(sy, { dispatch_final_supervisor: true, instructions: "Check browser behavior", reason: "User customization" }).effectiveInstructions).toContain("Human customization:\nCheck browser behavior");
-      const changed = YAML.parse(readFileSync(env.cfg.configPath, "utf8")); delete changed.client_supervision; expect(changed).toEqual(original);
+      const changed = YAML.parse(readFileSync(env.cfg.configPath, "utf8"));
+      // Fixtures explicitly select direct_tasks for legacy execution tests. A narrow update
+      // must preserve that pre-existing policy field as well as every unrelated YAML section.
+      expect(changed).toEqual({ ...original, client_supervision: { ...original.client_supervision, dispatch_final_supervisor: true, instructions: "Check browser behavior" } });
       expect(readFileSync(env.cfg.configPath, "utf8")).toContain("# keep this comment");
+    } finally { await sy.close(); }
+  });
+
+  it("defaults new policy to delegated delivery with FINAL acceptance and persists only explicitly requested fields", async () => {
+    env = makeEnv({ config: baseConfig({ client_supervision: {} }) });
+    const sy = open(env, new ScriptedClient(() => reply("{}")));
+    try {
+      const original = YAML.parse(readFileSync(env.cfg.configPath, "utf8"));
+      expect(supervisionPolicy(sy)).toMatchObject({ workflow: "delegated_delivery", dispatch_final_supervisor: false });
+      expect(supervisionPolicy(sy).effectiveInstructions).toContain("You retain FINAL acceptance");
+      setSupervisionPolicy(sy, { instructions: "Inspect the actual runtime", reason: "Explicit user customization" });
+      expect(YAML.parse(readFileSync(env.cfg.configPath, "utf8"))).toEqual({ ...original, client_supervision: { instructions: "Inspect the actual runtime" } });
+      setSupervisionPolicy(sy, { workflow: "direct_tasks", reason: "Explicit user requests direct tasks" });
+      expect(YAML.parse(readFileSync(env.cfg.configPath, "utf8"))).toEqual({ ...original, client_supervision: { instructions: "Inspect the actual runtime", workflow: "direct_tasks" } });
+      expect(supervisionPolicy(sy).dispatch_final_supervisor).toBe(false);
     } finally { await sy.close(); }
   });
 
@@ -117,7 +135,10 @@ describe("external client supervision", () => {
         const url = await new Promise<string>((resolve, reject) => { let output = ""; const timer = setTimeout(() => reject(new Error(output)), 30000); child!.stderr!.on("data", chunk => { output += chunk; const match = /at (http:\/\/\S+\/mcp)/.exec(output); if (match) { clearTimeout(timer); resolve(match[1]!); } }); child!.once("exit", code => { clearTimeout(timer); reject(new Error(`MCP exited ${code}: ${output}`)); }); });
         await client.connect(new StreamableHTTPClientTransport(new URL(url)));
       }
-      expect(client.getInstructions()).toContain("responsible for the user's intended project outcome");
+      expect(client.getInstructions()).toContain("FINAL supervisor responsible for the user's intended product outcome");
+      expect(client.getInstructions()).toContain("delivery-supervisor job");
+      expect(client.getInstructions()).toContain("runtime testing and repair");
+      expect(client.getInstructions()).toContain("You retain FINAL acceptance");
       let result = await client.callTool({ name: "get_supervision_policy", arguments: {} }); expect(content(result)).toHaveLength(1); expect(JSON.parse(content(result)[0]!.text).dispatch_final_supervisor).toBe(false);
       const denied = await client.callTool({ name: "start_job", arguments: { goal: "Whole project", repositories: ["core"], supervisionScope: "project" } }); expect(denied.isError).toBe(true); expect(content(denied)[0]!.text).toContain("disabled");
       const custom = await client.callTool({ name: "submit_tasks", arguments: { tasks: [{ profile: "inspect", goal: "Whole project", supervisionScope: "project", repositoryAliases: ["core"], constraints: { acceptanceCriteria: ["done"] } }] } }); expect(custom.isError).toBe(true); expect(content(custom)[0]!.text).toContain("disabled");

@@ -80,7 +80,9 @@ export class Worktrees {
   async collect(ws: Workspace, allowedPaths: string[], protectedPaths: string[]): Promise<ChangeSet> {
     await git(ws.worktreePath, ["add", "-A"]);
     const patch = await git(ws.worktreePath, ["diff", "--cached", "--binary", ws.baseSha]);
-    const nameStatus = await git(ws.worktreePath, ["diff", "--cached", "--name-status", "-z", ws.baseSha]);
+    // A rename changes both paths: retain the deleted evaluator and added destination
+    // for scope/protected-file enforcement rather than losing the source to rename folding.
+    const nameStatus = await git(ws.worktreePath, ["diff", "--cached", "--no-renames", "--name-status", "-z", ws.baseSha]);
     const parts = nameStatus.split("\0").filter(Boolean);
     const changed: ChangeSet["changed"] = [];
     for (let i = 0; i < parts.length; ) {
@@ -91,7 +93,7 @@ export class Worktrees {
       } else changed.push({ status, path: parts[i++]! });
     }
     const allowed = picomatch(allowedPaths.length ? allowedPaths : ["**"], { dot: true });
-    const prot = protectedPaths.length ? picomatch(protectedPaths, { dot: true }) : () => false;
+    const prot = protectedPaths.length ? picomatch(protectedPaths, { dot: true, nocase: process.platform === "win32" }) : () => false;
     return {
       patch,
       changed,

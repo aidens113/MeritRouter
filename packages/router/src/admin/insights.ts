@@ -671,6 +671,7 @@ export async function brainSearch(sy: MeritRouter, query: string, prefix?: strin
 }
 
 export { brainCatalogPage, brainSearchPage } from "./brain-catalog.js";
+export { brainMemoryManifestPreview } from "./brain-memory-manifest.js";
 export { brainDocumentHistoryPage } from "./brain-entities.js";
 
 export function brainHistory(sy: MeritRouter, path: string, project?: string) {

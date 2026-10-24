@@ -108,6 +108,13 @@ export interface JobPool {
   available: number | null;
 }
 
+export function protectedValidationRequests(db: Db, cfg: ResolvedConfig, taskId: string): number {
+  const task = new TaskStore(db).get(taskId);
+  if (task?.spec.deliveryVersion !== 2) return 0;
+  const row = db.prepare("SELECT stage FROM product_deliveries WHERE task_id=?").get(taskId) as { stage: string } | undefined;
+  return row && ["integrate", "validate", "handoff"].includes(row.stage) ? 0 : cfg.supervisor.delivery_budget.validation_reserve_requests;
+}
+
 /** The pool of a supervising task (null for a task that is not a supervisor job). */
 export function jobPool(db: Db, cfg: ResolvedConfig, jobId: string): JobPool | null {
   const job = new TaskStore(db).get(jobId);
@@ -116,7 +123,7 @@ export function jobPool(db: Db, cfg: ResolvedConfig, jobId: string): JobPool | n
   const limit = baseLimit === UNLIMITED_REQUESTS ? baseLimit : baseLimit + extraRequests(db, jobId);
   const used = (db.prepare("SELECT COUNT(*) AS n FROM request_charges WHERE task_id = ?").get(jobId) as { n: number }).n;
   const held = heldRequests(db, jobId);
-  const reserve = job.spec.deliveryVersion === 2 ? Math.max(cfg.team.supervisor_reserve_requests, cfg.supervisor.delivery_budget.supervisor_reserve_requests + cfg.supervisor.delivery_budget.validation_reserve_requests) : cfg.team.supervisor_reserve_requests;
+  const reserve = job.spec.deliveryVersion === 2 ? Math.max(cfg.team.supervisor_reserve_requests, cfg.supervisor.delivery_budget.supervisor_reserve_requests + protectedValidationRequests(db, cfg, jobId)) : cfg.team.supervisor_reserve_requests;
   const cap = limit === UNLIMITED_REQUESTS ? null : limit;
   const available = cap === null ? null : Math.max(0, cap - used - held - reserve);
   return { jobId, cap, used, held, reserve, available };

@@ -5,7 +5,7 @@ import { ARTIFACT_EVIDENCE_REF_RE, FILE_REF_RE, type CheckOutcome, type Criterio
 import type { AcceptanceContract } from "./contract.js";
 
 /** The deterministic checks this version implements. Any other required name is not_implemented. */
-export const NAMED_CHECKS = ["output_contract", "evidence_provenance", "scope", "protected_paths", "declared_checks", "criterion_evidence", "ephemeral_lab_checks"] as const;
+export const NAMED_CHECKS = ["output_contract", "evidence_provenance", "scope", "protected_paths", "declared_checks", "criterion_evidence", "ephemeral_lab_checks", "evaluator_change_review"] as const;
 export type NamedCheck = (typeof NAMED_CHECKS)[number];
 
 /** Exit codes meaning the command could not run at all: not executable, not found (sh), not found (cmd.exe). */
@@ -21,11 +21,20 @@ export interface SelfReportEntry {
 
 export type CheckRecord = WorkerResult["checks"][number];
 
+/** Constructed by the authenticated independent review runtime, never from a worker claim. */
+export interface EvaluatorReviewOutcome {
+  verdict: "pass" | "fail" | "inconclusive";
+  revision: string; policyVersion: string; changedPaths: string[];
+  reviewerEndpointId: string; authorEndpointIds: string[];
+  snapshotRefs: string[]; evidenceRefs: string[]; reason: string;
+}
+
 /** The parts of a runner result the checks read. */
 export type CheckedResult = Pick<WorkerResult, "executionStatus" | "stopReason" | "findings" | "checks" | "unresolvedCriteria" | "artifactRefs" | "patchRefs"> &
   Partial<Pick<WorkerResult, "data" | "changedPaths" | "scopeViolation" | "protectedPathsChanged" | "taskLab">>;
 
 export interface CheckSubject {
+  evaluatorReview?: EvaluatorReviewOutcome | null;
   contract: AcceptanceContract;
   taskLabAuthority?: TaskLabAuthority | null;
   mode: ProfileMode;
@@ -111,6 +120,19 @@ export function runNamedChecks(s: CheckSubject): CheckReport {
   const self = new Map((s.selfReport ?? []).map((e) => [e.id, e]));
   const results: NamedCheckResult[] = [];
   const add = (name: string, outcome: CheckOutcome, detail: string) => results.push({ name, required: required.has(name), outcome, detail });
+  const evaluator = (() => {
+    if (!coding) return { outcome: "not_applicable" as const, detail: "the task cannot change evaluators" };
+    if (r.protectedPathsChanged === undefined) return { outcome: "not_run" as const, detail: "protected changes are not reported" };
+    if (!r.protectedPathsChanged.length) return { outcome: "not_applicable" as const, detail: "no evaluator files changed" };
+    const review = s.evaluatorReview;
+    if (!review) return { outcome: "not_run" as const, detail: "independent baseline/candidate evaluator review has not run" };
+    const paths = (xs: string[]) => [...new Set(xs.map(path => path.replace(/\\/g, "/")))].sort().join("\n");
+    if (!s.revision || review.revision !== s.revision || review.policyVersion !== s.contract.fingerprints.policy || paths(review.changedPaths) !== paths(r.protectedPathsChanged)) return { outcome: "stale" as const, detail: "evaluator review does not bind current revision, policy and protected paths" };
+    if (!review.reviewerEndpointId || !review.authorEndpointIds.length || review.authorEndpointIds.includes(review.reviewerEndpointId)) return { outcome: "inconclusive" as const, detail: "evaluator review lacks independent runtime provenance" };
+    if (!review.snapshotRefs.length || review.snapshotRefs.some(ref => !review.evidenceRefs.includes(ref))) return { outcome: "inconclusive" as const, detail: "review does not cite immutable baseline/candidate snapshots" };
+    return { outcome: review.verdict === "pass" ? "passed" as const : review.verdict === "fail" ? "failed" as const : "inconclusive" as const, detail: review.reason };
+  })();
+  if (required.has("evaluator_change_review") || (r.protectedPathsChanged?.length ?? 0) > 0) add("evaluator_change_review", evaluator.outcome, evaluator.detail);
 
   // output_contract: the run produced a well-formed answer for its mode. An execution that did
   // not complete produced no answer to judge: that is its execution status, not a defect, so
@@ -157,7 +179,7 @@ export function runNamedChecks(s: CheckSubject): CheckReport {
     else if (r.scopeViolation.length) add("scope", "failed", `outside allowedPaths: ${r.scopeViolation.join(", ")}`);
     else add("scope", "passed", "all changes inside allowedPaths");
     if (r.protectedPathsChanged === undefined) add("protected_paths", "not_run", "the result does not report protected paths");
-    else if (r.protectedPathsChanged.length) add("protected_paths", "inconclusive", `tests or evaluator files changed: ${r.protectedPathsChanged.join(", ")}; verify independently`);
+    else if (r.protectedPathsChanged.length) add("protected_paths", evaluator.outcome === "passed" ? "passed" : evaluator.outcome === "failed" ? "failed" : "inconclusive", `${r.protectedPathsChanged.join(", ")}: ${evaluator.detail}`);
     else add("protected_paths", "passed", "no protected paths changed");
   }
 

@@ -11,8 +11,14 @@ User rejects prior clone as unusable despite recorded checks. The new
 initiator FINAL supervisor plus high-quality delivery supervisors; spec-led stages; conserved
 large budgets/upward requests; complete typed/batched defensive harness; scoped automatic
 memory; runtime/product acceptance; responsive complete Brain panel. Four research reports
-are incorporated. P0–P10 implementation sequence is specified but NOT implemented. No live
-paid/authority/config changes. Prior test records below do not establish user acceptance.
+are incorporated. User authorized execution. Implementation is on feat/supervised-delivery-v2
+in D:/SwitchYardRouter-delivery-v2, with isolated validation snapshots. Contracts, delegated
+defaults, quality/budget gates, defensive harness, typed automatic memory, actual evaluator
+review and Brain UI/index changes are implemented; release validation remains in progress.
+The Docker-backed interactive adapter has offline contract coverage but real-engine acceptance
+is blocked by the absent local Docker engine. No live paid/authority/config changes or clone
+edits. Prior test records below do not establish user acceptance. Read the effort's Current
+State and ledger for checkpoint IDs and independently observed results before publishing.
 
 User requested default four workers while supervising a new standalone Instagram clone.
 Schema/example/presets now use execution.max_concurrent_tasks=4 and

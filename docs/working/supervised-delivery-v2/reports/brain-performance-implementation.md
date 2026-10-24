@@ -104,3 +104,49 @@ No paid/live provider or original clone run was used. Compilation alone is not p
   global management route independent of an active project is not implemented in this slice.
 - External-edit freshness is a five-second reconciliation window; no filesystem watcher or
   automatic periodic background indexer is claimed. Browser-back draft retention needs review.
+
+## Follow-up implementation after checkpoint 375afc7
+
+The supervisor authorized completion of the remaining P8 seams. Implemented:
+
+- History continuations are now opaque validated cursors bound to HEAD, project, document and
+  page size. A new commit or altered scope returns `brain_cursor_stale`/HTTP 409; UI provides
+  Restart history. Git history is pinned to the captured revision, including cached pages.
+- `attribution.blame` and `commitInfo` accept backward-compatible process options. Brain's
+  selected blame flow shares a ten-second AbortSignal through its history, blame and trailer
+  Git commands, with byte limits; actual process abortion replaces indefinite command waits.
+  Mount-resolution helper calls remain separate; no universal filesystem timeout is claimed.
+- `/all/brain` manages global preferences without choosing or requiring an active project.
+  Global Knowledge and project Memory pages link there. Global API calls can omit project;
+  the install Brain binding is used internally, including when configured projects are archived.
+  Project-scoped memory continues to require an explicit active project.
+- Lazy actual-context receipt preview in the Memory tab reads project-owned `memory_manifest`
+  artifacts via integrity-checked `readScoped`, validates their schema/project/Brain refs, caps
+  count and aggregate bytes, and shows role/token cap/digests/reasons/omissions. It is explicitly
+  a historical snapshot, not an invented prediction or recomputation of future context.
+- A real reconciliation boundary defect was found: replacing an indexed directory with a
+  junction made the old deletion cleanup follow the junction through indexed file paths.
+  Cleanup now directly removes missing/disallowed rows, without reading those old paths. A
+  Windows junction fixture proves no external document body is read or searchable afterward.
+- Raw typed-memory editor protection is case-insensitive for Windows path aliases. Ordinary
+  editor save completion preserves text typed while its request is in flight, rather than
+  silently replacing a newer draft with the save response. Typed form controls are disabled
+  during their mutation, preserving its submitted identity/scope/content.
+
+Additional files: `all/brain/page.tsx`, the specific Global Knowledge preference link,
+`api/brain/memory-preview/route.ts`, `admin/brain-memory-manifest.ts`, optional argument seams
+in `attribution/index.ts`, and `tests/brain-provenance-paging.test.ts`.
+
+Observed follow-up checks: full router `tsc --noEmit` passed twice. The new provenance tests
+passed (HEAD cursor, process abort, scoped historical manifests), as did the refreshed catalog
+tests including junction safety: **4/4**. The original ten Brain ACL/core and fifteen privacy
+tests passed after P4 removed its temporary legacy-facts read widening. The final frozen-source
+30-test run subsequently passed **30/30 in 5 files**, duration **118.32 seconds**. Its final
+10k-file measurements under concurrent host test/build load were: initial indexing 5,675 ms;
+warm catalog p50/p95/max 0.451/0.888/0.911 ms (n=30); warm search 5.026/6.603/6.659 ms
+(n=30); fresh-instance existing-index 422.8/488.8/488.8 ms (n=5). This is service-level
+measurement, not browser latency. Production UI/API/browser checks remain pending.
+
+The earlier history-cursor, blame-command-deadline and standalone-global-route open questions
+above are now closed in source. Cold initial indexing and actual production/interactive evidence
+remain acceptance gates; the supervisor is validating isolated checkpoints separately.

@@ -28,7 +28,7 @@ export async function PUT(req: Request) {
     if (!findProject(sy, b.project)) throw new HttpError(404, `Unknown or archived project ${b.project}`);
     if (!b.path.endsWith(".md")) throw new HttpError(400, "Brain documents are markdown files: the path must end in .md", ["path: must end in .md"]);
     if (!insights.brainDocumentVisible(b.project, b.path)) throw new HttpError(403, "Document is outside this project's Brain scope");
-    if (b.path.startsWith("global/preferences/") || new RegExp(`^projects/[^/]+/memory/`).test(b.path)) throw new HttpError(409, "Typed memory must be edited in Memory & preferences so scope, source and authorization are retained");
+    if (/^(?:global\/preferences\/|projects\/[^/]+\/memory\/)/i.test(b.path)) throw new HttpError(409, "Typed memory must be edited in Memory & preferences so scope, source and authorization are retained");
     try {
       return { saved: await insights.brainWrite(sy, b.path, b.content, b.project, { expectedDigest: b.expectedDigest }) };
     } catch (err) {

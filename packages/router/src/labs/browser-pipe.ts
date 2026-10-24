@@ -29,6 +29,8 @@ export const BrowserPipeMethodSchema = z.enum([
   "Runtime.enable","Runtime.runIfWaitingForDebugger","Log.enable","Network.enable","Network.setCacheDisabled","Network.setBypassServiceWorker",
   "Network.emulateNetworkConditions","Emulation.setScriptExecutionDisabled","Emulation.setDeviceMetricsOverride",
   "Fetch.enable","Fetch.failRequest","Fetch.fulfillRequest","DOM.getDocument","DOM.querySelector","DOM.describeNode",
+  "DOM.getBoxModel","DOM.focus","DOM.scrollIntoViewIfNeeded","Input.dispatchMouseEvent","Input.dispatchKeyEvent","Input.insertText","Page.reload",
+  "DOM.setFileInputFiles",
 ]);
 export type BrowserPipeMethod = z.infer<typeof BrowserPipeMethodSchema>;
 

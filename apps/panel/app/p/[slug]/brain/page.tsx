@@ -336,11 +336,11 @@ async function DocPanel({ sc, sy, path, tab, entries, knownAgents, historyOffset
   const entry = entries.find((e) => e.path === path);
   const textOffset = Math.max(0, Math.min(doc?.content.length ?? 0, Number(docOffset) || 0));
   let history: Awaited<ReturnType<typeof insights.brainDocumentHistory>> = [];
-  let historyNext: number | null = null;
+  let historyNext: string | null = null;
   let historyError: string | null = null;
   if (doc && tab === "history") {
     try {
-      const page = await insights.brainDocumentHistoryPage(sy, sc.slug, path, { offset: Number(historyOffset) || 0 });
+      const page = await insights.brainDocumentHistoryPage(sy, sc.slug, path, { cursor: historyOffset || undefined });
       history = page.entries; historyNext = page.next;
     } catch (err) { historyError = (err as Error).message; }
   }
@@ -375,13 +375,13 @@ async function DocPanel({ sc, sy, path, tab, entries, knownAgents, historyOffset
         {error || !doc ? (
           <p className="text-sm text-bad-ink">{error ?? "Not found"}</p>
         ) : tab === "history" ? (
-          historyError ? <p role="alert" className="text-sm text-bad-ink">History unavailable: {historyError}</p> : <><History rows={history} slug={sc.slug} path={path} knownAgents={knownAgents} />{historyNext !== null ? <Link prefetch={false} href={`${href("history")}&historyafter=${historyNext}`} className="block pt-3 text-sm text-accent-ink">Older changes →</Link> : null}</>
+          historyError ? <p role="alert" className="text-sm text-bad-ink">History unavailable: {historyError} <Link href={href("history")} className="underline">Restart history</Link></p> : <><History rows={history} slug={sc.slug} path={path} knownAgents={knownAgents} />{historyNext !== null ? <Link prefetch={false} href={`${href("history")}&historyafter=${encodeURIComponent(historyNext)}`} className="block pt-3 text-sm text-accent-ink">Older changes →</Link> : null}</>
         ) : tab === "blame" ? (
           <Blame sy={sy} slug={sc.slug} path={path} knownAgents={knownAgents} offset={Math.max(0, Number(blameOffset) || 0)} />
         ) : tab === "related" ? (
           <p className="text-sm text-ink-3">Related task and job attribution appears below.</p>
         ) : tab === "edit" ? (
-          path.startsWith("global/preferences/") || /^projects\/[^/]+\/memory\//.test(path) ? <Link href={`${sc.base}/brain?view=memory`} className="text-sm text-accent-ink">Edit typed memory in Memory & preferences →</Link> : <BrainEditor key={path} project={sc.slug} path={path} initial={doc.content} digest={doc.digest} kind={doc.kind} maxCurrentState={sy.cfg.brain.current_state_max_lines} />
+          /^(?:global\/preferences\/|projects\/[^/]+\/memory\/)/i.test(path) ? <Link href={`${sc.base}/brain?view=memory`} className="text-sm text-accent-ink">Edit typed memory in Memory & preferences →</Link> : <BrainEditor key={path} project={sc.slug} path={path} initial={doc.content} digest={doc.digest} kind={doc.kind} maxCurrentState={sy.cfg.brain.current_state_max_lines} />
         ) : (
           <>
             {doc.kind === "working_doc" ? (

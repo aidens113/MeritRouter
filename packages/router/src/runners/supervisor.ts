@@ -33,10 +33,11 @@ import picomatch from "picomatch";
 import { taskWriteScope } from "../harness/task-scope.js";
 import { UNLIMITED_REQUESTS } from "../admission/admission.js";
 import { requestBudgetTool } from "../harness/budget-tools.js";
+import { projectMemoryTool } from "../harness/memory-tools.js";
 import { harnessV2Tools, harnessV2StartupContext } from "../harness/operation-dispatch.js";
 import { deliveryTools } from "../harness/delivery-tools.js";
 import { ProductDeliveries } from "../verification/product-delivery.js";
-import { currentProductCandidate } from "../verification/product-candidate.js";
+import { synchronizeDeliveryCandidate } from "../verification/product-runtime.js";
 import { deliverySpecDigest } from "../verification/product-spec.js";
 import { productCandidateDigest } from "../verification/product-evidence.js";
 import { z } from "zod";
@@ -233,6 +234,7 @@ export class SupervisorRunner implements CodingRunner {
     const tools: HarnessTool[] = [
       ...(!ctx.resume || ctx.resume.plan.messages.some(m => typeof m.content === "string" && m.content.includes("Harness v2:")) ? [...harnessV2Tools(env), ...deliveryTools(repos.values())] : []),
       requestBudgetTool(),
+      projectMemoryTool(),
       ...repoTools([...readers.keys()]),
       ...(primary ? editTools() : []),
       ...(env.commands ? [commandTool(patterns)] : []),
@@ -404,7 +406,7 @@ export class SupervisorRunner implements CodingRunner {
       for(const name of Object.keys(status.lab.recipe.checks)){
         const result=status.checks.find(check=>check.name===name&&labCheckMatchesHeads(check,status.heads));
         const repo=status.lab.repositories.find(repo=>repo.alias===result?.repository);
-        const checkedRepos=result?.browser?status.lab.repositories:repo?[repo]:[];
+        const checkedRepos=result?.browser||result?.journey?status.lab.repositories:repo?[repo]:[];
         const clean=repo && (await Promise.all(checkedRepos.map(item=>dirtyPaths(item.worktree)))).every(paths=>paths.length===0);
         const logRef=ctx.artifacts.write({taskId:ctx.taskId,executionId,kind:"check_log",label:`lab:${name}`,content:ctx.lab.manager.redact(ctx.lab.project,ctx.lab.name,result?`revision ${result.revision}\nexit ${result.exitCode}\n${result.stdout}\n${result.stderr}`:"No check result exists for this candidate revision."),extension:".log"});
         checks.push({command:`lab:${name}`,exitCode:result&&clean&&!result.killed?result.exitCode:null,logRef,revision:result?.revision??null});
@@ -414,7 +416,7 @@ export class SupervisorRunner implements CodingRunner {
     const delivery = new ProductDeliveries(ctx.tasks.db);
     let productStatus = delivery.status(ctx.taskId, (ctx.tasks.projectOf(ctx.taskId) ?? ctx.cfg.brain.project));
     if (productStatus && repos.size && !ctx.signal.aborted) {
-      delivery.setCandidate(ctx.taskId, (ctx.tasks.projectOf(ctx.taskId) ?? ctx.cfg.brain.project), await currentProductCandidate(ctx,repos.values()));
+      await synchronizeDeliveryCandidate(ctx,repos.values());
       productStatus = delivery.status(ctx.taskId, (ctx.tasks.projectOf(ctx.taskId) ?? ctx.cfg.brain.project));
       if (productStatus?.candidate && checks.length && (await Promise.all([...repos.values()].map(r=>dirtyPaths(r.worktree)))).every(paths=>paths.length===0)) {
         const criteria=productStatus.spec.criteria.filter(c=>c.requiredEvidence.includes("structural")).map(c=>c.id);

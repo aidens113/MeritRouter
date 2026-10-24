@@ -592,17 +592,27 @@ export class Brain {
 
   // ---------- index and search ----------
 
-  private indexFile(rel: string): void {
-    const r = this.resolve(rel);
-    if (!rel.endsWith(".md")) return;
+  private bumpIndexGeneration(rel: string): void {
     const projectScope = /^projects\/([^/]+)\//.exec(rel)?.[1];
     const scope = projectScope ? `project:${projectScope}` : "global";
     this.db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(`brain:index-generation:${scope}`, randomUUID());
+  }
+
+  private removeFromIndex(rel: string): void {
+    this.bumpIndexGeneration(rel);
     this.db.prepare("DELETE FROM brain_fts WHERE path = ?").run(rel);
+    this.db.prepare("DELETE FROM brain_files WHERE path = ?").run(rel);
+  }
+
+  private indexFile(rel: string): void {
+    const r = this.resolve(rel);
+    if (!rel.endsWith(".md")) return;
     if (!existsSync(r.abs)) {
-      this.db.prepare("DELETE FROM brain_files WHERE path = ?").run(rel);
+      this.removeFromIndex(rel);
       return;
     }
+    this.bumpIndexGeneration(rel);
+    this.db.prepare("DELETE FROM brain_fts WHERE path = ?").run(rel);
     const st = statSync(r.abs);
     const text = readFileSync(r.abs, "utf8");
     const doc = parseDoc(text);
@@ -627,6 +637,7 @@ export class Brain {
     await this.ensure();
     const seen = new Set<string>();
     const pending: string[] = [];
+    const removed = new Set<string>();
     let changed = 0;
     // The index is shared by every project's brain; each maintains its own folder, global/, and
     // the root (another project's mounts are invisible here, so its rows are left alone).
@@ -654,10 +665,10 @@ export class Brain {
     };
     visit("");
     for (const mount of this.mounts) if (this.owns(mount.prefix)) visit(mount.prefix);
-    for (const p of known.keys()) if (!seen.has(p)) pending.push(p);
+    for (const p of known.keys()) if (!seen.has(p)) { pending.push(p); removed.add(p); }
     // Bound synchronous parsing/FTS work so cold indexing does not freeze the panel event loop.
     for (let at = 0; at < pending.length; at += 100) {
-      this.db.transaction(() => { for (const rel of pending.slice(at, at + 100)) { this.indexFile(rel); changed++; } })();
+      this.db.transaction(() => { for (const rel of pending.slice(at, at + 100)) { if (removed.has(rel)) this.removeFromIndex(rel); else this.indexFile(rel); changed++; } })();
       if (at + 100 < pending.length) await new Promise<void>(resolve => setImmediate(resolve));
     }
     return changed;
@@ -669,7 +680,9 @@ export class Brain {
     const prefix = normalizeBrainPath(opts.prefix ?? "");
     const limit = Math.min(100, Math.max(1, Math.trunc(opts.limit ?? 50)));
     const scoped = opts.scope !== "all";
-    const generations = this.db.prepare("SELECT key, value FROM meta WHERE key IN (?, ?) ORDER BY key").all("brain:index-generation:global", `brain:index-generation:project:${this.project}`) as Array<{ key: string; value: string }>;
+    const generations = (scoped
+      ? this.db.prepare("SELECT key, value FROM meta WHERE key IN (?, ?) ORDER BY key").all("brain:index-generation:global", `brain:index-generation:project:${this.project}`)
+      : this.db.prepare("SELECT key, value FROM meta WHERE key LIKE 'brain:index-generation:%' ORDER BY key").all()) as Array<{ key: string; value: string }>;
     const generation = brainContentDigest(JSON.stringify(generations));
     const sql = `SELECT path, title, kind, status, lines, mtime FROM brain_files WHERE path > ? AND path LIKE ? ESCAPE '\\'${scoped ? " AND (path LIKE ? ESCAPE '\\' OR path LIKE 'global/%' OR path = 'README.md')" : ""} ORDER BY path LIMIT ?`;
     // Scan bounded chunks through ACLs so denied rows cannot crowd out visible metadata.
@@ -723,10 +736,10 @@ export class Brain {
     } catch { return []; }
   }
 
-  async blame(rel: string): Promise<BlameLine[]> {
+  async blame(rel: string, opts: { signal?: AbortSignal; timeoutMs?: number; maxBuffer?: number } = {}): Promise<BlameLine[]> {
     const r = await this.resolveGitDocument(rel);
     if (!r) throw new BrainError(`${rel} is not tracked by MeritRouter`);
-    const lines = await blame(r.repo, r.repoRel);
+    const lines = await blame(r.repo, r.repoRel, "HEAD", opts);
     return lines.map(line => ({ ...line, origPath: line.origPath.startsWith(r.mountPrefix) ? line.origPath.slice(r.mountPrefix.length) : line.origPath }));
   }
 

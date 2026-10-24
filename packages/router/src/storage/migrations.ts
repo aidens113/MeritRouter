@@ -959,4 +959,29 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX product_deliveries_project ON product_deliveries(project_id, updated_at);
   `,
+  // Keep prior specifications, evidence and FINAL decisions when the current candidate changes.
+  `
+  CREATE TABLE product_delivery_history (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    spec_json TEXT NOT NULL,
+    candidate_json TEXT,
+    evidence_json TEXT NOT NULL,
+    final_decision_json TEXT,
+    recorded_at INTEGER NOT NULL
+  );
+  CREATE INDEX product_delivery_history_scope ON product_delivery_history(project_id,task_id,sequence);
+  INSERT INTO product_delivery_history(task_id,project_id,stage,spec_json,candidate_json,evidence_json,final_decision_json,recorded_at)
+    SELECT task_id,project_id,stage,spec_json,candidate_json,evidence_json,final_decision_json,updated_at FROM product_deliveries;
+  CREATE TRIGGER product_delivery_insert_history AFTER INSERT ON product_deliveries BEGIN
+    INSERT INTO product_delivery_history(task_id,project_id,stage,spec_json,candidate_json,evidence_json,final_decision_json,recorded_at)
+      VALUES(NEW.task_id,NEW.project_id,NEW.stage,NEW.spec_json,NEW.candidate_json,NEW.evidence_json,NEW.final_decision_json,NEW.updated_at);
+  END;
+  CREATE TRIGGER product_delivery_update_history AFTER UPDATE ON product_deliveries BEGIN
+    INSERT INTO product_delivery_history(task_id,project_id,stage,spec_json,candidate_json,evidence_json,final_decision_json,recorded_at)
+      VALUES(NEW.task_id,NEW.project_id,NEW.stage,NEW.spec_json,NEW.candidate_json,NEW.evidence_json,NEW.final_decision_json,NEW.updated_at);
+  END;
+  `,
 ];

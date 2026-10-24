@@ -33,6 +33,7 @@ import { out, table } from "./cli/terminal.js";
 import { ensurePanel, revivePanel } from "./operations/panel.js";
 import { mcpOptions, runMcpServer } from "./mcp/serve.js";
 import type { ScanSummary } from "./models/scanner.js";
+import { cliDecisionActor } from "./cli/actor.js";
 
 // The `meritrouter` command: argument parsing and dispatch. Terminal rendering lives in src/cli/.
 
@@ -98,6 +99,7 @@ async function main(): Promise<number> {
       after: { type: "string" },
       limit: { type: "string" },
       reason: { type: "string" },
+      human: {type:"boolean",default:false},
       grant: { type: "string" },
       importance: { type: "string" },
       "importance-reason": { type: "string" },
@@ -297,12 +299,12 @@ async function main(): Promise<number> {
         return 0;
       }
       case "await": {
-        const r = await sy.awaitResults(args, { timeoutSeconds: Number(values.timeout ?? cfg.execution.await_max_seconds) });
+        const r = await sy.awaitResults(args, { timeoutSeconds: Number(values.timeout ?? cfg.execution.await_max_seconds), project:idScope() });
         out(r, true);
         return r.timedOut ? 2 : 0;
       }
       case "collect":
-        out(sy.collectResults(args), true);
+        out(sy.collectResults(args,idScope()), true);
         return 0;
       case "cancel":
         out(sy.cancelTasks(args, idScope()), true);
@@ -319,7 +321,7 @@ async function main(): Promise<number> {
       case "reject": {
         const id = args[0];
         if (!id) throw new MeritRouterError("usage", `usage: meritrouter ${cmd} <task id> ${cmd === "reject" ? "--reason" : "[--reason]"} "<why>"`);
-        const r = decideTaskAcceptance(sy, id, cmd, { kind: "human", id: cliActor() }, values.reason?.trim() || null, idScope());
+        const r = decideTaskAcceptance(sy, id, cmd, cliDecisionActor({id:cliActor(),humanRequested:values.human??false,stdinIsTTY:process.stdin.isTTY??false,stdoutIsTTY:process.stdout.isTTY??false}), values.reason?.trim() || null, idScope());
         out(json ? r : `${r.taskId}: ${r.decision.decision} by ${r.decision.by.id}; acceptance ${r.acceptanceStatus}`, json);
         return 0;
       }
@@ -444,7 +446,7 @@ the planned budget does not fit what is left of today's qualification allocation
         return 0;
       }
       case "answer": {
-        sy.answerQuestion(Number(args[0]), args.slice(1).join(" "), "user", idScope());
+        sy.answerQuestion(Number(args[0]), args.slice(1).join(" "), cliDecisionActor({id:cliActor(),humanRequested:values.human??false,stdinIsTTY:process.stdin.isTTY??false,stdoutIsTTY:process.stdout.isTTY??false}).id, idScope());
         out(`answered question ${args[0]}`, json);
         return 0;
       }
@@ -478,7 +480,8 @@ the planned budget does not fit what is left of today's qualification allocation
           const id = Number(args[1]);
           if (!Number.isInteger(id) || id < 1) throw new MeritRouterError("usage", `usage: meritrouter budget ${sub} <id> ${sub === "approve" ? "[--grant N] " : ""}[--reason "<why>"]`);
           const grant = values.grant !== undefined ? Number(values.grant) : null;
-          const r = decideBudgetRequest(sy, id, { approve: sub === "approve", grant, reason: values.reason?.trim() || args.slice(2).join(" ") || `${sub === "approve" ? "approved" : "denied"} by the user`, by: { kind: "human", id: cliActor() } }, idScope());
+          const actor=cliDecisionActor({id:cliActor(),humanRequested:values.human??false,stdinIsTTY:process.stdin.isTTY??false,stdoutIsTTY:process.stdout.isTTY??false});
+          const r = decideBudgetRequest(sy, id, { approve: sub === "approve", grant, reason: values.reason?.trim() || args.slice(2).join(" ") || `${sub === "approve" ? "approved" : "denied"} by CLI`, by: { kind: actor.kind==="human"?"human":"external", id: actor.id } }, idScope());
           out(json ? r : `budget request ${r.id}: ${r.status}${r.status === "approved" ? ` (+${r.granted} requests for ${r.taskId})` : ""}`, json);
         } else throw new MeritRouterError("usage", "usage: meritrouter budget list [--status pending|approved|denied|expired|all] [--job <id>] | approve <id> [--grant N] [--reason ...] | deny <id> [--reason ...]");
         return 0;

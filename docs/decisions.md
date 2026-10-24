@@ -644,3 +644,15 @@ not documentation. Paths are relative to `server/src/`.
 Container image proof retains the approved manifest reference and the separately inspected image configuration ID. Docker's [manifest example](https://docs.docker.com/reference/cli/docker/manifest/) shows a manifest digest and a distinct config descriptor digest; equating those identities would reject valid configurations or check the wrong object. Our pure ownership verifier compares actual container Image to the approved image config ID and requires that approved inspection to include the manifest reference. This is a source-backed contract, not actual-engine acceptance.
 
 Effective argv also includes approved image defaults: a non-null Compose entrypoint suppresses the image's default command unless the recipe supplies its own command, per [Compose entrypoint](https://docs.docker.com/reference/compose-file/services/#entrypoint). Independently obtained image and engine baseline facts must be sealed before provisioning; candidate inspect data cannot attest its own baseline. Runtime remains disabled pending durable ownership and actual-engine checks.
+
+### Delivery v2 isolated interactive browser contract (2026-10-23)
+
+The retained Lab interactive journey adapter uses a separately configured local Docker engine
+and an already installed image pinned by digest. Docker documents that [container create](https://docs.docker.com/reference/cli/docker/container/create/)
+does not start a container: the adapter can persist ownership and inspect its actual settings
+before an attached start. The [none network driver](https://docs.docker.com/engine/network/drivers/none/)
+provides only container loopback; a parent-side broker serves bounded requests to the owned
+Lab origin over CDP rather than giving the browser host-network access. These primary contracts
+were checked independently during integration. They do not establish that this implementation
+has passed real-engine acceptance: the local Docker Desktop Linux pipe was absent. No daemon
+was started, image downloaded, or host-browser substitute admitted as isolated journey evidence.

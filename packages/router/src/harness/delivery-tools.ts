@@ -2,11 +2,11 @@ import { z } from "zod";
 import type { HarnessTool } from "./tools.js";
 import { ProductDeliveries, DeliveryStageSchema } from "../verification/product-delivery.js";
 import { DeliverySpecSchema, deliverySpecDigest } from "../verification/product-spec.js";
-import { currentProductCandidate } from "../verification/product-candidate.js";
 import { productCandidateDigest } from "../verification/product-evidence.js";
 import { executeSupervisorCommand } from "./worker-actions.js";
 import { minimalEnv } from "../runners/coding/process.js";
 import { dirtyPaths } from "../workspaces/git.js";
+import { synchronizeDeliveryCandidate } from "../verification/product-runtime.js";
 
 /** Coordination tools accept specifications and stages, never model-authored observed receipts. */
 export function deliveryTools(repositories:Iterable<{alias:string;worktree:string}>):HarnessTool[] {
@@ -27,16 +27,21 @@ export function deliveryTools(repositories:Iterable<{alias:string;worktree:strin
       const ctx=env.ctx,store=new ProductDeliveries(ctx.tasks.db),project=(ctx.tasks.projectOf(ctx.taskId) ?? ctx.cfg.brain.project);
       const before=store.status(ctx.taskId,project);
       if(!before||!["integrate","validate"].includes(before.stage))throw new Error("Set specification and complete prepare/plan/implement/integrate stages before integrated validation");
-      if(!repos.length||!ctx.spec.constraints.checks?.length)throw new Error("Integrated check recipes are missing");
+      if(!repos.length)throw new Error("Integration repositories are missing");
+      const resolved=await synchronizeDeliveryCandidate(ctx,repos);
+      if(!ctx.spec.constraints.checks?.length){
+        if(!ctx.lab)throw new Error("Integrated check recipes are missing");
+        return JSON.stringify(resolved);
+      }
       const startedAt=Date.now(),logs:string[]=[],observations:string[]=[];let passed=true;
-      const candidate=await currentProductCandidate(ctx,repos);store.setCandidate(ctx.taskId,project,candidate);
+      const candidate=resolved!.candidate!;
       for(const [index,command] of ctx.spec.constraints.checks.entries()){
         const result=await executeSupervisorCommand(ctx,{command,cwd:repos[0]!.worktree,invocationId:`delivery_validation:${env.toolInvocationId??startedAt}:${index}`,env:minimalEnv({CI:"1"}),timeoutMs:ctx.cfg.execution.check_timeout_seconds*1000,reason:"Integrated delivery structural validation"});
         passed=passed&&!result.killed&&result.exitCode===0;
-        logs.push(ctx.artifacts.write({taskId:ctx.taskId,executionId:ctx.taskId,kind:"check_log",label:command,content:`$ ${command}\nexit ${result.exitCode}\n${result.stdout}\n${result.stderr}`,extension:".log"}));
+        logs.push(ctx.artifacts.write({taskId:ctx.taskId,kind:"check_log",label:command,content:`$ ${command}\nexit ${result.exitCode}\n${result.stdout}\n${result.stderr}`,extension:".log"}));
         observations.push(`${command}: ${result.killed?"terminated":`exit ${result.exitCode}`}`);
       }
-      const current=await currentProductCandidate(ctx,repos);
+      const current=(await synchronizeDeliveryCandidate(ctx,repos))!.candidate!;
       if(productCandidateDigest(current)!==productCandidateDigest(candidate)||(await Promise.all(repos.map(repo=>dirtyPaths(repo.worktree)))).some(paths=>paths.length))throw new Error("Candidate changed during checks; commit/repair and validate the exact candidate again");
       const ids=before.spec.criteria.filter(c=>c.requiredEvidence.includes("structural")).map(c=>c.id);
       if(ids.length)store.recordEvidence(ctx.taskId,project,{schemaVersion:1,id:`validation-${env.toolInvocationId??startedAt}`,criterionIds:ids,kind:"structural",specDigest:deliverySpecDigest(before.spec),candidateDigest:productCandidateDigest(candidate),actor:{id:`runtime:${ctx.taskId}`,role:"runtime"},basis:"observed",outcome:passed?"pass":"fail",startedAt,completedAt:Date.now(),expiresAt:null,artifactRefs:logs,observations,unknowns:[],subjectActorIds:[`supervisor:${ctx.spec.label??ctx.taskId}`]});

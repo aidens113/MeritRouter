@@ -61,12 +61,12 @@ export interface CommitInfo {
   trailers: Record<string, string>;
 }
 
-export async function commitInfo(repo: string, commits: string[]): Promise<Map<string, CommitInfo>> {
+export async function commitInfo(repo: string, commits: string[], opts: { signal?: AbortSignal; timeoutMs?: number; maxBuffer?: number } = {}): Promise<Map<string, CommitInfo>> {
   const out = new Map<string, CommitInfo>();
   const unique = [...new Set(commits)].filter((c) => !/^0+$/.test(c));
   for (let i = 0; i < unique.length; i += 200) {
     const chunk = unique.slice(i, i + 200);
-    const raw = await git(repo, ["log", "--no-walk=unsorted", "--format=%H%x1f%s%x1f%an%x1f%aI%x1f%(trailers:unfold)%x1e", ...chunk]);
+    const raw = await git(repo, ["log", "--no-walk=unsorted", "--format=%H%x1f%s%x1f%an%x1f%aI%x1f%(trailers:unfold)%x1e", ...chunk], opts);
     for (const rec of raw.split("\x1e")) {
       const [commit, subject, authorName, date, trailers] = rec.replace(/^\s+/, "").split("\x1f");
       if (!commit) continue;
@@ -94,8 +94,8 @@ export interface BlameLine {
 }
 
 /** Per-line attribution: git blame, then each commit's agent/model trailers. */
-export async function blame(repo: string, file: string, rev = "HEAD"): Promise<BlameLine[]> {
-  const raw = await git(repo, ["blame", "--line-porcelain", rev, "--", file]);
+export async function blame(repo: string, file: string, rev = "HEAD", opts: { signal?: AbortSignal; timeoutMs?: number; maxBuffer?: number } = {}): Promise<BlameLine[]> {
+  const raw = await git(repo, ["blame", "--line-porcelain", rev, "--", file], opts);
   const lines: Array<{ commit: string; origLine: number; finalLine: number; text: string; origPath: string }> = [];
   let cur: { commit: string; origLine: number; finalLine: number; origPath: string } | null = null;
   for (const l of raw.split("\n")) {
@@ -107,7 +107,7 @@ export async function blame(repo: string, file: string, rev = "HEAD"): Promise<B
       cur = null;
     }
   }
-  const info = await commitInfo(repo, lines.map((l) => l.commit));
+  const info = await commitInfo(repo, lines.map((l) => l.commit), opts);
   return lines.map((l) => {
     const c = info.get(l.commit);
     const t = c?.trailers ?? {};

@@ -89,6 +89,7 @@ export default async function KnowledgePage() {
     <div className="space-y-6">
       <PageHeader
         title="Knowledge"
+        actions={<Link href="/all/brain" className="text-sm text-accent-ink">Manage global preferences →</Link>}
         description="Global knowledge: lessons and terms the agents of every project read. Only supervisors add to it, and only after a check that the lesson names nothing of its project and an independent review on another model. You can approve, reject, and revert."
       />
 

@@ -5,6 +5,18 @@ import type { RunContext } from "../runners/types.js";
 import { git } from "../workspaces/git.js";
 import { productDigest } from "./product-spec.js";
 import { ProductCandidateSchema, type ProductCandidate } from "./product-evidence.js";
+import { resolveCurrentJourneyCandidate } from "../labs/browser-journey-current.js";
+import type { LabManager } from "../labs/lab.js";
+import type { LabRecord } from "../labs/store.js";
+
+/** Resolve runtime identity from retained service evidence, never from a model's receipt. */
+export async function currentDeliveryCandidate(ctx:Pick<RunContext,"spec"|"signal">,repos:Iterable<{alias:string;worktree:string}>,runtime?:{manager:LabManager;lab:LabRecord;specDigest:string}) {
+  if(runtime){
+    const journey=await resolveCurrentJourneyCandidate(runtime.manager,runtime.lab,runtime.specDigest,ctx.signal);
+    if(journey)return journey;
+  }
+  return {candidate:await currentProductCandidate(ctx,repos),check:null};
+}
 
 /** Actual integration tree identities; unspecified fixtures are explicit, never a passed journey. */
 export async function currentProductCandidate(ctx:Pick<RunContext,"spec"|"signal">,repos:Iterable<{alias:string;worktree:string}>):Promise<ProductCandidate> {

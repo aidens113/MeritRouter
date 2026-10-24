@@ -6,6 +6,7 @@ import type { HarnessEnv } from "../src/harness/tools.js";
 import { WorkerTaskSchema } from "../src/core/task.js";
 import { baseConfig, makeEnv, open, reply, ScriptedClient, type Env } from "./helpers.js";
 import type { MeritRouter } from "../src/core/service.js";
+import { capturedLease } from "../src/storage/task-leases.js";
 let env: Env | undefined, sy: MeritRouter | undefined;
 afterEach(async () => { await sy?.close(); sy = undefined; env?.cleanup(); env = undefined; });
 function setup() {
@@ -73,24 +74,43 @@ describe("nested supervisor upward grants", () => {
     expect(requestBudgetTool().available?.(env)).toBe(true);
     expect(requestBudgetTool().available?.({ ...env, ctx: { ...env.ctx, purpose: "verification" } })).toBe(false);
   });
-  it("supervisor tool requests external FINAL approval even when worker auto grants are enabled", async () => {
+  it.each([20,undefined])("supervisor tool requests external FINAL approval even when worker auto grants are enabled (amount %s)", async amount => {
     const { parent, store } = setup();
     sy!.cfg.team.budget_approver = "auto";
     const ctx = { cfg: sy!.cfg, taskId: parent, tasks: sy!.tasks, gate: sy!.gate, now: Date.now, budget: { maxModelRequests: 100 }, signal: new AbortController().signal };
     const harness = { role: "supervisor", ctx } as unknown as HarnessEnv;
-    const pending = requestBudgetTool().run({ requests: 20, reason: "runtime repair" }, harness);
+    const expected=amount??sy!.cfg.supervisor.delivery_budget.extension_requests;
+    const pending = requestBudgetTool().run({ ...(amount!==undefined?{requests:amount}:{}), reason: "runtime repair" }, harness);
     const request = store.list({ taskId: parent })[0]!;
-    expect(request).toMatchObject({ approver: "external", status: "pending" });
+    expect(request).toMatchObject({ approver: "external", status: "pending",requests:expected });
     store.decide(request.id, { approve: true, by: "external:final", reason: "go", cfg: sy!.cfg });
     expect(await pending).toContain("approved by external:final");
-    expect(ctx.budget.maxModelRequests).toBe(120);
+    expect(ctx.budget.maxModelRequests).toBe(100+expected);
   });
   it("protects both delivery supervisor and validation reserves without expanding an explicit lower cap", () => {
     setup();
     sy!.cfg.supervisor.delivery_budget.supervisor_reserve_requests = 80;
     sy!.cfg.supervisor.delivery_budget.validation_reserve_requests = 80;
     const create = (cap: number) => sy!.tasks.submit([WorkerTaskSchema.parse({ profile: "supervise", deliveryVersion: 2, goal: "deliver", constraints: { acceptanceCriteria: ["usable"] }, budget: { maxModelRequests: cap } })])[0]!.taskId;
-    expect(jobPool(sy!.db, sy!.cfg, create(600))).toMatchObject({ cap: 600, reserve: 160, available: 440 });
+    const delivery = create(600);
+    expect(jobPool(sy!.db, sy!.cfg, delivery)).toMatchObject({ cap: 600, reserve: 160, available: 440 });
     expect(jobPool(sy!.db, sy!.cfg, create(100))).toMatchObject({ cap: 100, reserve: 160, available: 0 });
+    sy!.db.prepare("INSERT INTO product_deliveries(task_id,project_id,stage,spec_json,updated_at) VALUES(?,'demo','integrate','{}',?)").run(delivery, Date.now());
+    expect(jobPool(sy!.db, sy!.cfg, delivery)).toMatchObject({ cap: 600, reserve: 80, available: 520 });
+    sy!.db.prepare("UPDATE product_deliveries SET stage='implement' WHERE task_id=?").run(delivery);
+    expect(jobPool(sy!.db, sy!.cfg, delivery)?.reserve).toBe(160);
+  });
+  it("prevents planning from consuming validation reserve, then permits physical dispatch at validation", async () => {
+    setup();
+    sy!.cfg.supervisor.delivery_budget.supervisor_reserve_requests = 0;
+    sy!.cfg.supervisor.delivery_budget.validation_reserve_requests = 1;
+    const taskId = sy!.tasks.submit([WorkerTaskSchema.parse({ profile: "supervise", deliveryVersion: 2, goal: "deliver", constraints: { acceptanceCriteria: ["usable"] }, budget: { maxModelRequests: 1 } })])[0]!.taskId;
+    sy!.tasks.claim("owner", { maxConcurrent: 4, maxWritersPerRepo: 4, leaseMs: 60_000, defaultTimeoutMs: 60_000, supervisorProfiles: ["supervise"], maxSupervisors: 4 });
+    const lease = capturedLease(sy!.tasks.get(taskId)!);
+    const request = { plan: sy!.router.plan("supervise", "T3", ["text"]), executionId: sy!.admission.createExecution("task", "supervise", [{ taskId, itemId: taskId }]), purpose: "supervision", participants: [{ taskId, leaseOwner: lease.owner, lease, budget: { maxModelRequests: 1, maxInputTokens: null, maxOutputTokens: null, maxPaidUsd: 0 } }], chat: { messages: [{ role: "user" as const, content: "plan" }], max_tokens: 10 } };
+    await expect(sy!.gate.request(request)).rejects.toThrow(/supervisor_validation_reserve_protected/);
+    expect(sy!.db.prepare("SELECT COUNT(*) FROM model_requests").pluck().get()).toBe(0);
+    sy!.db.prepare("INSERT INTO product_deliveries(task_id,project_id,stage,spec_json,updated_at) VALUES(?,'demo','validate','{}',?)").run(taskId, Date.now());
+    expect((await sy!.gate.request(request)).requestId).toBeTruthy();
   });
 });

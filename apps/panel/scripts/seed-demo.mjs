@@ -264,6 +264,8 @@ const OFFLINE = "http://127.0.0.1:9";
 const demoKey = (id, extra = {}) => ({ base_url: `${OFFLINE}/${id}/v1`, ...extra, keys: [{ label: `demo ${id} key (fake)`, api_key: `demo-${id}-NOT-A-REAL-KEY`, billing_class: "free_tier" }] });
 const raw = {
   version: 1,
+  // Existing deterministic scripts exercise legacy task orchestration, not a live product pilot.
+  client_supervision: { workflow: "direct_tasks" },
   providers: {
     nvidia: demoKey("nvidia"),
     groq: demoKey("groq"),
@@ -291,7 +293,7 @@ const raw = {
   security: { outside_repository: "supervisor" },
   // The brain lives inside the demo folder so seeding never touches ~/.meritrouter/brain.
   brain: { path: "brain", project: "demo", access_approver: "supervisor", global_requires_approval: true },
-  supervisor: { question_timeout_seconds: 86400 },
+  supervisor: { question_timeout_seconds: 86400, routing: {quality_evidence:endpoints.map(endpoint=>({schemaVersion:1,endpointId:endpoint.id,source:"demo scripted fixture; not a production model-quality claim",checkedAt:new Date(Date.now()-7*24*3600000).toISOString(),expiresAt:new Date(Date.now()+30*24*3600000).toISOString(),classification:"qualified_supervisor",confidence:1,trials:10,scores:{planning:1,architecture:1,supervision:1,integration:1,review:1,product:1,visual:1}}))} },
   // Agents' web search: a pool of a (fake) Tavily key and a SearXNG instance, both on the closed
   // port; the seed answers them in-process. Tavily answers 429, so the call moves on to SearXNG.
   web: { search: { tavily: { api_key: "demo-tavily-NOT-A-REAL-KEY", base_url: `${OFFLINE}/tavily` }, searxng: { base_url: `${OFFLINE}/searxng` } } },

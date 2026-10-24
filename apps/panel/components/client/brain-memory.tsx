@@ -8,8 +8,8 @@ import { Markdown } from "../markdown";
 
 type Entry = { record: MemoryRecord; digest: string; path: string };
 /** Explicit operator instructions; inferred global lessons keep their separate promotion gate. */
-export function BrainMemory({ project, base }: { project: string; base: string }) {
-  const [scope, setScope] = useState<"project" | "global">("project");
+export function BrainMemory({ project, base, globalOnly = false }: { project?: string; base: string; globalOnly?: boolean }) {
+  const [scope, setScope] = useState<"project" | "global">(globalOnly ? "global" : "project");
   const [entries, setEntries] = useState<Entry[]>([]);
   const [after, setAfter] = useState<string | null>(null);
   const [next, setNext] = useState<string | null>(null);
@@ -30,7 +30,7 @@ export function BrainMemory({ project, base }: { project: string; base: string }
     const signal = controller.signal;
     setLoading(true); setLoadError(null);
     try {
-      const response = await fetch(`/api/brain/memory?project=${encodeURIComponent(project)}&scope=${scope}${cursor ? `&after=${encodeURIComponent(cursor)}` : ""}`, { signal });
+      const response = await fetch(`/api/brain/memory?${project ? `project=${encodeURIComponent(project)}&` : ""}scope=${scope}${cursor ? `&after=${encodeURIComponent(cursor)}` : ""}`, { signal });
       const result = await response.json();
       if (!response.ok || !result.ok) throw new Error(result.error ?? "Could not load memory");
       setEntries(result.records); setNext(result.next); setAfter(cursor);
@@ -60,30 +60,63 @@ export function BrainMemory({ project, base }: { project: string; base: string }
     const result = await run("/api/brain/memory", "POST", { project, scope, kind, id, body: text, expectedDigest: selected?.digest ?? null, operation, confirmInstruction: confirmed }, { refresh: false, success: operation === "revoke" ? "Preference revoked; history retained." : "Memory saved." });
     if (result.ok) { reset(); await list(); }
   };
-  return <section className="grid gap-6 lg:grid-cols-[19rem_1fr]">
+  return <div className="space-y-6"><section className="grid gap-6 lg:grid-cols-[19rem_1fr]">
     <div className="space-y-3 rounded-lg border border-line p-4">
       <h2 className="text-sm font-semibold">Written memory</h2>
-      <label className="block text-xs">Scope<select className="field" value={scope} onChange={event => { if (canDiscard()) { reset(); setScope(event.target.value as "project" | "global"); } }}><option value="project">This project</option><option value="global">Global user preferences</option></select></label>
+      <label className="block text-xs">Scope<select className="field" value={scope} disabled={globalOnly || busy} onChange={event => { if (canDiscard()) { reset(); setScope(event.target.value as "project" | "global"); } }}>{!globalOnly ? <option value="project">This project</option> : null}<option value="global">Global user preferences</option></select></label>
       <p className="text-xs text-ink-3">{scope === "global" ? "Explicit instructions that apply across projects. Inferred lessons require Global Knowledge promotion review." : "Project facts, decisions, lessons and your project-specific preferences."}</p>
-      <button type="button" className={buttonClass("secondary", true)} onClick={() => { if (canDiscard()) reset(); }}>New memory</button>
+      {!globalOnly ? <a href="/all/brain" className="block text-xs text-accent-ink">Open standalone global preferences →</a> : null}
+      <button type="button" className={buttonClass("secondary", true)} disabled={busy} onClick={() => { if (canDiscard()) reset(); }}>New memory</button>
       {loading ? <p role="status">Loading memory…</p> : null}
       {loadError ? <p role="alert" className="text-sm text-bad-ink">{loadError} <button onClick={() => void list()} className="underline">Restart list</button></p> : null}
       {!loading && !entries.length ? <p className="text-sm text-ink-3">No typed memory on this page.</p> : null}
-      <ul className="space-y-2">{entries.map(entry => <li key={entry.path}><button type="button" className="w-full rounded border border-line p-2 text-left text-sm hover:bg-surface-2" onClick={() => choose(entry)}><span className="block font-medium">{entry.record.id}</span><span className="text-xs text-ink-3">{entry.record.kind} · {entry.record.status} · revision {entry.record.revision}</span></button></li>)}</ul>
+      <ul className="space-y-2">{entries.map(entry => <li key={entry.path}><button type="button" className="w-full rounded border border-line p-2 text-left text-sm hover:bg-surface-2" disabled={busy} onClick={() => choose(entry)}><span className="block font-medium">{entry.record.id}</span><span className="text-xs text-ink-3">{entry.record.kind} · {entry.record.status} · revision {entry.record.revision}</span></button></li>)}</ul>
       <div className="flex gap-3 text-xs text-accent-ink">{after ? <button onClick={() => void list()}>First page</button> : null}{next ? <button onClick={() => void list(next)}>Next page →</button> : null}</div>
     </div>
     <div className="space-y-3 rounded-lg border border-line p-4">
       <h2 className="text-sm font-semibold">{selected ? "Edit memory" : "Create memory"}</h2>
       {latest ? <div role="alert" className="space-y-2 rounded border border-warn p-3 text-sm"><p>A newer revision exists. Your draft is preserved. Merge the current content before saving.</p><pre className="max-h-48 overflow-auto whitespace-pre-wrap text-xs">{latest.record.body}</pre><button className={buttonClass("secondary", true)} onClick={() => { setSelected(latest); setLatest(null); setConfirmed(false); }}>I reviewed the latest revision; keep my draft for merging</button></div> : null}
-      <label className="block text-xs">Stable ID<input className="field" value={id} disabled={!!selected} placeholder="preferred-testing-style" onChange={event => { setId(event.target.value); setConfirmed(false); }} /></label>
-      <label className="block text-xs">Kind<select className="field" value={kind} disabled={!!selected} onChange={event => { setKind(event.target.value as MemoryRecord["kind"]); setConfirmed(false); }}><option value="user_preference">User preference</option>{scope === "project" ? <><option value="project_fact">Project fact</option><option value="decision">Decision</option><option value="empirical_lesson">Empirical lesson</option></> : null}</select></label>
-      <label className="block text-xs">{kind === "user_preference" ? "Your exact instruction" : "Memory content"}<textarea className="field font-mono text-sm" rows={12} value={text} onChange={event => { setText(event.target.value); setConfirmed(false); }} /></label>
-      <details><summary className="cursor-pointer text-xs">Preview</summary><Markdown text={text} basePath={selected?.path ?? `projects/${project}/memory/${id}.md`} linkBase={base} /></details>
+      <label className="block text-xs">Stable ID<input className="field" value={id} disabled={!!selected || busy} placeholder="preferred-testing-style" onChange={event => { setId(event.target.value); setConfirmed(false); }} /></label>
+      <label className="block text-xs">Kind<select className="field" value={kind} disabled={!!selected || busy} onChange={event => { setKind(event.target.value as MemoryRecord["kind"]); setConfirmed(false); }}><option value="user_preference">User preference</option>{scope === "project" ? <><option value="project_fact">Project fact</option><option value="decision">Decision</option><option value="empirical_lesson">Empirical lesson</option></> : null}</select></label>
+      <label className="block text-xs">{kind === "user_preference" ? "Your exact instruction" : "Memory content"}<textarea className="field font-mono text-sm" rows={12} disabled={busy} value={text} onChange={event => { setText(event.target.value); setConfirmed(false); }} /></label>
+      <details><summary className="cursor-pointer text-xs">Preview</summary><Markdown text={text} basePath={selected?.path ?? (scope === "global" ? `global/preferences/${id}.md` : `projects/${project}/memory/${id}.md`)} linkBase={base} /></details>
       {selected ? <p className="text-xs text-ink-3">Source: {selected.record.source.ref}. Author: {selected.record.author.id} ({selected.record.author.role}). Revision {selected.record.revision}, {selected.record.status}. {selected.record.scope.kind === "global" ? "Global scope." : `Project ${selected.record.scope.project}.`}</p> : null}
-      <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />{kind === "user_preference" ? `This is my instruction and I authorize it for ${scope === "global" ? "all projects" : "this project"}.` : "I confirm this project memory and its source."}</label>
+      <label className="flex items-start gap-2 text-sm"><input type="checkbox" disabled={busy} checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />{kind === "user_preference" ? `This is my instruction and I authorize it for ${scope === "global" ? "all projects" : "this project"}.` : "I confirm this project memory and its source."}</label>
       <div className="flex gap-3"><button className={buttonClass("primary", true)} disabled={busy || !!latest || !confirmed || !/^[a-z0-9][a-z0-9_-]{0,80}$/.test(id) || !text.trim()} onClick={() => void save("write")}>Save memory</button>{selected?.record.kind === "user_preference" && selected.record.status !== "revoked" ? <button className={buttonClass("danger", true)} disabled={busy || !!latest || !confirmed} onClick={() => void save("revoke")}>Revoke preference</button> : null}</div>
       <ActionStatus error={error} message={message} />
       {error ? <p className="text-xs text-ink-3">Your draft is preserved. Refresh the list, inspect the current revision, and merge before retrying a conflict.</p> : null}
     </div>
-  </section>;
+  </section>{project ? <BrainManifestPreview project={project} base={base} /> : null}</div>;
+}
+
+type Receipt = { taskId: string; artifactRef: string; createdAt: number; unavailable: string | null; manifest: null | { role: string; project: string; generatedAt: number; tokenBudget: number; estimatedTokens: number; entries: { ref: string; digest: string; reason: string; estimatedTokens: number }[]; omissions: { ref: string; reason: string }[] } };
+function BrainManifestPreview({ project, base }: { project: string; base: string }) {
+  const [taskId, setTaskId] = useState("");
+  const [receipts, setReceipts] = useState<Receipt[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = async () => {
+    setBusy(true); setError(null);
+    try {
+      const response = await fetch(`/api/brain/memory-preview?project=${encodeURIComponent(project)}${taskId ? `&taskId=${encodeURIComponent(taskId)}` : ""}`);
+      const result = await response.json();
+      if (!response.ok || !result.ok) throw new Error(result.error ?? "Manifest unavailable");
+      setReceipts(result.receipts);
+    } catch (err) { setError((err as Error).message); }
+    finally { setBusy(false); }
+  };
+  return <details className="space-y-3 rounded-lg border border-line p-4">
+    <summary className="cursor-pointer text-sm font-semibold">What agents actually received</summary>
+    <p className="text-xs text-ink-3">Historical injection manifests from completed context assembly, including role budgets, exact digests and omissions. These receipts do not predict current or future context; edits and revocations may have occurred afterward.</p>
+    <div className="flex flex-wrap gap-2"><input aria-label="Manifest task ID" className="field max-w-md" placeholder="Optional task ID" value={taskId} onChange={event => setTaskId(event.target.value)} /><button className={buttonClass("secondary", true)} disabled={busy} onClick={() => void load()}>{busy ? "Loading…" : "Load actual context receipts"}</button></div>
+    {error ? <p role="alert" className="text-sm text-bad-ink">{error}</p> : null}
+    {receipts?.length === 0 ? <p className="text-sm text-ink-3">No stored memory manifests yet. Actual task execution records these receipts.</p> : null}
+    {receipts?.map(receipt => <article key={receipt.artifactRef} className="space-y-2 rounded border border-line p-3 text-xs">
+      <p className="font-mono">{receipt.taskId} · {receipt.artifactRef}</p>
+      {receipt.manifest ? <><p>{receipt.manifest.role} · {receipt.manifest.estimatedTokens} estimated tokens / {receipt.manifest.tokenBudget} token cap · captured {new Date(receipt.manifest.generatedAt).toLocaleString()}</p>
+        <ul className="space-y-1">{receipt.manifest.entries.map(entry => <li key={entry.ref}><a className="text-accent-ink" href={`${base}/brain?path=${encodeURIComponent(entry.ref.slice("brain:".length))}`}>{entry.ref}</a> · {entry.reason} · {entry.estimatedTokens} tokens <code>{entry.digest.slice(0, 12)}</code></li>)}</ul>
+        {receipt.manifest.omissions.length ? <details><summary className="cursor-pointer">{receipt.manifest.omissions.length} omissions</summary><ul>{receipt.manifest.omissions.map((entry, index) => <li key={`${entry.ref}:${index}`}>{entry.ref}: {entry.reason}</li>)}</ul></details> : null}
+      </> : <p role="status" className="text-ink-3">{receipt.unavailable}</p>}
+    </article>)}
+  </details>;
 }

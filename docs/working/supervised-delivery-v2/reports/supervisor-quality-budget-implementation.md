@@ -37,7 +37,7 @@ supervisor runner tool registration, fixture-helper updates and public documenta
 ## Validation observed
 
 `pnpm exec vitest run tests/supervisor-quality.test.ts tests/supervisor-budget-extension.test.ts`
-passed **22/22 tests**. Coverage includes cross-provider quality ordering, unknown parameter
+passed **23/23 tests**. Coverage includes cross-provider quality ordering, unknown parameter
 sizes, forced weak-route refusal, paid-disabled/free-exhaustion/preferred behavior, worker
 compatibility, stale/future/low-confidence/weak-capability/missing-visual evidence, actual Gate
 dispatch ignoring weaker stickiness then refusing expired session evidence without another
@@ -45,6 +45,11 @@ HTTP call, nested grant conservation, sibling over-allocation/duplicate decision
 carve rollback, root grants, persisted router close/reopen, three-level ancestor holds,
 actual upward-tool FINAL resolution despite worker auto grants, and 600-request version2
 delivery pools protecting 80 supervisor plus 80 validation requests without raising lower caps.
+Validation reserve becomes available to child grants in integrate/validate/handoff, while
+80 supervisor requests remain held. Physical Gate dispatch prevents planning/implementation
+from spending protected validation headroom, including a recheck immediately before effects.
+The direct test proves no model request is reserved/sent when blocked and dispatch succeeds
+after the authenticated delivery stage changes to validation.
 No full-repository validation while other workers edited; parent owns that combined gate.
 
 ## Remaining integration and limitations

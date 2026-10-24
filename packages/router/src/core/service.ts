@@ -705,6 +705,9 @@ export class MeritRouter {
   }): Promise<SubmitOutcome> {
     if (!this.cfg.profiles.supervise) throw new TaskValidationError("this configuration has no supervise task type; use a standalone preset or add profiles.supervise");
     const project = this.projects.forWrite(input.project).project.slug;
+    const maxModelRequests = input.maxModelRequests ?? (this.cfg.client_supervision.workflow === "delegated_delivery"
+      ? Math.min(this.cfg.supervisor.delivery_budget.total_requests, this.cfg.profiles.supervise.max_model_requests ?? Infinity)
+      : undefined);
     const [out] = await this.submitTasks([
       {
         profile: "supervise",
@@ -716,7 +719,7 @@ export class MeritRouter {
         ...(input.label ? { label: input.label } : {}),
         ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
         constraints: { acceptanceCriteria: input.acceptanceCriteria?.length ? input.acceptanceCriteria : ["The goal is achieved and the supervisor verified it"], ...(input.checks?.length ? { checks: input.checks } : {}) },
-        budget: { maxModelRequests: input.maxModelRequests ?? this.cfg.supervisor.delivery_budget.total_requests, ...(input.maxPaidUsd !== undefined ? { maxPaidUsd: input.maxPaidUsd } : {}) },
+        ...(maxModelRequests !== undefined || input.maxPaidUsd !== undefined ? { budget: { ...(maxModelRequests !== undefined ? { maxModelRequests } : {}), ...(input.maxPaidUsd !== undefined ? { maxPaidUsd: input.maxPaidUsd } : {}) } } : {}),
       },
     ], { project });
     return out!;

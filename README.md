@@ -6,8 +6,9 @@ within your routing policies and spending budgets.
 
 It also gives coding agents a framework for testing and reviewing delegated work:
 repository-scoped tasks, executable checks, independent review and recorded evidence.
-The panel shows where requests and tokens went. Keep your current agent as supervisor,
-or use MeritRouter's own.
+The panel shows where requests and tokens went. Your initiating agent stays the FINAL
+supervisor. By default, qualified MeritRouter supervisors plan bounded deliveries, dispatch
+workers, integrate changes and test the result before returning evidence for FINAL review.
 
 **Want your agent to use MeritRouter? Copy this prompt into your agent’s chat:**
 
@@ -16,8 +17,9 @@ Use MeritRouter for this repository. Read MeritRouter's own README and setup gui
 at https://github.com/aidens113/MeritRouter or in its source checkout. Check whether
 the MeritRouter MCP tools are connected. If setup is needed, help me build
 it, register this repository and connect my agent; preserve existing configuration.
-Keep my current agent as the supervisor. Delegate small, clearly scoped tasks to
-MeritRouter, review the returned evidence and integrate only verified changes.
+Keep my current agent as FINAL supervisor. Delegate bounded deliveries to qualified
+MeritRouter supervisors; require specifications, worker delegation, integrated tests and
+independent review. Review observed evidence before accepting the product.
 Reduce model costs using capable free and paid routes within configured budgets.
 Keep outside-repository access on human approval only.
 Guide me to enter credentials in the panel and ask for required approvals.
@@ -30,6 +32,12 @@ Start by explaining what is ready and proposing one small task to verify setup.
 You need **Node.js 22.11 or later**, **Git**, and **pnpm 10.5**. You also need access
 to a model provider or a compatible local model server to run model tasks. An existing
 Claude Code or other MCP-capable agent can act as your supervisor.
+
+Supervisor routing requires current, sourced capability evidence in
+`supervisor.routing.quality_evidence`; it does not infer quality from a provider name or
+model size. An empty or expired evidence set blocks supervisor dispatch with an actionable
+reason. See [supervisor setup](docs/setup.md) before starting a delivery. Legacy task-by-task
+coordination remains available with `client_supervision.workflow: direct_tasks`.
 
 If `pnpm` is missing, install it with `npm install --global pnpm@10.5.0`.
 

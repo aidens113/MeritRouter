@@ -20,7 +20,7 @@ import { ProductDeliveries } from "../verification/product-delivery.js";
 import { deliverySpecDigest } from "../verification/product-spec.js";
 import { productCandidateDigest } from "../verification/product-evidence.js";
 import { ProductEvidenceKindSchema } from "../verification/product-spec.js";
-import { currentProductCandidate } from "../verification/product-candidate.js";
+import { currentDeliveryCandidate } from "../verification/product-candidate.js";
 import { randomUUID } from "node:crypto";
 import { MemoryPreferences, type PreferenceAuthorizationResolver } from "../brain/preferences.js";
 
@@ -80,12 +80,19 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
     if(!task||task.row.project_id!==p||task.spec.profile!=="supervise") throw new Error(`unknown delivery ${id} in project ${p}`);
     return {p,task};
   };
+  const guardDeliveryDecision = (id:string,decision:"accept"|"reject") => {
+    const verification=sy.contract(id)?.contract.verification;
+    if(decision==="accept"&&verification?.acceptance==="supervisor"&&verification.strictAcceptor==="human")
+      throw new Error("human_acceptance_required: this delivery requires an authenticated human decision");
+  };
   const refreshDeliveryCandidate = async (id:string,p:string,task:NonNullable<ReturnType<typeof sy.tasks.get>>) => {
     const status=deliveryStore.status(id,p);
     if(!status?.candidate)return;
     const workspace=sy.sessions.forTask(id).filter(session=>session.role==="supervisor").at(-1)?.workspace;
     if(!workspace?.repos.length)throw new Error("Cannot establish current integration workspace for FINAL review");
-    deliveryStore.setCandidate(id,p,await currentProductCandidate({spec:task.spec,signal:AbortSignal.timeout(30000)},workspace.repos));
+    const runtime=task.spec.lab?{manager:sy.labs,lab:sy.labs.status(p,task.spec.lab).lab,specDigest:deliverySpecDigest(status.spec)}:undefined;
+    const resolved=await currentDeliveryCandidate({spec:task.spec,signal:AbortSignal.timeout(30000)},workspace.repos,runtime);
+    deliveryStore.setCandidate(id,p,resolved.candidate);
   };
   server.registerTool("delivery_status", {title:"Delivery readiness and FINAL decision",description:"Versioned specification, exact candidate, observed criterion coverage, missing evidence and separate FINAL decision.",inputSchema:{taskId:z.string(),...projectInput}},async({taskId,project:named})=>{
     try{const {p,task}=deliveryTask(taskId,named);await refreshDeliveryCandidate(taskId,p,task);return json(deliveryStore.status(taskId,p));}catch(err){return fail(err);}
@@ -100,7 +107,7 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
     }catch(err){return fail(err);}
   });
   server.registerTool("decide_delivery",{title:"FINAL supervisor delivery decision",description:"Accept or reject the exact checked product candidate. Acceptance requires complete observed criterion evidence. Rejection reopens validation. This decision is distinct from task execution acceptance.",inputSchema:{taskId:z.string(),decision:z.enum(["accept","reject"]),reason:z.string().min(1),...projectInput}},async({taskId,decision,reason,project:named})=>{
-    try{const {p,task}=deliveryTask(taskId,named);await refreshDeliveryCandidate(taskId,p,task);const state=deliveryStore.status(taskId,p);if(!state?.candidate)throw new Error("No current candidate");deliveryStore.finalDecision(taskId,p,{schemaVersion:1,decision,reason,actor:{id:`mcp:${server.server.getClientVersion()?.name??"client"}`,role:"initiator"},specDigest:deliverySpecDigest(state.spec),candidateDigest:productCandidateDigest(state.candidate),at:Date.now()});return json(deliveryStore.status(taskId,p));}catch(err){return fail(err);}
+    try{const {p,task}=deliveryTask(taskId,named);guardDeliveryDecision(taskId,decision);await refreshDeliveryCandidate(taskId,p,task);const state=deliveryStore.status(taskId,p);if(!state?.candidate)throw new Error("No current candidate");deliveryStore.finalDecision(taskId,p,{schemaVersion:1,decision,reason,actor:{id:`mcp:${server.server.getClientVersion()?.name??"client"}`,role:"initiator"},specDigest:deliverySpecDigest(state.spec),candidateDigest:productCandidateDigest(state.candidate),at:Date.now()});return json(deliveryStore.status(taskId,p));}catch(err){return fail(err);}
   });
 
   server.registerTool("get_supervision_policy", { title: "External client supervision policy", description: "Read current Claude/Codex outer-supervisor workflow guidance; separate from internal job supervisors and permissions.", inputSchema: {} }, async () => { try { return json(supervisionPolicy(sy)); } catch (err) { return fail(err); } });
@@ -352,13 +359,13 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
     {
       title: "Delegate a bounded MeritRouter-supervised job",
       description: "Hand a whole goal to MeritRouter's own supervisor (models configured under supervisor), which plans, delegates, verifies, and integrates onto a job branch. Use when you want MeritRouter to manage job execution. Default supervisionScope subtask keeps Claude/Codex responsible for final project review, testing and completion. Explicit project scope requires dispatch_final_supervisor permission.",
-      inputSchema: { supervisionScope: z.enum(["subtask", "project"]).optional(), goal: z.string().min(1), repositories: z.array(z.string()).min(1), acceptanceCriteria: z.array(z.string()).optional(), checks: z.array(z.string()).optional(), label: z.string().optional(), lab: z.string().optional(), ...projectInput },
+      inputSchema: { supervisionScope: z.enum(["subtask", "project"]).optional(), goal: z.string().min(1), repositories: z.array(z.string()).min(1), acceptanceCriteria: z.array(z.string()).optional(), checks: z.array(z.string()).optional(), label: z.string().optional(), lab: z.string().optional(), maxModelRequests:z.number().int().positive().optional(), maxPaidUsd:z.number().min(0).optional(), ...projectInput },
     },
     async (a) => {
       try {
         const supervisionScope = a.supervisionScope ?? "subtask";
         scopedMcpTasks(sy, scope(a.project), [{ profile: "supervise", goal: a.goal, supervisionScope, constraints: { acceptanceCriteria: a.acceptanceCriteria?.length ? a.acceptanceCriteria : ["Bounded delegated goal achieved"] } }]);
-        return json({ ...await sy.startJob({ supervisionScope, goal: a.goal, project: scope(a.project), repositories: a.repositories, ...(a.lab ? {lab:a.lab} : {}), ...(a.acceptanceCriteria ? { acceptanceCriteria: a.acceptanceCriteria } : {}), ...(a.checks ? { checks: a.checks } : {}), ...(a.label ? { label: a.label } : {}) }), ...supervisionDispatch({ supervisionScope }) });
+        return json({ ...await sy.startJob({ supervisionScope, goal: a.goal, project: scope(a.project), repositories: a.repositories, ...(a.maxModelRequests!==undefined?{maxModelRequests:a.maxModelRequests}:{}), ...(a.maxPaidUsd!==undefined?{maxPaidUsd:a.maxPaidUsd}:{}), ...(a.lab ? {lab:a.lab} : {}), ...(a.acceptanceCriteria ? { acceptanceCriteria: a.acceptanceCriteria } : {}), ...(a.checks ? { checks: a.checks } : {}), ...(a.label ? { label: a.label } : {}) }), ...supervisionDispatch({ supervisionScope }) });
       } catch (err) {
         return fail(err);
       }

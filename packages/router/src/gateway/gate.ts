@@ -22,6 +22,7 @@ import { probeClient, requestDirect, type DirectRuntime } from "./direct.js";
 import { NOT_IN_PLAN_RECHECK_MS } from "../providers/keys.js";
 import { quarantineReason } from "./quarantine.js";
 import { assessSupervisorQuality } from "../routing/supervisor-quality.js";
+import { jobPool, protectedValidationRequests } from "../admission/budget-requests.js";
 
 export type { DirectRuntime } from "./direct.js";
 
@@ -385,7 +386,20 @@ export class Gate {
         attempts.push({ endpointId: ep.id, outcome: `skipped: ${q}` });
         continue;
       }
+      const assertValidationReserve = (reserved: boolean) => {
+        if (this.cfg.profiles[req.plan.profile]?.mode === "supervisor") {
+          for (const p of req.participants) {
+            const pool = jobPool(this.db, this.cfg, p.taskId);
+            const protectedRequests = protectedValidationRequests(this.db, this.cfg, p.taskId);
+            // Dispatch receipt already holds this request. Keep the validation pool untouched
+            // through planning/implementation, including retries across providers.
+            if (pool?.cap !== null && pool && protectedRequests > 0 && pool.cap - pool.used - pool.held - (reserved ? 0 : 1) < protectedRequests) throw new AdmissionDenied("task_request_budget_exhausted", "supervisor_validation_reserve_protected: planning/implementation cannot consume integrated-validation requests; advance to integration or request resources from FINAL", undefined, p.taskId);
+          }
+        }
+      };
+      assertValidationReserve(false);
       const r = await requestDirect({ cfg: this.cfg, ledger: this.ledger, captures: this.captures, assertDispatch: (participants, reservation, dispatchId) => {
+        assertValidationReserve(true);
         this.admission.assertDispatch(participants);
         if (reservation && dispatchId) new RequestReceipts(this.db).assertDispatch(reservation, dispatchId);
       }, health: this.health, direct: this.direct }, ep, req, participants, estInput, attempts, (e) => this.admit(e, holder, attempts, full, admitted));

@@ -10,8 +10,8 @@ const example = readFileSync(path.join(root, "examples/meritrouter.config.exampl
 const out = path.join(root, "examples/presets");
 mkdirSync(out, { recursive: true });
 
-// A job has no request-count ceiling unless the user configures one; tier/profile limits still
-// bound ordinary worker grants.
+// Delegated delivery uses the configured delivery-budget ceiling (600 by default).
+// This profile adds no smaller ceiling; quality evidence and spending policy still gate dispatch.
 const supervise = {
   mode: "supervisor",
   tools: "supervisor",
@@ -36,8 +36,8 @@ const claudeModel = {
 
 const presets = {
   "claude-code": {
-    header: "Preset: claude-code. Claude Code is the supervisor (via MCP); MeritRouter reduces worker cost with free routes and budgeted paid routes.",
-    edits: [[["brain", "project"], "my-project"]],
+    header: "Preset: claude-code. The MCP client is FINAL supervisor; qualified MeritRouter supervisors own delegated delivery. Configure current supervisor quality evidence before dispatch.",
+    edits: [[["brain", "project"], "my-project"], [["profiles", "supervise"], supervise]],
   },
   "standalone-free": {
     header: "Preset: standalone-free. MeritRouter's own supervisor runs on the most capable eligible free model; workers are free.",

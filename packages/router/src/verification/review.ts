@@ -21,13 +21,16 @@ import { checkEvidenceRef, evidenceUniverse, type EvidenceUniverse } from "../co
 import { ARTIFACT_EVIDENCE_REF_RE, FILE_REF_RE, type ReviewRecord, type WorkerResult } from "../core/task.js";
 import { runAgentLoop, type TerminalTool } from "../harness/loop.js";
 import { workerActionTools } from "../harness/worker-action-tools.js";
-import { artifactTool, repoTools, type HarnessEnv, type HarnessTool } from "../harness/tools.js";
+import { artifactTool, brainReadTools, repoTools, type HarnessEnv, type HarnessTool } from "../harness/tools.js";
 import { agentLabel, charterFor } from "../roles/index.js";
 import type { RunContext, RunOutcome } from "../runners/types.js";
 import { reviewAllowance, reviewCap, reviewReserveAdjustment, type StoredContract } from "./contract.js";
 import type { ReviewOutcome } from "./decide.js";
 import type { Reevaluation } from "./policy.js";
 import { isSimulatedCrash } from "../core/faults.js";
+import { git } from "../workspaces/git.js";
+import { workerBrainEnv } from "../harness/worker.js";
+import { memoryContext } from "../context/memory.js";
 
 /**
  * The deep and strict review phase: an independent reviewer, in its own child session and
@@ -42,10 +45,15 @@ export const VERDICTS = ["pass", "fail", "inconclusive"] as const;
 export const RECOMMENDED_ACTIONS = ["accept", "repair", "run_targeted_check", "needs_supervisor"] as const;
 
 const Refs = z.array(z.string().min(1).max(400)).max(20).default([]);
+export const EvaluatorChangeVerdictSchema = z.object({
+  verdict: z.enum(VERDICTS), changedPaths: z.array(z.string().min(1)).min(1).max(50),
+  evidenceRefs: Refs, reason: z.string().trim().min(1).max(4000),
+}).strict().refine(value => new Set(value.changedPaths).size === value.changedPaths.length, "Evaluator paths must be unique");
 
 export const VerdictSchema = z
   .object({
     verdict: z.enum(VERDICTS),
+    evaluatorChangeReview: EvaluatorChangeVerdictSchema.optional(),
     /** The revision (or artifact digest) the reviewer examined; must be the submitted one. */
     examinedRevision: z.string().min(1).max(100),
     /** The contract's policy fingerprint the reviewer judged against. */
@@ -69,6 +77,7 @@ export type Verdict = z.infer<typeof VerdictSchema>;
 export const VERDICT_JSON_SCHEMA = {
   type: "object",
   properties: {
+    evaluatorChangeReview: { type: "object", properties: { verdict: { type: "string", enum: [...VERDICTS] }, changedPaths: { type: "array", items: { type: "string" } }, evidenceRefs: { type: "array", items: { type: "string" } }, reason: { type: "string" } }, required: ["verdict", "changedPaths", "evidenceRefs", "reason"], additionalProperties: false },
     verdict: { type: "string", enum: [...VERDICTS] },
     examinedRevision: { type: "string" },
     policyVersion: { type: "string" },
@@ -103,6 +112,7 @@ export const VERDICT_CONTRACT = `Call submit_verdict exactly once with:
 - A score (0..1) is optional and never overrides a failed criterion.`;
 
 export interface VerdictExpectations {
+  evaluatorChanges?: { paths: string[]; snapshotRefs: string[] };
   criteria: Array<{ id: string }>;
   /** What examinedRevision must name (a 12+ character prefix of it is accepted). */
   revision: string;
@@ -123,6 +133,17 @@ export function validateVerdict(raw: unknown, x: VerdictExpectations): { ok: tru
   if (!parsed.success) return { ok: false, errors: parsed.error.issues.map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`) };
   const v = parsed.data;
   const errors: string[] = [];
+  if (x.evaluatorChanges) {
+    const evaluation = v.evaluatorChangeReview;
+    if (!evaluation) errors.push("Changed evaluators require evaluatorChangeReview against original assertions/fixtures and candidate implementation");
+    else {
+      const paths = (xs: string[]) => [...new Set(xs)].sort().join("\n");
+      if (paths(evaluation.changedPaths) !== paths(x.evaluatorChanges.paths)) errors.push("evaluatorChangeReview must assess every protected changed path exactly");
+      for (const ref of x.evaluatorChanges.snapshotRefs) if (!evaluation.evidenceRefs.includes(ref)) errors.push(`evaluatorChangeReview must cite immutable baseline/candidate snapshot ${ref}`);
+      if (evaluation.verdict === "fail" && v.verdict !== "fail") errors.push("Failed evaluator review requires overall fail");
+      if (evaluation.verdict === "inconclusive" && v.verdict === "pass") errors.push("Inconclusive evaluator review cannot pass");
+    }
+  }
   const known = new Set(x.criteria.map((c) => c.id));
   const seen = new Set<string>();
   for (const c of v.criteria) {
@@ -137,7 +158,7 @@ export function validateVerdict(raw: unknown, x: VerdictExpectations): { ok: tru
   if (!(rev === x.revision || (rev.length >= 12 && x.revision.startsWith(rev)))) errors.push(`examinedRevision must be the submitted revision ${x.revision}`);
   if (v.policyVersion.trim() !== x.policyVersion) errors.push(`policyVersion must be ${x.policyVersion}`);
   for (const f of v.blockingFindings) if (f.criterionId && !known.has(f.criterionId)) errors.push(`blocking finding cites unknown criterion ${f.criterionId}`);
-  for (const ref of [...v.criteria.flatMap((c) => c.evidenceRefs), ...v.blockingFindings.flatMap((f) => f.evidenceRefs)]) {
+  for (const ref of [...v.criteria.flatMap((c) => c.evidenceRefs), ...v.blockingFindings.flatMap((f) => f.evidenceRefs), ...(v.evaluatorChangeReview?.evidenceRefs ?? [])]) {
     if (x.universe) {
       if (ref === "inline" && x.universe.refs.has("inline")) continue;
       const e = checkEvidenceRef(ref, x.universe);
@@ -151,11 +172,11 @@ export function validateVerdict(raw: unknown, x: VerdictExpectations): { ok: tru
     if (v.blockingFindings.length) errors.push("verdict pass cannot have blocking findings");
     if (v.recommendedAction !== "accept") errors.push("verdict pass recommends accept");
   } else if (v.verdict === "fail") {
-    if (!fails && !v.blockingFindings.length) errors.push("verdict fail needs a failed criterion or a blocking finding");
+    if (!fails && !v.blockingFindings.length && v.evaluatorChangeReview?.verdict !== "fail") errors.push("verdict fail needs a failed criterion, evaluator review or a blocking finding");
     if (v.recommendedAction !== "repair" && v.recommendedAction !== "needs_supervisor") errors.push("verdict fail recommends repair or needs_supervisor");
   } else {
     if (fails || v.blockingFindings.length) errors.push("a failed criterion or blocking finding makes the verdict fail, not inconclusive");
-    if (!unsure && !v.missingEvidence.length) errors.push("verdict inconclusive needs an inconclusive criterion or missingEvidence");
+    if (!unsure && !v.missingEvidence.length && v.evaluatorChangeReview?.verdict !== "inconclusive") errors.push("verdict inconclusive needs an inconclusive criterion or missingEvidence");
     if (v.recommendedAction !== "run_targeted_check" && v.recommendedAction !== "needs_supervisor") errors.push("verdict inconclusive recommends run_targeted_check or needs_supervisor");
   }
   if (v.recommendedAction === "run_targeted_check") {
@@ -279,8 +300,9 @@ export type ReviewSessionResult =
 export async function runReviewSession(i: ReviewSessionInput): Promise<ReviewSessionResult> {
   const { ctx } = i;
   const universe = evidenceUniverse(i.given);
-  const env: HarnessEnv = { ctx, role: "reviewer", readers: i.readers, universe, allowArtifacts: true, edits: new Set() };
-  const tools: HarnessTool[] = [...(i.readers.size ? repoTools([...i.readers.keys()]) : []), artifactTool(), ...webTools(), ...workerActionTools()];
+  const brain = workerBrainEnv(ctx, "reviewer");
+  const env: HarnessEnv = { ctx, role: "reviewer", readers: i.readers, universe, allowArtifacts: true, edits: new Set(), ...(brain ? { brain } : {}) };
+  const tools: HarnessTool[] = [...(i.readers.size ? repoTools([...i.readers.keys()]) : []), artifactTool(), ...(brain ? brainReadTools() : []), ...webTools(), ...workerActionTools()];
   const maxTokens = Math.min(ctx.profile.max_output_tokens, 4000);
   const limits = planLimits(ctx.plan, ctx.cfg.routing.max_endpoint_fallbacks);
   const inputBudget = Math.max(2000, limits.contextLimitTokens - maxTokens - estimateTokens([], [...tools.map((t) => t.def), SUBMIT_VERDICT_DEF]) - 500);
@@ -291,6 +313,8 @@ export async function runReviewSession(i: ReviewSessionInput): Promise<ReviewSes
     },
     { role: "user", content: i.evidence },
   ];
+  const memory = await memoryContext(env, { messages, tools: [...tools.map(tool => tool.def), SUBMIT_VERDICT_DEF], reservedTokens: 500 });
+  if (memory) messages.push({ role: "user", content: memory });
   const executionId = ctx.gate.admission.createExecution("task", ctx.spec.profile, [{ taskId: ctx.taskId, itemId: ctx.taskId }]);
   const loop = await runAgentLoop({
     env,
@@ -323,6 +347,8 @@ export interface ReviewDeps {
 }
 
 export interface ReviewRequest {
+  /** Cancels preparation as well as the later reviewer model loop. */
+  signal?: AbortSignal;
   task: StoredTask;
   contract: StoredContract;
   /** The runner outcome under review (result plus revision, universe, self-assessment). */
@@ -404,6 +430,7 @@ export function supersedeInterruptedReviews(sessions: SessionStore, tasks: TaskS
  * failures leave the review not run (they never raise difficulty); an aborted task rethrows.
  */
 export async function reviewResult(d: ReviewDeps, r: ReviewRequest): Promise<ReviewPhaseResult> {
+  r.signal?.throwIfAborted();
   const { task, contract, outcome } = r;
   const id = task.row.id;
   const re = r.reevaluation;
@@ -477,8 +504,55 @@ export async function reviewResult(d: ReviewDeps, r: ReviewRequest): Promise<Rev
   const coding = !!task.spec.writableRepository && d.cfg.profiles[task.spec.profile]?.mode === "coding";
   const revision = ev.revision ?? (coding ? (ev.artifactDigest ?? "unknown") : answerDigest(res));
   const readers = reviewReaders(d, task);
+  const protectedPaths = [...new Set((res.protectedPathsChanged ?? []).map(path => path.replace(/\\/g, "/")))].sort();
+  const evaluatorRequired = re.checks.includes("evaluator_change_review") && protectedPaths.length > 0;
+  let evaluatorChanges: VerdictExpectations["evaluatorChanges"];
+  let evaluatorEvidence = "";
+  let snapshotGiven: { baseRef: string; totalLines: number | null } | null = null;
+  if (evaluatorRequired) {
+    const snapshotSignal = AbortSignal.any([AbortSignal.timeout(30_000), ...(r.signal ? [r.signal] : [])]);
+    const alias = task.spec.writableRepository;
+    const current = alias ? readers.get(alias) : undefined;
+    const baseCommit = alias ? res.baseCommits[alias] : undefined;
+    if (!alias || !current || !baseCommit || !/^[a-f0-9]{40,64}$/.test(baseCommit) || !/^[a-f0-9]{40,64}$/.test(revision) || protectedPaths.length > 50) return notRun("evaluator review needs immutable baseline/candidate objects and at most 50 changed evaluator files");
+    if (contract.contract.scope.baseCommits[alias] && contract.contract.scope.baseCommits[alias] !== baseCommit) return notRun("evaluator baseline differs from the pinned acceptance contract");
+    try {
+      for (const object of [baseCommit, revision]) {
+        const kind = (await git(current.root, ["cat-file", "-t", object], { signal: snapshotSignal, timeoutMs: 30_000 })).trim();
+        if (kind !== "tree" && kind !== "commit") throw new Error("revision is not a tree/commit");
+      }
+      const baseline = new RepoReader(`${alias}-baseline`, current.root, baseCommit);
+      const candidate = new RepoReader(alias, current.root, revision);
+      const snapshot = async (reader: RepoReader, path: string) => {
+        const listed = await reader.listFiles(path, undefined, 2, snapshotSignal);
+        if (!listed.files.includes(path)) return { status: "absent" as const };
+        const file = await reader.readFile(path, snapshotSignal);
+        return { status: "present" as const, digest: file.sha256, content: file.content };
+      };
+      const files = [];
+      for (const path of protectedPaths) {
+        const before = await snapshot(baseline, path), after = await snapshot(candidate, path);
+        if (before.status === "absent" && after.status === "absent") throw new Error(`Evaluator ${path} is absent from both immutable revisions`);
+        files.push({ path, before, after });
+      }
+      const bundle = { schemaVersion: 1, baseline: baseCommit, candidate: revision, files };
+      snapshotSignal.throwIfAborted();
+      const ref = d.artifacts.writeJson({ taskId: id, kind: "evaluator_snapshot", label: "immutable original and candidate evaluator sources", value: bundle });
+      evaluatorChanges = { paths: protectedPaths, snapshotRefs: [ref] };
+      const rendered = JSON.stringify(bundle, null, 2);
+      const inline = rendered.length <= 16_000;
+      if (inline) snapshotGiven = { baseRef: ref, totalLines: rendered.split("\n").length };
+      evaluatorEvidence = `\n\n## Required independent evaluator change review\nRead original assertions/fixtures and their candidate replacements, compare implementation behavior and original requirements. Reject removed/weakened assertions, skipped tests, weakened fixtures, false positives or production defects hidden by edits. A green edited suite is not independent proof. Cite ${ref}; use read_artifact to inspect the complete snapshot when omitted here. Current repository tools are pinned to ${revision}; ${alias}-baseline exposes original files at ${baseCommit}. Submit evaluatorChangeReview with verdict, every changedPaths entry (${protectedPaths.join(", ")}), evidenceRefs including ${ref}, and a concrete reason. Missing baseline/comparison means inconclusive, never pass.\n${inline ? rendered : "Snapshot is too large to inline; read the complete scoped artifact in pages."}`;
+      readers.set(alias, candidate);
+      readers.set(`${alias}-baseline`, baseline);
+    } catch (error) {
+      r.signal?.throwIfAborted();
+      return notRun(`immutable evaluator snapshots unavailable: ${(error as Error).message.slice(0, 200)}`);
+    }
+  }
   const sources = await loadSources(d.cfg, task.spec, d.artifacts, readers).catch(() => []);
   const given: Array<{ baseRef: string; totalLines: number | null }> = sources.map((s) => ({ baseRef: s.baseRef, totalLines: s.totalLines }));
+  if (snapshotGiven) given.push(snapshotGiven);
   const readText = (ref: string) => {
     try {
       return d.artifacts.read(ref)?.content.toString("utf8") ?? "";
@@ -506,7 +580,7 @@ export async function reviewResult(d: ReviewDeps, r: ReviewRequest): Promise<Rev
     work: coding ? null : { summary: res.summary, findings: res.findings, ...(res.data !== undefined ? { data: res.data } : {}) },
     claim: { summary: res.summary, findings: coding ? res.findings : [], self },
     context: sources.length ? renderSources(sources) : null,
-  });
+  }) + evaluatorEvidence;
 
   // The reviewer's child session and run context. A reviewer interrupted earlier (crash,
   // shutdown, watchdog) is never resumed: it is ended as superseded and this one links to it;
@@ -536,7 +610,7 @@ export async function reviewResult(d: ReviewDeps, r: ReviewRequest): Promise<Rev
 
   let run: ReviewSessionResult;
   try {
-    run = await runReviewSession({ ctx, readers, evidence, given, expect: { criteria, revision, policyVersion: contract.contract.fingerprints.policy, targetedChecksAllowed: coding ? r.targetedChecksAllowed : null } });
+    run = await runReviewSession({ ctx, readers, evidence, given, expect: { criteria, revision, policyVersion: contract.contract.fingerprints.policy, targetedChecksAllowed: coding ? r.targetedChecksAllowed : null, ...(evaluatorChanges ? { evaluatorChanges } : {}) } });
   } catch (err) {
     // A simulated process death leaves the session running, as a real one would.
     if (isSimulatedCrash(err)) throw err;
@@ -580,7 +654,7 @@ export async function reviewResult(d: ReviewDeps, r: ReviewRequest): Promise<Rev
   d.tasks.event(id, "review_completed", { attempt: r.attempt, reviewer, qualified, flags, verdict: v.verdict, recommendedAction: v.recommendedAction, requests });
   const notes = flags.includes("reviewer_unqualified") ? [`review ${r.attempt}: reviewer ${reviewer} is not ${qualName}-qualified (reviewer_unqualified)`] : [];
   return {
-    outcome: reviewOutcomeOf(v),
+    outcome: { ...reviewOutcomeOf(v), ...(evaluatorChanges && v.evaluatorChangeReview && reviewer ? { evaluatorChangeReview: { ...v.evaluatorChangeReview, revision, policyVersion: contract.contract.fingerprints.policy, reviewerEndpointId: reviewer, authorEndpointIds: authors, snapshotRefs: evaluatorChanges.snapshotRefs } } : {}) },
     verdict: v,
     record: {
       ...record,

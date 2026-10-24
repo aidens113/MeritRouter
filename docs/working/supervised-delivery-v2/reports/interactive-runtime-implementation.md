@@ -1,0 +1,46 @@
+# Interactive runtime implementation report
+Status: Implementation ready for review; real interactive platform acceptance blocked
+Owner: interactive-runtime worker (following harness-v2 implementation)
+
+## Current State
+Implementing P5/P6 in the feature worktree. Added a real Docker network-none browser backend and typed journey schema/DOM operations/broker/runtime, integrated with retained Lab recipe/check/artifact dispatch. Existing static renderer and unavailable native netns/AppContainer interfaces stay intact. Source is frozen for FINAL integration validation; the physical interactive platform gate remains blocked.
+
+## Verified host prerequisite
+Read-only command: docker.exe --host npipe:////./pipe/dockerDesktopLinuxEngine info --format '{{.OSType}}'. Exit1: named pipe missing (The system cannot find the file specified). No daemon/service started, no image pull, no host-browser fallback. Actual container/browser/platform acceptance is blocked until an authorized working daemon and approved locally installed digest-pinned image are available.
+
+## Implemented milestone details
+- Human-configured absolute Docker executable/local Unix/named-pipe endpoint, digest-pinned existing image, non-root container user. No model-provided raw command or registry pull.
+- Durable private launch intent before create; exact generation/project/Lab/check labels, engine/image/command identities. Inspect actual namespace/mount/resource/security state before start. Network none, read-only root, no host mounts/devices/privilege/ports, all capabilities dropped, no-new-privileges, private IPC/cgroup namespaces, bounded CPU/memory/PIDs and private noexec tmpfs. Chrome sandbox remains enabled.
+- CDP over container stdin/stdout; fixed trusted Node bridge, independent bounded lifetime/EOF stop. No host debugging listener. Exact owned stop/inspect/remove; ambiguous outcomes preserve private proof. Recovery defers still-live bounded generations and handles expired generations rather than killing another active manager.
+- Typed navigate/click/fill/key/wait/assert/reload/screenshot only; no model evaluate/script command. Every criterion named by actions must have an observable assertion. Native browser input events exercise actual handlers.
+- Parent-only resource broker can contact only the owned declared HTTP origin, with per-request service ownership checks; bounded methods/bodies/cookies/resources, no redirects, restrictive CSP, no external credentials. Container kernel network boundary is independent of CDP request interception.
+- Evidence binds all heads/trees, actual dependency manifests, expected-and-measured declared fixture digest, spec/test/recipe/environment identity and exact browser generation. Missing isolation/runtime is unavailable/failed, never a static pass.
+
+## Verification pending
+Focused schemas/DOM/candidate/inspection/recovery tests, existing static regressions, focused semantic diagnostics and real unavailable-Docker probe. Actual Docker/Chrome network/filesystem/cancellation/crash proof remains unverified on this host. Independent FINAL review and full repository checks required.
+
+## Primary external contracts checked
+Docker docs: https://docs.docker.com/reference/cli/docker/container/create/ ; https://docs.docker.com/engine/network/drivers/none/ ; https://docs.docker.com/reference/cli/docker/container/start/ . Verified create does not start, network:none creates only container loopback, and attached interactive start exposes stdin/stdout. These contracts do not establish this adapter passed runtime acceptance.
+CDP primary domain documentation: https://chromedevtools.github.io/devtools-protocol/tot/Input/ ; https://chromedevtools.github.io/devtools-protocol/tot/DOM/ ; https://chromedevtools.github.io/devtools-protocol/tot/Fetch/ . Typed inputs use browser input/DOM domains; request fulfillment is secondary to real kernel network isolation.
+
+## Final worker receipt and validation
+- Focused gate:47/47 passed across browser-journey(5), browser-journey-docker-recovery(4), browser-journey-current(12), existing browser-pipe(24), existing native-isolation-unavailable(2).
+- Actual installed Windows Chrome static compatibility smoke passed: labs-browser renderer, bounded screenshot retrieval, exact all-head binding and owned process/profile cleanup (28.05s). Seven unrelated cases skipped only by the explicit test-name filter, not platform skips. This proves static compatibility, not interactive containment.
+- Focused TypeScript semantic/syntactic diagnostics for new/adapted Labs and uniquely named tests: clean. Whitespace diff check clean. No repository-wide compile/build claim by worker.
+- Real Lab recipe/start/check dispatch against isolated temporary Node service persisted unavailable interactive evidence for absent Docker executable, scriptsEnabled:false, no browser isolation instance and no host Chrome fallback. Fake-engine lifecycle tests prove logical durable ordering, exact-generation refusal, lost-create-response reconciliation and expired-owner recovery; they are NOT physical Docker acceptance.
+- The current-candidate resolver revalidates current clean heads/trees/dependency manifests, active recipe/test/spec, measured final fixture state, actual service generation, live Docker engine/image identity and screenshot integrity. It preserves the measured initial fixture identity and exact tested browser generation. A newer same-spec failed/unavailable/stale check supersedes an older pass;12 tests cover identity invalidation and no older-green fallback.
+- Current-service restart and viewport changes run within one contained browser generation, allowing a single declared journey to cover desktop/mobile/persistence without mismatching independent browser generations. Every named criterion must have an observable assert/wait step. Upload uses declared hashed fake bytes installed only inside the owned container and typed file-input events; no model host paths or arbitrary JS tools.
+- Runtime reports fixtureAfterDigest separately from initial fixtureDigest so intentional app writes within a successful journey do not falsely invalidate that run; later state changes DO invalidate reuse. Source/recipe/environment identities and screenshots are rechecked before trusted receipt conversion. Exhaustive installed dependency-file hashing is not claimed; dependency identity uses pinned manifests/locks.
+- Resolver API supplied to FINAL: labs/browser-journey-current.ts resolveCurrentJourneyCandidate(manager, lab, specDigest, signal), returns validated {candidate,check} or null. FINAL integrated runtime receipt synchronization separately.
+
+## Material limits and outstanding acceptance work
+1. Docker executable is installed but the configured local Linux-engine named pipe is missing. No working engine/image was available. No image pull, Docker Desktop/service start or OS configuration change occurred. The source adapter is implemented; actual interactive runtime is not certified usable on this host.
+2. A compatible preinstalled digest-pinned Linux image must contain configured Node and Chromium, have no declared image volumes and support Chromium's own sandbox under the deliberately restricted non-root/cap-drop/no-new-privileges profile. Browser sandbox is not disabled to make startup appear successful. Unsupported image/kernel combinations fail visibly.
+3. Physical Docker tests still must prove real JS hydration/input/upload/cookies/restart/mobile flows, foreign TCP/UDP/DNS/WS/WebRTC/file canaries, owner crash/deadline descendants and process/container cleanup with actual platform resources. DOM/engine fixtures cannot substitute for these checks.
+4. Native linux_netns_v1/windows_appcontainer_v1 adapters remain explicitly unavailable. This addition is a separate docker_network_none_v1 backend, not an invented native capability flag.
+5. Existing retained-Lab services still follow their original explicit trusted-command/supervisor authority. Browser containers do not magically sandbox the server process. Automatic worker Task Lab execution/isolation remains the separate existing durable-execution prerequisite; this work does not enable it falsely.
+6. The restricted broker denies foreign origins, redirects, workers/frames/unsupported socket transports and raw evaluate tools. It supports declared HTTP methods and bounded fake bodies/cookies. Real browser multipart body availability and framework-specific runtime compatibility remain part of blocked physical acceptance, not an assumed pass.
+7. A browser pass is criterion-linked runtime evidence, never automatic visual/usability or FINAL acceptance. User review and independent qualified visual review remain required where specified.
+8. Container bridge has an independent maximum lifetime and EOF stop; durable exact-generation recovery waits bounded live generations before cleanup. Ambiguous create/cleanup outcomes retain private proof and report blocked cleanup. This is not a claim of instantaneous kernel owner-death cleanup before actual platform tests.
+
+No commits, live model/provider calls, original clone files, user memory/configuration or real application datasets changed. Source remains frozen for FINAL checks.

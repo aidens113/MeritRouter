@@ -54,6 +54,16 @@ describe("indexed Brain browsing", () => {
     await brain.refreshIndex();
     await expect(brainCatalogPage(sy, { project: "demo", prefix: "projects/demo/notes/", limit: 3, after: page.next! })).rejects.toMatchObject({ code: "brain_cursor_stale" });
     await expect(brainSearchPage(sy, { project: "demo", query: "needle", offset: 3, generation: search.generation })).rejects.toMatchObject({ code: "brain_cursor_stale" });
+    // Replacing a previously indexed directory with a junction/symlink must remove its
+    // metadata, rather than following old indexed paths back into the external target.
+    const outside = path.join(env.dir, "outside-brain");
+    fs.mkdirSync(outside); fs.writeFileSync(path.join(outside, "0.md"), "# Outside secret\nneedle\n");
+    fs.renameSync(path.join(brain.root, "projects/demo/notes"), path.join(env.dir, "parked-notes"));
+    fs.symlinkSync(outside, path.join(brain.root, "projects/demo/notes"), "junction");
+    spy.mockClear();
+    await brain.refreshIndex();
+    expect(spy).not.toHaveBeenCalled();
+    expect(brain.search({ kind: "human" }, "needle", { scope: "project" })).toEqual([]);
   });
 
   it("rejects stale concurrent writes and create collisions under the repository lock", async () => {
