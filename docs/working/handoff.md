@@ -11,8 +11,8 @@ User rejects prior clone as unusable despite recorded checks. The new
 initiator FINAL supervisor plus high-quality delivery supervisors; spec-led stages; conserved
 large budgets/upward requests; complete typed/batched defensive harness; scoped automatic
 memory; runtime/product acceptance; responsive complete Brain panel. Four research reports
-are incorporated. User authorized execution. Implementation is on feat/supervised-delivery-v2
-in D:/SwitchYardRouter-delivery-v2, with isolated validation snapshots. Contracts, delegated
+are incorporated. User authorized execution. Implementation merged and pushed dev/main
+at cc1e0a4; isolated feature/verification worktrees are temporary. Contracts, delegated
 defaults, quality/budget gates, defensive harness, typed automatic memory, actual evaluator
 review and Brain UI/index changes are implemented. Final full run1354pass/2stale HTTP inventory
 failures/3skips; corrected inventory and actual stdio/HTTP/product/repair selection passed12/12.

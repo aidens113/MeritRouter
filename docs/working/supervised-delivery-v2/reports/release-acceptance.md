@@ -87,5 +87,7 @@ Full JSON: `%TEMP%/meritrouter-final-61d572c-tests.json` and final
 
 ## Publication
 
-Source checks cleared for publication under repository standing authorization. Source acceptance
+Merged with preserved feature history and pushed to both dev and main at **cc1e0a4** under
+repository standing authorization. Final dev-integration product/report rerun7/7 passed.
+Source acceptance
 does not close the physical-platform, cold-performance or live-product acceptance work above.

@@ -10,10 +10,11 @@ Related: [trial assessment](instagram-meritrouter-assessment.md), [index](README
 
 ## Current State
 
-User authorized execution. Feature branch feat/supervised-delivery-v2 in
-D:/SwitchYardRouter-delivery-v2 contains the integrated implementation. No downstream clone,
+User authorized execution. Source merged and pushed to dev/main at cc1e0a4; the current
+checkout is D:/SwitchYardRouter on dev. Isolated feature/verification worktrees were temporary.
+No downstream clone,
 real user configuration/Brain, paid routing policy or live panel4477 was changed. No live
-provider calls or paid spending occurred. Source is cleared for dev/main publication;
+provider calls or paid spending occurred. Source publication is complete;
 the live installation has not been restarted or migrated.
 
 Implemented: FINAL initiator plus delegated delivery defaults; four-worker defaults;
@@ -581,6 +582,13 @@ checks never settles a disputed product-quality assessment.
 - Follow-up: Execute contract-first implementation sequence; numerical defaults/performance targets remain proposed until tested.
 
 ## Open Questions
+
+### 2026-10-23 — Verified source release and publication
+- Agent: Senior supervisor; bounded workers brain-performance, harness-v2 and release-scope-audit.
+- Changed: integrated P0–P9 source, corrective product attention/reports and guarded rejected-delivery repair; authored current docs/presets and preserved implementation history.
+- Validation: full d17890a 1354pass/2obsolete HTTP inventory failures/3skips; corrected actual stdio/HTTP/product/repair12/12; final dev-integration product/report7/7; final row validation delivery/repair6/6; recursive typecheck/build passed. Production17/17 and rebuilt mobile/settings/P9 UI/API controls passed; benchmark1/1. Exact boundaries and remaining limits in release-acceptance report.
+- Outcome: Accepted for coherent framework source release, merged/pushed dev and main at cc1e0a4. Entire delivery/live-platform plan remains Active.
+- Follow-up: actual Docker/Linux isolation and qualified live-provider product pilot, manual quality onboarding improvements, cold initial-index target. No live installation restart/migration, paid calls or downstream clone edits.
 
 ### 2026-10-23 — Production acceptance and memory/fixture closure
 - Agent: supervisor; workers Brain QA, delivery contracts, harness.
