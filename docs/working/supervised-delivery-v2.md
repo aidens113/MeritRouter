@@ -581,8 +581,6 @@ checks never settles a disputed product-quality assessment.
 - Outcome: Accepted
 - Follow-up: Execute contract-first implementation sequence; numerical defaults/performance targets remain proposed until tested.
 
-## Open Questions
-
 ### 2026-10-23 — Verified source release and publication
 - Agent: Senior supervisor; bounded workers brain-performance, harness-v2 and release-scope-audit.
 - Changed: integrated P0–P9 source, corrective product attention/reports and guarded rejected-delivery repair; authored current docs/presets and preserved implementation history.
@@ -677,5 +675,10 @@ checks never settles a disputed product-quality assessment.
 - Definition of done: Explain FINAL plus delegated supervisors, spec/evidence gates, explicit quality evidence setup (no vendor-name inference), 600/80/80 budgets/extensions, defensive batched tools/timeouts, typed memory and Brain controls, CLI explicit --human; distinguish real Docker capability unavailable from tested contracts. Remove contradictory old defaults in owned docs. Verify every stated contract against actual source, link references, report gaps. No promises of usable apps from builds alone.
 - Report to: docs/working/supervised-delivery-v2/reports/delivery-v2-authored-docs.md
 
-No user input blocks planning. Proposed numerical defaults will be explicit and configurable;
-unknown model capabilities never become guaranteed facts or permission to spend.
+## Open Questions
+
+No design decision blocks the verified source release. FINAL owns the remaining physical
+Docker/Linux acceptance and qualified live-provider pilot; these need an available engine/image,
+current quality evidence and an explicit pilot spending policy. Cold initial-index optimization
+and controlled large-corpus browser measurements remain open. Unknown model capabilities never
+become guaranteed facts or permission to spend.
