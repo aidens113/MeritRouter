@@ -53,6 +53,12 @@ and panel `.demo`; none are tracked. Feature commits preserve individual worker 
 - Actual compiled `delivery-report --project demo --limit1 --json` reported missing candidate,
   pending FINAL, effectiveAccepted:false and sourceRevalidated:false for the same fixture.
 - Temporary servers4480/4481/4482 and all QA Chrome instances stopped; live4477 remains.
+- Temporary worktree registrations and merged feature branch removed. Disposable source/demo
+  datasets cleaned. Exactly three Next SWC native-cache hardlinks remain under the former
+  worktree directories: Windows returns EPERM while the same module is loaded by live panel4477.
+  User panel/MCP processes were preserved. These cache remnants can be removed after the live
+  module unloads; they contain no project/configuration/test data. Historical QA scripts require
+  recreating their isolated worktree/demo paths before rerunning; captured JSON/screenshots remain.
 
 ## Remaining acceptance and operating limits
 
