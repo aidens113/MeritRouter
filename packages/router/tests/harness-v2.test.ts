@@ -49,6 +49,11 @@ describe("Harness v2 executable contract", () => {
   it("advertises nested edit/read/batch fields without requiring union-aware clients", async () => {
     const { env, invoke } = fixture();
     const definitions = new Map(harnessV2Tools(env).map(tool => [tool.def.function.name, tool.def.function.parameters]));
+    const nestedDialects = (value: any, root = true): string[] => !value || typeof value !== "object" ? [] : [
+      ...(!root && Object.hasOwn(value, "$schema") ? ["nested dialect declaration"] : []),
+      ...Object.values(value).flatMap(child => nestedDialects(child, false)),
+    ];
+    for (const schema of definitions.values()) expect(nestedDialects(schema)).toEqual([]);
     // Match the documented restricted client projection: union branches/const are lost.
     const portable = (schema: any): any => Object.fromEntries(Object.entries(schema).filter(([key]) =>
       ["type", "properties", "required", "items", "enum", "additionalProperties"].includes(key)).map(([key, value]) =>

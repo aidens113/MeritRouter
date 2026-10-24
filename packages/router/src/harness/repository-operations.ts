@@ -8,7 +8,9 @@ import { OutputPageArgs } from "./output-pages.js";
 const FileArgs = z.object({ path: z.string().min(1), start_line: z.number().int().positive().optional(), end_line: z.number().int().positive().optional() });
 // SDK registration also parses inputs. Retain legacy string acceptance there while
 // advertising the preferred object fields even to clients that discard union branches.
-const ModelFileArgs = z.union([z.string().min(1), FileArgs]).meta(z.toJSONSchema(FileArgs));
+const fileModelSchema = z.toJSONSchema(FileArgs);
+delete fileModelSchema.$schema; // Dialect declarations belong at the tool-schema root, not nested items.
+const ModelFileArgs = z.union([z.string().min(1), FileArgs]).meta(fileModelSchema);
 const PagingArgs = { offset: z.number().int().nonnegative().max(1000000).default(0), limit: z.number().int().min(1).max(1000).default(1000) };
 export function repositoryOperations(): OperationDefinition[] {
   return [
