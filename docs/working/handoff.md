@@ -6,6 +6,14 @@ own working document with decisions, phases, ledger, and reports.
 
 ## Current effort (2026-10-23)
 
+User rejects prior clone as unusable despite recorded checks. The new
+[supervised delivery v2 plan](supervised-delivery-v2.md) owns the next corrective effort:
+initiator FINAL supervisor plus high-quality delivery supervisors; spec-led stages; conserved
+large budgets/upward requests; complete typed/batched defensive harness; scoped automatic
+memory; runtime/product acceptance; responsive complete Brain panel. Four research reports
+are incorporated. P0–P10 implementation sequence is specified but NOT implemented. No live
+paid/authority/config changes. Prior test records below do not establish user acceptance.
+
 User requested default four workers while supervising a new standalone Instagram clone.
 Schema/example/presets now use execution.max_concurrent_tasks=4 and
 max_concurrent_writers_per_repository=4; explicit lower settings remain authoritative and

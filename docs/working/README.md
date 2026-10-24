@@ -6,6 +6,7 @@ lines, worker briefs, append-only ledger with real validation, open questions).
 
 | Document | Status | Scope |
 | --- | --- | --- |
+| [supervised-delivery-v2.md](supervised-delivery-v2.md) | Complete | Corrective plan only: FINAL/delegated supervision, quality/budgets, spec stages, full harness replacement, memory, product acceptance and Brain panel performance/completeness; implementation not started. |
 | [instagram-meritrouter-assessment.md](instagram-meritrouter-assessment.md) | Complete | All18tasks/19sessions and live panel reviewed;364requests reconciled; framework defects, supervision limits and prioritized operating improvements. |
 | [instagram-meritrouter-trial.md](instagram-meritrouter-trial.md) | Complete | Worker-only local app acceptance, observed framework gaps, and published four-worker defaults. |
 | [cost-first-routing.md](cost-first-routing.md) | Complete | Cost-first defaults/docs; visible cropped Overview charts with ranges; project selector and authorized panel restart. |

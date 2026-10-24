@@ -10,6 +10,11 @@ Related: [trial and acceptance evidence](instagram-meritrouter-trial.md), [worki
 
 ## Current State
 
+2026-10-23 user follow-up rejects the resulting app as unusable, including locally. Recorded
+checks below remain historical facts, not user product acceptance. The
+[corrective delivery plan](supervised-delivery-v2.md) supersedes any implication that those
+checks alone establish a usable product; its proposed changes are not yet implemented.
+
 MeritRouter successfully provided isolated worker execution, concurrent file ownership,
 request budgets, free-only routing, provenance and cautious acceptance. It helped produce a
 working local social app through repeated worker attempts and substantial external supervision.

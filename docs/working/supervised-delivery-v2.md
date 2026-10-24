@@ -1,0 +1,432 @@
+# Supervised delivery v2: specification and execution plan
+Status: Complete
+Status detail: Complete corrective specification and implementation sequence; source implementation not started.
+Created: 2026-10-23
+Last updated: 2026-10-23
+Owner: Senior supervisor agent
+Scope: Default final/delegated supervision, quality-first supervisor routing, spec-driven delivery, replacement harness, memory and evidence-based acceptance.
+Paired document: none
+Related: [trial assessment](instagram-meritrouter-assessment.md), [index](README.md)
+
+## Current State
+
+User rejects the prior app as unusable, including locally. Earlier automated checks did not
+establish usable product quality. This plan replaces task-completion-centric acceptance with
+specification, integrated runtime checks and explicit final product review.
+The initiator remains FINAL supervisor; delegated MeritRouter supervisors own bounded delivery
+and normally plan, dispatch workers, integrate, review and test before returning evidence.
+This turn produces the full plan and assigns harness redesign ownership, not a repository-wide
+implementation. Existing live paid/authority settings remain authoritative.
+Four design reports are complete and incorporated. The plan specifies P0–P10 with exact
+extension points, shared-file serialization, proposed defaults, validation and rollout gates.
+Harness replacement is assigned as a dedicated six-unit worker workstream. Brain panel
+navigation latency, search correctness and missing memory controls are explicitly included.
+No framework/application source, configuration, user memory or running service changed.
+Next execution starts with P0 contracts and a bounded implementation brief; this document's
+Complete status means the requested plan is complete, not that its changes are implemented.
+
+## Decision: failed product acceptance, new default ownership
+
+The prior app failed product acceptance. Preserve the recorded test passes as historical facts,
+but withdraw the implication that they establish usability. User rejection is not overruled
+by compilation, worker claims or a previous supervisor conclusion.
+
+```text
+User / initiating client = FINAL supervisor
+  -> MeritRouter delivery supervisor: spec, plan, workers, integration, review, TEST, repair
+       -> bounded implementation/discovery workers and independent reviewers
+       -> bounded sub-supervisors when a domain needs its own delivery loop
+  <- exact candidate + evidence + limitations + resource requests
+FINAL supervisor independently accepts/rejects; rejection reopens delivery
+```
+
+New multi-step builds default to a delivery-supervisor job, not the initiator dispatching every
+worker. Direct bounded tasks remain available for small work or explicit user preference.
+Retain `client_supervision.dispatch_final_supervisor=false`; flipping it would transfer FINAL
+authority into MeritRouter and contradict this request. Add workflow `delegated_delivery` as
+new/missing-field default, retaining explicit direct-task selections. External FINAL ownership
+is outside internal nesting depth. Four task/four repository writer defaults remain separate
+capacity controls, not a requirement to create four supervisors.
+
+The initiator owns product intent, cross-domain decisions, upward resources and final acceptance.
+Delegated supervisors remain responsible for their assigned delivery through planning, worker
+coordination, integration, independent review and tests. They return checked candidates, not
+collections of worker claims. They delegate implementation rather than silently fixing it
+themselves. Human-only decisions retain their real authority; an agent CLI cannot label itself
+human. Record trusted initiator/delivery/worker identities and lineage on every decision.
+
+## Starting architecture and detailed designs
+
+Source already provides nested supervisors, task graphs, per-file leases, integration queues,
+budget holds, Git-backed memory and process cancellation. Reuse these foundations. Missing
+defaults and gates require service changes, not just stronger prompts.
+
+- [Harness replacement design](supervised-delivery-v2/reports/harness-redesign.md): exact files, six serial implementation units, compatibility and fault tests.
+- [Supervisor routing/budgets](supervised-delivery-v2/reports/supervisor-routing.md): current selection/extension gaps and quality policy.
+- [Memory/product acceptance](supervised-delivery-v2/reports/memory-acceptance.md): scoped memory, evidence and real interactive-runtime prerequisites.
+- [Brain panel](supervised-delivery-v2/reports/brain-panel.md): initial navigation/search work paths, missing flows and performance gates.
+
+Supervisor independently checked routing/select ordering, supervisor exclusion from budget-tools,
+static-only browser schemas and deliberately unavailable hydrated isolation in source. These
+are implemented behaviors, not worker predictions. Proposed defaults/benefits below are unverified.
+
+## Specification-led methodology and stage contract
+
+All roles use the same versioned spec wherever applicable. Small fixes use a compact instance;
+larger builds require full observable journeys and design intent. No document ceremony just
+to change a constant, and no broad feature claim without a corresponding requirement/test.
+
+### Shared validated artifacts
+
+| Artifact | Required content |
+| --- | --- |
+| DeliverySpec | ID/version/digest, original user instruction, owner, users/platforms, workflows, data invariants, interface contracts, visual/usability references, failure/loading/empty states, security, exclusions and runnable setup |
+| Criterion | Stable ID, priority, observable behavior, required evidence types and applicability; critical criteria cannot be waived by a worker |
+| ExecutionPlan | Dependency graph, exact file ownership, input/spec revisions, setup/check recipes, budget/reserves, integration strategy and rollback |
+| WorkerBrief | Spec slice/criteria, exact context refs, allowed paths, outputs/check IDs, budget/deadline and return contract |
+| EvidenceReceipt | Criterion IDs, observations vs claims, candidate heads/tree, spec/test/recipe/environment/dependency/fixture identities, actor, logs/screenshots/traces and unknowns |
+| DeliveryBundle | Candidate/run information, coverage matrix, runtime/visual review, known defects, spend/requests and readiness verdict |
+
+Use Zod for live/stored inputs and portable shared CLI/MCP/panel schemas. Authored project specs
+remain in working docs; structured records reference their immutable digests instead of becoming
+an unsynchronized second truth. Append migrations when persistence changes. Update runtime brain
+protocol and repository protocol together if their format changes.
+
+### Enforced stages and prompts
+
+1. **Discover:** retrieve relevant memory and inspect repository/runtime/capabilities in batches.
+   Resolve product ambiguity that affects delivery; state consequential assumptions.
+2. **Specify:** write user journeys, functional and visual quality expectations, scope and criterion
+   matrix. FINAL supervisor reviews significant scope choices; routine implementation stays delegated.
+3. **Prepare:** establish dependencies, stable contracts, isolated data/services and authorized checks.
+   Missing setup is a blocker, not an invitation to parallel speculative implementations.
+4. **Plan:** persist graph/briefs before dispatch, partition files and reserve integration/review.
+   Dependent work uses accepted upstream input where correctness requires it.
+5. **Implement:** workers batch observations, make complete surgical edits and run applicable checks.
+   No omission placeholders, fake check results or silent weakening of requirements/tests.
+6. **Integrate:** inspect patches, serialize merge queue and validate combined candidate. Accepted
+   components do not establish a working product. Re-delegate failures with concrete evidence.
+7. **Validate:** runtime journeys, negative paths, persistence, test-change review and applicable
+   visual/usability review. Defects return to worker repair while delivery supervisor owns outcome.
+8. **Handoff:** return `ready_for_final_review`, `blocked` or explicitly partial with missing criteria.
+   Initiator independently evaluates the actual candidate; only its decision is FINAL acceptance.
+
+Version common role charter and stage prompt separately; record digests per session. Startup
+contains role/lineage, active spec, environment/tools, memory manifest and completion gate.
+Review prompts treat worker narratives as claims; validation prompts require actual behavior.
+Tools enforce stage authority and readiness; prompts alone cannot establish either.
+Plan-only/non-UI work has explicit applicable gates, not fabricated browser requirements.
+Spec/candidate changes invalidate affected evidence. Missing/stale/not_implemented/self-claimed
+required evidence blocks readiness. `finish_job` cannot accept arbitrary successful commands
+as complete criterion coverage or write Accepted into a ledger for unverified delivery.
+
+## Highest-quality eligible supervisors
+
+Supervisor routing becomes a distinct quality-sensitive policy across ALL configured providers.
+Eligibility first: authorized credentials/model/key plan, tools/modalities/context, role quality
+floor and existing paid/spend/security policy. Rank eligible models by task-specific planning,
+architecture, worker supervision, integration, review/testing and product reasoning performance.
+Prefer verified frontier GPT/Claude-class offerings when appropriate, alongside other models
+meeting the same demonstrated bar. Parameter size and vendor labels are not quality evidence.
+
+Store versioned quality/capability provenance, checked date/expiry and sample confidence. Unknown
+closed-model parameter size must not exclude a proven capable model. No permanent hard-coded
+model names, prices or provider superiority. Use task fit and current pool; visual tasks need
+visual capability or a separate eligible visual reviewer. Expose selection and exclusion reasons.
+
+Proposed floor: `frontier_or_qualified_supervisor`. No eligible route yields a structured
+`supervisor_quality_unavailable` blocker. Wait/select another qualified route on temporary
+capacity loss; never silently drop below the floor. A degraded per-job exception requires a
+recorded FINAL decision. Preflight reviewer eligibility/independence as well as execution.
+
+Quality ordering does not enable paid routing or raise dollar limits. Preserve explicit
+free-first/on_free_exhaustion/zero-dollar settings. Where paid selection is already authorized,
+quality precedes marginal cost; otherwise expose policy/quality conflict instead of selecting a
+weak model or spending without authority. Paid-disabled live configuration remains unchanged.
+Qualification probes have their own stated authorized quota/spend; unknown is not a capability.
+
+## Supervisor budgets and upward requests
+
+Proposed configurable starting delivery envelope: **600 aggregate model requests**, including
+supervisor/descendants/review/repair, not a target to consume. Protect **80 supervisor turns**
+and **80 integrated validation/review/repair requests**; initial worker holds total at most440.
+Suggested initial task grants: inspect12, bounded implementation40, review20; adapt to spec.
+Commands have separate runtime/check limits. Existing explicit lower ceilings remain constraints;
+preflight rejects infeasible reserves or requests resources, never silently overrides them.
+
+Supervisors must gain the actual `request_more_budget` capability (currently excluded). Ask the
+immediate parent; root delivery supervisor asks the FINAL initiator. At20% remaining or earlier
+if plan exceeds headroom, suggest +200 or justified exact amount with candidate, criterion
+progress, failed checks/no-progress counts, remaining plan and marginal request/cost estimate.
+Persist requests, wake on decisions and spend no model calls polling. Proposed response window
+1hour then resumable waiting/blocked state; chat absence must not lose work.
+
+Atomic grants update child allowance and ancestor holds together, protect parent reserves,
+prevent sibling/self approval and release unused holds exactly once. Count each physical request
+once through the tree. Counts, dollars, authority and wall-clock extensions are separate decisions.
+No-progress causes bounded diagnosis/replan/reassignment, not automatic budget inflation.
+
+## Harness v2: dedicated owner and complete replacement
+
+The harness-redesign worker owns the full design and serial implementation briefs. Replace
+the model-facing contracts, tools, batch scheduler, errors/output and operation lifecycle end
+to end. Preserve proven Gate/admission, containment, journal/replay, scoped memory and process
+termination primitives. Do not replace working safety mechanisms merely to call it a rewrite.
+
+### One typed operation registry
+
+Each operation defines Zod arguments/results, generated schema, role/authority, side effects,
+replay rules, timeout and handler. Native/MCP adapters share it. Results contain operation ID,
+status/duration, workspace/revision, data, diagnostics, artifact/cursor and next action. Distinguish
+failed check, denied permission, pending approval, timeout, cancellation and unknown effects.
+
+| Operation | Model-facing use |
+| --- | --- |
+| workspace_info | Inject OS, aliases/default repo, writable scope, base/head, recipes, dependencies and limits |
+| read_files | Many paths/ranges, independent outcomes, hashes/lines and bounded paged output |
+| list_paths / search_text | Root defaults, glob/literal/regex search, pagination and complete artifact |
+| apply_edits | Explicit create/replace/delete, expected hashes, grouped preflight, preserved line endings |
+| git_status / git_diff | Typed read-only inspection; workers have no commit/push/reset capability |
+| run_recipe / run_checks | Declared IDs -> trusted executable/argv/cwd/env and revision-bound evidence |
+| batch | Stable item IDs/dependencies, bounded read concurrency and ordered effects |
+| operation_status / cancel_operation | Event-driven long-operation progress and confirmed termination |
+
+Normalize harmless root `.`/`./`/empty and Windows separators. Omitted repo resolves only to
+sole granted or explicit default alias. Documented field synonyms must be unambiguous; conflicting
+fields return corrected examples. Never guess a destructive target, fuzzy-apply a mismatched
+edit, fix malformed shell text heuristically or broaden traversal/symlink/hardlink permissions.
+Mismatch returns current hash/nearby context and match count, not an opaque retry instruction.
+Whole-file replacement requires old hash and explicit intent; suspicious omissions/deletions
+trigger diagnostics plus independent semantic checks. Known commands use wrappers, not shell
+quoting. Package recipes still execute code and remain subject to real authorization/containment.
+
+### Batch reads/actions, bounded output
+
+One model response can request many relevant files/actions. Initial proposal:64items per batch,
+4concurrent independent reads,128KiB inline aggregate/32KiB per item, clamped further to available
+model context. Larger logical reads use lossless scoped artifacts/manifests/pages; no silent
+omission or unlimited heap/context claim.50small files should fit one batch/round trip when
+content fits. A missing item returns its own error without erasing49successful items.
+
+Writes default sequential; dependency references avoid stale reads/racing edits. Parallel checks
+require explicitly disjoint resources. No nested unbounded batches. Every child rechecks authority,
+counts quotas and has an intent/outcome journal. Preflight all grouped edits; do not pretend
+multi-file filesystem effects are atomic. Precisely report/reconcile partial interruption.
+
+### Timeouts, approvals and cancellation
+
+Every operation has model-visible configurable deadline, default30seconds; adjust within trusted
+caps (initial ceiling300seconds). Build/install recipes can explicitly declare120–300seconds.
+Managed services use readiness deadlines and owned lifetime, never infinite command calls.
+Effective deadline is minimum of requested/task/parent. Approval waiting and execution have
+separate bounds and event-driven responses, not repeated model polling.
+
+Timeout/cancel must stop real effects: abortable reads, authority recheck before effects and
+confirmed process-tree termination, not Promise.race alone. Stop new children/model requests,
+acknowledge quiescence, then release ownership. Preserve lease/expiry when stop is uncertain.
+Resume replays only proven idempotent/unexecuted work; unknown command effects require reconciliation.
+Retain per-response attribution and versioned historical session compatibility.
+
+## Written memory by role and scope
+
+Extend existing Git-backed Markdown brain, ACLs and FTS; no second memory database. Typed records:
+user preference, project fact, decision and empirical lesson, each with scope/status, source,
+author/role/task/model, timestamps/revision/digest, supersession/revocation and optional expiry.
+CAS expected-digest writes prevent concurrent supervisor overwrites. Nested supervisors own
+their job sections/assigned records; workers propose changes through own reports.
+
+Project supervisors maintain project knowledge. Explicit user instructions that apply across
+projects use a dedicated authorized global-preference path, preserving the original instruction
+and bounded scope. Trusted initiator capability or visible proposal/decision is required;
+worker text saying 'the user authorized' is not proof. Model-inferred global lessons retain
+independent promotion review. Memory never grants execution/spending/publishing permissions.
+
+Automatic startup/resume context proposed caps: supervisor12ktokens, reviewer6k, implementation/
+analysis/inspection4k, summary/classifier2k; clamp to endpoint context/task/output headroom.
+Caps are ceilings, not padding targets. Retrieve applicable authorized preferences, active spec/
+contracts, Current State, relevant project facts/decisions and approved global/failure lessons.
+Check grants before ranking/rendering. Manifest records refs/revisions, reason, token estimates,
+omissions and read-more handles. Version refreshes/revocation explicitly across resume and cache.
+Current user intent and enforced policy outrank stale memory. Retrieved prose is data, not
+system authority; conflicting preferences/spec facts are surfaced rather than silently merged.
+
+## Runtime, interactive testing and product quality
+
+Required layers: structural checks; meaningful component/security tests; integrated runtime,
+user journeys and persistence; applicable visual/usability review. The delivery supervisor owns
+the evidence even when specialists execute tests. Every claimed primary feature must be
+reachable and perform its specified action. Green build/tests cannot override a failed journey.
+Independent evaluator-change review must actually exist, not return not_implemented.
+
+Current browser checks disable scripts; hydrated isolation is deliberately unavailable. Complete
+durable Lab/service ownership and REAL Windows/Linux isolation adapters before automatic hydrated
+journeys. Integrate existing unfinished lifecycle roadmap rather than invent an unsafe parallel
+path. No fake availability flag or hidden ordinary-host-browser fallback. Unsupported hosts report
+missing capability; explicitly authorized FINAL manual testing can provide separately attributed
+evidence without pretending an automatic contained backend exists.
+
+Typed journeys exercise desktop/mobile/keyboard, forms, upload, error/loading/empty states,
+navigation, refresh/restart, console/network failures as applicable. Restrict actions/navigation
+to owned services and isolated fake data/profile/ports; prove owned cleanup/cancel/crash recovery.
+Bind evidence to every repo head, spec/test/recipe/dependency/fixture and browser generation.
+Screenshots must be inspected against visual requirements by a capable reviewer, not merely saved.
+Absent visual capability means missing review. FINAL initiator receives launch/candidate/coverage
+and independently samples actual behavior; user rejection reopens repair.
+
+## Brain panel: latency and incomplete workflows
+
+Source audit confirms initial page traverses/reads the full Brain before project filtering,
+View/Edit eagerly load history/related blame, search repeats full index traversal and filters
+scope AFTER top30 ranking, and unrelated task/session events can repeatedly refresh the page.
+These are expensive/correctness-sensitive paths; no measured latency attribution yet. Existing
+browse/search/edit/history/blame/access/promotions work must be preserved, not called absent.
+
+Work sequence: (1) stream page shell and lazy-load selected tabs; subscribe only to relevant
+memory events; (2) indexed scoped metadata/search pagination with scope BEFORE ranking/limit;
+(3) revision-keyed scoped cache/in-flight dedup, bounded rename-safe history/blame and Git deadlines;
+(4) complete create/edit/CAS, global preferences/revoke, promotion/access inbox and context preview.
+No full-body corpus scan/Git history on initial navigation; no background repair blocking the page.
+Preserve mount/rename privacy masking and scope cache keys. Dirty edits survive live refresh.
+
+Fixture matrix:100/1k/10kentries across3projects, foreign search matches,1khistory revisions,
+mounted docs/long documents/external edits and active task stream;50kentries stress bounded growth.
+Proposed production local targets: warm metadata/short entry p95<500ms, search p95<300ms,
+first history page<1s; cold shell streams<500ms and useful bounded document<2s. Record hardware,
+>=30warm/5cold samples, p50/p95/max, payload/query/Git counts and click-to-useful-render. These
+are proposed budgets, not measured results. Hard gates: zero eager history/blame on View/Edit;
+no unrelated document-body reads on unchanged warm browse/search; <=100metadata rows/200KB
+initial metadata; no unrelated-task-triggered full refresh; no lost edits/cache scope bleed.
+
+## Implementation phases, owners and dependencies
+
+Each phase gets a bounded spec/brief and unique report; supervisor verifies before acceptance.
+Freeze shared types first. Config/task/MCP/runner/public-export/migration files each have one
+scheduled owner at a time; workers may parallelize only disjoint files.
+
+| Phase / future owner | Concrete scope | Dependencies / exit gate |
+| --- | --- | --- |
+| P0 Contract worker + FINAL | verification/product-spec.ts, product-evidence.ts, product-readiness.ts; core/task/config schemas; appended migrations as needed | Freeze versioned stage/spec/operation/memory/budget interfaces; fake unusable products fail readiness |
+| P1 Control worker | client-supervision defaults/guidance, core/admin authority, MCP tools/schemas, CLI agent identity | P0; consistent two-project lifecycle and truthful FINAL/delegated/human decisions |
+| P2 Routing/budget worker | routing/supervisor-quality.ts plus select/router/staffing; qualification provenance; admission/budget-requests, harness/budget-tools | P0/P1 authority; qualified cross-provider selection and conserved upward grants under races/restart |
+| P3 Dedicated harness owner | Six serial units below; no competing loop/tools edits by other workers | P0/recipe authority interface; batch/deadline/containment/replay/cancel tests pass |
+| P4 Memory worker | brain/memory-record/preferences/brain/access; context/memory and manifest; role injection adapters | P0/P3 operation contract; scoped CAS, authorized preferences, deterministic capped context/resume |
+| P5 Runtime isolation worker | labs/task-attempt*, process-ownership/control-authority/browser-isolation and real platform adapters | P0/P3; actual platform setup/service/termination/crash ownership proof |
+| P6 Journey/evidence worker | labs/browser-journey-schema/runtime/evidence plus checks/recipe/promotion; verification checks/contracts/decide | P0/P5; interactive exact-candidate positive/negative controls and visual review |
+| P7 Delivery integration owner | runners/supervisor, harness/supervisor-tools/integration-tools; charters/prompts; protocol changes if needed | P1–P4/P6; full spec->workers->integration->TEST->repair trace; finish cannot evade coverage/FINAL decision |
+| P8 Brain panel worker | Brain routes/components/API; scoped admin read models through insights/public exports | P4 frozen API; P8 loading-path optimization can start early; complete scoped flows and measured fixture gates |
+| P9 Status UI worker | Tasks/detail/Activity/job/operation/budget/evidence views; compact CLI/MCP project reports | P1–P3/P7 read models; rejected/unverified/blocked visible and actionable, no false Nothing needs attention |
+| P10 FINAL + independent reviewer | Authored docs/setup/roles/operations, regenerated presets, migration/compatibility and live delivery pilot | All gates below; user/initiator product acceptance, not compilation-only claims |
+
+Harness owner serial units: H1 operation-contract/registry/dispatch; H2 repository-operations/
+output-pages and repo-reader normalization; H3 edit-operations/containment transfer; H4 recipe-
+operations/lifecycle and process/worker-action adapters; H5 journal/resume/repeat/loop/events;
+H6 native/task-tools/legacy facade and role adapters. Exact files/tests in harness report.
+P4 runner injection follows P3 runner adaptation; P7 follows both. P8/P9 shared navigation gets
+one integration owner. Parallelize routing, independent harness/memory internals and Brain
+read-path work after interfaces freeze; serialize actual shared-file edits.
+
+## Validation, rollout and rollback
+
+- Contract/offline: two-project lifecycle; shared tool/schema parity; quality floor/paid-policy
+  fixtures; supervisor upward budget races, restart and no double-counting; spec-change invalidation.
+- Harness:50-file read in one batch,49successes plus one missing; paged lossless oversized
+  output; harmless formatting fixtures succeed, ambiguous/unsafe requests stay denied. Crash
+  at each child effect; cancelled approval/in-flight process stops with no delayed writes.
+- Memory/panel: global authorized preference reaches a second project; model inference cannot
+  self-promote; CAS/revocation/grants/resume manifests;10k/50kfixture performance and full scoped
+  create/search/edit/history/preference/access/promotion/context-preview browser journeys.
+- Product negative controls: green-build static page with inert buttons, broken hydration,
+  omission rewrite, missing assets, hidden mobile controls or data loss FAILS readiness.
+  Changed test cannot validate itself; wrong head/fixture/recipe invalidates evidence.
+- Real platforms: Windows/Linux process and interactive containment acceptance separately;
+  mocks do not certify a runtime capability. Unsupported stays explicitly blocked.
+- Repository: pnpm -r typecheck; build router before full router Vitest; pnpm -r build.
+  Panel changes additionally seed demo, launch production spare-port, request touched pages/
+  APIs, inspect Chrome screenshots and stop owned services. Never use real user datasets.
+- Controlled live pilot: new isolated downstream project, frozen product/visual spec and actual
+  user journeys; qualified delivery supervisor owns implementation through tests/repair; FINAL
+  independently evaluates candidate. State600starting requests and exact dollar policy before
+  dispatch. Paid remains disabled absent separate authority; extensions are explicit.
+
+Measure requests by purpose, tool errors/no-progress turns, batching, approval/lease waits,
+tokens/cache, time, defects/repair cycles and FINAL interventions. Offline normalization fixtures
+require zero avoidable safe-format failures. Paired same-model/spec/environment pilots target
+>=50%fewer avoidable recovery turns without quality regression; total cost/request reduction is
+measured, not promised. Do not improve counts by omitting tests or treating available600 as a goal.
+
+Version v1/v2 tool surfaces; pin existing sessions to original contracts. Roll out offline fixtures
+-> opt-in isolated pilot -> new-job default. Preserve explicit paid/security/authority settings
+and historical evidence. Keep legacy log readers/temporary new-job rollback; rollback cannot
+weaken containment or rewrite outcomes. Regenerate presets with their script. Update roles,
+operations/setup, README/client guidance and brain protocol with substantial changes.
+
+## Risks and implementation decisions
+
+No strong authorized model means blocker, not weak fallback or unauthorized spend. Large
+batches/budgets need hard output/resource limits and progress telemetry. Memory needs provenance,
+CAS/revocation and clear authority. Harness rewrite needs replay/containment compatibility.
+Interactive runtime requires genuine unfinished infrastructure, not just new prompts. Brain
+latency needs measured baseline plus architectural no-work tests, not only loading skeletons.
+Usability needs observable spec, inspected visual evidence and FINAL/user judgment; passing
+checks never settles a disputed product-quality assessment.
+
+## Worker Briefs
+
+### Brief: brain-panel
+- Repository: D:/SwitchYardRouter
+- Task: Investigate user-reported slow/incomplete Brain page and propose exact performance/completeness work; no implementation.
+- Required reads: this Current State; apps/panel/components/brain*, app/p/[slug]/brain/**, app/brain/**, relevant admin/brain data access and brain storage/retrieval.
+- Owns (may edit): docs/working/supervised-delivery-v2/reports/brain-panel.md
+- Must not touch: source, shared docs, user brain/config/runtime data.
+- Definition of done: source-grounded loading bottleneck hypotheses vs measured facts, missing UI capabilities, scoped/lazy/paginated design, test and performance budgets; use demo/temporary data only for probes.
+- Report to: docs/working/supervised-delivery-v2/reports/brain-panel.md
+
+### Brief: harness-redesign
+- Repository: D:/SwitchYardRouter
+- Task: Own the complete replacement harness design and executable implementation brief; no source edits in this planning phase.
+- Required reads: this Current State; packages/router/src/harness/**, src/runners/coding/**, src/sessions/events.ts; relevant existing harness tests only.
+- Owns (may edit): docs/working/supervised-delivery-v2/reports/harness-redesign.md
+- Must not touch: source, shared docs, config, runtime data or downstream app.
+- Definition of done: map existing behavior; defensive typed wrappers, batching, bounded large reads, cancellation/timeouts, edits/checks and migration; exact file ownership and meaningful tests. Distinguish implemented vs proposed.
+- Report to: docs/working/supervised-delivery-v2/reports/harness-redesign.md
+
+### Brief: supervisor-routing
+- Repository: D:/SwitchYardRouter
+- Task: Audit delegated supervision, routing, budgets and stage prompts; propose concrete quality-first changes, no source edits.
+- Required reads: this Current State; docs/roles.md; src/runners/supervisor*, src/routing/**, src/qualification/**, relevant config/task/MCP files and charters.
+- Owns (may edit): docs/working/supervised-delivery-v2/reports/supervisor-routing.md
+- Must not touch: source, shared docs, config or runtime data.
+- Definition of done: exact extension points, initiator/final vs delegated ownership, highest eligible quality across providers, budget hierarchy and testable spec stages; preserve paid authorization.
+- Report to: docs/working/supervised-delivery-v2/reports/supervisor-routing.md
+
+### Brief: memory-acceptance
+- Repository: D:/SwitchYardRouter
+- Task: Audit memory/context, checks/Labs and acceptance; design scoped writable memory and product acceptance, no source edits.
+- Required reads: this Current State; src/brain/**, src/context/**, src/verification/**, relevant Labs/roles docs and tests.
+- Owns (may edit): docs/working/supervised-delivery-v2/reports/memory-acceptance.md
+- Must not touch: source, shared docs, config or runtime data.
+- Definition of done: role-budgeted injected memory, authorized project/global edits, versioning/provenance, integrated runtime/browser acceptance; exact file map, dependencies and tests.
+- Report to: docs/working/supervised-delivery-v2/reports/memory-acceptance.md
+
+## Work Ledger
+
+### 2026-10-23 — Planning scope and worker briefs
+- Agent: supervisor
+- Changed: this working document and three bounded research/design briefs.
+- Why: User requests a complete corrective plan and a worker-owned harness replacement.
+- Validation: prior assessment/current repository guidance inspected; no implementation checks run.
+- Outcome: Partial
+- Follow-up: Review worker conclusions against source and assemble sequenced specifications/acceptance gates.
+
+### 2026-10-23 — Corrective plan and Brain panel scope complete
+- Agent: supervisor
+- Changed: full P0–P10 specification, four worker design reports, working index/handoff and prior-assessment clarification.
+- Why: User requests strong delegated supervisors, spec methodology, complete defensive/batched harness, written memory and responsive complete Brain UI.
+- Validation: inspected source for routing order, supervisor budget exclusion, static/hydrated browser capability and Brain eager loading; report links/phase coverage and documentation whitespace checked. No implementation tests or live-provider calls run.
+- Outcome: Accepted
+- Follow-up: Execute contract-first implementation sequence; numerical defaults/performance targets remain proposed until tested.
+
+## Open Questions
+
+No user input blocks planning. Proposed numerical defaults will be explicit and configurable;
+unknown model capabilities never become guaranteed facts or permission to spend.
