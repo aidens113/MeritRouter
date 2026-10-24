@@ -17,6 +17,7 @@ import { clientSupervisionFeedback, scopedMcpTasks, guardMcpResume, supervisionD
 import { supervisionPolicy, setSupervisionPolicy } from "../admin/client-supervision.js";
 import { LabOperationArgumentSchema, TaskArgumentSchema, SupervisionPolicyArgumentShape } from "./schemas.js";
 import { ProductDeliveries } from "../verification/product-delivery.js";
+import { projectDeliveryReport, ProjectDeliveryReportInputSchema } from "../admin/deliveries.js";
 import { deliverySpecDigest, ProductDigestSchema } from "../verification/product-spec.js";
 import { productCandidateDigest } from "../verification/product-evidence.js";
 import { ProductEvidenceKindSchema } from "../verification/product-spec.js";
@@ -74,6 +75,16 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
     try{if(!preferenceAuthorization)throw new Error("preference_authority_unavailable: use a trusted initiating host or the panel Memory form");const b=sy.brainFor(scope(named));await b.ensure();return json(await new MemoryPreferences(b,preferenceAuthorization).writePreference(authorizationRef,{id,body},expectedDigest));}catch(err){return fail(err);}
   });
 
+  server.registerTool("project_delivery_report", {
+    title: "Project product delivery report",
+    description: "Bounded project-scoped delivery metadata with stored readiness, historical FINAL decision, effective acceptance and action reasons. Does not revalidate current Git/Lab sources; inspect delivery_status before deciding. Follow nextAfter for more entries.",
+    inputSchema: z.object({ project: z.string().min(1).max(200).optional().describe(`Project slug; default: ${project}.`), limit: z.number().int().min(1).max(100).optional(), after: z.string().min(1).max(200).optional() }).strict(),
+  }, async args => {
+    try {
+      const parsed = ProjectDeliveryReportInputSchema.parse({ ...args, project: scope(args.project) });
+      return json(projectDeliveryReport(sy, parsed));
+    } catch (err) { return fail(err); }
+  });
   const deliveryStore = new ProductDeliveries(sy.db);
   const deliveryTask = (id: string, named: unknown) => {
     const p=scope(named),task=sy.tasks.get(id);

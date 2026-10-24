@@ -34,6 +34,7 @@ import { ensurePanel, revivePanel } from "./operations/panel.js";
 import { mcpOptions, runMcpServer } from "./mcp/serve.js";
 import type { ScanSummary } from "./models/scanner.js";
 import { cliDecisionActor } from "./cli/actor.js";
+import { projectDeliveryReport } from "./admin/deliveries.js";
 
 // The `meritrouter` command: argument parsing and dispatch. Terminal rendering lives in src/cli/.
 
@@ -292,6 +293,12 @@ async function main(): Promise<number> {
         const r = await sy.awaitResults(submitted.map((s) => s.taskId), { timeoutSeconds: Number(values.timeout ?? cfg.execution.await_max_seconds) });
         out(r, true);
         return r.timedOut ? 2 : 0;
+      }
+      case "delivery-report": {
+        if (args.length) throw new MeritRouterError("usage", "usage: meritrouter delivery-report --project <slug> [--limit 1..100] [--after <task-id>] [--json]");
+        const report = projectDeliveryReport(sy, { project: project(), ...(values.limit !== undefined ? { limit: Number(values.limit) } : {}), ...(values.after !== undefined ? { after: values.after } : {}) });
+        out(json ? report : ["Stored candidate/evidence only; Git and Lab sources were not revalidated.", table(report.deliveries.map(item => ({ task: item.taskId, state: item.taskState, stage: item.stage, readiness: item.readiness, final: item.historicalFinalDecision ?? "pending", accepted: item.effectiveAccepted, reasons: item.reasons.join(", ") }))), ...(report.nextAfter ? [`Next page: --after ${report.nextAfter}`] : [])].join("\n"), json);
+        return 0;
       }
       case "status": {
         const rows = args.length ? sy.getStatus(args, idScope()) : sy.listTasks(undefined, 30, listScope());

@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { Classifier } from "../src/scoring/classifier.js";
 import { DEFAULT_RULEBOOK } from "../src/scoring/rulebook.js";
 import { classifierCouldMatter, decide, type TaskFeatures } from "../src/scoring/score.js";
 import { WorkerTaskSchema } from "../src/core/task.js";
@@ -9,6 +10,7 @@ let env: Env | undefined;
 let sy: MeritRouter | undefined;
 afterEach(async () => {
   await sy?.close();
+  vi.restoreAllMocks();
   sy = undefined;
   env?.cleanup();
 });
@@ -100,11 +102,27 @@ describe("classifier batching and caching", () => {
   it("classifies concurrent tasks with one shared request and reuses cached verdicts", async () => {
     env = makeEnv({ endpoints: [endpoint({ totalParametersB: 120 })] });
     let classifyCalls = 0;
+    const batchSizes: number[] = [];
+    // Real Git preflight can finish more than the 50ms batching window apart under load.
+    // Admit the first two prepared tasks together, then exercise the real queue/Gate/cache.
+    const classify = Classifier.prototype.classify;
+    let arrivals = 0;
+    let release!: () => void;
+    const admitted = new Promise<void>(resolve => { release = resolve; });
+    vi.spyOn(Classifier.prototype, "classify").mockImplementation(async function (this: Classifier, item) {
+      if (arrivals < 2) {
+        arrivals++;
+        if (arrivals === 2) release();
+        await admitted;
+      }
+      return classify.call(this, item);
+    });
     const client = new ScriptedClient((req) => {
       const sys = String(req.messages[0]!.content);
       if (sys.startsWith("You classify")) {
         classifyCalls++;
         const ids = [...String((req.messages[1] as { content: string }).content).matchAll(/<item id="(c\d+)">/g)].map((m) => m[1]);
+        batchSizes.push(ids.length);
         return reply(JSON.stringify({ items: ids.map((id) => ({ id, tags: { kind: "locate", reasoning: "lookup", novelty: "existing_pattern", risk: [], environment: [], ambiguity: "low" }, confidence: 0.9, rationale: "simple", suggestedTier: "T2" })) }), servedFor(sy!, req));
       }
       const tools = req.tools ?? [];
@@ -119,10 +137,14 @@ describe("classifier batching and caching", () => {
     const out = await sy.awaitResults(subs.map((s) => s.taskId), { timeoutSeconds: 10 });
     expect(out.completed.map((r) => r.executionStatus)).toEqual(["completed", "completed"]);
     expect(classifyCalls).toBe(1);
+    expect(arrivals).toBe(2);
+    expect(batchSizes).toEqual([2]);
     expect(out.completed[0]!.classification).toMatchObject({ basis: "rules+classifier", tier: "T2" });
     // Same spec again: cached, no new classification request.
     const again = await sy.submitTasks([task("one")]);
-    await sy.awaitResults([again[0]!.taskId], { timeoutSeconds: 10 });
+    const cached = await sy.awaitResults([again[0]!.taskId], { timeoutSeconds: 10 });
+    expect(cached.completed[0]?.executionStatus).toBe("completed");
+    expect(cached.completed[0]?.classification).toMatchObject({ basis: "rules+classifier", tier: "T2" });
     expect(classifyCalls).toBe(1);
   });
 });

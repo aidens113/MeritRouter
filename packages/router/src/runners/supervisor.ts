@@ -36,7 +36,7 @@ import { requestBudgetTool } from "../harness/budget-tools.js";
 import { projectMemoryTool } from "../harness/memory-tools.js";
 import { harnessV2Tools, harnessV2StartupContext } from "../harness/operation-dispatch.js";
 import { deliveryTools } from "../harness/delivery-tools.js";
-import { ProductDeliveries } from "../verification/product-delivery.js";
+import { DeliveryRepairContinuationSchema, ProductDeliveries } from "../verification/product-delivery.js";
 import { synchronizeDeliveryCandidate } from "../verification/product-runtime.js";
 import { deliverySpecDigest } from "../verification/product-spec.js";
 import { productCandidateDigest } from "../verification/product-evidence.js";
@@ -158,7 +158,11 @@ export class SupervisorRunner implements CodingRunner {
     const label = spec.label ?? ctx.taskId;
     const actor: Actor = { agent: `supervisor:${label}`, role: "supervisor", model: null, job: ctx.taskId, task: ctx.taskId, tier: ctx.tier };
     const legacy = ctx.resume ? null : loadLegacyState(ctx);
-    const repos = await integrationRepos(ctx, ctx.resume ? sessionRepos(ctx) : (legacy?.repos ?? []));
+    const repairEvent=ctx.tasks.db.prepare("SELECT data_json FROM events WHERE task_id=? AND type='delivery_repair_requested' ORDER BY id DESC LIMIT 1").get(ctx.taskId) as {data_json:string}|undefined;
+    const repair=repairEvent?DeliveryRepairContinuationSchema.strip().parse(JSON.parse(z.object({data_json:z.string()}).parse(repairEvent).data_json)):null;
+    const repairRepos=repair?.workspace.repos.flatMap(repo=>repo.baseCommit?[{alias:repo.alias,worktree:repo.worktree,branch:repo.branch??`${ctx.cfg.supervisor.branch_prefix}${ctx.taskId}`,baseSha:repo.baseCommit}]:[])??[];
+    if(repair&&!ctx.resume&&repairRepos.some(repo=>!existsSync(repo.worktree)))throw new Error("Retained delivery repair workspace disappeared; refusing to silently reconstruct a different candidate");
+    const repos = await integrationRepos(ctx, ctx.resume ? sessionRepos(ctx) : repair?repairRepos:(legacy?.repos ?? []));
     // Delegated tasks and their checks come from the task store, so a resumed job knows them.
     const children = new Map(Object.entries(legacy?.children ?? {}));
     const briefChecks = new Set(legacy?.briefChecks ?? []);
@@ -355,6 +359,7 @@ export class SupervisorRunner implements CodingRunner {
     }
     for (const c of spec.constraints.checks ?? []) state.briefChecks.add(c);
     if (!ctx.resume && messages[0]) messages[0] = {...messages[0],content:`${messages[0].content ?? ""}\n\n${harnessV2StartupContext(env)}\n\nDelivery workflow: discover -> specify -> prepare -> plan -> implement -> integrate -> validate -> handoff. Use set_delivery_spec before implementation and advance_delivery_stage to persist progress. You own planning, worker dispatch, combined runtime TESTS, independent review and repair. Write observable functional/visual criteria; passing builds alone never proves usable delivery. finish_job returns a candidate to the initiating FINAL supervisor, never final project acceptance. Request additional budget upward before validation reserves are exhausted.`};
+    if(repair&&!ctx.resume)messages.push({role:"user",content:`FINAL rejected the previous completed delivery. This is an explicit repair continuation in a new linked session; prior work and integration history remain. Rejection: ${repair.rejection.reason}\nPersisted delivery context: ${JSON.stringify(repair)}\nRepair the rejected behavior using new worker labels; do not replay completed integrations. Preserve required criteria, validate a fresh candidate, obtain fresh independent evidence, then return handoff for a separate FINAL decision. No additional budget was granted by this continuation.`});
 
     const maxTokens = ctx.profile.max_output_tokens;
     const memoryOptions = { tools: [...availableTools(tools, env).map(tool => tool.def), terminal.def], outputTokens: maxTokens, reservedTokens: 1000 };

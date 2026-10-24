@@ -3,6 +3,9 @@ import type { Db } from "../storage/db.js";
 import { DeliverySpecSchema, deliverySpecDigest, type DeliverySpec } from "./product-spec.js";
 import { EvidenceReceiptSchema, ProductCandidateSchema, ProductFinalDecisionSchema, productCandidateDigest, type EvidenceReceipt, type ProductCandidate, type ProductFinalDecision } from "./product-evidence.js";
 import { evaluateProductReadiness } from "./product-readiness.js";
+import { SessionWorkspaceSchema } from "../sessions/events.js";
+
+export const DeliveryRepairContinuationSchema=z.object({previousSessionId:z.string().min(1),workspace:SessionWorkspaceSchema,spec:DeliverySpecSchema,candidate:ProductCandidateSchema,rejection:ProductFinalDecisionSchema.refine(value=>value.decision==="reject")}).strict();
 
 export const DELIVERY_STAGES = ["discover","specify","prepare","plan","implement","integrate","validate","handoff"] as const;
 export const DeliveryStageSchema = z.enum(DELIVERY_STAGES);
@@ -19,6 +22,13 @@ export class ProductDeliveries {
   }
   private require(taskId:string,project:string):Row {
     const row=this.row(taskId,project); if(!row) throw new Error(`No delivery specification for ${taskId} in project ${project}`); return row;
+  }
+  /** Eligibility is checked again inside the task's atomic queue transition. */
+  rejectedCompleted(taskId:string,project:string) {
+    const task=this.db.prepare("SELECT state,profile FROM tasks WHERE id=? AND project_id=?").get(taskId,project) as {state:string;profile:string}|undefined;
+    const status=this.status(taskId,project);
+    if(task?.state!=="completed"||task.profile!=="supervise"||!status?.candidate||status.finalDecision?.decision!=="reject"||status.finalDecision.specDigest!==deliverySpecDigest(status.spec)||status.finalDecision.candidateDigest!==productCandidateDigest(status.candidate))return null;
+    return {spec:status.spec,candidate:status.candidate,rejection:status.finalDecision};
   }
   saveSpec(taskId:string,project:string,input:unknown,expectedDigest?:string):DeliverySpec {
     const spec=DeliverySpecSchema.parse(input);

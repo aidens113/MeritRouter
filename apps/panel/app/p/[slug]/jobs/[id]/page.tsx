@@ -1,4 +1,5 @@
 import { WorkerActionRequestsCard } from "@/components/worker-action-requests";
+import { ProductDeliveryStatus } from "@/components/product-delivery-status";
 import { RequestsTable } from "@/components/requests-table";
 import { BudgetRequestsCard, JobBudgetCard } from "@/components/budget-requests";
 import { ShowAllRows } from "@/components/client/show-all";
@@ -54,6 +55,7 @@ export default async function JobDetailPage({ params, searchParams }: { params: 
   const answered = job.questions.filter((q) => q.answer !== null);
   const docExists = sy.brainFor(p.slug).exists(job.workingDoc);
   const res = job.result;
+  const delivery = insights.deliveryView(sy, id, p.slug);
   const sessions = insights.sessionsView(sy, { jobId: id, limit: 200 });
   const plan = insights.jobPlan(sy, id);
   const team = insights.jobTeam(sy, id)!;
@@ -111,6 +113,7 @@ export default async function JobDetailPage({ params, searchParams }: { params: 
         }
       />
       <WorkerActionRequestsCard policy={sy.cfg.security.outside_repository} requests={workerActions} />
+      {delivery ? <ProductDeliveryStatus delivery={delivery} taskId={id} taskState={job.state} project={p.slug} base={base} /> : null}
       {status.stateReason && job.state !== "completed" ? (
         <Callout tone={job.state === "failed" || job.state === "budget_exhausted" ? "bad" : job.state === "interrupted" ? "serious" : "warn"} title={job.state === "queued" ? "Waiting for a worker" : job.state === "interrupted" ? "This job is paused" : "Status"}>
           {humanize(status.stateReason).replace(/\.?$/, ".")}

@@ -1,6 +1,6 @@
 import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 export { acknowledgeModelQuarantine } from "./quarantine.js";
-export { deliveryView } from "./deliveries.js";
+export { deliveryView, projectDeliveryReport } from "./deliveries.js";
 export { listWorkerActions, getWorkerAction, decideWorkerAction } from "./worker-actions.js";
 import path from "node:path";
 import YAML from "yaml";

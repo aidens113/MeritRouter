@@ -9,6 +9,7 @@ import { acquireLease, conflictingLease, releaseLeases, writeGlobs } from "./fil
 import { requiresAcceptedInputs } from "./plans.js";
 import { repoKey } from "../projects/context.js";
 import { FairClaimOrder, type ProjectClaimLimits } from "./fair-claim.js";
+import { DeliveryRepairContinuationSchema, ProductDeliveries } from "../verification/product-delivery.js";
 
 export interface TaskRow {
   id: string;
@@ -682,11 +683,17 @@ export class TaskStore {
    * on the `resumed` event for the next run: `sessionId` resumes that session, `freshWorkspace`
    * starts a coding task over in a new worktree (see `ResumeDirectiveSchema` in the executor).
    */
-  resume(id: string, directive: { sessionId?: string; freshWorkspace?: boolean } = {}): TaskState {
+  resume(id: string, directive: { sessionId?: string; freshWorkspace?: boolean } = {}, repair?: unknown): TaskState {
     return immediate(this.db, () => {
       const row = this.db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as TaskRow | undefined;
       if (!row) throw new TaskValidationError(`unknown task ${id}`);
-      if (row.state !== "interrupted") throw new TaskValidationError(`task ${id} is ${row.state}, not interrupted`);
+      if(row.state==="completed"){
+        const context=DeliveryRepairContinuationSchema.safeParse(repair);
+        const current=new ProductDeliveries(this.db,this.now).rejectedCompleted(id,row.project_id);
+        if(!context.success||!current||JSON.stringify(current.rejection)!==JSON.stringify(context.data.rejection)||Object.keys(directive).length)throw new TaskValidationError(`task ${id} requires a current FINAL-rejected delivery and a trusted repair continuation`);
+        this.event(id,"delivery_repair_requested",{...context.data,previousResult:this.hydrate(row).result});
+        this.db.prepare("UPDATE tasks SET finished_at=NULL,deadline_at=NULL,cancel_requested=0 WHERE id=?").run(id);
+      }else if (row.state !== "interrupted") throw new TaskValidationError(`task ${id} is ${row.state}, not interrupted`);
       this.db
         .prepare("UPDATE tasks SET state = 'queued', state_reason = 'resumed', result_json = NULL, updated_at = ? WHERE id = ?")
         .run(this.now(), id);

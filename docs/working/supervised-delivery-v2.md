@@ -10,72 +10,50 @@ Related: [trial assessment](instagram-meritrouter-assessment.md), [index](README
 
 ## Current State
 
-Latest release audit: snapshot 9c80b12 finished with 1,337 passed, seven failed,
-three skipped (139 files, 1,347 tests). This is not a green release result.
-All seven failures were traced to obsolete fixture assumptions about legal early wait
-returns, intentional memory notes, noninteractive CLI identity, or cancellation before
-actual process startup. Strengthened focused reruns pass without relaxing production
-authority or process-containment checks. Real CLI/MCP budget tests pass 2/2, including
-explicit rejection of automated human-only decisions. Independent memory/headroom and
-install-root checks pass 22/22. A final exact-revision full suite remains required.
-Production UI/API acceptance passed 17/17 scenarios with no browser exceptions.
-Supervisor rebuilt c4e85de and independently verified the mobile Markdown table fix
-(640px scrollable table, 406px height, 390px page width) and corrected supervisor
-settings copy plus actual null-cap/8000-token profile creation. Warm navigation p95
-was 281ms; cold 10k-file indexing remains above target. Genuine Docker acceptance and
-a qualified live-provider delivery pilot remain unverified; no such spending occurred.
+User authorized execution. Feature branch feat/supervised-delivery-v2 in
+D:/SwitchYardRouter-delivery-v2 contains the integrated implementation. No downstream clone,
+real user configuration/Brain, paid routing policy or live panel4477 was changed. No live
+provider calls or paid spending occurred. Feature is not yet published.
 
-Execution authorized by user: "Ok get to it." Implementation starts on feat/supervised-delivery-v2
-in a separate worktree. Implementation briefs below supersede prior planning-only briefs for
-their named workers. FINAL supervisor coordinates/reviews/tests; workers own bounded source
-changes and do not commit. Paid live routes and original app files remain untouched.
-Initial implementation now includes P0 spec/evidence/readiness contracts, scoped P1 MCP controls,
-P2 quality/budget enforcement, native H1–H6 harness operations, persisted P7 delivery stages and
-FINAL decisions, P4 memory services/injection, and P8 indexed/lazy Brain UI plus CAS/create.
-These are in-progress feature-worktree changes, NOT published or fully accepted. P5/P6 actual
-interactive platform isolation and release-wide validation remain open. Worker claims below
-are distinct from independently observed checks; no new downstream usability claim is made.
+Implemented: FINAL initiator plus delegated delivery defaults; four-worker defaults;
+quality-evidence supervisor selection; conserved600/80/80 request budgets and upward requests;
+versioned mandatory specs, exact candidates, independent evaluator review, evidence/readiness
+and separate FINAL decisions; defensive batched harness with adjustable30s timeouts,
+lossless paging/journals/process cancellation; typed project/global preference memory,
+role/headroom injection, ACL/CAS/revocation and install-root reads; indexed/lazy Brain flows,
+preferences/history/context receipts and mobile table fix.
 
-User rejects the prior app as unusable, including locally. Earlier automated checks did not
-establish usable product quality. This plan replaces task-completion-centric acceptance with
-specification, integrated runtime checks and explicit final product review.
-The initiator remains FINAL supervisor; delegated MeritRouter supervisors own bounded delivery
-and normally plan, dispatch workers, integrate, review and test before returning evidence.
-The earlier planning-only result is superseded by the authorized execution above. Existing
-live paid/authority settings remain authoritative. Four design reports inform P0–P10.
-Framework source is changing in the isolated feature worktree; downstream applications and
-the user's configuration/memory are untouched. No new live-provider spending is authorized.
-Checkpoint 375afc7 built successfully and passed recursive typechecking. Its isolated full
-suite finished; failures exposed first-message ordering regressions and a changed legacy
-uncapped budget default. Both causes are corrected: independently observed focused reruns
-passed 44/44. The new default delivery lifecycle also passed a real fake-provider/command
-end-to-end test, with separate FINAL acceptance. Initial isolated production Brain navigation
-returned HTTP200, loaded in 1.075 seconds and had no browser errors; newer global memory and
-settings controls still require production acceptance. Docker client is installed but its engine pipe is unavailable, blocking
-genuine container-backed interactive acceptance on this host. Offline contract tests do
-not substitute for that missing runtime verification.
+Release scope audit found and prompted additional P9 fixes: product attention independent of
+legacy task acceptance, compact bounded CLI/MCP project reports, project/job product views,
+and explicit guarded repair of completed FINAL-rejected supervisors. Repair opens a new
+linked session in retained workspace, preserves consumed budget/history, and requires fresh
+candidate evidence plus another FINAL decision. Accepted/nonproduct completed tasks stay closed.
 
-Checkpoint 7152295 contains the second implementation integration. Subsequent independent
-acceptance review found and closed dirty-source reuse, FINAL observation/decision CAS races,
-source-changing final-check evidence binding, all-optional initial specifications, and stale
-acceptance display. Focused real temporary-Git/default delivery tests now cover these fixes.
-The initial snapshot full suite completed: 1,275 passed, 14 failed, 3 skipped (129 files,
-1,292 tests, 1,278 seconds). Those failures were prompt position/budget compatibility,
-intentional guidance/tool inventory changes, and a fixed-delay capacity assertion; fixes and
-targeted reruns are on the feature branch. This is NOT a passing release suite. A fresh
-release snapshot must run the complete suite and latest panel production acceptance.
+Verification: recursive typecheck and production router/panel builds pass after P9 integration.
+Production demo seed passed all expectations.17/17 UI/API scenarios passed; rebuilt mobile
+Brain/settings checks and new project/job desktop/mobile status checks passed, zero browser
+exceptions. Actual Request repair UI queued a synthetic demo-only rejected task, duplicate,
+foreign-project and nonrejected requests returned409. Fixture state restored; this is UI
+control proof, not runtime/product proof. Actual fake-provider repair runtime passed in two
+project layouts; independent integrated repair/report/resume selection passed31/32 initially,
+with only obsolete MCP tool-count failure; corrected inventory rerun2/2 passed.
 
-Release snapshot 9c80b12 completed `pnpm -r build` successfully; its full139-file suite is
-running independently. Initial snapshot fixes pass there. Additional failures found so far:
-scripted supervisors integrate before workers finish after await_tasks returns for approval;
-the classifier session test omits the intentional memory-omission note; noninteractive CLI
-identity expectations predate explicit human authority; fixed-delay cancellation can occur
-before command spawn. Fixtures are being strengthened at real lifecycle boundaries, not by
-relaxing expected product/security outcomes. Memory resume headroom and trusted install-wide
-preference reads across separate project Brain bindings are now source-complete with worker
-19/19 focused passes; supervisor independent confirmation pending. Production demo seed
-passed all expectations, including nested integration/rebase; UI/API acceptance is active.
+Full snapshot61d572c:1,348 passed, one failed, three skipped (141 files,1,352 tests,949.61s).
+Remaining failure is classifier batching50ms arrival timing; diagnosis assigned with no
+production relaxation authorized. New P9 changes need final frozen release regression gate.
+Historical checkpoint counts/details are archived below; never treat earlier failures as green.
 
+Remaining limitations: Docker client has no working engine/image, so real container interactive
+journeys/isolation and Linux physical containment are unverified. No qualified live-provider
+product pilot or request/cost-reduction claim. Quality onboarding requires manual dated
+capability evidence; it is fail-closed rather than turnkey frontier discovery. Initial10k-file
+indexing measured5.68s on loaded host, above2s target; warm production navigation p95 was281ms.
+No cold10k/50k browser acceptance claim. Automatic worker Task Labs and FINAL waiver UI remain
+unsupported; retained Labs/MCP FINAL decisions are the implemented paths. Entire P0–P10 is
+not marked complete from offline tests. Finish unblocked release checks, preserve these gates,
+then publish only coherent verified source and document remaining acceptance work.
+
+Historical checkpoint notes: [archive](supervised-delivery-v2/archive/2026-10-23-release-checkpoints.md).
 ## Decision: failed product acceptance, new default ownership
 
 The prior app failed product acceptance. Preserve the recorded test passes as historical facts,
@@ -422,6 +400,53 @@ Usability needs observable spec, inspected visual evidence and FINAL/user judgme
 checks never settles a disputed product-quality assessment.
 
 ## Worker Briefs
+
+### Brief: release-scope-audit
+- Repository: D:/SwitchYardRouter-delivery-v2 at61d572c; read-only implementation review.
+- Task: Check planned P0–P10 against implemented source/reports; identify material unimplemented requirements, separately from unavailable external acceptance.
+- Required reads: Current State, phase/validation tables in this document; implementation reports and only relevant named source needed to substantiate findings.
+- Owns (may edit): docs/working/supervised-delivery-v2/reports/release-scope-audit.md only.
+- Must not touch: source/tests/shared docs, verification worktrees, runtime data, commits/pushes; do not run tests/builds while release suite runs.
+- Definition of done: Concise evidence-based gap list with source paths and user impact. Distinguish implemented/tested, implemented/unverified, and absent. Prioritize actual delivery usability and P9 status/report controls. Do not assume report claims prove runtime behavior. No broad background reads.
+- Report to: docs/working/supervised-delivery-v2/reports/release-scope-audit.md.
+
+### Brief: delivery-attention-report
+- Repository: D:/SwitchYardRouter-delivery-v2; full suite continues in frozen separate checkout.
+- Task: Close confirmed P9 product-attention false-negative and provide compact scoped project delivery status through CLI/MCP.
+- Required reads: Current State; admin/projects.ts, admin/deliveries.ts, relevant index.ts exports, cli.ts status, mcp tool registration and single-task delivery_status, product readiness API.
+- Owns (may edit): packages/router/src/admin/projects.ts, admin/deliveries.ts, index.ts, cli.ts, mcp.ts and mcp delivery tool registration module as needed; uniquely named tests/delivery-attention-report.test.ts; own report. Coordinate if another module needed.
+- Must not touch: panel files, other source/tests, shared docs, runtime config/data, commits/pushes. No broad builds or full tests; root owns integration builds.
+- Definition of done: Product delivery unready/rejected/stale/pending FINAL is visible in projectAttention even if legacy criteria met. Compact bounded project-scoped report exposes current readiness/stage/FINAL historical vs effective acceptance and actionable reasons, never cross-project bodies. CLI/MCP consistent strict input validation; preserve existing status contract. Focused tests prove synthetic legacy-met plus rejected/unready is attention, accepted-current clears it, stale historical acceptance is not effective, project isolation and pagination/bounds. Report actual checks and gaps.
+- Report to: docs/working/supervised-delivery-v2/reports/delivery-attention-report.md.
+
+### Brief: delivery-status-panel
+- Repository: D:/SwitchYardRouter-delivery-v2; disjoint panel-only implementation.
+- Task: Make product readiness and FINAL rejection visible on job detail and project overview, with useful next-action guidance.
+- Required reads: Current State; own release-scope-audit report; panel task-detail product card, project overview, job detail, task links; existing deliveryView read model.
+- Owns (may edit): apps/panel/app/p/[slug]/page.tsx, apps/panel/app/p/[slug]/jobs/[id]/page.tsx, new components/product-delivery-status.tsx, app/api/tasks/resume/route.ts after repair worker confirms service contract; own report. Ask root before any other file.
+- Must not touch: router source/tests, other panel files, shared docs, runtime config/data, commits/pushes. No builds while root integrates; no real-provider calls.
+- Definition of done: Job page displays root delivery readiness/stage/recorded FINAL decision, invalid historical acceptance, blockers and link to task review. Project overview links bounded product issues if practical using stable insights.projectDeliveryReport API being added by brain worker; coordinate API. Clearly label stored evidence (not fresh Git inspection), instructions inspect delivery_status, independently observe and decide; rejected tasks link existing resume route/UI where safe. Preserve project scope. No panel mutation endpoint that bypasses candidate-refresh/CAS or human authority. Report verified vs unverified; root does production demo/screenshots.
+- Report to: docs/working/supervised-delivery-v2/reports/delivery-status-panel.md.
+
+### Brief: rejected-delivery-repair
+- Repository: D:/SwitchYardRouter-delivery-v2; bounded control-plane fix, no full-suite/build runs.
+- Task: Investigate and close completed-product rejection dead end: documented resume_task only permits interrupted tasks today.
+- Required reads: Current State; core/service.ts resumeTask/resumeSession; storage/tasks.ts resume; supervisor runner/session resume, product-delivery finalDecision/stage, native supervisor guidance.
+- Owns (may edit): packages/router/src/core/service.ts, storage/tasks.ts, verification/product-delivery.ts, runners/supervisor.ts, uniquely named tests/rejected-delivery-repair.test.ts; own report. Ask before other source files.
+- Must not touch: CLI/MCP files (other worker owns), panel files, other tests, shared docs, commits/pushes, runtime data. No production authority weakening.
+- Definition of done: Existing resumeTask can explicitly reopen a completed supervisor ONLY when current persisted product FINAL decision rejects it; preserve budgets/lineage/audit and no double integration. Keep completed accepted/nonproduct tasks nonresumable. Reopened supervisor receives rejection and existing spec/candidate/criteria, must validate fresh candidate and return to FINAL separately. Determine correct safe session/workspace continuation; no blanket completed-task resume. Test actual fake-provider supervisor delivery rejection->resume->repair/validation or bounded equivalent proves real runtime, plus isolation/duplicate refusal/budget invariants. Report constraints immediately if safe implementation needs more files.
+- Report to: docs/working/supervised-delivery-v2/reports/rejected-delivery-repair.md.
+
+### Brief: classifier-batch-regression
+- Repository: D:/SwitchYardRouter-delivery-v2; source frozen except this bounded diagnosis.
+- Task: Diagnose full61d572c scoring.test classifier batching failure (2calls expected1); narrow scope, preserve request accounting/cache/security.
+- Required reads: Current State; tests/scoring.test.ts, tests/helpers.ts default50ms, scoring/classifier.ts queue; executor scoring preparation only if needed.
+- Owns (may edit): packages/router/tests/scoring.test.ts; packages/router/src/scoring/classifier.ts ONLY if genuine classifier queue bug proven; own report.
+- Must not touch: other files, shared docs/runtime data, commits/pushes, broad builds/full suite. Coordinate source change before editing.
+- Definition of done: Explain why two submitted tasks missed50ms window under loaded realGit tests. Prefer deterministic boundary test of actual batching/cache rather than enlarge time arbitrarily. Keep end-to-end actual shared request and cache reuse assertions. No production waiting/performance change without demonstrated bug. Run selected test file and report exact results.
+- Report to: docs/working/supervised-delivery-v2/reports/classifier-batch-regression.md.
+
+
 
 ### Implementation brief: evaluator-review (P6 verification)
 - Repository: D:/SwitchYardRouter-delivery-v2, feat/supervised-delivery-v2

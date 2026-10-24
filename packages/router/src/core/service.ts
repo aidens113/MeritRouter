@@ -38,6 +38,7 @@ import type { FetchLike } from "../providers/transport.js";
 import { createCodingRunner } from "../runners/coding/index.js";
 import { SupervisorRunner } from "../runners/supervisor.js";
 import { TaskValidationError } from "./errors.js";
+import { DeliveryRepairContinuationSchema, ProductDeliveries } from "../verification/product-delivery.js";
 import { validateTask } from "./validate.js";
 import { DELEGATED_BY_SESSION, Executor, type CodingRunner, type ProjectDeps } from "./executor.js";
 import { ProjectRegistry } from "../projects/registry.js";
@@ -806,14 +807,30 @@ export class MeritRouter {
   }
 
   /**
-   * Re-queue an interrupted task. Agent-loop roles continue their latest interrupted session;
+   * Re-queue an interrupted task, or explicitly repair a completed FINAL-rejected delivery.
+   * Delivery repair opens a fresh linked supervisor session in its retained workspace.
+   * Agent-loop roles continue their latest interrupted session;
    * a coding task starts over in a fresh worktree (the old one stays as evidence).
    */
   resumeTask(id: string, project?: string): TaskState {
     this.assertInProject(id, project);
     const t = this.tasks.get(id);
     const coding = t ? this.cfg.profiles[t.spec.profile]?.mode === "coding" : false;
-    const s = this.tasks.resume(id, coding ? { freshWorkspace: true } : {});
+    let s:TaskState;
+    if(t?.row.state==="completed"){
+      s=this.db.transaction(()=>{
+        const rejected=new ProductDeliveries(this.db,this.now).rejectedCompleted(id,t.row.project_id);
+        const previous=this.sessions.forTask(id).filter(session=>session.role==="supervisor").at(-1);
+        if(!rejected||!previous||previous.status!=="completed"||!previous.workspace?.repos.length)throw new TaskValidationError(`task ${id} is not a completed FINAL-rejected delivery with a retained supervisor workspace`);
+        const repair=DeliveryRepairContinuationSchema.parse({...rejected,previousSessionId:previous.id,workspace:previous.workspace});
+        const projectConfig=this.projectContext(t.row.project_id);
+        if(projectConfig.profiles[t.spec.profile]?.mode!=="supervisor")throw new TaskValidationError(`task ${id} no longer has current supervisor authority`);
+        for(const repo of repair.workspace.repos){
+          if(!t.spec.repositoryAliases.includes(repo.alias)||!projectConfig.repositoryPaths[repo.alias]?.writable||!repo.baseCommit||!statSync(repo.worktree,{throwIfNoEntry:false})?.isDirectory())throw new TaskValidationError(`task ${id} repair workspace is unavailable or outside its assigned repositories`);
+        }
+        return this.tasks.resume(id,{},repair);
+      }).immediate();
+    }else s = this.tasks.resume(id, coding ? { freshWorkspace: true } : {});
     this.scheduler.kick();
     return s;
   }

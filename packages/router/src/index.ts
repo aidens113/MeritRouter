@@ -264,3 +264,4 @@ export { ProductDeliveries, DeliveryStageSchema } from "./verification/product-d
 export { DeliverySpecSchema, deliverySpecDigest } from "./verification/product-spec.js";
 export { ProductCandidateSchema, EvidenceReceiptSchema, productCandidateDigest } from "./verification/product-evidence.js";
 export { evaluateProductReadiness } from "./verification/product-readiness.js";
+export { projectDeliveryReport, ProjectDeliveryReportInputSchema } from "./admin/deliveries.js";

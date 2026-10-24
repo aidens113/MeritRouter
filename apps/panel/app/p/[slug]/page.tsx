@@ -1,4 +1,5 @@
 import { BudgetRequestsCard } from "@/components/budget-requests";
+import { ProjectProductDeliveries } from "@/components/product-delivery-status";
 import { Tabs, pickTab } from "@/components/tabs";
 import { Disclosure } from "@/components/disclosure";
 import Link from "next/link";
@@ -26,6 +27,7 @@ export const metadata = { title: "Project overview" };
 function attentionLink(base: string, text: string, onlyJob: string | null): { href: string; cta: string } | null {
   if (/question/.test(text)) return { href: onlyJob ? `${jobHref(base, onlyJob)}#questions` : `${base}/jobs`, cta: "Answer" };
   if (/acceptance decision/.test(text)) return { href: `${base}/tasks?state=completed`, cta: "Decide" };
+  if (/product deliver/i.test(text)) return { href: "#product-deliveries", cta: "Review products" };
   if (/brain access/.test(text)) return { href: `${base}/brain?view=requests`, cta: "Review" };
   if (/interrupted/.test(text)) return { href: `${base}/tasks?state=interrupted`, cta: "Resume" };
   if (/^Repository /.test(text)) return { href: `${base}/settings`, cta: "Fix" };
@@ -46,6 +48,9 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
   const p = project(sy, slug);
   const base = projectBase(p.slug);
   const ov = insights.projectOverview(sy, p.slug);
+  const after = typeof sp.deliveryAfter === "string" && sp.deliveryAfter.length <= 200 && sp.deliveryAfter.length ? sp.deliveryAfter : undefined;
+  const deliveryReport = insights.projectDeliveryReport(sy, { project: p.slug, limit: 25, ...(after ? { after } : {}) });
+  const nextDeliveriesHref = deliveryReport.nextAfter ? `${base}?tab=activity&deliveryAfter=${encodeURIComponent(deliveryReport.nextAfter)}#product-deliveries` : null;
   const labs = insights.labsListView(sy, p.slug);
   const budgetPending = insights.budgetRequestsView(sy, { project: p.slug, status: "pending", limit: 1000 });
   const now = Date.now();
@@ -86,6 +91,7 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
           </ul>
         </Callout>
       ) : null}
+      <ProjectProductDeliveries report={deliveryReport} base={base} nextHref={nextDeliveriesHref} />
       {tab === "activity" ? <>{ov.attention.length || budgetPending.length ? (
         <Card className="border-warn/40">
           <div className="flex items-center gap-2 border-b border-line px-4 py-3 text-sm font-semibold text-ink">
@@ -112,7 +118,7 @@ export default async function ProjectOverviewPage({ params, searchParams }: { pa
         </Card>
       ) : (
         <Callout tone="good" icon={<CheckCircle2 size={16} />} title="Nothing needs your attention">
-          No questions, decisions, access requests, or interrupted tasks in this project, and every repository is in place.
+          No recorded questions, unresolved product reviews, decisions, access requests, or interrupted tasks in this project, and every repository is in place. Current product sources and runtimes have not been revalidated here.
         </Callout>
       )}</> : null}
       {tab === "activity" ? <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">

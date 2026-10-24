@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { projectDeliveryReport } from "./deliveries.js";
 import path from "node:path";
 import YAML from "yaml";
 import { PROJECT_SLUG_RE, REPOSITORY_ALIAS_RE } from "../config/schema.js";
@@ -118,6 +119,11 @@ export function projectAttention(sy: MeritRouter, slug: string): string[] {
   if (questions) out.push(`${questions} question(s) from supervisors are waiting for an answer.`);
   const awaiting = (sy.db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE project_id = ? AND state = 'completed' AND json_extract(result_json, '$.acceptanceStatus') IN ('needs_supervisor','not_verified')").get(slug) as { n: number }).n;
   if (awaiting) out.push(`${awaiting} result(s) wait for an acceptance decision.`);
+  const deliveryReport = projectDeliveryReport(sy, { project: slug, limit: 100 });
+  for (const delivery of deliveryReport.deliveries.filter(item => item.needsAttention)) {
+    out.push(`Product delivery ${delivery.taskId} needs attention: ${delivery.reasons.join(", ")}.`);
+  }
+  if (deliveryReport.nextAfter) out.push("More product delivery statuses remain to review; continue the project delivery report after its first 100 entries.");
   const requests = (sy.db.prepare("SELECT COUNT(*) AS n FROM brain_access_requests WHERE project_id = ? AND status = 'pending'").get(slug) as { n: number }).n;
   if (requests) out.push(`${requests} brain access request(s) wait for a decision.`);
   const interrupted = (sy.db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE project_id = ? AND state = 'interrupted'").get(slug) as { n: number }).n;

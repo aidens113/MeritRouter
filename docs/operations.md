@@ -41,6 +41,11 @@ stale or self-claimed required evidence blocks handoff. The external FINAL MCP c
 - Use `decide_delivery` to accept or reject the checked candidate. Acceptance requires complete
   current observed evidence, completed work and the handoff stage, with the same expected digests.
   Rejection moves the product back to validation; use `resume_task` explicitly to run repair.
+  For a completed rejected supervisor, repair opens a fresh linked session in its retained
+  workspace and keeps consumed budgets/history. It requires a current matching rejection
+  and current project supervisor/repository authority. Accepted, ordinary completed tasks
+  and missing-workspace deliveries cannot be reopened this way. The job page's Request
+  repair action uses the same guard. Repair must produce fresh evidence and another FINAL decision.
   Human-only authority remains enforced. `accepted` indicates effective acceptance: a historical
   accept decision does not override subsequently blocked evidence or a reopened delivery stage.
 
@@ -48,6 +53,16 @@ The panel separates execution status, task acceptance and the product's FINAL de
 completed task or passed structural check is not a usability verdict. Review the integrated
 product and its failure/loading/empty paths before accepting. Activity includes completed
 unverified work; task acceptance does not create missing product evidence.
+
+Use `meritrouter delivery-report --project <slug>` or MCP `project_delivery_report`
+for bounded project summaries (25 by default). CLI options include `--limit 1..100`,
+`--after <task-id>` and `--json`.
+The keyset continuation is `nextAfter`. Reports expose stage, readiness, historical FINAL
+decision, effective recorded acceptance and actionable reason codes, without specification
+or evidence bodies. Project overview and job detail display the same distinction; product
+rejection remains attention-worthy even when legacy task checks passed. Summaries describe
+stored candidate/evidence only (`sourceRevalidated: false`); inspect `delivery_status` to
+refresh actual Git/runtime state before making a FINAL decision.
 
 ## Cost reduction and spending controls
 
