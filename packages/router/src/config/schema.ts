@@ -822,7 +822,7 @@ export const ConfigSchema = z
       .prefault(DEFAULT_TIERS),
     routing: z
       .object({
-        /** Distinct models tried per model request before giving up on capacity. */
+        /** Ordinary free endpoint attempts per request; definite account/model refusals do not consume this transient retry allowance. */
         max_endpoint_fallbacks: z.number().int().min(1).max(10).default(3),
         /** Retry a failed task once at the next tier. */
         escalate_on_failure: z.boolean().default(true),

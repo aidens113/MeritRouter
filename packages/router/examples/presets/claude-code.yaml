@@ -1,4 +1,4 @@
-# Preset: claude-code. The MCP client is FINAL supervisor; qualified MeritRouter supervisors own delegated delivery. Configure current supervisor quality evidence before dispatch.
+# Preset: claude-code. The MCP client is FINAL supervisor; MeritRouter supervisors own delegated delivery using the strongest eligible route. Reviewed quality evidence is optional unless strict routing is configured.
 # Generated from meritrouter.config.example.yaml by scripts/build-presets.mjs.
 
 
@@ -81,13 +81,13 @@ client_supervision:
   workflow: delegated_delivery # direct_tasks retains the legacy client-coordinated workflow
   dispatch_final_supervisor: false
 
-# Internal supervisors require current quality evidence; paid policy remains independent.
+# Internal supervisors use the strongest eligible route; paid policy remains independent.
 supervisor:
   endpoints: [] # empty = rank eligible models across all configured providers by quality
   routing:
     strategy: highest_eligible_quality
-    minimum_quality: frontier_or_qualified_supervisor
-    quality_evidence: [] # add current sourced capability evidence; empty blocks supervisor routing
+    minimum_quality: best_available # frontier_or_qualified_supervisor requires reviewed evidence
+    quality_evidence: [] # optional sourced capability evidence; absent evidence is labelled unverified
   delivery_budget:
     total_requests: 600
     supervisor_reserve_requests: 80

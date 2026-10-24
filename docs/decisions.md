@@ -11,6 +11,20 @@ Verified interfaces, routing boundaries, and every departure from the original p
 (`plan.md`, written for "fluxiq-workers"). Dates are 2026-10-19 unless noted. FreeLLMAPI, the
 gateway MeritRouter used until 2026-10-20, appears here only as history (last section).
 
+## Usable supervisor routing default (corrective user request, 2026-10-23)
+
+The Facebook delivery pilot could not start any supervisor because omitted quality settings
+resolved to a mandatory evidence policy with an empty evidence list. Delivery now defaults to
+`supervisor.routing.minimum_quality: best_available`: reviewed current evidence ranks first,
+otherwise eligible supervisor models are ordered by existing qualification and capacity
+heuristics and explicitly reported as unverified. No benchmark scores or frontier claims are
+invented. Unverified models must meet supervisor size floors; tools, modalities, provider
+availability, paid policy and budgets remain enforced. Explicit
+`frontier_or_qualified_supervisor` retains the previous strict policy, including dispatch-time
+expiry checks. Supervisor submission preflights routes and refuses impossible jobs before
+queueing, with a typed explanation. External FINAL ownership and delegated delivery remain
+the default workflow; failing to launch a supervisor does not imply consent to direct workers.
+
 ## Cost-first defaults (user decision, 2026-10-23)
 
 The product emphasizes reducing cost across paid and free routes. New configuration enables

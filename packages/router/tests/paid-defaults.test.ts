@@ -23,12 +23,14 @@ describe("cost-first paid defaults", () => {
     for (const preset of ["claude-code", "standalone-free", "standalone-hybrid", "standalone-paid"]) {
       const cfg = ConfigSchema.parse(YAML.parse(readFileSync(path.resolve(import.meta.dirname, `../examples/presets/${preset}.yaml`), "utf8")));
       expect(cfg.execution).toMatchObject({ max_concurrent_tasks: 4, max_concurrent_writers_per_repository: 4 });
+      expect(cfg.supervisor.routing.minimum_quality).toBe("best_available");
     }
   });
   it("defaults to bounded paid routing, including the standalone supervisor", () => {
     const cfg = parse();
     expect(cfg.paid).toMatchObject({ enabled: true, budgets: { per_week_usd: 5 }, tiers: policies, providers: {}, models: [] });
     expect(cfg.supervisor.paid_policy).toBe("on_free_exhaustion");
+    expect(cfg.supervisor.routing.minimum_quality).toBe("best_available");
     expect(parse({ paid: { budgets: {}, tiers: {} } }).paid).toEqual(cfg.paid);
   });
   it("preserves explicit disabled, zero and never choices", () => {

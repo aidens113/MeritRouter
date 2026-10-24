@@ -165,9 +165,10 @@ export function endpointExclusions(
   if (!ep.available && ep.status === "active") reasons.push("no enabled key for this provider");
   if (ep.deniedProfiles.includes(req.profile)) reasons.push(`blocked for ${req.profile} tasks by an override`);
   const floor = Math.max(sizeFloor(cfg, req.profile, req.tier), req.minTotalParametersB ?? 0);
-  if (profile.mode !== "supervisor" && ep.totalParametersB !== null && ep.totalParametersB < floor && !opts.allowBelowFloor && !ep.ignoreSizeFloor) {
+  if ((profile.mode !== "supervisor" || supervisorQuality?.classification === null) && ep.totalParametersB !== null && ep.totalParametersB < floor && !opts.allowBelowFloor && !ep.ignoreSizeFloor) {
     reasons.push(`${ep.totalParametersB}B is below the ${floor}B floor for ${req.profile}/${req.tier}`);
   }
+  if (supervisorQuality?.classification === null && ep.totalParametersB === null && !opts.allowBelowFloor && !ep.ignoreSizeFloor) reasons.push(`unverified supervisor parameter size unknown; requires the ${floor}B floor or an explicit size-floor override`);
   // A model that searches on every request: its answers are web content, and a priced search makes every request paid.
   const always = alwaysSearches(ep);
   if (always && req.web === false) reasons.push("searches the web on every request (always_on); this task must not touch the web (hints.web: false)");
@@ -285,8 +286,14 @@ export function planRoute(
         const paid = paidRank(a.ep) - paidRank(b.ep);
         if (paid) return paid;
       }
-      const delta = quality(b.ep).score - quality(a.ep).score;
+      const delta = (quality(b.ep).score ?? -1) - (quality(a.ep).score ?? -1);
       if (delta) return delta;
+      if (quality(a.ep).classification === null && quality(b.ep).classification === null) {
+        const qualification = score(b.ep.id) - score(a.ep.id);
+        if (qualification) return qualification;
+        const capacity = (b.ep.totalParametersB ?? 0) - (a.ep.totalParametersB ?? 0);
+        if (capacity) return capacity;
+      }
     }
     const pa = forced ? 0 : preferIds.indexOf(a.ep.id);
     const pb = forced ? 0 : preferIds.indexOf(b.ep.id);
@@ -330,7 +337,7 @@ export function planRoute(
     belowFloorEndpoints: belowFloor,
     web: req.web ?? null,
     paidPolicy: policy,
-    ...(supervisor && eligible.length === 0 ? { blocker: { code: "supervisor_quality_unavailable" as const, message: "No authorized eligible endpoint meets the supervisor quality floor; configure current quality evidence or resolve endpoint exclusions. No weaker model was selected." } } : {}),
+    ...(supervisor && eligible.length === 0 ? { blocker: { code: "supervisor_quality_unavailable" as const, message: "No authorized eligible supervisor endpoint meets the configured policy; inspect endpoint exclusions, size floors, paid/access restrictions, and strict quality evidence if enabled." } } : {}),
   };
 }
 
