@@ -85,11 +85,11 @@ export class NativeCodingRunner implements CodingRunner {
     const maxTokens = Math.min(ctx.profile.max_output_tokens, spec.budget?.maxOutputTokens ?? Infinity, limits.outputLimitTokens || Infinity);
     const inputBudget = Math.max(2000, limits.contextLimitTokens - maxTokens - estimateTokens([], tools.map((t) => t.def)) - 500);
     env.inlineOutputBytes = Math.max(1024, Math.min(128 * 1024, inputBudget * 2));
-    const checks = declared.length ? `\nChecks that will be run after you finish${canCheck ? " (run them yourself first with run_check, exactly as written)" : ""}:\n${declared.map((c) => `- ${c}`).join("\n")}` : "";
+    const checks = declared.length ? `\nChecks that will be run after you finish${canCheck ? " (run them yourself first together with run_checks, using declared check:N IDs)" : ""}:\n${declared.map((c) => `- ${c}`).join("\n")}` : "";
     const fresh: ChatMessage[] = [
       {
         role: "system",
-        content: `${charterFor(ctx.cfg, role)}\n\n## Tools\nYour workspace is repository "${alias}" (an isolated worktree). Edit only paths matching: ${(spec.constraints.allowedPaths ?? []).join(", ")}. Prefer read_files/search_text and apply_edits (sha256-guarded); legacy read_file/search/write_file/replace_in_file/delete_file remain compatibility aliases${canCheck ? `; run your declared checks with run_check (at most ${ctx.cfg.coding.max_check_runs_per_task} runs)` : ""}${patterns.length ? "; run allowed commands with run_command" : ""}. There is no other shell. When done, call submit_result once.\n\n## Result\n${OUTPUT_CONTRACT}`,
+        content: `${charterFor(ctx.cfg, role)}\n\n## Tools\nYour workspace is repository "${alias}" (an isolated worktree). Edit only paths matching: ${(spec.constraints.allowedPaths ?? []).join(", ")}. Prefer read_files/search_text and apply_edits (sha256-guarded); legacy read_file/search/write_file/replace_in_file/delete_file remain compatibility aliases${canCheck ? `; group your declared checks with run_checks; run_check is a compatibility alias for one check (at most ${ctx.cfg.coding.max_check_runs_per_task} runs)` : ""}${patterns.length ? "; run allowed commands with run_command" : ""}. There is no other shell. When done, call submit_result once.\n\n## Result\n${OUTPUT_CONTRACT}`,
       },
       { role: "user", content: `${taskBrief(spec, ctx.retry)}${checks}\nProvided context:\n${renderSources(sources) || "(none)"}` },
     ];

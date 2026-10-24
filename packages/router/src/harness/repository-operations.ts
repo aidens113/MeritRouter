@@ -6,12 +6,15 @@ import { git } from "../workspaces/git.js";
 import { scopedArtifact } from "./check-evidence.js";
 import { OutputPageArgs } from "./output-pages.js";
 const FileArgs = z.object({ path: z.string().min(1), start_line: z.number().int().positive().optional(), end_line: z.number().int().positive().optional() });
+// SDK registration also parses inputs. Retain legacy string acceptance there while
+// advertising the preferred object fields even to clients that discard union branches.
+const ModelFileArgs = z.union([z.string().min(1), FileArgs]).meta(z.toJSONSchema(FileArgs));
 const PagingArgs = { offset: z.number().int().nonnegative().max(1000000).default(0), limit: z.number().int().min(1).max(1000).default(1000) };
 export function repositoryOperations(): OperationDefinition[] {
   return [
     { name: "workspace_info", description: "Inspect granted repositories, OS, writable scope and declared recipe IDs. Batch observations; commands must use authorized recipes.", args: z.object(DeadlineArgs), sideEffect: "read", async run(_, env) { return { platform: platform(), repositories: [...env.readers].map(([alias, r]) => ({ alias, root: r.root, revision: r.commit })), writable: env.workspace ? { alias: env.workspace.alias, allowedPaths: env.workspace.allowedPaths } : null, recipes: env.checks?.commands.map((command, i) => ({ id: `check:${i + 1}`, command })) ?? [], limits: { timeout_ms: 30000, max_timeout_ms: 300000, batch_items: 64, read_concurrency: 4 } }; } },
     {
-      name: "read_files", description: "Read up to 64 files in one call. Independent outcomes preserve successful files when another is missing; ranges use numbered lines.", args: z.object({ ...RepositoryArgs, ...DeadlineArgs, files: z.array(z.union([z.string().min(1), FileArgs])).min(1).max(64) }), sideEffect: "read", async run(a, env) {
+      name: "read_files", description: "Read up to 64 files in one call. Use one call for all known independent files: {\"files\":[{\"path\":\"src/a.ts\"},{\"path\":\"src/b.ts\",\"start_line\":1,\"end_line\":80}]}. Independent outcomes preserve successful files when another is missing; ranges use numbered lines.", args: z.object({ ...RepositoryArgs, ...DeadlineArgs, files: z.array(z.union([z.string().min(1), FileArgs])).min(1).max(64) }), modelArgs: z.object({ ...RepositoryArgs, ...DeadlineArgs, files: z.array(ModelFileArgs).min(1).max(64) }), sideEffect: "read", async run(a, env) {
         const r = resolveReader(env, a.alias), inputs = a.files as Array<string | z.infer<typeof FileArgs>>, results: unknown[] = new Array(inputs.length);
         if(!r.commit)await r.dirtyPaths(env.ctx.signal);
         let next = 0;

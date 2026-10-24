@@ -25,6 +25,54 @@ function setup(turns: ReturnType<typeof call>[][], tools: HarnessTool[], limit =
   return { options, offered };
 }
 describe("fresh repeat observations", () => {
+  it("coalesces same-turn repository reads with isolated invocation IDs and a four-read limit", async () => {
+    let active = 0, peak = 0;
+    const seen: string[] = [], ids: string[] = [];
+    const read = tool("read_file", "read", async (args, env) => {
+      active++; peak = Math.max(peak, active); ids.push(env.toolInvocationId!);
+      try {
+        await new Promise(resolve => setTimeout(resolve, 5));
+        seen.push(args.path as string);
+        if (args.path === "missing") throw new Error("missing file");
+        return `read ${args.path}`;
+      } finally { active--; }
+    });
+    const paths = ["one", "missing", "three", "four", "five", "six"];
+    const { options } = setup([paths.map((path, i) => call("read_file", { path }, `r${i}`)), [call("submit")]], [read]);
+    const result = await runAgentLoop(options);
+    expect(result.kind).toBe("terminal"); expect(peak).toBe(4); expect(active).toBe(0);
+    expect(seen.sort()).toEqual([...paths].sort());
+    expect(ids).toEqual(paths.map((_, i) => `exec:r${i}`));
+    expect(options.env.toolInvocationId).toBeUndefined();
+    expect(result.messages.filter(message => message.role === "tool").slice(0, 6).map(message => message.tool_call_id))
+      .toEqual(paths.map((_, i) => `r${i}`));
+    expect(result.messages.some(message => message.role === "tool" && message.content.includes("missing file"))).toBe(true);
+  });
+  it("retains mutations and commands as ordering barriers between read groups", async () => {
+    const order: string[] = [];
+    const tools = [tool("read_file", "read", async args => { order.push(`read ${args.path}`); return "read"; }),
+      tool("edit", "edit", async () => { order.push("edit"); return "edited"; }),
+      tool("check", "command", async () => { order.push("check"); return "checked"; })];
+    const { options } = setup([[call("read_file", { path: "before" }), call("edit"), call("check"), call("read_file", { path: "after" }, "after")], [call("submit")]], tools);
+    expect((await runAgentLoop(options)).kind).toBe("terminal");
+    expect(order).toEqual(["read before", "edit", "check", "read after"]);
+  });
+  it("waits for started reads to settle on cancellation and never starts the later edit", async () => {
+    const controller = new AbortController(); let active = 0;
+    const edit = vi.fn(async () => "must not edit");
+    const read = tool("read_file", "read", async args => {
+      active++;
+      try {
+        await new Promise(resolve => setTimeout(resolve, args.path === "cancel" ? 5 : 25));
+        if (args.path === "cancel") { controller.abort(new Error("fixture cancellation")); throw controller.signal.reason; }
+        return "settled";
+      } finally { active--; }
+    });
+    const { options } = setup([[call("read_file", { path: "cancel" }, "first"), call("read_file", { path: "settle" }, "second"), call("edit")]], [read, tool("edit", "edit", edit)]);
+    options.env.ctx.signal = controller.signal;
+    await expect(runAgentLoop(options)).rejects.toThrow("fixture cancellation");
+    expect(active).toBe(0); expect(edit).not.toHaveBeenCalled();
+  });
   it("refuses a later batched edit and response commit after authority is lost during a wait", async () => {
     let live = true;
     const edit = vi.fn(async () => "written"), commit = vi.fn();

@@ -43,13 +43,13 @@ export function recipeOperations(): OperationDefinition[] {
           return { ok, output: JSON.stringify(value) };
         });
         results.push(value);
-        if (a.stop_on_failure && (value as {
+        if ((value as { status: string }).status === "waiting_approval" || a.stop_on_failure && (value as {
           status: string;
         }).status !== "succeeded")
           break;
       }
       return {
-        status: results.every(result => (result as {
+        status: results.some(result => (result as { status: string }).status === "waiting_approval") ? "waiting_approval" : results.every(result => (result as {
           status: string;
         }).status === "succeeded") ? "succeeded" : "failed", results, notStarted: ids.slice(results.length)
       };

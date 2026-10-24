@@ -284,7 +284,27 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
 
     let finished: T | undefined;
     let repeatedToolCall: string | null = null;
-    for (const call of calls) {
+    const executeCall = async (call: ChatToolCall, args: unknown, t: HarnessTool | undefined, previous?: RepeatOutcome): Promise<RepeatOutcome> => {
+      assertRunAuthority(env.ctx);
+      return journaled(session, call, args, t ? { sideEffect: t.sideEffect, idempotent: t.idempotent } : { sideEffect: "none" }, async () => {
+        if (!t) return { ok: false, output: `error: unknown or unavailable tool ${call.function.name}` };
+        if (previous) return { ok: false, output: `the exact call already ran; MeritRouter did not repeat it to avoid duplicating its side effect. Its previous outcome was: ${previous.output}` };
+        try {
+          if (args === undefined) throw new Error(`${call.function.name} arguments are not valid JSON`);
+          const invocationEnv = { ...env, toolInvocationId: `${session?.id ?? o.executionId}:${call.id}` };
+          const output = await t.run(args as Record<string, unknown>, invocationEnv);
+          return { ok: t.outputSucceeded?.(output) ?? true, output };
+        } catch (err) {
+          if (env.ctx.signal.aborted) throw err;
+          return { ok: false, output: `error: ${(err as Error).message}` };
+        }
+      });
+    };
+    // Only repository observations can be coalesced. Waits, cancellation, approvals,
+    // commands and every mutation remain ordering barriers, even when called read-only.
+    const pureReads = new Set(["read_files", "list_paths", "search_text", "git_status", "git_diff", "read_output_page", "read_file", "list_files", "search"]);
+    const prefetched = new Map<ChatToolCall, RepeatOutcome>();
+    for (const [callIndex, call] of calls.entries()) {
       assertRunAuthority(env.ctx);
       const args = parseArgs(call.function.arguments);
       if (call.function.name === terminalName) {
@@ -310,25 +330,21 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
         : undefined;
       const fresh = !!t && (t.sideEffect === "read" || t.sideEffect === "none" || !!behavior);
       const previous = signature && !fresh ? effects.get(signature) : undefined;
-      const r = await journaled(session, call, args, t ? { sideEffect: t.sideEffect, idempotent: t.idempotent } : { sideEffect: "none" }, async () => {
-        if (!t) return { ok: false, output: `error: unknown or unavailable tool ${call.function.name}` };
-        if (previous) return { ok: false, output: `the exact call already ran; MeritRouter did not repeat it to avoid duplicating its side effect. Its previous outcome was: ${previous.output}` };
-        try {
-          if (args === undefined) throw new Error(`${call.function.name} arguments are not valid JSON`);
-          const previousInvocation = env.toolInvocationId;
-          env.toolInvocationId = `${session?.id ?? o.executionId}:${call.id}`;
-          try {
-            const output = await t.run(args as Record<string, unknown>, env);
-            return { ok: t.outputSucceeded?.(output) ?? true, output };
-          } finally {
-            if (previousInvocation === undefined) delete env.toolInvocationId;
-            else env.toolInvocationId = previousInvocation;
-          }
-        } catch (err) {
-          if (env.ctx.signal.aborted) throw err;
-          return { ok: false, output: `error: ${(err as Error).message}` };
+      if (!prefetched.has(call) && remaining !== 1 && t?.sideEffect === "read" && pureReads.has(call.function.name)) {
+        const group: ChatToolCall[] = [];
+        for (let index = callIndex; index < calls.length && group.length < 4; index++) {
+          const candidate = calls[index]!;
+          if (byName.get(candidate.function.name)?.sideEffect !== "read" || !pureReads.has(candidate.function.name)) break;
+          group.push(candidate);
         }
-      });
+        // Quiesce all started reads before propagating cancellation or a simulated crash.
+        const outcomes = await Promise.allSettled(group.map(async candidate => {
+          const value = await executeCall(candidate, parseArgs(candidate.function.arguments), byName.get(candidate.function.name));
+          prefetched.set(candidate, value);
+        }));
+        for (const outcome of outcomes) if (outcome.status === "rejected") throw outcome.reason;
+      }
+      const r = prefetched.get(call) ?? await executeCall(call, args, t, previous);
       if (r.ok && t?.sideEffect === "edit") edited = true;
       let output = r.output;
       if (previous) {
