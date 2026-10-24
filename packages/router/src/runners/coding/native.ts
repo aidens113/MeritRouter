@@ -12,15 +12,17 @@ import { charterFor } from "../../roles/index.js";
 import { commitAs } from "../../attribution/index.js";
 import { runAgentLoop } from "../../harness/loop.js";
 import { webTools } from "../../harness/web-tools.js";
-import { artifactTool, brainReadTools, commandTool, declaredCheckTool, editTools, repoTools, type HarnessEnv, type HarnessTool } from "../../harness/tools.js";
+import { artifactTool, availableTools, brainReadTools, commandTool, declaredCheckTool, editTools, repoTools, type HarnessEnv, type HarnessTool } from "../../harness/tools.js";
 import { requestBudgetTool } from "../../harness/budget-tools.js";
 import { labHarnessTools } from "../../labs/tools.js";
 import { minimalEnv } from "./process.js";
-import { brainContext, submitResultTool, workerActor, workerBrainEnv } from "../../harness/worker.js";
+import { brainContext, SUBMIT_RESULT_DEF, submitResultTool, workerActor, workerBrainEnv } from "../../harness/worker.js";
 import type { RunContext, RunOutcome } from "../types.js";
 import { taskBrief } from "../prompts.js";
 import { agentHome, finishCoding, prepareWorkspace, resumeWorkspace, sourceDirtyFinding } from "./finish.js";
 import { WorkspacePointer } from "../session-workspace.js";
+import { harnessV2Tools, harnessV2StartupContext } from "../../harness/operation-dispatch.js";
+import { refreshMemoryMessages } from "../../context/memory.js";
 
 /**
  * MeritRouter's own coding worker. Edits go through tools that refuse paths outside
@@ -64,6 +66,8 @@ export class NativeCodingRunner implements CodingRunner {
     };
     await restoreCheckEvidence(env);
     const tools: HarnessTool[] = [
+      // Historical v1 transcripts keep their original surface when resumed.
+      ...(!ctx.resume || ctx.resume.plan.messages.some(message => message.role === "system" && message.content.includes("Harness v2:")) ? harnessV2Tools(env) : []),
       ...repoTools(spec.repositoryAliases),
       ...editTools(),
       ...(declared.length ? [declaredCheckTool()] : []),
@@ -80,16 +84,23 @@ export class NativeCodingRunner implements CodingRunner {
     // Never ask for more output than the candidate models can produce (coding defaults high).
     const maxTokens = Math.min(ctx.profile.max_output_tokens, spec.budget?.maxOutputTokens ?? Infinity, limits.outputLimitTokens || Infinity);
     const inputBudget = Math.max(2000, limits.contextLimitTokens - maxTokens - estimateTokens([], tools.map((t) => t.def)) - 500);
+    env.inlineOutputBytes = Math.max(1024, Math.min(128 * 1024, inputBudget * 2));
     const checks = declared.length ? `\nChecks that will be run after you finish${canCheck ? " (run them yourself first with run_check, exactly as written)" : ""}:\n${declared.map((c) => `- ${c}`).join("\n")}` : "";
     const fresh: ChatMessage[] = [
       {
         role: "system",
-        content: `${charterFor(ctx.cfg, role)}\n\n## Tools\nYour workspace is repository "${alias}" (an isolated worktree). Edit only paths matching: ${(spec.constraints.allowedPaths ?? []).join(", ")}. Read with read_file/search; edit with write_file/replace_in_file/delete_file${canCheck ? `; run your declared checks with run_check (at most ${ctx.cfg.coding.max_check_runs_per_task} runs)` : ""}${patterns.length ? "; run allowed commands with run_command" : ""}. There is no other shell. When done, call submit_result once.\n\n## Result\n${OUTPUT_CONTRACT}`,
+        content: `${charterFor(ctx.cfg, role)}\n\n## Tools\nYour workspace is repository "${alias}" (an isolated worktree). Edit only paths matching: ${(spec.constraints.allowedPaths ?? []).join(", ")}. Prefer read_files/search_text and apply_edits (sha256-guarded); legacy read_file/search/write_file/replace_in_file/delete_file remain compatibility aliases${canCheck ? `; run your declared checks with run_check (at most ${ctx.cfg.coding.max_check_runs_per_task} runs)` : ""}${patterns.length ? "; run allowed commands with run_command" : ""}. There is no other shell. When done, call submit_result once.\n\n## Result\n${OUTPUT_CONTRACT}`,
       },
-      { role: "user", content: `${taskBrief(spec, ctx.retry)}${checks}\nProvided context:\n${renderSources(sources) || "(none)"}\n${brainContext(env)}` },
+      { role: "user", content: `${taskBrief(spec, ctx.retry)}${checks}\nProvided context:\n${renderSources(sources) || "(none)"}` },
     ];
+    fresh[0] = { ...fresh[0]!, content: `${fresh[0]!.content}\n\n${harnessV2StartupContext(env)}` };
+    const memoryOptions = { tools: [...availableTools(tools, env).map(tool => tool.def), SUBMIT_RESULT_DEF], outputTokens: maxTokens, reservedTokens: 500 };
+    if (!ctx.resume) {
+      const memory = await brainContext(env, { messages: fresh, ...memoryOptions });
+      if (memory) fresh.push({role:"user",content:memory});
+    }
     const lost = ctx.resume && !reused ? "\nYour previous worktree no longer exists: this is a fresh worktree, and your earlier edits are not in it. Re-apply them." : "";
-    const messages = ctx.resume ? ctx.resume.plan.messages : fresh;
+    const messages = ctx.resume ? await refreshMemoryMessages(env, ctx.resume.plan.messages, memoryOptions) : fresh;
     const executionId = ctx.gate.admission.createExecution("task", spec.profile, [{ taskId: ctx.taskId, itemId: ctx.taskId }]);
     const loop = await runAgentLoop({
       env,

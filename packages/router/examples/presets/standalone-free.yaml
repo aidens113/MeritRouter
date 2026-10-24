@@ -76,7 +76,12 @@ brain:
   access_approver: supervisor # who decides workers' requests for more access: supervisor | human | auto
   auto_approve: [] # e.g. [{ pattern: "projects/my-project/decisions/**", mode: read, min_tier: T2 }]
 
-# Standalone jobs (used when profiles.supervise exists; see the standalone presets).
+# The initiating client remains FINAL supervisor; internal supervisors own bounded delivery.
+client_supervision:
+  workflow: delegated_delivery # direct_tasks retains the legacy client-coordinated workflow
+  dispatch_final_supervisor: false
+
+# Internal supervisors require current quality evidence; paid policy remains independent.
 supervisor:
   endpoints: []
   paid_policy: never
@@ -88,8 +93,8 @@ team:
   max_agents: 8 # most tasks of one job running at once
   # A job's budget is one request pool: each delegated task holds its budget (the brief's
   # max_requests, else default_task_requests, else its tier's cap) while open; unused requests return.
-  # No job-wide request cap is set by default. Set profiles.supervise.max_model_requests,
-  # verification.max_total_requests_per_task, or the job's budget explicitly to impose one.
+  # Delegated delivery defaults to the 600-request ceiling above. Explicit smaller profile
+  # or task ceilings still apply. Legacy direct_tasks keeps its previous uncapped default.
   # default_task_requests: 40
   supervisor_reserve_requests: 4 # never granted to tasks: kept for the supervisor's own turns
   # Workers running low ask for more (request_more_budget) and wait for a decision.
@@ -223,6 +228,14 @@ panel:
   token_env: MERITROUTER_PANEL_TOKEN
 
 profiles:
+  supervise:
+    mode: supervisor
+    tools: supervisor
+    min_total_parameters_b: 100
+    max_model_requests: null
+    max_output_tokens: 8000
+    classify: never
+    min_tier: T3
   summarize:
     mode: completion
     min_total_parameters_b: 30
@@ -254,11 +267,3 @@ profiles:
     max_model_requests: 40
     tools: repository_read_and_artifacts
     min_tier: T2
-  supervise:
-    mode: supervisor
-    tools: supervisor
-    min_total_parameters_b: 100
-    max_model_requests: null
-    max_output_tokens: 8000
-    classify: never
-    min_tier: T3

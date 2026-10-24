@@ -72,9 +72,23 @@ brain:
   access_approver: supervisor   # who decides workers' requests for more access: supervisor | human | auto
   auto_approve: []              # e.g. [{ pattern: "projects/my-project/decisions/**", mode: read, min_tier: T2 }]
 
-# Standalone jobs (used when profiles.supervise exists; see the standalone presets).
+# The initiating client remains FINAL supervisor; internal supervisors own bounded delivery.
+client_supervision:
+  workflow: delegated_delivery # direct_tasks retains the legacy client-coordinated workflow
+  dispatch_final_supervisor: false
+
+# Internal supervisors require current quality evidence; paid policy remains independent.
 supervisor:
-  endpoints: []                 # models for the supervisor, in order; empty = most capable eligible T3 model
+  endpoints: []                 # empty = rank eligible models across all configured providers by quality
+  routing:
+    strategy: highest_eligible_quality
+    minimum_quality: frontier_or_qualified_supervisor
+    quality_evidence: []        # add current sourced capability evidence; empty blocks supervisor routing
+  delivery_budget:
+    total_requests: 600
+    supervisor_reserve_requests: 80
+    validation_reserve_requests: 80
+    extension_requests: 200     # requested upward; never an automatic grant
   paid_policy: on_free_exhaustion # never | on_free_exhaustion | preferred
   max_concurrent_jobs: 1
   job_timeout_seconds: 14400
@@ -91,8 +105,8 @@ team:
   max_agents: 8                 # most tasks of one job running at once
   # A job's budget is one request pool: each delegated task holds its budget (the brief's
   # max_requests, else default_task_requests, else its tier's cap) while open; unused requests return.
-  # No job-wide request cap is set by default. Set profiles.supervise.max_model_requests,
-  # verification.max_total_requests_per_task, or the job's budget explicitly to impose one.
+  # Delegated delivery defaults to the 600-request ceiling above. Explicit smaller profile
+  # or task ceilings still apply. Legacy direct_tasks keeps its previous uncapped default.
   # default_task_requests: 40
   supervisor_reserve_requests: 4 # never granted to tasks: kept for the supervisor's own turns
   # Workers running low ask for more (request_more_budget) and wait for a decision.
@@ -217,6 +231,14 @@ panel:
   token_env: MERITROUTER_PANEL_TOKEN
 
 profiles:
+  supervise:
+    mode: supervisor
+    tools: supervisor
+    min_total_parameters_b: 100
+    max_model_requests: null    # delivery_budget supplies the default job ceiling
+    max_output_tokens: 8000
+    classify: never
+    min_tier: T3
   summarize:
     mode: completion
     min_total_parameters_b: 30

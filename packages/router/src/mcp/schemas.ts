@@ -30,6 +30,7 @@ export const LabOperationArgumentSchema = open({
 
 /** One task as submit_tasks takes it: the main fields of core/task.ts's WorkerTaskSchema. */
 export const TaskArgumentSchema = open({
+  deliveryVersion: z.number().int().min(2).max(2).optional().describe("Versioned delivery workflow; normally set by start_job."),
   supervisionScope: z.enum(["subtask", "project"]).optional().describe("Supervisor task authority: defaults subtask, external client owns final project completion. Project requires policy permission."),
   parentTaskId: z.string().min(1).optional().describe("Existing same-project supervisor parent; children cannot claim project scope."),
   profile: ProfileNameSchema.describe(PROFILE_NAMES.join(" | ")),
@@ -41,6 +42,7 @@ export const TaskArgumentSchema = open({
     fileRefs: strings.optional().describe("'<alias>:<path>[#Lstart-Lend]' references the worker loads itself."),
     artifactRefs: strings.optional().describe("'artifact:<id>' references."),
     inlineText: z.string().optional(),
+    baseCommits: open({}).optional().describe("Repository alias to pinned Git commit strings; strict commit validation occurs at submission."),
   }).optional(),
   constraints: open({
     acceptanceCriteria: z
@@ -51,6 +53,13 @@ export const TaskArgumentSchema = open({
     labChecks: strings.optional().describe("Declared human-authorized command Lab check names; creates an isolated task-attempt Lab before acceptance."),
   }),
   importance: ImportanceSchema.optional(),
+  budget: open({
+    maxModelRequests: z.number().int().positive().optional(),
+    maxInputTokens: z.number().int().positive().optional(),
+    maxOutputTokens: z.number().int().positive().optional(),
+    maxPaidUsd: z.number().min(0).optional(),
+    timeoutSeconds: z.number().int().positive().optional(),
+  }).optional().describe("Explicit task ceilings. Request extensions never raise paid limits implicitly."),
   importanceReason: z.string().optional().describe("Required for high and critical."),
   verification: open({ atLeast: VerificationLevelSchema.optional(), addChecks: strings.optional() }).optional(),
   dependsOn: strings.optional().describe("Task ids that must finish first."),
@@ -64,6 +73,7 @@ export const TaskArgumentSchema = open({
 
 /** Portable typed description; strict runtime validation lives in admin/client-supervision.ts. */
 export const SupervisionPolicyArgumentShape = {
+  workflow: z.enum(["delegated_delivery", "direct_tasks"]).optional(),
   dispatch_final_supervisor: z.boolean().optional(),
   instructions: z.string().max(8000).optional(),
   reason: z.string().min(1).max(2000).describe("The explicit user's requested policy change and why."),

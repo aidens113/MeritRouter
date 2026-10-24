@@ -211,6 +211,7 @@ export class Executor {
       plan,
       attempts: routing.attempts,
       brain: d.brain,
+      installBrain: this.d.brain,
       access: d.access,
       effort: effortFor(task.spec, task.row.id),
       jobId: jobIdFor(task),

@@ -23,6 +23,7 @@ export function strongerLevel(a: VerificationLevel, b: VerificationLevel): Verif
 
 /** Built-in rule ids recorded alongside configured ones. */
 export const BUILTIN_RULES = {
+  evaluatorChanges: "evaluator-changes-required",
   /** A criterion marked verify: review needs an independent review, so at least deep. */
   criterionReview: "criterion-review",
   /** The task's own verification.atLeast. */
@@ -71,6 +72,7 @@ export function policyFingerprint(policy: VerificationConfig): string {
 }
 
 export interface PolicyInput {
+  evaluatorChangeExpected?: boolean;
   tier: TierName;
   profile: ProfileName;
   tags: Partial<Tags> | null;
@@ -122,6 +124,12 @@ export function evaluatePolicy(policy: VerificationConfig, input: PolicyInput): 
     rulesMatched.push(BUILTIN_RULES.criterionReview);
     level = strongerLevel(level, "deep");
   }
+  const evaluatorChanges = input.evaluatorChangeExpected || input.protectedPathsChanged === true;
+  if (evaluatorChanges) {
+    rulesMatched.push(BUILTIN_RULES.evaluatorChanges);
+    level = strongerLevel(level, "deep");
+    added.add("evaluator_change_review");
+  }
   if (input.atLeast) {
     rulesMatched.push(BUILTIN_RULES.taskAtLeast);
     level = strongerLevel(level, input.atLeast);
@@ -133,7 +141,7 @@ export function evaluatePolicy(policy: VerificationConfig, input: PolicyInput): 
   const resolved = resolveLevel(policy, level);
   const checks = [...resolved.checks];
   for (const c of added) if (!checks.includes(c)) checks.push(c);
-  return { importance, matrixLevel, level, rulesMatched, checks, review: resolved.review, acceptance: resolved.acceptance, fingerprint: policyFingerprint(policy) };
+  return { importance, matrixLevel, level, rulesMatched, checks, review: evaluatorChanges ? { ...resolved.review, required: true, independent: true } : resolved.review, acceptance: resolved.acceptance, fingerprint: policyFingerprint(policy) };
 }
 
 /** What a result reveals that the spec could not: the actual changes. Never the worker's own claims. */
@@ -193,10 +201,10 @@ export function reevaluateOnResult(policy: VerificationConfig, contract: Accepta
   const raised = level !== c.level || importance !== contract.importance.level || checks.length !== c.requiredChecks.length;
   // Review and acceptance never weaken below the contract's even if the policy changed since.
   const review: ResolvedReview = {
-    required: resolved.review.required || c.review.required,
+    required: resolved.review.required || c.review.required || ev.review.required,
     qualification: resolved.review.qualification ?? c.review.qualification,
     minTotalParametersB: Math.max(resolved.review.minTotalParametersB ?? 0, c.review.minTotalParametersB ?? 0) || null,
-    independent: resolved.review.independent || c.review.independent,
+    independent: resolved.review.independent || c.review.independent || ev.review.independent,
   };
   const acceptance = resolved.acceptance === "supervisor" || c.acceptance === "supervisor" ? "supervisor" : "automatic";
   return {

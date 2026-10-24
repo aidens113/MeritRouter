@@ -63,12 +63,15 @@ Tasks
                                 submit task JSON (object or array); --importance fills in
                                 tasks that set none (high and critical need a reason)
   status [ids...]               task status (recent tasks when no ids)
+  delivery-report [--limit n] [--after id] [--json]
+                                bounded project product readiness and FINAL decision summary
   await <ids...> [--timeout s]  wait for results
   collect <ids...>              print finished results
   cancel <ids...>               cancel tasks
   resume <id>                   requeue interrupted work: a session id (s_...) continues
                                 that session; a task id continues its latest session
                                 (coding tasks start over in a fresh worktree)
+                                completed FINAL-rejected delivery tasks request guarded repair
   accept <id> [--reason "<why>"]   accept a finished result as you (needs_supervisor and
                                 not_verified results need a reason)
   reject <id> --reason "<why>"  reject a finished result; it becomes unmet

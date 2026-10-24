@@ -38,6 +38,7 @@ import type { FetchLike } from "../providers/transport.js";
 import { createCodingRunner } from "../runners/coding/index.js";
 import { SupervisorRunner } from "../runners/supervisor.js";
 import { TaskValidationError } from "./errors.js";
+import { DeliveryRepairContinuationSchema, ProductDeliveries } from "../verification/product-delivery.js";
 import { validateTask } from "./validate.js";
 import { DELEGATED_BY_SESSION, Executor, type CodingRunner, type ProjectDeps } from "./executor.js";
 import { ProjectRegistry } from "../projects/registry.js";
@@ -620,12 +621,12 @@ export class MeritRouter {
   }
 
   /** Results for tasks that have reached a terminal (or interrupted) state. */
-  collectResults(ids: string[]): AwaitOutcome {
+  collectResults(ids: string[], project?: string): AwaitOutcome {
     const completed: WorkerResult[] = [];
     const pending: AwaitOutcome["pending"] = [];
     for (const id of ids) {
       const t = this.tasks.get(id);
-      if (!t) pending.push({ taskId: id, state: "unknown" });
+      if (!t || (project !== undefined && t.row.project_id !== project)) pending.push({ taskId: id, state: "unknown" });
       else if ((isTerminal(t.row.state) || t.row.state === "interrupted") && t.result) completed.push(t.result);
       else pending.push({ taskId: id, state: t.row.state });
     }
@@ -636,14 +637,14 @@ export class MeritRouter {
    * Wait inside the package until every task settles or the bounded wait elapses, so the
    * supervisor spends one tool call rather than repeated polling turns.
    */
-  async awaitResults(ids: string[], opts: { timeoutSeconds?: number; signal?: AbortSignal; uncapped?: boolean } = {}): Promise<AwaitOutcome> {
+  async awaitResults(ids: string[], opts: { timeoutSeconds?: number; signal?: AbortSignal; uncapped?: boolean; project?: string } = {}): Promise<AwaitOutcome> {
     // The cap bounds MCP tool calls; in-process supervisors may wait longer (it costs no requests).
     const cap = opts.uncapped ? 3600 : this.cfg.execution.await_max_seconds;
     const limit = Math.min(opts.timeoutSeconds ?? cap, cap);
     const start = this.now();
     const until = start + limit * 1000;
     for (;;) {
-      const r = this.collectResults(ids);
+      const r = this.collectResults(ids, opts.project);
       const waiting = r.pending.filter((p) => p.state !== "unknown");
       if (waiting.length === 0 || this.now() >= until || opts.signal?.aborted) {
         return { ...r, timedOut: waiting.length > 0, waitedSeconds: Math.round((this.now() - start) / 1000) };
@@ -705,9 +706,13 @@ export class MeritRouter {
   }): Promise<SubmitOutcome> {
     if (!this.cfg.profiles.supervise) throw new TaskValidationError("this configuration has no supervise task type; use a standalone preset or add profiles.supervise");
     const project = this.projects.forWrite(input.project).project.slug;
+    const maxModelRequests = input.maxModelRequests ?? (this.cfg.client_supervision.workflow === "delegated_delivery"
+      ? Math.min(this.cfg.supervisor.delivery_budget.total_requests, this.cfg.profiles.supervise.max_model_requests ?? Infinity)
+      : undefined);
     const [out] = await this.submitTasks([
       {
         profile: "supervise",
+        ...(this.cfg.client_supervision.workflow === "delegated_delivery" ? {deliveryVersion:2 as const} : {}),
         ...(input.supervisionScope ? { supervisionScope: input.supervisionScope } : {}),
         goal: input.goal,
         repositoryAliases: input.repositories,
@@ -715,7 +720,7 @@ export class MeritRouter {
         ...(input.label ? { label: input.label } : {}),
         ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
         constraints: { acceptanceCriteria: input.acceptanceCriteria?.length ? input.acceptanceCriteria : ["The goal is achieved and the supervisor verified it"], ...(input.checks?.length ? { checks: input.checks } : {}) },
-        ...(input.maxModelRequests || input.maxPaidUsd !== undefined ? { budget: { ...(input.maxModelRequests ? { maxModelRequests: input.maxModelRequests } : {}), ...(input.maxPaidUsd !== undefined ? { maxPaidUsd: input.maxPaidUsd } : {}) } } : {}),
+        ...(maxModelRequests !== undefined || input.maxPaidUsd !== undefined ? { budget: { ...(maxModelRequests !== undefined ? { maxModelRequests } : {}), ...(input.maxPaidUsd !== undefined ? { maxPaidUsd: input.maxPaidUsd } : {}) } } : {}),
       },
     ], { project });
     return out!;
@@ -802,14 +807,30 @@ export class MeritRouter {
   }
 
   /**
-   * Re-queue an interrupted task. Agent-loop roles continue their latest interrupted session;
+   * Re-queue an interrupted task, or explicitly repair a completed FINAL-rejected delivery.
+   * Delivery repair opens a fresh linked supervisor session in its retained workspace.
+   * Agent-loop roles continue their latest interrupted session;
    * a coding task starts over in a fresh worktree (the old one stays as evidence).
    */
   resumeTask(id: string, project?: string): TaskState {
     this.assertInProject(id, project);
     const t = this.tasks.get(id);
     const coding = t ? this.cfg.profiles[t.spec.profile]?.mode === "coding" : false;
-    const s = this.tasks.resume(id, coding ? { freshWorkspace: true } : {});
+    let s:TaskState;
+    if(t?.row.state==="completed"){
+      s=this.db.transaction(()=>{
+        const rejected=new ProductDeliveries(this.db,this.now).rejectedCompleted(id,t.row.project_id);
+        const previous=this.sessions.forTask(id).filter(session=>session.role==="supervisor").at(-1);
+        if(!rejected||!previous||previous.status!=="completed"||!previous.workspace?.repos.length)throw new TaskValidationError(`task ${id} is not a completed FINAL-rejected delivery with a retained supervisor workspace`);
+        const repair=DeliveryRepairContinuationSchema.parse({...rejected,previousSessionId:previous.id,workspace:previous.workspace});
+        const projectConfig=this.projectContext(t.row.project_id);
+        if(projectConfig.profiles[t.spec.profile]?.mode!=="supervisor")throw new TaskValidationError(`task ${id} no longer has current supervisor authority`);
+        for(const repo of repair.workspace.repos){
+          if(!t.spec.repositoryAliases.includes(repo.alias)||!projectConfig.repositoryPaths[repo.alias]?.writable||!repo.baseCommit||!statSync(repo.worktree,{throwIfNoEntry:false})?.isDirectory())throw new TaskValidationError(`task ${id} repair workspace is unavailable or outside its assigned repositories`);
+        }
+        return this.tasks.resume(id,{},repair);
+      }).immediate();
+    }else s = this.tasks.resume(id, coding ? { freshWorkspace: true } : {});
     this.scheduler.kick();
     return s;
   }

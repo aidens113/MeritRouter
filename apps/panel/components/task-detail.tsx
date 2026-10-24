@@ -73,6 +73,7 @@ export async function TaskDetailView({ sy, taskId, scope, sp = {} }: { sy: Merit
   const budgetHistory = insights.budgetRequestsView(sy, { taskId, project: scope.project }).filter((r) => r.status !== "pending");
   const workerActions = insights.listWorkerActions(sy.db, { project: scope.project, taskId });
   const webRequests = insights.taskWebRequests(sy, st.taskId);
+  const delivery = st.profile === "supervise" ? insights.deliveryView(sy,st.taskId,scope.project) : null;
 
   const tab = pickTab(sp, ["result", "verification", "routing", "usage", "sessions"]);
   return (
@@ -80,6 +81,16 @@ export async function TaskDetailView({ sy, taskId, scope, sp = {} }: { sy: Merit
       <Link href={scope.back.href} className="inline-flex items-center gap-1 text-sm text-ink-3 hover:text-ink">
         <ArrowLeft size={14} aria-hidden /> {scope.back.label}
       </Link>
+      {delivery ? <Card>
+        <CardHeader title="Product delivery" description="Execution and task acceptance are separate from the initiating FINAL supervisor's product decision."/>
+        <div className="space-y-2 p-4 text-sm">
+          <p>Stage: <strong>{delivery.stage}</strong> · Specification revision {delivery.spec.revision}</p>
+          <p>Recorded readiness: <strong>{delivery.readiness?.status === "ready_for_final_review" ? "Ready for FINAL review" : "Evidence incomplete"}</strong>. Current sources and runtime are rechecked when the FINAL supervisor reviews or decides.</p>
+          <p>Recorded FINAL decision: <strong>{delivery.finalDecision?.decision ?? "Not decided"}</strong>{delivery.finalDecision?` — ${delivery.finalDecision.reason}`:""}</p>
+          {delivery.finalDecision?.decision==="accept"&&!delivery.accepted?<p>Acceptance is no longer effective: current delivery requirements are unresolved.</p>:null}
+          {delivery.readiness?.blockers.length?<ul className="list-disc pl-5">{delivery.readiness.blockers.map((blocker,index)=><li key={index}>{blocker.criterionId??"Delivery"}: {blocker.detail}</li>)}</ul>:null}
+        </div>
+      </Card>:null}
       <PageHeader
         title={`${st.profile} task`}
         live={[`tasks:${st.taskId}`, "budget", "requests"]}
@@ -157,7 +168,7 @@ export async function TaskDetailView({ sy, taskId, scope, sp = {} }: { sy: Merit
               const v = verified.get(c.id);
               const open = v ? OPEN_OUTCOMES.includes(v.outcome) : unresolvedIds ? unresolvedIds.has(c.id) : [...unresolved].some((u) => u.includes(c.text) || u.startsWith(`[${i}]`));
               const good = v ? v.outcome === "passed" : res?.acceptanceStatus === "met";
-              const label = v ? (CRITERION_OUTCOME[v.outcome] ?? v.outcome.replace(/_/g, " ")) : res?.acceptanceStatus === "met" ? "met, verified by checks" : "worker reports met (not verified)";
+              const label = v ? (CRITERION_OUTCOME[v.outcome] ?? v.outcome.replace(/_/g, " ")) : res?.acceptanceStatus === "met" ? "accepted; no individual verification receipt" : "worker reports met (not verified)";
               return (
                 <li key={c.id} className="flex items-start gap-2">
                   {!res || v?.outcome === "pending_review" ? (

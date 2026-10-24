@@ -5,6 +5,16 @@ import { loadSources, renderSources, readersFor, type ContextSource } from "../c
 import { ask, baseResult, type RunContext, type RunOutcome } from "./types.js";
 import { systemPrompt, taskBrief } from "./prompts.js";
 import { criterionTexts } from "../core/task.js";
+import { roleForProfile } from "../roles/index.js";
+import { workerBrainEnv } from "../harness/worker.js";
+import type { HarnessEnv } from "../harness/tools.js";
+import type { EvidenceUniverse } from "../core/worker-output.js";
+import { memoryContext } from "../context/memory.js";
+
+export function completionMemoryEnv(ctx: RunContext, universe: EvidenceUniverse): HarnessEnv {
+  const role = roleForProfile(ctx.spec.profile);
+  return { ctx, role, universe, readers: readersFor(ctx.cfg, ctx.spec), allowArtifacts: false, edits: new Set(), brain: workerBrainEnv(ctx, role) };
+}
 
 export function contextManifest(sources: ContextSource[]) {
   return sources.map((s) => ({ ref: s.ref, sha256: s.sha256, commit: s.commit, uncommittedChanges: s.dirty, lines: s.totalLines }));
@@ -29,6 +39,7 @@ export async function runCompletion(ctx: RunContext): Promise<RunOutcome> {
     { role: "system", content: systemPrompt("Answer from the supplied sources only.") },
     { role: "user", content: `${taskBrief(spec, ctx.retry)}\nSources:\n${renderSources(sources) || "(none)"}` },
   ];
+  messages[1]!.content = `${messages[1]!.content}\n${await memoryContext(completionMemoryEnv(ctx, universe), { messages })}`;
   const executionId = ctx.gate.admission.createExecution("task", spec.profile, [{ taskId: ctx.taskId, itemId: ctx.taskId }]);
   const responseRefs: string[] = [];
   let lastErrors: string[] = [];

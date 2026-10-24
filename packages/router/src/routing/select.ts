@@ -2,6 +2,7 @@ import type { ResolvedConfig } from "../config/load.js";
 import type { Modality, PaidPolicy, ProfileName, TierName } from "../config/schema.js";
 import type { ModelEndpoint, RoutingOverride } from "../models/catalog.js";
 import { alwaysSearches, nativeSearchUse, type NativeSearchUse } from "./native-search.js";
+import { assessSupervisorQuality, type SupervisorQualityAssessment } from "./supervisor-quality.js";
 
 export interface RouteRequirements {
   profile: ProfileName;
@@ -107,6 +108,7 @@ export interface ProviderHealthLookup {
 }
 
 export interface CandidateExplanation {
+  supervisorQuality?: SupervisorQualityAssessment;
   endpointId: string;
   displayName: string;
   totalParametersB: number | null;
@@ -124,6 +126,8 @@ export interface CandidateExplanation {
 }
 
 export interface RoutePlan {
+  /** Supervisor quality cannot silently degrade when eligible capacity is absent. */
+  blocker?: { code: "supervisor_quality_unavailable"; message: string };
   profile: ProfileName;
   tier: TierName;
   floorB: number;
@@ -155,11 +159,13 @@ export function endpointExclusions(
 ): string[] {
   const reasons: string[] = [];
   const profile = cfg.profiles[req.profile]!;
+  const supervisorQuality = profile.mode === "supervisor" ? assessSupervisorQuality(ep.id, cfg.supervisor.routing, opts.now, req.inputModalities.some(m => m === "image" || m === "video")) : null;
+  if (supervisorQuality && !supervisorQuality.eligible) reasons.push(supervisorQuality.reason);
   if (ep.status !== "active") reasons.push(ep.statusReason ?? `status is ${ep.status}`);
   if (!ep.available && ep.status === "active") reasons.push("no enabled key for this provider");
   if (ep.deniedProfiles.includes(req.profile)) reasons.push(`blocked for ${req.profile} tasks by an override`);
   const floor = Math.max(sizeFloor(cfg, req.profile, req.tier), req.minTotalParametersB ?? 0);
-  if (ep.totalParametersB !== null && ep.totalParametersB < floor && !opts.allowBelowFloor && !ep.ignoreSizeFloor) {
+  if (profile.mode !== "supervisor" && ep.totalParametersB !== null && ep.totalParametersB < floor && !opts.allowBelowFloor && !ep.ignoreSizeFloor) {
     reasons.push(`${ep.totalParametersB}B is below the ${floor}B floor for ${req.profile}/${req.tier}`);
   }
   // A model that searches on every request: its answers are web content, and a priced search makes every request paid.
@@ -186,7 +192,7 @@ export function endpointExclusions(
     if (req.reviewer.mode === "required" && !opts.qualification?.qualified) {
       reasons.push(opts.qualification ? `not qualified as a ${req.reviewer.name} reviewer (pass rate ${(opts.qualification.passRate * 100).toFixed(0)}% over ${opts.qualification.trials} trials)` : `not yet qualified as a ${req.reviewer.name} reviewer`);
     }
-  } else if (cfg.qualification.required && !req.skipQualification && !opts.qualification?.qualified) {
+  } else if (profile.mode !== "supervisor" && cfg.qualification.required && !req.skipQualification && !opts.qualification?.qualified) {
     reasons.push(opts.qualification ? `not qualified for ${req.profile}/${req.tier} (pass rate ${(opts.qualification.passRate * 100).toFixed(0)}% over ${opts.qualification.trials} trials)` : `not yet qualified for ${req.profile}/${req.tier}`);
   }
   return reasons;
@@ -219,6 +225,8 @@ export function planRoute(
   const forced = forceIds.size > 0;
   const prefer = cfg.tiers[req.tier].prefer;
   const policy = paidPolicyFor(cfg, req);
+  const supervisor = cfg.profiles[req.profile]!.mode === "supervisor";
+  const quality = (ep: ModelEndpoint) => assessSupervisorQuality(ep.id, cfg.supervisor.routing, deps.now, req.inputModalities.some(m => m === "image" || m === "video"));
 
   const explanations: CandidateExplanation[] = [];
   const eligible: Array<{ ep: ModelEndpoint; ex: CandidateExplanation }> = [];
@@ -251,6 +259,7 @@ export function planRoute(
       coolingDownUntil: cooling,
       circuitOpenUntil: h?.circuitOpenUntil ?? null,
       belowFloorAllowed: belowFloor.has(ep.id),
+      ...(supervisor ? { supervisorQuality: quality(ep) } : {}),
     };
     explanations.push(ex);
     if (ex.eligible) eligible.push({ ep, ex });
@@ -269,6 +278,16 @@ export function planRoute(
   // this plan); any other task takes a model that searches on every request only after the rest.
   const webRank = (ep: ModelEndpoint) => (req.web === true ? (planSearch(ep, cfg, searchPlan) ? 0 : 1) : alwaysSearches(ep) ? 1 : 0);
   eligible.sort((a, b) => {
+    if (supervisor) {
+      // Existing free-first policies constrain quality selection; authorized paid preference
+      // does not make marginal price or vendor identity a quality proxy.
+      if (policy === "on_free_exhaustion" || policy === "never") {
+        const paid = paidRank(a.ep) - paidRank(b.ep);
+        if (paid) return paid;
+      }
+      const delta = quality(b.ep).score - quality(a.ep).score;
+      if (delta) return delta;
+    }
     const pa = forced ? 0 : preferIds.indexOf(a.ep.id);
     const pb = forced ? 0 : preferIds.indexOf(b.ep.id);
     if ((pa >= 0) !== (pb >= 0)) return pa >= 0 ? -1 : 1;
@@ -311,6 +330,7 @@ export function planRoute(
     belowFloorEndpoints: belowFloor,
     web: req.web ?? null,
     paidPolicy: policy,
+    ...(supervisor && eligible.length === 0 ? { blocker: { code: "supervisor_quality_unavailable" as const, message: "No authorized eligible endpoint meets the supervisor quality floor; configure current quality evidence or resolve endpoint exclusions. No weaker model was selected." } } : {}),
   };
 }
 

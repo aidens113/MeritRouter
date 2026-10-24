@@ -50,6 +50,7 @@ export const SECTIONS: Section[] = [
     title: "Claude/Codex supervision",
     description: "Choose whether MCP may dispatch MeritRouter as the final project supervisor. The external Claude/Codex client remains final supervisor by default and can delegate bounded sub-supervisors. This is separate from MeritRouter's internal job supervisors and grants no permissions. Existing MCP connections receive changes on their next tool call.",
     fields: [
+      f("client_supervision.workflow", "Default delivery workflow", "enum", "The initiating client keeps FINAL review. Delegated delivery gives a qualified internal supervisor responsibility for planning, workers, integration and testing.", {options:["delegated_delivery","direct_tasks"],optionHelp:{delegated_delivery:"Default: delegate complete bounded deliveries to internal supervisors; return evidence for FINAL review.",direct_tasks:"Legacy: the initiating client coordinates individual tasks directly."}}),
       f("client_supervision.dispatch_final_supervisor", "Allow MeritRouter final project-supervisor dispatch", "bool", "Off by default: Claude/Codex owns final project review, testing and completion. Bounded MeritRouter sub-supervisors remain available. Turn on to permit explicitly project-scoped MCP jobs; you can also explicitly ask your connected model to change this setting."),
       f("client_supervision.instructions", "Custom supervision instructions", "optText", "Optional human workflow guidance, up to 8000 characters. Explicit user and repository instructions, permissions and budgets retain their authority.", { multiline: true }),
     ],
@@ -237,7 +238,11 @@ export const SUPERVISOR_SECTION: Section = {
   title: "Supervisor (jobs)",
   description: "How standalone jobs are supervised. Used by the supervise task type.",
   fields: [
-    f("supervisor.endpoints", "Supervisor models", "list", "Model ids to supervise with, in order. Empty: route like any T3 task (most capable first).", { placeholder: "cerebras/qwen-3-235b-a22b-instruct-2507" }),
+    f("supervisor.endpoints", "Supervisor models", "list", "Optional endpoint pool. Eligible models are ranked by current supervisor quality evidence across providers; vendor names and size alone do not qualify. Configure supervisor.routing.quality_evidence in YAML.", { placeholder: "provider/model-id" }),
+    f("supervisor.delivery_budget.total_requests", "Delivery request budget", "int", "Default ceiling for delegated delivery, including supervisor, workers and validation. Explicit smaller task or profile limits still apply.", {min:1,unit:"requests"}),
+    f("supervisor.delivery_budget.supervisor_reserve_requests", "Supervisor reserve", "int", "Requests protected from worker grants for planning and integration.", {min:0,unit:"requests"}),
+    f("supervisor.delivery_budget.validation_reserve_requests", "Validation reserve", "int", "Requests protected until integration, validation and handoff.", {min:0,unit:"requests"}),
+    f("supervisor.delivery_budget.extension_requests", "Requested extension", "int", "Default amount requested upward when a delivery needs more budget. Approval and ancestor ceilings still apply.", {min:1,unit:"requests"}),
     f("supervisor.paid_policy", "Paid policy for supervisors", "enum", "Whether a job's supervisor may use paid models.", { options: ["never", "on_free_exhaustion", "preferred", "premium"], optionHelp: POLICY_HELP }),
     f("supervisor.max_concurrent_jobs", "Jobs at once", "int", "Most jobs running at the same time.", { min: 1 }),
     f("supervisor.max_workers_per_job", "Workers per job (old name)", "optInt", "Old name for Agents per job (Execution, team.max_agents), used only when that is empty. Leave empty.", { min: 1 }),
@@ -280,8 +285,8 @@ export const SUPERVISE_PROFILE_DEFAULT = {
   mode: "supervisor",
   tools: "supervisor",
   min_total_parameters_b: 100,
-  max_model_requests: 30,
-  max_output_tokens: 4000,
+  max_model_requests: null,
+  max_output_tokens: 8000,
   classify: "never",
   min_tier: "T3",
 };

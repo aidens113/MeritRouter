@@ -36,6 +36,7 @@ export function scopedMcpTasks(sy: MeritRouter, project: string, raw: unknown[])
       return spec;
     }
     spec.supervisionScope ??= "subtask";
+    if(sy.cfg.client_supervision.workflow === "delegated_delivery") spec.deliveryVersion ??= 2;
     if (spec.supervisionScope === "project") projectGuard(sy);
     return spec;
   });

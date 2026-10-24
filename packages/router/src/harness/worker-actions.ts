@@ -24,7 +24,8 @@ const ActionSchema = z.object({ command: z.string().min(1).max(16000), cwd: z.st
 const RowSchema = z.object({ id: z.string(), project: z.string(), taskId: z.string(),
   status: z.enum(["pending", "running", "completed", "denied", "cancelled", "uncertain"]),
   action: ActionSchema, decisionReason: z.string().nullable(), decidedBy: z.string().nullable(),
-  output: z.string().max(20000).nullable(), exitCode: z.number().int().nullable(), createdAt: z.number().int() }).strict();
+  output: z.string().max(20000).nullable(), exitCode: z.number().int().nullable(), createdAt: z.number().int(),
+  cancelRequested: z.boolean().optional(), quiescedAt: z.number().int().optional() }).strict();
 export type WorkerActionRequest = z.infer<typeof RowSchema>;
 export type WorkerActionActor = { kind: "operator" } | { kind: "supervisor"; taskId: string; lease: LeaseRef };
 
@@ -83,6 +84,20 @@ export class WorkerActionRequests {
     const t = new TaskStore(this.db, this.now);
     const l = row.action.lease;
     if (!t.dispatchable(l.taskId, l.owner, l.runCount, l.incarnation, l.project)) throw new Error("worker action lost its original task lease or was cancelled");
+    const latest = this.read(this.db.prepare("SELECT value_json FROM worker_action_requests WHERE id=? AND project_id=?").get(row.id,row.project));
+    if (latest?.cancelRequested) throw new Error("worker action cancellation requested");
+  }
+  /** Cancel only the request created under this exact captured task incarnation. */
+  cancelOwned(ctx: RunContext, id: string): WorkerActionRequest | null {
+    const lease=LeaseRefSchema.parse(ctx.taskLease);
+    return immediate(this.db,()=>{
+      const row=this.get(lease.project,id);
+      if(!row||row.taskId!==ctx.taskId||JSON.stringify(row.action.lease)!==JSON.stringify(lease))throw new Error("worker action cancellation requires its original captured task lease");
+      if(row.status!=="pending"&&row.status!=="running")return row;
+      row.cancelRequested=true;
+      if(row.status==="pending"){row.status="cancelled";row.quiescedAt=this.now();row.decisionReason="Owning operation cancelled before execution";row.decidedBy="system";}
+      this.save(row);return row;
+    });
   }
   async fileOperation(ctx: RunContext, input: { operation: string; args: Record<string, unknown>; reason: string; invocationId?: string }): Promise<WorkerActionRequest> {
     const cwd = ctx.cfg.repositoryPaths[ctx.spec.repositoryAliases[0] ?? ""]?.path;
@@ -166,11 +181,13 @@ export class WorkerActionRequests {
       if (input.signal?.aborted) abort();
       if (controller.signal.aborted) throw new Error("supervisor action cancelled before execution");
       const r = await runProcess(row.action.command, [], { cwd: row.action.cwd, env: minimalEnv({ CI: "1" }), timeoutMs: row.action.timeoutMs, signal: controller.signal, shell: true });
+      row.cancelRequested = this.get(row.project,row.id)?.cancelRequested ?? false;
       row.status = r.killed ? "uncertain" : "completed";
+      row.quiescedAt = this.now();
       row.exitCode = r.killed ? null : r.exitCode;
       row.output = (`$ ${row.action.command}\nsource ${row.action.source}\nexit ${row.exitCode}${r.killed ? ` (${r.killed})` : ""}\n${r.stdout}\n${r.stderr}`).slice(0, 20000);
       this.save(row); return row;
-    } catch (err) { row.status = "uncertain"; row.output = String(err).slice(0, 20000); this.save(row); throw err; }
+    } catch (err) { row.status = "uncertain"; row.quiescedAt=this.now(); row.output = String(err).slice(0, 20000); this.save(row); throw err; }
     finally { clearInterval(timer); input.signal?.removeEventListener("abort", abort); }
   }
 }
@@ -189,7 +206,13 @@ export async function awaitWorkerAction(ctx: RunContext, request: WorkerActionRe
     for (;;) {
       const lease = LeaseRefSchema.parse(ctx.taskLease);
       if (outsideRepositoryPolicy(ctx.cfg) === "disabled") throw new Error("outside-repository actions disabled while waiting");
-      if (ctx.signal.aborted || !ctx.tasks.dispatchable(lease.taskId, lease.owner, lease.runCount, lease.incarnation, lease.project)) throw new Error("worker action wait cancelled or original lease lost");
+      if (ctx.signal.aborted || !ctx.tasks.dispatchable(lease.taskId, lease.owner, lease.runCount, lease.incarnation, lease.project)) {
+        let stopping=store.cancelOwned(ctx,request.id);
+        // A stop request is not proof of termination. Keep ownership while the independent
+        // executor watchdog stops its process tree and persists confirmed close.
+        while(stopping?.status==="running"&&!stopping.quiescedAt){await new Promise(resolve=>setTimeout(resolve,100));stopping=store.get(lease.project,request.id);}
+        throw new Error("worker action wait cancelled or original lease lost");
+      }
       const current = store.get(lease.project, request.id);
       if (!current || current.taskId !== ctx.taskId) throw new Error("worker action disappeared");
       if (current.status !== "pending" && current.status !== "running") return current;
@@ -202,11 +225,18 @@ export async function awaitWorkerAction(ctx: RunContext, request: WorkerActionRe
 export async function awaitWorkerCommand(ctx: RunContext, input: { command: string; cwd: string; timeoutMs: number; reason: string; invocationId?: string }): Promise<WorkerActionRequest> {
   let request = await requestWorkerCommand(ctx, input);
   const deadline = ctx.tasks.get(ctx.taskId)?.row.deadline_at ?? ctx.now() + ctx.cfg.execution.job_timeout_seconds * 1000;
-  while (request.status === "pending" || request.status === "running") {
-    if (ctx.now() >= deadline) throw new Error("task deadline reached while awaiting supervisor action");
-    request = await awaitWorkerAction(ctx, request, Math.min(60000, deadline - ctx.now()));
+  try {
+    while (request.status === "pending" || request.status === "running") {
+      if (ctx.now() >= deadline) throw new Error("task deadline reached while awaiting supervisor action");
+      request = await awaitWorkerAction(ctx, request, Math.min(60000, deadline - ctx.now()));
+    }
+    return request;
+  } catch(error) {
+    const store=new WorkerActionRequests(ctx.tasks.db,ctx.now);
+    let stopping=store.cancelOwned(ctx,request.id);
+    while(stopping?.status==="running"&&!stopping.quiescedAt){await new Promise(resolve=>setTimeout(resolve,100));stopping=store.get(request.project,request.id);}
+    throw error;
   }
-  return request;
 }
 
 /** Supervisor exemption is conditional on current host policy; human-only never self-approves. */

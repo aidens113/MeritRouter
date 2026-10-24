@@ -10,7 +10,8 @@ import { PageHeader } from "@/components/page-header";
 import { RelatedPanel } from "@/components/related";
 import { AgentLink, ModelLink, TaskLink } from "@/components/entity-links";
 import { Markdown } from "@/components/markdown";
-import { AccessDecision, BrainEditor } from "@/components/client/brain";
+import { AccessDecision, BrainCreate, BrainEditor } from "@/components/client/brain";
+import { BrainMemory } from "@/components/client/brain-memory";
 import { Legend } from "@/components/client/charts";
 import { ago, dateTime, shortId } from "@/lib/format";
 
@@ -39,6 +40,7 @@ const TABS = [
   { id: "view", label: "View" },
   { id: "history", label: "History" },
   { id: "blame", label: "Blame" },
+  { id: "related", label: "Related" },
   { id: "edit", label: "Edit" },
 ] as const;
 
@@ -79,21 +81,30 @@ export default async function BrainPage({ params, searchParams }: { params: Prom
   const p = project(sy, (await params).slug);
   const sc: Sc = { slug: p.slug, base: projectBase(p.slug), index: null };
   const brain = sy.brainFor(p.slug);
-  const knownAgents = new Set(insights.agentsView(sy, { project: p.slug, limit: 2000 }).map(agent => agent.id));
   const sp = await searchParams;
   const str = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : "");
-  const view = str("view") === "requests" ? "requests" : str("view") === "promotions" ? "promotions" : "docs";
+  const view = str("view") === "requests" ? "requests" : str("view") === "promotions" ? "promotions" : str("view") === "memory" ? "memory" : "docs";
+  const provenanceTab = ["history", "blame", "related"].includes(str("tab"));
+  const knownAgents = new Set(view === "promotions" || provenanceTab ? insights.agentsView(sy, { project: p.slug, limit: 2000 }).map(agent => agent.id) : []);
   const q = str("q").trim();
 
   let entries: Entry[] = [];
+  let nextPage: string | null = null;
+  let indexCheckedAt = 0;
   let brainError: string | null = null;
   try {
-    entries = (await insights.brainTree(sy, "", p.slug)).filter((e) => inScope(sc, e.path));
+    if (view === "docs") {
+      if (str("refresh") === "1") await brain.refreshIndex();
+      const page = await insights.brainCatalogPage(sy, { project: p.slug, after: str("after") || undefined, limit: 50 });
+      entries = page.entries;
+      nextPage = page.next;
+      indexCheckedAt = page.refreshedAt;
+    }
   } catch (err) {
     brainError = (err as Error).message;
   }
   // With a per-project index the tree lists it instead of the root index (which only names projects).
-  if (entries.some((e) => e.path === projectIndexPath(p.slug))) {
+  if (view === "docs" && brain.exists(projectIndexPath(p.slug))) {
     sc.index = projectIndexPath(p.slug);
     entries = entries.filter((e) => e.path.includes("/"));
   }
@@ -102,7 +113,7 @@ export default async function BrainPage({ params, searchParams }: { params: Prom
   let promotions: PromotionRecord[] = [];
   let promotionsError: string | null = null;
   try {
-    promotions = sy.promotions({ project: p.slug });
+    if (view === "promotions") promotions = sy.promotions({ project: p.slug });
   } catch (err) {
     promotionsError = (err as Error).message;
   }
@@ -115,7 +126,7 @@ export default async function BrainPage({ params, searchParams }: { params: Prom
     <div className="space-y-6">
       <PageHeader
         title="Brain"
-        live={["brain", "tasks", "sessions"]}
+        live={["brain"]}
         description={
           <>
             This project's knowledge, plus the global documents every project's agents read: markdown documents in a git repository, each edit committed with the agent and model that made it. <HelpTip term="brain" />
@@ -133,6 +144,7 @@ export default async function BrainPage({ params, searchParams }: { params: Prom
       />
 
       <nav aria-label="Brain sections" className="flex flex-wrap gap-1 border-b border-line">
+        <Link href={`${sc.base}/brain?view=memory`} aria-current={view === "memory" ? "page" : undefined} className={cx("-mb-px border-b-2 px-3 py-2 text-sm", view === "memory" ? "border-accent font-medium text-accent-ink" : "border-transparent text-ink-2 hover:text-ink")}>Memory & preferences</Link>
         <Link href={`${sc.base}/brain`} aria-current={view === "docs" ? "page" : undefined} className={cx("-mb-px border-b-2 px-3 py-2 text-sm", view === "docs" ? "border-accent font-medium text-accent-ink" : "border-transparent text-ink-2 hover:text-ink")}>
           Documents
         </Link>
@@ -150,23 +162,27 @@ export default async function BrainPage({ params, searchParams }: { params: Prom
         </Callout>
       ) : null}
 
-      {view === "requests" ? (
+      {view === "memory" ? <BrainMemory project={p.slug} base={sc.base} /> : view === "requests" ? (
         <AccessRequests sc={sc} requests={requests} approver={sy.projects.get(p.slug)?.brain.access_approver ?? sy.cfg.brain.access_approver} />
       ) : view === "promotions" ? (
         <Promotions sc={sc} promotions={promotions} error={promotionsError} knownAgents={knownAgents} />
       ) : (
         <div className="grid gap-6 lg:grid-cols-[19rem_1fr]">
           <Card className="self-start lg:sticky lg:top-6">
-            <CardHeader title="Documents" description={<span className="break-all">{brain.root}</span>} />
+            <CardHeader title="Documents" description={<span className="break-all">{brain.root}<br />{entries.length} documents on this page{indexCheckedAt ? ` · index checked ${ago(indexCheckedAt)}` : ""}</span>} />
+            <Link prefetch={false} href={`${sc.base}/brain?refresh=1&path=${encodeURIComponent(path)}`} className="block px-3 py-2 text-xs text-accent-ink">Refresh document index</Link>
             <div className="max-h-[calc(100vh-12rem)] overflow-y-auto p-2">{entries.length ? <Tree sc={sc} entries={entries} current={q ? "" : path} project={p.slug} /> : <p className="p-2 text-sm text-ink-3">No documents yet.</p>}</div>
+            {nextPage ? <Link prefetch={false} href={`${sc.base}/brain?after=${encodeURIComponent(nextPage)}`} className="block p-3 text-sm text-accent-ink">Next documents →</Link> : null}
+            {str("after") ? <Link href={`${sc.base}/brain`} className="block p-3 text-sm text-accent-ink">First documents</Link> : null}
           </Card>
           <div className="min-w-0 space-y-6">
+            <BrainCreate project={p.slug} base={sc.base} />
             {pending.length ? (
               <Callout tone="warn" icon={<ShieldQuestion size={16} />} title={`${pending.length} access request${pending.length === 1 ? "" : "s"} waiting`}>
                 Workers asked for more brain access. <Link href={`${sc.base}/brain?view=requests`} className="font-medium text-accent-ink hover:underline">Review them →</Link>
               </Callout>
             ) : null}
-            {q ? <SearchResults sc={sc} sy={sy} q={q} /> : path ? <DocPanel sc={sc} sy={sy} path={path} tab={tab} entries={entries} knownAgents={knownAgents} /> : (
+            {q ? <SearchResults sc={sc} sy={sy} q={q} offset={str("searchafter")} generation={str("searchgeneration")} /> : path ? <DocPanel sc={sc} sy={sy} path={path} tab={tab} entries={entries} knownAgents={knownAgents} historyOffset={str("historyafter")} blameOffset={str("blameafter")} docOffset={str("docafter")} /> : (
               <Card>
                 <EmptyState icon={<BookOpenText size={22} />} title="The brain is empty">
                   Working documents appear when a supervisor starts a job; workers add reports, and supervisors record decisions and lessons. You can also edit any document here.
@@ -218,7 +234,7 @@ function Tree({ sc, entries, current, project }: { sc: Sc; entries: Entry[]; cur
               return (
                 <li key={e.path}>
                   <Link
-                    href={brainHref(sc.base, e.path)}
+                    prefetch={false} href={brainHref(sc.base, e.path)}
                     aria-current={e.path === current ? "page" : undefined}
                     className={cx("block rounded-md px-2 py-1 text-sm", e.path === current ? "bg-accent-soft text-accent-ink" : "text-ink-2 hover:bg-surface-2 hover:text-ink")}
                     title={e.path}
@@ -240,11 +256,16 @@ function Tree({ sc, entries, current, project }: { sc: Sc; entries: Entry[]; cur
   );
 }
 
-async function SearchResults({ sc, sy, q }: { sc: Sc; sy: MeritRouter; q: string }) {
+async function SearchResults({ sc, sy, q, offset, generation }: { sc: Sc; sy: MeritRouter; q: string; offset: string; generation: string }) {
   let hits: Awaited<ReturnType<typeof insights.brainSearch>> = [];
   let error: string | null = null;
+  let next: number | null = null;
+  let indexGeneration = "";
   try {
-    hits = (await insights.brainSearch(sy, q, undefined, sc.slug)).filter((h) => inScope(sc, h.path));
+    const page = await insights.brainSearchPage(sy, { project: sc.slug, query: q, limit: 30, offset: Number(offset) || 0, generation: generation || undefined });
+    hits = page.entries;
+    next = page.next;
+    indexGeneration = page.generation;
   } catch (err) {
     error = (err as Error).message;
   }
@@ -273,6 +294,7 @@ async function SearchResults({ sc, sy, q }: { sc: Sc; sy: MeritRouter; q: string
           Search matches whole words in titles and text. Try fewer or different words.
         </EmptyState>
       )}
+      {next !== null ? <Link prefetch={false} href={`${sc.base}/brain?q=${encodeURIComponent(q)}&searchafter=${next}&searchgeneration=${indexGeneration}`} className="block p-3 text-sm text-accent-ink">More search results →</Link> : null}
     </Card>
   );
 }
@@ -290,7 +312,7 @@ function snippet(s: string) {
   );
 }
 
-async function DocPanel({ sc, sy, path, tab, entries, knownAgents }: { sc: Sc; sy: MeritRouter; path: string; tab: string; entries: Entry[]; knownAgents: Set<string> }) {
+async function DocPanel({ sc, sy, path, tab, entries, knownAgents, historyOffset, blameOffset, docOffset }: { sc: Sc; sy: MeritRouter; path: string; tab: string; entries: Entry[]; knownAgents: Set<string>; historyOffset: string; blameOffset: string; docOffset: string }) {
   if (!inScope(sc, path)) {
     const owner = ownerOf(path);
     return (
@@ -312,8 +334,17 @@ async function DocPanel({ sc, sy, path, tab, entries, knownAgents }: { sc: Sc; s
     error = (err as Error).message;
   }
   const entry = entries.find((e) => e.path === path);
-  const history = doc ? await insights.brainDocumentHistory(sy, sc.slug, path) : [];
-  const related = doc ? await insights.brainDocumentRelated(sy, sc.slug, path) : { tasks: [], jobs: [] };
+  const textOffset = Math.max(0, Math.min(doc?.content.length ?? 0, Number(docOffset) || 0));
+  let history: Awaited<ReturnType<typeof insights.brainDocumentHistory>> = [];
+  let historyNext: string | null = null;
+  let historyError: string | null = null;
+  if (doc && tab === "history") {
+    try {
+      const page = await insights.brainDocumentHistoryPage(sy, sc.slug, path, { cursor: historyOffset || undefined });
+      history = page.entries; historyNext = page.next;
+    } catch (err) { historyError = (err as Error).message; }
+  }
+  const related = doc && tab === "related" ? await insights.brainDocumentRelated(sy, sc.slug, path) : { tasks: [] as string[], jobs: [] as string[] };
   const agents = [...new Set(history.map(h => h.agent).filter((id): id is string => !!id))];
   const models = [...new Set(history.map(h => h.model).filter((id): id is string => !!id))];
   const href = (t: string) => `${brainHref(sc.base, path)}${t === "view" ? "" : `&tab=${t}`}`;
@@ -334,7 +365,7 @@ async function DocPanel({ sc, sy, path, tab, entries, knownAgents }: { sc: Sc; s
         </div>
         <nav aria-label="Document views" className="mt-2 flex gap-1">
           {TABS.map((t) => (
-            <Link key={t.id} href={href(t.id)} aria-current={tab === t.id ? "page" : undefined} className={cx("-mb-px border-b-2 px-3 py-1.5 text-sm", tab === t.id ? "border-accent font-medium text-accent-ink" : "border-transparent text-ink-2 hover:text-ink")}>
+            <Link key={t.id} prefetch={false} href={href(t.id)} aria-current={tab === t.id ? "page" : undefined} className={cx("-mb-px border-b-2 px-3 py-1.5 text-sm", tab === t.id ? "border-accent font-medium text-accent-ink" : "border-transparent text-ink-2 hover:text-ink")}>
               {t.label}
             </Link>
           ))}
@@ -344,11 +375,13 @@ async function DocPanel({ sc, sy, path, tab, entries, knownAgents }: { sc: Sc; s
         {error || !doc ? (
           <p className="text-sm text-bad-ink">{error ?? "Not found"}</p>
         ) : tab === "history" ? (
-          <History rows={history} slug={sc.slug} path={path} knownAgents={knownAgents} />
+          historyError ? <p role="alert" className="text-sm text-bad-ink">History unavailable: {historyError} <Link href={href("history")} className="underline">Restart history</Link></p> : <><History rows={history} slug={sc.slug} path={path} knownAgents={knownAgents} />{historyNext !== null ? <Link prefetch={false} href={`${href("history")}&historyafter=${encodeURIComponent(historyNext)}`} className="block pt-3 text-sm text-accent-ink">Older changes →</Link> : null}</>
         ) : tab === "blame" ? (
-          <Blame sy={sy} slug={sc.slug} path={path} knownAgents={knownAgents} />
+          <Blame sy={sy} slug={sc.slug} path={path} knownAgents={knownAgents} offset={Math.max(0, Number(blameOffset) || 0)} />
+        ) : tab === "related" ? (
+          <p className="text-sm text-ink-3">Related task and job attribution appears below.</p>
         ) : tab === "edit" ? (
-          <BrainEditor project={sc.slug} path={path} initial={doc.content} kind={doc.kind} maxCurrentState={sy.cfg.brain.current_state_max_lines} />
+          /^(?:global\/preferences\/|projects\/[^/]+\/memory\/)/i.test(path) ? <Link href={`${sc.base}/brain?view=memory`} className="text-sm text-accent-ink">Edit typed memory in Memory & preferences →</Link> : <BrainEditor key={path} project={sc.slug} path={path} initial={doc.content} digest={doc.digest} kind={doc.kind} maxCurrentState={sy.cfg.brain.current_state_max_lines} />
         ) : (
           <>
             {doc.kind === "working_doc" ? (
@@ -361,12 +394,14 @@ async function DocPanel({ sc, sy, path, tab, entries, knownAgents }: { sc: Sc; s
                 </span>
               </p>
             ) : null}
-            <Markdown text={doc.content} basePath={path} linkBase={sc.base} />
+            <Markdown text={doc.content.slice(textOffset, textOffset + 64_000)} basePath={path} linkBase={sc.base} />
+            {textOffset + 64_000 < doc.content.length ? <Link prefetch={false} href={`${href("view")}&docafter=${textOffset + 64_000}`} className="block pt-3 text-sm text-accent-ink">Continue document →</Link> : null}
+            {textOffset > 0 ? <Link prefetch={false} href={href("view")} className="block pt-3 text-sm text-accent-ink">Start of document</Link> : null}
           </>
         )}
       </div>
     </Card>
-    {doc ? <RelatedPanel groups={[
+    {doc && (tab === "history" || tab === "related") ? <RelatedPanel groups={[
       { label: "Project", items: [{ key: sc.slug, node: <Link href={sc.base} className="text-accent-ink hover:underline">{sc.slug}</Link> }] },
       { label: "Commits", items: history.map(h => ({ key: h.commit, node: <Link href={brainCommitHref(sc.slug, path, h.commit)} className="font-mono text-accent-ink hover:underline">{h.commit.slice(0, 10)}</Link> })), more: { href: href("history"), label: "Document history" }, empty: "No recorded commits" },
       { label: "Agents", items: agents.map(agent => ({ key: agent, node: <BrainAgent base={sc.base} agent={agent} knownAgents={knownAgents} /> })) },
@@ -407,14 +442,16 @@ function History({ rows, slug, path, knownAgents }: { rows: Awaited<ReturnType<t
   );
 }
 
-async function Blame({ sy, slug, path, knownAgents }: { sy: MeritRouter; slug: string; path: string; knownAgents: Set<string> }) {
+async function Blame({ sy, slug, path, knownAgents, offset }: { sy: MeritRouter; slug: string; path: string; knownAgents: Set<string>; offset: number }) {
   let lines: BlameLine[] = [];
   try {
-    lines = await insights.brainDocumentBlame(sy, slug, path);
+    lines = await insights.brainDocumentBlame(sy, slug, path, { strict: true });
   } catch (err) {
     return <p className="text-sm text-ink-3">{(err as Error).message}</p>;
   }
   if (!lines.length) return <p className="text-sm text-ink-3">This file is empty.</p>;
+  const total = lines.length;
+  lines = lines.slice(offset, offset + 200);
   // One colour per author (agent + model), in order of first appearance; beyond six, "Other".
   const keyOf = (l: BlameLine) => (l.uncommitted ? "uncommitted" : `${l.agent ?? l.authorName}${l.model ? ` · ${l.model}` : ""}`);
   const counts = new Map<string, number>();
@@ -446,6 +483,7 @@ async function Blame({ sy, slug, path, knownAgents }: { sy: MeritRouter; slug: s
         </table>
       </div>
       <p className="text-xs text-ink-3">Hover a line for its commit, agent, role, and model. Colours follow the author, not the order of edits.</p>
+      <p className="text-xs text-ink-3">Lines {Math.min(offset + 1, total)}–{Math.min(offset + 200, total)} of {total}. {offset + 200 < total ? <Link prefetch={false} href={`${brainHref(projectBase(slug), path)}&tab=blame&blameafter=${offset + 200}`} className="text-accent-ink">Next lines →</Link> : null}</p>
     </div>
   );
 }

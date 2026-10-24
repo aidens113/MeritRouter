@@ -25,11 +25,13 @@ async function until<T>(read: () => T, ok: (value: T) => boolean): Promise<T> {
   for (;;) { const value = read(); if (ok(value)) return value; if (Date.now() > end) throw new Error("fixture timed out"); await new Promise(resolve => setTimeout(resolve, 10)); }
 }
 
-async function directBridge() {
+async function directBridge(declared = check) {
   env = makeEnv({ config: baseConfig({ coding: { runner: "native", max_check_runs_per_task: 1 }, security: { outside_repository: "human_only" } }) });
   const provider = new ScriptedClient(() => reply(JSON.stringify(goodOutput())));
   sy = open(env, provider);
-  const [submitted] = await sy.submitTasks([task()]);
+  const request = task();
+  request.constraints.checks = [declared];
+  const [submitted] = await sy.submitTasks([request]);
   const stored = sy.tasks.claim("bridge-test", { maxConcurrent: 1, maxWritersPerRepo: 1, leaseMs: 30000, defaultTimeoutMs: 30000 })[0]!;
   expect(stored.row.id).toBe(submitted!.taskId);
   const ctx = { cfg: env.cfg, tasks: sy.tasks, taskId: stored.row.id, leaseOwner: "bridge-test", taskLease: capturedLease(stored), spec: stored.spec, now: Date.now, signal: new AbortController().signal, session: null, artifacts: sy.artifacts } as unknown as RunContext;
@@ -62,9 +64,47 @@ describe("external worker refusal", () => {
 });
 
 describe("direct task-scoped bridge", () => {
+  it("waits for a running approved recipe to stop before settling timeout", async () => {
+    const { ctx } = await directBridge("node slow-check.cjs");
+    const marker=path.join(env!.repo,"late-write");
+    const started=path.join(env!.dir,"recipe-started");
+    // Keep the startup marker outside the pinned repository so observing real
+    // execution does not itself revoke the command's source authority.
+    writeFileSync(path.join(env!.repo,"slow-check.cjs"),`const fs=require('node:fs');fs.writeFileSync(${JSON.stringify(started)},String(Date.now()));setTimeout(()=>fs.writeFileSync(${JSON.stringify(marker)},'late'),8000);`);
+    const invokedAt=Date.now();
+    const pending=client!.callTool({name:"run_recipe",arguments:{id:"check:1",timeout_ms:5000}});
+    const actions=new WorkerActionRequests(sy!.db);
+    const request=await until(()=>actions.list({project:ctx.taskLease!.project,taskId:ctx.taskId,status:"pending"})[0],Boolean);
+    const executing=actions.decide({project:ctx.taskLease!.project,id:request!.id,decision:"approve",reason:"fixture operator authorized captured command",actor:{kind:"operator"},config:env!.cfg});
+    await until(()=>existsSync(started),Boolean);
+    const startedAt=Number(readFileSync(started,"utf8"));
+    expect(startedAt).toBeGreaterThanOrEqual(invokedAt);
+    expect(startedAt).toBeLessThan(invokedAt+5000);
+    const result=await pending,finished=await executing;
+    expect(result.isError).toBe(true);expect(finished.status).toBe("uncertain");expect(finished.quiescedAt).toBeTypeOf("number");
+    expect(finished.quiescedAt!).toBeGreaterThanOrEqual(startedAt);
+    await new Promise(resolve=>setTimeout(resolve,Math.max(0,startedAt+8200-Date.now())));expect(existsSync(marker)).toBe(false);
+  },20000);
+  it("cancels an expired recipe approval so it cannot execute later", async () => {
+    const { ctx } = await directBridge();
+    const result = await client!.callTool({name:"run_recipe",arguments:{id:"check:1",timeout_ms:700}});
+    expect(result.isError).toBe(true);
+    const actions = new WorkerActionRequests(sy!.db);
+    const request = actions.list({project:ctx.taskLease!.project,taskId:ctx.taskId})[0];
+    expect(request?.status).toBe("cancelled");
+    expect(request?.quiescedAt).toBeTypeOf("number");
+    const late = await actions.decide({project:ctx.taskLease!.project,id:request!.id,decision:"approve",reason:"too late",actor:{kind:"operator"},config:env!.cfg});
+    expect(late.status).toBe("cancelled");
+    expect(sy!.tasks.events(ctx.taskId,100).some(event=>event.type===WORKER_CHECK_EVENT)).toBe(false);
+  });
   it("authenticates and validates bounded capabilities without launching an external worker", async () => {
     const { provider } = await directBridge();
-    expect((await client!.listTools()).tools.map(tool => tool.name).sort()).toEqual(["request_more_budget", "run_check"]);
+    const names = (await client!.listTools()).tools.map(tool => tool.name).sort();
+    expect(names).toEqual(["batch", "cancel_operation", "git_diff", "git_status", "list_paths", "operation_status", "read_files", "read_output_page", "request_more_budget", "run_check", "run_checks", "run_recipe", "search_text", "workspace_info"]);
+    expect(names).not.toContain("apply_edits");
+    const deniedBatch = await client!.callTool({ name: "batch", arguments: { items: [{ id: "escape", operation: "apply_edits", args: { edits: [{ action: "create", path: "src/forbidden", content: "never" }] } }] } });
+    expect(deniedBatch.isError).toBe(true);
+    expect(existsSync(path.join(env!.repo, "src/forbidden"))).toBe(false);
     expect(taskToolsBrief(bridge!)).not.toContain(bridge!.token);
     const unauthorized = await fetch(bridge!.url, { method: "POST", headers: { Authorization: "Bearer invalid-token", "content-type": "application/json" }, body: "{}" });
     expect(unauthorized.status).toBe(401);

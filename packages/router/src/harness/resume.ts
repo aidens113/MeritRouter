@@ -13,6 +13,7 @@ import type { TerminalTool } from "./loop.js";
 import { journaled, parseArgs } from "./journal.js";
 import { assertRunAuthority } from "./task-authority.js";
 import { scopedArtifact } from "./check-evidence.js";
+import { resolveReader } from "./operation-contract.js";
 
 /**
  * What a runner hands the agent loop to continue an interrupted session (S2). The loop's
@@ -52,6 +53,28 @@ function argsOf(ref: ResumeToolRef): unknown {
  * edited) before the interruption, taken from the tool outputs in the transcript.
  */
 export function restoreEvidence(env: HarnessEnv, messages: ChatMessage[]): void {
+  const restoreV2 = (value: unknown, args: Record<string, unknown>): void => {
+    if (!value || typeof value !== "object") return;
+    const envelope = value as { data?: unknown; artifact?: string; status?: string };
+    if (envelope.status && envelope.status !== "succeeded") return;
+    if (envelope.data) return restoreV2(envelope.data, args);
+    if (envelope.artifact) {
+      try { restoreV2(JSON.parse(scopedArtifact(env, envelope.artifact).content.toString("utf8")), args); } catch { /* unavailable output is not evidence */ }
+      return;
+    }
+    if (!Array.isArray(value)) return;
+    for (const item of value) {
+      if (!item || typeof item !== "object") continue;
+      const record = item as { path?: unknown; totalLines?: unknown; status?: string; id?: string; result?: unknown };
+      if (typeof record.path === "string" && typeof record.totalLines === "number" && record.status === "succeeded") {
+        try { const reader = resolveReader(env, args.alias); env.universe.refs.set(`${reader.alias}:${normalizeRelPath(record.path)}`, record.totalLines); } catch { /* no longer granted */ }
+      }
+      if (record.result && Array.isArray(args.items)) {
+        const child = args.items.find((entry: {id?:string}) => entry.id === record.id) as {args?:Record<string,unknown>} | undefined;
+        if (child) restoreV2(record.result, child.args ?? {});
+      }
+    }
+  };
   const calls = new Map<string, ChatToolCall>();
   for (const m of messages) if (m.role === "assistant") for (const c of m.tool_calls ?? []) calls.set(c.id, c);
   for (const m of messages) {
@@ -62,6 +85,11 @@ export function restoreEvidence(env: HarnessEnv, messages: ChatMessage[]): void 
     if (m.content.startsWith("interrupted") && call.function.name !== "write_file" && call.function.name !== "replace_in_file") continue;
     const args = (parseArgs(call.function.arguments) ?? {}) as Record<string, unknown>;
     switch (call.function.name) {
+      case "read_files":
+      case "batch": {
+        try { restoreV2(JSON.parse(m.content), args); } catch { /* malformed/legacy output has no v2 citations */ }
+        break;
+      }
       case "read_file": {
         const r = /^ref: (\S+?)#L\d+-L\d+ \(of (\d+) lines\)/.exec(m.content);
         if (r) env.universe.refs.set(r[1]!, Number(r[2]));
@@ -205,7 +233,7 @@ export async function applyResume<T>(o: { env: HarnessEnv; messages: ChatMessage
           if (args === undefined || args === null || typeof args !== "object") throw new Error(`${action.name} arguments are not valid JSON`);
           const previousInvocation = env.toolInvocationId;
           env.toolInvocationId = `${session?.id ?? env.ctx.taskId}:${action.callId}`;
-          try { return { ok: true, output: await tool.run(args as Record<string, unknown>, env) }; }
+          try { const output = await tool.run(args as Record<string, unknown>, env); return { ok: tool.outputSucceeded?.(output) ?? true, output }; }
           finally { env.toolInvocationId = previousInvocation; }
         } catch (err) {
           return { ok: false, output: `error: ${(err as Error).message}` };

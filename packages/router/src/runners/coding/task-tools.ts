@@ -9,6 +9,9 @@ import { labHarnessTools } from "../../labs/tools.js";
 import { evidenceUniverse } from "../../core/worker-output.js";
 import type { RunContext } from "../types.js";
 import { minimalEnv } from "./process.js";
+import { harnessV2Tools } from "../../harness/operation-dispatch.js";
+import { operationRegistry } from "../../harness/operation-registry.js";
+import { RepoReader } from "../../context/repo-reader.js";
 
 export interface TaskToolsBridge {
   url: string;
@@ -34,7 +37,10 @@ export async function startTaskTools(ctx: RunContext, worktree: string, home: st
     ctx: toolCtx, role: "implementer", readers: new Map(), universe: evidenceUniverse([]), allowArtifacts: false, edits: new Set(),
     checks: { commands: ctx.spec.constraints.checks ?? [], cwd: worktree, env: minimalEnv({ HOME: home, USERPROFILE: home, CI: "1" }), timeoutMs: ctx.cfg.execution.check_timeout_seconds * 1000, maxRuns: ctx.cfg.coding.max_check_runs_per_task },
   };
-  const tools = availableTools([declaredCheckTool(), requestBudgetTool(), ...labHarnessTools()], env);
+  const alias = ctx.spec.writableRepository;
+  if (alias) env.readers.set(alias, new RepoReader(alias, worktree, null));
+  const tools = availableTools([...harnessV2Tools(env), declaredCheckTool(), requestBudgetTool(), ...labHarnessTools()], env);
+  const operationSchemas = new Map(operationRegistry().map(def => [def.name, def.args]));
   let closing = false;
   let serial: Promise<void> = Promise.resolve();
 
@@ -56,8 +62,9 @@ export async function startTaskTools(ctx: RunContext, worktree: string, home: st
       try {
         const output = await tool.run(args, env);
         active();
-        if (intent !== undefined) ctx.session!.toolOutcome(intent, { ok: true, output });
-        return { content: [{ type: "text" as const, text: output }] };
+        const ok = tool.outputSucceeded?.(output) ?? true;
+        if (intent !== undefined) ctx.session!.toolOutcome(intent, { ok, output });
+        return { ...(!ok ? {isError:true} : {}), content: [{ type: "text" as const, text: output }] };
       } catch (error) {
         const text = (error as Error).message;
         if (intent !== undefined) ctx.session!.toolOutcome(intent, { ok: false, output: text });
@@ -74,7 +81,9 @@ export async function startTaskTools(ctx: RunContext, worktree: string, home: st
       for (const tool of tools) {
         const name = tool.def.function.name;
         const description = tool.def.function.description;
-        if (name === "run_check") server.registerTool(name, { description, inputSchema: CheckArgs }, args => invoke(tool, args));
+        const schema = operationSchemas.get(name);
+        if (schema) server.registerTool(name, { description, inputSchema: schema }, args => invoke(tool, args));
+        else if (name === "run_check") server.registerTool(name, { description, inputSchema: CheckArgs }, args => invoke(tool, args));
         else if (name === "request_more_budget") server.registerTool(name, { description, inputSchema: BudgetArgs }, args => invoke(tool, args));
         else if (name.startsWith("lab_")) server.registerTool(name, { description, inputSchema: z.object({}).catchall(z.unknown()) }, args => invoke(tool, args));
       }

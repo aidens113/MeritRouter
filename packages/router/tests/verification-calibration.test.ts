@@ -96,7 +96,8 @@ describe("verdict records and the verdict cache", () => {
   });
 
   it("records each verdict and reuses a decisive one for the same contract, artifact, policy, and sources, never for a higher level", async () => {
-    env = envWith();
+    // This deliberately exercises the legacy key; memory-enabled jobs require fresh review.
+    env = envWith({ brain: { path: "brain", project: "demo", memory_context: { enabled: false } } });
     let reviews = 0;
     sy = open(env, new ScriptedClient((req) => {
       reviews++;
@@ -137,7 +138,7 @@ describe("verdict records and the verdict cache", () => {
   }, 120_000);
 
   it("is off with verification.cache_verdicts: false", async () => {
-    env = envWith({ verification: { cache_verdicts: false } });
+    env = envWith({ brain: { path: "brain", project: "demo", memory_context: { enabled: false } }, verification: { cache_verdicts: false } });
     let reviews = 0;
     sy = open(env, new ScriptedClient((req) => {
       reviews++;
@@ -160,7 +161,8 @@ describe("confirmation signals", () => {
 
   it("integration and a passing job check confirm a passed result; a seeded undo makes the pass a false approval", async () => {
     // This synthetic supervisor exercises explicitly trusted host policy; worker checks still request operator approval.
-    env = envWith({ security: { outside_repository: "supervisor" }, profiles: {
+    // Cache-lookup assertions below need the explicitly memory-disabled legacy key.
+    env = envWith({ brain: { path: "brain", project: "demo", memory_context: { enabled: false } }, security: { outside_repository: "supervisor" }, profiles: {
       ...(baseConfig().profiles as Record<string, unknown>),
       supervise: { mode: "supervisor", tools: "supervisor", min_total_parameters_b: 100, max_model_requests: 30, classify: "never" },
     } });

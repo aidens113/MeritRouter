@@ -108,14 +108,22 @@ export interface JobPool {
   available: number | null;
 }
 
+export function protectedValidationRequests(db: Db, cfg: ResolvedConfig, taskId: string): number {
+  const task = new TaskStore(db).get(taskId);
+  if (task?.spec.deliveryVersion !== 2) return 0;
+  const row = db.prepare("SELECT stage FROM product_deliveries WHERE task_id=?").get(taskId) as { stage: string } | undefined;
+  return row && ["integrate", "validate", "handoff"].includes(row.stage) ? 0 : cfg.supervisor.delivery_budget.validation_reserve_requests;
+}
+
 /** The pool of a supervising task (null for a task that is not a supervisor job). */
 export function jobPool(db: Db, cfg: ResolvedConfig, jobId: string): JobPool | null {
   const job = new TaskStore(db).get(jobId);
   if (!job || cfg.profiles[job.spec.profile]?.mode !== "supervisor") return null;
-  const limit = Math.min(effectiveBudget(cfg, job.spec, null).maxModelRequests, verificationTotal(cfg, job.spec));
+  const baseLimit = Math.min(effectiveBudget(cfg, job.spec, null).maxModelRequests, verificationTotal(cfg, job.spec));
+  const limit = baseLimit === UNLIMITED_REQUESTS ? baseLimit : baseLimit + extraRequests(db, jobId);
   const used = (db.prepare("SELECT COUNT(*) AS n FROM request_charges WHERE task_id = ?").get(jobId) as { n: number }).n;
   const held = heldRequests(db, jobId);
-  const reserve = cfg.team.supervisor_reserve_requests;
+  const reserve = job.spec.deliveryVersion === 2 ? Math.max(cfg.team.supervisor_reserve_requests, cfg.supervisor.delivery_budget.supervisor_reserve_requests + protectedValidationRequests(db, cfg, jobId)) : cfg.team.supervisor_reserve_requests;
   const cap = limit === UNLIMITED_REQUESTS ? null : limit;
   const available = cap === null ? null : Math.max(0, cap - used - held - reserve);
   return { jobId, cap, used, held, reserve, available };
@@ -243,10 +251,18 @@ export class BudgetRequests {
       const grant = d.grant ?? req.requests;
       if (!Number.isInteger(grant) || grant < 1 || grant > MAX_BUDGET_REQUEST) throw new MeritRouterError("invalid_request", `grant must be a whole number from 1 to ${MAX_BUDGET_REQUEST}`);
       if (req.jobId) {
+        if (req.taskId === req.jobId || jobOfTask(this.db, d.cfg, req.taskId) !== req.jobId) throw new MeritRouterError("budget_authority_invalid", "budget grant must come from the task's immediate supervising parent");
         const pool = jobPool(this.db, d.cfg, req.jobId);
         if (pool?.available !== null && pool && grant > pool.available) throw new MeritRouterError("budget_pool_exhausted", `grant ${grant} does not fit: ${poolLine(pool)}; grant at most ${pool.available}, or deny`);
       }
       this.settle(id, "approved", grant, d.by, reason);
+      // A nested supervisor's carve is its parent's hold. Grow that hold in the same
+      // transaction as the approval so sibling admission cannot spend these requests.
+      if (d.cfg.profiles[this.tasks.get(req.taskId)!.spec.profile]?.mode === "supervisor" && req.jobId) {
+        const carve = this.db.prepare("SELECT requests FROM job_budget_carves WHERE child_task_id=? AND parent_task_id=?").get(req.taskId, req.jobId) as { requests: number } | undefined;
+        if (!carve) throw new MeritRouterError("budget_carve_missing", "nested supervisor has no parent budget carve; reconcile ownership before granting");
+        if (carve.requests !== UNLIMITED_REQUESTS) this.db.prepare("UPDATE job_budget_carves SET requests=requests+? WHERE child_task_id=? AND parent_task_id=?").run(grant, req.taskId, req.jobId);
+      }
       return this.get(id)!;
     });
     this.announce(decided);

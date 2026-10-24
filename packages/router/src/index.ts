@@ -257,3 +257,11 @@ export { markPanelStopped, panelStopFile, turnPanelOff } from "./operations/pane
 export * from "./web/index.js";
 export { webTools } from "./harness/web-tools.js";
 export { WorkerActionRequests, outsideRepositoryPolicy, type WorkerActionRequest, type WorkerActionActor } from "./harness/worker-actions.js";
+export { MemoryPreferences } from "./brain/preferences.js";
+export { MemoryRecordSchema, memoryRecordPath, parseMemoryRecord } from "./brain/memory-record.js";
+export type { MemoryRecord } from "./brain/memory-record.js";
+export { ProductDeliveries, DeliveryStageSchema } from "./verification/product-delivery.js";
+export { DeliverySpecSchema, deliverySpecDigest } from "./verification/product-spec.js";
+export { ProductCandidateSchema, EvidenceReceiptSchema, productCandidateDigest } from "./verification/product-evidence.js";
+export { evaluateProductReadiness } from "./verification/product-readiness.js";
+export { projectDeliveryReport, ProjectDeliveryReportInputSchema } from "./admin/deliveries.js";

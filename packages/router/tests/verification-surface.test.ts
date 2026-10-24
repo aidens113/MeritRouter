@@ -28,10 +28,10 @@ afterEach(async () => {
 });
 
 /** Strict verification with a human acceptor: summarize gets room for the strict review reserve. */
-function strictHumanEnv(): Env {
+function strictHumanEnv(strictAcceptor:"human"|"supervisor"="human"): Env {
   const profiles = { ...(baseConfig().profiles as Record<string, Record<string, unknown>>) };
   profiles.summarize = { ...profiles.summarize, max_model_requests: 8 };
-  return makeEnv({ config: baseConfig({ profiles, verification: { strict_acceptor: "human" } }) });
+  return makeEnv({ config: baseConfig({ profiles, verification: { strict_acceptor: strictAcceptor } }) });
 }
 
 const critical = (extra: Record<string, unknown> = {}) => summarizeTask({ importance: "critical", importanceReason: "billing data", ...extra });
@@ -125,8 +125,14 @@ describe("insights task detail", () => {
 });
 
 describe("CLI acceptance and importance", () => {
-  it("accept and reject record the OS user; reject needs a reason", async () => {
-    env = strictHumanEnv();
+  it("noninteractive CLI cannot claim human acceptance authority",async()=>{
+    env=strictHumanEnv();
+    const [id]=await finished(env,[critical()]);
+    expect(cli(env,"accept",id!,"--reason","model reviewed").stderr).toMatch(/only a human/);
+    expect(cli(env,"accept",id!,"--human","--reason","model claims human").stderr).toMatch(/requires an interactive terminal/);
+  },60000);
+  it("supervisor accept and reject record the OS user; reject needs a reason", async () => {
+    env = strictHumanEnv("supervisor");
     const [a, b] = await finished(env, [critical({ id: "a" }), critical({ id: "b" })]);
 
     const noReason = cli(env, "reject", b!);
@@ -137,14 +143,14 @@ describe("CLI acceptance and importance", () => {
     const accepted = cli(env, "accept", a!, "--reason", "checked against the log");
     expect(accepted.stderr).toBe("");
     expect(accepted.code).toBe(0);
-    expect(accepted.stdout).toMatch(new RegExp(`^${a}: accepted by cli:\\S+; acceptance met`));
+    expect(accepted.stdout).toMatch(new RegExp(`^${a}: accepted by supervisor:cli:\\S+; acceptance met`));
     // The CLI status preserves the uncapped task ceiling instead of substituting its current allocation.
     expect(JSON.parse(cli(env, "status", a!, "--json").stdout)[0]).toMatchObject({ taskId: a, maxModelRequests: null });
     expect(cli(env, "status", a!).stdout).toMatch(/\d+\/uncapped/);
 
     const rejected = cli(env, "reject", b!, "--reason", "misses the step number", "--json");
     expect(rejected.code).toBe(0);
-    expect(JSON.parse(rejected.stdout)).toMatchObject({ taskId: b, acceptanceStatus: "unmet", decision: { decision: "rejected", by: { kind: "human", id: expect.stringMatching(/^cli:./) }, reason: "misses the step number" } });
+    expect(JSON.parse(rejected.stdout)).toMatchObject({ taskId: b, acceptanceStatus: "unmet", decision: { decision: "rejected", by: { kind: "supervisor", id: expect.stringMatching(/^supervisor:cli:./) }, reason: "misses the step number" } });
 
     // An unmet result cannot be accepted afterwards.
     const again = cli(env, "accept", b!, "--reason", "changed my mind");

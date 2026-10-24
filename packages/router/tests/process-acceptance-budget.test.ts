@@ -23,8 +23,10 @@ it.each(['stdio', 'http'] as const)('real CLI and MCP %s decisions preserve gran
   let url = '';
   try {
     const tasks = await sy.submitTasks(Array.from({ length: 5 }, (_, i) => summarizeTask({ label: `budget-${i}` })));
-    const filed = tasks.map((t, i) => requests.file({ taskId: t.taskId, jobId: null, role: 'reader', requests: 2, reason: 'fixture needs two more', used: 0, cap: 1, approver: i < 2 || i === 4 ? 'human' : 'external' }));
+    const filed = tasks.map((t, i) => requests.file({ taskId: t.taskId, jobId: null, role: 'reader', requests: 2, reason: 'fixture needs two more', used: 0, cap: 1, approver: i === 4 ? 'human' : 'external' }));
     const cli = (...args: string[]) => exec(process.execPath, [path.join(dist, 'cli.js'), 'budget', ...args, '--config', env.cfg.configPath, '--json'], { env: { PATH: process.env.PATH ?? '' }, windowsHide: true });
+    await expect(cli('approve',String(filed[4]!.id),'--reason','automation cannot claim human')).rejects.toThrow(/decided by a person/);
+    await expect(cli('approve',String(filed[4]!.id),'--human','--reason','explicit flag is insufficient without a terminal')).rejects.toThrow(/requires an interactive terminal/);
     const approved = JSON.parse((await cli('approve', String(filed[0]!.id), '--grant', '2', '--reason', 'fixture approval')).stdout);
     expect(approved).toMatchObject({ status: 'approved', granted: 2 });
     const denied = JSON.parse((await cli('deny', String(filed[1]!.id), '--reason', 'fixture denial')).stdout);

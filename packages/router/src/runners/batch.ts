@@ -10,7 +10,9 @@ import { canonicalJson } from "../storage/tasks.js";
 import { ask, baseResult, type RunContext, type RunOutcome } from "./types.js";
 import { planLimits } from "../routing/select.js";
 import { taskBrief } from "./prompts.js";
-import { baseCommitsFor, contextManifest } from "./completion.js";
+import { baseCommitsFor, completionMemoryEnv, contextManifest } from "./completion.js";
+import { buildMemoryContext } from "../context/memory.js";
+import { allows, type Principal } from "../brain/access.js";
 import type { WorkerTask } from "../core/task.js";
 import { criterionTexts } from "../core/task.js";
 
@@ -27,6 +29,9 @@ export function batchKey(spec: WorkerTask): string | null {
 }
 
 interface Item {
+  memory: string;
+  memoryRefs: string[];
+  memoryPrincipal: Principal | null;
   itemId: string;
   ctx: RunContext;
   sources: ContextSource[];
@@ -44,7 +49,7 @@ ${OUTPUT_CONTRACT}`;
 }
 
 function renderItem(item: Item): string {
-  return `<item id="${item.itemId}">\n${taskBrief(item.ctx.spec)}\nSources:\n${renderSources(item.sources) || "(none)"}\n</item>`;
+  return `<item id="${item.itemId}">\n${taskBrief(item.ctx.spec)}\nSources:\n${renderSources(item.sources) || "(none)"}\n${item.memory}\n</item>`;
 }
 
 /**
@@ -73,7 +78,14 @@ async function runItems(ctxs: RunContext[], outcomes: Map<string, RunOutcome>): 
   for (const [i, ctx] of ctxs.entries()) {
     const sources = await loadSources(ctx.cfg, ctx.spec, ctx.artifacts);
     const manifestRef = ctx.artifacts.writeJson({ taskId: ctx.taskId, kind: "context_manifest", label: "context sources", value: contextManifest(sources) });
-    const item: Item = { itemId: `i${i + 1}`, ctx, sources, universe: evidenceUniverse(sources), manifestRef, estTokens: 0 };
+    const item: Item = { itemId: `i${i + 1}`, ctx, sources, universe: evidenceUniverse(sources), manifestRef, estTokens: 0, memory: "", memoryRefs: [], memoryPrincipal: null };
+    const memoryEnv = completionMemoryEnv(ctx, item.universe);
+    const memory = await buildMemoryContext(memoryEnv, { messages: [{ role: "system", content: batchSystemPrompt() }, { role: "user", content: renderItem(item) }], reservedTokens: perItemOut + 300 });
+    item.memory = memory.text;
+    item.memoryRefs = memory.manifest.entries.map(e => e.ref.slice("brain:".length));
+    item.memoryPrincipal = memoryEnv.brain?.principal() ?? null;
+    for (const entry of memory.manifest.entries) item.universe.refs.set(entry.ref, null);
+    ctx.artifacts.writeJson({ taskId: ctx.taskId, kind: "memory_manifest", label: "batch item scoped memory manifest", value: memory.manifest });
     item.estTokens = estimateTokens([{ role: "user", content: renderItem(item) }]);
     items.push(item);
   }
@@ -87,6 +99,10 @@ async function runItems(ctxs: RunContext[], outcomes: Map<string, RunOutcome>): 
   const pool = planLimits(first.plan, first.cfg.routing.max_endpoint_fallbacks);
   const systemTokens = estimateTokens([{ role: "system", content: batchSystemPrompt() }]);
   const fits = (group: Item[]) => {
+    const project = (item: Item) => item.ctx.taskProject ?? item.ctx.cfg.brain.project;
+    if (group.some(item => project(item) !== project(group[0]!))) return false;
+    // A shared physical prompt may contain only memory every participating principal may read.
+    if (group.some(item => group.some(other => other.memoryRefs.some(ref => !item.memoryPrincipal || !allows(item.memoryPrincipal, ref, "read"))))) return false;
     const out = group.length * perItemOut + 300;
     const input = systemTokens + group.reduce((s, it) => s + it.estTokens, 0);
     return out <= pool.outputLimitTokens && input + out <= pool.contextLimitTokens;

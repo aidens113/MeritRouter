@@ -4,6 +4,7 @@ import type { Db } from "../storage/db.js";
 import type { ProfileName } from "../config/schema.js";
 import { approverFor, BudgetRequests, defaultTaskGrant, jobOfTask, jobPool, MAX_BUDGET_REQUEST, poolLine, type BudgetRequest, type JobPool } from "../admission/budget-requests.js";
 import type { HarnessEnv, HarnessTool } from "./tools.js";
+import { z } from "zod";
 
 /**
  * Budget control tools (docs/working/budget-control.md, D3 and D4). A worker that runs low asks
@@ -36,9 +37,10 @@ export function requestBudgetTool(): HarnessTool {
     "request_more_budget",
     "external",
     "Ask for more model requests when the ones you have left will not finish the brief. Say how many you need and why (what is done, what remains). You wait, without spending requests, for the decision; approved requests raise your limit at once. Ask early (a few requests before you run out), not for padding; the number of asks per task is limited.",
-    { requests: { type: "integer", minimum: 1, maximum: MAX_BUDGET_REQUEST, description: "how many more model requests you need" }, reason: { type: "string", description: "what is done, what remains, and why it needs this many" } },
-    ["requests", "reason"],
+    { requests: { type: "integer", minimum: 1, maximum: MAX_BUDGET_REQUEST, description: "How many more model requests you need; supervisors may omit to request the configured extension (default 200). Workers must supply an amount." }, reason: { type: "string", description: "what is done, what remains, and why it needs this many" } },
+    ["reason"],
     async (a, env) => {
+      const input=z.object({requests:z.coerce.number().int().min(1).max(MAX_BUDGET_REQUEST).optional(),reason:z.string().trim().min(1)}).strict().parse(a);
       const ctx = env.ctx;
       const cfg = ctx.cfg;
       const db = ctx.tasks.db;
@@ -46,12 +48,12 @@ export function requestBudgetTool(): HarnessTool {
       const max = cfg.team.max_budget_requests_per_task;
       const asked = store.countFor(ctx.taskId);
       if (asked >= max) throw new Error(`you already asked ${asked} time(s), the most a task may (team.max_budget_requests_per_task ${max}); finish with what you have and submit`);
-      const requests = Number(a.requests);
+      const requests = input.requests ?? (env.role === "supervisor" ? Math.min(MAX_BUDGET_REQUEST,cfg.supervisor.delivery_budget.extension_requests) : NaN);
       if (!Number.isInteger(requests) || requests < 1 || requests > MAX_BUDGET_REQUEST) throw new Error(`requests must be a whole number from 1 to ${MAX_BUDGET_REQUEST}`);
-      const reason = typeof a.reason === "string" ? a.reason.trim() : "";
+      const reason = input.reason;
       if (!reason) throw new Error("reason is required: what is done, what remains, and why it needs this many");
       const jobId = jobOfTask(db, cfg, ctx.taskId);
-      const approver = approverFor(cfg, jobId);
+      const approver = env.role === "supervisor" ? (cfg.team.budget_approver === "human" ? "human" : jobId ? "supervisor" : "external") : approverFor(cfg, jobId);
       const used = ctx.gate.admission.taskTotals(ctx.taskId).requests;
       let req = store.file({ taskId: ctx.taskId, jobId, role: env.role, requests, reason, used, cap: ctx.budget.maxModelRequests, approver });
       ctx.session?.note(`budget request ${req.id}: ${requests} more model request(s), decided by ${approver}`, { budgetRequest: req.id, requests, approver });
@@ -74,7 +76,7 @@ export function requestBudgetTool(): HarnessTool {
       if (req.status === "approved" && req.granted > 0) ctx.budget = { ...ctx.budget, maxModelRequests: ctx.budget.maxModelRequests + req.granted };
       return `budget request ${req.id} ${outcomeText(req, env)}`;
     },
-    (env) => env.role !== "supervisor" && env.ctx.purpose !== "verification" && env.ctx.cfg.team.max_budget_requests_per_task > 0,
+    (env) => env.ctx.purpose !== "verification" && env.ctx.cfg.team.max_budget_requests_per_task > 0,
     ),
     repeatBehavior: "execute",
   };

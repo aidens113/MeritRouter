@@ -192,6 +192,7 @@ export class Classifier {
           tier: plan.tier,
         });
         sessions.push(s);
+        s.note("memory context omitted", { memoryManifest: { schemaVersion: 1, role: "classifier", project: p.project, entries: [], omissions: [{ reason: "Technical task-metadata classification; product memory is not applicable" }] } });
         if (batch.length > 1) s.note(`shared classification request (${batch.length} items); this task is item ${ids[i]}`, { executionId, itemId: ids[i], members: batch.map((b, j) => ({ taskId: b.taskId, itemId: ids[j] })) });
         s.syncMessages(chat.messages);
         s.modelRequest({ executionId, purpose: "classification", chat });

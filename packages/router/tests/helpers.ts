@@ -97,7 +97,20 @@ export function makeEnv(opts: { config?: Record<string, unknown>; endpoints?: un
   gitIn(repo, "init", "-q", "-b", "main");
   commitAll(repo, "init");
   writeFileSync(path.join(dir, "models.yaml"), YAML.stringify({ version: 1, endpoints: opts.endpoints ?? [endpoint()], overrides: opts.overrides ?? {} }));
-  const raw = opts.config ?? baseConfig();
+  const raw: Record<string, unknown> = opts.config ?? baseConfig();
+  // Existing task-loop fixtures exercise the explicitly supported direct-task workflow.
+  // Delivery-v2 tests opt into its stage contract explicitly; production defaults stay delegated.
+  raw.client_supervision ??= {workflow:"direct_tasks"};
+  // Fake endpoint quality evidence belongs only to test fixtures. Production routing never
+  // infers quality from model names, parameter size, or the mere presence of an endpoint.
+  const supervisor = raw.supervisor as Record<string, unknown> | undefined;
+  if (!supervisor?.delivery_budget) raw.supervisor = {...supervisor,delivery_budget:{supervisor_reserve_requests:0,validation_reserve_requests:0}};
+  if (!supervisor?.routing) {
+    raw.supervisor = { ...(raw.supervisor as Record<string,unknown>), routing: { quality_evidence: (opts.endpoints ?? [endpoint()]).map(value => {
+      const model = value as {id: string};
+      return {schemaVersion:1,endpointId:model.id,source:"test-fixture:fake-supervisor-evaluation",checkedAt:new Date(Date.now()-60_000).toISOString(),expiresAt:new Date(Date.now()+86_400_000).toISOString(),classification:"qualified_supervisor",confidence:1,trials:10,scores:{planning:1,architecture:1,supervision:1,integration:1,review:1,product:1,visual:1}};
+    }) } };
+  }
   const configPath = path.join(dir, "meritrouter.config.yaml");
   writeFileSync(configPath, YAML.stringify(raw));
   const cfg = parseConfig(raw, configPath);

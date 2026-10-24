@@ -7,7 +7,7 @@ import { RequestCaptures } from "../storage/request-captures.js";
 import type { RequestCaptureStore } from "./request-capture.js";
 import type { RequestLedger } from "../admission/request-ledger.js";
 import { SqliteRequestLedger } from "../admission/sqlite-request-ledger.js";
-import { AdmissionDenied, GatewayError, type AdmissionDenialReason } from "../core/errors.js";
+import { AdmissionDenied, GatewayError, MeritRouterError, type AdmissionDenialReason } from "../core/errors.js";
 import type { ModelEndpoint } from "../models/catalog.js";
 import type { RoutePlan } from "../routing/select.js";
 import { fitsEndpoint } from "../routing/select.js";
@@ -21,6 +21,8 @@ import type { ProviderClient } from "../providers/client.js";
 import { probeClient, requestDirect, type DirectRuntime } from "./direct.js";
 import { NOT_IN_PLAN_RECHECK_MS } from "../providers/keys.js";
 import { quarantineReason } from "./quarantine.js";
+import { assessSupervisorQuality } from "../routing/supervisor-quality.js";
+import { jobPool, protectedValidationRequests } from "../admission/budget-requests.js";
 
 export type { DirectRuntime } from "./direct.js";
 
@@ -228,6 +230,14 @@ export class Gate {
   private candidatesFor(req: GateRequest): ModelEndpoint[] {
     const avoid = new Set(req.avoidEndpointIds ?? []);
     const list = avoid.size ? req.plan.candidates.filter((c) => !avoid.has(c.id)) : req.plan.candidates;
+    if (this.cfg.profiles[req.plan.profile]?.mode === "supervisor") {
+      // Session stickiness cannot override quality ordering, and evidence expiry/revocation
+      // must be checked on every physical dispatch rather than only at session creation.
+      const visual = req.chat.messages.some(m => Array.isArray(m.content) && m.content.some(part => part.type === "image_url"));
+      const eligible = list.filter(ep => assessSupervisorQuality(ep.id, this.cfg.supervisor.routing, new Date(this.direct.providers.now()), visual).eligible);
+      if (!eligible.length) throw new MeritRouterError("supervisor_quality_unavailable", "No supervisor candidate retains current qualifying quality evidence; no model request was sent");
+      return eligible;
+    }
     return this.cfg.routing.sticky_endpoints ? stickyOrder(list, req.preferEndpointId, (ep) => this.stickyHealthy(ep)) : list;
   }
 
@@ -376,7 +386,20 @@ export class Gate {
         attempts.push({ endpointId: ep.id, outcome: `skipped: ${q}` });
         continue;
       }
+      const assertValidationReserve = (reserved: boolean) => {
+        if (this.cfg.profiles[req.plan.profile]?.mode === "supervisor") {
+          for (const p of req.participants) {
+            const pool = jobPool(this.db, this.cfg, p.taskId);
+            const protectedRequests = protectedValidationRequests(this.db, this.cfg, p.taskId);
+            // Dispatch receipt already holds this request. Keep the validation pool untouched
+            // through planning/implementation, including retries across providers.
+            if (pool?.cap !== null && pool && protectedRequests > 0 && pool.cap - pool.used - pool.held - (reserved ? 0 : 1) < protectedRequests) throw new AdmissionDenied("task_request_budget_exhausted", "supervisor_validation_reserve_protected: planning/implementation cannot consume integrated-validation requests; advance to integration or request resources from FINAL", undefined, p.taskId);
+          }
+        }
+      };
+      assertValidationReserve(false);
       const r = await requestDirect({ cfg: this.cfg, ledger: this.ledger, captures: this.captures, assertDispatch: (participants, reservation, dispatchId) => {
+        assertValidationReserve(true);
         this.admission.assertDispatch(participants);
         if (reservation && dispatchId) new RequestReceipts(this.db).assertDispatch(reservation, dispatchId);
       }, health: this.health, direct: this.direct }, ep, req, participants, estInput, attempts, (e) => this.admit(e, holder, attempts, full, admitted));

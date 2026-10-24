@@ -1,6 +1,8 @@
 import type { LabManager } from "./lab.js";
 import { runBrowserCheck } from "./browser-check.js";
 import { BrowserCheckSchema, BrowserEvidenceSchema } from "./browser-schema.js";
+import { BrowserJourneyCheckSchema, BrowserJourneyEvidenceSchema } from "./browser-journey-schema.js";
+import { runBrowserJourney } from "./browser-journey.js";
 import { z } from "zod";
 import { newId } from "../storage/db.js";
 import { MeritRouterError } from "../core/errors.js";
@@ -11,13 +13,13 @@ import { LabsStore } from "./store.js";
 import { labEnvironment, labValues } from "./environment.js";
 import { LabNameSchema, substitute } from "./recipe.js";
 import { assertLabEffect, labEffectSignal } from "./control-authority.js";
-export const LabCheckResultSchema = z.object({ id: z.string(), name: z.string(), repository: z.string(), revision: z.string().regex(/^[a-f0-9]{40,64}$/), exitCode: z.number().int().nullable(), stdout: z.string(), stderr: z.string(), killed: z.string().nullable(), durationMs: z.number(), createdAt: z.number(), browser: BrowserEvidenceSchema.optional() });
+export const LabCheckResultSchema = z.object({ id: z.string(), name: z.string(), repository: z.string(), revision: z.string().regex(/^[a-f0-9]{40,64}$/), exitCode: z.number().int().nullable(), stdout: z.string(), stderr: z.string(), killed: z.string().nullable(), durationMs: z.number(), createdAt: z.number(), browser: BrowserEvidenceSchema.optional(), journey: BrowserJourneyEvidenceSchema.optional() });
 export type LabCheckResult = z.infer<typeof LabCheckResultSchema>;
 /** Browser evidence covers the whole environment, including repositories other than its service. */
-export function labCheckMatchesHeads(check: Pick<LabCheckResult, "repository" | "revision" | "browser">, heads: Record<string, string | null>): boolean {
+export function labCheckMatchesHeads(check: Pick<LabCheckResult, "repository" | "revision" | "browser" | "journey">, heads: Record<string, string | null>): boolean {
   if (check.revision !== heads[check.repository]) return false;
-  if (!check.browser) return true;
-  const checked = check.browser.heads;
+  if (!check.browser && !check.journey) return true;
+  const checked = (check.browser ?? check.journey)!.heads;
   return Object.keys(checked).length === Object.keys(heads).length
     && Object.entries(heads).every(([alias, head]) => head !== null && checked[alias] === head);
 }
@@ -39,9 +41,12 @@ export async function runLabCheck(store: LabsStore, lab: LabRecord, name: string
   const id = newId("lc");
   const command=typeof check==="string"?check:"command" in check?check.command:null;
   if(command===null&&!manager)throw new MeritRouterError("lab_invalid_state","browser check requires its scoped lab manager");
-  const browser=command===null?BrowserCheckSchema.parse(check):null;
+  const journey=command===null&&typeof check!=="string"&&"mode" in check&&check.mode==="interactive"?BrowserJourneyCheckSchema.parse(check):null;
+  const browser=command===null&&!journey?BrowserCheckSchema.parse(check):null;
   assertLabEffect();
-  const result=browser
+  const result=journey
+    ?await runBrowserJourney(manager!,lab,id,{...journey,timeout_seconds:Math.min(journey.timeout_seconds,timeoutSeconds)},signal)
+    :browser
     ?await runBrowserCheck(manager!,lab,id,{...browser,timeout_seconds:Math.min(browser.timeout_seconds,timeoutSeconds)},signal)
     :await runProcess(substitute(command!,labValues(lab)),[],{cwd:repo.worktree,env:labEnvironment(lab),timeoutMs:timeoutSeconds*1000,shell:true,signal});
   assertLabEffect();

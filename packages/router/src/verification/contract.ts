@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import picomatch from "picomatch";
 import {
   ImportanceSchema,
   ProfileNameSchema,
@@ -140,7 +141,7 @@ export type AllocationResult =
  * default ceiling (24) that only happens when an explicit task budget is too small.
  */
 export function allocateBudget(policy: VerificationConfig, ev: Pick<PolicyEvaluation, "level" | "review">, b: BudgetInput, repairReview = 0): AllocationResult {
-  const review = ev.review.required ? (policy.budget.review_requests[ev.level] ?? 0) : 0;
+  const review = ev.review.required ? Math.max(1, policy.budget.review_requests[ev.level] ?? 0) : 0;
   const needed = b.classificationUsed + review + 1;
   if (needed > b.total) return { ok: false, needed, available: b.total };
   let left = b.total - b.classificationUsed - review;
@@ -166,14 +167,14 @@ export function allocateBudget(policy: VerificationConfig, ev: Pick<PolicyEvalua
  */
 export function reviewAllowance(policy: Pick<VerificationConfig, "budget">, budget: BudgetAllocation, level: VerificationLevel, required: boolean): number {
   if (!required) return budget.review;
-  const wanted = policy.budget.review_requests[level] ?? 0;
+  const wanted = Math.max(1, policy.budget.review_requests[level] ?? 0);
   return budget.unallocated === null ? Math.max(budget.review, wanted) : Math.max(budget.review, Math.min(wanted, budget.review + budget.unallocated));
 }
 
 /** The reserve adjustment a raised level needs: review requests drawn from the unallocated room. */
 export function reviewReserveAdjustment(policy: Pick<VerificationConfig, "budget">, budget: BudgetAllocation, level: VerificationLevel, required: boolean): { from: number; to: number; fromUnallocated: number; wanted: number } | null {
   if (!required) return null;
-  const wanted = policy.budget.review_requests[level] ?? 0;
+  const wanted = Math.max(1, policy.budget.review_requests[level] ?? 0);
   if (wanted <= budget.review) return null;
   const to = reviewAllowance(policy, budget, level, required);
   return { from: budget.review, to, fromUnallocated: to - budget.review, wanted };
@@ -206,6 +207,8 @@ export function reviewCap(allowance: number, used: RequestsUsed, share = 1): num
 }
 
 export interface CompileInput {
+  /** Predicted from writable scope and configured protected-path patterns, before execution. */
+  evaluatorChangeExpected?: boolean;
   taskId: string;
   spec: WorkerTask;
   tier: TierName;
@@ -233,6 +236,7 @@ export function compileContract(input: CompileInput): CompileResult {
     tags: input.tags,
     paths: declaredPaths(spec),
     protectedPathsChanged: null,
+    evaluatorChangeExpected: input.evaluatorChangeExpected,
     criteria: crit,
     requestedImportance: spec.importance ?? null,
     importanceReason: spec.importanceReason ?? null,
@@ -317,6 +321,12 @@ export function compileContract(input: CompileInput): CompileResult {
     createdAt: input.now,
   });
   return { ok: true, contract, evaluation };
+}
+
+export function declaredEvaluatorChanges(spec: WorkerTask, protectedPaths: string[]): boolean {
+  if (!spec.writableRepository || !protectedPaths.length) return false;
+  const match = picomatch(protectedPaths, { dot: true });
+  return (spec.constraints.allowedPaths ?? []).some(path => match(path.replace(/\\/g, "/")));
 }
 
 function canonical(value: unknown): unknown {

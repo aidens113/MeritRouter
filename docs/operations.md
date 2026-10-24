@@ -6,7 +6,63 @@ explains evidence; [recovery](#recovery) covers interrupted work; and
 [backup and restore](#backup-and-restore) protects state. Read
 [repository boundaries](#repository-boundaries-and-outside-actions) before approving host
 commands. [Teams](#teams-plans-leases-and-capacity) and [Labs](#labs-isolated-services-and-checked-promotion)
-describe optional coordination and environment features.
+describe coordination and environment features.
+
+## Delivery v2 readiness and FINAL decisions
+
+Default `client_supervision.workflow: delegated_delivery` keeps the initiating client as FINAL
+supervisor and delegates multi-step execution to MeritRouter supervisors. Do not enable
+`dispatch_final_supervisor` just to get delegation. `direct_tasks` remains an explicit workflow.
+Supervisor dispatch requires current `supervisor.routing.quality_evidence`; a model pin or
+familiar provider name cannot bypass it. See [quality setup](setup.md#supervisor-quality-evidence-required-for-delivery-jobs).
+
+Version-2 jobs follow discover, specify, prepare, plan, implement, integrate, validate and
+handoff. They persist a versioned specification and criterion-linked receipts for an exact
+candidate, with source/environment/recipe/dependency/fixture identities as applicable.
+Updating the specification requires its expected digest and next revision. Evidence for a
+different specification/candidate cannot establish readiness. The original submitted goal is
+preserved exactly; supervisors cannot remove/weaken required criteria or assert a criterion is
+not applicable through a model-written `approvedBy`. No FINAL waiver UI is implemented, so
+waivers fail closed. Durable delivery history retains prior state when specifications,
+candidates, evidence or decisions change.
+Structural checks alone cannot satisfy runtime, journey, persistence, visual/usability or
+independent-review requirements.
+
+The delivery supervisor uses `set_delivery_spec`, `advance_delivery_stage` and
+`validate_delivery`. The latter runs declared integrated structural checks under existing command
+authority and records logs; it does not manufacture other evidence. Missing, unavailable, failed,
+stale or self-claimed required evidence blocks handoff. The external FINAL MCP client can:
+
+- Inspect `delivery_status` for the specification, candidate, coverage and blockers.
+- Call `record_delivery_observation` only for behavior it independently checked, with criterion
+  IDs, evidence kind, observations and scoped artifact references. Supply `expectedSpecDigest`
+  and `expectedCandidateDigest` from the inspected `delivery_status` readiness record; a changed
+  specification or candidate rejects the observation instead of assigning it to new code.
+- Use `decide_delivery` to accept or reject the checked candidate. Acceptance requires complete
+  current observed evidence, completed work and the handoff stage, with the same expected digests.
+  Rejection moves the product back to validation; use `resume_task` explicitly to run repair.
+  For a completed rejected supervisor, repair opens a fresh linked session in its retained
+  workspace and keeps consumed budgets/history. It requires a current matching rejection
+  and current project supervisor/repository authority. Accepted, ordinary completed tasks
+  and missing-workspace deliveries cannot be reopened this way. The job page's Request
+  repair action uses the same guard. Repair must produce fresh evidence and another FINAL decision.
+  Human-only authority remains enforced. `accepted` indicates effective acceptance: a historical
+  accept decision does not override subsequently blocked evidence or a reopened delivery stage.
+
+The panel separates execution status, task acceptance and the product's FINAL decision. A green
+completed task or passed structural check is not a usability verdict. Review the integrated
+product and its failure/loading/empty paths before accepting. Activity includes completed
+unverified work; task acceptance does not create missing product evidence.
+
+Use `meritrouter delivery-report --project <slug>` or MCP `project_delivery_report`
+for bounded project summaries (25 by default). CLI options include `--limit 1..100`,
+`--after <task-id>` and `--json`.
+The keyset continuation is `nextAfter`. Reports expose stage, readiness, historical FINAL
+decision, effective recorded acceptance and actionable reason codes, without specification
+or evidence bodies. Project overview and job detail display the same distinction; product
+rejection remains attention-worthy even when legacy task checks passed. Summaries describe
+stored candidate/evidence only (`sourceRevalidated: false`); inspect `delivery_status` to
+refresh actual Git/runtime state before making a FINAL decision.
 
 ## Cost reduction and spending controls
 
@@ -33,14 +89,15 @@ zero caps and `never` policies remain effective; omitted fields take new default
 | Supervisor edits under `supervisor.implementation: delegate` | Hard | The edit tools refuse everything but coordination files (`harness/coordination-edits.ts`) |
 | Implementers' own check runs (`run_check`) | Hard | Only the task's declared checks, exactly as declared; `coding.max_check_runs_per_task` per task |
 | Eligible free and paid models under configured policy; one model per request; served model must match | Hard | Route plan, gate |
-| Size floors, modalities, tool support, metadata age | Hard | Route plan |
+| Worker size floors; modalities, tool support and metadata age | Hard | Route plan |
+| Supervisor quality floor and current provenance | Hard | Route plan and per-dispatch Gate revalidation; never inferred from vendor/model names |
 | Paid spend | Hard | Worst-case cost reserved per request against global, per-key, prepaid-balance, and per-task budgets before dispatch; settled to billed cost |
 | Paid policy | Hard | Paid models (priced models, or any model through a paid key) only where `paid.tiers` / `supervisor.paid_policy` allow |
 | Worker file edits | Hard (native runner) | Edit tools refuse paths outside `allowedPaths` |
 | Brain access | Hard | Every brain read and write checked against role grants; workers write only their report |
 | Ledger integrity | Hard | Ledger entries are append-only and need a real validation record |
 | Deadlines, cancellation, lease ownership | Hard | Checked before every dispatch; late responses cannot complete a cancelled task |
-| One writer per repository | Hard | Claim transaction (repositories are keyed `<project>/<alias>`, so projects never block each other) |
+| Repository writer capacity and overlapping file leases | Hard | Four writers by default; claim transaction serializes overlapping write scopes |
 | Fair share between projects (`priority`) and a project's running tasks (`max_concurrent_tasks`) | Hard | Claim transaction (`storage/fair-claim.ts`) |
 | A project's paid cap (`paid_budgets`) and request share (`request_share`) | Hard | The same reservation as the global budgets, after them |
 | Input/output token budgets | Estimated | ~3 chars/token at admission; reconciled when the provider reports usage |
@@ -401,7 +458,7 @@ and policy fingerprints.
   `reject_task`, judged against the job's goal and the specifications it was given, and
   `integrate_task` refuses `unmet` results and requires an explicit acceptance for
   `not_verified` ones. With `verification.strict_acceptor: human`, strict results need a person:
-  `meritrouter accept|reject <task> --reason ...` or the panel's Accept/Reject buttons (MCP
+  `meritrouter accept|reject <task> --human --reason ...` in an interactive terminal, or the panel's Accept/Reject buttons (MCP
   `accept_result` acts as the supervisor and is refused for them).
 
 ### Calibration
@@ -432,6 +489,43 @@ Compaction runs only when the conversation exceeds that budget: it replaces the 
 turns with one summary of their tool calls, down to half the budget, so the cached prefix
 changes rarely.
 
+## Defensive harness and batched operations
+
+New native coding sessions use the v2 operation registry; supervisors and task-scoped MCP
+adapters share its schemas/handlers. Historical v1 sessions keep their compatible tools on resume.
+Call `workspace_info` for OS, granted aliases, pinned/writable revisions, allowed paths, declared
+`check:N` recipe IDs and limits. An omitted alias resolves only a sole granted repository or
+an explicit writable default. Empty/`.`/`./` directory roots and Windows separators normalize
+without relaxing file-target, symlink/hardlink, configuration or lease boundaries.
+
+| Operation | Use |
+| --- | --- |
+| `read_files` | Up to 64 paths/ranges in one call, four concurrent reads, independent file outcomes and SHA-256 hashes |
+| `list_paths`, `search_text` | Bounded pages; continue with `nextOffset`; literal search is the default |
+| `apply_edits` | Grouped preflight, expected hashes for existing files, exact patches, explicit complete-file replacement |
+| `git_status`, `git_diff` | Read-only working-tree inspection; pinned snapshots use file reads |
+| `run_recipe`, `run_checks` | Execute only trusted declared `check:N` commands, retaining approval and cumulative check limits |
+| `batch` | Up to 64 stable-ID operations with earlier dependency IDs; independent reads run four at a time, effects remain ordered |
+| `read_output_page` | Lossless pages from a task-scoped artifact when output exceeds inline limits |
+| `operation_status`, `cancel_operation` | Task-owned durable status and cancellation request; do not spend model calls polling |
+
+Operations default to a 30-second deadline. `timeout_ms` can request up to 300,000 milliseconds,
+clamped by remaining task time and applicable check limits. Declare build/install work and
+choose an adequate deadline; a wrapper does not authorize a new host command. Large output is
+preserved in scoped artifacts rather than silently discarded. Default inline output is 32 KiB,
+with context-sensitive bounds; `read_output_page` defaults to 16,000 UTF-16 characters/page.
+
+Malformed arguments return structured diagnostics. A missing file does not erase successful
+siblings. Hash/match conflicts require rereading current content, not fuzzy edits. Full-file
+replacement needs `whole_file: true` and its old hash; omission placeholders are rejected.
+Batch graph/schema preflight precedes effects, but filesystem edits are not a multi-file atomic
+transaction: inspect every child outcome and any reported partial application.
+
+Distinguish `failed`, `denied`, `waiting_approval`, `timed_out`, `cancelled` and `unknown_effect`.
+`cancellation_requested` is not termination proof. Command timeout/cancel waits for confirmed
+owned execution shutdown; uncertain effects remain explicit and are not blindly replayed.
+Approval, containment and paid policies are unchanged by these convenience operations.
+
 ## Teams: plans, leases, and capacity
 
 The default SQLite scheduler awaits validated task-queue claim and companion receipts before
@@ -460,13 +554,17 @@ not enable PostgreSQL or multiple hosts.
   whose globs overlap a live lease in the same repository waits (`waiting_for_file_lease`).
 - **Capacity.** `team.max_agents` (default 8; `supervisor.max_workers_per_job` is an older alias)
   caps running tasks per job; `execution.max_concurrent_tasks` bounds everything.
-- **Request budgets (one pool per job).** The pool has no request-count cap unless configured in
-  `profiles.supervise.max_model_requests`, `verification.max_total_requests_per_task`, or the
-  explicit task budget. Each delegated task holds a grant while open: the brief's `max_requests`,
+- **Request budgets (one pool per job).** Default delivery-v2 `start_job`/`startJob` jobs use a
+  600-request aggregate envelope (`supervisor.delivery_budget.total_requests`), narrowed by
+  applicable profile/verification/task caps. Legacy/direct jobs without a configured cap can
+  remain uncapped. Each delegated task holds a grant while open: the brief's `max_requests`,
   else `team.default_task_requests`, else its tier's execution cap. A finished task holds what it
   used; the rest returns. Finite caps are checked against the supervisor's usage, open holds, and
-  `team.supervisor_reserve_requests` (default 4); an uncapped pool does not refuse work for
-  exhausting a request count. Capacity, provider allocation, timeouts, paid-spend budgets, and
+  protected reserves. Delivery v2 protects 80 supervisor plus 80 validation requests, initially
+  leaving at most 440 for child grants before usage/other limits. The validation reserve opens
+  during integrate/validate/handoff; child grants still protect supervisor turns. Physical
+  dispatch protects validation headroom in earlier stages. Legacy
+  `team.supervisor_reserve_requests` (4) remains a lower bound. Capacity, provider allocation, timeouts, paid-spend budgets, and
   other configured limits remain enforced.
 - **Requests for more.** A worker running low calls `request_more_budget(requests, reason)` and
   waits (no model requests; exempt from the watchdog) up to `team.budget_request_wait_seconds`
@@ -478,6 +576,14 @@ not enable PostgreSQL or multiple hosts.
   [--reason ...]`, `meritrouter budget deny <id> [--reason ...]`. A request whose task finished
   expires; an interrupted wait leaves it pending, and an approval then applies to the resumed run.
   Paid budgets never grow with extra requests.
+  Supervisors can request more too: nested supervisors ask their immediate parent and root
+  supervisors ask the FINAL client. Ordinary worker auto-grants cannot self-approve supervisor
+  extensions. Supervisors may omit `requests` to ask for the configured
+  `supervisor.delivery_budget.extension_requests` (200); workers must supply an amount. Every
+  request needs a reason and approval. Parent holds grow atomically for nested grants. Storage
+  waits use bounded polling without model calls (300 seconds by default), not indefinite
+  event-driven waiting. CLI decisions default to supervisor identity; human-only decisions need
+  the signed-in panel or explicit `--human` in an interactive terminal.
   The panel shows pending decisions on the task, job, project and install dashboard. Supply a
   reason to approve or deny; approval can grant fewer requests than asked, within the current
   job pool. Job Overview shows the pool, reserve and held grants; task Usage shows its grant,
@@ -809,8 +915,9 @@ Services must remain foreground processes. Windows process ownership checks use 
 identity and retained tree evidence; ambiguous orphan ownership blocks destructive cleanup.
 HTTP access requires positive ownership of the declared loopback listener before and after
 the request. These checks are not an OS sandbox for human-authored commands. Linux process
-support exists, but this acceptance used Windows fixtures. Browser/ephemeral/Compose extensions
-and multi-host PostgreSQL remain separate work; they are not implied by the Labs UI.
+support exists, but platform acceptance must be recorded separately. Interactive browser checks
+require the declared Docker isolation below. Ephemeral browser recovery, Compose runtime and
+multi-host PostgreSQL remain separate work; they are not implied by the Labs UI.
 
 ### Task-owned runtime checks
 
@@ -851,8 +958,30 @@ Evidence records every repository head, assertion outcomes and bounded private s
 metadata. Reuse requires all recorded heads and clean repositories to match. Trusted callers
 can retrieve a screenshot through the scoped manager API with size/hash verification; images
 are not automatically sent to models and pixel redaction is not claimed. Browser/profile cleanup
-runs on timeout/cancel. These controls are not an OS network sandbox. Hydrated checks, task-owned
-browser recovery and Compose runtime remain separate unfinished work.
+runs on timeout/cancel. Static browser controls are not an OS network sandbox. Task-owned browser
+recovery and Compose runtime remain separate unfinished work.
+
+### Declared interactive browser journeys
+
+A named Lab recipe can declare `kind: browser`, `mode: interactive` checks. Unlike static
+checks, these execute scripts and declared navigate/click/fill/key/wait/assert/reload/upload/
+screenshot steps. Every step identifies criteria; actions without an observable assertion for
+their criteria are refused. Checks bind specification and fixture identities and capture
+candidate heads/trees, recipe/environment/dependency/test digests, bounded requests, console/
+page errors, screenshots and cleanup state. A screenshot alone does not establish visual quality.
+
+The only implemented interactive isolation backend is `docker_network_none_v1`. Its trusted
+configuration requires an absolute Docker executable, the allowed local engine socket/pipe,
+a Linux image pinned by SHA-256 digest, absolute in-container browser/Node paths and a non-root
+numeric user. The operator supplies/approves that environment; models choose a declared check
+ID and cannot select arbitrary binaries, images or network permissions. An owned broker serves
+only the declared verified service origin. Mutation methods must be explicitly declared;
+defaults are GET/HEAD. Limits cover deadlines, uploads, resource bytes and screenshots.
+
+Missing Docker/engine/image capability returns unavailable/failure rather than falling back to
+an unrestricted host browser. Contract/fake-process tests do not prove that an actual Docker
+journey ran; record a real contained run on a supported host before claiming runtime acceptance.
+The implementation host's unavailable Docker capability is not a passing product check.
 
 ### Awaited request accounting
 
@@ -866,6 +995,38 @@ PostgreSQL backend: distributed claims, fencing, journals, artifact storage and 
 acceptance remain outstanding.
 
 ## The brain and attribution
+
+The project Brain page uses scoped indexed metadata with document/search pages. View/Edit do
+not eagerly compute Git history or blame; select History, Blame or Related when needed.
+Only Brain events refresh this page. Index reconciliation checks metadata, parses changed
+documents and shares a five-second freshness window; API writes update the index immediately.
+Use **Refresh document index** after external edits. Initial indexing can still be slow on
+large repositories; warm metadata timings are not production-navigation guarantees.
+
+Document/search cursors detect index changes, and history cursors bind HEAD/project/path/page
+size. Restart from the first page when a cursor becomes stale. History Git calls are bounded;
+selected blame shares a ten-second cancellation signal through history/blame/commit metadata.
+Long text and blame rendering are paged. Project/mount rename privacy masking remains enforced.
+
+Ordinary document saves require the last content digest; explicit null creates only a missing
+document. A 409 conflict preserves the draft for comparison/merge instead of overwriting a newer
+revision. Existing typed memory is edited in **Memory & preferences**, not the raw editor.
+That form records project facts/decisions/lessons, explicit project/global user preferences,
+source/actor/revision and revocation. `/all/brain` manages global preferences without an active
+project. Inferred global lessons still use Global Knowledge promotion/review.
+
+Automatic memory context is role-budgeted and ACL-scoped, and refreshes on startup/resume so
+revoked or expired records are omitted. `brain.memory_context.enabled` and `role_tokens` control
+caps (12k supervisor, 6k reviewer, 4k implementer/analyst/inspector, 2k summarizer/classifier),
+further narrowed by context/output headroom and actual grants. Memory never grants permissions.
+Resumed sessions budget the actual offered tools, terminal schema and output allowance before
+adding fresh memory. Typed global preferences use the trusted install Brain even when a host
+binds a project to a separate Brain; explicit `brain_read`, `brain_list` and `brain_search`
+under `global/preferences` resolve the same records. Unprefixed searches retain their project
+Brain scope. Ordinary global lessons retain their existing Brain/promotion binding.
+The Memory tab's lazy **What agents actually received** view reads real project-owned historical
+`memory_manifest` artifacts with hashes, caps, selection reasons and omissions. It does not
+recompute or guarantee current/future injection. See [memory authority](roles.md#automatic-context-and-typed-memory).
 
 - The brain is one git repository (`brain.path`) for every project: `projects/<slug>/` per
   project and `global/` for knowledge shared by all of them (see [roles.md](roles.md#the-brain-shared-knowledge)).

@@ -1,11 +1,12 @@
 import type { VerificationConfig, VerificationLevel } from "../config/schema.js";
 import type { AcceptanceStatus, ExecutionStatus, ReviewRecord, SupervisorDecision, VerificationRecord, VerificationStatus } from "../core/task.js";
-import type { CheckReport, CriterionResult } from "./checks.js";
+import type { CheckReport, CriterionResult, EvaluatorReviewOutcome } from "./checks.js";
 import type { AcceptanceContract } from "./contract.js";
 import type { Reevaluation, ResolvedReview } from "./policy.js";
 
 /** A reviewer's verdict as decide() consumes it (review.ts produces it through submit_verdict). */
 export interface ReviewOutcome {
+  evaluatorChangeReview?: EvaluatorReviewOutcome;
   verdict: "pass" | "fail" | "inconclusive";
   criteria?: Array<{ id: string; outcome: "pass" | "fail" | "inconclusive"; reason?: string }>;
   reason?: string;

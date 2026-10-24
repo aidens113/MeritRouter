@@ -54,13 +54,15 @@ export class RepoReader {
     readonly commit: string | null,
   ) {}
 
+  invalidate(): void { this.dirty = null; this.head = null; }
+
   async headSha(): Promise<string> {
     this.head ??= await headSha(this.root);
     return this.head;
   }
 
-  async dirtyPaths(): Promise<Set<string>> {
-    this.dirty ??= new Set(await dirtyPaths(this.root));
+  async dirtyPaths(signal?: AbortSignal): Promise<Set<string>> {
+    this.dirty ??= new Set(await dirtyPaths(this.root,{...(signal?{signal}:{})}));
     return this.dirty;
   }
 
@@ -73,15 +75,16 @@ export class RepoReader {
     return real;
   }
 
-  async readFile(relInput: string): Promise<FileContent> {
+  async readFile(relInput: string, signal?: AbortSignal): Promise<FileContent> {
+    signal?.throwIfAborted();
     const rel = normalizeRelPath(relInput);
     let buf: Buffer;
     if (this.commit) {
-      const out = await git(this.root, ["cat-file", "-s", `${this.commit}:${rel}`]).catch(() => {
+      const out = await git(this.root, ["cat-file", "-s", `${this.commit}:${rel}`], { ...(signal ? {signal} : {}) }).catch(() => {
         throw new Error(`${this.alias}:${rel} does not exist at ${this.commit}`);
       });
       if (Number(out.trim()) > MAX_FILE_BYTES) throw new Error(`${this.alias}:${rel} exceeds ${MAX_FILE_BYTES} bytes`);
-      buf = Buffer.from(await git(this.root, ["show", `${this.commit}:${rel}`]), "utf8");
+      buf = Buffer.from(await git(this.root, ["show", `${this.commit}:${rel}`], { ...(signal ? {signal} : {}) }), "utf8");
     } else {
       const abs = await this.resolveWorktreePath(rel).catch(() => {
         throw new Error(`${this.alias}:${rel} does not exist`);
@@ -89,7 +92,7 @@ export class RepoReader {
       const st = await stat(abs);
       if (!st.isFile()) throw new Error(`${this.alias}:${rel} is not a file`);
       if (st.size > MAX_FILE_BYTES) throw new Error(`${this.alias}:${rel} exceeds ${MAX_FILE_BYTES} bytes`);
-      buf = await readFile(abs);
+      buf = await readFile(abs, { ...(signal ? {signal} : {}) });
     }
     if (buf.includes(0)) throw new Error(`${this.alias}:${rel} looks binary`);
     const content = buf.toString("utf8");
@@ -100,16 +103,18 @@ export class RepoReader {
       sha256: createHash("sha256").update(buf).digest("hex"),
       totalLines: content.length === 0 ? 0 : content.split("\n").length,
       commit: this.commit,
-      dirty: this.commit ? false : (await this.dirtyPaths()).has(rel),
+      dirty: this.commit ? false : (await this.dirtyPaths(signal)).has(rel),
     };
   }
 
   /** Tracked (and, in the working tree, untracked-but-not-ignored) files under `dir`. */
-  async listFiles(dirInput = "", glob?: string, limit = 500): Promise<{ files: string[]; truncated: boolean }> {
-    const dir = dirInput ? normalizeRelPath(dirInput) : "";
+  async listFiles(dirInput = "", glob?: string, limit = 500, signal?: AbortSignal): Promise<{ files: string[]; truncated: boolean }> {
+    signal?.throwIfAborted();
+    const root = dirInput.replace(/\\/g, "/");
+    const dir = /^(?:\.\/)*\.?\/?$/.test(root) ? "" : normalizeRelPath(dirInput);
     const out = this.commit
-      ? await git(this.root, ["ls-tree", "-r", "--name-only", "-z", this.commit, ...(dir ? ["--", dir] : [])])
-      : await git(this.root, ["ls-files", "-z", "--cached", "--others", "--exclude-standard", ...(dir ? ["--", dir] : [])]);
+      ? await git(this.root, ["ls-tree", "-r", "--name-only", "-z", this.commit, ...(dir ? ["--", dir] : [])], { ...(signal ? {signal} : {}) })
+      : await git(this.root, ["ls-files", "-z", "--cached", "--others", "--exclude-standard", ...(dir ? ["--", dir] : [])], { ...(signal ? {signal} : {}) });
     let files = [...new Set(out.split("\0").filter(Boolean))].sort();
     if (glob) {
       const match = picomatch(glob, { dot: true });
@@ -121,14 +126,14 @@ export class RepoReader {
   /** Line matches for an extended regular expression (git grep semantics). */
   async search(
     pattern: string,
-    opts: { pathGlob?: string; ignoreCase?: boolean; limit?: number } = {},
+    opts: { pathGlob?: string; ignoreCase?: boolean; limit?: number; signal?: AbortSignal } = {},
   ): Promise<{ matches: Array<{ path: string; line: number; text: string }>; truncated: boolean }> {
     const limit = opts.limit ?? 100;
     const args = ["grep", "-n", "-I", "-E", "--no-color", "-z", ...(opts.ignoreCase ? ["-i"] : []), "-e", pattern];
     if (this.commit) args.push(this.commit);
     else args.push("--untracked");
     if (opts.pathGlob) args.push("--", `:(glob)${normalizeRelPath(opts.pathGlob)}`);
-    const out = await git(this.root, args, { allowExit: [1] });
+    const out = await git(this.root, args, { allowExit: [1], ...(opts.signal ? {signal:opts.signal} : {}) });
     const matches: Array<{ path: string; line: number; text: string }> = [];
     for (const raw of out.split("\n")) {
       if (!raw) continue;

@@ -46,9 +46,18 @@ describe("standalone supervisor", () => {
       () => [call("brain_append_ledger", { title: "Integrated subtract", changed: "src/app.ts", why: "goal", validation: `\`${check}\` -> exit 0`, outcome: "Accepted", follow_up: "none" })],
       () => [call("finish_job", { status: "completed", summary: "subtract() added and integrated", verified: [{ claim: "subtract exists on the job branch", evidence: "run_check exit 0" }], not_verified: [] })],
     ];
-    const client = new ScriptedClient((req) => {
+    const client = new ScriptedClient(async (req) => {
       if (!isSupervisor(req)) return worker(req);
-      return reply(null, { ...servedFor(sy!, req), toolCalls: script[turns(req)]!() });
+      const calls = script[turns(req)]!();
+      // A pending real check approval is a legal early return from await_tasks;
+      // this fixed script integrates only after the fixture operator finishes it.
+      if (calls.some(tool => tool.function.name === "integrate_task")) {
+        const jobId = /Job id: (\S+)/.exec(String(req.messages[0]!.content))![1]!;
+        const child = sy!.tasks.childrenOf(jobId).find(task => task.spec.label === "subtract")!;
+        const finished = await sy!.awaitResults([child.row.id], { timeoutSeconds: 120 });
+        expect(finished.timedOut, JSON.stringify({ pending: finished.pending, events: sy!.tasks.events(child.row.id, 100) })).toBe(false);
+      }
+      return reply(null, { ...servedFor(sy!, req), toolCalls: calls });
     });
     // The fixture operator approves only this exact declared check, including the
     // worker's post-submission and supervisor integration verification requests.
@@ -56,7 +65,7 @@ describe("standalone supervisor", () => {
     const job = await sy.startJob({ goal: "Add subtract() to the app", repositories: ["core"], checks: [check], label: "subtract-job" });
     const r = (await sy.awaitResults([job.taskId], { timeoutSeconds: 120 })).completed[0]!;
     expect(r.stopReason).toBe("supervisor_completed");
-    expect(r.acceptanceStatus).toBe("met");
+    expect(r.acceptanceStatus, JSON.stringify({ result: r, tools: client.requests.filter(isSupervisor).at(-1)?.messages.filter(message => message.role === "tool"), children: sy.tasks.childrenOf(job.taskId).map(child => ({ state: child.row.state, result: child.result, events: sy!.tasks.events(child.row.id, 100) })) }, null, 2)).toBe("met");
     expect(r.checks[0]!.exitCode).toBe(0);
     const actions = sy.db.prepare("SELECT value_json FROM worker_action_requests WHERE project_id=?").all(sy.tasks.projectOf(job.taskId)) as Array<{ value_json: string }>;
     expect(actions.length).toBeGreaterThanOrEqual(2);
