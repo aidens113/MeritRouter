@@ -6,6 +6,15 @@ own working document with decisions, phases, ledger, and reports.
 
 ## Current effort (2026-10-23)
 
+Latest focused change: [project-grid-deletion](project-grid-deletion.md). Grid and archived
+entries now expose the shared two-modal delete flow; typecheck/build,10deletion tests and
+production demo browser checks passed. Panel4477 rebuilt/restarted. User explicitly confirmed
+platform/MeritRouter data only: Instagram removed through actual grid modals (18tasks,
+19sessions,32artifacts,16Brain files,18worktrees, no problems); source folders preserved.
+Facebook remains:2unresolved model requests/2retained transport holds correctly block deletion.
+No supported recovery exists, and legacy holds lack durable physical quiescence proof. Do not
+manually clear DB holds. See the bounded recovery design/report before further cleanup.
+
 User rejects prior clone as unusable despite recorded checks. The new
 [supervised delivery v2 plan](supervised-delivery-v2.md) owns the next corrective effort:
 initiator FINAL supervisor plus high-quality delivery supervisors; spec-led stages; conserved

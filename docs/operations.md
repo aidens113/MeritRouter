@@ -359,7 +359,8 @@ The archived flag is kept in the store (`projects` table), not in the config fil
 
 `meritrouter projects delete <slug>` shows what deleting removes and keeps, with counts, and
 whether it can be deleted now; `meritrouter projects delete <slug> --confirm <slug>` deletes it. In
-the panel, the Danger zone at the end of the project's Settings page does the same in two steps:
+the panel, Delete project is available on each project-grid card and archived entry, as well as
+the Danger zone at the end of the project's Settings page. Each uses the same two steps:
 a dialog listing what goes and what stays, then one that asks for the slug before "Delete
 permanently". Archived projects can be deleted too.
 - Refused while the project has running or queued tasks, for the last project that is not

@@ -6,6 +6,7 @@ lines, worker briefs, append-only ledger with real validation, open questions).
 
 | Document | Status | Scope |
 | --- | --- | --- |
+| [project-grid-deletion.md](project-grid-deletion.md) | Blocked | Grid/archived two-modal deletion verified and deployed; Instagram removed through UI. Facebook remains blocked by unresolved transport holds and missing safe request recovery. |
 | [supervised-delivery-v2.md](supervised-delivery-v2.md) | Active | Authorized implementation on feat/supervised-delivery-v2: FINAL/delegated supervision, quality/budgets, defensive harness, scoped memory, product evidence and Brain UI; release validation in progress, actual isolated interactive acceptance blocked by absent Docker engine. |
 | [instagram-meritrouter-assessment.md](instagram-meritrouter-assessment.md) | Complete | All18tasks/19sessions and live panel reviewed;364requests reconciled; framework defects, supervision limits and prioritized operating improvements. |
 | [instagram-meritrouter-trial.md](instagram-meritrouter-trial.md) | Complete | Worker-only local app acceptance, observed framework gaps, and published four-worker defaults. |
