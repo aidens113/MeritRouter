@@ -945,4 +945,18 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE lab_operations ADD COLUMN authority_json TEXT;
   ALTER TABLE lab_services ADD COLUMN authority_json TEXT;
   `,
+  // Versioned delivery specification and authenticated evidence; execution is not FINAL acceptance.
+  `
+  CREATE TABLE product_deliveries (
+    task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL,
+    stage TEXT NOT NULL DEFAULT 'discover',
+    spec_json TEXT NOT NULL CHECK(length(CAST(spec_json AS BLOB)) <= 1048576),
+    candidate_json TEXT,
+    evidence_json TEXT NOT NULL DEFAULT '[]',
+    final_decision_json TEXT,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX product_deliveries_project ON product_deliveries(project_id, updated_at);
+  `,
 ];

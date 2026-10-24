@@ -1,6 +1,6 @@
 # Supervised delivery v2: specification and execution plan
-Status: Complete
-Status detail: Complete corrective specification and implementation sequence; source implementation not started.
+Status: Active
+Status detail: User authorized execution; initial contracts, harness replacement and Brain performance implementation dispatched.
 Created: 2026-10-23
 Last updated: 2026-10-23
 Owner: Senior supervisor agent
@@ -9,6 +9,17 @@ Paired document: none
 Related: [trial assessment](instagram-meritrouter-assessment.md), [index](README.md)
 
 ## Current State
+
+Execution authorized by user: "Ok get to it." Implementation starts on feat/supervised-delivery-v2
+in a separate worktree. Implementation briefs below supersede prior planning-only briefs for
+their named workers. FINAL supervisor coordinates/reviews/tests; workers own bounded source
+changes and do not commit. Paid live routes and original app files remain untouched.
+Initial implementation now includes P0 spec/evidence/readiness contracts, scoped P1 MCP controls,
+P2 quality/budget enforcement, native H1–H6 harness operations, persisted P7 delivery stages and
+FINAL decisions, P4 memory services/injection, and P8 indexed/lazy Brain UI plus CAS/create.
+These are in-progress feature-worktree changes, NOT published or fully accepted. P5/P6 actual
+interactive platform isolation and release-wide validation remain open. Worker claims below
+are distinct from independently observed checks; no new downstream usability claim is made.
 
 User rejects the prior app as unusable, including locally. Earlier automated checks did not
 establish usable product quality. This plan replaces task-completion-centric acceptance with
@@ -372,6 +383,60 @@ checks never settles a disputed product-quality assessment.
 
 ## Worker Briefs
 
+### Implementation brief: interactive-runtime (P5/P6)
+- Repository: D:/SwitchYardRouter-delivery-v2, feat/supervised-delivery-v2
+- Task: Implement durable isolated interactive journey capability and typed evidence on real supported platform backends, reusing existing Lab/control primitives; no fake available flag or ordinary host-browser fallback.
+- Required reads: Current State/runtime spec; memory-acceptance report; labs/browser-isolation, browser-check/schema, process-ownership, checks, recipe, task-attempt and existing lifecycle roadmap/tests.
+- Owns: labs/** except unrelated user changes; uniquely named browser-journey/isolation tests; own report. Coordinate any workspaces/git/process seam already supplied by harness.
+- Must not touch: config/schema, core/task, delivery/readiness modules, exports, UI or other workers' files without negotiated seam. No live providers or user data; no commits.
+- Definition of done: real capability establishment, owned process/network/fs scope, JS-enabled typed journeys, revision-bound evidence, cancellation/crash cleanup and negative controls. Explicitly report platform prerequisites absent on this host and implement/test all useful work without pretending unsupported capability is ready.
+- Report: docs/working/supervised-delivery-v2/reports/interactive-runtime-implementation.md
+
+### Implementation brief: memory-v2 (P4)
+- Repository: D:/SwitchYardRouter-delivery-v2, feat/supervised-delivery-v2
+- Task: Implement role-budgeted automatic memory context and typed authorized scoped memory/preferences service, using existing Brain storage/ACL/CAS.
+- Required reads: Current State/memory spec; memory-acceptance report; brain/access/promotion; context assembly in worker/read-only/native/supervisor.
+- Owns: new brain/memory-record.ts, preferences.ts; new context/memory.ts, memory-manifest.ts; brain/access.ts only if needed; harness/worker.ts; runners/readonly.ts; uniquely named memory-v2 tests and own report.
+- Must not touch: brain/brain.ts or catalog (Brain worker); config/schema, native/supervisor runners, harness loop/tools/dispatch (send injection seam), migrations/exports/MCP (FINAL owns); no commits/live calls.
+- Definition of done: real automatic context in allowed runners, grants checked before render, role caps/revision manifest, CAS and revocation, distinct authorized global preferences vs inferred lessons. No raw model 'user said' authority bypass; provide explicit service capability seam for FINAL/MCP UI adapters.
+- Report: docs/working/supervised-delivery-v2/reports/memory-v2-implementation.md
+
+### Implementation brief: supervisor-quality-budget (P2)
+- Repository: D:/SwitchYardRouter-delivery-v2, feat/supervised-delivery-v2
+- Task: Implement real supervisor quality policy and upward request grants; integrate existing router/admission paths, preserving explicit paid settings.
+- Required reads: Current State/quality/budgets; supervisor-routing report; routing/router/select/staffing; model catalog/qualification; admission budget store and harness budget tools.
+- Owns: routing/**, models/catalog.ts, qualification/** as needed; admission/budget-requests.ts; harness/budget-tools.ts; tests/supervisor-quality.test.ts, supervisor-budget-extension.test.ts; own report.
+- Must not touch: config/schema.ts (send needed typed config seam to FINAL), core/task, supervisor runner/tools, harness loop/tools, public exports/panel, other workers' files; no commits/live calls.
+- Definition of done: high-quality-floor route selection across authorized providers with evidence/expiry and no weak silent fallback; supervisors can request more from parent/FINAL; conserved nested grants and paid limits, race/restart tests. No disconnected policy helper.
+- Report: docs/working/supervised-delivery-v2/reports/supervisor-quality-budget-implementation.md
+
+### Implementation brief: delivery-contracts (P0)
+- Repository: D:/SwitchYardRouter-delivery-v2, feat/supervised-delivery-v2
+- Task: Implement versioned Zod product spec/evidence/readiness contracts and meaningful negative tests; freeze public API before consumers.
+- Required reads: Current State/stages above; core/task.ts; verification/contract.ts, checks.ts, decide.ts; supervisor runner finish flow.
+- Owns: new verification/product-spec.ts, product-evidence.ts, product-readiness.ts; tests/product-readiness.test.ts; own reports/delivery-contracts-implementation.md.
+- Must not touch: existing shared schemas/runners/config/exports, other workers' files; no commits/live calls.
+- Definition of done: valid typed spec/receipts, digest/version and exact-candidate checks, missing/claimed/stale/failed evidence blocks readiness, final decision separate; consumers get exported file API. No unattached pretend runtime implementation.
+- Report: docs/working/supervised-delivery-v2/reports/delivery-contracts-implementation.md
+
+### Implementation brief: harness-v2 (P3)
+- Repository: D:/SwitchYardRouter-delivery-v2, feat/supervised-delivery-v2
+- Task: Own COMPLETE harness replacement implementation through H1–H6, starting contract/batch/read/edit/recipes then native-loop integration. Persist milestones and coordinate shared file ownership.
+- Required reads: Current State/harness spec; reports/harness-redesign.md; named existing harness/coding/session modules and focused tests.
+- Owns: harness/** except supervisor-tools.ts/integration-tools.ts/budget-tools.ts; context/repo-reader.ts; runners/coding/**; sessions/events.ts; uniquely named harness-v2* tests; own report.
+- Must not touch: config/schema, core/task, index exports, memory modules, panel, supervisor runner, shared doc, other tests without coordination; no commits/live calls.
+- Definition of done: runtime-integrated defensive typed batching,50file mixed-outcome reads, adjustable deadlines, safe wrappers/edits, journal/recovery/containment preserved, default native v2 with compatibility. Do not stop at disconnected schemas.
+- Report: docs/working/supervised-delivery-v2/reports/harness-v2-implementation.md
+
+### Implementation brief: brain-performance (P8 early)
+- Repository: D:/SwitchYardRouter-delivery-v2, feat/supervised-delivery-v2
+- Task: Implement Brain navigation/search performance and correctness work plus scoped paging/lazy provenance; measure isolated fixture and finish usable browse/edit flows.
+- Required reads: Current State/Brain spec; reports/brain-panel.md; Brain page/admin/index/read paths and tests.
+- Owns: apps/panel/app/p/[slug]/brain/**, app/api/brain/**, components/client/brain.tsx; admin/brain*.ts; brain/brain.ts; new brain/catalog.ts if needed; tests/brain-performance.test.ts; own report.
+- Must not touch: brain/access/preferences/injection, config/migrations/exports, shared docs or other worker files; request public export seam from supervisor. No commits/live data/provider calls.
+- Definition of done: no eager history/blame/full-body scans on View, scope-before-limit search, bounded paged tree/search, stale-safe caching; production-demo/manual validation needs listed precisely. Keep privacy/history behavior.
+- Report: docs/working/supervised-delivery-v2/reports/brain-performance-implementation.md
+
 ### Brief: brain-panel
 - Repository: D:/SwitchYardRouter
 - Task: Investigate user-reported slow/incomplete Brain page and propose exact performance/completeness work; no implementation.
@@ -409,6 +474,14 @@ checks never settles a disputed product-quality assessment.
 - Report to: docs/working/supervised-delivery-v2/reports/memory-acceptance.md
 
 ## Work Ledger
+
+### 2026-10-23 — Initial implementation and contract checks
+- Agent: supervisor
+- Changed: bounded worker implementation briefs and feature worktree; product/control integration and migration.
+- Why: User authorized executing the full corrective plan.
+- Validation: offline dependency install219packages; independently ran `pnpm exec vitest run tests/product-delivery.test.ts tests/product-readiness.test.ts tests/mcp-lifecycle-v2.test.ts --maxWorkers=1 --minWorkers=1` ->30passed. Worker narrow suites remain subject to integration review.
+- Outcome: Partial
+- Follow-up: Complete P4/P8/harness recovery, implement runtime/journey prerequisites, then stable-tree full typecheck/build/tests and demo-browser acceptance.
 
 ### 2026-10-23 — Planning scope and worker briefs
 - Agent: supervisor

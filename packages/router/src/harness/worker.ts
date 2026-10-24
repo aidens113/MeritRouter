@@ -10,6 +10,7 @@ import type { Actor } from "../attribution/index.js";
 import type { HarnessEnv } from "./tools.js";
 import type { TerminalTool } from "./loop.js";
 import { criterionTexts } from "../core/task.js";
+import { memoryContext, type MemoryContextOptions } from "../context/memory.js";
 
 export const SUBMIT_RESULT_DEF: ChatTool = {
   type: "function",
@@ -71,17 +72,7 @@ export function workerBrainEnv(ctx: RunContext, role: RoleName): HarnessEnv["bra
 }
 
 /** Granted context to put in a worker's first message: its job's Current State, when readable. */
-export function brainContext(env: HarnessEnv): string {
-  const b = env.brain;
-  if (!b || !b.workingDoc || !b.brain.exists(b.workingDoc)) return "";
-  try {
-    const cs = b.brain.read(b.principal(), b.workingDoc, { section: "Current State" });
-    env.universe.refs.set(`brain:${b.workingDoc}`, null);
-    return `\nShared context (brain:${b.workingDoc}, Current State):\n<brain ref="brain:${b.workingDoc}">\n${cs.content}\n</brain>\n`;
-  } catch {
-    return "";
-  }
-}
+export async function brainContext(env: HarnessEnv, options: MemoryContextOptions = {}): Promise<string> { return memoryContext(env, options); }
 
 export interface ReportContext {
   cfg: RunContext["cfg"];

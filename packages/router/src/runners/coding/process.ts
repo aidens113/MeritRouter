@@ -24,7 +24,8 @@ export function killTree(child: ChildProcess): Promise<void> {
       } catch {
         child.kill("SIGTERM");
       }
-      const t = setTimeout(() => {
+      // Parent exit does not prove descendants stopped: a child may ignore SIGTERM.
+      setTimeout(() => {
         try {
           process.kill(-child.pid!, "SIGKILL");
         } catch {
@@ -32,10 +33,6 @@ export function killTree(child: ChildProcess): Promise<void> {
         }
         resolve();
       }, 3000);
-      child.once("exit", () => {
-        clearTimeout(t);
-        resolve();
-      });
     }
   });
 }
@@ -82,6 +79,7 @@ export function runProcess(
     let stdout = "";
     let stderr = "";
     let killed: string | null = null;
+    let termination: Promise<void> | null = null;
     child.stdout?.on("data", (d: Buffer) => {
       if (stdout.length < CAP) stdout += d.toString("utf8");
     });
@@ -93,7 +91,7 @@ export function runProcess(
     const stop = (why: string) => {
       if (killed) return;
       killed = why;
-      void killTree(child);
+      termination = killTree(child);
     };
     const timer = setTimeout(() => stop("timeout"), opts.timeoutMs);
     const onAbort = () => stop(String(opts.signal?.reason ?? "aborted"));
@@ -102,9 +100,10 @@ export function runProcess(
     child.on("error", (err) => {
       stderr += `\n${err.message}`;
     });
-    child.on("close", (code) => {
+    child.on("close", async (code) => {
       clearTimeout(timer);
       opts.signal?.removeEventListener("abort", onAbort);
+      if (termination) await termination;
       resolve({ exitCode: code, stdout, stderr, killed, durationMs: Date.now() - started });
     });
   });

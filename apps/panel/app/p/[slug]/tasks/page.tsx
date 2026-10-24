@@ -9,7 +9,7 @@ import { Card, cx, EmptyState, HelpTip, Mono } from "@/components/ui";
 import { PageHeader } from "@/components/page-header";
 import { ActionButton } from "@/components/client/actions";
 import { UrlFilters } from "@/components/client/url-filters";
-import { TASK_STATE_LABEL, TaskStateBadge, TierBadge } from "@/components/task-badges";
+import { TASK_STATE_LABEL, TaskStateBadge, TierBadge, AcceptanceBadge } from "@/components/task-badges";
 import { ago, dateTime, shortId } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -32,13 +32,16 @@ export default async function TasksPage({ params, searchParams }: { params: Prom
   const type = str("type");
   const tier = str("tier");
   const q = str("q").trim().toLowerCase();
+  const acceptance = str("acceptance");
   const states: TaskState[] | undefined = GROUPS[state] ?? ((TASK_STATES as readonly string[]).includes(state) ? [state as TaskState] : undefined);
   let tasks = sy.listTasks(states, 300, p.slug);
+  const results = new Map(sy.collectResults(tasks.map(t=>t.taskId),p.slug).completed.map(result=>[result.taskId,result]));
+  if(acceptance)tasks=tasks.filter(task=>results.get(task.taskId)?.acceptanceStatus===acceptance);
   if (type) tasks = tasks.filter((t) => t.profile === type);
   if (tier) tasks = tasks.filter((t) => (t.tier ?? "") === tier);
   if (q) tasks = tasks.filter((t) => `${t.taskId} ${t.goal}`.toLowerCase().includes(q));
   const now = Date.now();
-  const filtered = Boolean(state || type || tier || q);
+  const filtered = Boolean(state || type || tier || q || acceptance);
 
   return (
     <div>
@@ -50,9 +53,10 @@ export default async function TasksPage({ params, searchParams }: { params: Prom
       <Card>
         <div className="border-b border-line px-4 py-3">
           <UrlFilters
-            values={{ state, type, tier, q: str("q") }}
+            values={{ state, type, tier, acceptance, q: str("q") }}
             fields={[
               { name: "state", label: "State", kind: "select", options: [["active", "Not finished"], ["finished", "Finished"], ...TASK_STATES.map((s) => [s, TASK_STATE_LABEL[s] ?? s] as [string, string])] },
+              { name: "acceptance", label: "Acceptance", kind: "select", options: [["met","Criteria met"],["unmet","Criteria unmet"],["not_verified","Not verified"],["needs_supervisor","Needs supervisor"]] },
               { name: "type", label: "Task type", kind: "select", options: Object.keys(sy.cfg.profiles).map((p) => [p, p] as [string, string]) },
               { name: "tier", label: "Tier", kind: "select", options: ["T1", "T2", "T3", "T4"].map((t) => [t, t] as [string, string]) },
               { name: "q", label: "Search goal or id", kind: "text", placeholder: "e.g. login bug" },
@@ -77,6 +81,7 @@ export default async function TasksPage({ params, searchParams }: { params: Prom
                   <th>Created</th>
                   <th>Task</th>
                   <th>State</th>
+                  <th>Acceptance</th>
                   <th>
                     <span className="inline-flex items-center gap-1">
                       Tier <HelpTip term="tier" />
@@ -116,6 +121,9 @@ export default async function TasksPage({ params, searchParams }: { params: Prom
                             {t.stateReason}
                           </div>
                         ) : null}
+                      </td>
+                      <td>
+                        {results.get(t.taskId)?<AcceptanceBadge status={results.get(t.taskId)!.acceptanceStatus}/>:<span className="text-ink-3">Pending result</span>}
                       </td>
                       <td>
                         <TierBadge tier={t.tier} />

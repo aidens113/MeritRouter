@@ -20,6 +20,8 @@ import { currentSupervisorAuthority } from "../core/supervisor-authority.js";
 export interface HarnessEnv {
   /** Trusted journal identity for this invocation; never taken from model arguments. */
   toolInvocationId?: string;
+  /** Trusted caller-derived inline output cap, clamped to the active model context. */
+  inlineOutputBytes?: number;
   ctx: RunContext;
   role: RoleName;
   readers: Map<string, RepoReader>;
@@ -54,6 +56,10 @@ export interface HarnessTool {
    * a job.
    */
   available?(env: HarnessEnv): boolean;
+  /** Structured adapters distinguish a completed invocation from a successful operation. */
+  outputSucceeded?(output: string): boolean;
+  /** Remove transport IDs/timing, retaining semantic state for no-progress detection. */
+  observationOutput?(output: string): string;
   run(args: Record<string, unknown>, env: HarnessEnv): Promise<string>;
 }
 
@@ -78,7 +84,8 @@ function tool(name: string, sideEffect: ToolSideEffect, description: string, pro
 export function repoTools(aliases: string[]): HarnessTool[] {
   const alias = { type: "string", enum: aliases, description: "Repository alias" };
   const reader = (env: HarnessEnv, a: unknown) => {
-    const r = typeof a === "string" ? env.readers.get(a) : undefined;
+    const name = typeof a === "string" ? a : env.workspace?.alias ?? (env.readers.size === 1 ? env.readers.keys().next().value : undefined);
+    const r = name ? env.readers.get(name) : undefined;
     if (!r) throw new Error(`unknown alias; use one of ${[...env.readers.keys()].join(", ")}`);
     return r;
   };
@@ -118,7 +125,7 @@ export function artifactTool(): HarnessTool {
 
 // ---------- workspace editing (confined in code, not by prompt) ----------
 
-function workspacePath(env: HarnessEnv, input: unknown): { rel: string; abs: string } {
+export function workspacePath(env: HarnessEnv, input: unknown): { rel: string; abs: string } {
   const ws = env.workspace;
   if (!ws) throw new Error("no writable workspace for this role");
   const rel = normalizeRelPath(str(input, "path"));
@@ -130,6 +137,15 @@ function workspacePath(env: HarnessEnv, input: unknown): { rel: string; abs: str
   if (refused) throw new Error(`${refused} The edit was refused.`);
   const abs = path.join(ws.root, ...rel.split("/"));
   if (path.resolve(abs).toLowerCase() === path.resolve(env.ctx.cfg.configPath).toLowerCase()) throw new Error("agents cannot edit the trusted MeritRouter configuration through repository tools");
+  // Even an in-root directory link could redirect an allowed lexical path to a protected
+  // file or another worker's scope. Never mutate through linked parent components.
+  let parent = path.dirname(abs);
+  while (path.resolve(parent) !== path.resolve(ws.root)) {
+    if (lstatExists(parent) && lstatSync(parent).isSymbolicLink()) throw new Error(`${rel} has a linked parent; edits through directory links are refused`);
+    const next = path.dirname(parent);
+    if (next === parent) throw new Error(`${rel} escapes the workspace`);
+    parent = next;
+  }
   const rootReal = realpathSync(ws.root);
   let probe = path.dirname(abs);
   while (!existsSync(probe)) probe = path.dirname(probe);
@@ -151,13 +167,16 @@ function workspacePath(env: HarnessEnv, input: unknown): { rel: string; abs: str
  * with what is needed, saying that nothing was written.
  */
 function pathArg(a: Record<string, unknown>, toolName: string): string {
-  for (const k of ["path", "file_path", "filename", "file"]) if (typeof a[k] === "string" && (a[k] as string).trim()) return a[k] as string;
+  const values = ["path", "file_path", "filename", "file"].map(key => a[key]).filter((value): value is string => typeof value === "string" && !!value.trim());
+  if (new Set(values.map(value => value.replace(/\\/g, "/"))).size > 1) throw new Error(`${toolName} received conflicting path fields; provide exactly one path. Nothing was written.`);
+  if (values.length) return values[0]!;
   throw new Error(`${toolName} needs path: the file, relative to the repository root (for example "src/posts.js"). Nothing was written; call ${toolName} again with path.`);
 }
 
 /** A file the worker edited is citable evidence, like one it read. */
 function noteEdited(env: HarnessEnv, rel: string, abs: string): void {
   env.edits.add(rel);
+  if (env.workspace) env.readers.get(env.workspace.alias)?.invalidate();
   if (env.workspace && existsSync(abs)) env.universe.refs.set(`${env.workspace.alias}:${rel}`, readFileSync(abs, "utf8").split(/\r?\n/).length);
 }
 
@@ -203,6 +222,7 @@ export function editTools(): HarnessTool[] {
       if (!existsSync(abs)) throw new Error(`${rel} does not exist`);
       rmSync(abs);
       env.edits.add(rel);
+      if (env.workspace) env.readers.get(env.workspace.alias)?.invalidate();
       return `deleted ${rel}`;
     }),
   ];

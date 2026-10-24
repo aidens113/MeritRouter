@@ -318,7 +318,8 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
           const previousInvocation = env.toolInvocationId;
           env.toolInvocationId = `${session?.id ?? o.executionId}:${call.id}`;
           try {
-            return { ok: true, output: await t.run(args as Record<string, unknown>, env) };
+            const output = await t.run(args as Record<string, unknown>, env);
+            return { ok: t.outputSucceeded?.(output) ?? true, output };
           } finally {
             if (previousInvocation === undefined) delete env.toolInvocationId;
             else env.toolInvocationId = previousInvocation;
@@ -334,7 +335,7 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
         output += `\n[Repeated identical effect. No action was repeated; the task is stopping for reconciliation.]`;
         repeatedToolCall ??= call.function.name;
       } else if (signature && fresh && (behavior !== "execute" || !r.ok)) {
-        const state = observations.observe(signature, r);
+        const state = observations.observe(signature, { ...r, output: t?.observationOutput?.(r.output) ?? r.output });
         if (state.warn) output += `\n[Repeated identical observation. The tool ran freshly but returned unchanged state; repeating it again will stop the task unless state changes.]`;
         if (state.stalled) {
           output += `\n[Three fresh observations returned unchanged state. The task is stopping because no progress was observed.]`;

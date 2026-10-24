@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, openSync, closeSync } from "node:fs";
 import { homedir } from "node:os";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import type { ResolvedConfig } from "../config/load.js";
 import type { BrainMode } from "../config/schema.js";
@@ -52,6 +53,12 @@ export class BrainError extends Error {
   ) {
     super(message);
   }
+}
+
+export const brainContentDigest = (content: string) => createHash("sha256").update(content).digest("hex");
+export class BrainConflictError extends Error {
+  readonly code = "brain_conflict";
+  constructor() { super("This document changed since it was opened. Reload the current version before saving; your draft has been preserved."); }
 }
 
 export function expandHome(p: string): string {
@@ -114,6 +121,8 @@ export class Brain {
   private readonly mounts: Array<{ prefix: string; abs: string; commit: boolean }>;
   private chains = new Map<string, Promise<unknown>>();
   private ready: Promise<void> | null = null;
+  private indexRefresh: Promise<number> | null = null;
+  private indexRefreshedAt = 0;
   /** Gated promotion of lessons to `global/` (decision D9): records, review, approval. */
   readonly promotions: GlobalPromotions;
 
@@ -180,6 +189,7 @@ export class Brain {
       // Every project has its own Brain instance, but may share this repository.
       // Initialization must use the same lock as ordinary writes, including its commit.
       await this.locked(this.root, async () => {
+        const created: string[] = [];
         if (!existsSync(path.join(this.root, ".git"))) {
           await git(this.root, ["init", "-q", "-b", "main"]);
           await git(this.root, ["config", "core.autocrlf", "false"]);
@@ -188,14 +198,16 @@ export class Brain {
           mkdirSync(path.join(this.root, dir), { recursive: true });
         }
         const glossary = path.join(this.root, "global/glossary.md");
-        if (!existsSync(glossary)) writeFileSync(glossary, "# Glossary\n\nShared terms. Supervisors maintain this file.\n");
-        if (!existsSync(path.join(this.root, "README.md"))) writeFileSync(path.join(this.root, "README.md"), this.renderIndex([]));
+        if (!existsSync(glossary)) { writeFileSync(glossary, "# Glossary\n\nShared terms. Supervisors maintain this file.\n"); created.push("global/glossary.md"); }
+        if (!existsSync(path.join(this.root, "README.md"))) { writeFileSync(path.join(this.root, "README.md"), this.renderIndex([])); created.push("README.md"); }
         const own = this.resolve(projectIndexPath(this.project));
         if (!existsSync(own.abs)) {
           mkdirSync(path.dirname(own.abs), { recursive: true });
           writeFileSync(own.abs, this.renderProjectIndex([]));
+          if (own.repo === this.root) created.push(own.repoRel);
         }
-        if (this.cfg.brain.commit) await commitAs(this.root, { agent: "meritrouter", role: "tool" }, "Initialise brain", { paths: [".", ":(exclude).switchyard-brain.lock"] });
+        // Reopening a Brain must not scan/adopt every user file or stage unrelated changes.
+        if (this.cfg.brain.commit && created.length) await commitAs(this.root, { agent: "meritrouter", role: "tool" }, "Initialise brain", { paths: created.map(rel => `:(literal)${rel}`) });
       });
     })();
     return this.ready;
@@ -270,14 +282,18 @@ export class Brain {
    * Write a file and commit it. `content` may be a function of the file's current text (null
    * when absent), evaluated under the repository lock; returning null skips the write.
    */
-  private async writeFile(rel: string, contentOrFn: string | ((current: string | null) => string | null), actor: Actor, message: string): Promise<{ path: string; commit: string | null }> {
+  private async writeFile(rel: string, contentOrFn: string | ((current: string | null) => string | null), actor: Actor, message: string, opts: { expectedDigest?: string | null } = {}): Promise<{ path: string; commit: string | null; digest: string }> {
     await this.ensure();
     const r = this.resolve(rel);
     const binding = r.repo && r.commit ? await this.resolveGitDocument(rel) : null;
     const doWrite = async () => {
+      if (opts.expectedDigest !== undefined) {
+        const current = existsSync(r.abs) ? brainContentDigest(readFileSync(r.abs, "utf8")) : null;
+        if (current !== opts.expectedDigest) throw new BrainConflictError();
+      }
       if (binding) { assertBrainGitPath(binding, r.abs); await this.adoptExternalEdits(binding.repo, binding); }
       const content = typeof contentOrFn === "string" ? contentOrFn : contentOrFn(existsSync(r.abs) ? readFileSync(r.abs, "utf8") : null);
-      if (content === null) return { path: rel, commit: null };
+      if (content === null) return { path: rel, commit: null, digest: existsSync(r.abs) ? brainContentDigest(readFileSync(r.abs, "utf8")) : "" };
       mkdirSync(path.dirname(r.abs), { recursive: true });
       const tmp = `${r.abs}.${process.pid}.tmp`;
       writeFileSync(tmp, content.endsWith("\n") ? content : `${content}\n`);
@@ -288,7 +304,7 @@ export class Brain {
         if (this.cfg.brain.push && commit) await git(binding.repo, ["push", "-q"]).catch(() => undefined);
       }
       this.indexFile(rel);
-      return { path: rel, commit };
+      return { path: rel, commit, digest: brainContentDigest(content.endsWith("\n") ? content : `${content}\n`) };
     };
     return r.repo ? this.locked(r.repo, doWrite) : doWrite();
   }
@@ -297,17 +313,18 @@ export class Brain {
     return existsSync(this.resolve(rel).abs);
   }
 
-  read(p: Principal, rel: string, opts: { section?: string } = {}): { path: string; kind: EntryKind; content: string; lines: number } {
+  read(p: Principal, rel: string, opts: { section?: string } = {}): { path: string; kind: EntryKind; content: string; lines: number; digest: string } {
     const r = this.resolve(rel);
     this.check(p, r.rel, "read");
     if (!existsSync(r.abs)) throw new BrainError(`${r.rel} does not exist`);
     let content = readFileSync(r.abs, "utf8");
+    const digest = brainContentDigest(content);
     if (opts.section) {
       const s = section(parseDoc(content), opts.section);
       if (!s) throw new BrainError(`${r.rel} has no '${opts.section}' section`);
       content = s.body;
     }
-    return { path: r.rel, kind: kindOf(r.rel), content, lines: content.split("\n").length };
+    return { path: r.rel, kind: kindOf(r.rel), content, lines: content.split("\n").length, digest };
   }
 
   /** Files under a prefix that the principal may read. */
@@ -338,7 +355,7 @@ export class Brain {
   // ---------- writes with protocol rules ----------
 
   /** Create or replace a file. Working documents keep their ledger append-only. */
-  async write(p: Principal, actor: Actor, rel: string, content: string, message?: string): Promise<{ path: string; commit: string | null }> {
+  async write(p: Principal, actor: Actor, rel: string, content: string, message?: string, opts: { expectedDigest?: string | null } = {}): Promise<{ path: string; commit: string | null; digest: string }> {
     const r = this.resolve(rel);
     if (!r.rel.toLowerCase().endsWith(".md")) throw new BrainError(`brain entries are markdown files ending in .md: ${r.rel}`);
     this.check(p, r.rel, "write");
@@ -364,7 +381,7 @@ export class Brain {
       if (issues.length) throw new BrainError(`working document rejected: ${issues.join("; ")}`, issues);
       content = setHeaderField(content, "Last updated", new Date(this.now()).toISOString().slice(0, 10));
     }
-    return this.writeFile(r.rel, content, actor, message ?? `${existsSync(r.abs) ? "Update" : "Add"} ${r.rel}`);
+    return this.writeFile(r.rel, content, actor, message ?? `${existsSync(r.abs) ? "Update" : "Add"} ${r.rel}`, opts);
   }
 
   async createWorkingDoc(p: Principal, actor: Actor, effort: string, f: { title: string; statusDetail: string; owner: string; scope: string; related?: string; currentState: string }): Promise<{ path: string; commit: string | null }> {
@@ -578,6 +595,9 @@ export class Brain {
   private indexFile(rel: string): void {
     const r = this.resolve(rel);
     if (!rel.endsWith(".md")) return;
+    const projectScope = /^projects\/([^/]+)\//.exec(rel)?.[1];
+    const scope = projectScope ? `project:${projectScope}` : "global";
+    this.db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(`brain:index-generation:${scope}`, randomUUID());
     this.db.prepare("DELETE FROM brain_fts WHERE path = ?").run(rel);
     if (!existsSync(r.abs)) {
       this.db.prepare("DELETE FROM brain_files WHERE path = ?").run(rel);
@@ -593,25 +613,77 @@ export class Brain {
   }
 
   /** Bring the index up to date with the files (cheap when nothing changed). */
-  async refreshIndex(): Promise<number> {
+  async refreshIndex(opts: { maxAgeMs?: number } = {}): Promise<number> {
+    if (this.indexRefresh) return this.indexRefresh;
+    if (this.indexRefreshedAt && this.now() - this.indexRefreshedAt < (opts.maxAgeMs ?? 0)) return 0;
+    this.indexRefresh = this.reconcileIndex().then(changed => {
+      this.indexRefreshedAt = this.now();
+      return changed;
+    }).finally(() => { this.indexRefresh = null; });
+    return this.indexRefresh;
+  }
+
+  private async reconcileIndex(): Promise<number> {
     await this.ensure();
     const seen = new Set<string>();
+    const pending: string[] = [];
     let changed = 0;
     // The index is shared by every project's brain; each maintains its own folder, global/, and
     // the root (another project's mounts are invisible here, so its rows are left alone).
     const known = new Map((this.db.prepare("SELECT path, mtime, size FROM brain_files").all() as Array<{ path: string; mtime: number; size: number }>).filter((r) => this.owns(r.path)).map((r) => [r.path, r]));
-    for (const e of this.list({ kind: "human" })) {
-      if (!this.owns(e.path)) continue;
-      seen.add(e.path);
-      const st = statSync(this.resolve(e.path).abs);
-      const k = known.get(e.path);
-      if (!k || k.mtime !== st.mtimeMs || k.size !== st.size) {
-        this.indexFile(e.path);
-        changed++;
+    // Inspect metadata only; unchanged documents must never be read or parsed during reconciliation.
+    const visit = (rel: string) => {
+      if (!this.owns(rel) && rel !== "projects" && rel !== `projects/${this.project}`) return;
+      const resolved = this.resolve(rel);
+      if (!existsSync(resolved.abs)) return;
+      const st = statSync(resolved.abs);
+      if (st.isDirectory()) {
+        for (const entry of readdirSync(resolved.abs, { withFileTypes: true })) {
+          if (entry.name.startsWith(".") || entry.isSymbolicLink()) continue;
+          visit(rel ? `${rel}/${entry.name}` : entry.name);
+        }
+        return;
       }
+      if (!rel.endsWith(".md")) return;
+      if (seen.has(rel)) return;
+      seen.add(rel);
+      const k = known.get(rel);
+      if (!k || k.mtime !== st.mtimeMs || k.size !== st.size) {
+        pending.push(rel);
+      }
+    };
+    visit("");
+    for (const mount of this.mounts) if (this.owns(mount.prefix)) visit(mount.prefix);
+    for (const p of known.keys()) if (!seen.has(p)) pending.push(p);
+    // Bound synchronous parsing/FTS work so cold indexing does not freeze the panel event loop.
+    for (let at = 0; at < pending.length; at += 100) {
+      this.db.transaction(() => { for (const rel of pending.slice(at, at + 100)) { this.indexFile(rel); changed++; } })();
+      if (at + 100 < pending.length) await new Promise<void>(resolve => setImmediate(resolve));
     }
-    for (const p of known.keys()) if (!seen.has(p)) (this.indexFile(p), changed++);
     return changed;
+  }
+
+  /** Indexed metadata, scoped before ordering and pagination. No document bodies are loaded. */
+  async catalog(p: Principal, opts: { prefix?: string; scope?: "project" | "all"; after?: string; limit?: number } = {}): Promise<{ entries: BrainEntry[]; next: string | null; refreshedAt: number; generation: string }> {
+    await this.refreshIndex({ maxAgeMs: 5000 });
+    const prefix = normalizeBrainPath(opts.prefix ?? "");
+    const limit = Math.min(100, Math.max(1, Math.trunc(opts.limit ?? 50)));
+    const scoped = opts.scope !== "all";
+    const generations = this.db.prepare("SELECT key, value FROM meta WHERE key IN (?, ?) ORDER BY key").all("brain:index-generation:global", `brain:index-generation:project:${this.project}`) as Array<{ key: string; value: string }>;
+    const generation = brainContentDigest(JSON.stringify(generations));
+    const sql = `SELECT path, title, kind, status, lines, mtime FROM brain_files WHERE path > ? AND path LIKE ? ESCAPE '\\'${scoped ? " AND (path LIKE ? ESCAPE '\\' OR path LIKE 'global/%' OR path = 'README.md')" : ""} ORDER BY path LIMIT ?`;
+    // Scan bounded chunks through ACLs so denied rows cannot crowd out visible metadata.
+    const entries: BrainEntry[] = [];
+    let cursor = opts.after ?? "";
+    for (;;) {
+      const rows = this.db.prepare(sql).all(cursor, `${likeEscape(prefix)}%`, ...(scoped ? [`${likeEscape(`projects/${this.project}/`)}%`] : []), 100) as BrainEntry[];
+      for (const row of rows) if (denial(p, row.path, "read") === null) {
+        entries.push(row);
+        if (entries.length > limit) return { entries: entries.slice(0, limit), next: entries[limit - 1]!.path, refreshedAt: this.indexRefreshedAt, generation };
+      }
+      if (rows.length < 100) return { entries, next: null, refreshedAt: this.indexRefreshedAt, generation };
+      cursor = rows[rows.length - 1]!.path;
+    }
   }
 
   /**
@@ -621,7 +693,7 @@ export class Brain {
    * against the grants. A person sees everything, or with `scope: "project"` this brain's project,
    * `global/`, and the root.
    */
-  search(p: Principal, query: string, opts: { prefix?: string; limit?: number; scope?: "project" | "all" } = {}): Array<{ path: string; title: string | null; kind: EntryKind; snippet: string }> {
+  search(p: Principal, query: string, opts: { prefix?: string; limit?: number; offset?: number; scope?: "project" | "all" } = {}): Array<{ path: string; title: string | null; kind: EntryKind; snippet: string }> {
     const terms = query.match(/[\p{L}\p{N}_]+/gu)?.slice(0, 12) ?? [];
     if (!terms.length) return [];
     const match = terms.map((t) => `"${t}"`).join(" OR ");
@@ -632,10 +704,10 @@ export class Brain {
       prefixes = reach.includes("") ? null : [...new Set(reach)];
       if (prefixes && !prefixes.length) return [];
     } else if (opts.scope === "project") prefixes = [`projects/${this.project}/`, "global/"];
-    const scopeSql = prefixes ? ` AND (${prefixes.map(() => "path LIKE ? ESCAPE '\\'").join(" OR ")}${p.kind === "human" ? " OR path NOT LIKE '%/%'" : ""})` : "";
+    const scopeSql = (prefixes ? ` AND (${prefixes.map(() => "path LIKE ? ESCAPE '\\'").join(" OR ")}${p.kind === "human" ? " OR path = 'README.md'" : ""})` : "") + (prefix ? " AND path LIKE ? ESCAPE '\\'" : "");
     const rows = this.db
-      .prepare(`SELECT path, title, snippet(brain_fts, 2, '[', ']', '…', 24) AS snippet FROM brain_fts WHERE brain_fts MATCH ?${scopeSql} ORDER BY bm25(brain_fts) LIMIT ?`)
-      .all(match, ...(prefixes ?? []).map((x) => `${likeEscape(x)}%`), (opts.limit ?? 10) * 5) as Array<{ path: string; title: string; snippet: string }>;
+      .prepare(`SELECT path, title, snippet(brain_fts, 2, '[', ']', '…', 24) AS snippet FROM brain_fts WHERE brain_fts MATCH ?${scopeSql} ORDER BY bm25(brain_fts), path LIMIT ? OFFSET ?`)
+      .all(match, ...(prefixes ?? []).map((x) => `${likeEscape(x)}%`), ...(prefix ? [`${likeEscape(prefix)}%`] : []), (opts.limit ?? 10) * 5, opts.offset ?? 0) as Array<{ path: string; title: string; snippet: string }>;
     return rows
       .filter((r) => (!prefix || r.path.startsWith(prefix)) && denial(p, r.path, "read") === null)
       .slice(0, opts.limit ?? 10)

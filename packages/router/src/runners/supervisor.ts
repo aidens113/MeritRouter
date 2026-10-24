@@ -32,6 +32,15 @@ import { maxAgentsPerJob } from "../config/schema.js";
 import picomatch from "picomatch";
 import { taskWriteScope } from "../harness/task-scope.js";
 import { UNLIMITED_REQUESTS } from "../admission/admission.js";
+import { requestBudgetTool } from "../harness/budget-tools.js";
+import { harnessV2Tools, harnessV2StartupContext } from "../harness/operation-dispatch.js";
+import { deliveryTools } from "../harness/delivery-tools.js";
+import { ProductDeliveries } from "../verification/product-delivery.js";
+import { currentProductCandidate } from "../verification/product-candidate.js";
+import { deliverySpecDigest } from "../verification/product-spec.js";
+import { productCandidateDigest } from "../verification/product-evidence.js";
+import { z } from "zod";
+import { memoryContext, refreshMemoryMessages } from "../context/memory.js";
 
 interface Finish {
   status: "completed" | "blocked";
@@ -222,6 +231,8 @@ export class SupervisorRunner implements CodingRunner {
     // The supervisor's commits use the same actor object the loop updates per response.
     if (brain) state.actor = brain.actor;
     const tools: HarnessTool[] = [
+      ...(!ctx.resume || ctx.resume.plan.messages.some(m => typeof m.content === "string" && m.content.includes("Harness v2:")) ? [...harnessV2Tools(env), ...deliveryTools(repos.values())] : []),
+      requestBudgetTool(),
       ...repoTools([...readers.keys()]),
       ...(primary ? editTools() : []),
       ...(env.commands ? [commandTool(patterns)] : []),
@@ -232,14 +243,21 @@ export class SupervisorRunner implements CodingRunner {
       ...(brain ? [...brainReadTools(), ...brainSupervisorTools().filter((t) => !docSection || !["brain_set_current_state", "brain_compact"].includes(t.def.function.name))] : []),
       // Integration and undo commit on the job branch: record the new head after each.
       ...supervisorTools(state).map((t): HarnessTool => {
-        if (t.sideEffect !== "edit") return t;
         return {
           ...t,
           run: async (a, e) => {
             try {
+              if(spec.deliveryVersion===2&&["delegate","plan_work"].includes(t.def.function.name)){
+                const items=(t.def.function.name==="delegate"?a.tasks:a.nodes) as Array<{profile?:string}>|undefined;
+                const implementation=Array.isArray(items)&&items.some(item=>item.profile==="implement"||item.profile==="supervise");
+                if(implementation){
+                  const delivery=new ProductDeliveries(ctx.tasks.db).status(ctx.taskId,(ctx.tasks.projectOf(ctx.taskId) ?? ctx.cfg.brain.project));
+                  if(!delivery||!["plan","implement","integrate","validate"].includes(delivery.stage))throw new Error("delivery_spec_required: specify, prepare and plan before assigning implementation; read-only discovery may run first");
+                }
+              }
               return await t.run(a, e);
             } finally {
-              await pointer.refresh();
+              if(t.sideEffect==="edit")await pointer.refresh();
             }
           },
         };
@@ -249,10 +267,16 @@ export class SupervisorRunner implements CodingRunner {
     const terminal: TerminalTool<Finish> = {
       def: FINISH_DEF,
       accept: async (raw) => {
-        const a = raw as Record<string, unknown>;
+        const parsed=z.object({status:z.enum(["completed","blocked"]),summary:z.string().min(1),verified:z.array(z.object({claim:z.string(),evidence:z.string()}).strict()),not_verified:z.array(z.string()),follow_up:z.string().optional()}).strict().safeParse(raw);
+        if(!parsed.success)return {ok:false,errors:parsed.error.issues.map(issue=>issue.message)};
+        const a = parsed.data;
         const errors: string[] = [];
         const verified = Array.isArray(a.verified) ? (a.verified as Finish["verified"]) : [];
         if (a.status === "completed" && verified.length === 0) errors.push("a completed job must list what you verified and how (command and result, or evidence)");
+        if(spec.deliveryVersion===2&&a.status==="completed"){
+          const readiness=new ProductDeliveries(ctx.tasks.db).status(ctx.taskId,(ctx.tasks.projectOf(ctx.taskId) ?? ctx.cfg.brain.project))?.readiness;
+          if(readiness?.status!=="ready_for_final_review")errors.push("Product readiness is missing or blocked. Set the versioned specification, complete delivery stages and validate_delivery; obtain observed criterion evidence. Report blocked with exact missing tests instead of claiming completed.");
+        }
         const running = [...state.children.values()].filter((id) => {
           const t = ctx.services!.getTask(id);
           return t && ["queued", "waiting_for_dependencies", "waiting_for_capacity", "running", "cancel_requested"].includes(t.state);
@@ -327,6 +351,9 @@ export class SupervisorRunner implements CodingRunner {
       if (queueNote) messages.push({ role: "user", content: queueNote.trim() });
     }
     for (const c of spec.constraints.checks ?? []) state.briefChecks.add(c);
+    if(ctx.resume) messages=await refreshMemoryMessages(env,messages);
+    else {const memory=await memoryContext(env,{messages,tools:tools.map(tool=>tool.def)});if(memory)messages.push({role:"user",content:memory});}
+    if (!ctx.resume && messages[0]) messages[0] = {...messages[0],content:`${messages[0].content ?? ""}\n\n${harnessV2StartupContext(env)}\n\nDelivery workflow: discover -> specify -> prepare -> plan -> implement -> integrate -> validate -> handoff. Use set_delivery_spec before implementation and advance_delivery_stage to persist progress. You own planning, worker dispatch, combined runtime TESTS, independent review and repair. Write observable functional/visual criteria; passing builds alone never proves usable delivery. finish_job returns a candidate to the initiating FINAL supervisor, never final project acceptance. Request additional budget upward before validation reserves are exhausted.`};
 
     const maxTokens = ctx.profile.max_output_tokens;
     const limits = planLimits(ctx.plan, ctx.cfg.routing.max_endpoint_fallbacks);
@@ -384,8 +411,23 @@ export class SupervisorRunner implements CodingRunner {
       }
     }
     const finish = loop.kind === "terminal" ? loop.value : null;
-    const checksPass = checks.length > 0 && checks.every((c) => c.exitCode === 0);
-    const acceptance = scopeViolation.length || checks.some((c) => c.exitCode !== 0) ? "unmet" : finish?.status === "completed" && checksPass ? "met" : "not_verified";
+    const delivery = new ProductDeliveries(ctx.tasks.db);
+    let productStatus = delivery.status(ctx.taskId, (ctx.tasks.projectOf(ctx.taskId) ?? ctx.cfg.brain.project));
+    if (productStatus && repos.size && !ctx.signal.aborted) {
+      delivery.setCandidate(ctx.taskId, (ctx.tasks.projectOf(ctx.taskId) ?? ctx.cfg.brain.project), await currentProductCandidate(ctx,repos.values()));
+      productStatus = delivery.status(ctx.taskId, (ctx.tasks.projectOf(ctx.taskId) ?? ctx.cfg.brain.project));
+      if (productStatus?.candidate && checks.length && (await Promise.all([...repos.values()].map(r=>dirtyPaths(r.worktree)))).every(paths=>paths.length===0)) {
+        const criteria=productStatus.spec.criteria.filter(c=>c.requiredEvidence.includes("structural")).map(c=>c.id);
+        if(criteria.length) delivery.recordEvidence(ctx.taskId,(ctx.tasks.projectOf(ctx.taskId) ?? ctx.cfg.brain.project),{
+          schemaVersion:1,id:`structural-${executionId}`,criterionIds:criteria,kind:"structural",specDigest:deliverySpecDigest(productStatus.spec),candidateDigest:productCandidateDigest(productStatus.candidate),
+          actor:{id:`runtime:${ctx.taskId}`,role:"runtime"},basis:"observed",outcome:checks.every(c=>c.exitCode===0)?"pass":"fail",startedAt:Date.now(),completedAt:Date.now(),expiresAt:null,
+          artifactRefs:checks.map(c=>c.logRef),observations:checks.map(c=>`${c.command}: exit ${c.exitCode}`),unknowns:[],subjectActorIds:[state.actor.agent],
+        });
+        productStatus=delivery.status(ctx.taskId,(ctx.tasks.projectOf(ctx.taskId) ?? ctx.cfg.brain.project));
+      }
+    }
+    // Job execution can return a candidate, never manufacture FINAL product acceptance.
+    const acceptance = scopeViolation.length || checks.some((c) => c.exitCode !== 0) ? "unmet" : spec.deliveryVersion !== 2 && finish?.status === "completed" && checks.length > 0 && checks.every(c=>c.exitCode===0) ? "met" : "not_verified";
     // A sub-job's branches are integrated by its parent job (integrate_task), not merged by hand.
     const branchNote = [...repos.values()]
       .map((r) => (isSubJob ? `${r.alias}: delivered on ${r.branch}; the parent job ${spec.parentTaskId} integrates it through its merge queue (integrate_task ${label})` : ctx.lab ? `${r.alias}: candidate on ${r.branch}; use lab_promote under the configured promotion policy` : `${r.alias}: review and merge with \`git merge --no-ff ${r.branch}\``))
@@ -400,7 +442,7 @@ export class SupervisorRunner implements CodingRunner {
           changed: [...repos.values()].map((r) => r.branch).join(", ") || "nothing",
           why: spec.goal.replace(/\s+/g, " ").slice(0, 160),
           validation,
-          outcome: finish?.status === "completed" && acceptance !== "unmet" ? "Accepted" : finish?.status === "blocked" ? "Blocked" : "Partial",
+          outcome: finish?.status === "blocked" ? "Blocked" : "Partial",
           followUp: finish?.followUp ?? "resume or re-run the job",
         })
         .catch(() => undefined);
@@ -414,7 +456,7 @@ export class SupervisorRunner implements CodingRunner {
         acceptanceStatus: acceptance,
         stopReason: finish ? `supervisor_${finish.status}` : loop.kind === "budget_exhausted" ? "supervisor request budget exhausted" : loop.kind === "stalled" ? loop.reason : "invalid_finish",
         summary: `${finish?.summary ?? (loop.kind === "stalled" ? `Stopped after a repeated identical tool call without progress (${loop.reason}).` : "The supervisor did not finish.")}${branchNote ? `\n\n${branchNote}` : ""}`,
-        findings: [...(finish?.verified ?? []).map((v) => ({ description: `Verified: ${v.claim} (${v.evidence})`, evidenceRefs: [] })), ...(scopeViolation.length ? [{ description: `Out-of-scope changes (not allowed by allowedPaths): ${scopeViolation.join(", ")}`, evidenceRefs: [] }] : [])],
+        findings: [...(finish?.verified ?? []).map((v) => ({ description: `Supervisor claim: ${v.claim} (${v.evidence}); independently confirm before FINAL acceptance`, evidenceRefs: [] })), {description:productStatus?.readiness?.status === "ready_for_final_review" ? "Candidate ready for FINAL supervisor review; not final acceptance." : "Product readiness not established: missing current observed criterion evidence.",evidenceRefs:[]}, ...(scopeViolation.length ? [{ description: `Out-of-scope changes (not allowed by allowedPaths): ${scopeViolation.join(", ")}`, evidenceRefs: [] }] : [])],
         ...(scopeViolation.length ? { scopeViolation } : {}),
         artifactRefs: [transcriptRef],
         patchRefs,

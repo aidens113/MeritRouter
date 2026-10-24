@@ -51,7 +51,7 @@ export function requestBudgetTool(): HarnessTool {
       const reason = typeof a.reason === "string" ? a.reason.trim() : "";
       if (!reason) throw new Error("reason is required: what is done, what remains, and why it needs this many");
       const jobId = jobOfTask(db, cfg, ctx.taskId);
-      const approver = approverFor(cfg, jobId);
+      const approver = env.role === "supervisor" ? (cfg.team.budget_approver === "human" ? "human" : jobId ? "supervisor" : "external") : approverFor(cfg, jobId);
       const used = ctx.gate.admission.taskTotals(ctx.taskId).requests;
       let req = store.file({ taskId: ctx.taskId, jobId, role: env.role, requests, reason, used, cap: ctx.budget.maxModelRequests, approver });
       ctx.session?.note(`budget request ${req.id}: ${requests} more model request(s), decided by ${approver}`, { budgetRequest: req.id, requests, approver });
@@ -74,7 +74,7 @@ export function requestBudgetTool(): HarnessTool {
       if (req.status === "approved" && req.granted > 0) ctx.budget = { ...ctx.budget, maxModelRequests: ctx.budget.maxModelRequests + req.granted };
       return `budget request ${req.id} ${outcomeText(req, env)}`;
     },
-    (env) => env.role !== "supervisor" && env.ctx.purpose !== "verification" && env.ctx.cfg.team.max_budget_requests_per_task > 0,
+    (env) => env.ctx.purpose !== "verification" && env.ctx.cfg.team.max_budget_requests_per_task > 0,
     ),
     repeatBehavior: "execute",
   };

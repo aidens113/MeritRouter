@@ -1,4 +1,6 @@
 import { LabsConfigSchema } from "../labs/recipe.js";
+import { SupervisorQualityRoutingSchema } from "../routing/supervisor-quality.js";
+import { MemoryContextConfigSchema } from "../context/memory-manifest.js";
 import { z } from "zod";
 import { TAG_GROUPS } from "../scoring/rulebook.js";
 import { BillingClassSchema } from "../providers/vault.js";
@@ -507,6 +509,7 @@ export type VerificationConfig = z.infer<typeof VerificationConfigSchema>;
 
 export const BrainConfigSchema = z
   .object({
+    memory_context: MemoryContextConfigSchema,
     /** Brain repository directory (created and git-initialised when missing). `~` expands to home. */
     path: z.string().min(1).default("~/.meritrouter/brain"),
     /**
@@ -538,6 +541,13 @@ export type BrainConfig = z.infer<typeof BrainConfigSchema>;
 
 export const SupervisorConfigSchema = z
   .object({
+    routing: SupervisorQualityRoutingSchema.prefault({}),
+    delivery_budget: z.object({
+      total_requests: z.number().int().positive().default(600),
+      supervisor_reserve_requests: z.number().int().min(0).default(80),
+      validation_reserve_requests: z.number().int().min(0).default(80),
+      extension_requests: z.number().int().positive().default(200),
+    }).strict().prefault({}),
     /** Endpoint ids to use, in order. Empty: route like any T3 task (most capable). */
     endpoints: z.array(z.string().min(1)).default([]),
     paid_policy: PaidPolicySchema.default("on_free_exhaustion"),
@@ -755,6 +765,7 @@ export type WebConfig = z.infer<typeof WebConfigSchema>;
 /** Advice for the connected outer MCP client; grants no permissions. */
 export const ClientSupervisionSchema = z.object({
   dispatch_final_supervisor: z.boolean().default(false),
+  workflow: z.enum(["delegated_delivery", "direct_tasks"]).default("delegated_delivery"),
   instructions: z.string().trim().max(8000).default(""),
 }).strict();
 

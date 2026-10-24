@@ -73,6 +73,7 @@ export async function TaskDetailView({ sy, taskId, scope, sp = {} }: { sy: Merit
   const budgetHistory = insights.budgetRequestsView(sy, { taskId, project: scope.project }).filter((r) => r.status !== "pending");
   const workerActions = insights.listWorkerActions(sy.db, { project: scope.project, taskId });
   const webRequests = insights.taskWebRequests(sy, st.taskId);
+  const delivery = st.profile === "supervise" ? insights.deliveryView(sy,st.taskId,scope.project) : null;
 
   const tab = pickTab(sp, ["result", "verification", "routing", "usage", "sessions"]);
   return (
@@ -80,6 +81,15 @@ export async function TaskDetailView({ sy, taskId, scope, sp = {} }: { sy: Merit
       <Link href={scope.back.href} className="inline-flex items-center gap-1 text-sm text-ink-3 hover:text-ink">
         <ArrowLeft size={14} aria-hidden /> {scope.back.label}
       </Link>
+      {delivery ? <Card>
+        <CardHeader title="Product delivery" description="Execution and task acceptance are separate from the initiating FINAL supervisor's product decision."/>
+        <div className="space-y-2 p-4 text-sm">
+          <p>Stage: <strong>{delivery.stage}</strong> · Specification revision {delivery.spec.revision}</p>
+          <p>Readiness: <strong>{delivery.readiness?.status === "ready_for_final_review" ? "Ready for FINAL review" : "Evidence incomplete"}</strong></p>
+          <p>FINAL decision: <strong>{delivery.finalDecision?.decision ?? "Not decided"}</strong>{delivery.finalDecision?` — ${delivery.finalDecision.reason}`:""}</p>
+          {delivery.readiness?.blockers.length?<ul className="list-disc pl-5">{delivery.readiness.blockers.map((blocker,index)=><li key={index}>{blocker.criterionId??"Delivery"}: {blocker.detail}</li>)}</ul>:null}
+        </div>
+      </Card>:null}
       <PageHeader
         title={`${st.profile} task`}
         live={[`tasks:${st.taskId}`, "budget", "requests"]}

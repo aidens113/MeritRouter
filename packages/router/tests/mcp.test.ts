@@ -54,8 +54,8 @@ describe("MCP server", () => {
     const tools = listed.map((t) => t.name).sort();
     expect(tools).toEqual([
       "accept_result", "answer_question", "await_results", "blame", "brain_access_requests", "brain_append_ledger", "brain_decide_request", "brain_list", "brain_promote_lesson",
-      "brain_read", "brain_search", "brain_set_current_state", "brain_start_working_doc", "brain_write", "budget_requests", "cancel_tasks", "collect_results", "decide_budget_request", "get_job_metrics", "get_job_tree", "get_plan", "get_session", "get_supervision_policy", "get_task_status",
-      "job_status", "lab_control", "lab_logs", "lab_operation", "lab_status", "list_questions", "list_sessions", "panel", "preview_route", "read_artifact", "read_channel", "reject_result", "resume_session", "resume_task", "set_supervision_policy", "start_job", "submit_tasks", "usage_summary",
+      "brain_read", "brain_search", "brain_set_current_state", "brain_start_working_doc", "brain_write", "budget_requests", "cancel_tasks", "collect_results", "decide_budget_request", "decide_delivery", "delivery_status", "get_job_metrics", "get_job_tree", "get_plan", "get_session", "get_supervision_policy", "get_task_status",
+      "job_status", "lab_control", "lab_logs", "lab_operation", "lab_status", "list_questions", "list_sessions", "panel", "preview_route", "read_artifact", "read_channel", "record_delivery_observation", "reject_result", "resume_session", "resume_task", "set_supervision_policy", "start_job", "submit_tasks", "usage_summary", "write_project_memory", "write_user_preference",
     ]);
 
     // Any tool call revives a panel the user turned off: the marker goes (auto_start off here, and no

@@ -1,5 +1,6 @@
 import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 export { acknowledgeModelQuarantine } from "./quarantine.js";
+export { deliveryView } from "./deliveries.js";
 export { listWorkerActions, getWorkerAction, decideWorkerAction } from "./worker-actions.js";
 import path from "node:path";
 import YAML from "yaml";
@@ -665,9 +666,12 @@ export function brainRead(sy: MeritRouter, path: string, project?: string) {
 
 export async function brainSearch(sy: MeritRouter, query: string, prefix?: string, project?: string) {
   const brain = brainOf(sy, project);
-  await brain.refreshIndex();
-  return brain.search(HUMAN, query, { ...(prefix ? { prefix } : {}), limit: 30 });
+  await brain.refreshIndex({ maxAgeMs: 5000 });
+  return brain.search(HUMAN, query, { ...(prefix ? { prefix } : {}), limit: 30, scope: project ? "project" : "all" });
 }
+
+export { brainCatalogPage, brainSearchPage } from "./brain-catalog.js";
+export { brainDocumentHistoryPage } from "./brain-entities.js";
 
 export function brainHistory(sy: MeritRouter, path: string, project?: string) {
   return brainOf(sy, project).history(path);
@@ -681,8 +685,8 @@ export function brainBlame(sy: MeritRouter, path: string, project?: string) {
 }
 
 /** Save a brain file as the user (protocol validation still applies to working docs and reports). */
-export function brainWrite(sy: MeritRouter, path: string, content: string, project?: string) {
-  return brainOf(sy, project).write(HUMAN, humanActor, path, content, `Edit ${path} in the panel`);
+export function brainWrite(sy: MeritRouter, path: string, content: string, project?: string, opts: { expectedDigest?: string | null } = {}) {
+  return brainOf(sy, project).write(HUMAN, humanActor, path, content, `Edit ${path} in the panel`, opts);
 }
 
 /** The project a brain access request belongs to ('' when unassigned), or null for an unknown request. */

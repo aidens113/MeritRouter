@@ -116,7 +116,7 @@ export function projectAttention(sy: MeritRouter, slug: string): string[] {
   const out: string[] = [];
   const questions = sy.questions({ project: slug }).length;
   if (questions) out.push(`${questions} question(s) from supervisors are waiting for an answer.`);
-  const awaiting = (sy.db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE project_id = ? AND state = 'completed' AND json_extract(result_json, '$.acceptanceStatus') = 'needs_supervisor'").get(slug) as { n: number }).n;
+  const awaiting = (sy.db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE project_id = ? AND state = 'completed' AND json_extract(result_json, '$.acceptanceStatus') IN ('needs_supervisor','not_verified')").get(slug) as { n: number }).n;
   if (awaiting) out.push(`${awaiting} result(s) wait for an acceptance decision.`);
   const requests = (sy.db.prepare("SELECT COUNT(*) AS n FROM brain_access_requests WHERE project_id = ? AND status = 'pending'").get(slug) as { n: number }).n;
   if (requests) out.push(`${requests} brain access request(s) wait for a decision.`);

@@ -18,6 +18,7 @@ import { baseCommitsFor, contextManifest } from "./completion.js";
 import { criterionTexts } from "../core/task.js";
 import { labHarnessTools } from "../labs/tools.js";
 import { minimalEnv } from "./coding/process.js";
+import { refreshMemoryMessages } from "../context/memory.js";
 
 /** Read-only repository investigation (inspect, analyze, review) on the shared agent harness. */
 export async function runReadOnly(ctx: RunContext): Promise<RunOutcome> {
@@ -67,10 +68,11 @@ export async function runReadOnly(ctx: RunContext): Promise<RunOutcome> {
       role: "system",
       content: `${charterFor(ctx.cfg, role)}\n\n## Tools\nInvestigate the repositories (${spec.repositoryAliases.join(", ")}) with the read-only tools, then call submit_result exactly once. You cannot modify anything.${canRunChecks ? ` You may run only the exact declared checks listed in the task using run_check (at most ${ctx.cfg.coding.max_check_runs_per_task} times); there is no arbitrary shell access.` : " No shell commands are available unless exact checks are declared for a single repository."} Do not infer the machine's runtime or environment version from repository files. If the task asks for runtime information and no declared check can provide it, say it is unavailable and submit an unknown criterion instead of repeating searches.\n\n## Result\n${OUTPUT_CONTRACT}`,
     },
-    { role: "user", content: `${taskBrief(spec, ctx.retry)}${canRunChecks ? `\nDeclared checks (run exactly as written with run_check):\n${declaredChecks.map((command) => `- ${command}`).join("\n")}` : ""}\nProvided context:\n${renderSources(sources) || "(none)"}\n${brainContext(env)}` },
+    { role: "user", content: `${taskBrief(spec, ctx.retry)}${canRunChecks ? `\nDeclared checks (run exactly as written with run_check):\n${declaredChecks.map((command) => `- ${command}`).join("\n")}` : ""}\nProvided context:\n${renderSources(sources) || "(none)"}` },
   ];
+  fresh[1]!.content = `${fresh[1]!.content}\n${await brainContext(env, { messages: fresh, tools: tools.map(tool => tool.def) })}`;
   // A resumed session continues its own transcript (the fresh one above still registered the evidence).
-  const messages = ctx.resume ? ctx.resume.plan.messages : fresh;
+  const messages = ctx.resume ? await refreshMemoryMessages(env, ctx.resume.plan.messages) : fresh;
   const executionId = ctx.gate.admission.createExecution("task", spec.profile, [{ taskId: ctx.taskId, itemId: ctx.taskId }]);
   const loop = await runAgentLoop({
     env,

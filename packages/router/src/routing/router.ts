@@ -1,5 +1,5 @@
 import { capturedLease, type LeaseRef } from "../storage/task-leases.js";
-import { AdmissionDenied } from "../core/errors.js";
+import { AdmissionDenied, MeritRouterError } from "../core/errors.js";
 import type { ResolvedConfig } from "../config/load.js";
 import type { Modality, PaidPolicy, ProfileName, TierName } from "../config/schema.js";
 import type { Db } from "../storage/db.js";
@@ -172,7 +172,9 @@ export class TaskRouter {
       classification.rejectReason = null;
       this.recordClassification(lease, "T3", classification);
       const chosen: RoutingOverride[] = this.cfg.supervisor.endpoints.map((endpointId) => ({ profile: spec.profile, tier: null, kind: "force", endpointId, allowBelowFloor: true, enabled: true }));
-      return { classification, plan: this.plan(spec.profile, "T3", inputModalities, spec.routing?.endpointId, false, this.cfg.supervisor.paid_policy, chosen, spec.hints?.web), inputModalities };
+      const plan = this.plan(spec.profile, "T3", inputModalities, spec.routing?.endpointId, false, this.cfg.supervisor.paid_policy, chosen, spec.hints?.web);
+      if (plan.blocker) throw new MeritRouterError(plan.blocker.code, plan.blocker.message);
+      return { classification, plan, inputModalities };
     }
     if (spec.routing?.tier || spec.routing?.endpointId) {
       classification = decide(this.cfg, this.rulebook, spec, features, { ...base, basis: "forced", tags: spec.hints?.tags ?? null });

@@ -342,6 +342,7 @@ async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, un
         label,
         goal: String(it.goal),
         parentTaskId: jobId,
+        ...(s.ctx.spec.deliveryVersion === 2 && it.profile === "supervise" ? {deliveryVersion:2 as const} : {}),
       ...(s.ctx.spec.lab ? { lab: s.ctx.spec.lab } : {}),
         idempotencyKey: `${jobId}:${label}`,
         repositoryAliases: repos,

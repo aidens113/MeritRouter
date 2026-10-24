@@ -15,7 +15,7 @@ export class GitError extends Error {
 }
 
 /** Run git without a shell. Output is capped; callers truncate further as needed. */
-export async function git(cwd: string, args: string[], opts: { maxBuffer?: number; allowExit?: number[]; env?: Record<string, string> } = {}): Promise<string> {
+export async function git(cwd: string, args: string[], opts: { maxBuffer?: number; allowExit?: number[]; env?: Record<string, string>; signal?: AbortSignal; timeoutMs?: number } = {}): Promise<string> {
   try {
     const processPolicy = prepareGitProcess(cwd, args, opts.env);
     const { stdout } = await execFileAsync("git", processPolicy.args, {
@@ -23,6 +23,8 @@ export async function git(cwd: string, args: string[], opts: { maxBuffer?: numbe
       maxBuffer: opts.maxBuffer ?? 32 * 1024 * 1024,
       windowsHide: true,
       env: processPolicy.env,
+      ...(opts.signal ? { signal: opts.signal } : {}),
+      ...(opts.timeoutMs !== undefined ? { timeout: opts.timeoutMs } : {}),
     });
     return stdout;
   } catch (err) {
@@ -50,8 +52,8 @@ export async function isGitRepo(dir: string): Promise<boolean> {
 }
 
 /** Paths with uncommitted changes (tracked or untracked), relative to the repo root. */
-export async function dirtyPaths(repo: string): Promise<string[]> {
-  const out = await git(repo, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+export async function dirtyPaths(repo: string, opts: {signal?:AbortSignal;timeoutMs?:number} = {}): Promise<string[]> {
+  const out = await git(repo, ["status", "--porcelain=v1", "-z", "--untracked-files=all"],opts);
   const entries = out.split("\0").filter(Boolean);
   const paths: string[] = [];
   for (let i = 0; i < entries.length; i++) {

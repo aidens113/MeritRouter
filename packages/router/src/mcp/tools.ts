@@ -16,6 +16,13 @@ import { LabOperationInputSchema } from "../labs/control.js";
 import { clientSupervisionFeedback, scopedMcpTasks, guardMcpResume, supervisionDispatch } from "./client-supervision.js";
 import { supervisionPolicy, setSupervisionPolicy } from "../admin/client-supervision.js";
 import { LabOperationArgumentSchema, TaskArgumentSchema, SupervisionPolicyArgumentShape } from "./schemas.js";
+import { ProductDeliveries } from "../verification/product-delivery.js";
+import { deliverySpecDigest } from "../verification/product-spec.js";
+import { productCandidateDigest } from "../verification/product-evidence.js";
+import { ProductEvidenceKindSchema } from "../verification/product-spec.js";
+import { currentProductCandidate } from "../verification/product-candidate.js";
+import { randomUUID } from "node:crypto";
+import { MemoryPreferences, type PreferenceAuthorizationResolver } from "../brain/preferences.js";
 
 /** What every connection's server shares: the service, its config, and the project it serves. */
 export interface McpContext {
@@ -23,10 +30,12 @@ export interface McpContext {
   cfg: ResolvedConfig;
   /** The project tools default to (and whose brain the brain tools use). */
   project: string;
+  /** Trusted host capability; never populated from tool arguments or a model's user-said claim. */
+  preferenceAuthorization?: PreferenceAuthorizationResolver;
 }
 
 /** A new MCP server with every MeritRouter tool registered; connect it to exactly one transport. */
-export function buildMcpServer({ sy, cfg, project }: McpContext): McpServer {
+export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: McpContext): McpServer {
   /** A tool's project: the one it names (which must exist), else this server's. */
   const scope = (named: unknown): string => (typeof named === "string" && named ? sy.projects.require(named).project.slug : project);
   const projectInput = { project: z.string().min(1).optional().describe(`Project slug; default: this server's project (${project}).`) };
@@ -57,6 +66,42 @@ export function buildMcpServer({ sy, cfg, project }: McpContext): McpServer {
     });
   const json = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] });
   const fail = (err: unknown) => ({ isError: true, content: [{ type: "text" as const, text: (err as Error).message ?? String(err) }] });
+  const memoryActor=()=>({agent:`supervisor:mcp:${server.server.getClientVersion()?.name??"client"}`,role:"supervisor",model:null});
+  server.registerTool("write_project_memory",{title:"Maintain project memory",description:"Write a versioned project fact/decision/lesson with source and compare-and-swap digest. Workers cannot use this external-supervisor control. Global lessons use promotion; preferences require a trusted instruction capability.",inputSchema:{id:z.string(),kind:z.enum(["project_fact","decision","empirical_lesson"]),body:z.string().min(1),sourceRef:z.string().min(1),expectedDigest:z.string().nullable(),...projectInput}},async({id,kind,body,sourceRef,expectedDigest,project:named})=>{
+    try{const p=scope(named),b=sy.brainFor(p),access=sy.brainAccessFor(p);await b.ensure();const principal=access.principalFor("supervisor",{project:p,effort:"external",task:null,repos:Object.keys(sy.projectContext(p).repositoryPaths),jobId:null,tier:null});return json(await new MemoryPreferences(b,()=>null).writeProject(principal,memoryActor(),{id,kind,body,source:{kind:"observation",ref:sourceRef}},expectedDigest));}catch(err){return fail(err);}
+  });
+  server.registerTool("write_user_preference",{title:"Record an authorized user preference",description:"Requires an operation/id/scope/body-bound instruction reference supplied by the trusted initiating host. A tool argument asserting user authorization cannot grant this capability. Use the panel Memory form if this connection has no host capability.",inputSchema:{authorizationRef:z.string(),id:z.string(),body:z.string().min(1),expectedDigest:z.string().nullable(),...projectInput}},async({authorizationRef,id,body,expectedDigest,project:named})=>{
+    try{if(!preferenceAuthorization)throw new Error("preference_authority_unavailable: use a trusted initiating host or the panel Memory form");const b=sy.brainFor(scope(named));await b.ensure();return json(await new MemoryPreferences(b,preferenceAuthorization).writePreference(authorizationRef,{id,body},expectedDigest));}catch(err){return fail(err);}
+  });
+
+  const deliveryStore = new ProductDeliveries(sy.db);
+  const deliveryTask = (id: string, named: unknown) => {
+    const p=scope(named),task=sy.tasks.get(id);
+    if(!task||task.row.project_id!==p||task.spec.profile!=="supervise") throw new Error(`unknown delivery ${id} in project ${p}`);
+    return {p,task};
+  };
+  const refreshDeliveryCandidate = async (id:string,p:string,task:NonNullable<ReturnType<typeof sy.tasks.get>>) => {
+    const status=deliveryStore.status(id,p);
+    if(!status?.candidate)return;
+    const workspace=sy.sessions.forTask(id).filter(session=>session.role==="supervisor").at(-1)?.workspace;
+    if(!workspace?.repos.length)throw new Error("Cannot establish current integration workspace for FINAL review");
+    deliveryStore.setCandidate(id,p,await currentProductCandidate({spec:task.spec,signal:AbortSignal.timeout(30000)},workspace.repos));
+  };
+  server.registerTool("delivery_status", {title:"Delivery readiness and FINAL decision",description:"Versioned specification, exact candidate, observed criterion coverage, missing evidence and separate FINAL decision.",inputSchema:{taskId:z.string(),...projectInput}},async({taskId,project:named})=>{
+    try{const {p,task}=deliveryTask(taskId,named);await refreshDeliveryCandidate(taskId,p,task);return json(deliveryStore.status(taskId,p));}catch(err){return fail(err);}
+  });
+  server.registerTool("record_delivery_observation", {title:"Record FINAL supervisor's independent observation",description:"Record only behavior you independently checked on the exact current candidate, with evidence references. Worker claims are insufficient. Does not accept the product or raise permissions.",inputSchema:{taskId:z.string(),criterionIds:z.array(z.string()).min(1),kind:ProductEvidenceKindSchema,outcome:z.enum(["pass","fail","inconclusive","unavailable"]),artifactRefs:z.array(z.string()).min(1),observations:z.array(z.string()).min(1),...projectInput}},async({taskId,criterionIds,kind,outcome,artifactRefs,observations,project:named})=>{
+    try{
+      const {p,task}=deliveryTask(taskId,named);await refreshDeliveryCandidate(taskId,p,task);const state=deliveryStore.status(taskId,p);
+      if(!state?.candidate)throw new Error("No runtime-resolved candidate exists yet");
+      const at=Date.now(),actorId=`mcp:${server.server.getClientVersion()?.name??"client"}`;
+      deliveryStore.recordEvidence(taskId,p,{schemaVersion:1,id:`final-observation-${randomUUID()}`,criterionIds,kind,outcome,artifactRefs,observations,specDigest:deliverySpecDigest(state.spec),candidateDigest:productCandidateDigest(state.candidate),actor:{id:actorId,role:"initiator"},basis:"observed",startedAt:at,completedAt:at,expiresAt:null,unknowns:[],subjectActorIds:[`supervisor:${task.spec.label??taskId}`]});
+      return json(deliveryStore.status(taskId,p));
+    }catch(err){return fail(err);}
+  });
+  server.registerTool("decide_delivery",{title:"FINAL supervisor delivery decision",description:"Accept or reject the exact checked product candidate. Acceptance requires complete observed criterion evidence. Rejection reopens validation. This decision is distinct from task execution acceptance.",inputSchema:{taskId:z.string(),decision:z.enum(["accept","reject"]),reason:z.string().min(1),...projectInput}},async({taskId,decision,reason,project:named})=>{
+    try{const {p,task}=deliveryTask(taskId,named);await refreshDeliveryCandidate(taskId,p,task);const state=deliveryStore.status(taskId,p);if(!state?.candidate)throw new Error("No current candidate");deliveryStore.finalDecision(taskId,p,{schemaVersion:1,decision,reason,actor:{id:`mcp:${server.server.getClientVersion()?.name??"client"}`,role:"initiator"},specDigest:deliverySpecDigest(state.spec),candidateDigest:productCandidateDigest(state.candidate),at:Date.now()});return json(deliveryStore.status(taskId,p));}catch(err){return fail(err);}
+  });
 
   server.registerTool("get_supervision_policy", { title: "External client supervision policy", description: "Read current Claude/Codex outer-supervisor workflow guidance; separate from internal job supervisors and permissions.", inputSchema: {} }, async () => { try { return json(supervisionPolicy(sy)); } catch (err) { return fail(err); } });
   server.registerTool("set_supervision_policy", { title: "Change external client supervision guidance", description: "Only on explicit user request: permit or forbid final project-supervisor dispatch, or customize external Claude/Codex workflow guidance. Requires a reason. Grants no new permissions; do not self-change this policy to bypass user instructions.", inputSchema: SupervisionPolicyArgumentShape }, async input => { try { return json(setSupervisionPolicy(sy, input)); } catch (err) { return fail(err); } });
@@ -108,11 +153,11 @@ export function buildMcpServer({ sy, cfg, project }: McpContext): McpServer {
     {
       title: "Wait for task results",
       description: "Wait inside the package until the tasks finish or the bounded wait elapses. Prefer this over repeated status checks.",
-      inputSchema: { taskIds: z.array(z.string()).min(1), timeoutSeconds: z.number().int().positive().optional() },
+      inputSchema: { taskIds: z.array(z.string()).min(1), timeoutSeconds: z.number().int().positive().optional(), ...projectInput },
     },
-    async ({ taskIds, timeoutSeconds }, extra) => {
+    async ({ taskIds, timeoutSeconds, project: named }, extra) => {
       try {
-        return json(await sy.awaitResults(taskIds, { ...(timeoutSeconds ? { timeoutSeconds } : {}), signal: extra.signal }));
+        return json(await sy.awaitResults(taskIds, { ...(timeoutSeconds ? { timeoutSeconds } : {}), signal: extra.signal, project: scope(named) }));
       } catch (err) {
         return fail(err);
       }
@@ -140,9 +185,9 @@ export function buildMcpServer({ sy, cfg, project }: McpContext): McpServer {
     {
       title: "Collect finished results",
       description: "Return results (with evidence, artifact and patch references) for tasks that have finished, without waiting.",
-      inputSchema: { taskIds: z.array(z.string()).min(1) },
+      inputSchema: { taskIds: z.array(z.string()).min(1), ...projectInput },
     },
-    async ({ taskIds }) => json(sy.collectResults(taskIds)),
+    async ({ taskIds, project: named }) => { try { return json(sy.collectResults(taskIds, scope(named))); } catch (err) { return fail(err); } },
   );
 
   server.registerTool(
@@ -150,11 +195,11 @@ export function buildMcpServer({ sy, cfg, project }: McpContext): McpServer {
     {
       title: "Cancel tasks",
       description: "Persist cancellation; no further model requests are dispatched for these tasks.",
-      inputSchema: { taskIds: z.array(z.string()).min(1) },
+      inputSchema: { taskIds: z.array(z.string()).min(1), ...projectInput },
     },
-    async ({ taskIds }) => {
+    async ({ taskIds, project: named }) => {
       try {
-        return json(sy.cancelTasks(taskIds, project));
+        return json(sy.cancelTasks(taskIds, scope(named)));
       } catch (err) {
         return fail(err);
       }
@@ -168,12 +213,13 @@ export function buildMcpServer({ sy, cfg, project }: McpContext): McpServer {
       description:
         "Requeue an interrupted task. Agent-loop tasks (read-only workers, supervisors) continue their latest interrupted session; completion tasks re-run; " +
         "coding tasks start over in a fresh worktree and keep the previous one as evidence. To continue a coding session in its own worktree, use resume_session.",
-      inputSchema: { taskId: z.string() },
+      inputSchema: { taskId: z.string(), ...projectInput },
     },
-    async ({ taskId }) => {
+    async ({ taskId, project: named }) => {
       try {
-        guardMcpResume(sy, project, taskId);
-        return json({ taskId, state: sy.resumeTask(taskId, project) });
+        const p = scope(named);
+        guardMcpResume(sy, p, taskId);
+        return json({ taskId, state: sy.resumeTask(taskId, p) });
       } catch (err) {
         return fail(err);
       }
@@ -185,9 +231,9 @@ export function buildMcpServer({ sy, cfg, project }: McpContext): McpServer {
   // acceptance (the CLI and the panel) is an explicit manual override, so with
   // `verification.strict_acceptor: human` an MCP accept of a strict result is refused.
   const acceptor = () => ({ kind: "supervisor" as const, id: `mcp:${server.server.getClientVersion()?.name ?? "client"}` });
-  const decideResult = (taskId: string, decision: "accept" | "reject", reason: string | undefined) => {
+  const decideResult = (taskId: string, decision: "accept" | "reject", reason: string | undefined, named?: string) => {
     try {
-      return json(decideTaskAcceptance(sy, taskId, decision, acceptor(), reason?.trim() || null, project));
+      return json(decideTaskAcceptance(sy, taskId, decision, acceptor(), reason?.trim() || null, scope(named)));
     } catch (err) {
       return fail(err);
     }
@@ -200,18 +246,18 @@ export function buildMcpServer({ sy, cfg, project }: McpContext): McpServer {
         "Accept a finished, completed task's result as its supervisor (recorded as supervisor mcp:<client>, with the reason). " +
         "Results in needs_supervisor (strict verification, missing evidence, or a pending review) and not_verified need a reason: judge them against the task's goal and acceptance criteria. Unmet results cannot be accepted. " +
         "With verification.strict_acceptor: human, a strict result is refused with human_acceptance_required: only a person can accept it, with `meritrouter accept <id> --reason ...` or the panel.",
-      inputSchema: { taskId: z.string().min(1), reason: z.string().max(4000).optional() },
+      inputSchema: { taskId: z.string().min(1), reason: z.string().max(4000).optional(), ...projectInput },
     },
-    async ({ taskId, reason }) => decideResult(taskId, "accept", reason),
+    async ({ taskId, reason, project: named }) => decideResult(taskId, "accept", reason, named),
   );
   server.registerTool(
     "reject_result",
     {
       title: "Reject a task result",
       description: "Reject a finished task's result with a reason; it becomes unmet and the decision is recorded on the result as supervisor mcp:<client>, with the reason.",
-      inputSchema: { taskId: z.string().min(1), reason: z.string().trim().min(1).max(4000) },
+      inputSchema: { taskId: z.string().min(1), reason: z.string().trim().min(1).max(4000), ...projectInput },
     },
-    async ({ taskId, reason }) => decideResult(taskId, "reject", reason),
+    async ({ taskId, reason, project: named }) => decideResult(taskId, "reject", reason, named),
   );
 
   // ---------- budget control: workers asking for more model requests ----------
@@ -239,11 +285,11 @@ export function buildMcpServer({ sy, cfg, project }: McpContext): McpServer {
       description:
         "Decide a worker's pending request for more model requests, with a reason (recorded as supervisor mcp:<client>). An approval grants `grant` requests (default: what it asked); for a task of a MeritRouter job they come out of that job's pool, which must have them available. " +
         "The worker continues at once with the higher limit; a denial lets it finish and submit what it has. Requests whose approver is human need a person (meritrouter budget approve|deny, or the panel). Paid budgets are unaffected.",
-      inputSchema: { id: z.number().int().positive(), approve: z.boolean(), grant: z.number().int().positive().max(1000).optional(), reason: z.string().trim().min(1).max(2000) },
+      inputSchema: { id: z.number().int().positive(), approve: z.boolean(), grant: z.number().int().positive().max(1000).optional(), reason: z.string().trim().min(1).max(2000), ...projectInput },
     },
-    async ({ id, approve, grant, reason }) => {
+    async ({ id, approve, grant, reason, project: named }) => {
       try {
-        return json(decideBudgetRequest(sy, id, { approve, grant: grant ?? null, reason, by: { kind: "external", id: `mcp:${server.server.getClientVersion()?.name ?? "client"}` } }, project));
+        return json(decideBudgetRequest(sy, id, { approve, grant: grant ?? null, reason, by: { kind: "external", id: `mcp:${server.server.getClientVersion()?.name ?? "client"}` } }, scope(named)));
       } catch (err) {
         return fail(err);
       }
@@ -415,9 +461,9 @@ export function buildMcpServer({ sy, cfg, project }: McpContext): McpServer {
       return fail(err);
     }
   });
-  server.registerTool("answer_question", { title: "Answer a supervisor's question", description: "Answer a pending question so the job continues.", inputSchema: { id: z.number().int(), answer: z.string().min(1) } }, async ({ id, answer }) => {
+  server.registerTool("answer_question", { title: "Answer a supervisor's question", description: "Answer a pending question so the job continues.", inputSchema: { id: z.number().int(), answer: z.string().min(1), ...projectInput } }, async ({ id, answer, project: named }) => {
     try {
-      sy.answerQuestion(id, answer, "claude-code", project);
+      sy.answerQuestion(id, answer, `mcp:${server.server.getClientVersion()?.name ?? "client"}`, scope(named));
       return json({ answered: id });
     } catch (err) {
       return fail(err);
@@ -459,11 +505,11 @@ export function buildMcpServer({ sy, cfg, project }: McpContext): McpServer {
         "Also returns its delegated child sessions and the other sessions of the same task. " +
         "Pages hold at most `limit` events (default 200) after `afterSeq`; when hasMore is true, call again with afterSeq set to the last returned seq. " +
         "`corrupt` lists log lines that failed validation and were skipped.",
-      inputSchema: { sessionId: z.string().min(1), afterSeq: z.number().int().nonnegative().optional(), limit: z.number().int().positive().max(1000).optional() },
+      inputSchema: { sessionId: z.string().min(1), afterSeq: z.number().int().nonnegative().optional(), limit: z.number().int().positive().max(1000).optional(), ...projectInput },
     },
-    async ({ sessionId, afterSeq, limit }) => {
+    async ({ sessionId, afterSeq, limit, project: named }) => {
       try {
-        const d = sessionDetail(sy, sessionId, { afterSeq: afterSeq ?? 0, limit: limit ?? 200 });
+        const d = sessionDetail(sy, sessionId, { afterSeq: afterSeq ?? 0, limit: limit ?? 200, project: scope(named) });
         if (!d) return fail(new Error(`unknown session ${sessionId}`));
         return json(d);
       } catch (err) {
@@ -481,14 +527,15 @@ export function buildMcpServer({ sy, cfg, project }: McpContext): McpServer {
         "(interrupted edits committed as recovered or reset per sessions.recover_edits, delegations re-run idempotently, unknown outcomes reported to the model), and a 'resumed' event is logged. " +
         "Coding sessions continue in their own worktree. Completion and batch sessions re-run fresh, linked to this one. " +
         "The session must be interrupted (a session left running by a dead process is settled first) and its task interrupted. Returns the task id and its new state.",
-      inputSchema: { sessionId: z.string().min(1) },
+      inputSchema: { sessionId: z.string().min(1), ...projectInput },
     },
-    async ({ sessionId }) => {
+    async ({ sessionId, project: named }) => {
       try {
         const session = sy.sessions.get(sessionId);
         if (!session || !session.taskId) throw new Error(`unknown session ${sessionId}`);
-        guardMcpResume(sy, project, session.taskId);
-        return json({ sessionId, ...sy.resumeSession(sessionId, project) });
+        const p = scope(named);
+        guardMcpResume(sy, p, session.taskId);
+        return json({ sessionId, ...sy.resumeSession(sessionId, p) });
       } catch (err) {
         return fail(err);
       }
@@ -501,7 +548,7 @@ export function buildMcpServer({ sy, cfg, project }: McpContext): McpServer {
   const brain = sy.brainFor(project);
   const access = sy.brainAccessFor(project);
   const principal = (): Principal => access.principalFor("supervisor", { project: brain.project, effort, task: null, repos: Object.keys(sy.projectContext(project).repositoryPaths), jobId: null, tier: null });
-  const actor = { agent: "supervisor:claude-code", role: "supervisor", model: "claude-code" };
+  const actor = { get agent(){return memoryActor().agent;}, role: "supervisor", model: null };
   const brainTool = (name: string, description: string, inputSchema: Record<string, z.ZodTypeAny>, run: (a: Record<string, unknown>) => Promise<unknown> | unknown) =>
     server.registerTool(name, { title: name.replace(/_/g, " "), description, inputSchema }, async (a: Record<string, unknown>) => {
       try {

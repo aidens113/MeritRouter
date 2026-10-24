@@ -7,7 +7,7 @@ import { RequestCaptures } from "../storage/request-captures.js";
 import type { RequestCaptureStore } from "./request-capture.js";
 import type { RequestLedger } from "../admission/request-ledger.js";
 import { SqliteRequestLedger } from "../admission/sqlite-request-ledger.js";
-import { AdmissionDenied, GatewayError, type AdmissionDenialReason } from "../core/errors.js";
+import { AdmissionDenied, GatewayError, MeritRouterError, type AdmissionDenialReason } from "../core/errors.js";
 import type { ModelEndpoint } from "../models/catalog.js";
 import type { RoutePlan } from "../routing/select.js";
 import { fitsEndpoint } from "../routing/select.js";
@@ -21,6 +21,7 @@ import type { ProviderClient } from "../providers/client.js";
 import { probeClient, requestDirect, type DirectRuntime } from "./direct.js";
 import { NOT_IN_PLAN_RECHECK_MS } from "../providers/keys.js";
 import { quarantineReason } from "./quarantine.js";
+import { assessSupervisorQuality } from "../routing/supervisor-quality.js";
 
 export type { DirectRuntime } from "./direct.js";
 
@@ -228,6 +229,14 @@ export class Gate {
   private candidatesFor(req: GateRequest): ModelEndpoint[] {
     const avoid = new Set(req.avoidEndpointIds ?? []);
     const list = avoid.size ? req.plan.candidates.filter((c) => !avoid.has(c.id)) : req.plan.candidates;
+    if (this.cfg.profiles[req.plan.profile]?.mode === "supervisor") {
+      // Session stickiness cannot override quality ordering, and evidence expiry/revocation
+      // must be checked on every physical dispatch rather than only at session creation.
+      const visual = req.chat.messages.some(m => Array.isArray(m.content) && m.content.some(part => part.type === "image_url"));
+      const eligible = list.filter(ep => assessSupervisorQuality(ep.id, this.cfg.supervisor.routing, new Date(this.direct.providers.now()), visual).eligible);
+      if (!eligible.length) throw new MeritRouterError("supervisor_quality_unavailable", "No supervisor candidate retains current qualifying quality evidence; no model request was sent");
+      return eligible;
+    }
     return this.cfg.routing.sticky_endpoints ? stickyOrder(list, req.preferEndpointId, (ep) => this.stickyHealthy(ep)) : list;
   }
 
