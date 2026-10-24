@@ -1,6 +1,12 @@
 # Clone request-hold investigation
 
-Status: Read-only investigation complete; safe cleanup capability missing.
+Status: Historical read-only investigation; superseded by pending-request deletion lifecycle.
+
+The new implementation separates deleting private project data from reclaiming physical
+capacity. Pending requests are retired with conservative accounting and anonymous transport
+quarantine; no fabricated quiescence proof or raw hold deletion is needed. See
+[implementation report](project-grid-deletion-pending-report.md). The findings below describe
+the earlier blocking implementation; safe physical capacity recovery remains separate.
 
 ## Finding
 

@@ -363,6 +363,11 @@ the panel, Delete project is available on each project-grid card and archived en
 the Danger zone at the end of the project's Settings page. Each uses the same two steps:
 a dialog listing what goes and what stays, then one that asks for the slug before "Delete
 permanently". Archived projects can be deleted too.
+- Pending model requests do not prevent deletion. Deletion revokes their dispatch/retry
+  authority and removes private bindings and captures. Definitely unsent reservations are
+  refunded; unknown dispatched outcomes retain conservative accounting. Exact physical
+  transport holds remain quarantined outside project scope until safe recovery; deletion
+  does not assert remote cancellation. The impact dialog reports these retained counts.
 - Refused while the project has running or queued tasks, for the last project that is not
   archived, and for a single-project config (it is the install's only project). The confirmation
   must equal the slug.
@@ -375,9 +380,9 @@ permanently". Archived projects can be deleted too.
   folder `projects/<slug>/`, in one brain commit with a `Remove-Reason` trailer (edits made
   outside MeritRouter are committed first, so the text stays in the brain's history).
 - Kept: the repository folders and every branch in them (job branches included), model requests
-  with their per-task charges and paid spend (for accounting; the requests no longer belong to a
-  project, so they count only in install-wide views, and their charges name tasks that no longer
-  exist), brain mounts outside the brain repository, and the brain's git history.
+  and paid spend (for accounting; requests are anonymized and count only in install-wide views;
+  per-task charges are removed with the tasks), minimal opaque anti-replay records and transport
+  quarantine, brain mounts outside the brain repository, and the brain's git history.
 - Deleting the primary project (`brain.project`) moves `brain.project` to another live project.
   A running worker or MCP server that had it as its primary keeps its old brain handle until it
   restarts.
@@ -692,7 +697,7 @@ Ordinary task-operation IDs have a seven-day retry window; recovery uses distinc
 
 Default Gate task participants carry captured insertion incarnation, owner, run count and project. Each physical key/endpoint attempt has an immutable request ID, payload digest and durable reserve/dispatch-intent/settlement receipt. Lost acknowledgement or replay never authorizes another provider call; a final local SQLite guard runs after awaits immediately before client invocation. Classifier persistence uncertainty propagates to the task instead of silently starting execution. Late usage settles the original request and cannot update charges for a reused task identity.
 
-Request IDs have a seven-day retry window and100,000-key bound. Settled private bindings without outstanding holds expire in bounded64-row cleanup; quota refusal cannot roll that cleanup back. Reserve/prune require a top-level transaction. Unresolved requests or strict transport holds block project deletion before config writes and again during purge. Successful deletion removes scoped private bindings while preserving consumed-ID tombstones and accounting. Aborting a socket or losing a task lease does not prove remote cancellation or nonbilling; unknown holds remain conservative until an operator establishes safe reconciliation. This does not provide PostgreSQL, two-host operation or remote side-effect fencing.
+Request IDs have a seven-day retry window and100,000-key bound. Settled private bindings without outstanding holds expire in bounded64-row cleanup; quota refusal cannot roll that cleanup back. Reserve/prune require a top-level transaction. Project deletion atomically revokes private request authority, settles definitely unsent reservations as unbilled, and preserves conservative accounting for unknown dispatched outcomes. It retains opaque deletion tombstones and exact quarantined transport identities without project/task lease payloads. Mixed or corrupt ownership still refuses deletion. Tombstones expire in bounded cleanup only after their retry window and absent physical hold; legacy key GC remains compatible. Aborting a socket, deleting a project or losing a task lease does not prove remote cancellation or nonbilling. Unknown holds require separate safe recovery; this change does not reclaim their capacity. Restart older clients to acquire the new session-append and capture-start deletion guards. This does not provide PostgreSQL, two-host operation or remote side-effect fencing.
 ## Agent sessions
 
 Every model-driven run is an agent session: each run of a task (a recovery re-run or a tier

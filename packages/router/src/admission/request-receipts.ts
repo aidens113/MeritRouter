@@ -23,7 +23,8 @@ export class RequestReceipts {
     return immediate(this.db, () => {
       const now = this.now();
       const receipts = this.db.prepare("DELETE FROM request_protocol WHERE request_id IN (SELECT request_id FROM request_protocol WHERE state='settled' AND expires_at<? AND NOT EXISTS(SELECT 1 FROM provider_slots s WHERE s.id=json_extract(request_protocol.binding_json,'$.slot.id')) LIMIT 64)").run(now).changes;
-      const keys = this.db.prepare("DELETE FROM request_protocol_keys WHERE id IN (SELECT k.id FROM request_protocol_keys k LEFT JOIN request_protocol p ON p.request_id=k.id WHERE k.expires_at<? AND p.request_id IS NULL LIMIT 64)").run(now).changes;
+      this.db.prepare("DELETE FROM request_deletion_tombstones WHERE request_id IN (SELECT t.request_id FROM request_deletion_tombstones t WHERE t.expires_at<? AND NOT EXISTS(SELECT 1 FROM provider_slots s WHERE s.id=t.slot_id) LIMIT 64)").run(now);
+      const keys = this.db.prepare("DELETE FROM request_protocol_keys WHERE id IN (SELECT k.id FROM request_protocol_keys k LEFT JOIN request_protocol p ON p.request_id=k.id WHERE k.expires_at<? AND p.request_id IS NULL AND NOT EXISTS(SELECT 1 FROM request_deletion_tombstones t WHERE t.request_id=k.id) LIMIT 64)").run(now).changes;
       return { receipts, keys };
     });
   }
@@ -42,7 +43,8 @@ export class RequestReceipts {
         if (previous.fingerprint !== fingerprint) throw new Error("request ID reused with different payload");
         return { ...ReservationDTOSchema.parse(JSON.parse(previous.reservation_json)), disposition: "replayed" };
       }
-      if (this.db.prepare("SELECT 1 FROM request_protocol_keys WHERE id=?").get(parsed.requestId)) throw new Error("request ID was purged and cannot be reused");
+      if (this.db.prepare("SELECT 1 FROM request_protocol_keys WHERE id=?").get(parsed.requestId)
+        || this.db.prepare("SELECT 1 FROM request_deletion_tombstones WHERE request_id=?").get(parsed.requestId)) throw new Error("request ID was purged and cannot be reused");
       if ((this.db.prepare("SELECT COUNT(*) FROM request_protocol_keys").pluck().get() as number) >= MAX_ROWS) throw new Error("request receipt capacity exhausted; reconcile retained requests before retry");
       const projects = [...new Set(parsed.participants.map(p => p.lease.project))];
       if (projects.length > 1) throw new Error("request cannot mix project authorities");
@@ -99,10 +101,63 @@ export class RequestReceipts {
     const slots = this.db.prepare("SELECT COUNT(*) FROM provider_slots WHERE kind='request' AND (nonce IS NOT NULL OR lease_json IS NOT NULL) AND (COALESCE(json_valid(lease_json),0)=0 OR EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(lease_json) THEN lease_json ELSE '[]' END) WHERE json_extract(value,'$.project')=?))").pluck().get(project) as number;
     return { requests, slots };
   }
+  /** Check authority before destructive cleanup; unknown/mixed ownership remains a refusal. */
+  assertProjectPurge(project: string): void {
+    z.string().parse(project);
+    if (this.db.prepare("SELECT 1 FROM request_protocol_projects a JOIN request_protocol_projects b ON a.request_id=b.request_id WHERE a.project_id=? AND b.project_id!=? LIMIT 1").get(project, project)) throw new Error("request recovery cannot prove exclusive project ownership");
+    const rows = this.db.prepare("SELECT p.* FROM request_protocol p JOIN request_protocol_projects s ON s.request_id=p.request_id WHERE s.project_id=?").all(project);
+    for (const value of rows) {
+      const row = Row.parse(value), binding = ReserveRequestDTOSchema.parse(JSON.parse(row.binding_json));
+      if (binding.participants.some(p => p.lease.project !== project)) throw new Error("request recovery cannot cross project authority");
+      this.bound(ReservationDTOSchema.parse(JSON.parse(row.reservation_json)));
+      if (binding.slot?.id) {
+        const slot = this.db.prepare("SELECT nonce FROM provider_slots WHERE id=?").get(binding.slot.id) as { nonce: string | null } | undefined;
+        if (slot && slot.nonce !== binding.slot.nonce) throw new Error("unresolved transport identity mismatch; recovery evidence retained");
+      }
+    }
+    for (const slot of this.projectSlots(project)) {
+      if (this.db.prepare("SELECT 1 FROM provider_slots s JOIN tasks t ON t.id=s.task_id WHERE s.id=? AND t.project_id!=? LIMIT 1").get(slot.id, project)
+        || this.db.prepare("SELECT 1 FROM request_protocol p JOIN request_protocol_projects s ON s.request_id=p.request_id WHERE json_extract(p.binding_json,'$.slot.id')=? AND s.project_id!=? LIMIT 1").get(slot.id, project)) throw new Error("transport recovery cannot cross project authority");
+      if (slot.lease_json !== null) {
+        const leases = z.array(z.object({ project: z.string() }).passthrough()).parse(JSON.parse(slot.lease_json));
+        if (leases.some(lease => lease.project !== project)) throw new Error("transport recovery cannot cross project authority");
+      }
+    }
+  }
+  private projectSlots(project: string) {
+    return z.array(z.object({ id: z.string(), nonce: z.string().nullable(), lease_json: z.string().nullable() })).parse(this.db.prepare(`SELECT id,nonce,lease_json FROM provider_slots WHERE kind='request' AND (nonce IS NOT NULL OR lease_json IS NOT NULL)
+      AND (task_id IN (SELECT id FROM tasks WHERE project_id=@project)
+        OR EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(lease_json) THEN lease_json ELSE '[]' END) WHERE json_extract(value,'$.project')=@project)
+        OR id IN (SELECT json_extract(p.binding_json,'$.slot.id') FROM request_protocol p JOIN request_protocol_projects s ON s.request_id=p.request_id WHERE s.project_id=@project))`).all({ project }));
+  }
+  retention(project: string): { pendingRequests: number; retainedTransportHolds: number } {
+    return { pendingRequests: this.blockers(project).requests, retainedTransportHolds: this.projectSlots(project).length };
+  }
+  /** Revoke dispatch and remove private bindings without pretending remote transport stopped. */
   purgeProject(project: string): { receipts: number } {
     return immediate(this.db, () => {
-      const blocked = this.blockers(project);
-      if (blocked.requests || blocked.slots) throw new Error("project has unresolved request protocol/transport holds");
+      this.assertProjectPurge(project);
+      const slots = this.projectSlots(project), now = this.now();
+      const rows = this.db.prepare("SELECT p.* FROM request_protocol p JOIN request_protocol_projects s ON s.request_id=p.request_id WHERE s.project_id=?").all(project);
+      for (const value of rows) {
+        const row = Row.parse(value), binding = ReserveRequestDTOSchema.parse(JSON.parse(row.binding_json));
+        const reservation = ReservationDTOSchema.parse(JSON.parse(row.reservation_json));
+        this.db.prepare("INSERT INTO request_deletion_tombstones(request_id,fingerprint,reservation_digest,slot_id,slot_nonce,retired_at,expires_at) VALUES(?,?,?,?,?,?,?)")
+          .run(row.request_id, row.fingerprint, digest({ ...reservation, disposition: "fresh" }), binding.slot?.id ?? null, binding.slot?.nonce ?? null, now, row.expires_at);
+        if (row.state !== "settled") {
+          const status = row.state === "reserved" ? "failed" : "uncertain";
+          // Already-recorded success/failure is authoritative even if its acknowledgement was lost.
+          const changed = this.db.prepare("UPDATE model_requests SET status=?,finished_at=?,error_kind='project_deleted',error_message='Project deleted; pending request retired without replay' WHERE id=? AND status='reserved'").run(status, now, row.request_id).changes;
+          if (changed) {
+            this.db.prepare("UPDATE paid_spend SET actual_usd=CASE WHEN ?='failed' THEN 0 ELSE reserved_usd END,cost_basis=CASE WHEN ?='failed' THEN 'not_billed' ELSE 'uncertain' END,settled_at=? WHERE request_id=? AND settled_at IS NULL").run(status, status, now, row.request_id);
+            this.db.prepare("UPDATE model_requests SET estimated_cost_usd=(SELECT actual_usd FROM paid_spend WHERE request_id=?) WHERE id=? AND EXISTS(SELECT 1 FROM paid_spend WHERE request_id=?)").run(row.request_id, row.request_id, row.request_id);
+          }
+        }
+      }
+      for (const slot of slots) {
+        // Keep exact physical identity/nonce and platform capacity; strip task/project authority.
+        this.db.prepare("UPDATE provider_slots SET uncertain=1,task_id='',holder='',lease_owner=NULL,lease_json='[]' WHERE id=? AND ((nonce IS NULL AND ? IS NULL) OR nonce=?)").run(slot.id, slot.nonce, slot.nonce);
+      }
       const receipts = this.db.prepare("DELETE FROM request_protocol WHERE request_id IN (SELECT request_id FROM request_protocol_projects WHERE project_id=?)").run(project).changes;
       return { receipts };
     });

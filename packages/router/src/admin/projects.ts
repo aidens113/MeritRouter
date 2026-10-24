@@ -312,6 +312,8 @@ export interface ProjectDeletionPreview {
   keeps: string[];
   /** Why the project cannot be deleted now; empty when it can. */
   blockers: string[];
+  /** Conservative accounting and quarantined physical transport retained outside project scope. */
+  retainedRequests: { pendingRequests: number; retainedTransportHolds: number };
 }
 
 export interface ProjectDeletionResult {
@@ -323,6 +325,7 @@ export interface ProjectDeletionResult {
   newPrimary: string | null;
   /** Files or worktrees that could not be removed (the rows are gone either way). */
   problems: string[];
+  retainedRequests: { pendingRequests: number; retainedTransportHolds: number };
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -330,8 +333,8 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 /** Why a project cannot be deleted now: running or queued tasks, the last live project, or the single-project config. */
 function deletionBlockers(sy: MeritRouter, info: ProjectSummary, allowTaskPrune = false): string[] {
   const out: string[] = [];
-  const holds = new RequestReceipts(sy.db).blockers(info.slug);
-  if (holds.requests || holds.slots) out.push(`it has ${holds.requests} unresolved model request(s) and ${holds.slots} retained transport hold(s); reconcile them before deletion`);
+  try { new RequestReceipts(sy.db).assertProjectPurge(info.slug); }
+  catch (error) { out.push(`request cleanup cannot prove safe project ownership: ${(error as Error).message}`); }
   const labs = sy.db.prepare("SELECT count(*) AS n FROM labs WHERE project_id = ? AND state != 'destroyed' AND (?=0 OR kind!='task_attempt' OR state!='stopped')").get(info.slug, allowTaskPrune ? 1 : 0) as { n: number };
   if (labs.n) out.push(`it has ${labs.n} retained or unresolved lab(s); destroy retained Labs or finish owned task-Lab cleanup first`);
   const a = projectActivity(sy, info.slug);
@@ -353,6 +356,7 @@ export async function previewProjectDeletion(sy: MeritRouter, slug: string): Pro
   const fp = await footprintOf(sy, sy.projects.get(slug)!);
   const counts: ProjectDeletionCounts = { tasks: fp.taskIds.length, jobs: fp.jobs, sessions: fp.sessions, artifacts: fp.artifacts, brainEntries: sy.brain.projectFolderFiles(slug), worktrees: fp.worktrees.length };
   const repositories = info.repositories.map((r) => ({ alias: r.alias, path: r.path }));
+  const retainedRequests = new RequestReceipts(sy.db).retention(slug);
   return {
     slug,
     name: info.name,
@@ -373,8 +377,10 @@ export async function previewProjectDeletion(sy: MeritRouter, slug: string): Pro
       repositories.length === 1 ? "Its repository folder and every branch in it, untouched." : `${plural(repositories.length, "repository folder")} and every branch in them, untouched.`,
       `${plural(fp.requests, "model request")} (${fp.paidRequests} paid), with their charges and spend, for accounting; they no longer belong to a project.`,
       "The brain's history: the removed folder stays in its git log.",
+      `${retainedRequests.pendingRequests} pending model request(s) are revoked without retry; dispatched requests with unknown outcomes retain conservative charges. ${retainedRequests.retainedTransportHolds} physical transport hold(s) remain quarantined outside the project until safe recovery; deleting the project does not cancel remote billing. Minimal opaque anti-replay records remain.`,
     ],
     blockers: deletionBlockers(sy, info, true),
+    retainedRequests,
   };
 }
 
@@ -460,5 +466,6 @@ export async function deleteProject(sy: MeritRouter, slug: string, opts: { confi
     brainCommit,
     newPrimary,
     problems,
+    retainedRequests: { pendingRequests: purged.pendingRequests, retainedTransportHolds: purged.retainedTransportHolds },
   };
 }

@@ -119,18 +119,20 @@ async function projectWorktrees(storageDir: string, taskIds: string[], repositor
 /**
  * Delete the project's rows in one transaction: its tasks and everything hanging off them
  * (dependencies, executions' memberships, artifacts' rows, events, workspaces, contracts,
- * verdicts and audits, plans, leases, carves, the merge queue, the team channel, provider slots),
+ * verdicts and audits, plans, leases, carves, the merge queue, the team channel, claim/wait slots),
  * its sessions and their events, supervisor transcripts and questions, brain access requests and
  * grants, and the project's row. Model requests and paid spend are kept for accounting, unlinked
  * from the project (`project_id` ''); their per-task charges go with the tasks they name, so
  * foreign keys hold throughout. Refused when the project has a task in one of `activeStates`
  * (checked inside the transaction).
  */
-export function purgeProjectRows(db: Db, slug: string, activeStates: readonly string[]): { tasks: number; sessions: number } {
+export function purgeProjectRows(db: Db, slug: string, activeStates: readonly string[]): { tasks: number; sessions: number; pendingRequests: number; retainedTransportHolds: number } {
   return immediate(db, () => {
-    // Refuse outstanding dispatch/transport uncertainty before deleting any authority.
-    // Settled private bindings go with the project; opaque consumed-ID keys remain.
-    new RequestReceipts(db).purgeProject(slug);
+    // Retire pending dispatch authority atomically with the purge. Conservative accounting,
+    // opaque anti-replay bindings and detached physical transport quarantine remain.
+    const receipts = new RequestReceipts(db);
+    const retained = receipts.retention(slug);
+    receipts.purgeProject(slug);
     const active = db.prepare("SELECT COUNT(*) FROM tasks WHERE project_id = ? AND state IN (SELECT value FROM json_each(?))").pluck().get(slug, JSON.stringify(activeStates)) as number;
     if (active) throw new MeritRouterError("usage", `project ${slug} has ${active} running or queued task(s); cancel them or let them finish before deleting it`);
     const p = { slug, ids: ids(db.prepare("SELECT id FROM tasks WHERE project_id = ?").pluck().all(slug) as string[]) };
@@ -195,11 +197,11 @@ export function purgeProjectRows(db: Db, slug: string, activeStates: readonly st
     run(`DELETE FROM job_channel WHERE job_id IN ${IN_TASKS}`);
     if (guard) db.exec(guard);
     run(`DELETE FROM provider_slots WHERE task_id IN ${IN_TASKS}`);
-    run("UPDATE model_requests SET project_id = '' WHERE project_id = @slug");
+    run("UPDATE model_requests SET project_id = '',route_note=NULL,error_message=NULL,telemetry_json=NULL,web_citations_json=NULL WHERE project_id = @slug");
     run(`DELETE FROM request_charges WHERE task_id IN ${IN_TASKS}`);
     const tasks = run(`DELETE FROM tasks WHERE id IN ${IN_TASKS}`);
     run("DELETE FROM projects WHERE id = @slug");
-    return { tasks, sessions };
+    return { tasks, sessions, ...retained };
   });
 }
 

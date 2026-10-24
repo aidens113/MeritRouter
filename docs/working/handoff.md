@@ -6,14 +6,20 @@ own working document with decisions, phases, ledger, and reports.
 
 ## Current effort (2026-10-23)
 
-Latest focused change: [project-grid-deletion](project-grid-deletion.md). Grid and archived
-entries now expose the shared two-modal delete flow; typecheck/build,10deletion tests and
-production demo browser checks passed. Panel4477 rebuilt/restarted. User explicitly confirmed
-platform/MeritRouter data only: Instagram removed through actual grid modals (18tasks,
-19sessions,32artifacts,16Brain files,18worktrees, no problems); source folders preserved.
-Facebook remains:2unresolved model requests/2retained transport holds correctly block deletion.
-No supported recovery exists, and legacy holds lack durable physical quiescence proof. Do not
-manually clear DB holds. See the bounded recovery design/report before further cleanup.
+Latest focused change: [project-grid-deletion](project-grid-deletion.md). Grid/archived entries
+expose two-modal deletion. Pending requests now retire atomically rather than blocking project
+removal: conservative billing, opaque replay tombstones and anonymized exact transport holds
+remain; private bindings/captures/logs are purged. Session/capture late-write guards added.
+Typecheck/build and 45 independent focused tests passed. Full router suite: 1,365 passed,
+3 skipped, 1 browser-start timing failure; exact failed case passed isolated rerun without
+source changes (the initial full run was not wholly green).
+Instagram and Facebook were removed using actual grid modals. Source folders preserved;
+final API/grid contain only my-project, Tetris and Pomodoro. All clone managed worktrees and
+Brain folders removed. A locked native-module leftover was removed by the feature cleanup
+routine with panel stopped; final panel restarted and browser checked at127.0.0.1:4477.
+Two anonymous transport holds remain quarantined; safe capacity recovery is separate. External
+older clients need restart for new session/capture guards; dispatch/accounting fencing already
+uses compatible receipt removal. Never clear holds or fabricate remote cancellation.
 
 User rejects prior clone as unusable despite recorded checks. The new
 [supervised delivery v2 plan](supervised-delivery-v2.md) owns the next corrective effort:

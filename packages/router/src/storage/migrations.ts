@@ -984,4 +984,13 @@ export const MIGRATIONS: string[] = [
       VALUES(NEW.task_id,NEW.project_id,NEW.stage,NEW.spec_json,NEW.candidate_json,NEW.evidence_json,NEW.final_decision_json,NEW.updated_at);
   END;
   `,
+  // Opaque revoked-request bindings survive project-private purge; never authorize dispatch.
+  `
+  CREATE TABLE request_deletion_tombstones (
+    request_id TEXT PRIMARY KEY,
+    fingerprint TEXT NOT NULL, reservation_digest TEXT NOT NULL,
+    slot_id TEXT, slot_nonce TEXT, retired_at INTEGER NOT NULL, expires_at INTEGER NOT NULL
+  );
+  CREATE INDEX request_deletion_tombstones_expiry ON request_deletion_tombstones(expires_at);
+  `,
 ];

@@ -1,4 +1,5 @@
 import { closeSync, fsyncSync, openSync, writeSync } from "node:fs";
+import { z } from "zod";
 import { immediate, type Db } from "../storage/db.js";
 import type { ChatMessage, ChatRequest } from "../gateway/types.js";
 import type { GateAttempt, GateResponse } from "../gateway/gate.js";
@@ -132,6 +133,7 @@ function capOutput(output: string): { output: string; truncated: boolean } {
  * transaction. A failure to record throws: the log is the record of truth.
  */
 export class SessionRecorder {
+  private readonly identity: string;
   private seq: number;
   private endedSeq: number | null = null;
   private readonly logged: string[] = [];
@@ -146,11 +148,20 @@ export class SessionRecorder {
     lastSeq = 0,
     restore?: RecorderRestore,
   ) {
+    this.identity = this.sessionIdentity();
     this.seq = lastSeq;
     if (restore) {
       for (const m of restore.messages) this.logged.push(fingerprint(m));
       for (const i of restore.openIntents) this.intents.set(i.seq, { callId: i.callId, name: i.name });
     }
+  }
+
+  private sessionIdentity(): string {
+    const row = z.object({ rowid: z.number().int(), created_at: z.number(), log_path: z.string(), task_id: z.string().nullable(), job_id: z.string().nullable(), role: z.string() }).safeParse(
+      this.db.prepare("SELECT rowid,created_at,log_path,task_id,job_id,role FROM sessions WHERE id=?").get(this.id),
+    );
+    if (!row.success) throw new Error(`session ${this.id} no longer exists`);
+    return JSON.stringify(row.data);
   }
 
   /** Sequence number of the last appended event (0 before any). */
@@ -276,18 +287,22 @@ export class SessionRecorder {
     const at = this.now();
     const event = SessionEventSchema.parse({ seq, at, type, data });
     const bytes = Buffer.from(`${JSON.stringify(event)}\n`, "utf8");
-    const fd = openSync(this.logPath, "a");
-    try {
-      let off = 0;
-      while (off < bytes.length) off += writeSync(fd, bytes, off, bytes.length - off);
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
-    // The line is durable: its seq is taken even if the index update below fails.
-    this.seq = seq;
-    const idx = indexUpdateFor(event);
-    immediate(this.db, () => writeIndex(this.db, this.id, seq, type, at, idx));
+    immediate(this.db, () => {
+      // Serialize authority and the filesystem append with project/session purge.
+      // Checking after writing would recreate a deleted private log before its FK fails.
+      if (this.sessionIdentity() !== this.identity) throw new Error(`session ${this.id} identity changed`);
+      const fd = openSync(this.logPath, "a");
+      try {
+        let off = 0;
+        while (off < bytes.length) off += writeSync(fd, bytes, off, bytes.length - off);
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+      // The line is durable even if indexing/commit fails; recovery backfills it.
+      this.seq = seq;
+      writeIndex(this.db, this.id, seq, type, at, indexUpdateFor(event));
+    });
     return seq;
   }
 }

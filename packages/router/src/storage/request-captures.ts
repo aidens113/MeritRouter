@@ -59,6 +59,7 @@ export class RequestCaptures implements RequestCaptureStore {
     const projection = Input.parse(raw);
     if (captureBytes(projection.input) > L.inputBytes) throw new Error("capture input exceeds byte limit");
     immediate(this.db, () => {
+      if (this.db.prepare("SELECT 1 FROM request_deletion_tombstones WHERE request_id=?").get(requestId)) throw new Error("capture request was purged and cannot be recreated");
       const request = this.request(requestId); if (!request.success) throw new Error("capture requires an admitted request");
       const prior = this.row(requestId);
       if (prior) {

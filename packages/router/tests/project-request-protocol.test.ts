@@ -6,7 +6,6 @@ import { capturedLease } from "../src/storage/task-leases.js";
 import { RequestPersistenceError } from "../src/admission/request-ledger.js";
 import { RequestReceipts } from "../src/admission/request-receipts.js";
 import { deleteProject, previewProjectDeletion } from "../src/admin/insights.js";
-import { purgeProjectRows } from "../src/projects/deletion.js";
 import { baseConfig, endpoint, makeEnv, open, reply, ScriptedClient, summarizeTask, type Env } from "./helpers.js";
 
 let env: Env | undefined, sy: MeritRouter | undefined;
@@ -31,16 +30,16 @@ function setup() {
   } };
 }
 function terminal() { sy!.db.prepare("UPDATE tasks SET state='failed' WHERE id='delete-request'").run(); }
-async function blocked() {
+async function deleted() {
   terminal();
-  const config = readFileSync(env!.cfg.configPath, "utf8");
-  expect((await previewProjectDeletion(sy!, "beta")).blockers.join(" ")).toContain("reconcile them");
-  await expect(deleteProject(sy!, "beta", { confirm: "beta" })).rejects.toThrow("reconcile them");
-  expect(readFileSync(env!.cfg.configPath, "utf8")).toBe(config);
-  expect(() => purgeProjectRows(sy!.db, "beta", [])).toThrow("unresolved request");
-  expect(sy!.tasks.get("delete-request")).toBeDefined();
+  expect((await previewProjectDeletion(sy!, "beta")).blockers).toEqual([]);
+  expect((await deleteProject(sy!, "beta", { confirm: "beta" })).problems).toEqual([]);
+  expect(sy!.tasks.get("delete-request")).toBeUndefined();
+  expect(readFileSync(env!.cfg.configPath, "utf8")).not.toContain("beta:");
+  expect(sy!.db.prepare("SELECT uncertain,task_id,lease_json FROM provider_slots WHERE kind='request'").get()).toEqual({ uncertain: 1, task_id: "", lease_json: "[]" });
+  expect(sy!.db.pragma("foreign_key_check")).toEqual([]);
 }
-it.each(["reserve", "beginDispatch"] as const)("refuses deletion before config writes after lost %s acknowledgement", async stage => {
+it.each(["reserve", "beginDispatch"] as const)("deletes private scope and retains transport quarantine after lost %s acknowledgement", async stage => {
   const { request, client } = setup(), ledger = sy!.gate.ledger;
   if (stage === "reserve") {
     const original = ledger.reserve.bind(ledger);
@@ -52,7 +51,7 @@ it.each(["reserve", "beginDispatch"] as const)("refuses deletion before config w
   await expect(sy!.gate.request(request)).rejects.toBeInstanceOf(RequestPersistenceError);
   expect(client.requests).toHaveLength(0);
   expect(new RequestReceipts(sy!.db).blockers("beta")).toEqual({ requests: 1, slots: 1 });
-  await blocked();
+  await deleted();
 });
 it("retains independent uncertain transport authority even when accounting settled", async () => {
   const { request, lease } = setup();
@@ -60,7 +59,7 @@ it("retains independent uncertain transport authority even when accounting settl
   sy!.db.prepare("INSERT INTO provider_slots(id,platform,kind,holder,task_id,lease_owner,priority,since,seen_at,lease_json,nonce,uncertain) VALUES('uncertain','fixture','request','holder',?,?,0,1,1,?,'nonce',1)")
     .run(lease.taskId, lease.owner, JSON.stringify([lease]));
   expect(new RequestReceipts(sy!.db).blockers("beta")).toEqual({ requests: 0, slots: 1 });
-  await blocked();
+  await deleted();
 });
 it("purges settled private bindings while preserving accounting and consumed request IDs", async () => {
   const { request } = setup();
