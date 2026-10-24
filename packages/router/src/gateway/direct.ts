@@ -33,13 +33,19 @@ export interface DirectRuntime {
 }
 
 /** Gateway errors after which trying the next ranked model is reasonable. */
-export const FALLBACK_KINDS = new Set<GatewayErrorKind>(["rate_limited", "pool_exhausted", "server", "timeout", "transport", "bad_request"]);
+export const FALLBACK_KINDS = new Set<GatewayErrorKind>(["rate_limited", "pool_exhausted", "server", "timeout", "transport", "bad_request", "unknown_model"]);
 
 /**
  * Failures that say something about the key, not the provider or the request: try another key
  * (`not_in_plan`: another key's plan may include the model; with none, the gate tries the next model).
  */
-const KEY_LEVEL = new Set<ProviderErrorKind>(["rate_limited", "auth_invalid", "out_of_credits", "not_in_plan"]);
+const KEY_LEVEL = new Set<ProviderErrorKind>(["rate_limited", "auth_invalid", "out_of_credits", "not_in_plan", "unknown_model"]);
+
+/** Definite account/model refusals do not consume the transient endpoint retry allowance.
+ * Every physical request still consumes normal admission, request and paid budgets. */
+function unavailableRefusal(error: GatewayError): boolean {
+  return error instanceof ProviderError && !error.possiblyConsumed && ["not_in_plan", "unknown_model", "auth_invalid", "out_of_credits"].includes(error.reason);
+}
 
 const REASON_OF: Record<GatewayErrorKind, ProviderErrorKind> = {
   rate_limited: "rate_limited",
@@ -80,7 +86,7 @@ export interface DirectDeps {
 
 export type DirectOutcome =
   | { kind: "skip"; resumeAt: number | null }
-  | { kind: "failed"; error: GatewayError }
+  | { kind: "failed"; error: GatewayError; unavailable?: boolean }
   | { kind: "ok"; requestId: string; response: ChatResponse };
 
 const when = (t: number | null) => (t === null ? "" : ` until ${new Date(t).toISOString()}`);
@@ -158,7 +164,7 @@ export async function requestDirect(
       });
       if (!sel.credential) {
         // Keys were tried and failed: the gate moves on to the next endpoint.
-        if (lastKeyError) return { kind: "failed", error: lastKeyError };
+        if (lastKeyError) return { kind: "failed", error: lastKeyError, unavailable: unavailableRefusal(lastKeyError) };
         const blocked = sel.blocked.filter((b) => b.reason !== "excluded" && b.reason !== "unusable");
         attempts.push({ endpointId: ep.id, outcome: `skipped: no ${provider.id} key available (${blocked.map((b) => `${b.ref}: ${b.reason}${when(b.until)}`).join("; ") || "none usable"})` });
         return { kind: "skip", resumeAt: sel.resumeAt };
@@ -212,7 +218,7 @@ export async function requestDirect(
         d.health.breakers.release(ep.providerId);
         if (err instanceof AdmissionDenied && PAID_BUDGET_DENIALS.has(err.reason)) {
           attempts.push({ endpointId: ep.id, outcome: `skipped (paid budget): ${err.message}`, denial: err.reason });
-          return lastKeyError ? { kind: "failed", error: lastKeyError } : { kind: "skip", resumeAt: null };
+          return lastKeyError ? { kind: "failed", error: lastKeyError, unavailable: unavailableRefusal(lastKeyError) } : { kind: "skip", resumeAt: null };
         }
         throw err instanceof AdmissionDenied ? err : new RequestPersistenceError("reserve", requestId, err);
       }
@@ -303,7 +309,7 @@ export async function requestDirect(
           lastKeyError = pe;
           continue;
         }
-        if (FALLBACK_KINDS.has(pe.kind)) return { kind: "failed", error: pe };
+        if (FALLBACK_KINDS.has(pe.kind)) return { kind: "failed", error: pe, unavailable: unavailableRefusal(pe) };
         throw Object.assign(pe, { attempts });
       }
 

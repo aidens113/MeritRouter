@@ -127,7 +127,7 @@ describe("direct free requests", () => {
     // Every usable key refused it: routing leaves it out (with the reason), and no request is spent.
     const preview = sy.router.plan("summarize", "T1", ["text"]);
     expect(preview.candidates.map((e) => e.id)).toEqual(["acme/in-plan"]);
-    expect(preview.explanations.find((x) => x.endpointId === "acme/plan-only")!.reasons).toEqual([expect.stringMatching(/^not in the plan of any acme key/)]);
+    expect(preview.explanations.find((x) => x.endpointId === "acme/plan-only")!.reasons).toEqual([expect.stringMatching(/^model unavailable with every acme key/)]);
     const [second] = await sy.submitTasks([summarizeTask({ goal: "Summarise the log again" })]);
     const r2 = (await sy.awaitResults([second!.taskId], { timeoutSeconds: 10 })).completed[0]!;
     expect(r2.routing!.attempts).toEqual([{ endpointId: "acme/in-plan", outcome: "succeeded" }]);
@@ -136,8 +136,8 @@ describe("direct free requests", () => {
 
     // A plan refusal is not a quarantine: the models view says why, without "quarantined".
     const view = insights.modelsView(sy).find((v) => v.endpoint.id === "acme/plan-only")!;
-    expect(view).toMatchObject({ quarantined: null, planRefused: expect.stringMatching(/^not in the plan of any acme key/) });
-    expect(view.headline).toMatch(/^Not available with your keys: not in the plan/);
+    expect(view).toMatchObject({ quarantined: null, planRefused: expect.stringMatching(/^model unavailable with every acme key/) });
+    expect(view.headline).toMatch(/^Not available with your keys: model unavailable/);
 
     // Re-keying or re-enabling the key forgets its refusals.
     sy.providers.keys.clear(REF_A);

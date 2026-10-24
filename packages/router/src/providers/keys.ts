@@ -34,7 +34,7 @@ export interface KeyState {
   rateLimits: RateLimitSnapshot | null;
   /** The last free daily quota probe (OpenRouter). */
   quota: FreeDailyQuota | null;
-  /** Models this key's plan refused (`not_in_plan`), by provider model id: when, and the provider's words. */
+  /** Models this key refused (`not_in_plan` or `unknown_model`), by provider model id: when, and the provider's words. */
   planRefusals: Record<string, PlanRefusal>;
   selectedSeq: number;
   updatedAt: number;
@@ -224,14 +224,14 @@ export class ProviderKeys {
   /**
    * The key's request failed. `rate_limited` cools the key (the provider's wait, else a doubling
    * default); `auth_invalid` (401/403) and `out_of_credits` (402, spend caps) disable it;
-   * `server`, `timeout`, and `transport` only count a failure. `not_in_plan` records the refused
-   * `model` on the key (skipped for it, the key stays usable). Bad requests, unknown models,
-   * policy refusals, and aborts say nothing about the key and are ignored.
+   * `server`, `timeout`, and `transport` only count a failure. `not_in_plan` and definite
+   * `unknown_model` record the refused `model` on the key (skipped for it, the key stays usable).
+   * Bad requests, policy refusals, and aborts say nothing about the key and are ignored.
    */
   recordFailure(key: KeyRef, err: ProviderError, model: string | null = null): void {
     const ref = typeof key === "string" ? key : key.ref;
     const last4 = typeof key === "string" ? undefined : key.last4 || undefined;
-    if (err.reason === "not_in_plan") {
+    if (err.reason === "not_in_plan" || (err.reason === "unknown_model" && !err.possiblyConsumed)) {
       if (!model) return;
       immediate(this.db, () => {
         const refusals = { ...(this.get(ref)?.planRefusals ?? {}), [model]: { at: this.now(), message: err.message.slice(0, 500) } };
