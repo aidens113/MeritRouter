@@ -1,6 +1,6 @@
 # Supervisor lifecycle stall investigation
 Status: Active
-Status detail: Correction b6de6be published dev/main; same parent resumed in linked session and dispatched deps-setup worker.
+Status detail: Checked-candidate sealing and retained recovery verified; final failed-file34/34 plus recursive checks pass, publication/live retry next.
 Created: 2026-10-23
 Last updated: 2026-10-25
 Owner: Senior supervisor agent
@@ -9,6 +9,22 @@ Paired document: none
 Related: [supervised delivery](supervised-delivery-v2.md)
 
 ## Current State
+
+Final checked-candidate source verified: root recursive typecheck/build exit0, focused33/33;
+full1484-test aggregate1479pass/2earlier-sourcefail/3skip in735.72s. Captured full began
+before final cap refusal and duplicate-event suppression. Exact final failed-file serial
+rerun34/34 passed56.44s; separate parallel file rerun9/10 had unrelated classifier timing,
+resolved in final serial10/10. Assertions unchanged; full aggregate not wholly green.
+Publish coherent source, resume same parent, FIRST retry retained deps-setup2 integration.
+
+Latest live blocker: deps-setup2 t_0mvoaezx59bab910181df completed/met with install and
+typecheck exit0, but integrate_task refused actual tree17945de6905d vs checked37770005900e.
+Root stopped daemon20836 before further setup churn; preserve worktree and parent390cap.
+Investigate source sealing/check finalization mismatch, never bypass exact-tree integration.
+Previous setup failed unallowed tsconfig.tsbuildinfo; new brief added ignore/scope correctly.
+Actual panel approvals operated throughout, routine commands reviewed and results inspected.
+No Facebook app exists or is accepted. Root authors no application code.
+
 
 Live deployment receipt: source b6de6be pushed dev/main, daemon20836 and rebuilt panel4477
 active. Explicitly cancelled expired deps3 through supported MCP; resumed same parent through
@@ -306,6 +322,24 @@ not approved/executed by FINAL. Compiler/configuration and usable-app acceptance
 - No repository-wide validation while workers edit; narrow read-only reasoning only. Root will run integrated checks after edits settle.
 - Report concrete blockers and unverified assumptions to docs/working/supervisor-lifecycle-stall/reports/observation-recovery-review.md.
 
+### Corrective worker brief: checked tree integration mismatch (2026-10-25)
+- Role: worker, direct dev; no commit/push, no live mutations or app edits/shared doc edits.
+- Goal: trace and fix completed/met worker candidate checked-tree vs integration tree mismatch without weakening exact-source verification.
+- Start: harness/integration-tools.ts line98, native runner check sealing/finalization and worker results; follow only relevant owners.
+- Runtime evidence read-only: deps-setup2 t_0mvoaezx59bab910181df; worktree D:/SwitchYard/.switchyard/worktrees/t_0mvoaezx59bab910181df-r1-mvoaf0yq; checked37770005900e vs actual17945de6905d. Fake-provider regression required before fix.
+- Own framework source/tests for specific sealing bug; coordinate ownership before editing if another active worker overlaps. No other code worker currently active.
+- Preserve source/approval/ownership/lease fences and exact validated revision. Do not just accept current HEAD or ignore dirty trees.
+- Read current working state above, inspect actual check/artifact/runtime history to identify changed paths. Report observed cause and files before broad implementation.
+- Report docs/working/supervisor-lifecycle-stall/reports/checked-tree-mismatch.md; run narrow regression/checks. Root independently verifies release and handles live recovery.
+- Integrated follow-up: session-recording full run expected2workspace events/got3; avoid duplicate setWorkspace when sealing returns existing HEAD, preserving assertions.
+
+### Corrective worker brief: checked candidate safety review (2026-10-25)
+- Role: read-only reviewer; no live/app/shared doc changes, no commit/push, own report only.
+- Review checked_tree_mismatch worker's new attribution/checked-candidate.ts, harness/checked-task-candidate.ts and finish.ts/integration-tools.ts diff as available.
+- Independently check normal pre-check attributed sealing and narrow legacy staged-candidate recovery: exact tree/HEAD/index/unstaged/untracked/patch/source/action/task/session/owner/lease scope, check artifact provenance and cancellation. Refuse Lab mutation or inconsistent evidence.
+- Communicate actionable blockers to root/implementer. No broad tests during editing; root validates final frozen source.
+- Own report docs/working/supervisor-lifecycle-stall/reports/checked-candidate-review.md.
+
 ## Work Ledger
 ### 2026-10-23 - Live stall reproduced
 - Agent: supervisor
@@ -420,6 +454,28 @@ not approved/executed by FINAL. Compiler/configuration and usable-app acceptance
 - Validation: parent running in linked s_0mvoa32avbabc4483ff3b with old failed session unchanged, same integration head/original deadline/390cap. Actual planv8/v9 and deps-setup t_0mvoa4oiib5bc69d2cdaf running; no pending approval at read. Panel job HTTP response restored; config SHA256 unchanged.
 - Outcome: Partial
 - Follow-up: oversee implementation, operate exact reviewed routine panel actions, independently verify product. Batch rejected supervisory operations observed and recorded; app still unaccepted.
+
+### 2026-10-25 - Resumed active panel oversight after missed approval
+- Agent: supervisor
+- Changed: resumed continuous oversight after user observed another apparent stop. Parent/child were alive; exact install wa_0mvoa4xjwaea91bb9cbf5 awaited approval. Approved through actual panel UI under standing user delegation; install exit0.
+- Validation: approved actual typecheck; first exit2 invalid swcMinify, worker repaired it. Subsequent typechecks exit0 but one source-bound check record exitCode null because generated source/cache changed. Worker added next-env.d.ts; approved exact fresh source checks. Duplicate manual install request denied via panel; distinct post-submission install approved.
+- Outcome: Partial
+- Follow-up: stay with job through approvals/failures/dispatch/review/runtime checks, not merely resume-and-exit. Record confusing source-change evidence diagnostic and redundant check requests for framework follow-up. Placeholder npm test echo is not product test evidence; audit4findings remain untriaged.
+
+### 2026-10-25 - Setup churn reached checked-tree integration defect
+- Agent: supervisor
+- Changed: kept panel oversight active through actual install/typecheck approvals, denied redundant manual install; deps-setup2 completed/met. Paused runtime before further setup retries and dispatched checked-tree-mismatch framework worker.
+- Validation: deps-setup failed scope tsconfig.tsbuildinfo despite successful commands; deps-setup2 fixed ignore/scope. Its first recipe install30000ms timed out; direct replacement300000ms completed exit0, final install/typecheck both exit0. integrate_task refused actual17945de6905d vs checked37770005900e. Worker read-only trace confirms exactly staged package-lock.json1887lines missing from final HEAD8dae73c; finishCoding collect bound staged tree but never attributed-committed generated files.
+- Outcome: Partial
+- Follow-up: fix exact checked candidate sealing without weakening integration/source fences; preserve completed candidate and390cap. Original daemon stopped and stale MCP12488 stopped; dead running lease awaits normal recovery. No app source changes by FINAL.
+
+### 2026-10-25 - Exact checked candidate sealing independently verified
+- Agent: supervisor
+- Changed: worker-owned immutable captured-tree commit with expected-old HEAD CAS, coding pre-check seal and session update, strict retained worker proof recovery, internal Git allowlist, regressions; authored operations docs.
+- Why: generated package-lock was staged/checked but absent from worker HEAD, forcing repeated setup tasks at integration.
+- Validation: root final pnpm -r typecheck/build exit0. Focused33/33; full156-file1484-test aggregate1479pass/2fail/3skip in735.72s, started before final cap/no-op-event fixes. Exact final failed-file rerun34/34 in56.44s. Initial parallel final session-file9/10 had unrelated classifier grouping timing; serialfinal10/10 passed unchanged. Worker58/58 and follow-up30/30 reported, independently covered by root aggregate/targeted checks. Source review no remaining blocker.
+- Outcome: Accepted
+- Follow-up: publish, refresh runtime, retry exact retained deps-setup2 via supervisor tool; independently verify integration then actual app implementation. No app source edits by FINAL or relaxed revision guard.
 
 ### Deferred: make approval requests obvious (user request 2026-10-25)
 - Owner: senior supervisor, future panel UX work. User explicitly requested recording this for later; continue MVP oversight now.

@@ -11,6 +11,9 @@ import { baseResult, type RunContext, type RunOutcome } from "../types.js";
 import { awaitWorkerCommand, workerSourceIdentity } from "../../harness/worker-actions.js";
 import { criteria } from "../../core/task.js";
 import { checkRunOutcome } from "../../verification/checks.js";
+import { sealCheckedCandidate } from "../../attribution/checked-candidate.js";
+import { workerActor } from "../../harness/worker.js";
+import { assertRunAuthority } from "../../harness/task-authority.js";
 
 export function sourceDirtyFinding(ws: Workspace): RunOutcome["result"]["findings"] {
   return ws.sourceDirty
@@ -96,6 +99,14 @@ export async function finishCoding(
   const changes = await o.worktrees.collect(o.ws, spec.constraints.allowedPaths ?? [], ctx.cfg.coding.protected_paths);
   // collect() staged everything: the staged tree is the submitted revision.
   const revision = await stagedTree(o.ws.worktreePath);
+  // Declared commands can create allowed files without an editing response (e.g. a
+  // dependency lockfile). Final checks must run on a committed, integrable candidate.
+  if (!ctx.signal.aborted && o.state === "completed" && changes.changed.length && !changes.outOfScope.length && revision) {
+    const head = (await git(o.ws.worktreePath, ["rev-parse", "HEAD"])).trim();
+    const sealed = await sealCheckedCandidate({ worktree: o.ws.worktreePath, head, tree: revision,
+      actor: workerActor(ctx, "implementer", ctx.attempts.at(-1)?.endpointId ?? null), assertAuthority: () => assertRunAuthority(ctx) });
+    if (sealed !== head) ctx.session?.setWorkspace({ repos: [{ alias, worktree: o.ws.worktreePath, branch: null, baseCommit: o.ws.baseSha, head: sealed }] });
+  }
   const artifactDigest = changes.patch ? createHash("sha256").update(changes.patch).digest("hex") : null;
   const patchRef = changes.patch
     ? ctx.artifacts.write({ taskId: ctx.taskId, executionId: o.executionId, kind: "patch", label: `patch against ${o.ws.baseSha.slice(0, 12)}`, content: changes.patch, mediaType: "text/x-diff", extension: ".patch" })

@@ -6,6 +6,14 @@ own working document with decisions, phases, ledger, and reports.
 
 ## Current effort (2026-10-25)
 
+Latest blocker: deps-setup2 completed/met but integration refused staged checked lockfile
+missing from final worker commit. Runtime paused; checked-candidate seal + narrow retained
+candidate recovery implemented by worker, independent source review clear. Root final
+focused33/33 and recursive typecheck/build pass. Full1479pass/2pre-final-sourcefail/3skip;
+exact final failed-file serial34/34 pass56.44s; no weaker assertions. Publish/live retry next. Actual
+retained-task integration must be verified after release before declaring setup delivered.
+No usable Facebook app accepted; Codex authors no app code and actively operates panel.
+
 Latest follow-up: Facebook parent t_0mvo6hmvmd7be5c1e9417 failed with
 repeated_tool_call:task_result while deps3 was running. No pending approval explains the stop.
 Focused correction uses host-only measured-wait receipts to reset observation windows;

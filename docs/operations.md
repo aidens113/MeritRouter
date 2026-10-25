@@ -682,6 +682,14 @@ not enable PostgreSQL or multiple hosts.
 
 ## Recovery
 
+Before final coding checks, MeritRouter seals allowed generated files (such as dependency
+lockfiles) into an attributed commit of the exact captured tree. Integration still requires
+the checked tree. A retained legacy result with an uncommitted checked index can be sealed
+only when its completed author session, original HEAD, patch digest, every successful final
+command action and current source all agree. Dirty, changed, incomplete or Lab-bound proof
+is refused; the runtime never substitutes the latest tree for the checked candidate.
+
+
 - State lives in `.meritrouter/meritrouter.db` (SQLite, WAL). It is written before every
   acknowledgement and at every state change.
 - When a worker dies, its leases expire (`execution.lease_seconds`). The next worker marks those

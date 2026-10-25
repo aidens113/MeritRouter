@@ -16,6 +16,7 @@ import { executeSupervisorCommand } from "./worker-actions.js";
 import { mediateOutsideOperation, withOutsideAuthority } from "./outside-operation.js";
 import type { HarnessEnv, HarnessTool } from "./tools.js";
 import type { IntegrationRepo, SupervisorState } from "./supervisor-tools.js";
+import { sealRetainedCheckedTask } from "./checked-task-candidate.js";
 
 /**
  * Integration onto a job branch (`integrate_task`): the acceptance gate, where a finished task's
@@ -94,7 +95,12 @@ async function integrationGateAfter(s: SupervisorState, id: string, t: TaskView,
   // Checks are bound to the tree they ran on: a worktree changed since then is not what was verified.
   const verifiedTree = r.checks.map((c) => c.revision).find((x): x is string => typeof x === "string");
   if (target.kind === "task" && verifiedTree && target.sourceWorktree) {
-    const head = (await git(target.sourceWorktree, ["rev-parse", "HEAD^{tree}"])).trim();
+    let head = (await git(target.sourceWorktree, ["rev-parse", "HEAD^{tree}"])).trim();
+    if (head !== verifiedTree) {
+      target.head = await sealRetainedCheckedTask(s.ctx, { taskId: id, alias: target.repo.alias, worktree: target.sourceWorktree, head: target.head, base: target.base, tree: verifiedTree });
+      target.commits = (await git(target.sourceWorktree, ["rev-list", "--reverse", `${target.base}..${target.head}`])).split("\n").map(line => line.trim()).filter(Boolean);
+      head = (await git(target.sourceWorktree, ["rev-parse", "HEAD^{tree}"])).trim();
+    }
     if (head !== verifiedTree) throw new Error(`refused: ${id}'s worktree (tree ${head.slice(0, 12)}) is not the revision its checks ran on (${verifiedTree.slice(0, 12)}); re-delegate it`);
   }
   // A strict result only a human may accept is refused before anything is integrated.

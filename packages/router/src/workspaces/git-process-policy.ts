@@ -5,7 +5,7 @@ import { devNull } from "node:os";
 
 const GIT_NULL = process.platform === "win32" ? "NUL" : devNull;
 const IDENTITY_ENV = /^(GIT_(AUTHOR|COMMITTER)_(NAME|EMAIL|DATE))$/i;
-const INTERNAL_COMMANDS = new Set(["init", "add", "commit", "diff", "diff-tree", "show", "show-ref", "log", "blame", "grep", "rev-parse", "rev-list", "status", "ls-files", "worktree", "switch", "symbolic-ref", "merge-base", "merge", "cherry-pick", "rebase", "revert", "reset", "update-ref", "for-each-ref", "branch", "check-ref-format", "config", "ls-tree", "cat-file", "write-tree", "read-tree", "apply", "check-ignore"]);
+const INTERNAL_COMMANDS = new Set(["init", "add", "commit", "commit-tree", "diff", "diff-tree", "show", "show-ref", "log", "blame", "grep", "rev-parse", "rev-list", "status", "ls-files", "worktree", "switch", "symbolic-ref", "merge-base", "merge", "cherry-pick", "rebase", "revert", "reset", "update-ref", "for-each-ref", "branch", "check-ref-format", "config", "ls-tree", "cat-file", "write-tree", "read-tree", "apply", "check-ignore"]);
 const EXECUTABLE_CONFIG = /^(filter\..*\.(clean|smudge|process)|merge\..*\.driver|trailer\..*\.(command|cmd)|diff\..*\.(command|textconv)|core\.alternaterefscommand|include\.path|includeif\..*\.path)$/i;
 const SAFE_CONFIG = [
   "core.fsmonitor=false", `core.hooksPath=${GIT_NULL}`, "commit.gpgsign=false", "tag.gpgsign=false", "merge.gpgsign=false",
