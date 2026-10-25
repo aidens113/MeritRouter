@@ -12,7 +12,8 @@ import { ConfirmDialog } from "./confirm-dialog";
  * shows (`useLive` / `<LiveStatus topics>`), and only a change to one of them re-renders the
  * page's server components in place (router.refresh: no reload, scroll position and open
  * disclosures kept), at most about once a second. Pausing stops this tab's refreshes, never the
- * work it shows; changes that arrive while paused are applied on resume.
+ * work it shows; changes that arrive while paused are applied on resume. Hidden tabs release
+ * their connection and catch up from the saved cursor when visible again.
  */
 
 export type LiveState = "connecting" | "live" | "reconnecting" | "paused" | "offline";
@@ -106,25 +107,35 @@ export function LiveProvider({ scope, children }: { scope: string; children: Rea
     let retry: ReturnType<typeof setTimeout> | null = null;
     let stopped = false;
 
-    const connect = () => {
-      if (stopped) return;
+    const disconnect = () => {
       if (retry) clearTimeout(retry);
       retry = null;
-      es?.close();
+      const source = es;
+      es = null;
+      connected.current = false;
+      source?.close();
+    };
+
+    const connect = () => {
+      if (stopped || document.visibilityState !== "visible") return;
+      disconnect();
       const q = new URLSearchParams({ scope });
       if (cursor) q.set("cursor", cursor);
       const source = new EventSource(`/api/live?${q.toString()}`);
       es = source;
+      const current = () => es === source && !stopped && document.visibilityState === "visible";
       const remember = (e: MessageEvent) => {
         if (e.lastEventId) cursor = e.lastEventId;
       };
       source.addEventListener("hello", (e) => {
+        if (!current()) return;
         remember(e as MessageEvent);
         attempt = 0;
         connected.current = true;
         if (!snap.current.paused) update({ state: "live" });
       });
       source.addEventListener("change", (e) => {
+        if (!current()) return;
         remember(e as MessageEvent);
         try {
           const data = JSON.parse((e as MessageEvent).data as string) as { topics?: unknown };
@@ -134,6 +145,7 @@ export function LiveProvider({ scope, children }: { scope: string; children: Rea
         }
       });
       source.addEventListener("reset", (e) => {
+        if (!current()) return;
         remember(e as MessageEvent);
         pending.current = true;
         flush();
@@ -141,7 +153,7 @@ export function LiveProvider({ scope, children }: { scope: string; children: Rea
       source.onerror = () => {
         // Take over from the browser's own retry so the wait grows and the cursor is sent back.
         source.close();
-        if (es !== source || stopped) return;
+        if (!current()) return;
         es = null;
         connected.current = false;
         if (!snap.current.paused) update({ state: navigator.onLine === false ? "offline" : "reconnecting" });
@@ -153,7 +165,7 @@ export function LiveProvider({ scope, children }: { scope: string; children: Rea
 
     const soon = () => {
       // Back on the network or the tab: try at once instead of waiting out the backoff.
-      if (!es && !stopped) {
+      if (!es && !stopped && document.visibilityState === "visible") {
         attempt = 0;
         connect();
       }
@@ -162,18 +174,24 @@ export function LiveProvider({ scope, children }: { scope: string; children: Rea
       if (document.visibilityState === "visible") {
         soon();
         flush();
+      } else {
+        disconnect();
+        if (flushTimer.current) clearTimeout(flushTimer.current);
+        flushTimer.current = null;
+        // Without a cursor, the next hello cannot tell us what the hidden page missed.
+        if (!cursor) pending.current = true;
+        if (pending.current) update({ waiting: true });
+        if (!snap.current.paused) update({ state: "reconnecting" });
       }
     };
 
     update({ state: snap.current.paused ? "paused" : "connecting" });
-    connect();
+    onVisible();
     window.addEventListener("online", soon);
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       stopped = true;
-      connected.current = false;
-      if (retry) clearTimeout(retry);
-      es?.close();
+      disconnect();
       window.removeEventListener("online", soon);
       document.removeEventListener("visibilitychange", onVisible);
     };
