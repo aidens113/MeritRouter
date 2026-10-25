@@ -1,3 +1,4 @@
+import { resolveRepairSource } from "../workspaces/repair-hydration.js";
 import { executeSupervisorCommand, WorkerActionRequests } from "./worker-actions.js";
 import { supervisorActionTools, workerActionCapability } from "./worker-action-tools.js";
 import { z } from "zod";
@@ -180,6 +181,7 @@ function briefProperties(allowSupervise: boolean): Record<string, unknown> {
     },
     goal: { type: "string" },
     acceptance_criteria: { type: "array", items: { type: "string" } },
+    repair_from_task: { type: "string", description: "Owned terminal coding task whose retained commits should hydrate this repair workspace; all inherited paths must fit allowed_paths. Does not accept its result." },
     file_refs: { type: "array", items: { type: "string" }, description: "<alias>:<path>[#Lx-Ly]" },
     repositories: { type: "array", items: { type: "string" } },
     writable_repository: { type: "string" },
@@ -367,6 +369,14 @@ async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, un
     for (const alias of Object.keys(bc)) bc[alias] = (await git(s.repos.get(alias)!.worktree, ["rev-parse", "HEAD"])).trim();
   }
   for (const sp of specs) {
+    const item = fresh.find(x => x.label === sp.label)!.it;
+    if (item.repair_from_task !== undefined) {
+      if (item.profile !== "implement" || typeof item.repair_from_task !== "string") throw new Error("repair_from_task requires an implementation task and owned task reference");
+      const sourceId = ownTask(s, item.repair_from_task);
+      const alias = String(sp.spec.writableRepository);
+      const context = sp.spec.context as { baseCommits: Record<string,string>; repairSource?: unknown };
+      context.repairSource = await resolveRepairSource(s.ctx, sourceId, alias, sp.spec.constraints as {allowedPaths?:string[]}, jobId);
+    }
     if (!sp.sub) {
       await recordBrief(s, env, sp.brief);
       continue;
@@ -607,6 +617,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
           return {
             label,
             profile: profile as PlanNodeInput["profile"],
+            repairFromTask: it.repair_from_task === undefined ? null : z.string().min(1).parse(it.repair_from_task),
             goal: String(it.goal ?? ""),
             acceptanceCriteria: Array.isArray(it.acceptance_criteria) ? (it.acceptance_criteria as unknown[]).map(String) : [],
             dependsOn: ((it.depends_on as string[] | undefined) ?? []).map(slug),

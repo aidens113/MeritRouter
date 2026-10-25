@@ -370,6 +370,28 @@ project's slug, so the default grants never reach another project's folder.
 - **The panel.** A project's Brain page shows that project's folder, `global/`, and the root.
   Opening another project's path shows a link to that project's Brain page, not the document.
 
+### Retained coding repairs
+
+For a repair of an owned terminal coding task, set `repair_from_task` to its label or ID
+in the recorded plan and dispatched brief. Its source binding must match the plan. The source
+is repair data, not an accepted dependency: keep its failed result and give the new repair a
+fresh label. Use the repaired task as the downstream dependency after its checks and review.
+
+Before the model runs, the framework replays the retained attributed commits into a new clean
+worktree on the current job base. The integration base stays current, so later integration
+includes the inherited implementation and the correction while preserving newer disjoint work.
+The server resolves and revalidates the strict `context.repairSource` descriptor; a model cannot
+use it to authorize another project, parent, repository or path. The original task is unchanged
+and is not accepted by hydration. All checks and protected-file review run on the new candidate.
+
+Source history must be terminal, clean, attributed, linear and quiescent; inherited source paths
+and actual replayed target changes are checked against scope. Replay uses internal guarded Git,
+with a 100-commit and 8 MiB cumulative patch-byte ceiling. Merge histories, symlinks/submodules,
+Lab-bound source/repair and quality-retry starts are refused. A conflict or interrupted hydration
+keeps a typed failure/start receipt and refuses model work or final checks; use a new repair
+rather than replaying partial effects. A completed receipt supports legitimate later repair
+commits and a fresh worker lease on resume without reapplying the retained commits.
+
 ### Automatic context and typed memory
 
 Automatic context resolves live ACLs before selecting/rendering memory. Default token ceilings

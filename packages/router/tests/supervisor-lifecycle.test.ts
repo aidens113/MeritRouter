@@ -160,6 +160,14 @@ describe("supervisor lifecycle enforcement", () => {
     expect(() => assertPlannedBriefs(ctx, [{ ...brief, label: "unplanned-review" }], "core")).toThrow(/plan_required/);
   });
 
+  it("binds repair source to its persisted draft before dispatch", async () => {
+    const { ctx,run,prepare } = await fixture(); prepare();
+    const repair={...brief,repair_from_task:"original-source"};
+    await run("plan_work",{nodes:[repair],dispatch:false});
+    expect(()=>assertPlannedBriefs(ctx,[{...repair,repair_from_task:"foreign-source"}],"core")).toThrow(/repairFromTask/);
+    expect(sy!.tasks.childrenOf(ctx.taskId)).toHaveLength(0);
+  });
+
   it("bounds discovery using task-wide requests across reopened runner instances", async () => {
     const { ctx, prepare, run } = await fixture();
     vi.spyOn(ctx.gate.admission, "taskTotals").mockReturnValue({ requests: SUPERVISOR_DISCOVERY_REQUESTS } as ReturnType<typeof ctx.gate.admission.taskTotals>);

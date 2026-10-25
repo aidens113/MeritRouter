@@ -37,6 +37,7 @@ export const PlanNodeSchema = z
     /** Labels of nodes in this plan, or of tasks the job dispatched earlier. */
     dependsOn: z.array(z.string().regex(PLAN_LABEL_RE)).default([]),
     writableRepository: z.string().nullable().default(null),
+    repairFromTask: z.string().min(1).nullable().default(null),
     allowedPaths: z.array(z.string().min(1)).nullable().default(null),
     checks: z.array(z.string().min(1)).default([]),
     labChecks: z.array(LabNameSchema).max(10).default([]),

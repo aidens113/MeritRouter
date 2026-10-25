@@ -586,6 +586,16 @@ not enable PostgreSQL or multiple hosts.
   upstream's own head. A node with `requires_accepted_inputs` (default for high and critical
   importance) waits while an upstream is `not_verified` or `needs_supervisor`, and fails on
   `unmet`.
+- **Retained repair source.** `plan_work`/`delegate` briefs may set `repair_from_task` to an
+  owned terminal coding sibling. The persisted plan binds that source. A new scoped workspace
+  replays its immutable attributed commits on the current integration base before any model
+  request; source acceptance is unchanged, and the repair must pass fresh checks/review.
+  Same-project/parent/repository, clean author workspace, complete quiescent history, per-commit
+  scope and actual target scope/modes are enforced. Replay is bounded to 100 linear commits and
+  8 MiB cumulative patch bytes, using internal guarded Git. Lab/quality-retry starts, conflicts,
+  ambiguous provenance and incomplete hydration receipts fail closed; no partial replay is
+  silently resumed. A completed receipt retains subsequent legitimate repair commits across
+  worker-lease changes. See [retained coding repairs](roles.md#retained-coding-repairs).
 - **File leases.** A coding task takes a lease on its write globs when it is claimed and keeps it
   until it finishes, is interrupted, or its task lease expires; a resumed task re-takes it. A task
   whose globs overlap a live lease in the same repository waits (`waiting_for_file_lease`).
