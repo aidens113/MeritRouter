@@ -6,6 +6,14 @@ own working document with decisions, phases, ledger, and reports.
 
 ## Current effort (2026-10-25)
 
+Live oversight continues: no usable Facebook app. Setup integration repaired/verified, then
+three core attempts looped; fourth cancelled. Effective cap540 after explicit
+external grant150; spent/deadline/paid0 preserved. Daemon19232 active. Supported trusted
+core-dependency-repair-v1 memory is confirmed in resumed parent/worker transcripts; next
+manifest-repair t_0mvobw40j70ed1e05c9f5 is running with reviewed type-dependency
+install approved. Next ensure accessible prior patch and per-worktree dependency install.
+Read rewritten Current State of active document; historical checkpoint text below is older.
+
 Latest blocker: deps-setup2 completed/met but integration refused staged checked lockfile
 missing from final worker commit. Runtime paused; checked-candidate seal + narrow retained
 candidate recovery implemented by worker, independent source review clear. Root final
