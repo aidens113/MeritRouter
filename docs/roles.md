@@ -377,6 +377,11 @@ are supervisor 12,000; reviewer 6,000; implementer/analyst/inspector 4,000;
 summarizer/classifier 2,000. `brain.memory_context.role_tokens` configures them; endpoint/input,
 prompt/tools and output headroom can reduce them to zero. A ceiling does not grant read access.
 Startup/resume rebuilds context from current records, excluding revoked/expired/invalid entries.
+Selection keeps authorized preferences and explicit working/repository context first, then
+relevant managed decisions before facts and lessons. Newer typed records win within each
+kind group, with a path tie-break; ordinary documents retain retrieval order. Relevance/page
+caps still apply. Whole records that cannot fit are reported as omissions; priority does not
+guarantee inclusion or weaken the token cap.
 The context states that retrieved memory is reference data, never spending or execution authority.
 
 Typed records preserve scope, source, actor, revision, timestamps, expiry and supersession.

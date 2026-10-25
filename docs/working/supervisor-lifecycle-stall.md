@@ -14,36 +14,35 @@ Active original Facebook MVP oversight: initiating Codex writes NO application c
 operates the actual panel under explicit user authorization. Do not end oversight merely
 because a task resumed or dispatched. Handle pending commands, failures, review and real
 product testing until delivered or user pauses. Panel: http://127.0.0.1:4477.
-No usable Facebook app or FINAL acceptance exists. Only manifest setup is integrated.
+No usable Facebook app or FINAL acceptance exists. Core and interface contract are retained; API/UI construction is active.
 
-Current repair parent t_0mvodbsfke4f94fab4e33, session s_0mvodc2jn57e5fd0f1ad4,
-new finite800requests/$0paid, starts actual retained core818e98d54ddda47e701db5391d95a033e49334f6.
-Published06c3513 dev/main activated daemon7800; no user configuration change.
-Old parent t_0mvo6hmvmd7be5c1e9417 completed supervisor_blocked, FINAL rejected all11criteria;
-382actual charges/history preserved. This is a new supported repair task, not budget reset.
-Core-repair t_0mvoddaole2fc8c2be9bb exhausted100actualrequests despite120requested grant.
-Actual post-submission npm install exit0; typecheck exit2 tests/store.test.ts:104 TS2556;
-npm test exit1:44pass/1fail, auth expiry test CommonJS require cannot resolve ../lib/store.
-Repair-fix t_0mvoe0ntde909389eb982 active150grant, actual oldbase818e98d (no candidate handoff).
-Root wrote supported scoped project-memory notes with real implementation/tests patch;
-worker brain_read BOTH notes observed. Exact npm10.9 Arborist edgesOut failed old resolution,
-then patched minimums installed0. Initial syntax/config errors fixed by worker. Actual final
-source45054d8a: npm test45/45 pass (6files,748ms), typecheck0. Submission/final checks pending;
-Core task completed/met via supervisor override;18commits integrated jobHEAD1dbe934. Parent lacks node_modules so integration checks failed; install there before tests. No app/pages yet, build expected to fail until API/UI. Deep reviewer
-used6requests with no verdict (verification_pending), NOT independently reviewed. Actual
-implement profile max_model_requests100 caps child120/150 grants; second task94execution+
-6review=100actual. Do not mislabel entire grant difference as reserved review or unavailable
-model failure. Standalone review profile allows40requests; final independent review required.
-Root writes no app code.
-Actual app versions now Vitest4.1.12/Vite6.4.5/Zod4.6.7, real Node22/React19 types.
-Audit improved2critical/1high ->0critical/0high/3moderate CSS-chain; do not claim zero findings.
-New root planv1 had13nodes; v2 partial staffing dropped future phases, only core remains.
-Framework worker phased_plan_preservation owns supervisor-tools.ts/focused tests per written
-brief below; sends design before edits. Live remains06c3513 until independent validation.
-Plan preservation root typecheck/build pass; full157files/1509tests1490pass/16fail/3skip in598.12s.
-New lifecycle cases passed. Failures include timer/busy cleanup/browser and older subsystem
-assertions; root exact11-file serial rerun including changed lifecycle98/98 passed in449.05s. No source changes between runs. New fix accepted for publication; do not call full aggregate green.
-Root operates exact pending commands in actual panel, verifies results, writes no app code.
+Current continuation t_0mvof1bldb6e51dd16e6a, session s_0mvof1c9ma19e9ca8fc5a,
+finite500requests/$0paid, base3b5b6fa5fc5ccd978ac753d9a58a6752f2f16a88 contains verified
+core + INTERFACES.md. Prior repair t_0mvodbsfke4f94fab4e33 FAILED model_handoff_exhausted:
+repeated_tool_call:plan_work after81parent+100core1+100corefix+13interfaces+5cancelledbuild
+=299actualrequests; preserved. New500+old299<=799/800 repair ceiling, no reset/extra grant.
+Publishedc77c5c5 dev/main active daemon23760 after supported stop/start; no config change.
+Current graphv1 draft5nodes; v2 dispatches api+ui-core and RETAINS3future phases live.
+API t_0mvof2ck58bfd71573461 running85grant; ui-core t_0mvof2ck584c7903ff4b2 running90grant.
+Future ui-features, independent-review, runtime-validation remain visible, not dispatched.
+No usable app/FINAL acceptance yet. Root operates actual panel and writes no app code.
+Core actual45/45tests/typecheck/install passed,18commits integrated oldjob1dbe934; interfaces
+head3b5b6fa supplies newbase. Deep reviewer6requests/noverdict, supervisor override accepted;
+independent review still required. Implement profile actual cap100 bounds requested120/150.
+Actual app Vitest4.1.12/Vite6.4.5/Zod4.6.7/realNode22React19types; audit0critical/0high/3moderate.
+
+Plan preservation root recursive typecheck/build pass; full157files1509tests1490pass/16fail/
+3skip598.12s; exact failed10files+changed lifecycle serial98/98pass449.05s unchanged source.
+Do not call full aggregate green. Sourcec77c5c5 published dev/main, live graph confirms fix.
+Memory defect independently reproduced: old manifest11615/12000tokens included6.4Ktokens
+historical patches, OMITTED newer current plan decision. Supported CAS compacted integrated
+patch notes (full prior revisions/artifact preserved), cancelled premature build-only task;
+refreshed manifest7340tokens includes current decision/no omissions. Old supervisor still
+replayed historical build plan across eligible models and failed; new bounded continuation
+starts fresh transcript from retained code, does NOT bypass duplicate-effect guard.
+Worker current_memory_priority fixes selection order context/memory.ts + focusedtests;
+source frozen, worker21/21pass; root typecheckpass. Full157files1512tests1492pass/17fail/3skip650.61s; exact failed11files+3memory files serial125/125pass500.10s unchanged source. Do not claim full aggregate green. Build/publication pending. Root owns
+authored docs/review/build/release. No live activation until independently verified.
 Config SHA2562963B9A8B79CD23DC2425989BAD58A1BC068E6A6E8DA8F755C0145188B9554E7 unchanged.
 
 Published framework corrections through b4ef7bf (docs42c698f dev/main): supervisor default
@@ -344,6 +343,39 @@ Historical checkpoints preserved in [archive](supervisor-lifecycle-stall/archive
 - Explain safest immediate existing-tool operation for root supervisor without writing app code or raw DB state, and exact tests/implementation ownership for later fix. Do not deploy or submit tasks.
 - Report docs/working/supervisor-lifecycle-stall/reports/repair-context-handoff.md; send concrete conclusion promptly.
 
+### Corrective worker brief: current memory priority under context cap (2026-10-25)
+- Role: framework worker; own context/memory.ts and its focused tests only, own report; no app/live/config/shared doc edits or commits.
+- Actual supervisor resumed on c77c5c5 but latest memory_manifest artifact:a_0mvoet4er52df958ef791 included11615/12000tokens old notes and6.4Ktokens historical repair patches; omitted newer decision phased-plan-core-integrated-next-v1.md by role/context token cap. Supervisor then planned build-only task with no app/pages allowed before UI/API existed.
+- Root supported CAS-compacted now-integrated historical patch notes (full history/artifact preserved), cancelled premature build task and refreshes parent context. This fixes live symptom only.
+- Read Current State and context/memory.ts/memory-record metadata/relevant tests as needed. Diagnose ordering before edits and send design. Keep explicit authorized direct refs/working doc/preferences precedence; memory remains reference data, not authority.
+- Implement narrow deterministic selection so relevant current decisions cannot be starved by large older facts/patch notes; use typed provenance/updated metadata, no magic task/model IDs or dropped access/expiry/digest controls. Clearly report omissions and keep token cap.
+- Test constrained budget with old large project fact versus newer relevant decision, stable ordering, scoped/expired/revoked exclusions and direct reference precedence. Do not broaden app or routing behavior.
+- Report docs/working/supervisor-lifecycle-stall/reports/current-memory-priority.md with exact checks and frozen-source receipt; root owns independent validation/release.
+
+### Investigation brief: approval execution survives panel navigation (2026-10-25)
+- Role: read-only framework worker; own report only, no code/app/live/config/shared-doc edits or commits.
+- Actual parallel API install wa_0mvof4jkp61f355563ee4 became uncertain ResponseAborted when root refreshed same panel tab to approve UI. Persisted quiescedAt1792968624119 and no npm process confirmed stopped; new exact retry approved in separate tab. UI recipe install wa_0mvof7is3de7bc88131ab timed out28870ms; not navigation. Keep causes separate.
+- Root operator now opens unique retained tab per action, never reloads/closes running-command page. This prevents immediate operator error, not framework fix.
+- Read apps/panel/src/app/api/worker-actions/[id]/route.ts and harness/worker-actions.ts/executeSupervisorCommand call chain only as needed. Diagnose request.signal coupling, durable command owner/leases/recovery/cancel and exact approval semantics.
+- Recommend narrow safe detach/lifecycle design: approval persists once, supported durable executor owns bounded execution; browser disconnect must not cancel authorized command; explicit cancel/deadline/lease/source fences and unknown effect handling remain. Do not silently spawn uncontrolled background commands or weaken source checks.
+- Report docs/working/supervisor-lifecycle-stall/reports/approval-navigation-lifecycle.md promptly; no implementation while current memory source validation frozen.
+
+### Corrective worker brief: detach approved execution from browser abort (2026-10-25)
+- Role: worker; isolated worktree D:/SwitchYardRouter-approval-navigation, branch feat/approval-navigation off c77c5c5. Own its apps/panel/app/api/worker-actions/[id]/route.ts only; own report in main D:/SwitchYardRouter/docs/working/supervisor-lifecycle-stall/reports/approval-navigation-lifecycle-fix.md. No app/live/config/shared docs/commits. Root validation runs main concurrently; do not edit main source or start broad checks.
+- Read investigation report approval-navigation-lifecycle.md and route/admin/service call chain as needed. Exact req.signal forwarding cancels already-approved bounded execution on page reload, observed API ResponseAborted with quiesced proof.
+- Narrow fix: decouple browser transport abort from approved host execution in panel route. Existing WorkerActionRequests executor retains bounded timeout, task deadline, exact source/lease, explicit cancel and process-quiescence fences. No fire-and-forget, new global executor, relaxed request body/auth/source or replay of uncertain effects. Preserve explicitly supplied service cancellation for non-panel callers.
+- This addresses navigation lifetime only; durable separate runtime-owner architecture may be future work. Report scope honestly rather than claiming panel process death recoverability changed.
+- Root owns real demo HTTP regression: approve bounded fixture command, abort only browser HTTP client, verify persisted command completes0; explicit cancellation/timeout still terminate. Root also runs panel/router build/typecheck and actual demo panel/API checks.
+- If route simply removing req.signal is insufficient due real platform-owned lifetime, report evidence before broader architecture changes. No tests mirroring source string. Report reports/approval-navigation-lifecycle-fix.md and frozen diff.
+
+### Corrective worker brief: release hidden-tab live connections (2026-10-25)
+- Role: same approval-liveness worker/unit in isolated D:/SwitchYardRouter-approval-navigation branch feat/approval-navigation (root committed prior route fix868c27e). Own components/client/live.tsx only plus own main report; no main source/live/config/shared docs/commits.
+- Actual browser six Established4477 connections while each tab owns EventSource; final API test approval sat pending with busy controls. Root closed4completed action tabs, then POST ran. Resource timing proves fetchStart4047.8ms, requestStart161525.8ms, responseEnd164055.3ms:157478ms queued before request,2529.5ms response. Distinguish from navigation abort and UI recipe30s timeout.
+- Existing live.tsx suppresses hidden-tab refresh but keeps EventSource open. Narrow fix: suspend/close owned EventSource and cancel reconnect timers when document becomes hidden; reconnect visible using preserved cursor and existing pending/reset/catchup semantics. Online/backoff callbacks must not reopen while hidden; manual pause semantics intact.
+- No global SharedWorker/BroadcastChannel architecture, custom transport, connection-cap hardcoding, source/approval policy changes or permission UX work. This fixes hidden-tab exhaustion, not arbitrary many visible windows.
+- Send design before edits if current lifecycle needs broader change. Existing event listeners must be cleaned up and stale source callbacks ignored safely. Root owns real demo7-tab visibility/catchup/approval regression +build/screenshot checks. No tests that mirror source strings.
+- Update main reports/approval-navigation-lifecycle-fix.md with scope/limitations and frozen diff, no broad checks while main validation runs.
+
 ## Work Ledger
 Historical entries: [settled release ledger](supervisor-lifecycle-stall/archive/2026-10-25-settled-release-ledger.md).
 
@@ -435,6 +467,22 @@ Historical entries: [settled release ledger](supervisor-lifecycle-stall/archive/
 - Validation: root source/test diff reviewed; pnpm -r typecheck/build pass. Worker lifecycle15/15; root full1490pass/16fail/3skip598.12s; exact failed10files+changed lifecycle serial98/98pass449.05s without source changes. New behavior accepted; full aggregate not wholly green. No app code edited by root.
 - Outcome: Partial
 - Follow-up: publish framework correction and oversee parent install/API/UI/review/runtime delivery. Repair handoff discovery confirms direct candidate-base pin alone can omit inherited integration range; use authoritative scoped artifact handoff rather than unsafe acceptance.
+
+### 2026-10-25 - Parallel API/UI work and approval transport failure isolated
+- Agent: supervisor
+- Changed: fresh supported500request continuation from retained core+contract3b5b6fa after old root failed stale repeated plan across eligible model handoffs. Prior299actualcharges preserved. Current planv2 retains5nodes and dispatches api85/ui-core90 in parallel. No app code edited by root.
+- Validation: public get_plan/actual plan_work receipts show3future nodes retained; API and UI use read_files batching. Model also tried legacy read_file inside batch (unknown operation) and UI attempted feature-page out-of-scope write (correctly refused). Record tool ergonomics follow-up, no scope relaxation.
+- Validation: API install wa_0mvof4jkp61f355563ee4 uncertain ResponseAborted when root reloaded approval tab; persisted quiescedAt1792968624119 and no npm processes confirm stopped. Fresh300000ms retry approved in unique retained tab. Separate UI recipe install timed out28870ms, quiesced1792968660758; final host300000ms install approved. Root now checks requested timeout and uses unique tabs, never reload/close running command pages.
+- Outcome: Partial
+- Follow-up: API/UI actual checks and integration/features/review/runtime; memory-priority full regression/build/publication; approval-navigation source investigation report confirms req.signal->runProcess coupling, bounded owner fix pending. Deferred permission UX remains separate.
+
+### 2026-10-25 - Memory priority independently verified; candidate repairs active
+- Agent: supervisor
+- Changed: worker-owned context/memory.ts selection order and3regressions; authored roles/operations docs. Scoped current decisions precede large older facts, after preferences/direct refs; managed canonical validation/relevance/token fences remain. No app edits by root.
+- Validation: pnpm -r typecheck passed. Full npx vitest run JSON1512tests1492pass/17fail/3skip650.61s, all new memory cases pass. Exact failed11files plus3memory files --fileParallelism=false125/125pass500.10s without source changes; JSONsuccess true. Full aggregate remains failed; observed timer/browser/fixture-lock failures distinguished.
+- Validation: old UI candidate install0/typecheck2 incorrect app/page imports; API candidate install0/typecheck2 single search-route import, old45core tests not endpoint proof. Parent now7node plan with api-repair/ui-core-repair40grants each; old failed nodes retained. API worker read actual3source Brain notes; helper note hit16K output cap, source handoff remains deficient. Root provided exact original candidate commit ranges for reviewed worker-requested reuse, not app edits.
+- Outcome: Partial
+- Follow-up: local memory commit then combined panel build/runtime tests before push. Isolated approval branch868c27e detaches browser abort, live.tsx hidden-stream change frozen/uncommitted, source diff reviewed. Actual6connections/approval resource timing157478ms pre-request queue released after4finishedtabs closed; real7-tab demo regression required.
 
 ### Deferred: make approval requests obvious (user request 2026-10-25)
 - Owner: senior supervisor, future panel UX work. User explicitly requested recording this for later; continue MVP oversight now.
