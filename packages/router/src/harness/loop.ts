@@ -2,7 +2,7 @@ import type { ChatMessage, ChatTool, ChatToolCall } from "../gateway/types.js";
 import { estimateTokens } from "../gateway/types.js";
 import type { GateResponse } from "../gateway/gate.js";
 import type { ModelEndpoint } from "../models/catalog.js";
-import { AdmissionDenied } from "../core/errors.js";
+import { AdmissionDenied, MeritRouterError } from "../core/errors.js";
 import { ask } from "../runners/types.js";
 import { availableTools, type HarnessEnv, type HarnessTool } from "./tools.js";
 import { journaled, parseArgs } from "./journal.js";
@@ -10,6 +10,7 @@ import { applyResume, type ResumeInput } from "./resume.js";
 import { compact } from "./compaction.js";
 import { RepeatObservations, type RepeatOutcome } from "./repeat-policy.js";
 import { assertRunAuthority } from "./task-authority.js";
+import { StallHandoff } from "./stall-handoff.js";
 
 export { compact } from "./compaction.js";
 
@@ -71,6 +72,22 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value) ?? "null";
 }
 
+/** Structured call/outcome proof needed to restore the in-memory effect guard on resume. */
+function effectsStillVisible(messages: readonly ChatMessage[], signatures: Iterable<string>): boolean {
+  const calls = new Map<string, string>(), visible = new Set<string>();
+  for (const message of messages) {
+    if (message.role === "assistant") for (const call of message.tool_calls ?? []) {
+      const args = parseArgs(call.function.arguments);
+      if (args !== undefined) calls.set(call.id, `${call.function.name} ${canonicalJson(args)}`);
+    }
+    if (message.role === "tool") {
+      const signature = calls.get(message.tool_call_id);
+      if (signature) visible.add(signature);
+    }
+  }
+  return [...signatures].every(signature => visible.has(signature));
+}
+
 /** The retry of a turn whose tool call was cut short: a larger output allowance, or another endpoint. */
 interface TurnRetry {
   maxTokens: number;
@@ -128,6 +145,21 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
   // The endpoint that served the last turn (a resumed session's last recorded response at first).
   let sticky: string | null = o.resume?.plan.lastEndpointId ?? null;
   let servingBudget = budgetFor(env.ctx.plan.candidates.find((c) => c.id === sticky));
+  // Persisted safety state still applies when a new routing plan has no candidates.
+  // The empty minimal environments used by standalone loop callers have no store.
+  const handoff = env.ctx.tasks.db || env.ctx.plan.candidates.length ? new StallHandoff(env.ctx) : null;
+  // Resume can replay pending tools. Check authoritative history before that replay,
+  // never infer intact effect protection from a model's summary prose.
+  if (o.resume && handoff?.excluded.size && handoff.lostEffectHistory) {
+    sync();
+    // Throw before runner finalization: a normal stalled result can still run the
+    // coding runner's final declared checks, which is unsafe without this history.
+    throw new MeritRouterError("model_handoff_unprovable_effect_history", "model_handoff_unprovable_effect_history: Cannot resume a model handoff after effect history was compacted; explicit reconciliation is required");
+  }
+  if (handoff?.excluded.has(sticky ?? "")) {
+    sticky = null;
+    servingBudget = null;
+  }
   // Per-turn recovery state: at most one continuation and one truncated-call retry per turn.
   let continued: ChatMessage | null = null;
   let continuedThisTurn = false;
@@ -228,7 +260,7 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
     }
     const requestDefs = policy ? defs.filter(def => def.function.name === terminalName || policy.allowedToolNames.includes(def.function.name)) : defs;
     const budget = servingBudget ?? o.inputBudget;
-    compact(messages, budget);
+    if (compact(messages, budget) && effects.size && !effectsStillVisible(messages, effects.keys())) handoff?.recordLostEffectHistory(o.executionId);
 
     const pending: TurnRetry | null = retry;
     retry = null;
@@ -242,7 +274,7 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
         chat: { messages, max_tokens: pending?.maxTokens ?? o.maxTokens, temperature: 0.2, tools: remaining === 1 ? [o.terminal.def] : requestDefs, tool_choice: remaining === 1 ? "required" : "auto" },
         preferEndpointId: sticky,
         cacheKey,
-        ...(pending?.avoid.length ? { avoidEndpointIds: pending.avoid } : {}),
+        ...((pending?.avoid.length || handoff?.excluded.size) ? { avoidEndpointIds: [...new Set([...(pending?.avoid ?? []), ...(handoff?.excluded.size ? handoff.avoid() : [])])] } : {}),
       });
     } catch (err) {
       if (err instanceof AdmissionDenied && err.reason === "task_request_budget_exhausted") {
@@ -254,6 +286,10 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
         servingBudget = null;
         if (pending) retry = pending;
         continue;
+      }
+      if (handoff?.excluded.size && (err instanceof AdmissionDenied && ["no_eligible_endpoint", "context_does_not_fit", "paid_budget_exhausted", "project_paid_budget_exhausted"].includes(err.reason) || err instanceof MeritRouterError && err.code === "supervisor_quality_unavailable")) {
+        sync();
+        return { kind: "stalled", reason: `model_handoff_exhausted:${handoff.reason}`, messages };
       }
       // No endpoint could take the retry of a cut-short turn: keep the truncated response as it is.
       if (pending && err instanceof AdmissionDenied) res = pending.fallback;
@@ -416,7 +452,20 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
     if (env.edits.size) await o.onResponse?.({ endpointId, requestId, edits: [...env.edits] });
     sync();
     if (finished !== undefined) return { kind: "terminal", value: finished, messages };
-    if (repeatedToolCall) return { kind: "stalled", reason: `repeated_tool_call:${repeatedToolCall}`, messages };
+    if (repeatedToolCall) {
+      const reason = `repeated_tool_call:${repeatedToolCall}`;
+      if (!handoff) return { kind: "stalled", reason, messages };
+      handoff.record(endpointId, reason, o.executionId, requestId);
+      if (!handoff.hasAlternative()) return { kind: "stalled", reason: env.ctx.plan.candidates.some(endpoint => endpoint.id !== endpointId) ? `model_handoff_exhausted:${reason}` : reason, messages };
+      // Never discard completed/uncertain effect protection or replay a tool while
+      // handing off. Only fresh observation history belongs to the new endpoint.
+      observations.progress();
+      sticky = null;
+      servingBudget = null;
+      messages.push({ role: "user", content: `The previous endpoint stalled (${reason}) and is excluded for this task. Continue from the recorded files and tool outcomes using another eligible free endpoint. Do not repeat completed effects or effects with uncertain outcomes; inspect current state or report the exact blocker. The original request budget, deadline, scope and approvals still apply.` });
+      session?.note("agent model handoff", { endpointId, reason });
+      sync();
+    }
     if (invalid > o.maxInvalidTerminal) return { kind: "invalid_terminal", errors: lastErrors, messages };
   }
 }

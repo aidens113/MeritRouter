@@ -1,6 +1,6 @@
 # Supervisor lifecycle stall investigation
 Status: Active
-Status detail: Active panel oversight; repeated core retries stopped, manifest type repair running with exact install approved.
+Status detail: Bounded model handoff independently verified; old run rejected, publication and retained-core repair job next.
 Created: 2026-10-23
 Last updated: 2026-10-25
 Owner: Senior supervisor agent
@@ -20,10 +20,17 @@ Current parent t_0mvo6hmvmd7be5c1e9417, session s_0mvoa32avbabc4483ff3b.
 Original deadline1792968351277 preserved. Effective cap540: original390 plus external
 approved request4 grant150 (request3 denied superseded). Spent requests never reset;
 paid0/config unchanged. Config SHA2562963B9A8B79CD23DC2425989BAD58A1BC068E6A6E8DA8F755C0145188B9554E7.
-Active daemon19232 after supervised pause/resume for concrete repair memory; rebuilt
-panel active. Parent139requests at latest read. Manifest-repair t_0mvobw40j70ed1e05c9f5
-running; actual panel approved install wa_0mvobweuy24c6f7ee51ee after reviewing
-real @types/node22 and React19 additions,300000ms execution cap.
+Daemon19232 currently idle after parent completed supervisor_blocked and FINAL rejected
+exact manifest-only candidate; no usable app. Model-handoff source accepted after review and root checks; publish before new live run. Rebuilt
+panel active. Parent162requests at blocked finish. Manifest-repair t_0mvobw40j70ed1e05c9f5
+completed/met and integrated at jobHEAD8bcaf5e0e23ea2995eebcede2398dd3ae7d7f0a0.
+Core-lib5 t_0mvoc0vaf776d068c2f8c installed dependencies after operator feedback, then
+exhausted18execution requests from30grant (12deepreview reserve) before code. Effective
+cap540 unchanged;3request-extension attempts exhausted, coordinator/validation reserve160
+left1availableforworkers. FINAL rejected exact candidate8bcaf5e with11criteriaallmissing.
+Next supported new repair job can pin retained actual core commit via submit_tasks supervise
+context.baseCommits; keep old charges/history/rejection intact, state new finite freebudget
+explicitly. Do not claim same taskbudget reset or hidden extension.
 
 Published framework corrections through b4ef7bf (docs42c698f dev/main): supervisor default
 routing/preflight, unavailable free-model traversal, safe batching/read grouping, persisted
@@ -281,83 +288,33 @@ Historical checkpoints preserved in [archive](supervisor-lifecycle-stall/archive
 - Communicate actionable blockers to root/implementer. No broad tests during editing; root validates final frozen source.
 - Own report docs/working/supervisor-lifecycle-stall/reports/checked-candidate-review.md.
 
+### Corrective worker brief: bounded model handoff after genuine stalls (2026-10-25)
+- Role: framework worker, direct dev; no app/live/config edits, no commit/push/shared doc edits.
+- Investigate loop.ts genuine repeated_tool_call stop -> coding failure -> supervisor identical rebrief. Actual core1/2/3 failed repeated edit/search/git_status; all served beam. Requests remained available.
+- Goal: propose and implement narrowly bounded eligible-model handoff in same task/session for genuine stalls, preserving completed/uncertain-effect dedupe, fresh observations, scope/lease/cancel/deadline, original task budget and paid policy. Send design before edits.
+- Read loop.ts, ask/Gate request selection API and closest tests only as needed. Owned loop/gateway request-option source and new focused tests; do not overlap other source workers (none active now).
+- No blanket guard removal, arbitrary higher thresholds, model-specific hardcodes, fabricated quality grades, paid escalation, state reset, repeated uncertain effects, or endless recovery.
+- Candidate approach: exclude actual stalled endpoint for remaining task continuation and retry only another currently eligible endpoint; conserved finite attempts + typed exhaustion. Persist recovered exclusions across interruption if necessary.
+- Fake-provider regression must demonstrate first endpoint stall -> alternate makes progress, no duplicate effect, same request charges, exhausted candidates/cancel/deadline remain bounded. Legacy tests need explicit conservative behavior when no eligible alternative.
+- Report docs/working/supervisor-lifecycle-stall/reports/model-stall-handoff.md. Root will review, run integrated checks and deploy only after passing.
+
+### Corrective worker brief: model handoff safety review (2026-10-25)
+- Role: read-only reviewer; no app/live/config/shared doc edits, no commit/push. Own report only.
+- Review loop.ts + new harness/stall-handoff.ts and tests/model-stall-handoff.test.ts diff.
+- Verify actual Gate-served endpoint identity, current eligible-free routing, no paid escalation/quality bypass, finite unique endpoints and original budget/deadline/cancel; effect cache preserved, no uncertain replay, typed task receipts persist exclusions unpaged across interruption, malformed stored receipts fail closed.
+- Check no-candidate/context-no-fit and request accounting; don't broaden tests while source frozen validation starts.
+- Send blockers to root/implementer; report docs/working/supervisor-lifecycle-stall/reports/model-handoff-review.md.
+
+### Corrective worker brief: HTTP fixture shutdown lock (2026-10-25)
+- Role: worker; own tests/mcp-http.test.ts and own report only, no production/app/live/config changes without reporting actual cause.
+- Root full1501pass/1EBUSY/3skip; exact isolated HTTP file again3pass/1EBUSY. afterEach kills spawned server, env cleanup fails brain directory. This is recurring, not ignored flake.
+- Inspect first HTTP test scope (transport/list/persisted submission, no worker completion assertion) and startHttp worker defaults. Test currently starts actual worker and kills Node before child Git cwd quiesces.
+- Investigate minimal correct fixture: --no-worker for transport-only HTTP tests, preserving every host/token/origin/persistence assertion; no sleeps, broader generic cleanup retries or weaker assertion. Verify no unnecessary background provider/Git work.
+- If real server shutdown bug rather than unnecessary worker fixture, report before expanding production scope. No shared docs/commits.
+- Report docs/working/supervisor-lifecycle-stall/reports/http-fixture-quiescence.md; rerun exact file meaningfully and send frozen receipt. Modelhandoff source remains frozen; do not alter it.
+
 ## Work Ledger
-### 2026-10-23 - Live stall reproduced
-- Agent: supervisor
-- Changed: investigation document only; denied optional node version request through supported API.
-- Why: supervisor had no plan and no implementation, waiting on unnecessary host command.
-- Validation: CLI job read -> running,16 requests, cancelled env-inspect child; last tool npm run typecheck.
-- Outcome: Partial
-- Follow-up: trace and repair lifecycle progression rather than approve needless checks.
-
-### 2026-10-25 - Resume and implement lifecycle correction
-- Agent: supervisor
-- Changed: assigned disjoint lifecycle and loop-role workers; no app code edits.
-- Why: confirmed PlanStore supports undispatched nodes, but plan_work couples recording and execution.
-- Validation: CLI job -> cancelled22requests, both children cancelled; source inspection confirmed current gaps.
-- Outcome: Partial
-- Follow-up: draft plan support, command/dispatch gates and bounded discovery; independently validate.
-
-### 2026-10-25 - Integrated lifecycle correction verified
-- Agent: supervisor
-- Changed: worker-owned lifecycle/loop/planning/storage/charter files and proportionate regressions; docs/roles.
-- Why: require persisted planning and actual assignment before unrestricted discovery/execution.
-- Validation: pnpm -r typecheck and pnpm -r build -> exit0; full vitest ->1392pass/9fail/3skip,525.41s.
-- Validation: all8failedfiles serialized ->62/62,299.72s; final7-file delivery/native/harness selection ->49/49,42.59s.
-- Outcome: Accepted
-- Follow-up: publish verified source, restart bounded free-only pilot and inspect actual plan/dispatch; no clone accepted.
-### 2026-10-25 - Live encoded-plan regression corrected
-- Agent: supervisor
-- Changed: worker-owned lifecycle guard and regression; preserved encoded-array compatibility.
-- Why: pilot t_0mvo5uxr4cfd4c54aca73 persisted spec/prepare but failed18requests before any plan/task.
-- Validation: independently observed final4-file lifecycle/loop/team run32/32,32.16s; recursive typecheck/build exit0.
-- Outcome: Accepted
-- Follow-up: publish correction; start replacement with425requests/$0paid, retaining failed task history and consumed quota.
-### 2026-10-25 - Human-only action wait correction verified
-- Agent: supervisor
-- Changed: worker-owned await/action guidance and authority metadata; default human-only wait tests; Lab fixture synchronization.
-- Why: live supervisor treated an impossible agent approval as repeated work and cancelled a real candidate.
-- Validation: recursive typecheck/build exit0; focused75pass/1preexistingLab race in107.33s; final synchronized Lab/humanwait/clock10/10 in26.59s.
-- Outcome: Accepted
-- Follow-up: publish correction and390request/$0paid live replacement; preserve actual approval authority and all candidate history.
-### 2026-10-25 - Runtime-owned specification binding verified
-- Agent: supervisor
-- Changed: worker-owned delivery tool input and new binding regressions; docs/roles.
-- Why: live390request pilot repeatedly failed exact goal/hash transcription; service already owns authoritative goal.
-- Validation: initial safeExtend typing failed TS2322; corrected input shape plus strict bound-spec parse. Final recursive typecheck/build exit0; independent6-file28/28 in32.28s.
-- Outcome: Accepted
-- Follow-up: publish and recover same live job without budget reset; request#2 denied200extra, cap390 unchanged. No app candidate accepted.
-### 2026-10-25 - Phased first dispatch and working-document encoding corrected
-- Agent: supervisor
-- Changed: worker-owned lifecycle allowlist and real phased-dispatch regression; repaired UTF-8 working-document headings and role navigation.
-- Why: after discovery cap a valid draft still could not delegate its first phase; repeated ANSI/UTF-8 rewrites had bloated ledger headings.
-- Validation: independent5-file36/36 in31.44s; recursive typecheck/build exit0. Working document restored from1.1MB to17KB preserving ledger content.
-- Outcome: Accepted
-- Follow-up: publish and recover same390request live job; no application code authored by external FINAL.
-
-### 2026-10-25 - Final release activated and real approval wait observed
-- Agent: supervisor
-- Changed: published source d9243b8; refreshed daemon8988/panel4477; scoped project oversight memory.
-- Why: preserve same job/session/budget across deployments and verify real planning/assignment/approval behavior.
-- Validation: live job/plan HTTP200; foundation task completed/met; deps exact npm install request pending. Root28model requests unchanged across reads while await_tasks waits for operator.
-- Outcome: Partial
-- Follow-up: operator must approve wa_0mvo71ilk540326de44ab in panel; then inspect install result, later implementation/review/product evidence. No app code by external FINAL.
-
-### 2026-10-25 - Separate approval wait from bounded execution
-- Agent: supervisor
-- Changed: worker-owned operation clocks, recipe guidance, exact-action cancellation/caps and14regressions; docs/operations and roles.
-- Why: user approved in panel after the300s operation timer had cancelled the request during human wait; replacement had changed source.
-- Validation: root recursive typecheck/build exit0; full153-file run1428pass/3skip/0fail in670.58s with4workers. JSON success and newclock14/14 verified.
-- Outcome: Accepted
-- Follow-up: publish, reload all runtime controllers/panel, recover same390request supervisor, rebrief failed dependency phase and inspect fresh approval request. No app edits/approval impersonation.
-
-### 2026-10-25 - Clock release activated and current install request reviewed
-- Agent: supervisor
-- Changed: source9995b14 published; refreshed controllers/panel; scoped recovery memory and same parent resume.
-- Why: old user-reported approval was already expired, and old dependency attempts could not resume after their task deadlines.
-- Validation: planv5/deps3 running; current request source matches independently computed worktree identity; requested/effective cap300000ms. Full suite1428pass/3skip/0fail remains source acceptance.
-- Outcome: Partial
-- Follow-up: human approve wa_0mvo8npaq640917dd768f; inspect actual install/check results and continue MVP workers. No app edits or approval impersonation by FINAL.
+Historical entries: [settled release ledger](supervisor-lifecycle-stall/archive/2026-10-25-settled-release-ledger.md).
 
 ### 2026-10-25 - Explicit panel-operation authorization and approval UX backlog
 - Agent: supervisor
@@ -431,6 +388,14 @@ Historical checkpoints preserved in [archive](supervisor-lifecycle-stall/archive
 - Validation: actual core1/2/3 failed repeated edit/search/git_status respectively; core2 wrote8files but compile lacked node_modules and Node types. Core4 cancellation requested, pending check automatically cancelled; parent129requests still running. Trusted repair decision observed in both resumed transcripts. No app edits or raw state changes by FINAL.
 - Outcome: Partial
 - Follow-up: remain active until manifest repair, usable core/API/UI, independent review and actual runtime tests. No product accepted. Router retry/context/model-loop defects recorded explicitly.
+
+### 2026-10-25 - Bounded eligible-free model handoff independently verified
+- Agent: supervisor
+- Changed: worker-owned loop handoff, typed unpaged task receipts, free-eligible exclusions, cancellation fence and compacted-effect proof-loss refusal before replay/final checks; authored roles/operations docs. HTTP fixture now --no-worker with queued/0requests assertion; no security assertions weakened.
+- Why: genuine model tool loops repeatedly failed core tasks then supervisor blindly rebriefed same endpoint; no app delivered. Final run blocked at extension-attempt limit, FINAL rejected exact manifest-only candidate with all11criteria missing.
+- Validation: root final recursive typecheck/build pass; targeted42/42 in23.15s. Full157files/1505tests:1501pass/1HTTP brain cleanup EBUSY/3skip in729.77s; all21newtests pass. Root isolated pre-fix HTTP3/4 repeated EBUSY. Fixture correction worker4/4 twice, root final4/4 in5.97s; production source unchanged after full run. Independent final source review no remaining blocker. Actual routing preview implement/T3 has7eligiblefree endpoints/floor100B, no config change.
+- Outcome: Accepted
+- Follow-up: publish and activate; next supported repair supervisor job pins actual retained core commit818e98d54ddda47e701db5391d95a033e49334f6, new finite800request/$0paid budget after user keepworking. Preserve historical rejected run/382actualcharges and all artifacts; no app source edits by FINAL.
 
 ### Deferred: make approval requests obvious (user request 2026-10-25)
 - Owner: senior supervisor, future panel UX work. User explicitly requested recording this for later; continue MVP oversight now.

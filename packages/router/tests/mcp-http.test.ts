@@ -28,11 +28,11 @@ afterEach(async () => {
   env = undefined;
 });
 
-/** Start `meritrouter mcp --http --port 0` and wait for the URL it prints. */
+/** Transport fixtures persist calls but never run provider work or background task Git. */
 async function startHttp(extraArgs: string[] = [], extraEnv: Record<string, string> = {}): Promise<{ url: string; stderr: () => string }> {
   env = makeEnv();
   let stderr = "";
-  child = spawn(process.execPath, [path.join(dist, "cli.js"), "mcp", "--config", env.cfg.configPath, "--http", "--port", "0", ...extraArgs], { env: { PATH: process.env.PATH ?? "", ...extraEnv }, stdio: ["ignore", "pipe", "pipe"] });
+  child = spawn(process.execPath, [path.join(dist, "cli.js"), "mcp", "--config", env.cfg.configPath, "--no-worker", "--http", "--port", "0", ...extraArgs], { env: { PATH: process.env.PATH ?? "", ...extraEnv }, stdio: ["ignore", "pipe", "pipe"] });
   const proc = child;
   const url = await new Promise<string>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`no URL printed: ${stderr}`)), 30_000);
@@ -93,7 +93,10 @@ describe("MCP over Streamable HTTP", () => {
     expect(text(await client.callTool({ name: "get_plan", arguments: { jobId: "no-such-job" } }))).toBe("unknown job no-such-job");
     const ok = await client.callTool({ name: "submit_tasks", arguments: { tasks: [summarizeTask({ idempotencyKey: "http-1" })] } });
     expect(ok.isError).toBeFalsy();
-    expect(JSON.parse(text(ok)).submitted[0].taskId).toMatch(/^t_/);
+    const taskId = JSON.parse(text(ok)).submitted[0].taskId;
+    expect(taskId).toMatch(/^t_/);
+    const persisted = JSON.parse(text(await client.callTool({ name: "get_task_status", arguments: { taskIds: [taskId] } })));
+    expect(persisted[0]).toMatchObject({ taskId, state: "queued", modelRequestsUsed: 0 });
 
     // DNS rebinding and tunnels: a tokenless server answers loopback names only.
     const port = new URL(url).port;

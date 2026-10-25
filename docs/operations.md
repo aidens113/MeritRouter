@@ -710,6 +710,16 @@ is refused; the runtime never substitutes the latest tree for the checked candid
 - Repeated observations remain bounded: three identical fresh reads without progress stop a
   spinning loop. A successful `await_tasks` with a service-measured wait starts a fresh
   observation window; an immediate return or wait-like model text does not.
+- A genuine agent loop stall can hand off within the same task to another currently
+  eligible free endpoint. Task-local typed receipts exclude the actually served stalled
+  endpoint across interruption; they do not assign global model-quality grades. Existing
+  request ceilings, routing floors, authority, paid policy and effect deduplication remain.
+  Each endpoint is excluded once; no alternative yields a bounded stop instead of an
+  endless retry. Handoff never enables a paid route.
+- If host context compaction lost the structured proof protecting an effect, a later
+  interrupted handoff refuses resume with `model_handoff_unprovable_effect_history`
+  before pending-tool replay, new model requests or final shell checks. Source/worktree
+  remains available for explicit repair. Read-only compaction can continue normally.
 - A supervisor failed specifically with `repeated_tool_call:task_result` can be explicitly
   continued through task resume when its retained failed session/workspace is available,
   the original deadline is still future, and request capacity remains. Recovery retains

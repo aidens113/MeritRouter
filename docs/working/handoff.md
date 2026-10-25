@@ -6,6 +6,14 @@ own working document with decisions, phases, ledger, and reports.
 
 ## Current effort (2026-10-25)
 
+Latest source accepted for release: bounded same-task eligible-free model handoff, persisted
+exclusions/effect guards, typed proof-loss refusal before pending replay or final commands.
+Root final typecheck/build and42/42 targeted pass. Full1501pass/1HTTPfixture EBUSY/3skip;
+corrected unnecessary worker fixture, exact final4/4 passes. Old job completedblocked and
+FINALrejected manifest-only candidate;382actualrequests charged, not reset. User said keep
+working. Next finite800/$0paid repair job pins actual8-file core commit818e98d (unverified),
+not empty main. No usable clone, no manual app code. Read active Current State for launch.
+
 Live oversight continues: no usable Facebook app. Setup integration repaired/verified, then
 three core attempts looped; fourth cancelled. Effective cap540 after explicit
 external grant150; spent/deadline/paid0 preserved. Daemon19232 active. Supported trusted

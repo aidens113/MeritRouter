@@ -269,6 +269,12 @@ Budgets are set by the supervisor that delegates and enforced by admission, neve
   The validation reserve becomes available at integrate/validate/handoff; the supervisor reserve
   remains protected from child allocations. Physical dispatch also protects validation headroom
   during earlier stages. Legacy `team.supervisor_reserve_requests` (4) remains a lower bound.
+- **Stalled endpoint recovery.** Repeated unchanged observations or duplicate effects can
+  hand off to another currently eligible free endpoint inside the same task/session and
+  budget. The runtime retains tool outcomes/effect guards and persists task-local endpoint
+  exclusions; it never fabricates global quality evidence or relaxes routing floors. With
+  no alternative it stops finitely. Lost compacted effect proof on interruption refuses
+  recovery before any replay or final check; a retained-source repair is required.
 - **Requests for more.** Workers and delivery supervisors (not reviewers inside verification) get
   `request_more_budget(requests, reason)` while `team.max_budget_requests_per_task` (default 3)
   allows. The run waits without model requests up to `team.budget_request_wait_seconds`
