@@ -1,6 +1,6 @@
 # Supervisor lifecycle stall investigation
 Status: Active
-Status detail: Measured-wait and bounded failed-supervisor recovery verified; publication and same-job continuation in progress.
+Status detail: Correction b6de6be published dev/main; same parent resumed in linked session and dispatched deps-setup worker.
 Created: 2026-10-23
 Last updated: 2026-10-25
 Owner: Senior supervisor agent
@@ -9,6 +9,18 @@ Paired document: none
 Related: [supervised delivery](supervised-delivery-v2.md)
 
 ## Current State
+
+Live deployment receipt: source b6de6be pushed dev/main, daemon20836 and rebuilt panel4477
+active. Explicitly cancelled expired deps3 through supported MCP; resumed same parent through
+supported resume_task. New linked session s_0mvoa32avbabc4483ff3b retains old failed session
+and integration head f2f2a417df5b43020e67076bcd0eaf9a33f47903. Original deadline
+1792968351277 and390cap preserved; observed84parentrequests after resumed planning.
+Actual planv8 drafted remaining implementation/review/runtime graph; planv9 dispatched
+new deps-setup t_0mvoa4oiib5bc69d2cdaf, running. No pending actions at that read.
+Config SHA256 unchanged. Observed another batch limitation: internal supervisor attempted
+batch children run_check/task_result and received Unknown/non-batchable operation; it then
+used separate supported calls. Record for contract/guidance follow-up, not product success.
+No usable MVP or FINAL product acceptance yet; no app edits by initiating agent.
 
 Latest correction accepted: recursive typecheck/build passed; final full1451-test run
 1447passed/1temporary-brain EBUSY cleanup failure/3skipped,700.08s. Exact failed HTTP
@@ -401,6 +413,13 @@ not approved/executed by FINAL. Compiler/configuration and usable-app acceptance
 - Validation: root pnpm -r typecheck and pnpm -r build exit0; independent focused53/53. Final full pnpm exec vitest run --maxWorkers=4 --reporter=default --reporter=json --outputFile <temp>/meritrouter-observation-recovery-full.json: 1447pass/1fail/3skip in700.08s, 152filespass/1fail/1skip. Only failure mcp-http temporary-brain cleanup EBUSY; exact failed-file rerun4/4 in5.56s without source changes. Final new recovery16/16 and repeat21/21 passed full run; JSON verified.
 - Outcome: Accepted
 - Follow-up: publish coherent correction and recover same parent with original390request cap/deadline; replace expired child through supervisor. No app source edits by FINAL; approval UX remains deferred.
+
+### 2026-10-25 - Published correction and verified same-job worker dispatch
+- Agent: supervisor
+- Changed: b6de6be pushed dev/main; activated daemon20836/rebuilt panel; scoped factual recovery memory; supported cancellation of expired deps3 and explicit parent resume.
+- Validation: parent running in linked s_0mvoa32avbabc4483ff3b with old failed session unchanged, same integration head/original deadline/390cap. Actual planv8/v9 and deps-setup t_0mvoa4oiib5bc69d2cdaf running; no pending approval at read. Panel job HTTP response restored; config SHA256 unchanged.
+- Outcome: Partial
+- Follow-up: oversee implementation, operate exact reviewed routine panel actions, independently verify product. Batch rejected supervisory operations observed and recorded; app still unaccepted.
 
 ### Deferred: make approval requests obvious (user request 2026-10-25)
 - Owner: senior supervisor, future panel UX work. User explicitly requested recording this for later; continue MVP oversight now.

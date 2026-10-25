@@ -14,7 +14,9 @@ deadline and retained workspace in a linked session. Independent review has no r
 source blocker; root focused53/53 and recursive typecheck/build pass. Final full suite
 1447pass/1EBUSY temporary-brain cleanup failure/3skip in700.08s; exact failed HTTP file
 rerun4/4 passes without source changes. New recovery16/16 and repeat21/21 pass.
-Publication/same-job recovery next.
+Source b6de6be published dev/main; daemon20836/panel4477 active. Same parent recovered
+in linked s_0mvoa32avbabc4483ff3b with390cap/original deadline; deps-setup child
+t_0mvoa4oiib5bc69d2cdaf running. No app accepted.
 No app accepted. User authorized Codex operating reviewed routine panel commands; approval
 UX fixes explicitly deferred. Read active document for final validation/deployment receipts.
 
