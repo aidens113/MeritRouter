@@ -6,13 +6,17 @@ own working document with decisions, phases, ledger, and reports.
 
 ## Current effort (2026-10-25)
 
-Latest source accepted for release: bounded same-task eligible-free model handoff, persisted
-exclusions/effect guards, typed proof-loss refusal before pending replay or final commands.
-Root final typecheck/build and42/42 targeted pass. Full1501pass/1HTTPfixture EBUSY/3skip;
-corrected unnecessary worker fixture, exact final4/4 passes. Old job completedblocked and
-FINALrejected manifest-only candidate;382actualrequests charged, not reset. User said keep
-working. Next finite800/$0paid repair job pins actual8-file core commit818e98d (unverified),
-not empty main. No usable clone, no manual app code. Read active Current State for launch.
+Published06c3513 dev/main active. Retained-core repair job t_0mvodbsfke4f94fab4e33
+has finite800requests/$0paid, actual818e98d base, old rejected history intact.
+Core repair45/45tests+typecheck+install passed, integrated18commits at jobHEAD1dbe934;
+parent has no node_modules, needs own install. API/UI not written; Next build not ready.
+Deep reviewer used6requests without verdict; supervisor override accepted core, independent
+review still required before FINAL. Actual implement profile cap100 bounds requested120/150.
+Worker plan preservation independently verified root typecheck/build, full1490pass/16fail/3skip;
+exact failed10files plus changed lifecycle serial98/98 pass449.05s. Publication next, no app
+code authored by Codex. Read active working doc for exact job, approvals and remaining work.
+
+Historical checkpoints below are older; active working document is authoritative.
 
 Live oversight continues: no usable Facebook app. Setup integration repaired/verified, then
 three core attempts looped; fourth cancelled. Effective cap540 after explicit

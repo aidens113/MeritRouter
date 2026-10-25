@@ -571,8 +571,12 @@ sessions and local inventory remain synchronous SQLite operations; this boundary
 not enable PostgreSQL or multiple hosts.
 
 - **Plans.** A supervisor's `plan_work` records the job's decomposition as an immutable,
-  versioned, acyclic plan (`job_plans`) and dispatches every node through the normal delegate
-  path; re-planning adds a version and keeps nodes already dispatched. The plan reports its
+  versioned, acyclic plan (`job_plans`). `dispatch:false` records a draft without workers or
+  budget grants; default dispatch staffs only nodes supplied in that call through the normal
+  delegate path. Delivery-v2 updates retain omitted future nodes, so staffing one phase
+  preserves the remaining graph. `replace_undispatched:true` deliberately removes omitted
+  future nodes. Dispatched history is always retained; legacy plans keep replacement behavior.
+  Merged graphs still enforce dependency, cycle and node limits. The plan reports its
   critical path (tier-weighted: T1=1, T2=2, T3=4). See it with `meritrouter plan <job>`, MCP
   `get_plan`, or the panel's job page.
 - **Upstream results.** When a dependent first runs, its upstreams' summaries, findings, artifact

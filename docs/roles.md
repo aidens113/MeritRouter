@@ -157,8 +157,11 @@ The full text ships as `packages/router/charters/supervisor.md` and can be overr
    read, `allowedPaths`, checks, difficulty hint, importance. Briefs are written into the working
    document before dispatch. For multi-part goals, record the decomposition first with
    `plan_work` (a versioned task graph). Use `dispatch:false` to publish a validated draft
-   without staffing or launching workers; supply the full briefs again with `dispatch:true`
-   to execute it. After recording a draft, `delegate` can launch an exact recorded ready phase
+   without staffing or launching workers. Supply a phase's full briefs with `dispatch:true`
+   to execute that phase. Delivery-v2 updates retain omitted future nodes; only submitted
+   nodes are staffed or granted budgets. Use `replace_undispatched:true` to deliberately
+   remove omitted future nodes. Dispatched history is always retained; legacy plans keep
+   their replacement behavior. After recording a draft, `delegate` can launch an exact recorded ready phase
    without launching the other draft nodes, including after the discovery allowance.
    Dispatch defaults to true for existing clients. Every ready dispatched node
    runs at once, up to `team.max_agents`

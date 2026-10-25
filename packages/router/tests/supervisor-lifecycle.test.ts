@@ -5,6 +5,7 @@ import type { RunContext } from "../src/runners/types.js";
 import type { HarnessEnv, HarnessTool } from "../src/harness/tools.js";
 import { supervisorTools, type SupervisorState } from "../src/harness/supervisor-tools.js";
 import { assertPlannedBriefs, assertSupervisorTool, supervisorToolPolicy, SUPERVISOR_DISCOVERY_REQUESTS } from "../src/harness/supervisor-lifecycle.js";
+import { heldRequests } from "../src/admission/admission.js";
 import { PlanStore } from "../src/storage/plans.js";
 import { ProductDeliveries } from "../src/verification/product-delivery.js";
 import { productDigest } from "../src/verification/product-spec.js";
@@ -51,6 +52,60 @@ describe("supervisor lifecycle enforcement", () => {
     expect(() => store.transition(ctx.taskId, "demo", "implement")).not.toThrow();
     await expect(run("plan_work", { nodes: [brief] })).resolves.toContain("1 dispatched now");
     expect(sy!.tasks.childrenOf(ctx.taskId)).toHaveLength(1);
+  });
+
+  it("retains future phases while dispatching only the supplied phase and its grant", async () => {
+    const { ctx, run, prepare } = await fixture();
+    prepare();
+    const later = { ...brief, label: "later", depends_on: [brief.label], max_requests: 1000 };
+    await run("plan_work", { nodes: [brief, later], dispatch: false });
+    const phase = { ...brief, max_requests: 10 };
+    const before = sy!.admission.taskTotals(ctx.taskId).requests;
+    await expect(run("plan_work", { nodes: [phase] })).resolves.toContain("2 node(s); 1 dispatched now");
+    expect(jobPlan(sy!, ctx.taskId)?.nodes).toEqual([
+      expect.objectContaining({ label: brief.label, taskId: expect.any(String) }),
+      expect.objectContaining({ label: "later", taskId: null, state: "not_dispatched", dependsOn: [brief.label] }),
+    ]);
+    expect(sy!.tasks.childrenOf(ctx.taskId)).toHaveLength(1);
+    expect(sy!.admission.taskTotals(ctx.taskId).requests).toBe(before);
+    expect(sy!.tasks.childrenOf(ctx.taskId)[0]!.spec.budget?.maxModelRequests).toBe(10);
+    expect(heldRequests(sy!.db, ctx.taskId)).toBe(10);
+    // Explicit replacement removes only omitted future nodes, retaining dispatched history.
+    await run("plan_work", { nodes: [{ ...brief, label: "replacement" }], dispatch: false, replace_undispatched: true });
+    expect(new PlanStore(sy!.db).latest(ctx.taskId)?.nodes.map(n => n.label)).toEqual(["replacement", brief.label]);
+    expect(sy!.tasks.childrenOf(ctx.taskId)).toHaveLength(1);
+  });
+
+  it("validates merged future dependencies and explicit replacement before persistence", async () => {
+    const { ctx, run, prepare } = await fixture();
+    prepare();
+    const later = { ...brief, label: "later", depends_on: [brief.label] };
+    await run("plan_work", { nodes: [brief, later], dispatch: false });
+    await expect(run("plan_work", { nodes: [{ ...brief, depends_on: ["later"] }], dispatch: false })).rejects.toThrow(/cycle/);
+    await expect(run("plan_work", { nodes: [later], dispatch: false, replace_undispatched: true })).rejects.toThrow(/neither a node/);
+    await expect(run("plan_work", { nodes: [brief], dispatch: false, replace_undispatched: "true" })).rejects.toThrow();
+    expect(new PlanStore(sy!.db).list(ctx.taskId)).toHaveLength(1);
+    expect(sy!.tasks.childrenOf(ctx.taskId)).toHaveLength(0);
+  });
+
+  it("enforces the node cap on the merged graph without losing the prior plan", async () => {
+    const { ctx, run, prepare } = await fixture();
+    prepare();
+    await run("plan_work", { nodes: Array.from({ length: 50 }, (_, i) => ({ ...brief, label: `phase-${i}` })), dispatch: false });
+    await expect(run("plan_work", { nodes: [brief], dispatch: false })).rejects.toThrow();
+    expect(new PlanStore(sy!.db).latest(ctx.taskId)?.nodes).toHaveLength(50);
+    expect(new PlanStore(sy!.db).list(ctx.taskId)).toHaveLength(1);
+    expect(sy!.tasks.childrenOf(ctx.taskId)).toHaveLength(0);
+  });
+
+  it("keeps legacy replacement semantics for omitted undispatched nodes", async () => {
+    const { ctx, run } = await fixture();
+    delete ctx.spec.deliveryVersion;
+    sy!.db.prepare("UPDATE tasks SET spec_json=json_remove(spec_json,'$.deliveryVersion') WHERE id=?").run(ctx.taskId);
+    await run("plan_work", { nodes: [brief, { ...brief, label: "later" }], dispatch: false });
+    await expect(run("plan_work", { nodes: [brief], dispatch: false, replace_undispatched: "true" })).rejects.toThrow();
+    await run("plan_work", { nodes: [brief], dispatch: false });
+    expect(new PlanStore(sy!.db).latest(ctx.taskId)?.nodes.map(n => n.label)).toEqual([brief.label]);
   });
 
   it("validates draft scopes and graphs before persistence or dispatch", async () => {

@@ -568,11 +568,12 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
     tool(
       "plan_work",
       "delegate",
-      "Record the job's decomposition as a task graph (a new plan version). Set dispatch:false to publish a draft without staffing, reserving budgets or starting workers. Default dispatch:true dispatches every fresh node through delegate at once. To execute a draft, supply its full briefs again with dispatch:true. Nodes with no unfinished dependencies run in parallel up to the job's agent cap. Include implementation, independent review and product testing work when applicable. Replanning retains already dispatched nodes; cancel and use a new label to change them. Returns the critical path.",
+      "Record the job's decomposition as a task graph (a new plan version). Set dispatch:false to publish a draft without staffing, reserving budgets or starting workers. Default dispatch:true dispatches only fresh nodes supplied in this call. Delivery-v2 replanning preserves omitted future nodes unless replace_undispatched:true; execute a draft in phases by supplying each phase's full briefs with dispatch:true. Nodes with no unfinished dependencies run in parallel up to the job's agent cap. Include implementation, independent review and product testing work when applicable. Replanning retains already dispatched nodes; cancel and use a new label to change them. Returns the critical path.",
       {
         nodes: { type: "array", items: { type: "object", properties: { ...briefProperties(maySupervise(s)), requires_accepted_inputs: { type: "boolean", description: "start only on accepted upstream results (default: true for high/critical importance)" }, redundancy: { type: "integer", enum: [1, 2], description: "2 runs a small (T1/T2) non-coding node twice on different models and keeps the first verified result; both are charged" } }, required: ["label", "profile", "goal", "acceptance_criteria"] } },
         note: { type: "string", description: "what this version changes and why" },
-        dispatch: { type: "boolean", description: "false records a validated visible draft only; default true dispatches fresh nodes" },
+        dispatch: { type: "boolean", description: "false records a validated visible draft only; default true dispatches supplied fresh nodes" },
+        replace_undispatched: { type: "boolean", description: "true deliberately drops omitted undispatched nodes; delivery-v2 defaults to retaining them. Already dispatched history is always retained." },
       },
       ["nodes"],
       async (a, env) => {
@@ -580,6 +581,8 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
         if (!items.length) throw new Error("nodes is empty");
         if (items.length > MAX_PLAN_NODES) throw new Error(`a plan holds at most ${MAX_PLAN_NODES} nodes`);
         const dispatch = z.boolean().parse(a.dispatch ?? true);
+        const replaceUndispatched = z.boolean().parse(a.replace_undispatched ?? false);
+        const preserveFuture = s.ctx.spec.deliveryVersion === 2 && !replaceUndispatched;
         // Drafts validate scope and task inputs without Gate/classification or budget effects.
         for (const it of items) {
           const profile = String(it.profile ?? "");
@@ -619,7 +622,8 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
           };
         });
         // Dispatched nodes keep their tasks: their recorded definition stays the one dispatched,
-        // and dispatched nodes the new version leaves out are carried over.
+        // and omitted future nodes remain visible for delivery-v2 phased execution.
+        // Retention changes the recorded graph only, never the dispatch/grant input list.
         const named = new Set(nodes.map((n) => n.label));
         const kept: string[] = [];
         const recorded = nodes.map((n) => {
@@ -627,7 +631,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
           kept.push(n.label);
           return previous?.nodes.find((p) => p.label === n.label) ?? n;
         });
-        const carried = (previous?.nodes ?? []).filter((p) => !named.has(p.label) && s.children.has(p.label));
+        const carried = (previous?.nodes ?? []).filter((p) => !named.has(p.label) && (s.children.has(p.label) || preserveFuture));
         const all = [...recorded, ...carried];
         const external = new Set([...s.children.keys()].filter((l) => !all.some((n) => n.label === l)));
         const plan = store.record(jobId, all, { note: typeof a.note === "string" ? a.note : null, createdBy: s.actor.agent, external });

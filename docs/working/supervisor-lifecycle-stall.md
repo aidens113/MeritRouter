@@ -1,6 +1,6 @@
 # Supervisor lifecycle stall investigation
 Status: Active
-Status detail: Bounded model handoff independently verified; old run rejected, publication and retained-core repair job next.
+Status detail: Core repair checks passed and integrated; plan-preservation98/98 verified, publication next; API/UI unfinished.
 Created: 2026-10-23
 Last updated: 2026-10-25
 Owner: Senior supervisor agent
@@ -16,21 +16,35 @@ because a task resumed or dispatched. Handle pending commands, failures, review 
 product testing until delivered or user pauses. Panel: http://127.0.0.1:4477.
 No usable Facebook app or FINAL acceptance exists. Only manifest setup is integrated.
 
-Current parent t_0mvo6hmvmd7be5c1e9417, session s_0mvoa32avbabc4483ff3b.
-Original deadline1792968351277 preserved. Effective cap540: original390 plus external
-approved request4 grant150 (request3 denied superseded). Spent requests never reset;
-paid0/config unchanged. Config SHA2562963B9A8B79CD23DC2425989BAD58A1BC068E6A6E8DA8F755C0145188B9554E7.
-Daemon19232 currently idle after parent completed supervisor_blocked and FINAL rejected
-exact manifest-only candidate; no usable app. Model-handoff source accepted after review and root checks; publish before new live run. Rebuilt
-panel active. Parent162requests at blocked finish. Manifest-repair t_0mvobw40j70ed1e05c9f5
-completed/met and integrated at jobHEAD8bcaf5e0e23ea2995eebcede2398dd3ae7d7f0a0.
-Core-lib5 t_0mvoc0vaf776d068c2f8c installed dependencies after operator feedback, then
-exhausted18execution requests from30grant (12deepreview reserve) before code. Effective
-cap540 unchanged;3request-extension attempts exhausted, coordinator/validation reserve160
-left1availableforworkers. FINAL rejected exact candidate8bcaf5e with11criteriaallmissing.
-Next supported new repair job can pin retained actual core commit via submit_tasks supervise
-context.baseCommits; keep old charges/history/rejection intact, state new finite freebudget
-explicitly. Do not claim same taskbudget reset or hidden extension.
+Current repair parent t_0mvodbsfke4f94fab4e33, session s_0mvodc2jn57e5fd0f1ad4,
+new finite800requests/$0paid, starts actual retained core818e98d54ddda47e701db5391d95a033e49334f6.
+Published06c3513 dev/main activated daemon7800; no user configuration change.
+Old parent t_0mvo6hmvmd7be5c1e9417 completed supervisor_blocked, FINAL rejected all11criteria;
+382actual charges/history preserved. This is a new supported repair task, not budget reset.
+Core-repair t_0mvoddaole2fc8c2be9bb exhausted100actualrequests despite120requested grant.
+Actual post-submission npm install exit0; typecheck exit2 tests/store.test.ts:104 TS2556;
+npm test exit1:44pass/1fail, auth expiry test CommonJS require cannot resolve ../lib/store.
+Repair-fix t_0mvoe0ntde909389eb982 active150grant, actual oldbase818e98d (no candidate handoff).
+Root wrote supported scoped project-memory notes with real implementation/tests patch;
+worker brain_read BOTH notes observed. Exact npm10.9 Arborist edgesOut failed old resolution,
+then patched minimums installed0. Initial syntax/config errors fixed by worker. Actual final
+source45054d8a: npm test45/45 pass (6files,748ms), typecheck0. Submission/final checks pending;
+Core task completed/met via supervisor override;18commits integrated jobHEAD1dbe934. Parent lacks node_modules so integration checks failed; install there before tests. No app/pages yet, build expected to fail until API/UI. Deep reviewer
+used6requests with no verdict (verification_pending), NOT independently reviewed. Actual
+implement profile max_model_requests100 caps child120/150 grants; second task94execution+
+6review=100actual. Do not mislabel entire grant difference as reserved review or unavailable
+model failure. Standalone review profile allows40requests; final independent review required.
+Root writes no app code.
+Actual app versions now Vitest4.1.12/Vite6.4.5/Zod4.6.7, real Node22/React19 types.
+Audit improved2critical/1high ->0critical/0high/3moderate CSS-chain; do not claim zero findings.
+New root planv1 had13nodes; v2 partial staffing dropped future phases, only core remains.
+Framework worker phased_plan_preservation owns supervisor-tools.ts/focused tests per written
+brief below; sends design before edits. Live remains06c3513 until independent validation.
+Plan preservation root typecheck/build pass; full157files/1509tests1490pass/16fail/3skip in598.12s.
+New lifecycle cases passed. Failures include timer/busy cleanup/browser and older subsystem
+assertions; root exact11-file serial rerun including changed lifecycle98/98 passed in449.05s. No source changes between runs. New fix accepted for publication; do not call full aggregate green.
+Root operates exact pending commands in actual panel, verifies results, writes no app code.
+Config SHA2562963B9A8B79CD23DC2425989BAD58A1BC068E6A6E8DA8F755C0145188B9554E7 unchanged.
 
 Published framework corrections through b4ef7bf (docs42c698f dev/main): supervisor default
 routing/preflight, unavailable free-model traversal, safe batching/read grouping, persisted
@@ -313,6 +327,23 @@ Historical checkpoints preserved in [archive](supervisor-lifecycle-stall/archive
 - If real server shutdown bug rather than unnecessary worker fixture, report before expanding production scope. No shared docs/commits.
 - Report docs/working/supervisor-lifecycle-stall/reports/http-fixture-quiescence.md; rerun exact file meaningfully and send frozen receipt. Modelhandoff source remains frozen; do not alter it.
 
+### Corrective worker brief: preserve future plan nodes on phased dispatch (2026-10-25)
+- Role: framework worker, direct dev; no app/live/config/shared doc edits or commits.
+- Reproduce actual v2 job t_0mvodbsfke4f94fab4e33: get_plan v1=13full draftnodes; v2=1core node after partial plan_work dispatch. Future API/UI/review/runtime phases disappeared; user explicitly expects persistent framework/panel plan.
+- Own harness/supervisor-tools.ts and focused plan/lifecycle tests; diagnose then send design before edits. No peer owns these files currently.
+- Proposed v2 default: merge future undispatched nodes from latest persisted plan when staffing a submitted subset, while dispatching ONLY submitted nodes. Never auto-launch retained future nodes or charge their grants.
+- Preserve already dispatched/failed history, graph validation/scope/acceptance and dependency semantics. Keep legacy non-v2 replacement behavior. If explicit drop/replacement needed, add deliberate validated flag with documentation rather than silent default loss.
+- Test full draft->one-node dispatch retainsfuture graph/no extra workers/requests/budgetholds; deliberate replacement, cyclic/invalid graph failures and existing phased delegate behavior. No broad source refactor.
+- Report docs/working/supervisor-lifecycle-stall/reports/phased-plan-preservation.md. Root owns authored docs, integrated checks and deployment; live MVP continues on06c3513.
+
+### Corrective worker brief: retained failed-candidate repair handoff (2026-10-25)
+- Role: read-only framework discovery worker; no source/app/live/config/shared-doc edits or commits.
+- Actual new core-repair-fix t_0mvoe0ntde909389eb982 describes precise two test defects but context.baseCommits remains818e98d, not prior actual candidate6cf460735d25b949ecc70c007c04b199143129de; no artifactRefs. Prior patch artifact:a_0mvodt8oh1c5e41a01718. This forces wholesale recreation rather than two-file correction.
+- Read Current State, harness/supervisor-tools.ts delegation/redelegate, relevant task schema/workspace resolution and tests only as needed. Source currently owned by phased_plan_preservation; coordinate, DO NOT edit it.
+- Diagnose existing supported repair handoff contract. Recommend narrow explicit validated repair_from_task or equivalent that grants accessible patch/context or pins untrusted candidate without accepting/integrating failed work. Must enforce same parent/project/repo, scope, attribution, immutable source provenance, no active worktree mutation, budget/paid fences.
+- Explain safest immediate existing-tool operation for root supervisor without writing app code or raw DB state, and exact tests/implementation ownership for later fix. Do not deploy or submit tasks.
+- Report docs/working/supervisor-lifecycle-stall/reports/repair-context-handoff.md; send concrete conclusion promptly.
+
 ## Work Ledger
 Historical entries: [settled release ledger](supervisor-lifecycle-stall/archive/2026-10-25-settled-release-ledger.md).
 
@@ -396,6 +427,14 @@ Historical entries: [settled release ledger](supervisor-lifecycle-stall/archive/
 - Validation: root final recursive typecheck/build pass; targeted42/42 in23.15s. Full157files/1505tests:1501pass/1HTTP brain cleanup EBUSY/3skip in729.77s; all21newtests pass. Root isolated pre-fix HTTP3/4 repeated EBUSY. Fixture correction worker4/4 twice, root final4/4 in5.97s; production source unchanged after full run. Independent final source review no remaining blocker. Actual routing preview implement/T3 has7eligiblefree endpoints/floor100B, no config change.
 - Outcome: Accepted
 - Follow-up: publish and activate; next supported repair supervisor job pins actual retained core commit818e98d54ddda47e701db5391d95a033e49334f6, new finite800request/$0paid budget after user keepworking. Preserve historical rejected run/382actualcharges and all artifacts; no app source edits by FINAL.
+
+### 2026-10-25 - Retained repair oversight and phased-plan correction
+- Agent: supervisor
+- Changed: new800request/$0paid job t_0mvodbsfke4f94fab4e33 from actual retained818e98d core; operated exact panel checks. Worker phased_plan_preservation retains v2 future graph while dispatching submitted nodes only; explicit validated replace_undispatched preserves deliberate removal/legacy behavior.
+- Validation: actual core final install0/typecheck2/test1 (44pass/1fail); precise TS2556 spy/CommonJS import failures. Repair-fix t_0mvoe0ntde909389eb982 active150grant but inherited oldbase, not prior candidate. Public project-memory notes now expose inspected implementation/tests patch with provenance; first over20KB write rejected, two bounded writes succeeded. npm10.9 Arborist edgesOut failure reproduced; exact unsupported compound diagnostic denied with actual log/version/compatible-version guidance.
+- Validation: root source/test diff reviewed; pnpm -r typecheck/build pass. Worker lifecycle15/15; root full1490pass/16fail/3skip598.12s; exact failed10files+changed lifecycle serial98/98pass449.05s without source changes. New behavior accepted; full aggregate not wholly green. No app code edited by root.
+- Outcome: Partial
+- Follow-up: publish framework correction and oversee parent install/API/UI/review/runtime delivery. Repair handoff discovery confirms direct candidate-base pin alone can omit inherited integration range; use authoritative scoped artifact handoff rather than unsafe acceptance.
 
 ### Deferred: make approval requests obvious (user request 2026-10-25)
 - Owner: senior supervisor, future panel UX work. User explicitly requested recording this for later; continue MVP oversight now.
