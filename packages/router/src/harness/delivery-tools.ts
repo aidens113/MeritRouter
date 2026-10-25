@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { createHash } from "node:crypto";
 import type { HarnessTool } from "./tools.js";
 import { ProductDeliveries, DeliveryStageSchema } from "../verification/product-delivery.js";
 import { DeliverySpecSchema, deliverySpecDigest } from "../verification/product-spec.js";
@@ -14,11 +15,18 @@ export function deliveryTools(repositories:Iterable<{alias:string;worktree:strin
   const make=(name:string,description:string,schema:z.ZodType,run:HarnessTool["run"],sideEffect:HarnessTool["sideEffect"]):HarnessTool=>({
     def:{type:"function",function:{name,description,parameters:z.toJSONSchema(schema) as Record<string,unknown>}},sideEffect,run,
   });
-  const args=z.object({spec:DeliverySpecSchema,expectedDigest:z.string().optional()}).strict();
+  // The runtime owns the authoritative task goal; models need not echo or hash it.
+  // Only tool input is optional. The stored specification remains fully strict.
+  const specInput=z.object({...DeliverySpecSchema.shape,
+    source:DeliverySpecSchema.shape.source.optional().describe("Optional authored source reference and SHA256 digest. Omit to bind the task goal automatically; do not invent a hash."),
+    originalInstruction:DeliverySpecSchema.shape.originalInstruction.optional().describe("Optional exact original task goal. Omit to use the authoritative task goal; supplied replacements are rejected."),
+  }).strict();
+  const args=z.object({spec:specInput,expectedDigest:z.string().optional()}).strict();
   return [
-    make("set_delivery_spec","Write a versioned observable delivery specification before implementation. Existing specs require expectedDigest and next revision; changes invalidate candidate evidence.",args,async(raw,env)=>{
+    make("set_delivery_spec","Write a versioned observable delivery specification before implementation. Omit originalInstruction and source: runtime binds the exact task goal and its SHA256 source automatically. Supplied fields retain strict validation and cannot replace the original goal. Existing specs require expectedDigest and next revision; changes invalidate candidate evidence.",args,async(raw,env)=>{
       const a=args.parse(raw),store=new ProductDeliveries(env.ctx.tasks.db),project=(env.ctx.tasks.projectOf(env.ctx.taskId) ?? env.ctx.cfg.brain.project);
-      const spec=store.saveSpec(env.ctx.taskId,project,a.spec,a.expectedDigest);
+      const bound=DeliverySpecSchema.parse({...a.spec,originalInstruction:a.spec.originalInstruction??env.ctx.spec.goal,source:a.spec.source??{ref:`task:${env.ctx.taskId}:goal`,digest:createHash("sha256").update(env.ctx.spec.goal,"utf8").digest("hex")}});
+      const spec=store.saveSpec(env.ctx.taskId,project,bound,a.expectedDigest);
       env.ctx.tasks.event(env.ctx.taskId,"delivery_spec_written",{digest:deliverySpecDigest(spec),revision:spec.revision});
       return JSON.stringify({specDigest:deliverySpecDigest(spec),stage:"specify"});
     },"edit"),

@@ -49,7 +49,7 @@ authority. Existing explicit lower budgets and security policies remain authorit
 `start_job` and supervisor-mode `submit_tasks` default to `supervisionScope: subtask`, which
 completes a delegated component rather than declaring the entire project finished.
 
-Allow explicit `supervisionScope: project` dispatch in Settings Ã¢â€ â€™ General Ã¢â€ â€™ Claude/Codex
+Allow explicit `supervisionScope: project` dispatch in Settings ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ General ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Claude/Codex
 supervision, or ask the connected model to use `set_supervision_policy` with a reason. The
 setting permits project-level MeritRouter supervision; it never disables bounded delegation.
 `get_supervision_policy` reads the effective guidance. Custom instructions are optional.
@@ -187,7 +187,10 @@ Version-2 delivery jobs use `discover -> specify -> prepare -> plan -> implement
 IDs, observable workflows, interface/data/security requirements, exclusions and setup references.
 Updating a specification requires its expected digest and next revision; candidate/specification
 changes invalidate evidence for a different revision. The specification must preserve the
-original submitted goal exactly. Supervisors cannot remove/weaken required criteria or claim
+original submitted goal exactly. In `set_delivery_spec`, models may omit `originalInstruction`
+and `source`; runtime binds the exact task goal and computes its SHA-256 task source. Explicit
+replacements and invalid supplied sources remain rejected. The saved specification is fully
+validated after binding. Supervisors cannot remove/weaken required criteria or claim
 `not_applicable` through a model-written `approvedBy`; no FINAL waiver UI is implemented, so
 these changes fail closed. Prior specification/candidate/evidence/decision states remain in
 durable delivery history when the current state changes.
