@@ -4,7 +4,14 @@ Written for the next agent (Codex or Claude Code) picking this repository up col
 then `AGENTS.md`, then the `Current State` of the effort you work on. Every effort below has its
 own working document with decisions, phases, ledger, and reports.
 
-## Current effort (2026-10-23)
+## Current effort (2026-10-25)
+
+[Supervisor lifecycle stall](supervisor-lifecycle-stall.md) owns the active follow-up.
+Facebook supervisor cancelled after22requests without a framework plan; discovery checks
+blocked on human-only approval, then repeated after denial. No app work accepted. Disjoint
+workers are implementing persisted drafts, lifecycle guards and role-aware stall guidance.
+Corrective routing/batching release14410bc was published to dev/main; prior publication-pending
+language below is historical. Do not claim product delivery from source tests.
 
 Latest corrective work: [supervised delivery](supervised-delivery-v2.md) fixes supervisor startup,
 unavailable-model fallback and actual batch tools after the new Facebook pilot exposed failures.

@@ -421,7 +421,7 @@ describe("declared checks for implementers (run_check)", () => {
     // The tool is offered, and the brief says to use it.
     const first = client.requests[0]!;
     expect((first.tools ?? []).map((x) => x.function.name)).toContain("run_check");
-    expect(String(first.messages[0]!.content)).toMatch(/run your declared checks with run_check \(at most 2 runs\)/);
+    expect(String(first.messages[0]!.content)).toMatch(/group your declared checks with run_checks; run_check is a compatibility alias for one check \(at most 2 runs\)/);
     const outputs = toolOutputs(client.requests.at(-1)!);
     expect(outputs[0]).toMatch(/^\$ node -e .*\nsource [a-f0-9]{64}\nexit 1\n/);
     expect(outputs[0]).toMatch(/\(log artifact:\S+; supervisor action wa_\S+\)/);

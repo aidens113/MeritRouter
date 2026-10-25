@@ -49,7 +49,7 @@ authority. Existing explicit lower budgets and security policies remain authorit
 `start_job` and supervisor-mode `submit_tasks` default to `supervisionScope: subtask`, which
 completes a delegated component rather than declaring the entire project finished.
 
-Allow explicit `supervisionScope: project` dispatch in Settings → General → Claude/Codex
+Allow explicit `supervisionScope: project` dispatch in Settings â†’ General â†’ Claude/Codex
 supervision, or ask the connected model to use `set_supervision_policy` with a reason. The
 setting permits project-level MeritRouter supervision; it never disables bounded delegation.
 `get_supervision_policy` reads the effective guidance. Custom instructions are optional.
@@ -156,7 +156,10 @@ The full text ships as `packages/router/charters/supervisor.md` and can be overr
 5. **Brief precisely** (at most about 40 lines): task type, goal, acceptance criteria, files to
    read, `allowedPaths`, checks, difficulty hint, importance. Briefs are written into the working
    document before dispatch. For multi-part goals, record the decomposition first with
-   `plan_work` (a versioned task graph); every ready node runs at once, up to `team.max_agents`
+   `plan_work` (a versioned task graph). Use `dispatch:false` to publish a validated draft
+   without staffing or launching workers; supply the full briefs again with `dispatch:true`
+   to execute it. Dispatch defaults to true for existing clients. Every ready dispatched node
+   runs at once, up to `team.max_agents`
    per job. Coding tasks whose paths overlap are serialised by file leases (enforced at claim);
    dependents receive their upstream results as context.
 6. **Budget the team.** The job's request budget is one pool. Each delegated task gets
@@ -189,6 +192,15 @@ original submitted goal exactly. Supervisors cannot remove/weaken required crite
 these changes fail closed. Prior specification/candidate/evidence/decision states remain in
 durable delivery history when the current state changes.
 
+Delivery supervisors have a task-wide six-request discovery allowance before the framework
+restricts them to planning, coordination and reporting blockers until a specification, persisted
+plan and worker dispatch exist. Reopening a session does not reset the allowance. Read-only
+repository discovery, including read batches, is available during initial discovery. Host
+commands, command-bearing discovery briefs and Lab execution require a specification and
+recorded plan before any approval request is created. Planned execution briefs must match
+their recorded scope, checks and acceptance criteria; replan to change them. A stage named
+`plan` alone is insufficient. Human-only approval requirements still apply after planning.
+An early blocked v2 result does not automatically execute final shell checks.
 The delivery tools are `set_delivery_spec`, `advance_delivery_stage`, `validate_delivery` and
 `delivery_status`. Integrated declared checks produce structural evidence; they do not establish
 runtime journeys, persistence, visual quality or usability. Required unavailable, stale,

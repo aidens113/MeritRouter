@@ -42,6 +42,7 @@ import { deliverySpecDigest } from "../verification/product-spec.js";
 import { productCandidateDigest } from "../verification/product-evidence.js";
 import { z } from "zod";
 import { memoryContext, refreshMemoryMessages } from "../context/memory.js";
+import { assertSupervisorTool, supervisorToolPolicy } from "../harness/supervisor-lifecycle.js";
 
 interface Finish {
   status: "completed" | "blocked";
@@ -253,14 +254,6 @@ export class SupervisorRunner implements CodingRunner {
           ...t,
           run: async (a, e) => {
             try {
-              if(spec.deliveryVersion===2&&["delegate","plan_work"].includes(t.def.function.name)){
-                const items=(t.def.function.name==="delegate"?a.tasks:a.nodes) as Array<{profile?:string}>|undefined;
-                const implementation=Array.isArray(items)&&items.some(item=>item.profile==="implement"||item.profile==="supervise");
-                if(implementation){
-                  const delivery=new ProductDeliveries(ctx.tasks.db).status(ctx.taskId,(ctx.tasks.projectOf(ctx.taskId) ?? ctx.cfg.brain.project));
-                  if(!delivery||!["plan","implement","integrate","validate"].includes(delivery.stage))throw new Error("delivery_spec_required: specify, prepare and plan before assigning implementation; read-only discovery may run first");
-                }
-              }
               return await t.run(a, e);
             } finally {
               if(t.sideEffect==="edit")await pointer.refresh();
@@ -268,7 +261,10 @@ export class SupervisorRunner implements CodingRunner {
           },
         };
       }),
-    ];
+    ].map((tool): HarnessTool => ({ ...tool, run: async (args, context) => {
+      assertSupervisorTool(ctx, tool, args);
+      return tool.run(args, context);
+    } }));
 
     const terminal: TerminalTool<Finish> = {
       def: FINISH_DEF,
@@ -369,6 +365,7 @@ export class SupervisorRunner implements CodingRunner {
     const inputBudget = Math.max(4000, limits.contextLimitTokens - maxTokens - estimateTokens([], tools.map((t) => t.def)) - 1000);
     const executionId = ctx.gate.admission.createExecution("task", spec.profile, [{ taskId: ctx.taskId, itemId: ctx.taskId }]);
     const loop = await runAgentLoop({
+      toolPolicy: () => supervisorToolPolicy(ctx),
       env,
       executionId,
       messages,
@@ -391,7 +388,11 @@ export class SupervisorRunner implements CodingRunner {
     const scopeViolation: string[] = [];
     const checks: RunOutcome["result"]["checks"] = [];
     const checkHeads=new Map(await Promise.all([...repos.values()].map(async repo=>[repo.alias,await headSha(repo.worktree)] as const)));
-    if (primary && !ctx.signal.aborted) {
+    // A blocked/stalled v2 run has not offered a finished candidate. Do not create fresh
+    // host approvals on the way out (notably for pre-plan discovery failures).
+    const runFinalChecks = spec.deliveryVersion !== 2 || (loop.kind === "terminal" && loop.value.status === "completed");
+    if (!runFinalChecks && spec.constraints.checks?.length) ctx.tasks.event(ctx.taskId, "final_verification_skipped", { reason: "delivery_not_completed", commands: spec.constraints.checks });
+    if (primary && !ctx.signal.aborted && runFinalChecks) {
       for (const command of spec.constraints.checks ?? []) {
         const res = await executeSupervisorCommand(ctx, { command, cwd: primary.worktree, invocationId: `final_job_check:${executionId}:${checks.length}`, env: minimalEnv({ CI: "1" }), timeoutMs: ctx.cfg.execution.check_timeout_seconds * 1000, reason: "Final supervisor verification check" });
         const logRef = ctx.artifacts.write({ taskId: ctx.taskId, executionId, kind: "check_log", label: command, content: `$ ${command}\nexit ${res.exitCode}\n${res.stdout}\n${res.stderr}`, extension: ".log" });
@@ -454,7 +455,7 @@ export class SupervisorRunner implements CodingRunner {
       .join("; ");
 
     if (brain?.workingDoc) {
-      const validation = checks.length ? checks.map((c) => `\`${c.command}\` -> exit ${c.exitCode}`).join("; ") : "not validated: the job defined no checks";
+      const validation = checks.length ? checks.map((c) => `\`${c.command}\` -> exit ${c.exitCode}`).join("; ") : !runFinalChecks && spec.constraints.checks?.length ? "not validated: delivery blocked or stalled before completing a candidate; declared host checks were not run" : "not validated: the job defined no checks";
       await brain.brain
         .appendLedger(brain.principal(), state.actor, brain.workingDoc, {
           title: `${isSubJob ? `Sub-job ${label}` : "Job"} ${finish?.status ?? loop.kind}`,

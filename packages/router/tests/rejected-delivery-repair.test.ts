@@ -25,14 +25,19 @@ it.each(["demo","other"])("repairs a rejected completed delivery in a linked ses
     store.recordEvidence(id,project,{schemaVersion:1,id:`visual-${repair?"repair":"initial"}`,criterionIds:["runtime"],kind:"visual",specDigest:deliverySpecDigest(state.spec),candidateDigest:productCandidateDigest(state.candidate!),actor:{id:"fixture-final",role:"initiator"},basis:"observed",outcome:"pass",startedAt:at,completedAt:at,expiresAt:null,artifactRefs:[sy!.artifacts.write({taskId:id,kind:"check_log",label:"Independent fixture observation",content:"FINAL observed the exact current candidate",extension:".log"})],observations:["Observed exact candidate"],unknowns:[],subjectActorIds:[`supervisor:${id}`]});
   }
   const client=new ScriptedClient(req=>{
+    if(!String(req.messages[0]?.content).startsWith("# Supervisor charter")){
+      const turn=req.messages.filter(message=>message.role==="assistant").length;
+      return reply(null,{...servedFor(sy!,req),toolCalls:turn===0?[call("read_file",{path:"README.md"})]:[call("submit_result",{summary:"Fixture inspected",findings:[],criteria:[{index:0,status:"met",evidenceRefs:["core:README.md#L1"]}]})]});
+    }
     const id=/Job id: (\S+)/.exec(String(req.messages[0]!.content))![1]!;
     const turn=req.messages.filter(message=>message.role==="assistant").length;
     let calls;
     if(!repair){
       if(turn===0)calls=[call("set_delivery_spec",{spec})];
-      else if(turn===1)calls=["prepare","plan","implement","integrate","validate"].map(stage=>call("advance_delivery_stage",{stage},stage));
-      else if(turn===2)calls=[call("validate_delivery",{})];
-      else if(turn===3){visual(id);calls=[call("advance_delivery_stage",{stage:"handoff"})];}
+      else if(turn===1)calls=[...(["prepare","plan"].map(stage=>call("advance_delivery_stage",{stage},stage))),call("plan_work",{nodes:[{label:"inspect-runtime",profile:"inspect",goal:"Inspect the runtime fixture",acceptance_criteria:["Fixture observed"],repositories:["core"],difficulty:"T1"}]})];
+      else if(turn===2)calls=[call("await_tasks",{timeout_seconds:30}),...["implement","integrate","validate"].map(stage=>call("advance_delivery_stage",{stage},stage))];
+      else if(turn===3)calls=[call("validate_delivery",{})];
+      else if(turn===4){visual(id);calls=[call("advance_delivery_stage",{stage:"handoff"})];}
       else calls=[finish()];
     }else{
       if(turn===0){

@@ -8,7 +8,7 @@ import { MAX_PLAN_NODES, PlanStore, criticalPath, defaultRequiresAcceptedInputs,
 import { AWAITING_ACCEPTANCE, TaskStore } from "../storage/tasks.js";
 import type { RunContext } from "../runners/types.js";
 import { IMPORTANCE_LEVELS, MIN_CHILD_REQUESTS, PROFILE_NAMES, maxAgentsPerJob, type Importance } from "../config/schema.js";
-import { ARTIFACT_REF_RE } from "../core/task.js";
+import { ARTIFACT_REF_RE, WorkerTaskSchema } from "../core/task.js";
 import { childRequestBudget, heldRequests, recordCarve } from "../admission/admission.js";
 import { grantOf, recordGrant } from "../admission/job-pool.js";
 import { defaultTaskGrant } from "../admission/budget-requests.js";
@@ -27,6 +27,7 @@ import { rulebookTier } from "../routing/staffing.js";
 import { liveSlotCounts, readConcurrencyRecords } from "../gateway/capacity.js";
 import type { WorkerTaskInput } from "../core/task.js";
 import { narrowedScope, taskWriteScope } from "./task-scope.js";
+import { assertPlannedBriefs } from "./supervisor-lifecycle.js";
 
 export { queueOf } from "./integration-tools.js";
 
@@ -261,6 +262,7 @@ async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, un
   const dup = labels.find((l, i) => labels.indexOf(l) !== i);
   if (dup) throw new Error(`label ${dup} is used more than once`);
   const fresh = items.map((it, i) => ({ it, label: labels[i]! })).filter((x) => !s.children.has(x.label));
+  assertPlannedBriefs(s.ctx, fresh.map(item => item.it), [...s.repos.keys()][0]);
   const ids = new Map(fresh.map((x) => [x.label, newId("t")]));
   for (const { it, label } of fresh) if (it.profile === "implement" && !((it.allowed_paths as string[] | undefined) ?? []).length) throw new Error(`${label}: implement briefs need allowed_paths`);
   const depIds = (it: Record<string, unknown>) =>
@@ -566,17 +568,32 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
     tool(
       "plan_work",
       "delegate",
-      "Record the job's decomposition as a task graph (a new plan version) and dispatch every node through delegate at once. Nodes with no unfinished dependencies run in parallel, up to the job's agent cap; a node starts when its depends_on nodes finish and is given their results (summary, findings, artifacts, patches, acceptance). requires_accepted_inputs (default true for high and critical importance) makes a node wait until its upstream results are accepted (met, or accepted by you with accept_task) instead of starting on unverified work. Re-planning: call again with the full plan; nodes already dispatched keep their tasks (changes to them are ignored; cancel and use a new label instead), dispatched nodes you leave out are carried over. Returns the critical path (longest chain by estimated cost).",
+      "Record the job's decomposition as a task graph (a new plan version). Set dispatch:false to publish a draft without staffing, reserving budgets or starting workers. Default dispatch:true dispatches every fresh node through delegate at once. To execute a draft, supply its full briefs again with dispatch:true. Nodes with no unfinished dependencies run in parallel up to the job's agent cap. Include implementation, independent review and product testing work when applicable. Replanning retains already dispatched nodes; cancel and use a new label to change them. Returns the critical path.",
       {
         nodes: { type: "array", items: { type: "object", properties: { ...briefProperties(maySupervise(s)), requires_accepted_inputs: { type: "boolean", description: "start only on accepted upstream results (default: true for high/critical importance)" }, redundancy: { type: "integer", enum: [1, 2], description: "2 runs a small (T1/T2) non-coding node twice on different models and keeps the first verified result; both are charged" } }, required: ["label", "profile", "goal", "acceptance_criteria"] } },
         note: { type: "string", description: "what this version changes and why" },
+        dispatch: { type: "boolean", description: "false records a validated visible draft only; default true dispatches fresh nodes" },
       },
       ["nodes"],
       async (a, env) => {
         const items = parseObjectArray(a.nodes, "nodes").map((it) => ({ ...it }));
         if (!items.length) throw new Error("nodes is empty");
         if (items.length > MAX_PLAN_NODES) throw new Error(`a plan holds at most ${MAX_PLAN_NODES} nodes`);
-        const { tiers: plannedTiers, notes: staffed } = await staffNodes(s, items);
+        const dispatch = z.boolean().parse(a.dispatch ?? true);
+        // Drafts validate scope and task inputs without Gate/classification or budget effects.
+        for (const it of items) {
+          const profile = String(it.profile ?? "");
+          const repositories = (it.repositories as string[] | undefined) ?? s.ctx.spec.repositoryAliases;
+          if (repositories.some(alias => !s.ctx.spec.repositoryAliases.includes(alias))) throw new Error(`${String(it.label)}: repositories exceeds parent repository scope`);
+          const writable = profile === "implement" ? String(it.writable_repository ?? [...s.repos.keys()][0] ?? "") : undefined;
+          if (writable && (!s.repos.has(writable) || !repositories.includes(writable))) throw new Error(`${String(it.label)}: writable repository exceeds parent scope`);
+          if (profile === "implement" && !((it.allowed_paths as string[] | undefined) ?? []).length) throw new Error(`${String(it.label)}: implement briefs need allowed_paths`);
+          if (profile === "supervise" && !maySupervise(s)) throw new Error(`${slug(it.label)}: sub-supervisors are limited to team.max_depth ${s.ctx.cfg.team.max_depth}; this job is at depth ${depthOf(s)}, so delegate workers instead`);
+          const paths = writable || profile === "supervise" ? narrowedScope(taskWriteScope(s.ctx.spec, s.ctx.tasks), it.allowed_paths) : undefined;
+          sharedFilesArg(it);
+          WorkerTaskSchema.parse({ profile, goal: it.goal, repositoryAliases: repositories, ...(writable ? { writableRepository: writable } : {}), context: { ...(it.file_refs ? { fileRefs: it.file_refs } : {}) }, constraints: { acceptanceCriteria: it.acceptance_criteria, ...(paths ? { allowedPaths: paths } : {}), ...(it.checks ? { checks: it.checks } : {}), ...(it.lab_checks ? { labChecks: it.lab_checks } : {}) }, ...(it.max_requests !== undefined ? { budget: { maxModelRequests: it.max_requests } } : {}), ...(it.importance ? { importance: it.importance } : {}), ...(it.importance_reason ? { importanceReason: it.importance_reason } : {}), ...(it.difficulty || it.web !== undefined ? { hints: { ...(it.difficulty ? { difficulty: it.difficulty } : {}), ...(it.web !== undefined ? { web: it.web } : {}) } } : {}), ...(it.brain_grants ? { brain: { grants: it.brain_grants } } : {}) });
+        }
+        const { tiers: plannedTiers, notes: staffed } = dispatch ? await staffNodes(s, items) : { tiers: new Map<string, PlanDifficulty>(), notes: [] as string[] };
         const store = new PlanStore(s.db, s.ctx.now);
         const previous = store.latest(jobId);
         const nodes: PlanNodeInput[] = items.map((it) => {
@@ -593,6 +610,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
             writableRepository: profile === "implement" ? String(it.writable_repository ?? [...s.repos.keys()][0] ?? "") || null : null,
             allowedPaths: (it.allowed_paths as string[] | undefined) ?? null,
             checks: (it.checks as string[] | undefined) ?? [],
+            labChecks: (it.lab_checks as string[] | undefined) ?? [],
             difficulty,
             importance,
             requiresAcceptedInputs: typeof it.requires_accepted_inputs === "boolean" ? it.requires_accepted_inputs : defaultRequiresAcceptedInputs(importance),
@@ -616,7 +634,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
         let dispatched: string;
         try {
           const freshItems = items.filter((it) => !s.children.has(slug(it.label)));
-          dispatched = freshItems.length ? await dispatchBriefs(s, freshItems, env) : "";
+          dispatched = dispatch && freshItems.length ? await dispatchBriefs(s, freshItems, env) : "";
         } catch (err) {
           // Nothing was submitted: the version is withdrawn so the plan matches the tasks.
           if (!nodes.some((n) => !kept.includes(n.label) && s.children.has(n.label))) store.discard(jobId, plan.version);
@@ -625,7 +643,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
         const cp = criticalPath(plan.nodes);
         const fresh = nodes.length - kept.length;
         return [
-          `plan v${plan.version} recorded: ${plan.nodes.length} node(s); ${fresh} dispatched now, ${kept.length} already dispatched (kept)${carried.length ? `, ${carried.length} carried over (${carried.map((c) => c.label).join(", ")})` : ""}`,
+          `plan v${plan.version} recorded: ${plan.nodes.length} node(s); ${dispatch ? fresh : 0} dispatched now${dispatch ? "" : " (draft; dispatch:false)"}, ${kept.length} already dispatched (kept)${carried.length ? `, ${carried.length} carried over (${carried.map((c) => c.label).join(", ")})` : ""}`,
           `critical path: ${cp.labels.join(" -> ")} (estimated cost ${cp.cost}); at most ${maxAgentsPerJob(s.ctx.cfg)} task(s) of this job run at once`,
           ...(staffed.length ? [`tiers from the rulebook (nodes without difficulty): ${staffed.join("; ")}`] : []),
           ...capacityLine(s),

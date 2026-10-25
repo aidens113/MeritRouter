@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from "vitest";
-import { baseConfig, commitAll, makeEnv, openWithTestSupervisor, reply, ScriptedClient, type Env } from "./helpers.js";
+import { baseConfig, commitAll, makeEnv, openWithTestSupervisor, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
 import type { MeritRouter } from "../src/core/service.js";
 import { ProductDeliveries } from "../src/verification/product-delivery.js";
 import { productDigest } from "../src/verification/product-spec.js";
@@ -25,12 +25,20 @@ it.each([false,true])("runs default delegated lifecycle and refuses a source-cha
   const spec={schemaVersion:1,id:"fixture",revision:1,source:{ref:"fixture-spec",digest:productDigest(goal)},originalInstruction:goal,ownerId:"initiator",users:["fixture operator"],platforms:["node"],workflows:["run node"],dataInvariants:[],interfaceContracts:[],visualRequirements:[],failureStates:[],securityRequirements:[],exclusions:[],setupRecipeRefs:[],criteria:[{id:"runtime",priority:"required",behavior:"Node starts",applicability:{status:"applicable"},requiredEvidence:["structural"]}]};
   const script:Array<[string,unknown]>=[
     ["set_delivery_spec",{spec}],
-    ...["prepare","plan","implement","integrate","validate"].map(stage=>["advance_delivery_stage",{stage}] as [string,unknown]),
+    ...["prepare","plan"].map(stage=>["advance_delivery_stage",{stage}] as [string,unknown]),
+    ["plan_work",{nodes:[{label:"inspect-runtime",profile:"inspect",goal:"Inspect the runtime fixture",acceptance_criteria:["Fixture contents observed"],repositories:["core"],difficulty:"T1"}]}],
+    ["await_tasks",{timeout_seconds:30}],
+    ...["implement","integrate","validate"].map(stage=>["advance_delivery_stage",{stage}] as [string,unknown]),
     ["validate_delivery",{}],["advance_delivery_stage",{stage:"handoff"}],
     ["finish_job",{status:"completed",summary:"Fixture verified",verified:[{claim:"Node starts",evidence:"validate_delivery ran node --version with exit 0"}],not_verified:[],follow_up:"FINAL supervisor review"}],
   ];
   let index=0;
   const client=new ScriptedClient(req=>{
+    if(!String(req.messages[0]?.content).startsWith("# Supervisor charter")){
+      const turn=req.messages.filter(message=>message.role==="assistant").length;
+      const name=turn===0?"read_file":"submit_result",args=turn===0?{path:"README.md"}:{summary:"Fixture observed",findings:[],criteria:[{index:0,status:"met",evidenceRefs:["core:README.md#L1"]}]};
+      return reply(null,{...servedFor(sy!,req),toolCalls:[{id:`worker-${turn}`,type:"function",function:{name,arguments:JSON.stringify(args)}}]});
+    }
     if(req.messages.some(message=>message.role==="tool"&&String(message.content).includes('"error"')))throw new Error("Unexpected tool error in delegated lifecycle");
     const [name,args]=script[index++]??["finish_job",{status:"blocked",summary:"Unexpected extra call",verified:[],not_verified:["lifecycle"],follow_up:"inspect"}];
     return reply(null,{toolCalls:[{id:`step-${index}`,type:"function",function:{name,arguments:JSON.stringify(args)}}]});
@@ -48,7 +56,7 @@ it.each([false,true])("runs default delegated lifecycle and refuses a source-cha
   expect(state).toMatchObject({stage:"handoff",readiness:{status:"ready_for_final_review"},finalDecision:null});
   expect(state!.evidence.some(receipt=>receipt.kind==="structural"&&receipt.basis==="observed"&&receipt.outcome==="pass")).toBe(true);
   expect(sy.tasks.get(submitted.taskId)!.spec).toMatchObject({deliveryVersion:2,budget:{maxModelRequests:600}});
-  expect(index).toBe(9);
+  expect(index).toBe(11);
   const server=buildMcpServer({sy,cfg:env.cfg,project:"demo"});
   const [clientTransport,serverTransport]=InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);

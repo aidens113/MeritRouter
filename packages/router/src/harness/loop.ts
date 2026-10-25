@@ -47,6 +47,8 @@ export interface LoopOptions<T> {
    */
   resume?: ResumeInput;
   purpose?: string;
+  /** Dynamic role/workflow restriction, rechecked before requests and actual tool execution. */
+  toolPolicy?: () => { allowedToolNames: readonly string[]; notice?: string } | null;
 }
 
 export type LoopResult<T> =
@@ -96,7 +98,19 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
   /** Log transcript messages the session has not seen (the next request would; the last turn has none). */
   const sync = () => session?.syncMessages(messages);
   // Tools this run may not have are neither offered nor run (a call to one is an unknown tool).
-  const tools = availableTools(o.tools, env);
+  const allowedNow = (name: string) => {
+    const policy = o.toolPolicy?.();
+    return !policy || policy.allowedToolNames.includes(name);
+  };
+  // Wrap execution as well as filtering advertised definitions: providers may invent calls,
+  // one call may change the policy for the next, and resume may rerun an unfinished intent.
+  const tools = availableTools(o.tools, env).map(t => !o.toolPolicy ? t : {
+    ...t,
+    run: async (args: Record<string, unknown>, invocationEnv: HarnessEnv) => {
+      if (!allowedNow(t.def.function.name)) throw new Error(`tool restricted by current workflow policy: ${t.def.function.name}`);
+      return t.run(args, invocationEnv);
+    },
+  });
   const byName = new Map(tools.map((t) => [t.def.function.name, t]));
   const defs = [...tools.map((t) => t.def), o.terminal.def];
   const terminalName = o.terminal.def.function.name;
@@ -105,6 +119,7 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
   let invalid = 0;
   let lastErrors: string[] = [];
   let finalNotice = false;
+  const policyNotices = new Set(messages.filter(message => message.role === "user" && typeof message.content === "string").map(message => message.content as string));
 
   /** The input budget while `ep` serves: its own context, never less than the fallback budget. */
   const budgetFor = (ep: ModelEndpoint | undefined): number | null =>
@@ -131,9 +146,11 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
   }
 
   // Progress guards (live 2026-10-21: coding workers spent whole budgets reading and searching):
-  // a coding run that has edited nothing by half its requests is told to write now. One exact
+  // a coding run that has edited nothing by half its requests is told to write now;
+  // supervisors receive coordination guidance instead. One exact
   // repeated observation is always fresh; three unchanged observations stop a stalled run.
   const canEdit = byName.has("write_file");
+  const isSupervisor = env.ctx.profile?.mode === "supervisor";
   const runStart = env.ctx.gate.admission.taskTotals(env.ctx.taskId).requests;
   const allowance = env.ctx.budget.maxModelRequests - runStart;
   let edited = false;
@@ -188,7 +205,9 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
       stallNudged = true;
       messages.push({
         role: "user",
-        content: `You have used ${used - runStart} of ${allowance} requests and have not changed any file yet. Write your implementation now with write_file. If something you depend on does not exist yet (another task's module or interface), define the smallest version you need yourself, state that assumption in your result, and continue; do not search for it again.`,
+        content: isSupervisor
+          ? `You have used ${used - runStart} of ${allowance} requests without recording a coordination change. Advance the persisted delivery specification and task plan, dispatch bounded worker briefs, review their results, and verify the integrated product when possible. Respect your implementation policy: delegate-only supervisors must delegate application changes. If progress requires an unavailable dependency or human approval, report the exact blocker instead of repeating discovery or bypassing approval. Builds alone do not prove product acceptance.`
+          : `You have used ${used - runStart} of ${allowance} requests and have not changed any file yet. Write your implementation now with write_file. If something you depend on does not exist yet (another task's module or interface), define the smallest version you need yourself, state that assumption in your result, and continue; do not search for it again.`,
       });
     }
     if (remaining <= 0) {
@@ -199,6 +218,12 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
       finalNotice = true;
       messages.push({ role: "user", content: `This is your final model request. Call ${terminalName} now with what you have; mark anything unverified as unknown.` });
     }
+    const policy = o.toolPolicy?.();
+    if (policy?.notice && !policyNotices.has(policy.notice)) {
+      policyNotices.add(policy.notice);
+      messages.push({ role: "user", content: policy.notice });
+    }
+    const requestDefs = policy ? defs.filter(def => def.function.name === terminalName || policy.allowedToolNames.includes(def.function.name)) : defs;
     const budget = servingBudget ?? o.inputBudget;
     compact(messages, budget);
 
@@ -211,7 +236,7 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
         purpose: o.purpose ?? "agent_loop",
         // The final request offers only the terminal tool: a model told to submit still called
         // other tools (live 2026-10-21), and some providers ignore tool_choice.
-        chat: { messages, max_tokens: pending?.maxTokens ?? o.maxTokens, temperature: 0.2, tools: remaining === 1 ? [o.terminal.def] : defs, tool_choice: remaining === 1 ? "required" : "auto" },
+        chat: { messages, max_tokens: pending?.maxTokens ?? o.maxTokens, temperature: 0.2, tools: remaining === 1 ? [o.terminal.def] : requestDefs, tool_choice: remaining === 1 ? "required" : "auto" },
         preferEndpointId: sticky,
         cacheKey,
         ...(pending?.avoid.length ? { avoidEndpointIds: pending.avoid } : {}),

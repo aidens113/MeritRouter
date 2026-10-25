@@ -4,6 +4,7 @@ import { DeliverySpecSchema, deliverySpecDigest, type DeliverySpec } from "./pro
 import { EvidenceReceiptSchema, ProductCandidateSchema, ProductFinalDecisionSchema, productCandidateDigest, type EvidenceReceipt, type ProductCandidate, type ProductFinalDecision } from "./product-evidence.js";
 import { evaluateProductReadiness } from "./product-readiness.js";
 import { SessionWorkspaceSchema } from "../sessions/events.js";
+import { PlanStore } from "../storage/plans.js";
 
 export const DeliveryRepairContinuationSchema=z.object({previousSessionId:z.string().min(1),workspace:SessionWorkspaceSchema,spec:DeliverySpecSchema,candidate:ProductCandidateSchema,rejection:ProductFinalDecisionSchema.refine(value=>value.decision==="reject")}).strict();
 
@@ -58,6 +59,9 @@ export class ProductDeliveries {
     const stage=DeliveryStageSchema.parse(input),row=this.require(taskId,project);
     const from=DELIVERY_STAGES.indexOf(DeliveryStageSchema.parse(row.stage)),to=DELIVERY_STAGES.indexOf(stage);
     if(to>from+1) throw new Error(`Cannot skip delivery stage ${DELIVERY_STAGES[from+1]}`);
+    const rawTask=this.db.prepare("SELECT json_extract(spec_json,'$.deliveryVersion') AS version FROM tasks WHERE id=? AND project_id=?").get(taskId,project);
+    const task=rawTask?z.object({version:z.number().nullable()}).strict().parse(rawTask):null;
+    if(task?.version===2 && stage==="implement" && !new PlanStore(this.db).latest(taskId)) throw new Error("delivery_plan_required: publish the task decomposition with plan_work before implementation");
     if(stage==="handoff" && this.status(taskId,project)?.readiness?.status!=="ready_for_final_review") throw new Error("Delivery handoff requires complete current observed criterion evidence");
     this.db.prepare("UPDATE product_deliveries SET stage=?,updated_at=? WHERE task_id=? AND project_id=?").run(stage,this.now(),taskId,project);
   }

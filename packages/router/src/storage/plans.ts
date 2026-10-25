@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { Db } from "./db.js";
 import { immediate } from "./db.js";
 import { ImportanceSchema, ProfileNameSchema, type Importance } from "../config/schema.js";
+import { LabNameSchema } from "../labs/recipe.js";
 
 /**
  * A job's decomposition as a versioned task graph (`plan_work`). Every version is immutable;
@@ -38,6 +39,7 @@ export const PlanNodeSchema = z
     writableRepository: z.string().nullable().default(null),
     allowedPaths: z.array(z.string().min(1)).nullable().default(null),
     checks: z.array(z.string().min(1)).default([]),
+    labChecks: z.array(LabNameSchema).max(10).default([]),
     difficulty: z.enum(PLAN_DIFFICULTIES).nullable().default(null),
     importance: ImportanceSchema.nullable().default(null),
     /**
