@@ -12,6 +12,22 @@ const list = z.array(z.string());
 const normalizedLabel = (value: unknown) => String(value ?? "").toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 40);
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
+/** Match the supervisor tools' existing encoded-array compatibility before applying guards. */
+function delegationItems(value: unknown, name: string): Array<Record<string, unknown>> {
+  let input = value;
+  if (typeof value === "string") {
+    try {
+      input = JSON.parse(value) as unknown;
+    } catch (error) {
+      if (error instanceof SyntaxError) throw new Error(`${name} must be a JSON array of objects`);
+      throw error;
+    }
+  }
+  const parsed = z.array(z.record(z.string(), z.unknown())).safeParse(input);
+  if (!parsed.success) throw new Error(`${name} must be an array of objects`);
+  return parsed.data;
+}
+
 function state(ctx: RunContext) {
   const project = ctx.tasks.projectOf(ctx.taskId) ?? ctx.cfg.brain.project;
   return { delivery: new ProductDeliveries(ctx.tasks.db).status(ctx.taskId, project), plan: new PlanStore(ctx.tasks.db).latest(ctx.taskId) };
@@ -47,7 +63,8 @@ export function assertSupervisorTool(ctx: RunContext, tool: Pick<HarnessTool, "d
   const planned = !!plan && !!delivery && ["plan", "implement", "integrate", "validate"].includes(delivery.stage);
   if (((name !== "batch" && tool.sideEffect === "command") || containsCommand(name, args)) && !planned) throw new Error("delivery_plan_required: publish a specification and plan before requesting host commands; read-only repository discovery remains available");
   if (name !== "delegate" && name !== "plan_work") return;
-  const items = z.array(z.record(z.string(), z.unknown())).parse(name === "delegate" ? args.tasks : args.nodes);
+  const field = name === "delegate" ? "tasks" : "nodes";
+  const items = delegationItems(args[field], field);
   if (name === "plan_work" && args.dispatch === false) return;
   const execution = items.some(item => item.profile === "implement" || item.profile === "supervise" || (Array.isArray(item.checks) && item.checks.length) || (Array.isArray(item.lab_checks) && item.lab_checks.length));
   if (execution && (!delivery || !["plan", "implement", "integrate", "validate"].includes(delivery.stage))) throw new Error("delivery_plan_required: specify, prepare and plan before execution; read-only discovery without host checks may run first");

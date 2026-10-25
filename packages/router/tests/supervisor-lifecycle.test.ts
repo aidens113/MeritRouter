@@ -28,7 +28,11 @@ async function fixture(version: 2 | undefined = 2) {
   const harness = { ctx, role: "supervisor", readers: new Map(), edits: new Set() } as unknown as HarnessEnv;
   const tools = supervisorTools(state);
   const store = new ProductDeliveries(sy.db);
-  const run = (name: string, args: Record<string, unknown>) => tools.find(tool => tool.def.function.name === name)!.run(args, harness);
+  const run = async (name: string, args: Record<string, unknown>) => {
+    const tool = tools.find(tool => tool.def.function.name === name)!;
+    assertSupervisorTool(ctx, tool, args);
+    return tool.run(args, harness);
+  };
   const prepare = () => { store.saveSpec(ctx.taskId, "demo", specification); store.transition(ctx.taskId, "demo", "prepare"); store.transition(ctx.taskId, "demo", "plan"); };
   return { ctx, state, run, prepare, store };
 }
@@ -73,6 +77,23 @@ describe("supervisor lifecycle enforcement", () => {
     expect(sy!.db.prepare("SELECT COUNT(*) AS n FROM worker_action_requests").get()).toEqual({ n: 0 });
   });
 
+  it("preserves encoded arrays while rejecting malformed strings and encoded command bypasses before effects", async () => {
+    const { ctx, run, prepare } = await fixture();
+    await expect(run("delegate", { tasks: JSON.stringify([{ ...brief, checks: ["node --version"] }]) })).rejects.toThrow(/delivery_plan_required/);
+    const invalid = ["[", '[{}] trailing note', '{"label":"not-an-array"}', '[null]', '[1]'];
+    for (const value of invalid) {
+      await expect(run("plan_work", { nodes: value, dispatch: false })).rejects.toThrow(/nodes must be (a JSON array|an array) of objects/);
+      await expect(run("delegate", { tasks: value })).rejects.toThrow(/tasks must be (a JSON array|an array) of objects/);
+      expect(new PlanStore(sy!.db).latest(ctx.taskId)).toBeNull();
+      expect(sy!.tasks.childrenOf(ctx.taskId)).toHaveLength(0);
+    }
+    prepare();
+    await expect(run("plan_work", { nodes: JSON.stringify([brief]), dispatch: false })).resolves.toContain("0 dispatched now (draft");
+    await expect(run("delegate", { tasks: JSON.stringify([brief]) })).resolves.toContain("inspect ->");
+    expect(sy!.tasks.childrenOf(ctx.taskId)).toHaveLength(1);
+    expect(sy!.db.prepare("SELECT COUNT(*) AS n FROM worker_action_requests").get()).toEqual({ n: 0 });
+  });
+
   it("matches actual execution and review briefs to recorded plan nodes", async () => {
     const { ctx, run } = await fixture();
     const implementation = { ...brief, label: "implement", profile: "implement", allowed_paths: ["src/**"] };
@@ -110,15 +131,15 @@ describe("supervisor lifecycle enforcement", () => {
   });
 });
 
-it.each([false, true])("runs the real supervisor with no pre-plan host effects (immediate blocked %s)", async immediateBlocked => {
+it.each([[false, false], [false, true], [true, false]])("runs the real supervisor with no pre-plan host effects (blocked %s, encoded arrays %s)", async (immediateBlocked, encoded) => {
   const base = baseConfig();
   env = makeEnv({ config: { ...base, client_supervision: {}, profiles: { ...base.profiles, supervise: { mode: "supervisor", tools: "supervisor", min_total_parameters_b: 100, max_model_requests: 40, classify: "never", min_tier: "T3" } } } });
   let turn = 0;
   const script = [
     [call("run_check", { command: "node --version" }), call("batch", { items: [{ id: "files", operation: "list_paths", args: {} }] }, "read-batch"), call("batch", { items: [{ id: "host", operation: "run_recipe", args: { id: "check:1" } }] }, "host-batch"), call("delegate", { tasks: [{ ...brief, checks: ["node --version"] }] })],
     [call("set_delivery_spec", { spec: specification }), call("advance_delivery_stage", { stage: "prepare" }, "prepare"), call("advance_delivery_stage", { stage: "plan" }, "plan")],
-    [call("plan_work", { nodes: [brief], dispatch: false })],
-    [call("plan_work", { nodes: [brief] })],
+    [call("plan_work", { nodes: encoded ? JSON.stringify([brief]) : [brief], dispatch: false })],
+    encoded ? [call("delegate", { tasks: JSON.stringify([brief]) })] : [call("plan_work", { nodes: [brief] })],
     [call("await_tasks", { timeout_seconds: 30 })],
     [call("finish_job", { status: "blocked", summary: "Planning/dispatch fixture complete; product not implemented", verified: [{ claim: "Planned inspection ran", evidence: "await_tasks observed child result" }], not_verified: ["Usable product"], follow_up: "Implement product" })],
   ];
@@ -133,7 +154,7 @@ it.each([false, true])("runs the real supervisor with no pre-plan host effects (
   const result = (await sy.awaitResults([job.taskId], { timeoutSeconds: 70 })).completed[0];
   expect(result, JSON.stringify(client.requests.at(-1)?.messages)).toMatchObject({ stopReason: "supervisor_blocked" });
   expect(turn).toBe(immediateBlocked ? 2 : 6);
-  expect(new PlanStore(sy.db).list(job.taskId)).toHaveLength(immediateBlocked ? 0 : 2);
+  expect(new PlanStore(sy.db).list(job.taskId)).toHaveLength(immediateBlocked ? 0 : encoded ? 1 : 2);
   expect(sy.tasks.childrenOf(job.taskId)).toHaveLength(immediateBlocked ? 0 : 1);
   if (!immediateBlocked) expect(sy.tasks.childrenOf(job.taskId)[0]!.row.state).toBe("completed");
   const toolMessages = client.requests.filter(req => String(req.messages[0]?.content).startsWith("# Supervisor charter")).at(-1)!.messages.filter(message => message.role === "tool");

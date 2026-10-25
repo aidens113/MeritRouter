@@ -1,6 +1,6 @@
 # Supervisor lifecycle stall investigation
 Status: Active
-Status detail: Lifecycle correction verified; source publication and bounded live reactivation next.
+Status detail: Lifecycle release published; live pilot exposed encoded-array compatibility regression, correction being validated.
 Created: 2026-10-23
 Last updated: 2026-10-25
 Owner: Senior supervisor agent
@@ -23,7 +23,13 @@ Full router suite observed1392passed/9failed/3skipped in150files,525.41s (sessio
 All8failedfiles passed serialized rerun62/62,299.72s. Only obsolete batching-guidance assertion
 changed; runtime assertions/timeouts unchanged. Implementer charter now matches grouped checks.
 Final integrated selection49/49 passed42.59s after charter update (lifecycle,loop,native,
-harness,readonly checks,delivery runtime and rejected repair). No live restart yet.
+harness,readonly checks,delivery runtime and rejected repair). Source3b52bf6 published dev/main.
+Rebuilt daemon20712/panel4477 started with unchanged configuration SHA256; free-only450request
+pilot t_0mvo5uxr4cfd4c54aca73 persisted spec and prepare stage, then failed18requests with
+no children/plan: new guard rejected JSON-encoded nodes accepted by existing tool parser.
+Worker corrected parser compatibility and added actual encoded-draft/delegate regression.
+No blind resume or direct state mutation: failed tasks are not resumable through supported APIs.
+Correction validation/rebuild before another bounded pilot; preserve prior consumed requests.
 Need verify persisted plan, dispatch, independent review and product tests; source builds
 alone do not demonstrate delivery. Host approval policy must remain intact.
 
@@ -94,8 +100,17 @@ alone do not demonstrate delivery. Host approval policy must remain intact.
   when offered, exact check:N recipes/commands; preserve ordering, serial execution and approvals.
 - Preserve run_check individual/legacy fallback and no shell, exact results, fix failures, final checks.
 - No tests/commits or other edits; root runs focused native/check tests afterwards.
+### encoded-plan-compatibility
+- Role: worker; own src/harness/supervisor-lifecycle.ts and tests/supervisor-lifecycle.test.ts only.
+- Live pilot t_0mvo5uxr4cfd4c54aca73 failed18requests after specification persisted.
+- New guard z.array rejects JSON-encoded nodes/tasks before existing parseObjectArray accepts them.
+- Preserve existing encoded-array compatibility with safe JSON parsing and zod validation;
+  malformed strings remain refused, all stage/plan/command guards unchanged.
+- Regression: encoded draft nodes and encoded planned delegate tasks; actual tool flow,
+  invalid strings and check-bearing encoded tasks still guarded before effects.
+- No commits, app edits, broad tests; focused test allowed. Report encoded-plan-compatibility.md.
 ## Work Ledger
-### 2026-10-23 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â Live stall reproduced
+### 2026-10-23 ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Live stall reproduced
 - Agent: supervisor
 - Changed: investigation document only; denied optional node version request through supported API.
 - Why: supervisor had no plan and no implementation, waiting on unnecessary host command.
@@ -103,7 +118,7 @@ alone do not demonstrate delivery. Host approval policy must remain intact.
 - Outcome: Partial
 - Follow-up: trace and repair lifecycle progression rather than approve needless checks.
 
-### 2026-10-25 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â Resume and implement lifecycle correction
+### 2026-10-25 ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Resume and implement lifecycle correction
 - Agent: supervisor
 - Changed: assigned disjoint lifecycle and loop-role workers; no app code edits.
 - Why: confirmed PlanStore supports undispatched nodes, but plan_work couples recording and execution.
@@ -111,7 +126,7 @@ alone do not demonstrate delivery. Host approval policy must remain intact.
 - Outcome: Partial
 - Follow-up: draft plan support, command/dispatch gates and bounded discovery; independently validate.
 
-### 2026-10-25 — Integrated lifecycle correction verified
+### 2026-10-25 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Integrated lifecycle correction verified
 - Agent: supervisor
 - Changed: worker-owned lifecycle/loop/planning/storage/charter files and proportionate regressions; docs/roles.
 - Why: require persisted planning and actual assignment before unrestricted discovery/execution.
@@ -119,5 +134,12 @@ alone do not demonstrate delivery. Host approval policy must remain intact.
 - Validation: all8failedfiles serialized ->62/62,299.72s; final7-file delivery/native/harness selection ->49/49,42.59s.
 - Outcome: Accepted
 - Follow-up: publish verified source, restart bounded free-only pilot and inspect actual plan/dispatch; no clone accepted.
+### 2026-10-25 — Live encoded-plan regression corrected
+- Agent: supervisor
+- Changed: worker-owned lifecycle guard and regression; preserved encoded-array compatibility.
+- Why: pilot t_0mvo5uxr4cfd4c54aca73 persisted spec/prepare but failed18requests before any plan/task.
+- Validation: independently observed final4-file lifecycle/loop/team run32/32,32.16s; recursive typecheck/build exit0.
+- Outcome: Accepted
+- Follow-up: publish correction; start replacement with425requests/$0paid, retaining failed task history and consumed quota.
 ## Open Questions
 - Supervisor owns diagnosis and implementation scope after worker report.
