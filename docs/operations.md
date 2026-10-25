@@ -524,9 +524,16 @@ without relaxing file-target, symlink/hardlink, configuration or lease boundarie
 | `read_output_page` | Lossless pages from a task-scoped artifact when output exceeds inline limits |
 | `operation_status`, `cancel_operation` | Task-owned durable status and cancellation request; do not spend model calls polling |
 
-Operations default to a 30-second deadline. `timeout_ms` can request up to 300,000 milliseconds,
-clamped by remaining task time and applicable check limits. Declare build/install work and
-choose an adequate deadline; a wrapper does not authorize a new host command. Large output is
+Operations default to a 30-second active-work budget. `timeout_ms` can request up to 300,000
+milliseconds, subject to applicable check limits and an independent task deadline. Only a
+persisted, owned pending approval pauses the operation and enclosing execution clocks; source
+capture remains active work. Task deadlines and explicit operation/task cancellation continue
+throughout the wait. Approved commands are capped by the requested and remaining enclosing
+execution budgets, including commands that finish between status observations. An identical
+invocation/source retains its approval identity; runtime may narrow its effective execution cap.
+A cancelled request cannot execute later, and approval never transfers to changed source.
+Declare build/install work and choose an adequate budget; a wrapper does not authorize a new
+host command. To abandon an approval wait, cancel the operation or task. Large output is
 preserved in scoped artifacts rather than silently discarded. Default inline output is 32 KiB,
 with context-sensitive bounds; `read_output_page` defaults to 16,000 UTF-16 characters/page.
 

@@ -34,11 +34,12 @@ async function directBridge(declared = check) {
   const [submitted] = await sy.submitTasks([request]);
   const stored = sy.tasks.claim("bridge-test", { maxConcurrent: 1, maxWritersPerRepo: 1, leaseMs: 30000, defaultTimeoutMs: 30000 })[0]!;
   expect(stored.row.id).toBe(submitted!.taskId);
-  const ctx = { cfg: env.cfg, tasks: sy.tasks, taskId: stored.row.id, leaseOwner: "bridge-test", taskLease: capturedLease(stored), spec: stored.spec, now: Date.now, signal: new AbortController().signal, session: null, artifacts: sy.artifacts } as unknown as RunContext;
+  const controller = new AbortController();
+  const ctx = { cfg: env.cfg, tasks: sy.tasks, taskId: stored.row.id, leaseOwner: "bridge-test", taskLease: capturedLease(stored), spec: stored.spec, now: Date.now, signal: controller.signal, session: null, artifacts: sy.artifacts } as unknown as RunContext;
   bridge = await startTaskTools(ctx, env.repo, env.dir);
   client = new Client({ name: "direct-fixture", version: "1" });
   await client.connect(new StreamableHTTPClientTransport(new URL(bridge.url), { requestInit: { headers: { Authorization: `Bearer ${bridge.token}` } } }));
-  return { ctx, provider };
+  return { ctx, provider, controller };
 }
 
 describe("external worker refusal", () => {
@@ -119,14 +120,19 @@ describe("direct task-scoped bridge", () => {
     expect(finished.quiescedAt!).toBeGreaterThanOrEqual(startedAt);
     await new Promise(resolve=>setTimeout(resolve,Math.max(0,startedAt+8200-Date.now())));expect(existsSync(marker)).toBe(false);
   },20000);
-  it("cancels an expired recipe approval so it cannot execute later", async () => {
-    const { ctx } = await directBridge();
-    const result = await client!.callTool({name:"run_recipe",arguments:{id:"check:1",timeout_ms:700}});
-    expect(result.isError).toBe(true);
+  it("keeps approval separate from execution timeout and explicitly cancels it so it cannot execute later", async () => {
+    const { ctx, controller } = await directBridge();
+    const pending = client!.callTool({name:"run_recipe",arguments:{id:"check:1",timeout_ms:700}});
     const actions = new WorkerActionRequests(sy!.db);
-    const request = actions.list({project:ctx.taskLease!.project,taskId:ctx.taskId})[0];
-    expect(request?.status).toBe("cancelled");
-    expect(request?.quiescedAt).toBeTypeOf("number");
+    const request = await until(()=>actions.list({project:ctx.taskLease!.project,taskId:ctx.taskId,status:"pending"})[0],Boolean);
+    await new Promise(resolve=>setTimeout(resolve,800));
+    expect(actions.get(ctx.taskLease!.project,request!.id)?.status).toBe("pending");
+    controller.abort("Explicit fixture caller cancellation");
+    const result = await pending;
+    expect(result.isError).toBe(true);
+    const cancelled = actions.get(ctx.taskLease!.project, request!.id);
+    expect(cancelled?.status).toBe("cancelled");
+    expect(cancelled?.quiescedAt).toBeTypeOf("number");
     const late = await actions.decide({project:ctx.taskLease!.project,id:request!.id,decision:"approve",reason:"too late",actor:{kind:"operator"},config:env!.cfg});
     expect(late.status).toBe("cancelled");
     expect(sy!.tasks.events(ctx.taskId,100).some(event=>event.type===WORKER_CHECK_EVENT)).toBe(false);

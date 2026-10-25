@@ -13,6 +13,28 @@ interface OperationState {
   controller: AbortController;
 }
 const states = new WeakMap<object, Map<string, OperationState>>();
+interface ExecutionClock { parent: AbortSignal; remaining(): number; pause(): (executionStartedAt?: number) => void; }
+const executionClocks = new WeakMap<AbortSignal, ExecutionClock>();
+
+/** Approval is a separate phase. Pause only execution clocks, never task/lease authority. */
+export function pauseOperationExecutionTimeout(signal: AbortSignal): (executionStartedAt?: number) => void {
+  const releases: Array<(executionStartedAt?: number) => void> = [];
+  let clock = executionClocks.get(signal);
+  while (clock) {
+    releases.push(clock.pause());
+    clock = executionClocks.get(clock.parent);
+  }
+  let released = false;
+  return executionStartedAt => { if (!released) { released = true; for (const release of releases.reverse()) release(executionStartedAt); } };
+}
+
+/** A captured command may only consume the remaining active budget of every ancestor. */
+export function operationExecutionTimeRemaining(signal: AbortSignal): number {
+  if (signal.aborted) return 0;
+  let remaining = Infinity, clock = executionClocks.get(signal);
+  while (clock) { remaining = Math.min(remaining, clock.remaining()); clock = executionClocks.get(clock.parent); }
+  return Math.max(0, Math.floor(remaining));
+}
 function stateMap(env: HarnessEnv) {
   let map = states.get(env.ctx.tasks); if (!map) {
     map = new Map();
@@ -66,9 +88,57 @@ export async function executeOperation(def: OperationDefinition, input: Record<s
   const row = env.ctx.tasks.get(env.ctx.taskId)?.row;
   if(row?.deadline_at!=null&&env.ctx.now()>=row.deadline_at)return {version:"2",operationId:id,status:"denied",durationMs:Date.now()-started,diagnostics:["Task deadline already expired; no operation executed."]};
   const remaining = row?.deadline_at == null ? Infinity : Math.max(1, row.deadline_at - env.ctx.now());
-  const timeout = Math.min(Number(parsed.data.timeout_ms ?? 30000), 300000, remaining);
-  const timer = setTimeout(() => controller.abort(new Error("operation timeout")), timeout);
-  timer.unref?.();
+  const timeout = Math.min(Number(parsed.data.timeout_ms ?? 30000), 300000);
+  let executionRemaining = timeout, activeSince = Date.now(), pauses = 0, settled = false;
+  let chargedIntervals: Array<[number, number]> = [], chargedWhilePaused = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const scheduleExecution = () => {
+    if (settled || signal.aborted || pauses) return;
+    if (executionRemaining <= 0) { controller.abort(new Error("operation timeout")); return; }
+    activeSince = Date.now();
+    timer = setTimeout(() => controller.abort(new Error("operation timeout")), Math.max(0, executionRemaining));
+    timer.unref?.();
+  };
+  const clock: ExecutionClock = { parent: env.ctx.signal, remaining() {
+    const remaining = executionRemaining - (pauses ? 0 : Date.now() - activeSince);
+    if (remaining <= 0 && !settled && !signal.aborted) controller.abort(new Error("operation timeout"));
+    return settled || signal.aborted ? 0 : Math.max(0, remaining);
+  }, pause() {
+    if (settled || signal.aborted) return () => {};
+    const pausedAt = Date.now();
+    if (pauses++ === 0) {
+      clearTimeout(timer);
+      executionRemaining = Math.max(0, executionRemaining - (pausedAt - activeSince));
+      chargedIntervals = []; chargedWhilePaused = 0;
+      // A delayed timer callback cannot revive an already-spent active budget.
+      if (executionRemaining === 0) controller.abort(new Error("operation timeout"));
+    }
+    let released = false;
+    return executionStartedAt => { if (!released) {
+      released = true;
+      if (executionStartedAt !== undefined && Number.isFinite(executionStartedAt)) {
+        const end = Date.now(), start = Math.min(end, Math.max(pausedAt, executionStartedAt));
+        const sorted = [...chargedIntervals, [start, end] as [number, number]].sort((a, b) => a[0] - b[0]);
+        const merged: Array<[number, number]> = [];
+        for (const span of sorted) {
+          const last = merged.at(-1);
+          if (last && span[0] <= last[1]) last[1] = Math.max(last[1], span[1]);
+          else merged.push([...span]);
+        }
+        chargedIntervals = merged;
+        const charged = merged.reduce((sum, span) => sum + span[1] - span[0], 0);
+        executionRemaining = Math.max(0, executionRemaining - (charged - chargedWhilePaused));
+        chargedWhilePaused = charged;
+        if (executionRemaining === 0) controller.abort(new Error("operation timeout"));
+      }
+      if (--pauses === 0) scheduleExecution();
+    } };
+  } };
+  executionClocks.set(signal, clock);
+  scheduleExecution();
+  // This wall-clock bound remains active throughout approval waiting.
+  const taskTimer = Number.isFinite(remaining) ? setTimeout(() => controller.abort(new Error("task deadline reached")), remaining) : undefined;
+  taskTimer?.unref?.();
   const state: OperationState = { controller, result: null };
   stateMap(env).set(key, state);
   env.ctx.session?.note?.("Harness v2 operation started", { kind: "harness_v2_operation", taskId: env.ctx.taskId, operationId: id, sideEffect: def.sideEffect });
@@ -91,7 +161,10 @@ export async function executeOperation(def: OperationDefinition, input: Record<s
     result = { version: "2", operationId: id, status: signal.aborted ? (def.sideEffect === "read" ? (env.ctx.signal.aborted ? "cancelled" : "timed_out") : "unknown_effect") : "failed", durationMs: Date.now() - started, diagnostics: [message] };
   }
   finally {
+    settled = true;
     clearTimeout(timer);
+    clearTimeout(taskTimer);
+    executionClocks.delete(signal);
   }
   const alias=typeof parsed.data.alias==="string"?parsed.data.alias:env.workspace?.alias??(env.readers.size===1?env.readers.keys().next().value:undefined);
   const reader=alias?env.readers.get(alias):undefined;

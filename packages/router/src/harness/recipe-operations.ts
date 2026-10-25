@@ -6,7 +6,7 @@ import { journaled } from "./journal.js";
 export function recipeOperations(): OperationDefinition[] {
   const args = z.object({ ...DeadlineArgs, id: z.string().regex(/^check:[1-9]\d*$/) });
   const recipe: OperationDefinition = {
-    name: "run_recipe", description: "Run a declared check recipe by check:N ID from workspace_info. Uses existing authority, approval and cumulative check limits. No arbitrary shell interpolation.", args, sideEffect: "command", available: env => !!env.checks?.commands.length, async run(a, env) {
+    name: "run_recipe", description: "Run a declared check recipe by check:N ID from workspace_info. timeout_ms bounds active work, excluding only an authoritative pending approval wait; source preflight, task deadline and cancellation remain bounded. Uses existing authority, approval and cumulative check limits. No arbitrary shell interpolation.", args, sideEffect: "command", available: env => !!env.checks?.commands.length, async run(a, env) {
       const checks = env.checks!, index = Number((a.id as string).split(":")[1]) - 1, command = checks.commands[index];
       if (!command)
         throw new Error(`Unknown recipe ${a.id}; use workspace_info for granted IDs.`);
@@ -24,7 +24,7 @@ export function recipeOperations(): OperationDefinition[] {
     }
   };
   return [recipe, {
-    name: "run_checks", description: "Run selected declared check:N IDs sequentially, or all declared checks when ids is omitted. Every command retains approval, deadline and cumulative quota; stop on failure by default.",
+    name: "run_checks", description: "Run selected declared check:N IDs sequentially, or all declared checks when ids is omitted. timeout_ms bounds active work, excluding only authoritative pending approval waits; source preflight, task deadline and cancellation remain bounded. Every command retains approval and cumulative quota; stop on failure by default.",
     args: z.object({ ...DeadlineArgs, ids: z.array(z.string().regex(/^check:[1-9]\d*$/)).min(1).max(64).optional(), stop_on_failure: z.boolean().default(true) }),
     sideEffect: "command", available: recipe.available,
     async run(a, env) {

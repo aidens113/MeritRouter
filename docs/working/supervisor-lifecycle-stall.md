@@ -1,6 +1,6 @@
 # Supervisor lifecycle stall investigation
 Status: Active
-Status detail: Corrections published through d9243b8; live foundation completed, dependency install awaits exact human approval.
+Status detail: Approval/execution timeout correction verified by full153-file suite; publishing and resuming same supervisor.
 Created: 2026-10-23
 Last updated: 2026-10-25
 Owner: Senior supervisor agent
@@ -9,6 +9,20 @@ Paired document: none
 Related: [supervised delivery](supervised-delivery-v2.md)
 
 ## Current State
+
+Latest correction independently verified: recursive typecheck/build passed; full router suite
+`pnpm exec vitest run --maxWorkers=4 --reporter=default --reporter=json --outputFile <temp>`
+passed152files/1skipped,1428tests/3skipped/0failed in670.58s. New approval-clock file14/14
+passed in that full run. JSON success verified; no concurrent build/live provider worker.
+Only trusted pending approval pauses active execution clocks. Source capture stays bounded,
+expired clocks cannot revive, task deadline/cancel remain independent, and approved execution
+is clamped by requested and remaining own/ancestor budgets. Trusted execution-start accounting
+covers commands completing between polls; optional row metadata preserves old records and
+immutable approval identity, and replay may only narrow its effective cap.
+Independent reviewer found no remaining blocker. Exact user-approved old request never ran;
+no approval transfers to replacement/changed source. Dependency task failed its task deadline,
+so resumed parent must rebrief setup. Publish this coherent source before runtime recovery.
+
 Corrective routing/batching release published to dev/main at 14410bc.
 Live job t_0mvlxbcr2902bde7859a2 was cancelled after22 requests without a plan; both discovery children are cancelled.
 It blocked on node --version; external FINAL denied the optional request, explicitly
@@ -63,6 +77,23 @@ Config SHA256 unchanged2963B9A8B79CD23DC2425989BAD58A1BC068E6A6E8DA8F755C0145188
 No usable app, installed dependencies, production success, browser acceptance or FINAL approval yet.
 Need verify persisted plan, dispatch, independent review and product tests; source builds
 alone do not demonstrate delivery. Host approval policy must remain intact.
+
+Latest user reply: approved npm install in panel. Verification found original action
+wa_0mvo71ilk540326de44ab system-cancelled before execution after its300000ms operation
+budget expired during human waiting. Replacement wa_0mvo784v0d4ff72c1cfc0 is pending with
+changed source after worker edits; no approval may transfer across source identities.
+No install success observed. New corrective worker separates active execution clock from
+human approval wait, preserving unpaused task deadline, explicit cancellation, execution
+kill/quiescence and operator/source authority. Old explicit recipe-expiry fixture changes
+to explicit cancellation, preserving no-late-execution assertions. No new approval asked yet.
+Source correction now separates active execution/approval clocks, keeps independent task
+deadline, fences source-capture cancellation, charges missed fast execution and persists a
+trusted narrowing execution cap outside the immutable approval identity. Worker focused14/14
+and independent safety review complete; root recursive typecheck/build passed. Full suite
+running --maxWorkers=4 (session95225), no concurrent build or live provider worker.
+Daemon8988 stopped; stale MCP2960 stopped. Dependency task reached its existing task deadline
+and is failed; root job remains recoverable/interrupted with390request cap. On recovery,
+supervisor must rebrief dependency setup; old approvals cannot be transferred.
 
 ## Worker Briefs
 ### lifecycle-discovery
@@ -181,6 +212,37 @@ alone do not demonstrate delivery. Host approval policy must remain intact.
 - Add real fake-provider regression >=six requests then two-node draft -> delegate first only,
   actual child completion, second node remains visible not_dispatched. No need launch wholegraph.
 - No app edits/commits; focused tests/typecheck allowed, report phased-first-dispatch.md.
+### approval-execution-timeout
+- Role: worker; own harness/operation-lifecycle.ts, recipe-operations.ts, worker-actions.ts,
+  operation-dispatch.ts if necessary, and new tests/approval-execution-timeout.test.ts.
+- Read Current State and those files only, plus existing relevant harness/approval tests.
+- User approved npm install in panel, but old action wa_0mvo71ilk540326de44ab was already
+  system-cancelled after300s: Owning operation cancelled before execution. Replacement
+  wa_0mvo784v0d4ff72c1cfc0 pending with changed source after worker continued editing.
+- Trace and fix execution timeout incorrectly consuming human approval wait; preserve
+  separate bounded task deadline, lease/source identity, explicit cancellation and command kill/quiescence.
+- Do not execute pending actions, carry approval across changed sources, extend paid/budget
+  authority, disable timeouts, or interpret user chat as an operator decision.
+- Additional root review: charge active execution missed between pending/running/completed
+  polls so quick commands cannot escape enclosing group/batch execution budgets. Use trusted
+  persisted execution-start timing or equally precise server-owned accounting, not model data.
+- Regression actual operation waits beyond execution timeout with pending action stable,
+  then approved execution still times out/kills at requested limit; deny/cancel/task deadline work.
+- Approved fixture update: external-task-tools.test.ts expired-approval case now uses explicit
+  task/client cancellation while preserving all no-late-execution assertions; execution timeout
+  becomes active-work time, approval wait remains bounded by a separate task deadline.
+- Use fakes/temp directories; root owns final validation/deployment/docs. No app edits/commits.
+- Report approval-execution-timeout.md; announce source stability before root checks.
+
+### approval-clock-safety
+- Role: read-only reviewer; own only reports/approval-clock-safety.md, no commits.
+- Read Current State and changed operation-lifecycle.ts/worker-actions.ts/recipe-operations.ts
+  plus new approval-execution-timeout.test.ts and changed external-task-tools test.
+- Review pending-action authority, nested clock pause/resume, unpaused task deadline,
+  explicit cancellation, cleanup/quiescence and execution timeout after approval.
+- Coordinate with implementation worker; do not run broad tests during edits.
+- Flag concrete bypasses/races and distinguish inspected source from observed test results.
+
 ## Work Ledger
 ### 2026-10-23 - Live stall reproduced
 - Agent: supervisor
@@ -242,6 +304,14 @@ alone do not demonstrate delivery. Host approval policy must remain intact.
 - Validation: live job/plan HTTP200; foundation task completed/met; deps exact npm install request pending. Root28model requests unchanged across reads while await_tasks waits for operator.
 - Outcome: Partial
 - Follow-up: operator must approve wa_0mvo71ilk540326de44ab in panel; then inspect install result, later implementation/review/product evidence. No app code by external FINAL.
+
+### 2026-10-25 - Separate approval wait from bounded execution
+- Agent: supervisor
+- Changed: worker-owned operation clocks, recipe guidance, exact-action cancellation/caps and14regressions; docs/operations and roles.
+- Why: user approved in panel after the300s operation timer had cancelled the request during human wait; replacement had changed source.
+- Validation: root recursive typecheck/build exit0; full153-file run1428pass/3skip/0fail in670.58s with4workers. JSON success and newclock14/14 verified.
+- Outcome: Accepted
+- Follow-up: publish, reload all runtime controllers/panel, recover same390request supervisor, rebrief failed dependency phase and inspect fresh approval request. No app edits/approval impersonation.
 
 ## Open Questions
 - Supervisor owns diagnosis and implementation scope after worker report.

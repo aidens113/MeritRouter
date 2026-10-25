@@ -211,6 +211,10 @@ does not return control to the model: it waits for the operator decision, comple
 cancellation or timeout without spending requests. Supervisor-capable actions still wake
 the model promptly. Action listings identify `approvalPolicy`, `canApprove` and `waitingFor`.
 Timeout output distinguishes a human wait from a decision the supervisor may make.
+For recipe execution, only the authoritative pending approval phase pauses active operation
+time. Source checks, task deadlines and explicit cancellation remain bounded, and approved
+commands retain their own and enclosing execution limits. A replay keeps the same approval
+identity; changed source requires a new decision.
 The delivery tools are `set_delivery_spec`, `advance_delivery_stage`, `validate_delivery` and
 `delivery_status`. Integrated declared checks produce structural evidence; they do not establish
 runtime journeys, persistence, visual quality or usability. Required unavailable, stale,

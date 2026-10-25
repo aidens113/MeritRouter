@@ -10,6 +10,7 @@ import { minimalEnv, runProcess } from "../runners/coding/process.js";
 import type { RunContext } from "../runners/types.js";
 import { loadConfig, type ResolvedConfig } from "../config/load.js";
 import { currentSupervisorAuthority } from "../core/supervisor-authority.js";
+import { operationExecutionTimeRemaining, pauseOperationExecutionTimeout } from "./operation-lifecycle.js";
 
 export function outsideRepositoryPolicy(cfg: ResolvedConfig): "disabled" | "human_only" | "supervisor" {
   // Always re-read the trusted config path; queued actions cannot retain a looser stale policy.
@@ -25,7 +26,8 @@ const RowSchema = z.object({ id: z.string(), project: z.string(), taskId: z.stri
   status: z.enum(["pending", "running", "completed", "denied", "cancelled", "uncertain"]),
   action: ActionSchema, decisionReason: z.string().nullable(), decidedBy: z.string().nullable(),
   output: z.string().max(20000).nullable(), exitCode: z.number().int().nullable(), createdAt: z.number().int(),
-  cancelRequested: z.boolean().optional(), quiescedAt: z.number().int().optional() }).strict();
+  cancelRequested: z.boolean().optional(), quiescedAt: z.number().int().optional(),
+  executionStartedAt: z.number().int().nonnegative().optional(), executionTimeoutMs: z.number().int().positive().max(300000).optional() }).strict();
 export type WorkerActionRequest = z.infer<typeof RowSchema>;
 export type WorkerActionActor = { kind: "operator" } | { kind: "supervisor"; taskId: string; lease: LeaseRef };
 
@@ -106,6 +108,7 @@ export class WorkerActionRequests {
     return this.file(ctx, { command: `[supervisor operation ${input.operation}]`, cwd, timeoutMs: 300000, reason: input.reason, invocationId: input.invocationId, operation: { name: input.operation, args: input.args } });
   }
   async file(ctx: RunContext, input: { command: string; cwd: string; timeoutMs: number; reason: string; invocationId?: string; operation?: { name: string; args: Record<string, unknown> } }): Promise<WorkerActionRequest> {
+    if (ctx.signal.aborted) throw new Error("worker action cancelled before source capture");
     if (outsideRepositoryPolicy(ctx.cfg) === "disabled") throw new Error("outside-repository actions are disabled by security.outside_repository");
     const lease = LeaseRefSchema.parse(ctx.taskLease);
     if (lease.taskId !== ctx.taskId) throw new Error("worker action task identity differs from its captured lease");
@@ -127,13 +130,20 @@ export class WorkerActionRequests {
       };
       walk(input.operation.args, 0);
     }
-    const action = ActionSchema.parse({ ...input, timeoutMs: Math.min(input.timeoutMs, 300000), cwd: realpathSync(input.cwd), source: await workerSourceIdentity(input.cwd), lease, jobId: task.spec.parentTaskId ?? null });
-    const row: WorkerActionRequest = { id: newId("wa"), project: lease.project, taskId: ctx.taskId, action, status: "pending", decisionReason: null, decidedBy: null, output: null, exitCode: null, createdAt: this.now() };
+    const source = await workerSourceIdentity(input.cwd);
+    if (ctx.signal.aborted) throw new Error("worker action cancelled during source capture");
+    const executionBudget = Math.min(input.timeoutMs, 300000, operationExecutionTimeRemaining(ctx.signal));
+    if (executionBudget <= 0) throw new Error("operation execution budget exhausted before approval filing");
+    const action = ActionSchema.parse({ ...input, timeoutMs: Math.min(input.timeoutMs, 300000), cwd: realpathSync(input.cwd), source, lease, jobId: task.spec.parentTaskId ?? null });
+    const row: WorkerActionRequest = { id: newId("wa"), project: lease.project, taskId: ctx.taskId, action, status: "pending", decisionReason: null, decidedBy: null, output: null, exitCode: null, createdAt: this.now(), executionTimeoutMs: executionBudget };
     this.current(row);
     return immediate(this.db, () => {
       const key = createHash("sha256").update(JSON.stringify({ ...action, reason: undefined })).digest("hex");
       const existing = this.read(this.db.prepare("SELECT value_json FROM worker_action_requests WHERE project_id=? AND request_key=?").get(row.project, key));
-      if (existing) return existing;
+      if (existing) {
+        if (existing.status === "pending") { existing.executionTimeoutMs = Math.min(existing.executionTimeoutMs ?? existing.action.timeoutMs, executionBudget); this.save(existing); }
+        return existing;
+      }
       const count = z.object({ n: z.number() }).parse(this.db.prepare("SELECT COUNT(*) n FROM worker_action_requests WHERE task_id=?").get(row.taskId)).n;
       if (count >= 50) throw new Error("worker action request limit reached (50)");
       this.db.prepare("INSERT INTO worker_action_requests(id,project_id,task_id,request_key,value_json,created_at) VALUES(?,?,?,?,?,?)").run(row.id, row.project, row.taskId, key, JSON.stringify(row), row.createdAt);
@@ -164,6 +174,7 @@ export class WorkerActionRequests {
       if (latest.status !== "pending") return latest;
       authorize(); this.current(latest);
       latest.status = input.decision === "deny" ? "denied" : "running";
+      if (latest.status === "running") latest.executionStartedAt = Date.now();
       latest.decisionReason = reason;
       latest.decidedBy = input.actor.kind === "operator" ? "operator" : input.actor.taskId;
       if (latest.status === "running" && latest.action.operation) { latest.status = "completed"; latest.output = `Supervisor-provided response (not executed worker evidence):\n${z.string().max(19000).parse(input.response)}`; }
@@ -180,7 +191,7 @@ export class WorkerActionRequests {
       this.current(row); authorize();
       if (input.signal?.aborted) abort();
       if (controller.signal.aborted) throw new Error("supervisor action cancelled before execution");
-      const r = await runProcess(row.action.command, [], { cwd: row.action.cwd, env: minimalEnv({ CI: "1" }), timeoutMs: row.action.timeoutMs, signal: controller.signal, shell: true });
+      const r = await runProcess(row.action.command, [], { cwd: row.action.cwd, env: minimalEnv({ CI: "1" }), timeoutMs: Math.min(row.action.timeoutMs, row.executionTimeoutMs ?? row.action.timeoutMs), signal: controller.signal, shell: true });
       row.cancelRequested = this.get(row.project,row.id)?.cancelRequested ?? false;
       row.status = r.killed ? "uncertain" : "completed";
       row.quiescedAt = this.now();
@@ -201,6 +212,7 @@ export async function requestWorkerCommand(ctx: RunContext, input: { command: st
 export async function awaitWorkerAction(ctx: RunContext, request: WorkerActionRequest, timeoutMs: number): Promise<WorkerActionRequest> {
   const store = new WorkerActionRequests(ctx.tasks.db, ctx.now);
   const until = Date.now() + timeoutMs;
+  let resumeExecution: ((executionStartedAt?: number) => void) | null = null;
   ctx.tasks.event(ctx.taskId, "worker_action_wait", { id: request.id, until });
   try {
     for (;;) {
@@ -214,12 +226,20 @@ export async function awaitWorkerAction(ctx: RunContext, request: WorkerActionRe
         throw new Error("worker action wait cancelled or original lease lost");
       }
       const current = store.get(lease.project, request.id);
-      if (!current || current.taskId !== ctx.taskId) throw new Error("worker action disappeared");
+      if (!current || current.taskId !== ctx.taskId || current.action.lease.owner !== lease.owner || current.action.lease.runCount !== lease.runCount || current.action.lease.incarnation !== lease.incarnation || current.action.lease.project !== lease.project) throw new Error("worker action disappeared or differs from its original captured lease");
+      if (current.status === "pending") resumeExecution ??= pauseOperationExecutionTimeout(ctx.signal);
+      else {
+        // Charge execution even if approval and a fast command both happened between polls.
+        // Legacy rows lack a trusted start; conservatively charge the whole paused span.
+        const executed = ["running", "completed", "uncertain"].includes(current.status);
+        resumeExecution?.(executed ? current.executionStartedAt ?? 0 : undefined); resumeExecution = null;
+      }
+      ctx.signal.throwIfAborted();
       if (current.status !== "pending" && current.status !== "running") return current;
       if (Date.now() >= until) return current;
       await new Promise<void>(resolve => { const timer = setTimeout(done, 100); function done() { clearTimeout(timer); ctx.signal.removeEventListener("abort", done); resolve(); } ctx.signal.addEventListener("abort", done, { once: true }); });
     }
-  } finally { ctx.tasks.event(ctx.taskId, "worker_action_wait_end", { id: request.id }); }
+  } finally { resumeExecution?.(); ctx.tasks.event(ctx.taskId, "worker_action_wait_end", { id: request.id }); }
 }
 
 export async function awaitWorkerCommand(ctx: RunContext, input: { command: string; cwd: string; timeoutMs: number; reason: string; invocationId?: string }): Promise<WorkerActionRequest> {
