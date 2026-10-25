@@ -1,6 +1,6 @@
 # Supervisor lifecycle stall investigation
 Status: Active
-Status detail: Checked-candidate sealing and retained recovery verified; final failed-file34/34 plus recursive checks pass, publication/live retry next.
+Status detail: Source b4ef7bf published and active; retained setup integrated exact checked tree, core-lib implementation running.
 Created: 2026-10-23
 Last updated: 2026-10-25
 Owner: Senior supervisor agent
@@ -15,9 +15,16 @@ full1484-test aggregate1479pass/2earlier-sourcefail/3skip in735.72s. Captured fu
 before final cap refusal and duplicate-event suppression. Exact final failed-file serial
 rerun34/34 passed56.44s; separate parallel file rerun9/10 had unrelated classifier timing,
 resolved in final serial10/10. Assertions unchanged; full aggregate not wholly green.
-Publish coherent source, resume same parent, FIRST retry retained deps-setup2 integration.
 
-Latest live blocker: deps-setup2 t_0mvoaezx59bab910181df completed/met with install and
+Live receipt: b4ef7bf pushed dev/main; daemon20472/rebuilt panel active. Explicit
+resume_session retained same s_0mvoa32avbabc4483ff3b and390cap/original deadline.
+Actual integrate_task succeeded2commits; job HEAD7be89a8362dab018d31dfc10f6e3c5d58577e221.
+Root independently checked worker HEADtree37770005900e53611cd68214f03f8e306a208fd4
+matches prior checked tree; lockfile seal has original worker/model/task trailers.
+Planv11 dispatched core-lib t_0mvobeje2f4bf953b2f09, running,30requestgrant. Original
+80requestproposal refused within pool; smaller grant respected. Still no usable app.
+
+Latest live blocker (historical, corrected above): deps-setup2 t_0mvoaezx59bab910181df completed/met with install and
 typecheck exit0, but integrate_task refused actual tree17945de6905d vs checked37770005900e.
 Root stopped daemon20836 before further setup churn; preserve worktree and parent390cap.
 Investigate source sealing/check finalization mismatch, never bypass exact-tree integration.
@@ -476,6 +483,13 @@ not approved/executed by FINAL. Compiler/configuration and usable-app acceptance
 - Validation: root final pnpm -r typecheck/build exit0. Focused33/33; full156-file1484-test aggregate1479pass/2fail/3skip in735.72s, started before final cap/no-op-event fixes. Exact final failed-file rerun34/34 in56.44s. Initial parallel final session-file9/10 had unrelated classifier grouping timing; serialfinal10/10 passed unchanged. Worker58/58 and follow-up30/30 reported, independently covered by root aggregate/targeted checks. Source review no remaining blocker.
 - Outcome: Accepted
 - Follow-up: publish, refresh runtime, retry exact retained deps-setup2 via supervisor tool; independently verify integration then actual app implementation. No app source edits by FINAL or relaxed revision guard.
+
+### 2026-10-25 - Exact retained candidate integrated live
+- Agent: supervisor
+- Changed: published b4ef7bf dev/main; daemon20472 activated, exact supervisor session resumed through supported MCP; no manual app edits/commits.
+- Validation: actual integrate_task succeeded2commits, jobhead7be89a8362dab018d31dfc10f6e3c5d58577e221. Root Git confirms worker HEADtree37770005900e53611cd68214f03f8e306a208fd4 exactly priorcheckedtree and original implementer/model/task trailers. Core-lib t_0mvobeje2f4bf953b2f09 running via planv11; parent110requests at read, original390cap/deadline preserved.
+- Outcome: Partial
+- Follow-up: remain active overseeing panel approvals/worker results and actual app implementation/review/runtime testing. Source fix accepted; product still not delivered.
 
 ### Deferred: make approval requests obvious (user request 2026-10-25)
 - Owner: senior supervisor, future panel UX work. User explicitly requested recording this for later; continue MVP oversight now.

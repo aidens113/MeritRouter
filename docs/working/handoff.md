@@ -10,8 +10,9 @@ Latest blocker: deps-setup2 completed/met but integration refused staged checked
 missing from final worker commit. Runtime paused; checked-candidate seal + narrow retained
 candidate recovery implemented by worker, independent source review clear. Root final
 focused33/33 and recursive typecheck/build pass. Full1479pass/2pre-final-sourcefail/3skip;
-exact final failed-file serial34/34 pass56.44s; no weaker assertions. Publish/live retry next. Actual
-retained-task integration must be verified after release before declaring setup delivered.
+exact final failed-file serial34/34 pass56.44s; no weaker assertions. Source b4ef7bf
+published dev/main and daemon20472 active. Actual retained integration succeeded2commits;
+root independently checked exact tree and original attribution. Core-lib child running.
 No usable Facebook app accepted; Codex authors no app code and actively operates panel.
 
 Latest follow-up: Facebook parent t_0mvo6hmvmd7be5c1e9417 failed with
