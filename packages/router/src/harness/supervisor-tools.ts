@@ -1,5 +1,5 @@
 import { executeSupervisorCommand, WorkerActionRequests } from "./worker-actions.js";
-import { supervisorActionTools } from "./worker-action-tools.js";
+import { supervisorActionTools, workerActionCapability } from "./worker-action-tools.js";
 import { z } from "zod";
 import type { Db } from "../storage/db.js";
 import { newId } from "../storage/db.js";
@@ -653,20 +653,37 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
     ),
 
     {
-      ...tool("await_tasks", "none", "Wait (without model requests) until the given tasks, or all of this job's active tasks, finish or the timeout passes. Returns early when everything still open waits for you to accept or reject an upstream result, and when a worker asks you for more model requests (decide it with decide_budget_request). Returns compact results.", { task_ids: { type: "array", items: { type: "string" } }, timeout_seconds: { type: "integer" } }, [], async (a) => {
+      ...tool("await_tasks", "none", "Wait without model requests for task completion or timeout. Wake for upstream acceptance, budget requests and worker actions you can approve under current supervisor policy. Human-only pending actions wait here for the operator without model polling; an explicit timeout reports that human wait clearly. Do not cancel workers merely because human approval is pending. Returns compact results.", { task_ids: { type: "array", items: { type: "string" } }, timeout_seconds: { type: "integer" } }, [], async (a) => {
       const ids = Array.isArray(a.task_ids) && a.task_ids.length ? (a.task_ids as string[]).map((x) => ownTask(s, x)) : [...s.children.values()];
       if (!ids.length) return "no tasks dispatched yet";
       const until = Date.now() + Math.min(Number(a.timeout_seconds) || 1800, 3600) * 1000;
+      const actionStore = new WorkerActionRequests(s.db, s.ctx.now);
+      const project = s.ctx.taskProject ?? s.ctx.cfg.brain.project;
+      const humanWaiting = new Set<string>();
+      const pendingActions = () => actionStore.list({ project, jobId, status: "pending" });
+      const rememberHumanWaits = () => {
+        if (workerActionCapability(s.ctx.cfg).approvalPolicy === "human_only") for (const action of pendingActions()) humanWaiting.add(action.id);
+      };
+      rememberHumanWaits();
+      let operatorDecisions: string[] = [];
       // Wait in slices: a dependent waiting on this supervisor's acceptance, or a worker waiting on
       // its budget request, would otherwise hold the wait until the timeout.
       let r: Awaited<ReturnType<typeof svc.awaitResults>>;
       for (;;) {
         r = await svc.awaitResults(ids, { timeoutSeconds: Math.max(1, Math.min(3, Math.ceil((until - Date.now()) / 1000))), signal: s.ctx.signal, uncapped: true });
-        if (!r.pending.length || Date.now() >= until || s.ctx.signal.aborted || blockedOnAcceptance(s, r.pending) || supervisorAsked(s.db, jobId) || new WorkerActionRequests(s.db, s.ctx.now).list({project: s.ctx.taskProject ?? s.ctx.cfg.brain.project, jobId, status: "pending"}).length > 0) break;
+        const capability = workerActionCapability(s.ctx.cfg);
+        if (capability.approvalPolicy === "human_only") for (const action of pendingActions()) humanWaiting.add(action.id);
+        operatorDecisions = [...humanWaiting].flatMap(id => {
+          const action = actionStore.get(project, id);
+          return action && !["pending", "running"].includes(action.status) ? [`worker action ${id}: ${action.status}${action.decisionReason ? `; ${action.decisionReason}` : ""}`] : [];
+        });
+        if (!r.pending.length || Date.now() >= until || s.ctx.signal.aborted || blockedOnAcceptance(s, r.pending) || supervisorAsked(s.db, jobId) || operatorDecisions.length || (capability.canApprove && pendingActions().length > 0)) break;
       }
       const budget = pendingBudgetLines(s.db, s.ctx.cfg, jobId);
-      const actions = new WorkerActionRequests(s.db, s.ctx.now).list({ project: s.ctx.taskProject ?? s.ctx.cfg.brain.project, jobId, status: "pending" });
-      return cap([...actions.map(row => `worker action ${row.id} from ${row.taskId}: ${row.action.operation?.name ?? row.action.command}; decide_worker_action`), ...budget, ...r.completed.map((c) => summarizeResult(c.taskId, s)), ...r.pending.map((p) => {
+      const actions = pendingActions();
+      const capability = workerActionCapability(s.ctx.cfg);
+      const guidance = capability.canApprove ? "decide_worker_action" : capability.approvalPolicy === "human_only" ? "awaiting human operator approval; supervisor cannot approve; continue await_tasks without model polling" : "outside-repository execution disabled; operator policy change or cancellation required";
+      return cap([...operatorDecisions, ...actions.map(row => `worker action ${row.id} from ${row.taskId}: ${row.action.operation?.name ?? row.action.command}; ${guidance}`), ...budget, ...r.completed.map((c) => summarizeResult(c.taskId, s)), ...r.pending.map((p) => {
         const why = stateReason(s, p.taskId);
         return `${p.taskId}: still ${p.state}${why && why !== "resumed" ? ` (${why}${why.startsWith(AWAITING_ACCEPTANCE) ? "; accept_task or reject_task the upstream result" : ""})` : ""}`;
       })].join("\n"));

@@ -1,8 +1,15 @@
 import { z } from "zod";
 import { LeaseRefSchema } from "../storage/task-leases.js";
-import { awaitWorkerAction, WorkerActionRequests } from "./worker-actions.js";
+import { awaitWorkerAction, outsideRepositoryPolicy, WorkerActionRequests } from "./worker-actions.js";
+import type { ResolvedConfig } from "../config/load.js";
 import type { HarnessTool } from "./tools.js";
 import { currentSupervisorAuthority } from "../core/supervisor-authority.js";
+
+/** Read current trusted policy; a pending request never preserves stale approval power. */
+export function workerActionCapability(config: ResolvedConfig) {
+  const approvalPolicy = outsideRepositoryPolicy(config);
+  return { approvalPolicy, canApprove: approvalPolicy === "supervisor", waitingFor: approvalPolicy === "supervisor" ? "supervisor_decision" : approvalPolicy === "human_only" ? "human_operator" : "policy_change_or_cancellation" };
+}
 
 export function workerActionTools(): HarnessTool[] {
   return [{
@@ -41,15 +48,16 @@ export function workerActionTools(): HarnessTool[] {
 
 export function supervisorActionTools(jobId: string): HarnessTool[] {
   return [{
-    def: { type: "function", function: { name: "worker_action_requests", description: "List pending exact worker actions requiring your decision. Commands execute once as supervisor; no worker sandbox bypass is granted.", parameters: { type: "object", properties: {} } } },
+    def: { type: "function", function: { name: "worker_action_requests", description: "List pending exact worker actions and current approval capability. canApprove:false under human_only means wait for the human operator with await_tasks; do not attempt supervisor approval or cancel work merely because approval is pending. Supervisor policy permits decide_worker_action. No worker sandbox bypass is granted.", parameters: { type: "object", properties: {} } } },
     sideEffect: "read", repeatBehavior: "execute",
     run: async (_args, env) => {
       const lease = LeaseRefSchema.parse(env.ctx.taskLease);
       if (env.ctx.taskId !== jobId || !currentSupervisorAuthority(env.ctx.tasks.db, env.ctx.cfg, lease, env.ctx.now())) throw new Error("owning supervisor required");
-      return JSON.stringify(new WorkerActionRequests(env.ctx.tasks.db, env.ctx.now).list({ project: lease.project, jobId, status: "pending" }));
+      const capability = workerActionCapability(env.ctx.cfg);
+      return JSON.stringify(new WorkerActionRequests(env.ctx.tasks.db, env.ctx.now).list({ project: lease.project, jobId, status: "pending" }).map(row => ({ ...row, ...capability })));
     },
   }, {
-    def: { type: "function", function: { name: "decide_worker_action", description: "Approve or deny one exact worker action with a reason. Approving a shell command executes it as supervisor outside worker containment. For other operations perform it yourself and supply the bounded response.", parameters: { type: "object", properties: { id: { type: "string" }, decision: { type: "string", enum: ["approve", "deny"] }, reason: { type: "string" }, response: { type: "string" } }, required: ["id", "decision", "reason"] } } },
+    def: { type: "function", function: { name: "decide_worker_action", description: "Approve or deny one exact worker action with a reason. Approval is available only under current supervisor policy; human_only approvals require the human operator, so await_tasks instead. Pending human approval alone is not a reason to deny or cancel. Approving a shell command executes it outside worker containment. For other operations perform it yourself and supply the bounded response.", parameters: { type: "object", properties: { id: { type: "string" }, decision: { type: "string", enum: ["approve", "deny"] }, reason: { type: "string" }, response: { type: "string" } }, required: ["id", "decision", "reason"] } } },
     sideEffect: "external",
     run: async (args, env) => {
       const input = z.object({ id: z.string().min(1), decision: z.enum(["approve", "deny"]), reason: z.string().min(1), response: z.string().max(20000).optional() }).strict().parse(args);

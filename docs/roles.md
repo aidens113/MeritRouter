@@ -49,7 +49,7 @@ authority. Existing explicit lower budgets and security policies remain authorit
 `start_job` and supervisor-mode `submit_tasks` default to `supervisionScope: subtask`, which
 completes a delegated component rather than declaring the entire project finished.
 
-Allow explicit `supervisionScope: project` dispatch in Settings â†’ General â†’ Claude/Codex
+Allow explicit `supervisionScope: project` dispatch in Settings Ã¢â€ â€™ General Ã¢â€ â€™ Claude/Codex
 supervision, or ask the connected model to use `set_supervision_policy` with a reason. The
 setting permits project-level MeritRouter supervision; it never disables bounded delegation.
 `get_supervision_policy` reads the effective guidance. Custom instructions are optional.
@@ -201,6 +201,11 @@ recorded plan before any approval request is created. Planned execution briefs m
 their recorded scope, checks and acceptance criteria; replan to change them. A stage named
 `plan` alone is insufficient. Human-only approval requirements still apply after planning.
 An early blocked v2 result does not automatically execute final shell checks.
+`await_tasks` rereads approval policy while waiting. A pending human-only action alone
+does not return control to the model: it waits for the operator decision, completion,
+cancellation or timeout without spending requests. Supervisor-capable actions still wake
+the model promptly. Action listings identify `approvalPolicy`, `canApprove` and `waitingFor`.
+Timeout output distinguishes a human wait from a decision the supervisor may make.
 The delivery tools are `set_delivery_spec`, `advance_delivery_stage`, `validate_delivery` and
 `delivery_status`. Integrated declared checks produce structural evidence; they do not establish
 runtime journeys, persistence, visual quality or usability. Required unavailable, stale,

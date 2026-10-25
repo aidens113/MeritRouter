@@ -30,10 +30,21 @@ it("runs a scripted bound team, scoped tools, integration restart and revision c
     () => [call("lab_check", { name: "verify" })],
     () => [call("finish_job", { status: "completed", summary: "Integrated subtract into the lab", verified: [{ claim: "subtract verified", evidence: "lab_check verify exit 0" }], not_verified: [] })],
   ];
-  const client = new ScriptedClient(req => {
+  const client = new ScriptedClient(async req => {
     const turns = req.messages.filter(m => m.role === "assistant").length;
-    if (String(req.messages[0]!.content).startsWith("# Supervisor charter"))
-      return reply(null, { ...servedFor(sy!, req), toolCalls: script[turns]!() });
+    if (String(req.messages[0]!.content).startsWith("# Supervisor charter")) {
+      const calls = script[turns]!();
+      // await_tasks can legitimately return while an exact action needs a supervisor
+      // decision. The fixture operator handles it asynchronously; this fixed script
+      // must observe child completion before attempting integration.
+      if (calls.some(tool => tool.function.name === "integrate_task")) {
+        const jobId = /Job id: (\S+)/.exec(String(req.messages[0]!.content))![1]!;
+        const child = sy!.tasks.childrenOf(jobId).find(task => task.spec.label === "subtract")!;
+        const finished = await sy!.awaitResults([child.row.id], { timeoutSeconds: 60 });
+        expect(finished.timedOut, JSON.stringify({ pending: finished.pending, events: sy!.tasks.events(child.row.id, 100) })).toBe(false);
+      }
+      return reply(null, { ...servedFor(sy!, req), toolCalls: calls });
+    }
     if (turns === 0)
       return reply(null, { ...servedFor(sy!, req), toolCalls: [call("replace_in_file", { path: "src/app.ts", old_text: "export function add", new_text: "export function subtract(a: number, b: number) { return a - b; }\n\nexport function add" })] });
     return reply(null, { ...servedFor(sy!, req), toolCalls: [call("submit_result", goodOutput(1, "app:src/app.ts#L1-L1"))] });

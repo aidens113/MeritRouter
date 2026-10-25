@@ -18,7 +18,7 @@ async function fixture(completedTarget = false) {
   // Authority deliberately predates wall time; only injected time may expire these leases.
   let clock = Date.UTC(2020, 0, 1);
   const now = () => clock;
-  const cfg = baseConfig();
+  const cfg = baseConfig({ security: { outside_repository: "supervisor" } });
   Object.assign(cfg.profiles, { supervise: { mode: "supervisor", tools: "supervisor", max_model_requests: 30 } });
   env = makeEnv({ config: cfg });
   db = openDatabase(env.cfg.storageDir);
