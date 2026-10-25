@@ -14,7 +14,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     if (!request) throw new HttpError(404, "Unknown worker action in project");
     if (request.status !== "pending") throw new HttpError(409, "This request has already been decided; refresh to see its result");
     if (input.decision === "approve" && request.action.operation && !input.response?.trim()) throw new HttpError(400, "Perform the operation and supply its result before responding");
-    try { return { request: await insights.decideWorkerAction(sy.db, sy.cfg, { ...input, id: id.data }, req.signal) }; }
+    // Navigation ends the response, not an approved command. The executor still enforces
+    // its captured task authority, explicit cancellation and bounded execution timeout.
+    try { return { request: await insights.decideWorkerAction(sy.db, sy.cfg, { ...input, id: id.data }) }; }
     catch (error) { throw new HttpError(409, (error as Error).message); }
   });
 }
