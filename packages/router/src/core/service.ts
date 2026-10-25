@@ -10,7 +10,7 @@ import { immediate, openDatabase, type Db } from "../storage/db.js";
 import { TaskStore, canonicalJson, type StoredTask, type SubmitOutcome } from "../storage/tasks.js";
 import { ArtifactStore } from "../storage/artifacts.js";
 import { usageSummary, type UsageSummary } from "../storage/usage.js";
-import { Admission, effectiveBudget } from "../admission/admission.js";
+import { Admission, effectiveBudget, heldRequests } from "../admission/admission.js";
 import { extraRequests } from "../admission/job-pool.js";
 import { Gate, ProviderHealth } from "../gateway/gate.js";
 import { Catalog } from "../models/catalog.js";
@@ -839,7 +839,27 @@ export class MeritRouter {
     const t = this.tasks.get(id);
     const coding = t ? this.cfg.profiles[t.spec.profile]?.mode === "coding" : false;
     let s:TaskState;
-    if(t?.row.state==="completed"){
+    if (t?.row.state === "failed") {
+      s = this.db.transaction(() => {
+        const current = this.tasks.get(id)!;
+        const cfg = this.projectContext(current.row.project_id);
+        const previous = this.sessions.forTask(id).at(-1);
+        const cap = effectiveBudget(cfg, current.spec, previous?.tier ?? null).maxModelRequests;
+        const allowed = cap === UNLIMITED_REQUESTS ? cap : cap + extraRequests(this.db, id);
+        if (cfg.profiles[current.spec.profile]?.mode !== "supervisor" || !previous || previous.role !== "supervisor" || previous.status !== "failed" || previous.stopReason !== "repeated_tool_call:task_result" || !previous.workspace?.repos.length ||
+          this.admission.taskTotals(id).requests + heldRequests(this.db, id) >= allowed)
+          throw new TaskValidationError(`task ${id} is not a recoverable supervisor observation stall with remaining budget`);
+        for (const repo of previous.workspace.repos) {
+          if (!current.spec.repositoryAliases.includes(repo.alias) || !cfg.repositoryPaths[repo.alias]?.writable || !repo.baseCommit || !statSync(repo.worktree, { throwIfNoEntry: false })?.isDirectory())
+            throw new TaskValidationError(`task ${id} recovery workspace is unavailable or outside its assigned repositories`);
+        }
+        const log = this.sessions.events(previous.id, { limit: 1 });
+        const plan = this.sessions.planResume(previous.id, { recoverEdits: cfg.sessions.recover_edits });
+        if (!log || log.corrupt.length || !plan?.messages.length || plan.actions.length || !plan.workspace?.repos.length)
+          throw new TaskValidationError(`task ${id} recovery transcript is unavailable or corrupt`);
+        return this.tasks.resumeObservationStall(id, previous.id);
+      }).immediate();
+    } else if(t?.row.state==="completed"){
       s=this.db.transaction(()=>{
         const rejected=new ProductDeliveries(this.db,this.now).rejectedCompleted(id,t.row.project_id);
         const previous=this.sessions.forTask(id).filter(session=>session.role==="supervisor").at(-1);

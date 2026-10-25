@@ -653,7 +653,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
     ),
 
     {
-      ...tool("await_tasks", "none", "Wait without model requests for task completion or timeout. Wake for upstream acceptance, budget requests and worker actions you can approve under current supervisor policy. Human-only pending actions wait here for the operator without model polling; an explicit timeout reports that human wait clearly. Do not cancel workers merely because human approval is pending. Returns compact results.", { task_ids: { type: "array", items: { type: "string" } }, timeout_seconds: { type: "integer" } }, [], async (a) => {
+      ...tool("await_tasks", "none", "Wait without model requests for task completion or timeout. Wake for upstream acceptance, budget requests and worker actions you can approve under current supervisor policy. Human-only pending actions wait here for the operator without model polling; an explicit timeout reports that human wait clearly. Do not cancel workers merely because human approval is pending. Returns compact results.", { task_ids: { type: "array", items: { type: "string" } }, timeout_seconds: { type: "integer" } }, [], async (a, env) => {
       const ids = Array.isArray(a.task_ids) && a.task_ids.length ? (a.task_ids as string[]).map((x) => ownTask(s, x)) : [...s.children.values()];
       if (!ids.length) return "no tasks dispatched yet";
       const until = Date.now() + Math.min(Number(a.timeout_seconds) || 1800, 3600) * 1000;
@@ -666,11 +666,15 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
       };
       rememberHumanWaits();
       let operatorDecisions: string[] = [];
+      let waited = false;
       // Wait in slices: a dependent waiting on this supervisor's acceptance, or a worker waiting on
       // its budget request, would otherwise hold the wait until the timeout.
       let r: Awaited<ReturnType<typeof svc.awaitResults>>;
       for (;;) {
         r = await svc.awaitResults(ids, { timeoutSeconds: Math.max(1, Math.min(3, Math.ceil((until - Date.now()) / 1000))), signal: s.ctx.signal, uncapped: true });
+        // This metric comes from the service's measured wait, never model output or
+        // requested timeout. Immediate returns cannot erase no-progress history.
+        waited ||= (r.waitedSeconds ?? 0) > 0;
         const capability = workerActionCapability(s.ctx.cfg);
         if (capability.approvalPolicy === "human_only") for (const action of pendingActions()) humanWaiting.add(action.id);
         operatorDecisions = [...humanWaiting].flatMap(id => {
@@ -679,6 +683,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
         });
         if (!r.pending.length || Date.now() >= until || s.ctx.signal.aborted || blockedOnAcceptance(s, r.pending) || supervisorAsked(s.db, jobId) || operatorDecisions.length || (capability.canApprove && pendingActions().length > 0)) break;
       }
+      if (waited && !s.ctx.signal.aborted && env.observationWait) env.observationWait.epoch++;
       const budget = pendingBudgetLines(s.db, s.ctx.cfg, jobId);
       const actions = pendingActions();
       const capability = workerActionCapability(s.ctx.cfg);

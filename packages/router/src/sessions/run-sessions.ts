@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { z } from "zod";
 import type { ResolvedConfig } from "../config/load.js";
 import type { TierName } from "../config/schema.js";
@@ -25,7 +26,7 @@ const DelegatedBySchema = z.object({ sessionId: z.string().min(1) });
  * worktree (the operator's `resume <task>`). Without either, an interrupted latest session is
  * resumed when its role allows it.
  */
-export const ResumeDirectiveSchema = z.object({ sessionId: z.string().min(1).optional(), freshWorkspace: z.boolean().optional() }).strict();
+export const ResumeDirectiveSchema = z.object({ sessionId: z.string().min(1).optional(), freshWorkspace: z.boolean().optional(), failedObservationRecovery: z.literal(true).optional() }).strict();
 export type ResumeDirective = z.infer<typeof ResumeDirectiveSchema>;
 
 /** Profile modes whose runs continue an interrupted session (agent loops); the others re-run fresh. */
@@ -129,18 +130,35 @@ function resumeDirective(tasks: TaskStore, taskId: string): ResumeDirective {
 export function resumeFor(d: RunSessionDeps, task: StoredTask): RunResume | null {
   const store = d.sessions;
   const mode = d.cfg.profiles[task.spec.profile]?.mode;
-  if (!store || !mode || !RESUMABLE_MODES.has(mode)) return null;
   const directive = resumeDirective(d.tasks, task.row.id);
+  if (directive.failedObservationRecovery && (!store || mode !== "supervisor" || !directive.sessionId)) throw new Error("Supervisor observation recovery lost its session authority");
+  if (!store || !mode || !RESUMABLE_MODES.has(mode)) return null;
   if (directive.freshWorkspace && mode === "coding" && !directive.sessionId) return null;
   const named = directive.sessionId ? store.get(directive.sessionId) : null;
   // A reviewer is never resumed: the run continues the author's session it reviewed (an
   // accepted submission then finishes without a request and verification runs again).
   const target = named ? authorOf(store, named) : (authorSessions(store, task.row.id).at(-1) ?? null);
-  if (!target || target.taskId !== task.row.id || target.status !== "interrupted") return null;
+  const failedRecovery = directive.failedObservationRecovery === true;
+  if (failedRecovery && (!named || !target || target.id !== directive.sessionId || target.taskId !== task.row.id || target.status !== "failed" || target.role !== "supervisor" || mode !== "supervisor" || target.stopReason !== "repeated_tool_call:task_result" || !target.workspace?.repos.length))
+    throw new Error("Supervisor observation recovery lost its retained failed session");
+  if (!failedRecovery && (!target || target.taskId !== task.row.id || target.status !== "interrupted")) return null;
+  if (!target) return null;
+  if (failedRecovery && store.events(target.id, { limit: 1 })?.corrupt.length) throw new Error("Supervisor observation recovery transcript is corrupt");
+  if (failedRecovery && target.workspace!.repos.some(repo => !task.spec.repositoryAliases.includes(repo.alias) || !d.cfg.repositoryPaths[repo.alias]?.writable || !repo.baseCommit || !statSync(repo.worktree, { throwIfNoEntry: false })?.isDirectory())) throw new Error("Supervisor observation recovery workspace is unavailable");
   const plan = store.planResume(target.id, { recoverEdits: d.cfg.sessions.recover_edits });
-  if (!plan || plan.messages.length === 0) return null; // nothing logged: start fresh
-  const session = store.reopen(target.id);
-  d.tasks.event(task.row.id, "session_resumed", { sessionId: target.id, actions: plan.actions.map((a) => a.kind), warnings: plan.warnings });
+  if (failedRecovery && plan?.actions.length) throw new Error("Supervisor observation recovery has unresolved effects");
+  if (!plan || plan.messages.length === 0) {
+    if (failedRecovery) throw new Error("Supervisor observation recovery transcript is missing");
+    return null; // nothing logged: start fresh
+  }
+  const session = failedRecovery ? store.create({ taskId: target.taskId, jobId: target.jobId, parentSessionId: target.parentSessionId, previousSessionId: target.id, role: target.role, agentLabel: target.agentLabel, profile: target.profile, tier: target.tier }) : store.reopen(target.id);
+  if (failedRecovery) {
+    session.syncMessages(plan.messages);
+    session.setWorkspace(target.workspace!);
+    session.resumed("Explicit continuation of a settled supervisor observation failure; no additional budget granted.", [], { notAppliedTools: plan.notAppliedTools });
+    session.note("supervisor_observation_recovery", { previousSessionId: target.id, previousStopReason: target.stopReason });
+  }
+  d.tasks.event(task.row.id, "session_resumed", { sessionId: session.id, ...(failedRecovery ? { previousSessionId: target.id } : {}), actions: plan.actions.map((a) => a.kind), warnings: plan.warnings });
   return { session, plan };
 }
 

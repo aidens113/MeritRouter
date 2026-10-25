@@ -157,6 +157,9 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
   let stallNudged = false;
   const effects = new Map<string, RepeatOutcome>();
   const observations = new RepeatObservations();
+  // Shared object survives the per-invocation environment copy. Model arguments/output
+  // cannot claim a wait: only a trusted tool implementation advances this receipt.
+  const observationWait = env.observationWait = { epoch: 0 };
   // Restore completed/uncertain effect protection across resume. Fresh reads start a new
   // observation window; pending effects remain governed by applyResume's reconciliation.
   if (o.resume) {
@@ -369,7 +372,9 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
         }));
         for (const outcome of outcomes) if (outcome.status === "rejected") throw outcome.reason;
       }
+      const waitEpoch = observationWait.epoch;
       const r = prefetched.get(call) ?? await executeCall(call, args, t, previous);
+      if (r.ok && observationWait.epoch > waitEpoch) observations.progress();
       if (r.ok && t?.sideEffect === "edit") edited = true;
       let output = r.output;
       if (previous) {

@@ -699,6 +699,15 @@ not enable PostgreSQL or multiple hosts.
 - Manual resume: `meritrouter resume <session-id>` continues that session; `meritrouter resume
   <task-id>` restarts the task (a coding task in a fresh worktree; the old one stays as
   evidence). MCP `resume_session` / `resume_task` and the panel's Resume buttons do the same.
+- Repeated observations remain bounded: three identical fresh reads without progress stop a
+  spinning loop. A successful `await_tasks` with a service-measured wait starts a fresh
+  observation window; an immediate return or wait-like model text does not.
+- A supervisor failed specifically with `repeated_tool_call:task_result` can be explicitly
+  continued through task resume when its retained failed session/workspace is available,
+  the original deadline is still future, and request capacity remains. Recovery retains
+  the failed receipt, uses a linked continuation, and preserves consumed requests, held
+  child grants, original deadline and source/approval fences. It does not revive expired
+  children or recover unrelated failures, cancellation, or budget exhaustion.
 - Stuck runs: a run whose session records nothing for `execution.watchdog_minutes` (default 10;
   0 disables) is interrupted with stop reason `watchdog` and resumed like a crash (counts against
   the 3 automatic runs). A pending model request, a running tool call, or final checks extend the

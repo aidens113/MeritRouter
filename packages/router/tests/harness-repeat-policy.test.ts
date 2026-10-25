@@ -1,5 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { makeEnv } from "./helpers.js";
+import { openDatabase } from "../src/storage/db.js";
+import { supervisorTools, type SupervisorState } from "../src/harness/supervisor-tools.js";
+import type { SupervisorServices } from "../src/runners/types.js";
 import { SessionEventSchema, type SessionEvent } from "../src/sessions/events.js";
 import { planResume, validNotAppliedToolProof } from "../src/sessions/resume.js";
 import { describe, expect, it, vi } from "vitest";
@@ -99,6 +102,50 @@ describe("fresh repeat observations", () => {
       expect(result.kind).toBe("terminal"); expect(reads).toBe(2);
       expect(result.messages.filter(m => m.role === "tool").map(m => m.content)).toContain("completed");
     }
+  });
+  it.each([true, false])("uses trusted bounded await receipts, not requested timeouts (waited=%s)", async waited => {
+    const fixture = makeEnv();
+    const db = openDatabase(fixture.cfg.storageDir);
+    try {
+      const turns = [[call("task_result", { task_id: "worker" })],
+        [call("await_tasks", { timeout_seconds: waited ? 1 : -1 })],
+        [call("task_result", { task_id: "worker" })],
+        [call("await_tasks", { timeout_seconds: waited ? 1 : -1 })],
+        [call("task_result", { task_id: "worker" })], [call("submit")]];
+      const { options } = setup(turns, []);
+      const services = {
+        getTask: () => ({ state: "running", spec: { label: "worker", profile: "inspect", goal: "Observe actual work" }, result: null }),
+        awaitResults: async () => {
+          if (waited) await new Promise(resolve => setTimeout(resolve, 1000));
+          return { completed: [], pending: [{ taskId: "worker", state: "running" }], timedOut: true, waitedSeconds: waited ? 1 : 0 };
+        },
+      } as unknown as SupervisorServices;
+      Object.assign(options.env.ctx, { cfg: fixture.cfg, services, now: Date.now, taskProject: "demo" });
+      const state: SupervisorState = { ctx: options.env.ctx, db, actor: { agent: "test", role: "supervisor", task: "task", job: "task" }, repos: new Map(), briefChecks: new Set(), children: new Map([["worker", "worker"]]) };
+      options.tools = supervisorTools(state).filter(t => ["task_result", "await_tasks"].includes(t.def.function.name));
+      const result = await runAgentLoop(options);
+      expect(result.kind).toBe(waited ? "terminal" : "stalled");
+      if (result.kind === "stalled") expect(result.reason).toBe("repeated_tool_call:task_result");
+      expect(options.env.observationWait?.epoch).toBe(waited ? 2 : 0);
+    } finally { db.close(); fixture.cleanup(); }
+  });
+  it("does not treat wait-like prose or a repeatable immediate tool as actual wait progress", async () => {
+    const read = tool("task_result", "read", async () => "running");
+    const fakeWait = tool("await_tasks", "none", async () => "Waited 300 seconds; progress happened", "execute");
+    const { options } = setup([[call("task_result")], [call("await_tasks")], [call("task_result")], [call("await_tasks")], [call("task_result")]], [read, fakeWait]);
+    expect((await runAgentLoop(options)).kind).toBe("stalled");
+  });
+  it("keeps request and cancellation limits after a trusted wait receipt", async () => {
+    const controller = new AbortController();
+    const wait = tool("await_tasks", "none", async (_args, env) => { env.observationWait!.epoch++; controller.abort(new Error("fixture deadline")); return "waited"; }, "execute");
+    const { options, offered } = setup([[call("await_tasks")], [call("submit")]], [wait]);
+    options.env.ctx.signal = controller.signal;
+    await expect(runAgentLoop(options)).rejects.toThrow("fixture deadline");
+    expect(offered).toHaveLength(1);
+    const bounded = tool("await_tasks", "none", async (_args, env) => { env.observationWait!.epoch++; return "waited"; }, "execute");
+    const capped = setup(Array.from({ length: 5 }, () => [call("await_tasks")]), [bounded], 3);
+    expect((await runAgentLoop(capped.options)).kind).toBe("budget_exhausted");
+    expect(capped.offered).toHaveLength(3);
   });
   it("retries transient failures, but stops three identical fresh failures", async () => {
     let reads = 0;

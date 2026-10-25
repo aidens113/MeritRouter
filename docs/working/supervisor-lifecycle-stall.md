@@ -1,6 +1,6 @@
 # Supervisor lifecycle stall investigation
 Status: Active
-Status detail: Clock correction9995b14 published and active; rebriefed dependency worker awaits fresh matching install approval.
+Status detail: Measured-wait and bounded failed-supervisor recovery verified; publication and same-job continuation in progress.
 Created: 2026-10-23
 Last updated: 2026-10-25
 Owner: Senior supervisor agent
@@ -9,6 +9,21 @@ Paired document: none
 Related: [supervised delivery](supervised-delivery-v2.md)
 
 ## Current State
+
+Latest correction accepted: recursive typecheck/build passed; final full1451-test run
+1447passed/1temporary-brain EBUSY cleanup failure/3skipped,700.08s. Exact failed HTTP
+file rerun4/4 passed without source changes. New recovery16/16 and repeat21/21 passed
+in full run. Independent review found no remaining source blocker. Publish and recover
+same job with original budget/deadline; do not describe initial full run as wholly green.
+
+Latest live failure: parent t_0mvo6hmvmd7be5c1e9417 failed at 2026-10-25T20:00:48Z
+with repeated_tool_call:task_result, 61/390 parent requests. Log seq510 returned
+state running for deps3; seq512 appended three-unchanged-observations fatal message.
+Actual install passed; typecheck failed invalid swcMinify; build failed missing app/pages.
+No usable MVP accepted. Existing supported resume rejects failed tasks; investigate safe,
+bounded recovery preserving deadline/budget/workspace and approval/source fences.
+User authorizes Codex operating reviewed routine panel actions. Approval UX is deferred.
+
 
 Latest correction independently verified: recursive typecheck/build passed; full router suite
 `pnpm exec vitest run --maxWorkers=4 --reporter=default --reporter=json --outputFile <temp>`
@@ -251,6 +266,34 @@ not approved/executed by FINAL. Compiler/configuration and usable-app acceptance
 - Coordinate with implementation worker; do not run broad tests during edits.
 - Flag concrete bypasses/races and distinguish inspected source from observed test results.
 
+### Corrective worker brief (2026-10-25)
+
+### Active brief: live-repeat-recovery
+- Role: worker; tier direct dev; no commit/push; no application edits or live configuration changes.
+- Goal: fix false terminal supervisor stalls on legitimate asynchronous child observation, and assess supported safe recovery of this failed supervisor.
+- Read Current State above; inspect harness/loop.ts, repeat-policy.ts, supervisor-tools.ts and task resume implementation as needed.
+- Owned files: packages/router/src/harness/loop.ts, repeat-policy.ts, supervisor-tools.ts, tools.ts (trusted wait receipt); packages/router/tests/harness-repeat-policy.test.ts; a new focused async observation test if needed.
+- Do not edit service/storage recovery yet: report minimal safe design first. Do not edit shared docs.
+- Preserve bounded actual loop detection, request/deadline limits, cancellation and fresh observations; no blanket status-tool exemption or arbitrary threshold increase.
+- Reproduce regression using real loop with interleaved bounded await/progress and repeated task_result running; retain genuine immediate-spin coverage.
+- Run narrow meaningful tests; write report docs/working/supervisor-lifecycle-stall/reports/live-repeat-recovery.md with files, checks, limitations and recovery recommendation.
+
+### Corrective worker brief: failed supervisor recovery (2026-10-25)
+- Role: worker, direct dev; no commit/push/live mutations/application edits/shared docs.
+- Goal: add explicit supported recovery for failed supervisor repeated_tool_call observation stalls, preserving consumed budgets, original deadline, workspace, approval identity and historical failure receipt.
+- Owned files: packages/router/src/core/service.ts, packages/router/src/storage/tasks.ts, packages/router/src/sessions resume files and narrow executor.ts fail-closed recovery guard; new packages/router/tests/supervisor-stall-recovery.test.ts. Coordinate overlap before edits.
+- Inspect existing resume/session continuation and expiry guards. Only a trusted explicit service resume may recover narrow eligible supervisor failures; generic failed/cancelled/deadline/budget tasks must remain rejected.
+- Do not reset consumed/granted quotas, deadline, acceptance or source fences. Retain failure history; linked session or safe existing transcript continuation must preserve tool outcomes and worktree.
+- Include regression for real persisted failed supervisor with retained session/workspace, same budget/deadline and child ownership, plus refusal of unrelated failures, expired/exhausted/cancelled and wrong project.
+- Report own file docs/working/supervisor-lifecycle-stall/reports/failed-supervisor-recovery.md with exact checks and limitations.
+
+### Corrective worker brief: independent safety review (2026-10-25)
+- Role: read-only worker; no edits except own report, no live changes/commits.
+- Review pending loop/tools/supervisor-tools wait receipt and service/storage/run-sessions/executor failed supervisor recovery diffs.
+- Check source fences, workspace/session preservation, budgets/held grants, original deadline, project scope, forged recovery directives, genuine spin bounds and cancellation. Coordinate implementation findings directly.
+- No repository-wide validation while workers edit; narrow read-only reasoning only. Root will run integrated checks after edits settle.
+- Report concrete blockers and unverified assumptions to docs/working/supervisor-lifecycle-stall/reports/observation-recovery-review.md.
+
 ## Work Ledger
 ### 2026-10-23 - Live stall reproduced
 - Agent: supervisor
@@ -328,6 +371,44 @@ not approved/executed by FINAL. Compiler/configuration and usable-app acceptance
 - Validation: planv5/deps3 running; current request source matches independently computed worktree identity; requested/effective cap300000ms. Full suite1428pass/3skip/0fail remains source acceptance.
 - Outcome: Partial
 - Follow-up: human approve wa_0mvo8npaq640917dd768f; inspect actual install/check results and continue MVP workers. No app edits or approval impersonation by FINAL.
+
+### 2026-10-25 - Explicit panel-operation authorization and approval UX backlog
+- Agent: supervisor
+- Changed: user explicitly instructed Codex to operate panel. Approved exact reviewed npm install via actual panel UI with reason recording delegated authority; request now running.
+- Validation: authoritative action wa_0mvo8npaq640917dd768f status running, operator reason explicitly says performed by Codex on user instruction. No exit result yet.
+- Outcome: Partial
+- Follow-up: inspect install result and continue scoped MVP checks. User requested approval discoverability/clarity fixes be recorded for later, not implemented now.
+
+### 2026-10-25 - Delegated panel commands produced actual diagnostics
+- Agent: supervisor
+- Changed: operated actual panel approval controls on the user's explicit instruction for exact npm install, typecheck and build requests. No application source edits.
+- Validation: install wa_0mvo8npaq640917dd768f completed exit0 (101 packages; audit reported 3 moderate and 1 high vulnerability, requiring triage before acceptance). Typecheck wa_0mvo93mff21c24691f5c5 completed exit2: swcMinify is invalid for installed NextConfig. Build wa_0mvo953hdfafd25e41d92 completed exit1: no pages or app directory; also warned about swcMinify.
+- Outcome: Partial
+- Follow-up: MeritRouter must repair configuration and implement the actual app before successful product verification. Dependency installation is verified; MVP is not accepted. Approval UX remains explicitly deferred.
+
+### 2026-10-25 - False live supervisor stall reproduced
+- Agent: supervisor
+- Changed: recorded actual failure and dispatched disjoint loop-wait and explicit recovery workers.
+- Why: user observed idle supervisor; status and session log show fatal repeated_tool_call:task_result at 20:00:48Z while deps3 was running.
+- Validation: explicit-config CLI status confirmed failed parent61/390; private session seq510/512 confirms unchanged running child read caused fatal guard. Child later interrupted queue_dispatch_abandoned with original deadline expired; no pending approvals.
+- Outcome: Partial
+- Follow-up: verify real bounded-wait reset without exempting spin; safe explicit parent recovery without budget/deadline reset; rebrief expired child through supervisor, not raw state changes.
+
+### 2026-10-25 - Measured-wait and bounded supervisor recovery independently verified
+- Agent: supervisor
+- Changed: worker-owned host wait receipt, loop observation reset, narrow explicit failed-supervisor continuation with retained workspace/transcript and fail-closed execution; authored operations and handoff docs.
+- Why: repeated fresh running-child reads across legitimate awaits triggered fatal loop protection; generic failed-task resume was unsupported.
+- Validation: root pnpm -r typecheck and pnpm -r build exit0; independent focused53/53. Final full pnpm exec vitest run --maxWorkers=4 --reporter=default --reporter=json --outputFile <temp>/meritrouter-observation-recovery-full.json: 1447pass/1fail/3skip in700.08s, 152filespass/1fail/1skip. Only failure mcp-http temporary-brain cleanup EBUSY; exact failed-file rerun4/4 in5.56s without source changes. Final new recovery16/16 and repeat21/21 passed full run; JSON verified.
+- Outcome: Accepted
+- Follow-up: publish coherent correction and recover same parent with original390request cap/deadline; replace expired child through supervisor. No app source edits by FINAL; approval UX remains deferred.
+
+### Deferred: make approval requests obvious (user request 2026-10-25)
+- Owner: senior supervisor, future panel UX work. User explicitly requested recording this for later; continue MVP oversight now.
+- Problem: user could not tell what needed permission or where to approve it. Pending actions are buried in the job page; the reason requirement disables approval without making the next step obvious. Chat acknowledgement was confused with a panel decision.
+- Required behavior: prominent project/job/global pending-approval alert and count, clear blocked-work status, direct navigation to the exact request, plain-language command purpose and affected worktree, and why approval is needed. Make approve/deny controls and required-input guidance obvious.
+- Clearly show pending/running/completed/failed/expired states, command result and retry guidance. Distinguish recorded decisions from chat acknowledgements. Preserve exact-command, source and lease checks.
+- Evaluate deliberately configured scoped permission for routine install/build checks to reduce surprise; do not silently weaken policy.
+- Acceptance: a user entering the project immediately sees the blocked action, understands it, approves without hunting, and sees execution/result feedback. Validate desktop/mobile and expired/source-changed/error cases.
 
 ## Open Questions
 - Supervisor owns diagnosis and implementation scope after worker report.

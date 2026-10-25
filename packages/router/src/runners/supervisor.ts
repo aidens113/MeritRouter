@@ -111,6 +111,9 @@ function questionState(ctx: RunContext, ref: ResumeToolRef): string {
 /** Create (or reuse after a restart) the job branch and its integration worktree per writable repo. */
 async function integrationRepos(ctx: RunContext, saved: IntegrationRepo[]): Promise<Map<string, IntegrationRepo>> {
   const out = new Map<string, IntegrationRepo>();
+  const observationRecovery = ctx.tasks.events(ctx.taskId, 500).some(event => event.type === "supervisor_observation_recovery_requested");
+  if (observationRecovery && ctx.spec.repositoryAliases.some(alias => ctx.cfg.repositoryPaths[alias]?.writable && !saved.some(repo => repo.alias === alias && existsSync(repo.worktree))))
+    throw new Error("Retained supervisor recovery workspace disappeared; refusing to reconstruct a different candidate");
   if (ctx.lab && ctx.lab.rootJobId === ctx.taskId) {
     const status = ctx.lab.manager.status(ctx.lab.project, ctx.lab.name);
     for (const repo of status.lab.repositories) {

@@ -36,7 +36,7 @@ import { faultPoint } from "../core/faults.js";
 /** What a supervisor needs from the service (kept as an interface to avoid import cycles). */
 export interface SupervisorServices {
   submitTasks(raw: unknown[], opts?: { purpose?: string; parentSessionId?: string }): Promise<Array<{ taskId: string; state: string; deduplicated: boolean }>>;
-  awaitResults(ids: string[], opts?: { timeoutSeconds?: number; signal?: AbortSignal; uncapped?: boolean }): Promise<{ completed: WorkerResult[]; pending: Array<{ taskId: string; state: string }>; timedOut: boolean }>;
+  awaitResults(ids: string[], opts?: { timeoutSeconds?: number; signal?: AbortSignal; uncapped?: boolean }): Promise<{ completed: WorkerResult[]; pending: Array<{ taskId: string; state: string }>; timedOut: boolean; waitedSeconds?: number }>;
   getTask(id: string): { spec: WorkerTask; state: string; result: WorkerResult | null } | null;
   cancelTasks(ids: string[]): unknown;
   /** Record the supervisor's (or a human's) acceptance; throws with the refusal reason. */

@@ -41,6 +41,8 @@ export interface HarnessEnv {
   brain?: { brain: Brain; access: BrainAccess; principal: () => Principal; actor: Actor; workingDoc: string | null };
   /** Files edited during the current model response (for per-response commits). */
   edits: Set<string>;
+  /** Host-only receipt shared with invocation environments; advanced after an actual bounded async wait. */
+  observationWait?: { epoch: number };
 }
 
 export interface HarnessTool {

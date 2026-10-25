@@ -702,6 +702,20 @@ export class TaskStore {
     });
   }
 
+  /** Explicit operator recovery of an observation stall; never resets deadlines or budgets. */
+  resumeObservationStall(id: string, sessionId: string): TaskState {
+    return immediate(this.db, () => {
+      const task = this.get(id);
+      const session = this.db.prepare("SELECT task_id,role,status,stop_reason FROM sessions WHERE id=?").get(sessionId) as { task_id: string; role: string; status: string; stop_reason: string } | undefined;
+      if (!task || task.row.state !== "failed" || task.row.state_reason !== "repeated_tool_call:task_result" || task.row.cancel_requested || !task.row.deadline_at || task.row.deadline_at <= this.now() || !session || session.task_id !== id || session.role !== "supervisor" || session.status !== "failed" || session.stop_reason !== task.row.state_reason)
+        throw new TaskValidationError(`task ${id} is not an eligible supervisor observation stall`);
+      this.event(id, "supervisor_observation_recovery_requested", { sessionId, previousResult: task.result, previousStateReason: task.row.state_reason });
+      this.db.prepare("UPDATE tasks SET state='queued',state_reason='resumed',result_json=NULL,finished_at=NULL,updated_at=? WHERE id=?").run(this.now(), id);
+      this.event(id, "resumed", { sessionId, failedObservationRecovery: true });
+      return "queued";
+    });
+  }
+
   /** Tasks a job (supervisor task) delegated, oldest first. */
   childrenOf(parentTaskId: string): StoredTask[] {
     const rows = this.db

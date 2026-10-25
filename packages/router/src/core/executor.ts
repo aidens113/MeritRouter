@@ -393,6 +393,8 @@ export class Executor {
       try {
         resume = resumeFor(d, task);
       } catch (err) {
+        // Explicit failed-supervisor recovery must retain its transcript/workspace or fail closed.
+        if (this.d.tasks.events(task.row.id, 500).some(event => event.type === "resumed" && (event.data as { failedObservationRecovery?: boolean } | undefined)?.failedObservationRecovery)) throw err;
         // An unreadable or already-claimed session: run fresh (linked to it) rather than not at all.
         this.d.tasks.event(task.row.id, "session_resume_failed", { error: (err as Error).message });
       }

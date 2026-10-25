@@ -6,6 +6,18 @@ own working document with decisions, phases, ledger, and reports.
 
 ## Current effort (2026-10-25)
 
+Latest follow-up: Facebook parent t_0mvo6hmvmd7be5c1e9417 failed with
+repeated_tool_call:task_result while deps3 was running. No pending approval explains the stop.
+Focused correction uses host-only measured-wait receipts to reset observation windows;
+explicit narrow failed-supervisor recovery preserves spent requests, held grants, original
+deadline and retained workspace in a linked session. Independent review has no remaining
+source blocker; root focused53/53 and recursive typecheck/build pass. Final full suite
+1447pass/1EBUSY temporary-brain cleanup failure/3skip in700.08s; exact failed HTTP file
+rerun4/4 passes without source changes. New recovery16/16 and repeat21/21 pass.
+Publication/same-job recovery next.
+No app accepted. User authorized Codex operating reviewed routine panel commands; approval
+UX fixes explicitly deferred. Read active document for final validation/deployment receipts.
+
 [Supervisor lifecycle stall](supervisor-lifecycle-stall.md) owns the active follow-up.
 Latest source9995b14 is published to dev/main: human approval wait is separate from active
 execution budget; task deadlines/cancellation/source checks remain bounded. Parent/group
