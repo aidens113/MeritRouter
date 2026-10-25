@@ -1083,6 +1083,10 @@ Automatic memory context is role-budgeted and ACL-scoped, and refreshes on start
 revoked or expired records are omitted. `brain.memory_context.enabled` and `role_tokens` control
 caps (12k supervisor, 6k reviewer, 4k implementer/analyst/inspector, 2k summarizer/classifier),
 further narrowed by context/output headroom and actual grants. Memory never grants permissions.
+Authorized preferences and explicit context precede inferred records. Relevant managed decisions
+precede historical facts/lessons, with newest updates first and stable path ties; ordinary documents
+keep retrieval order. Existing relevance/page caps and whole-record fit still apply, and the
+manifest reports records omitted by the token cap.
 Resumed sessions budget the actual offered tools, terminal schema and output allowance before
 adding fresh memory. Typed global preferences use the trusted install Brain even when a host
 binds a project to a separate Brain; explicit `brain_read`, `brain_list` and `brain_search`

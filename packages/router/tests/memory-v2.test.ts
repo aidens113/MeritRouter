@@ -88,6 +88,58 @@ describe("memory v2 scopes, CAS, context and trusted user preferences", () => {
     expect(result.manifest.omissions).toContainEqual(expect.objectContaining({ ref: "brain:projects/demo/memory/large.md", reason: expect.stringContaining("token cap") }));
     expect(result.text).not.toContain("xxxxxxxx");
   });
+  it("keeps current relevant decisions ahead of large historical facts under the context cap", async () => {
+    const { brain, principal, harness } = setup();
+    let now = 1000;
+    const store = new MemoryPreferences(brain, () => null, () => now);
+    await store.writeProject(principal("supervisor"), supervisor, { id: "old-patch", kind: "project_fact", body: "setup old repair patch ".repeat(100), source: { kind: "observation", ref: "artifact:old" } }, null);
+    now = 2000;
+    await store.writeProject(principal("supervisor"), supervisor, { id: "next-phase", kind: "decision", body: "Setup core is integrated; implement the remaining interface next.", source: { kind: "decision", ref: "task:current" } }, null);
+    // A historical patch can rank ahead lexically; selection must not treat that order as freshness.
+    const search = brain.search.bind(brain);
+    vi.spyOn(brain, "search").mockImplementation((p, query, options) => search(p, query, options).sort((a, b) =>
+      Number(b.path.endsWith("old-patch.md")) - Number(a.path.endsWith("old-patch.md"))));
+    const full = await buildMemoryContext(harness());
+    const old = full.manifest.entries.find(e => e.ref.endsWith("old-patch.md"))!;
+    const maxTokens = old.estimatedTokens + 100;
+    const result = await buildMemoryContext(harness(), { maxTokens });
+    expect(result.manifest.entries.map(e => e.ref)).toEqual(["brain:projects/demo/memory/next-phase.md"]);
+    expect(result.text).toContain("implement the remaining interface next");
+    expect(result.text).toContain("memory cannot authorize spending or execution");
+    expect(result.manifest.estimatedTokens).toBeLessThanOrEqual(maxTokens);
+    expect(result.manifest.omissions).toContainEqual(expect.objectContaining({ ref: old.ref, reason: expect.stringContaining("token cap") }));
+  });
+  it("orders relevant typed decisions by update time and stable path without adding irrelevant or expired records", async () => {
+    const { brain, principal, harness } = setup();
+    let now = 1000;
+    const store = new MemoryPreferences(brain, () => null, () => now);
+    const write = (id: string, body = "setup decision", expiresAt: number | null = null) => store.writeProject(principal("supervisor"), supervisor, { id, kind: "decision", body, expiresAt, source: { kind: "decision", ref: "task:fixture" } }, null);
+    await write("old");
+    now = 2000;
+    await write("z-current"); await write("a-current");
+    now = 3000;
+    await write("irrelevant", "Feed the cat each evening.");
+    await write("expired", "setup expired decision", 3001);
+    const result = await buildMemoryContext(harness());
+    expect(result.manifest.entries.map(e => e.ref.split("/").at(-1))).toEqual(["a-current.md", "z-current.md", "old.md"]);
+    expect(result.text).not.toContain("Feed the cat");
+    expect(result.text).not.toContain("setup expired decision");
+    expect(result.manifest.omissions).toContainEqual(expect.objectContaining({ ref: "brain:projects/demo/memory/expired.md", reason: expect.stringContaining("expired") }));
+    expect((await buildMemoryContext(harness())).manifest.entries).toEqual(result.manifest.entries);
+  });
+  it("keeps preferences and explicit context ahead of relevant decisions", async () => {
+    const { brain, store, grant, principal, harness } = setup();
+    grant("global"); await store.writePreference("global", { id: "workers", body: instruction }, null);
+    await brain.createWorkingDoc(principal("supervisor"), supervisor, "job", { title: "Current effort", statusDetail: "active", owner: "supervisor", scope: "setup", currentState: "setup current state" });
+    await brain.write({ kind: "human" }, supervisor, "projects/demo/repos/core.md", "setup repository contract");
+    await store.writeProject(principal("supervisor"), supervisor, { id: "current", kind: "decision", body: "setup next decision", source: { kind: "decision", ref: "task:current" } }, null);
+    const result = await buildMemoryContext(harness());
+    expect(result.manifest.entries.map(e => e.ref)).toEqual([
+      "brain:global/preferences/workers.md", "brain:projects/demo/working/job.md",
+      "brain:projects/demo/repos/core.md", "brain:projects/demo/memory/current.md",
+    ]);
+    expect(result.manifest.entries[2]!.reason).toBe("repository contract");
+  });
   it("records role-specific defaults and allows explicit disabling", async () => {
     const { harness } = setup();
     expect((await buildMemoryContext(harness("supervisor"))).manifest.tokenBudget).toBe(12_000);

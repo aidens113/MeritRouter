@@ -6,15 +6,18 @@ own working document with decisions, phases, ledger, and reports.
 
 ## Current effort (2026-10-25)
 
-Published06c3513 dev/main active. Retained-core repair job t_0mvodbsfke4f94fab4e33
-has finite800requests/$0paid, actual818e98d base, old rejected history intact.
-Core repair45/45tests+typecheck+install passed, integrated18commits at jobHEAD1dbe934;
-parent has no node_modules, needs own install. API/UI not written; Next build not ready.
-Deep reviewer used6requests without verdict; supervisor override accepted core, independent
-review still required before FINAL. Actual implement profile cap100 bounds requested120/150.
-Worker plan preservation independently verified root typecheck/build, full1490pass/16fail/3skip;
-exact failed10files plus changed lifecycle serial98/98 pass449.05s. Publication next, no app
-code authored by Codex. Read active working doc for exact job, approvals and remaining work.
+Active Facebook API/UI continuation t_0mvof1bldb6e51dd16e6a,
+session s_0mvof1c9ma19e9ca8fc5a, max500requests/$0paid. Base3b5b6fa contains
+verified core45/45tests/typecheck/install and INTERFACES.md. Prior root failed stale
+plan repetition after299actualrequests; new500+old299<=799/800, no charge reset.
+Full draft5nodes persisted; v2 launched API85grant/ui-core90grant in parallel and
+retained ui-features/review/runtime phases, verifying c77c5c5 plan fix live.
+c77c5c5 published dev/main, daemon23760 active. No app accepted, no Codex app code.
+Memory old patch notes crowded out newer decision; supported CAS compaction preserved
+history and refreshed manifest7340tokens includes current decision/no omissions.
+Worker current_memory_priority source frozen21/21 focused; root typecheck pass,
+full regression session4389 running. Root owns authored docs/build/review/release.
+Read active working document for exact state, approvals, remaining UI and verification.
 
 Historical checkpoints below are older; active working document is authoritative.
 
