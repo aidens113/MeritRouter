@@ -7,13 +7,20 @@ own working document with decisions, phases, ledger, and reports.
 ## Current effort (2026-10-25)
 
 [Supervisor lifecycle stall](supervisor-lifecycle-stall.md) owns the active follow-up.
-Facebook supervisor cancelled after22requests without a framework plan; discovery checks
-blocked on human-only approval, then repeated after denial. No app work accepted. Disjoint
-workers are implementing persisted drafts, lifecycle guards and role-aware stall guidance.
-Corrective routing/batching release14410bc was published to dev/main; prior publication-pending
-language below is historical. Do not claim product delivery from source tests.
+Source corrections published to dev/main through d9243b8: persisted draft planning, bounded
+progress, matched phased dispatch, encoded-array compatibility, runtime goal/hash binding,
+role-aware/batched guidance and capability-aware human approval waits. Final independent36/36
+plus recursive typecheck/build pass; earlier full1392pass/9fail/3skip and all failed-file62/62
+serial rerun remain recorded honestly. Later targeted failure was a Lab fixture integration
+race, synchronized without weaker assertions/timeouts; corrected10/10 passed.
+Current Facebook job t_0mvo6hmvmd7be5c1e9417 keeps390request/$0paid cap and same resumed session.
+Foundation completed/met; deps task waits on human-only npm install action
+wa_0mvo71ilk540326de44ab. FINAL inspected manifest and relayed panel approval request; never
+approved as human. Root session28requests stable while await_tasks waits; daemon8988/panel4477
+run final build. No usable clone accepted or manually coded. Read the active document for
+exact IDs/validation; old pilot/publication-pending statements below are historical.
 
-Latest corrective work: [supervised delivery](supervised-delivery-v2.md) fixes supervisor startup,
+Earlier corrective work: [supervised delivery](supervised-delivery-v2.md) fixes supervisor startup,
 unavailable-model fallback and actual batch tools after the new Facebook pilot exposed failures.
 Source integrated through5e1bfe2; final integrated83/83 and final schema/MCP26/26 pass;
 recursive typecheck/build pass, publication pending. Initial full1360pass/15fail/3skip plusRPC

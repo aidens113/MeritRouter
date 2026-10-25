@@ -1,6 +1,6 @@
 # Supervisor lifecycle stall investigation
 Status: Active
-Status detail: Lifecycle, encoded input, approval waits and canonical spec binding published; final phased-dispatch correction verified, deployment next.
+Status detail: Corrections published through d9243b8; live foundation completed, dependency install awaits exact human approval.
 Created: 2026-10-23
 Last updated: 2026-10-25
 Owner: Senior supervisor agent
@@ -52,7 +52,15 @@ and created deps task t_0mvo6rej5da69d37ab487 (622f23423645001c90f7b3738e41e4dfe
 Daemon13184 stopped for final first-dispatch correction; persisted running rows need normal
 lease recovery on restart (owner19572 no longer exists). No install approval pending yet.
 Final phased-dispatch guard now allows exact planned first delegate after six-request cap;
-independent36/36 and recursive typecheck/build passed. Source publication/recovery next.
+independent36/36 and recursive typecheck/build passed. Source d9243b8 published dev/main.
+Fresh daemon8988 and production panel4477 run final build. Same job/session recovered: root
+session s_0mvo6hmxb98171fac6adf has28model requests and is waiting in await_tasks(timeout120s).
+Foundation completed/met; deps running with exact npm install request wa_0mvo71ilk540326de44ab
+pending. External FINAL inspected package/config, relayed human approval request, never approved
+as operator. Same action/source and root28requests observed across independent reads.
+Root integration head f2f2a417df5b43020e67076bcd0eaf9a33f47903; app main remains unaccepted.
+Config SHA256 unchanged2963B9A8B79CD23DC2425989BAD58A1BC068E6A6E8DA8F755C0145188B9554E7, paid disabled.
+No usable app, installed dependencies, production success, browser acceptance or FINAL approval yet.
 Need verify persisted plan, dispatch, independent review and product tests; source builds
 alone do not demonstrate delivery. Host approval policy must remain intact.
 
@@ -226,6 +234,14 @@ alone do not demonstrate delivery. Host approval policy must remain intact.
 - Validation: independent5-file36/36 in31.44s; recursive typecheck/build exit0. Working document restored from1.1MB to17KB preserving ledger content.
 - Outcome: Accepted
 - Follow-up: publish and recover same390request live job; no application code authored by external FINAL.
+
+### 2026-10-25 - Final release activated and real approval wait observed
+- Agent: supervisor
+- Changed: published source d9243b8; refreshed daemon8988/panel4477; scoped project oversight memory.
+- Why: preserve same job/session/budget across deployments and verify real planning/assignment/approval behavior.
+- Validation: live job/plan HTTP200; foundation task completed/met; deps exact npm install request pending. Root28model requests unchanged across reads while await_tasks waits for operator.
+- Outcome: Partial
+- Follow-up: operator must approve wa_0mvo71ilk540326de44ab in panel; then inspect install result, later implementation/review/product evidence. No app code by external FINAL.
 
 ## Open Questions
 - Supervisor owns diagnosis and implementation scope after worker report.
