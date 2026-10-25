@@ -1,6 +1,6 @@
 # Supervisor lifecycle stall investigation
 Status: Active
-Status detail: Approval/execution timeout correction verified by full153-file suite; publishing and resuming same supervisor.
+Status detail: Clock correction9995b14 published and active; rebriefed dependency worker awaits fresh matching install approval.
 Created: 2026-10-23
 Last updated: 2026-10-25
 Owner: Senior supervisor agent
@@ -94,6 +94,14 @@ running --maxWorkers=4 (session95225), no concurrent build or live provider work
 Daemon8988 stopped; stale MCP2960 stopped. Dependency task reached its existing task deadline
 and is failed; root job remains recoverable/interrupted with390request cap. On recovery,
 supervisor must rebrief dependency setup; old approvals cannot be transferred.
+Source9995b14 published dev/main and all controllers refreshed. Fresh daemon1680/panel4477
+run rebuilt code. Parent explicitly resumed through supported MCP; expired interrupted deps2
+was cancelled (not a valid live human wait) so parent could rebrief against accepted foundation.
+Planv5 dispatched deps3 t_0mvo8ijuk232b0562665e with required file scope. FINAL inspected
+manifest/config, returned setup/time-budget feedback, and declined obsolete-source requests.
+Current npm install action wa_0mvo8npaq640917dd768f has matching source e0db7f678184ca18abe0c3b9bd49ba52991e600ab32e199ba635656655fd79ae,
+requested/effective execution cap300000ms. Fresh human panel approval requested after inspection;
+not approved/executed by FINAL. Compiler/configuration and usable-app acceptance remain open.
 
 ## Worker Briefs
 ### lifecycle-discovery
@@ -312,6 +320,14 @@ supervisor must rebrief dependency setup; old approvals cannot be transferred.
 - Validation: root recursive typecheck/build exit0; full153-file run1428pass/3skip/0fail in670.58s with4workers. JSON success and newclock14/14 verified.
 - Outcome: Accepted
 - Follow-up: publish, reload all runtime controllers/panel, recover same390request supervisor, rebrief failed dependency phase and inspect fresh approval request. No app edits/approval impersonation.
+
+### 2026-10-25 - Clock release activated and current install request reviewed
+- Agent: supervisor
+- Changed: source9995b14 published; refreshed controllers/panel; scoped recovery memory and same parent resume.
+- Why: old user-reported approval was already expired, and old dependency attempts could not resume after their task deadlines.
+- Validation: planv5/deps3 running; current request source matches independently computed worktree identity; requested/effective cap300000ms. Full suite1428pass/3skip/0fail remains source acceptance.
+- Outcome: Partial
+- Follow-up: human approve wa_0mvo8npaq640917dd768f; inspect actual install/check results and continue MVP workers. No app edits or approval impersonation by FINAL.
 
 ## Open Questions
 - Supervisor owns diagnosis and implementation scope after worker report.

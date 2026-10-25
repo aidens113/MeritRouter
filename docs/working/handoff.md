@@ -7,6 +7,15 @@ own working document with decisions, phases, ledger, and reports.
 ## Current effort (2026-10-25)
 
 [Supervisor lifecycle stall](supervisor-lifecycle-stall.md) owns the active follow-up.
+Latest source9995b14 is published to dev/main: human approval wait is separate from active
+execution budget; task deadlines/cancellation/source checks remain bounded. Parent/group
+caps and fast-command accounting are persisted without changing approval identity.
+Final recursive typecheck/build and full153-file suite1428pass/3skip/0fail passed in670.58s.
+Current same390request/$0paid Facebook job rebriefed deps3 after expired old attempts;
+current matching npm install action wa_0mvo8npaq640917dd768f awaits fresh human approval.
+The old action the user reported approving had already been system-cancelled and never ran.
+Daemon1680/panel4477 run final build. No usable app accepted; initiating agent still writes
+no app code. Older pending-action/deployment snapshots below are historical.
 Source corrections published to dev/main through d9243b8: persisted draft planning, bounded
 progress, matched phased dispatch, encoded-array compatibility, runtime goal/hash binding,
 role-aware/batched guidance and capability-aware human approval waits. Final independent36/36
