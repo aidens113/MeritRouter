@@ -109,11 +109,15 @@ describe("supervisor lifecycle enforcement", () => {
     const { ctx, prepare, run } = await fixture();
     vi.spyOn(ctx.gate.admission, "taskTotals").mockReturnValue({ requests: SUPERVISOR_DISCOVERY_REQUESTS } as ReturnType<typeof ctx.gate.admission.taskTotals>);
     expect(supervisorToolPolicy(ctx)?.allowedToolNames).not.toContain("read_files");
+    expect(supervisorToolPolicy(ctx)?.allowedToolNames).not.toContain("delegate");
     expect(supervisorToolPolicy({ ...ctx })?.allowedToolNames).toContain("set_delivery_spec");
     prepare();
     expect(supervisorToolPolicy(ctx)?.allowedToolNames).toContain("plan_work");
     await run("plan_work", { nodes: [brief], dispatch: false });
     expect(supervisorToolPolicy(ctx)?.allowedToolNames).not.toContain("read_files");
+    expect(supervisorToolPolicy(ctx)?.allowedToolNames).toContain("delegate");
+    await expect(run("delegate", { tasks: [{ ...brief, goal: "An unplanned replacement" }] })).rejects.toThrow(/delivery_plan_conflict/);
+    expect(sy!.tasks.childrenOf(ctx.taskId)).toHaveLength(0);
     await run("plan_work", { nodes: [brief] });
     expect(supervisorToolPolicy(ctx)).toBeNull();
   });
@@ -130,6 +134,44 @@ describe("supervisor lifecycle enforcement", () => {
     await expect(run("plan_work", { nodes: [brief] })).resolves.toContain("1 dispatched now");
   });
 });
+
+it("dispatches the first exact planned phase after the discovery cap without launching remaining draft nodes", async () => {
+  const base = baseConfig();
+  env = makeEnv({ config: { ...base, client_supervision: {}, profiles: { ...base.profiles, supervise: { mode: "supervisor", tools: "supervisor", min_total_parameters_b: 100, max_model_requests: 40, classify: "never", min_tier: "T3" } } } });
+  const later = { ...brief, label: "later-review", goal: "Review after the first phase", depends_on: [brief.label] };
+  const script = [
+    [call("set_delivery_spec", { spec: specification })],
+    [call("advance_delivery_stage", { stage: "prepare" })],
+    [call("advance_delivery_stage", { stage: "plan" })],
+    [call("plan_work", { nodes: [brief, later], dispatch: false })],
+    [call("delivery_status", {}, "status-1")],
+    [call("delivery_status", {}, "status-2")],
+    [call("delegate", { tasks: [brief] })],
+    [call("await_tasks", { timeout_seconds: 30 })],
+    [call("finish_job", { status: "blocked", summary: "First phase finished; remaining product work unverified", verified: [{ claim: "First planned worker completed", evidence: "await_tasks result" }], not_verified: ["Remaining plan and product"], follow_up: "Execute remaining plan" })],
+  ];
+  let turn = 0;
+  const client = new ScriptedClient(req => {
+    if (String(req.messages[0]?.content).startsWith("# Supervisor charter")) {
+      if (turn === SUPERVISOR_DISCOVERY_REQUESTS) expect(req.tools?.map(tool => tool.function.name)).toContain("delegate");
+      return reply(null, { ...servedFor(sy!, req), toolCalls: script[turn++]! });
+    }
+    const workerTurn = req.messages.filter(message => message.role === "assistant").length;
+    return reply(null, { ...servedFor(sy!, req), toolCalls: workerTurn === 0 ? [call("read_file", { path: "README.md" })] : [call("submit_result", { summary: "Fixture inspected", findings: [], criteria: [{ index: 0, status: "met", evidenceRefs: ["core:README.md#L1"] }] })] });
+  });
+  sy = open(env, client, { worker: true });
+  const submitted = await sy.startJob({ goal, repositories: ["core"] });
+  const outcome = (await sy.awaitResults([submitted.taskId], { timeoutSeconds: 60 })).completed[0];
+  expect(outcome, JSON.stringify(client.requests.at(-1)?.messages.filter(message => message.role === "tool"))).toMatchObject({ stopReason: "supervisor_blocked" });
+  expect(turn).toBe(9);
+  const view = jobPlan(sy, submitted.taskId)!;
+  expect(view.nodes).toEqual([
+    expect.objectContaining({ label: brief.label, state: "completed", taskId: expect.any(String) }),
+    expect.objectContaining({ label: later.label, state: "not_dispatched", taskId: null }),
+  ]);
+  expect(sy.tasks.childrenOf(submitted.taskId)).toHaveLength(1);
+  expect(sy.admission.taskTotals(submitted.taskId).requests).toBeGreaterThan(SUPERVISOR_DISCOVERY_REQUESTS);
+}, 70_000);
 
 it.each([[false, false], [false, true], [true, false]])("runs the real supervisor with no pre-plan host effects (blocked %s, encoded arrays %s)", async (immediateBlocked, encoded) => {
   const base = baseConfig();

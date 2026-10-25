@@ -49,7 +49,7 @@ authority. Existing explicit lower budgets and security policies remain authorit
 `start_job` and supervisor-mode `submit_tasks` default to `supervisionScope: subtask`, which
 completes a delegated component rather than declaring the entire project finished.
 
-Allow explicit `supervisionScope: project` dispatch in Settings ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ General ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Claude/Codex
+Allow explicit `supervisionScope: project` dispatch in Settings → General → Claude/Codex
 supervision, or ask the connected model to use `set_supervision_policy` with a reason. The
 setting permits project-level MeritRouter supervision; it never disables bounded delegation.
 `get_supervision_policy` reads the effective guidance. Custom instructions are optional.
@@ -158,7 +158,9 @@ The full text ships as `packages/router/charters/supervisor.md` and can be overr
    document before dispatch. For multi-part goals, record the decomposition first with
    `plan_work` (a versioned task graph). Use `dispatch:false` to publish a validated draft
    without staffing or launching workers; supply the full briefs again with `dispatch:true`
-   to execute it. Dispatch defaults to true for existing clients. Every ready dispatched node
+   to execute it. After recording a draft, `delegate` can launch an exact recorded ready phase
+   without launching the other draft nodes, including after the discovery allowance.
+   Dispatch defaults to true for existing clients. Every ready dispatched node
    runs at once, up to `team.max_agents`
    per job. Coding tasks whose paths overlap are serialised by file leases (enforced at claim);
    dependents receive their upstream results as context.

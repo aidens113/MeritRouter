@@ -39,7 +39,8 @@ export function supervisorToolPolicy(ctx: RunContext) {
   const assigned = plan && ctx.tasks.childrenOf(ctx.taskId).some(child => plan.nodes.some(node => node.label === child.spec.label));
   if (assigned && delivery && ["plan", "implement", "integrate", "validate", "handoff"].includes(delivery.stage)) return null;
   if (ctx.gate.admission.taskTotals(ctx.taskId).requests < SUPERVISOR_DISCOVERY_REQUESTS) return null;
-  return { allowedToolNames: coordination, notice: `Discovery allowance exhausted. Persist the observable delivery specification with set_delivery_spec, advance prepare/plan, and publish plan_work (dispatch:false records a draft without running workers). Dispatch bounded planned work with plan_work dispatch:true; an undispatched draft alone does not resume discovery. If essential information is unavailable, ask_user or finish_job blocked with the exact blocker. Do not run environment checks or repeat discovery.` };
+  const canDispatch = !!plan && !!delivery && ["plan", "implement", "integrate", "validate"].includes(delivery.stage);
+  return { allowedToolNames: canDispatch ? [...coordination, "delegate"] : coordination, notice: `Discovery allowance exhausted. Persist the observable delivery specification with set_delivery_spec, advance prepare/plan, and publish plan_work (dispatch:false records a draft without running workers). Dispatch bounded planned work with plan_work dispatch:true, or delegate the first planned phase using its exact recorded brief; an undispatched draft alone does not resume discovery. If essential information is unavailable, ask_user or finish_job blocked with the exact blocker. Do not run environment checks or repeat discovery.` };
 }
 
 function containsCommand(name: string, args: Record<string, unknown>): boolean {
