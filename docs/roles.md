@@ -376,6 +376,16 @@ For a repair of an owned terminal coding task, set `repair_from_task` to its lab
 in the recorded plan and dispatched brief. Its source binding must match the plan. The source
 is repair data, not an accepted dependency: keep its failed result and give the new repair a
 fresh label. Use the repaired task as the downstream dependency after its checks and review.
+A fresh implementation brief that explicitly references a compatible owned terminal coding
+task must name its intended `repair_from_task`; prose or artifact references do not hydrate
+source. Missing, ambiguous or mismatched choices fail before staffing, grants or plan writes.
+An undispatched draft's explicit repair binding cannot disappear through an omitted field;
+keep it or use a fresh label. Disjoint contract references and dispatched idempotent retries
+remain supported, and the normal source provenance checks still apply.
+Proven integration into the current job branch permits ordinary follow-up edits on that
+base; stale, reset or undone integration receipts do not exempt a retained source.
+
+
 
 Before the model runs, the framework replays the retained attributed commits into a new clean
 worktree on the current job base. The integration base stays current, so later integration
