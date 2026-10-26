@@ -169,7 +169,7 @@ describe("paid execution", () => {
 
   it("an uncertain paid failure keeps the worst case charged", async () => {
     env = makeEnv({ config: paidCfg({ tiers: { T1: "preferred" } }), endpoints: [] });
-    const { client } = providers(
+    const { client, paidCalls } = providers(
       () => reply("{}"),
       () => {
         throw new GatewayError("transport", "connection reset", undefined, undefined, true);
@@ -177,9 +177,13 @@ describe("paid execution", () => {
     );
     sy = open(env, client, { worker: true });
     sy.vault.add({ provider: "acme", secret: "sk-acme-0000-1111" });
+    // Test uncertain transport, not cold Git-backed Brain bootstrap within the task's 2s deadline.
+    await sy.brain!.ensure();
     const [a] = await sy.submitTasks([summarizeTask({ budget: { timeoutSeconds: 2 } })]);
     await sy.awaitResults([a!.taskId], { timeoutSeconds: 5 });
     const s = sy.spend.summary();
+    expect(paidCalls.length).toBeGreaterThan(0);
+    expect(sy.db.prepare("SELECT 1 FROM model_requests r JOIN paid_spend p ON p.request_id=r.id WHERE r.status='uncertain' AND p.cost_basis='uncertain'").get()).toBeTruthy();
     expect(s.week).toBeGreaterThan(0);
   });
 });

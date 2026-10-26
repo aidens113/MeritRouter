@@ -1022,4 +1022,31 @@ export const MIGRATIONS: string[] = [
   CREATE UNIQUE INDEX project_store_pending_migration ON project_store_migrations(project_uuid)
     WHERE state NOT IN ('committed','rolled_back');
   `,
+  // Global split-store accounting has no FK to project-private task/execution rows.
+  `
+  ALTER TABLE provider_slots ADD COLUMN project_uuid TEXT;
+  ALTER TABLE provider_slots ADD COLUMN store_uuid TEXT;
+  ALTER TABLE provider_slots ADD COLUMN store_generation INTEGER;
+  CREATE TABLE physical_requests (
+    id TEXT PRIMARY KEY, installation_uuid TEXT NOT NULL, project_uuid TEXT NOT NULL REFERENCES project_store_registrations(project_uuid),
+    store_uuid TEXT NOT NULL, generation INTEGER NOT NULL CHECK(generation>0), fingerprint TEXT NOT NULL,
+    accounting_json TEXT NOT NULL CHECK(length(CAST(accounting_json AS BLOB))<=131072),
+    endpoint_id TEXT NOT NULL, provider TEXT NOT NULL, key_ref TEXT, provider_reservation_id TEXT, paid INTEGER NOT NULL CHECK(paid IN (0,1)),
+    slot_id TEXT, slot_nonce TEXT, status TEXT NOT NULL CHECK(status IN ('reserved','dispatch_intent','settled','retired')),
+    reserved_at INTEGER NOT NULL, dispatch_id TEXT, outcome_digest TEXT, accounting_outcome_sha256 TEXT,
+    outcome TEXT CHECK(outcome IN ('succeeded','failed','uncertain')), input_tokens INTEGER, output_tokens INTEGER,
+    unexpected_liability_usd REAL CHECK(unexpected_liability_usd>0),cost_quarantined INTEGER NOT NULL DEFAULT 0 CHECK(cost_quarantined IN (0,1)),
+    quarantine_outcome_sha256 TEXT,quarantine_conflict INTEGER NOT NULL DEFAULT 0 CHECK(quarantine_conflict IN (0,1)),
+    error_code TEXT, finished_at INTEGER
+  );
+  CREATE INDEX physical_requests_project_window ON physical_requests(project_uuid,reserved_at);
+  CREATE UNIQUE INDEX physical_requests_provider_reservation ON physical_requests(provider_reservation_id) WHERE provider_reservation_id IS NOT NULL;
+  CREATE UNIQUE INDEX physical_requests_slot_authority ON physical_requests(slot_id,slot_nonce) WHERE slot_id IS NOT NULL;
+  CREATE TABLE broker_paid_spend (
+    request_id TEXT PRIMARY KEY REFERENCES physical_requests(id),key_ref TEXT NOT NULL,provider TEXT NOT NULL,endpoint_id TEXT NOT NULL,
+    reserved_usd REAL NOT NULL CHECK(reserved_usd>=0),liability_usd REAL NOT NULL CHECK(liability_usd>=reserved_usd),
+    actual_usd REAL CHECK(actual_usd>=0),cost_basis TEXT,created_at INTEGER NOT NULL,settled_at INTEGER
+  );
+  CREATE INDEX broker_paid_spend_key_window ON broker_paid_spend(key_ref,created_at);
+  `,
 ];

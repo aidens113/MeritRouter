@@ -4,6 +4,7 @@ import type { ResolvedConfig } from "../config/load.js";
 import type { KeyVault, PaidKey } from "../providers/vault.js";
 import type { ProviderCredential } from "../providers/credentials.js";
 import type { ProjectLimits } from "../projects/schema.js";
+import { ACCOUNTING_SPEND_SQL, assertAccountingOverlap } from "../admission/accounting-usage.js";
 
 const DAY = 86_400_000;
 
@@ -41,6 +42,9 @@ export class PaidSpend {
     private readonly now: () => number = Date.now,
   ) {}
 
+  /** Host-only wiring check for atomic global accounting adapters. */
+  usesDatabase(db: Db): boolean { return this.db === db; }
+
   /**
    * The ledger's view of a credential: a vault key with its cap and balance (null when the vault
    * no longer has it), or a config key with neither (only global and task budgets apply to it).
@@ -53,7 +57,8 @@ export class PaidSpend {
   }
 
   private sum(where: string, ...args: unknown[]): number {
-    return (this.db.prepare(`SELECT COALESCE(SUM(COALESCE(actual_usd, reserved_usd)), 0) AS s FROM paid_spend WHERE ${where}`).get(...args) as { s: number }).s;
+    assertAccountingOverlap(this.db);
+    return (this.db.prepare(`WITH spend AS (${ACCOUNTING_SPEND_SQL}) SELECT COALESCE(SUM(COALESCE(actual_usd, reserved_usd)), 0) AS s FROM spend WHERE ${where}`).get(...args) as { s: number }).s;
   }
 
   windowSpend(sinceMs: number): number {
@@ -65,11 +70,12 @@ export class PaidSpend {
   }
 
   taskSpend(taskId: string): number {
+    assertAccountingOverlap(this.db);
     return (
       this.db
         .prepare(
           `SELECT COALESCE(SUM(COALESCE(p.actual_usd, p.reserved_usd) * 1.0 / (SELECT COUNT(*) FROM request_charges c2 WHERE c2.request_id = p.request_id)), 0) AS s
-             FROM paid_spend p JOIN request_charges c ON c.request_id = p.request_id WHERE c.task_id = ?`,
+             FROM (${ACCOUNTING_SPEND_SQL}) p JOIN request_charges c ON c.request_id = p.request_id WHERE c.task_id = ?`,
         )
         .get(taskId) as { s: number }
     ).s;
@@ -77,14 +83,22 @@ export class PaidSpend {
 
   /** Paid spend of one project's requests since `sinceMs` (attributed by `model_requests.project_id`). */
   projectSpendSince(project: string, sinceMs: number): number {
+    assertAccountingOverlap(this.db);
     return (
       this.db
         .prepare(
           `SELECT COALESCE(SUM(COALESCE(p.actual_usd, p.reserved_usd)), 0) AS s
-             FROM paid_spend p JOIN model_requests r ON r.id = p.request_id WHERE r.project_id = ? AND p.created_at > ?`,
+             FROM (${ACCOUNTING_SPEND_SQL}) p WHERE p.created_at > ? AND (
+               EXISTS(SELECT 1 FROM model_requests r WHERE r.id=p.request_id AND r.project_id=?)
+               OR p.project_uuid IN (SELECT project_uuid FROM project_store_registrations WHERE slug=?))`,
         )
-        .get(project, sinceMs) as { s: number }
+        .get(sinceMs, project, project) as { s: number }
     ).s;
+  }
+
+  /** Immutable split-project accounting; unmapped legacy history is held conservatively, never guessed from a reused slug. */
+  projectAccountingSpendSince(projectId: string, sinceMs: number): number {
+    return this.sum("created_at > ? AND (project_uuid=? OR project_uuid IS NULL)", sinceMs, projectId);
   }
 
   /**
@@ -118,6 +132,7 @@ export class PaidSpend {
 
   /** Global windows. Returns a reason when the worst case would exceed one, else null. */
   globalDenial(worstUsd: number): string | null {
+    if (this.db.prepare("SELECT 1 FROM physical_requests WHERE cost_quarantined=1 LIMIT 1").get()) return "unreconciled unexpected provider cost blocks paid routing";
     const now = this.now();
     const b = this.cfg.paid.budgets;
     const checks: Array<[string, number | undefined, number]> = [
@@ -164,7 +179,7 @@ export class PaidSpend {
         };
       }),
       byEndpoint: this.db
-        .prepare("SELECT endpoint_id AS endpointId, COUNT(*) AS requests, ROUND(COALESCE(SUM(COALESCE(actual_usd, reserved_usd)),0), 6) AS usd FROM paid_spend WHERE created_at > ? GROUP BY endpoint_id ORDER BY usd DESC")
+        .prepare(`WITH spend AS (${ACCOUNTING_SPEND_SQL}) SELECT endpoint_id AS endpointId, COUNT(*) AS requests, ROUND(COALESCE(SUM(COALESCE(actual_usd, reserved_usd)),0), 6) AS usd FROM spend WHERE created_at > ? GROUP BY endpoint_id ORDER BY usd DESC`)
         .all(now - 30 * DAY) as SpendSummary["byEndpoint"],
     };
   }

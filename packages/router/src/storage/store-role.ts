@@ -5,7 +5,7 @@ import { assertCriticalStoreDurability, readStoreIdentity, StoreIdentitySchema, 
 
 const sharedTables = ["endpoints", "endpoint_overrides", "routing_overrides", "scans", "paid_keys", "paid_spend",
   "provider_slots", "provider_key_state", "provider_usage", "web_backend_state", "request_deletion_tombstones",
-  "project_store_registrations", "project_store_migrations"] as const;
+  "project_store_registrations", "project_store_migrations", "physical_requests", "broker_paid_spend"] as const;
 const qualificationTables = ["qualification_runs", "qualification_results", "repository_registry", "qualification_tasks"] as const;
 // Complete current logical-schema classification. New/restored tables require an explicit ownership decision.
 const localTables = new Set([
