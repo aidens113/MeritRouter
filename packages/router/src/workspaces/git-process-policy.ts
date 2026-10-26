@@ -6,7 +6,7 @@ import { authorizedGitIndex, type GitIndexCapability } from "./git-index-transac
 
 const GIT_NULL = process.platform === "win32" ? "NUL" : devNull;
 const IDENTITY_ENV = /^(GIT_(AUTHOR|COMMITTER)_(NAME|EMAIL|DATE))$/i;
-const INTERNAL_COMMANDS = new Set(["init", "add", "commit", "commit-tree", "diff", "diff-tree", "show", "show-ref", "log", "blame", "grep", "rev-parse", "rev-list", "status", "ls-files", "worktree", "switch", "symbolic-ref", "merge-base", "merge", "cherry-pick", "rebase", "revert", "reset", "update-ref", "for-each-ref", "branch", "check-ref-format", "config", "ls-tree", "cat-file", "write-tree", "read-tree", "apply", "check-ignore"]);
+const INTERNAL_COMMANDS = new Set(["init", "add", "commit", "commit-tree", "diff", "diff-tree", "show", "show-ref", "log", "blame", "grep", "rev-parse", "rev-list", "status", "ls-files", "worktree", "switch", "symbolic-ref", "merge-base", "merge", "cherry-pick", "rebase", "revert", "reset", "update-ref", "for-each-ref", "branch", "check-ref-format", "config", "ls-tree", "cat-file", "write-tree", "read-tree", "apply", "check-ignore", "stripspace", "interpret-trailers"]);
 const EXECUTABLE_CONFIG = /^(filter\..*\.(clean|smudge|process)|merge\..*\.driver|trailer\..*\.(command|cmd)|diff\..*\.(command|textconv)|core\.alternaterefscommand|include\.path|includeif\..*\.path)$/i;
 const SAFE_CONFIG = [
   ...(process.platform === "win32" ? ["core.longpaths=true"] : []),
@@ -14,6 +14,14 @@ const SAFE_CONFIG = [
   "core.pager=", "core.editor=false", "sequence.editor=false", "core.sshCommand=false", "core.gitProxy=",
   "credential.helper=", "protocol.allow=never", "gc.auto=0", "maintenance.auto=false", "submodule.recurse=false",
 ];
+
+/** Closed formatting-only argv: never accepts a filename, in-place write or extra option. */
+export function isCommitMessageStdinCommand(args: readonly string[]): boolean {
+  if (args.join("\0") === "stripspace" || args.join("\0") === "stripspace\0--strip-comments") return true;
+  return args[0] === "interpret-trailers" && args[1] === "--no-divider" && args.length >= 4 && args.length <= 82 && args.length % 2 === 0
+    && args.slice(2).every((arg, offset) => offset % 2 === 0 ? arg === "--trailer" : arg.length > 0 && arg.length <= 4096 && !/[\0\r\n]/.test(arg))
+    && args.reduce((sum, arg) => sum + Buffer.byteLength(arg), 0) <= 32768;
+}
 
 /** No inherited Git config, directory redirection, external-command or trace-file injection. */
 export function gitProcessEnvironment(overrides: Record<string, string> = {}): NodeJS.ProcessEnv {
@@ -76,6 +84,7 @@ export function prepareGitProcess(cwd: string, input: readonly string[], overrid
   }
   const command = args[0];
   if (!command || !INTERNAL_COMMANDS.has(command)) throw new Error(`unsupported internal Git command: ${command ?? "empty"}`);
+  if (["stripspace", "interpret-trailers"].includes(command) && !isCommitMessageStdinCommand(args)) throw new Error("Git commit-message stdin command requires exact formatting-only arguments");
   const env = gitProcessEnvironment(overrides);
   if (index !== undefined) env.GIT_INDEX_FILE = authorizedGitIndex(index, cwd, args);
   let policy = SAFE_CONFIG.flatMap(value => ["-c", value]);
