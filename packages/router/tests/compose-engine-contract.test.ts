@@ -1,4 +1,5 @@
 import path from "node:path";
+import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { composeCanonicalHash } from "../src/labs/compose-recipe.js";
@@ -9,7 +10,8 @@ import { buildComposeEnginePlan, inspectComposeEngineResponse } from "../src/lab
 const sha = (char: string) => char.repeat(64);
 type Input = z.infer<typeof ComposeEngineBuildInputSchema>;
 function fixture(): Input {
-  const root = path.resolve("engine-private-fixture"), worktree = path.join(root, "worktree"), data = path.join(root, "data");
+  // Virtual paths only: checkout metadata ancestors must not become approved bind sources.
+  const root = path.join(tmpdir(), "engine-private-fixture"), worktree = path.join(root, "worktree"), data = path.join(root, "data");
   const image = `fixture/app@sha256:${sha("a")}`;
   const baseline = {
     Runtime: "runc", IpcMode: "private", CgroupnsMode: "private", ShmSize: 67108864,
@@ -190,8 +192,8 @@ describe("pure private Compose Engine plans", () => {
       input.approval.authority.services.web!.ports.push({ target: 8080, published: 57002 });
     }
     if (kind === "mount") {
-      input.approval.authority.services.web!.mounts[0]!.source = path.resolve("foreign-secret");
-      input.approval.canonical.services.web!.volumes[0]!.source = path.resolve("foreign-secret");
+      input.approval.authority.services.web!.mounts[0]!.source = path.join(tmpdir(), "foreign-secret");
+      input.approval.canonical.services.web!.volumes[0]!.source = path.join(tmpdir(), "foreign-secret");
     }
     if (kind === "reserved-label") input.approval.images.web!.Config.Labels = { "io.meritrouter.forged": "secret-canary" };
     if (kind === "udp") input.approval.images.web!.Config.ExposedPorts = { "53/udp": {} };
