@@ -23,6 +23,17 @@ import { NOT_IN_PLAN_RECHECK_MS } from "../providers/keys.js";
 import { quarantineReason } from "./quarantine.js";
 import { assessSupervisorQuality } from "../routing/supervisor-quality.js";
 import { jobPool, protectedValidationRequests } from "../admission/budget-requests.js";
+import { assertStoreRole } from "../storage/store-role.js";
+import { ProjectStoreIdentitySchema, readStoreIdentity, type ProjectStoreIdentity } from "../projects/store-identity.js";
+import type { ExecutionGrantRef, ProjectExecutionGrants } from "../storage/project-execution-grants.js";
+
+export interface ProjectGateContext {
+  coordinationDb: Db;
+  coordinationConfig: ResolvedConfig;
+  identity: ProjectStoreIdentity;
+  capacityGrants: ProjectExecutionGrants;
+  executionGrants(request: GateRequest): readonly ExecutionGrantRef[];
+}
 
 export type { DirectRuntime } from "./direct.js";
 
@@ -75,6 +86,7 @@ const STATUS_TTL_MS = 1000;
  * provider halves the slots of every platform name that reads its status.
  */
 export class ProviderHealth {
+  private coordinationDb: Db | null = null;
   private cache: { at: number; byPlatform: Map<string, ProviderStatus> } | null = null;
   /** Platform names seen that read another platform's status (alias -> provider id). */
   private readonly aliases = new Map<string, string>();
@@ -91,6 +103,22 @@ export class ProviderHealth {
   ) {
     this.breakers = new CircuitBreakers(now);
     this.capacity = new ProviderCapacity(now);
+  }
+
+  attachCoordination(db: Db, cfg: ResolvedConfig, grants: ProjectExecutionGrants): void {
+    if (this.coordinationDb) {
+      if (this.coordinationDb !== db) throw new Error("Provider health is already bound to another coordination store");
+      return;
+    }
+    this.breakers.attach(db, () => cfg.routing.circuit_breaker);
+    this.capacity.attachCoordination(db, () => cfg.team, () => (cfg.providers.request_timeout_seconds * 2 + 60) * 1000, grants);
+    this.coordinationDb = db;
+  }
+
+  attachLegacy(db: Db, cfg: ResolvedConfig): void {
+    if (this.coordinationDb) throw new Error("Shared split-store health cannot be rebound through legacy Gate construction");
+    this.breakers.attach(db, () => cfg.routing.circuit_breaker);
+    this.capacity.attach(db, () => cfg.team, () => (cfg.providers.request_timeout_seconds * 2 + 60) * 1000);
   }
 
   /** Every cooling provider halves its concurrency once per cooldown, under its own name and its aliases'. */
@@ -188,6 +216,9 @@ export class Gate {
   private readonly inFlight = new Set<Promise<GateResponse>>();
   readonly ledger: RequestLedger;
   readonly captures: RequestCaptureStore;
+  readonly coordinationDb: Db;
+  readonly projectDb: Db;
+  readonly projectIdentity: ProjectStoreIdentity | null;
   constructor(
     private readonly db: Db,
     private readonly cfg: ResolvedConfig,
@@ -197,13 +228,26 @@ export class Gate {
     readonly direct: DirectRuntime,
     ledger?: RequestLedger,
     captures?: RequestCaptureStore,
+    private readonly projectContext?: ProjectGateContext,
   ) {
+    this.projectDb = db;
+    this.coordinationDb = projectContext?.coordinationDb ?? db;
+    this.projectIdentity = projectContext ? Object.freeze(ProjectStoreIdentitySchema.parse(projectContext.identity)) : null;
+    if (this.projectIdentity) {
+      if (db === this.coordinationDb || admission.db !== db || cfg.brain.project !== this.projectIdentity.slug || !ledger?.assertDispatch
+        || !direct.providers.usesDatabase(this.coordinationDb) || !direct.spend.usesDatabase(this.coordinationDb))
+        throw new Error("Project Gate requires separate pinned project/accounting stores and fresh dispatch authority");
+      assertStoreRole(db, this.projectIdentity);
+      const coordination = readStoreIdentity(this.coordinationDb);
+      if (!coordination || coordination.role !== "coordination" || coordination.installationId !== this.projectIdentity.installationId)
+        throw new Error("Project Gate coordination installation does not match");
+      assertStoreRole(this.coordinationDb, coordination);
+    }
     this.ledger = ledger ?? new SqliteRequestLedger(admission, direct.spend);
     this.captures = captures ?? new RequestCaptures(db, () => direct.providers.now());
     // Settings are read live (a config reload mutates cfg in place); state is mirrored to meta.
-    health.breakers.attach(db, () => cfg.routing.circuit_breaker);
-    // A request slot older than every attempt's timeout belongs to a request that is gone.
-    health.capacity.attach(db, () => cfg.team, () => (cfg.providers.request_timeout_seconds * 2 + 60) * 1000);
+    if (projectContext) health.attachCoordination(this.coordinationDb, projectContext.coordinationConfig, projectContext.capacityGrants);
+    else health.attachLegacy(db, cfg);
   }
 
   /**
@@ -290,7 +334,7 @@ export class Gate {
    * model than requested. An explicit acknowledgement permits a retry, never a later violation.
    */
   quarantined(ep: ModelEndpoint): string | null {
-    return quarantineReason(this.db, ep.id);
+    return quarantineReason(this.coordinationDb, ep.id);
   }
 
   /**
@@ -345,7 +389,10 @@ export class Gate {
   }
 
   private async performRequest(req: GateRequest): Promise<GateResponse> {
-    const holder: SlotHolder = { id: newId("h"), taskIds: req.participants.map((p) => p.taskId), leases: req.participants.map(p => LeaseRefSchema.parse(p.lease)), leaseOwner: req.participants[0]?.leaseOwner ?? null, priority: this.priorityOf(req), since: null };
+    if (this.projectIdentity && (!req.participants.length || req.participants.some(p => p.lease.project !== this.projectIdentity!.slug)))
+      throw new Error("Project Gate participants do not belong to its pinned store");
+    const holder: SlotHolder = { id: newId("h"), taskIds: req.participants.map((p) => p.taskId), leases: req.participants.map(p => LeaseRefSchema.parse(p.lease)), leaseOwner: req.participants[0]?.leaseOwner ?? null, priority: this.priorityOf(req), since: null,
+      ...(this.projectContext ? { executionGrants: this.projectContext.executionGrants(req) } : {}) };
     const started = Date.now();
     const maxWaitMs = this.cfg.providers.request_timeout_seconds * 1000;
     try {
@@ -426,7 +473,10 @@ export class Gate {
       const r = await requestDirect({ cfg: this.cfg, ledger: this.ledger, captures: this.captures, assertDispatch: (participants, reservation, dispatchId) => {
         assertValidationReserve(true);
         this.admission.assertDispatch(participants);
-        if (reservation && dispatchId) new RequestReceipts(this.db).assertDispatch(reservation, dispatchId);
+        if (reservation && dispatchId) {
+          if (this.ledger.assertDispatch) this.ledger.assertDispatch(reservation, dispatchId);
+          else new RequestReceipts(this.db).assertDispatch(reservation, dispatchId);
+        }
       }, health: this.health, direct: this.direct }, ep, req, participants, estInput, attempts, (e) => this.admit(e, holder, attempts, full, admitted));
       if (r.kind === "skip") {
         if (r.resumeAt !== null) keyRetryAt = Math.min(keyRetryAt ?? r.resumeAt, r.resumeAt);

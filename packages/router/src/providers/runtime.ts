@@ -74,7 +74,7 @@ export class ProviderRuntime {
 
   constructor(
     private readonly cfg: ProviderRuntimeConfig,
-    db: Db,
+    private readonly db: Db,
     readonly vault: KeyVault | null,
     private readonly opts: ProviderRuntimeOptions = {},
   ) {
@@ -84,6 +84,8 @@ export class ProviderRuntime {
     this.limits = new ProviderLimits(db, this.now);
     this.client = opts.client ?? createProviderClient({ fetch: this.fetch, now: this.now });
   }
+
+  usesDatabase(db: Db): boolean { return this.db === db; }
 
   private current(): NonNullable<ProviderRuntime["cache"]> {
     const section = this.cfg.providers;

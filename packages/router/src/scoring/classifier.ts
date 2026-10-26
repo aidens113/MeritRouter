@@ -81,6 +81,8 @@ export class Classifier {
     private readonly planFor: () => RoutePlan,
     private readonly now: () => number = Date.now,
   ) {
+    if (gate.projectIdentity && (db !== gate.projectDb || cfg.brain.project !== gate.projectIdentity.slug))
+      throw new Error("Classifier does not match its pinned project Gate");
     this.sessions = new SessionStore(db, cfg.storageDir, now);
   }
 

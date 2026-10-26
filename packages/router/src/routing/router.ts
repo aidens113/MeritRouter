@@ -43,6 +43,8 @@ export class TaskRouter {
     private readonly artifacts: ArtifactStore,
     private readonly now: () => number = Date.now,
   ) {
+    if (gate.projectIdentity && (db !== gate.projectDb || cfg.brain.project !== gate.projectIdentity.slug))
+      throw new Error("Task router does not match its pinned project Gate");
     this.rulebook = loadRulebook(cfg.rulebookPath);
     this.fingerprint = rulebookFingerprint(this.rulebook);
     this.classifier = new Classifier(cfg, db, gate, this.fingerprint, () => this.classificationPlan(), now);
@@ -67,7 +69,7 @@ export class TaskRouter {
       },
       {
         now: new Date(this.now()),
-        qualification: qualificationLookup(this.db, this.cfg),
+        qualification: qualificationLookup(this.gate.coordinationDb ?? this.db, this.cfg),
         health: this.gate.health.lookup,
         quarantined: (ep) => this.gate.excluded(ep),
       },
@@ -106,7 +108,7 @@ export class TaskRouter {
       },
       {
         now: new Date(this.now()),
-        qualification: qualificationLookup(this.db, this.cfg),
+        qualification: qualificationLookup(this.gate.coordinationDb ?? this.db, this.cfg),
         health: this.gate.health.lookup,
         quarantined: (ep) => this.gate.excluded(ep),
       },
