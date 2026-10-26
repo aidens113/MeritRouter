@@ -23,7 +23,6 @@ import type { ProjectContext } from "../projects/context.js";
 import { ProjectConfigSchema } from "../projects/schema.js";
 import { immediate, newId, type Db } from "../storage/db.js";
 import { dirtyPaths, git as unguardedGit } from "../workspaces/git.js";
-import { runProcess } from "../runners/coding/process.js";
 import type { LeaseRef } from "../storage/task-leases.js";
 import { assertLabEffect, assertLabSupervisor, labEffectSignal, withLabAuthority } from "./control-authority.js";
 import { LabsConfigSchema, LabNameSchema, validateRecipe, substitute } from "./recipe.js";
@@ -32,6 +31,11 @@ import { allocatePorts } from "./ports.js";
 import { labOwnedPath } from "./paths.js";
 import { assertRuntimeCwdSupported, projectRuntimePaths, validateRuntimeLocation } from "../projects/runtime-paths.js";
 import { ensureProjectMetadataExcluded } from "../workspaces/metadata-exclusion.js";
+import { withLabRepositoryMutation, type LabMutationControl, type LabMutationRepository } from "./repository-mutation.js";
+import { RepositoryMutationError, type RepositoryMutationCapability } from "../workspaces/repository-mutation.js";
+import { SelectedCommitError } from "../attribution/selected-commit.js";
+import { LabRepositoryCommands } from "./command-authority.js";
+import type { ProjectLabPortReservations } from "./port-reservations.js";
 import { labEnvironment, labValues } from "./environment.js";
 import { LabServices } from "./services.js";
 import { labChecks, runLabCheck, LabCheckResultSchema, type LabCheckResult } from "./checks.js";
@@ -41,6 +45,7 @@ export interface LabManagerOptions {
   cfg: ResolvedConfig;
   project: (slug: string) => ProjectContext;
   monitor?: boolean;
+  portAuthority?: ProjectLabPortReservations;
 }
 export interface LabStatus {
   lab: LabRecord;
@@ -55,6 +60,7 @@ export class LabManager {
   readonly services: LabServices;
   readonly controls: LabControl;
   readonly taskAttempts: TaskLabLifecycle;
+  readonly commands: LabRepositoryCommands;
   private timer: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
   private closed = false;
@@ -64,7 +70,8 @@ export class LabManager {
   private readonly busyLabs = new Set<string>();
   constructor(readonly options: LabManagerOptions) {
     this.store = new LabsStore(options.db);
-    this.services = new LabServices(this.store, LabsConfigSchema.parse(options.cfg.labs), this.owner, this.abort.signal, options.cfg);
+    this.commands = new LabRepositoryCommands(this.store, options.project, (lab, target) => this.labPath(lab, target));
+    this.services = new LabServices(this.store, LabsConfigSchema.parse(options.cfg.labs), this.owner, this.abort.signal, options.cfg, this.commands);
     this.controls = new LabControl(this.store, this.owner, (project, name, input, lease) => withLabAuthority(options.db, options.cfg, project, lease, this.abort.signal, () => this.executeControl(project, name, input)), (project, name) => !this.busyLabs.has(`${project}/${name}`), (project, lease) => { if (lease) assertLabSupervisor(options.db, options.cfg, project, lease); });
     this.taskAttempts = new TaskLabLifecycle(this);
     if (options.monitor !== false) {
@@ -327,20 +334,20 @@ export class LabManager {
     const storage = this.labStorageDirectory(project, name, lab.root);
     const expected = path.resolve(storage, "labs", project, name);
     if (path.resolve(lab.root) !== expected)
-      throw new Error("recorded lab root does not match its project and name");
+      throw new RepositoryMutationError("ownership_changed", "recorded lab root does not match its project and name");
     labOwnedPath(storage, lab.root);
     if (existsSync(lab.root)) {
       const marker = labOwnedPath(storage, labOwnershipMarker(lab.root));
       const proof = z.object({ id: z.literal(lab.id), project: z.literal(project), name: z.literal(name) }).safeParse(JSON.parse(readFileSync(marker, "utf8")));
       if (!proof.success)
-        throw new Error("lab directory ownership marker does not match persisted identity");
+        throw new RepositoryMutationError("ownership_changed", "lab directory ownership marker does not match persisted identity");
     }
     const ctx = this.options.project(project);
     for (const repo of lab.repositories) {
       if (!Object.hasOwn(ctx.repositoryPaths, repo.alias))
-        throw new Error("lab repository is not configured in this project");
+        throw new RepositoryMutationError("ownership_changed", "lab repository is not configured in this project");
       if (path.resolve(repo.worktree) !== path.join(expected, "repos", repo.alias) || path.resolve(ctx.repositoryPaths[repo.alias]?.path ?? "") !== path.resolve(repo.source))
-        throw new Error("lab repository ownership does not match project configuration");
+        throw new RepositoryMutationError("ownership_changed", "lab repository ownership does not match project configuration");
       labOwnedPath(storage, repo.worktree);
     }
     return lab;
@@ -370,8 +377,17 @@ export class LabManager {
     return labOwnedPath(this.labStorageDirectory(lab.project, lab.name, lab.root), target);
   }
   /** Preflight before either retained or task-attempt Lab creation imports files or writes state. */
-  async prepareLabRoot(project: string, name: string): Promise<string> {
+  withGitMutation<T>(project: string, repositories: LabMutationRepository[], action: (mutation: RepositoryMutationCapability) => Promise<T>, control: LabMutationControl = {}): Promise<T> {
+    return withLabRepositoryMutation(this.options.project(project), repositories, action, control);
+  }
+  private labRepositories(lab: LabRecord): LabMutationRepository[] {
+    this.labPath(lab, lab.root);
+    for (const repo of lab.repositories) this.labPath(lab, repo.worktree);
+    return lab.repositories.length ? lab.repositories : Object.entries(this.options.project(lab.project).repositoryPaths).map(([alias, repo]) => ({ alias, source: repo.path }));
+  }
+  async prepareLabRoot(project: string, name: string, control: LabMutationControl = {}): Promise<string> {
     const ctx = this.options.project(project), storage = this.labStorageDirectory(project, name);
+    return this.withGitMutation(project, Object.entries(ctx.repositoryPaths).map(([alias, repo]) => ({ alias, source: repo.path })), async () => {
     const root = labOwnedPath(storage, path.join(storage, "labs", project, name));
     await validateRuntimeLocation(ctx.projectDirectory!, root);
     for (const alias of Object.keys(ctx.repositoryPaths)) assertRuntimeCwdSupported(path.join(root, "repos", alias));
@@ -379,6 +395,7 @@ export class LabManager {
     // stays at the canonical project directory. Exclusion acts on its physical Git owner.
     for (const repo of Object.values(ctx.repositoryPaths)) await ensureProjectMetadataExcluded(realpathSync(repo.path));
     return root;
+    }, control);
   }
   list(project?: string): LabRecord[] {
     if (project !== undefined)
@@ -425,7 +442,8 @@ export class LabManager {
     if (!Object.keys(ctx.repositoryPaths).length)
       throw new Error("a lab needs a project repository");
     const cfg = this.services.config;
-    const root = await this.prepareLabRoot(project, name);
+    const { lab, creationTimer } = await this.withGitMutation(project, Object.entries(ctx.repositoryPaths).map(([alias, repo]) => ({ alias, source: repo.path })), async mutation => {
+    const root = await this.prepareLabRoot(project, name, { mutation });
     if (existsSync(root))
       throw new Error("lab directory already exists; refusing to adopt its data during creation");
     const now = Date.now();
@@ -450,7 +468,7 @@ export class LabManager {
       mkdirSync(path.join(root, "logs"), { recursive: true });
       for (const data of [...recipe.data, "home", "cache"])
         mkdirSync(path.join(root, "data", data), { recursive: true });
-      lab.ports = await allocatePorts(this.options.db, lab.id, recipe.ports, cfg.port_range);
+      lab.ports = await allocatePorts(this.options.db, lab.id, recipe.ports, cfg.port_range, this.options.portAuthority);
       this.store.save(lab);
       for (const [alias, source] of Object.entries(ctx.repositoryPaths)) {
         const requested = input.targetBranches?.[alias];
@@ -470,27 +488,39 @@ export class LabManager {
       }
       lab.env = labEnvironment(lab);
       this.store.save(lab);
-      for (const setup of recipe.setup) {
+      return { lab, creationTimer };
+    } catch (error) {
+      clearInterval(creationTimer);
+      if (error instanceof RepositoryMutationError || error instanceof SelectedCommitError) throw error;
+      lab.state = "failed";
+      this.store.save(lab);
+      this.options.db.prepare("UPDATE labs SET creation_until=0 WHERE id=? AND creation_owner=?").run(lab.id, this.owner);
+      throw error;
+    }
+    });
+    try {
+      for (const [setupIndex, setup] of recipe.setup.entries()) {
         const repo = typeof setup === "string" ? lab.repositories[0] : lab.repositories.find(r => r.alias === setup.repo);
         if (!repo)
           throw new Error("setup repository unavailable");
         assertLabEffect();
-        const result = await runProcess(substitute(typeof setup === "string" ? setup : setup.command, labValues(lab)), [], { cwd: repo.worktree, env: labEnvironment(lab), timeoutMs: cfg.setup_timeout_seconds * 1000, shell: true, signal: labEffectSignal(this.abort.signal) });
+        const result = await this.commands.run(lab, "lab-setup", String(setupIndex), labEnvironment(lab), cfg.setup_timeout_seconds * 1000, labEffectSignal(this.abort.signal));
         assertLabEffect();
-        this.store.event(lab.id, "setup_finished", { repository: repo.alias, ...result });
+        await this.commands.status(lab, async () => { this.store.event(lab.id, "setup_finished", { repository: repo.alias, ...result }); });
         if (result.exitCode !== 0 || result.killed)
           throw new Error(`lab setup failed: ${result.stderr.slice(-1000)}`);
       }
-      lab.state = "stopped";
-      lab.updatedAt = Date.now();
-      this.store.save(lab);
+      await this.commands.status(lab, async () => {
+        lab.state = "stopped"; lab.updatedAt = Date.now(); this.store.save(lab);
+      });
       return this.status(project, name);
     }
     catch (err) {
-      lab.state = "failed";
-      lab.updatedAt = Date.now();
-      this.store.save(lab);
-      this.store.event(lab.id, "creation_failed", { error: (err as Error).message });
+      if (err instanceof RepositoryMutationError || err instanceof SelectedCommitError) throw err;
+      await this.commands.status(lab, async () => {
+        lab.state = "failed"; lab.updatedAt = Date.now(); this.store.save(lab);
+        this.store.event(lab.id, "creation_failed", { error: (err as Error).message });
+      });
       throw err;
     }
     finally {
@@ -502,9 +532,9 @@ export class LabManager {
     const lab = this.require(project, name);
     if (["creating", "starting"].includes(lab.state))
       throw new MeritRouterError("lab_invalid_state", "lab creation is incomplete");
-    lab.state = "starting";
-    lab.updatedAt = Date.now();
-    this.store.save(lab);
+    await this.commands.status(lab, async () => {
+      lab.state = "starting"; lab.updatedAt = Date.now(); this.store.save(lab);
+    });
     const started = new Set<string>();
     const visit = async (service: string): Promise<void> => {
       if (started.has(service))
@@ -520,19 +550,19 @@ export class LabManager {
     try {
       for (const service of Object.keys(lab.recipe.services))
         await visit(service);
-      lab.state = "running";
-      lab.lastActivity = Date.now();
-      lab.updatedAt = Date.now();
-      this.store.save(lab);
-      this.store.event(lab.id, "started", {});
+      await this.commands.status(lab, async () => {
+        lab.state = "running"; lab.lastActivity = Date.now(); lab.updatedAt = Date.now();
+        this.store.save(lab); this.store.event(lab.id, "started", {});
+      });
       return this.status(project, name);
     }
     catch (err) {
+      if (err instanceof RepositoryMutationError || err instanceof SelectedCommitError) throw err;
       for (const service of [...started].reverse())
         await this.services.stop(lab, service, true).catch(() => undefined);
-      lab.state = "failed";
-      lab.updatedAt = Date.now();
-      this.store.save(lab);
+      await this.commands.status(lab, async () => {
+        lab.state = "failed"; lab.updatedAt = Date.now(); this.store.save(lab);
+      });
       throw err;
     }
   }
@@ -540,12 +570,14 @@ export class LabManager {
     const lab = this.require(project, name);
     if (["creating", "starting"].includes(lab.state))
       throw new MeritRouterError("lab_invalid_state", "lab operation is still in progress");
+    await this.commands.status(lab, async () => undefined);
     for (const service of this.store.services(lab.id).reverse())
       await this.services.stop(lab, service.name);
-    lab.state = "stopped";
-    lab.updatedAt = Date.now();
-    this.store.save(lab);
-    this.store.event(lab.id, "stopped", {});
+    await this.commands.stopTransient(lab);
+    await this.commands.status(lab, async () => {
+      lab.state = "stopped"; lab.updatedAt = Date.now(); this.store.save(lab);
+      this.store.event(lab.id, "stopped", {});
+    });
     return this.status(project, name);
   }
   private async restartLab(project: string, name: string, service?: string): Promise<LabStatus> {
@@ -555,12 +587,12 @@ export class LabManager {
     if (service) {
       if (!Object.hasOwn(lab.recipe.services, service))
         throw new Error("unknown lab service");
+      await this.commands.status(lab, async () => undefined);
       await this.services.stop(lab, service);
       await this.services.start(lab, service);
-      lab.lastActivity = Date.now();
-      lab.updatedAt = Date.now();
-      lab.state = "running";
-      this.store.save(lab);
+      await this.commands.status(lab, async () => {
+        lab.lastActivity = Date.now(); lab.updatedAt = Date.now(); lab.state = "running"; this.store.save(lab);
+      });
       return this.status(project, name);
     }
     await this.stopLab(project, name);
@@ -573,7 +605,7 @@ export class LabManager {
   }
   private async checkLab(project: string, name: string, check: string): Promise<LabCheckResult> {
     const lab = this.require(project, name);
-    this.touch(project, name);
+    await this.commands.status(lab, async () => { this.touch(project, name); });
     assertLabEffect();
     return runLabCheck(this.store, lab, check, this.services.config.check_timeout_seconds, labEffectSignal(this.abort.signal), this);
   }
@@ -581,14 +613,17 @@ export class LabManager {
     let lab = this.require(project, name);
     if (["creating", "starting"].includes(lab.state))
       throw new MeritRouterError("lab_invalid_state", "lab operation is still in progress");
-    for (const repo of lab.repositories)
-      if ((await dirtyPaths(repo.worktree)).length)
+    await this.commands.status(lab, async () => {
+      for (const repo of lab.repositories) if ((await dirtyPaths(repo.worktree)).length)
         throw new MeritRouterError("lab_dirty", "lab has uncommitted changes; commit them before refreshing");
+    });
     const running = lab.state === "running";
     if (running)
       await this.stopLab(project, name);
     lab = this.require(project, name);
     try {
+      await this.withGitMutation(project, this.labRepositories(lab), async () => {
+      for (const repo of lab.repositories) if ((await dirtyPaths(repo.worktree)).length) throw new MeritRouterError("lab_dirty", "lab changed before the fenced refresh; retained without merging");
       for (const repo of lab.repositories) {
         await git(repo.worktree, ["-c", "user.name=MeritRouter", "-c", "user.email=meritrouter@localhost", "merge", "--no-edit", `refs/heads/${repo.target}`]);
         repo.base = (await git(repo.source, ["rev-parse", "--verify", "--end-of-options", `${repo.target}^{commit}`])).trim();
@@ -598,15 +633,18 @@ export class LabManager {
       this.store.save(lab);
       this.store.event(lab.id, "refreshed", {});
       this.touch(project, name);
+      });
       if (running)
         return this.startLab(project, name);
       return this.status(project, name);
     }
     catch (err) {
+      if (err instanceof RepositoryMutationError || err instanceof SelectedCommitError) throw err;
       lab = this.require(project, name);
-      lab.state = "failed";
-      this.store.save(lab);
-      this.store.event(lab.id, "refresh_conflict", { error: (err as Error).message });
+      await this.withGitMutation(project, this.labRepositories(lab), async () => {
+        lab.state = "failed"; this.store.save(lab);
+        this.store.event(lab.id, "refresh_conflict", { error: (err as Error).message });
+      });
       throw err;
     }
   }
@@ -614,22 +652,29 @@ export class LabManager {
     const lab = this.require(project, name);
     if (["creating", "starting"].includes(lab.state))
       throw new MeritRouterError("lab_invalid_state", "lab operation is still in progress");
-    for (const repo of lab.repositories)
-      if (existsSync(repo.worktree) && (await dirtyPaths(repo.worktree)).length)
+    await this.commands.status(lab, async () => {
+      for (const repo of lab.repositories) if ((await dirtyPaths(repo.worktree)).length)
         throw new MeritRouterError("lab_dirty", "lab has uncommitted changes; commit them before destroying so the branch retains the work");
+    });
     await this.stopLab(project, name);
+    await this.withGitMutation(project, this.labRepositories(lab), async () => {
+    for (const repo of lab.repositories) if ((await dirtyPaths(repo.worktree)).length) throw new MeritRouterError("lab_dirty", "lab changed before fenced destruction; uncommitted data retained");
     for (const repo of lab.repositories) {
       this.labPath(lab, repo.worktree);
-      if (existsSync(repo.worktree))
+      if (existsSync(repo.worktree)) {
+        await assertNoNativeWorktreeOperation(repo.worktree);
         await git(repo.source, ["worktree", "remove", repo.worktree]);
+      }
     }
     this.labPath(lab, lab.root);
     rmSync(lab.root, { recursive: true, force: true });
-    this.options.db.prepare("DELETE FROM lab_ports WHERE lab_id=?").run(lab.id);
     lab.state = "destroyed";
     lab.updatedAt = Date.now();
     this.store.save(lab);
+    this.options.portAuthority?.release(lab.id);
+    this.options.db.prepare("DELETE FROM lab_ports WHERE lab_id=?").run(lab.id);
     this.store.event(lab.id, "destroyed", { branches: lab.repositories.map(r => r.branch) });
+    });
   }
   async recover(): Promise<void> {
     await this.taskAttempts.recover();
@@ -639,24 +684,23 @@ export class LabManager {
       const checks=path.join(lab.root,"checks");
       if(existsSync(checks))for(const check of readdirSync(checks))if(/^lc_[a-z0-9]+$/.test(check)){
         try{await recoverDockerBrowser(lab,check);}
-        catch{this.store.event(lab.id,"browser_journey_recovery_blocked",{checkId:check,reason:"Exact owned container cleanup could not be verified; private proof retained"});}
+        catch{await this.commands.status(lab, async () => { this.store.event(lab.id,"browser_journey_recovery_blocked",{checkId:check,reason:"Exact owned container cleanup could not be verified; private proof retained"}); });}
       }
       if (lab.state === "creating") {
         const lease = z.object({ creation_until: z.number() }).parse(this.options.db.prepare("SELECT creation_until FROM labs WHERE id=?").get(lab.id));
         if (lease.creation_until > Date.now())
           continue;
-        lab.state = "failed";
-        lab.updatedAt = Date.now();
-        this.store.save(lab);
-        this.store.event(lab.id, "creation_interrupted", {});
+        await this.commands.status(lab, async () => {
+          lab.state = "failed"; lab.updatedAt = Date.now(); this.store.save(lab);
+          this.store.event(lab.id, "creation_interrupted", {});
+        });
         continue;
       }
       if (["running", "starting"].includes(lab.state)) {
         await this.services.monitor(lab);
         const services = this.store.services(lab.id);
-        if (services.length && services.every(s => s.state === "running")) {
-          lab.state = "running";
-          this.store.save(lab);
+        if (lab.state !== "running" && services.length && services.every(s => s.state === "running")) {
+          await this.commands.status(lab, async () => { lab.state = "running"; this.store.save(lab); });
         }
       }
     }
@@ -686,11 +730,11 @@ export class LabManager {
         const activeTeam = this.options.db.prepare("SELECT t.state FROM lab_teams l JOIN tasks t ON t.id=l.root_job_id WHERE l.lab_id=? AND t.state IN ('running','cancel_requested')").get(lab.id);
         if (activeTeam) {
           lab.lastActivity = Date.now();
-          this.store.save(lab);
+          this.options.db.prepare("UPDATE labs SET last_activity=? WHERE id=? AND state='running'").run(lab.lastActivity, lab.id);
         }
         if (mine && Date.now() - lab.lastActivity >= this.services.config.idle_stop_minutes * 60000) {
           await this.stop(lab.project, lab.name);
-          this.store.event(lab.id, "idle_stopped", {});
+          await this.commands.status(lab, async () => { this.store.event(lab.id, "idle_stopped", {}); });
           continue;
         }
         await this.services.monitor(lab);
@@ -715,6 +759,7 @@ export class LabManager {
     if (input.stopServices !== false) {
       for (const lab of this.list()) {
         if(lab.kind==="task_attempt")continue;
+        await this.commands.stopTransient(lab);
         if (this.store.services(lab.id).some(s => s.owner_id === this.owner))
           await this.stopLab(lab.project, lab.name);
       }
@@ -729,3 +774,4 @@ async function git(...args: Parameters<typeof unguardedGit>): Promise<string> {
   assertLabEffect();
   return result;
 }
+import { assertNoNativeWorktreeOperation } from "../workspaces/worktree-removal.js";

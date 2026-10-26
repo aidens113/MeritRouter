@@ -4,7 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 import { assertNoPendingCommitPublication } from "../attribution/selected-commit-receipts.js";
 import { git } from "./git.js";
-import { assertNoActiveRepositoryCommand, type RepositoryCommandPermit } from "./repository-command.js";
+import { assertNoActiveRepositoryCommand, assertRepositoryCommandPermitScope, type RepositoryCommandPermits } from "./repository-command.js";
 
 declare const mutationBrand: unique symbol;
 /** Host-only scope; object copies, serialized values and expired scopes cannot authorize writes. */
@@ -54,7 +54,8 @@ async function resolveOwners(input: string[]): Promise<Owner[]> {
   }
   return resolved;
 }
-async function validateOwners(owners: Owner[], command?: RepositoryCommandPermit): Promise<void> {
+async function validateOwners(owners: Owner[], command?: RepositoryCommandPermits): Promise<void> {
+  await assertRepositoryCommandPermitScope(owners.map(owner => owner.gitDirectory), command);
   for (const owner of owners) {
     const [current] = await resolveOwners([owner.repo]);
     if (!current || key(current.gitDirectory) !== key(owner.gitDirectory) || key(current.commonDirectory) !== key(owner.commonDirectory)) throw new RepositoryMutationError("ownership_changed", "Repository mutation owner changed during admission");
@@ -110,7 +111,7 @@ function activeLease(capability: RepositoryMutationCapability): Lease {
   return lease;
 }
 
-export interface RepositoryMutationOptions { capability?: RepositoryMutationCapability; command?: RepositoryCommandPermit; timeoutMs?: number }
+export interface RepositoryMutationOptions { capability?: RepositoryMutationCapability; command?: RepositoryCommandPermits; timeoutMs?: number }
 /**
  * Lock order: sorted physical common Git owners, then native index/ref locks inside action.
  * Never call while holding a SQLite transaction. Locks are cooperative, never stolen by age.
@@ -127,7 +128,7 @@ export function withRepositoryMutation<T>(input: string[], action: (capability: 
       const owners = await resolveOwners(requested);
       activeLease(lease.capability);
       if (owners.some(owner => !lease.owners.has(key(owner.commonDirectory)))) throw new RepositoryMutationError("invalid_capability", "Repository mutation capability cannot widen its owner scope");
-      await validateOwners(owners, parsed.command as RepositoryCommandPermit | undefined); activeLease(lease.capability);
+      await validateOwners(owners, parsed.command as RepositoryCommandPermits | undefined); activeLease(lease.capability);
       return action(lease.capability);
     })();
     lease.pending.add(running);
@@ -140,7 +141,7 @@ export function withRepositoryMutation<T>(input: string[], action: (capability: 
     const locks: OwnedLock[] = [], deadline = Date.now() + parsed.timeoutMs;
     try {
       for (const directory of directories) locks.push(await acquire(directory, deadline));
-      await validateOwners(owners, parsed.command as RepositoryCommandPermit | undefined);
+      await validateOwners(owners, parsed.command as RepositoryCommandPermits | undefined);
       const capability = Object.freeze({}) as RepositoryMutationCapability;
       const lease: Lease = { active: true, owners: new Set(directories.map(key)), pending: new Set(), capability };
       leases.set(capability, lease);

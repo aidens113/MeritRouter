@@ -7,11 +7,10 @@ import { z } from "zod";
 import { newId } from "../storage/db.js";
 import { MeritRouterError } from "../core/errors.js";
 import { dirtyPaths, git } from "../workspaces/git.js";
-import { runProcess } from "../runners/coding/process.js";
 import type { LabRecord } from "./store.js";
 import { LabsStore } from "./store.js";
-import { labEnvironment, labValues } from "./environment.js";
-import { LabNameSchema, substitute } from "./recipe.js";
+import { labEnvironment } from "./environment.js";
+import { LabNameSchema } from "./recipe.js";
 import { assertLabEffect, labEffectSignal } from "./control-authority.js";
 export const LabCheckResultSchema = z.object({ id: z.string(), name: z.string(), repository: z.string(), revision: z.string().regex(/^[a-f0-9]{40,64}$/), exitCode: z.number().int().nullable(), stdout: z.string(), stderr: z.string(), killed: z.string().nullable(), durationMs: z.number(), createdAt: z.number(), browser: BrowserEvidenceSchema.optional(), journey: BrowserJourneyEvidenceSchema.optional() });
 export type LabCheckResult = z.infer<typeof LabCheckResultSchema>;
@@ -27,6 +26,7 @@ export async function runLabCheck(store: LabsStore, lab: LabRecord, name: string
   assertLabEffect();
   signal = labEffectSignal(signal);
   if(lab.kind==="task_attempt")throw new MeritRouterError("lab_scope_denied","task checks require their persisted attempt lifecycle");
+  if (!manager) throw new MeritRouterError("lab_invalid_state", "check requires its scoped lab manager");
   LabNameSchema.parse(name);
   const check = lab.recipe.checks[name];
   if (!Object.hasOwn(lab.recipe.checks, name) || !check)
@@ -35,9 +35,11 @@ export async function runLabCheck(store: LabsStore, lab: LabRecord, name: string
   const repo = lab.repositories.find(r => r.alias === alias);
   if (!repo)
     throw new Error("lab check repository is unavailable");
-  if ((await dirtyPaths(repo.worktree)).length)
-    throw new MeritRouterError("lab_dirty", "commit lab changes before running revision-bound checks");
-  const revision = (await git(repo.worktree, ["rev-parse", "HEAD"])).trim();
+  const revision = await manager.commands.status(lab, async () => {
+    if ((await dirtyPaths(repo.worktree)).length)
+      throw new MeritRouterError("lab_dirty", "commit lab changes before running revision-bound checks");
+    return (await git(repo.worktree, ["rev-parse", "HEAD"])).trim();
+  });
   const id = newId("lc");
   const command=typeof check==="string"?check:"command" in check?check.command:null;
   if(command===null&&!manager)throw new MeritRouterError("lab_invalid_state","browser check requires its scoped lab manager");
@@ -48,9 +50,10 @@ export async function runLabCheck(store: LabsStore, lab: LabRecord, name: string
     ?await runBrowserJourney(manager!,lab,id,{...journey,timeout_seconds:Math.min(journey.timeout_seconds,timeoutSeconds)},signal)
     :browser
     ?await runBrowserCheck(manager!,lab,id,{...browser,timeout_seconds:Math.min(browser.timeout_seconds,timeoutSeconds)},signal)
-    :await runProcess(substitute(command!,labValues(lab)),[],{cwd:repo.worktree,env:labEnvironment(lab),timeoutMs:timeoutSeconds*1000,shell:true,signal});
+    :await manager.commands.run(lab,"lab-check",name,labEnvironment(lab),timeoutSeconds*1000,signal);
   assertLabEffect();
   const record = LabCheckResultSchema.parse({ id, name, repository: repo.alias, revision, ...result, createdAt: Date.now() });
+  await manager.commands.status(lab, async () => {
   if ((await git(repo.worktree, ["rev-parse", "HEAD"])).trim() !== revision || (await dirtyPaths(repo.worktree)).length) {
     record.exitCode = 1;
     record.killed = "revision_changed";
@@ -58,6 +61,7 @@ export async function runLabCheck(store: LabsStore, lab: LabRecord, name: string
   }
   store.db.prepare("INSERT INTO lab_checks(id,lab_id,name,repository,revision,result_json,created_at) VALUES(?,?,?,?,?,?,?)").run(record.id, lab.id, name, repo.alias, revision, JSON.stringify(record), record.createdAt);
   store.event(lab.id, "check_finished", { id: record.id, name, revision, exitCode: record.exitCode, killed: record.killed });
+  });
   return record;
 }
 export function labChecks(store: LabsStore, labId: string): LabCheckResult[] {

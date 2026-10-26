@@ -29,6 +29,7 @@ const RowSchema = z.object({ id: z.string(), project: z.string(), taskId: z.stri
   action: ActionSchema, decisionReason: z.string().nullable(), decidedBy: z.string().nullable(),
   output: z.string().max(20000).nullable(), exitCode: z.number().int().nullable(), createdAt: z.number().int(),
   cancelRequested: z.boolean().optional(), quiescedAt: z.number().int().optional(),
+  executionPhase: z.enum(["admitting", "executing"]).optional(),
   executionStartedAt: z.number().int().nonnegative().optional(), executionTimeoutMs: z.number().int().positive().max(300000).optional() }).strict();
 export type WorkerActionRequest = z.infer<typeof RowSchema>;
 export type WorkerActionActor = { kind: "operator" } | { kind: "supervisor"; taskId: string; lease: LeaseRef };
@@ -208,7 +209,7 @@ export class WorkerActionRequests {
       if (latest.status !== "pending") return latest;
       authorize(); this.current(latest);
       latest.status = input.decision === "deny" ? "denied" : "running";
-      if (latest.status === "running") latest.executionStartedAt = Date.now();
+      if (latest.status === "running") { latest.executionPhase = "admitting"; delete latest.executionStartedAt; }
       latest.decisionReason = reason;
       latest.decidedBy = input.actor.kind === "operator" ? "operator" : input.actor.taskId;
       if (latest.status === "running" && latest.action.operation) { latest.status = "completed"; latest.output = `Supervisor-provided response (not executed worker evidence):\n${z.string().max(19000).parse(input.response)}`; }
@@ -225,7 +226,14 @@ export class WorkerActionRequests {
       this.current(row); authorize();
       if (input.signal?.aborted) abort();
       if (controller.signal.aborted) throw new Error("supervisor action cancelled before execution");
-      const r = await createRepositoryEffects(row.action.cwd).runCommand({ command: row.action.command, cwd: row.action.cwd, env: minimalEnv({ CI: "1" }), timeoutMs: Math.min(row.action.timeoutMs, row.executionTimeoutMs ?? row.action.timeoutMs), signal: controller.signal }, { assertAuthority: async () => { this.current(row!); authorize(); if (row!.action.source !== await workerSourceIdentity(row!.action.cwd)) throw new Error("worker action source changed; request again for current source"); } });
+      const r = await createRepositoryEffects(row.action.cwd).runCommand({ command: row.action.command, cwd: row.action.cwd, env: minimalEnv({ CI: "1" }), timeoutMs: Math.min(row.action.timeoutMs, row.executionTimeoutMs ?? row.action.timeoutMs), signal: controller.signal }, {
+        assertAuthority: async () => { this.current(row!); authorize(); if (row!.action.source !== await workerSourceIdentity(row!.action.cwd)) throw new Error("worker action source changed; request again for current source"); },
+        started: () => {
+          const current = this.get(row!.project, row!.id);
+          if (!current || current.status !== "running" || JSON.stringify(current.action.lease) !== JSON.stringify(row!.action.lease)) throw new Error("worker action changed before its execution grant");
+          this.current(current); authorize(); current.executionPhase = "executing"; current.executionStartedAt = Date.now(); this.save(current); row = current;
+        },
+      });
       row.cancelRequested = this.get(row.project,row.id)?.cancelRequested ?? false;
       row.status = r.killed ? "uncertain" : "completed";
       row.quiescedAt = this.now();
@@ -261,11 +269,11 @@ export async function awaitWorkerAction(ctx: RunContext, request: WorkerActionRe
       }
       const current = store.get(lease.project, request.id);
       if (!current || current.taskId !== ctx.taskId || current.action.lease.owner !== lease.owner || current.action.lease.runCount !== lease.runCount || current.action.lease.incarnation !== lease.incarnation || current.action.lease.project !== lease.project) throw new Error("worker action disappeared or differs from its original captured lease");
-      if (current.status === "pending") resumeExecution ??= pauseOperationExecutionTimeout(ctx.signal);
+      if (current.status === "pending" || current.status === "running" && current.executionPhase === "admitting") resumeExecution ??= pauseOperationExecutionTimeout(ctx.signal);
       else {
         // Charge execution even if approval and a fast command both happened between polls.
         // Legacy rows lack a trusted start; conservatively charge the whole paused span.
-        const executed = ["running", "completed", "uncertain"].includes(current.status);
+        const executed = current.executionPhase !== "admitting" && ["running", "completed", "uncertain"].includes(current.status);
         resumeExecution?.(executed ? current.executionStartedAt ?? 0 : undefined); resumeExecution = null;
       }
       ctx.signal.throwIfAborted();

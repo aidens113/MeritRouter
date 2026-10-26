@@ -6,6 +6,7 @@ import { TaskStore } from "../storage/tasks.js";
 import { splitRepoKey } from "../projects/context.js";
 import type { ProjectContext } from "../projects/context.js";
 import { dirtyPaths, git } from "../workspaces/git.js";
+import { withLabRepositoryMutation } from "./repository-mutation.js";
 export interface LabRetentionResult {
   removed: string[];
   skipped: Array<{
@@ -64,14 +65,20 @@ export async function pruneTaskWorktrees(db: Db, storageDir: string, days: numbe
       const rel = path.relative(root, candidate);
       if (!rel || rel.startsWith("..") || path.isAbsolute(rel) || lstatSync(candidate).isSymbolicLink() || !registered.includes(candidate))
         continue;
+      await withLabRepositoryMutation(project(task.row.project_id), [{ alias: key.alias, source: row.source_path, worktree: candidate }], async () => {
+      const current = (await git(row.source_path, ["worktree", "list", "--porcelain", "-z"])).split("\0").filter(x => x.startsWith("worktree ")).map(x => path.resolve(x.slice(9)));
+      if (!current.includes(candidate)) throw new Error("Task worktree registration changed before retention cleanup");
       if ((await dirtyPaths(candidate)).length) {
         out.skipped.push({ path: candidate, reason: "uncommitted changes retained" });
-        continue;
+        return;
       }
+      await assertNoNativeWorktreeOperation(candidate);
       await git(row.source_path, ["worktree", "remove", candidate]);
       out.removed.push(candidate);
       db.prepare("UPDATE workspaces SET status='removed',updated_at=? WHERE task_id=? AND worktree_path=?").run(now, row.task_id, candidate);
+      });
     }
   }
   return out;
 }
+import { assertNoNativeWorktreeOperation } from "../workspaces/worktree-removal.js";

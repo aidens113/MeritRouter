@@ -14,36 +14,29 @@ import { captureOwnedProcessTree, HOST_MARKER, inspectLabListeners, processOwner
 import { portAvailable } from "./ports.js";
 import type { ResolvedConfig } from "../config/load.js";
 import { assertLabEffect, assertLabSupervisor, currentLabAuthority, labEffectSignal, serviceLabAuthority, withLabAuthority } from "./control-authority.js";
+import { LAB_SERVICE_COMMAND_HOST } from "./command-authority.js";
+import type { LabRepositoryCommands } from "./command-authority.js";
+import { RepositoryMutationError } from "../workspaces/repository-mutation.js";
 // The independent wrapper survives its manager. Its random token is verified against the OS
 // command line before another manager adopts or terminates it. Declared services run foreground.
-const HOST_SOURCE = `// ${HOST_MARKER}
-const{spawn}=require('node:child_process');
-const cfg=JSON.parse(process.env.MERITROUTER_LAB_COMMAND);
-delete process.env.MERITROUTER_LAB_COMMAND;
-const child=spawn(cfg.command,[],{shell:true,cwd:cfg.cwd,env:process.env,stdio:'inherit',windowsHide:true});
-child.on('error',e=>{console.error(e.message);process.exitCode=1});
-child.on('close',code=>process.exit(code===null?1:code));
-process.on('SIGTERM',()=>{try{child.kill('SIGTERM')}catch{};setTimeout(()=>process.exit(0),500)});
-`;
 const LEASE_MS = 60000;
 export class LabServices {
-  constructor(readonly store: LabsStore, readonly config: LabsConfig, readonly owner: string, readonly signal?: AbortSignal, readonly hostConfig?: ResolvedConfig) {
+  constructor(readonly store: LabsStore, readonly config: LabsConfig, readonly owner: string, readonly signal?: AbortSignal, readonly hostConfig?: ResolvedConfig, readonly commands?: LabRepositoryCommands) {
   }
+  private commandAuthority(): LabRepositoryCommands { if (!this.commands) throw new RepositoryMutationError("command_uncertain", "Lab service has no verified repository command authority"); return this.commands; }
   private proofPath(lab: LabRecord, name: string): string {
     return labOwnedPath(path.resolve(lab.root, "../../.."), path.join(lab.root, "logs", `${name}.process-tree.json`));
   }
   private async stopProcess(lab: LabRecord, name: string, pid: number, token: string): Promise<void> {
     try {
-      await stopOwnedProcess(pid, token, this.proofPath(lab, name));
+      const authority = this.commandAuthority();
+      const observed = await authority.observe(lab, { kind: "lab-service", name, token });
+      if (observed && observed.pid !== pid) throw new RepositoryMutationError("ownership_changed", "Lab service PID differs from its kernel Job identity");
+      await authority.stop(lab, { kind: "lab-service", name, token });
     }
     catch (error) {
-      const record = this.store.service(lab.id, name);
-      if (record) {
-        record.state = "failed";
-        this.store.saveService(record);
-      }
-      this.store.event(lab.id, "cleanup_refused", { name, pid, error: (error as Error).message });
-      throw error;
+      if (error instanceof RepositoryMutationError) throw error;
+      throw new RepositoryMutationError("command_uncertain", `Lab service cleanup could not prove kernel retirement; identity and receipts retained: ${(error as Error).message}`);
     }
   }
   async start(lab: LabRecord, name: string, restarting = false): Promise<LabServiceRecord> {
@@ -70,7 +63,8 @@ export class LabServices {
       if (ownership === "foreign")
         throw new Error("refused to adopt or replace an unverified recorded process");
     }
-    immediate(this.store.db, () => {
+    const token = randomBytes(24).toString("hex"), authority = this.commandAuthority(), reference = { kind: "lab-service" as const, name, token };
+    const command = await authority.prepare(lab, reference, () => immediate(this.store.db, () => {
       const running = this.store.db.prepare("SELECT COUNT(*) AS n FROM lab_services WHERE state IN ('starting','running','backoff') AND NOT(lab_id=? AND name=?)").get(lab.id, name) as {
         n: number;
       };
@@ -79,43 +73,32 @@ export class LabServices {
       previous = this.store.service(lab.id, name);
       if (previous?.owner_id && previous.owner_id !== this.owner && previous.owner_until > Date.now())
         throw new Error("another manager is starting this service");
-      this.store.saveService({ lab_id: lab.id, name, state: "starting", pid: null, token: null, log_path: path.join(lab.root, "logs", `${name}.log`), restart_count: restarting ? (previous?.restart_count ?? 0) : 0, next_restart: null, started_at: Date.now(), owner_id: this.owner, owner_until: Date.now() + LEASE_MS });
+      this.store.saveService({ lab_id: lab.id, name, state: "starting", pid: null, token, log_path: path.join(lab.root, "logs", `${name}.log`), restart_count: restarting ? (previous?.restart_count ?? 0) : 0, next_restart: null, started_at: Date.now(), owner_id: this.owner, owner_until: Date.now() + LEASE_MS });
       this.store.db.prepare("UPDATE lab_services SET authority_json=? WHERE lab_id=? AND name=?").run(currentLabAuthority()?.lease ? JSON.stringify(currentLabAuthority()!.lease) : null, lab.id, name);
-    });
-    const token = randomBytes(24).toString("hex");
+    }));
     const logPath = labOwnedPath(path.resolve(lab.root, "../../.."), path.join(lab.root, "logs", `${name}.log`));
-    mkdirSync(path.dirname(logPath), { recursive: true });
     assertLabEffect();
-    const fd = openSync(logPath, "a");
-    const child = spawn(process.execPath, ["-e", HOST_SOURCE, "--", `--sy-lab-token=${token}`], { cwd: repo.worktree, env: { ...labEnvironment(lab), MERITROUTER_LAB_COMMAND: JSON.stringify({ command: substitute(recipe.command, labValues(lab)), cwd: repo.worktree }) }, detached: true, windowsHide: true, stdio: ["ignore", fd, fd] });
-    closeSync(fd);
+    let pid: number | undefined;
     try {
-      await new Promise<void>((resolve, reject) => {
-        child.once("spawn", resolve);
-        child.once("error", reject);
-      });
-      if (!child.pid)
-        throw new Error("service process did not start");
+      const binding = await authority.start(lab, reference, command, { file: process.execPath, args: ["-e", LAB_SERVICE_COMMAND_HOST, "--", `--sy-lab-token=${token}`], cwd: repo.worktree, env: { ...labEnvironment(lab), MERITROUTER_LAB_COMMAND: JSON.stringify({ command: substitute(recipe.command, labValues(lab)), cwd: repo.worktree }) }, timeoutMs: null }, async binding => {
+        pid = binding.pid;
+        await authority.status(lab, async () => { const record = this.store.service(lab.id, name)!; record.pid = binding.pid; record.token = token; this.store.saveService(record); });
+      }, logPath);
+      pid = binding.pid;
       const record = this.store.service(lab.id, name)!;
-      record.pid = child.pid;
-      record.token = token;
-      this.store.saveService(record);
       assertLabEffect();
-      child.unref();
-      await this.ready(lab, name, child.pid, token);
+      await this.ready(lab, name, pid, token);
       assertLabEffect();
-      await captureOwnedProcessTree(child.pid, token, this.proofPath(lab, name));
-      record.state = "running";
-      record.owner_until = Date.now() + LEASE_MS;
-      this.store.saveService(record);
-      this.store.event(lab.id, "service_started", { name, pid: child.pid });
+      await captureOwnedProcessTree(pid, token, this.proofPath(lab, name));
+      await authority.status(lab, async () => { record.state = "running"; record.owner_until = Date.now() + LEASE_MS; this.store.saveService(record); this.store.event(lab.id, "service_started", { name, pid }); });
       return record;
     }
     catch (err) {
+      if (err instanceof RepositoryMutationError) throw err;
       let cleanupFailed = false;
-      if (child.pid) {
+      if (pid) {
         try {
-          await this.stopProcess(lab, name, child.pid, token);
+          await this.stopProcess(lab, name, pid, token);
         }
         catch {
           cleanupFailed = true;
@@ -127,8 +110,7 @@ export class LabServices {
         record.pid = null;
         record.token = null;
       }
-      this.store.saveService(record);
-      this.store.event(lab.id, "service_failed", { name, error: (err as Error).message });
+      await authority.status(lab, async () => { this.store.saveService(record); this.store.event(lab.id, "service_failed", { name, error: (err as Error).message }); });
       throw err;
     }
   }
@@ -182,7 +164,9 @@ export class LabServices {
     if(lab.kind==="task_attempt")throw new Error("task-owned services cannot be adopted as retained services");
     if (!s.pid || !s.token || await processOwnership(s.pid, s.token) !== "owned")
       throw new Error("cannot adopt unverified service process");
-    const claimed = immediate(this.store.db, () => this.store.db.prepare("UPDATE lab_services SET owner_id=?,owner_until=? WHERE lab_id=? AND name=? AND (owner_id=? OR owner_until<=?)").run(this.owner, Date.now() + LEASE_MS, s.lab_id, s.name, this.owner, Date.now()).changes);
+    const authority = this.commandAuthority(), observed = await authority.observe(lab, { kind: "lab-service", name: s.name, token: s.token });
+    if (!observed || observed.pid !== s.pid || !observed.primaryMember || observed.activeProcesses === 0) throw new RepositoryMutationError("ownership_changed", "Service adoption requires exact live native Job membership");
+    const claimed = await authority.status(lab, async () => immediate(this.store.db, () => this.store.db.prepare("UPDATE lab_services SET owner_id=?,owner_until=? WHERE lab_id=? AND name=? AND (owner_id=? OR owner_until<=?)").run(this.owner, Date.now() + LEASE_MS, s.lab_id, s.name, this.owner, Date.now()).changes));
     if (!claimed)
       throw new Error("lab service has another live owner");
     await this.ready(lab, s.name, s.pid, s.token);
@@ -190,8 +174,7 @@ export class LabServices {
     s.owner_id = this.owner;
     s.owner_until = Date.now() + LEASE_MS;
     s.state = "running";
-    this.store.saveService(s);
-    this.store.event(lab.id, "service_adopted", { name: s.name, pid: s.pid });
+    await authority.status(lab, async () => { this.store.saveService(s); this.store.event(lab.id, "service_adopted", { name: s.name, pid: s.pid }); });
     return s;
   }
   async stop(lab: LabRecord, name: string, cleanup = false): Promise<void> {
@@ -203,14 +186,14 @@ export class LabServices {
       throw new Error("lab service has another active owner");
     if (s.pid && s.token)
       await this.stopProcess(lab, name, s.pid, s.token);
+    else if (s.token) await this.commandAuthority().stop(lab, { kind: "lab-service", name, token: s.token });
     s.state = "stopped";
     s.pid = null;
     s.token = null;
     s.owner_id = null;
     s.owner_until = 0;
     s.next_restart = null;
-    this.store.saveService(s);
-    this.store.event(lab.id, "service_stopped", { name });
+    await this.commandAuthority().status(lab, async () => { this.store.saveService(s); this.store.event(lab.id, "service_stopped", { name }); });
   }
   async monitor(lab: LabRecord): Promise<void> {
     if(lab.kind==="task_attempt")return;
@@ -221,26 +204,35 @@ export class LabServices {
         catch { if (s.owner_id === this.owner || s.owner_until <= Date.now()) await this.stop(lab, s.name, true); continue; }
       }
       this.logs(lab, s.name, 1);
+      const logFile = labOwnedPath(path.resolve(lab.root, "../../.."), path.join(lab.root, "logs", `${s.name}.log`));
+      if (existsSync(logFile) && statSync(logFile).size > 10 * 1024 * 1024) {
+        await this.commandAuthority().status(lab, async () => {
+          const previousBytes = statSync(logFile).size, text = this.logs(lab, s.name, 2000);
+          writeFileSync(logFile, text); this.store.event(lab.id, "log_rotated", { name: s.name, previousBytes });
+        });
+      }
       if (s.owner_id !== this.owner) {
         if (s.owner_until > Date.now())
           continue;
         if (s.pid && s.token) {
           const ownership = await processOwnership(s.pid, s.token);
           if (ownership === "owned") {
-            await this.adopt(lab, s).catch(err => this.store.event(lab.id, "adoption_refused", { name: s.name, error: (err as Error).message }));
+            await this.adopt(lab, s).catch(async err => {
+              if (err instanceof RepositoryMutationError) throw err;
+              await this.commandAuthority().status(lab, async () => { this.store.event(lab.id, "adoption_refused", { name: s.name, error: (err as Error).message }); });
+            });
             continue;
           }
           if (ownership === "foreign") {
             s.state = "failed";
-            this.store.saveService(s);
-            this.store.event(lab.id, "ownership_lost", { name: s.name });
+            await this.commandAuthority().status(lab, async () => { this.store.saveService(s); this.store.event(lab.id, "ownership_lost", { name: s.name }); });
             continue;
           }
         }
         if (s.pid && s.token)
           await this.stopProcess(lab, s.name, s.pid, s.token);
         if (["running", "starting", "backoff"].includes(s.state)) {
-          const claimed = immediate(this.store.db, () => this.store.db.prepare("UPDATE lab_services SET owner_id=?,owner_until=? WHERE lab_id=? AND name=? AND owner_until<=?").run(this.owner, Date.now() + LEASE_MS, lab.id, s.name, Date.now()).changes);
+          const claimed = await this.commandAuthority().status(lab, async () => immediate(this.store.db, () => this.store.db.prepare("UPDATE lab_services SET owner_id=?,owner_until=? WHERE lab_id=? AND name=? AND owner_until<=?").run(this.owner, Date.now() + LEASE_MS, lab.id, s.name, Date.now()).changes));
           if (!claimed)
             continue;
           s.owner_id = this.owner;
@@ -249,7 +241,7 @@ export class LabServices {
           s.restart_count++;
           s.state = s.restart_count > this.config.max_restarts ? "failed" : "backoff";
           s.next_restart = Date.now();
-          this.store.saveService(s);
+          await this.commandAuthority().status(lab, async () => { this.store.saveService(s); });
         }
         else
           continue;
@@ -260,8 +252,7 @@ export class LabServices {
         if (ownership === "foreign") {
           s.state = "failed";
           s.owner_until = 0;
-          this.store.saveService(s);
-          this.store.event(lab.id, "ownership_lost", { name: s.name });
+          await this.commandAuthority().status(lab, async () => { this.store.saveService(s); this.store.event(lab.id, "ownership_lost", { name: s.name }); });
           continue;
         }
         if (ownership === "owned") {
@@ -269,7 +260,8 @@ export class LabServices {
             await this.stop(lab, s.name);
             throw err;
           });
-          this.store.saveService(s);
+          // Pure lease renewal does not publish application state or require native admission.
+          this.store.db.prepare("UPDATE lab_services SET owner_until=? WHERE lab_id=? AND name=? AND owner_id=? AND token=? AND pid=?").run(s.owner_until, lab.id, s.name, this.owner, s.token, s.pid);
           continue;
         }
         await this.stopProcess(lab, s.name, s.pid, s.token);
@@ -278,12 +270,15 @@ export class LabServices {
         s.restart_count++;
         s.state = s.restart_count > this.config.max_restarts ? "failed" : "backoff";
         s.next_restart = Date.now() + Math.min(60000, this.config.restart_backoff_ms * 2 ** (s.restart_count - 1));
-        this.store.event(lab.id, "service_crashed", { name: s.name, restarts: s.restart_count });
+        await this.commandAuthority().status(lab, async () => { this.store.event(lab.id, "service_crashed", { name: s.name, restarts: s.restart_count }); });
       }
-      this.store.saveService(s);
+      await this.commandAuthority().status(lab, async () => { this.store.saveService(s); });
       if (s.state === "backoff" && s.next_restart !== null && s.next_restart <= Date.now()) {
         const restart = () => this.start(lab, s.name, true);
-        await (origin && this.hostConfig ? withLabAuthority(this.store.db, this.hostConfig, lab.project, origin, this.signal, restart) : restart()).catch(err => this.store.event(lab.id, "restart_failed", { name: s.name, error: (err as Error).message }));
+        await (origin && this.hostConfig ? withLabAuthority(this.store.db, this.hostConfig, lab.project, origin, this.signal, restart) : restart()).catch(async err => {
+          if (err instanceof RepositoryMutationError) throw err;
+          await this.commandAuthority().status(lab, async () => { this.store.event(lab.id, "restart_failed", { name: s.name, error: (err as Error).message }); });
+        });
       }
     }
   }
@@ -304,10 +299,6 @@ export class LabServices {
       closeSync(fd);
     }
     const text = buffer.toString("utf8");
-    if (size > 10 * 1024 * 1024) {
-      writeFileSync(file, text);
-      this.store.event(lab.id, "log_rotated", { name, previousBytes: size });
-    }
     return text.split(/\r?\n/).slice(-Math.max(1, Math.min(tail, 2000))).join("\n");
   }
 }

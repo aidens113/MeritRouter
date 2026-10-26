@@ -16,6 +16,9 @@ import { TaskLabPruneRefusal } from "./task-attempt-prune.js";
 import { TaskAttemptProcesses } from "./task-attempt-processes.js";
 import { TaskAttemptSource, taskCommonDirectory, assertRegisteredTaskWorktree, taskHash } from "./task-attempt-source.js";
 import { TaskLabEvidenceSchema, type TaskAttemptRecord, type TaskLabRecord, type TaskLabEvidence } from "./task-attempt-schema.js";
+import type { LabMutationControl } from "./repository-mutation.js";
+import { RepositoryMutationError, type RepositoryMutationCapability } from "../workspaces/repository-mutation.js";
+import { SelectedCommitError } from "../attribution/selected-commit.js";
 /** Cleanup may recognize a persisted pre-rename branch, never an arbitrary legacy ref. */
 export function taskLabBranchOwned(project: string, attemptId: string, alias: string, branch: string, target: string): boolean {
   const suffix = `task-lab-${taskHash(project).slice(0, 8)}-${attemptId.slice(-12)}-${taskHash(alias).slice(0, 8)}`;
@@ -43,12 +46,20 @@ export class TaskAttemptRunner {
   private get store() {
     return this.source.store;
   }
+  private withMutation<T>(attempt: TaskAttemptRecord, lab: LabRecord | undefined, action: (mutation: RepositoryMutationCapability) => Promise<T>, control: LabMutationControl = {}): Promise<T> {
+    return this.manager.withGitMutation(attempt.project, [...attempt.repositories.map(repo => ({ alias: repo.alias, source: repo.sourcePath })), { alias: attempt.writableAlias, source: attempt.sourceWorktree }, ...(lab?.repositories ?? [])], action, control);
+  }
+  private withStatus<T>(attempt: TaskAttemptRecord, lab: LabRecord | undefined, action: () => Promise<T>): Promise<T> {
+    const sources = [...attempt.repositories.map(repo => ({ alias: repo.alias, source: repo.sourcePath })), { alias: attempt.writableAlias, source: attempt.sourceWorktree }];
+    return lab ? this.manager.commands.status(lab, action, [], sources) : this.manager.withGitMutation(attempt.project, sources, () => action());
+  }
   private async create(attempt: TaskAttemptRecord, request: TaskLabRecord): Promise<LabRecord> {
+    return this.withMutation(attempt, undefined, async mutation => {
     this.source.identity(attempt);
     const writable = attempt.repositories.find(r => r.alias === attempt.writableAlias)!;
     if ((await git(writable.sourcePath, ["rev-parse", "--verify", "--end-of-options", `${attempt.submittedCommit}^{tree}`])).trim() !== attempt.submittedTree)
       throw new Error("persisted task commit/tree identity differs");
-    const name = `task-${attempt.id.slice(-20)}`, now = Date.now(), root = await this.manager.prepareLabRoot(attempt.project, name);
+    const name = `task-${attempt.id.slice(-20)}`, now = Date.now(), root = await this.manager.prepareLabRoot(attempt.project, name, { mutation });
     const lab = LabRecordSchema.parse({ id: newId("lab"), project: attempt.project, name, state: "creating", kind: "task_attempt", root, recipe: request.recipe, repositories: [], ports: {}, env: {}, goal: "Task runtime verification", createdAt: now, updatedAt: now, lastActivity: now });
     immediate(this.store.db, () => {
       const all = this.manager.list().filter(item => taskLabUsesCapacity(this.manager, item)), limit = this.manager.services.config.max_active, project = ProjectConfigSchema.parse(this.manager.options.cfg.projects[attempt.project]);
@@ -66,7 +77,7 @@ export class TaskAttemptRunner {
     for (const name of ["home", "cache", ...lab.recipe.data])
       mkdirSync(path.join(root, "data", name), { recursive: true });
     mkdirSync(path.join(root, "logs"), { recursive: true });
-    lab.ports = await allocatePorts(this.store.db, lab.id, lab.recipe.ports, this.manager.services.config.port_range);
+    lab.ports = await allocatePorts(this.store.db, lab.id, lab.recipe.ports, this.manager.services.config.port_range, this.manager.options.portAuthority);
     this.manager.store.save(lab);
     for (const repo of attempt.repositories) {
       const configured = this.manager.options.project(attempt.project).repositoryPaths[repo.alias];
@@ -82,8 +93,9 @@ export class TaskAttemptRunner {
     lab.env = labEnvironment(lab);
     this.manager.store.save(lab);
     return lab;
+    });
   }
-  private async heads(lab: LabRecord, attempt: TaskAttemptRecord) {
+  private async headsUnderScope(lab: LabRecord, attempt: TaskAttemptRecord) {
     this.assertLab(lab, attempt);
     if (lab.repositories.length !== attempt.repositories.length)
       throw new Error("task Lab repository snapshot is incomplete");
@@ -111,6 +123,7 @@ export class TaskAttemptRunner {
     }
     return heads;
   }
+  private heads(lab: LabRecord, attempt: TaskAttemptRecord) { return this.withStatus(attempt, lab, () => this.headsUnderScope(lab, attempt)); }
   async run(attempt: TaskAttemptRecord, signal: AbortSignal): Promise<TaskLabEvidence> {
     let request = this.store.lab(attempt.id)!, lab: LabRecord | undefined;
     const checks: LabCheckResult[] = [];
@@ -128,10 +141,10 @@ export class TaskAttemptRunner {
           throw new Error("task Lab setup failed");
       }
       await this.heads(lab, attempt);
-      request.phase = "starting";
-      this.store.save(request);
-      lab.state = "starting";
-      this.manager.store.save(lab);
+      await this.withStatus(attempt, lab, async () => {
+        request.phase = "starting"; this.store.save(request);
+        lab!.state = "starting"; this.manager.store.save(lab!);
+      });
       const started = new Set<string>();
       const start = async (name: string): Promise<void> => {
         if (started.has(name))
@@ -143,10 +156,10 @@ export class TaskAttemptRunner {
       };
       for (const name of Object.keys(lab.recipe.services))
         await start(name);
-      lab.state = "running";
-      this.manager.store.save(lab);
-      request.phase = "checking";
-      this.store.save(request);
+      await this.withStatus(attempt, lab, async () => {
+        lab!.state = "running"; this.manager.store.save(lab!);
+        request.phase = "checking"; this.store.save(request);
+      });
       for (const name of request.checks) {
         this.source.identity(attempt);
         if (signal.aborted)
@@ -158,24 +171,28 @@ export class TaskAttemptRunner {
         await this.heads(lab, attempt);
         const id = newId("lc"), result = await this.processes.run(lab, attempt.id, "check", name, substitute(typeof spec === "string" ? spec : spec.command, labValues(lab)), repo.worktree, labEnvironment(lab), signal, this.manager.services.config.check_timeout_seconds * 1000);
         const record = LabCheckResultSchema.parse({ id, name, repository: alias, revision: (await git(repo.worktree, ["rev-parse", "HEAD"])).trim(), ...result, createdAt: Date.now(), stdout: this.safeText(lab, attempt, result.stdout), stderr: this.safeText(lab, attempt, result.stderr) });
-        await this.heads(lab, attempt);
-        checks.push(record);
-        this.store.db.prepare("INSERT INTO lab_checks(id,lab_id,name,repository,revision,result_json,created_at) VALUES(?,?,?,?,?,?,?)").run(id, lab.id, name, alias, record.revision, JSON.stringify(record), record.createdAt);
+        await this.withStatus(attempt, lab, async () => {
+          await this.headsUnderScope(lab!, attempt);
+          checks.push(record);
+          this.store.db.prepare("INSERT INTO lab_checks(id,lab_id,name,repository,revision,result_json,created_at) VALUES(?,?,?,?,?,?,?)").run(id, lab!.id, name, alias, record.revision, JSON.stringify(record), record.createdAt);
+        });
       }
       await this.heads(lab, attempt);
       status = checks.every(r => r.exitCode === 0 && !r.killed) ? "passed" : "failed";
     }
     catch (cause) {
-      if (request.labId)
-        this.manager.store.event(request.labId, "task_attempt_failed", { attemptId: attempt.id, error: this.manager.redact(attempt.project, this.manager.store.byId(request.labId)!.name, cause instanceof Error ? cause.message : "invalid runtime response").slice(0, 2000) });
+      if (cause instanceof RepositoryMutationError || cause instanceof SelectedCommitError) throw cause;
+      if (request.labId) await this.withStatus(attempt, lab, async () => {
+        this.manager.store.event(request.labId!, "task_attempt_failed", { attemptId: attempt.id, error: this.manager.redact(attempt.project, this.manager.store.byId(request.labId!)!.name, cause instanceof Error ? cause.message : "invalid runtime response").slice(0, 2000) });
+      });
       status = signal.aborted ? "cancelled" : "environment_failure";
       error = "Task Lab verification could not complete; private evidence retained";
     }
     const evidence: TaskLabEvidence = { schemaVersion: 1, attemptId: attempt.id, labId: lab?.id ?? this.store.lab(attempt.id)?.labId ?? "", heads: Object.fromEntries(attempt.repositories.map(r => [r.alias, r.alias === attempt.writableAlias ? attempt.submittedCommit! : r.head])), submittedCommit: attempt.submittedCommit!, submittedTree: attempt.submittedTree!, patchDigest: attempt.patchDigest, recipeDigest: request.recipeDigest, status, cleanup: "complete", checks, error };
     request = this.store.lab(attempt.id)!;
-    request.result = evidence;
-    request.desiredState = "stopped";
-    this.store.save(request);
+    await this.withStatus(attempt, lab, async () => {
+      request.result = evidence; request.desiredState = "stopped"; this.store.save(request);
+    });
     return this.stop(attempt);
   }
   private async startService(lab: LabRecord, attempt: TaskAttemptRecord, name: string, signal: AbortSignal) {
@@ -247,9 +264,10 @@ export class TaskAttemptRunner {
   }
   async stop(attempt: TaskAttemptRecord): Promise<TaskLabEvidence> {
     const request = this.store.lab(attempt.id)!;
-    request.desiredState = "stopped";
-    request.phase = "stopping";
-    this.store.save(request);
+    const retained = request.labId ? this.manager.store.byId(request.labId)! : undefined;
+    await this.withStatus(attempt, retained, async () => {
+      request.desiredState = "stopped"; request.phase = "stopping"; this.store.save(request);
+    });
     let cleanup: TaskLabEvidence["cleanup"] = "complete";
     try {
       if (request.labId) {
@@ -259,15 +277,19 @@ export class TaskAttemptRunner {
         for (const port of Object.values(lab.ports))
           if (!await portAvailable(port))
             throw new Error("task port remains bound");
-        this.store.db.prepare("UPDATE lab_services SET state='stopped',pid=NULL,token=NULL,owner_id=NULL,owner_until=0 WHERE lab_id=?").run(lab.id);
-        this.store.db.prepare("DELETE FROM lab_ports WHERE lab_id=?").run(lab.id);
-        lab.state = "stopped";
-        this.manager.store.save(lab);
+        await this.withStatus(attempt, lab, async () => {
+          this.store.db.prepare("UPDATE lab_services SET state='stopped',pid=NULL,token=NULL,owner_id=NULL,owner_until=0 WHERE lab_id=?").run(lab.id);
+          lab.state = "stopped"; this.manager.store.save(lab);
+          this.manager.options.portAuthority?.release(lab.id);
+          this.store.db.prepare("DELETE FROM lab_ports WHERE lab_id=?").run(lab.id);
+        });
+        await this.heads(lab, attempt);
       }
       request.phase = "retained";
       request.cleanupError = null;
     }
-    catch {
+    catch (error) {
+      if (error instanceof RepositoryMutationError || error instanceof SelectedCommitError) throw error;
       cleanup = "blocked";
       request.phase = "cleanup_blocked";
       request.cleanupError = "Task cleanup could not be proved; reservations and evidence retained";
@@ -276,9 +298,11 @@ export class TaskAttemptRunner {
     evidence.cleanup = cleanup;
     if (cleanup === "blocked" && evidence.status === "passed")
       evidence.status = "environment_failure";
-    request.result = TaskLabEvidenceSchema.parse(evidence);
-    this.store.save(request);
-    return request.result;
+    const completed = TaskLabEvidenceSchema.parse(evidence);
+    await this.withStatus(attempt, retained, async () => {
+      request.result = completed; this.store.save(request);
+    });
+    return completed;
   }
   private assertPruneContents(lab: LabRecord): void {
     if (!existsSync(lab.root)) return;
@@ -326,8 +350,9 @@ export class TaskAttemptRunner {
       }
     }
   }
-  async prune(request: TaskLabRecord, attempt: TaskAttemptRecord, fence: { assert(): void; resume: boolean; verified(): void }) {
+  async prune(request: TaskLabRecord, attempt: TaskAttemptRecord, fence: { assert(): void; resume: boolean; verified(): void }, control: LabMutationControl = {}) {
     const lab = this.manager.store.byId(request.labId!)!;
+    return this.manager.withGitMutation(attempt.project, [...attempt.repositories.map(repo => ({ alias: repo.alias, source: repo.sourcePath })), { alias: attempt.writableAlias, source: attempt.sourceWorktree }, ...lab.repositories], async () => {
     fence.assert();
     this.assertLab(lab, attempt);
     if (lab.repositories.length !== attempt.repositories.length)
@@ -364,6 +389,7 @@ export class TaskAttemptRunner {
       fence.assert();
     }
     this.assertPruneContents(lab);
+    this.manager.options.portAuthority?.release(lab.id);
     fence.verified();
     for (const repo of lab.repositories) {
       if (!existsSync(repo.worktree)) continue;
@@ -379,6 +405,7 @@ export class TaskAttemptRunner {
       await this.assertPruneRegistrations(lab, attempt, fence.assert);
       this.assertPruneContents(lab);
       fence.assert();
+      await assertNoNativeWorktreeOperation(repo.worktree);
       await git(repo.source, ["worktree", "remove", repo.worktree]);
       fence.assert();
     }
@@ -395,5 +422,7 @@ export class TaskAttemptRunner {
       request.cleanupError = null;
       this.store.save(request);
     });
+    }, { ...control, allowMissingWorktrees: fence.resume });
   }
 }
+import { assertNoNativeWorktreeOperation } from "../workspaces/worktree-removal.js";

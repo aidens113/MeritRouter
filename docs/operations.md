@@ -114,6 +114,14 @@ External coding runners fail closed until an accepted OS sandbox is available. S
 [repository boundaries and outside actions](#repository-boundaries-and-outside-actions)
 for policy, approval, cancellation and evidence rules.
 
+On Windows, long-lived Lab setup/check/service commands use a named native Job with a
+durable command owner. An application starts only after suspended assignment and persisted
+binding. Restart adoption and stop check the exact helper identity and kernel Job membership;
+parent exit or a saved zero-count string is insufficient. Unknown ownership keeps Git mutation
+blocked until recovery proves the Job empty. Short status scopes can stop their own commands
+without granting publication authority. Command execution budgets start at the verified grant,
+after admission and helper preparation. This is process containment, not a host filesystem sandbox.
+
 ## Provider keys
 
 MeritRouter calls every provider directly with your keys: keys in the encrypted vault (added in

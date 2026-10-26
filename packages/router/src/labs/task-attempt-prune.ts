@@ -7,6 +7,9 @@ import type { TaskAttemptRunner } from "./task-attempt-runner.js";
 import { WorkerTaskSchema } from "../core/task.js";
 import { immediate, newId } from "../storage/db.js";
 import type { TaskAttemptRecord, TaskLabRecord } from "./task-attempt-schema.js";
+import type { LabMutationControl } from "./repository-mutation.js";
+import { RepositoryMutationError } from "../workspaces/repository-mutation.js";
+import { SelectedCommitError } from "../attribution/selected-commit.js";
 
 /** Durable discriminator: ordinary cleanup recovery must not consume removal proof. */
 export class TaskLabPruneRefusal extends Error {}
@@ -19,9 +22,7 @@ const Terminal = new Set(["completed", "failed", "cancelled", "budget_exhausted"
 export class TaskAttemptPruner {
   constructor(readonly manager: LabManager, readonly source: TaskAttemptSource, readonly runner: TaskAttemptRunner, readonly open: () => boolean) {}
   private get db() { return this.source.store.db; }
-  private eligible(request: TaskLabRecord, attempt: TaskAttemptRecord, ownId?: string): void {
-    if (!this.open() || request.phase !== "retained" || request.desiredState !== "stopped" || request.result?.cleanup !== "complete" || !request.labId)
-      throw new Error("task Lab cleanup is not complete");
+  private terminalAncestry(attempt: TaskAttemptRecord): void {
     let id: string | undefined = attempt.taskId;
     const seen = new Set<string>();
     while (id) {
@@ -34,6 +35,11 @@ export class TaskAttemptPruner {
       if (this.db.prepare("SELECT 1 FROM merge_queue WHERE task_id=? AND state IN ('queued','integrating','picked')").get(id)) throw new Error("task integration is pending");
       id = task.parentTaskId;
     }
+  }
+  private eligible(request: TaskLabRecord, attempt: TaskAttemptRecord, ownId?: string): void {
+    if (!this.open() || request.phase !== "retained" || request.desiredState !== "stopped" || request.result?.cleanup !== "complete" || !request.labId)
+      throw new Error("task Lab cleanup is not complete");
+    this.terminalAncestry(attempt);
     if (this.db.prepare("SELECT 1 FROM task_lab_operations WHERE attempt_id=? AND id!=? AND (state='pending' OR state='running')").get(attempt.id, ownId ?? "")) throw new Error("another task operation owns cleanup");
     if (this.db.prepare("SELECT 1 FROM lab_attempt_processes WHERE (lab_id=? OR attempt_id=?) AND state!='stopped'").get(request.labId, attempt.id)
       || this.db.prepare("SELECT 1 FROM lab_ports WHERE lab_id=?").get(request.labId)
@@ -46,13 +52,21 @@ export class TaskAttemptPruner {
     const lab = this.manager.store.byId(request.labId!)!;
     return createHash("sha256").update(JSON.stringify({ attempt, lab: { id: lab.id, project: lab.project, name: lab.name, kind: lab.kind, root: lab.root, repositories: lab.repositories } })).digest("hex");
   }
-  async run(project: string | undefined, retentionTime: number): Promise<{ removed: string[]; blocked: number }> {
+  async run(project: string | undefined, retentionTime: number, control: LabMutationControl = {}): Promise<{ removed: string[]; blocked: number }> {
     const rows = Rows.parse(this.db.prepare(`SELECT l.attempt_id FROM lab_task_attempts l JOIN task_workspace_attempts a ON a.id=l.attempt_id WHERE l.phase!='pruned' ${project === undefined ? "" : "AND a.project_id=?"} ORDER BY l.attempt_id`).all(...(project === undefined ? [] : [project])));
     const result = { removed: [] as string[], blocked: 0 };
     for (const row of rows) {
       if (!this.open()) { result.blocked += rows.length - result.removed.length - result.blocked; break; }
       let claim: { id: string; owner: string; identity: string; verified: boolean; request: TaskLabRecord; attempt: TaskAttemptRecord } | undefined;
       try {
+        const snapshot = this.source.store.get(row.attempt_id), request = this.source.store.lab(row.attempt_id)!, lab = request.labId ? this.manager.store.byId(request.labId) : null;
+        // These read-only no-op decisions require no mutation admission and must not delay
+        // the service monitor behind an unrelated active attempt's native Git probes.
+        if (request.phase !== "retained" || request.desiredState !== "stopped" || request.result?.cleanup !== "complete" || !request.labId) { result.blocked++; continue; }
+        if (project === undefined && request.updatedAt > retentionTime - this.manager.services.config.keep_task_worktrees_days * 86400000) continue;
+        this.terminalAncestry(snapshot);
+        const repositories = [...snapshot.repositories.map(repo => ({ alias: repo.alias, source: repo.sourcePath })), { alias: snapshot.writableAlias, source: snapshot.sourceWorktree }, ...(lab?.repositories ?? [])];
+        await this.manager.withGitMutation(snapshot.project, repositories, async mutation => {
         claim = immediate(this.db, () => {
           const request = this.source.store.lab(row.attempt_id)!;
           if (project === undefined && request.updatedAt > retentionTime - this.manager.services.config.keep_task_worktrees_days * 86400000) return undefined;
@@ -70,7 +84,7 @@ export class TaskAttemptPruner {
           this.db.prepare("INSERT INTO task_lab_operations(id,attempt_id,kind,state,owner_id,lease_until,result_json,error,created_at,updated_at) VALUES(?,?,'cleanup','running',?,?,?,?,?,?)").run(id, attempt.id, owner, now + 30000, JSON.stringify({ kind: TASK_PRUNE_OPERATION, identity, verified }), TASK_PRUNE_OPERATION, now, now);
           return { id, owner, identity, verified, request, attempt };
         });
-        if (!claim) continue;
+        if (!claim) return;
         const c = claim;
         const assert = () => {
           if (!this.db.prepare("SELECT 1 FROM task_lab_operations WHERE id=? AND owner_id=? AND state='running' AND lease_until>?").get(c.id, c.owner, Date.now())) throw new Error("prune generation lost");
@@ -87,13 +101,15 @@ export class TaskAttemptPruner {
           await this.runner.prune(c.request, c.attempt, { assert, resume: c.verified, verified: () => {
             assert();
             this.db.prepare("UPDATE task_lab_operations SET result_json=? WHERE id=? AND owner_id=? AND state='running' AND lease_until>?").run(JSON.stringify({ kind: TASK_PRUNE_OPERATION, identity: c.identity, verified: true }), c.id, c.owner, Date.now());
-          } });
+          } }, { mutation });
           // runner's final synchronous settlement is fenced; preserve immutable proof.
           const done = this.db.prepare("UPDATE task_lab_operations SET state='completed',lease_until=0,updated_at=? WHERE id=? AND owner_id=? AND state='running' AND lease_until>?").run(Date.now(), c.id, c.owner, Date.now());
           if (!done.changes) throw new Error("prune settlement generation lost");
           result.removed.push(c.request.labId!);
         } finally { clearInterval(heartbeat); }
+        }, { ...control, allowMissingWorktrees: true });
       } catch (error) {
+        if (error instanceof RepositoryMutationError || error instanceof SelectedCommitError) throw error;
         if (claim) this.db.prepare("UPDATE lab_task_attempts SET cleanup_error=? WHERE attempt_id=? AND phase='retained'").run(error instanceof TaskLabPruneRefusal ? error.message : "Prune blocked: verify terminal task, stopped ownership and unchanged clean registered Git resources before retry", claim.attempt.id);
         if (claim) this.db.prepare("UPDATE task_lab_operations SET state='failed',lease_until=0,updated_at=? WHERE id=? AND owner_id=? AND state='running'").run(Date.now(), claim.id, claim.owner);
         result.blocked++;

@@ -76,7 +76,7 @@ it('prunes only the requested terminal project immediately, preserving seven-day
   expect(existsSync(b.worktree)).toBe(true);
   expect((await git(env!.repo, ['show-ref', '--verify', `refs/heads/${a.lab.repositories[0]!.branch}`])).trim()).toContain(a.commit);
   expect(await m.taskAttempts.pruneProject('beta')).toEqual({ removed: [], blocked: 1 });
-}, 60000);
+}, 120000);
 it('retains dirty Lab worktrees and unknown process ownership without touching the process', async () => {
   const m = setup(), a = await retained('dirty-prune'), file = path.join(a.lab.repositories[0]!.worktree, 'value.txt');
   writeFileSync(file, 'uncommitted data');

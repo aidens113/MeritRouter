@@ -1099,4 +1099,68 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE project_execution_grants ADD COLUMN renewal_sequence INTEGER NOT NULL DEFAULT 0 CHECK(renewal_sequence>=0);
   UPDATE project_execution_grants SET authority_expires_at=expires_at;
   `,
+  // Project-local sealed execution claims and exact participant/dispatch authority.
+  `
+  CREATE TABLE project_execution_claims (
+    grant_id TEXT PRIMARY KEY,nonce TEXT NOT NULL,project_id TEXT NOT NULL,
+    project_uuid TEXT NOT NULL,store_uuid TEXT NOT NULL,store_generation INTEGER NOT NULL,
+    binding_json TEXT NOT NULL CHECK(length(CAST(binding_json AS BLOB))<=65536),
+    phase TEXT NOT NULL CHECK(phase IN ('claimed','started','terminal_pending','terminal')),
+    started_token TEXT,terminal_state TEXT CHECK(terminal_state IN ('completed','revoked')),
+    created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX project_execution_claims_pending ON project_execution_claims(phase,grant_id);
+  CREATE TABLE project_execution_claim_members (
+    grant_id TEXT NOT NULL REFERENCES project_execution_claims(grant_id),project_id TEXT NOT NULL,
+    task_id TEXT NOT NULL REFERENCES tasks(id),lease_incarnation TEXT NOT NULL,run_count INTEGER NOT NULL,
+    lease_owner TEXT NOT NULL,PRIMARY KEY(task_id,lease_incarnation,run_count)
+  );
+  CREATE INDEX project_execution_claim_members_grant ON project_execution_claim_members(grant_id);
+  `,
+  // Retained C3 Lab command owners are private project recovery evidence.
+  `
+  CREATE TABLE lab_command_owners (
+    id TEXT PRIMARY KEY,project_id TEXT NOT NULL,lab_id TEXT NOT NULL REFERENCES labs(id),
+    kind TEXT NOT NULL CHECK(kind IN ('lab-service','lab-setup','lab-check','task-service','task-setup','task-check')),
+    logical_name TEXT NOT NULL,token TEXT NOT NULL UNIQUE CHECK(length(token)=48 AND token NOT GLOB '*[^0-9a-f]*'),
+    command_digest TEXT NOT NULL CHECK(length(command_digest)=64 AND command_digest NOT GLOB '*[^0-9a-f]*'),
+    worktree_path TEXT NOT NULL,process_id TEXT REFERENCES lab_attempt_processes(id),
+    handle_json TEXT NOT NULL CHECK(json_valid(handle_json) AND json_type(handle_json)='object'),
+    phase TEXT NOT NULL CHECK(phase IN ('prepared','running')),created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,
+    UNIQUE(lab_id,kind,logical_name)
+  );
+  CREATE INDEX lab_command_owners_project ON lab_command_owners(project_id,lab_id);
+  `,
+  // Split Web quota coordinates minimal global reservations; targets and captures stay local.
+  `
+  CREATE TABLE web_usage_reservations (
+    id TEXT PRIMARY KEY,call_id TEXT NOT NULL,owner_json TEXT NOT NULL,binding_digest TEXT NOT NULL,
+    backend TEXT NOT NULL,key_ref TEXT,kind TEXT NOT NULL CHECK(kind IN ('search','fetch')),
+    status TEXT NOT NULL CHECK(status IN ('reserved','dispatch_intent','settled')),
+    dispatch_id TEXT,outcome_json TEXT,legacy_web_request_id INTEGER UNIQUE,
+    created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX web_usage_reservations_call ON web_usage_reservations(call_id,created_at);
+  CREATE INDEX web_usage_reservations_backend ON web_usage_reservations(backend,created_at);
+  CREATE TABLE web_usage_protocol (
+    id INTEGER PRIMARY KEY REFERENCES web_requests(id),project_id TEXT NOT NULL,binding_json TEXT NOT NULL,
+    phase TEXT NOT NULL CHECK(phase IN ('prepared','bound','dispatch_intent','settled','uncertain')),
+    global_id TEXT NOT NULL UNIQUE,global_receipt_json TEXT,dispatch_id TEXT,outcome_json TEXT,outcome_digest TEXT,
+    created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL
+  );
+  `,
+  // Split Brain grants bind captured task incarnation; unbound legacy rows remain nullable.
+  `
+  ALTER TABLE brain_access_requests ADD COLUMN lease_json TEXT;
+  ALTER TABLE brain_grants ADD COLUMN lease_incarnation TEXT;
+  `,
+  // Shared Lab ports retain only fixed ownership identities and private-name digests.
+  `
+  CREATE TABLE project_lab_ports (
+    port INTEGER PRIMARY KEY CHECK (port BETWEEN 1 AND 65535),reservation_id TEXT UNIQUE NOT NULL,
+    installation_uuid TEXT NOT NULL,project_uuid TEXT NOT NULL,store_uuid TEXT NOT NULL,generation INTEGER NOT NULL,
+    lab_digest TEXT NOT NULL,name_digest TEXT NOT NULL,created_at INTEGER NOT NULL
+  );
+  CREATE INDEX project_lab_ports_project ON project_lab_ports(project_uuid,store_uuid,generation,lab_digest);
+  `,
 ];

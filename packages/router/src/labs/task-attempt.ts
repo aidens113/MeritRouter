@@ -1,4 +1,7 @@
 import { z } from "zod";
+import type { LabMutationControl } from "./repository-mutation.js";
+import { RepositoryMutationError } from "../workspaces/repository-mutation.js";
+import { SelectedCommitError } from "../attribution/selected-commit.js";
 import type { LabManager } from "./lab.js";
 import { ProjectConfigSchema } from "../projects/schema.js";
 import { TaskAttemptPruner, TASK_PRUNE_OPERATION } from "./task-attempt-prune.js";
@@ -26,7 +29,7 @@ export class TaskLabLifecycle {
   private drain: Promise<void> | null = null;
   constructor(readonly manager: LabManager, barrier?: (phase: string, row: TaskProcessRecord) => Promise<void>) {
     this.source = new TaskAttemptSource(manager);
-    this.processes = new TaskAttemptProcesses(manager.options.db, manager.options.storageDir, barrier, (id) => this.assertRunning(id), (project, name, root) => manager.labStorageDirectory(project, name, root));
+    this.processes = new TaskAttemptProcesses(manager.options.db, manager.options.storageDir, barrier, (id) => this.assertRunning(id), (project, name, root) => manager.labStorageDirectory(project, name, root), manager.commands);
     this.runner = new TaskAttemptRunner(manager, this.source, this.processes);
   }
   private assertRunning(id: string): void {
@@ -134,13 +137,14 @@ export class TaskLabLifecycle {
     const ids = z.array(z.object({ id: z.string() })).parse(this.store.db.prepare("SELECT id FROM task_lab_operations WHERE state='pending' ORDER BY created_at LIMIT 20").all());
     await Promise.all(ids.map(async ({ id }) => {
       if (this.closed) return;
-      const op = immediate(this.store.db, () => {
+      const candidate = Operation.parse(this.store.db.prepare("SELECT * FROM task_lab_operations WHERE id=?").get(id));
+      const op = await this.withMutation(candidate.attempt_id, async () => immediate(this.store.db, () => {
         const row = Operation.parse(this.store.db.prepare("SELECT * FROM task_lab_operations WHERE id=?").get(id));
         if (row.state !== "pending" || this.store.db.prepare("SELECT 1 FROM task_lab_operations WHERE attempt_id=? AND state='running' AND lease_until>?").get(row.attempt_id, Date.now()))
           return null;
         this.store.db.prepare("UPDATE task_lab_operations SET state='running',owner_id=?,lease_until=?,updated_at=? WHERE id=?").run(this.manager.owner, Date.now() + 30000, Date.now(), id);
         return row;
-      });
+      }));
       if (!op)
         return;
       const work = this.execute(op);
@@ -156,7 +160,7 @@ export class TaskLabLifecycle {
   /** Start one tracked drain without blocking the retained-service monitoring tick. */
   schedule(): void {
     if (this.closed || this.drain) return;
-    this.drain = this.process().catch(() => {
+    this.drain = new Promise<void>(resolve => setImmediate(resolve)).then(() => this.process()).catch(() => {
       // Durable queued/leased rows remain available for the next recovery pass.
     }).finally(() => { this.drain = null; });
   }
@@ -194,31 +198,50 @@ export class TaskLabLifecycle {
     heartbeat.unref();
     try {
       const result = op.kind === "check" ? await this.runner.run(this.store.get(op.attempt_id), controller.signal) : await this.runner.stop(this.store.get(op.attempt_id));
-      const now = Date.now(), settled = this.store.db.prepare("UPDATE task_lab_operations SET state='completed',result_json=?,lease_until=0,updated_at=? WHERE id=? AND owner_id=? AND state='running' AND lease_until>?").run(JSON.stringify(result), now, op.id, this.manager.owner, now);
-      if (!settled.changes)
-        this.quarantine(op.attempt_id);
+      await this.withMutation(op.attempt_id, async () => {
+        const now = Date.now(), settled = this.store.db.prepare("UPDATE task_lab_operations SET state='completed',result_json=?,lease_until=0,updated_at=? WHERE id=? AND owner_id=? AND state='running' AND lease_until>?").run(JSON.stringify(result), now, op.id, this.manager.owner, now);
+        if (!settled.changes) this.quarantine(op.attempt_id);
+      });
     }
-    catch {
+    catch (error) {
+      if (error instanceof RepositoryMutationError || error instanceof SelectedCommitError) throw error;
+      await this.withMutation(op.attempt_id, async () => {
       const now = Date.now(), settled = this.store.db.prepare("UPDATE task_lab_operations SET state='failed',error=?,lease_until=0,updated_at=? WHERE id=? AND owner_id=? AND state='running' AND lease_until>?").run("Task Lab failed; private ownership evidence retained", now, op.id, this.manager.owner, now);
       if (!settled.changes)
         this.quarantine(op.attempt_id);
+      });
     }
     finally {
       clearInterval(heartbeat);
       this.active.delete(op.attempt_id);
     }
   }
+  private withMutation<T>(attemptId: string, action: () => Promise<T>): Promise<T> {
+    const attempt = this.store.get(attemptId), request = this.store.lab(attemptId), lab = request?.labId ? this.manager.store.byId(request.labId) : null;
+    const sources = [...attempt.repositories.map(repo => ({ alias: repo.alias, source: repo.sourcePath })), { alias: attempt.writableAlias, source: attempt.sourceWorktree }];
+    return lab ? this.manager.commands.status(lab, action, [], sources) : this.manager.withGitMutation(attempt.project, sources, action);
+  }
   async recover(): Promise<void> {
     for (const request of this.store.all()) {
       if (request.phase === "pruned" || this.active.has(request.attemptId))
         continue;
+      if (request.phase === "retained" && !this.store.db.prepare("SELECT 1 FROM task_lab_operations WHERE attempt_id=? AND ((state='running' AND lease_until<=?) OR(kind='cleanup' AND state='pending'))").get(request.attemptId, Date.now())) continue;
+      // A live generation needing no recovery has no application mutation to admit.
+      // Re-evaluate all of these facts under admission if recovery is actually required.
+      if (request.desiredState === "running" && request.phase !== "cleanup_blocked"
+        && !this.store.db.prepare("SELECT 1 FROM task_lab_operations WHERE attempt_id=? AND state='running' AND lease_until<=?").get(request.attemptId, Date.now())) {
+        let live = false;
+        try { this.source.identity(this.store.get(request.attemptId)); live = true; } catch { /* recovery below */ }
+        if (live) continue;
+      }
+      const claimed = await this.withMutation(request.attemptId, async () => {
       // A prune has its own immutable removal intent. Ordinary stop cannot adopt it.
       // A fresh fenced prune retries an expired intent; retain its proof in the meantime.
       this.store.db.prepare("UPDATE task_lab_operations SET state='failed',lease_until=0,updated_at=? WHERE attempt_id=? AND error=? AND state='running' AND lease_until<=?").run(Date.now(), request.attemptId, TASK_PRUNE_OPERATION, Date.now());
       const stale = this.store.db.prepare("SELECT 1 FROM task_lab_operations WHERE attempt_id=? AND state='running' AND lease_until<=?").get(request.attemptId, Date.now());
       const pending = this.store.db.prepare("SELECT 1 FROM task_lab_operations WHERE attempt_id=? AND kind='cleanup' AND state='pending'").get(request.attemptId);
       if (request.phase === "retained" && !stale && !pending)
-        continue;
+        return null;
       let live = true;
       try {
         this.source.identity(this.store.get(request.attemptId));
@@ -227,8 +250,8 @@ export class TaskLabLifecycle {
         live = false;
       }
       if (live && !stale && request.desiredState === "running" && request.phase !== "cleanup_blocked")
-        continue;
-      const claimed = immediate(this.store.db, () => {
+        return null;
+      return immediate(this.store.db, () => {
         const now = Date.now();
         if (this.store.db.prepare("SELECT 1 FROM task_lab_operations WHERE attempt_id=? AND state='running' AND lease_until>?").get(request.attemptId, now))
           return null;
@@ -246,6 +269,7 @@ export class TaskLabLifecycle {
         this.store.db.prepare("UPDATE task_lab_operations SET state='running',owner_id=?,lease_until=?,updated_at=? WHERE id=? AND (state='pending' OR(state='running' AND lease_until<=?))").run(this.manager.owner, now + 30000, now, op.id, now);
         return { ...op, kind: "cleanup" as const };
       });
+      });
       if (claimed) {
         const work = this.execute(claimed);
         this.work.add(work);
@@ -258,9 +282,9 @@ export class TaskLabLifecycle {
       }
     }
   }
-  private async runPrune(project?: string, now = Date.now()) {
+  private async runPrune(project?: string, now = Date.now(), control: LabMutationControl = {}) {
     if (this.closed) return { removed: [] as string[], blocked: 0 };
-    const work = new TaskAttemptPruner(this.manager, this.source, this.runner, () => !this.closed).run(project, now);
+    const work = new TaskAttemptPruner(this.manager, this.source, this.runner, () => !this.closed).run(project, now, control);
     this.work.add(work);
     try { return await work; }
     finally { this.work.delete(work); }
@@ -269,9 +293,9 @@ export class TaskLabLifecycle {
     return (await this.runPrune(undefined, now)).removed;
   }
   /** Internal confirmed-project-deletion cleanup; never relaxes task Lab ownership. */
-  async pruneProject(project: string): Promise<{ removed: string[]; blocked: number }> {
+  async pruneProject(project: string, control: LabMutationControl = {}): Promise<{ removed: string[]; blocked: number }> {
     if (this.closed) throw new MeritRouterError("unavailable", "Task Lab lifecycle is closed; project cleanup is unavailable");
-    return this.runPrune(z.string().min(1).parse(project));
+    return this.runPrune(z.string().min(1).parse(project), Date.now(), control);
   }
   async close() {
     this.closed = true;
