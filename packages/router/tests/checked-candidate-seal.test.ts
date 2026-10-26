@@ -43,17 +43,32 @@ it.each(["head", "index", "worktree", "untracked", "cancelled"])("refuses a chan
 });
 
 it("publishes only the captured immutable tree even if the live index changes during sealing", async () => {
-  const input = candidate(); let guards = 0;
-  input.assertAuthority = () => { if (++guards === 11) { writeFileSync(path.join(input.worktree, "extra.txt"), "new concurrent source\n"); raw(input.worktree, "add", "extra.txt"); } };
-  await expect(sealCheckedCandidate(input)).rejects.toThrow(/changed while sealing/);
+  const input = candidate(); let locked = false;
+  await expect(sealCheckedCandidate({ ...input,
+    publication: { sealed: async () => {
+      expect(() => raw(input.worktree, "add", "package-lock.json")).toThrow(/index\.lock/);
+      locked = true;
+    } },
+    afterPublication: async () => {
+      writeFileSync(path.join(input.worktree, "extra.txt"), "new concurrent source\n");
+      raw(input.worktree, "add", "extra.txt");
+    },
+  })).rejects.toThrow(/changed while sealing/);
+  expect(locked).toBe(true);
   expect(raw(input.worktree, "rev-parse", "HEAD^{tree}")).toBe(input.tree);
   expect(raw(input.worktree, "diff", "--cached", "--name-only")).toBe("extra.txt");
 });
 
 it("uses expected-old HEAD CAS and preserves a concurrent commit", async () => {
-  const input = candidate(); let guards = 0, newer = "";
-  input.assertAuthority = () => { if (++guards === 12) { raw(input.worktree, "commit", "-qm", "concurrent owner commit"); newer = raw(input.worktree, "rev-parse", "HEAD"); } };
-  await expect(sealCheckedCandidate(input)).rejects.toThrow();
+  const input = candidate(); let newer = "", locked = false;
+  await expect(sealCheckedCandidate({ ...input, publication: { beforePrepare: async () => {
+    expect(() => raw(input.worktree, "commit", "-qm", "blocked concurrent owner commit")).toThrow(/index\.lock/);
+    locked = true;
+    // A legitimate ref-only Git writer does not take index.lock; expected-old CAS still applies.
+    newer = raw(input.worktree, "commit-tree", input.tree, "-p", input.head, "-m", "concurrent owner commit");
+    raw(input.worktree, "update-ref", "HEAD", newer, input.head);
+  } } })).rejects.toThrow();
+  expect(locked).toBe(true);
   expect(newer).not.toBe(""); expect(raw(input.worktree, "rev-parse", "HEAD")).toBe(newer);
 });
 

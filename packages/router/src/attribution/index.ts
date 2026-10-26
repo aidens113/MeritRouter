@@ -1,47 +1,28 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
+import { z } from "zod";
 import { git, GitError } from "../workspaces/git.js";
-
-/** Who made a change. Every MeritRouter commit records this as git identity plus trailers. */
-export interface Actor {
-  /** Stable agent identity, e.g. `implementer:t_abc`, `supervisor:t_job`, `human`. */
-  agent: string;
-  role: string;
-  model?: string | null;
-  task?: string | null;
-  job?: string | null;
-  tier?: string | null;
-  request?: string | null;
-}
-
-export const TRAILER_KEYS = ["Agent", "Role", "Model", "Task", "Job", "Tier", "Request"] as const;
-
-export function actorIdentity(a: Actor): { name: string; email: string } {
-  const slug = a.agent.replace(/[^A-Za-z0-9._-]+/g, ".").replace(/^\.+|\.+$/g, "") || "agent";
-  const model = a.model ? ` (${a.model})` : "";
-  return { name: `${a.agent.replace(":", " ")}${model}`.slice(0, 120), email: `${slug}@meritrouter.local` };
-}
-
-export function trailerArgs(a: Actor, extra: Record<string, string> = {}): string[] {
-  const t: Record<string, string | null | undefined> = { Agent: a.agent, Role: a.role, Model: a.model, Task: a.task, Job: a.job, Tier: a.tier, Request: a.request, ...extra };
-  return Object.entries(t)
-    .filter(([, v]) => v !== null && v !== undefined && v !== "")
-    .flatMap(([k, v]) => ["--trailer", `${k}: ${String(v).replace(/[\r\n]+/g, " ")}`]);
-}
+import { ActorSchema, type Actor } from "./actor.js";
+import { commitSelectedApplication, unpackSelectedCommitOutcome, type SelectedCommitControl } from "./selected-commit.js";
+import { withRepositoryMutation, type RepositoryMutationOptions } from "../workspaces/repository-mutation.js";
+import { assertSafeIndexInput } from "../workspaces/git-index-transaction.js";
+export { ActorSchema, actorIdentity, trailerArgs, TRAILER_KEYS, type Actor } from "./actor.js";
+export { SelectedCommitError } from "./selected-commit.js";
+const UndoReason = z.string().max(16384).refine(value => !value.includes("\0"));
+const UndoRevision = z.string().min(1).max(4096).refine(value => !value.includes("\0") && !value.startsWith("-"));
+const UndoRanges = z.array(z.tuple([z.number().int().min(1).max(10000000), z.number().int().min(1).max(10000000)])).max(10000)
+  .refine(ranges => ranges.reduce((sum, [a, b]) => sum + Math.abs(a - b) + 1, 0) <= 1000000, "Undo range exceeds supported line budget");
 
 /**
  * Stage changes (all, or the given paths) and commit them as the actor. Returns the new commit
  * id, or null when there was nothing to commit.
  */
-export async function commitAs(repo: string, actor: Actor, message: string, opts: { paths?: string[]; extraTrailers?: Record<string, string>; allowEmpty?: boolean } = {}): Promise<string | null> {
-  await git(repo, ["add", "-A", ...(opts.paths?.length ? ["--", ...opts.paths] : [])]);
-  const paths = opts.paths?.length ? opts.paths : undefined;
-  const staged = await git(repo, ["diff", "--cached", "--name-only", ...(paths ? ["--", ...paths] : [])]);
-  if (!staged.trim() && !opts.allowEmpty) return null;
-  const id = actorIdentity(actor);
-  const env = { GIT_AUTHOR_NAME: id.name, GIT_AUTHOR_EMAIL: id.email, GIT_COMMITTER_NAME: id.name, GIT_COMMITTER_EMAIL: id.email };
-  await git(repo, ["commit", "-q", "--no-verify", ...(opts.allowEmpty ? ["--allow-empty"] : []), "-m", message, ...trailerArgs(actor, opts.extraTrailers), ...(paths ? ["--only", "--", ...paths] : [])], { env });
-  return (await git(repo, ["rev-parse", "HEAD"])).trim();
+export async function commitAs(repo: string, actor: Actor, message: string, opts: { paths?: string[]; extraTrailers?: Record<string, string>; allowEmpty?: boolean } = {}, control: SelectedCommitControl = {}): Promise<string | null> {
+  return unpackSelectedCommitOutcome(await commitSelectedApplication(repo, {
+    actor, message, ...(opts.paths?.length ? { paths: opts.paths } : {}),
+    ...(opts.extraTrailers === undefined ? {} : { extraTrailers: opts.extraTrailers }),
+    ...(opts.allowEmpty === undefined ? {} : { allowEmpty: opts.allowEmpty }),
+  }, control));
 }
 
 export function parseTrailers(text: string): Record<string, string> {
@@ -185,8 +166,14 @@ function notifyUndone(hook: UndoHook | undefined, change: UndoneChange): void {
  * Revert whole commits (newest first) in one undo commit. History is kept; the undo commit
  * names what it reverts and why. `onUndone` is told which commits (and tasks) were undone.
  */
-export async function revertCommits(repo: string, commits: string[], actor: Actor, reason: string, opts: { onUndone?: UndoHook } = {}): Promise<string | null> {
+export async function revertCommits(repo: string, commits: string[], actor: Actor, reason: string, opts: { onUndone?: UndoHook } = {}, control: RepositoryMutationOptions = {}): Promise<string | null> {
+  z.array(UndoRevision).max(10000).parse(commits);
   if (!commits.length) return null;
+  ActorSchema.parse(actor); UndoReason.parse(reason);
+  return withRepositoryMutation([repo], mutation => revertCommitsLocked(repo, commits, actor, reason, opts, mutation), control);
+}
+
+async function revertCommitsLocked(repo: string, commits: string[], actor: Actor, reason: string, opts: { onUndone?: UndoHook }, mutation: NonNullable<RepositoryMutationOptions["capability"]>): Promise<string | null> {
   // Newest first in history order (commit dates tie after a cherry-pick, so dates are not enough).
   const wanted = new Set(await Promise.all(commits.map(async (c) => (await git(repo, ["rev-parse", c])).trim())));
   const ordered = (await git(repo, ["rev-list", "--topo-order", "HEAD"])).split("\n").filter((c) => wanted.has(c));
@@ -194,12 +181,17 @@ export async function revertCommits(repo: string, commits: string[], actor: Acto
   try {
     await git(repo, ["revert", "--no-commit", ...ordered]);
   } catch (err) {
-    await git(repo, ["revert", "--abort"]).catch(() => undefined);
+    try { await git(repo, ["revert", "--abort"]); }
+    catch (abortError) { throw new GitError(`undo conflict recovery failed; sequencer and source retained: ${(abortError as Error).message}`, (abortError as GitError).exitCode ?? null, (abortError as GitError).stderr ?? ""); }
     throw new GitError(`undo would conflict with later changes: ${(err as Error).message}; undo specific lines instead`, (err as GitError).exitCode ?? null, (err as GitError).stderr ?? "");
   }
+  // Native commit normally retires the successful revert sequencer. Our immutable
+  // publisher deliberately refuses active sequencers, so end only this completed
+  // no-commit operation explicitly, retaining the staged undo and worktree bytes.
+  await git(repo, ["revert", "--quit"]);
   const commit = await commitAs(repo, actor, `Undo ${ordered.length} commit(s): ${reason}`.slice(0, 200), {
     extraTrailers: { Reverts: ordered.map((c) => c.slice(0, 12)).join(" "), Reason: reason.slice(0, 300) },
-  });
+  }, { mutation });
   if (opts.onUndone && commit) {
     const info = await commitInfo(repo, ordered);
     notifyUndone(opts.onUndone, { kind: "commits", repo, commit, reason, actor, undone: ordered.map((c) => undoneCommit(c, info.get(c)?.trailers ?? {})) });
@@ -244,7 +236,16 @@ export async function undoLines(
   actor: Actor,
   reason: string,
   opts: { sinceCommit?: string; onUndone?: UndoHook } = {},
+  control: RepositoryMutationOptions = {},
 ): Promise<{ commit: string | null; undone: number[]; skipped: Array<{ line: number; why: string }> }> {
+  ActorSchema.parse(actor); UndoReason.parse(reason); UndoRanges.parse(ranges);
+  z.string().min(1).max(4096).refine(value => !value.includes("\0")).parse(file);
+  if (opts.sinceCommit !== undefined) UndoRevision.parse(opts.sinceCommit);
+  return withRepositoryMutation([repo], mutation => undoLinesLocked(repo, file, ranges, actor, reason, opts, mutation), control);
+}
+
+async function undoLinesLocked(repo: string, file: string, ranges: Array<[number, number]>, actor: Actor, reason: string, opts: { sinceCommit?: string; onUndone?: UndoHook }, mutation: NonNullable<RepositoryMutationOptions["capability"]>): Promise<{ commit: string | null; undone: number[]; skipped: Array<{ line: number; why: string }> }> {
+  await assertSafeIndexInput(repo, file, false);
   const abs = path.join(repo, file);
   if (!existsSync(abs)) throw new Error(`${file} does not exist`);
   const status = await git(repo, ["status", "--porcelain", "--", file]);
@@ -317,7 +318,7 @@ export async function undoLines(
   const commit = await commitAs(repo, actor, `Undo ${undone.length} line(s) in ${file}: ${reason}`.slice(0, 200), {
     paths: [file],
     extraTrailers: { Undoes: [...byCommit.keys()].map((c) => c.slice(0, 12)).join(" "), Lines: `${file}:${undone.join(",")}`.slice(0, 300), Reason: reason.slice(0, 300) },
-  });
+  }, { mutation });
   notifyUndone(opts.onUndone, {
     kind: "lines",
     repo,
