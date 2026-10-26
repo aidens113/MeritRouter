@@ -45,7 +45,7 @@ describe("MCP server", () => {
   it("exposes the task tools and persists submissions before acknowledging", async () => {
     env = makeEnv();
     client = new Client({ name: "test", version: "1" });
-    await client.connect(new StdioClientTransport({ command: process.execPath, args: [server, "--config", env.cfg.configPath], env: { PATH: process.env.PATH ?? "", MERITROUTER_PANEL_DIR: NO_PANEL } }));
+    await client.connect(new StdioClientTransport({ command: process.execPath, args: [server, "--config", env.cfg.configPath, "--worker"], env: { PATH: process.env.PATH ?? "", MERITROUTER_PANEL_DIR: NO_PANEL } }));
     const listed = (await client.listTools()).tools;
     // Every input schema suits OpenAI clients (Codex, ChatGPT): portable keywords only, typed
     // nodes, and open objects that say additionalProperties: true. Empty inputs are objects.

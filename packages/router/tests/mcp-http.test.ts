@@ -77,7 +77,7 @@ describe("MCP over Streamable HTTP", () => {
     expect(httpAccessProblem("127.0.0.1", undefined)).toBeNull();
     expect(httpAccessProblem("0.0.0.0", undefined)).toMatch(MCP_TOKEN_ENV);
     expect(httpAccessProblem("0.0.0.0", TOKEN)).toBeNull();
-    expect(mcpOptions({})).toMatchObject({ http: false, host: "127.0.0.1", port: 4478, worker: true });
+    expect(mcpOptions({})).toMatchObject({ http: false, host: "127.0.0.1", port: 4478, worker: false });
     expect(mcpOptions({ port: "5000", "no-worker": true })).toMatchObject({ http: true, port: 5000, worker: false });
     expect(() => mcpOptions({ port: "http" })).toThrow(/--port/);
   });
