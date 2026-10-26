@@ -227,7 +227,7 @@ export class SupervisorRunner implements CodingRunner {
       const access = ctx.access;
       await b.ensure();
       await b.refreshIndex();
-      const principal = () => access.principalFor("supervisor", { project: b.project, effort: ctx.effort, task: null, repos: spec.repositoryAliases, jobId: ctx.taskId, tier: ctx.tier });
+      const principal = () => access.principalFor("supervisor", { project: b.project, effort: ctx.effort, task: null, repos: spec.repositoryAliases, jobId: ctx.taskId, tier: ctx.tier,lease:ctx.taskLease,sessionId:ctx.session?.id });
       const lane = ctx.lab ? `projects/${b.project}/labs/${ctx.lab.name}.md` : null;
       if (lane && !b.exists(lane)) {
         await b.write(principal(), actor, lane, workingDocTemplate({title:`Lab ${ctx.lab!.name}`,statusDetail:"Active root team",owner:actor.agent,scope:spec.goal.slice(0,200),currentState:`Root team: ${ctx.lab!.rootJobId}\n\nGoal: ${spec.goal.slice(0,2000)}\n\nUse lab_status and lab_check for current services and revision evidence.`}), `Create lab lane ${ctx.lab!.name}`);

@@ -127,7 +127,7 @@ export type RepositoryServiceDescriptor = z.infer<typeof RepositoryServiceDescri
 export const RepositoryServiceCommandSchema = z.object({ repo: z.string().min(1).max(4096), id: idSchema, nonce: hashSchema, descriptor: RepositoryServiceDescriptorSchema }).strict();
 export type RepositoryServiceCommand = z.infer<typeof RepositoryServiceCommandSchema>;
 function immutableServiceCommand(command: RepositoryServiceCommand): RepositoryServiceCommand { Object.freeze(command.descriptor); return Object.freeze(command); }
-interface ServiceLease { lease: CommandLease; permit: RepositoryCommandPermit; binding?: ServiceJobBinding }
+interface ServiceLease { lease: CommandLease; permit: RepositoryCommandPermit; binding?: ServiceJobBinding; startAttempted: boolean; retiring?: boolean }
 const serviceLeases = new WeakMap<object, ServiceLease>();
 function serviceLease(command: RepositoryServiceCommand): ServiceLease {
   const current = command && typeof command === "object" ? serviceLeases.get(command) : undefined;
@@ -146,16 +146,19 @@ export function repositoryServicePermit(command: RepositoryServiceCommand, group
   if (command.descriptor.group !== group) throw new RepositoryMutationError("invalid_capability", "Service permit belongs to another Lab group"); return serviceLease(command).permit;
 }
 /** Audit lookup permits only replay of already-retired DB metadata cleanup, never OS/Git authority. */
-export async function repositoryServiceAuditArchived(input: RepositoryServiceCommand): Promise<boolean> {
+export async function repositoryServiceRetirement(input: RepositoryServiceCommand): Promise<"quiescent" | "unsent" | null> {
   const command = RepositoryServiceCommandSchema.parse(input), owner = await gitDirectory(command.repo);
-  try { await lstat(path.join(owner, "meritrouter-commands", "active", command.id)); return false; }
+  try { await lstat(path.join(owner, "meritrouter-commands", "active", command.id)); return null; }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   const directory = path.join(owner, "meritrouter-commands", "archive", command.id.slice(3, 5), command.id);
   try {
     await safeDirectory(directory); const record = RecordSchema.parse(JSON.parse((await bytes(path.join(directory, "receipt.json"))).toString("utf8")));
-    return record.id === command.id && record.nonce === command.nonce && record.descriptorSha256 === hash(JSON.stringify(command.descriptor)) && record.state === "quiescent" && !!record.outcomeSha256;
-  } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return false; throw error; }
+    if (record.id !== command.id || record.nonce !== command.nonce || record.descriptorSha256 !== hash(JSON.stringify(command.descriptor)) || !record.outcomeSha256) return null;
+    return record.state === "quiescent" || record.state === "unsent" ? record.state : null;
+  } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
 }
+/** Matching retired metadata only; this does not construct an OS proof or mutation permit. */
+export async function repositoryServiceAuditArchived(input: RepositoryServiceCommand): Promise<boolean> { return await repositoryServiceRetirement(input) !== null; }
 /** Reserve before the native suspended process exists. No service lifetime holds this scope. */
 export async function prepareRepositoryServiceCommand(root: string, descriptor: RepositoryServiceDescriptor, siblings: readonly RepositoryServiceCommand[] = []): Promise<RepositoryServiceCommand> {
   const parsed = RepositoryServiceDescriptorSchema.parse(descriptor), repo = await realpath(root), owner = await gitDirectory(repo);
@@ -171,11 +174,13 @@ export async function prepareRepositoryServiceCommand(root: string, descriptor: 
     return { active: true, gitDirectory: owner, directory, record, digest: hash(content) } satisfies CommandLease;
   }, { command: commands });
   const handle = immutableServiceCommand(RepositoryServiceCommandSchema.parse({ repo, id: lease.record.id, nonce: lease.record.nonce, descriptor: parsed })), permit = Object.freeze({}) as RepositoryCommandPermit;
-  permits.set(permit, lease); serviceLeases.set(handle, { lease, permit }); return handle;
+  permits.set(permit, lease); serviceLeases.set(handle, { lease, permit, startAttempted: false }); return handle;
 }
 /** The caller persists its exact Lab PID/token identity before the native execution grant. */
 export async function startRepositoryServiceCommand(command: RepositoryServiceCommand, input: ServiceCommandInput, beforeGrant: (binding: ServiceJobBinding) => Promise<void>, siblings: readonly RepositoryServiceCommand[] = [], logPath?: string): Promise<ServiceJobBinding> {
   const current = serviceLease(command);
+  if (current.startAttempted || current.retiring || current.binding || current.lease.record.state !== "prepared") throw new RepositoryMutationError("invalid_capability", "Service command execution was already attempted or retired");
+  current.startAttempted = true;
   try {
     if (key(await gitDirectory(await realpath(input.cwd))) !== key(current.lease.gitDirectory)) throw new Error("Service cwd changed worktree owner");
     return await startServiceCommandProcess(input, { id: command.id, nonce: command.nonce, directory: current.lease.directory, ...(logPath ? { logPath } : {}) }, async binding => {
@@ -203,7 +208,7 @@ export async function recoverRepositoryServiceCommand(input: RepositoryServiceCo
     const observation = serviceJobObservation(await inspectServiceCommandProcess(saved.binding, directory));
     if (observation.id !== command.id || observation.nonce !== command.nonce) throw new Error("Service Job observation changed");
     const lease: CommandLease = { active: true, gitDirectory: owner, directory, record, digest: hash(content) }, permit = Object.freeze({}) as RepositoryCommandPermit;
-    permits.set(permit, lease); serviceLeases.set(command, { lease, permit, binding: saved.binding }); return command;
+    permits.set(permit, lease); serviceLeases.set(command, { lease, permit, binding: saved.binding, startAttempted: true }); return command;
   } catch (error) {
     if (error instanceof RepositoryMutationError) throw error;
     throw new RepositoryMutationError("command_uncertain", `Original service command ${command.id} cannot be verified by its native Job; receipt retained`);
@@ -213,6 +218,21 @@ export async function observeRepositoryServiceCommand(command: RepositoryService
   const current = serviceLease(command); if (!current.binding) throw new RepositoryMutationError("command_uncertain", "Service command has no durable suspended-assignment binding");
   try { return serviceJobObservation(await inspectServiceCommandProcess(current.binding, current.lease.directory)); }
   catch (error) { if (error instanceof RepositoryMutationError) throw error; throw new RepositoryMutationError("command_uncertain", `Service command ${command.id} native Job observation is unverified; receipt retained`); }
+}
+/** A current live host may retire a prepared command it knows never attempted transport. */
+export async function abandonPreparedRepositoryServiceCommand(command: RepositoryServiceCommand, siblings: readonly RepositoryServiceCommand[] = []): Promise<void> {
+  const current = serviceLease(command);
+  if (current.startAttempted || current.retiring || current.binding || current.lease.record.state !== "prepared") throw new RepositoryMutationError("command_uncertain", "Service transport may have started; unsent retirement is unavailable");
+  current.retiring = true;
+  try {
+    await withRepositoryMutation([command.repo], async () => {
+      if (current.startAttempted || current.binding || current.lease.record.state !== "prepared") throw new RepositoryMutationError("command_uncertain", "Prepared service identity changed before unsent retirement");
+      await replaceRecord(current.lease, RecordSchema.parse({ ...current.lease.record, state: "unsent", outcomeSha256: hash(JSON.stringify({ kind: "live-host-never-started", id: command.id, nonce: command.nonce })) }));
+      const archive = path.join(path.dirname(path.dirname(current.lease.directory)), "archive"), shard = path.join(archive, command.id.slice(3, 5));
+      await ensureDirectory(archive); await ensureDirectory(shard); await rename(current.lease.directory, path.join(shard, command.id));
+    }, { command: ownPermits(command, siblings) });
+    current.lease.active = false;
+  } catch (error) { if (error instanceof RepositoryMutationError) throw error; throw new RepositoryMutationError("command_uncertain", `Prepared service ${command.id} unsent retirement failed; receipt retained`); }
 }
 /** Own DB/command metadata only: no capability is exposed and no service lifetime is awaited. */
 export async function withRepositoryServiceStatus<T>(roots: string[], commands: readonly RepositoryServiceCommand[], group: string, action: () => Promise<T>): Promise<T> {

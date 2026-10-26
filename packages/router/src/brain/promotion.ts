@@ -241,6 +241,8 @@ export interface PromotionHost {
   repoHas(root: string, rel: string): boolean;
   /** Write and commit under the repository lock; a function returning null skips the write. */
   write(rel: string, content: string | ((current: string | null) => string | null), actor: Actor, message: string): Promise<{ path: string; commit: string | null }>;
+  /** Host-only split projection; private provenance remains in the project promotion record. */
+  publicProjection?(input:{promotionId:string|null;title:string;body:string}):{publicationDigest:string};
   requiresApproval(): boolean;
   reviewer(): PromotionReviewPort | null;
   error(message: string, issues?: string[]): Error;
@@ -526,7 +528,9 @@ export class GlobalPromotions {
    */
   private async writeGlobal(promotionId: string | null, c: PromotionCandidate, provenance: Record<string, unknown>): Promise<{ path: string; commit: string | null }> {
     const base = `global/lessons/${slugify(c.title)}`;
-    const meta = { kind: "lesson", ...(promotionId ? { promotion: promotionId } : {}), ...provenance, promoted_at: this.iso() };
+    const projection=this.h.publicProjection?.({promotionId,title:c.title,body:c.body});
+    const publicationDigest=projection?z.string().regex(/^[a-f0-9]{64}$/).parse(projection.publicationDigest):null;
+    const meta = publicationDigest?{kind:"lesson",publication_digest:publicationDigest}:{ kind: "lesson", ...(promotionId ? { promotion: promotionId } : {}), ...provenance, promoted_at: this.iso() };
     const text = frontMatter(meta, c.title, c.body);
     for (let n = 1; n < 100; n++) {
       const rel = n === 1 ? `${base}.md` : `${base}-${n}.md`;
@@ -537,7 +541,8 @@ export class GlobalPromotions {
           if (current !== null) {
             const fm = splitFrontMatter(current);
             const owner = (fm?.meta as { promotion?: unknown } | null)?.promotion;
-            if (!promotionId || owner !== promotionId) return null;
+            if(publicationDigest){if((fm?.meta as {publication_digest?:unknown}|null)?.publication_digest!==publicationDigest)return null;}
+            else if (!promotionId || owner !== promotionId) return null;
           }
           wrote = true;
           return text;

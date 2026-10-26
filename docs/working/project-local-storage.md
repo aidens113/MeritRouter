@@ -48,6 +48,17 @@ provider worker has started. Default activation/migration and full checks remain
 - This is a cooperative precheck, not an atomic CAS against unmanaged native processes.
 - C3 Labs owner will consume the exported check at its removal sites after root tests.
 
+### Supervisor brief: S6d shared port authority
+- Own labs/ports.ts, new labs/port-reservations.ts and tests/project-lab-port-isolation.test.ts.
+- Keep private Lab IDs/names/recipes in local store; coordination stores UUID/generation,
+  opaque Lab/name digests and numeric host port only. Unique global port survives restart.
+- Acquire global reservation before OS availability check and local projection; a local commit
+  failure may overhold, never permit duplicate ownership. Same binding retries are idempotent.
+- Release requires trusted local lifecycle proof after setup/service stop and kernel quiescence;
+  no elapsed-time reclamation, model-provided waiver or global transaction reading local SQL.
+- Ask S5 schema owner to append/classify shared reservations; do not race migration edits.
+- C3 owns active Lab callsites; coordinate optional allocation port then integrate serially.
+
 Latest user directive: finish the ENTIRE plan, keep live testing on Facebook, delete the old
 Facebook project and start fresh. Clean all sibling variants; ALL project Labs/data belong
 under the DOWNSTREAM project .MeritRouter. The router SOURCE REPOSITORY must have NO
@@ -176,6 +187,71 @@ is underway before approving physical DB split implementation. Do not copy globa
 or private payloads into a misleading partial project store and call migration complete.
 
 ## Worker Briefs
+
+### Activation wave (2026-10-26, Claude Code supervisor)
+
+Decision: split activation is installation-wide, never mixed. A bound coordination DB rejects
+private rows, so legacy projects must be migrated (S10) before the installation flips. Config
+`storage.layout: legacy|project` (default legacy for existing installs). In `project` layout
+startup refuses dispatch if the installation DB still holds unmigrated project-private rows.
+Service API contract shared by all briefs (supervisor added `labsFor` stub):
+`projectStores(slug)` -> bundle stores in project layout; `brainFor/brainAccessFor(slug)` ->
+split Brain; `labsFor(slug)` -> per-project LabManager. Admin/CLI read only through these.
+
+#### A split-host-activation
+- Own core/service.ts, config/schema.ts, config/load.ts, new core/project-runtime-host.ts,
+  new projects/store-provisioning.ts, admin/projects.ts createProject only,
+  tests/project-split-activation.test.ts, reports/split-host-activation.md.
+- Layout flag; coordination binding of installation DB with refusal when legacy private rows
+  exist; provisioning (mint identity, `<dir>/.MeritRouter/state`, project role, register,
+  project.json manifest); real privateServices (split Brain/BrainAccess/WebAccess with
+  usage/backend ports, LabManager with port authority + ProjectLabCapacity, servicesForLease);
+  broker/grants/ProjectQueueBindings/ProjectScheduler replacing the legacy Scheduler.
+- Route every per-slug service method (submit/status/list/collect/cancel/accept/reject/
+  questions/resume/usage/recover/startJob) to the bundle. Project without directory refuses.
+- Fake-provider test: fresh install in project layout, two projects, submit->complete, data
+  only in each project store, zero private rows in installation DB, restart reopens.
+
+#### B s6d-lab-capacity-integration
+- Own labs/lab.ts, labs/task-attempt-runner.ts, labs/task-attempt.ts, labs/task-attempt-prune.ts,
+  labs/project-capacity.ts, workspaces/repository-command.ts, tests/project-lab-capacity.test.ts,
+  reports/split-s6d-lab-capacity.md. Wire reserve/release callsites per that report; optional
+  LabManager `capacity` option (A passes it). Legacy unchanged.
+
+#### C s10-store-migration
+- Own new projects/store-migration.ts, projects/store-export.ts, projects/store-path-references.ts,
+  tests/project-store-migration.test.ts, reports/split-s10-migration.md. Library only (no CLI,
+  no admin/deletion edits). Dry-run manifest, WAL-aware backup, FK-ordered export per
+  ownership-inventory, Git-aware worktree moves, typed path rewrite, registration switch,
+  rollback before dispatch, restart detection. OS-temp fixtures only.
+
+#### D1/D2 s7-admin-reads
+- D1 owns admin/live.ts, entities.ts, insights.ts, session-project-scope.ts, request-evidence.ts,
+  dashboards.ts, sessions.ts. D2 owns the remaining admin files from the activation map except
+  projects.ts. Per-project reads via the service API above with explicit project filters (works
+  in both layouts); missing/unavailable project store yields an explicit unavailable state.
+  Tests: tests/project-admin-store-isolation.test.ts (D1), tests/project-admin-job-reads.test.ts (D2).
+
+### S6d capacity: c3_message
+- MAIN only. Read Current State and split-s6d-lab-ports.md; C3.8 existing sources frozen
+  until supervisor accepts the running independent native/adapter selection.
+- Initially own ONLY new labs/project-capacity.ts, tests/project-lab-capacity.test.ts and
+  report split-s6d-lab-capacity.md. Propose exact append/classification to S5 schema owner.
+- Implement explicit sanitized global installation max_active/max_services authority with
+  project/store UUID+generation and opaque Lab/service name digests; no recipes/paths/prose.
+- Trusted constructor limits callback must validate global caps, not model-selected limits.
+- Local IMMEDIATE proof precedes global transaction; global SQL never reads local state.
+- Reserve after durable local creating/starting intent, before native transport/process grant.
+- Same binding replay/adoption holds one slot. Crash/local rollback may overhold; no age-based
+  reclamation, process-snapshot waiver, cancellation refund or blind row purge.
+- Retained stopped Labs keep Lab slots until destroyed. Task-attempt slots retire only after
+  durable retained/pruned phase and exact stopped process/command evidence. Service backoff
+  keeps its slot; terminal stopped/failed release requires exact own kernel-zero retirement.
+- Validate actual local Lab/service/task-attempt row ownership, identity and state with Zod.
+- Tests: real temp FULL two-project stores, duplicate IDs/names, shared cap refusal, replay,
+  rollback/unknown-proof hold, generation invalidation, service/Lab independent release.
+- No existing Lab callsite edits yet. Report required minimal integration callbacks for root
+  approval once C3.8 source accepted. No commits/shared docs/new checkout/provider calls.
 
 ### c3-tool-command-guard
 - Role: implementation MAIN only; no .MeritRouter in source repo or new checkout.
@@ -475,6 +551,18 @@ FS effects, verify two actual project stores and unavailable foreign refs. No sc
 S5 owns schema/role. Default activation remains separate; no live providers.
 
 ## Work Ledger
+
+### 2026-10-26 — Accept S5 queue, S6c Brain/Web and S6d Lab capacity ports
+- Agent: supervisor (Claude Code); prior workers sibling_cleanup_inventory, storage_split_contract, c3_message
+- Changed: S5 coordinated project queue/scheduler host controls, S6c pinned Brain/Web ports and
+  Web usage reservations, S6d Lab capacity authority (callsites not yet wired); `labsFor` stub.
+- Validation: `pnpm -r typecheck` PASS. Focused 17 files 241 PASS / 2 FAIL 491s; failures are
+  team-capacity scheduler admission (in-flight wait 20s and afterEach close >10s). Same test
+  fails with HEAD scheduler.ts swapped in; a diagnostic rerun passed the body and timed out only
+  in close(). Classified as slow service close (also seen as 11-29s fairness close), not S5
+  claim logic. Removed leftover fairness timing console.log; kept warmup and 120s teardown.
+- Outcome: Partial — ports accepted; slow-close diagnosis assigned; host activation next.
+- Follow-up: activation wave A-D (see Worker Briefs); full suite/build after integration.
 
 ### 2026-10-26 — Freeze global broker and continue caller activation
 

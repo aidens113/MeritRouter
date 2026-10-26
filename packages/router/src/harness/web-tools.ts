@@ -21,7 +21,7 @@ function webOf(env: HarnessEnv) {
   return web;
 }
 
-const caller = (env: HarnessEnv) => ({ taskId: env.ctx.taskId, sessionId: env.ctx.session?.id ?? null, signal: env.ctx.signal });
+const caller = (env: HarnessEnv) => ({ taskId: env.ctx.taskId, sessionId: env.ctx.session?.id ?? null, signal: env.ctx.signal,lease:env.ctx.taskLease });
 
 /** Which backend answered, and which failed before it (the call moved on within itself). */
 function answeredBy(backend: string, attempts: WebAttempt[]): string {

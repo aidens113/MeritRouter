@@ -1,3 +1,4 @@
+import { readStoreIdentity } from "../projects/store-identity.js";
 import { SqliteTaskLeases } from "../storage/sqlite-task-leases.js";
 import type { TaskLeases } from "../storage/task-leases.js";
 import { recoveryOperationId, leaseOperationId, reconcileLeaseOperation, capturedLease } from "../storage/task-leases.js";
@@ -10,6 +11,13 @@ import type { Executor } from "./executor.js";
 import type { SessionStore } from "../sessions/store.js";
 export { projectBatchKey } from "../storage/sqlite-task-queue.js";
 
+/** Trusted coordination controls; project schedulers never write shared metadata locally. */
+export interface SchedulerHostControls {
+  managed:true;
+  heartbeat(active:boolean):void;
+  beforeDispatch(members:readonly StoredTask[]):"fresh"|"already_started"|"deferred"|Promise<"fresh"|"already_started"|"deferred">;
+  wake?():void;
+}
 /** Runs an interrupted task gets automatically (recovery, watchdog) before an operator must resume it. */
 export const MAX_AUTO_RESUMES = 3;
 
@@ -55,14 +63,19 @@ export class Scheduler {
     /** A project's configuration (its `team.max_agents` override); null or unknown: the global one. */
     private readonly projectConfig: ((slug: string) => ResolvedConfig | undefined) | null = null,
     readonly queue: TaskQueue = new SqliteTaskQueue(cfg, tasks, providerSlots, projectConfig),
-  ) { this.taskLeases = executor.taskLeases ?? new SqliteTaskLeases(cfg, tasks); }
+    private readonly host:SchedulerHostControls|null=null,
+  ) {
+    this.taskLeases = executor.taskLeases ?? new SqliteTaskLeases(cfg, tasks);
+    if(readStoreIdentity(tasks.db)?.role==="project"&&(!host||host.managed!==true||typeof host.heartbeat!=="function"||typeof host.beforeDispatch!=="function"))throw new Error("Project Scheduler requires explicit coordination controls");
+  }
 
   start(intervalMs = 1000): void {
-    if (this.timer || this.stopping || this.restartTimer) return;
+    if (this.timer || this.stopping || this.restartTimer || (this.host?.managed && this.startup && !this.stopped)) return;
     this.intervalMs = intervalMs;
     this.stopped = false;
     this.startup = this.recoverAsync();
     void this.startup.catch(() => undefined);
+    if(this.host?.managed)return;
     this.timer = setInterval(() => this.wake(), intervalMs);
     this.timer.unref?.();
     this.wake();
@@ -101,6 +114,7 @@ export class Scheduler {
 
   /** Wake the loop. A no-op unless start() was called (non-worker processes never run tasks). */
   kick(): void {
+    if(this.host?.managed){this.host.wake?.();return;}
     if (!this.timer) return;
     this.wake();
   }
@@ -137,7 +151,8 @@ export class Scheduler {
         if (this.stopped) break;
         this.again = false;
         // Liveness marker for the panel ("a worker is running").
-        this.tasks.db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(`worker:${this.owner}`, String(Date.now()));
+        if(this.host)this.host.heartbeat(true);
+        else this.tasks.db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(`worker:${this.owner}`, String(Date.now()));
         // Stuck runs first: a run aborted here ends `interrupted` and is queued to resume.
         this.executor.checkWatchdog();
         await this.recoverAsync("expired_only");
@@ -161,9 +176,9 @@ export class Scheduler {
             const extra = claimed.filter((c) => !taken.has(c.row.id) && projectBatchKey(c) === key && !this.redundant(c)).slice(0, profile.batching.max_items - 1 - companions.length);
             const members = [task, ...companions, ...extra];
             for (const m of members) taken.add(m.row.id);
-            this.dispatch(members, acquired);
+            await this.dispatch(members, acquired);
           } else {
-            this.dispatch([task], acquired);
+            await this.dispatch([task], acquired);
           }
         }
       } while (this.again && !this.stopped);
@@ -171,7 +186,8 @@ export class Scheduler {
       this.stopped = true;
       if (this.timer) clearInterval(this.timer);
       this.timer = null;
-      this.tasks.db.prepare("DELETE FROM meta WHERE key = ?").run(`worker:${this.owner}`);
+      if(this.host)this.host.heartbeat(false);
+      else this.tasks.db.prepare("DELETE FROM meta WHERE key = ?").run(`worker:${this.owner}`);
       throw error;
     } finally {
       for (const task of acquired.values()) await this.abandon(task, "queue_dispatch_abandoned");
@@ -211,7 +227,7 @@ export class Scheduler {
     }
   }
 
-  private dispatch(members: StoredTask[], acquired: Map<string, StoredTask>): void {
+  private async dispatch(members: StoredTask[], acquired: Map<string, StoredTask>): Promise<void> {
     if (this.stopped) return;
     // Re-read authority and task contents after every asynchronous queue boundary.
     const live = members.flatMap(member => {
@@ -219,6 +235,16 @@ export class Scheduler {
       return current ? [StoredTaskDTOSchema.parse(current)] : [];
     });
     if (!live.length) return;
+    if(this.host){
+      const admitted=await this.host.beforeDispatch(live);
+      if(admitted!=="fresh"){
+        for(const task of live)acquired.delete(this.attemptKey(task.row.id,task.row.run_count,task.row.lease_incarnation));
+        return;
+      }
+      // Admission can await local/global receipts. Stop, cancellation or expiry may
+      // have arrived meanwhile; no executor starts from an earlier observation.
+      if(this.stopped||live.some(task=>!this.tasks.dispatchable(task.row.id,this.owner,task.row.run_count,task.row.lease_incarnation,task.row.project_id)||(task.row.deadline_at!==null&&task.row.deadline_at<=this.tasks.serverNow())))return;
+    }
     const running = live.length > 1 ? this.executor.runBatch(live) : this.executor.runSingle(live[0]!);
     for (const task of live) acquired.delete(this.attemptKey(task.row.id, task.row.run_count, task.row.lease_incarnation));
     this.track(running);
@@ -253,7 +279,8 @@ export class Scheduler {
       await this.ticking?.catch(() => undefined);
       await Promise.allSettled([...this.inFlight]);
       while (this.recovering.size) await Promise.allSettled([...this.recovering]);
-      if (this.tasks.db.open) this.tasks.db.prepare("DELETE FROM meta WHERE key = ?").run(`worker:${this.owner}`);
+      if(this.host)this.host.heartbeat(false);
+      else if (this.tasks.db.open) this.tasks.db.prepare("DELETE FROM meta WHERE key = ?").run(`worker:${this.owner}`);
     })().finally(() => { this.stopping = null; });
     return this.stopping;
   }

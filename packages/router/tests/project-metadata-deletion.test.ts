@@ -48,6 +48,15 @@ function snapshot(f: Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe("project deletion publication admission", () => {
+  it.each(["command","capacity"] as const)("blocks retained %s ownership before config or repository cleanup even when its Lab says destroyed",async(kind)=>{
+    const f=await fixture(),now=Date.now();
+    sy!.db.prepare("INSERT INTO labs(id,project_id,name,state,root,recipe_json,repositories_json,ports_json,env_json,goal,created_at,updated_at,last_activity) VALUES('lab_owner','beta','retained','destroyed',?,'{}','[]','{}','{}','',?,?,?)").run(env!.dir,now,now,now);
+    if(kind==="command")sy!.db.prepare("INSERT INTO lab_command_owners(id,project_id,lab_id,kind,logical_name,token,command_digest,worktree_path,handle_json,phase,created_at,updated_at) VALUES('owner','beta','lab_owner','lab-service','retained',?,?,?,'{}','prepared',?,?)").run("a".repeat(48),"b".repeat(64),f.ws.worktreePath,now,now);
+    else sy!.db.prepare("INSERT INTO lab_capacity_owners(reservation_id,project_id,lab_id,service_name,command_token,handle_json,created_at,updated_at) VALUES('owner','beta','lab_owner','retained',?,'{}',?,?)").run("a".repeat(48),now,now);
+    const table=kind==="command"?"lab_command_owners":"lab_capacity_owners",before=snapshot(f),owners=sy!.db.prepare(`SELECT * FROM ${table}`).all();
+    await expect(deleteProject(sy!,"beta",{confirm:"beta"})).rejects.toThrow(/retained Lab (command|capacity) owner/);
+    expect(snapshot(f)).toEqual(before);expect(sy!.db.prepare(`SELECT * FROM ${table}`).all()).toEqual(owners);
+  },60_000);
   it.each(["workspace", "brain"] as const)("refuses pending %s before Lab prune, config, SQL or filesystem cleanup", async scope => {
     const f = await fixture(), receipt = await pending(scope === "workspace" ? f.ws.worktreePath : sy!.brain.root), before = snapshot(f), receiptBytes = () => ["receipt.json", "original.index", "next.index"].map(name => readFileSync(path.join(receipt.directory, name))), bytes = receiptBytes(), prune = vi.spyOn(sy!.labs.taskAttempts, "pruneProject");
     await expect(deleteProject(sy!, "beta", { confirm: "beta" })).rejects.toMatchObject({ detail: { kind: "pending_publication" } });

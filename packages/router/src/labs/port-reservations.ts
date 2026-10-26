@@ -33,6 +33,7 @@ export class ProjectLabPortReservations {
   const lab=this.localLab(labId,true);
   if(!["creating","stopped","failed","destroyed"].includes(lab.state)
    ||this.local.prepare("SELECT 1 FROM lab_command_owners WHERE lab_id=? LIMIT 1").get(labId)
+   ||this.local.prepare("SELECT 1 FROM lab_capacity_owners WHERE lab_id=? LIMIT 1").get(labId)
    ||this.local.prepare("SELECT 1 FROM lab_attempt_processes WHERE lab_id=? AND state!='stopped' LIMIT 1").get(labId)
    ||this.local.prepare("SELECT 1 FROM lab_services WHERE lab_id=? AND (state NOT IN ('stopped','failed') OR pid IS NOT NULL OR token IS NOT NULL) LIMIT 1").get(labId))throw new Error("Lab port release requires durable process quiescence");
  }

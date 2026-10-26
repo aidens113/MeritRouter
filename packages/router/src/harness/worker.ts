@@ -1,3 +1,4 @@
+import type { LeaseRef,LeaseReceipt } from "../storage/task-leases.js";
 import type { RoleName } from "../config/schema.js";
 import type { ChatTool } from "../gateway/types.js";
 import type { ValidateFunction } from "ajv";
@@ -65,7 +66,7 @@ export function workerBrainEnv(ctx: RunContext, role: RoleName): HarnessEnv["bra
   return {
     brain,
     access,
-    principal: () => access.principalFor(role, { ...g, jobId: ctx.jobId, tier: ctx.tier, ...(briefGrants.length ? { briefGrants } : {}) }),
+    principal: () => access.principalFor(role, { ...g, jobId: ctx.jobId, tier: ctx.tier,lease:ctx.taskLease,sessionId:ctx.session?.id, ...(briefGrants.length ? { briefGrants } : {}) }),
     actor: workerActor(ctx, role),
     workingDoc,
   };
@@ -83,6 +84,7 @@ export interface ReportContext {
   effort: string;
   jobId: string | null;
   tier: RunContext["tier"] | null;
+  taskLease?:LeaseRef;taskReceipt?:LeaseReceipt;
 }
 
 /** Write the worker's report into its job's working document folder (best effort). */
@@ -90,7 +92,8 @@ export async function writeWorkerReport(ctx: ReportContext, role: RoleName, resu
   if (!ctx.brain || !ctx.access || !ctx.cfg.brain.worker_reports) return null;
   const label = ctx.spec.label ?? ctx.taskId;
   const g = { project: ctx.brain.project, effort: ctx.effort, task: label, repos: ctx.spec.repositoryAliases };
-  const principal = ctx.access.principalFor(role, { ...g, jobId: ctx.jobId, tier: ctx.tier });
+  let principal;
+  try{principal=ctx.access.principalFor(role, { ...g, jobId: ctx.jobId, tier: ctx.tier,lease:ctx.taskLease,reportOnly:true,terminalReceipt:ctx.taskReceipt });}catch{return null;}
   const outcome = state === "completed" ? (result.unresolvedCriteria.length || result.acceptanceStatus === "unmet" ? "Partial" : "Done") : "Blocked";
   const changed = [
     ...result.findings.map((f) => `- ${f.description}${f.evidenceRefs.length ? ` (${f.evidenceRefs.join(", ")})` : ""}`),

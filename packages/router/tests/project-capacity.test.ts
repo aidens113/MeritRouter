@@ -55,7 +55,14 @@ it.each(["uncertain","unbounded","failed_timeout"] as const)("refuses %s physica
  f.capacity.release(slot);expect(f.capacity.usage("fixture").requests).toBe(1);f.capacity.quarantine(slot);expect(f.capacity.releaseReconciled(slot)).toBe(false);expect(f.capacity.usage("fixture").requests).toBe(1);
 });
 
-it("counts every supervisor participant against the trusted global cap",()=>{const f=setup(),a=f.holder(),original=f.grants.read(a.executionGrants![0]!.grantId)!.input;f.grants.complete(a.executionGrants![0]!);const input={...original,grantId:randomUUID(),role:"supervisor" as const,leases:[original.leases[0]!,{...original.leases[0]!,taskId:"second-supervisor"}]};expect(()=>f.grants.reserve(input)).toThrow(/capacity/);f.limits.maxSupervisors=2;const grant=f.grants.reserve(input).grant;f.grants.consume(grant.ref);f.limits.maxSupervisors=1;expect(()=>f.grants.assertActive(grant.ref)).toThrow(/live capacity/);});
+it("requires single-lease supervisor grants and counts independent root supervisors separately",()=>{
+ const f=setup(),a=f.holder(),original=f.grants.read(a.executionGrants![0]!.grantId)!.input;f.grants.complete(a.executionGrants![0]!);
+ const input={...original,grantId:randomUUID(),role:"supervisor" as const,leases:[original.leases[0]!,{...original.leases[0]!,taskId:"second-supervisor"}]};
+ expect(()=>f.grants.reserve(input)).toThrow(/exactly one task lease/);f.limits.maxSupervisors=2;expect(()=>f.grants.reserve(input)).toThrow(/exactly one task lease/);
+ const first=f.grants.reserve({...input,leases:[input.leases[0]!]}).grant;f.grants.consume(first.ref);
+ const second=f.grants.reserve({...input,grantId:randomUUID(),leases:[input.leases[1]!]}).grant;f.grants.consume(second.ref);
+ f.limits.maxSupervisors=1;expect(()=>f.grants.assertActive(first.ref)).toThrow(/live capacity/);
+});
 
 it("refuses a multi-lease writer grant that would hide two writers behind one repository hold",()=>{const f=setup(),a=f.holder(),original=f.grants.read(a.executionGrants![0]!.grantId)!.input;f.grants.complete(a.executionGrants![0]!);const input={...original,grantId:randomUUID(),repositoryDigests:["e".repeat(64)],leases:[original.leases[0]!,{...original.leases[0]!,taskId:"second-writer"}]};expect(()=>f.grants.reserve(input)).toThrow(/exactly one task lease/);const one=f.grants.reserve({...input,leases:[input.leases[0]!]}).grant;f.grants.consume(one.ref);expect(()=>f.grants.reserve({...input,grantId:randomUUID(),leases:[input.leases[1]!]})).toThrow(/writer capacity/);});
 
@@ -68,3 +75,27 @@ it("retains renewed global holds when the enclosing local commit aborts",()=>{co
 
 it("renews an expired grant only from still-live verified local authority and persists it across reopen",()=>{const f=renewalFixture();f.advance();expect(()=>f.grants.assertActive(f.ref)).toThrow(/expired/);const renewed=f.local.transaction(()=>f.grants.renew(f.ref,f.proof)).immediate();expect(renewed.disposition).toBe("fresh");f.db.close();const db=openDatabase(f.dir,{durability:"full"});dbs.push(db);const reopened=new ProjectExecutionGrants(db,()=>f.limits,f.now);expect(reopened.assertActive(f.ref)).toMatchObject({renewalSequence:1,authorityExpiresAt:f.proof.expiresAt});});
 it("rejects an async or model-injected renewal authority source",()=>{const f=renewalFixture();const bad=new ProjectExecutionGrants(f.db,()=>f.limits,f.now,(()=>Promise.resolve(f.proof.expiresAt)) as never);expect(()=>f.local.transaction(()=>bad.renew(f.ref,f.proof)).immediate()).toThrow(/verified local/);expect(()=>f.grants.renew(f.ref,{...f.proof,maxDeadline:f.proof.expiresAt} as never)).toThrow();});
+
+it("treats an explicit immutable completion batch as one execution and provider-claim unit",()=>{
+ const f=setup(),single=f.holder(),original=f.grants.read(single.executionGrants![0]!.grantId)!.input;f.grants.complete(single.executionGrants![0]!);f.limits.maxTasks=1;
+ const leases=[{...original.leases[0]!,taskId:"first"},{...original.leases[0]!,taskId:"second"}];
+ expect(()=>f.grants.reserve({...original,grantId:randomUUID(),leases})).toThrow(/explicit sealed completion batch/);
+ const grant=f.grants.reserve({...original,grantId:randomUUID(),executionUnit:"completion_batch",leases}).grant;f.grants.consume(grant.ref);
+ const holder:SlotHolder={...single,id:"same-local-holder",taskIds:leases.map(l=>l.taskId),leases,executionGrants:[grant.ref]};
+ f.capacity.recordProjectClaim(holder,"fixture");f.capacity.recordProjectClaim({...holder,leases:[...leases].reverse(),taskIds:[...holder.taskIds].reverse()},"fixture");expect(f.capacity.usage("fixture").claims).toBe(1);
+ expect(()=>f.holder(f.beta)).toThrow(/capacity/);
+ expect(()=>f.capacity.tryAcquire({...holder,taskIds:[leases[0]!.taskId],leases:[leases[0]!]},"fixture")).toThrow(/participant/);
+ expect(f.capacity.tryAcquire(holder,"fixture")).toHaveProperty("nonce");expect(f.capacity.usage("fixture")).toMatchObject({claims:0,requests:1});
+});
+it("separates worker and root supervisor pools and rejects raw delegated flags without host proof",()=>{
+ const f=setup();f.limits.maxTasks=1;f.holder();
+ const root={grantId:randomUUID(),project:f.alpha,leases:[{taskId:"root",owner:"worker",project:"alpha",incarnation:"b".repeat(32),runCount:1}],role:"supervisor" as const,repositoryDigests:[],expiresAt:f.now()+60000};
+ const grant=f.grants.reserve(root).grant;f.grants.consume(grant.ref);expect(()=>f.grants.reserve({...root,grantId:randomUUID(),delegatedSupervisor:true,leases:root.leases.map(l=>({...l,taskId:"child"}))})).toThrow(/trusted local lineage/);
+});
+it("keeps equal local holder IDs in different project stores independent",()=>{
+ const f=setup();f.settings.provider_concurrency_start=2;f.settings.provider_concurrency_max=2;
+ const a={...f.holder(),id:"same"},b={...f.holder(f.beta),id:"same"};
+ f.capacity.recordProjectClaim(a,"fixture");f.capacity.recordProjectClaim(b,"fixture");expect(f.capacity.usage("fixture").claims).toBe(2);
+ f.capacity.wait(a,["fixture"]);f.capacity.wait(b,["fixture"]);expect(f.capacity.usage("fixture").waiting).toBe(2);
+ f.capacity.leave(a);expect(f.capacity.usage("fixture").waiting).toBe(1);
+});

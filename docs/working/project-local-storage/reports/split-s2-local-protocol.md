@@ -51,8 +51,9 @@ known minimum exactly once, persisted fence, replay and no free/settled result.
 - project-accounting-protocol initial final draft + request-ledger: 22/22 passed (15+7).
 - project-accounting-protocol final: 18/18 passed, including closed-local live unbounded
   evidence and coordination reopen paid-fence proof. request-admission-protocol 12/12 passed.
-  Optional budget-control whole file still running (session 25232); it includes lengthy harness
-  jobs and per-case 60/90/120-second waits; no pass/failure claimed.
+  Optional budget-control whole file finished EXIT1 in673.62s:12/17passed,5failed
+  (three Repository mutation lease supervisor-completion mismatches, one close hook timeout,
+  one missing tool outputs plus EBUSY cleanup); combined41pass/5fail.
 - Real separate FULL SQLite files, actual broker, native ABORT triggers; fake model outcomes only.
   Covers all seven commit checkpoints, replay/process proof, cancellation/deadline/incarnation,
   local preparation cap, batch charges, known paid projection, unbounded paid quarantine, private

@@ -1,3 +1,5 @@
+import { z } from "zod";
+import { assertCriticalStoreDurability,readStoreIdentity,type StoreIdentity } from "../projects/store-identity.js";
 import { createHash } from "node:crypto";
 import type { Db } from "../storage/db.js";
 import { DEFAULT_COOLDOWN_MS, MAX_DEFAULT_COOLDOWN_MS, OUT_OF_CREDITS_RECHECK_MS } from "../providers/keys.js";
@@ -45,13 +47,18 @@ export function secretFingerprint(secret: string | null): string | null {
 }
 
 export class WebBackendState {
+  private pinned:StoreIdentity|null=null;
   constructor(
     private readonly db: Db,
     private readonly now: () => number = Date.now,
-  ) {}
+  ) {this.owner();}
+  usesDatabase(db:Db):boolean{return this.db===db;}
+  private owner():boolean{const current=readStoreIdentity(this.db);if(current?.role==="project")throw new Error("Shared web backend state cannot use a project store");if(current){assertCriticalStoreDurability(this.db);if(this.pinned&&JSON.stringify(this.pinned)!==JSON.stringify(current))throw new Error("Web backend coordination identity changed");this.pinned??=current;}return current!==null;}
+
 
   private row(ref: string): Row | undefined {
-    return this.db.prepare("SELECT * FROM web_backend_state WHERE ref = ?").get(ref) as Row | undefined;
+    this.owner();const raw=this.db.prepare("SELECT * FROM web_backend_state WHERE ref = ?").get(z.string().min(1).max(300).parse(ref));if(!raw)return undefined;
+    return z.object({ref:z.string(),backend:z.string(),status:z.enum(["ok","cooling","invalid","out_of_credits"]),until:z.number().nullable(),failures:z.number().int().nonnegative(),last_used_at:z.number().nullable(),last_error:z.string().nullable(),secret_fp:z.string().nullable(),updated_at:z.number()}).strict().parse(raw);
   }
 
   /** The key's state; a key whose secret changed since it was recorded reads as fresh. */
@@ -59,7 +66,7 @@ export class WebBackendState {
     const r = this.row(ref);
     const fp = secretFingerprint(secret);
     if (!r || (r.secret_fp !== null && fp !== null && r.secret_fp !== fp)) return { ref, backend, status: "ok", until: null, failures: 0, lastUsedAt: r?.last_used_at ?? null, lastError: null };
-    return { ref, backend: r.backend, status: r.status, until: r.until, failures: r.failures, lastUsedAt: r.last_used_at, lastError: r.last_error };
+    return { ref, backend: r.backend, status: r.status, until: r.until, failures: r.failures, lastUsedAt: r.last_used_at, lastError: this.owner()&&r.last_error?`backend_${r.status}`:r.last_error };
   }
 
   /** Whether the key may be tried now: ok, or cooling / out of credits whose wait has passed. */
@@ -70,6 +77,7 @@ export class WebBackendState {
   }
 
   private write(ref: string, backend: string, secret: string | null, v: { status: WebKeyStatus; until: number | null; failures: number; lastUsedAt: number | null; lastError: string | null }): void {
+    this.owner();
     this.db
       .prepare(
         `INSERT INTO web_backend_state (ref, backend, status, until, failures, last_used_at, last_error, secret_fp, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -96,7 +104,8 @@ export class WebBackendState {
   failed(ref: string, backend: string, secret: string | null, reason: ProviderErrorKind, message: string, retryAfterMs: number | null): WebKeyState | null {
     const s = this.get(ref, backend, secret);
     const now = this.now();
-    const lastError = message.slice(0, 300);
+    const shared=this.owner();
+    const lastError = shared ? z.enum(["rate_limited","auth_invalid","out_of_credits","not_in_plan","policy","server","timeout","transport","bad_request","unknown_model","aborted"]).parse(reason) : message.slice(0, 300);
     let next: { status: WebKeyStatus; until: number | null; failures: number };
     if (reason === "rate_limited" || reason === "server" || reason === "timeout" || reason === "transport") {
       const failures = s.failures + 1;
@@ -111,6 +120,6 @@ export class WebBackendState {
 
   /** Forget a key's state (a re-enabled or replaced key). */
   clear(ref: string): void {
-    this.db.prepare("DELETE FROM web_backend_state WHERE ref = ?").run(ref);
+    this.owner();this.db.prepare("DELETE FROM web_backend_state WHERE ref = ?").run(ref);
   }
 }

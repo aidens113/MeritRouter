@@ -5,11 +5,18 @@ import type { ResolvedConfig } from "../config/load.js";
 import { immediate } from "./db.js";
 import { canonicalJson, type StoredTask, type TaskStore } from "./tasks.js";
 import { LEASE_RECEIPT_WINDOW_MS, RECOVERY_RECEIPT_WINDOW_MS, LEASE_RECEIPT_CAPACITY, RECOVERY_RECEIPT_CAPACITY, RECOVERY_TOTAL_THRESHOLD, LeaseReceiptSchema, RenewLeaseSchema, FinishLeaseSchema, InterruptLeaseSchema, DeferLeaseSchema, RecoverLeasesSchema, CancelLeasesSchema, type LeaseRef, type LeaseReceipt, type TaskLeases } from "./task-leases.js";
+/** Trusted project execution bridge. Renewal is inside local IMMEDIATE; commits are observed afterwards. */
+export interface ProjectLeaseExecutionHooks {
+  renewing(lease: LeaseRef, now: number): void;
+  committed(receipt: LeaseReceipt): void;
+  drain?(): Promise<void>;
+}
 /** Local SQLite server-time authority. All mutation and receipt writes share one immediate transaction. */
 export class SqliteTaskLeases implements TaskLeases {
-  constructor(private readonly cfg: ResolvedConfig, readonly tasks: TaskStore, private readonly now: () => number = () => tasks.serverNow()) {
+  constructor(private readonly cfg: ResolvedConfig, readonly tasks: TaskStore, private readonly now: () => number = () => tasks.serverNow(), private readonly execution?: ProjectLeaseExecutionHooks) {
   }
   async drain(): Promise<void> {
+    await this.execution?.drain?.();
   }
   private read(id: string): StoredTask | undefined {
     const task = this.tasks.get(id);
@@ -39,7 +46,7 @@ export class SqliteTaskLeases implements TaskLeases {
     immediate(this.tasks.db, () => {
       this.tasks.db.prepare("DELETE FROM task_lease_operation_keys WHERE id IN (SELECT id FROM task_lease_operation_keys WHERE expires_at<? ORDER BY expires_at,id LIMIT 500)").run(this.now());
     });
-    return immediate(this.tasks.db, () => {
+    const result = immediate(this.tasks.db, () => {
       const now = this.now();
       validateKey(now);
       if (Buffer.byteLength(canonicalJson(input), "utf8") > 2 * 1024 * 1024)
@@ -89,6 +96,8 @@ export class SqliteTaskLeases implements TaskLeases {
         this.tasks.db.prepare("INSERT INTO task_lease_operation_projects(operation_id,project_id) VALUES(?,?)").run(input.operationId, project);
       return receipt;
     });
+    this.execution?.committed(result);
+    return result;
   }
   private owned(lease: LeaseRef, now: number, scopes: Set<string>, expiredAllowed = false): {
     task?: StoredTask;
@@ -115,8 +124,10 @@ export class SqliteTaskLeases implements TaskLeases {
         outcome = "cancel_requested";
       else if (row && row.deadline_at !== null && row.deadline_at <= now)
         outcome = "deadline_exceeded";
-      if (outcome === "applied")
+      if (outcome === "applied") {
         this.tasks.db.prepare("UPDATE tasks SET lease_expires_at=?,updated_at=? WHERE id=?").run(now + this.cfg.execution.lease_seconds * 1000, now, input.lease.taskId);
+        this.execution?.renewing(input.lease, now);
+      }
       return {
         lease: input.lease, disposition: outcome, original: outcome, leaseExpiresAt: outcome === "applied" ? now + this.cfg.execution.lease_seconds * 1000 : row?.lease_expires_at ?? null, affected: []
       };

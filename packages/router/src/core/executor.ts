@@ -694,7 +694,7 @@ export class Executor {
     const d = this.tryDepsFor(task);
     if (d?.brain && mode && mode !== "supervisor" && final !== "running") {
       const p = writeWorkerReport(
-        { cfg: d.cfg, brain: d.brain, access: d.access, spec: task.spec, taskId: task.row.id, effort: effortFor(task.spec, task.row.id), jobId: task.spec.parentTaskId ?? null, tier: (r?.tier ?? null) as never },
+        { cfg: d.cfg, brain: d.brain, access: d.access, spec: task.spec, taskId: task.row.id, effort: effortFor(task.spec, task.row.id), jobId: task.spec.parentTaskId ?? null,taskLease:lease,taskReceipt:receipt, tier: (r?.tier ?? null) as never },
         roleForProfile(task.spec.profile),
         runner,
         final,

@@ -191,13 +191,16 @@ export function purgeProjectRows(db: Db, slug: string, activeStates: readonly st
     if (active) throw new MeritRouterError("usage", `project ${slug} has ${active} running or queued task(s); cancel them or let them finish before deleting it`);
     const p = { slug, ids: ids(db.prepare("SELECT id FROM tasks WHERE project_id = ?").pluck().all(slug) as string[]) };
     const run = (sql: string) => db.prepare(sql).run(p).changes;
+    if(db.prepare("SELECT 1 FROM project_execution_claims WHERE project_id=? AND phase!='terminal' LIMIT 1").get(slug))throw new MeritRouterError("usage","Project execution claims require exact terminal reconciliation before purge");
     if (db.prepare(`SELECT 1 FROM task_workspace_attempts WHERE task_id IN ${IN_TASKS} AND project_id!=@slug LIMIT 1`).get(p)
       || db.prepare(`SELECT 1 FROM lab_teams t JOIN labs l ON l.id=t.lab_id WHERE t.root_job_id IN ${IN_TASKS} AND l.project_id!=@slug LIMIT 1`).get(p)) {
       throw new MeritRouterError("usage", "Project cleanup cannot prove exclusive Lab ownership; recovery evidence was retained");
     }
     // Private runtime ownership records may only go after their resources were proved removed.
     // In particular, removing a task must not orphan a recoverable task-Lab process intent.
-    if (db.prepare("SELECT 1 FROM labs WHERE project_id=? AND state!='destroyed' LIMIT 1").get(slug)
+    if (db.prepare("SELECT 1 FROM lab_command_owners WHERE project_id=? LIMIT 1").get(slug)
+      || db.prepare("SELECT 1 FROM lab_capacity_owners WHERE project_id=? LIMIT 1").get(slug)
+      || db.prepare("SELECT 1 FROM labs WHERE project_id=? AND state!='destroyed' LIMIT 1").get(slug)
       || db.prepare(`SELECT 1 FROM lab_task_attempts l JOIN task_workspace_attempts a ON a.id=l.attempt_id WHERE a.task_id IN ${IN_TASKS} AND l.phase!='pruned' LIMIT 1`).get(p)
       || db.prepare(`SELECT 1 FROM task_lab_operations WHERE attempt_id IN (SELECT id FROM task_workspace_attempts WHERE task_id IN ${IN_TASKS}) AND state IN ('pending','running') LIMIT 1`).get(p)
       || db.prepare(`SELECT 1 FROM lab_attempt_processes WHERE attempt_id IN (SELECT id FROM task_workspace_attempts WHERE task_id IN ${IN_TASKS}) AND state!='stopped' LIMIT 1`).get(p)
@@ -210,6 +213,8 @@ export function purgeProjectRows(db: Db, slug: string, activeStates: readonly st
     // retry tombstones so delayed old requests cannot recreate purged scoped payloads.
     db.prepare("DELETE FROM task_lease_operations WHERE id IN (SELECT operation_id FROM task_lease_operation_projects WHERE project_id=?)").run(slug);
     new RequestCaptures(db).purgeProject(slug);
+    run("DELETE FROM project_execution_claim_members WHERE grant_id IN (SELECT grant_id FROM project_execution_claims WHERE project_id=@slug AND phase='terminal')");
+    run("DELETE FROM project_execution_claims WHERE project_id=@slug AND phase='terminal'");
     const attempts = `(SELECT id FROM task_workspace_attempts WHERE task_id IN ${IN_TASKS})`;
     const labs = "(SELECT id FROM labs WHERE project_id=@slug)";
     run(`DELETE FROM lab_attempt_processes WHERE attempt_id IN ${attempts}`);

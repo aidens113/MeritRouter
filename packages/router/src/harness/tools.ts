@@ -470,7 +470,7 @@ export function brainSupervisorTools(): HarnessTool[] {
     }),
     tool("brain_decide_request", "brain", "Approve or deny a worker's brain access request, with a reason.", { id: { type: "integer" }, approve: { type: "boolean" }, reason: { type: "string" } }, ["id", "approve", "reason"], async (a, env) => {
       const b = brainOf(env);
-      const r = b.access.decide(Number(a.id), a.approve === true, b.actor.agent, str(a.reason, "reason"));
+      const r = b.access.decide(Number(a.id), a.approve === true, b.actor.agent, str(a.reason, "reason"),b.principal());
       return `request ${r.id}: ${r.status}`;
     }),
   ];

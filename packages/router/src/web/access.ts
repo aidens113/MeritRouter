@@ -1,3 +1,6 @@
+import type { ProjectStoreIdentity } from "../projects/store-identity.js";
+import type { LeaseRef } from "../storage/task-leases.js";
+import type { WebUsageReservations } from "./usage-reservations.js";
 import { randomBytes } from "node:crypto";
 import type { Db } from "../storage/db.js";
 import type { RoleName, WebConfig } from "../config/schema.js";
@@ -35,7 +38,8 @@ export interface WebAccessDeps {
   /** The live config object (`web` is read on every call, so reloads apply). */
   cfg: { web: WebConfig };
   db: Db;
-  providers: { credentials(): ProviderCredentials; provider(id: string): ResolvedProvider | null; vault: KeyVault | null };
+  project?:{identity:ProjectStoreIdentity;usage:WebUsageReservations;backendState:WebBackendState;assertRuntime():void};
+  providers: { usesDatabase?(db:Db):boolean;credentials(): ProviderCredentials; provider(id: string): ResolvedProvider | null; vault: KeyVault | null };
   env?: Readonly<Record<string, string | undefined>>;
   /** Fetch for the search and fetch APIs (tests inject a fake). */
   fetch?: FetchLike;
@@ -104,6 +108,7 @@ export interface WebStatus {
 }
 
 export interface WebCaller {
+  lease?:LeaseRef;
   taskId: string | null;
   sessionId?: string | null;
   signal?: AbortSignal;
@@ -125,8 +130,10 @@ export class WebAccess {
 
   constructor(private readonly d: WebAccessDeps) {
     this.now = d.now ?? Date.now;
-    this.ledger = new WebLedger(d.db, this.now);
-    this.state = new WebBackendState(d.db, this.now);
+    if(d.project&&!d.project.usage.matchesBackendState(d.project.backendState))throw new Error("Web quota and backend state use different coordination stores");
+    if(d.project&&!d.project.usage.matchesProviders(d.providers))throw new Error("Project web requires shared coordination provider bookkeeping");
+    this.ledger = new WebLedger(d.db, this.now,d.project);
+    this.state = d.project?.backendState??new WebBackendState(d.db, this.now);
   }
 
   private get web(): WebConfig {
@@ -320,7 +327,7 @@ export class WebAccess {
     for (const c of candidates) {
       if (caller.signal?.aborted) break;
       const { backend, key } = describe(c);
-      const input: AttemptInput = { callId, taskId: caller.taskId, sessionId: caller.sessionId ?? null, kind, backend, keyRef: key?.ref ?? null, target };
+      const input: AttemptInput = { callId, taskId: caller.taskId, sessionId: caller.sessionId ?? null, kind, backend, keyRef: key?.ref ?? null, target,...(caller.lease?{lease:caller.lease}:{}) };
       let id: number;
       if (!reserved) {
         const r = this.ledger.reserve(input, { perTask: this.web.max_requests_per_task, perDay: this.web.max_requests_per_day });
@@ -332,24 +339,25 @@ export class WebAccess {
         id = r.id;
       } else id = this.ledger.attempt(input);
       if (key) this.state.touch(key.ref, key.backend, key.secret);
-      try {
-        const value = await run(c);
-        const m = measure(value);
-        this.ledger.settle(id, { ok: true, ...m });
-        if (key) this.state.succeeded(key.ref, key.backend, key.secret);
-        tried.push({ backend, ok: true });
-        finish(true, { backend, ...m });
-        return { value, backend, attempts: tried };
-      } catch (err) {
-        const ssrf = err instanceof SsrfRefusal;
-        const reason = ssrf ? "ssrf" : err instanceof WebBackendError ? err.reason : "error";
-        const message = maskSecrets((err as Error).message, [key?.secret]);
-        this.ledger.settle(id, { ok: false, error: message, errorKind: reason });
-        if (key && err instanceof WebBackendError) this.state.failed(key.ref, key.backend, key.secret, err.reason, message, err.retryAfterMs);
-        tried.push({ backend, ok: false, errorKind: reason, error: message });
-        // A refused URL is never sent anywhere else; a cancelled call stops.
-        if (ssrf || reason === "aborted" || caller.signal?.aborted) break;
+      const dispatchId=`wd_${randomBytes(16).toString("hex")}`;
+      if(!this.ledger.beginDispatch(id,dispatchId))throw new Error("Web dispatch replay cannot authorize a new send");
+      this.d.project?.assertRuntime();this.ledger.assertDispatch(id,dispatchId);
+      let value:T;
+      try {value=await run(c);}
+      catch(err){
+        const ssrf=err instanceof SsrfRefusal;
+        const reason=ssrf?"ssrf":err instanceof WebBackendError?err.reason:"error";
+        const message=maskSecrets((err as Error).message,[key?.secret]);
+        // Persistence errors propagate here; they never masquerade as a retryable provider error.
+        this.ledger.settle(id,{ok:false,error:message,errorKind:reason});
+        if(key&&err instanceof WebBackendError)this.state.failed(key.ref,key.backend,key.secret,err.reason,message,err.retryAfterMs);
+        tried.push({backend,ok:false,errorKind:reason,error:message});
+        if(ssrf||reason==="aborted"||caller.signal?.aborted)break;
+        continue;
       }
+      const measured=measure(value);this.ledger.settle(id,{ok:true,...measured});
+      if(key)this.state.succeeded(key.ref,key.backend,key.secret);
+      tried.push({backend,ok:true});finish(true,{backend,...measured});return {value,backend,attempts:tried};
     }
     finish(false);
     const last = tried.at(-1);

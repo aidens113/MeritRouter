@@ -334,6 +334,10 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 /** Why a project cannot be deleted now: running or queued tasks, the last live project, or the single-project config. */
 function deletionBlockers(sy: MeritRouter, info: ProjectSummary, allowTaskPrune = false): string[] {
   const out: string[] = [];
+  const commandOwners=sy.db.prepare("SELECT count(*) AS n FROM lab_command_owners WHERE project_id=?").get(info.slug) as {n:number};
+  if(commandOwners.n)out.push(`it has ${commandOwners.n} retained Lab command owner(s); prove kernel process quiescence through owned Lab recovery before deletion`);
+  if(sy.db.prepare("SELECT 1 FROM lab_capacity_owners WHERE project_id=? LIMIT 1").get(info.slug))out.push("it has a retained Lab capacity owner; finish exact command retirement and capacity reconciliation before deletion");
+  if(sy.db.prepare("SELECT 1 FROM project_execution_claims WHERE project_id=? AND phase!='terminal' LIMIT 1").get(info.slug))out.push("it has unreconciled project execution claims; finish exact grant reconciliation before deletion");
   try { new RequestReceipts(sy.db).assertProjectPurge(info.slug); }
   catch (error) { out.push(`request cleanup cannot prove safe project ownership: ${(error as Error).message}`); }
   const labs = sy.db.prepare("SELECT count(*) AS n FROM labs WHERE project_id = ? AND state != 'destroyed' AND (?=0 OR kind!='task_attempt' OR state!='stopped')").get(info.slug, allowTaskPrune ? 1 : 0) as { n: number };

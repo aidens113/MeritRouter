@@ -25,7 +25,10 @@ it("retains global ownership after local rollback and refuses unknown process ev
  expect(global.prepare("SELECT count(*) n FROM project_lab_ports").get()).toEqual({n:1});
  a.db.prepare("INSERT INTO lab_command_owners(id,project_id,lab_id,kind,logical_name,token,command_digest,worktree_path,handle_json,phase,created_at,updated_at) VALUES('unknown','alpha','secret-lab','lab-service','web',?,?,'retained','{}','prepared',1,1)").run("a".repeat(48),"b".repeat(64));
  expect(()=>a.ports.release("secret-lab")).toThrow(/quiescence/);expect(global.prepare("SELECT count(*) n FROM project_lab_ports").get()).toEqual({n:1});
- a.db.prepare("DELETE FROM lab_command_owners").run();a.db.prepare("UPDATE labs SET state='running'").run();expect(()=>a.ports.release("secret-lab")).toThrow(/quiescence/);
+ a.db.prepare("DELETE FROM lab_command_owners").run();
+ a.db.prepare("INSERT INTO lab_capacity_owners(reservation_id,project_id,lab_id,service_name,command_token,process_id,handle_json,created_at,updated_at) VALUES('unknown-capacity','alpha','secret-lab','web',?,NULL,'{}',1,1)").run("c".repeat(48));
+ expect(()=>a.ports.release("secret-lab")).toThrow(/quiescence/);a.db.prepare("DELETE FROM lab_capacity_owners").run();
+ a.db.prepare("UPDATE labs SET state='running'").run();expect(()=>a.ports.release("secret-lab")).toThrow(/quiescence/);
  a.db.prepare("UPDATE labs SET state='stopped'").run();a.ports.release("secret-lab");expect(global.prepare("SELECT count(*) n FROM project_lab_ports").get()).toEqual({n:0});
 });
 it("rejects foreign stores and stale generations without clearing held ports",async()=>{

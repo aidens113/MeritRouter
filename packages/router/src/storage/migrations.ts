@@ -1163,4 +1163,21 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX project_lab_ports_project ON project_lab_ports(project_uuid,store_uuid,generation,lab_digest);
   `,
+  // Shared Lab capacity retains sanitized ownership; exact service retirement stays private.
+  `
+  CREATE TABLE project_lab_capacity (
+    reservation_id TEXT PRIMARY KEY,installation_uuid TEXT NOT NULL,project_uuid TEXT NOT NULL,store_uuid TEXT NOT NULL,
+    generation INTEGER NOT NULL CHECK(generation>0),kind TEXT NOT NULL CHECK(kind IN ('lab','service')),
+    lab_digest TEXT NOT NULL CHECK(length(lab_digest)=64 AND lab_digest NOT GLOB '*[^0-9a-f]*'),
+    member_digest TEXT NOT NULL CHECK(length(member_digest)=64 AND member_digest NOT GLOB '*[^0-9a-f]*'),created_at INTEGER NOT NULL,
+    UNIQUE(installation_uuid,project_uuid,store_uuid,generation,kind,lab_digest,member_digest)
+  );
+  CREATE INDEX project_lab_capacity_installation_kind ON project_lab_capacity(installation_uuid,kind);
+  CREATE TABLE lab_capacity_owners (
+    reservation_id TEXT PRIMARY KEY,project_id TEXT NOT NULL,lab_id TEXT NOT NULL REFERENCES labs(id),service_name TEXT NOT NULL,
+    command_token TEXT NOT NULL CHECK(length(command_token)=48 AND command_token NOT GLOB '*[^0-9a-f]*'),
+    process_id TEXT REFERENCES lab_attempt_processes(id),handle_json TEXT NOT NULL CHECK(json_valid(handle_json) AND json_type(handle_json)='object'),
+    created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(lab_id,service_name)
+  );
+  `,
 ];

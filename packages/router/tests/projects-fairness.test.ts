@@ -22,7 +22,7 @@ afterEach(async () => {
   db = undefined;
   env?.cleanup();
   env = undefined;
-});
+},120_000);
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -172,6 +172,7 @@ describe("fair claiming across projects", () => {
       return reply(JSON.stringify(goodOutput()), servedFor(sy!, req));
     });
     sy = open(env, client, { worker: true });
+    await Promise.all(sy.projects.slugs().map(slug => sy!.brainFor(slug).ensure()));
     // An explicit output cap keeps them out of prompt batches, so each is its own execution.
     const alpha = await sy.submitTasks([0, 1, 2].map((i) => summarizeTask({ goal: `a${i}`, budget: { maxOutputTokens: 1500 } })), { project: "alpha" });
     const beta = await sy.submitTasks([0, 1].map((i) => summarizeTask({ goal: `b${i}`, budget: { maxOutputTokens: 1500 } })), { project: "beta" });
@@ -202,6 +203,7 @@ describe("prompt batching", () => {
       return reply(JSON.stringify({ items: ids.map((id) => ({ id, result: goodOutput() })) }), servedFor(sy!, req));
     });
     sy = open(env, client);
+    await Promise.all(sy.projects.slugs().map(slug => sy!.brainFor(slug).ensure()));
     const a = await sy.submitTasks([summarizeTask({ goal: "alpha one" }), summarizeTask({ goal: "alpha two" })], { project: "alpha" });
     const b = await sy.submitTasks([summarizeTask({ goal: "beta one" }), summarizeTask({ goal: "beta two" })], { project: "beta" });
     sy.recover();
@@ -243,6 +245,7 @@ describe("per-project budgets (D7)", () => {
       return { ...reply(JSON.stringify(goodOutput()), { model: req.model }), usage: { inputTokens: 1000, outputTokens: 500, cachedInputTokens: null, reasoningTokens: null, reportedCostUsd: null, basis: "provider_reported" } };
     });
     sy = open(env, client, { worker: true });
+    await Promise.all(sy.projects.slugs().map(slug => sy!.brainFor(slug).ensure()));
     sy.vault.add({ provider: "acme", secret: "sk-acme-0000-1111" });
     const [a] = await sy.submitTasks([summarizeTask()], { project: "alpha" });
     const ra = (await sy.awaitResults([a!.taskId], { timeoutSeconds: 10 })).completed[0]!;

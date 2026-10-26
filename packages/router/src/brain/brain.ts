@@ -1,3 +1,10 @@
+import { loadConfig } from "../config/load.js";
+import { z } from "zod";
+import YAML from "yaml";
+import { assertStoreRole } from "../storage/store-role.js";
+import { readStoreIdentity,ProjectStoreIdentitySchema,type ProjectStoreIdentity } from "../projects/store-identity.js";
+import { projectRuntimePaths } from "../projects/runtime-paths.js";
+import { assertProjectBrainPrincipal } from "./access.js";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, lstatSync, realpathSync, unlinkSync, writeFileSync, openSync, closeSync } from "node:fs";
 import { homedir } from "node:os";
 import { createHash, randomUUID } from "node:crypto";
@@ -104,7 +111,19 @@ export interface BrainMutationControl {
   deferPush?: boolean;
 }
 
+export interface SharedBrainKnowledgePort {
+  /** Global public knowledge only; implementations never persist private search queries. */
+  read(path:string):{content:string}|null;
+  list(prefix:string):BrainEntry[];
+  search(query:string,opts:{prefix?:string;limit:number;offset:number}):Array<{path:string;title:string|null;kind:EntryKind;snippet:string}>;
+  /** Durable expected-digest CAS/idempotent publication of an already reviewed/approved sanitized lesson. */
+  publishApprovedLesson?(input:{path:string;content:string;publicationDigest:string;expectedDigest:string|null}):Promise<{path:string;commit:string|null;digest:string}>;
+}
+export interface ProjectBrainOptions {identity:ProjectStoreIdentity;assertRuntime():void;sharedKnowledge?:SharedBrainKnowledgePort}
+const BrainEntrySchema=z.object({path:z.string(),kind:z.enum(["working_doc","report","archive","lesson","glossary","decision","fact","repo_notes","index","note"]),title:z.string().nullable(),status:z.string().nullable(),lines:z.number().int().nonnegative(),mtime:z.number().finite()}).strict();
+
 export interface BrainOptions {
+  project?:ProjectBrainOptions;
   /** The independent reviewer of global promotions (a function: the service builds it after its brains). */
   reviewer?: PromotionReviewPort | (() => PromotionReviewPort | null | undefined) | null;
 }
@@ -128,6 +147,7 @@ const likeEscape = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
  */
 export class Brain {
   readonly root: string;
+  private readonly projectMode:ProjectBrainOptions|undefined;
   private readonly mounts: Array<{ prefix: string; abs: string; commit: boolean }>;
   private chains = new Map<string, Promise<unknown>>();
   private ready: Promise<void> | null = null;
@@ -143,35 +163,68 @@ export class Brain {
     private readonly now: () => number = Date.now,
     opts: BrainOptions = {},
   ) {
+    this.projectMode=opts.project?{...opts.project,identity:Object.freeze(ProjectStoreIdentitySchema.parse(opts.project.identity))}:undefined;
+    const role=readStoreIdentity(db);if(role?.role==="coordination")throw new BrainError("Private Brain cannot use coordination store");if(role?.role==="project"&&!opts.project)throw new BrainError("Project Brain requires explicit pinned local options");
     const base = path.dirname(cfg.configPath);
     this.root = path.resolve(base, expandHome(cfg.brain.path));
     this.mounts = cfg.brain.mounts
       .map((m) => ({ prefix: normalizeBrainPath(m.prefix), abs: path.resolve(base, expandHome(m.path)), commit: m.commit }))
       .sort((a, b) => b.prefix.length - a.prefix.length);
+    if(this.projectMode){const identity=ProjectStoreIdentitySchema.parse(this.projectMode.identity),directory=(cfg as {projectDirectory?:unknown}).projectDirectory;if(typeof directory!=="string"||path.resolve(projectRuntimePaths(directory).brain).toLowerCase()!==this.root.toLowerCase()||cfg.brain.project!==identity.slug)throw new BrainError("Project Brain root/configuration differs from pinned project runtime");for(const mount of this.mounts){if(!mount.prefix.startsWith(`projects/${identity.slug}/`))throw new BrainError("Project Brain mounts must remain in its own namespace");if(!this.localTarget(mount.abs))throw new BrainError("Project Brain mount must stay beneath its own canonical .MeritRouter runtime");}this.owner();}
     const reviewer = opts.reviewer;
     this.promotions = new GlobalPromotions({
       scope: () => this.scope(),
       exists: (rel) => this.exists(rel),
       readText: (rel) => {
+        if(this.projectMode&&rel.startsWith("global/"))return this.readShared(rel);
         const r = this.resolve(rel);
         return existsSync(r.abs) && statSync(r.abs).isFile() ? readFileSync(r.abs, "utf8") : null;
       },
       listDir: (rel) => {
+        if(this.projectMode&&(rel==="global"||rel.startsWith("global/")))return this.sharedEntries(rel).filter(entry=>path.posix.dirname(entry.path)===rel).map(entry=>path.posix.basename(entry.path));
         const r = this.resolve(rel);
         return existsSync(r.abs) && statSync(r.abs).isDirectory() ? readdirSync(r.abs).filter((n) => n.endsWith(".md") && !n.startsWith(".")) : [];
       },
       repoHas: (root, rel) => existsSync(path.join(root, ...rel.split("/"))),
-      write: (rel, content, actor, message) => this.writeFile(normalizeBrainPath(rel), content, actor, message),
-      requiresApproval: () => this.cfg.brain.global_requires_approval,
+      write: (rel, content, actor, message) => this.projectMode&&rel.startsWith("global/")?this.publishShared(rel,content):this.writeFile(normalizeBrainPath(rel), content, actor, message),
+      ...(this.projectMode?{publicProjection:({promotionId,title,body}:{promotionId:string|null;title:string;body:string})=>({publicationDigest:brainContentDigest(JSON.stringify({promotionId,title,body}))})}:{}),
+      requiresApproval: () => this.projectMode?loadConfig(this.cfg.configPath).brain.global_requires_approval:this.cfg.brain.global_requires_approval,
       reviewer: () => (typeof reviewer === "function" ? (reviewer() ?? null) : (reviewer ?? null)),
       error: (message, issues) => new BrainError(message, issues),
       now: this.now,
     });
   }
 
+  private localTarget(target:string):boolean{
+    const directory=(this.cfg as {projectDirectory?:string}).projectDirectory;
+    const roots=directory?[projectRuntimePaths(directory).root]:[];
+    const inside=(root:string,file:string)=>{const rel=path.relative(path.resolve(root),path.resolve(file));return rel===""||!path.isAbsolute(rel)&&rel!==".."&&!rel.startsWith(`..${path.sep}`);};
+    if(!roots.some(root=>inside(root,target)))return false;
+    let existing=path.resolve(target);while(!existsSync(existing)){const parent=path.dirname(existing);if(parent===existing)return false;existing=parent;}
+    const real=realpathSync(existing);return roots.some(root=>{let actualRoot=path.resolve(root);if(existsSync(actualRoot)){const canonical=realpathSync(actualRoot);if((process.platform==="win32"?canonical.toLowerCase():canonical)!==(process.platform==="win32"?actualRoot.toLowerCase():actualRoot))return false;actualRoot=canonical;}return inside(actualRoot,real);});
+  }
+  private owner():void{
+    if(!this.projectMode)return;this.projectMode.assertRuntime();assertStoreRole(this.db,this.projectMode.identity);
+    if(this.cfg.brain.project!==this.projectMode.identity.slug)throw new BrainError("Brain project configuration changed");
+    const paths=z.array(z.object({path:z.string()}).strict()).parse(this.db.prepare("SELECT path FROM brain_files UNION SELECT path FROM brain_fts").all());if(paths.some(row=>!this.owns(row.path)))throw new BrainError("Project Brain index contains foreign or global rows; explicit migration required");
+  }
+  private shared():SharedBrainKnowledgePort{this.owner();const port=this.projectMode?.sharedKnowledge;if(!port)throw new BrainError("Shared global knowledge requires an explicit port");return port;}
+  private readShared(rel:string):string|null{const value=z.object({content:z.string().max(2000000)}).strict().nullable().parse(this.shared().read(rel));return value?.content??null;}
+  private globalPath(rel:string):boolean{return rel==="global"||rel.startsWith("global/");}
+  private sharedEntries(prefix:string):BrainEntry[]{return z.array(BrainEntrySchema).max(10000).parse(this.shared().list(prefix)).map(entry=>{if(!entry.path.startsWith("global/")||normalizeBrainPath(entry.path)!==entry.path)throw new BrainError("Shared knowledge port returned a private path");return entry;});}
+  private async publishShared(rel:string,content:string|((current:string|null)=>string|null)):Promise<{path:string;commit:string|null;digest:string}>{
+    const port=this.shared();if(!port.publishApprovedLesson||!/^global\/lessons\/[^/]+\.md$/.test(rel))throw new BrainError("Shared approved lesson publication port is unavailable");
+    const current=this.readShared(rel),next=typeof content==="function"?content(current):content;if(next===null)return {path:rel,commit:null,digest:brainContentDigest(current??"")};
+    z.string().max(2000000).parse(next);
+    const match=/^---\r?\n([\s\S]*?)\r?\n---\r?\n/.exec(next);if(!match)throw new BrainError("Shared lesson has no sanitized publication metadata");
+    const metadata=z.object({kind:z.literal("lesson"),publication_digest:z.string().regex(/^[a-f0-9]{64}$/)}).strict().parse(YAML.parse(match[1]!));
+    const result=z.object({path:z.string(),commit:z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/).nullable(),digest:z.string().regex(/^[a-f0-9]{64}$/)}).strict().parse(await port.publishApprovedLesson({path:rel,content:next,publicationDigest:metadata.publication_digest,expectedDigest:current===null?null:brainContentDigest(current)}));
+    if(result.path!==rel||result.digest!==brainContentDigest(next))throw new BrainError("Shared publication receipt does not match approved content");return result;
+  }
+
   /** The project this brain serves: its slug, name, and repositories (what a global lesson must not name). */
   scope(): ProjectScope {
-    const info = (this.cfg as { project?: { slug: string; name: string } }).project;
+    this.owner();const info = (this.cfg as { project?: { slug: string; name: string } }).project;
     return {
       slug: this.project,
       name: info?.name ?? this.project,
@@ -182,6 +235,7 @@ export class Brain {
   /** Paths this brain's project maintains in the shared index: everything except other projects' folders. */
   private owns(rel: string): boolean {
     const p = rel.toLowerCase();
+    if(this.projectMode)return p==="readme.md"||p===`projects/${this.project.toLowerCase()}`||p.startsWith(`projects/${this.project.toLowerCase()}/`);
     return !p.startsWith("projects/") || p.startsWith(`projects/${this.project.toLowerCase()}/`);
   }
 
@@ -195,6 +249,7 @@ export class Brain {
 
   /** Create the brain repository and its skeleton on first use. */
   ensure(control: BrainMutationControl = {}): Promise<void> {
+    this.owner();
     // A host already holding the common lease must not wait for an initializer queued
     // behind that same lease. Bootstrap is idempotent and revalidates its supplied scope.
     if (control.mutation !== undefined) return this.initialize(control);
@@ -218,11 +273,11 @@ export class Brain {
     await this.mutate([this.root, ...(ownOwner ? [ownOwner] : [])], mutation => this.locked(this.root, async () => {
       if (ownBinding) assertBrainGitPath(ownBinding, own.abs);
       const created: string[] = [];
-      for (const dir of ["global/lessons", `projects/${this.project}/working`, `projects/${this.project}/decisions`, `projects/${this.project}/repos`]) {
+      for (const dir of [...(this.projectMode?[]:["global/lessons"]), `projects/${this.project}/working`, `projects/${this.project}/decisions`, `projects/${this.project}/repos`]) {
         mkdirSync(path.join(this.root, dir), { recursive: true });
       }
       const glossary = path.join(this.root, "global/glossary.md");
-      if (!existsSync(glossary)) { writeFileSync(glossary, "# Glossary\n\nShared terms. Supervisors maintain this file.\n"); created.push("global/glossary.md"); }
+      if (!this.projectMode&&!existsSync(glossary)) { writeFileSync(glossary, "# Glossary\n\nShared terms. Supervisors maintain this file.\n"); created.push("global/glossary.md"); }
       if (!existsSync(path.join(this.root, "README.md"))) { writeFileSync(path.join(this.root, "README.md"), this.renderIndex([])); created.push("README.md"); }
       if (!existsSync(own.abs)) {
         mkdirSync(path.dirname(own.abs), { recursive: true });
@@ -262,14 +317,17 @@ export class Brain {
 
   /** Map a brain path to a file, honouring mounts (e.g. a repository's docs/working). */
   resolve(relInput: string): { rel: string; abs: string; repo: string | null; repoRel: string; commit: boolean } {
-    const rel = normalizeBrainPath(relInput);
+    this.owner();const rel = normalizeBrainPath(relInput);
+    if(this.projectMode&&rel!==""&&rel!=="projects"&&!this.owns(rel))throw new BrainError("Brain path is outside pinned local project namespace");
     for (const m of this.mounts) {
       if (rel === m.prefix || rel.startsWith(`${m.prefix}/`)) {
         const sub = rel.slice(m.prefix.length).replace(/^\//, "");
-        return { rel, abs: path.join(m.abs, ...sub.split("/").filter(Boolean)), repo: m.commit ? m.abs : null, repoRel: sub, commit: m.commit };
+        const abs=path.join(m.abs,...sub.split("/").filter(Boolean));if(this.projectMode&&!this.localTarget(abs))throw new BrainError("Project Brain path is redirected outside allowed roots");
+        return { rel, abs, repo: m.commit ? m.abs : null, repoRel: sub, commit: m.commit };
       }
     }
-    return { rel, abs: path.join(this.root, ...rel.split("/").filter(Boolean)), repo: this.root, repoRel: rel, commit: this.cfg.brain.commit };
+    const abs=path.join(this.root,...rel.split("/").filter(Boolean));if(this.projectMode&&!this.localTarget(abs))throw new BrainError("Project Brain path is redirected outside allowed roots");
+    return { rel, abs, repo: this.root, repoRel: rel, commit: this.cfg.brain.commit };
   }
 
   /** Resolve a configured document mount to its verified Git root without broadening mount visibility. */
@@ -278,13 +336,14 @@ export class Brain {
   }
 
   private check(p: Principal, rel: string, mode: BrainMode): void {
+    if(this.projectMode){this.owner();assertProjectBrainPrincipal(this.db,p,rel);}
     const d = denial(p, rel, mode);
     if (d) throw new BrainError(d);
   }
 
   /** Queue cooperating Brain effects before acquiring common authority, never while holding it. */
   private async mutate<T>(repos: string[], action: (mutation: RepositoryMutationCapability) => Promise<T>, control: BrainMutationControl = {}): Promise<T> {
-    const execute = () => withRepositoryMutation(repos, action, { capability: control.mutation });
+    const execute = () => withRepositoryMutation(repos, mutation=>{this.owner();return action(mutation);}, { capability: control.mutation });
     // A nested host already owns its sorted scopes. Waiting for a normal operation
     // queued behind that same host would deadlock; the original capability is revalidated.
     if (control.mutation !== undefined) return execute();
@@ -353,6 +412,7 @@ export class Brain {
     const binding = r.repo && r.commit ? await this.resolveGitDocument(rel) : null;
     const effectRepo = binding?.repo ?? r.repo ?? await this.effectRepository(r.abs);
     const doWrite = async (mutation?: RepositoryMutationCapability) => {
+      this.owner();
       if (opts.expectedDigest !== undefined) {
         const current = existsSync(r.abs) ? brainContentDigest(readFileSync(r.abs, "utf8")) : null;
         if (current !== opts.expectedDigest) throw new BrainConflictError();
@@ -384,10 +444,12 @@ export class Brain {
   }
 
   exists(rel: string): boolean {
+    const normalized=normalizeBrainPath(rel);if(this.projectMode&&this.globalPath(normalized))return this.readShared(normalized)!==null;
     return existsSync(this.resolve(rel).abs);
   }
 
   read(p: Principal, rel: string, opts: { section?: string } = {}): { path: string; kind: EntryKind; content: string; lines: number; digest: string } {
+    const normalized=normalizeBrainPath(rel);if(this.projectMode&&this.globalPath(normalized)){this.check(p,normalized,"read");const record=this.readShared(normalized);if(record===null)throw new BrainError(`${normalized} does not exist`);let content=z.string().max(2000000).parse(record),digest=brainContentDigest(content);if(opts.section){const found=section(parseDoc(content),opts.section);if(!found)throw new BrainError("Shared section does not exist");content=found.body;}return {path:normalized,kind:kindOf(normalized),content,lines:content.split("\n").length,digest};}
     const r = this.resolve(rel);
     this.check(p, r.rel, "read");
     if (!existsSync(r.abs)) throw new BrainError(`${r.rel} does not exist`);
@@ -403,9 +465,12 @@ export class Brain {
 
   /** Files under a prefix that the principal may read. */
   list(p: Principal, prefix = ""): BrainEntry[] {
+    this.owner();if(this.projectMode)assertProjectBrainPrincipal(this.db,p);
     const start = normalizeBrainPath(prefix);
+    if(this.projectMode&&this.globalPath(start))return this.sharedEntries(start).filter(entry=>denial(p,entry.path,"read")===null);
     const out: BrainEntry[] = [];
     const walk = (rel: string) => {
+      if(this.projectMode&&rel!==""&&rel!=="projects"&&!this.owns(rel))return;
       const r = this.resolve(rel);
       if (!existsSync(r.abs)) return;
       const st = statSync(r.abs);
@@ -423,6 +488,7 @@ export class Brain {
       }
     };
     walk(start);
+    if(this.projectMode&&this.projectMode.sharedKnowledge&&start==="")out.push(...this.sharedEntries("global/").filter(entry=>denial(p,entry.path,"read")===null));
     return out.sort((a, b) => a.path.localeCompare(b.path));
   }
 
@@ -540,6 +606,7 @@ export class Brain {
    * and usually comes back pending review, or rejected and kept in the project with the reason.
    */
   async promoteLesson(p: Principal, actor: Actor, title: string, body: string, sources: string[]): Promise<PromotionOutcome> {
+    if(this.projectMode)assertProjectBrainPrincipal(this.db,p);
     if (p.kind === "agent" && p.role !== "supervisor") throw new BrainError("only supervisors promote lessons");
     await this.ensure();
     return this.promotions.promote(p, actor, { title, body, sources });
@@ -591,6 +658,7 @@ export class Brain {
     const binding = r.repo && r.commit ? await this.resolveGitDocument(r.rel) : null;
     const effectRepo = binding?.repo ?? r.repo ?? await this.effectRepository(r.abs);
     const doRemove = async (mutation?: RepositoryMutationCapability) => {
+      this.owner();
       if (binding) assertBrainGitPath(binding, r.abs);
       if (!existsSync(r.abs) || !statSync(r.abs).isFile()) throw new BrainError(`${r.rel} does not exist`);
       // A file written outside MeritRouter and never committed is recorded first, so its text stays in the history.
@@ -627,6 +695,7 @@ export class Brain {
   }
 
   private projectFolder(slug: string): string {
+    this.owner();if(this.projectMode&&slug!==this.projectMode.identity.slug)throw new BrainError("Project Brain cannot inspect another project folder");
     if (!/^[a-z0-9][a-z0-9._-]*$/.test(slug) || slug.includes("..")) throw new BrainError(`not a project slug: ${JSON.stringify(slug)}`);
     return path.join(this.root, "projects", slug);
   }
@@ -674,7 +743,7 @@ export class Brain {
 
   private bumpIndexGeneration(rel: string): void {
     const projectScope = /^projects\/([^/]+)\//.exec(rel)?.[1];
-    const scope = projectScope ? `project:${projectScope}` : "global";
+    const scope = this.projectMode?`project:${this.project}`:projectScope ? `project:${projectScope}` : "global";
     this.db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(`brain:index-generation:${scope}`, randomUUID());
   }
 
@@ -704,7 +773,7 @@ export class Brain {
 
   /** Bring the index up to date with the files (cheap when nothing changed). */
   async refreshIndex(opts: { maxAgeMs?: number } = {}): Promise<number> {
-    if (this.indexRefresh) return this.indexRefresh;
+    this.owner();if (this.indexRefresh) return this.indexRefresh;
     if (this.indexRefreshedAt && this.now() - this.indexRefreshedAt < (opts.maxAgeMs ?? 0)) return 0;
     this.indexRefresh = this.reconcileIndex().then(changed => {
       this.indexRefreshedAt = this.now();
@@ -758,6 +827,7 @@ export class Brain {
   async catalog(p: Principal, opts: { prefix?: string; scope?: "project" | "all"; after?: string; limit?: number } = {}): Promise<{ entries: BrainEntry[]; next: string | null; refreshedAt: number; generation: string }> {
     await this.refreshIndex({ maxAgeMs: 5000 });
     const prefix = normalizeBrainPath(opts.prefix ?? "");
+    if(this.projectMode){assertProjectBrainPrincipal(this.db,p);const local=z.array(BrainEntrySchema).parse(this.db.prepare("SELECT path,title,kind,status,lines,mtime FROM brain_files").all());const shared=this.projectMode.sharedKnowledge&&(!prefix||this.globalPath(prefix))?this.sharedEntries(prefix||"global/"):[];const entries=[...local,...shared].filter(entry=>entry.path.startsWith(prefix)&&entry.path>(opts.after??"")&&denial(p,entry.path,"read")===null).sort((a,b)=>a.path.localeCompare(b.path));const limit=Math.min(100,Math.max(1,Math.trunc(opts.limit??50)));const generations=z.array(z.object({key:z.string(),value:z.string()}).strict()).parse(this.db.prepare("SELECT key,value FROM meta WHERE key=?").all(`brain:index-generation:project:${this.project}`));return {entries:entries.slice(0,limit),next:entries.length>limit?entries[limit-1]!.path:null,refreshedAt:this.indexRefreshedAt,generation:brainContentDigest(JSON.stringify({generations,shared:shared.map(entry=>[entry.path,entry.mtime])}))};}
     const limit = Math.min(100, Math.max(1, Math.trunc(opts.limit ?? 50)));
     const scoped = opts.scope !== "all";
     const generations = (scoped
@@ -787,6 +857,7 @@ export class Brain {
    * `global/`, and the root.
    */
   search(p: Principal, query: string, opts: { prefix?: string; limit?: number; offset?: number; scope?: "project" | "all" } = {}): Array<{ path: string; title: string | null; kind: EntryKind; snippet: string }> {
+    this.owner();if(this.projectMode){assertProjectBrainPrincipal(this.db,p);if(opts.prefix&&!(this.globalPath(normalizeBrainPath(opts.prefix))||this.owns(normalizeBrainPath(opts.prefix))))throw new BrainError("Brain search prefix is outside pinned scope");}
     const terms = query.match(/[\p{L}\p{N}_]+/gu)?.slice(0, 12) ?? [];
     if (!terms.length) return [];
     const match = terms.map((t) => `"${t}"`).join(" OR ");
@@ -801,10 +872,11 @@ export class Brain {
     const rows = this.db
       .prepare(`SELECT path, title, snippet(brain_fts, 2, '[', ']', '…', 24) AS snippet FROM brain_fts WHERE brain_fts MATCH ?${scopeSql} ORDER BY bm25(brain_fts), path LIMIT ? OFFSET ?`)
       .all(match, ...(prefixes ?? []).map((x) => `${likeEscape(x)}%`), ...(prefix ? [`${likeEscape(prefix)}%`] : []), (opts.limit ?? 10) * 5, opts.offset ?? 0) as Array<{ path: string; title: string; snippet: string }>;
-    return rows
+    const local=rows
       .filter((r) => (!prefix || r.path.startsWith(prefix)) && denial(p, r.path, "read") === null)
       .slice(0, opts.limit ?? 10)
       .map((r) => ({ path: r.path, title: r.title || null, kind: kindOf(r.path), snippet: r.snippet }));
+    if(this.projectMode?.sharedKnowledge&&(!prefix||this.globalPath(prefix))){const hits=z.array(z.object({path:z.string(),title:z.string().nullable(),kind:BrainEntrySchema.shape.kind,snippet:z.string()}).strict()).max(1000).parse(this.shared().search(query,{...(prefix?{prefix}:{}),limit:opts.limit??10,offset:opts.offset??0}));for(const hit of hits)if(!hit.path.startsWith("global/")||normalizeBrainPath(hit.path)!==hit.path)throw new BrainError("Shared search returned a private path");return [...local,...hits.filter(hit=>denial(p,hit.path,"read")===null)].slice(0,opts.limit??10);}return local;
   }
 
   // ---------- history ----------
@@ -849,6 +921,7 @@ export class Brain {
   /** Projects the root index names: the configured ones, this brain's, and any other folder under `projects/`. */
   private indexProjects(): Array<{ slug: string; name: string }> {
     const out = new Map<string, string>();
+    if(this.projectMode)return [{slug:this.project,name:this.scope().name}];
     for (const p of this.cfg.projectResolution?.projects ?? []) out.set(p.slug, p.name);
     if (!out.has(this.project)) out.set(this.project, this.scope().name);
     const dir = path.join(this.root, "projects");

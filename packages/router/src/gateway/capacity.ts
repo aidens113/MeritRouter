@@ -1,9 +1,12 @@
+import { createHash } from "node:crypto";
 import { canonicalJson } from "../storage/tasks.js";
 import { readStoreIdentity } from "../projects/store-identity.js";
 import { ProjectExecutionGrants, ExecutionGrantRefSchema, type ExecutionGrantRef } from "../storage/project-execution-grants.js";
 import { LeaseRefSchema, type LeaseRef } from "../storage/task-leases.js";
 import { z } from "zod";
 import { immediate, newId, type Db } from "../storage/db.js";
+
+export class ProviderClaimCapacityError extends Error { constructor(){super("Split provider claim capacity exhausted");this.name="ProviderClaimCapacityError";} }
 
 /** `team.provider_concurrency_*` (see the config schema). */
 export interface ConcurrencySettings {
@@ -190,6 +193,15 @@ export class ProviderCapacity {
     if(holder.leaseOwner!==leases[0]!.owner||holder.taskIds.length!==leases.length||holder.taskIds.some(id=>!leases.some(l=>l.taskId===id)))throw new Error("Split holder participant mismatch");
     return {refs,leases,project};
   }
+  /** Public holder IDs are local; coordination keys bind their exact store generation and grants. */
+  private storageHolder(holder: SlotHolder): string {
+    if (!this.grants) return holder.id;
+    const refs = z.array(ExecutionGrantRefSchema).min(1).max(128).parse(holder.executionGrants);
+    const grants = refs.map(ref => { const grant = this.grants!.read(ref.grantId); if (!grant || grant.ref.nonce !== ref.nonce) throw new Error("Split holder grant nonce lost"); return grant; });
+    const project = grants[0]!.input.project;
+    if (grants.some(grant => canonicalJson(grant.input.project) !== canonicalJson(project))) throw new Error("Cross-project split holder");
+    return `split_${createHash("sha256").update(canonicalJson({project,id:holder.id,refs:[...refs].sort((a,b)=>a.grantId.localeCompare(b.grantId))})).digest("hex")}`;
+  }
   private splitLiveSql = `(s.kind='request' OR (s.execution_grants_json IS NOT NULL AND ((s.kind='claim' AND s.since>@claimCut) OR (s.kind='wait' AND s.seen_at>@waitCut)) AND NOT EXISTS (
     SELECT 1 FROM json_each(s.execution_grants_json) j LEFT JOIN project_execution_grants g ON g.id=json_extract(j.value,'$.grantId')
     LEFT JOIN project_store_registrations p ON p.project_uuid=g.project_uuid
@@ -326,13 +338,14 @@ export class ProviderCapacity {
     if (!this.enabled && !this.grants) return { id: null, platform, generation: 0 };
     return immediate(this.db!, () => {
       const split = this.grants ? this.splitHolder(holder) : null;
+      const storedHolder = this.storageHolder(holder);
       this.purge();
       const now = this.now();
       const r = this.record(platform);
       const held = this.count(platform, "request");
       if (this.enabled && held >= r.limit) return { full: true, platform, held, limit: r.limit, ahead: 0 } as SlotsFull;
       const ahead = this.count(platform, "wait", "AND s.holder != @holder AND (s.priority > @priority OR (s.priority = @priority AND s.since < @since))", {
-        holder: holder.id,
+        holder: storedHolder,
         priority: holder.priority,
         since: holder.since ?? Number.MAX_SAFE_INTEGER,
       });
@@ -341,12 +354,12 @@ export class ProviderCapacity {
       const leases = holder.leases === undefined ? null : JSON.stringify(z.array(LeaseRefSchema).max(256).parse(holder.leases));
       this.db!
         .prepare("INSERT INTO provider_slots (id, platform, kind, holder, task_id, lease_owner, priority, since, seen_at,lease_json,nonce) VALUES (?, ?, 'request', ?, ?, ?, ?, ?, ?,?,?)")
-        .run(id, platform, holder.id, holder.taskIds[0] ?? "", holder.leaseOwner, holder.priority, now, now, leases, nonce ?? null);
+        .run(id, platform, storedHolder, holder.taskIds[0] ?? "", holder.leaseOwner, holder.priority, now, now, leases, nonce ?? null);
       if(split)this.db!.prepare("UPDATE provider_slots SET project_uuid=?,store_uuid=?,store_generation=?,execution_grants_json=? WHERE id=?").run(split.project.projectId,split.project.storeId,split.project.generation,JSON.stringify(split.refs),id);
-      this.db!.prepare("DELETE FROM provider_slots WHERE kind = 'wait' AND holder = ?").run(holder.id);
+      this.db!.prepare("DELETE FROM provider_slots WHERE kind = 'wait' AND holder = ?").run(storedHolder);
       if (holder.leases !== undefined) {
-        const del = this.db!.prepare("DELETE FROM provider_slots WHERE kind='claim' AND task_id=? AND lease_owner=? AND json_extract(lease_json,'$[0].runCount')=? AND json_extract(lease_json,'$[0].incarnation')=? AND json_extract(lease_json,'$[0].project')=?");
-        for (const lease of holder.leases) del.run(lease.taskId, lease.owner, lease.runCount, lease.incarnation, lease.project);
+        const del = this.db!.prepare("DELETE FROM provider_slots WHERE kind='claim' AND task_id=? AND lease_owner=? AND json_extract(lease_json,'$[0].runCount')=? AND json_extract(lease_json,'$[0].incarnation')=? AND json_extract(lease_json,'$[0].project')=?" + (split ? " AND project_uuid=? AND store_uuid=? AND store_generation=?" : ""));
+        for (const lease of holder.leases) del.run(lease.taskId, lease.owner, lease.runCount, lease.incarnation, lease.project, ...(split ? [split.project.projectId,split.project.storeId,split.project.generation] : []));
       } else {
         const del = this.db!.prepare("DELETE FROM provider_slots WHERE kind='claim' AND task_id=? AND lease_json IS NULL");
         for (const t of holder.taskIds) del.run(t);
@@ -397,13 +410,14 @@ export class ProviderCapacity {
     holder.since ??= now;
     immediate(this.db!, () => {
       const split=this.grants?this.splitHolder(holder):null;
+      const storedHolder=this.storageHolder(holder);
       for (const platform of new Set(platforms)) {
-        const updated = this.db!.prepare("UPDATE provider_slots SET seen_at = ? WHERE kind = 'wait' AND holder = ? AND platform = ?").run(now, holder.id, platform);
+        const updated = this.db!.prepare("UPDATE provider_slots SET seen_at = ? WHERE kind = 'wait' AND holder = ? AND platform = ?").run(now, storedHolder, platform);
         if (updated.changes) continue;
         const waitId=newId("slot");
         this.db!
           .prepare("INSERT INTO provider_slots (id, platform, kind, holder, task_id, lease_owner, priority, since, seen_at,lease_json) VALUES (?, ?, 'wait', ?, ?, ?, ?, ?, ?,?)")
-          .run(waitId, platform, holder.id, holder.taskIds[0]!, holder.leaseOwner, holder.priority, holder.since!, now, holder.leases === undefined ? null : JSON.stringify(holder.leases));
+          .run(waitId, platform, storedHolder, holder.taskIds[0]!, holder.leaseOwner, holder.priority, holder.since!, now, holder.leases === undefined ? null : JSON.stringify(holder.leases));
         if(split)this.db!.prepare("UPDATE provider_slots SET project_uuid=?,store_uuid=?,store_generation=?,execution_grants_json=? WHERE id=?").run(split.project.projectId,split.project.storeId,split.project.generation,JSON.stringify(split.refs),waitId);
       }
     });
@@ -413,7 +427,7 @@ export class ProviderCapacity {
   leave(holder: SlotHolder): void {
     if (!this.db) return;
     try {
-      const n = this.db.prepare("DELETE FROM provider_slots WHERE holder=? AND uncertain=0 AND (kind='wait' OR (kind='request' AND nonce IS NULL AND lease_json IS NULL))").run(holder.id).changes;
+      const n = this.db.prepare("DELETE FROM provider_slots WHERE holder=? AND uncertain=0 AND (kind='wait' OR (kind='request' AND nonce IS NULL AND lease_json IS NULL))").run(this.storageHolder(holder)).changes;
       if (n) this.wake();
     } catch {
       // database closed
@@ -463,14 +477,21 @@ export class ProviderCapacity {
   /** Called only after local claim commit consumed the global execution grant. */
   recordProjectClaim(holder:SlotHolder,platform:string):void {
     if(!this.grants)throw new Error("Split capacity not attached");
-    immediate(this.db!,()=>{const bound=this.splitHolder(holder),now=this.now();
+    immediate(this.db!,()=>{const bound=this.splitHolder(holder),now=this.now(),storedHolder=this.storageHolder(holder);
       this.purge();
-      const existing=this.db!.prepare("SELECT COUNT(*) n FROM provider_slots WHERE kind='claim' AND holder=? AND platform=?").get(holder.id,platform) as {n:number};
-      if(existing.n===bound.leases.length)return;
-      if(existing.n!==0)throw new Error("Partial split claim binding");
+      const existing=this.db!.prepare("SELECT lease_json,execution_grants_json FROM provider_slots WHERE kind='claim' AND holder=? AND platform=?").all(storedHolder,platform) as Array<{lease_json:string;execution_grants_json:string}>;
+      if(existing.length===1){
+        const row=existing[0]!;
+        const set=(values:readonly unknown[])=>JSON.stringify(values.map(value=>canonicalJson(value)).sort());
+        const storedLeases=z.array(LeaseRefSchema).min(1).max(128).parse(JSON.parse(row.lease_json)),storedRefs=z.array(ExecutionGrantRefSchema).min(1).max(128).parse(JSON.parse(row.execution_grants_json));
+        if(set(storedLeases)!==set(bound.leases)||set(storedRefs)!==set(bound.refs))throw new Error("Split claim binding changed");
+        return;
+      }
+      if(existing.length!==0)throw new Error("Partial split claim binding");
       const used=this.count(platform,"request")+this.count(platform,"claim")+this.count(platform,"wait","AND s.priority>0");
-      if(this.enabled&&used+bound.leases.length>this.limit(platform))throw new Error("Split provider claim capacity exhausted");
-      for(const lease of bound.leases)this.db!.prepare("INSERT INTO provider_slots(id,platform,kind,holder,task_id,lease_owner,priority,since,seen_at,lease_json,project_uuid,store_uuid,store_generation,execution_grants_json) VALUES(?,?,'claim',?,?,?,0,?,?,?,?,?,?,?)").run(newId("slot"),platform,holder.id,lease.taskId,lease.owner,now,now,JSON.stringify([lease]),bound.project.projectId,bound.project.storeId,bound.project.generation,JSON.stringify(bound.refs));
+      if(this.enabled&&used+1>this.limit(platform))throw new ProviderClaimCapacityError();
+      const first=bound.leases[0]!;
+      this.db!.prepare("INSERT INTO provider_slots(id,platform,kind,holder,task_id,lease_owner,priority,since,seen_at,lease_json,project_uuid,store_uuid,store_generation,execution_grants_json) VALUES(?,?,'claim',?,?,?,0,?,?,?,?,?,?,?)").run(newId("slot"),platform,storedHolder,first.taskId,first.owner,now,now,JSON.stringify(bound.leases),bound.project.projectId,bound.project.storeId,bound.project.generation,JSON.stringify(bound.refs));
     });
   }
 

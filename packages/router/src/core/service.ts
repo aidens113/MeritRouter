@@ -393,6 +393,12 @@ export class MeritRouter {
     });
   }
 
+  /** A project's Lab manager; the installation manager until project runtimes are active. */
+  labsFor(project: string): LabManager {
+    this.projectContext(project);
+    return this.labs;
+  }
+
   /**
    * The context a project's tasks run under. A row without a project (written outside a service
    * since this one started) belongs to the primary project, as at start (see `backfillProjects`).

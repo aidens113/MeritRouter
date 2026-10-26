@@ -6,6 +6,9 @@ Standalone native lock/sequencer removal precheck added by supervisor. Actual pe
 ten-marker and shared packed-refs lock fixture PASS1/1,18.93s; full existing workspace
 lifecycle guards PASS12/12,74.97s. Check is cooperative; unmanaged native races remain outside
 the atomicity claim. Labs owner consumes the same check under its existing scopes.
+Additional retained-command blocker: preliminary admin admission and low-level purge refuse
+any project lab_command_owners row even if its Lab says destroyed. Exact regression PASS1/1,
+14.66s, preserving config/Git/index/SQL and owner bytes before cleanup.
 
 Worker: c3_message
 Date: 2026-10-26

@@ -1,3 +1,4 @@
+import { ProjectStoreIdentitySchema, readStoreIdentity, type ProjectStoreIdentity } from "../projects/store-identity.js";
 import { createHash } from "node:crypto";
 import type { Db } from "./db.js";
 import { immediate, newId } from "./db.js";
@@ -48,6 +49,9 @@ export interface SubmitOutcome {
   state: TaskState;
   deduplicated: boolean;
 }
+
+/** Host-only local selection; coordination admission remains the split queue adapter's authority. */
+export interface ProjectClaimControl { project: ProjectStoreIdentity; order: "project_fifo" }
 
 export interface ClaimLimits {
   maxConcurrent: number;
@@ -274,8 +278,12 @@ export class TaskStore {
    * within a project (`FairClaimOrder`); a project's `max_concurrent_tasks` and every global
    * cap, provider-slot, and lease check apply to each one.
    */
-  claim(owner: string, limits: ClaimLimits): StoredTask[] {
+  claim(owner: string, limits: ClaimLimits, control?: ProjectClaimControl): StoredTask[] {
     return immediate(this.db, () => {
+      if (control) {
+        const identity = ProjectStoreIdentitySchema.parse(control.project);
+        if (control.order !== "project_fifo" || canonicalJson(readStoreIdentity(this.db)) !== canonicalJson(identity)) throw new Error("Project claim order requires the exact local store identity");
+      }
       const now = this.now();
       this.resolveDependencyGates(now);
 
@@ -337,8 +345,10 @@ export class TaskStore {
            next_attempt_at = NULL, updated_at = ?
          WHERE id = ?`,
       );
-      const order = new FairClaimOrder(this.db, candidates, limitsOf);
+      let nextLocal = 0;
+      const order = control ? { next: () => candidates[nextLocal++] ?? null, claimed: (_row: TaskRow) => {}, save: () => {} } : new FairClaimOrder(this.db, candidates, limitsOf);
       for (let row = order.next(); row; row = order.next()) {
+        if (control && claimed.length >= (limits.limit ?? Number.MAX_SAFE_INTEGER)) break;
         const spec = JSON.parse(row.spec_json) as WorkerTask;
         const isSubSup = sup.has(row.profile) && !!spec.parentTaskId;
         const isSup = sup.has(row.profile) && !isSubSup;

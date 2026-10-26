@@ -1,3 +1,4 @@
+import { ProviderClaimCapacityError } from "../gateway/capacity.js";
 import type { ExecutionGrantRef } from "../storage/project-execution-grants.js";
 import type { ResolvedConfig } from "../config/load.js";
 import { TIER_NAMES, type TierName } from "../config/schema.js";
@@ -82,6 +83,25 @@ export class ProviderSlotAdmission implements ClaimAdmission {
       wait: platforms.join(","),
       data: { platforms: r.usage.map((u) => ({ platform: u.platform, limit: u.limit, inFlight: u.requests, starting: u.claims, waiting: u.waiting })) },
     };
+  }
+
+  /** Resolve headroom before opening a coordination transaction; route plans stay project-local. */
+  selectedPlatform(row: TaskRow, spec: WorkerTask): string | null {
+    if (!this.capacity.enabled) return null;
+    const platforms = this.platforms(row, spec);
+    if (!platforms.length) return null;
+    const selected = this.capacity.admissible(platforms).platform;
+    if (!selected) throw new ProviderClaimCapacityError();
+    return selected;
+  }
+
+  /** Called after local claim COMMIT and fresh grant consumption, for the immutable whole group. */
+  claimedGroup(tasks: readonly StoredTask[], owner: string, refs: readonly ExecutionGrantRef[], platform: string | null): void {
+    if (!this.capacity.splitMode || !tasks.length) throw new Error("Sealed project claim requires split capacity and participants");
+    const leases = tasks.map(task => ({taskId:task.row.id,owner,runCount:task.row.run_count,incarnation:task.row.lease_incarnation,project:task.row.project_id}));
+    if (tasks.some(task => task.row.lease_owner !== owner || task.row.project_id !== leases[0]!.project)) throw new Error("Sealed provider claim has foreign participants");
+    for (const task of tasks) this.chosen.delete(task.row.id);
+    if (platform) this.capacity.recordProjectClaim({id:refs[0]!.grantId,taskIds:tasks.map(task=>task.row.id),leaseOwner:owner,priority:0,since:null,leases,executionGrants:refs},platform);
   }
 
   claimed(row: TaskRow, _spec: WorkerTask, owner: string): void {
