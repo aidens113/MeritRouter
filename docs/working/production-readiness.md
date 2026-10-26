@@ -1,6 +1,6 @@
 # Production readiness execution sequence
 Status: Active
-Status detail: Consolidated execution priorities; project-local storage foundation underway, product pilot undelivered.
+Status detail: User resumed the plan on 2026-10-26 and required investigation and prevention of drive-root folder sprawl.
 Created: 2026-10-26
 Last updated: 2026-10-26
 Owner: Senior supervisor agent
@@ -9,6 +9,10 @@ Paired document: none
 Related: [storage](project-local-storage.md), [delivery](supervisor-lifecycle-stall.md), [supervised delivery](supervised-delivery-v2.md), [platform backlog](roadmap-completion.md)
 
 ## Current State
+
+Resumed explicitly by the user on 2026-10-26. First investigate drive-root folder sprawl,
+enforce in-repository development/validation locations, then continue the storage checkpoint.
+Preserve existing dirty work and services; do not treat historical worktrees as disposable.
 
 MeritRouter supports supervised use; unattended production delivery is unproven.
 User authorized continued plan execution on 2026-10-26. Current implementation focus is
@@ -49,6 +53,14 @@ Steps may overlap only where source ownership and validation trees are isolated.
 relocate active workers or replace the live daemon merely to activate a nonblocking fix.
 
 ## Work Ledger
+
+### 2026-10-26 — Resume with drive-root containment
+- Agent: supervisor
+- Changed: resumed checkpoint, AGENTS.md worktree location/cleanup rule, storage inventory.
+- Why: Explicit user resume and complaint about alternate D:/ folders.
+- Validation: Git inventory identifies twelve merged sibling worktrees; `git diff --check` exit0.
+- Outcome: Accepted policy; storage C2b implementation resumed in existing in-project tree.
+- Follow-up: preserve legacy configuration/projects; no broad deletion or live activation.
 
 ### 2026-10-26 — Consolidate execution priorities
 - Agent: supervisor

@@ -2,6 +2,16 @@
 
 ## Priority checkpoint (2026-10-26)
 
+USER RESUMED on 2026-10-26: continue plan; investigate/prevent alternate folders in D:/.
+Twelve sibling SwitchYardRouter-* folders are registered development worktrees with HEADs
+merged into dev. Placement/cleanup policy gap corrected in AGENTS.md; inspect untracked
+data and services before any cleanup. No folders moved/deleted. Resume isolated C2b work
+in existing .MeritRouter/development/metadata-exclusion, preserving unfinished draft.
+Published dev/main2185d59; local dev2bc5ab6 includes compact paths, unpushed.
+Isolated metadata-exclusion tree has unfinished/uncommitted selected-commit corrections;
+selected_commit_resume is continuing the paused draft there with focused regression checks.
+No migration/live activation; app undelivered. Preserve source and existing panel services.
+
 [Production readiness](production-readiness.md) now owns cross-effort execution order and
 exit criteria. [Project-local storage](project-local-storage.md) is the active implementation
 focus: path contract and additive project directory metadata implemented, state/accounting

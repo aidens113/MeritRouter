@@ -1,6 +1,6 @@
 # Project-local runtime storage
 Status: Active
-Status detail: Storage foundation full1789PASS/0FAIL/3SKIP and recursive checks passed; isolated staging/compact paths active, migration pending.
+Status detail: User resumed 2026-10-26; investigate drive-root worktrees, prevent recurrence, then finish isolated selected-commit corrections and validation.
 Created: 2026-10-25
 Last updated: 2026-10-26
 Owner: Senior supervisor agent
@@ -9,6 +9,30 @@ Paired document: none
 Related: [working index](README.md), [delivery investigation](supervisor-lifecycle-stall.md)
 
 ## Current State
+
+RESUMED explicitly on 2026-10-26. User also requires no more alternate folders in D:/.
+Inventory found twelve D:/SwitchYardRouter-* registered development worktrees, all HEADs
+already ancestors of dev, no tracked changes and no nonignored untracked files. Ignored
+build/demo state and historical service launch references must be preserved before cleanup.
+Prior isolation policy omitted placement and cleanup;
+AGENTS.md now requires in-project ignored .MeritRouter/development and validation paths.
+No external directory moved or deleted. Preserve panel/app services; no reload.
+Published dev/main2185d59. Local dev2bc5ab6 includes compact-v2 merge, not pushed.
+Isolated staging branchb7cf87b retains accepted C1/C2 commits plus UNCOMMITTED C2b changes,
+including review-blocker corrections in progress. Do not treat latest draft as accepted.
+Known review blockers: concurrent pending-receipt bypass and redirected Git refs foreign write;
+author addressing under-lock gate, Git-write topology and terminal receipt retention.
+Resumed source is frozen; independent review found no new prerequisite blocker, with real
+concurrent-pending/hardlinked-log/archive probes3/3 and targeted topology5/5 passing.
+Root read implementation and observed main/isolated recursive typecheck and isolated build PASS.
+Root selected28-case suite and full router suite are running against frozen isolated source;
+no aggregate success claimed yet. Test fixture pack-refs setup fixed without widening policy.
+Message/trailer compatibility, all-caller pending gates and power-loss durability remain
+explicit preactivation requirements. Main working-doc changes also uncommitted.
+No data migration or live caller activation performed. Facebook remains undelivered.
+
+The execution checkpoint below records earlier acceptance; selected_commit_resume now owns
+the unfinished C2b draft. See reports/drive-root-worktrees.md for the folder investigation.
 
 2026-10-26: user authorized continuing execution. Initial discovery is complete;
 report: project-local-storage/reports/storage-discovery.md. Shared DB/store construction
@@ -36,7 +60,8 @@ output .MeritRouter/validation/storage-foundation-final/full.json. Recursive che
 Original JSON output moved after completion into this project's ignored metadata directory:
 .MeritRouter/validation/storage-foundation-87feb17/full.json (copy/fsync/SHA256 verified,
 then removed own temp original; C:->D: rename refused EXDEV). Not a green aggregate.
-No physical separation or migration implemented; checked foundation publication underway.
+No physical separation or migration implemented. Checked foundation published dev/main2185d59;
+no runtime daemon/panel reload or legacy-data migration performed for this release.
 Next exclusion/preflight helper in isolated feat/project-metadata-exclusion tree under
 D:/SwitchYardRouter/.MeritRouter/development/metadata-exclusion. Root established a
 Git-local exclude block (preserving prior bytes) before creating that development tree;
@@ -55,6 +80,18 @@ root31PASS/1POSIXskip90.94s plus isolated typecheck/build PASS. C2 committed onl
 branchb9d866f; dev merged into that branch without conflicts. C2b selected exact commit API
 assigned in same isolated tree, with no existing caller changes yet. Compact layoutv2 assigned
 separately under .MeritRouter/development/compact-runtime-paths, retaining existing v1 paths.
+Compactv2 independently/root37/37 plus type/build PASS, committeda34f291 and merged locally;
+main recursive typecheck/build after merge PASS. New native cwd preflight240, tested232cwd
+and434characterdeepGitfile with process-local longpaths. Not pushed/activated yet.
+Compact development worktree registration/local branch removed after merge. Directory cleanup
+partially failed Windows Invalid argument, then EPERM on a loaded/shared Next SWC native DLL.
+Only ignored owned dependency residue remains; defer its cleanup until naturally quiescent,
+do not stop the user's panel for this. No unknown/user directories selected.
+C2b review found confirmed pending-publication waiter bypass and redirected Git refs foreign
+write; author correcting under-lock gate and bounded Git-write topology checks including logs/
+objects. Root also required unresolved-only gate/sharded terminal archive to avoid retaining/
+rehashing every fullindex forever and permanently blocking after1000completed commits.
+C2b NOT accepted/committed/activated. All failure probes used disposable temp Git data.
 Live Facebook job is interrupted (watchdog); profile completed, people and notifications
 failed deadline_exceeded. No pending/running command approvals at inspection. Preserve
 all retained source and accounting; do not represent the app as delivered.
@@ -126,6 +163,31 @@ is underway before approving physical DB split implementation. Do not copy globa
 or private payloads into a misleading partial project store and call migration complete.
 
 ## Worker Briefs
+
+### metadata-selected-commit-resume-review
+- Role: independent read-only reviewer, existing metadata-exclusion tree; no new checkout.
+- Read root Current State, C2b brief, prior metadata-selected-commit-review report and draft diff.
+- Own only reports/metadata-selected-commit-resume-review.md in that isolated tree.
+- Verify under-lock pending gate, ref/log/object topology, terminal retention/crash semantics
+  and complete/refused outcome classification. Run independent real temp-Git probes as useful.
+- Check ordinary commit message/trailer compatibility; report source blockers separately
+  from unsupported backend/hostile filesystem limitations. Tests/source remain author-owned.
+- Coordinate with author if source changes during review; report exact reviewed snapshot.
+- No source/shared-doc edits, commits, live data, providers or repository-wide validation.
+- Return findings by severity, exact checks and remaining acceptance limits; freeze report.
+
+### metadata-selected-commit-resume
+- Role: implementation worker; continue existing C2b draft, no new checkout.
+- Directory: D:/SwitchYardRouter/.MeritRouter/development/metadata-exclusion.
+- Read Current State and existing metadata-selected-commit brief; inspect local draft first.
+- Own only the C2b source/tests already assigned there and reports/metadata-selected-commit-resume.md.
+- Finish under-index-lock pending receipt gate, bounded Git write topology checks, and
+  unresolved-only receipt scan with sharded terminal retention. Preserve original guarantees.
+- Reproduce both prior review blockers and add real temp-Git regressions before acceptance.
+- Run focused C1/C2/C2b tests and package typecheck; report exact outputs and freeze changes.
+- No existing caller integration, shared docs, live data, provider calls, commits or pushes.
+- No directories outside this checkout; temp Git fixtures only in normal OS temp.
+- Final report: changed files, verified behavior, exact checks, remaining risks/blockers.
 
 ### runtime-path-contract
 - Role: worker; implementation foundation only, no live migration or service wiring.
@@ -339,6 +401,7 @@ or private payloads into a misleading partial project store and call migration c
 - Role: implementation worker in same isolated staging branch after root C2 commit.
 - Read: Current State, metadata-commit-contract.md and accepted C2 API/source.
 - Own: workspaces/git-index-transaction.ts, metadata-staging.ts, git.ts, git-process-policy.ts as necessary;
+  NEW workspaces/git-write-topology.ts for bounded native Git write ownership preflight;
   NEW attribution/selected-commit.ts and specifically named publication/recovery module if needed;
   NEW tests/project-metadata-selected-commit.test.ts; own report. No existing caller/Actor edits.
 - Build a trusted exact selected-commit API preserving Git positive/negative/literal selection,
@@ -365,6 +428,20 @@ or private payloads into a misleading partial project store and call migration c
 - Preserve stage-only API; no migration/runtime/model tool exposure/caller integration/commits.
   Propose API and any genuine blockers before broad refactor; focused tests/typecheck then freeze.
 
+### metadata-selected-commit-review
+- Role: independent read-only reviewer in metadata-exclusion isolated tree after author freeze.
+- Own report reports/metadata-selected-commit-review.md only; bounded temp probes/tests allowed.
+- Inspect new selected-commit,receipt,ref-publication modules and Gitindex/staging/policy diffs.
+- Confirm staged-A/partial-B/deletions/newfiles preserve original Git semantics, immutable
+  binary/Unicode candidate, no selected private alias bytes, no global renormalization, setup
+  identity/message compatibility and Actortrailers. Check copied-index racy state regressions.
+- Inspect interactive literalHEAD prepare proof, attached/detached/unborn/sameOID races,
+  child death/timeouts/lock ownership, typed uncertain or committed-index-pending states and
+  durable bounded validated receipts/backups. No automatic HEAD rollback or foreign-lock cleanup.
+- Check host-only capabilities, raw stdin/env denial, callback quiescence and cleanup/faultpaths;
+  Windows longpaths flag remains trusted process-local. No source edits/live projects/commits.
+- Separate unsupported backend, physical-race and no-caller integration limits from defects.
+
 ### compact-runtime-paths
 - Role: implementation worker in separate isolated feat/compact-runtime-paths tree.
 - Read: Current State, reports/windows-workspace-launch.md and existing runtime-path module/tests.
@@ -384,6 +461,16 @@ or private payloads into a misleading partial project store and call migration c
 - Keep existing safety tests, add v1 roundtrip/unchanged path, v2 encoding/version/alias conflicts,
   actual cwd/process cases. Focused checks only; offline locked deps if needed, no source manifests.
 - No commits/live projects/providers or main source/dist edits; notify freeze/report limits.
+
+### compact-runtime-paths-review
+- Role: independent read-only reviewer in compact-runtime-paths isolated tree.
+- Own report reports/compact-runtime-paths-review.md only; focused tests/probes allowed.
+- Read Current State/compact brief and frozen runtime-paths source/test/report. Verify exact
+  v1 identity/schema/path compatibility, strict v2/manifest agreement, full128bit case-safe
+  encoding, Windows cwd preflight, alias/namespace/link/unknownversion handling and real launch.
+- Check ordinary readable names stay recognizable and no implicit migration/source activation.
+  Report blockers versus Gitpolicy/deep-path activation prerequisites. No source/live changes,
+  commits/main-tree edits or redundant broad builds.
 
 ### storage-discovery
 - Role: read-only worker; do not change source or live runtime state.
@@ -407,6 +494,22 @@ or private payloads into a misleading partial project store and call migration c
 - Keep report navigable with tables and exact file references. No broad code extraction.
 
 ## Work Ledger
+
+### 2026-10-26 — Review resumed selected-commit corrections
+- Agent: supervisor; workers selected_commit_resume and selected_commit_review
+- Changed: isolated C2b draft corrections/tests and separate author/reviewer reports.
+- Why: Finish paused concurrency/topology blockers with bounded terminal receipt retention.
+- Validation: root main and isolated `pnpm -r typecheck` PASS; isolated `pnpm -r build` PASS. Root focused/full router checks running, not yet accepted.
+- Outcome: Partial; independent review report read, no new standalone prerequisite blocker.
+- Follow-up: inspect exact root test output; retain explicit message/caller/power-loss limits; no runtime activation.
+
+### 2026-10-26 — Resume and prevent sibling worktree sprawl
+- Agent: supervisor
+- Changed: AGENTS.md, Current State/handoff/readiness checkpoint and drive-root-worktrees report.
+- Why: User resumed execution and required no more alternate development folders in D:/.
+- Validation: twelve `git merge-base --is-ancestor <HEAD> dev` checks exit0; tracked/nonignored untracked inventories empty; ignored build/demo state retained; `git diff --check` exit0.
+- Outcome: Accepted policy/investigation; no directory removal or runtime migration.
+- Follow-up: selected_commit_resume owns C2b in existing in-project tree; independent review and supervisor checks required before acceptance. External cleanup deferred pending evidence/launch-reference inventory.
 
 ### 2026-10-26 — Verify and commit isolated exclusion preflight
 - Agent: supervisor; workers project_directory_config and runtime_path_contract
