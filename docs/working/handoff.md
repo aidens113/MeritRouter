@@ -8,8 +8,9 @@ merged into dev. Placement/cleanup policy gap corrected in AGENTS.md; inspect un
 data and services before any cleanup. No folders moved/deleted. Resume isolated C2b work
 in existing .MeritRouter/development/metadata-exclusion, preserving unfinished draft.
 Published dev/main2185d59; local dev2bc5ab6 includes compact paths, unpushed.
-Isolated metadata-exclusion tree has unfinished/uncommitted selected-commit corrections;
-selected_commit_resume is continuing the paused draft there with focused regression checks.
+Isolated metadata-exclusion tree nowf26b974 commits standalone selected-commit corrections;
+root selected28/28 and recursive checks pass, full router suite still running after native
+SQLite dependency repair. Not merged/pushed/activated. Next C3 contract is recorded there.
 No migration/live activation; app undelivered. Preserve source and existing panel services.
 
 [Production readiness](production-readiness.md) now owns cross-effort execution order and

@@ -18,17 +18,24 @@ Prior isolation policy omitted placement and cleanup;
 AGENTS.md now requires in-project ignored .MeritRouter/development and validation paths.
 No external directory moved or deleted. Preserve panel/app services; no reload.
 Published dev/main2185d59. Local dev2bc5ab6 includes compact-v2 merge, not pushed.
-Isolated staging branchb7cf87b retains accepted C1/C2 commits plus UNCOMMITTED C2b changes,
-including review-blocker corrections in progress. Do not treat latest draft as accepted.
-Known review blockers: concurrent pending-receipt bypass and redirected Git refs foreign write;
-author addressing under-lock gate, Git-write topology and terminal receipt retention.
+Isolated staging branch nowf26b974 retains C1/C2 plus committed standalone C2b corrections.
+No caller activation accepted. Prior concurrent pending-receipt and redirected Git refs
+blockers have regressions and root/independent checks; full-suite acceptance is pending.
 Resumed source is frozen; independent review found no new prerequisite blocker, with real
 concurrent-pending/hardlinked-log/archive probes3/3 and targeted topology5/5 passing.
 Root read implementation and observed main/isolated recursive typecheck and isolated build PASS.
-Root selected28-case suite and full router suite are running against frozen isolated source;
-no aggregate success claimed yet. Test fixture pack-refs setup fixed without widening policy.
+Root selected suite PASS28/28 in157.39s; full router suite is running against frozen
+isolated source, no aggregate success claimed yet. Fixture pack-refs setup fixed without
+widening runtime policy. Root verified all four reviewed source SHA256 values unchanged.
+Initial root full run stopped after missing isolated better-sqlite3 native binding; no green
+aggregate for that interrupted run. Isolated rebuild exit0 and in-memory SELECT1 succeeded;
+fresh full rerun writes validation/selected-commit-resume/full-after-dependency-rebuild.json.
 Message/trailer compatibility, all-caller pending gates and power-loss durability remain
 explicit preactivation requirements. Main working-doc changes also uncommitted.
+Next C3 source/reference contract is in reports/metadata-caller-activation-contract.md:
+message parity first, shared lifecycle lease second, then attributed wrappers/stage/setup/
+resume/integration/Brain/deletion. Preserve legacy public paths:[] meaning ALL. Root read
+the proposed file partitions and acceptance matrix; no C3 source edits during full suite.
 No data migration or live caller activation performed. Facebook remains undelivered.
 
 The execution checkpoint below records earlier acceptance; selected_commit_resume now owns
@@ -163,6 +170,19 @@ is underway before approving physical DB split implementation. Do not copy globa
 or private payloads into a misleading partial project store and call migration complete.
 
 ## Worker Briefs
+
+### metadata-caller-activation-contract
+- Role: read-only planner in existing metadata-exclusion tree during frozen-source validation.
+- Own only reports/metadata-caller-activation-contract.md there; no checkout/source/shared docs.
+- Read Current State, metadata-commit-contract report and resumed C2b review limits.
+- Trace actual mutation callers: attribution/index.ts, harness/resume.ts, harness collection,
+  workspace creation/integration/deletion and project setup; follow direct references only.
+- Propose precise file partitions for C3 wrapper activation with unchanged identity/message/
+  trailer semantics, typed uncertain/pending handling and pending guards on every mutation.
+- Distinguish must-fix preactivation gaps from later migration/state-service work; no fake
+  transparent replacement of raw commit-tree message semantics. Include exact acceptance tests.
+- Do not implement, run broad tests, call providers, touch live data or commit/push.
+- Return actionable contract and any genuine unresolved user decision; preserve frozen source.
 
 ### metadata-selected-commit-resume-review
 - Role: independent read-only reviewer, existing metadata-exclusion tree; no new checkout.
@@ -494,6 +514,14 @@ or private payloads into a misleading partial project store and call migration c
 - Keep report navigable with tables and exact file references. No broad code extraction.
 
 ## Work Ledger
+
+### 2026-10-26 — Repair isolated validation dependency
+- Agent: supervisor
+- Changed: isolated ignored node_modules only; no source/runtime change.
+- Why: Full suite emitted missing better-sqlite3 native binding; stopped exact owned test process tree.
+- Validation: isolated `pnpm --filter meritrouter rebuild better-sqlite3` exit0; in-memory SQLite `select 1 as ok` returned `{ ok: 1 }`.
+- Outcome: Partial; interrupted original run is not accepted. Fresh full run underway with maxWorkers3.
+- Follow-up: inspect full-after-dependency-rebuild.json; no changes to live SQLite/configuration.
 
 ### 2026-10-26 — Review resumed selected-commit corrections
 - Agent: supervisor; workers selected_commit_resume and selected_commit_review
