@@ -287,7 +287,7 @@ export class SupervisorRunner implements CodingRunner {
           const t = ctx.services!.getTask(id);
           return t && ["queued", "waiting_for_dependencies", "waiting_for_capacity", "running", "cancel_requested"].includes(t.state);
         });
-        if (running.length) errors.push(`tasks still running: ${running.join(", ")}; await or cancel them first`);
+        if (running.length) errors.push(`tasks still running: ${running.join(", ")}; continue await_tasks until they settle. Active checks cannot be abandoned to finish the job`);
         if (errors.length) return { ok: false, errors };
         return {
           ok: true,
