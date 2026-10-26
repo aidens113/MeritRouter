@@ -91,6 +91,9 @@ describe("native coding worker", () => {
   it("external coding workers fail closed when no OS repository sandbox is available", async () => {
     env = makeEnv({ config: baseConfig({ coding: { runner: "command", command: `node "${agent}" good` } }) });
     sy = open(env, new ScriptedClient((req) => reply(JSON.stringify(goodOutput()), servedFor(sy!, req))), { worker: true, coding: createCodingRunner(env.cfg) });
+    // This case checks worker sandbox refusal; keep first-use Brain bootstrap in the
+    // test's setup phase rather than the short shared shutdown hook.
+    await sy.brain.ensure();
     const [sub] = await sy.submitTasks([task()]);
     const r = (await sy.awaitResults([sub!.taskId], { timeoutSeconds: 60 })).completed[0]!;
     expect(r.executionStatus).toBe("failed");
