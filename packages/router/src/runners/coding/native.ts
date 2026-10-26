@@ -1,3 +1,4 @@
+import { git } from "../../workspaces/git.js";
 import { restoreCheckEvidence } from "../../harness/check-evidence.js";
 import { workerActionTools } from "../../harness/worker-action-tools.js";
 import type { ChatMessage } from "../../gateway/types.js";
@@ -37,7 +38,7 @@ export class NativeCodingRunner implements CodingRunner {
     // A resumed session continues in the worktree it recorded; otherwise a fresh one.
     const reused = ctx.resume ? await resumeWorkspace(ctx, ctx.resume.plan.workspace) : null;
     const { ws, worktrees } = reused ?? (await prepareWorkspace(ctx));
-    const pointer = new WorkspacePointer(ctx.session, [{ alias, worktree: ws.worktreePath, branch: null, baseCommit: ws.baseSha, head: reused?.head ?? ws.baseSha }]);
+    const pointer = new WorkspacePointer(ctx.session, [{ alias, worktree: ws.worktreePath, branch: null, baseCommit: ws.baseSha, head: reused?.head ?? (await git(ws.worktreePath, ["rev-parse", "HEAD"])).trim() }]);
     const readers = readersFor(ctx.cfg, spec);
     readers.set(alias, new RepoReader(alias, ws.worktreePath, null)); // read your own edits
     // Explicit context describes the isolated base, even when the source checkout changes
@@ -91,7 +92,7 @@ export class NativeCodingRunner implements CodingRunner {
         role: "system",
         content: `${charterFor(ctx.cfg, role)}\n\n## Tools\nYour workspace is repository "${alias}" (an isolated worktree). Edit only paths matching: ${(spec.constraints.allowedPaths ?? []).join(", ")}. Prefer read_files/search_text and apply_edits (sha256-guarded); legacy read_file/search/write_file/replace_in_file/delete_file remain compatibility aliases${canCheck ? `; group your declared checks with run_checks; run_check is a compatibility alias for one check (at most ${ctx.cfg.coding.max_check_runs_per_task} runs)` : ""}${patterns.length ? "; run allowed commands with run_command" : ""}. There is no other shell. When done, call submit_result once.\n\n## Result\n${OUTPUT_CONTRACT}`,
       },
-      { role: "user", content: `${taskBrief(spec, ctx.retry)}${checks}\nProvided context:\n${renderSources(sources) || "(none)"}` },
+      { role: "user", content: `${taskBrief(spec, ctx.retry)}${spec.context.repairSource ? "\nYour isolated workspace already contains the retained repair source, replayed onto the current integration base. Inspect and correct those actual files; do not recreate the earlier implementation from descriptions. The source remains unaccepted and every declared check must pass anew.\n" : ""}${checks}\nProvided context:\n${renderSources(sources) || "(none)"}` },
     ];
     fresh[0] = { ...fresh[0]!, content: `${fresh[0]!.content}\n\n${harnessV2StartupContext(env)}` };
     const memoryOptions = { tools: [...availableTools(tools, env).map(tool => tool.def), SUBMIT_RESULT_DEF], outputTokens: maxTokens, reservedTokens: 500 };

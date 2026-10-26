@@ -31,6 +31,14 @@ export const AcceptanceCriterionSchema = z
   .strict();
 export type AcceptanceCriterionInput = z.infer<typeof AcceptanceCriterionSchema>;
 
+const RepairCommit = z.string().regex(/^[0-9a-f]{40,64}$/);
+export const RepairSourceSchema = z.object({
+  taskId: z.string().min(1), project: z.string(), alias: z.string().min(1),
+  base: RepairCommit, head: RepairCommit, tree: RepairCommit,
+  commits: z.array(RepairCommit).min(1).max(100),
+}).strict();
+export type RepairSource = z.infer<typeof RepairSourceSchema>;
+
 export const WorkerTaskSchema = z
   .object({
     id: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional(),
@@ -43,6 +51,7 @@ export const WorkerTaskSchema = z
     context: z
       .object({
         fileRefs: z.array(z.string().min(1)).optional(),
+        repairSource: RepairSourceSchema.optional(),
         artifactRefs: z.array(z.string().regex(ARTIFACT_REF_RE)).optional(),
         inlineText: z.string().max(400_000).optional(),
         baseCommits: z.record(z.string(), z.string().regex(/^[0-9a-f]{7,64}$/)).optional(),

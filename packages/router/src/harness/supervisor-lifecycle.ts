@@ -80,10 +80,11 @@ export function assertPlannedBriefs(ctx: RunContext, items: Array<Record<string,
     if (!plan && item.profile !== "implement" && item.profile !== "supervise" && !(Array.isArray(item.checks) && item.checks.length) && !(Array.isArray(item.lab_checks) && item.lab_checks.length)) continue;
     const node = plan?.nodes.find(node => node.label === normalizedLabel(item.label));
     if (!node) throw new Error(`delivery_plan_required: record ${String(item.label)} with plan_work before dispatch`);
-    const expected: Pick<PlanNode, "profile" | "goal" | "acceptanceCriteria" | "dependsOn" | "allowedPaths" | "checks" | "labChecks" | "writableRepository"> = {
+    const expected: Pick<PlanNode, "profile" | "goal" | "acceptanceCriteria" | "dependsOn" | "allowedPaths" | "checks" | "labChecks" | "writableRepository" | "repairFromTask"> = {
       profile: item.profile as PlanNode["profile"], goal: String(item.goal ?? ""), acceptanceCriteria: list.parse(item.acceptance_criteria),
       dependsOn: list.parse(item.depends_on ?? []).map(normalizedLabel), allowedPaths: item.allowed_paths === undefined ? null : list.parse(item.allowed_paths), checks: list.parse(item.checks ?? []),
       labChecks: list.parse(item.lab_checks ?? []),
+      repairFromTask: item.repair_from_task === undefined ? null : z.string().min(1).parse(item.repair_from_task),
       writableRepository: item.profile === "implement" ? String(item.writable_repository ?? defaultRepository ?? "") || null : null,
     };
     for (const key of Object.keys(expected) as Array<keyof typeof expected>) if (!same(node[key], expected[key])) throw new Error(`delivery_plan_conflict: ${node.label}.${key} differs from its persisted plan; replan before dispatch`);

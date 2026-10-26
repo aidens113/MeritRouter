@@ -1,3 +1,4 @@
+import { hydrateRepairWorkspace, verifyRepairHydration } from "../../workspaces/repair-hydration.js";
 import { runTaskLabChecks } from "./task-lab.js";
 import type { TaskLabEvidence } from "../../labs/task-attempt-schema.js";
 import { createHash } from "node:crypto";
@@ -31,6 +32,7 @@ export async function prepareWorkspace(ctx: RunContext): Promise<{ ws: Workspace
   // A quality repair continues from the submitted revision; the diff is still taken against the base.
   const start = ctx.retry?.startFrom?.alias === alias ? ctx.retry.startFrom.commit : null;
   const ws = await worktrees.prepare({ taskId: ctx.taskId, run: runNo, alias, sourcePath: repo.path, ...(ctx.spec.context.baseCommits?.[alias] ? { baseCommit: ctx.spec.context.baseCommits[alias] } : {}), ...(start ? { startCommit: start } : {}) });
+  await hydrateRepairWorkspace(ctx, ws);
   ctx.tasks.event(ctx.taskId, "worktree_ready", { path: ws.worktreePath, baseSha: ws.baseSha, sourceDirty: ws.sourceDirty, ...(start ? { startCommit: start } : {}) });
   return { ws, worktrees };
 }
@@ -50,6 +52,7 @@ export async function resumeWorkspace(ctx: RunContext, recorded: SessionWorkspac
     prev && path.resolve(prev.worktreePath) === path.resolve(rec.worktree)
       ? prev
       : { taskId: ctx.taskId, repoAlias: alias, sourcePath: ctx.cfg.repositoryPaths[alias]!.path, worktreePath: rec.worktree, baseSha: rec.baseCommit, sourceDirty: false, dirtyPaths: [] };
+  await verifyRepairHydration(ctx, ws);
   worktrees.setStatus(ctx.taskId, "ready");
   ctx.tasks.event(ctx.taskId, "worktree_reused", { path: ws.worktreePath, baseSha: ws.baseSha });
   const head = (await git(ws.worktreePath, ["rev-parse", "HEAD"])).trim();
