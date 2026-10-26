@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Db } from "../storage/db.js";
+import { TERMINAL_STATES } from "../core/task.js";
 import { DeliverySpecSchema, deliverySpecDigest, type DeliverySpec } from "./product-spec.js";
 import { EvidenceReceiptSchema, ProductCandidateSchema, ProductFinalDecisionSchema, productCandidateDigest, type EvidenceReceipt, type ProductCandidate, type ProductFinalDecision } from "./product-evidence.js";
 import { evaluateProductReadiness } from "./product-readiness.js";
@@ -97,7 +98,8 @@ export class ProductDeliveries {
     if(decision.decision==="accept"){
       const task=this.db.prepare("SELECT state FROM tasks WHERE id=? AND project_id=?").get(taskId,project) as {state:string}|undefined;
       if(status.stage!=="handoff"||task?.state!=="completed")throw new Error("FINAL acceptance requires a completed delivery at handoff");
-      const active=this.db.prepare("WITH RECURSIVE descendants(id) AS (SELECT id FROM tasks WHERE json_extract(spec_json,'$.parentTaskId')=? AND project_id=? UNION ALL SELECT t.id FROM tasks t JOIN descendants d ON json_extract(t.spec_json,'$.parentTaskId')=d.id WHERE t.project_id=?) SELECT COUNT(*) AS n FROM tasks WHERE id IN (SELECT id FROM descendants) AND state IN ('queued','waiting_for_dependencies','waiting_for_capacity','running','cancel_requested','interrupted','budget_exhausted')").get(taskId,project,project) as {n:number};
+      const terminalStates=[...TERMINAL_STATES];
+      const active=this.db.prepare(`WITH RECURSIVE descendants(id) AS (SELECT id FROM tasks WHERE json_extract(spec_json,'$.parentTaskId')=? AND project_id=? UNION ALL SELECT t.id FROM tasks t JOIN descendants d ON json_extract(t.spec_json,'$.parentTaskId')=d.id WHERE t.project_id=?) SELECT COUNT(*) AS n FROM tasks WHERE id IN (SELECT id FROM descendants) AND state NOT IN (${terminalStates.map(()=>"?").join(",")})`).get(taskId,project,project,...terminalStates) as {n:number};
       if(active.n)throw new Error("FINAL acceptance requires all delegated work to be terminal");
     }
     this.db.prepare("UPDATE product_deliveries SET final_decision_json=?,stage=CASE WHEN ?='reject' THEN 'validate' ELSE stage END,updated_at=? WHERE task_id=? AND project_id=?").run(JSON.stringify(decision),decision.decision,this.now(),taskId,project);

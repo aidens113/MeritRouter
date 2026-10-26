@@ -243,7 +243,12 @@ self-claimed or missing evidence blocks `ready_for_final_review` and handoff.
 
 The FINAL MCP client uses `delivery_status`, `record_delivery_observation` for behavior it
 actually inspected, and `decide_delivery`. FINAL rejection reopens validation. Task execution
-completion, task acceptance and FINAL product acceptance are separate records. A passing build
+completion, task acceptance and FINAL product acceptance are separate records. Historical
+`budget_exhausted` attempts are terminal for FINAL activity checks, like failed, cancelled and
+completed attempts. Exhaustion never counts as success: exact current candidate/spec,
+completed handoff and complete observed criterion evidence are still required. Interrupted and
+other active descendants continue to block FINAL acceptance; no history, charge or result is
+rewritten to make a delivery acceptable. A passing build
 or a worker report is never proof that the product is usable. See [delivery operations](operations.md#delivery-v2-readiness-and-final-decisions).
 
 ## Worker rules (summary of the worker charter)
