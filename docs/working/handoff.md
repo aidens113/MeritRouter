@@ -6,18 +6,17 @@ own working document with decisions, phases, ledger, and reports.
 
 ## Current effort (2026-10-25)
 
-Active Facebook API/UI continuation t_0mvof1bldb6e51dd16e6a,
-session s_0mvof1c9ma19e9ca8fc5a, max500requests/$0paid. Base3b5b6fa contains
-verified core45/45tests/typecheck/install and INTERFACES.md. Prior root failed stale
-plan repetition after299actualrequests; new500+old299<=799/800, no charge reset.
-Full draft5nodes persisted; v2 launched API85grant/ui-core90grant in parallel and
-retained ui-features/review/runtime phases, verifying c77c5c5 plan fix live.
-c77c5c5 published dev/main, daemon23760 active. No app accepted, no Codex app code.
-Memory old patch notes crowded out newer decision; supported CAS compaction preserved
-history and refreshed manifest7340tokens includes current decision/no omissions.
-Worker current_memory_priority source frozen21/21 focused; root typecheck pass,
-full regression session4389 running. Root owns authored docs/build/review/release.
-Read active working document for exact state, approvals, remaining UI and verification.
+Facebook MVP remains unaccepted; canonical D:/SwitchYardProjects/facebook-mvp has only.git.
+Source retained in isolated worktrees; final validated app MUST materialize canonical folder.
+Job t_0mvof1bldb6e51dd16e6a, session s_0mvof1c9ma19e9ca8fc5a,500requests/$0paid unchanged.
+Remote dev/main c77c5c5; local memory/approval/native hydration corrections not all published.
+Native hydration final39/39 + reviewCLEAR, recursive typecheck/router+panelbuild PASS;
+full router exec22103 running. Canary real4477 PID2776/daemon24532/worker13944 uses
+D:/SwitchYardRouter-repair-hydration. Do not delete active feature worktree.
+Root found stale MCP PID20136 competing and claiming copy-from-notes retries; verified and
+stopped it, requested cancellation of those2tasks through public API. Check lease recovery
+and ensure new claimant uses explicit repair_from_task original API/UI candidates.
+No app source authored by Codex. Read active working document for exact source IDs/evidence.
 
 Historical checkpoints below are older; active working document is authoritative.
 

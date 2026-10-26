@@ -1160,7 +1160,14 @@ Generic network/Lab responses are explicitly supervisor reports, not independent
 
 Approval checks current configuration, project, task incarnation, source identity and live lease.
 Policy revocation/cancellation aborts owned running actions; stale pending requests are cancelled.
-Unknown running outcomes are not automatically replayed. Operator APIs accept no client-supplied
+Unknown running outcomes are not automatically replayed.
+The local panel awaits approved execution independently of the browser request lifetime:
+closing or navigating the requesting tab does not cancel the command. Explicit task
+cancellation, policy checks, task deadline and execution timeout still apply. This does
+not provide durable process ownership across panel server death. Hidden panel tabs release
+their live EventSource and reconnect with the saved cursor when visible, so inactive tabs
+do not occupy connections needed for approvals. Manual Live pause still controls refresh.
+ Operator APIs accept no client-supplied
 actor identity, and panel mutations reject cross-origin browser requests.
 
 External coding agents remain disabled until an accepted OS sandbox is available. Automatic

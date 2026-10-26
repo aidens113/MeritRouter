@@ -1,6 +1,6 @@
 # Supervisor lifecycle stall investigation
 Status: Active
-Status detail: Core repair checks passed and integrated; plan-preservation98/98 verified, publication next; API/UI unfinished.
+Status detail: Native retained-repair canary activated; stale MCP competing worker stopped; full regression pending; API/UI unfinished.
 Created: 2026-10-23
 Last updated: 2026-10-25
 Owner: Senior supervisor agent
@@ -14,35 +14,58 @@ Active original Facebook MVP oversight: initiating Codex writes NO application c
 operates the actual panel under explicit user authorization. Do not end oversight merely
 because a task resumed or dispatched. Handle pending commands, failures, review and real
 product testing until delivered or user pauses. Panel: http://127.0.0.1:4477.
-No usable Facebook app or FINAL acceptance exists. Core and interface contract are retained; API/UI construction is active.
+No usable Facebook app or FINAL acceptance exists. Canonical D:/SwitchYardProjects/facebook-mvp remains empty master with only.git; all code is isolated worktrees/branches. Final deliverable MUST be promoted through MeritRouter into that actual project folder, not left only on a private branch. Core/contract retained; API/UI candidates need import repairs.
 
-Current continuation t_0mvof1bldb6e51dd16e6a, session s_0mvof1c9ma19e9ca8fc5a,
-finite500requests/$0paid, base3b5b6fa5fc5ccd978ac753d9a58a6752f2f16a88 contains verified
-core + INTERFACES.md. Prior repair t_0mvodbsfke4f94fab4e33 FAILED model_handoff_exhausted:
-repeated_tool_call:plan_work after81parent+100core1+100corefix+13interfaces+5cancelledbuild
-=299actualrequests; preserved. New500+old299<=799/800 repair ceiling, no reset/extra grant.
-Publishedc77c5c5 dev/main active daemon23760 after supported stop/start; no config change.
-Current graphv1 draft5nodes; v2 dispatches api+ui-core and RETAINS3future phases live.
-API t_0mvof2ck58bfd71573461 running85grant; ui-core t_0mvof2ck584c7903ff4b2 running90grant.
-Future ui-features, independent-review, runtime-validation remain visible, not dispatched.
-No usable app/FINAL acceptance yet. Root operates actual panel and writes no app code.
-Core actual45/45tests/typecheck/install passed,18commits integrated oldjob1dbe934; interfaces
-head3b5b6fa supplies newbase. Deep reviewer6requests/noverdict, supervisor override accepted;
-independent review still required. Implement profile actual cap100 bounds requested120/150.
-Actual app Vitest4.1.12/Vite6.4.5/Zod4.6.7/realNode22React19types; audit0critical/0high/3moderate.
+Current app continuation t_0mvof1bldb6e51dd16e6a, session s_0mvof1c9ma19e9ca8fc5a,
+finite500requests/$0paid, base3b5b6fa5fc5ccd978ac753d9a58a6752f2f16a88 (core+contract).
+Prior repair299actualcharges retained; originally500+299<=799/800 planned ceiling. User
+again said keepworking after asking why canonical folder empty. Any further grant must be
+explicit bounded external decision, never reset/hidden increase. Current500 unchanged.
+Canonical D:/SwitchYardProjects/facebook-mvp verified empty master/.git only; source lives
+in isolated worktrees. Final delivery MUST materialize validated app there via MeritRouter.
+Planv2 preserved5nodes, v3 added2repairnodes and retainedfuture phases (7total): c77c5c5 live
+plan fix independently verified. API85grant exhausted73actual, original candidatebf459d167eecbf60675e4067f629ace533e4daaf
+has18files/820lines, install0/typecheck2 single search-route import. UI90grant completed/unmet
+41actual, candidatec7896f0e1703db4151d8713b1a72101987475fd1 has12files/858lines, install0/typecheck2
+wrong app/page imports. Preserve ORIGINAL complete candidates for native repair.
+UI repair t_0mvofq8c4cf477f18ab32 exhausted28/40 with0files. API repair t_0mvofq8c4ef1582df90d3
+rewrote source, grant40+20,48actual then deadline_exceeded; actual tree OMITS
+app/api/posts/route.ts, posts/[id]/route.ts, posts/[id]/like/route.ts. Do not accept partial API.
+No usable app/FINAL acceptance. Core45/45tests passed earlier; original deep reviewer6requests
+noverdict, overrides not independent review. Final real API/UI/browser/persistence review required.
+Current live runtime: primary panel4477 PID2776 and daemon24532/worker13944 run
+D:/SwitchYardRouter-repair-hydration built feature source. Panel exec65602 remains owned.
+Old MCP PID20136 (main dist/mcp.js default worker, --project my-project) unexpectedly
+claimed Facebook parent and two new copy-from-notes tasks despite replacement daemon.
+Root verified exact process identity then stopped20136; public cancelTasksAsync requested
+cancellation of api-create2 t_0mvohjenhef576b148e66 and ui-create2 t_0mvohjenhf5eed6dcd0de.
+No pending/running approved shell commands existed at intervention. Recover awaited live
+lease expiry; parent latest60charges. No budgets reset, no source lost, no app accepted.
+Need verify new daemon sole claimant and resume parent with repair_from_task ORIGINAL
+source IDs, not copy/reconstruct notes. Stale MCP startup discovery investigation delegated.
 
-Plan preservation root recursive typecheck/build pass; full157files1509tests1490pass/16fail/
-3skip598.12s; exact failed10files+changed lifecycle serial98/98pass449.05s unchanged source.
-Do not call full aggregate green. Sourcec77c5c5 published dev/main, live graph confirms fix.
-Memory defect independently reproduced: old manifest11615/12000tokens included6.4Ktokens
-historical patches, OMITTED newer current plan decision. Supported CAS compacted integrated
-patch notes (full prior revisions/artifact preserved), cancelled premature build-only task;
-refreshed manifest7340tokens includes current decision/no omissions. Old supervisor still
-replayed historical build plan across eligible models and failed; new bounded continuation
-starts fresh transcript from retained code, does NOT bypass duplicate-effect guard.
-Worker current_memory_priority fixes selection order context/memory.ts + focusedtests;
-source frozen, worker21/21pass; root typecheckpass. Full157files1512tests1492pass/17fail/3skip650.61s; exact failed11files+3memory files serial125/125pass500.10s unchanged source. Do not claim full aggregate green. Build/publication pending. Root owns
-authored docs/review/build/release. No live activation until independently verified.
+Remote dev/main c77c5c5. Main local fba7b01 plus merged approval source; unpublished.
+Native feature4dd523d plus merge main source: final39/39 focused tests, independent review
+CLEAR, router/panel builds PASS. Root recursive typecheck PASS on final merged feature.
+Full frozen router regression exec22103 still running (maxWorkers2, JSON temp
+meritrouter-repair-hydration-full.json). Canary activation is conditional, not full acceptance.
+Native repair validates explicit same-parent terminal candidate, original attribution,
+source/action quiescence, actual replayed target scope/modes, cumulative patch bound and
+post-await source fence. Guarded Git hydrates inherited files before model; original result
+remains unmet. Never hydrate from incomplete copy-repair candidates.
+
+Memory priority focused21PASS; root full1512:1492PASS/17FAIL/3SKIP; exact failed files+
+memory serial125/125PASS unchangedsource. Do not claim aggregate whollygreen.
+Approval transport/liveness actual demo validation PASS on803c3b16: browser abort command
+completes0, explicit timeout and cancellation quiesce, 7tabs/6hidden leave1SSE; approval
+queue0.4ms, command0. Wrongproject404/alreadydecided409/missingreason400/foreignOrigin403.
+All fixtures0providerrequests. Root viewed screenshot, stopped temporary4488 PID2080,
+closed7demo tabs. Evidence SHA256 manifest in TEMP/meritrouter-approval-liveness-803c3b16.
+Primary canary4477 intentionally stays running under explicit user panel authorization.
+Unique retained approvaltabs and terminal/quiescent checks remain required. Browser
+disconnect no longer cancels command; panel process death durability remains unimplemented.
+Owned Chrome CDP9337. Approval UX clarity explicitly deferred; no routine reauthorization.
+
 Config SHA2562963B9A8B79CD23DC2425989BAD58A1BC068E6A6E8DA8F755C0145188B9554E7 unchanged.
 
 Published framework corrections through b4ef7bf (docs42c698f dev/main): supervisor default
@@ -108,6 +131,17 @@ Remaining observed framework follow-ups (not silently implemented):
 Historical checkpoints preserved in [archive](supervisor-lifecycle-stall/archive/2026-10-25-live-source-checkpoints.md).
 
 ## Worker Briefs
+### Brief: mcp-passive-startup
+- Repository: D:/SwitchYardRouter-mcp-passive, feat/mcp-passive; isolated because full validation reads another tree.
+- Task: prevent MCP discovery connections silently starting install-wide workers; default passive with explicit --worker opt-in.
+- Required reads: Current State; own mcp-stale-worker-review report; mcp/serve.ts; MCP CLI tests and relevant CLI flag parsing.
+- Owns: packages/router/src/mcp/serve.ts; directly required CLI usage/flag source; MCP option/startup tests; own report only.
+- Must not touch: other router subsystems, panel, shared docs, config, real runtime; no commits/push/provider calls.
+- Definition of done: no-flag passive, --worker active, --no-worker passive, conflicting flags explicit refusal; programmatic worker:true preserved.
+- Verify actual passive MCP with queued fake task and submission/resume never claims/spends, explicit worker runs fake task; meaningful narrow tests/typecheck.
+- Install offline dependencies as needed; root owns authored docs/integration/global validation. Preserve standalone opt-in operation.
+- Report to: docs/working/supervisor-lifecycle-stall/reports/mcp-passive-startup.md in main checkout.
+
 ### lifecycle-discovery
 - Role: read-only worker; no code edits or commits.
 - Read Current State above, runners/supervisor.ts, harness/supervisor-tools.ts,
@@ -375,6 +409,43 @@ Historical checkpoints preserved in [archive](supervisor-lifecycle-stall/archive
 - No global SharedWorker/BroadcastChannel architecture, custom transport, connection-cap hardcoding, source/approval policy changes or permission UX work. This fixes hidden-tab exhaustion, not arbitrary many visible windows.
 - Send design before edits if current lifecycle needs broader change. Existing event listeners must be cleaned up and stale source callbacks ignored safely. Root owns real demo7-tab visibility/catchup/approval regression +build/screenshot checks. No tests that mirror source strings.
 - Update main reports/approval-navigation-lifecycle-fix.md with scope/limitations and frozen diff, no broad checks while main validation runs.
+
+### Investigation brief: bounded retained-candidate workspace hydration (2026-10-25)
+- Role: read-only framework designer; own report repair-context-handoff.md follow-up only. No code/app/live/config/shared-doc edits/commits.
+- Read prior own report and current source supervisor-tools.ts delegation/workspace creation files already identified there. New live evidence: UI repair40grant exhausted28execution with0files despite real source notes; API repair rewrites820lines for one import. Plain artifact pointers have no access; Brain body16K output cap truncates helper source. Workarounds are not an adequate native repair contract.
+- Design explicit repair_from_task that safely hydrates NEW repair workspace with retained source while preserving CURRENT job integration base. Same parent/project/repo, terminal source, immutable source head/provenance, all inherited paths within repair scope, no active/unquiesced source effects. Never accept/integrate failed source implicitly, mutate original, clear charges or disable checks.
+- Candidate start HEAD alone is unsafe if workspace.base_sha becomes original candidate: inherited changes disappear from eventual integration. Keep integration base current jobHEAD; replay original bounded commits onto that new base, preserve original authorship/trailers, fail closed on conflicts or ambiguous source/scope/authority. Source may differ from current job due disjoint API integration.
+- Identify exact owned files/minimal test matrix and existing safe internal Git/patch primitives (hooks/cwd/cancel containment). Compare context-only artifact_refs against true workspace hydration; no implementation until root assigns file ownership/design approved.
+- Immediate existing-tool alternative: MeritrRouter worker requests reviewed exact git cherry-pick original-base..candidate in clean isolated repair worktree, operator approves via panel; original attribution preserved, worker then fixes imports and fullchecks. Root did not run app mutation itself. Assess this containment path, do not execute it.
+- Report concrete design/risks promptly, scope code changes realistically; root continues current API/UI tasks and panel liveness verification in separate worktree.
+
+### Implementation brief: native retained-candidate repair hydration (2026-10-25)
+- Role: framework worker in isolated D:/SwitchYardRouter-repair-hydration, branch feat/repair-hydration from fba7b01. Read main Current State and own repair-context-handoff.md design first. No app/live/config/shared docs/commits.
+- Own core/task.ts, harness/supervisor-tools.ts, NEW workspaces/repair-hydration.ts, coding/finish.ts, coding/native.ts, and focused repair-hydration/lifecycle tests. Confirm actual paths before edits and notify root if another required owner file is needed; no migration unless proven necessary. No peer owns these files.
+- Implement explicit validated repair_from_task brief contract and authoritative server-resolved descriptor. New task retains CURRENT job integration base; BEFORE model execution, hydrate its NEW clean workspace by bounded internal safeGit replay of source-base..candidate commits, preserving original authorship/trailers and later disjoint integrated changes.
+- Worktrees.prepare already separates baseCommit/startCommit; do not lose inherited changes by setting integration base to candidate. Existing integrationTarget range must include all inherited code and subsequent repairs. Source stays unmet/unaccepted until new taskchecks/review pass; never mutate source or parent job while hydrating.
+- Enforce source same parent/project/repo, terminal, exact retained owner/head/base/provenance; no active/unquiesced effects. Validate EVERY inherited commit path, no merges/nonlinear/oversized/ambiguous chain, original/newallowedPaths and protected review. Pin source immutable commits, use existing hooks-disabled git() with authority/cancel/timeout fences. Model-supplied descriptor is untrusted and revalidated runtime.
+- Persist typed per-task hydration receipts before/after replay; crash/partial/stale receipt must refuse replay/model/final checks unless exact safe completion proved. Preserve task budgets/deadlines/paid/exclusions; no raw DB mutation in live state, no profile/grade/config changes.
+- Mandatory tests: actual12-file UI-like candidate one-import repair retains all inherited files through final integration; newer disjoint base preserved; foreign/active/unquiesced/source-head/scope/protected/merge/oversize refusals; authority/cancel during replay; conflict and interrupted/resumed hydration no duplicate commits or model requests. No fake independent acceptance.
+- Send design/API footprint confirmation before edits. Run narrow tests only, then freeze/report main docs/working/supervisor-lifecycle-stall/reports/repair-context-hydration.md with exact commands/results. Root owns independent review/full checks/merge/release. Do not change panel API (separate approval-liveness worktree).
+- Live source candidates: UI c7896f0e1703db4151d8713b1a72101987475fd1, API bf459d167eecbf60675e4067f629ace533e4daaf, originalbase/currentjob3b5b6fa5fc5ccd978ac753d9a58a6752f2f16a88. These are examples for design, never hardcode live IDs in production/tests.
+
+### Independent review brief: retained repair hydration (2026-10-25)
+- Role: read-only reviewer. Read main Current State, implementation brief and report repair-context-handoff.md, then changed source/tests under isolated D:/SwitchYardRouter-repair-hydration. No source/app/live/config/shared-doc edits/commits.
+- Review owned source core/task.ts, harness/supervisor-tools.ts, storage/plans.ts, harness/supervisor-lifecycle.ts, workspaces/repair-hydration.ts, coding/finish.ts, coding/native.ts and focused tests; helper actual paths per git diff. Worker source frozen, final narrow tests running; no code peer edits unless blocker surfaced.
+- Audit untrusted descriptor/project/parent/repo/candidate identity, plan exact source binding, all inherited commit scope/protected-review/attribution, internal safeGit bounds/authority/cancel, current integration base retained incl newer disjoint API, and original source remains unmet/unmodified.
+- Audit crash/race receipt semantics before model/final checks. Completed hydration must support legitimate resume after new repair commits and changed worker lease, while rejecting unrelated worktree/base/history or incomplete/forged proof; never duplicate replay or clear budget/deadline/exclusions.
+- Check no-source/cross-owner/Lab/qualityretry cases fail usefully; report unsupported behavior accurately. Require actionable blockers, not hypothetical architecture expansion. Send findings to root+implementer promptly.
+- Own only main docs/working/supervisor-lifecycle-stall/reports/repair-hydration-review.md. Root owns independent tests/release; worker completion is not verification.
+
+### Corrective hydration worker brief: independent review findings (2026-10-25)
+- Resume same worker in D:/SwitchYardRouter-repair-hydration, same owned source/helper/tests and report. No main/shared/live/app/config edits/commits.
+- Read own prior report and reviewer repair-hydration-review.md. Old source33+2focused results are pre-correction, not accepted. Explicit source freeze revoked for these changes.
+- Fix proven target-scope escape: newer targetbase rename src/a.ts -> outside/a.ts lets safeGit cherry-pick of allowed source modify outside/a.ts. Validate actual cumulative target-base..HEAD paths/modes after EVERY pick and before completed/model; reject/quarantine failed replay, retain no-model/no-finalcheck boundary.
+- Fix net-only8MBpatch-byte bound: large intermediate add/revert must count cumulatively per inherited commit. Preserve exact bound semantics/metadata, do not claim blob/disk bound if only patchbytes enforced. Add regression.
+- Recheck exact original source state/head/quiescence after last awaited pick BEFORE completed receipt; source may resume/change during finalpick. Add race regression.
+- Add positive completed-resume regression after a legitimate repair commit and changed tasklease: no replay, repaired HEAD retained, new lease authority enforced. Existing incomplete/forged/unrelated history refusals remain.
+- Coordinate reviewer directly and send final frozen receipt after all relevant tests; root will independently verify and broadtest then deploy. Update only own report with exact final results and limitations.
 
 ## Work Ledger
 Historical entries: [settled release ledger](supervisor-lifecycle-stall/archive/2026-10-25-settled-release-ledger.md).
