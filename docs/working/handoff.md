@@ -1,5 +1,18 @@
 # Handoff: state of every effort (2026-10-23)
 
+## Priority checkpoint (2026-10-26)
+
+[Production readiness](production-readiness.md) now owns cross-effort execution order and
+exit criteria. [Project-local storage](project-local-storage.md) is the active implementation
+focus: path contract and additive project directory metadata in progress, state/accounting
+separation under design. No project data has moved; existing runtime paths remain authoritative.
+Latest live read: Facebook v7 supervisor interrupted/watchdog; profile completed, people and
+notifications failed deadline_exceeded, no pending/running approvals. Retained source and
+charges must be preserved; no usable app delivered. Older process IDs and task snapshots below
+are historical, not fresh status. Do not resume/move work without checking current state.
+Latest combined framework recursive typecheck/build passed on local merged e0e6cf2 before
+storage edits; final combined full-suite validation and publication remain outstanding.
+
 Written for the next agent (Codex or Claude Code) picking this repository up cold. Read this,
 then `AGENTS.md`, then the `Current State` of the effort you work on. Every effort below has its
 own working document with decisions, phases, ledger, and reports.

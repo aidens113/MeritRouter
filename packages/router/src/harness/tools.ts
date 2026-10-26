@@ -17,6 +17,7 @@ import { awaitWorkerCommand, executeSupervisorCommand, requestWorkerCommand, wor
 import { scopedArtifact } from "./check-evidence.js";
 import { dirtyPaths } from "../workspaces/git.js";
 import { currentSupervisorAuthority } from "../core/supervisor-authority.js";
+import { assertNotProjectMetadataPath } from "../projects/metadata-policy.js";
 
 export interface HarnessEnv {
   /** Trusted journal identity for this invocation; never taken from model arguments. */
@@ -133,6 +134,7 @@ export function workspacePath(env: HarnessEnv, input: unknown): { rel: string; a
   if (!ws) throw new Error("no writable workspace for this role");
   const rel = normalizeRelPath(str(input, "path"));
   if (!rel) throw new Error("path must name a file");
+  assertNotProjectMetadataPath(rel);
   if (ws.allowedPaths && !picomatch(ws.allowedPaths, { dot: true })(rel)) {
     throw new Error(`${rel} is outside allowedPaths (${ws.allowedPaths.join(", ")}); the edit was refused`);
   }

@@ -16,7 +16,7 @@ export interface ProjectInfo {
  * config reload reaches every project. Runners, validation, context sources, and the brain read
  * project fields from here, never from the global config.
  */
-export type ProjectContext = ResolvedConfig & { readonly project: ProjectInfo };
+export type ProjectContext = ResolvedConfig & { readonly project: ProjectInfo; readonly projectDirectory: string | null };
 
 /**
  * Build a project context over `global`. `overlay` holds the keys that differ from the global
@@ -24,6 +24,7 @@ export type ProjectContext = ResolvedConfig & { readonly project: ProjectInfo };
  * object stays valid for the life of the service.
  */
 export function projectContext(global: ResolvedConfig, overlay: Record<string, unknown>): ProjectContext {
+  if (!Object.prototype.hasOwnProperty.call(overlay, "projectDirectory")) overlay.projectDirectory = null;
   const has = (k: PropertyKey) => Object.prototype.hasOwnProperty.call(overlay, k);
   return new Proxy(global, {
     get: (t, k) => (has(k) ? overlay[k as string] : Reflect.get(t, k)),

@@ -6,6 +6,8 @@ lines, worker briefs, append-only ledger with real validation, open questions).
 
 | Document | Status | Scope |
 | --- | --- | --- |
+| [production-readiness.md](production-readiness.md) | Active | Authoritative priority order and production-readiness exit criteria; storage, delivery reliability, pilot acceptance, approval UX and repeatability. |
+| [project-local-storage.md](project-local-storage.md) | Active | Readable path/owner contracts, same-DB store seam and metadata read/edit guards implemented;90 focused checks pass. Staging, physical store separation and migration remain; no relocation yet. |
 | [project-grid-deletion.md](project-grid-deletion.md) | Complete | Grid deletion and pending-request retirement verified; both clones removed through UI, sources preserved, panel restarted. Full suite had one browser timing failure that passed isolated rerun. |
 | [supervisor-lifecycle-stall.md](supervisor-lifecycle-stall.md) | Active | Facebook MVP undelivered; retained API checks pass but report repair needed, original UI proof now eligible. Local memory/transport/repair guards merged; full suites1574 and1597 pass/0fail/3skip each, newest91focused plus full1626pass/0fail/3skip; combinedchecks pass. Authorized panel oversight active; daemon10260 latest670. See Current State for live IDs, budget and continuation. |
 | [supervised-delivery-v2.md](supervised-delivery-v2.md) | Active | Supervisor bootstrap/recovery/batching corrections verified and activated; renewed Facebook supervisor running, product acceptance pending. Earlier interactive adapter acceptance still blocked by absent Docker engine. |

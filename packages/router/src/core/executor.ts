@@ -3,6 +3,7 @@ import { TaskRunLeases } from "./task-run-leases.js";
 import { leaseOperationId, reconcileLeaseOperation, receiptApplied, type LeaseRef, type LeaseReceipt, type TaskLeases } from "../storage/task-leases.js";
 import { canonicalJson } from "../storage/tasks.js";
 import type { ResolvedConfig } from "../config/load.js";
+import { projectStoresForTask, type ProjectRuntimeStore } from "../projects/runtime-store.js";
 import type { WebAccess } from "../web/access.js";
 import { TIER_NAMES, type ProfileMode, type TierName } from "../config/schema.js";
 import type { Db } from "../storage/db.js";
@@ -98,6 +99,8 @@ export interface ProjectDeps {
   cfg: ResolvedConfig;
   brain: Brain | null;
   access: BrainAccess | null;
+  /** Optional same-DB seam; omitted preserves legacy project callback behavior. */
+  stores?: ProjectRuntimeStore;
 }
 
 interface Routing {
@@ -139,7 +142,12 @@ export class Executor {
    * brain access in place of the global ones. Throws when the task's project is not configured.
    */
   private depsFor(task: StoredTask): ExecutorDeps {
-    const deps = this.d.project ? { ...this.d, ...this.d.project(task) } : this.d;
+    const project = this.d.project?.(task);
+    let deps = project ? { ...this.d, cfg: project.cfg, brain: project.brain, access: project.access } : this.d;
+    if (project?.stores) {
+      const stores = projectStoresForTask(project.stores, task, project.cfg);
+      deps = { ...deps, db: stores.db, tasks: stores.tasks, sessions: stores.sessions, artifacts: stores.artifacts, contracts: stores.contracts };
+    }
     if (!deps.labs) return deps;
     const scoped = deps.labs.contextForTask(task.row.project_id || deps.cfg.brain.project, task.row.id, task.spec, deps.tasks);
     return { ...deps, cfg: scoped.cfg };
@@ -203,8 +211,8 @@ export class Executor {
       retry: v.retry,
       ...(v.repairCap != null ? { purpose: "repair" as const } : {}),
       gate: this.d.gate,
-      tasks: this.d.tasks,
-      artifacts: this.d.artifacts,
+      tasks: d.tasks,
+      artifacts: d.artifacts,
       signal,
       now: this.d.now,
       tier: plan.tier,

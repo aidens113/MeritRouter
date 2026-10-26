@@ -14,6 +14,8 @@ export type ProjectOverrides = Partial<Pick<RawConfig, "brain" | "verification" 
 export interface ResolvedProject {
   slug: string;
   name: string;
+  /** Explicit owner, single distinct repository default, or null when ambiguous. No storage relocation. */
+  directory: string | null;
   /** Read from the single-project shape (top-level `repositories` and `brain.project`, decision D3). */
   legacy: boolean;
   repositories: RawConfig["repositories"];
@@ -49,6 +51,18 @@ export function resolveRepositories(repos: RawConfig["repositories"], baseDir: s
   return out;
 }
 
+/** Pure lexical ownership metadata; activation must separately verify filesystem containment. */
+function projectDirectory(explicit: string | undefined, repositories: ResolvedRepositories, baseDir: string): string | null {
+  if (explicit !== undefined) return path.resolve(baseDir, explicit);
+  const paths = new Map(Object.values(repositories).map((repo) => [process.platform === "win32" ? repo.path.toLowerCase() : repo.path, repo.path]));
+  return paths.size === 1 ? paths.values().next().value! : null;
+}
+
+function containsDirectory(parent: string, child: string): boolean {
+  const relative = path.relative(parent, child);
+  return relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`));
+}
+
 /**
  * Read the projects of a parsed config. With no `projects` section the config is one project
  * named `brain.project` that owns the top-level repositories (users of a single-project config
@@ -59,8 +73,9 @@ export function resolveProjects(cfg: RawConfig, baseDir: string): { resolution: 
   const entries = Object.entries(cfg.projects);
   if (!entries.length) {
     const slug = cfg.brain.project;
+    const repositoryPaths = resolveRepositories(cfg.repositories, baseDir);
     return {
-      resolution: { primary: slug, projects: [{ slug, name: slug, legacy: true, repositories: cfg.repositories, repositoryPaths: resolveRepositories(cfg.repositories, baseDir), overrides: {} }] },
+      resolution: { primary: slug, projects: [{ slug, name: slug, directory: projectDirectory(undefined, repositoryPaths, baseDir), legacy: true, repositories: cfg.repositories, repositoryPaths, overrides: {} }] },
       issues: [],
     };
   }
@@ -114,7 +129,22 @@ export function resolveProjects(cfg: RawConfig, baseDir: string): { resolution: 
     if (coding) overrides.coding = coding;
     if (supervisor) overrides.supervisor = supervisor;
     if (p.roles) overrides.roles = { ...cfg.roles, ...p.roles };
-    projects.push({ slug, name: p.name ?? slug, legacy: false, repositories: p.repositories, repositoryPaths: resolveRepositories(p.repositories, baseDir), overrides });
+    const repositoryPaths = resolveRepositories(p.repositories, baseDir);
+    const directory = projectDirectory(p.directory, repositoryPaths, baseDir);
+    projects.push({ slug, name: p.name ?? slug, directory, legacy: false, repositories: p.repositories, repositoryPaths, overrides });
+  }
+  // Existing inferred roots retain compatibility. Explicit ownership cannot overlap another
+  // known owner, even if the other project's owner came from a single repository default.
+  for (let i = 0; i < projects.length; i++) {
+    for (const other of projects.slice(i + 1)) {
+      const current = projects[i]!;
+      if (!current.directory || !other.directory) continue;
+      const currentExplicit = (cfg.projects[current.slug] as { directory?: string } | undefined)?.directory !== undefined;
+      const otherExplicit = (cfg.projects[other.slug] as { directory?: string } | undefined)?.directory !== undefined;
+      if ((currentExplicit || otherExplicit) && (containsDirectory(current.directory, other.directory) || containsDirectory(other.directory, current.directory))) {
+        issues.push({ path: ["projects", otherExplicit ? other.slug : current.slug, "directory"], message: `project directory ownership overlaps between ${current.slug} and ${other.slug}; choose distinct non-nested directories` });
+      }
+    }
   }
   const primary = cfg.projects[cfg.brain.project] !== undefined ? cfg.brain.project : entries[0]![0];
   return { resolution: { projects, primary }, issues };

@@ -42,6 +42,7 @@ import { DeliveryRepairContinuationSchema, ProductDeliveries } from "../verifica
 import { validateTask } from "./validate.js";
 import { DELEGATED_BY_SESSION, Executor, type CodingRunner, type ProjectDeps } from "./executor.js";
 import { ProjectRegistry } from "../projects/registry.js";
+import { createProjectRuntimeStore, type ProjectRuntimeStore } from "../projects/runtime-store.js";
 import { retainedLabConfigErrors } from "../projects/lab-config-guard.js";
 import { LabManager } from "../labs/lab.js";
 import { LabNameSchema } from "../labs/recipe.js";
@@ -348,7 +349,15 @@ export class MeritRouter {
   private projectDeps(project: string): ProjectDeps {
     const cfg = this.projectContext(project);
     const b = this.projectBrain(cfg.project.slug);
-    return { cfg, brain: b.brain, access: b.access };
+    return { cfg, brain: b.brain, access: b.access, stores: this.projectStores(cfg.project.slug) };
+  }
+
+  /** Transitional project handle over existing shared stores; does not isolate or relocate data. */
+  projectStores(project: string): ProjectRuntimeStore {
+    const cfg = this.projectContext(project);
+    return createProjectRuntimeStore(cfg.project.slug, {
+      db: this.db, tasks: this.tasks, sessions: this.sessions, artifacts: this.artifacts, contracts: this.contracts,
+    });
   }
 
   /**

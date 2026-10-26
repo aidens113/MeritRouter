@@ -71,6 +71,8 @@ export const ProjectConfigSchema = z
     ...ProjectLimitsSchema.shape,
     /** Display name (defaults to the slug). */
     name: z.string().min(1).max(80).optional(),
+    /** Owner directory for project runtime data; relative to the config file. Does not activate relocation. */
+    directory: z.string().trim().min(1).max(4096).refine((value) => !/[\u0000-\u001f]/.test(value), "project directory cannot contain control characters").optional(),
     lab: LabRecipeSchema.optional(),
     labs: ProjectLabsSchema.prefault({}),
     /** Repositories by alias; users write the bare alias, MeritRouter keys it `<project>/<alias>` internally. */

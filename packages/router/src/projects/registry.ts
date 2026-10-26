@@ -47,6 +47,7 @@ export class ProjectRegistry {
     }
     for (const slug of [...this.entries.keys()]) if (!seen.has(slug)) this.entries.delete(slug);
     const internal = qualificationOverlay(this.cfg);
+    internal.projectDirectory = null;
     if (this.internal) {
       // Keep the runtime-registered fixtures; take the rest (the brain section) from the reloaded config.
       internal.repositoryPaths = this.internal.overlay.repositoryPaths;
@@ -150,6 +151,6 @@ function overlayFor(p: ResolvedProject): Record<string, unknown> {
   const project: ProjectInfo = { slug: p.slug, name: p.name, legacy: p.legacy };
   // A single-project config is its own project: nothing differs, so the context reads the global
   // config throughout (runtime-registered repositories included).
-  if (p.legacy) return { project };
-  return { project, repositories: p.repositories, repositoryPaths: { ...p.repositoryPaths }, ...p.overrides };
+  if (p.legacy) return { project, projectDirectory: p.directory };
+  return { project, projectDirectory: p.directory, repositories: p.repositories, repositoryPaths: { ...p.repositoryPaths }, ...p.overrides };
 }

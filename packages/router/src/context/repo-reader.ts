@@ -1,10 +1,14 @@
 import { createHash } from "node:crypto";
-import { readFile, realpath, stat } from "node:fs/promises";
+import { lstat, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import picomatch from "picomatch";
 import { git, headSha, dirtyPaths } from "../workspaces/git.js";
+import { assertNotProjectMetadataPath, isProjectMetadataPath, PROJECT_METADATA_SEARCH_EXCLUDES } from "../projects/metadata-policy.js";
 
 export const MAX_FILE_BYTES = 512 * 1024;
+const MAX_PHYSICAL_CANDIDATES = 50000;
+const MAX_UNSAFE_EXCLUSIONS = 128;
+const MAX_SEARCH_ARGUMENT_BYTES = 20000;
 
 export interface FileContent {
   alias: string;
@@ -72,12 +76,57 @@ export class RepoReader {
     const real = await realpath(abs);
     const relToRoot = path.relative(this.rootReal, real);
     if (relToRoot.startsWith("..") || path.isAbsolute(relToRoot)) throw new Error(`path resolves outside the repository: ${rel}`);
+    assertNotProjectMetadataPath(relToRoot);
     return real;
+  }
+
+  /** Inspect names/metadata only, before grep can read private bytes. Four bounded workers. */
+  private async unsafeWorktreePaths(files: string[], signal?: AbortSignal): Promise<Set<string>> {
+    signal?.throwIfAborted();
+    if (files.length > MAX_PHYSICAL_CANDIDATES) throw new Error("Repository physical safety scan exceeds 50000 candidates; narrow the directory/glob");
+    const root = await realpath(this.root);
+    const parents = new Map<string, Promise<string>>();
+    const unsafe = new Set<string>();
+    let cursor = 0;
+    const inside = (resolved: string) => {
+      const relative = path.relative(root, resolved);
+      return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
+        && !isProjectMetadataPath(relative) && !relative.split(path.sep).some(isGitSegment);
+    };
+    const inspect = async () => {
+      while (cursor < files.length) {
+        signal?.throwIfAborted();
+        const file = files[cursor++]!;
+        try {
+          const rel = normalizeRelPath(file);
+          assertNotProjectMetadataPath(rel);
+          const abs = path.join(root, ...rel.split("/"));
+          const parent = path.dirname(abs);
+          let parentReal = parents.get(parent);
+          if (!parentReal) { parentReal = realpath(parent); parents.set(parent, parentReal); }
+          const resolvedParent = await parentReal;
+          signal?.throwIfAborted();
+          if (!inside(resolvedParent)) { unsafe.add(file); continue; }
+          const info = await lstat(abs);
+          signal?.throwIfAborted();
+          const resolved = info.isSymbolicLink() ? await realpath(abs) : path.join(resolvedParent, path.basename(abs));
+          const targetInfo = info.isSymbolicLink() ? await stat(resolved) : info;
+          signal?.throwIfAborted();
+          if (!inside(resolved) || !targetInfo.isFile() || targetInfo.nlink > 1) unsafe.add(file);
+        } catch {
+          signal?.throwIfAborted();
+          unsafe.add(file); // Unreadable/missing/ambiguous paths are never search candidates.
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, files.length) }, inspect));
+    return unsafe;
   }
 
   async readFile(relInput: string, signal?: AbortSignal): Promise<FileContent> {
     signal?.throwIfAborted();
     const rel = normalizeRelPath(relInput);
+    assertNotProjectMetadataPath(rel);
     let buf: Buffer;
     if (this.commit) {
       const out = await git(this.root, ["cat-file", "-s", `${this.commit}:${rel}`], { ...(signal ? {signal} : {}) }).catch(() => {
@@ -91,6 +140,7 @@ export class RepoReader {
       });
       const st = await stat(abs);
       if (!st.isFile()) throw new Error(`${this.alias}:${rel} is not a file`);
+      if (st.nlink > 1) throw new Error(`${this.alias}:${rel} has multiple hard links; repository reads are refused`);
       if (st.size > MAX_FILE_BYTES) throw new Error(`${this.alias}:${rel} exceeds ${MAX_FILE_BYTES} bytes`);
       buf = await readFile(abs, { ...(signal ? {signal} : {}) });
     }
@@ -112,13 +162,18 @@ export class RepoReader {
     signal?.throwIfAborted();
     const root = dirInput.replace(/\\/g, "/");
     const dir = /^(?:\.\/)*\.?\/?$/.test(root) ? "" : normalizeRelPath(dirInput);
+    assertNotProjectMetadataPath(dir);
     const out = this.commit
       ? await git(this.root, ["ls-tree", "-r", "--name-only", "-z", this.commit, ...(dir ? ["--", dir] : [])], { ...(signal ? {signal} : {}) })
       : await git(this.root, ["ls-files", "-z", "--cached", "--others", "--exclude-standard", ...(dir ? ["--", dir] : [])], { ...(signal ? {signal} : {}) });
-    let files = [...new Set(out.split("\0").filter(Boolean))].sort();
+    let files = [...new Set(out.split("\0").filter(file => !!file && !isProjectMetadataPath(file)))].sort();
     if (glob) {
       const match = picomatch(glob, { dot: true });
       files = files.filter((f) => match(f) || match(path.posix.basename(f)));
+    }
+    if (!this.commit) {
+      const unsafe = await this.unsafeWorktreePaths(files, signal);
+      files = files.filter(file => !unsafe.has(file));
     }
     return { files: files.slice(0, limit), truncated: files.length > limit };
   }
@@ -129,10 +184,23 @@ export class RepoReader {
     opts: { pathGlob?: string; ignoreCase?: boolean; limit?: number; signal?: AbortSignal } = {},
   ): Promise<{ matches: Array<{ path: string; line: number; text: string }>; truncated: boolean }> {
     const limit = opts.limit ?? 100;
+    opts.signal?.throwIfAborted();
+    if (opts.pathGlob) assertNotProjectMetadataPath(normalizeRelPath(opts.pathGlob));
     const args = ["grep", "-n", "-I", "-E", "--no-color", "-z", ...(opts.ignoreCase ? ["-i"] : []), "-e", pattern];
     if (this.commit) args.push(this.commit);
     else args.push("--untracked");
-    if (opts.pathGlob) args.push("--", `:(glob)${normalizeRelPath(opts.pathGlob)}`);
+    args.push("--", ...(opts.pathGlob ? [`:(glob)${normalizeRelPath(opts.pathGlob)}`] : []), ...PROJECT_METADATA_SEARCH_EXCLUDES);
+    if (!this.commit) {
+      const listed = await git(this.root, ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--",
+        ...(opts.pathGlob ? [`:(glob)${normalizeRelPath(opts.pathGlob)}`] : []), ...PROJECT_METADATA_SEARCH_EXCLUDES], { ...(opts.signal ? { signal: opts.signal } : {}) });
+      const files = [...new Set(listed.split("\0").filter(Boolean))];
+      const unsafe = await this.unsafeWorktreePaths(files, opts.signal);
+      if (unsafe.size > MAX_UNSAFE_EXCLUSIONS) throw new Error("Repository search exceeds 128 unsafe-path exclusions; narrow the glob");
+      args.push(...[...unsafe].map(file => `:(exclude,literal)${file}`));
+    }
+    if (args.reduce((bytes, arg) => bytes + Buffer.byteLength(arg, "utf8") + 1, 0) > MAX_SEARCH_ARGUMENT_BYTES) {
+      throw new Error("Repository search exceeds the 20000-byte argument safety bound; narrow the glob");
+    }
     const out = await git(this.root, args, { allowExit: [1], ...(opts.signal ? {signal:opts.signal} : {}) });
     const matches: Array<{ path: string; line: number; text: string }> = [];
     for (const raw of out.split("\n")) {
@@ -142,6 +210,7 @@ export class RepoReader {
       if (parts.length < 3) continue;
       let p = parts[0]!;
       if (this.commit && p.startsWith(`${this.commit}:`)) p = p.slice(this.commit.length + 1);
+      if (isProjectMetadataPath(p)) continue;
       matches.push({ path: p, line: Number(parts[1]), text: parts.slice(2).join("\0").slice(0, 400) });
       if (matches.length >= limit) return { matches, truncated: true };
     }

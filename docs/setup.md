@@ -153,6 +153,16 @@ to be installed or running: MeritRouter calls each provider's API itself.
 
 ### Projects
 
+Projects may declare `projects.<slug>.directory` as their owner folder, relative to the
+configuration file or absolute. When omitted, a single distinct repository folder supplies
+the owner; multiple distinct repositories or no repositories leave ownership unspecified.
+Explicit owner folders must not overlap another known project's owner folder.
+
+This is ownership metadata in preparation for project-local runtime storage. It does not
+move existing worktrees, databases, logs or Brain data. Current storage settings remain in
+effect. Do not move managed worktrees manually; the project-local storage migration is
+not implemented yet.
+
 One install holds many projects. Each project has its own:
 - repositories;
 - brain folder (`projects/<slug>/` in the brain repository);
