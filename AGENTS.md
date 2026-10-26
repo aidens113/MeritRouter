@@ -249,6 +249,21 @@ a worker: workers are ephemeral, several may serve one brief, and a
 re-dispatched worker is still the same unit of work. Workers never commit, so
 agent identity travels in commit trailers rather than in a branch name.
 
+**Location and cleanup.** Never create development worktrees, alternate checkouts,
+validation folders, reports, or build staging beside this repository (for example,
+`D:/SwitchYardRouter-<slug>`), or elsewhere in a drive root. Keep development
+worktrees under `<repository>/.MeritRouter/development/<short-slug>` and validation
+artifacts under `<repository>/.MeritRouter/validation/`. Verify the metadata
+directory is Git-ignored before creating anything inside it. Use the existing
+checkout and serialize validation when isolation is unnecessary; workers do not
+each need their own checkout. Check Windows path length before choosing a slug.
+Record each worktree's owner and purpose in the working document. After integration,
+inspect tracked and untracked changes, running processes/services and retained
+evidence before Git-aware cleanup. Never force-remove or relocate a dirty or active
+worktree; record why it must remain and revisit once quiescent. Existing external
+worktrees require that same inventory before any cleanup. User project directories
+and explicitly configured external runtime locations are not disposable worktrees.
+
 The supervisor picks the tier when it writes the brief:
 
 - **Direct on `dev`** for supervisor edits it already understands and for
