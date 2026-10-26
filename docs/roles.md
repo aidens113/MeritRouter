@@ -377,7 +377,7 @@ in the recorded plan and dispatched brief. Its source binding must match the pla
 is repair data, not an accepted dependency: keep its failed result and give the new repair a
 fresh label. Use the repaired task as the downstream dependency after its checks and review.
 A fresh implementation brief that explicitly references a compatible owned terminal coding
-task must name its intended `repair_from_task`; prose or artifact references do not hydrate
+task, or its owned patch artifact, must name its intended `repair_from_task`; references do not hydrate
 source. Missing, ambiguous or mismatched choices fail before staffing, grants or plan writes.
 An undispatched draft's explicit repair binding cannot disappear through an omitted field;
 keep it or use a fresh label. Disjoint contract references and dispatched idempotent retries
@@ -401,6 +401,12 @@ Lab-bound source/repair and quality-retry starts are refused. A conflict or inte
 keeps a typed failure/start receipt and refuses model work or final checks; use a new repair
 rather than replaying partial effects. A completed receipt supports legitimate later repair
 commits and a fresh worker lease on resume without reapplying the retained commits.
+A completed source with one missing nested declared-recipe outcome can remain eligible only
+when the original grouped operation has settled and an exact, immutable, host-quiesced action
+proves the same command, source, session and lease generation. This does not repair its
+journal, turn an unknown check into success, accept the source or authorize replay. The new
+repair still runs fresh checks. Missing or mismatched proof remains a refusal.
+
 
 ### Automatic context and typed memory
 

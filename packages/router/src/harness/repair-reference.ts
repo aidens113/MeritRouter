@@ -7,6 +7,7 @@ import { narrowedScope } from "./task-scope.js";
 
 const paths = z.array(z.string().min(1)).min(1);
 const terminal = new Set(["completed", "failed", "cancelled", "budget_exhausted"]);
+const patchMetadata = z.object({ id: z.string().min(1), task_id: z.string().min(1), kind: z.literal("patch") });
 
 const integrationHead=z.object({after_head:z.string().regex(/^[a-f0-9]{40,64}$/)}).strict();
 type IntegrationTarget={branch:string;worktree:string};
@@ -53,8 +54,16 @@ export async function assertExplicitRepairReferences(ctx: RunContext, children: 
     if(!target.success)continue; // Ordinary brief validation reports malformed/missing scope.
     const writable=String(item.writable_repository ?? defaultRepository ?? "");
     const targetMatches=picomatch(target.data,{dot:true});
+    const referencedSources=new Set(sources.filter(source=>references.has(source.row.id)).map(source=>source.row.id));
+    // A patch ID can identify an owned retained source just as its task ID does. Resolve
+    // metadata only: this refusal boundary must never read bytes or grant artifact access.
+    for(const ref of references){
+      if(!/^a_[A-Za-z0-9_-]+$/.test(ref))continue;
+      const metadata=patchMetadata.safeParse(ctx.artifacts.get(ref));
+      if(metadata.success && metadata.data.id===ref && sources.some(source=>source.row.id===metadata.data.task_id))referencedSources.add(metadata.data.task_id);
+    }
     const compatible=sources.filter(source=>{
-      if(source.spec.writableRepository!==writable || !references.has(source.row.id))return false;
+      if(source.spec.writableRepository!==writable || !referencedSources.has(source.row.id))return false;
       const actual=paths.safeParse(source.result?.changedPaths);
       if(actual.success)return actual.data.every(path=>targetMatches(path));
       const original=paths.safeParse(source.spec.constraints.allowedPaths);

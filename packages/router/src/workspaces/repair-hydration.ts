@@ -1,3 +1,4 @@
+import { quiescentRecipeSource } from "../harness/repair-operation-quiescence.js";
 import { z } from "zod";
 import picomatch from "picomatch";
 import { createHash } from "node:crypto";
@@ -8,7 +9,7 @@ import { git } from "./git.js";
 import { assertRunAuthority } from "../harness/task-authority.js";
 import { SessionStore } from "../sessions/store.js";
 import { authorSessions } from "../sessions/run-sessions.js";
-import { WorkerActionRequests } from "../harness/worker-actions.js";
+import { workerSourceIdentity, WorkerActionRequests } from "../harness/worker-actions.js";
 
 const EVENT = "repair_hydration";
 const Receipt = z.object({ status: z.enum(["started", "completed", "failed"]), digest: z.string().regex(/^[0-9a-f]{64}$/),
@@ -38,12 +39,11 @@ export async function resolveRepairSource(ctx: RunContext, id: string, alias: st
   const author = authorSessions(sessions,id).at(-1);
   const page = author ? sessions.events(author.id, {limit:10000}) : null;
   if (!page || page.corrupt.length || page.hasMore || sessions.forTask(id).some(a=>a.status==="running")) refuse("source session history is incomplete or active");
-  const pending = new Set<string>();
+  const pending = new Map<string, Extract<(typeof page.events)[number],{type:"tool_intent"}>>();
   for (const e of page.events) {
-    if (e.type==="tool_intent" && e.data.sideEffect!=="none") pending.add(e.data.callId);
+    if (e.type==="tool_intent" && e.data.sideEffect!=="none") pending.set(e.data.callId,e);
     if (e.type==="tool_outcome") pending.delete(e.data.callId);
   }
-  if (pending.size) refuse("source has unfinished effects");
   const recorded = author?.workspace?.repos.find(r=>r.alias===alias);
   if (!author || author.role!=="implementer" || author.profile!==task.spec.profile || !["completed","failed","cancelled","budget_exhausted"].includes(author.status) || !recorded ||
       recorded.worktree !== ws.worktree_path || recorded.baseCommit !== ws.base_sha) refuse("source author workspace proof");
@@ -51,6 +51,11 @@ export async function resolveRepairSource(ctx: RunContext, id: string, alias: st
   if ((await git(cwd,["status","--porcelain=v1","--untracked-files=all"],opts)).trim()) refuse("source is dirty");
   const head=(await git(cwd,["rev-parse","HEAD"],opts)).trim();
   if (recorded.head !== head) refuse("source head differs from author receipt");
+  if(pending.size){
+    const unresolved=[...pending.values()];
+    const currentSource=await workerSourceIdentity(cwd);
+    if(unresolved.length!==1||!quiescentRecipeSource(ctx,task,author,page.events,unresolved[0]!,{path:cwd,alias},currentSource))refuse(`source has unfinished effects: task ${id}; pending ${unresolved.map(event=>`${event.data.name} call ${event.data.callId}`).join(", ")}`);
+  }
   const commits=(await git(cwd,["rev-list","--reverse","--max-count=101",`${ws.base_sha}..${head}`],opts)).trim().split("\n").filter(Boolean);
   if (!commits.length || commits.length>100) refuse("source commit bound");
   const allowed=picomatch(constraints.allowedPaths ?? [],{dot:true});

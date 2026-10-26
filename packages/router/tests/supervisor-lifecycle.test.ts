@@ -59,6 +59,13 @@ async function retainedSource(state:SupervisorState, options:{label?:string;allo
 }
 const repairBrief=(id:string)=>({label:"api-native-repair",profile:"implement",goal:`Repair the previous task ${id}; read its patch artifact and keep its API implementation`,repositories:["core"],allowed_paths:["app/api/**","INTERFACES.md"],acceptance_criteria:["API repaired"],max_requests:10});
 
+function retainedPatch(taskId:string|null,kind="patch",exactId?:string){
+  const ref=sy!.artifacts.write({taskId,kind,label:"retained fixture",content:"artifact body must not be read by reference guard",extension:".patch"});
+  if(!exactId)return ref.slice("artifact:".length);
+  sy!.db.prepare("UPDATE artifacts SET id=? WHERE id=?").run(exactId,ref.slice("artifact:".length));
+  return exactId;
+}
+
 async function integratedSource(f:Awaited<ReturnType<typeof fixture>>) {
   const id=await retainedSource(f.state,{changed:["app/api/posts/route.ts"]});
   const base=(await git(env!.repo,["rev-parse","HEAD"])).trim();
@@ -136,6 +143,61 @@ describe("supervisor lifecycle enforcement", () => {
     expect(sy!.tasks.childrenOf(f.ctx.taskId)).toHaveLength(before.children);
     expect(heldRequests(sy!.db,f.ctx.taskId)).toBe(before.held);
     expect(sy!.admission.taskTotals(f.ctx.taskId).requests).toBe(before.requests);
+  });
+  it.each(["draft","dispatch","delegate"])("requires typed source for exact owned patch references before %s effects",async(mode)=>{
+    const f=await fixture();f.prepare();
+    const api=await retainedSource(f.state,{label:"retained-api",changed:["app/api/posts/route.ts"]});
+    const ui=await retainedSource(f.state,{label:"retained-ui",allowed:["components/**"],changed:["components/Feed.tsx"]});
+    const apiPatch=retainedPatch(api,"patch","a_0mvofjo055767581894fc"),uiPatch=retainedPatch(ui,"patch","a_0mvof94fpd683b60c48cf");
+    if(mode==="delegate")await f.run("plan_work",{nodes:[brief],dispatch:false});
+    const resolver=vi.spyOn(hydration,"resolveRepairSource"),read=vi.spyOn(sy!.artifacts,"read"),scoped=vi.spyOn(sy!.artifacts,"readScoped");
+    const before={plans:new PlanStore(sy!.db).list(f.ctx.taskId).length,children:sy!.tasks.childrenOf(f.ctx.taskId).length,held:heldRequests(sy!.db,f.ctx.taskId),requests:sy!.admission.taskTotals(f.ctx.taskId).requests,grants:sy!.db.prepare("SELECT COUNT(*) FROM task_request_grants").pluck().get()};
+    for(const [id,patch,allowed]of [[api,apiPatch,["app/api/**"]],[ui,uiPatch,["components/**"]]] as const)for(const prefix of ["","artifact:"]){
+      const item={...repairBrief(id),goal:`Create implementation; read patch ${prefix}${patch}`,allowed_paths:[...allowed]};
+      await expect(f.run(mode==="delegate"?"delegate":"plan_work",mode==="delegate"?{tasks:[item]}:{nodes:[item],dispatch:mode!=="draft"})).rejects.toThrow(new RegExp(`repair_reference_required:.*repair_from_task.*${id}`));
+      expect(new PlanStore(sy!.db).list(f.ctx.taskId)).toHaveLength(before.plans);
+      expect(sy!.tasks.childrenOf(f.ctx.taskId)).toHaveLength(before.children);
+      expect(heldRequests(sy!.db,f.ctx.taskId)).toBe(before.held);
+      expect(sy!.admission.taskTotals(f.ctx.taskId).requests).toBe(before.requests);
+      expect(sy!.db.prepare("SELECT COUNT(*) FROM task_request_grants").pluck().get()).toBe(before.grants);
+    }
+    expect(resolver).not.toHaveBeenCalled();expect(read).not.toHaveBeenCalled();expect(scoped).not.toHaveBeenCalled();
+    expect(sy!.db.prepare("SELECT COUNT(*) FROM worker_action_requests").pluck().get()).toBe(0);
+  });
+  it("requires matching typed ownership for a patch reference and leaves hydration to the native resolver",async()=>{
+    const f=await fixture();f.prepare();const id=await retainedSource(f.state,{label:"patch-source",changed:["app/api/posts.ts"]});
+    const patch=retainedPatch(id),item={...repairBrief(id),goal:`Repair using artifact:${patch}`};
+    await expect(f.run("plan_work",{nodes:[{...item,repair_from_task:"wrong"}],dispatch:false})).rejects.toThrow(/repair_reference_mismatch/);
+    expect(new PlanStore(sy!.db).latest(f.ctx.taskId)).toBeNull();
+    const source={taskId:id,project:"demo",alias:"core",base:"a".repeat(40),head:"b".repeat(40),tree:"c".repeat(40),commits:["b".repeat(40)]};
+    const resolver=vi.spyOn(hydration,"resolveRepairSource").mockResolvedValue(source),read=vi.spyOn(sy!.artifacts,"read"),scoped=vi.spyOn(sy!.artifacts,"readScoped");
+    await f.run("plan_work",{nodes:[{...item,repair_from_task:"patch-source"}],dispatch:false});
+    await expect(f.run("delegate",{tasks:[{...item,repair_from_task:"patch-source"}]})).resolves.toContain("budget 10 requests");
+    expect(resolver).toHaveBeenCalledTimes(1);expect(read).not.toHaveBeenCalled();expect(scoped).not.toHaveBeenCalled();
+    expect(sy!.tasks.childrenOf(f.ctx.taskId).find(t=>t.spec.label===item.label)!.spec.context.repairSource).toEqual(source);
+  });
+  it("does not infer source authority from other kinds, unknown, foreign, unowned, active, shared or disjoint patch metadata",async()=>{
+    const f=await fixture();f.prepare();const own=await retainedSource(f.state,{label:"own",changed:["app/api/posts.ts"]});
+    const foreign=await retainedSource(f.state,{label:"foreign-patch",project:"foreign",changed:["app/api/posts.ts"]});
+    const unowned=await retainedSource(f.state,{label:"unowned-patch",parent:"outside-parent",changed:["app/api/posts.ts"]});
+    const active=await retainedSource(f.state,{label:"active-patch",active:true,changed:["app/api/posts.ts"]});
+    const disjoint=await retainedSource(f.state,{label:"disjoint-patch",allowed:["components/**"],changed:["components/Feed.tsx"]});
+    const refs=[retainedPatch(own,"check_log"),retainedPatch(own,"screenshot"),retainedPatch(foreign),retainedPatch(unowned),retainedPatch(active),retainedPatch(disjoint),retainedPatch(null),"a_unknown","a_badmetadata","a_wrongmetadataid",`${retainedPatch(own)}suffix`];
+    const original=sy!.artifacts.get.bind(sy!.artifacts);
+    vi.spyOn(sy!.artifacts,"get").mockImplementation(ref=>ref==="a_badmetadata"?{id:ref,kind:"patch",task_id:42} as never:ref==="a_wrongmetadataid"?{id:"a_other",kind:"patch",task_id:own} as never:original(ref));
+    const read=vi.spyOn(sy!.artifacts,"read"),scoped=vi.spyOn(sy!.artifacts,"readScoped"),gitSpy=vi.spyOn(safeGit,"git"),resolver=vi.spyOn(hydration,"resolveRepairSource");
+    const before=sy!.tasks.childrenOf(f.ctx.taskId).length;
+    for(const [index,ref]of refs.entries())await expect(f.run("plan_work",{nodes:[{...repairBrief(own),label:`ordinary-patch-${index}`,goal:`Create API using artifact:${ref}`}],dispatch:false})).resolves.toContain("draft");
+    expect(new PlanStore(sy!.db).latest(f.ctx.taskId)!.nodes.every(node=>node.repairFromTask===null)).toBe(true);
+    expect(sy!.tasks.childrenOf(f.ctx.taskId)).toHaveLength(before);
+    expect(gitSpy).not.toHaveBeenCalled();expect(resolver).not.toHaveBeenCalled();expect(read).not.toHaveBeenCalled();expect(scoped).not.toHaveBeenCalled();
+  });
+  it.each([false,true])("keeps the exact integration/undo exemption for an owned patch reference (undone=%s)",async(undone)=>{
+    const f=await fixture();f.prepare();const source=await integratedSource(f),patch=retainedPatch(source.id);
+    if(undone)await revertCommits(env!.repo,[source.afterHead],{agent:"supervisor:fixture",role:"supervisor"},"Undo source",{onUndone:calibrationUndoHook(sy!.db,sy!.tasks,{jobId:f.ctx.taskId,now:Date.now})});
+    const item={...repairBrief(source.id),goal:`Follow up on artifact:${patch}`};
+    if(undone){await expect(f.run("plan_work",{nodes:[item],dispatch:false})).rejects.toThrow(/repair_reference_required/);expect(new PlanStore(sy!.db).latest(f.ctx.taskId)).toBeNull();}
+    else await expect(f.run("plan_work",{nodes:[item],dispatch:false})).resolves.toContain("draft");
   });
   it("supports actual-path compatibility and conservative original-scope fallback",async()=>{
     const f=await fixture();f.prepare();
