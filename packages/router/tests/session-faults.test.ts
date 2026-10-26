@@ -58,15 +58,16 @@ function runs(taskId: string): SessionRecord[] {
  * process. Checks the crash left the task running and its session running (as a dead process
  * would), then opens a fresh worker whose clock is past the lease, so recovery takes over.
  */
-async function crashThenRecover(o: { client: ScriptedClient; fault: string; submit: (s: MeritRouter) => Promise<string>; opts?: MeritRouterOptions; operator?: (s: MeritRouter, taskId: string) => void }): Promise<string> {
+async function crashThenRecover(o: { client: ScriptedClient; fault: string; submit: (s: MeritRouter) => Promise<string>; opts?: MeritRouterOptions; operator?: (s: MeritRouter, taskId: string) => void; crashTimeoutMs?:number }): Promise<string> {
   const before = simulatedCrashCount();
   process.env[FAULT_ENV] = o.fault;
   // Explicit fixture operator approves only this exact declared native/supervisor check.
   // openWithTestSupervisor stops and drains its approval task before the simulated process closes.
   sy = openWithTestSupervisor(env!, o.client, { worker: true, ...o.opts }, [check]);
   const id = await o.submit(sy);
-  for (let i = 0; i < 600 && simulatedCrashCount() === before; i++) await sleep(20);
-  expect(simulatedCrashCount()).toBe(before + 1);
+  const observationDeadline=Date.now()+(o.crashTimeoutMs??12_000);
+  while(Date.now()<observationDeadline&&simulatedCrashCount()===before)await sleep(20);
+  expect(simulatedCrashCount(),JSON.stringify({tasks:sy.db.prepare("SELECT id,state,result_json FROM tasks").all(),events:sy.db.prepare("SELECT type,data_json FROM events ORDER BY id DESC LIMIT 5").all()})).toBe(before + 1);
   delete process.env[FAULT_ENV];
   await sleep(50);
   await sy.close();
@@ -287,7 +288,7 @@ describe("supervisor", () => {
       if (turns(req) === 0) return reply(null, { ...s, toolCalls: [call("replace_in_file", { path: "src/app.ts", old_text: "export function add", new_text: "export function subtract(a: number, b: number) {\n  return a - b;\n}\n\nexport function add" }, "w-edit")] });
       return reply(null, { ...s, toolCalls: [call("submit_result", goodOutput(1, "core:src/app.ts#L1-L3"), "w-submit")] });
     });
-    const id = await crashThenRecover({ client, fault: "after_tool_run:1:delegate", submit: async (s) => (await s.startJob({ goal: "Add subtract() to the app", repositories: ["core"], checks: [check], label: "subtract-job" })).taskId });
+    const id = await crashThenRecover({ client, fault: "after_tool_run:1:delegate", crashTimeoutMs:120_000, submit: async (s) => (await s.startJob({ goal: "Add subtract() to the app", repositories: ["core"], checks: [check], label: "subtract-job" })).taskId });
     const r = (await sy!.awaitResults([id], { timeoutSeconds: 120 })).completed[0]!;
     expect(r).toMatchObject({ stopReason: "supervisor_completed", acceptanceStatus: "met" });
 

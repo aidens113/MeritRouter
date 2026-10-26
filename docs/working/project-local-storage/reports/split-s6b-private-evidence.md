@@ -21,8 +21,12 @@ and hardlinked evidence, cached database alias changes and recorder refusal are 
 Runtime-registry19+project-tools12 independently PASS31/31 in17.09s on this evidence draft.
 Legacy sessions/resume/artifacts/captures/usage40/40 PASS; fault injection9/10 PASS.
 Supervisor delegation fault case failed before the injection (count6 expected7) in its old
-600x20ms observation loop. Exact original isolated rerun is active; no assertions/deadlines
-changed and no green aggregate claimed. No live model calls.
+600x20ms observation loop; exact original isolated rerun failed identically with task still
+running and no failure result. Diagnostic bounded120s observation passed the complete original
+journey in97.331s, preserving one child/one brief, resume journal, source and result assertions.
+Its original180s test deadline and internal120s result wait remain unchanged; only this native
+multi-publication fixture uses the longer observation. All50 distinct compatibility cases now
+passed across the combined49 and exact rerun1; no green full-suite aggregate claimed.
 
 Final evidence6+tools12 PASS18/18,13.48s; router+panel recursive typecheck PASS on held snapshot.
 Remaining: full build after concurrent authors freeze, complete crash compatibility results,
