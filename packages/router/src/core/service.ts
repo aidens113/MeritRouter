@@ -1,4 +1,5 @@
 import { readClientSupervision } from "../config/client-supervision.js";
+import { RepositoryMutationError } from "../workspaces/repository-mutation.js";
 import { EventEmitter } from "node:events";
 import { WebAccess, type PageTransport, type Resolver } from "../web/index.js";
 import { hostname } from "node:os";
@@ -336,13 +337,23 @@ export class MeritRouter {
     if (this.closing) return;
     const row = this.db.prepare("SELECT purpose, project_id FROM tasks WHERE id = ?").get(taskId) as { purpose: string; project_id: string } | undefined;
     if (row?.purpose !== PROMOTION_REVIEW_PURPOSE) return;
-    // On a later turn of the event loop: settling may start another review task.
-    const timer = setTimeout(() => {
-      this.promotionTimers.delete(timer);
-      if (!this.closing) void this.settlePromotions(row.project_id || undefined).catch(() => undefined);
-    }, 0);
-    this.promotionTimers.add(timer);
-    timer.unref?.();
+    // Review results are already durable. Transient writer contention must not lose
+    // the only settlement notification; retry publication, never the model request.
+    const schedule = (attempt: number): void => {
+      if (this.closing) return;
+      const timer = setTimeout(() => {
+        this.promotionTimers.delete(timer);
+        if (this.closing) return;
+        void this.settlePromotions(row.project_id || undefined).catch(error => {
+          if (error instanceof RepositoryMutationError && error.detail.kind === "lock_busy" && attempt < 5)
+            schedule(attempt + 1);
+          // Unresolved publication/command evidence requires explicit recovery.
+        });
+      }, attempt === 0 ? 0 : Math.min(4000, 250 * 2 ** (attempt - 1)));
+      this.promotionTimers.add(timer);
+      timer.unref?.();
+    };
+    schedule(0);
   }
 
   /** A task's project dependencies (its context, brain, brain access); throws for an unconfigured project. */
