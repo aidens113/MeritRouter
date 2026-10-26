@@ -2,6 +2,8 @@ import { quiescentRecipeSource } from "../harness/repair-operation-quiescence.js
 import { z } from "zod";
 import picomatch from "picomatch";
 import { createHash } from "node:crypto";
+import { realpath } from "node:fs/promises";
+import path from "node:path";
 import { RepairSourceSchema, type RepairSource } from "../core/task.js";
 import type { RunContext } from "../runners/types.js";
 import type { Workspace } from "./worktree.js";
@@ -10,6 +12,9 @@ import { assertRunAuthority } from "../harness/task-authority.js";
 import { SessionStore } from "../sessions/store.js";
 import { authorSessions } from "../sessions/run-sessions.js";
 import { workerSourceIdentity, WorkerActionRequests } from "../harness/worker-actions.js";
+import { withRepositoryMutation, type RepositoryMutationCapability } from "./repository-mutation.js";
+
+interface RepairMutationControl { mutation?: RepositoryMutationCapability }
 
 const EVENT = "repair_hydration";
 const Receipt = z.object({ status: z.enum(["started", "completed", "failed"]), digest: z.string().regex(/^[0-9a-f]{64}$/),
@@ -84,7 +89,12 @@ export async function resolveRepairSource(ctx: RunContext, id: string, alias: st
 }
 
 /** Read unpaged task-local receipts: a partial/crashed hydration must never enter a model loop. */
-export async function verifyRepairHydration(ctx:RunContext,ws:Workspace):Promise<void> {
+export async function verifyRepairHydration(ctx:RunContext,ws:Workspace,control:RepairMutationControl={}):Promise<void> {
+  if (!ctx.spec.context.repairSource) return;
+  await withRepositoryMutation([ws.worktreePath],()=>verifyRepairHydrationUnderMutation(ctx,ws),{capability:control.mutation});
+}
+
+async function verifyRepairHydrationUnderMutation(ctx:RunContext,ws:Workspace):Promise<void> {
   const source=ctx.spec.context.repairSource;
   if (!source) return;
   RepairSourceSchema.parse(source);
@@ -112,12 +122,25 @@ async function validateTargetDelta(ctx:RunContext,ws:Workspace,from:string,to:st
   assertRunAuthority(ctx);
 }
 
-export async function hydrateRepairWorkspace(ctx:RunContext,ws:Workspace):Promise<void> {
+export async function hydrateRepairWorkspace(ctx:RunContext,ws:Workspace,control:RepairMutationControl={}):Promise<void> {
+  const source=ctx.spec.context.repairSource;
+  if (!source) return;
+  RepairSourceSchema.parse(source);
+  const sourceWorkspace=z.object({worktree_path:z.string()}).parse(ctx.tasks.db.prepare("SELECT worktree_path FROM workspaces WHERE task_id=?").get(source.taskId));
+  const common=async(root:string)=>{
+    const physical=await realpath(path.resolve(root,(await git(root,["rev-parse","--git-common-dir"],options(ctx))).trim()));
+    return process.platform==="win32" ? physical.toLowerCase() : physical;
+  };
+  if(await common(ws.worktreePath)!==await common(sourceWorkspace.worktree_path))refuse("source and target Git owners differ");
+  await withRepositoryMutation([ws.worktreePath,sourceWorkspace.worktree_path],()=>hydrateRepairWorkspaceUnderMutation(ctx,ws),{capability:control.mutation});
+}
+
+async function hydrateRepairWorkspaceUnderMutation(ctx:RunContext,ws:Workspace):Promise<void> {
   const source=ctx.spec.context.repairSource;
   if (!source) return;
   if (ctx.spec.lab || ctx.spec.constraints.labChecks?.length || ctx.retry?.startFrom) refuse("unsupported Lab or quality-retry hydration");
   const existing=ctx.tasks.db.prepare("SELECT 1 FROM events WHERE task_id=? AND type=? LIMIT 1").get(ctx.taskId,EVENT);
-  if (existing) { await verifyRepairHydration(ctx,ws); return; }
+  if (existing) { await verifyRepairHydrationUnderMutation(ctx,ws); return; }
   const resolved=await resolveRepairSource(ctx,source.taskId,ws.repoAlias,ctx.spec.constraints,ctx.spec.parentTaskId ?? "");
   if (JSON.stringify(resolved)!==JSON.stringify(RepairSourceSchema.parse(source))) refuse("source provenance changed");
   if ((await git(ws.worktreePath,["rev-parse","HEAD"],options(ctx))).trim()!==ws.baseSha ||

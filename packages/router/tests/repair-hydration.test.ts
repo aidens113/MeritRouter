@@ -8,6 +8,8 @@ import path from "node:path";
 import { git } from "../src/workspaces/git.js";
 import { Worktrees } from "../src/workspaces/worktree.js";
 import { commitAs } from "../src/attribution/index.js";
+import { commitSelectedApplication } from "../src/attribution/selected-commit.js";
+import { withRepositoryMutation } from "../src/workspaces/repository-mutation.js";
 import { hydrateRepairWorkspace,resolveRepairSource,verifyRepairHydration } from "../src/workspaces/repair-hydration.js";
 import { capturedLease } from "../src/storage/task-leases.js";
 import { syntheticResult } from "../src/storage/tasks.js";
@@ -15,6 +17,26 @@ import type { RunContext } from "../src/runners/types.js";
 import type { MeritRouter } from "../src/core/service.js";
 import { baseConfig,makeEnv,open,ScriptedClient,reply,type Env } from "./helpers.js";
 let env:Env|undefined,sy:MeritRouter|undefined;
+it("reuses an existing host mutation capability for hydration and verification",async()=>{
+ const f=await fixture();
+ await withRepositoryMutation([f.ws.worktreePath,f.original.worktreePath],async mutation=>{
+   await hydrateRepairWorkspace(f.ctx,f.ws,{mutation});
+   await verifyRepairHydration(f.ctx,f.ws,{mutation});
+ });
+ expect(await git(f.ws.worktreePath,["show","HEAD:ui/page11.tsx"])).toContain("retained");
+});
+it.each(["source","target"] as const)("refuses pending %s publication before hydration receipts or target writes",async owner=>{
+ const f=await fixture();
+ const root=owner==="source" ? f.original.worktreePath : f.ws.worktreePath;
+ writeFileSync(path.join(root,"pending.txt"),"retained publication");
+ const outcome=await commitSelectedApplication(root,{actor:{agent:"implementer:fixture",role:"implementer",model:"fake/model",task:"fixture"},message:"Pending fixture",paths:["pending.txt"]},{refPublished:async()=>{throw Error("retain pending");}});
+ expect(outcome.kind).toBe("reconciliation_required");
+ const head=await git(f.ws.worktreePath,["rev-parse","HEAD"]);
+ const before=sy!.db.prepare("SELECT * FROM events WHERE task_id=? AND type='repair_hydration'").all(f.ctx.taskId);
+ await expect(hydrateRepairWorkspace(f.ctx,f.ws)).rejects.toMatchObject({detail:{kind:"pending_publication"}});
+ expect(await git(f.ws.worktreePath,["rev-parse","HEAD"])).toBe(head);
+ expect(sy!.db.prepare("SELECT * FROM events WHERE task_id=? AND type='repair_hydration'").all(f.ctx.taskId)).toEqual(before);
+});
 afterEach(async()=>{vi.restoreAllMocks();await sy?.close();sy=undefined;env?.cleanup();env=undefined;});
 const limits={maxConcurrent:8,maxWritersPerRepo:8,leaseMs:600000,defaultTimeoutMs:3600000,supervisorProfiles:["supervise"],maxSupervisors:4,supervisorTimeoutMs:3600000};
 async function fixture(newer=false,variant="ordinary"){
