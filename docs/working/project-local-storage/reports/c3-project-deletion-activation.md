@@ -2,7 +2,10 @@
 
 Supervisor independent final-source acceptance:5/5 PASS126.791s; ordinary confirmed deletion
 37.434s with original accepted90s case allowance. Full Brain+deletion22/22 PASS272.96s.
-Known standalone native lock/sequencer pre-removal checks remain follow-up before activation.
+Standalone native lock/sequencer removal precheck added by supervisor. Actual per-worktree
+ten-marker and shared packed-refs lock fixture PASS1/1,18.93s; full existing workspace
+lifecycle guards PASS12/12,74.97s. Check is cooperative; unmanaged native races remain outside
+the atomicity claim. Labs owner consumes the same check under its existing scopes.
 
 Worker: c3_message
 Date: 2026-10-26

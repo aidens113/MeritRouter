@@ -3,6 +3,7 @@ import path from "node:path";
 import { MeritRouterError } from "../core/errors.js";
 import { immediate, type Db } from "../storage/db.js";
 import { git } from "../workspaces/git.js";
+import { assertNoNativeWorktreeOperation } from "../workspaces/worktree-removal.js";
 import { RequestCaptures } from "../storage/request-captures.js";
 import { RequestReceipts } from "../admission/request-receipts.js";
 import { z } from "zod";
@@ -290,7 +291,9 @@ export async function removeProjectWorktrees(worktrees: WorktreeRef[], control: 
     for (let offset = 0; offset < worktrees.length; offset += 64)
       await withRepositoryMutation(worktrees.slice(offset, offset + 64).map(wt => wt.path), async () => undefined, { capability: mutation });
     let removed = 0;
+    for(const wt of worktrees)await assertNoNativeWorktreeOperation(wt.path);
     for (const wt of worktrees) {
+      await assertNoNativeWorktreeOperation(wt.path);
       try { await git(wt.repo!, ["worktree", "remove", "--force", "--force", wt.path]); }
       catch (error) { throw new RepositoryMutationError("ownership_changed", `Native worktree removal failed for ${wt.path}; rows and config must be retained: ${(error as Error).message}`); }
       if (existsSync(wt.path)) throw new RepositoryMutationError("ownership_changed", `Native removal left worktree ${wt.path}; it was not counted as removed`);

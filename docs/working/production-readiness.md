@@ -24,6 +24,11 @@ and absent. Development uses main only; validation artifacts use OS TEMP. Old Fa
 verified complete. C3 runner/command guards and S2 local accounting active; runtime wiring,
 migration and actual fresh-provider acceptance remain unfinished.
 
+Latest accepted local checkpoint d042de0 adds lease-bound project tools/services; independent
+tools12 and runtime-registry19 pass. Root private evidence isolation6 passes; S5 coordinated
+queue and C3 Labs native-process adapters remain active. No fresh Facebook job/provider calls
+have started. Current panel projects are my-project, tetris and pomodoro, all not live.
+
 MeritRouter supports supervised use; unattended production delivery is unproven.
 User authorized continued plan execution on 2026-10-26. Current implementation focus is
 project-local storage, preserving existing project state and retained pilot source.
@@ -42,7 +47,7 @@ No production-readiness percentage or date is established by test counts.
    Exit: integrated source reviewed, recursive checks and final full suite observed;
    real failing journeys reproduced and corrected, with no fake acceptance or usage reset.
    Existing local fixes need final integrated validation/publication; do not assume published.
-3. **Deliver the Facebook pilot.** Recover or rebrief retained work through supported controls,
+3. **Deliver the Facebook pilot.** Create a fresh project and brief through supported controls,
    finish remaining pages and near-1:1 visual polish through MeritRouter, then review exact
    integrated source and test actual desktop/mobile journeys, security and persistence.
    Exit: validated source materialized at canonical project root, reproducible startup,

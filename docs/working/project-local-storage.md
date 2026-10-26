@@ -1,6 +1,6 @@
 # Project-local runtime storage
 Status: Active
-Status detail: Foundations verified; C3 runner/command guards and S2 local accounting active. Runtime activation, migration and fresh Facebook acceptance remain open.
+Status detail: S0-S3 and Gate isolation verified locally; runtime registry and queue integration active. Migration/default activation and fresh Facebook live acceptance remain open.
 Created: 2026-10-25
 Last updated: 2026-10-26
 Owner: Senior supervisor agent
@@ -9,6 +9,44 @@ Paired document: none
 Related: [working index](README.md), [delivery investigation](supervisor-lifecycle-stall.md)
 
 ## Current State
+
+2026-10-26 latest checkpoint: S6a committed d042de0 after independent tools12+
+registry19 PASS31/31. Brain/deletion22/22 independently PASS, committed ee7c5f8.
+S6b committed985b43d, final evidence6+tools12 PASS18/18; recursive router/panel
+typecheck PASS after short source freeze. Legacy evidence40/40 and crashes9/10
+PASS; exact supervisor crash retry passes97.331s under bounded120s observation,
+same original180s case limit and all source/result/deduplication assertions.
+S5 queue5/5 author PASS, full fan-out next; Web7new+33legacy author PASS,
+Brain local scope ports and Labs named-Job adapters active. No fresh Facebook
+provider worker has started. Default activation/migration and full checks remain open.
+
+### Worker brief: S6c private Brain and Web ports
+- Worker: storage_split_contract. MAIN only; no worktree or source-repo runtime data.
+- Read Current State here and storage-split-implementation-contract.md S6/S6c.
+- Own web/access.ts, web/ledger.ts, web/backend-state.ts, new web/usage-reservations.ts,
+  tests/project-brain-web-isolation.test.ts and report split-s6c-brain-web.md.
+- Brain brain.ts/access.ts ownership starts ONLY after root explicitly releases C3 Brain.
+- First implement/review Web boundaries while Brain acceptance runs. No service.ts edits.
+- Private targets/results/errors/task/session joins must stay in actual pinned local store.
+- Global backend state/quota needs explicit sanitized coordination ports and durable,
+  idempotent cross-store reserve/settle; never global transaction opening local SQL.
+- Preserve global per-day/backend limits across projects; no taskless bypass or duplicate quota.
+- Legacy unbound stores retain explicit compatibility. Bound coordination rejects private data.
+- Schema changes: send exact append/classification to sibling_cleanup_inventory first;
+  do not edit migrations/store-role concurrently.
+- No paid/network provider calls. OS-temp canonical project roots for fake integration tests.
+- Report exact observed tests and remaining host wiring; no commits/shared doc edits.
+- S6a is committed; worker-actions now belongs C3, do not edit it.
+- Bounded expansion: harness/web-tools.ts caller adds captured taskLease; brain/promotion.ts
+  optional publicProjection keeps private provenance local and uses opaque publicationDigest.
+
+### Supervisor brief: native worktree removal evidence
+- Own new workspaces/worktree-removal.ts, workspaces/worktree.ts,
+  projects/deletion.ts and tests/worktree-removal-evidence.test.ts.
+- Under existing common-owner capability, refuse known native lock/sequencer markers
+  before native remove can erase per-worktree admin evidence. Preserve bytes and rows.
+- This is a cooperative precheck, not an atomic CAS against unmanaged native processes.
+- C3 Labs owner will consume the exported check at its removal sites after root tests.
 
 Latest user directive: finish the ENTIRE plan, keep live testing on Facebook, delete the old
 Facebook project and start fresh. Clean all sibling variants; ALL project Labs/data belong
@@ -24,19 +62,32 @@ and recursive typecheck/build PASS. C3.2 attribution/checked-tree activation imp
 root final pending/setup/commit suite15/15 PASS. C3.4 runner/resume and command guards active.
 Command guards committedb87f326: root24/24 command/write/resume +final command8/8 PASS.
 Runner/resume committed7e49ad3; root11/11 within24. Queue committed442990e; root11/11 PASS,
-existing full-supervisor prequeue timing still under investigation. No final full-suite green.
+full supervisor actual crash/restart/replay PASS95.15s after bounded fixture observation fix.
+No final full-suite green. Latest draft TS onlyS4b narrowing issue corrected; rerun pending.
 Root C3.5 repair final targeted4/4 PASS (pending source/target, nested capability, fresh-lease
 resume); earlier22/23 identified self-lock now corrected, not a final full aggregate.
 Root C3.6 Brain pending3/3 PASS; existing compatibility timeouts under worker diagnosis.
-C3.7 deletion worker active; S2 project-local protocol worker active.
+C3.7 deletion draft frozen; S4b registry integration under review.
+C3.7 author5/5 PASS; rootprune capability bridge applied, independent rerun pendingC3.8.
+C3.8 short Lab guards and kernel-backed long-service proof adapters active, not accepted.
+Brain real Gate promotion now passes original deadlines after canonical ordinary write queue
+and rootd208119 transient settlement retry; ordinary10/newguards17 pass, finalprojects8 running.
 S0 role/identity committed567d236: strengthened19/19 independently PASS in main.
 S1 minimal global accounting broker committed87f0945; root broker/identity/defaults/workspace
-combined63/63 PASS, recursive typecheck PASS. S2 local protocol implementation active;
+combined63/63 PASS, recursive typecheck PASS. S2 local protocol integrated locally;
 no runtime/dispatch activation yet. Labs project-local filesystem/strict Compose
 boundary committedd8dd7cd: root new18+Compose118+S019 =155/155 PASS. Author rebuilt-dist
 Lab lifecycle57/57 PASS, incl real Chrome/kill/adoption/prune/deletion; C3.3 workspace guards
 implemented and root12/12 PASS within combined63. Additional Lab lifecycle mutation fencing
-remains C3.8 scope. No service/store caller activation yet.
+remains C3.8 scope. No default service/store activation yet.
+S2 committede0d669f: root protocol18+broker26+identity19=63/63 PASS48.13s.
+S3 committed121be75, renewalc02c9c5: rootcapacity28/28 PASS in compatibility run.
+Gate isolation committedf8959cb; root final5/5 PASS including two physical project DBs,
+local prompts/output captures/classification, shared quota, foreign provider wiring refusal,
+and runtime physical identity check immediately before transport (guard followup local).
+S4b actual per-project Executor registry author16+Gate5 PASS; rootreview/install-source guard
+correction in progress. S5 queue written brief queued for Brainworker after acceptance.
+No new live provider calls or Facebook worker; current tests use fakes/OS-temp stores only.
 
 User correction triggered removal of the accidental source-repo metadata tree. All12 sibling
 SwitchYardRouter-* directories plus baseline/sy-wt are absent from D:/ after checked relocation.
@@ -282,6 +333,146 @@ Missing/unverifiable workspace ownership refuses explicitly. Do not hold SQLite 
 Coordinate nested Worktrees/Brain capabilities; never reacquire an outer common lock.
 Real receipt fixtures must prove unchanged config/rows/files before refusal; ordinary confirmed
 deletion must retain accounting and worktree branches. Report exact failures/limits, no push.
+
+### c3-lab-mutation-activation
+
+Owner: c3_message after deletion freeze. Status: Queued, not dispatched yet.
+Files: labs/lab.ts, task-attempt-runner.ts, task-attempt.ts, task-attempt-prune.ts;
+tests/project-metadata-lab.test.ts; reports/c3-lab-mutation-activation.md.
+Request additional files before edits; existing deletion caller capability bridge serialized
+with that worker's deletion brief. Discover raw Git worktree create/refresh/merge/remove and
+recursive prune effects; gate actual owning source+worktree before writes/DB status changes.
+Preserve existing LabEffect ownership and process/Docker cleanup proofs. Common-owner scope
+must not span service lifetimes, provider/human waits or checks. Short filesystem/Git effects
+only; keep unresolved publication/command outcomes typed, no abort/reset/delete fallback.
+Forward optional host capability from confirmed project deletion to avoid self-deadlock.
+Verify retained empty-publication receipt even with clean HEAD/index, forged owner/path and
+ordinary Lab/task-attempt lifecycle. No new checkout/provider calls/shared-doc edits/commits.
+
+### split-s3-capacity
+
+Owner: storage_split_contract. Status: Assigned.
+Files: gateway/capacity.ts, gateway/quarantine.ts, routing/claim-capacity.ts,
+new storage/project-execution-grants.ts, tests/project-capacity.test.ts,
+reports/split-s3-capacity.md. Append migrations/store-role only for new global grant schema.
+Read Current State and storage-split-implementation-contract.md S3/authority sections.
+Remove local task joins from NEW split-mode global slot ownership; retain legacy explicit
+compatibility. Pin immutable project/store UUID/generation plus owner/incarnation/run and slot
+nonce to actual global execution grants. No private task copies in global store. Conservative
+unresolved physical holds survive owner loss/reopen; parent exit/lease age does not prove send
+absence. Claim authority consumed/revoked exact-once; stale recreated projects cannot inherit.
+Coordinate stable APIs with root S4a Gate constructor/dispatch injection before altering ports.
+Fake two-project capacity/last-slot/reopen/stale-generation tests; preserve legacy capacity tests.
+No service/Gate activation, provider calls, new checkout, commit/push/shared-doc edits.
+
+### split-s4a-gate
+
+Owner: Supervisor. Status: Starting after S2 acceptance.
+Files: gateway/gate.ts, gateway/direct.ts, routing/router.ts, scoring/classifier.ts,
+providers/runtime.ts (explicit DB wiring predicate only), tests/project-gate-isolation.test.ts,
+reports/split-s4a-gate.md.
+Inject explicit project versus coordination stores and ProjectRequestLedger; consume fresh
+dispatch authority immediately before transport. Private captures/classification remain local;
+global catalog/health/quota/keys/capacity stay shared. No implicit root-DB project scoping.
+Coordinate S3 stable capacity inputs. Fake two-project end-to-end request slice before runtime
+bundle/service activation. No live provider call until complete isolation/migration.
+
+### split-s3-renewal
+
+Owner: storage_split_contract. Status: Assigned after committed121be75 S3.
+Files: storage/project-execution-grants.ts, appended storage/migrations.ts and store-role if
+needed, tests/project-capacity.test.ts, reports/split-s3-capacity.md.
+Keep original grant binding immutable; authority_expires_at/renewal_sequence updated via
+nonce/project/store/generation/exact lease/expected-sequence CAS. Trusted synchronous host
+resolver returns verified local maximum deadline; caller holds local IMMEDIATE and validates
+actual lease/deadline/cancel authority before global renewal, no global-to-local transaction.
+Lost local commit only overholds global. No expiry auto-refund, nonce rotation, participant
+substitution or model-supplied authority. Append new migration; test stale generation/sequence,
+changed owner/incarnation and local commit failure. No runtime activation/shared-doc/commit.
+
+### split-s4b-runtime-registry
+
+Owner: storage_split_contract after renewal freeze. Status: Queued.
+Files: projects/runtime-store.ts, new projects/runtime-registry.ts, core/service.ts,
+core/executor.ts, sessions/run-sessions.ts, tests/project-runtime-registry.test.ts,
+reports/split-s4b-runtime-registry.md. Request further actual ownership before edits.
+Construct real separate project DB/service bundles pinned to registered UUID/store/generation;
+explicit project services at execution/lease/session end paths. Installation db remains shared
+coordination, never a pretend scoped SQL facade or first-project getter. Root S4a Gate optional
+ProjectGateContext stable; use project ledger/captures/router plus shared providers/health/grants.
+No global copies of task graph, payloads, approvals or private evidence. Missing/retired/mismatched
+store fails closed, never silently recreates data. Legacy mode explicit pending S9/S10 switch.
+Real two-project fake-request/session/close/generation tests before next scheduler phase.
+No provider calls/new checkout/shared-doc edits/commit; coordinate stable S5 queue API with root.
+
+### promotion-settlement-contention
+
+Owner: Supervisor. Status: In progress; core/service.ts held from S4b worker.
+Files: core/service.ts, tests/promotion-settlement-retry.test.ts, own report.
+Actual completed reviewer task emits settled; Brain publication gets typed lock_busy and
+automatic callback swallows it, leaving promotion pending indefinitely. Brain worker fixes
+ordinary common-owner queue. Root adds bounded transient lock_busy settlement retries using
+existing tracked timers, cancels onclose, never retries unresolved publication/command proof.
+No extra model request or changed task/transport deadline. Verify retry/recovery-required/close
+cases, then release service.ts to S4b. Keep existing exact result/lease authority checks.
+
+### split-s5-queue
+
+Owner: sibling_cleanup_inventory after Brain freeze. Status: Queued/read-design first.
+Files: core/scheduler.ts, storage/sqlite-task-queue.ts, storage/sqlite-task-leases.ts,
+storage/fair-claim.ts, core/task-run-leases.ts, storage/tasks.ts host-only claim ordering;
+new core/project-scheduler.ts; bounded gateway/capacity.ts, routing/claim-capacity.ts and
+storage/project-execution-grants.ts sealed-batch unit correction; append migrations/store-role
+for explicit private claim markers; tests/project-queue-isolation.test.ts,
+reports/split-s5-queue.md. Request extra actual files before edits; service bridge root-coordinated.
+Read S4b registry/services stable APIs and S5 contract. Global coordination fairly fans out
+project-local queues; one real Executor per project bundle, no root task copies/SQL facade.
+Local IMMEDIATE validates/seals chosen same-project group and reserves minimal global grant
+in local->global order; LOCAL COMMIT, then fresh global consume/provider claim, then LOCAL
+started-marker CAS COMMIT, only then executor. No replay/lost local commit starts execution.
+Sealed completion batch is one real execution/claim unit with immutable full participant set;
+supervisor/writer grants single-lease. Capacity rejects subset use of a combined batch grant.
+Replayed global grant never starts a second run. Failed local commit only overholds global.
+Renew actual local lease under same ordering with trusted renewal bound; never age-refund
+physical slots. Keep actual task graph/glob leases local. Move claim_pass shared fairness
+meta to explicit global authority; do not weaken S0 project metadata guard as a shortcut.
+Exact project UUID/generation/lease on heartbeat/cancel/end/recovery, even duplicate task IDs.
+Verify two-project fair claims, last-slot, rollback/reopen/cancel/renew/no-double-executor and
+private DB isolation with fake providers. No default activation until remaining consumers ready.
+No providers/new checkout/shared-doc edits/commit; coordinate root S6 operations partition.
+
+### split-s6a-project-tools
+
+Owner: storage_split_contract after S4b acceptance. Status: Assigned.
+Files: harness/supervisor-tools.ts, harness/budget-tools.ts, harness/worker-actions.ts,
+core/supervisor-authority.ts; new core/project-services.ts if it owns scoped runtime callbacks;
+tests/project-tool-store-isolation.test.ts, reports/split-s6a-project-tools.md.
+Read S4b actual bundle/runtime-services API and S6a contract. Every graph, approval, grant,
+command and supervisor-authority operation uses the pinned local project bundle; no root DB
+escape, cross-project lookup or first-project getter. Shared provider/capacity/accounting only
+through explicit sanitized ports. Stable per-project RunServices callback factory should make
+it difficult to accidentally pass installation task/session stores; coordinate runtime-services
+type bridge before edits and propose exact extra source ownership. No default service activation.
+Model-supplied project/parent/task IDs cannot widen owner scope, including duplicate task IDs
+in different stores and stale reused slug. Preserve C3 command guards/approval semantics.
+Verify actual two-project tools/approval/grant writes and zero private global rows with fakes;
+reject foreign parent/sessions/generation before side effects. Request migration ownership if
+needed (S5 currently owns append schema/role). No providers/new checkout/shared-doc/commit.
+
+### split-s6b-private-evidence
+
+Owner: Supervisor. Status: In progress.
+Files: storage/request-captures.ts, storage/artifacts.ts, storage/usage.ts,
+sessions/store.ts, sessions/recorder.ts; new storage/project-evidence-scope.ts;
+tests/project-evidence-isolation.test.ts, reports/split-s6b-private-evidence.md.
+Pin actual store identity/generation for private evidence, fail on coordination-role access,
+retain explicit legacy-unbound compatibility. Project files use canonical owning .MeritRouter
+root (including classifier sessions), never cfg.state/sessions split or external supplied root.
+Validate task/execution/session ownership before private file effects; exact stamped project
+for taskless local sessions; preserve existing append/replay/capture/privacy semantics.
+No global task joins/copies or fabricated telemetry. Reject pointer/link/owner changes before
+FS effects, verify two actual project stores and unavailable foreign refs. No schema edits;
+S5 owns schema/role. Default activation remains separate; no live providers.
 
 ## Work Ledger
 

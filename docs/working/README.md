@@ -7,7 +7,7 @@ lines, worker briefs, append-only ledger with real validation, open questions).
 | Document | Status | Scope |
 | --- | --- | --- |
 | [production-readiness.md](production-readiness.md) | Active | Authoritative priority order and production-readiness exit criteria; storage, delivery reliability, pilot acceptance, approval UX and repeatability. |
-| [project-local-storage.md](project-local-storage.md) | Active | Compact paths and standalone C1/C2/C2b integrated; final216PASS/1SKIP, recursive checks pass. Full49 checkout-fixture failures corrected and exact files pass; no new green full aggregate. Caller activation and physical migration pending. |
+| [project-local-storage.md](project-local-storage.md) | Active | S0-S4 and scoped tools/evidence accepted locally; queue, Brain/Web and Labs integration active. Latest recursive typecheck passes. Migration/default activation, final full checks and fresh Facebook live acceptance pending. |
 | [project-grid-deletion.md](project-grid-deletion.md) | Complete | Grid deletion and pending-request retirement verified; both clones removed through UI, sources preserved, panel restarted. Full suite had one browser timing failure that passed isolated rerun. |
 | [supervisor-lifecycle-stall.md](supervisor-lifecycle-stall.md) | Active | Facebook remains undelivered; v7 interrupted, retained profile complete and other page attempts failed deadlines. Current storage priority and exact acceptance gaps recorded; preserve source/charges. |
 | [supervised-delivery-v2.md](supervised-delivery-v2.md) | Active | Supervisor bootstrap/recovery/batching corrections verified and activated; renewed Facebook supervisor running, product acceptance pending. Earlier interactive adapter acceptance still blocked by absent Docker engine. |

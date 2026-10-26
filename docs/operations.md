@@ -376,9 +376,15 @@ permanently". Archived projects can be deleted too.
   for them (results, contracts, verdicts, plans, leases, merge queue, team channel, questions,
   supervisor transcripts), its sessions and their logs, artifacts, events, brain access requests
   and grants, and its `projects` row, in one transaction; the worktrees MeritRouter made for its
-  tasks and jobs under `<storage>/worktrees` (`git worktree remove`, then `prune`); and its brain
+  tasks and jobs under `<storage>/worktrees` (verified native `git worktree remove`); and its brain
   folder `projects/<slug>/`, in one brain commit with a `Remove-Reason` trailer (edits made
   outside MeritRouter are committed first, so the text stays in the brain's history).
+- Cleanup first verifies physical Git ownership and retained publication/command evidence.
+  Native locks and merge, rebase, cherry-pick or sequencer markers block worktree removal;
+  recover the operation before retrying. A failed native removal preserves rows and config,
+  with no recursive-delete fallback or unrelated worktree pruning. Git/Brain cleanup precedes
+  final config/SQL purge; partial filesystem cleanup is reported and cannot be rolled back
+  by restoring SQL. Remote Brain pushes run after releasing repository mutation authority.
 - Kept: the repository folders and every branch in them (job branches included), model requests
   and paid spend (for accounting; requests are anonymized and count only in install-wide views;
   per-task charges are removed with the tasks), minimal opaque anti-replay records and transport

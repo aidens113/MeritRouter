@@ -2,6 +2,12 @@
 
 ## Priority checkpoint (2026-10-26)
 
+Latest override: local d042de0 accepts scoped project tools and pinned drain assertions.
+Root tools12+runtime19 PASS31/31; private evidence6/6 passes. S5 coordinated queue,
+S6c Web quota/private-store ports and C3 Labs service-command ownership active in MAIN.
+No fresh Facebook worker/provider request yet. Full recursive validation/build pending;
+do not deploy these partial activation drafts or report the production plan finished.
+
 LATEST USER: finish entire plan and continue live Facebook testing; delete old Facebook
 project and start over. Cleanup sibling variants; no new alternate development checkouts.
 All project Labs/data must be enforced under own .MeritRouter. Prior preserve-old-Facebook

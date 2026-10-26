@@ -8,6 +8,7 @@ import { ensureProjectMetadataExcluded } from "./metadata-exclusion.js";
 import { stageWithoutProjectMetadata } from "./metadata-staging.js";
 import { withRepositoryMutation, type RepositoryMutationCapability } from "./repository-mutation.js";
 import { assertRuntimeCwdSupported } from "../projects/runtime-paths.js";
+import { assertNoNativeWorktreeOperation } from "./worktree-removal.js";
 
 const absolute = z.string().min(1).max(4096).refine(value => path.isAbsolute(value) && !value.includes("\0"), "Expected an absolute repository path");
 const commit = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);
@@ -182,6 +183,7 @@ export class Worktrees {
       managedWorkspacePath(this.root, ws.worktreePath);
       await assertSameRepository(source, worktree);
       await withRepositoryMutation([worktree], async () => {
+        await assertNoNativeWorktreeOperation(worktree);
         await git(source, ["worktree", "remove", ws.worktreePath]);
         if (existsSync(ws.worktreePath)) throw new Error("Git did not remove the managed workspace; ownership record retained");
         this.db.prepare("UPDATE workspaces SET status='removed',updated_at=? WHERE task_id=? AND worktree_path=?").run(this.now(), ws.taskId, ws.worktreePath);
