@@ -630,6 +630,22 @@ Unproven resources remain quarantined. A trusted local engine is a prerequisite;
 peers and hostile-image/kernel containment are outside the stated boundary. Actual disposable-engine
 acceptance remains required; no engine or containers were started during this investigation.
 
+## Project-local metadata and prepared Git publication (2026-10-26)
+
+Project-owned runtime content belongs beneath its project directory in `.MeritRouter`,
+with readable versioned job/task/attempt paths. Installation credentials and shared routing/
+accounting authority remain separate. Existing paths require explicit quiescent migration;
+the storage foundation does not relocate live worktrees or split the database.
+
+Git's [update-ref contract](https://git-scm.com/docs/git-update-ref) documents prepared
+transactions that acquire reference locks before publication and release them on abort.
+The selected-commit adapter under development uses bounded trusted interactive plumbing:
+queue an expected-old update of literal HEAD, prepare, verify raw HEAD type/target under
+the prepared native lock, then commit. Local Windows Git2.55 probes cover attached/detached
+HEAD and same-object symbolic changes. Unsupported backends must refuse; neither reference
+publication plus index replacement nor hostile filesystem changes are one atomic operation.
+The exact adapter and its recovery receipts remain unaccepted until implementation checks.
+
 ## History: verified FreeLLMAPI behaviour (server v0.2.1, commit 0c456ea)
 
 FreeLLMAPI was removed on 2026-10-20 (see Direct providers). None of this applies to the current

@@ -2,16 +2,27 @@
 
 ## Priority checkpoint (2026-10-26)
 
+USER RESUMED on 2026-10-26: continue plan; investigate/prevent alternate folders in D:/.
+Twelve sibling SwitchYardRouter-* folders are registered development worktrees with HEADs
+merged into dev. Placement/cleanup policy gap corrected in AGENTS.md; inspect untracked
+data and services before any cleanup. No folders moved/deleted. Resume isolated C2b work
+in existing .MeritRouter/development/metadata-exclusion, preserving unfinished draft.
+Published dev/main2185d59; local dev2bc5ab6 includes compact paths, unpushed.
+Isolated metadata-exclusion tree nowf26b974 commits standalone selected-commit corrections;
+root selected28/28 and recursive checks pass, full router suite still running after native
+SQLite dependency repair. Not merged/pushed/activated. Next C3 contract is recorded there.
+No migration/live activation; app undelivered. Preserve source and existing panel services.
+
 [Production readiness](production-readiness.md) now owns cross-effort execution order and
 exit criteria. [Project-local storage](project-local-storage.md) is the active implementation
-focus: path contract and additive project directory metadata in progress, state/accounting
+focus: path contract and additive project directory metadata implemented, state/accounting
 separation under design. No project data has moved; existing runtime paths remain authoritative.
 Latest live read: Facebook v7 supervisor interrupted/watchdog; profile completed, people and
 notifications failed deadline_exceeded, no pending/running approvals. Retained source and
 charges must be preserved; no usable app delivered. Older process IDs and task snapshots below
 are historical, not fresh status. Do not resume/move work without checking current state.
 Storage foundation87feb17 now committed locally:90 focused tests plus recursive typecheck/
-build pass; final integrated full suite running, publication pending. Main source/dist frozen.
+build pass; corrected full1792 total:1789PASS/0FAIL/3SKIP1012.23s, publication underway.
 Next Git exclusion helper isolated under this project's .MeritRouter/development/metadata-exclusion,
 not a flat installation folder. No project store separation/migration or runtime rollout yet.
 
