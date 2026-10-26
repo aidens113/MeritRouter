@@ -10,11 +10,18 @@ C3.0/C3.1/S0/Labs foundations committed, C3.2 committed96d4a86, C3.3 committed25
 S1 broker committed87f0945. Root final commit15/15 and combined broker/identity/defaults/
 workspace63/63 PASS; recursive typecheck PASS. C3.4 runner/command guards and S2 local
 accounting active; C3.5 repair replay/merge queue next. Activation/migration still unfinished.
+Latest local checkpoints: commandb87f326, runner7e49ad3, hydration71dbf2a, queue442990e.
+Root command/write/resume24/24 +final command8/8 +queue11/11 +hydration/Brain7 targeted PASS.
+C3.6 Brain compatibility under measured multi-publication timing investigation; C3.7 deletion
+and S2 accounting active. Latest draft typecheck found only command lease literal TS2322,
+corrected type annotation, recursive rerun pending. No latest full-suite/build green claim.
 Old Facebook deletion verified complete; canonical path absent, old Git history in OS TEMP.
 Fresh live trial cap400/$0 paid; no provider call yet. Do not use old shared-storage defaults.
 All12 D:/ sibling variants and baseline/sy-wt absent. Source .MeritRouter ABSENT and prohibited.
 Historical12 .claude/worktrees checkouts plus unregistered leftover retired to existing
 D:/.pnpm-store/meritrouter-agent-cleanup-20261026; dirty contents preserved, not deleted.
+Git administrative state copied/hash-verified to OS TEMP; inactive pointers detached and
+invalid registrations pruned. Git worktree list now contains only main.
 ALL development is MAIN D:/SwitchYardRouter. No new checkout. See project-local-storage.md
 Current State for authoritative status; historical checkpoint text below is superseded.
 

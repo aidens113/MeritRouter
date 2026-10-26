@@ -22,6 +22,13 @@ C3.0 native message compatibility merged locally; root37/37 + containment16/16 P
 C3.1 lifecycle fence committed d332c6b: author53PASS/1POSIXskip, root full source review
 and recursive typecheck/build PASS. C3.2 attribution/checked-tree activation implemented;
 root final pending/setup/commit suite15/15 PASS. C3.4 runner/resume and command guards active.
+Command guards committedb87f326: root24/24 command/write/resume +final command8/8 PASS.
+Runner/resume committed7e49ad3; root11/11 within24. Queue committed442990e; root11/11 PASS,
+existing full-supervisor prequeue timing still under investigation. No final full-suite green.
+Root C3.5 repair final targeted4/4 PASS (pending source/target, nested capability, fresh-lease
+resume); earlier22/23 identified self-lock now corrected, not a final full aggregate.
+Root C3.6 Brain pending3/3 PASS; existing compatibility timeouts under worker diagnosis.
+C3.7 deletion worker active; S2 project-local protocol worker active.
 S0 role/identity committed567d236: strengthened19/19 independently PASS in main.
 S1 minimal global accounting broker committed87f0945; root broker/identity/defaults/workspace
 combined63/63 PASS, recursive typecheck PASS. S2 local protocol implementation active;
@@ -40,6 +47,8 @@ leftovers moved atomically into existing machine package cache D:/.pnpm-store/me
 Router source .MeritRouter is now ABSENT (also after restored passive MCP/panel). Panel and
 passive MCP were restored after the verified temporary stop. No checkout/cache may run from
 the quarantine; all code authors/tests use MAIN. No new alternate checkout allowed.
+Hidden12 worktrees and one unregistered residue also retired; Git admin backups byte-verified
+in OS TEMP, pointer files detached and invalid registrations pruned. Git lists ONLY MAIN.
 Agent checkpoint/validation evidence is in normal OS temp (not repository .MeritRouter).
 
 Old Facebook deletion submitted ONCE via supported DELETE after preview no blockers:
@@ -241,6 +250,38 @@ across checks, redelegation, human/model waits. Propagate typed unresolved outco
 rollback; expose abort failures. Restore only proven owned pick chain, never foreign advance.
 Preserve durable branch mutex/replay semantics. Validate real Git pending/race/recovery cases
 and relevant existing queue tests; report exact results/limits, no commit/push/shared-doc edits.
+
+### c3-brain-activation
+
+Owner: sibling_cleanup_inventory (supervisor draft handed off). Status: In progress.
+Files: brain/brain.ts, tests/project-metadata-brain.test.ts, tests/brain.test.ts,
+tests/projects-brain.test.ts, reports/c3-brain-activation.md only.
+Fence Git-backed initialization, writes, adoption and removal before file/index effects;
+preserve mount and literal path boundaries, optimistic digests and typed publication outcomes.
+Forward host capabilities into attributed commits. Keep optional remote push outside leases.
+Verify actual retained-publication refusals and ordinary Brain behavior after shared modules ready.
+Root new3/3 pending tests pass; existing projects-brain snapshot6/8 timeout30s with cascading
+cleanup and brain.test still running root session1697. Diagnose actual cause with one-case
+bounded diagnostic before changing assertions/timeouts; preserve every authority assertion.
+Root will stop/drain that old run before replacement loops. Native test bootstrap fixture is
+root-owned and committedb7a0c5b; original-hook exact case passes. No native fixture edits.
+Coordinate deletion host API: optional {mutation} through ensure/removeProjectFolder and
+README write without nested reacquisition. Propose exact public host shape to root and c3_message.
+Do not hold leases across Git push. No new checkout/provider calls/shared-doc edits/commits.
+
+### c3-project-deletion-activation
+
+Owner: c3_message after merge-queue freeze. Status: Queued, not dispatched yet.
+Files: projects/deletion.ts, admin/projects.ts, tests/project-metadata-deletion.test.ts,
+reports/c3-project-deletion-activation.md. Brain host-control extensions require root coordination.
+Discover relevant worktree/Brain pending publications before Lab prune, config rewrite or SQL
+purge. Hold sorted common-owner authority through destructive lifecycle; revalidate under
+scope. Preserve private recovery evidence and global usage/holds. Never swallow native remove
+failure then count removal; validate actual paths/physical owners, no foreign lock writes.
+Missing/unverifiable workspace ownership refuses explicitly. Do not hold SQLite tx across await.
+Coordinate nested Worktrees/Brain capabilities; never reacquire an outer common lock.
+Real receipt fixtures must prove unchanged config/rows/files before refusal; ordinary confirmed
+deletion must retain accounting and worktree branches. Report exact failures/limits, no push.
 
 ## Work Ledger
 

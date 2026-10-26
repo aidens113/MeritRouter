@@ -84,7 +84,7 @@ are disposable sibling variants under this inventory.
 No directories/files were deleted or moved, no new directories/checkouts created, no source
 or shared documents edited, no tests/builds/providers/Docker called, and no commits/pushes made.
 
-## Supervisor execution update — 2026-10-26
+## Supervisor execution update â€” 2026-10-26
 
 The above is the original read-only inventory, not the final cleanup state. User later
 explicitly prohibited source-repository .MeritRouter; its unfinished source was preserved
@@ -99,5 +99,8 @@ and several trees untracked validation logs. Git worktree move preserved each en
 under the same existing quarantine with legacy- prefixes. Unregistered overview-horizons
 residue was moved there with Move-Item after explicit absolute boundary/occupied-target checks.
 No actual worker process referenced these paths; only the inventory command matched itself.
-.claude/worktrees is now empty; .MeritRouter remains absent. Registrations still identify the
-retired quarantine locations; these are preservation-only, never development checkouts.
+.claude/worktrees is now empty; .MeritRouter remains absent. Retired Git administrative
+directories were subsequently copied and every file SHA256-verified in OS TEMP at
+meritrouter-retired-worktree-admin-20261026. Quarantine .git pointer files renamed .git-retired,
+then git worktree prune removed only invalid registrations. Git now lists ONLY main.
+Dirty source, logs, staged-index/admin recovery and branches remain preserved.
