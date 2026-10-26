@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import path from "node:path";
 import { devNull } from "node:os";
+import { authorizedGitIndex, type GitIndexCapability } from "./git-index-transaction.js";
 
 const GIT_NULL = process.platform === "win32" ? "NUL" : devNull;
 const IDENTITY_ENV = /^(GIT_(AUTHOR|COMMITTER)_(NAME|EMAIL|DATE))$/i;
@@ -63,7 +64,7 @@ function trustedNewlineConfiguration(): string[] {
 }
 
 /** Shared by async Git and the few fixed synchronous metadata reads. This is not a worker shell API. */
-export function prepareGitProcess(cwd: string, input: readonly string[], overrides: Record<string, string> = {}): { args: string[]; env: NodeJS.ProcessEnv } {
+export function prepareGitProcess(cwd: string, input: readonly string[], overrides: Record<string, string> = {}, index?: GitIndexCapability): { args: string[]; env: NodeJS.ProcessEnv } {
   const args = [...input];
   const identity: string[] = [];
   while (args[0] === "-c") {
@@ -75,6 +76,7 @@ export function prepareGitProcess(cwd: string, input: readonly string[], overrid
   const command = args[0];
   if (!command || !INTERNAL_COMMANDS.has(command)) throw new Error(`unsupported internal Git command: ${command ?? "empty"}`);
   const env = gitProcessEnvironment(overrides);
+  if (index !== undefined) env.GIT_INDEX_FILE = authorizedGitIndex(index, cwd, args);
   let policy = SAFE_CONFIG.flatMap(value => ["-c", value]);
   // Reading configuration is a built-in metadata operation; it does not run filters/hooks.
   // Reject configured conversion/merge/trailer programs rather than silently changing file semantics.
