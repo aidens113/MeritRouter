@@ -4,9 +4,11 @@ import { memoryReadBrain } from "../harness/tools.js";
 import { allows } from "../brain/access.js";
 import { memoryRecordPath, parseMemoryRecord } from "../brain/memory-record.js";
 import { MemoryManifestSchema, type MemoryManifest } from "./memory-manifest.js";
+import { compact } from "../harness/compaction.js";
 
 const START = "<!-- meritrouter-memory-context:start -->", END = "<!-- meritrouter-memory-context:end -->";
-const tokens = (text: string) => Math.ceil(text.length / 4);
+// Use the same conservative units as routed prompt admission, including dense Unicode.
+const tokens = (text: string) => estimateTokens([{ role: "user", content: text }]);
 const strip = (text: string) => text.replace(/<!-- meritrouter-memory-context:start -->[\s\S]*?<!-- meritrouter-memory-context:end -->/g, "").trimEnd();
 
 /** Always re-resolves ACLs and live records. No cached prose survives revocation/resume. */
@@ -21,15 +23,29 @@ export async function buildMemoryContext(env: HarnessEnv, options: MemoryContext
   const config = env.ctx.cfg.brain.memory_context;
   const endpointBudget = env.ctx.plan.candidates.reduce((n, ep) => Math.min(n, ep.contextLimitTokens ?? 0), Number.MAX_SAFE_INTEGER);
   const configuredInput = Math.min(endpointBudget, env.ctx.budget.maxInputTokens ?? Infinity);
-  // Callers may supply their actual assembled prompt/tools. Otherwise protect half the
-  // window for loaded source/system/tools plus the serialized task; never assume 2k fits.
-  const allocated = options.messages ? estimateTokens(options.messages, options.tools ?? []) + 2000 : Math.max(4000, Math.ceil(configuredInput / 2)) + Math.ceil(JSON.stringify(env.ctx.spec).length / 2);
+  const desiredMemory = config.enabled ? Math.max(0, Math.min(config.role_tokens[env.role], options.maxTokens ?? Infinity)) : 0;
   const outputTokens = options.outputTokens ?? Math.min(env.ctx.profile.max_output_tokens, env.ctx.budget.maxOutputTokens ?? Infinity);
-  const contextHeadroom = Math.max(0, configuredInput - outputTokens - allocated - (options.reservedTokens ?? 0));
-  const budget = config.enabled ? Math.max(0, Math.min(config.role_tokens[env.role], options.maxTokens ?? Infinity, contextHeadroom)) : 0;
+  const reserved = options.reservedTokens ?? 0;
+  // Reserve memory against the prompt the loop can actually fit, not an oversized restored
+  // transcript that the loop has not compacted yet. Project on a deep copy: real compaction
+  // must remain inside runAgentLoop so its effect-history safeguards observe every removal.
+  let allocated = options.messages ? estimateTokens(options.messages, options.tools ?? []) + 2000 : Math.max(4000, Math.ceil(configuredInput / 2)) + Math.ceil(JSON.stringify(env.ctx.spec).length / 2);
+  if (options.messages && desiredMemory > 0 && configuredInput - outputTokens - allocated - reserved < desiredMemory) {
+    const projected = structuredClone(options.messages);
+    const messageBudget = Math.max(0, configuredInput - outputTokens - estimateTokens([], options.tools ?? []) - 2000 - reserved - desiredMemory);
+    compact(projected, messageBudget);
+    allocated = estimateTokens(projected, options.tools ?? []) + 2000;
+  }
+  const contextHeadroom = Math.max(0, configuredInput - outputTokens - allocated - reserved);
+  const budget = Math.min(desiredMemory, contextHeadroom);
   const manifest: MemoryManifest = { schemaVersion: 1, role: env.role, project: env.ctx.brain?.project ?? "", generatedAt: env.ctx.now(), tokenBudget: budget, estimatedTokens: 0, entries: [], omissions: [] };
   const b = env.brain;
-  if (!b || budget < 100) return { text: "", manifest };
+  if (!b || budget < 100) {
+    if (b && config.enabled && desiredMemory > 0 && budget < 100) manifest.omissions.push({ ref: "context:memory", reason: contextHeadroom < 100
+      ? "Prompt/tool/output headroom cannot fit memory after bounded compaction projection; current source records were not read"
+      : "Configured role/explicit memory cap is below the minimum context size; current source records were not read" });
+    return { text: "", manifest };
+  }
   const principal = b.principal(), project = b.brain.project;
   const refs = new Map<string, string>();
   const direct = new Set<string>();
