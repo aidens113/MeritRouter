@@ -71,3 +71,8 @@ without force and without discarding user data. Do not bulk-delete drive-root di
 
 No live provider calls, service changes, runtime migration, directory cleanup or source
 code changes were necessary for this investigation.
+
+Follow-up inventory: scheduled-task actions (executable, arguments and working directory),
+`D:/SwitchYard/start-switchyard.bat`, and the local `.mcp.json` registration returned no
+`SwitchYardRouter-` references. `Get-ScheduledTask` completed successfully; `rg -l -F`
+returned exit1 (no matches). This narrows known launch dependencies, not open-handle proof.

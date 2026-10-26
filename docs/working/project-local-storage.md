@@ -24,12 +24,15 @@ blockers have regressions and root/independent checks; full-suite acceptance is 
 Resumed source is frozen; independent review found no new prerequisite blocker, with real
 concurrent-pending/hardlinked-log/archive probes3/3 and targeted topology5/5 passing.
 Root read implementation and observed main/isolated recursive typecheck and isolated build PASS.
-Root selected suite PASS28/28 in157.39s; full router suite is running against frozen
-isolated source, no aggregate success claimed yet. Fixture pack-refs setup fixed without
+Root selected suite PASS28/28 in157.39s; full1854 finished1801PASS/49FAIL/4SKIP1040.21s.
+All49 failures are two pure Compose files whose cwd-relative virtual approved binds inherit
+.MeritRouter ancestry and correctly hit existing production guards. Root baseline118/118
+PASS from main; fixture-only neutral OS-temp paths preserve all assertions/guards. Root
+final two-file118/118 PASS1.04s. No final green full aggregate claimed. Pack-refs fixture fixed without
 widening runtime policy. Root verified all four reviewed source SHA256 values unchanged.
 Initial root full run stopped after missing isolated better-sqlite3 native binding; no green
 aggregate for that interrupted run. Isolated rebuild exit0 and in-memory SELECT1 succeeded;
-fresh full rerun writes validation/selected-commit-resume/full-after-dependency-rebuild.json.
+full output retained at validation/selected-commit-resume/full-after-dependency-rebuild.json.
 Message/trailer compatibility, all-caller pending gates and power-loss durability remain
 explicit preactivation requirements. Main working-doc changes also uncommitted.
 Next C3 source/reference contract is in reports/metadata-caller-activation-contract.md:
@@ -170,6 +173,18 @@ is underway before approving physical DB split implementation. Do not copy globa
 or private payloads into a misleading partial project store and call migration complete.
 
 ## Worker Briefs
+
+### compose-fixture-containment
+- Role: focused fixture investigation/fix, existing metadata-exclusion tree; no new checkout.
+- Own tests/compose-engine-contract.test.ts, tests/compose-ownership.test.ts only;
+  own reports/compose-fixture-containment.md. No production/shared-document edits.
+- Root full result:1801PASS/49FAIL/4SKIP of1854 in1040.21s, failures only these two files,
+  chiefly approval_mismatch. Reproduce focused; trace actual refusal before changing anything.
+- Hypothesis: pure fictional path.resolve fixtures inherit .MeritRouter checkout ancestry
+  and correctly hit metadata policy. If confirmed, use neutral OS-temp virtual fixture paths,
+  preserving every assertion and production guard. No writes to user paths or live Compose.
+- Verify both full test files; compare unchanged baseline source behavior where practical.
+- If production defect instead, report before source edits. No commits/pushes/live calls.
 
 ### metadata-caller-activation-contract
 - Role: read-only planner in existing metadata-exclusion tree during frozen-source validation.
@@ -514,6 +529,14 @@ or private payloads into a misleading partial project store and call migration c
 - Keep report navigable with tables and exact file references. No broad code extraction.
 
 ## Work Ledger
+
+### 2026-10-26 — Resolve full-suite checkout-sensitive fixtures
+- Agent: supervisor; worker selected_commit_resume
+- Changed: only two Compose fixture files and their report in isolated tree.
+- Why: Pure virtual approved mounts inherited .MeritRouter cwd and correctly hit metadata guard.
+- Validation: full1854 exit1:1801PASS/49FAIL/4SKIP1040.21s; root baseline main two-file118/118 PASS; root corrected isolated two-file118/118 PASS1.04s. All61 executable C1/C2/C2b cases passed in full run.
+- Outcome: Accepted fixture correction; no production guard/assertion relaxation, no final full-green claim.
+- Follow-up: merge current dev into feature and check combined compact paths/metadata plus recursive checks before integration/publication.
 
 ### 2026-10-26 — Repair isolated validation dependency
 - Agent: supervisor
