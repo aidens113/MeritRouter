@@ -33,6 +33,8 @@ export interface ProjectGateContext {
   identity: ProjectStoreIdentity;
   capacityGrants: ProjectExecutionGrants;
   executionGrants(request: GateRequest): readonly ExecutionGrantRef[];
+  /** Host-only synchronous check of the registered runtime's physical identity. */
+  assertRuntime?: () => undefined;
 }
 
 export type { DirectRuntime } from "./direct.js";
@@ -369,6 +371,7 @@ export class Gate {
    */
   async request(req: GateRequest): Promise<GateResponse> {
     if (this.closing) throw new Error("model request gate is closed");
+    this.assertProjectRuntime();
     req = { ...req, chat: structuredClone(req.chat), participants: req.participants.map(p => {
       const lease = Object.freeze(LeaseRefSchema.parse(p.lease));
       if (p.taskId !== lease.taskId || p.leaseOwner !== lease.owner) throw new Error("participant fields disagree with captured lease");
@@ -379,6 +382,11 @@ export class Gate {
     this.inFlight.add(run);
     try { return await run; }
     finally { this.inFlight.delete(run); }
+  }
+
+  private assertProjectRuntime(): void {
+    if (this.projectContext?.assertRuntime && this.projectContext.assertRuntime() !== undefined)
+      throw new Error("Project runtime assertion must complete synchronously");
   }
 
   /** Stop new routed requests and drain accounting before its SQLite connection closes. */
@@ -471,6 +479,7 @@ export class Gate {
       };
       assertValidationReserve(false);
       const r = await requestDirect({ cfg: this.cfg, ledger: this.ledger, captures: this.captures, assertDispatch: (participants, reservation, dispatchId) => {
+        this.assertProjectRuntime();
         assertValidationReserve(true);
         this.admission.assertDispatch(participants);
         if (reservation && dispatchId) {

@@ -24,6 +24,10 @@ registry row) were corrected without weakening assertions or guards.
 
 Latest combined Gate4 + promotion retry3 =7/7 PASS9.64s. S3 capacity final17 independently
 passed separately. Recursive typecheck/build/final suites await coherent source snapshot.
+Follow-up synchronous runtime assertion now runs at entry and immediately before transport;
+physical runtime replacement after durable intent sends nothing and retains the global hold.
+Final Gate5/5 PASS9.36s, then registry19+Gate5 =24/24 PASS18.38s. Legacy capture compatibility
+17/17 PASS90.83s under original limits after fixture-owned Brain bootstrap/shutdown drain.
 
 This does not activate core service, scheduler, entrypoints or any real provider. Internal
 taskless discovery/qualification needs S8 synthetic-store/grant authority; no empty-lease

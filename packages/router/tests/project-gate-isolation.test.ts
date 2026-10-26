@@ -98,3 +98,10 @@ it("rejects project-local provider bookkeeping before it can write shared author
   expect(()=>new Gate(alpha.local,alpha.cfg,alpha.admission,f.health,{providers,spend:f.spend},alpha.ledger,undefined,alpha.context)).toThrow(/separate pinned/);
   expect(f.calls).toEqual([]);assertStoreRole(alpha.local,alpha.identity);
 });
+it("rechecks pinned runtime identity after durable intent and before transport",async()=>{
+  const f=fixture(),alpha=f.project("alpha");let checks=0;
+  Object.assign(alpha.context,{assertRuntime:()=>{if(++checks===2)throw new Error("runtime file replaced");}});
+  await expect(alpha.gate.request(alpha.request)).rejects.toThrow(/runtime file replaced/);
+  expect(checks).toBe(2);expect(f.calls).toEqual([]);
+  expect(f.global.prepare("SELECT status FROM physical_requests").get()).toEqual({status:"dispatch_intent"});
+});

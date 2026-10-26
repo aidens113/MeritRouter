@@ -139,6 +139,9 @@ it("captures one shared classifier payload per admitted request, without duplica
 
 it("captures the default completion batch once while preserving each participant charge", async () => {
   const { client } = setup();
+  const service=sy!;
+  try {
+  await service.brain.ensure();
   client.handler = req => {
     const ids = [...String(req.messages[1]!.content).matchAll(/<item id="(i\d+)">/g)].map(match => match[1]!);
     return reply(JSON.stringify({ items: ids.map(id => ({ id, result: goodOutput() })) }), { model: req.model, provider: req.provider });
@@ -153,6 +156,7 @@ it("captures the default completion batch once while preserving each participant
   expect(capture.input!.messages[1]!.content).toContain('<item id="i2">');
   expect(sy!.db.prepare("SELECT COUNT(*) AS n FROM request_captures").get()).toEqual({ n: 1 });
   expect(sy!.db.prepare("SELECT COUNT(*) AS n FROM request_charges").get()).toEqual({ n: 2 });
+  } finally { await service.close(); if(sy===service)sy=undefined; }
 });
 
 
@@ -164,6 +168,9 @@ it.each(["native", "command"])("captures actual %s coding calls through the defa
     return reply(JSON.stringify(goodOutput()), { model: req.model, provider: req.provider });
   });
   sy = open(env, client, { worker: true, coding: createCodingRunner(env.cfg) });
+  const service=sy;
+  try {
+  await sy.brain.ensure();
   const [task] = await sy.submitTasks([{ profile: "implement", goal: "Add subtract", repositoryAliases: ["core"], writableRepository: "core", hints: { difficulty: "T2" }, context: { fileRefs: ["core:src/app.ts"] }, constraints: { acceptanceCriteria: ["subtract exists"], allowedPaths: ["src/**"] } }]);
   const result = await sy.awaitResults([task!.taskId], { timeoutSeconds: 60 });
   if (runner === "command") {
@@ -183,4 +190,5 @@ it.each(["native", "command"])("captures actual %s coding calls through the defa
     expect(capture.input).not.toBeNull(); expect(capture.output).not.toBeNull();
     expect(capture.outcome!.kind).toBe("succeeded");
   }
+  } finally { await service.close(); if(sy===service)sy=undefined; }
 }, 90000);
