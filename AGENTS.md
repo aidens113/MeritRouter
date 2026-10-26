@@ -252,9 +252,10 @@ agent identity travels in commit trailers rather than in a branch name.
 **Location and cleanup.** Never create development worktrees, alternate checkouts,
 validation folders, reports, or build staging beside this repository (for example,
 `D:/SwitchYardRouter-<slug>`), or elsewhere in a drive root. Keep development
-worktrees under `<repository>/.MeritRouter/development/<short-slug>` and validation
-artifacts under `<repository>/.MeritRouter/validation/`. Verify the metadata
-directory is Git-ignored before creating anything inside it. Use the existing
+worktrees only where explicitly authorized by the user; current authorization is
+to use the existing main checkout and create no alternate checkout. Put agent validation
+artifacts in normal OS temporary storage, never a source-repository `.MeritRouter`.
+Use the existing
 checkout and serialize validation when isolation is unnecessary; workers do not
 each need their own checkout. Check Windows path length before choosing a slug.
 Record each worktree's owner and purpose in the working document. After integration,
@@ -263,6 +264,14 @@ evidence before Git-aware cleanup. Never force-remove or relocate a dirty or act
 worktree; record why it must remain and revisit once quiescent. Existing external
 worktrees require that same inventory before any cleanup. User project directories
 and explicitly configured external runtime locations are not disposable worktrees.
+
+**2026-10-26 user override:** No `.MeritRouter` directory in this source repository.
+Do not create further alternate development checkouts; use the main checkout and serialize
+validation. All runtime Labs, workspaces and
+project-owned data must reside under the owning project's `.MeritRouter`, enforced by
+the service/path boundary. A central installation directory or drive-root sibling is
+not an acceptable new-project default. Shared credentials/coordination remain explicitly
+global; existing project data needs checked migration, never silent relocation.
 
 The supervisor picks the tier when it writes the brief:
 

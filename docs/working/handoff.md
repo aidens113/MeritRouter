@@ -2,19 +2,25 @@
 
 ## Priority checkpoint (2026-10-26)
 
-USER RESUMED on 2026-10-26: continue plan; investigate/prevent alternate folders in D:/.
-Twelve sibling SwitchYardRouter-* folders are registered development worktrees with HEADs
-merged into dev. Placement/cleanup policy gap corrected in AGENTS.md; inspect untracked
-data and services before any cleanup. No folders moved/deleted. Resume isolated C2b work
-in existing .MeritRouter/development/metadata-exclusion, preserving unfinished draft.
-Source checkpoint dev17182ad integrates compact paths and standalone C1/C2/C2b.
-Final root combined216PASS/1POSIXskip and recursive typecheck/build PASS; checked feature
-and merged packages/apps source identical. Full1801PASS/49FAIL/4SKIP: all49 were cwd-sensitive
-Compose fixtures, corrected with guards/assertions intact and root118/118 + combined passing.
-No final green full aggregate claimed. No caller activation/migration/live reload. Next C3
-contract in project-local-storage/reports/metadata-caller-activation-contract.md. Internal
-metadata-exclusion tree retained for this active storage unit; no worker currently active.
-No migration/live activation; app undelivered. Preserve source and existing panel services.
+LATEST USER: finish entire plan and continue live Facebook testing; delete old Facebook
+project and start over. Cleanup sibling variants; no new alternate development checkouts.
+All project Labs/data must be enforced under own .MeritRouter. Prior preserve-old-Facebook
+payload direction superseded by this reset, not permission to erase shared usage/charges.
+C3.0/C3.1/S0/Labs foundations committed, C3.2 committed96d4a86, C3.3 committed255ef7f,
+S1 broker committed87f0945. Root final commit15/15 and combined broker/identity/defaults/
+workspace63/63 PASS; recursive typecheck PASS. C3.4 runner/command guards and S2 local
+accounting active; C3.5 repair replay/merge queue next. Activation/migration still unfinished.
+Old Facebook deletion verified complete; canonical path absent, old Git history in OS TEMP.
+Fresh live trial cap400/$0 paid; no provider call yet. Do not use old shared-storage defaults.
+All12 D:/ sibling variants and baseline/sy-wt absent. Source .MeritRouter ABSENT and prohibited.
+Historical12 .claude/worktrees checkouts plus unregistered leftover retired to existing
+D:/.pnpm-store/meritrouter-agent-cleanup-20261026; dirty contents preserved, not deleted.
+ALL development is MAIN D:/SwitchYardRouter. No new checkout. See project-local-storage.md
+Current State for authoritative status; historical checkpoint text below is superseded.
+
+Historical validation: full1801PASS/49FAIL/4SKIP, all49 cwd-sensitive Compose fixtures.
+Corrected fixtures preserve guards/assertions; root118/118 and combined216PASS/1POSIXskip
+passed. No final passing full aggregate claimed. Fresh app remains undelivered.
 
 [Production readiness](production-readiness.md) now owns cross-effort execution order and
 exit criteria. [Project-local storage](project-local-storage.md) is the active implementation

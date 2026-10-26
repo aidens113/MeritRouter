@@ -1,6 +1,6 @@
 # Project-local runtime storage
 Status: Active
-Status detail: Folder policy and standalone storage prerequisites integrated; final combined216PASS/1SKIP and recursive checks pass, caller activation/migration remain open.
+Status detail: Foundations verified; C3 runner/command guards and S2 local accounting active. Runtime activation, migration and fresh Facebook acceptance remain open.
 Created: 2026-10-25
 Last updated: 2026-10-26
 Owner: Senior supervisor agent
@@ -10,117 +10,58 @@ Related: [working index](README.md), [delivery investigation](supervisor-lifecyc
 
 ## Current State
 
-RESUMED explicitly on 2026-10-26. User also requires no more alternate folders in D:/.
-Inventory found twelve D:/SwitchYardRouter-* registered development worktrees, all HEADs
-already ancestors of dev, no tracked changes and no nonignored untracked files. Ignored
-build/demo state and historical service launch references must be preserved before cleanup.
-Prior isolation policy omitted placement and cleanup;
-AGENTS.md now requires in-project ignored .MeritRouter/development and validation paths.
-No external directory moved or deleted. Preserve panel/app services; no reload.
-Source integrated on dev17182ad: compact-v2, C1/C2 and standalone C2b corrections.
-Final feature sync882e53e includes current dev; root confirmed identical packages/apps source
-after merge. Final combined six-file217:216PASS/1POSIX-onlySKIP159.12s; recursive typecheck
-and build PASS on that exact source. Existing internal development tree retained for C3.
-No caller activation accepted. Prior concurrent pending-receipt and redirected Git refs
-blockers have passing root/independent regressions; full-run limitations recorded below.
-Resumed source is frozen; independent review found no new prerequisite blocker, with real
-concurrent-pending/hardlinked-log/archive probes3/3 and targeted topology5/5 passing.
-Root read implementation and observed main/isolated recursive typecheck and isolated build PASS.
-Root selected suite PASS28/28 in157.39s; full1854 finished1801PASS/49FAIL/4SKIP1040.21s.
-All49 failures are two pure Compose files whose cwd-relative virtual approved binds inherit
-.MeritRouter ancestry and correctly hit existing production guards. Root baseline118/118
-PASS from main; fixture-only neutral OS-temp paths preserve all assertions/guards. Root
-final two-file118/118 PASS1.04s. No final green full aggregate claimed. Pack-refs fixture fixed without
-widening runtime policy. Root verified all four reviewed source SHA256 values unchanged.
-Initial root full run stopped after missing isolated better-sqlite3 native binding; no green
-aggregate for that interrupted run. Isolated rebuild exit0 and in-memory SELECT1 succeeded;
-full output retained at validation/selected-commit-resume/full-after-dependency-rebuild.json.
-Message/trailer compatibility, all-caller pending gates and power-loss durability remain
-explicit preactivation requirements. No runtime rollout or physical migration accepted.
-Next C3 source/reference contract is in reports/metadata-caller-activation-contract.md:
-message parity first, shared lifecycle lease second, then attributed wrappers/stage/setup/
-resume/integration/Brain/deletion. Preserve legacy public paths:[] meaning ALL. Root read
-the proposed file partitions and acceptance matrix; no C3 source edits during full suite.
-No data migration or live caller activation performed. Facebook remains undelivered.
+Latest user directive: finish the ENTIRE plan, keep live testing on Facebook, delete the old
+Facebook project and start fresh. Clean all sibling variants; ALL project Labs/data belong
+under the DOWNSTREAM project .MeritRouter. The router SOURCE REPOSITORY must have NO
+.MeritRouter directory. No new development checkout; MAIN D:/SwitchYardRouter only.
+These instructions supersede prior in-repository development/validation location rules.
 
-The checkpoint below is historical evidence; latest integration/validation above supersedes
-its unfinished C2b status. No active implementation worker remains. See reports/drive-root-worktrees.md.
+All16 unfinished Lab/S0 files transferred byte-for-byte into main; Git preservation
+checkpoint b2c6cd2 and exact OS-temp backup retained. Active code work is in main only.
+C3.0 native message compatibility merged locally; root37/37 + containment16/16 PASS.
+C3.1 lifecycle fence committed d332c6b: author53PASS/1POSIXskip, root full source review
+and recursive typecheck/build PASS. C3.2 attribution/checked-tree activation implemented;
+root final pending/setup/commit suite15/15 PASS. C3.4 runner/resume and command guards active.
+S0 role/identity committed567d236: strengthened19/19 independently PASS in main.
+S1 minimal global accounting broker committed87f0945; root broker/identity/defaults/workspace
+combined63/63 PASS, recursive typecheck PASS. S2 local protocol implementation active;
+no runtime/dispatch activation yet. Labs project-local filesystem/strict Compose
+boundary committedd8dd7cd: root new18+Compose118+S019 =155/155 PASS. Author rebuilt-dist
+Lab lifecycle57/57 PASS, incl real Chrome/kill/adoption/prune/deletion; C3.3 workspace guards
+implemented and root12/12 PASS within combined63. Additional Lab lifecycle mutation fencing
+remains C3.8 scope. No service/store caller activation yet.
 
-2026-10-26: user authorized continuing execution. Initial discovery is complete;
-report: project-local-storage/reports/storage-discovery.md. Shared DB/store construction
-makes complete project-data relocation a service/accounting boundary change, not a rename.
-Standalone validated path contract and additive directory metadata are implemented.
-Latest root combined90/90 covers paths31, owner config14, store seam10, metadata reads12,
-metadata writes14 and existing projects9. Recursive typecheck/build both passed.
-Independent reviews drove drive-qualified Windows paths, case-safe repository identities,
-and canonicalized device namespace rejection. State-service contract report is complete;
-same-DB project store seam implemented with independent19/19 seam+projects tests passing.
-Ownership inventory maps all70 logical tables and55 literal direct SQL caller files.
-Read and write metadata boundaries implemented. Review exposed actual Windows junction/
-hardlink leakage; corrected bounded physical preflight now excludes unsafe aliases BEFORE
-Git grep reads content. Root final combined90/90 PASS23.50s and recursive typecheck PASS.
-Independent final metadata12/12 and actual alias probes PASS; root rebuilt-dist probe confirms
-only app.txt/PUBLIC returned and both aliases refused. Final recursive build PASS.
-Foundation committed locally87feb17; full suite completed exit1:1788PASS/1FAIL/3SKIP
-of1792. Only failure: team-integration redundancy plan stub rejects empty parent project
-in delegatedSourceSnapshot. Root reproduced unchanged narrow test deterministically.
-Fixture corrected only: explicit project on parent/children and no unused source alias;
-all original assertions retained plus owner assertions. Root guard/team/store51/51 PASS83.82s
-and recursive typecheck PASS. Production guard unchanged. Fixture/report committed1f5f219;
-final full rerun PASS exit0:1789PASS/0FAIL/3SKIP of1792 in1012.23s (maxWorkers3),
-output .MeritRouter/validation/storage-foundation-final/full.json. Recursive checks PASS.
-Original JSON output moved after completion into this project's ignored metadata directory:
-.MeritRouter/validation/storage-foundation-87feb17/full.json (copy/fsync/SHA256 verified,
-then removed own temp original; C:->D: rename refused EXDEV). Not a green aggregate.
-No physical separation or migration implemented. Checked foundation published dev/main2185d59;
-no runtime daemon/panel reload or legacy-data migration performed for this release.
-Next exclusion/preflight helper in isolated feat/project-metadata-exclusion tree under
-D:/SwitchYardRouter/.MeritRouter/development/metadata-exclusion. Root established a
-Git-local exclude block (preserving prior bytes) before creating that development tree;
-git check-ignore confirms it is ignored. This operator setup is NOT product migration.
-Main source acceptance complete; further implementation stays isolated.
-Windows launch probe found267-character generated cwd fails Node spawning absolute Git,
-while short-directory control succeeds, even with core.longpaths=true. Before activation,
-compact hierarchy/cwd acceptance must be resolved; see reports/windows-workspace-launch.md.
-C1 helper accepted/committed only on isolated feature branch2cb0e0e: root18/18 PASS33.30s,
-root isolated package typecheck PASS, independent corrected ignore/capacity probes clear.
-It remains unwired and does not guarantee staging. C2 transactional index implementation
-is accepted only on the isolated branch; main does not activate its callers.
-C2 author31PASS/1POSIX-only SKIP (C1+C2) plus typecheck; independent13PASS/1POSIXskip
-and expiry/HEADchange/file-redirection probes clear. Root source review read full implementation;
-root31PASS/1POSIXskip90.94s plus isolated typecheck/build PASS. C2 committed only feature
-branchb9d866f; dev merged into that branch without conflicts. C2b selected exact commit API
-assigned in same isolated tree, with no existing caller changes yet. Compact layoutv2 assigned
-separately under .MeritRouter/development/compact-runtime-paths, retaining existing v1 paths.
-Compactv2 independently/root37/37 plus type/build PASS, committeda34f291 and merged locally;
-main recursive typecheck/build after merge PASS. New native cwd preflight240, tested232cwd
-and434characterdeepGitfile with process-local longpaths. Not pushed/activated yet.
-Compact development worktree registration/local branch removed after merge. Directory cleanup
-partially failed Windows Invalid argument, then EPERM on a loaded/shared Next SWC native DLL.
-Only ignored owned dependency residue remains; defer its cleanup until naturally quiescent,
-do not stop the user's panel for this. No unknown/user directories selected.
-C2b review found confirmed pending-publication waiter bypass and redirected Git refs foreign
-write; author correcting under-lock gate and bounded Git-write topology checks including logs/
-objects. Root also required unresolved-only gate/sharded terminal archive to avoid retaining/
-rehashing every fullindex forever and permanently blocking after1000completed commits.
-C2b NOT accepted/committed/activated. All failure probes used disposable temp Git data.
-Live Facebook job is interrupted (watchdog); profile completed, people and notifications
-failed deadline_exceeded. No pending/running command approvals at inspection. Preserve
-all retained source and accounting; do not represent the app as delivered.
+User correction triggered removal of the accidental source-repo metadata tree. All12 sibling
+SwitchYardRouter-* directories plus baseline/sy-wt are absent from D:/ after checked relocation.
+Approval demo1583 files byte-verified in retained archive; baseline291 blobs independently
+verified already in Git. Permanent cache removal twice rejected by automatic review with
+only blocked-by-policy; Windows recoverable removal returned sharing violation32. Inactive
+leftovers moved atomically into existing machine package cache D:/.pnpm-store/meritrouter-agent-cleanup-20261026.
+Router source .MeritRouter is now ABSENT (also after restored passive MCP/panel). Panel and
+passive MCP were restored after the verified temporary stop. No checkout/cache may run from
+the quarantine; all code authors/tests use MAIN. No new alternate checkout allowed.
+Agent checkpoint/validation evidence is in normal OS temp (not repository .MeritRouter).
 
-User requires project-owned runtime data under the project folder, rather than the
-MeritRouter installation/root folder. Proposed metadata directory: `.MeritRouter`.
-Workspaces must have readable job, branch/version, and attempt hierarchy; opaque task IDs
-may remain collision-resistant suffixes, not the only navigation labels.
-Existing live worktrees must not be moved while agents or commands are using them.
-Foundation and same-DB seam exist; no physical storage activation/migration performed.
-Discovery must cover databases, sessions, artifacts, brain, approvals, workspace receipts,
-Labs, cleanup/deletion, recovery, panel links, and configuration defaults.
-Current deletion code explicitly assumes `<storage>/worktrees`; changing creation alone
-would leave cleanup and recovery inconsistent.
-Shared installation configuration/provider credentials and cross-project routing services
-need explicit ownership boundaries; project data must not remain globally stored merely
-because the current database is shared. Never copy shared secrets into project folders.
+Old Facebook deletion submitted ONCE via supported DELETE after preview no blockers:
+61tasks/8jobs/77sessions/277artifacts/57worktrees,1690requests retained for accounting,
+1unresolved transport hold conservatively quarantined. HTTP request timed out240s; actual
+project registry now shows only my-project/tetris/pomodoro. No duplicate deletion submitted.
+Filesystem check: only9 unrelated global worktree dirs remain, no Facebook Git bindings;
+old brain project folder absent. Canonical Git-only source retired to OS-temp recovery and
+verified HEAD566a315 + git fsck exit0; empty hidden shells removed nonrecursively. Canonical
+Facebook path is now ABSENT. Fresh creation must mint new UUID and source history.
+Fresh live trial announced400 model requests/$0paid; no new provider calls yet. Do not start
+fresh runtime through old global storage defaults merely to claim testing: enforce project
+path/store ownership first, then operate the real fresh pilot. Codex authors no Facebook app.
+
+Plan sequence remains C3 activation (message/fence/attribution/workspace/resume/integration/
+Brain/deletion), S0-S11 store/accounting/queue/runtime/migration and actual pilot/approval UX/
+repeatability acceptance. Contracts: reports/metadata-caller-activation-contract.md and
+reports/storage-split-implementation-contract.md. Continue execution, not just prerequisites.
+Baseline source publication e5989ce; latest main changes are local/unpublished pending checks.
+Earlier full1854:1801PASS/49Compose-fixtureFAIL/4SKIP; corrected failed files118/118 and
+combined216PASS/1SKIP with recursive checks PASS. Do not invent a final green full aggregate.
+Historical prerequisite details preserved in archive/2026-10-26-prerequisite-current-state.md.
 
 ## Intended layout
 
@@ -176,361 +117,145 @@ or private payloads into a misleading partial project store and call migration c
 
 ## Worker Briefs
 
-### compose-fixture-containment
-- Role: focused fixture investigation/fix, existing metadata-exclusion tree; no new checkout.
-- Own tests/compose-engine-contract.test.ts, tests/compose-ownership.test.ts only;
-  own reports/compose-fixture-containment.md. No production/shared-document edits.
-- Root full result:1801PASS/49FAIL/4SKIP of1854 in1040.21s, failures only these two files,
-  chiefly approval_mismatch. Reproduce focused; trace actual refusal before changing anything.
-- Hypothesis: pure fictional path.resolve fixtures inherit .MeritRouter checkout ancestry
-  and correctly hit metadata policy. If confirmed, use neutral OS-temp virtual fixture paths,
-  preserving every assertion and production guard. No writes to user paths or live Compose.
-- Verify both full test files; compare unchanged baseline source behavior where practical.
-- If production defect instead, report before source edits. No commits/pushes/live calls.
+### c3-tool-command-guard
+- Role: implementation MAIN only; no .MeritRouter in source repo or new checkout.
+- Own harness/tools.ts, edit-operations.ts, operation-lifecycle.ts, loop.ts, worker-actions.ts;
+  new workspaces/repository-command.ts; minimal repository-mutation.ts active-command hook;
+  unique tests/project-metadata-command.test.ts and project-metadata-tool-write.test.ts;
+  own reports/c3-tool-command-guard.md. Original four runner/resume files owned by c3_message.
+- Short actual FS-write leases, typed unresolved errors rethrown through V2 partial/loop catches;
+  host hook mandatory in native/supervisor wiring, optional only for independent non-Git tools.
+- Approved long checks: durable exact per-worktree active-command receipt created before spawn
+  under SHORT common lease; mutations honor it during process lifetime. No common lease across
+  process wait; pending human approvals create NO active receipt. Retire only with verified
+  process-tree quiescence or definitely-unsent spawn proof; unknown/crashed owner preserves guard.
+- Minimal FS receipt IDs/nonces/digests; full command/review payload remains project store.
+  Host-only own-receipt retirement permit, never model input, no broad ignore-all-active flag.
+- Coordinate injection/signatures with runner author; no edits to their owned files.
+- Actual delayed/competing command+write/commit tests, failed spawn/exit/kill and unknown
+  descendants/abandoned guards, no fake quiescence. No locks over SQLite awaits/model calls.
+- Report any process-containment limitation instead of treating parent exit as full proof.
+- Focused tests then freeze; no broad checks/live commands/providers/shared docs/commits.
 
-### metadata-caller-activation-contract
-- Role: read-only planner in existing metadata-exclusion tree during frozen-source validation.
-- Own only reports/metadata-caller-activation-contract.md there; no checkout/source/shared docs.
-- Read Current State, metadata-commit-contract report and resumed C2b review limits.
-- Trace actual mutation callers: attribution/index.ts, harness/resume.ts, harness collection,
-  workspace creation/integration/deletion and project setup; follow direct references only.
-- Propose precise file partitions for C3 wrapper activation with unchanged identity/message/
-  trailer semantics, typed uncertain/pending handling and pending guards on every mutation.
-- Distinguish must-fix preactivation gaps from later migration/state-service work; no fake
-  transparent replacement of raw commit-tree message semantics. Include exact acceptance tests.
-- Do not implement, run broad tests, call providers, touch live data or commit/push.
-- Return actionable contract and any genuine unresolved user decision; preserve frozen source.
+### split-s2-local-protocol
+- Role: implementation MAIN only; no alternate checkout/source-repo metadata.
+- Read S1 frozen broker API/report, state-service and storage-split contracts.
+- Own admission/admission.ts, sqlite-request-ledger.ts, request-receipts.ts, request-ledger.ts,
+  job-pool.ts, budget-requests.ts; new admission/project-request-ledger.ts plus specifically
+  named local preparation/projection modules if needed; append-only migrations.ts and store-role
+  classification for LOCAL rows; unique tests/project-accounting-protocol.test.ts and own report.
+- Propose additional actual accounting-file ownership before touching; no Gate/capacity/service.
+- Implement durable local prepare/holds -> global reserve -> local bind -> synchronous local
+  IMMEDIATE then global IMMEDIATE dispatch intent -> local commit. No await/network in SQL txn.
+- Dispatch replay never grants transport; derive dispatchNotAfter from actual local task/lease
+  deadlines, recheck before handing out fresh process-owned authority. Broker alone is not cap.
+- Exact owner/store UUID/generation/incarnation binding, conservative original task/grant holds;
+  global same-ID settle then idempotent local charge/spend projection, no blind refund/retry.
+- Persist private bindings/output/error/captures locally only. Global cost-quarantine error is
+  durable evidence; retain local liability and stop dispatch, never report free or complete.
+- Preserve legacy same-DB adapter behavior; don't pretend task budgets live in global broker.
+- Actual two-store crash/fault/concurrent cancel/claim/dispatch/replay tests at EACH durable
+  boundary plus same-project batch/job pools. No project copies of shared credentials/keys.
+- S3 later supplies UUID-bound global slots; tests use trusted fake authority, never real API.
+- Focused tests and freeze/report; no broad checks/live writes/providers/shared docs/commits.
 
-### metadata-selected-commit-resume-review
-- Role: independent read-only reviewer, existing metadata-exclusion tree; no new checkout.
-- Read root Current State, C2b brief, prior metadata-selected-commit-review report and draft diff.
-- Own only reports/metadata-selected-commit-resume-review.md in that isolated tree.
-- Verify under-lock pending gate, ref/log/object topology, terminal retention/crash semantics
-  and complete/refused outcome classification. Run independent real temp-Git probes as useful.
-- Check ordinary commit message/trailer compatibility; report source blockers separately
-  from unsupported backend/hostile filesystem limitations. Tests/source remain author-owned.
-- Coordinate with author if source changes during review; report exact reviewed snapshot.
-- No source/shared-doc edits, commits, live data, providers or repository-wide validation.
-- Return findings by severity, exact checks and remaining acceptance limits; freeze report.
+Historical completed/superseded briefs: [archive](project-local-storage/archive/2026-10-26-completed-foundation-briefs.md).
 
-### metadata-selected-commit-resume
-- Role: implementation worker; continue existing C2b draft, no new checkout.
-- Directory: D:/SwitchYardRouter/.MeritRouter/development/metadata-exclusion.
-- Read Current State and existing metadata-selected-commit brief; inspect local draft first.
-- Own only the C2b source/tests already assigned there and reports/metadata-selected-commit-resume.md.
-- Finish under-index-lock pending receipt gate, bounded Git write topology checks, and
-  unresolved-only receipt scan with sharded terminal retention. Preserve original guarantees.
-- Reproduce both prior review blockers and add real temp-Git regressions before acceptance.
-- Run focused C1/C2/C2b tests and package typecheck; report exact outputs and freeze changes.
-- No existing caller integration, shared docs, live data, provider calls, commits or pushes.
-- No directories outside this checkout; temp Git fixtures only in normal OS temp.
-- Final report: changed files, verified behavior, exact checks, remaining risks/blockers.
+### c3-resume-runner-activation
+- Role: MAIN checkout only. Read C3.4 contract + frozen attribution/workspace API reports.
+- Own harness/resume.ts, runners/coding/native.ts, runners/coding/finish.ts,
+  runners/supervisor.ts, new tests/project-metadata-resume.test.ts and own report.
+- Propose any extra source ownership first (especially harness loop/tool mutation boundary).
+- Guard BEFORE sequencer abort/reset/reuse/per-response writes/status updates; propagate
+  typed pending/uncertain/index-pending effects so no false pointer/unchanged/not-applied proof.
+- Abort errors surface; no blind resets, auto retries or HEAD rollback after unresolved commit.
+- Pass opaque host mutation capabilities into nested Worktrees/commitAs calls; scope short
+  repository mutation sections only. NEVER hold common-owner lease across model/provider calls,
+  await_tasks, human approvals or long-running check processes.
+- Trace model FS tools/approved checks admission: entry-only guard must not allow writes to a
+  retained pending-publication worktree; propose correct existing-authority hook if needed.
+- Real temp pending fixtures compare files/index/HEAD/session pointer/status/receipts; original
+  successful resume/runner/recovery behavior preserved. Fake providers only, no live project.
+- Source may be read/proposed during root typecheck, edit only after root signal. Focused tests
+  after own freeze; no global builds/shared docs/commits/new checkouts or repo metadata.
 
-### runtime-path-contract
-- Role: worker; implementation foundation only, no live migration or service wiring.
-- Read: Current State and discovery report; projects schema/context for conventions.
-- Own: NEW src/projects/runtime-paths.ts and tests/project-runtime-paths.test.ts;
-  own report project-local-storage/reports/runtime-path-contract.md only.
-- Build a zod-validated versioned path contract for an explicit absolute project directory,
-  .MeritRouter root and readable stable job/task/attempt/repository hierarchy.
-- Inputs have bounded safe labels and stable IDs; reject traversal, reserved names,
-  Windows ambiguities and escaping existing symlinks/junctions. Labels must not silently
-  change established paths: expose a persisted identity/manifest contract for consumers.
-- No automatic mkdir/migration/config defaults; separate pure construction from any
-  filesystem validation. Document unsupported cases rather than claim complete containment.
-- No edits to existing source/config/stores/shared docs, commits, paid calls or user data.
-- Run proportional focused tests and package typecheck; return exact checks and API.
+### split-s1-broker
+- Role: implement in MAIN checkout ONLY; no .MeritRouter or alternate development checkout.
+- Read Current State, S0 APIs and storage-split-implementation-contract.md S1 protocol.
+- Own new admission/accounting-broker.ts, sqlite-accounting-broker.ts, optional specifically
+  named accounting-usage.ts; paid/spend.ts; append-only storage/migrations.ts; storage/store-role.ts
+  classification update for new tables; unique tests/project-accounting-broker.test.ts;
+  own reports/split-s1-broker.md. No other admission/Gate/service files yet.
+- Synchronous validated minimal DTOs, reserve/dispatch/settle/read/definitely-unsent retirement;
+  immutable project/store generation/UUID binding, exact fingerprint replay, outcome digest CAS.
+- New global physical_requests/broker_paid_spend contain no private binding/prose/path/payload.
+- Preserve conservative unknown transport/cost liability; intent replay never grants transport.
+- Deduplicate legacy/new request IDs for package/spend math; no request-count refunds or
+  deleted-project slug reuse. Check trusted coordination registration, key/slot/nonce authority.
+- Temp two-store/fake-provider tests at durable boundaries, conflicts, quotas, legacy coexistence,
+  recreation and definitely-unsent vs uncertain outcomes. No live money or provider calls.
+- Source edits may proceed; NO native/test process until root signals cold cleanup complete.
+- No shared docs/commits/pushes; propose DTOs early, test after signal, freeze/report exact results.
 
-### state-service-contract
-- Role: read-only design worker; no source or live state edits.
-- Read: Current State/discovery, core/service.ts and actual stores/accounting consumers.
-- Own report project-local-storage/reports/state-service-contract.md only.
-- Specify executable staged separation of project DB/content from global credentials,
-  provider coordination and authoritative accounting; map transactions and crash boundaries.
-- Cover request charges/holds/captures, task/session/delivery/approval references, migration
-  journal and backup/restore; identify atomicity that cannot survive naive DB splitting.
-- Recommend precise file-partitioned implementation steps and acceptance tests; distinguish
-  facts from design and list unresolved blockers. No commits or broad test execution.
+### c3-attribution-activation
+- Role: implement in MAIN only; no .MeritRouter or alternate checkout.
+- Read Current State, C3.2 activation contract and frozen C3.0/C3.1 APIs/reports.
+- Own attribution/index.ts, checked-candidate.ts, optional actor.ts with preserved reexports;
+  selected-commit.ts only for exact captured-tree publication API; tests/attribution.test.ts,
+  new tests/project-metadata-commit.test.ts and own reports/c3-attribution-activation.md.
+- commitAs success remains string|null; map legacy paths undefined/[] to ALL. Preserve
+  native messages/Actor identity/trailers; typed pending/refused/uncertain/index-pending errors.
+- Fence undo BEFORE filesystem/revert effects; propagate a host-only capability through nested
+  calls, no widening or public model capability. Expose abort failures instead of swallowing.
+- Checked candidate MUST publish exact previously captured tree under same fence/native locks/
+  durable receipt protocol; preserve authority checks and never restage/reread newer app bytes.
+- Propose captured-tree API before widening selected-commit internals. No raw update-ref bypass.
+- Real temp tests legacy path semantics, staged A/partial B, exact captured tree, pending refusal
+  before undo edits, identity/messages, races and typed outcomes. No caller files outside ownership.
+- Source edits only until root ends cold cleanup; then focused tests, freeze/report. No broad checks.
+- No live projects/providers/shared docs/commits/new checkouts.
 
-### project-directory-config
-- Role: implementation worker; additive ownership metadata, no storage relocation.
-- Read: Current State/discovery; projects schema/resolve/context/registry, config/load.
-- Own: projects/{schema,resolve,context,registry}.ts; NEW projects/directory.ts if needed;
-  tests/project-directory.test.ts and own report reports/project-directory-config.md.
-- Add optional explicit project directory resolved against config location; expose resolved
-  directory through project context. A single distinct repository path may supply default;
-  ambiguous/no-repo legacy projects remain null until storage activation, preserving compatibility.
-- Validate supplied directory using zod; no filesystem writes or creating .MeritRouter.
-- Reject conflicting explicit project owners where containment would mix project metadata;
-  document legacy ambiguity. Do not infer a common ancestor for multi-repo projects.
-- No changes to config/schema.ts, config/load.ts, existing tests, runtime-paths.ts,
-  stores, service, setup/panel or shared docs; no commits/live data/provider use.
-- Add focused config/context tests; coordinate package validation with root. Return exact
-  API and verification. This foundation alone must not be described as project-local storage.
+### c3-workspace-activation
+- Role: implement MAIN only; no source-repo .MeritRouter or alternate checkout.
+- Own workspaces/worktree.ts, repository-prepare.ts, projects/repository-setup.ts,
+  tests/repository-prepare.test.ts, new tests/project-metadata-worktree.test.ts;
+  reports/c3-workspace-activation.md. C3 attribution author owns selected APIs; coordinate signatures.
+- C1 exclusions before initial snapshots; C2 stage collection; C2b fixed initial commits.
+- Fence prepare/source+target reuse/remove and collection under C3.1 common-owner leases.
+  Preserve existing task scope/protected-path/immutable base behavior; no swallowed remove success.
+- Guard pending publication before status/DB/FS side effects. Preserve exact registered source
+  junction identity through physical Git owner resolution, not by weakening metadata aliases.
+- New ordinary task path activation remains S9; don't pretend this alone moves project data.
+- Existing legacy setup/collect/remove tests + meaningful pending/alias/metadata/temp-Git tests.
+- Source edits only until root ends cold cleanup; focused checks after signal, freeze/report.
+- No broad checks/live data/provider calls/shared docs/commits/new checkouts.
 
-### project-store-seam
-- Role: implementation worker; behavior-preserving same-DB service seam only.
-- Read: Current State, reports/state-service-contract.md and current executor ProjectDeps/depsFor.
-- Own: core/{service,executor}.ts; NEW projects/runtime-store.ts; NEW tests/project-runtime-store.test.ts;
-  own report reports/project-store-seam.md. No other source or existing tests/shared docs.
-- Define typed project store handle for db/tasks/sessions/artifacts/contracts with explicit
-  project identity. Have service.projectDeps supply same existing store instances through
-  this handle; executor depsFor consumes it, preserving omitted ProjectDeps fallback.
-- Reject a handle whose project identity disagrees with the stored task/project context.
-  Unknown project must fail closed before runner/provider use. No new database creation,
-  runtime-path activation, store constructors, scheduler/admission changes or transaction split.
-- Demonstrate two projects receive correct config/identity and identical existing store refs;
-  optional legacy caller behavior, mismatched handles and qualification stay correct.
-- Do not claim handles isolate stores yet. No commits, live data or providers. Coordinate
-  freeze with root; run focused tests only, root owns combined validation.
+### c3-merge-queue-activation
 
-### metadata-read-boundary
-- Role: implementation worker; exclude private runtime metadata from repository tools.
-- Read: Current State and reports/metadata-exclusion-plan.md.
-- Own: NEW projects/metadata-policy.ts; context/repo-reader.ts;
-  NEW tests/project-metadata-read.test.ts; own report reports/metadata-read-boundary.md.
-- Reserve .MeritRouter (case-insensitive component match, including legacy casing).
-  Direct committed/worktree reads refuse; listings/search filter before limit/truncation.
-  Protect in-repository symlink aliases resolving into metadata for actual worktree reads.
-- Keep authorized Brain/artifact APIs separate; do not claim arbitrary commands cannot read
-  metadata. No staging/writes/permission changes; no source-identity weakening or string redaction.
-- Real temp-Git tests cover tracked/ignored/untracked metadata, pinned read/list/search,
-  safe ordinary files and symlink alias. Reuse existing path containment rules.
-- No edits to other files/shared docs, commits/live data or providers. Notify source freeze;
-  focused tests only, root combined checks after all workers freeze.
-
-### project-store-seam-review
-- Role: independent read-only reviewer, author of design/inventory rather than implementation.
-- Read: Current State and project-store-seam brief; inspect runtime-store.ts, core service/
-  executor diff and new project-runtime-store.test.ts.
-- Own report reports/project-store-seam-review.md only; focused tests permitted.
-- Confirm same-instance store selection, no admission/lease/scheduler transaction changes,
-  correct persisted task/context identity validation, legacy callback and qualification behavior.
-- Report blockers separately from future physical-separation requirements. No source/live
-  changes, commits or shared document edits.
-
-### metadata-write-boundary
-- Role: implementation worker; protect reserved runtime metadata from repository mutations.
-- Read: Current State, metadata-exclusion-plan.md partition B, projects/metadata-policy.ts.
-- Own: harness/tools.ts; harness/edit-operations.ts only if necessary;
-  NEW tests/project-metadata-write.test.ts; own report reports/metadata-write-boundary.md.
-- Use assertNotProjectMetadataPath in canonical workspacePath BEFORE filesystem effects;
-  physical alias safety must preserve existing symlink/hard-link checks. Check all edits
-  during batch preflight so mixed safe/private batch produces no changes.
-- Cover write/replace/delete and nested/mixed-case/backslash/trailingdot/space metadata;
-  ordinary app files and roots under ancestor .MeritRouter must remain usable.
-- No grant/permission/staging/command changes, no other source/shared docs/live data/commits.
-  Run focused tests, notify freeze; root owns combined validation.
-
-### metadata-boundary-review
-- Role: independent read-only reviewer; no implementation edits.
-- Read: Current State and read/write briefs; metadata-policy.ts, RepoReader diff,
-  harness/tools.ts diff and both new metadata test files.
-- Own report reports/metadata-boundary-review.md only; focused tests permitted.
-- Check pinned/direct/physical read paths, Git grep pathspec semantics, truncation,
-  mixed batch atomic refusal, existing link guards and workspaces under metadata ancestor.
-- Distinguish repository-tool protection from approved commands/Brain permissions.
-  No source/live edits, commits or shared document changes.
-
-### metadata-staging-contract
-- Role: read-only design worker; no source or live repository changes.
-- Read: metadata-exclusion-plan partition C and actual four staging consumers.
-- Own report reports/metadata-staging-contract.md only.
-- Specify shared staging/ignore helper API, contamination refusal before index mutation,
-  explicit commitAs paths, initial snapshot, resume, linked Git excludes locking and tests.
-- Preserve user index/exclusion bytes on refusal; classify remaining race/ownership limits.
-  No broad tests, commits, live mutations or shared docs.
-
-### metadata-exclusion-foundation
-- Role: implementation worker, isolated feat/project-metadata-exclusion worktree owned by root.
-- Read: Current State; reports/metadata-staging-contract.md C1/exclude/preflight sections.
-- Own: NEW workspaces/metadata-exclusion.ts, NEW tests/project-metadata-exclusion.test.ts,
-  own reports/metadata-exclusion-foundation.md. No existing source edits/callers yet.
-- Implement assertNoTrackedProjectMetadata (HEAD/index, explicit unborn detection, NUL paths,
-  fail closed on unreadable/corrupt/unmerged relevant state) and ensureProjectMetadataExcluded.
-- Resolve actual Git/common dirs, validate exclude ancestry/file no symlink/junction escape,
-  exclusive info/exclude.lock, preserve bytes/newline/idempotency and foreign locks.
-- Reject contamination before exclude writes; no index mutations or stage API in this unit.
-  Case-insensitive any-depth ignore pattern; linked-worktree shared exclude correctness.
-- Real temp-Git tests including pretracked/indexed/forced metadata, staged deletion,
-  byte-preserved index on refusal, initial/unborn repo, existing excludes, concurrent calls,
-  linked worktree and redirected exclude paths. Keep promise limited to this API.
-- Install locked dependencies offline if needed, no source manifest edits. No commits/push,
-  live projects/providers or shared docs. Focused checks in isolated tree; report limits.
-
-### metadata-exclusion-review
-- Role: independent read-only reviewer in isolated metadata-exclusion tree.
-- Read: Current State and C1 brief; inspect new helper/tests and author report.
-- Own isolated report reports/metadata-exclusion-review.md only; focused tests permitted.
-- Verify contamination refusal before writes, unborn/corrupt/unmerged semantics, Git common/
-  worktree directory ownership, links/foreign locks, byte preservation and pattern precedence
-  limitations. Check existingpattern pluslaternegation, bare repo and missing info handling.
-- Distinguish helper foundation from transactional staging/activation; no source/live edits,
-  commits or shared docs. Main full suite source must remain untouched.
-
-### metadata-index-transaction
-- Role: implementation worker in isolated metadata-exclusion feature tree, after root C1 commit.
-- Read: Current State; reports/metadata-staging-contract.md C2; accepted exclusion helper;
-  git.ts/git-process-policy.ts. Preserve their executable config/hook/filter protections.
-- Own: workspaces/{git,git-process-policy}.ts; NEW workspaces/metadata-staging.ts;
-  NEW workspaces/git-index-transaction.ts if needed; NEW tests/project-metadata-index-transaction.test.ts;
-  own report reports/metadata-index-transaction.md. No existing callers or C1 helper edits.
-- Implement host-owned opaque active alternate-index capability; raw/env/forged/replayed/
-  cross-repo index overrides remain denied. Never generally allow GIT_INDEX_FILE from callers.
-- stageWithoutProjectMetadata holds native index.lock, snapshots original index/HEAD,
-  uses owned temp index, pre/postflights, fsync/publishes only on success and preserves original
-  index bytes on every staging refusal/failure. No commit/HEAD mutations in this unit.
-- Validate Git metadata ancestry and lock ownership, unborn/no-index cases, cleanup only own
-  temp/locks, old foreign locks untouched. Keep original positive/negative pathspec semantics;
-  explicit empty selection must not stage all. No unbounded arguments/scan or filesystem fanout.
-- Name exclusions alone do NOT stop Windows junction/hardlink aliases (reader repro): inspect
-  selected physical worktree inputs before staging, refuse/skip private aliases without copying
-  their bytes, preserve ordinary tracked deletions. Revalidate temp-index candidates before publish.
-- Real Git tests: raw/forged capability refusal, success/revoke/wrongrepo, staged unrelated files,
-  actual junction/hardlink private aliases, metadata force/negated ignore, wildcard selection,
-  pre/postflight failure index-byte preservation, native foreign lock, concurrent calls, deleted
-  files, unborn, linked worktree independent indexes, cleanup. Use fakes/temp only.
-- Root reviews commitAs --only integration design separately; do not claim C3/commit transaction
-  or full physical isolation is done. No permission broadening/source-identity changes/live
-  projects/providers/commits/shared docs. Focused tests/typecheck then freeze for review.
-
-### metadata-commit-contract
-- Role: read-only design worker in isolated metadata-exclusion tree.
-- Own report reports/metadata-commit-contract.md only; no source/fixtures/live changes.
-- Read frozen attribution/index.ts, harness/resume.ts, workspaces/worktree.ts,
-  workspaces/repository-prepare.ts and C1/C2 staging contract. C2 implementation in progress;
-  do not infer stable API from its partially edited files.
-- Proposed C2 only stages via host-owned temp-index capability, never commits/updates HEAD.
-- Resolve C3 commitAs --only behavior: preserve positive/negative trusted pathspec semantics,
-  unrelated staged app changes and attribution; Git --only rebuilds from worktree, so a clean
-  temp index alone is insufficient. Cover physical junction/hardlink aliases too.
-- Recommend smallest safe integration with exact selected candidate validation and clear
-  distinction among refusal, staged-but-not-committed failure and uncertain HEAD update.
-  Do not propose automatic history rewrite or clearing unknown effects. No permission changes.
-- Specify ordering before resume abort/reset and initial snapshot; provide bounded file briefs,
-  actual Git proof tests and any genuine architectural blockers. No tests/builds/commits.
-
-### team-plan-fixture-correction
-- Role: focused worker, MAIN tree only; C2 remains isolated and must not be edited.
-- Own: packages/router/tests/team-integration.test.ts ONLY and
-  reports/team-plan-fixture-correction.md. No production source/shared docs changes/commits.
-- Root reproduced only full failure via -t 'plan_work records and passes redundancy'.
-  Raw TaskStore stub inserts parent with empty project; actual service registers/backfills
-  project before run, new source guard correctly requires matching nonempty parent identity.
-- Verify cause, correct fixture project/service behavior. Redundancy-only test should not
-  fake source provenance: use valid no-repository setup if no files needed, or real tempGit
-  if keeping repositories. Preserve all existing redundancy/supervise assertions.
-- Do not weaken guard, skip test, increase timeout or change unrelated cases. Run exact
-  regression then complete team-integration file. Report what changed/verified and freeze.
-
-### metadata-index-review
-- Role: independent read-only reviewer in isolated metadata-exclusion tree.
-- Own report reports/metadata-index-review.md only; focused tests/probes allowed temp only.
-- Read C2 brief and frozen git-index-transaction.ts,metadata-staging.ts,Git helper/policy
-  diff,new tests/author report. Check opaque cap origin/lifetime/repo/commands, no env escape,
-  pending-command drain, native lock/temp ownership, index-byte preservation and HEAD CAS.
-- Probe actual selected physical aliases/metadata before Git object ingestion, deletions,
-  positive/negative/literal pathspecs, cleanup/faultpaths and linked-worktree indexes.
-- Distinguish stage transaction from commit publication/hostile FS race; preserve existing
-  Git executable-config restrictions. No source/live changes/commits or main validation edits.
-
-### metadata-selected-commit
-- Role: implementation worker in same isolated staging branch after root C2 commit.
-- Read: Current State, metadata-commit-contract.md and accepted C2 API/source.
-- Own: workspaces/git-index-transaction.ts, metadata-staging.ts, git.ts, git-process-policy.ts as necessary;
-  NEW workspaces/git-write-topology.ts for bounded native Git write ownership preflight;
-  NEW attribution/selected-commit.ts and specifically named publication/recovery module if needed;
-  NEW tests/project-metadata-selected-commit.test.ts; own report. No existing caller/Actor edits.
-- Build a trusted exact selected-commit API preserving Git positive/negative/literal selection,
-  unrelated original staged blobs, ordinary deletions, staged-new/deleted paths and allowEmpty.
-  No raw commit --only reread after candidate seal. Two indexes: HEAD+selected current content
-  for immutable commit tree, original index+selected changes for final preserved staging.
-- Refactor owned C2 lock/cap internals only if needed, retaining all its existing tests/guarantees.
-  Reuse bounded selected staging/physical checks; stage worktree bytes once into preserved index,
-  derive HEAD-based candidate from immutable selected cached binary diff, never reread worktree.
-  Capabilities remain closed host-only with no raw env access; bounded trusted stdin Git plumbing
-  may be added for ref transaction. Validate runtime/stored DTOs with zod.
-- Create commit-tree from immutable bytes and publish expected-old ref transaction; support
-  attached and detached HEAD and unborn. Verify symbolic target atomically where supported;
-  detect unavailable Git transaction capability and fail closed, no weak fallback.
-- Durably record owned publication intent and preserved index before ref publication. On
-  later index failure report exact committed/reconciliation-needed state and retain receipt;
-  never auto rewrite/reset HEAD, delete foreign locks, or call uncertain results ordinary refusal.
-- Keep all receipts/index backups within owned project/Git metadata, bounded and link-checked;
-  no installation-root data. Respect existing Git config/filter/hook restrictions and identities.
-- Real temp-Git tests compare exact trees/index entries, author/message/trailer payload,
-  paths selecting only B with unrelated staged A, partial B, deletes/newfiles, empty/null cases,
-  HEAD/symref races, junction/hardlink before-copy refusal, crash/fault boundaries and recovery
-  receipts. No source point may copy unsafe private bytes into Git objects.
-- Preserve stage-only API; no migration/runtime/model tool exposure/caller integration/commits.
-  Propose API and any genuine blockers before broad refactor; focused tests/typecheck then freeze.
-
-### metadata-selected-commit-review
-- Role: independent read-only reviewer in metadata-exclusion isolated tree after author freeze.
-- Own report reports/metadata-selected-commit-review.md only; bounded temp probes/tests allowed.
-- Inspect new selected-commit,receipt,ref-publication modules and Gitindex/staging/policy diffs.
-- Confirm staged-A/partial-B/deletions/newfiles preserve original Git semantics, immutable
-  binary/Unicode candidate, no selected private alias bytes, no global renormalization, setup
-  identity/message compatibility and Actortrailers. Check copied-index racy state regressions.
-- Inspect interactive literalHEAD prepare proof, attached/detached/unborn/sameOID races,
-  child death/timeouts/lock ownership, typed uncertain or committed-index-pending states and
-  durable bounded validated receipts/backups. No automatic HEAD rollback or foreign-lock cleanup.
-- Check host-only capabilities, raw stdin/env denial, callback quiescence and cleanup/faultpaths;
-  Windows longpaths flag remains trusted process-local. No source edits/live projects/commits.
-- Separate unsupported backend, physical-race and no-caller integration limits from defects.
-
-### compact-runtime-paths
-- Role: implementation worker in separate isolated feat/compact-runtime-paths tree.
-- Read: Current State, reports/windows-workspace-launch.md and existing runtime-path module/tests.
-- Own: projects/runtime-paths.ts; tests/project-runtime-paths.test.ts;
-  own report reports/compact-runtime-paths.md only. No Git helper/policy/caller/shared docs edits.
-- Resolve actual Windows267-character cwd spawn failure with compact human-readable layoutv2:
-  bounded readable labels, shorter structural segments and lowercase case-safe encoding retaining
-  at least128bits of stable identity digest. Persist version and names; never rename parsed v1.
-- Preserve existing v1 manifest/identity parsing and workspace paths exactly; explicit migration
-  required to relocate existing identities. New identities/layout may defaultv2 with strict
-  version agreement and manifest collision checks. Propose clean compatibility API before edits.
-- Validate supported Windows cwd length before directory creation, fail with actionable shorter
-  project root guidance. Keep path containment/alias/namespace protections and Unix support.
-- Real temp-Git process launch with typical project root/job/task names, maximal safe names,
-  deep application filename and Windows too-long root refusal. Distinguish cwd launch from
-  deepGit core.longpaths support; no policy edit (another worker owns it). No globalconfig changes.
-- Keep existing safety tests, add v1 roundtrip/unchanged path, v2 encoding/version/alias conflicts,
-  actual cwd/process cases. Focused checks only; offline locked deps if needed, no source manifests.
-- No commits/live projects/providers or main source/dist edits; notify freeze/report limits.
-
-### compact-runtime-paths-review
-- Role: independent read-only reviewer in compact-runtime-paths isolated tree.
-- Own report reports/compact-runtime-paths-review.md only; focused tests/probes allowed.
-- Read Current State/compact brief and frozen runtime-paths source/test/report. Verify exact
-  v1 identity/schema/path compatibility, strict v2/manifest agreement, full128bit case-safe
-  encoding, Windows cwd preflight, alias/namespace/link/unknownversion handling and real launch.
-- Check ordinary readable names stay recognizable and no implicit migration/source activation.
-  Report blockers versus Gitpolicy/deep-path activation prerequisites. No source/live changes,
-  commits/main-tree edits or redundant broad builds.
-
-### storage-discovery
-- Role: read-only worker; do not change source or live runtime state.
-- Read: this Current State; start at src/workspaces/worktree.ts, src/projects/deletion.ts,
-  configuration schema and core service; follow only relevant storage consumers.
-- Scope: map project-owned versus shared paths, relocation consumers and migration risks.
-- Report: docs/working/project-local-storage/reports/storage-discovery.md only.
-- Return: concrete file/function references, recommended file partitions, checks needed,
-  unknowns; distinguish inspected facts from proposed design. No commits or pushes.
-
-### ownership-inventory
-- Role: read-only worker; use state-service-contract.md rather than rediscover architecture.
-- Own report reports/ownership-inventory.md only; no source/live edits/commits/tests.
-- Enumerate every applied schema table and content-bearing columns; classify authoritative
-  project/shared/mixed ownership, reference keys and schema validation gaps. Trace direct SQL
-  callers of tasks/charges/model_requests across source and group implementation file sets.
-- Explicitly flag transaction cross-ownership, content leaked by diagnostics, internal
-  qualification/project ownership, global promoted knowledge and captured path fields.
-- Propose the smallest same-DB service seam that can be implemented next without changing
-  behavior or claiming split storage is complete. Provide concrete constructor/caller APIs.
-- Keep report navigable with tables and exact file references. No broad code extraction.
+Owner: c3_message after runner freeze. Status: Assigned.
+Files: workspaces/merge-queue.ts, tests/project-metadata-merge-queue.test.ts,
+reports/c3-merge-queue-activation.md only. Root owns repair-hydration.ts and its tests.
+Brief: guard pending publication/active commands before recovery state or Git side effects;
+branch mutex then short sorted common-owner leases then native Git locks. No lifecycle lease
+across checks, redelegation, human/model waits. Propagate typed unresolved outcomes without
+rollback; expose abort failures. Restore only proven owned pick chain, never foreign advance.
+Preserve durable branch mutex/replay semantics. Validate real Git pending/race/recovery cases
+and relevant existing queue tests; report exact results/limits, no commit/push/shared-doc edits.
 
 ## Work Ledger
+
+### 2026-10-26 — Freeze global broker and continue caller activation
+
+- S1 committed locally87f0945 after independent63/63 combined broker/identity/defaults/workspace
+  checks and recursive typecheck. No runtime activation or provider calls; unpublished.
+- C3.2 root final selected-commit suite15/15 PASS; C3.3 root12/12 PASS in combined63.
+- C3.4 resume/runner and durable command guard workers active; S2 local protocol active.
+- Root owns C3.5 repair-hydration.ts and its existing test file: source+target lifecycle fence,
+  nested capability forwarding and pending-before-receipt regression tests; validation running.
+- Latest full status delivered to user; remaining store wiring/migration/live acceptance explicit.
+- Twelve merged historical .claude/worktrees checkouts Git-moved to existing quarantine;
+  dirty source and logs retained. Unregistered overview-horizons leftover moved alongside them.
+  .claude/worktrees now empty; source .MeritRouter remains absent. No permanent deletion claim.
 
 ### 2026-10-26 — Integrate standalone storage prerequisites and folder policy
 - Agent: supervisor; workers selected_commit_resume and selected_commit_review

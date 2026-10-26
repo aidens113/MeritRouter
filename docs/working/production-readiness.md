@@ -10,9 +10,19 @@ Related: [storage](project-local-storage.md), [delivery](supervisor-lifecycle-st
 
 ## Current State
 
-Resumed explicitly by the user on 2026-10-26. First investigate drive-root folder sprawl,
-enforce in-repository development/validation locations, then continue the storage checkpoint.
-Preserve existing dirty work and services; do not treat historical worktrees as disposable.
+2026-10-26 latest user directive: FINISH THE PLAN; continue live Router testing on Facebook,
+delete the old Facebook project and start fresh. Also clean sibling variant folders and enforce
+all project Labs/data under that project's .MeritRouter. This supersedes earlier instructions
+to preserve the old Facebook project's task/source payloads; shared accounting remains intact.
+Fresh trial budget announced400 model requests/$0 paid. No downstream app source by Codex.
+Do not stop at prerequisite publication; continue C3 activation, state split/migration and
+actual pilot/approval UX/repeatability acceptance. Existing checkout only, serial validation.
+
+Drive-root folder sprawl investigated: sibling variants and hidden historical worktrees retired
+with dirty work preserved in inactive quarantine. Source-repository .MeritRouter is prohibited
+and absent. Development uses main only; validation artifacts use OS TEMP. Old Facebook reset
+verified complete. C3 runner/command guards and S2 local accounting active; runtime wiring,
+migration and actual fresh-provider acceptance remain unfinished.
 
 MeritRouter supports supervised use; unattended production delivery is unproven.
 User authorized continued plan execution on 2026-10-26. Current implementation focus is
