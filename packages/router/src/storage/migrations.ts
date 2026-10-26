@@ -993,4 +993,33 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX request_deletion_tombstones_expiry ON request_deletion_tombstones(expires_at);
   `,
+  // Explicit split-store identity prerequisites. Legacy stores remain unbound until opted in.
+  `
+  CREATE TABLE store_identity (
+    singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+    manifest_json TEXT NOT NULL CHECK(length(CAST(manifest_json AS BLOB))<=8192)
+  );
+  CREATE TABLE project_store_registrations (
+    project_uuid TEXT PRIMARY KEY, installation_uuid TEXT NOT NULL,
+    slug TEXT NOT NULL, store_uuid TEXT NOT NULL UNIQUE,
+    generation INTEGER NOT NULL CHECK(generation>0), project_directory TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('registered','migrating','retired')),
+    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, retired_at INTEGER,
+    CHECK((state='retired')=(retired_at IS NOT NULL))
+  );
+  CREATE UNIQUE INDEX project_store_live_slug ON project_store_registrations(slug) WHERE state!='retired';
+  CREATE TABLE project_store_migrations (
+    migration_uuid TEXT PRIMARY KEY, project_uuid TEXT NOT NULL REFERENCES project_store_registrations(project_uuid),
+    installation_uuid TEXT NOT NULL, source_store_uuid TEXT NOT NULL, target_store_uuid TEXT NOT NULL,
+    source_generation INTEGER NOT NULL CHECK(source_generation>0),
+    target_generation INTEGER NOT NULL CHECK(target_generation=source_generation+1),
+    source_schema INTEGER NOT NULL CHECK(source_schema>0), target_schema INTEGER NOT NULL CHECK(target_schema>0),
+    checkpoint_sha256 TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('prepared','copying','verified','committed','rolled_back','recovery_required')),
+    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+    CHECK(source_store_uuid!=target_store_uuid)
+  );
+  CREATE UNIQUE INDEX project_store_pending_migration ON project_store_migrations(project_uuid)
+    WHERE state NOT IN ('committed','rolled_back');
+  `,
 ];
