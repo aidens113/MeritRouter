@@ -944,8 +944,10 @@ or workers.
 - `daemon`, `daemon start`, and `service` take the global config and refuse `--project` with an
   explanation. The daemon also does not pass a shell's `MERITROUTER_PROJECT` on to its worker.
 - A second daemon for the same storage directory is refused.
-- MCP servers for individual projects run beside the daemon with `--no-worker`.
-- An MCP server runs a worker unless `--no-worker` is set. If a queue tick fails, it reports the
+- MCP servers are passive by default; `--no-worker` remains an explicit compatible option.
+- Only `mcp --worker` deliberately starts an installation-wide worker. Project selection scopes
+  tools, not execution. Do not leave old worker-enabled MCP processes running during a runtime
+  upgrade: another daemon cannot stop them claiming tasks. If a queue tick fails, it reports the
   error and restarts the scheduler with bounded backoff; tasks acquired by the failed tick are
   recovered before retrying, rather than remaining queued until a manual process restart.
 - A provider's `not_in_plan` response is specific to that model/key, not temporary capacity. The
@@ -1138,7 +1140,7 @@ recompute or guarantee current/future injection. See [memory authority](roles.md
   current (OpenRouter prices are fetched when `pricing_url` is set).
 - Audio/video inputs are routed only to models that accept them; there is no transcription or
   frame-extraction preprocessing yet.
-- Tasks and jobs run only while a worker process is running (the MCP server stops with the
+- Tasks and jobs run only while a worker process is running (an explicit `mcp --worker` stops with the
   Claude session; run `meritrouter worker`, `meritrouter daemon start`, or
   `meritrouter service install` for unattended work, and the MCP servers with `--no-worker`).
 - Idempotency keys are unique per install, not per project: a key already used in one project

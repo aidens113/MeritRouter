@@ -37,7 +37,7 @@ approval only. External coding runners are currently unavailable. See [security 
 | --- | --- |
 | Wrong config or project | Pass absolute `--config` and explicit `--project`; run `doctor`. |
 | No eligible model | Inspect Models, Routing, key health, metadata and request budget. |
-| Task stays queued | Keep MCP or a worker/daemon running; check capacity and key cooldowns. |
+| Task stays queued | Run a worker/daemon or explicit `mcp --worker`; check capacity and key cooldowns. |
 | Task waits for a check | Inspect its pending exact command approval on the task/job page. |
 | Panel unavailable | Run `panel` with the same config; inspect `<storage>/logs/panel.log`. |
 | MCP tools missing | Check absolute paths, build output and client registration; reconnect. |
@@ -598,9 +598,11 @@ the projects. A guessed default could write tasks and brain entries into the wro
 once an install has several projects, pass `--project` unless the client always runs inside one
 of the project's repositories.
 
-Add `--no-worker` when a daemon or service already runs the worker (see below). The MCP server
-then only submits and reads, and leaves recovery to the daemon. Without the flag, the server
-runs a worker for every project in its own process.
+MCP connections are passive by default: they submit/read work and leave execution and
+recovery to a daemon or separate worker. Start `meritrouter daemon start --config <file>`
+for background execution. `--no-worker` remains a compatible explicit passive option.
+Use `mcp --worker` only when this MCP process should deliberately execute installation-wide
+work; `--project` scopes its tools, not its worker. Conflicting worker flags are refused.
 
 The tools only add to the client. The client keeps its own login and model; nothing intercepts
 its native requests.
@@ -666,8 +668,8 @@ the client's supported authentication. Follow that client's current MCP setup in
 its UI and account requirements are outside MeritRouter. Anyone with the token can invoke
 the server's tools. Keep it secret and stop the tunnel when finished.
 
-Without `--no-worker`, the MCP process runs the worker loop, so tasks run while the Claude Code
-session is open. For work that should continue after closing Claude, run
+With explicit `--worker`, the MCP process runs the worker loop while the client session is
+open. Without it, discovery and submission do not start execution. For background work, run
 `node packages/router/dist/cli.js worker` in a terminal; any number of processes can share the
 store. To keep a worker running across crashes and logins:
 - `meritrouter daemon start` runs the daemon in the background. It restarts the worker with
@@ -679,7 +681,7 @@ store. To keep a worker running across crashes and logins:
   and `service status` / `service uninstall` manage it.
 
 There is one daemon per install, and its one worker serves every project. Beside it, run each
-project's MCP server with `--no-worker`.
+project's MCP server with the passive default (or explicit `--no-worker`).
 
 ## 5. Coding workers
 
@@ -701,7 +703,7 @@ approval/security policy; they cannot authorize undeclared setup or commands. Se
 With a standalone preset, give MeritRouter a whole goal:
 
 ```bash
-node packages/router/dist/cli.js worker &                         # or keep the MCP server running
+node packages/router/dist/cli.js worker &                         # or explicitly run mcp --worker
 node packages/router/dist/cli.js run "Add CSV export to the report page" --project my-app --repo app --check "npm test"
 node packages/router/dist/cli.js job <id>                         # workers, branch, questions
 node packages/router/dist/cli.js answer <question-id> "use semicolons"

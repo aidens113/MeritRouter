@@ -6,17 +6,20 @@ own working document with decisions, phases, ledger, and reports.
 
 ## Current effort (2026-10-25)
 
-Facebook MVP remains unaccepted; canonical D:/SwitchYardProjects/facebook-mvp has only.git.
-Source retained in isolated worktrees; final validated app MUST materialize canonical folder.
-Job t_0mvof1bldb6e51dd16e6a, session s_0mvof1c9ma19e9ca8fc5a,500requests/$0paid unchanged.
-Remote dev/main c77c5c5; local memory/approval/native hydration corrections not all published.
-Native hydration final39/39 + reviewCLEAR, recursive typecheck/router+panelbuild PASS;
-full router exec22103 running. Canary real4477 PID2776/daemon24532/worker13944 uses
-D:/SwitchYardRouter-repair-hydration. Do not delete active feature worktree.
-Root found stale MCP PID20136 competing and claiming copy-from-notes retries; verified and
-stopped it, requested cancellation of those2tasks through public API. Check lease recovery
-and ensure new claimant uses explicit repair_from_task original API/UI candidates.
-No app source authored by Codex. Read active working document for exact source IDs/evidence.
+Facebook MVP unaccepted; canonical D:/SwitchYardProjects/facebook-mvp only.git. Source retained
+in isolated worktrees; final validated app MUST materialize canonicalfolder. No Codex appcode.
+Job t_0mvof1bldb6e51dd16e6a/session s_0mvof1c9ma19e9ca8fc5a cap500/$0paid unchanged.
+Remote dev/main c77c5c5; localdev9efd8a7 integrates reviewed memory/panel/native/passiveMCP.
+Full1536:1531PASS/2timingFAIL/3SKIP, exact2/2rerunPASS; final merged55/55PASS137.88s;
+recursive typecheckPASS, recursivebuildPASS. No aggregate whollygreen claim.
+Primary4477 PID2776/daemon24532/worker13944 use D:/SwitchYardRouter-repair-hydration.
+Do not delete active feature worktree. Older MCP defaultworker auto-respawned/claimed tasks;
+exactprocesses retired, hostargs now--no-worker, main compiledMCP rebuilt defaultpassive.
+Parent blocked8/8persistent transportholds from6deadidentifiedowners+2anonymousquarantined;
+300s capacitydefer/resume observed without providerdispatch. Never clear anonymousholds or
+resetaccounting. Guarded explicit operator dead-owner recovery in implementation by
+failed_supervisor_recovery, isolated D:/SwitchYardRouter-transport-recovery. No live recovery
+performed. Read active CurrentState for exact original API/UI repair source IDs and nextsteps.
 
 Historical checkpoints below are older; active working document is authoritative.
 
