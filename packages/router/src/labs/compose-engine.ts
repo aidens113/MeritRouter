@@ -1,4 +1,5 @@
 import path from "node:path";
+import { composeMountPathAllowed } from "./compose-mount-policy.js";
 import { z } from "zod";
 import { composeCanonicalHash } from "./compose-recipe.js";
 import { ComposeResourceApprovalSchema, ComposeResourceCreationReceiptSchema } from "./compose-ownership-schema.js";
@@ -111,8 +112,7 @@ function validateApproval(input: Input) {
     }
     const mounts = new Set<string>();
     for (const mount of spec.volumes) {
-      if (mounts.has(mount.target) || [mount.source, mount.target].some(value =>
-        /docker\.sock|(?:^|[\\/])\.git(?:[\\/]|$)|(?:^|[\\/])\.meritrouter(?:[\\/]|$)/i.test(value)) ||
+      if (mounts.has(mount.target) || !composeMountPathAllowed(authority, mount.source, mount.target) ||
         path.resolve(mount.source) === path.resolve(authority.worktree) ||
         path.resolve(mount.source) === path.resolve(authority.labRoot) ||
         ![authority.worktree, ...authority.dataRoots].some(root => inside(root, mount.source))) refuse("approval_mismatch");

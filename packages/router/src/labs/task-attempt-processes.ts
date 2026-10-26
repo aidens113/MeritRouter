@@ -29,7 +29,7 @@ child.on('error',e=>{err=String(e.message).slice(0,65536);done(1)});child.on('cl
 },30);
 `;
 export class TaskAttemptProcesses {
-  constructor(readonly db: Db, readonly storageDir: string, readonly barrier?: (phase: string, row: TaskProcessRecord) => Promise<void>, readonly authorize?: (attemptId: string) => void) {
+  constructor(readonly db: Db, readonly storageDir: string, readonly barrier?: (phase: string, row: TaskProcessRecord) => Promise<void>, readonly authorize?: (attemptId: string) => void, readonly storageForLab?: (project: string, name: string, root: string) => string) {
   }
   rows(labId: string): TaskProcessRecord[] {
     return this.db.prepare("SELECT * FROM lab_attempt_processes WHERE lab_id=? AND state!='stopped' ORDER BY created_at DESC").all(labId).map(r => Row.parse(r));
@@ -37,7 +37,7 @@ export class TaskAttemptProcesses {
   async spawn(lab: LabRecord, attemptId: string, kind: TaskProcessRecord["kind"], name: string, command: string, cwd: string, env: Record<string, string>): Promise<TaskProcessRecord> {
     this.authorize?.(attemptId);
     const id = newId("tap"), token = randomBytes(24).toString("hex"), now = Date.now();
-    const directory = labOwnedPath(this.storageDir, path.join(lab.root, "processes", id));
+    const directory = labOwnedPath(this.storageForLab?.(lab.project, lab.name, lab.root) ?? this.storageDir, path.join(lab.root, "processes", id));
     mkdirSync(directory, { recursive: true });
     const row: TaskProcessRecord = { id, lab_id: lab.id, attempt_id: attemptId, kind, logical_name: name, token, pid: null, directory, state: "intent", created_at: now, updated_at: now };
     this.db.prepare("INSERT INTO lab_attempt_processes(id,lab_id,attempt_id,kind,logical_name,token,pid,directory,state,created_at,updated_at) VALUES(?,?,?,?,?,?,NULL,?,'intent',?,?)").run(id, lab.id, attemptId, kind, name, token, directory, now, now);
@@ -92,9 +92,10 @@ export class TaskAttemptProcesses {
   async stop(row: TaskProcessRecord): Promise<void> {
     Row.parse(row);
     const lab = z.object({ root: z.string(), project_id: z.string(), name: z.string(), kind: z.literal("task_attempt"), attempt_id: z.literal(row.attempt_id) }).parse(this.db.prepare("SELECT l.root,l.project_id,l.name,l.kind,a.attempt_id FROM labs l JOIN lab_task_attempts a ON a.lab_id=l.id WHERE l.id=?").get(row.lab_id));
-    if (path.resolve(lab.root) !== path.resolve(this.storageDir, "labs", lab.project_id, lab.name) || path.resolve(row.directory) !== path.resolve(lab.root, "processes", row.id))
+    const storage = this.storageForLab?.(lab.project_id, lab.name, lab.root) ?? this.storageDir;
+    if (path.resolve(lab.root) !== path.resolve(storage, "labs", lab.project_id, lab.name) || path.resolve(row.directory) !== path.resolve(lab.root, "processes", row.id))
       throw new Error("process directory is outside exact task attempt ownership");
-    labOwnedPath(this.storageDir, row.directory);
+    labOwnedPath(storage, row.directory);
     const pid = row.pid ?? await this.discover(row);
     if (pid) {
       this.db.prepare("UPDATE lab_attempt_processes SET pid=?,updated_at=? WHERE id=? AND pid IS NULL").run(pid, Date.now(), row.id);

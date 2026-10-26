@@ -1,4 +1,5 @@
 import path from "node:path";
+import { composeMountPathAllowed } from "./compose-mount-policy.js";
 import { z } from "zod";
 import { composeCanonicalHash } from "./compose-recipe.js";
 import { ComposeContainerInspectSchema, ComposeNetworkInspectSchema, ComposeResourceProofInputSchema, ComposeResourceProofResultSchema, ComposeKnownResourceProofInputSchema, ComposeKnownResourceProofResultSchema } from "./compose-ownership-schema.js";
@@ -78,7 +79,7 @@ function validateApproval(approval:Approval,current:Identity){
    for(const port of spec.ports){if(published.has(port.published))refuse("approval_mismatch");published.add(port.published);}
    const targets=new Set<string>();
    for(const mount of spec.volumes){
-    if(targets.has(mount.target)||[mount.source,mount.target].some(value=>/docker\.sock|(?:^|[\\/])\.git(?:[\\/]|$)|(?:^|[\\/])\.meritrouter(?:[\\/]|$)/i.test(value))||path.resolve(mount.source)===path.resolve(authority.worktree)||path.resolve(mount.source)===path.resolve(authority.labRoot))refuse("approval_mismatch");
+    if(targets.has(mount.target)||!composeMountPathAllowed(authority,mount.source,mount.target)||path.resolve(mount.source)===path.resolve(authority.worktree)||path.resolve(mount.source)===path.resolve(authority.labRoot))refuse("approval_mismatch");
     targets.add(mount.target);
     if(![authority.worktree,...authority.dataRoots].some(root=>{const rel=path.relative(path.resolve(root),path.resolve(mount.source));return rel!==".."&&!rel.startsWith(".."+path.sep)&&!path.isAbsolute(rel);}))refuse("approval_mismatch");
    }

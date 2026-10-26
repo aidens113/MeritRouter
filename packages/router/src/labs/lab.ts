@@ -15,7 +15,7 @@ import { worktreeHead } from "./revisions.js";
 import { pruneTaskWorktrees, type LabRetentionResult } from "./retention.js";
 import { MeritRouterError } from "../core/errors.js";
 import path from "node:path";
-import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
+import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, readdirSync, realpathSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { ResolvedConfig } from "../config/load.js";
@@ -30,6 +30,8 @@ import { LabsConfigSchema, LabNameSchema, validateRecipe, substitute } from "./r
 import { LabsStore, type LabRecord, type LabServiceRecord } from "./store.js";
 import { allocatePorts } from "./ports.js";
 import { labOwnedPath } from "./paths.js";
+import { assertRuntimeCwdSupported, projectRuntimePaths, validateRuntimeLocation } from "../projects/runtime-paths.js";
+import { ensureProjectMetadataExcluded } from "../workspaces/metadata-exclusion.js";
 import { labEnvironment, labValues } from "./environment.js";
 import { LabServices } from "./services.js";
 import { labChecks, runLabCheck, LabCheckResultSchema, type LabCheckResult } from "./checks.js";
@@ -322,12 +324,13 @@ export class LabManager {
     const lab = this.store.get(project, name);
     if (!lab || lab.state === "destroyed")
       throw new MeritRouterError("not_found", `unknown lab ${project}/${name}`);
-    const expected = path.resolve(this.options.storageDir, "labs", project, name);
+    const storage = this.labStorageDirectory(project, name, lab.root);
+    const expected = path.resolve(storage, "labs", project, name);
     if (path.resolve(lab.root) !== expected)
       throw new Error("recorded lab root does not match its project and name");
-    labOwnedPath(this.options.storageDir, lab.root);
+    labOwnedPath(storage, lab.root);
     if (existsSync(lab.root)) {
-      const marker = labOwnedPath(this.options.storageDir, labOwnershipMarker(lab.root));
+      const marker = labOwnedPath(storage, labOwnershipMarker(lab.root));
       const proof = z.object({ id: z.literal(lab.id), project: z.literal(project), name: z.literal(name) }).safeParse(JSON.parse(readFileSync(marker, "utf8")));
       if (!proof.success)
         throw new Error("lab directory ownership marker does not match persisted identity");
@@ -338,9 +341,44 @@ export class LabManager {
         throw new Error("lab repository is not configured in this project");
       if (path.resolve(repo.worktree) !== path.join(expected, "repos", repo.alias) || path.resolve(ctx.repositoryPaths[repo.alias]?.path ?? "") !== path.resolve(repo.source))
         throw new Error("lab repository ownership does not match project configuration");
-      labOwnedPath(this.options.storageDir, repo.worktree);
+      labOwnedPath(storage, repo.worktree);
     }
     return lab;
+  }
+  /** New Labs require a registered project directory. Exact persisted legacy paths remain readable. */
+  labStorageDirectory(project: string, name: string, recordedRoot?: string): string {
+    z.string().regex(/^[a-z0-9][a-z0-9._-]*$/).parse(project);
+    LabNameSchema.parse(name);
+    const ctx = this.options.project(project);
+    const legacy = path.resolve(this.options.storageDir, "labs", project, name);
+    if (recordedRoot !== undefined && path.resolve(recordedRoot) === legacy) {
+      const persisted = this.store.get(project, name);
+      if (!persisted || path.resolve(persisted.root) !== legacy) throw new Error("Legacy Lab paths require an exact persisted ownership record");
+      labOwnedPath(this.options.storageDir, recordedRoot);
+      return path.resolve(this.options.storageDir);
+    }
+    if (!ctx.projectDirectory) throw new Error("A project directory is required before creating project-local Labs; configure projects.<slug>.directory");
+    const storage = projectRuntimePaths(ctx.projectDirectory).root;
+    const expected = path.join(storage, "labs", project, name);
+    if (recordedRoot !== undefined && path.resolve(recordedRoot) !== expected) throw new Error("recorded Lab root does not match its project directory");
+    labOwnedPath(storage, expected);
+    return storage;
+  }
+  labPath(lab: Pick<LabRecord, "project" | "name" | "root">, target: string): string {
+    const relative = path.relative(path.resolve(lab.root), path.resolve(target));
+    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error("Lab path escapes its exact recorded root");
+    return labOwnedPath(this.labStorageDirectory(lab.project, lab.name, lab.root), target);
+  }
+  /** Preflight before either retained or task-attempt Lab creation imports files or writes state. */
+  async prepareLabRoot(project: string, name: string): Promise<string> {
+    const ctx = this.options.project(project), storage = this.labStorageDirectory(project, name);
+    const root = labOwnedPath(storage, path.join(storage, "labs", project, name));
+    await validateRuntimeLocation(ctx.projectDirectory!, root);
+    for (const alias of Object.keys(ctx.repositoryPaths)) assertRuntimeCwdSupported(path.join(root, "repos", alias));
+    // Repository aliases may use a trusted configured junction while runtime ownership
+    // stays at the canonical project directory. Exclusion acts on its physical Git owner.
+    for (const repo of Object.values(ctx.repositoryPaths)) await ensureProjectMetadataExcluded(realpathSync(repo.path));
+    return root;
   }
   list(project?: string): LabRecord[] {
     if (project !== undefined)
@@ -387,7 +425,7 @@ export class LabManager {
     if (!Object.keys(ctx.repositoryPaths).length)
       throw new Error("a lab needs a project repository");
     const cfg = this.services.config;
-    const root = labOwnedPath(this.options.storageDir, path.join(this.options.storageDir, "labs", project, name));
+    const root = await this.prepareLabRoot(project, name);
     if (existsSync(root))
       throw new Error("lab directory already exists; refusing to adopt its data during creation");
     const now = Date.now();
@@ -423,7 +461,7 @@ export class LabManager {
         const base = (await git(source.path, ["rev-parse", "--verify", "--end-of-options", `${target}^{commit}`])).trim();
         const projectPart = project.replace(/[^a-z0-9-]/g, "-");
         const branch = `meritrouter/lab-${projectPart}-${name}-${lab.id.slice(-6)}`;
-        const worktree = labOwnedPath(this.options.storageDir, path.join(root, "repos", alias));
+        const worktree = this.labPath(lab, path.join(root, "repos", alias));
         mkdirSync(path.dirname(worktree), { recursive: true });
         lab.repositories.push({ alias, source: source.path, worktree, branch, target, base });
         lab.updatedAt = Date.now();
@@ -581,11 +619,11 @@ export class LabManager {
         throw new MeritRouterError("lab_dirty", "lab has uncommitted changes; commit them before destroying so the branch retains the work");
     await this.stopLab(project, name);
     for (const repo of lab.repositories) {
-      labOwnedPath(this.options.storageDir, repo.worktree);
+      this.labPath(lab, repo.worktree);
       if (existsSync(repo.worktree))
         await git(repo.source, ["worktree", "remove", repo.worktree]);
     }
-    labOwnedPath(this.options.storageDir, lab.root);
+    this.labPath(lab, lab.root);
     rmSync(lab.root, { recursive: true, force: true });
     this.options.db.prepare("DELETE FROM lab_ports WHERE lab_id=?").run(lab.id);
     lab.state = "destroyed";

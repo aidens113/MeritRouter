@@ -26,7 +26,7 @@ export class TaskLabLifecycle {
   private drain: Promise<void> | null = null;
   constructor(readonly manager: LabManager, barrier?: (phase: string, row: TaskProcessRecord) => Promise<void>) {
     this.source = new TaskAttemptSource(manager);
-    this.processes = new TaskAttemptProcesses(manager.options.db, manager.options.storageDir, barrier, (id) => this.assertRunning(id));
+    this.processes = new TaskAttemptProcesses(manager.options.db, manager.options.storageDir, barrier, (id) => this.assertRunning(id), (project, name, root) => manager.labStorageDirectory(project, name, root));
     this.runner = new TaskAttemptRunner(manager, this.source, this.processes);
   }
   private assertRunning(id: string): void {

@@ -9,7 +9,6 @@ import { immediate, newId } from "../storage/db.js";
 import { dirtyPaths, git } from "../workspaces/git.js";
 import { substitute } from "./recipe.js";
 import { allocatePorts, portAvailable } from "./ports.js";
-import { labOwnedPath } from "./paths.js";
 import { labEnvironment, labValues } from "./environment.js";
 import { inspectLabListeners } from "./process-ownership.js";
 import { LabCheckResultSchema, type LabCheckResult } from "./checks.js";
@@ -49,7 +48,7 @@ export class TaskAttemptRunner {
     const writable = attempt.repositories.find(r => r.alias === attempt.writableAlias)!;
     if ((await git(writable.sourcePath, ["rev-parse", "--verify", "--end-of-options", `${attempt.submittedCommit}^{tree}`])).trim() !== attempt.submittedTree)
       throw new Error("persisted task commit/tree identity differs");
-    const name = `task-${attempt.id.slice(-20)}`, now = Date.now(), root = labOwnedPath(this.manager.options.storageDir, path.join(this.manager.options.storageDir, "labs", attempt.project, name));
+    const name = `task-${attempt.id.slice(-20)}`, now = Date.now(), root = await this.manager.prepareLabRoot(attempt.project, name);
     const lab = LabRecordSchema.parse({ id: newId("lab"), project: attempt.project, name, state: "creating", kind: "task_attempt", root, recipe: request.recipe, repositories: [], ports: {}, env: {}, goal: "Task runtime verification", createdAt: now, updatedAt: now, lastActivity: now });
     immediate(this.store.db, () => {
       const all = this.manager.list().filter(item => taskLabUsesCapacity(this.manager, item)), limit = this.manager.services.config.max_active, project = ProjectConfigSchema.parse(this.manager.options.cfg.projects[attempt.project]);
@@ -75,7 +74,7 @@ export class TaskAttemptRunner {
         throw new Error("project repository scope changed before task Lab creation");
       if (await taskCommonDirectory(repo.sourcePath) !== repo.commonDirectory)
         throw new Error("task source physical repository changed");
-      const head = repo.alias === attempt.writableAlias ? attempt.submittedCommit! : repo.head, branch = `meritrouter/task-lab-${taskHash(attempt.project).slice(0, 8)}-${attempt.id.slice(-12)}-${taskHash(repo.alias).slice(0, 8)}`, worktree = labOwnedPath(this.manager.options.storageDir, path.join(root, "repos", repo.alias));
+      const head = repo.alias === attempt.writableAlias ? attempt.submittedCommit! : repo.head, branch = `meritrouter/task-lab-${taskHash(attempt.project).slice(0, 8)}-${attempt.id.slice(-12)}-${taskHash(repo.alias).slice(0, 8)}`, worktree = this.manager.labPath(lab, path.join(root, "repos", repo.alias));
       lab.repositories.push({ alias: repo.alias, source: repo.sourcePath, worktree, branch, target: branch, base: head });
       this.manager.store.save(lab);
       await git(repo.sourcePath, ["worktree", "add", "-b", branch, worktree, head]);
@@ -101,7 +100,7 @@ export class TaskAttemptRunner {
     }
     const heads: Record<string, string> = {};
     for (const repo of lab.repositories) {
-      labOwnedPath(this.manager.options.storageDir, repo.worktree);
+      this.manager.labPath(lab, repo.worktree);
       await assertRegisteredTaskWorktree(repo.source, repo.worktree);
       if ((await dirtyPaths(repo.worktree)).length)
         throw new Error("task Lab repository is dirty");
@@ -232,19 +231,19 @@ export class TaskAttemptRunner {
     if (lab.kind !== "task_attempt" || lab.project !== attempt.project || this.store.lab(attempt.id)?.labId !== lab.id)
       throw new Error("task Lab identity mismatch");
     const expectedName = `task-${attempt.id.slice(-20)}`;
-    if (lab.name !== expectedName || path.resolve(lab.root) !== path.resolve(this.manager.options.storageDir, "labs", attempt.project, expectedName))
+    if (lab.name !== expectedName || path.resolve(lab.root) !== path.resolve(this.manager.labStorageDirectory(attempt.project, expectedName, lab.root), "labs", attempt.project, expectedName))
       throw new Error("task Lab root does not match exact attempt identity");
-    labOwnedPath(this.manager.options.storageDir, lab.root);
+    this.manager.labPath(lab, lab.root);
     const aliases = new Set<string>();
     for (const repo of lab.repositories) {
       const source = attempt.repositories.find(r => r.alias === repo.alias);
       if (!source || aliases.has(repo.alias) || path.resolve(repo.source) !== path.resolve(source.sourcePath) || path.resolve(repo.worktree) !== path.resolve(lab.root, "repos", repo.alias) || !taskLabBranchOwned(attempt.project, attempt.id, repo.alias, repo.branch, repo.target) || repo.base !== (repo.alias === attempt.writableAlias ? attempt.submittedCommit : source.head))
         throw new Error("task Lab repository is outside exact attempt ownership");
       aliases.add(repo.alias);
-      labOwnedPath(this.manager.options.storageDir, repo.worktree);
+      this.manager.labPath(lab, repo.worktree);
     }
     if (existsSync(lab.root))
-      z.object({ id: z.literal(lab.id), project: z.literal(attempt.project), name: z.literal(lab.name), attemptId: z.literal(attempt.id) }).parse(JSON.parse(readFileSync(labOwnedPath(this.manager.options.storageDir, labOwnershipMarker(lab.root)), "utf8")));
+      z.object({ id: z.literal(lab.id), project: z.literal(attempt.project), name: z.literal(lab.name), attemptId: z.literal(attempt.id) }).parse(JSON.parse(readFileSync(this.manager.labPath(lab, labOwnershipMarker(lab.root)), "utf8")));
   }
   async stop(attempt: TaskAttemptRecord): Promise<TaskLabEvidence> {
     const request = this.store.lab(attempt.id)!;
@@ -291,7 +290,7 @@ export class TaskAttemptRunner {
       if (depth > 64 || Date.now() > deadline)
         throw new TaskLabPruneRefusal("Prune blocked: inspect oversized/deep Lab contents manually before retry (scan limit: 20,000 entries, depth 64, one second)");
       // labOwnedPath rejects changed ancestor junctions; never follow entries that are links.
-      labOwnedPath(this.manager.options.storageDir, directory);
+      this.manager.labPath(lab, directory);
       for (const entry of readdirSync(directory, { withFileTypes: true })) {
         if (++entries > 20000 || Date.now() > deadline)
           throw new TaskLabPruneRefusal("Prune blocked: inspect oversized Lab contents manually before retry (scan limit: 20,000 entries, depth 64, one second)");
@@ -337,7 +336,7 @@ export class TaskAttemptRunner {
     // Prove every repository before the first removal. A durable verified intent is
     // required to accept resources missing after an interrupted removal.
     for (const repo of lab.repositories) {
-      labOwnedPath(this.manager.options.storageDir, repo.worktree);
+      this.manager.labPath(lab, repo.worktree);
       if (await taskCommonDirectory(repo.source) !== attempt.repositories.find(r => r.alias === repo.alias)!.commonDirectory)
         throw new Error("task repository physical identity changed before prune");
       fence.assert();
@@ -369,7 +368,7 @@ export class TaskAttemptRunner {
     for (const repo of lab.repositories) {
       if (!existsSync(repo.worktree)) continue;
       // Recheck paths and registration immediately before each destructive action.
-      labOwnedPath(this.manager.options.storageDir, repo.worktree);
+      this.manager.labPath(lab, repo.worktree);
       await assertRegisteredTaskWorktree(repo.source, repo.worktree);
       fence.assert();
       if (await taskCommonDirectory(repo.source) !== attempt.repositories.find(r => r.alias === repo.alias)!.commonDirectory
@@ -386,7 +385,7 @@ export class TaskAttemptRunner {
     await this.assertPruneRegistrations(lab, attempt, fence.assert);
     this.assertPruneContents(lab);
     fence.assert();
-    rmSync(labOwnedPath(this.manager.options.storageDir, lab.root), { recursive: true, force: true });
+    rmSync(this.manager.labPath(lab, lab.root), { recursive: true, force: true });
     fence.assert();
     immediate(this.store.db, () => {
       fence.assert();
