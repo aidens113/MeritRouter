@@ -35,7 +35,7 @@ async function fixture(version: 2 | undefined = 2) {
   const [task] = await sy.submitTasks([{ profile: "supervise", deliveryVersion: version, goal, repositoryAliases: ["core"], constraints: { acceptanceCriteria: ["Fixture opens"] } }]);
   const services = { submitTasks: sy.submitTasks.bind(sy), getTask: (id: string) => { const task = sy!.tasks.get(id); return task ? { spec: task.spec, state: task.row.state, result: task.result } : null; } };
   const ctx = { taskId: task!.taskId, spec: sy.tasks.get(task!.taskId)!.spec, tasks: sy.tasks, cfg: sy.cfg, gate: sy.gate, services, now: Date.now, signal: new AbortController().signal, budget: { maxModelRequests: 40 }, artifacts: sy.artifacts } as unknown as RunContext;
-  const state: SupervisorState = { ctx, db: sy.db, actor: { agent: "supervisor:fixture", role: "supervisor", task: ctx.taskId, job: ctx.taskId }, repos: new Map([["core", { alias: "core", worktree: env.repo, branch: "fixture", baseSha: "a".repeat(40) }]]), briefChecks: new Set(), children: new Map() };
+  const state: SupervisorState = { ctx, db: sy.db, actor: { agent: "supervisor:fixture", role: "supervisor", task: ctx.taskId, job: ctx.taskId }, repos: new Map([["core", { alias: "core", worktree: env.repo, branch: (await git(env.repo,["symbolic-ref","--short","HEAD"])).trim(), baseSha: "a".repeat(40) }]]), briefChecks: new Set(), children: new Map() };
   const harness = { ctx, role: "supervisor", readers: new Map(), edits: new Set() } as unknown as HarnessEnv;
   const tools = supervisorTools(state);
   const store = new ProductDeliveries(sy.db);

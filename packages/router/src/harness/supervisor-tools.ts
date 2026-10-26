@@ -1,3 +1,4 @@
+import { delegatedSourceSnapshot } from "./delegated-source.js";
 import { assertExplicitRepairReferences } from "./repair-reference.js";
 import { resolveRepairSource } from "../workspaces/repair-hydration.js";
 import { executeSupervisorCommand, WorkerActionRequests, type WorkerActionRequest } from "./worker-actions.js";
@@ -317,7 +318,7 @@ async function assertRepairBriefSources(s:SupervisorState,items:Array<Record<str
  * its own branch forked from this job's branch, gets its own section of this job's working
  * document, and a request budget carved from this job's remaining one (`team.child_budget_share`).
  */
-async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, unknown>>, env: HarnessEnv, opts: { artifactRefs?: Record<string, string[]> } = {}): Promise<string> {
+async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, unknown>>, env: HarnessEnv, opts: { artifactRefs?: Record<string, string[]>; sourceSnapshot?: Record<string,string> } = {}): Promise<string> {
   const svc = s.ctx.services!;
   const jobId = s.ctx.taskId;
   const labels = items.map((it) => slug(str(it.label, "label")));
@@ -326,6 +327,7 @@ async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, un
   const fresh = items.map((it, i) => ({ it, label: labels[i]! })).filter((x) => !s.children.has(x.label));
   await assertRepairBriefSources(s,fresh.map(item=>item.it));
   assertPlannedBriefs(s.ctx, fresh.map(item => item.it), [...s.repos.keys()][0]);
+  const sourceSnapshot = opts.sourceSnapshot ?? (fresh.length ? await delegatedSourceSnapshot(s.ctx, s.repos, fresh.flatMap(({it}) => (it.repositories as string[] | undefined) ?? s.ctx.spec.repositoryAliases)) : {});
   const ids = new Map(fresh.map((x) => [x.label, newId("t")]));
   for (const { it, label } of fresh) if (it.profile === "implement" && !((it.allowed_paths as string[] | undefined) ?? []).length) throw new Error(`${label}: implement briefs need allowed_paths`);
   const depIds = (it: Record<string, unknown>) =>
@@ -374,10 +376,7 @@ async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, un
     if (repos.some(alias => !s.ctx.spec.repositoryAliases.includes(alias))) throw new Error(`${label}: repositories exceeds parent repository scope`);
     const writable = it.profile === "implement" ? String(it.writable_repository ?? [...s.repos.keys()][0] ?? "") : undefined;
     const paths = sub || writable ? narrowedScope(taskWriteScope(s.ctx.spec, s.ctx.tasks), it.allowed_paths) : undefined;
-    const baseCommits: Record<string, string> = {};
-    if (writable && s.repos.get(writable)) baseCommits[writable] = "HEAD_OF_JOB";
-    // A sub-job's branches fork from this job's branches as integrated so far.
-    if (sub) for (const alias of repos) if (s.repos.get(alias)) baseCommits[alias] = "HEAD_OF_JOB";
+    const baseCommits = Object.fromEntries(repos.map(alias => [alias, sourceSnapshot[alias]!]));
     const checks = (it.checks as string[] | undefined) ?? [];
     for (const c of checks) s.briefChecks.add(c);
     const deps = depIds(it);
@@ -423,12 +422,7 @@ async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, un
       } as Record<string, unknown>,
     };
   });
-  // Workers start from the job branch as integrated so far (a dependent's base is chosen again
-  // when it starts: see context/upstream.ts).
-  for (const sp of specs) {
-    const bc = (sp.spec.context as { baseCommits: Record<string, string> }).baseCommits;
-    for (const alias of Object.keys(bc)) bc[alias] = (await git(s.repos.get(alias)!.worktree, ["rev-parse", "HEAD"])).trim();
-  }
+  // Staffing, explicit context validation and dispatch share one immutable parent snapshot.
   for (const sp of specs) {
     const item = fresh.find(x => x.label === sp.label)!.it;
     if (item.repair_from_task !== undefined) {
@@ -486,7 +480,7 @@ async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, un
  * so semantic tags can raise its tier and set importance floors). A node scoring above T3 is
  * reported so the supervisor splits it. Returns the planned tiers and one note per node scored.
  */
-async function staffNodes(s: SupervisorState, items: Array<Record<string, unknown>>): Promise<{ tiers: Map<string, PlanDifficulty>; notes: string[] }> {
+async function staffNodes(s: SupervisorState, items: Array<Record<string, unknown>>, sourceSnapshot: Record<string,string>): Promise<{ tiers: Map<string, PlanDifficulty>; notes: string[] }> {
   const notes: string[] = [];
   const tiers = new Map<string, PlanDifficulty>();
   if (!s.ctx.artifacts) return { tiers, notes };
@@ -499,7 +493,7 @@ async function staffNodes(s: SupervisorState, items: Array<Record<string, unknow
       goal: String(it.goal ?? ""),
       repositoryAliases: repos,
       ...(writable ? { writableRepository: writable } : {}),
-      context: { ...(it.file_refs ? { fileRefs: it.file_refs } : {}) },
+      context: { ...(it.file_refs ? { fileRefs: it.file_refs } : {}), baseCommits: Object.fromEntries(repos.map(alias => [alias, sourceSnapshot[alias]!])) },
       constraints: { acceptanceCriteria: it.acceptance_criteria, ...(it.allowed_paths ? { allowedPaths: it.allowed_paths } : {}), ...(it.checks ? { checks: it.checks } : {}), ...(it.lab_checks ? { labChecks: it.lab_checks } : {}) },
     } as WorkerTaskInput;
     const staffed = await rulebookTier(s.ctx.cfg, brief, s.ctx.artifacts);
@@ -668,7 +662,8 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
           sharedFilesArg(it);
           WorkerTaskSchema.parse({ profile, goal: it.goal, repositoryAliases: repositories, ...(writable ? { writableRepository: writable } : {}), context: { ...(it.file_refs ? { fileRefs: it.file_refs } : {}) }, constraints: { acceptanceCriteria: it.acceptance_criteria, ...(paths ? { allowedPaths: paths } : {}), ...(it.checks ? { checks: it.checks } : {}), ...(it.lab_checks ? { labChecks: it.lab_checks } : {}) }, ...(it.max_requests !== undefined ? { budget: { maxModelRequests: it.max_requests } } : {}), ...(it.importance ? { importance: it.importance } : {}), ...(it.importance_reason ? { importanceReason: it.importance_reason } : {}), ...(it.difficulty || it.web !== undefined ? { hints: { ...(it.difficulty ? { difficulty: it.difficulty } : {}), ...(it.web !== undefined ? { web: it.web } : {}) } } : {}), ...(it.brain_grants ? { brain: { grants: it.brain_grants } } : {}) });
         }
-        const { tiers: plannedTiers, notes: staffed } = dispatch ? await staffNodes(s, items) : { tiers: new Map<string, PlanDifficulty>(), notes: [] as string[] };
+        const sourceSnapshot = dispatch && items.some(it => !s.children.has(slug(it.label))) ? await delegatedSourceSnapshot(s.ctx, s.repos, items.filter(it => !s.children.has(slug(it.label))).flatMap(it => (it.repositories as string[] | undefined) ?? s.ctx.spec.repositoryAliases)) : {};
+        const { tiers: plannedTiers, notes: staffed } = dispatch ? await staffNodes(s, items, sourceSnapshot) : { tiers: new Map<string, PlanDifficulty>(), notes: [] as string[] };
         const store = new PlanStore(s.db, s.ctx.now);
         const previous = store.latest(jobId);
         const nodes: PlanNodeInput[] = items.map((it) => {
@@ -711,7 +706,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
         let dispatched: string;
         try {
           const freshItems = items.filter((it) => !s.children.has(slug(it.label)));
-          dispatched = dispatch && freshItems.length ? await dispatchBriefs(s, freshItems, env) : "";
+          dispatched = dispatch && freshItems.length ? await dispatchBriefs(s, freshItems, env, { sourceSnapshot }) : "";
         } catch (err) {
           // Nothing was submitted: the version is withdrawn so the plan matches the tasks.
           if (!nodes.some((n) => !kept.includes(n.label) && s.children.has(n.label))) store.discard(jobId, plan.version);

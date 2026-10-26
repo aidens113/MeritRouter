@@ -167,6 +167,14 @@ The full text ships as `packages/router/charters/supervisor.md` and can be overr
    runs at once, up to `team.max_agents`
    per job. Coding tasks whose paths overlap are serialised by file leases (enforced at claim);
    dependents receive their upstream results as context.
+   Delegated repository context (including inspect/review and explicit `file_refs`) uses one
+   immutable committed parent snapshot for staffing and dispatch. Each permitted writable alias
+   comes from the parent's integration worktree, not the canonical checkout's possibly older
+   HEAD. The runtime checks project/alias scope, common Git repository, declared branch and a
+   clean stable HEAD; missing, foreign or dirty integration sources refuse dispatch. Read-only
+   aliases retain the parent's declared commit, or freeze their configured committed HEAD.
+   Later parent changes do not retarget a child's reads/listings/searches. This adds no read
+   permission; coding dependents retain their existing upstream base-selection rules.
 6. **Budget the team.** The job's request budget is one pool. Each delegated task gets
    `max_requests` from its brief (default `team.default_task_requests`, else its tier's cap) and
    holds it from the pool while open; a finished task holds only what it used. A brief that does
