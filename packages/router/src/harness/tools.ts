@@ -1,3 +1,6 @@
+import { createRepositoryEffects, type RepositoryEffects } from "../workspaces/repository-command.js";
+import type { RepositoryMutationCapability } from "../workspaces/repository-mutation.js";
+import { assertRunAuthority } from "./task-authority.js";
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import picomatch from "picomatch";
@@ -22,6 +25,8 @@ import { assertNotProjectMetadataPath } from "../projects/metadata-policy.js";
 export interface HarnessEnv {
   /** Trusted journal identity for this invocation; never taken from model arguments. */
   toolInvocationId?: string;
+  repositoryEffects?: RepositoryEffects;
+  repositoryMutation?: RepositoryMutationCapability;
   /** Trusted caller-derived inline output cap, clamped to the active model context. */
   inlineOutputBytes?: number;
   ctx: RunContext;
@@ -185,9 +190,25 @@ function noteEdited(env: HarnessEnv, rel: string, abs: string): void {
   if (env.workspace && existsSync(abs)) env.universe.refs.set(`${env.workspace.alias}:${rel}`, readFileSync(abs, "utf8").split(/\r?\n/).length);
 }
 
+/** Guard actual repository effects, including direct tool calls without runner injection. */
+export async function withRepositoryToolWrite<T>(env: HarnessEnv, action: (guarded: HarnessEnv) => T | Promise<T>): Promise<T> {
+  let effects = env.repositoryEffects;
+  if (!effects && env.workspace) {
+    let directory = path.resolve(env.workspace.root);
+    while (true) {
+      if (lstatExists(path.join(directory, ".git")) || (lstatExists(path.join(directory, "HEAD")) && lstatExists(path.join(directory, "objects")))) {
+        effects = createRepositoryEffects(env.workspace.root); break;
+      }
+      const parent = path.dirname(directory); if (parent === directory) break; directory = parent;
+    }
+  }
+  const execute = (guarded: HarnessEnv) => { assertRunAuthority(env.ctx); return action(guarded); };
+  return effects ? effects.withWrite(cap => execute({ ...env, repositoryEffects: effects, repositoryMutation: cap }), env.repositoryMutation) : execute(env);
+}
+
 export function editTools(): HarnessTool[] {
   return [
-    tool("write_file", "edit", "Create or overwrite a file in your workspace with the full new content.", { path: { type: "string" }, content: { type: "string" } }, ["path", "content"], async (a, env) => {
+    tool("write_file", "edit", "Create or overwrite a file in your workspace with the full new content.", { path: { type: "string" }, content: { type: "string" } }, ["path", "content"], async (a, env) => withRepositoryToolWrite(env, async env => {
       const { rel, abs } = workspacePath(env, pathArg(a, "write_file"));
       mkdirSync(path.dirname(abs), { recursive: true });
       // Keep an existing file's line-ending style.
@@ -196,14 +217,14 @@ export function editTools(): HarnessTool[] {
       writeFileSync(abs, crlf ? content.replace(/\n/g, "\r\n") : content);
       noteEdited(env, rel, abs);
       return `wrote ${rel} (${String(a.content ?? "").split("\n").length} lines)`;
-    }),
+    })),
     tool(
       "replace_in_file",
       "edit",
       "Replace an exact text snippet in a file. old_text must match exactly once unless replace_all is true.",
       { path: { type: "string" }, old_text: { type: "string" }, new_text: { type: "string" }, replace_all: { type: "boolean" } },
       ["path", "old_text", "new_text"],
-      async (a, env) => {
+      async (a, env) => withRepositoryToolWrite(env, async env => {
         const { rel, abs } = workspacePath(env, pathArg(a, "replace_in_file"));
         if (!existsSync(abs)) throw new Error(`${rel} does not exist`);
         // Match on LF-normalised text and write back in the file's own line-ending style, so
@@ -220,16 +241,16 @@ export function editTools(): HarnessTool[] {
         writeFileSync(abs, crlf ? next.replace(/\n/g, "\r\n") : next);
         noteEdited(env, rel, abs);
         return `replaced ${a.replace_all === true ? count : 1} occurrence(s) in ${rel}`;
-      },
+      }),
     ),
-    tool("delete_file", "edit", "Delete a file in your workspace.", { path: { type: "string" } }, ["path"], async (a, env) => {
+    tool("delete_file", "edit", "Delete a file in your workspace.", { path: { type: "string" } }, ["path"], async (a, env) => withRepositoryToolWrite(env, async env => {
       const { rel, abs } = workspacePath(env, pathArg(a, "delete_file"));
       if (!existsSync(abs)) throw new Error(`${rel} does not exist`);
       rmSync(abs);
       env.edits.add(rel);
       if (env.workspace) env.readers.get(env.workspace.alias)?.invalidate();
       return `deleted ${rel}`;
-    }),
+    })),
   ];
 }
 
@@ -237,8 +258,9 @@ function lstatExists(p: string): boolean {
   try {
     lstatSync(p);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) return false;
+    throw error;
   }
 }
 

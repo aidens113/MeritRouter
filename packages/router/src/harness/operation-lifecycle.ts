@@ -1,3 +1,5 @@
+import { RepositoryMutationError } from "../workspaces/repository-mutation.js";
+import { SelectedCommitError } from "../attribution/selected-commit.js";
 import { randomUUID } from "node:crypto";
 import type { HarnessEnv } from "./tools.js";
 import { OperationResultSchema, type OperationDefinition, type OperationResult } from "./operation-contract.js";
@@ -155,7 +157,7 @@ export async function executeOperation(def: OperationDefinition, input: Record<s
     result = { version: "2", operationId: id, status: signal.aborted ? (def.sideEffect === "read" ? (env.ctx.signal.aborted ? "cancelled" : "timed_out") : "unknown_effect") : status === "partial" ? "unknown_effect" : status === "failed" ? "failed" : status === "waiting_approval" ? "waiting_approval" : "succeeded", durationMs: Date.now() - started, data: boundedOutput(data, env), diagnostics: signal.aborted ? [String(signal.reason??"cancelled after partial work")] : [] };
   }
   catch (error) {
-    if (isSimulatedCrash(error))
+    if (isSimulatedCrash(error) || error instanceof RepositoryMutationError || error instanceof SelectedCommitError)
       throw error;
     const message = (error as Error).message ?? String(error);
     result = { version: "2", operationId: id, status: signal.aborted ? (def.sideEffect === "read" ? (env.ctx.signal.aborted ? "cancelled" : "timed_out") : "unknown_effect") : "failed", durationMs: Date.now() - started, diagnostics: [message] };

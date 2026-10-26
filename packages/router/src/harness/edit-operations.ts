@@ -1,3 +1,6 @@
+import { withRepositoryToolWrite } from "./tools.js";
+import { RepositoryMutationError } from "../workspaces/repository-mutation.js";
+import { SelectedCommitError } from "../attribution/selected-commit.js";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { z } from "zod";
@@ -61,16 +64,18 @@ export function editOperations(): OperationDefinition[] {
       for (let i = 0;i < edits.length;i++) {
         const edit = edits[i]!;
         try {
+          await withRepositoryToolWrite(env, async guarded => {
           preflight(edit);
           const name = edit.action === "delete" ? "delete_file" : edit.action === "patch" ? "replace_in_file" : "write_file";
           const args = edit.action === "patch" ? { path: edit.path, old_text: edit.old_text, new_text: edit.new_text, replace_all: edit.replace_all } : { path: edit.path, ...("content" in edit ? { content: edit.content } : {}) };
           const tool = legacy.find(t => t.def.function.name === name)!;
           const id = `${env.toolInvocationId ?? "edit"}:file:${i}`;
-          const outcome = await journaled(env.ctx.session, { id, function: { name, arguments: JSON.stringify(args) } }, args, tool, async () => { env.ctx.signal.throwIfAborted(); return { ok: true, output: await tool.run(args, { ...env, toolInvocationId: id }) }; });
+          const outcome = await journaled(env.ctx.session, { id, function: { name, arguments: JSON.stringify(args) } }, args, tool, async () => { env.ctx.signal.throwIfAborted(); return { ok: true, output: await tool.run(args, { ...guarded, toolInvocationId: id }) }; });
           results.push({ path: edit.path, status: "succeeded", output: outcome.output });
+          });
         }
         catch (error) {
-          if (isSimulatedCrash(error))
+          if (isSimulatedCrash(error) || error instanceof RepositoryMutationError || error instanceof SelectedCommitError)
             throw error;
           results.push({ path: edit.path, status: env.ctx.signal.aborted ? "cancelled" : "failed", diagnostic: (error as Error).message });
           return { status: "partial", applied: i, total: edits.length, results, notStarted: edits.slice(i + 1).map(x => x.path) };

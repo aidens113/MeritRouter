@@ -4,12 +4,13 @@ import path from "node:path";
 import { z } from "zod";
 import { assertNoPendingCommitPublication } from "../attribution/selected-commit-receipts.js";
 import { git } from "./git.js";
+import { assertNoActiveRepositoryCommand, type RepositoryCommandPermit } from "./repository-command.js";
 
 declare const mutationBrand: unique symbol;
 /** Host-only scope; object copies, serialized values and expired scopes cannot authorize writes. */
 export interface RepositoryMutationCapability { readonly [mutationBrand]: true }
 export const RepositoryMutationFailureSchema = z.object({
-  kind: z.enum(["pending_publication", "lock_busy", "invalid_capability", "ownership_changed", "unawaited_mutation"]),
+  kind: z.enum(["pending_publication", "active_command", "command_uncertain", "lock_busy", "invalid_capability", "ownership_changed", "unawaited_mutation"]),
   reason: z.string().max(4096),
   receiptId: z.string().regex(/^pc_[a-f0-9]{32}$/).optional(),
 }).strict();
@@ -26,7 +27,7 @@ interface Lease { active: boolean; owners: Set<string>; pending: Set<Promise<unk
 interface OwnedLock { file: string; directory: string; content: Buffer; handle: Awaited<ReturnType<typeof open>>; dev: number; ino: number }
 const leases = new WeakMap<object, Lease>();
 const repositories = z.array(z.string().min(1).max(4096).refine(value => !value.includes("\0"))).min(1).max(128);
-const optionsSchema = z.object({ capability: z.unknown().optional(), timeoutMs: z.number().int().min(50).max(60000).default(10000) }).strict();
+const optionsSchema = z.object({ capability: z.unknown().optional(), command: z.unknown().optional(), timeoutMs: z.number().int().min(50).max(60000).default(10000) }).strict();
 const lockRecord = z.object({ version: z.literal(1), token: z.string().regex(/^[a-f0-9]{32}$/), pid: z.number().int().positive() }).strict();
 const key = (value: string) => process.platform === "win32" ? value.toLowerCase() : value;
 
@@ -53,7 +54,7 @@ async function resolveOwners(input: string[]): Promise<Owner[]> {
   }
   return resolved;
 }
-async function validateOwners(owners: Owner[]): Promise<void> {
+async function validateOwners(owners: Owner[], command?: RepositoryCommandPermit): Promise<void> {
   for (const owner of owners) {
     const [current] = await resolveOwners([owner.repo]);
     if (!current || key(current.gitDirectory) !== key(owner.gitDirectory) || key(current.commonDirectory) !== key(owner.commonDirectory)) throw new RepositoryMutationError("ownership_changed", "Repository mutation owner changed during admission");
@@ -63,6 +64,8 @@ async function validateOwners(owners: Owner[]): Promise<void> {
       const receiptId = /^Publication (pc_[a-f0-9]{32}) requires explicit reconciliation$/.exec(reason)?.[1];
       throw new RepositoryMutationError("pending_publication", reason, receiptId);
     }
+    try { await assertNoActiveRepositoryCommand(owner.repo, command); }
+    catch (error) { if (error instanceof RepositoryMutationError) throw error; throw new RepositoryMutationError("active_command", "Repository command ownership is unknown; retained guard requires inspection"); }
   }
 }
 async function acquire(directory: string, deadline: number): Promise<OwnedLock> {
@@ -107,7 +110,7 @@ function activeLease(capability: RepositoryMutationCapability): Lease {
   return lease;
 }
 
-export interface RepositoryMutationOptions { capability?: RepositoryMutationCapability; timeoutMs?: number }
+export interface RepositoryMutationOptions { capability?: RepositoryMutationCapability; command?: RepositoryCommandPermit; timeoutMs?: number }
 /**
  * Lock order: sorted physical common Git owners, then native index/ref locks inside action.
  * Never call while holding a SQLite transaction. Locks are cooperative, never stolen by age.
@@ -124,7 +127,7 @@ export function withRepositoryMutation<T>(input: string[], action: (capability: 
       const owners = await resolveOwners(requested);
       activeLease(lease.capability);
       if (owners.some(owner => !lease.owners.has(key(owner.commonDirectory)))) throw new RepositoryMutationError("invalid_capability", "Repository mutation capability cannot widen its owner scope");
-      await validateOwners(owners); activeLease(lease.capability);
+      await validateOwners(owners, parsed.command as RepositoryCommandPermit | undefined); activeLease(lease.capability);
       return action(lease.capability);
     })();
     lease.pending.add(running);
@@ -137,7 +140,7 @@ export function withRepositoryMutation<T>(input: string[], action: (capability: 
     const locks: OwnedLock[] = [], deadline = Date.now() + parsed.timeoutMs;
     try {
       for (const directory of directories) locks.push(await acquire(directory, deadline));
-      await validateOwners(owners);
+      await validateOwners(owners, parsed.command as RepositoryCommandPermit | undefined);
       const capability = Object.freeze({}) as RepositoryMutationCapability;
       const lease: Lease = { active: true, owners: new Set(directories.map(key)), pending: new Set(), capability };
       leases.set(capability, lease);

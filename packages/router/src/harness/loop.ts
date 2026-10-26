@@ -1,3 +1,5 @@
+import { RepositoryMutationError } from "../workspaces/repository-mutation.js";
+import { SelectedCommitError } from "../attribution/selected-commit.js";
 import type { ChatMessage, ChatTool, ChatToolCall } from "../gateway/types.js";
 import { estimateTokens } from "../gateway/types.js";
 import type { GateResponse } from "../gateway/gate.js";
@@ -359,7 +361,7 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
           const output = await t.run(args as Record<string, unknown>, invocationEnv);
           return { ok: t.outputSucceeded?.(output) ?? true, output };
         } catch (err) {
-          if (env.ctx.signal.aborted) throw err;
+          if (env.ctx.signal.aborted || err instanceof RepositoryMutationError || err instanceof SelectedCommitError) throw err;
           return { ok: false, output: `error: ${(err as Error).message}` };
         }
       });

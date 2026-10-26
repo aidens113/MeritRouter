@@ -1,3 +1,5 @@
+import { createRepositoryEffects } from "../workspaces/repository-command.js";
+import { RepositoryMutationError } from "../workspaces/repository-mutation.js";
 import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import path from "node:path";
@@ -6,7 +8,7 @@ import { immediate, newId, type Db } from "../storage/db.js";
 import { TaskStore } from "../storage/tasks.js";
 import { LeaseRefSchema, type LeaseRef } from "../storage/task-leases.js";
 import { git } from "../workspaces/git.js";
-import { minimalEnv, runProcess, type RunResult } from "../runners/coding/process.js";
+import { minimalEnv, type RunResult } from "../runners/coding/process.js";
 import type { RunContext } from "../runners/types.js";
 import { loadConfig, type ResolvedConfig } from "../config/load.js";
 import { currentSupervisorAuthority } from "../core/supervisor-authority.js";
@@ -219,14 +221,14 @@ export class WorkerActionRequests {
       this.current(row); authorize();
       if (input.signal?.aborted) abort();
       if (controller.signal.aborted) throw new Error("supervisor action cancelled before execution");
-      const r = await runProcess(row.action.command, [], { cwd: row.action.cwd, env: minimalEnv({ CI: "1" }), timeoutMs: Math.min(row.action.timeoutMs, row.executionTimeoutMs ?? row.action.timeoutMs), signal: controller.signal, shell: true });
+      const r = await createRepositoryEffects(row.action.cwd).runCommand({ command: row.action.command, cwd: row.action.cwd, env: minimalEnv({ CI: "1" }), timeoutMs: Math.min(row.action.timeoutMs, row.executionTimeoutMs ?? row.action.timeoutMs), signal: controller.signal }, { assertAuthority: async () => { this.current(row!); authorize(); if (row!.action.source !== await workerSourceIdentity(row!.action.cwd)) throw new Error("worker action source changed; request again for current source"); } });
       row.cancelRequested = this.get(row.project,row.id)?.cancelRequested ?? false;
       row.status = r.killed ? "uncertain" : "completed";
       row.quiescedAt = this.now();
       row.exitCode = r.killed ? null : r.exitCode;
       row.output = (`$ ${row.action.command}\nsource ${row.action.source}\nexit ${row.exitCode}${r.killed ? ` (${r.killed})` : ""}\n${r.stdout}\n${r.stderr}`).slice(0, 20000);
       this.save(row); return row;
-    } catch (err) { row.status = "uncertain"; row.quiescedAt=this.now(); row.output = String(err).slice(0, 20000); this.save(row); throw err; }
+    } catch (err) { row.status = "uncertain"; row.output = String(err).slice(0, 20000); this.save(row); throw err; }
     finally { clearInterval(timer); input.signal?.removeEventListener("abort", abort); }
   }
 }
@@ -263,6 +265,7 @@ export async function awaitWorkerAction(ctx: RunContext, request: WorkerActionRe
         resumeExecution?.(executed ? current.executionStartedAt ?? 0 : undefined); resumeExecution = null;
       }
       ctx.signal.throwIfAborted();
+      if (current.status === "uncertain" && !current.quiescedAt) throw new RepositoryMutationError("command_uncertain", "Supervisor command lacks verified process quiescence");
       if (current.status !== "pending" && current.status !== "running") return current;
       if (Date.now() >= until) return current;
       await new Promise<void>(resolve => { const timer = setTimeout(done, 100); function done() { clearTimeout(timer); ctx.signal.removeEventListener("abort", done); resolve(); } ctx.signal.addEventListener("abort", done, { once: true }); });
@@ -302,7 +305,7 @@ export async function executeSupervisorCommand(ctx: RunContext, input: { command
     const abort = () => stopper.abort(ctx.signal.reason ?? "cancelled");
     const timer = setInterval(() => { try { current(); } catch { stopper.abort("authority_changed"); } }, 100);
     ctx.signal.addEventListener("abort", abort);
-    try { current(); return await runProcess(input.command, [], { cwd: input.cwd, env: input.env ?? minimalEnv({ CI: "1" }), timeoutMs: Math.min(300000, input.timeoutMs), signal: stopper.signal, shell: true }); }
+    try { current(); return await createRepositoryEffects(input.cwd).runCommand({ command: input.command, cwd: input.cwd, env: input.env ?? minimalEnv({ CI: "1" }), timeoutMs: Math.min(300000, input.timeoutMs), signal: stopper.signal }, { assertAuthority: current }); }
     finally { clearInterval(timer); ctx.signal.removeEventListener("abort", abort); }
   }
   const row = await awaitWorkerCommand(ctx, { command: input.command, cwd: input.cwd, timeoutMs: input.timeoutMs, reason: input.reason, invocationId: input.invocationId });
