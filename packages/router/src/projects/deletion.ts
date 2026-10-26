@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import { MeritRouterError } from "../core/errors.js";
 import { immediate, type Db } from "../storage/db.js";
@@ -6,6 +6,9 @@ import { git } from "../workspaces/git.js";
 import { RequestCaptures } from "../storage/request-captures.js";
 import { RequestReceipts } from "../admission/request-receipts.js";
 import { z } from "zod";
+import { SessionWorkspaceSchema } from "../sessions/events.js";
+import { LabRepositorySchema } from "../labs/store.js";
+import { RepositoryMutationError, withRepositoryMutation, type RepositoryMutationCapability } from "../workspaces/repository-mutation.js";
 
 // Deleting a project (the mechanics; `admin/projects.ts` checks, confirms, and edits the config):
 // what a project leaves in the store and on disk, and removing it. Its per-project rows, session
@@ -43,6 +46,56 @@ export interface ProjectFootprint {
 const ids = (taskIds: string[]) => JSON.stringify(taskIds);
 const IN_TASKS = "(SELECT value FROM json_each(@ids))";
 const SESSIONS = `(project_id = @slug OR task_id IN ${IN_TASKS} OR job_id IN ${IN_TASKS})`;
+const physicalKey = (value: string) => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
+
+async function physicalOwner(root: string): Promise<string> {
+  if (!existsSync(root)) throw new RepositoryMutationError("ownership_changed", `Project cleanup retained a missing repository ${root}; restore it for explicit recovery`);
+  try {
+    const actualRoot = (await git(root, ["rev-parse", "--show-toplevel"])).trim();
+    if (physicalKey(realpathSync(actualRoot)) !== physicalKey(realpathSync(root))) throw new Error("recorded path is not the Git worktree root");
+    return physicalKey(realpathSync(path.resolve(root, (await git(root, ["rev-parse", "--git-common-dir"])).trim())));
+  }
+  catch (error) {
+    if (error instanceof RepositoryMutationError) throw error;
+    throw new RepositoryMutationError("ownership_changed", `Project cleanup cannot verify physical Git ownership of ${root}: ${(error as Error).message}`);
+  }
+}
+
+/** Discover retained publication/command admission roots without writing locks or cleanup state. */
+export async function projectMutationRepositories(db: Db, fp: ProjectFootprint, repositories: string[], brainRoot: string): Promise<string[]> {
+  const p = { slug: fp.slug, ids: ids(fp.taskIds) };
+  const permittedOwners = new Set(await Promise.all(repositories.map(physicalOwner)));
+  const roots = new Map(repositories.map(root => [physicalKey(root), root]));
+  const workspaceRows = z.array(z.object({ worktree_path: z.string(), status: z.string() })).parse(db.prepare(`SELECT worktree_path,status FROM workspaces WHERE task_id IN ${IN_TASKS}`).all(p));
+  const removed = new Set(workspaceRows.filter(row => row.status === "removed").map(row => physicalKey(row.worktree_path)));
+  const labRows = z.array(z.object({ state: z.string(), repositories_json: z.string() })).parse(db.prepare("SELECT state,repositories_json FROM labs WHERE project_id=@slug").all(p));
+  for (const lab of labRows.filter(row => row.state === "destroyed")) for (const repo of z.array(LabRepositorySchema).parse(JSON.parse(lab.repositories_json))) removed.add(physicalKey(repo.worktree));
+  const attemptRows = z.array(z.object({ source_worktree: z.string(), phase: z.string().nullable() })).parse(db.prepare(`SELECT a.source_worktree,l.phase FROM task_workspace_attempts a LEFT JOIN lab_task_attempts l ON l.attempt_id=a.id WHERE a.task_id IN ${IN_TASKS}`).all(p));
+  for (const row of attemptRows.filter(row => row.phase === "pruned")) removed.add(physicalKey(row.source_worktree));
+  const retired = (root: string) => removed.has(physicalKey(root)) && !existsSync(root);
+  const retained: string[] = [...fp.worktrees.map(wt => wt.path), ...workspaceRows.filter(row => !retired(row.worktree_path)).map(row => row.worktree_path)];
+  const sessions = z.array(z.object({ workspace_json: z.string().nullable() })).parse(db.prepare(`SELECT workspace_json FROM sessions WHERE ${SESSIONS}`).all(p));
+  for (const session of sessions) if (session.workspace_json) {
+    for (const repo of SessionWorkspaceSchema.parse(JSON.parse(session.workspace_json)).repos)
+      if (!retired(repo.worktree)) retained.push(repo.worktree);
+  }
+  const merges = z.array(z.object({ integration_worktree: z.string(), source_worktree: z.string().nullable() })).parse(db.prepare(`SELECT integration_worktree,source_worktree FROM merge_queue WHERE job_id IN ${IN_TASKS} OR task_id IN ${IN_TASKS}`).all(p));
+  for (const row of merges) for (const root of [row.integration_worktree, row.source_worktree]) if (root && !retired(root)) retained.push(root);
+  for (const lab of labRows) for (const repo of z.array(LabRepositorySchema).parse(JSON.parse(lab.repositories_json))) {
+    if (lab.state !== "destroyed" || !retired(repo.worktree)) retained.push(repo.source, repo.worktree);
+  }
+  retained.push(...attemptRows.filter(row => !retired(row.source_worktree)).map(row => row.source_worktree));
+  for (const root of retained) {
+    const owner = await physicalOwner(root);
+    if (!permittedOwners.has(owner)) throw new RepositoryMutationError("ownership_changed", `Project cleanup found a foreign retained Git owner at ${root}; no cleanup or foreign lock was written`);
+    roots.set(physicalKey(root), root);
+  }
+  if (existsSync(brainRoot)) {
+    await physicalOwner(brainRoot);
+    roots.set(physicalKey(brainRoot), brainRoot);
+  }
+  return [...roots.values()];
+}
 
 function inside(root: string, p: string): boolean {
   const rel = path.relative(root, p);
@@ -100,7 +153,7 @@ async function projectWorktrees(storageDir: string, taskIds: string[], repositor
   for (const repo of repositories) {
     if (seenRepos.has(key(repo)) || !existsSync(path.join(repo, ".git"))) continue;
     seenRepos.add(key(repo));
-    const list = await git(repo, ["worktree", "list", "--porcelain"]).catch(() => "");
+    const list = await git(repo, ["worktree", "list", "--porcelain"]);
     for (const line of list.split(/\r?\n/)) {
       if (!line.startsWith("worktree ")) continue;
       const wt = path.resolve(line.slice("worktree ".length).trim());
@@ -219,22 +272,30 @@ export function removeProjectFiles(fp: ProjectFootprint): string[] {
 }
 
 /** Remove the worktrees (`git worktree remove --force`, then prune); branches are kept. */
-export async function removeProjectWorktrees(worktrees: WorktreeRef[]): Promise<{ removed: number; problems: string[] }> {
-  const problems: string[] = [];
-  let removed = 0;
-  const repos = new Set<string>();
-  for (const wt of worktrees) {
-    try {
-      if (wt.repo) {
-        repos.add(wt.repo);
-        await git(wt.repo, ["worktree", "remove", "--force", "--force", wt.path]).catch(() => undefined);
-      }
-      rmSync(wt.path, { recursive: true, force: true });
-      removed++;
-    } catch (err) {
-      problems.push(`worktree ${wt.path}: ${(err as Error).message}`);
+export async function removeProjectWorktrees(worktrees: WorktreeRef[], control: { mutation?: RepositoryMutationCapability } = {}): Promise<{ removed: number; problems: string[] }> {
+  if (!worktrees.length) return { removed: 0, problems: [] };
+  const validate = async () => {
+    for (const wt of worktrees) {
+      if (!wt.repo || !existsSync(wt.path) || !lstatSync(wt.path).isDirectory() || lstatSync(wt.path).isSymbolicLink())
+        throw new RepositoryMutationError("ownership_changed", `Worktree ${wt.path} has missing or unverifiable ownership; recovery evidence is retained`);
+      if (!existsSync(path.join(wt.path, ".git")) || !lstatSync(path.join(wt.path, ".git")).isFile() || lstatSync(path.join(wt.path, ".git")).isSymbolicLink() || await physicalOwner(wt.repo) !== await physicalOwner(wt.path))
+        throw new RepositoryMutationError("ownership_changed", `Worktree ${wt.path} does not belong to its recorded source; no foreign lock or removal was attempted`);
+      const listed = (await git(wt.repo, ["worktree", "list", "--porcelain"])).split(/\r?\n/).some(line => line.startsWith("worktree ") && physicalKey(line.slice(9).trim()) === physicalKey(wt.path));
+      if (!listed) throw new RepositoryMutationError("ownership_changed", `Worktree ${wt.path} is not registered in its recorded source`);
     }
-  }
-  for (const repo of repos) await git(repo, ["worktree", "prune"]).catch((err: Error) => problems.push(`git worktree prune in ${repo}: ${err.message}`));
-  return { removed, problems };
+  };
+  await validate(); // Read-only owner comparison must precede any foreign-owner lease write.
+  return withRepositoryMutation([...new Set(worktrees.map(wt => wt.repo!))], async mutation => {
+    await validate();
+    for (let offset = 0; offset < worktrees.length; offset += 64)
+      await withRepositoryMutation(worktrees.slice(offset, offset + 64).map(wt => wt.path), async () => undefined, { capability: mutation });
+    let removed = 0;
+    for (const wt of worktrees) {
+      try { await git(wt.repo!, ["worktree", "remove", "--force", "--force", wt.path]); }
+      catch (error) { throw new RepositoryMutationError("ownership_changed", `Native worktree removal failed for ${wt.path}; rows and config must be retained: ${(error as Error).message}`); }
+      if (existsSync(wt.path)) throw new RepositoryMutationError("ownership_changed", `Native removal left worktree ${wt.path}; it was not counted as removed`);
+      removed++;
+    }
+    return { removed, problems: [] };
+  }, { capability: control.mutation });
 }

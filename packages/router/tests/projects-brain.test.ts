@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { GlobalPromotions } from "../src/brain/promotion.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -15,17 +16,49 @@ import { parseConfig } from "../src/config/load.js";
 import type { Actor } from "../src/attribution/index.js";
 import { baseConfig, commitAll, endpoint, FakeProvider, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
 
+// Test timeouts do not cancel JavaScript effects. Drain the complete started Brain
+// calls before closing SQLite or deleting fixture Git roots; never hide EBUSY.
+const activeBrainEffects = new Set<Promise<unknown>>();
+function trackEffects(target: Record<string, (...args: unknown[]) => unknown>, methods: string[]): void {
+  for (const method of methods) {
+    const original = target[method]!;
+    vi.spyOn(target, method).mockImplementation(function(this: unknown, ...args: unknown[]) {
+      const result = original.apply(this, args);
+      if (result instanceof Promise) {
+        activeBrainEffects.add(result);
+        void result.then(() => activeBrainEffects.delete(result), () => activeBrainEffects.delete(result));
+      }
+      return result;
+    });
+  }
+}
+beforeEach(() => {
+  trackEffects(Brain.prototype as unknown as Record<string, (...args: unknown[]) => unknown>, ["ensure", "writeFile", "write", "remove", "removeProjectFolder", "createWorkingDoc", "regenerateIndex", "promoteLesson", "compact", "appendLedger", "setCurrentState", "appendChannel", "writeReport", "addBrief"]);
+  trackEffects(GlobalPromotions.prototype as unknown as Record<string, (...args: unknown[]) => unknown>, ["promote", "settle", "approve", "reject"]);
+});
+
+async function drainBrainEffects(): Promise<void> {
+  let idle = 0;
+  while (idle < 2) {
+    if (activeBrainEffects.size) { idle = 0; await Promise.allSettled([...activeBrainEffects]); }
+    else idle++;
+    await new Promise<void>(resolve => setImmediate(resolve));
+  }
+}
+
 let env: Env | undefined;
 let sy: MeritRouter | undefined;
 let db: Db | undefined;
 afterEach(async () => {
+  await drainBrainEffects();
   await sy?.close();
   sy = undefined;
   db?.close();
   db = undefined;
   env?.cleanup();
   env = undefined;
-});
+  vi.restoreAllMocks();
+}, 120_000);
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function until<T>(get: () => T | Promise<T>, ok: (v: T) => boolean, ms = 60_000): Promise<T> {
@@ -136,7 +169,7 @@ describe("project brain index", () => {
     expect(links).toEqual(["working/launch.md"]);
     // Resolved against the index's folder, as the panel and any markdown viewer do.
     for (const l of links) expect(existsSync(path.join(a.root, "projects", "alpha", l))).toBe(true);
-  });
+  },120_000);
 });
 
 describe("project brain isolation (D4)", () => {
@@ -181,7 +214,7 @@ describe("project brain isolation (D4)", () => {
     const granted = workerOf(access, "alpha");
     expect(a.read(granted, betaDoc).content).toContain("Zanzibar migration");
     expect(a.search(granted, "Zanzibar").map((h) => h.path)).toContain(betaDoc);
-  });
+  },120_000);
 
   it("no grant lets an agent write global/: not workers, not supervisors, not approved requests", async () => {
     env = twoProjects();
@@ -236,7 +269,7 @@ describe("gated promotion to global/ (D9)", () => {
     const missing = await brain.promoteLesson(supervisor, actorOf("alpha"), GENERIC.title, GENERIC.body, ["projects/alpha/decisions/nope.md", "projects/beta/working/x.md"]);
     expect(missing.issues.join("; ")).toMatch(/nope\.md does not exist in the brain.*projects\/beta\/working\/x\.md is not in this project's brain/);
     expect(globalLessons(brain)).toEqual([]);
-  });
+  },120_000);
 
   it("a generic lesson that passes an independent review lands in global/ with provenance", async () => {
     env = twoProjects();
@@ -280,7 +313,7 @@ describe("gated promotion to global/ (D9)", () => {
     expect(rec2.lesson_path).toBe("projects/alpha/decisions/lessons/batch-small-writes.md");
     expect(readFileSync(path.join(brain.root, rec2.lesson_path!), "utf8")).toContain("only describes this codebase's checkout");
     expect(globalLessons(brain)).toEqual(["retry-idempotent-calls-with-jittered-backoff.md"]);
-  });
+  },180_000);
 
   it("with brain.global_requires_approval a passed promotion waits for a person", async () => {
     env = twoProjects({ brain: { path: "brain", project: "alpha", global_requires_approval: true } });
@@ -298,7 +331,7 @@ describe("gated promotion to global/ (D9)", () => {
     const done = await brain.promotions.approve({ kind: "human", name: "panel:aiden" }, r.id!);
     expect(done).toMatchObject({ status: "approved", decided_by: "panel:aiden" });
     expect(frontMatterOf(readFileSync(path.join(brain.root, done.global_path!), "utf8"))).toMatchObject({ approved_by: "panel:aiden", review: { verdict: "pass" }, project: "alpha" });
-  });
+  },120_000);
 
   it("with no eligible reviewer the promotion waits as pending, never approved", async () => {
     // Every model shares the supervisor's family.
@@ -319,7 +352,7 @@ describe("gated promotion to global/ (D9)", () => {
     const done = await sy.decidePromotion("alpha", r.id!, true, "cli:aiden");
     expect(done.status).toBe("approved");
     expect(globalLessons(brain)).toEqual(["retry-idempotent-calls-with-jittered-backoff.md"]);
-  });
+  },120_000);
 
   it("runs the review as a task through the Gate on another model family and settles it when the task finishes", async () => {
     env = twoProjects();

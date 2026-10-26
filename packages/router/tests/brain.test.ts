@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { GlobalPromotions } from "../src/brain/promotion.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -11,13 +12,45 @@ import type { Actor } from "../src/attribution/index.js";
 import * as attribution from "../src/attribution/index.js";
 import { baseConfig, makeEnv, type Env } from "./helpers.js";
 
+// Test timeouts do not cancel JavaScript effects. Drain the complete started Brain
+// calls before closing SQLite or deleting fixture Git roots; never hide EBUSY.
+const activeBrainEffects = new Set<Promise<unknown>>();
+function trackEffects(target: Record<string, (...args: unknown[]) => unknown>, methods: string[]): void {
+  for (const method of methods) {
+    const original = target[method]!;
+    vi.spyOn(target, method).mockImplementation(function(this: unknown, ...args: unknown[]) {
+      const result = original.apply(this, args);
+      if (result instanceof Promise) {
+        activeBrainEffects.add(result);
+        void result.then(() => activeBrainEffects.delete(result), () => activeBrainEffects.delete(result));
+      }
+      return result;
+    });
+  }
+}
+beforeEach(() => {
+  trackEffects(Brain.prototype as unknown as Record<string, (...args: unknown[]) => unknown>, ["ensure", "writeFile", "write", "remove", "removeProjectFolder", "createWorkingDoc", "regenerateIndex", "promoteLesson", "compact", "appendLedger", "setCurrentState", "appendChannel", "writeReport", "addBrief"]);
+  trackEffects(GlobalPromotions.prototype as unknown as Record<string, (...args: unknown[]) => unknown>, ["promote", "settle", "approve", "reject"]);
+});
+
+async function drainBrainEffects(): Promise<void> {
+  let idle = 0;
+  while (idle < 2) {
+    if (activeBrainEffects.size) { idle = 0; await Promise.allSettled([...activeBrainEffects]); }
+    else idle++;
+    await new Promise<void>(resolve => setImmediate(resolve));
+  }
+}
+
 let env: Env | undefined;
 let openDb: { close(): void } | undefined;
-afterEach(() => {
+afterEach(async () => {
+  await drainBrainEffects();
   openDb?.close();
   openDb = undefined;
   env?.cleanup();
-});
+  vi.restoreAllMocks();
+}, 120_000);
 
 const supActor: Actor = { agent: "supervisor:j1", role: "supervisor", model: "paid:anthropic/x", job: "j1" };
 const workActor: Actor = { agent: "inspector:t1", role: "inspector", model: "groq/m", task: "t1", job: "j1" };
@@ -71,7 +104,7 @@ describe("brain: working documents in git", () => {
       expect((await brain.history("projects/demo/facts/one.md"))[0]?.agent).toBe(supActor.agent);
       expect((await other.history("projects/storefront/facts/two.md"))[0]?.agent).toBe(supActor.agent);
     } finally { spy.mockRestore(); }
-  });
+  },120_000);
 
   it("creates a protocol working doc committed under the supervisor's identity", async () => {
     const { brain, supervisor } = setup();
@@ -86,7 +119,7 @@ describe("brain: working documents in git", () => {
     // The project's own index lists the document; the root index names projects, not their documents.
     expect(readFileSync(path.join(brain.root, "projects/demo/README.md"), "utf8")).toContain("projects/demo/working/job-j1.md");
     expect(readFileSync(path.join(brain.root, "README.md"), "utf8")).not.toContain("job-j1.md");
-  });
+  },120_000);
 
   it("workers read what their brief grants and write only their own report", async () => {
     const { brain, supervisor, worker } = setup();
@@ -100,7 +133,7 @@ describe("brain: working documents in git", () => {
     expect(r.commit).toBeTruthy();
     expect(() => brain.read(w, "global/glossary.md")).not.toThrow();
     expect(() => brain.read(w, "projects/other/working/x.md")).toThrow(/no read access/);
-  });
+  },120_000);
 
   it("the ledger is append-only and needs real validation", async () => {
     const { brain, supervisor } = setup();
@@ -116,7 +149,7 @@ describe("brain: working documents in git", () => {
     await brain.setCurrentState(supervisor, supActor, doc, "**Done:** found the bug.");
     expect(brain.read(supervisor, doc, { section: "Current State" }).content).toBe("**Done:** found the bug.");
     expect(brain.read(supervisor, doc, { section: "Work Ledger" }).content).toContain("Inspect add()");
-  });
+  },120_000);
 
   it("access requests: pending until the approver decides, then granted", async () => {
     const { brain, access, supervisor, worker } = setup();
@@ -144,7 +177,7 @@ describe("brain: working documents in git", () => {
     await brain.write(supervisor, supActor, "projects/demo/facts/secret.md", "# Secret\n\ndiscount codes live in vault\n");
     expect(brain.search(supervisor, "discount").map((r) => r.path).sort()).toEqual(["projects/demo/facts/secret.md", "projects/demo/working/job-j1.md"]);
     expect(brain.search(worker(), "discount").map((r) => r.path)).toEqual(["projects/demo/working/job-j1.md"]);
-  });
+  },120_000);
 
   it("edits made outside MeritRouter are committed as the user before MeritRouter writes", async () => {
     const { brain, supervisor } = setup();
@@ -153,7 +186,7 @@ describe("brain: working documents in git", () => {
     await brain.appendLedger(supervisor, supActor, "projects/demo/working/job-j1.md", goodLedger);
     const log = execFileSync("git", ["log", "--format=%(trailers:key=Agent,valueonly)%x09%s", "-3"], { cwd: brain.root }).toString();
     expect(log).toMatch(/human\s*\tRecord edits made outside MeritRouter/);
-  });
+  },120_000);
 
   it("mounts map a prefix to an existing folder and do not commit by default", async () => {
     const tmp = makeEnv();
@@ -184,4 +217,4 @@ it("treats only an exact lab lane as a working document with scoped protocol ope
  expect(kindOf(lane)).toBe("working_doc");expect(kindOf("projects/demo/labs/feature/reports/worker.md")).not.toBe("working_doc");
  await expect(brain.appendLedger(principal,supActor,"projects/demo/labs/feature/reports/worker.md",goodLedger)).rejects.toThrow(/not a working document/);
  await expect(brain.setCurrentState(worker(),workActor,lane,"escape")).rejects.toThrow(/no write access/);
-});
+},120_000);

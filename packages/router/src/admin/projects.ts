@@ -10,9 +10,10 @@ import type { SelectableProject } from "../cli/project-select.js";
 import { recordPreparation, repositoryNotices, repositoryProblems } from "../projects/repository-setup.js";
 import { folderState, prepareRepository } from "../workspaces/repository-prepare.js";
 import { patchConfig, readConfigText, validateConfigText, writeConfigText } from "./config-edit.js";
-import { projectFootprint, purgeProjectRows, removeProjectFiles, removeProjectWorktrees } from "../projects/deletion.js";
+import { projectFootprint, projectMutationRepositories, purgeProjectRows, removeProjectFiles, removeProjectWorktrees } from "../projects/deletion.js";
 import { immediate } from "../storage/db.js";
 import { RequestReceipts } from "../admission/request-receipts.js";
+import { RepositoryMutationError, withRepositoryMutation, type RepositoryMutationCapability } from "../workspaces/repository-mutation.js";
 
 // Projects for the panel's grid, the CLI's `projects` command, and project selection: listing,
 // per-project activity and attention, and creating or archiving a project. Settings live in the
@@ -323,7 +324,7 @@ export interface ProjectDeletionResult {
   brainCommit: string | null;
   /** The project that is now the primary one (`brain.project`) when the deleted project was. */
   newPrimary: string | null;
-  /** Files or worktrees that could not be removed (the rows are gone either way). */
+  /** Session/artifact files that could not be removed after confirmed publication and row purge. */
   problems: string[];
   retainedRequests: { pendingRequests: number; retainedTransportHolds: number };
 }
@@ -411,61 +412,78 @@ export async function deleteProject(sy: MeritRouter, slug: string, opts: { confi
   const valid = validateConfigText(text, sy.cfg.configPath);
   if (!valid.ok) throw new MeritRouterError("config_invalid", `the config without projects.${slug} does not validate:\n  ${valid.errors.join("\n  ")}`);
 
-  // Confirmed deletion may bypass retention age, never positive ownership checks.
-  // Validate config first; the prune keeps recovery proof on any partial refusal.
-  const cleanup = await sy.labs.taskAttempts.pruneProject(slug);
-  if (cleanup.blocked) throw new MeritRouterError("usage", `project ${slug} has ${cleanup.blocked} task Lab cleanup(s) that could not be proved safe; recovery evidence was retained`);
-  const afterCleanup = deletionBlockers(sy, projectInfo(sy, slug));
-  if (afterCleanup.length) throw new MeritRouterError("usage", `project ${slug} cannot be deleted: ${afterCleanup.join("; ")}`);
-  const fp = await footprintOf(sy, sy.projects.get(slug)!);
-  const brainEntries = sy.brain.projectFolderFiles(slug);
-  let configWritten = false;
-  let purged: ReturnType<typeof purgeProjectRows>;
-  try {
-    purged = immediate(sy.db, () => {
-      // Footprint discovery yields to other services. Serialize the final lifecycle/config
-      // checks with archive writes, submissions, and other deletions before removing anything.
-      if (readConfigText(sy) !== original) throw new MeritRouterError("config_changed", "The config changed during project deletion; reload it and retry.");
-      sy.reloadIfChanged();
-      const currentBlockers = deletionBlockers(sy, projectInfo(sy, slug));
-      if (currentBlockers.length) throw new MeritRouterError("usage", `project ${slug} cannot be deleted: ${currentBlockers.join("; ")}`);
-      const written = writeConfigText(sy, text, { expectedText: original });
-      if (!written.ok) throw new MeritRouterError("config_write_failed", `the config could not be written: ${written.errors.join("; ")}`);
-      configWritten = true;
-      return purgeProjectRows(sy.db, slug, ACTIVE_STATES);
-    });
-  } catch (error) {
-    // SQLite rolls the rows back if purge fails. Restore the file only if it is still the
-    // exact file we wrote; an intervening external editor must never be overwritten.
-    if (configWritten) {
-      const restored = writeConfigText(sy, original, { expectedText: text });
-      if (!restored.ok) throw new MeritRouterError("config_restore_failed", `${(error as Error).message}; the config could not be restored: ${restored.errors.join("; ")}`);
-    }
-    throw error;
-  }
-  const problems: string[] = [];
-  if (sy.projects.get(slug)) sy.reloadIfChanged();
-  // A process that reloaded the config between the purge and the write may have recorded the row again.
-  sy.db.prepare("DELETE FROM projects WHERE id = ?").run(slug);
-  problems.push(...removeProjectFiles(fp));
-  const wt = await removeProjectWorktrees(fp.worktrees);
-  problems.push(...wt.problems);
-  let brainCommit: string | null = null;
-  const keeper = sy.projects.primary.project.slug;
-  if (keeper === slug || sy.projects.get(slug)) problems.push(`the brain folder projects/${slug}/ was not removed: this process has not reloaded the config yet`);
-  else {
+  const context = sy.projects.get(slug)!;
+  const repositories = Object.values(context.repositoryPaths).map(repo => repo.path);
+  const keeper = newPrimary ?? projectList(sy).find(project => project.slug !== slug)!.slug;
+  const brain = sy.brainFor(keeper);
+  const initial = await footprintOf(sy, context);
+  // Read-only discovery proves every physical owner before a lifecycle lock is written.
+  await projectMutationRepositories(sy.db, initial, repositories, brain.root);
+  const owners = [...repositories, ...(existsSync(brain.root) ? [brain.root] : [])];
+  const perform = async (mutation?: RepositoryMutationCapability): Promise<ProjectDeletionResult> => {
+    const beforeCleanup = await footprintOf(sy, context);
+    const admission = await projectMutationRepositories(sy.db, beforeCleanup, repositories, brain.root);
+    // A large history can have many worktrees sharing a few physical owners. Admission batches
+    // stay bounded while the outer owner capability remains held through the entire lifecycle.
+    for (let offset = 0; offset < admission.length; offset += 64)
+      await withRepositoryMutation(admission.slice(offset, offset + 64), async () => undefined, { capability: mutation });
+    // Confirmed deletion may bypass retention age, never positive ownership checks.
+    // Validate config first; the prune keeps recovery proof on any partial refusal.
+    const cleanup = await sy.labs.taskAttempts.pruneProject(slug, { mutation });
+    if (cleanup.blocked) throw new MeritRouterError("usage", `project ${slug} has ${cleanup.blocked} task Lab cleanup(s) that could not be proved safe; recovery evidence was retained`);
+    const afterCleanup = deletionBlockers(sy, projectInfo(sy, slug));
+    if (afterCleanup.length) throw new MeritRouterError("usage", `project ${slug} cannot be deleted: ${afterCleanup.join("; ")}`);
+    const fp = await footprintOf(sy, sy.projects.get(slug)!);
+    const covered = new Set([...repositories, brain.root, ...fp.worktrees.map(worktree => worktree.path)].map(root => process.platform === "win32" ? path.resolve(root).toLowerCase() : path.resolve(root)));
+    const retained = await projectMutationRepositories(sy.db, fp, repositories, brain.root);
+    for (const root of retained) if (!covered.has(process.platform === "win32" ? path.resolve(root).toLowerCase() : path.resolve(root)))
+      throw new RepositoryMutationError("ownership_changed", `Retained workspace ${root} is outside the authorized deletion footprint; project-local layout migration/deletion manifest recovery is required before purge`);
+    const brainEntries = sy.brain.projectFolderFiles(slug);
+    // Destructive Git cleanup precedes config/row purge, so failure retains the authority and
+    // accounting context required to recover. There is no rollback claim for partial cleanup.
+    const wt = await removeProjectWorktrees(fp.worktrees, { mutation });
+    let brainCommit: string | null = null;
+    if (existsSync(brain.root)) brainCommit = (await brain.removeProjectFolder(slug, { agent: "human", role: "human" }, `project ${slug} was deleted`, { mutation, deferPush: true })).commit;
+    let configWritten = false;
+    let purged: ReturnType<typeof purgeProjectRows>;
     try {
-      brainCommit = (await sy.brainFor(keeper).removeProjectFolder(slug, { agent: "human", role: "human" }, `project ${slug} was deleted`)).commit;
-    } catch (err) {
-      problems.push(`brain folder projects/${slug}/: ${(err as Error).message}`);
+      purged = immediate(sy.db, () => {
+        // Footprint discovery yields to other services. Serialize the final lifecycle/config
+        // checks with archive writes, submissions, and other deletions before removing anything.
+        if (readConfigText(sy) !== original) throw new MeritRouterError("config_changed", "The config changed during project deletion; reload it and retry.");
+        sy.reloadIfChanged();
+        const currentBlockers = deletionBlockers(sy, projectInfo(sy, slug));
+        if (currentBlockers.length) throw new MeritRouterError("usage", `project ${slug} cannot be deleted: ${currentBlockers.join("; ")}`);
+        const written = writeConfigText(sy, text, { expectedText: original });
+        if (!written.ok) throw new MeritRouterError("config_write_failed", `the config could not be written: ${written.errors.join("; ")}`);
+        configWritten = true;
+        return purgeProjectRows(sy.db, slug, ACTIVE_STATES);
+      });
+    } catch (error) {
+      // SQLite rolls the rows back if purge fails. Restore the file only if it is still the
+      // exact file we wrote; an intervening external editor must never be overwritten.
+      if (configWritten) {
+        const restored = writeConfigText(sy, original, { expectedText: text });
+        if (!restored.ok) throw new MeritRouterError("config_restore_failed", `${(error as Error).message}; the config could not be restored: ${restored.errors.join("; ")}`);
+      }
+      if (wt.removed || brainEntries || brainCommit) throw new RepositoryMutationError("ownership_changed", `Project ${slug} repository cleanup partially completed before config/row finalization failed: ${(error as Error).message}. Retained rows/config describe recovery context; removed files were not rolled back`);
+      throw error;
     }
-  }
-  return {
-    slug,
-    removed: { tasks: purged.tasks, jobs: fp.jobs, sessions: purged.sessions, artifacts: fp.artifacts, brainEntries, worktrees: wt.removed },
-    brainCommit,
-    newPrimary,
-    problems,
-    retainedRequests: { pendingRequests: purged.pendingRequests, retainedTransportHolds: purged.retainedTransportHolds },
+    const problems: string[] = [];
+    if (sy.projects.get(slug)) sy.reloadIfChanged();
+    // A process that reloaded the config between the purge and the write may have recorded the row again.
+    sy.db.prepare("DELETE FROM projects WHERE id = ?").run(slug);
+    problems.push(...removeProjectFiles(fp));
+    return {
+      slug,
+      removed: { tasks: purged.tasks, jobs: fp.jobs, sessions: purged.sessions, artifacts: fp.artifacts, brainEntries, worktrees: wt.removed },
+      brainCommit,
+      newPrimary,
+      problems,
+      retainedRequests: { pendingRequests: purged.pendingRequests, retainedTransportHolds: purged.retainedTransportHolds },
+    };
   };
+  const result = owners.length ? await withRepositoryMutation(owners, perform) : await perform();
+  await brain.pushPending(); // Remote waits must never hold project/common-Git mutation authority.
+  return result;
 }

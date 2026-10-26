@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, openSync, closeSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, lstatSync, realpathSync, unlinkSync, writeFileSync, openSync, closeSync } from "node:fs";
 import { homedir } from "node:os";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
@@ -7,6 +7,7 @@ import type { BrainMode } from "../config/schema.js";
 import type { Db } from "../storage/db.js";
 import { assertBrainGitPath, brainMountHistory, brainMountPathspecs, resolveBrainGitDocument, type BrainGitDocument } from "./mount-git.js";
 import { git } from "../workspaces/git.js";
+import { withRepositoryMutation, type RepositoryMutationCapability } from "../workspaces/repository-mutation.js";
 import { isGitSegment } from "../context/repo-reader.js";
 import { blame, commitAs, type Actor, type BlameLine } from "../attribution/index.js";
 import { denial, isBrainIndex, type Grant, type Principal } from "./access.js";
@@ -96,6 +97,13 @@ export const projectIndexPath = (project: string) => `projects/${project}/README
 
 const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9_]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "note";
 
+export interface BrainMutationControl {
+  /** Host-only opaque authority; never supplied by a model operation. */
+  mutation?: RepositoryMutationCapability;
+  /** Deletion holds the common lease; remote I/O must be drained after releasing it. */
+  deferPush?: boolean;
+}
+
 export interface BrainOptions {
   /** The independent reviewer of global promotions (a function: the service builds it after its brains). */
   reviewer?: PromotionReviewPort | (() => PromotionReviewPort | null | undefined) | null;
@@ -109,6 +117,8 @@ function grantPrefix(pattern: string): string {
   return lit.slice(0, lit.lastIndexOf("/") + 1);
 }
 
+const brainMutationQueues = new Map<string, Promise<unknown>>();
+
 const likeEscape = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
 /**
@@ -121,6 +131,7 @@ export class Brain {
   private readonly mounts: Array<{ prefix: string; abs: string; commit: boolean }>;
   private chains = new Map<string, Promise<unknown>>();
   private ready: Promise<void> | null = null;
+  private readonly pendingPushes = new Set<string>();
   private indexRefresh: Promise<number> | null = null;
   private indexRefreshedAt = 0;
   /** Gated promotion of lessons to `global/` (decision D9): records, review, approval. */
@@ -183,34 +194,70 @@ export class Brain {
   }
 
   /** Create the brain repository and its skeleton on first use. */
-  ensure(): Promise<void> {
-    this.ready ??= (async () => {
-      mkdirSync(this.root, { recursive: true });
-      // Every project has its own Brain instance, but may share this repository.
-      // Initialization must use the same lock as ordinary writes, including its commit.
+  ensure(control: BrainMutationControl = {}): Promise<void> {
+    // A host already holding the common lease must not wait for an initializer queued
+    // behind that same lease. Bootstrap is idempotent and revalidates its supplied scope.
+    if (control.mutation !== undefined) return this.initialize(control);
+    return this.ready ??= this.initialize(control);
+  }
+
+  private async initialize(control: BrainMutationControl): Promise<void> {
+    if (control.mutation !== undefined) await withRepositoryMutation([this.root], async () => {}, { capability: control.mutation });
+    mkdirSync(this.root, { recursive: true });
+    if (!existsSync(path.join(this.root, ".git"))) {
       await this.locked(this.root, async () => {
-        const created: string[] = [];
         if (!existsSync(path.join(this.root, ".git"))) {
           await git(this.root, ["init", "-q", "-b", "main"]);
           await git(this.root, ["config", "core.autocrlf", "false"]);
         }
-        for (const dir of ["global/lessons", `projects/${this.project}/working`, `projects/${this.project}/decisions`, `projects/${this.project}/repos`]) {
-          mkdirSync(path.join(this.root, dir), { recursive: true });
-        }
-        const glossary = path.join(this.root, "global/glossary.md");
-        if (!existsSync(glossary)) { writeFileSync(glossary, "# Glossary\n\nShared terms. Supervisors maintain this file.\n"); created.push("global/glossary.md"); }
-        if (!existsSync(path.join(this.root, "README.md"))) { writeFileSync(path.join(this.root, "README.md"), this.renderIndex([])); created.push("README.md"); }
-        const own = this.resolve(projectIndexPath(this.project));
-        if (!existsSync(own.abs)) {
-          mkdirSync(path.dirname(own.abs), { recursive: true });
-          writeFileSync(own.abs, this.renderProjectIndex([]));
-          if (own.repo === this.root) created.push(own.repoRel);
-        }
-        // Reopening a Brain must not scan/adopt every user file or stage unrelated changes.
-        if (this.cfg.brain.commit && created.length) await commitAs(this.root, { agent: "meritrouter", role: "tool" }, "Initialise brain", { paths: created.map(rel => `:(literal)${rel}`) });
       });
-    })();
-    return this.ready;
+    }
+    const own = this.resolve(projectIndexPath(this.project));
+    const ownBinding = own.repo && own.repo !== this.root && own.commit ? await this.resolveGitDocument(own.rel) : null;
+    const ownOwner = ownBinding?.repo ?? (own.repo !== this.root ? await this.effectRepository(own.abs) : null);
+    await this.mutate([this.root, ...(ownOwner ? [ownOwner] : [])], mutation => this.locked(this.root, async () => {
+      if (ownBinding) assertBrainGitPath(ownBinding, own.abs);
+      const created: string[] = [];
+      for (const dir of ["global/lessons", `projects/${this.project}/working`, `projects/${this.project}/decisions`, `projects/${this.project}/repos`]) {
+        mkdirSync(path.join(this.root, dir), { recursive: true });
+      }
+      const glossary = path.join(this.root, "global/glossary.md");
+      if (!existsSync(glossary)) { writeFileSync(glossary, "# Glossary\n\nShared terms. Supervisors maintain this file.\n"); created.push("global/glossary.md"); }
+      if (!existsSync(path.join(this.root, "README.md"))) { writeFileSync(path.join(this.root, "README.md"), this.renderIndex([])); created.push("README.md"); }
+      if (!existsSync(own.abs)) {
+        mkdirSync(path.dirname(own.abs), { recursive: true });
+        writeFileSync(own.abs, this.renderProjectIndex([]));
+        if (own.repo === this.root) created.push(own.repoRel);
+      }
+      // Reopening a Brain must not scan/adopt every user file or stage unrelated changes.
+      if (this.cfg.brain.commit && created.length) await commitAs(this.root, { agent: "meritrouter", role: "tool" }, "Initialise brain", { paths: created.map(rel => `:(literal)${rel}`) }, { mutation });
+    }), control);
+  }
+
+  /** A non-committing mount can still be Git-backed and must honor its owner's fence. */
+  private async effectRepository(target: string): Promise<string | null> {
+    let directory = path.resolve(target);
+    while (true) {
+      try { lstatSync(path.join(directory, ".git")); return (await git(directory, ["rev-parse", "--show-toplevel"])).trim(); }
+      catch (error) {
+        if (!["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+      }
+      const parent = path.dirname(directory); if (parent === directory) return null; directory = parent;
+    }
+  }
+
+  private async pushAfterMutation(repo: string, commit: string | null, control: BrainMutationControl): Promise<void> {
+    if (!this.cfg.brain.push || !commit) return;
+    if (control.mutation !== undefined || control.deferPush) { this.pendingPushes.add(repo); return; }
+    await git(repo, ["push", "-q"]).catch(() => undefined);
+  }
+
+  /** Host calls only after releasing its outer repository lease. */
+  async pushPending(): Promise<void> {
+    for (const repo of [...this.pendingPushes]) {
+      this.pendingPushes.delete(repo);
+      await git(repo, ["push", "-q"]).catch(() => undefined);
+    }
   }
 
   /** Map a brain path to a file, honouring mounts (e.g. a repository's docs/working). */
@@ -233,6 +280,24 @@ export class Brain {
   private check(p: Principal, rel: string, mode: BrainMode): void {
     const d = denial(p, rel, mode);
     if (d) throw new BrainError(d);
+  }
+
+  /** Queue cooperating Brain effects before acquiring common authority, never while holding it. */
+  private async mutate<T>(repos: string[], action: (mutation: RepositoryMutationCapability) => Promise<T>, control: BrainMutationControl = {}): Promise<T> {
+    const execute = () => withRepositoryMutation(repos, action, { capability: control.mutation });
+    // A nested host already owns its sorted scopes. Waiting for a normal operation
+    // queued behind that same host would deadlock; the original capability is revalidated.
+    if (control.mutation !== undefined) return execute();
+    const owners = [...new Set(await Promise.all(repos.map(async repo => {
+      const common = realpathSync((await git(repo, ["rev-parse", "--path-format=absolute", "--git-common-dir"])).trim());
+      return process.platform === "win32" ? common.toLowerCase() : common;
+    })))];
+    const previous = owners.map(owner => brainMutationQueues.get(owner) ?? Promise.resolve());
+    const run = Promise.all(previous.map(pending => pending.catch(() => undefined))).then(execute);
+    for (const owner of owners) brainMutationQueues.set(owner, run);
+    const release = () => { for (const owner of owners) if (brainMutationQueues.get(owner) === run) brainMutationQueues.delete(owner); };
+    void run.then(release, release);
+    return run;
   }
 
   /** Serialize writes per repository (in-process chain plus a cross-process lock file). */
@@ -271,42 +336,51 @@ export class Brain {
   }
 
   /** Commit edits made outside MeritRouter (editor, scripts) as the user, before MeritRouter writes. */
-  private async adoptExternalEdits(repo: string, binding?: BrainGitDocument): Promise<void> {
+  private async adoptExternalEdits(repo: string, binding: BrainGitDocument | undefined, mutation: RepositoryMutationCapability): Promise<void> {
     const paths = binding ? brainMountPathspecs(binding) : [".", ":(exclude).switchyard-brain.lock"];
     const status = await git(repo, ["status", "--porcelain", "--", ...paths]);
     const changed = status.split("\n").filter((l) => l.trim() && !l.endsWith(".switchyard-brain.lock"));
-    if (changed.length) await commitAs(repo, { agent: "human", role: "human" }, "Record edits made outside MeritRouter", { paths });
+    if (changed.length) await commitAs(repo, { agent: "human", role: "human" }, "Record edits made outside MeritRouter", { paths }, { mutation });
   }
 
   /**
    * Write a file and commit it. `content` may be a function of the file's current text (null
    * when absent), evaluated under the repository lock; returning null skips the write.
    */
-  private async writeFile(rel: string, contentOrFn: string | ((current: string | null) => string | null), actor: Actor, message: string, opts: { expectedDigest?: string | null } = {}): Promise<{ path: string; commit: string | null; digest: string }> {
-    await this.ensure();
+  private async writeFile(rel: string, contentOrFn: string | ((current: string | null) => string | null), actor: Actor, message: string, opts: { expectedDigest?: string | null } = {}, control: BrainMutationControl = {}): Promise<{ path: string; commit: string | null; digest: string }> {
+    await this.ensure(control);
     const r = this.resolve(rel);
     const binding = r.repo && r.commit ? await this.resolveGitDocument(rel) : null;
-    const doWrite = async () => {
+    const effectRepo = binding?.repo ?? r.repo ?? await this.effectRepository(r.abs);
+    const doWrite = async (mutation?: RepositoryMutationCapability) => {
       if (opts.expectedDigest !== undefined) {
         const current = existsSync(r.abs) ? brainContentDigest(readFileSync(r.abs, "utf8")) : null;
         if (current !== opts.expectedDigest) throw new BrainConflictError();
       }
-      if (binding) { assertBrainGitPath(binding, r.abs); await this.adoptExternalEdits(binding.repo, binding); }
+      if (binding) { assertBrainGitPath(binding, r.abs); await this.adoptExternalEdits(binding.repo, binding, mutation!); }
       const content = typeof contentOrFn === "string" ? contentOrFn : contentOrFn(existsSync(r.abs) ? readFileSync(r.abs, "utf8") : null);
       if (content === null) return { path: rel, commit: null, digest: existsSync(r.abs) ? brainContentDigest(readFileSync(r.abs, "utf8")) : "" };
+      const next = content.endsWith("\n") ? content : `${content}\n`;
+      // Admission, revision/path checks and outside-edit adoption have already run.
+      // An identical generated index does not need another native publication.
+      if (existsSync(r.abs) && readFileSync(r.abs).equals(Buffer.from(next, "utf8"))) {
+        this.indexFile(rel);
+        return { path: rel, commit: null, digest: brainContentDigest(next) };
+      }
       mkdirSync(path.dirname(r.abs), { recursive: true });
       const tmp = `${r.abs}.${process.pid}.tmp`;
-      writeFileSync(tmp, content.endsWith("\n") ? content : `${content}\n`);
+      writeFileSync(tmp, next);
       renameSync(tmp, r.abs);
       let commit: string | null = null;
       if (binding) {
-        commit = await commitAs(binding.repo, actor, message.slice(0, 200), { paths: [`:(literal)${binding.repoRel}`] });
-        if (this.cfg.brain.push && commit) await git(binding.repo, ["push", "-q"]).catch(() => undefined);
+        commit = await commitAs(binding.repo, actor, message.slice(0, 200), { paths: [`:(literal)${binding.repoRel}`] }, { mutation });
       }
       this.indexFile(rel);
       return { path: rel, commit, digest: brainContentDigest(content.endsWith("\n") ? content : `${content}\n`) };
     };
-    return r.repo ? this.locked(r.repo, doWrite) : doWrite();
+    const result = effectRepo ? await this.mutate([effectRepo], mutation => this.locked(r.repo ?? effectRepo, () => doWrite(mutation)), control) : await doWrite();
+    if (binding) await this.pushAfterMutation(binding.repo, result.commit, control);
+    return result;
   }
 
   exists(rel: string): boolean {
@@ -515,24 +589,26 @@ export class Brain {
     if (!why) throw new BrainError("say why the entry is removed; the reason is recorded in the brain's history");
     await this.ensure();
     const binding = r.repo && r.commit ? await this.resolveGitDocument(r.rel) : null;
-    const doRemove = async () => {
+    const effectRepo = binding?.repo ?? r.repo ?? await this.effectRepository(r.abs);
+    const doRemove = async (mutation?: RepositoryMutationCapability) => {
       if (binding) assertBrainGitPath(binding, r.abs);
       if (!existsSync(r.abs) || !statSync(r.abs).isFile()) throw new BrainError(`${r.rel} does not exist`);
       // A file written outside MeritRouter and never committed is recorded first, so its text stays in the history.
-      if (binding) await this.adoptExternalEdits(binding.repo, binding);
+      if (binding) await this.adoptExternalEdits(binding.repo, binding, mutation!);
       const text = readFileSync(r.abs, "utf8");
       const who = p.kind === "human" ? (p.name ?? actor.agent) : actor.agent;
       const trailers = typeof opts.trailers === "function" ? opts.trailers(text) : (opts.trailers ?? { "Removed-By": who.slice(0, 200), "Remove-Reason": why.slice(0, 1000) });
       unlinkSync(r.abs);
       let commit: string | null = null;
       if (binding) {
-        commit = await commitAs(binding.repo, actor, (opts.message ?? `Remove ${r.rel}`).slice(0, 200), { paths: [`:(literal)${binding.repoRel}`], extraTrailers: trailers });
-        if (this.cfg.brain.push && commit) await git(binding.repo, ["push", "-q"]).catch(() => undefined);
+        commit = await commitAs(binding.repo, actor, (opts.message ?? `Remove ${r.rel}`).slice(0, 200), { paths: [`:(literal)${binding.repoRel}`], extraTrailers: trailers }, { mutation });
       }
       this.indexFile(r.rel);
       return { path: r.rel, commit, text };
     };
-    return r.repo ? this.locked(r.repo, doRemove) : doRemove();
+    const result = effectRepo ? await this.mutate([effectRepo], mutation => this.locked(r.repo ?? effectRepo, () => doRemove(mutation))) : await doRemove();
+    if (binding && this.cfg.brain.push && result.commit) await git(binding.repo, ["push", "-q"]).catch(() => undefined);
+    return result;
   }
 
   /** Files under another project's folder (`projects/<slug>/`) in the shared brain repository, for a deletion preview. */
@@ -562,31 +638,35 @@ export class Brain {
    * no longer names it once the config has dropped the project). Called on a remaining project's
    * brain; never on the folder's own project. Mounts outside the brain repository are not touched.
    */
-  async removeProjectFolder(slug: string, actor: Actor, reason: string): Promise<{ files: number; commit: string | null }> {
+  async removeProjectFolder(slug: string, actor: Actor, reason: string, control: BrainMutationControl = {}): Promise<{ files: number; commit: string | null }> {
     if (slug.toLowerCase() === this.project.toLowerCase()) throw new BrainError(`a project's brain cannot remove its own folder (${slug})`);
     const dir = this.projectFolder(slug);
-    await this.ensure();
+    await this.ensure(control);
     const rel = `projects/${slug}`;
-    const out = await this.locked(this.root, async () => {
-      const files = this.projectFolderFiles(slug);
-      if (!existsSync(dir)) return { files: 0, commit: null };
-      const commits = this.cfg.brain.commit && existsSync(path.join(this.root, ".git"));
-      if (commits) await this.adoptExternalEdits(this.root);
-      rmSync(dir, { recursive: true, force: true });
-      let commit: string | null = null;
-      if (commits) {
-        const tracked = (await git(this.root, ["ls-files", "--", rel])).trim().length > 0;
-        if (tracked) {
-          commit = await commitAs(this.root, actor, `Remove project ${slug}`.slice(0, 200), { paths: [rel], extraTrailers: { "Removed-By": actor.agent.slice(0, 200), "Remove-Reason": reason.trim().replace(/\s+/g, " ").slice(0, 1000) } });
-          if (this.cfg.brain.push && commit) await git(this.root, ["push", "-q"]).catch(() => undefined);
+    const out = await this.mutate([this.root], async mutation => {
+      const nested = { ...control, mutation };
+      const removed = await this.locked(this.root, async () => {
+        const files = this.projectFolderFiles(slug);
+        if (!existsSync(dir)) return { files: 0, commit: null };
+        const commits = this.cfg.brain.commit && existsSync(path.join(this.root, ".git"));
+        if (commits) await this.adoptExternalEdits(this.root, undefined, mutation);
+        rmSync(dir, { recursive: true, force: true });
+        let commit: string | null = null;
+        if (commits && (await git(this.root, ["ls-files", "--", `:(literal)${rel}`])).trim()) {
+          commit = await commitAs(this.root, actor, `Remove project ${slug}`.slice(0, 200), { paths: [`:(literal)${rel}`], extraTrailers: { "Removed-By": actor.agent.slice(0, 200), "Remove-Reason": reason.trim().replace(/\s+/g, " ").slice(0, 1000) } }, { mutation });
         }
-      }
-      return { files, commit };
-    });
-    const like = `${likeEscape(`${rel}/`)}%`;
-    this.db.prepare("DELETE FROM brain_fts WHERE path LIKE ? ESCAPE '\\'").run(like);
-    this.db.prepare("DELETE FROM brain_files WHERE path LIKE ? ESCAPE '\\'").run(like);
-    await this.writeFile("README.md", this.renderIndex(this.list({ kind: "human" })), actor, "Regenerate brain index");
+        return { files, commit };
+      });
+      // Both publications precede SQL/config deletion. The configured project still exists
+      // here, so explicitly omit its link rather than publishing again after task purge.
+      await this.writeFile("README.md", this.renderIndex(this.list({ kind: "human" }), [slug]), actor, "Regenerate brain index", {}, nested);
+      const like = `${likeEscape(`${rel}/`)}%`;
+      this.db.prepare("DELETE FROM brain_fts WHERE path LIKE ? ESCAPE '\\'").run(like);
+      this.db.prepare("DELETE FROM brain_files WHERE path LIKE ? ESCAPE '\\'").run(like);
+      return removed;
+    }, control);
+    await this.pushAfterMutation(this.root, out.commit, control);
+    if (!control.mutation && !control.deferPush) await this.pushPending();
     return out;
   }
 
@@ -749,10 +829,10 @@ export class Brain {
    * The root index: global knowledge (`global/`) and the projects by name, each linking to its
    * own index. It names no project's documents (supervisors read only their own project).
    */
-  renderIndex(entries: BrainEntry[]): string {
+  renderIndex(entries: BrainEntry[], excludedProjects: string[] = []): string {
     const global = entries.filter((e) => e.path.toLowerCase().startsWith("global/"));
     const rows = global.map((e) => `| [${e.path}](${e.path}) | ${e.kind} | ${e.title ?? ""} |`);
-    const list = this.indexProjects().map((p) => `- [${p.name}](${projectIndexPath(p.slug)})${p.name === p.slug ? "" : ` (\`${p.slug}\`)`}`);
+    const list = this.indexProjects().filter(p => !excludedProjects.some(slug => slug.toLowerCase() === p.slug.toLowerCase())).map((p) => `- [${p.name}](${projectIndexPath(p.slug)})${p.name === p.slug ? "" : ` (\`${p.slug}\`)`}`);
     return `# Brain index\n\nGenerated by MeritRouter. Global knowledge, and the projects; each project's own index lists its working documents.\n\n## Global knowledge\n\n| Entry | Kind | Title |\n| --- | --- | --- |\n${rows.join("\n") || "| (none yet) | | |"}\n\n## Projects\n\n${list.join("\n") || "(none yet)"}\n`;
   }
 
@@ -779,9 +859,9 @@ export class Brain {
   }
 
   /** Regenerate the root index and this project's index. */
-  async regenerateIndex(actor: Actor): Promise<void> {
+  async regenerateIndex(actor: Actor, control: BrainMutationControl = {}): Promise<void> {
     const entries = this.list({ kind: "human" });
-    await this.writeFile("README.md", this.renderIndex(entries), actor, "Regenerate brain index");
-    await this.writeFile(projectIndexPath(this.project), this.renderProjectIndex(entries), actor, `Regenerate the ${this.project} index`);
+    await this.writeFile("README.md", this.renderIndex(entries), actor, "Regenerate brain index", {}, control);
+    await this.writeFile(projectIndexPath(this.project), this.renderProjectIndex(entries), actor, `Regenerate the ${this.project} index`, {}, control);
   }
 }
