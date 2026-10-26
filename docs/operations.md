@@ -1173,6 +1173,14 @@ Generic network/Lab responses are explicitly supervisor reports, not independent
 Approval checks current configuration, project, task incarnation, source identity and live lease.
 Policy revocation/cancellation aborts owned running actions; stale pending requests are cancelled.
 Unknown running outcomes are not automatically replayed.
+Supervisor command results retain the exact terminal worker-action ID, status, recorded
+actor and bounded decision reason. The `workerActionDecision` result field contains validated
+metadata; a quoted copy follows the formatted output so `run_check` presents it to the model
+and stores it in the check log. This includes operator denials and uncertain/cancelled terminal
+outcomes; a denial keeps its null exit and denied status. Decision text is data, not command
+output, instructions or permission. Control characters are escaped, truncation is explicit,
+and command stderr is never invented. Source/lease failures before a result still throw;
+this feedback does not execute, replay, approve or change an action.
 The local panel awaits approved execution independently of the browser request lifetime:
 closing or navigating the requesting tab does not cancel the command. Explicit task
 cancellation, policy checks, task deadline and execution timeout still apply. This does
