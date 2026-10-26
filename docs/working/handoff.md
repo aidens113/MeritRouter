@@ -7,10 +7,13 @@ Twelve sibling SwitchYardRouter-* folders are registered development worktrees w
 merged into dev. Placement/cleanup policy gap corrected in AGENTS.md; inspect untracked
 data and services before any cleanup. No folders moved/deleted. Resume isolated C2b work
 in existing .MeritRouter/development/metadata-exclusion, preserving unfinished draft.
-Published dev/main2185d59; local dev2bc5ab6 includes compact paths, unpushed.
-Isolated metadata-exclusion tree nowf26b974 commits standalone selected-commit corrections;
-root selected28/28 and recursive checks pass, full router suite still running after native
-SQLite dependency repair. Not merged/pushed/activated. Next C3 contract is recorded there.
+Source checkpoint dev17182ad integrates compact paths and standalone C1/C2/C2b.
+Final root combined216PASS/1POSIXskip and recursive typecheck/build PASS; checked feature
+and merged packages/apps source identical. Full1801PASS/49FAIL/4SKIP: all49 were cwd-sensitive
+Compose fixtures, corrected with guards/assertions intact and root118/118 + combined passing.
+No final green full aggregate claimed. No caller activation/migration/live reload. Next C3
+contract in project-local-storage/reports/metadata-caller-activation-contract.md. Internal
+metadata-exclusion tree retained for this active storage unit; no worker currently active.
 No migration/live activation; app undelivered. Preserve source and existing panel services.
 
 [Production readiness](production-readiness.md) now owns cross-effort execution order and

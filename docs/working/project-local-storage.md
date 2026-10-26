@@ -1,6 +1,6 @@
 # Project-local runtime storage
 Status: Active
-Status detail: User resumed 2026-10-26; investigate drive-root worktrees, prevent recurrence, then finish isolated selected-commit corrections and validation.
+Status detail: Folder policy and standalone storage prerequisites integrated; final combined216PASS/1SKIP and recursive checks pass, caller activation/migration remain open.
 Created: 2026-10-25
 Last updated: 2026-10-26
 Owner: Senior supervisor agent
@@ -17,10 +17,12 @@ build/demo state and historical service launch references must be preserved befo
 Prior isolation policy omitted placement and cleanup;
 AGENTS.md now requires in-project ignored .MeritRouter/development and validation paths.
 No external directory moved or deleted. Preserve panel/app services; no reload.
-Published dev/main2185d59. Local dev2bc5ab6 includes compact-v2 merge, not pushed.
-Isolated staging branch nowf26b974 retains C1/C2 plus committed standalone C2b corrections.
+Source integrated on dev17182ad: compact-v2, C1/C2 and standalone C2b corrections.
+Final feature sync882e53e includes current dev; root confirmed identical packages/apps source
+after merge. Final combined six-file217:216PASS/1POSIX-onlySKIP159.12s; recursive typecheck
+and build PASS on that exact source. Existing internal development tree retained for C3.
 No caller activation accepted. Prior concurrent pending-receipt and redirected Git refs
-blockers have regressions and root/independent checks; full-suite acceptance is pending.
+blockers have passing root/independent regressions; full-run limitations recorded below.
 Resumed source is frozen; independent review found no new prerequisite blocker, with real
 concurrent-pending/hardlinked-log/archive probes3/3 and targeted topology5/5 passing.
 Root read implementation and observed main/isolated recursive typecheck and isolated build PASS.
@@ -34,15 +36,15 @@ Initial root full run stopped after missing isolated better-sqlite3 native bindi
 aggregate for that interrupted run. Isolated rebuild exit0 and in-memory SELECT1 succeeded;
 full output retained at validation/selected-commit-resume/full-after-dependency-rebuild.json.
 Message/trailer compatibility, all-caller pending gates and power-loss durability remain
-explicit preactivation requirements. Main working-doc changes also uncommitted.
+explicit preactivation requirements. No runtime rollout or physical migration accepted.
 Next C3 source/reference contract is in reports/metadata-caller-activation-contract.md:
 message parity first, shared lifecycle lease second, then attributed wrappers/stage/setup/
 resume/integration/Brain/deletion. Preserve legacy public paths:[] meaning ALL. Root read
 the proposed file partitions and acceptance matrix; no C3 source edits during full suite.
 No data migration or live caller activation performed. Facebook remains undelivered.
 
-The execution checkpoint below records earlier acceptance; selected_commit_resume now owns
-the unfinished C2b draft. See reports/drive-root-worktrees.md for the folder investigation.
+The checkpoint below is historical evidence; latest integration/validation above supersedes
+its unfinished C2b status. No active implementation worker remains. See reports/drive-root-worktrees.md.
 
 2026-10-26: user authorized continuing execution. Initial discovery is complete;
 report: project-local-storage/reports/storage-discovery.md. Shared DB/store construction
@@ -529,6 +531,14 @@ or private payloads into a misleading partial project store and call migration c
 - Keep report navigable with tables and exact file references. No broad code extraction.
 
 ## Work Ledger
+
+### 2026-10-26 — Integrate standalone storage prerequisites and folder policy
+- Agent: supervisor; workers selected_commit_resume and selected_commit_review
+- Changed: C1/C2/C2b and fixture corrections merged into dev17182ad after dev sync882e53e.
+- Why: Finish paused prerequisites without activating incomplete callers or moving project data.
+- Validation: root six-file compact/metadata/Compose run216PASS/1POSIXskip159.12s; recursive typecheck/build PASS; packages/apps diff between checked feature and merged dev empty.
+- Outcome: Accepted standalone prerequisites. Full1801PASS/49FAIL/4SKIP remains recorded; exact failed files corrected and independently118/118 then combined118/118 PASS, not a new green full aggregate.
+- Follow-up: C3.0 message parity, C3.1 mutation fence, then wrapper/lifecycle activation per contract; physical store split/migration later. Keep current internal tree for this active unit, no external folders removed.
 
 ### 2026-10-26 — Resolve full-suite checkout-sensitive fixtures
 - Agent: supervisor; worker selected_commit_resume
