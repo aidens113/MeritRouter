@@ -1,3 +1,6 @@
+import { immediate } from "../storage/db.js";
+import { currentSupervisorAuthority,projectToolIdentity } from "../core/supervisor-authority.js";
+import { LeaseRefSchema } from "../storage/lease-ref.js";
 import type { ToolSideEffect } from "../sessions/events.js";
 import type { ResolvedConfig } from "../config/load.js";
 import type { Db } from "../storage/db.js";
@@ -16,6 +19,13 @@ import { z } from "zod";
 
 function tool(name: string, sideEffect: ToolSideEffect, description: string, properties: Record<string, unknown>, required: string[], run: HarnessTool["run"], available?: HarnessTool["available"]): HarnessTool {
   return { def: { type: "function", function: { name, description, parameters: { type: "object", properties, required } } }, sideEffect, run, ...(available ? { available } : {}) };
+}
+
+function localBudgetAuthority(env:HarnessEnv,jobId?:string):void{
+ const ctx=env.ctx;if(!projectToolIdentity(ctx.tasks.db,ctx.cfg.brain.project))return;
+ const lease=LeaseRefSchema.parse(ctx.taskLease);
+ if(lease.taskId!==ctx.taskId||ctx.gate.admission.db!==ctx.tasks.db||!ctx.tasks.dispatchable(lease.taskId,lease.owner,lease.runCount,lease.incarnation,lease.project))throw new Error("Budget tool lost local captured authority");
+ if(jobId!==undefined&&(jobId!==lease.taskId||!currentSupervisorAuthority(ctx.tasks.db,ctx.cfg,lease,ctx.now())))throw new Error("Budget decisions require this owning active supervisor");
 }
 
 const POLL_MS = 500;
@@ -41,6 +51,7 @@ export function requestBudgetTool(): HarnessTool {
     ["reason"],
     async (a, env) => {
       const input=z.object({requests:z.coerce.number().int().min(1).max(MAX_BUDGET_REQUEST).optional(),reason:z.string().trim().min(1)}).strict().parse(a);
+      localBudgetAuthority(env);
       const ctx = env.ctx;
       const cfg = ctx.cfg;
       const db = ctx.tasks.db;
@@ -61,6 +72,7 @@ export function requestBudgetTool(): HarnessTool {
       else {
         const until = Date.now() + cfg.team.budget_request_wait_seconds * 1000;
         for (;;) {
+          localBudgetAuthority(env);
           req = store.get(req.id)!;
           if (req.status !== "pending") break;
           // Interrupted while waiting: the request stays pending; a decision applies to the resumed run.
@@ -106,6 +118,7 @@ export interface BriefGrant {
  * nothing is granted and the error names the number left.
  */
 export function grantBriefs(db: Db, cfg: ResolvedConfig, jobId: string, briefs: Array<{ it: Record<string, unknown>; label: string }>): { grants: Map<string, BriefGrant>; total: number } {
+  projectToolIdentity(db,cfg.brain.project);
   const grants = new Map<string, BriefGrant>();
   let total = 0;
   if (!briefs.length) return { grants, total };
@@ -127,6 +140,7 @@ export function grantBriefs(db: Db, cfg: ResolvedConfig, jobId: string, briefs: 
 
 /** A worker of the job waits for its supervisor's decision on a budget request. */
 export function supervisorAsked(db: Db, jobId: string): boolean {
+  projectToolIdentity(db);
   try {
     return new BudgetRequests(db).list({ status: "pending", jobId }).some((r) => r.approver === "supervisor");
   } catch {
@@ -136,6 +150,7 @@ export function supervisorAsked(db: Db, jobId: string): boolean {
 
 /** Pending requests of a job as lines for its supervisor (empty when there are none). */
 export function pendingBudgetLines(db: Db, cfg: ResolvedConfig, jobId: string): string[] {
+  projectToolIdentity(db,cfg.brain.project);
   let pending: BudgetRequest[];
   try {
     pending = new BudgetRequests(db).list({ status: "pending", jobId });
@@ -161,6 +176,7 @@ export function pendingBudgetLines(db: Db, cfg: ResolvedConfig, jobId: string): 
 export function supervisorBudgetTools(jobId: string): HarnessTool[] {
   return [
     tool("budget_requests", "read", "Your job's request pool (budget, used, held by open tasks, available) and your workers' pending requests for more model requests.", {}, [], async (_a, env) => {
+      localBudgetAuthority(env,jobId);
       const db = env.ctx.tasks.db;
       const lines = pendingBudgetLines(db, env.ctx.cfg, jobId);
       if (lines.length) return lines.join("\n");
@@ -175,15 +191,19 @@ export function supervisorBudgetTools(jobId: string): HarnessTool[] {
       ["id", "approve", "reason"],
       async (a, env) => {
         const db = env.ctx.tasks.db;
+        return immediate(db,()=>{
+        localBudgetAuthority(env,jobId);
         const store = new BudgetRequests(db, env.ctx.now);
         const req = store.get(Number(a.id));
         if (!req || req.jobId !== jobId) throw new Error(`budget request ${String(a.id)} is not one of this job's`);
         if (req.approver !== "supervisor") throw new Error(`budget request ${req.id} is decided by ${req.approver}, not by you`);
+        const target=env.ctx.tasks.get(req.taskId);if(projectToolIdentity(db,env.ctx.cfg.brain.project)&&(!target||target.row.project_id!==env.ctx.cfg.brain.project||target.spec.parentTaskId!==jobId))throw new Error("Budget request does not belong to this supervisor child");
         const reason = typeof a.reason === "string" ? a.reason.trim() : "";
         if (!reason) throw new Error("reason is required");
         const r = store.decide(req.id, { approve: a.approve === true, grant: a.grant === undefined || a.grant === null ? null : Number(a.grant), by: env.brain?.actor.agent ?? `supervisor (job ${jobId})`, reason, cfg: env.ctx.cfg });
         const pool = jobPool(db, env.ctx.cfg, jobId);
         return `budget request ${r.id}: ${r.status}${r.status === "approved" ? ` (+${r.granted})` : ""}${pool ? `; ${poolLine(pool)}` : ""}`;
+        });
       },
     ),
   ];

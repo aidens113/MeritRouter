@@ -1,3 +1,5 @@
+import { createProjectWorkerReadServices } from "./project-services.js";
+import { projectToolIdentity } from "./supervisor-authority.js";
 import { createHash } from "node:crypto";
 import { TaskRunLeases } from "./task-run-leases.js";
 import { leaseOperationId, reconcileLeaseOperation, receiptApplied, type LeaseRef, type LeaseReceipt, type TaskLeases } from "../storage/task-leases.js";
@@ -74,6 +76,7 @@ export interface ExecutorDeps {
   brain: Brain | null;
   access: BrainAccess | null;
   services: SupervisorServices | null;
+  servicesForLease?: (lease:LeaseRef)=>SupervisorServices;
   supervisor: CodingRunner | null;
   /** Agent sessions; null runs without recording (each run's `ctx.session` stays null). */
   sessions: SessionStore | null;
@@ -194,6 +197,7 @@ export class Executor {
     // A repair (or escalation) run draws on the repair reserve, on top of the execution cap. A
     // first run also gets every request its approved requests for more granted (budget control D3).
     const cap = v.repairCap ?? runCap(d.cfg, task.spec, plan.tier, v.contract) + extraRequests(this.d.db, task.row.id);
+    if(d.cfg.profiles[task.spec.profile]?.mode==="supervisor"&&projectToolIdentity(d.db,d.cfg.brain.project)&&!this.d.servicesForLease)throw new Error("Split supervisor requires captured lease-bound services factory");
     return {
       cfg: d.cfg,
       profile: d.cfg.profiles[task.spec.profile]!,
@@ -223,7 +227,7 @@ export class Executor {
       access: d.access,
       effort: effortFor(task.spec, task.row.id),
       jobId: jobIdFor(task),
-      services: this.d.services ? { ...this.d.services, cancelTasks: ids => this.cancelTasksAsync(ids, task.row.project_id, this.runLeases.lease(task)) } : null,
+      services: this.d.servicesForLease ? this.d.servicesForLease(this.runLeases.lease(task)) : this.d.services ? projectToolIdentity(d.db,d.cfg.brain.project) ? createProjectWorkerReadServices(d,this.runLeases.lease(task)) : { ...this.d.services, cancelTasks: ids => this.cancelTasksAsync(ids, task.row.project_id, this.runLeases.lease(task)) } : null,
       session,
       resume,
       web: this.d.web ?? null,

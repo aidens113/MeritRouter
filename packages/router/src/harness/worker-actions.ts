@@ -11,7 +11,7 @@ import { git } from "../workspaces/git.js";
 import { minimalEnv, type RunResult } from "../runners/coding/process.js";
 import type { RunContext } from "../runners/types.js";
 import { loadConfig, type ResolvedConfig } from "../config/load.js";
-import { currentSupervisorAuthority } from "../core/supervisor-authority.js";
+import { currentSupervisorAuthority,projectToolIdentity } from "../core/supervisor-authority.js";
 import { operationExecutionTimeRemaining, pauseOperationExecutionTimeout } from "./operation-lifecycle.js";
 
 export function outsideRepositoryPolicy(cfg: ResolvedConfig): "disabled" | "human_only" | "supervisor" {
@@ -76,13 +76,14 @@ export async function workerSourceIdentity(cwd: string): Promise<string> {
 
 /** Durable, one-shot supervisor actions. Approval executes the captured action; it grants no worker capability. */
 export class WorkerActionRequests {
-  constructor(readonly db: Db, readonly now: () => number = Date.now) {}
+  constructor(readonly db: Db, readonly now: () => number = Date.now) {projectToolIdentity(db); }
   private read(raw: unknown): WorkerActionRequest | null {
     if (!raw) return null;
     const row = z.object({ value_json: z.string() }).parse(raw);
     return RowSchema.parse(JSON.parse(row.value_json));
   }
   private reconcilePending(project: string, id?: string): void {
+    projectToolIdentity(this.db,project);
     this.db.prepare(`UPDATE worker_action_requests SET value_json=json_set(value_json,
       '$.status','cancelled','$.decidedBy','system','$.decisionReason','Original task authority ended before execution')
       WHERE project_id=? AND (? IS NULL OR id=?) AND json_extract(value_json,'$.status')='pending'
@@ -109,10 +110,11 @@ export class WorkerActionRequests {
       .all(input.jobId ?? null,input.project,input.project,input.project,input.jobId ?? null,input.taskId ?? null,input.taskId ?? null,input.status ?? null,input.status ?? null).map(raw => this.read(raw)!);
   }
   private save(row: WorkerActionRequest): void {
-    RowSchema.parse(row);
+    RowSchema.parse(row);projectToolIdentity(this.db,row.project);
     this.db.prepare("UPDATE worker_action_requests SET value_json=? WHERE id=? AND project_id=?").run(JSON.stringify(row), row.id, row.project);
   }
   private current(row: WorkerActionRequest): void {
+    projectToolIdentity(this.db,row.project);
     const t = new TaskStore(this.db, this.now);
     const l = row.action.lease;
     if (!t.dispatchable(l.taskId, l.owner, l.runCount, l.incarnation, l.project)) throw new Error("worker action lost its original task lease or was cancelled");
@@ -121,7 +123,7 @@ export class WorkerActionRequests {
   }
   /** Cancel only the request created under this exact captured task incarnation. */
   cancelOwned(ctx: RunContext, id: string): WorkerActionRequest | null {
-    const lease=LeaseRefSchema.parse(ctx.taskLease);
+    const lease=LeaseRefSchema.parse(ctx.taskLease);projectToolIdentity(this.db,lease.project);if(ctx.tasks.db!==this.db)throw new Error("Worker action context uses another store");
     return immediate(this.db,()=>{
       const row=this.get(lease.project,id);
       if(!row||row.taskId!==ctx.taskId||JSON.stringify(row.action.lease)!==JSON.stringify(lease))throw new Error("worker action cancellation requires its original captured task lease");
@@ -141,6 +143,7 @@ export class WorkerActionRequests {
     if (ctx.signal.aborted) throw new Error("worker action cancelled before source capture");
     if (outsideRepositoryPolicy(ctx.cfg) === "disabled") throw new Error("outside-repository actions are disabled by security.outside_repository");
     const lease = LeaseRefSchema.parse(ctx.taskLease);
+    const localIdentity=projectToolIdentity(this.db,lease.project);if(ctx.tasks.db!==this.db||localIdentity&&ctx.cfg.brain.project!==lease.project)throw new Error("Worker action context uses another project store");
     if (lease.taskId !== ctx.taskId) throw new Error("worker action task identity differs from its captured lease");
     const task = new TaskStore(this.db, this.now).get(ctx.taskId);
     if (!task) throw new Error("action requires a persisted task");
@@ -181,6 +184,7 @@ export class WorkerActionRequests {
     });
   }
   async decide(input: { project: string; id: string; decision: "approve" | "deny"; reason: string; actor: WorkerActionActor; config: ResolvedConfig; response?: string; signal?: AbortSignal }): Promise<WorkerActionRequest> {
+    projectToolIdentity(this.db,input.config.brain.project);
     const reason = z.string().trim().min(1).max(4000).parse(input.reason);
     let row = this.get(input.project, input.id);
     if (!row) throw new Error("unknown worker action in project");

@@ -6,7 +6,8 @@ import { supervisorActionTools, workerActionCapability } from "./worker-action-t
 import { z } from "zod";
 import type { Db } from "../storage/db.js";
 import { immediate, newId } from "../storage/db.js";
-import { currentSupervisorAuthority } from "../core/supervisor-authority.js";
+import { assertProjectServiceBinding } from "../core/project-services.js";
+import { currentSupervisorAuthority,projectToolIdentity } from "../core/supervisor-authority.js";
 import { LeaseRefSchema } from "../storage/lease-ref.js";
 import { globsOverlap } from "../storage/file-leases.js";
 import { MAX_PLAN_NODES, PlanStore, criticalPath, defaultRequiresAcceptedInputs, nodeWeight, type PlanDifficulty, type PlanNodeInput } from "../storage/plans.js";
@@ -60,6 +61,14 @@ export interface SupervisorState {
   docSection?: string | null;
   /** Files this job's briefs named as shared (interface contracts, docs): the supervisor may edit them. */
   sharedFiles?: Set<string>;
+}
+
+function assertSplitSupervisorState(s:SupervisorState):void {
+    if(typeof s.ctx.tasks?.db?.prepare!=="function"||!projectToolIdentity(s.ctx.tasks.db,s.ctx.cfg.brain.project))return;
+    if(s.db!==s.ctx.tasks.db||s.ctx.gate.admission.db!==s.db)throw new Error("Supervisor tools require one pinned local store graph");
+    const lease=LeaseRefSchema.parse(s.ctx.taskLease);
+    if(lease.taskId!==s.ctx.taskId||!currentSupervisorAuthority(s.db,s.ctx.cfg,lease,s.ctx.now()))throw new Error("Supervisor tool lost original authority");
+    assertProjectServiceBinding(s.ctx.services,s.db,lease);
 }
 
 /** Marker before a sub-job's own status in its section (the brief above it is the parent's). */
@@ -444,6 +453,7 @@ async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, un
   }
   // The delegating session becomes each new task's parent session.
   const out = specs.length ? await svc.submitTasks(specs.map((sp) => sp.spec), { purpose: "work", ...(s.ctx.session ? { parentSessionId: s.ctx.session.id } : {}) }) : [];
+  immediate(s.db,()=>{assertSplitSupervisorState(s);
   out.forEach((o, i) => {
     const sp = specs[i]!;
     s.children.set(sp.label, o.taskId);
@@ -455,6 +465,7 @@ async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, un
       for (const f of sp.shared) (s.sharedFiles ??= new Set()).add(f);
       s.ctx.tasks.event(jobId, SHARED_FILES_EVENT, { label: sp.label, taskId: o.taskId, files: sp.shared });
     }
+  });
   });
   const submitted = new Map(out.map((o, i) => [specs[i]!.label, o]));
   const lines = labels.map((label) => {
@@ -515,6 +526,10 @@ function capacityLine(s: SupervisorState): string[] {
   const capacity = s.ctx.gate?.health?.capacity;
   if (!capacity) return [];
   if (!capacity.enabled) return ["provider slots: not limited (team.provider_concurrency_enabled is off)"];
+  if(projectToolIdentity(s.db,s.ctx.cfg.brain.project)){
+    const platforms=[...new Set(s.ctx.plan.candidates.map(endpoint=>endpoint.providerId))].sort();
+    return [`provider slots (in flight/limit): ${platforms.map(platform=>{const use=capacity.usage(platform);return `${platform} ${use.requests}/${use.limit}${use.waiting?`, ${use.waiting} waiting`:""}`;}).join("; ")||"none in current route"}`];
+  }
   const counts = liveSlotCounts(s.db, s.ctx.now());
   const platforms = [...new Set([...readConcurrencyRecords(s.db).map((r) => r.platform), ...counts.map((c) => c.platform)])].sort();
   if (!platforms.length) return [`provider slots: none in use (each platform starts with ${s.ctx.cfg.team.provider_concurrency_start})`];
@@ -613,6 +628,8 @@ function withSubJob(hook: UndoHook, subJobId: string): UndoHook {
 
 /** Tools only supervisors get: delegation, waiting, integration, attribution, undo, questions. */
 export function supervisorTools(s: SupervisorState): HarnessTool[] {
+  const assertLocal=()=>assertSplitSupervisorState(s);
+  assertLocal();
   const svc = s.ctx.services!;
   const jobId = s.ctx.taskId;
 
@@ -904,7 +921,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
       if (s.ctx.signal.aborted) throw new Error("interrupted while waiting for the user's answer");
       return "no answer arrived; decide with a sensible default and record it";
     }),
-  ];
+  ].map(entry=>({...entry,run:async(args,env)=>{assertLocal();return entry.run(args,env);}}));
 }
 
 export type { HarnessEnv };

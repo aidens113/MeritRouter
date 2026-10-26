@@ -16,7 +16,7 @@ import { assertStoreRole } from "../storage/store-role.js";
 import { createSplitProjectRuntimeStore,projectStoresForTask } from "./runtime-store.js";
 import type { ProjectRuntimeBundle,ProjectRuntimeConstruction } from "./runtime-registry.js";
 
-export type ProjectPrivateExecutorServices=Pick<ExecutorDeps,"coding"|"supervisor"|"brain"|"access"|"services"|"onSettled"> & Partial<Pick<ExecutorDeps,"web"|"labs"|"ensureLabsSupervisor"|"taskLeases">>;
+export type ProjectPrivateExecutorServices=Pick<ExecutorDeps,"coding"|"supervisor"|"brain"|"access"|"services"|"onSettled"> & Partial<Pick<ExecutorDeps,"web"|"labs"|"ensureLabsSupervisor"|"taskLeases"|"servicesForLease">>;
 export interface ProjectRuntimeServiceHost {
  coordinationDb:Db;coordinationConfig:ResolvedConfig;catalog:Catalog;health:ProviderHealth;direct:DirectRuntime;
  grants:ProjectExecutionGrants;broker:RequestAccountingBroker;owner:string;now?:()=>number;
@@ -42,7 +42,7 @@ export function createProjectRuntimeServices(input:ProjectRuntimeConstruction,ho
  const track=(work:()=>Promise<void>):Promise<void>=>{if(closing)return Promise.reject(new Error("Project executor is closing"));const p=Promise.resolve().then(work);pending.add(p);void p.then(()=>pending.delete(p),()=>pending.delete(p));return p;};
  // Keep actual Executor identity while tracking every public execution entry, including scheduler callers.
  executor.runSingle=task=>track(()=>{input.assertCurrent();projectStoresForTask(store,task,cfg);return single(task);});executor.runBatch=items=>track(()=>{input.assertCurrent();if(!items.length)throw new Error("Project batch cannot be empty");for(const task of items)projectStoresForTask(store,task,cfg);return batch(items);});
- return Object.freeze({...store,assertCurrent:input.assertCurrent,identity,cfg,paths,admission,ledger,gate,router,executor,taskLeases:executor.taskLeases,brain:privateServices.brain,access:privateServices.access,
+ return Object.freeze({...store,assertCurrent:input.assertCurrent,assertPinned:input.assertPinned??input.assertCurrent,identity,cfg,paths,admission,ledger,gate,router,executor,taskLeases:executor.taskLeases,brain:privateServices.brain,access:privateServices.access,
   runSingle:executor.runSingle.bind(executor),runBatch:executor.runBatch.bind(executor),
   drain:()=>{if(closingPromise)return closingPromise;closing=true;closingPromise=(async()=>{executor.abortAll("shutdown");while(pending.size)await Promise.allSettled([...pending]);await executor.flush();await gate.close();await ledger.drain();})();return closingPromise;}});
 }

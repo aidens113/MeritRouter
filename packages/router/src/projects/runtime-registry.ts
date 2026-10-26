@@ -19,6 +19,7 @@ import type { Executor, ExecutorDeps } from "../core/executor.js";
 
 export interface ProjectRuntimeBundle extends ProjectRuntimeStore {
  assertCurrent():void;
+ assertPinned():void;
  readonly identity:ProjectStoreIdentity;readonly cfg:ProjectContext;readonly paths:ProjectRuntimePaths;
  readonly brain:ExecutorDeps["brain"];readonly access:ExecutorDeps["access"];readonly taskLeases:Executor["taskLeases"];
  readonly admission:Admission;readonly ledger:ProjectRequestLedger;readonly gate:Gate;readonly router:TaskRouter;readonly executor:Executor;
@@ -26,7 +27,7 @@ export interface ProjectRuntimeBundle extends ProjectRuntimeStore {
  /** Drain local work/accounting. Registry alone closes its SQLite connection afterwards. */
  drain():Promise<void>;
 }
-export interface ProjectRuntimeConstruction {assertCurrent():void;identity:ProjectStoreIdentity;cfg:ProjectContext;paths:ProjectRuntimePaths;db:Db}
+export interface ProjectRuntimeConstruction {assertCurrent():void;assertPinned?():void;identity:ProjectStoreIdentity;cfg:ProjectContext;paths:ProjectRuntimePaths;db:Db}
 export interface ProjectRuntimeRegistryOptions {
  context(slug:string):ProjectContext;
  build(input:ProjectRuntimeConstruction):ProjectRuntimeBundle;
@@ -43,7 +44,7 @@ function physical(value:string,kind:"directory"|"file"):string{
 export class ProjectRuntimeRegistry {
  private readonly entries=new Map<string,ProjectRuntimeBundle>();private closing=false;private closingPromise:Promise<void>|null=null;
  constructor(readonly coordinationDb:Db,private readonly options:ProjectRuntimeRegistryOptions){if(readStoreIdentity(coordinationDb)?.role!=="coordination")throw new Error("Runtime registry requires explicit coordination store");}
- private registration(id:string){if(this.closing)throw new Error("Project runtime registry is closing");const r=readProjectStoreRegistration(this.coordinationDb,z.uuid().parse(id));if(!r||r.state!=="registered")throw new Error("Project runtime is unavailable or requires migration");return r;}
+ private registration(id:string,allowClosing=false){if(this.closing&&!allowClosing)throw new Error("Project runtime registry is closing");const r=readProjectStoreRegistration(this.coordinationDb,z.uuid().parse(id));if(!r||r.state!=="registered")throw new Error("Project runtime is unavailable or requires migration");return r;}
  openRegistered(id:string):ProjectRuntimeBundle{
   const r=this.registration(id),identity=Object.freeze(ProjectStoreIdentitySchema.parse({version:1,role:"project",installationId:r.installationId,projectId:r.projectId,storeId:r.storeId,generation:r.generation,slug:r.slug}));
   const existing=this.entries.get(id);if(existing){if(canonicalJson(existing.identity)!==canonicalJson(identity)||!samePath(existing.paths.projectDirectory,r.projectDirectory))throw new Error("Cached project runtime generation changed; explicit drain required");existing.assertCurrent();return existing;}
@@ -54,17 +55,18 @@ export class ProjectRuntimeRegistry {
   const preflight=new Database(file,{readonly:true,fileMustExist:true});try{const found=readStoreIdentity(preflight);if(canonicalJson(found)!==canonicalJson(identity))throw new Error("Registered project store manifest is missing or mismatched");}finally{preflight.close();}
   const initial=lstatSync(file,{bigint:true}),pin={dev:initial.dev,ino:initial.ino,birth:initial.birthtimeNs};
   const db=openDatabase(paths.state,{durability:"full",fileMustExist:true,expectedIdentity:identity});
-  const assertCurrent=()=>{
-   const current=this.registration(id);
+  const assertPinned=()=>{
+   const current=this.registration(id,true);
    if(current.installationId!==identity.installationId||current.projectId!==identity.projectId||current.storeId!==identity.storeId||current.generation!==identity.generation||current.slug!==identity.slug||!samePath(current.projectDirectory,paths.projectDirectory))throw new Error("Pinned runtime registration generation changed");
    physical(paths.projectDirectory,"directory");physical(paths.root,"directory");physical(paths.state,"directory");physical(file,"file");
    const stat=lstatSync(file,{bigint:true});if(stat.dev!==pin.dev||stat.ino!==pin.ino||stat.birthtimeNs!==pin.birth)throw new Error("Pinned project database file was replaced");
    assertStoreRole(db,identity);
   };
+  const assertCurrent=()=>{if(this.closing)throw new Error("Project runtime registry is closing");assertPinned();};
   try{
    assertCurrent();
    const cfg=projectContext(context,{project:context.project,projectDirectory:r.projectDirectory,storageDir:paths.state,storage:{...context.storage,durability:"full"},brain:{...context.brain,path:paths.brain,project:r.slug}});
-   const bundle=this.options.build({assertCurrent,identity,cfg,paths,db});
+   const bundle=this.options.build({assertCurrent,assertPinned,identity,cfg,paths,db});
    if(bundle.db!==db||bundle.tasks.db!==db||canonicalJson(bundle.identity)!==canonicalJson(identity)||bundle.project!==r.slug)throw new Error("Project runtime factory returned foreign stores");
    assertStoreRole(db,identity);this.entries.set(id,bundle);return bundle;
   }catch(error){db.close();throw error;}
