@@ -214,6 +214,16 @@ does not return control to the model: it waits for the operator decision, comple
 cancellation or timeout without spending requests. Supervisor-capable actions still wake
 the model promptly. Action listings identify `approvalPolicy`, `canApprove` and `waitingFor`.
 Timeout output distinguishes a human wait from a decision the supervisor may make.
+Internal supervisors cannot use `cancel_tasks` to abandon a current-generation child (or
+its descendants) while a human-only action awaits approval or an operator-approved action is
+running. The tool checks persisted task/action generations atomically before cancelling any
+member of a batch; one protected target refuses the entire batch. Unprotected and stale-generation
+cleanup remains available. External operator cancellation and runtime deadlines/policy fences
+retain their authority. `await_tasks` reports running approved commands as execution in progress,
+not pending approval; supervisors must wait for active checks before finishing. A persisted
+running row from an inactive task generation is labelled unresolved and requires operator
+reconciliation; it does not prove a command is still executing.
+
 For recipe execution, only the authoritative pending approval phase pauses active operation
 time. Source checks, task deadlines and explicit cancellation remain bounded, and approved
 commands retain their own and enclosing execution limits. A replay keeps the same approval

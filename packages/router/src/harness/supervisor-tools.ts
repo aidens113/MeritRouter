@@ -1,10 +1,12 @@
 import { assertExplicitRepairReferences } from "./repair-reference.js";
 import { resolveRepairSource } from "../workspaces/repair-hydration.js";
-import { executeSupervisorCommand, WorkerActionRequests } from "./worker-actions.js";
+import { executeSupervisorCommand, WorkerActionRequests, type WorkerActionRequest } from "./worker-actions.js";
 import { supervisorActionTools, workerActionCapability } from "./worker-action-tools.js";
 import { z } from "zod";
 import type { Db } from "../storage/db.js";
-import { newId } from "../storage/db.js";
+import { immediate, newId } from "../storage/db.js";
+import { currentSupervisorAuthority } from "../core/supervisor-authority.js";
+import { LeaseRefSchema } from "../storage/lease-ref.js";
 import { globsOverlap } from "../storage/file-leases.js";
 import { MAX_PLAN_NODES, PlanStore, criticalPath, defaultRequiresAcceptedInputs, nodeWeight, type PlanDifficulty, type PlanNodeInput } from "../storage/plans.js";
 import { AWAITING_ACCEPTANCE, TaskStore } from "../storage/tasks.js";
@@ -154,6 +156,52 @@ function ownTask(s: SupervisorState, ref: unknown): string {
   const id = s.children.get(key) ?? key;
   if (![...s.children.values()].includes(id)) throw new Error(`${key} is not a task of this job`);
   return id;
+}
+
+/** Persisted running is an active execution claim only for its exact live task generation. */
+function currentActionGeneration(s: SupervisorState, row: WorkerActionRequest): boolean {
+  const lease = row.action.lease, now = s.ctx.now();
+  if (row.taskId !== lease.taskId || row.project !== lease.project) return false;
+  return !!s.db.prepare(`SELECT 1 FROM tasks WHERE id=? AND project_id=? AND state='running' AND cancel_requested=0
+    AND lease_owner=? AND run_count=? AND lease_incarnation=? AND lease_expires_at>?
+    AND (deadline_at IS NULL OR deadline_at>?)`).get(row.taskId, row.project, lease.owner, lease.runCount, lease.incarnation, now, now);
+}
+
+/** Internal model cancellation cannot revoke the operator's active exact-generation work. */
+function cancelUnprotectedChildren(s: SupervisorState, ids: string[]): unknown {
+  return immediate(s.db, () => {
+    const actor = LeaseRefSchema.parse(s.ctx.taskLease);
+    if (actor.taskId !== s.ctx.taskId || !currentSupervisorAuthority(s.db, s.ctx.cfg, actor, s.ctx.now())) throw new Error("active owning supervisor authority required for cancellation");
+    for (const id of ids) {
+      const task = s.ctx.tasks.get(id);
+      if (!task || task.row.project_id !== actor.project || task.spec.parentTaskId !== actor.taskId) throw new Error("only this supervisor's current project children may be cancelled");
+    }
+    const humanOnly = workerActionCapability(s.ctx.cfg).approvalPolicy === "human_only";
+    const now = s.ctx.now();
+    for (const id of ids) {
+      const rows = s.db.prepare(`WITH RECURSIVE owned(id) AS (
+        SELECT id FROM tasks WHERE id=? AND project_id=?
+        UNION SELECT t.id FROM tasks t JOIN owned p ON json_extract(t.spec_json,'$.parentTaskId')=p.id WHERE t.project_id=?
+      ) SELECT w.id,w.task_id,w.value_json FROM worker_action_requests w JOIN tasks t ON t.id=w.task_id AND t.project_id=w.project_id
+      WHERE w.project_id=? AND w.task_id IN (SELECT id FROM owned) AND t.state='running' AND t.cancel_requested=0
+        AND t.lease_expires_at>? AND (t.deadline_at IS NULL OR t.deadline_at>?)
+        AND json_extract(w.value_json,'$.status') IN ('pending','running')
+        AND json_extract(w.value_json,'$.action.lease.taskId')=t.id
+        AND json_extract(w.value_json,'$.action.lease.project')=t.project_id
+        AND json_extract(w.value_json,'$.action.lease.owner')=t.lease_owner
+        AND json_extract(w.value_json,'$.action.lease.runCount')=t.run_count
+        AND json_extract(w.value_json,'$.action.lease.incarnation')=t.lease_incarnation`).all(id, actor.project, actor.project, actor.project, now, now);
+      const actions = z.array(z.object({ id: z.string(), task_id: z.string(), value_json: z.string() }).strict()).parse(rows);
+      for (const record of actions) {
+        const action = z.object({ status: z.enum(["pending", "running"]), decidedBy: z.string().nullable(), action: z.object({ lease: LeaseRefSchema }).passthrough() }).passthrough().parse(JSON.parse(record.value_json));
+        if ((action.status === "pending" && humanOnly) || (action.status === "running" && action.decidedBy === "operator"))
+          throw new Error(`cannot cancel ${record.task_id}: exact worker action ${record.id} is ${action.status === "pending" ? "awaiting human approval" : "operator-approved and running"}; continue await_tasks. External operator cancellation and runtime deadlines remain authoritative.`);
+      }
+    }
+    // This service facade is synchronous. There is no await between action/lease preflight
+    // and logical cancellation, so approval and mixed-batch cancellation serialize atomically.
+    return s.ctx.services!.cancelTasks(ids);
+  });
 }
 
 function repoFor(s: SupervisorState, alias: unknown): IntegrationRepo {
@@ -714,10 +762,10 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
       }
       if (waited && !s.ctx.signal.aborted && env.observationWait) env.observationWait.epoch++;
       const budget = pendingBudgetLines(s.db, s.ctx.cfg, jobId);
-      const actions = pendingActions();
+      const actions = [...pendingActions(), ...actionStore.list({ project, jobId, status: "running" })];
       const capability = workerActionCapability(s.ctx.cfg);
       const guidance = capability.canApprove ? "decide_worker_action" : capability.approvalPolicy === "human_only" ? "awaiting human operator approval; supervisor cannot approve; continue await_tasks without model polling" : "outside-repository execution disabled; operator policy change or cancellation required";
-      return cap([...operatorDecisions, ...actions.map(row => `worker action ${row.id} from ${row.taskId}: ${row.action.operation?.name ?? row.action.command}; ${guidance}`), ...budget, ...r.completed.map((c) => summarizeResult(c.taskId, s)), ...r.pending.map((p) => {
+      return cap([...operatorDecisions, ...actions.map(row => `worker action ${row.id} from ${row.taskId}: ${row.action.operation?.name ?? row.action.command}; ${row.status === "running" ? currentActionGeneration(s, row) ? `running; approved by ${row.decidedBy ?? "recorded decision"}; execution in progress; continue await_tasks` : "persisted running from inactive generation; unresolved, requires operator reconciliation" : guidance}`), ...budget, ...r.completed.map((c) => summarizeResult(c.taskId, s)), ...r.pending.map((p) => {
         const why = stateReason(s, p.taskId);
         return `${p.taskId}: still ${p.state}${why && why !== "resumed" ? ` (${why}${why.startsWith(AWAITING_ACCEPTANCE) ? "; accept_task or reject_task the upstream result" : ""})` : ""}`;
       })].join("\n"));
@@ -732,8 +780,9 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
       return cap(JSON.stringify({ state: t.state, spec: { label: t.spec.label, profile: t.spec.profile, goal: t.spec.goal }, result: t.result }, null, 1));
     }),
 
-    tool("cancel_tasks", "delegate", "Cancel tasks this job dispatched.", { task_ids: { type: "array", items: { type: "string" } } }, ["task_ids"], async (a) => {
-      await svc.cancelTasks((a.task_ids as string[]).map((x) => ownTask(s, x)));
+    tool("cancel_tasks", "delegate", "Cancel this job's unprotected tasks. Pending human-only approvals and operator-approved running actions must settle through await_tasks; only the external operator or runtime cancellation may interrupt those exact active generations.", { task_ids: { type: "array", items: { type: "string" } } }, ["task_ids"], async (a) => {
+      const ids = z.array(z.string().min(1)).min(1).max(MAX_PLAN_NODES).parse(a.task_ids).map(id => ownTask(s, id));
+      cancelUnprotectedChildren(s, [...new Set(ids)]);
       return "cancellation requested";
     }),
 
