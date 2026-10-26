@@ -2,12 +2,14 @@ import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import path from "node:path";
 import { devNull } from "node:os";
+import { authorizedGitIndex, type GitIndexCapability } from "./git-index-transaction.js";
 
 const GIT_NULL = process.platform === "win32" ? "NUL" : devNull;
 const IDENTITY_ENV = /^(GIT_(AUTHOR|COMMITTER)_(NAME|EMAIL|DATE))$/i;
 const INTERNAL_COMMANDS = new Set(["init", "add", "commit", "commit-tree", "diff", "diff-tree", "show", "show-ref", "log", "blame", "grep", "rev-parse", "rev-list", "status", "ls-files", "worktree", "switch", "symbolic-ref", "merge-base", "merge", "cherry-pick", "rebase", "revert", "reset", "update-ref", "for-each-ref", "branch", "check-ref-format", "config", "ls-tree", "cat-file", "write-tree", "read-tree", "apply", "check-ignore"]);
 const EXECUTABLE_CONFIG = /^(filter\..*\.(clean|smudge|process)|merge\..*\.driver|trailer\..*\.(command|cmd)|diff\..*\.(command|textconv)|core\.alternaterefscommand|include\.path|includeif\..*\.path)$/i;
 const SAFE_CONFIG = [
+  ...(process.platform === "win32" ? ["core.longpaths=true"] : []),
   "core.fsmonitor=false", `core.hooksPath=${GIT_NULL}`, "commit.gpgsign=false", "tag.gpgsign=false", "merge.gpgsign=false",
   "core.pager=", "core.editor=false", "sequence.editor=false", "core.sshCommand=false", "core.gitProxy=",
   "credential.helper=", "protocol.allow=never", "gc.auto=0", "maintenance.auto=false", "submodule.recurse=false",
@@ -63,7 +65,7 @@ function trustedNewlineConfiguration(): string[] {
 }
 
 /** Shared by async Git and the few fixed synchronous metadata reads. This is not a worker shell API. */
-export function prepareGitProcess(cwd: string, input: readonly string[], overrides: Record<string, string> = {}): { args: string[]; env: NodeJS.ProcessEnv } {
+export function prepareGitProcess(cwd: string, input: readonly string[], overrides: Record<string, string> = {}, index?: GitIndexCapability): { args: string[]; env: NodeJS.ProcessEnv } {
   const args = [...input];
   const identity: string[] = [];
   while (args[0] === "-c") {
@@ -75,6 +77,7 @@ export function prepareGitProcess(cwd: string, input: readonly string[], overrid
   const command = args[0];
   if (!command || !INTERNAL_COMMANDS.has(command)) throw new Error(`unsupported internal Git command: ${command ?? "empty"}`);
   const env = gitProcessEnvironment(overrides);
+  if (index !== undefined) env.GIT_INDEX_FILE = authorizedGitIndex(index, cwd, args);
   let policy = SAFE_CONFIG.flatMap(value => ["-c", value]);
   // Reading configuration is a built-in metadata operation; it does not run filters/hooks.
   // Reject configured conversion/merge/trailer programs rather than silently changing file semantics.
