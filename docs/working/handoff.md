@@ -4,14 +4,14 @@
 
 [Production readiness](production-readiness.md) now owns cross-effort execution order and
 exit criteria. [Project-local storage](project-local-storage.md) is the active implementation
-focus: path contract and additive project directory metadata in progress, state/accounting
+focus: path contract and additive project directory metadata implemented, state/accounting
 separation under design. No project data has moved; existing runtime paths remain authoritative.
 Latest live read: Facebook v7 supervisor interrupted/watchdog; profile completed, people and
 notifications failed deadline_exceeded, no pending/running approvals. Retained source and
 charges must be preserved; no usable app delivered. Older process IDs and task snapshots below
 are historical, not fresh status. Do not resume/move work without checking current state.
 Storage foundation87feb17 now committed locally:90 focused tests plus recursive typecheck/
-build pass; final integrated full suite running, publication pending. Main source/dist frozen.
+build pass; corrected full1792 total:1789PASS/0FAIL/3SKIP1012.23s, publication underway.
 Next Git exclusion helper isolated under this project's .MeritRouter/development/metadata-exclusion,
 not a flat installation folder. No project store separation/migration or runtime rollout yet.
 

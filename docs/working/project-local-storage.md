@@ -1,6 +1,6 @@
 # Project-local runtime storage
 Status: Active
-Status detail: Reviewed storage foundation passes90 focused tests, recursive typecheck/build; full suite and physical migration pending.
+Status detail: Storage foundation full1789PASS/0FAIL/3SKIP and recursive checks passed; isolated staging/compact paths active, migration pending.
 Created: 2026-10-25
 Last updated: 2026-10-26
 Owner: Senior supervisor agent
@@ -30,26 +30,31 @@ of1792. Only failure: team-integration redundancy plan stub rejects empty parent
 in delegatedSourceSnapshot. Root reproduced unchanged narrow test deterministically.
 Fixture corrected only: explicit project on parent/children and no unused source alias;
 all original assertions retained plus owner assertions. Root guard/team/store51/51 PASS83.82s
-and recursive typecheck PASS. Production guard unchanged; final full rerun pending.
+and recursive typecheck PASS. Production guard unchanged. Fixture/report committed1f5f219;
+final full rerun PASS exit0:1789PASS/0FAIL/3SKIP of1792 in1012.23s (maxWorkers3),
+output .MeritRouter/validation/storage-foundation-final/full.json. Recursive checks PASS.
 Original JSON output moved after completion into this project's ignored metadata directory:
 .MeritRouter/validation/storage-foundation-87feb17/full.json (copy/fsync/SHA256 verified,
 then removed own temp original; C:->D: rename refused EXDEV). Not a green aggregate.
-No physical separation or migration implemented; nothing from this effort pushed yet.
+No physical separation or migration implemented; checked foundation publication underway.
 Next exclusion/preflight helper in isolated feat/project-metadata-exclusion tree under
 D:/SwitchYardRouter/.MeritRouter/development/metadata-exclusion. Root established a
 Git-local exclude block (preserving prior bytes) before creating that development tree;
 git check-ignore confirms it is ignored. This operator setup is NOT product migration.
-Full main source run finished; only assigned fixture correction may edit main now.
+Main source acceptance complete; further implementation stays isolated.
 Windows launch probe found267-character generated cwd fails Node spawning absolute Git,
 while short-directory control succeeds, even with core.longpaths=true. Before activation,
 compact hierarchy/cwd acceptance must be resolved; see reports/windows-workspace-launch.md.
 C1 helper accepted/committed only on isolated feature branch2cb0e0e: root18/18 PASS33.30s,
 root isolated package typecheck PASS, independent corrected ignore/capacity probes clear.
 It remains unwired and does not guarantee staging. C2 transactional index implementation
-assigned in same isolated tree; main source/dist remains frozen for its full suite.
+is accepted only on the isolated branch; main does not activate its callers.
 C2 author31PASS/1POSIX-only SKIP (C1+C2) plus typecheck; independent13PASS/1POSIXskip
 and expiry/HEADchange/file-redirection probes clear. Root source review read full implementation;
-root tests/acceptance still pending. No callers or commit behavior changed.
+root31PASS/1POSIXskip90.94s plus isolated typecheck/build PASS. C2 committed only feature
+branchb9d866f; dev merged into that branch without conflicts. C2b selected exact commit API
+assigned in same isolated tree, with no existing caller changes yet. Compact layoutv2 assigned
+separately under .MeritRouter/development/compact-runtime-paths, retaining existing v1 paths.
 Live Facebook job is interrupted (watchdog); profile completed, people and notifications
 failed deadline_exceeded. No pending/running command approvals at inspection. Preserve
 all retained source and accounting; do not represent the app as delivered.
@@ -329,6 +334,56 @@ or private payloads into a misleading partial project store and call migration c
   positive/negative/literal pathspecs, cleanup/faultpaths and linked-worktree indexes.
 - Distinguish stage transaction from commit publication/hostile FS race; preserve existing
   Git executable-config restrictions. No source/live changes/commits or main validation edits.
+
+### metadata-selected-commit
+- Role: implementation worker in same isolated staging branch after root C2 commit.
+- Read: Current State, metadata-commit-contract.md and accepted C2 API/source.
+- Own: workspaces/git-index-transaction.ts, metadata-staging.ts, git.ts, git-process-policy.ts as necessary;
+  NEW attribution/selected-commit.ts and specifically named publication/recovery module if needed;
+  NEW tests/project-metadata-selected-commit.test.ts; own report. No existing caller/Actor edits.
+- Build a trusted exact selected-commit API preserving Git positive/negative/literal selection,
+  unrelated original staged blobs, ordinary deletions, staged-new/deleted paths and allowEmpty.
+  No raw commit --only reread after candidate seal. Two indexes: HEAD+selected current content
+  for immutable commit tree, original index+selected changes for final preserved staging.
+- Refactor owned C2 lock/cap internals only if needed, retaining all its existing tests/guarantees.
+  Reuse bounded selected staging/physical checks; stage worktree bytes once into preserved index,
+  derive HEAD-based candidate from immutable selected cached binary diff, never reread worktree.
+  Capabilities remain closed host-only with no raw env access; bounded trusted stdin Git plumbing
+  may be added for ref transaction. Validate runtime/stored DTOs with zod.
+- Create commit-tree from immutable bytes and publish expected-old ref transaction; support
+  attached and detached HEAD and unborn. Verify symbolic target atomically where supported;
+  detect unavailable Git transaction capability and fail closed, no weak fallback.
+- Durably record owned publication intent and preserved index before ref publication. On
+  later index failure report exact committed/reconciliation-needed state and retain receipt;
+  never auto rewrite/reset HEAD, delete foreign locks, or call uncertain results ordinary refusal.
+- Keep all receipts/index backups within owned project/Git metadata, bounded and link-checked;
+  no installation-root data. Respect existing Git config/filter/hook restrictions and identities.
+- Real temp-Git tests compare exact trees/index entries, author/message/trailer payload,
+  paths selecting only B with unrelated staged A, partial B, deletes/newfiles, empty/null cases,
+  HEAD/symref races, junction/hardlink before-copy refusal, crash/fault boundaries and recovery
+  receipts. No source point may copy unsafe private bytes into Git objects.
+- Preserve stage-only API; no migration/runtime/model tool exposure/caller integration/commits.
+  Propose API and any genuine blockers before broad refactor; focused tests/typecheck then freeze.
+
+### compact-runtime-paths
+- Role: implementation worker in separate isolated feat/compact-runtime-paths tree.
+- Read: Current State, reports/windows-workspace-launch.md and existing runtime-path module/tests.
+- Own: projects/runtime-paths.ts; tests/project-runtime-paths.test.ts;
+  own report reports/compact-runtime-paths.md only. No Git helper/policy/caller/shared docs edits.
+- Resolve actual Windows267-character cwd spawn failure with compact human-readable layoutv2:
+  bounded readable labels, shorter structural segments and lowercase case-safe encoding retaining
+  at least128bits of stable identity digest. Persist version and names; never rename parsed v1.
+- Preserve existing v1 manifest/identity parsing and workspace paths exactly; explicit migration
+  required to relocate existing identities. New identities/layout may defaultv2 with strict
+  version agreement and manifest collision checks. Propose clean compatibility API before edits.
+- Validate supported Windows cwd length before directory creation, fail with actionable shorter
+  project root guidance. Keep path containment/alias/namespace protections and Unix support.
+- Real temp-Git process launch with typical project root/job/task names, maximal safe names,
+  deep application filename and Windows too-long root refusal. Distinguish cwd launch from
+  deepGit core.longpaths support; no policy edit (another worker owns it). No globalconfig changes.
+- Keep existing safety tests, add v1 roundtrip/unchanged path, v2 encoding/version/alias conflicts,
+  actual cwd/process cases. Focused checks only; offline locked deps if needed, no source manifests.
+- No commits/live projects/providers or main source/dist edits; notify freeze/report limits.
 
 ### storage-discovery
 - Role: read-only worker; do not change source or live runtime state.
