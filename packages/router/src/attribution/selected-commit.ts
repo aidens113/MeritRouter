@@ -2,6 +2,7 @@ import { z } from "zod";
 import { lstat } from "node:fs/promises";
 import path from "node:path";
 import { actorIdentity, trailerArgs } from "./index.js";
+import { prepareCommitMessage } from "./commit-message.js";
 import { git } from "../workspaces/git.js";
 import { gitIndexSnapshot, withGitIndexTransaction, withHeadGitIndex } from "../workspaces/git-index-transaction.js";
 import { ensureProjectMetadataExcluded } from "../workspaces/metadata-exclusion.js";
@@ -50,6 +51,9 @@ export function commitInitialApplicationSnapshot(repo: string, kind: "created" |
 
 async function commitSelectedInternal(repo: string, input: SelectedCommitInput, control: SelectedCommitControl, setup: boolean): Promise<SelectedCommitOutcome> {
   const parsed = SelectedCommitInputSchema.parse(input);
+  const message = setup ? `${parsed.message}\n` : await prepareCommitMessage(repo, {
+    message: parsed.message, trailers: trailerArgs(parsed.actor, parsed.extraTrailers).filter((_, index) => index % 2 === 1),
+  });
   await assertNoPendingCommitPublication(repo);
   await ensureProjectMetadataExcluded(repo);
   if (control.admitted) await control.admitted();
@@ -82,9 +86,6 @@ async function commitSelectedInternal(repo: string, input: SelectedCommitInput, 
         const names = (await git(repo, ["ls-tree", "-r", "--name-only", "-z", tree])).split("\0").filter(Boolean);
         if (names.length > 20000 || names.some(isProjectMetadataPath)) throw new Error("Selected candidate tree contains private or excessive entries");
         if (tree === baseline && !parsed.allowEmpty) return { commit: null, tree };
-        const trailers = setup ? "" : trailerArgs(parsed.actor, parsed.extraTrailers).filter((_, index) => index % 2 === 1).join("\n");
-        const payload = `${parsed.message}${trailers ? `\n\n${trailers}` : ""}`;
-        const message = payload.endsWith("\n") ? payload : `${payload}\n`;
         const commit = CommitObjectSchema.parse((await git(repo, ["commit-tree", tree, ...(snapshot.head ? ["-p", snapshot.head] : [])], { env, input: message })).trim());
         if (control.sealed) await control.sealed();
         return { commit, tree };

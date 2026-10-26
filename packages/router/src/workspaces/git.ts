@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { prepareGitProcess } from "./git-process-policy.js";
+import { isCommitMessageStdinCommand, prepareGitProcess } from "./git-process-policy.js";
 import { promisify } from "node:util";
 import { runGitIndexCommand, type GitIndexCapability } from "./git-index-transaction.js";
 
@@ -19,12 +19,14 @@ export class GitError extends Error {
 export function git(cwd: string, args: string[], opts: { maxBuffer?: number; allowExit?: number[]; env?: Record<string, string>; signal?: AbortSignal; timeoutMs?: number; index?: GitIndexCapability; input?: string } = {}): Promise<string> {
   const run = async () => {
     try {
+      if (["stripspace", "interpret-trailers"].includes(args[0] ?? "") && opts.input === undefined) throw new Error("Git commit-message stdin must be explicitly supplied");
       const processPolicy = prepareGitProcess(cwd, args, opts.env, opts.index);
       if (opts.input !== undefined) {
         const apply = !!opts.index && args.join("\0") === ["apply", "--cached", "--binary", "--whitespace=nowarn", "-"].join("\0");
         const object = (value: string | undefined) => !!value && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value);
         const message = !opts.index && args[0] === "commit-tree" && object(args[1]) && (args.length === 2 || args.length === 4 && args[2] === "-p" && object(args[3]));
-        if ((!apply && !message) || Buffer.byteLength(opts.input) > (apply ? 32 * 1024 * 1024 : 65536)) throw new Error("Git stdin requires exact bounded cached-apply or commit-message plumbing");
+        const formatting = !opts.index && isCommitMessageStdinCommand(args);
+        if ((!apply && !message && !formatting) || Buffer.byteLength(opts.input) > (apply ? 32 * 1024 * 1024 : 65536)) throw new Error("Git stdin requires exact bounded cached-apply or commit-message plumbing");
       }
       const running = execFileAsync("git", processPolicy.args, {
         cwd,
