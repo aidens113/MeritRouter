@@ -174,7 +174,17 @@ The full text ships as `packages/router/charters/supervisor.md` and can be overr
    clean stable HEAD; missing, foreign or dirty integration sources refuse dispatch. Read-only
    aliases retain the parent's declared commit, or freeze their configured committed HEAD.
    Later parent changes do not retarget a child's reads/listings/searches. This adds no read
-   permission; coding dependents retain their existing upstream base-selection rules.
+   permission. A job-owned dependent freezes its source when dependencies become ready: readonly review
+   receives the owned implementation head (or verified integration branch), and a later dependent
+   of that review inherits the exact reviewed commit, recorded as `upstream_snapshot`, rather
+   than a newer parent HEAD. Ownership, repository identity, immutable commits and integration
+   receipt ancestry are checked. Final ownership/undo checks and receipt publication share an
+   immediate transaction; concurrent preparation reuses the first frozen subject. Missing or
+   conflicting subjects refuse instead of falling back
+   to stale canonical files. Frozen upstream receipts survive long logs and resume unchanged.
+   Parentless readonly tasks retain their declared or canonical source behavior. Direct coding
+   dependents retain their existing base-selection rules. Source selection never
+   grants acceptance or changes the scheduler's accepted-input gates.
 6. **Budget the team.** The job's request budget is one pool. Each delegated task gets
    `max_requests` from its brief (default `team.default_task_requests`, else its tier's cap) and
    holds it from the pool while open; a finished task holds only what it used. A brief that does
