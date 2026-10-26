@@ -9,6 +9,7 @@ import { ChannelStore, type ChannelKind } from "../storage/channel.js";
 import { ContractStore } from "../verification/contract.js";
 import { effectiveBudget, heldRequests, UNLIMITED_REQUESTS, verificationTotal } from "./admission.js";
 import { extraRequests, grantOf } from "./job-pool.js";
+import { taskRequestsIncludingPreparations } from "./project-request-totals.js";
 
 /**
  * Budget control (docs/working/budget-control.md, D1-D5): the request pool of a job and the
@@ -121,7 +122,7 @@ export function jobPool(db: Db, cfg: ResolvedConfig, jobId: string): JobPool | n
   if (!job || cfg.profiles[job.spec.profile]?.mode !== "supervisor") return null;
   const baseLimit = Math.min(effectiveBudget(cfg, job.spec, null).maxModelRequests, verificationTotal(cfg, job.spec));
   const limit = baseLimit === UNLIMITED_REQUESTS ? baseLimit : baseLimit + extraRequests(db, jobId);
-  const used = (db.prepare("SELECT COUNT(*) AS n FROM request_charges WHERE task_id = ?").get(jobId) as { n: number }).n;
+  const used = taskRequestsIncludingPreparations(db, jobId);
   const held = heldRequests(db, jobId);
   const reserve = job.spec.deliveryVersion === 2 ? Math.max(cfg.team.supervisor_reserve_requests, cfg.supervisor.delivery_budget.supervisor_reserve_requests + protectedValidationRequests(db, cfg, jobId)) : cfg.team.supervisor_reserve_requests;
   const cap = limit === UNLIMITED_REQUESTS ? null : limit;

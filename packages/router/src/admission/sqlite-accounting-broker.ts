@@ -8,9 +8,9 @@ import type { ResolvedConfig } from "../config/load.js";
 import { worstCaseUsd, type PaidSpend } from "../paid/spend.js";
 import { physicalRequestCount } from "./accounting-usage.js";
 import { accountingIdentityDigest, accountingOwnerDigest, GlobalEndpointAuthoritySchema, GlobalReceiptSchema,
-  GlobalRequestReferenceSchema, ReserveGlobalRequestSchema, SettleGlobalRequestSchema, globalReservationFingerprint,
+  GlobalRequestReferenceSchema, ReserveGlobalRequestSchema, SettleGlobalRequestSchema, UnboundedGlobalCostSchema, globalReservationFingerprint,
   type GlobalEndpointAuthority, type GlobalReceipt, type GlobalRequestReference, type RequestAccountingBroker,
-  type ReserveGlobalRequest, type SettleGlobalRequest } from "./accounting-broker.js";
+  type ReserveGlobalRequest, type SettleGlobalRequest, type UnboundedGlobalCost } from "./accounting-broker.js";
 
 const DAY = 86_400_000;
 const rowSchema = z.object({
@@ -22,14 +22,15 @@ const rowSchema = z.object({
   outcome: z.enum(["succeeded", "failed", "uncertain"]).nullable(), input_tokens: z.number().int().nonnegative().nullable(),
   unexpected_liability_usd: z.number().finite().positive().nullable(), cost_quarantined: z.union([z.literal(0),z.literal(1)]),
   quarantine_outcome_sha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(), quarantine_conflict: z.union([z.literal(0),z.literal(1)]),
+  unbounded_cost: z.union([z.literal(0),z.literal(1)]),
   output_tokens: z.number().int().nonnegative().nullable(), error_code: z.string().nullable(), finished_at: z.number().int().nonnegative().nullable(),
 }).strict().refine(row => row.status === "reserved" ? row.dispatch_id === null && row.outcome_digest === null && row.outcome === null && row.finished_at === null
   : row.status === "dispatch_intent" ? row.dispatch_id !== null && row.outcome_digest === null && row.outcome === null && row.finished_at === null
   : row.status === "settled" ? row.dispatch_id !== null && row.outcome_digest !== null && row.accounting_outcome_sha256 !== null && row.outcome !== null && row.finished_at !== null
   : row.dispatch_id === null && row.outcome_digest === null && row.outcome === null && row.finished_at !== null, "Physical request state is incomplete")
   .refine(row => row.cost_quarantined === 0 ? row.unexpected_liability_usd === null && row.quarantine_outcome_sha256 === null && row.quarantine_conflict === 0
-      && (row.status === "settled" || row.accounting_outcome_sha256 === null)
-    : row.paid === 0 && row.status === "dispatch_intent" && row.unexpected_liability_usd !== null && row.quarantine_outcome_sha256 !== null
+      && row.unbounded_cost === 0 && (row.status === "settled" || row.accounting_outcome_sha256 === null)
+    : row.status === "dispatch_intent" && (row.unexpected_liability_usd !== null || row.unbounded_cost === 1) && row.quarantine_outcome_sha256 !== null
       && row.accounting_outcome_sha256 !== null, "Unexpected cost quarantine is incomplete");
 type Row = z.infer<typeof rowSchema>;
 export class GlobalAccountingDenied extends Error {
@@ -93,6 +94,7 @@ export class SqliteRequestAccountingBroker implements RequestAccountingBroker {
       reservedUsd: spend?.reserved_usd ?? null, liabilityUsd: spend?.liability_usd ?? row.unexpected_liability_usd,
       actualUsd: spend?.actual_usd ?? null, unexpectedLiabilityUsd: row.unexpected_liability_usd,
       quarantineOutcomeDigest: row.quarantine_outcome_sha256,
+      unboundedCost: row.unbounded_cost === 1,
       costQuarantined: row.cost_quarantined === 1, quarantineConflict: row.quarantine_conflict === 1 });
   }
   private bound(reference: GlobalRequestReference): Row {
@@ -216,13 +218,15 @@ export class SqliteRequestAccountingBroker implements RequestAccountingBroker {
         return this.receipt(row);
       }
       if (row.status !== "dispatch_intent") throw new GlobalAccountingDenied("state");
-      if (row.paid === 0 && ((input.actualUsd !== null && input.actualUsd > 0) || row.cost_quarantined === 1)) {
+      if ((row.paid === 0 && input.actualUsd !== null && input.actualUsd > 0) || row.cost_quarantined === 1) {
         if (input.actualUsd !== null && input.actualUsd > 0) this.db.prepare(`UPDATE physical_requests SET
           unexpected_liability_usd=MAX(COALESCE(unexpected_liability_usd,0),?),cost_quarantined=1,
           quarantine_conflict=CASE WHEN accounting_outcome_sha256 IS NOT NULL AND accounting_outcome_sha256!=? THEN 1 ELSE quarantine_conflict END,
           quarantine_outcome_sha256=COALESCE(quarantine_outcome_sha256,?),
           accounting_outcome_sha256=COALESCE(accounting_outcome_sha256,?),error_code='unexpected_cost' WHERE id=?`)
           .run(input.actualUsd, digest, input.outcomeDigest, digest, row.id);
+        if (row.paid === 1 && input.actualUsd !== null) this.db.prepare("UPDATE broker_paid_spend SET liability_usd=MAX(liability_usd,?) WHERE request_id=?")
+          .run(input.actualUsd, row.id);
         quarantined = true;
         return this.receipt(this.row(row.id)!);
       }
@@ -241,6 +245,21 @@ export class SqliteRequestAccountingBroker implements RequestAccountingBroker {
   readReceipt(requestId: string): GlobalReceipt | null {
     const parsed = ReserveGlobalRequestSchema.shape.requestId.parse(requestId), row = this.row(parsed);
     return row ? this.receipt(row) : null;
+  }
+  /** Explicit unpriceable-outcome incident. Finite amounts are minima, never a fabricated upper bound. */
+  quarantineUnboundedCost(value: UnboundedGlobalCost): GlobalReceipt {
+    const input = UnboundedGlobalCostSchema.parse(value), digest = createHash("sha256").update(JSON.stringify(input)).digest("hex");
+    return this.mutation(() => {
+      const row = this.bound({ requestId: input.requestId, fingerprint: input.fingerprint });
+      if (row.status !== "dispatch_intent") throw new GlobalAccountingDenied("state");
+      this.db.prepare(`UPDATE physical_requests SET cost_quarantined=1,unbounded_cost=1,
+        unexpected_liability_usd=CASE WHEN ?>0 THEN MAX(COALESCE(unexpected_liability_usd,0),?) ELSE unexpected_liability_usd END,
+        quarantine_conflict=CASE WHEN accounting_outcome_sha256 IS NOT NULL AND accounting_outcome_sha256!=? THEN 1 ELSE quarantine_conflict END,
+        quarantine_outcome_sha256=COALESCE(quarantine_outcome_sha256,?),accounting_outcome_sha256=COALESCE(accounting_outcome_sha256,?),
+        error_code=? WHERE id=?`).run(input.minimumUsd, input.minimumUsd, digest, input.outcomeDigest, digest, input.code, row.id);
+      if (row.paid === 1) this.db.prepare("UPDATE broker_paid_spend SET liability_usd=MAX(liability_usd,?) WHERE request_id=?").run(input.minimumUsd, row.id);
+      return this.receipt(this.row(row.id)!);
+    });
   }
   retireDefinitelyUnsent(reference: GlobalRequestReference): GlobalReceipt {
     return this.mutation(() => {

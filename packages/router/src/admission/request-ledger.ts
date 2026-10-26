@@ -41,11 +41,14 @@ export const RequestOutcomeDTOSchema = z.discriminatedUnion("kind", [
 export type ReserveRequestDTO = z.infer<typeof ReserveRequestDTOSchema>;
 export type ReservationDTO = z.infer<typeof ReservationDTOSchema>;
 export type RequestOutcomeDTO = z.infer<typeof RequestOutcomeDTOSchema>;
+export type RequestLedgerPhase = "prepared" | "reserved" | "dispatch_intent" | "settled" | "retired" | "uncertain" | "quarantined";
 export interface RequestLedger {
   reserve(input: ReserveRequestDTO): Promise<ReservationDTO>;
   beginDispatch(reservation: ReservationDTO, dispatchId: string): Promise<{ disposition: "fresh" | "replayed" }>;
   reconcile(reservation: ReservationDTO, outcome: RequestOutcomeDTO): Promise<void>;
-  receipt(requestId: string): Promise<{ state: "reserved" | "dispatch_intent" | "settled" } | null>;
+  receipt(requestId: string): Promise<{ state: RequestLedgerPhase } | null>;
+  /** Split adapters consume a process-owned single-use proof immediately before transport. */
+  assertDispatch?(reservation: ReservationDTO, dispatchId: string): void;
   drain(): Promise<void>;
 }
 

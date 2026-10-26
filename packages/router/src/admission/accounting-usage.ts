@@ -14,7 +14,7 @@ export const ACCOUNTING_SPEND_SQL = `SELECT p.request_id,p.key_ref,p.provider,p.
   UNION ALL SELECT r.id,COALESCE(r.key_ref,old.key_ref,'unresolved:'||r.provider),r.provider,r.endpoint_id,
     MAX(r.unexpected_liability_usd,COALESCE(old.actual_usd,old.reserved_usd,0)),NULL,
     MAX(r.reserved_at,COALESCE(old.created_at,r.reserved_at)),r.project_uuid
-  FROM physical_requests r LEFT JOIN paid_spend old ON old.request_id=r.id WHERE r.cost_quarantined=1`;
+  FROM physical_requests r LEFT JOIN paid_spend old ON old.request_id=r.id WHERE r.cost_quarantined=1 AND r.paid=0`;
 export function assertAccountingOverlap(db: Db): void {
   if (db.prepare(`SELECT 1 FROM physical_requests r LEFT JOIN broker_paid_spend b ON b.request_id=r.id
     WHERE (r.paid=1 AND b.request_id IS NULL) OR (r.paid=0 AND b.request_id IS NOT NULL)

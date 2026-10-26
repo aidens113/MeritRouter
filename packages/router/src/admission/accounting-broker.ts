@@ -37,6 +37,8 @@ export const GlobalReceiptSchema = z.object({
   inputTokens: count.nullable(), outputTokens: count.nullable(),
   reservedUsd: money.nullable(), liabilityUsd: money.nullable(), actualUsd: money.nullable(),
   unexpectedLiabilityUsd: money.nullable(), quarantineOutcomeDigest: digest.nullable(), costQuarantined: z.boolean(), quarantineConflict: z.boolean(),
+  /** Finite liability fields are only a known minimum when this flag is true. */
+  unboundedCost: z.boolean(),
 }).strict();
 export type GlobalReceipt = z.infer<typeof GlobalReceiptSchema>;
 export const GlobalRequestReferenceSchema = z.object({ requestId: RequestIdSchema, fingerprint: digest }).strict();
@@ -48,10 +50,15 @@ export const SettleGlobalRequestSchema = GlobalRequestReferenceSchema.extend({
   errorCode: z.enum(["none", "aborted", "timeout", "rate_limited", "authentication", "provider_error", "policy", "unknown"]),
 }).strict().refine(value => value.costBasis !== "not_billed" || value.actualUsd === 0, "Not-billed accounting requires an exact zero cost");
 export type SettleGlobalRequest = z.infer<typeof SettleGlobalRequestSchema>;
+export const UnboundedGlobalCostSchema = GlobalRequestReferenceSchema.extend({
+  outcomeDigest: digest, minimumUsd: money, code: z.enum(["cache_write_price_unknown", "provider_cost_unknown"]),
+}).strict();
+export type UnboundedGlobalCost = z.infer<typeof UnboundedGlobalCostSchema>;
 export interface RequestAccountingBroker {
   reserveGlobal(input: ReserveGlobalRequest): { disposition: "fresh" | "replayed"; receipt: GlobalReceipt };
   beginDispatchGlobal(reference: GlobalRequestReference, dispatchId: string): { disposition: "fresh" | "replayed"; receipt: GlobalReceipt };
   settleGlobal(input: SettleGlobalRequest): GlobalReceipt;
+  quarantineUnboundedCost(input: UnboundedGlobalCost): GlobalReceipt;
   readReceipt(requestId: string): GlobalReceipt | null;
   retireDefinitelyUnsent(reference: GlobalRequestReference): GlobalReceipt;
   listUnresolved(limit?: number): GlobalReceipt[];

@@ -16,12 +16,13 @@ const localTables = new Set([
   "lab_promotions", "lab_teams", "lab_operations", "lab_target_locks", "task_workspace_attempts", "lab_task_attempts", "task_lab_operations", "lab_attempt_processes",
   "request_captures", "task_lease_operation_keys", "task_lease_operations", "task_lease_operation_projects", "request_protocol_keys", "request_protocol",
   "request_protocol_projects", "worker_action_requests", "product_deliveries", "product_delivery_history", "store_identity",
+  "project_request_protocol", "project_request_holds", "project_request_spend",
 ]);
 const classifiedTables = new Set<string>([...localTables, ...sharedTables, ...qualificationTables]);
 const brainFtsShadowTables = new Set(["brain_fts_data", "brain_fts_idx", "brain_fts_content", "brain_fts_docsize", "brain_fts_config"]);
 const scopedTables = ["model_requests", "events", "brain_access_requests", "brain_grants", "job_state", "sessions", "job_plans", "web_requests",
   "budget_requests", "labs", "lab_operations", "task_workspace_attempts", "request_captures", "task_lease_operation_projects", "request_protocol_projects",
-  "worker_action_requests", "product_deliveries", "product_delivery_history"] as const;
+  "worker_action_requests", "product_deliveries", "product_delivery_history", "project_request_protocol", "project_request_holds", "project_request_spend"] as const;
 
 function assertClassifiedSchema(db: Db): void {
   const rows = z.array(z.object({ schema: z.literal("main"), name: z.string(), type: z.enum(["table", "virtual", "shadow"]) }).passthrough())

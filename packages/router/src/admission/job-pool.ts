@@ -1,4 +1,5 @@
 import type { Db } from "../storage/db.js";
+import { taskRequestsIncludingPreparations } from "./project-request-totals.js";
 
 /**
  * A job's request pool (budget control D1 and D2): every worker task a supervisor delegates is
@@ -41,7 +42,7 @@ export function extraRequests(db: Db, taskId: string): number {
 }
 
 function charged(db: Db, taskId: string): number {
-  return (db.prepare("SELECT COUNT(*) AS n FROM request_charges WHERE task_id = ?").get(taskId) as { n: number }).n;
+  return taskRequestsIncludingPreparations(db, taskId);
 }
 
 /**

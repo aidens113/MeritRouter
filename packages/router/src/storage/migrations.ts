@@ -1049,4 +1049,32 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX broker_paid_spend_key_window ON broker_paid_spend(key_ref,created_at);
   `,
+  // Project-private two-store protocol. No credential or physical-accounting authority is copied here.
+  `
+  ALTER TABLE physical_requests ADD COLUMN unbounded_cost INTEGER NOT NULL DEFAULT 0 CHECK(unbounded_cost IN (0,1));
+  CREATE TABLE project_request_protocol (
+    request_id TEXT PRIMARY KEY,project_id TEXT NOT NULL,owner_json TEXT NOT NULL,fingerprint TEXT NOT NULL,
+    binding_json TEXT NOT NULL CHECK(length(CAST(binding_json AS BLOB))<=262144),
+    global_json TEXT NOT NULL CHECK(length(CAST(global_json AS BLOB))<=131072),
+    reservation_json TEXT NOT NULL CHECK(length(CAST(reservation_json AS BLOB))<=262144),
+    phase TEXT NOT NULL CHECK(phase IN ('prepared','bound','dispatch_intent','settled','retired','uncertain','quarantined')),
+    global_receipt_json TEXT,dispatch_id TEXT,transport_consumed INTEGER NOT NULL DEFAULT 0 CHECK(transport_consumed IN (0,1)),
+    outcome_json TEXT CHECK(length(CAST(outcome_json AS BLOB))<=1048576),outcome_digest TEXT,reason_code TEXT,
+    created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX project_request_protocol_pending ON project_request_protocol(phase,request_id);
+  CREATE TABLE project_request_holds (
+    request_id TEXT NOT NULL REFERENCES project_request_protocol(request_id),task_id TEXT NOT NULL REFERENCES tasks(id),project_id TEXT NOT NULL,
+    lease_incarnation TEXT NOT NULL,run_count INTEGER NOT NULL,input_tokens INTEGER NOT NULL CHECK(input_tokens>=0),
+    output_tokens INTEGER NOT NULL CHECK(output_tokens>=0),paid_usd REAL NOT NULL CHECK(paid_usd>=0),
+    active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),PRIMARY KEY(request_id,task_id)
+  );
+  CREATE INDEX project_request_holds_task ON project_request_holds(task_id,active);
+  CREATE TABLE project_request_spend (
+    request_id TEXT NOT NULL REFERENCES model_requests(id),task_id TEXT NOT NULL REFERENCES tasks(id),project_id TEXT NOT NULL,
+    lease_incarnation TEXT NOT NULL,run_count INTEGER NOT NULL,reserved_usd REAL NOT NULL CHECK(reserved_usd>=0),
+    liability_usd REAL NOT NULL CHECK(liability_usd>=reserved_usd),actual_usd REAL CHECK(actual_usd>=0),global_outcome_digest TEXT,
+    PRIMARY KEY(request_id,task_id)
+  );
+  `,
 ];

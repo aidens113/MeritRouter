@@ -246,4 +246,20 @@ describe("minimal synchronous global accounting broker", () => {
     expect(() => f.broker.reserveGlobal(input)).toThrow(/conflict/);
     expect(physicalRequestCount(f.db, 0)).toBe(0);
   });
+  it("keeps unpriceable paid liability globally fenced across reopen and counts its minimum once", () => {
+    const f = setup({ paid: true }), receipt = f.broker.reserveGlobal(f.request()).receipt;
+    f.broker.beginDispatchGlobal(ref(receipt), "dispatch");
+    const incident = { ...ref(receipt), outcomeDigest: "f".repeat(64), minimumUsd: 0.5, code: "cache_write_price_unknown" as const };
+    expect(f.broker.quarantineUnboundedCost(incident)).toMatchObject({ state: "dispatch_intent", unboundedCost: true,
+      costQuarantined: true, liabilityUsd: 0.5, actualUsd: null, quarantineOutcomeDigest: incident.outcomeDigest });
+    expect(f.broker.quarantineUnboundedCost(incident).quarantineConflict).toBe(false);
+    expect(f.spend.windowSpend(0)).toBe(0.5);
+    expect(f.spend.summary().byEndpoint[0]).toMatchObject({ requests: 1, usd: 0.5 });
+    expect(() => f.broker.settleGlobal(settle(receipt, { actualUsd: 0, costBasis: "not_billed" }))).toThrow(/cost_quarantine/);
+    f.db.close(); const reopened = openDatabase(f.globalDir, { durability: "full" }); databases.push(reopened);
+    const spend = new PaidSpend(reopened, f.env.cfg, new KeyVault(reopened, f.globalDir), () => f.now);
+    const broker = new SqliteRequestAccountingBroker(reopened, { cfg: f.env.cfg, spend, authorize: () => f.authority, now: () => f.now });
+    expect(broker.readReceipt(receipt.requestId)?.unboundedCost).toBe(true);
+    expect(spend.globalDenial(0)).toMatch(/unexpected provider cost/); expect(spend.windowSpend(0)).toBe(0.5);
+  });
 });

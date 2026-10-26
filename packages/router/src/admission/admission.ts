@@ -12,6 +12,7 @@ import { projectLimits } from "../projects/schema.js";
 import { workerHeld } from "./job-pool.js";
 import { SqliteRequestAccounting } from "./sqlite-request-ledger.js";
 import type { RequestOutcomeDTO } from "./request-ledger.js";
+import { preparedTaskTotals, preparedTaskPurposes, taskRequestsIncludingPreparations } from "./project-request-totals.js";
 
 export { UNLIMITED_REQUESTS } from "../config/schema.js";
 
@@ -91,7 +92,7 @@ export interface BudgetCarve {
 const TERMINAL_TASK_STATES = new Set(["completed", "failed", "cancelled", "budget_exhausted"]);
 
 function requestsCharged(db: Db, taskId: string): number {
-  return (db.prepare("SELECT COUNT(*) AS n FROM request_charges WHERE task_id = ?").get(taskId) as { n: number }).n;
+  return taskRequestsIncludingPreparations(db, taskId);
 }
 
 /**
@@ -257,7 +258,8 @@ export class Admission {
         "SELECT COUNT(*) AS requests, COALESCE(SUM(input_tokens), 0) AS inputTokens, COALESCE(SUM(output_tokens), 0) AS outputTokens FROM request_charges WHERE task_id = ?",
       )
       .get(taskId) as TaskUsageTotals;
-    return r;
+    const prepared = preparedTaskTotals(this.db, taskId);
+    return { requests: r.requests + prepared.requests, inputTokens: r.inputTokens + prepared.inputTokens, outputTokens: r.outputTokens + prepared.outputTokens };
   }
 
   /** Requests charged to a task, by purpose (see purposeCategory). */
@@ -267,6 +269,7 @@ export class Admission {
       .all(taskId) as Array<{ purpose: string; n: number }>;
     const out: Record<RequestPurpose, number> = { classification: 0, execution: 0, verification: 0, repair: 0 };
     for (const r of rows) out[purposeCategory(r.purpose)] += r.n;
+    for (const r of preparedTaskPurposes(this.db, taskId)) out[purposeCategory(r.purpose)] += r.n;
     return out;
   }
 
