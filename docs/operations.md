@@ -1206,3 +1206,24 @@ Usage displays distinguish measured zero cache tokens from unknown usage. Task n
 are unknown if any cache share is unknown; aggregate known cache totals are lower bounds and
 new-input totals are upper bounds until every contributing request reports cache usage. These
 labels do not alter provider billing or conservative paid reservations.
+
+
+### Reconciling a dead local model transport
+
+An interrupted process can leave a nonce-bound provider slot whose remote request outcome is
+unknown. Lease expiry alone cannot release it. The trusted local operator can inspect one
+identified modern request and reconcile only its exact retained snapshot:
+
+```sh
+meritrouter transport inspect <requestId> --project <project> --config <file>
+meritrouter transport reconcile <requestId> --expected <snapshotDigest> --reason "operator explanation" --project <project> --config <file>
+```
+
+Reconciliation requires the original captured lease to be inactive, an exact matching
+request/slot/nonce/owner/project binding, and OS proof that the same-host owner PID is absent.
+Live, inaccessible, foreign, malformed, anonymous, quarantined and mismatched owners refuse.
+The operation atomically marks the request uncertain, retains its conservative request/token
+charges and paid/key quota reservations, releases only the proven-dead local transport slot,
+and records an idempotent project-scoped receipt. It does not establish remote cancellation,
+completion or billing outcome. A matching retry returns the committed receipt; a changed
+snapshot or conflicting settlement refuses. There is no force bypass or model/MCP tool.

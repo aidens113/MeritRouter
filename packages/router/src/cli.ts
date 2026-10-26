@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { TransportRecovery } from "./operations/transport-recovery.js";
 import { readFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import path from "node:path";
@@ -100,6 +101,7 @@ async function main(): Promise<number> {
       after: { type: "string" },
       limit: { type: "string" },
       reason: { type: "string" },
+      expected: { type: "string" },
       human: {type:"boolean",default:false},
       grant: { type: "string" },
       importance: { type: "string" },
@@ -183,6 +185,15 @@ async function main(): Promise<number> {
   try {
     if (explicit && cmd !== "projects") project();
     switch (cmd) {
+      case "transport": {
+        const [action, requestId, extra] = args;
+        if (!requestId || extra || !["inspect", "reconcile"].includes(action ?? "") || values.force || values.yes || values.human)
+          throw new MeritRouterError("usage", "usage: transport inspect <requestId> | transport reconcile <requestId> --expected <snapshotDigest> --reason <text>");
+        const recovery = new TransportRecovery(sy.db, sy.admission, sy.spend);
+        const result = action === "inspect" ? recovery.inspect(requestId, idScope()) : recovery.reconcile({ requestId, expected: values.expected, reason: values.reason }, idScope());
+        out(result, true);
+        return 0;
+      }
       case "projects":
         return await projectsCommand(sy, args, values, json, select);
       case "labs": {

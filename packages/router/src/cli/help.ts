@@ -51,6 +51,10 @@ Setup
                                 a daemon or separate worker executes queued work. --worker
                                 explicitly runs an install-wide worker in this process;
                                 --no-worker retains the passive behavior.
+  transport inspect <requestId> inspect one nonce-bound local transport hold and its snapshot
+  transport reconcile <requestId> --expected <digest> --reason <text>
+                                explicitly reconcile a proven-dead local transport owner;
+                                retain uncertain accounting and release only that exact slot
   models [--all]                list models with status and eligibility
   models scan                   list the models of every provider with a usable key, refresh
                                 free daily quotas and paid prices (exit 1 if nothing was listed)
