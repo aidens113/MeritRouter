@@ -106,6 +106,24 @@ Exit0: **26 PASS** across4 files,24.00s (service2, read-only Compose client10, a
 task validation6). No existing assertions/source changed. Dist-dependent process-owner
 kill/adoption tests remain pending the supervisor's rebuilt router signal.
 
+After the supervisor rebuilt router and panel, MAIN dist-dependent regression command:
+
+```text
+pnpm exec vitest run tests/labs.test.ts tests/labs-task-attempt.test.ts tests/labs-task-prune.test.ts tests/project-task-lab-deletion.test.ts tests/labs-browser.test.ts tests/labs-scripted.test.ts --maxWorkers=1
+```
+
+Exit0: **57 PASS** across6 files,581.67s. Counts: retained Labs18, task-attempt16, pruning11,
+project deletion3, actual Chrome browser8 and scripted team1. Verified real cross-process
+service adoption/restart, owner death in both fault windows, process/resource cleanup,
+foreign listener/source preservation and exact project deletion behavior. Workspace runtime
+source remained unchanged for this entire selected snapshot; C3workspace activation began
+only after this result. No whole-router aggregate claim is made here.
+
+The approved additional owned test calls actual `validateComposeCanonical` with a real
+project-local Lab data directory, then reseals an authority pointing to sibling project
+state and verifies refusal. Final new-file run: **18 PASS**,10.49s. Production Lab/Compose
+source did not change after the earlier135-case MAIN result.
+
 ## Limits and handoff
 
 - Actual downstream projects own their `.MeritRouter` directories. The router source checkout

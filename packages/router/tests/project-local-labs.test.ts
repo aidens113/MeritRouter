@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { LabManager } from "../src/labs/lab.js";
 import { LabRecordSchema } from "../src/labs/store.js";
 import { composeMountPathAllowed } from "../src/labs/compose-mount-policy.js";
+import { validateComposeCanonical } from "../src/labs/compose-recipe.js";
 import { labOwnedPath } from "../src/labs/paths.js";
 import { ProjectRegistry } from "../src/projects/registry.js";
 import { openDatabase, type Db } from "../src/storage/db.js";
@@ -83,6 +84,23 @@ describe("project-owned Lab roots", () => {
     expect(created.lab.root).toBe(path.join(env!.repo, ".MeritRouter", "labs", "alpha", "linked"));
     expect(created.lab.repositories[0]!.source).toBe(link);
     await manager.destroy("alpha", "linked");
+  });
+  it("validates real project-local Compose data while refusing resealed sibling-state mounts", async () => {
+    const manager = setup(), { lab } = await manager.create("alpha", "compose");
+    const data = path.join(lab.root, "data", "db"), worktree = lab.repositories[0]!.worktree;
+    const image = `fixture/app@sha256:${"a".repeat(64)}`, mount = { source: data, target: "/data", readOnly: false };
+    const authority = { labRoot: lab.root, worktree, dataRoots: [data], manifest: path.join(worktree, "compose.yaml"), manifestSha256: "b".repeat(64), projectName: "sy-project-local",
+      services: { web: { image, environment: {}, ports: [], mounts: [mount] } } };
+    const document = { name: authority.projectName, networks: { default: { driver: "bridge" } }, services: { web: { image,
+      read_only: true, cap_drop: ["ALL"], security_opt: ["no-new-privileges:true"], restart: "no", networks: { default: null },
+      volumes: [{ type: "bind", source: data, target: "/data", read_only: false }] } } };
+    expect(validateComposeCanonical(document, authority).services.web!.volumes[0]!.source).toBe(data);
+    const state = path.join(env!.repo, ".MeritRouter", "state"); mkdirSync(state);
+    const forgedAuthority = structuredClone(authority), forgedDocument = structuredClone(document);
+    forgedAuthority.dataRoots = [state]; forgedAuthority.services.web.mounts[0]!.source = state;
+    forgedDocument.services.web.volumes[0]!.source = state;
+    expect(() => validateComposeCanonical(forgedDocument, forgedAuthority)).toThrow(/mount_denied/);
+    await manager.destroy("alpha", "compose");
   });
   it("rejects metadata junctions before writes or persistent Lab admission", async () => {
     const manager = setup(), foreign = path.join(env!.dir, "foreign");
