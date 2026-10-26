@@ -118,6 +118,7 @@ async function main(): Promise<number> {
       "team-requests": { type: "string" },
       yes: { type: "boolean", default: false },
       // meritrouter mcp (mcp/serve.ts)
+      worker: { type: "boolean", default: false },
       "no-worker": { type: "boolean", default: false },
       "no-panel": { type: "boolean", default: false },
       http: { type: "boolean", default: false },

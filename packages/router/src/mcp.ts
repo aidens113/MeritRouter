@@ -5,7 +5,7 @@ import { parseMcpArgv, runMcpServer } from "./mcp/serve.js";
  * MeritRouter's MCP server as a standalone script (`node dist/mcp.js`), the same as
  * `meritrouter mcp`. Tools are in mcp/tools.ts, transports in mcp/serve.ts and mcp/http.ts.
  *
- * Arguments: [--config <file>] [--project <slug>] [--no-worker] [--http] [--host <h>] [--port <n>]
+ * Arguments: [--config <file>] [--project <slug>] [--worker | --no-worker] [--http] [--host <h>] [--port <n>]
  */
 Promise.resolve()
   .then(() => runMcpServer(parseMcpArgv(process.argv.slice(2))))

@@ -4,8 +4,8 @@
 // `--project <slug>`, else MERITROUTER_PROJECT, else the only project, else the project whose
 // repository contains the working directory; with none, it refuses to start and lists the
 // projects. Tools default to that project (and the brain tools work in its brain). It runs the
-// worker loop in-process unless `--no-worker` (when a daemon already runs the worker for every
-// project); in-process jobs continue only while this process lives (state is persisted
+// worker loop only with explicit `--worker`; by default a daemon or separate worker executes
+// queued work for every project. In-process jobs continue only while this process lives (state is persisted
 // incrementally and recovered on the next start). It keeps the web panel reachable while it
 // runs (`panel.auto_start`; see operations/panel.ts).
 //
@@ -28,7 +28,7 @@ export const MCP_DEFAULT_PORT = 4478;
 export interface McpOptions {
   config?: string;
   project?: string;
-  /** Run the worker loop in this process (false with --no-worker). */
+  /** Run the worker loop in this process; CLI callers must explicitly select --worker. */
   worker: boolean;
   /** Streamable HTTP instead of stdio. */
   http: boolean;
@@ -40,6 +40,7 @@ export interface McpOptions {
 export const MCP_FLAGS = {
   config: { type: "string" },
   project: { type: "string" },
+  worker: { type: "boolean", default: false },
   "no-worker": { type: "boolean", default: false },
   http: { type: "boolean", default: false },
   host: { type: "string" },
@@ -48,6 +49,7 @@ export const MCP_FLAGS = {
 
 /** Options from parsed flags. `--host` or `--port` alone also selects HTTP. */
 export function mcpOptions(values: Record<string, unknown>): McpOptions {
+  if (values.worker === true && values["no-worker"] === true) throw new MeritRouterError("usage", "choose --worker or --no-worker, not both");
   const str = (v: unknown) => (typeof v === "string" && v ? v : undefined);
   const host = str(values.host);
   const portText = str(values.port);
@@ -56,14 +58,14 @@ export function mcpOptions(values: Record<string, unknown>): McpOptions {
   return {
     ...(str(values.config) ? { config: str(values.config)! } : {}),
     ...(str(values.project) ? { project: str(values.project)! } : {}),
-    worker: values["no-worker"] !== true,
+    worker: values.worker === true,
     http: values.http === true || host !== undefined || portText !== undefined,
     host: host ?? MCP_DEFAULT_HOST,
     port,
   };
 }
 
-/** Options from a command line: [--config <file>] [--project <slug>] [--no-worker] [--http] [--host <h>] [--port <n>]. */
+/** Options from a command line: [--config <file>] [--project <slug>] [--worker | --no-worker] [--http] [--host <h>] [--port <n>]. */
 export function parseMcpArgv(argv: string[]): McpOptions {
   const { values } = parseArgs({ args: argv, strict: false, allowPositionals: true, options: MCP_FLAGS });
   return mcpOptions(values);
