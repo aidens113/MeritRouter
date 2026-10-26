@@ -6,20 +6,29 @@ own working document with decisions, phases, ledger, and reports.
 
 ## Current effort (2026-10-25)
 
-Facebook MVP unaccepted; canonical D:/SwitchYardProjects/facebook-mvp only.git. Source retained
-in isolated worktrees; final validated app MUST materialize canonicalfolder. No Codex appcode.
-Job t_0mvof1bldb6e51dd16e6a/session s_0mvof1c9ma19e9ca8fc5a cap500/$0paid unchanged.
-Remote dev/main c77c5c5; localdev9efd8a7 integrates reviewed memory/panel/native/passiveMCP.
-Full1536:1531PASS/2timingFAIL/3SKIP, exact2/2rerunPASS; final merged55/55PASS137.88s;
-recursive typecheckPASS, recursivebuildPASS. No aggregate whollygreen claim.
-Primary4477 PID2776/daemon24532/worker13944 use D:/SwitchYardRouter-repair-hydration.
-Do not delete active feature worktree. Older MCP defaultworker auto-respawned/claimed tasks;
-exactprocesses retired, hostargs now--no-worker, main compiledMCP rebuilt defaultpassive.
-Parent blocked8/8persistent transportholds from6deadidentifiedowners+2anonymousquarantined;
-300s capacitydefer/resume observed without providerdispatch. Never clear anonymousholds or
-resetaccounting. Guarded explicit operator dead-owner recovery in implementation by
-failed_supervisor_recovery, isolated D:/SwitchYardRouter-transport-recovery. No live recovery
-performed. Read active CurrentState for exact original API/UI repair source IDs and nextsteps.
+Facebook MVP STILL undelivered; canonical D:/SwitchYardProjects/facebook-mvp only.git.
+Root authors no app source; user requires active MeritRouter oversight until delivery.
+Authoritative [Current State](supervisor-lifecycle-stall.md) has exact source IDs and next steps.
+Root job t_0mvof1bldb6e51dd16e6a cap800/$0 after explicit request7 bounded grant150; all charges retained.
+Latest supervisor s_0mvokqjt8ab8508e616bc reopened after parent cancelled approved API install
+and finished blocked. Native API source t_0mvok15gg2bc49ed1b864 has19paths/install/type/45tests
+passed but invalid evidence report; must fresh native report repair with25requests, NOT redo code.
+UI original t_0mvof2ck584c7903ff4b2 retained12files; newest proof permits native reuse safely.
+Runtime daemon10260 now from D:/SwitchYardRouter-repair-quiescent670c20c; panel4477 PID2776
+from repair-hydration27aff23 stays authorized. Do not remove runtime trees or stop activechecks.
+Root operates exact panel approvals; no more user confirmation for routine installs/tests.
+
+Remote dev/main172e6f4; local dev merged memory6dda, transportc926, guard9cef and UIproof670.
+Full main prior guard:1574PASS/0FAIL/3SKIP; fullguard1597PASS/0FAIL/3SKIP.
+Latest UIproof full exec1495 exit0:1626PASS/0FAIL/3SKIP1495.65s;91focusedPASS,
+independent29PASS. Combined recursive typecheck/buildPASS after merges.
+Source/report/docs not all published; see actual git status. No whollygreen pending-suite claim.
+Guarded deadowner recovery6 audited exact requests left charges/anonymous2holds unchanged.
+Resume memory actual manifest restored12000budget/11633estimate/11entries. Passive MCP
+flag--no-worker in exact hostargs; use fresh passive SDK if old connected transportclosed.
+Current separate read-only review active-validation-cancellation-review traces supervisor
+cancelling approved/running worker; no source fix yet. Future app graph MUST include UIfeatures,
+independentreview, actual desktop/mobile/browser/persistence/security checks and canonicalpromotion.
 
 Historical checkpoints below are older; active working document is authoritative.
 

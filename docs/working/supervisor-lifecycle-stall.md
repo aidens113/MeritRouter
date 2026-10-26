@@ -1,6 +1,6 @@
 # Supervisor lifecycle stall investigation
 Status: Active
-Status detail: Repair/panel/passive-MCP corrections validated locally; guarded dead-owner transport recovery active; app undelivered.
+Status detail: Recovery framework full1626pass/0fail/3skip with combined checks; retained app repairs active, app undelivered.
 Created: 2026-10-23
 Last updated: 2026-10-25
 Owner: Senior supervisor agent
@@ -10,92 +10,217 @@ Related: [supervised delivery](supervised-delivery-v2.md)
 
 ## Current State
 
-User wants a near1:1 Facebook MVP built through MeritRouter. Initiating Codex authors NO
-application source; workers author app code. Root owns coordination/framework fixes/review,
-integration/actual testing and final delivery. KEEP OVERSIGHT ACTIVE until delivered or user
-explicitly pauses; resuming/dispatching is not completion. User authorized actual panel
-operation, including exact routine commands with truthful Codex operator reasons. Permission
-UX clarity/discoverability explicitly DEFERRED. Panel http://127.0.0.1:4477.
+User requires a near1:1 Facebook MVP THROUGH MeritRouter. Root authors NO application
+source; runtime workers implement it. Root owns oversight, framework fixes, integration,
+independent checks and actual panel command operation. KEEP WORKING until delivered or user
+pauses; starting/resuming a task is not completion. Routine exact command approvals already
+authorized, truthful actor operator/Codex reason. Approval UX clarity explicitly DEFERRED.
+Panel http://127.0.0.1:4477 (PID2776, exec65602, repair-hydration built27aff23); preserve its tree.
 
-No usable app/FINAL acceptance. Canonical D:/SwitchYardProjects/facebook-mvp verified only.git,
-empty master at566a315. Source is retained in isolated worktrees. Final verified deliverable
-MUST materialize in canonical folder, not only a private branch. No manual app source fixes.
+NO usable app/FINAL acceptance. Canonical D:/SwitchYardProjects/facebook-mvp still only.git,
+master566a315. Final verified app MUST materialize there. Source remains in isolated worktrees.
+Root job t_0mvof1bldb6e51dd16e6a, latest linked supervisor s_0mvokqjt8ab8508e616bc,
+label facebook-ui-api-continuation-v6. Base3b5b6fa5fc5ccd978ac753d9a58a6752f2f16a88 core45tests.
+Job worktree D:/SwitchYard/.switchyard/worktrees/job-t_0mvof1bldb6e51dd16e6a-app.
+Finite800requests/$0paid after explicit request7 grant150 (prior650; request6 raised500->650); preserve all charges,
+prior v5 charges299 and original deadline. No paid routes or hidden reset/grant.
 
-Active root t_0mvof1bldb6e51dd16e6a, session s_0mvof1c9ma19e9ca8fc5a,
-label facebook-ui-api-continuation-v6, finite500requests/$0paid unchanged. Prior v5 charges299
-retained. Base3b5b6fa5fc5ccd978ac753d9a58a6752f2f16a88 includes verified core45tests+contract.
-Root worktree D:/SwitchYard/.switchyard/worktrees/job-t_0mvof1bldb6e51dd16e6a-app.
-Original API task t_0mvof2ck58bfd71573461, terminal budget_exhausted73actual,
-head bf459d167eecbf60675e4067f629ace533e4daaf, complete18files/820lines, scope app/api/**+lib/api.ts.
-Its one compiler error: users/search route must import ../../../../lib/api.
-Original UI task t_0mvof2ck584c7903ff4b2, completed/unmet41actual,
-head c7896f0e1703db4151d8713b1a72101987475fd1, complete12files/858lines.
-Scope app/layout.tsx,app/page.tsx,app/login/**,app/globals.css,components/shell/**,
-components/feed/**,lib/client.tsx. app/page imports ../lib/client and ../components/feed/*.
-Use explicit native repair_from_task ORIGINAL IDs in draft AND dispatched brief, fresh labels,
-no failed-original depends_on. Preserve all original files; do not reconstruct from notes.
-Current project decision phased-plan-core-integrated-next-v1 digest3299a27bb14de6fff747f68e988089959e66762ad2f47f98b9877dbabdf59133
-already records this; new memory priority includes it on resume. Original source uncertain
-commands are quiesced; source remains unmet until fresh repair/check/review/integration.
+LATEST API SOURCE t_0mvok15gg2bc49ed1b864 (api-live-retained-v4): all19 changed paths,
+imports plus authenticated GET and friendship discovery P1 fixes. Source commit16c3cd5110853bb7245985fa00adcf0fda914200,
+TREE a5fd95c2a2ca4207225bf5722fc1cf1c7da5338a. All sealed install/typecheck/45tests passed.
+Completed invalid_output ONLY: model used app:artifact: refs, then unread package.json refs.
+Correct output-contract rejection; do NOT weaken evidence validation or accept original.
+Previous t_0mvokhrgw0108cf0efc82 api-verify-v5 correctly native-repaired latestAPI, no code edits.
+Descriptor13commits; hydration events1820started/1821completed, headd73b6a67/treea5fd95c exact.
+Parent cancelled it during approved install; command uncertain lease_lost, quiesced1792977820529.
+Parent completed blocked; FINAL rejected and public resumeTask opened s_0mvokqjt8ab8508e616bc.
+Fresh continuation requires API reportrepair25 and UI native35; no code reconstruction.
+If valid, accept/integrate THIS new task via supported lifecycle, keep old invalid_output.
+Evidence syntax artifact:<returned/read ID>, NEVER app:artifact:<ID> or unread source lines.
 
-Failed copy repairs UI t_0mvofq8c4cf477f18ab32 exhausted28actual with0files;
-API t_0mvofq8c4ef1582df90d3 deadline48actual omitted three essential post routes.
-Do not accept or hydrate these incomplete candidates. Later copy retries api-create/ui-create
-cancelled3each; api-create2 t_0mvohjenhef576b148e66 cancelled17 and ui-create2
-t_0mvohjenhf5eed6dcd0de cancelled13 after old owner lease expired. Preserve all charges.
-Future ui-features, independent-review and runtime-validation nodes must be remapped to new
-successful repair nodes. Parent also needs its own npm install, actual stage transitions,
-meaningful endpoint/desktop/mobile/restart-persistence tests and exact checked final candidate.
-Each isolated worktree requires deps. Long commands timeout_ms300000; keep owning approvaltab
-open until authoritative terminal/quiescent result, no reload/navigation during command.
+ORIGINAL UI t_0mvof2ck584c7903ff4b2, completed/unmet41, commitc7896f0e1703db4151d8713b1a72101987475fd1,
+12files858lines. Scope app/layout.tsx,app/page.tsx,app/login/**,app/globals.css,
+components/shell/**,components/feed/**,lib/client.tsx. Fix page imports ../lib/client and
+../components/feed/{Stories,Composer,PostCard}. Native repair_from_task MUST exact originalID
+in BOTH goal and structured field; no artifact copying, source reconstruction or failedoriginal dependencies.
+Original API t_0mvof2ck58bfd71573461 is superseded by latest checked API above; don't redo it.
 
-Actual runtime: panel4477 PID2776 exec65602 and daemon24532/worker13944 from
-D:/SwitchYardRouter-repair-hydration built27aff23. Keep feature worktree while runtime uses it.
-Old main MCP PID20136 defaultworker silently claimed parent/newtasks; client respawned20656,
-then20328 despite daemon replacement. Verified/stopped exact PIDs. Exact host config MCP args
-now include --no-worker; cached args still required retiring old compiled entry temporarily.
-Main dist rebuilt passive after source integration; temporary renamed backup removed.
-No anonymous holds cleared. Parent now sole claimant13944 but waits before model dispatch:
-provider_slots8/8 held (6identified historical dispatch_intent+2anonymous quarantined).
-No new ledger row during capacity wait is expected. Actual300s timeout/defer/resume observed
-1792973096947. Existing conservative nonce/lease-bound holds intentionally survive lease death.
-A new guarded operator transport-recovery implementation is active in isolated
-D:/SwitchYardRouter-transport-recovery (feat/transport-recovery); no live mutations yet.
-Design approved: exact request snapshot+nonce/owner/lease/protocol binding, samehost PID
-positively absent (only ESRCH), nonlive originallease, sync atomic UNCERTAIN accounting+
-exact slot CAS+typed durable audit, idempotence. Preserve requests/token/paid/keyquota;
-never infer unsent, clear anonymous/quarantinedholds, resetbudgets, replay or raisecapacity.
-Worker failed_supervisor_recovery owns code/tests/ownreport; root independentreview pending.
+UI resolver blocker now FIXED in frozen D:/SwitchYardRouter-repair-quiescent, commit670c20c,
+feat/repair-quiescent-operations off9cefdd0. Missing nested recipe outcome can establish source
+eligibility ONLY via exact completedauthor/outerunknown-effect/durablequiescent broker proof;
+no acceptance, replay, source journal mutation or accounting reset. Actual UI author
+s_0mvof2yp16ecca8ab6022 seq302 call ...:call_8qihlavf:recipe:0 maps exact action
+wa_0mvof7is3de7bc88131ab, quiesced1792968660758. Readonly production probe eligibilityTRUE,
+current sourcehash7024c7e202587d0c6fc49f9e1cda6f86497783f3b0e81836a2826caf3fe79b5d.
+Also guards retained PATCH artifact metadata refs when model omits source taskID; no body grants.
+Root focused69+22=91PASS; independent29PASS; root package typecheck/buildPASS.
+FULL exec1495 exit0:1629total/1626PASS/0FAIL/3SKIP1495.65s, TEMP/meritrouter-quiescent-patch-full.json.
+Activate built670 daemon AFTER active approved commands settle. NEVER stop during running
+command or incomplete native hydration. Old daemon22188 stopped safely after child quiesced; daemon10260 now built670c20c.
+Supported daemon stop/start; await actual completion, public resumeSession handles dead lease.
 
-Source remote dev/main c77c5c5; local dev9efd8a7 integrates memoryfba7b01,
-approval868c27e+28bf526, native4dd523d, passiveMCPbcddc5a via --no-ff merges. Unpublished.
-Native39/39 focused+independent reviewCLEAR; full frozen1536tests1531PASS/2FAIL/3SKIP
-1293.89s, both40s process-acceptance-budget timing failures; exact unchanged-source2/2PASS
-12.65s. Full aggregate not whollygreen. Final merged affected6files55/55PASS137.88s;
-root recursive typecheckPASS, recursive production buildPASS.
-PassiveMCP actual bothentrypoint default/no-worker submission/resume0claims/0requests;
-explicit --worker executesfakeprovider;14/14, independent reviewCLEAR. Main compiled
-mcpOptions defaultWorkerfalse/explicitWorkertrue independently observed. No MCP/harness
-transport-clear capability planned; operator-only service/CLI.
+Next: finish API checks/integration; activate670; fresh native UI repair; ui-features owning
+app/profile/**,app/people/**,app/notifications/**,components/features/**; independent review;
+combined install/typecheck/test/build; actual desktop1440/mobile390 browser flows/screenshots,
+auth/ownership/DTO/persistence/restart. Parent needs own deps. Runtime validator generatedconfig
+scope next-env.d.ts,tsconfig.json,package-lock.json. Full graph must remain visible and remapped
+from successful phase labels. Use record_delivery_observation ONLY for independently checked
+exact candidate evidence, then separate FINAL. No fabrication or blanket acceptance.
 
-Panel correction independently verified actual demo803c3b16,0providerrequests:
-browserabort still commandexit0/1915ms; timeout600ms quiesced685ms; explicitcancel386ms;
-7tabs/6hidden1SSE, cursorcatchup and approvalqueue0.4ms/exit0; refusal404/409/400/403.
-Root viewed1440x1000 screenshot. Stopped temp4488 PID2080, closed7demotabs. Evidence
-SHA256manifest TEMP/meritrouter-approval-liveness-803c3b16. Panelprocessdeath durability
-remains unimplemented. MainChromeCDP9337 owned; host config unchanged except exact MCPflag.
-Memory priority21focusedPASS; historical full1492PASS/17FAIL/3SKIP, exact failed+memory
-serial125/125PASS. New decisions prioritize before historicalfacts, existing caps/access kept.
+Latest typed memory ui-proof-ready-api-report-only-v1 digestc38cadd61c8820037e038b27d0a969c815556a9184f3e88d9a14763fc08567b8,
+Brain e06d423a; tells API finish, UI proof ready pending daemon activation, exact refs syntax,
+remaining graph/cap retained. Earlier native-repair-briefs-v2 and API-first decisions historical.
 
-Already published: automatic supervisors/plans/delegation, unavailablefree-model traversal,
-safe batching, persisted draft/dispatch/specbinding, trustedapprovalwait clock, measuredwait
-observation/recovery, checked-candidate sealing, bounded finite freemodel stallhandoff,
-partialplan futurephase preservation (verified live5nodes retained). Read reports/history
-for receipts; do not redo accepted source. Final app still needs independent review/testing.
-Historical checkpoints: [repair canary archive](supervisor-lifecycle-stall/archive/2026-10-25-repair-canary-checkpoint.md)
-and [earlier archive](supervisor-lifecycle-stall/archive/2026-10-25-live-source-checkpoints.md).
+Framework release: remote dev/main172e6f4 includes supervisor defaults/plans, free unavailable
+fallback, safe batching, futureplan preservation, approval navigation/SSE fixes, native repair,
+passive MCP. Main local dev fccd6ed adds c926ff7 transport recovery and6dda613 memory resume.
+Main exact full1577total/1574PASS/0FAIL/3SKIP1435.257s; recursive typecheck/buildPASS.
+Transport exact full1571total/1568PASS/0FAIL/3SKIP1348.207s; 65focused+9reviewPASS.
+Guard9cefdd0 and670c20c now merged into local dev; not published yet. Guard: root62focusedPASS, review14PASS, type/buildPASS;
+FULL1600total/1597PASS/0FAIL/3SKIP,423suitesPASS. Merge coherent units after root review;
+670 full green and recursive combined typecheck/buildPASS; publish completed recoveryunit with docs. Don't overwrite dist during
+MCP fullsuite. Working docs/reports main uncommitted, preserve them. Root only commits/pushes.
+
+Transport live recovery6 exact dead requests audit1673,1678..1682, all old charge hashes unchanged,
+UNCERTAIN retained, anonymous2 holds hash e5e2ed46efefab01549f949aac5273a9afe530d24636b4cb264f2495dfb5b163 unchanged.
+No anonymous deletion/replay/refund. Evidence TEMP/meritrouter-transport-recovery-evidence.
+Memory LIVEmanifest a_0mvoisg5h7fe8d5349212 restored12000budget/11633estimate/11entries;
+headroom projection fix verified with source/tests, real loop remains sole compactor.
+Host config only exact MCP --no-worker added; old cached worker-enabled MCP retired. Main
+connected MCP transport may be closed: use fresh passive SDK StdioClientTransport dist/mcp.js
+--config D:/SwitchYard/switchyard.config.yaml --project facebook-mvp --no-worker.
+
+Historical details/reports below and archives retain prior failures/charges. Do not hydrate
+abandoned incomplete copy tasks. API review smoke contract in reports/retained-api-review.md.
+Actual demo panel checks0providercalls proved browserabortcommand0, timeout/cancelquiescence,
+7tabs/6hidden1SSE and refusal guards; temp4488 stopped. Main4477 authorized stayrunning.
+ChromeCDP9337 owned; leave active approvaltab open until authoritative terminal/quiescent;
+close only owned finishedtabs to release connection capacity. No app remote push/deploy authorized.
+
+Current native repairs dispatched correctly: APIreport t_0mvokt9jwdd0100a8bdb4 (25requests),
+UI t_0mvokt9jw19c536bb1c16 (35requests); both exact source descriptors/modelstarted.
+UI install0/typecheck0; manual tests pending/running. API repeatedly chooses default30sec
+run_recipe installs -> uncertain timeout, despite300000 guidance; final automaticchecks use300000.
+Do not pass old unknowns or silently widen exact requests. Track misleading outerunknown diagnostics
+('lease lost' despite tasklease alive) and recipe timeout guidance as actual issue; no fix yet.
+Independent UI source review P1s root confirmed: Composer hardcodes user_ava and feed mountonly
+ignores auth changes/retains cached content afterlogout. Required typed decision
+ui-current-user-feed-required-v1 digest6fe8c05e5ddf4c5e51f46eba23a801272b275951396d0d1367a2fdaae82b8cec,
+Brainf830d743; mandatory bounded followup before delivery. Header search needs actual behavior,
+covered people/profile/notifications routes belong planned features. Actual browser proof pending.
+New cancellation fix active in isolated D:/SwitchYardRouter-active-validation, worker
+failed_supervisor_recovery. Review found unconditional model cancel_tasks + finish suggestion
+cancel + observations hide running actions allowed premature blockedfinish. Guard internal exact
+generation protectedpending/approvedrunning cancellation atomically, preserve externalauthority.
+Combined root recursive typecheck andbuild PASS after guard/UIproof merges. No source changed during fullsuite; newest670 source full is green. Isolatedcancellationunit remains separate, not yet merged/published.
 
 ## Worker Briefs
+### Brief: active-validation-ownership-review
+- Worker repair_hydration_review; read-only D:/SwitchYardRouter-active-validation.
+- Read Current State/implementation brief and changed supervisor-tools, runnerguidance, uniquelynamedtests/roles docs.
+- Check atomic currentgeneration ownership/descendants/mixedbatch protection for pendinghumanonly+approvedrunning; expired/stale/foreign/terminalnegativecases, legitimateexternalcancel unchanged, truthful runningobservations.
+- Coordinate finalfreeze before tests; own only reports/active-validation-ownership-review.md; no source/runtime/providers/commits. Report blockers/CLEAR with exact observed tests.
+
+### Brief: retained-ui-review
+- Worker repair_hydration_review; read-only original UI worktree D:/SwitchYard/.switchyard/worktrees/t_0mvof2ck584c7903ff4b2-r1-mvof2z9j and current repair oncefilesavailable.
+- Required reads: Current State; actual app/page.tsx, app/globals.css, lib/client.tsx, components/feed/**, components/shell/**, app/login/** only; shared INTERFACES.md as needed.
+- Review concrete Facebook MVP visual/functionality defects beyond known import fix; prioritize auth/feed/post CRUD/likes/comments/ownership, navigation and1440/390 responsive behavior. No claims from screenshot absence; label source-only findings.
+- Own only reports/retained-ui-review.md; no app/framework/runtime/config writes/providers/commits. Report P0/P1 with exact file/line and concrete bounded remedy; distinguish unsupported optionaltabs from broken coveredcontrol. Root actual browser verification later.
+
+### Brief: active-validation-ownership
+- Worker failed_supervisor_recovery; featurebranch/worktree D:/SwitchYardRouter-active-validation offa035193, isolated from fullsuite.
+- Implement reviewed rootcause guard, not prompt-only: internal supervisor cannot cancel exact-generation active child with pending human_only approval or operator-approved running command just to unblock finish. External operator cancellation/runtime deadlines retain authority.
+- Own packages/router/src/harness/supervisor-tools.ts and approved runners/supervisor.ts finish guidance; narrow owning service only if required; uniquelynamed tests/active-validation-ownership.test.ts; docs/roles.md; own report active-validation-ownership.md.
+- Must not touch appcode/liveconfig/store/runtime/sharedworkingdocs; no providers/commits. Report extra file needs before widening.
+- Enforce current authoritative action/generation at supported cancellation boundary, all-or-nothing for mixed batch, no await between check and cancel if race-sensitive. Existing task/project ownership stays binding.
+- await_tasks observations must expose actual running action state as well as pending/terminal; finish activechild refusal tells await rather than cancel. Preserve legitimate cancellation of unprotected siblings and external operator/runtime paths.
+- Regression actual approve->running->internalcancel refusal with child/action unchanged and finish stillblocked; pendingrefusal, stale generation/foreignaction nofalseprotection, terminalquiescent allows normalcancel, mixedbatch no partialsideeffects, externalcancel works.
+- Inspect source/types first; reuse exact action lease fields, no raw DB mutation. Run fake focused tests/typecheck/build after sourcefreeze. Root owns independent review, validation/integration/liveactivation.
+
+### Brief: active-validation-cancellation-review
+- Worker: failed_supervisor_recovery; read-only narrow investigation, no source edits/runtime mutations/providers.
+- Read Current State and exact supervisor session s_0mvoivuv3b9218b6ca526 seq592 onward.
+- Actual defect: parent cancel_tasks active t_0mvokhrgw0108cf0efc82 during approved/running wa_0mvokihn6b5581386cf3b, then finish_job blocked claiming pendingapproval.
+- Inspect finish/cancel lifecycle enforcement; propose safe root cause guard preserving legitimate cancellation. No prompt-only patch or blanket no-cancel rule.
+- Own only reports/active-validation-cancellation-review.md. Report cause, bounded fix proposal, validation plan; root will brief implementation separately.
+
+### Brief: quiescent-repair-review
+- Repository: D:/SwitchYardRouter-repair-quiescent sharedunit; bothcodeownersfrozen.
+- Task: independentreview exactUIoperationquiescence eligibility +patchmetadata source-reference guard.
+- Required reads: Current State; reports/repair-quiescent-operations.md and repair-patch-reference-guard.md; changed source/tests only.
+- Owns: only main docs/working/supervisor-lifecycle-stall/reports/quiescent-repair-review.md.
+- Must not touch: source/tests/shared docs/runtime/config/store/provider calls; no commits.
+- Definition of done: exactnestedrun_checks/run_recipe/session/call/index/declaredcommand/task/project/lease/cwd/currenthash/durablequiescence+outerunknown-effect proof; stillunmet/no journal/replayauthority/accountingwrites; negativesfailedclosed. Patchkindmetadata onlysameownsource/fullscope, nocapgrant/bodyread. Runselectedfake testswhenfrozen; report concreteblockers orclear.
+
+### Brief: repair-patch-reference-guard
+- Repository: D:/SwitchYardRouter-repair-quiescent, SAME unit as UIquiescence worker; disjoint fileownership.
+- Task: extend exact source-reference refusal to OWN retained PATCH artifact IDs in goal; actual model dropped taskID and referenced only inaccessible patchartifact after nativeUI eligibilityrefused, bypassingtaskIDguard.
+- Required reads: Current State; harness/repair-reference.ts and its tests; artifacts validated metadata/schema accessors.
+- Owns: harness/repair-reference.ts; tests/supervisor-lifecycle.test.ts; own main report repair-patch-reference-guard.md.
+- Must not touch: workspaces/repair-hydration.ts or new harness/repair-operation-quiescence.ts or repair-hydration tests (workerrepair_context_handoff); shared docs/runtime/config/store/providercalls; no commits.
+- Rule: exact artifact ID token (with/without artifact: prefix), validated metadata kind patch, maps to SAME owned terminalcoding parent/project/repo source with compatiblepathscope => require matching repair_from_task just as TaskIDref. No artifact bodyread, grants, natural-language inference or new authority; foreign/unowned/checklog/screenshot refs do not become sources. Existing currentintegratedreceipt exemption remains unchanged.
+- Tests actual APIpatcha_0mvofjo055767581894fc/UIpatcha_0mvof94fpd683b60c48cf case withtaskIDomitted =>zero plan/staff/grant/child effects; explicitmatchingfieldproceeds; missing/wrongkind/foreign/unknown/disjoint metadata noauthority; no source reads outside allowedscope; existingtaskID/integrated/undo safetykept.
+- Coordinate workerrepair_context_handoff before ANY broadtypecheck/build (treechanging); narrowown tests afterownsourcefreeze okay. Finalcombinedfreeze neededbefore rootfull. No changes realartifactstore orsourcejournal torepairproduction; trace readonlyonly.
+
+### Brief: repair-quiescent-operations
+- Repository: D:/SwitchYardRouter-repair-quiescent feat/repair-quiescent-operations offguard9cefdd0; isolated while fullsuitesrun.
+- Task: trace/fix actual UI source hydration refusal despite durable quiescent old install; never weaken unresolved effect safety.
+- Required reads: Current State; workspaces/repair-hydration.ts source pending-journal logic; native v2 operation durable receipt schema/action mapping; relevant tests.
+- Owns: workspaces/repair-hydration.ts; focused helper in owning area if essential (ask root); tests/repair-hydration.test.ts/new uniquelynamedtest; own main report repair-quiescent-operations.md.
+- Must not touch: app/runtime/store/config/source logs, shared docs, other frameworksource; no provider calls/commits. Actualstate readonly only.
+- Evidence: original API task t_0mvof2ck58bfd71573461 author s_0mvof32ozf4f8b6844f5a pendingNONE. Original UI t_0mvof2ck584c7903ff4b2 author s_0mvof2yp16ecca8ab6022 completed with pending seq302 run_recipe sideEffectcommand args{id:check:1}; outsideaction install30stimeout uncertain butquiesced1792968660758. Source clean committed12files; read durable operation/worker-action matching proof.
+- Definition of done: allow only an exact immutable source operation that is provably completed/failed/cancelled/quiescent and cannot replay, bound task/project/session/callID/incarnation/runCount/action/source. Do not infer from elapsedtime/taskterminal/summary or quiesced unrelated action; pending/running/unknown/ambiguous/mismatched/corrupt histories refuse. Preserve accounting and current/native hydration fences.
+- First trace exactproof and send proposal before broadimplementation. Then concrete real-runner regression simulating original timedout outer run_recipe +durable quiesced action with no outeroutcome, negative still-active/unmatched/foreign/partial; source remains unmet/newchecksmandatory.
+- Current originalUI source is readonly productionevidence, notfixture to mutate. No appendfake tooloutcome or rawstatefix. Root owns independent review/tests/operationalactivation.
+
+### Brief: repair-reference-review
+- Repository: D:/SwitchYardRouter-repair-reference; read-only independent review.
+- Task: inspect fresh source-reference guard, helper and lifecycle24cases after workerfreeze.
+- Required reads: Current State; guard writtenbrief and changed source/tests only.
+- Owns: only main docs/working/supervisor-lifecycle-stall/reports/repair-reference-review.md.
+- Must not touch: source/tests/shared docs/runtime/config/store/provider calls; no commits.
+- Definition of done: actionable missingfield/ambiguous/mismatch rejection before staffing/Gate/grants/plan/children; exact ownterminal/project/scope andactualchangedpaths/proven containment; disjoint/foreign/freshrefs noauthority; explicitselection andsameplannedsource preservation; idempotent dispatchedhistory stable. Coordinate finalfreeze before fake narrow tests; report concrete blockers or clear.
+
+### Brief: repair-reference-guard
+- Repository: D:/SwitchYardRouter-repair-reference feat/repair-reference-guard; isolated from frozen main/transport full suites.
+- Task: prevent actual pseudo-native repair brief referencing owned original task but omitting repair_from_task and telling worker copy inaccessible artifact; model labels alone are not structured recovery.
+- Required reads: Current State; harness/supervisor-tools.ts brief validation/delegation, supervisor-lifecycle.ts draft binding, related tests. Existing native resolver owns actual authority; do not weaken it.
+- Owns: harness/supervisor-tools.ts (or focused new helper within harness if necessary); tests/supervisor-lifecycle.test.ts or own new testfile; own main report repair-reference-guard.md only.
+- Must not touch: memory/source hydration/effect safety, app/runtime/config/store writes, shared docs; no provider calls/commits.
+- Implement narrow code-enforced validation: implement briefs explicitly referencing an OWN same-parent/project terminal coding task ID in goal whose retained allowed scope is compatible with target must supply explicit matching repair_from_task. Refuse with actionable exact field/source before draft publication, staffing/budget reservation, worktree/child side effects. Validate both plan_work draft/dispatch and delegate.
+- This is not auto-apply or authority from prose: reference only triggers refusal, normal explicit resolver still verifies source provenance/scope. Do not infer source from label/native wording, do not auto-pick ambiguous candidates, do not reject fresh implementation or disjoint references to shared UI/API contracts. Discuss any necessary stricter/wider rule with root before implementing.
+- Regression actual: api-native-repair and ui-native-repair goal contains original owned task IDs+patchartifact but context.repairSource absent, hydrationevents0, workers reread notes. Original sources have18API/12UI files.
+- Tests: exact owned terminal ref omission =>zero children/grants/plan effects and helpful error; explicit valid reference proceeds; disjoint cross-scope contract mention allowed; foreign/unowned ID never becomesauthority; multiple compatible refs without explicit choice refuse ambiguous; explicit matching choice resolves; partial existing plan source cannot silentlyerase. Keep ordinary drafts cheap/no Git-heavy validation.
+- Definition of done: final frozen packagetypecheck/build/narrow tests pass and own report. Root independent review/merged checks/liveactivation owned separately.
+
+### Brief: memory-headroom-review
+- Repository: D:/SwitchYardRouter-memory-headroom; read-only independent review.
+- Task: review context/memory.ts compaction projection and new real-loop tests; protect context caps and effect fencing.
+- Required reads: Current State; owned source diff, new tests/resumed-memory-compaction-projection.test.ts; loop compaction safeguards only as needed.
+- Owns: only docs/working/supervisor-lifecycle-stall/reports/memory-headroom-review.md in main.
+- Must not touch: source/tests/shared docs/runtime/config/store/provider calls; no commits.
+- Definition of done: projection never mutates actual messages, no context-window expansion/tool/output underreservation; tail memory survives actual loop compaction; lost-effect marker only actual loop; zeroheadroom diagnosed/ACL kept. Coordinate implementer final freeze before narrow fake tests.
+
+### Brief: memory-resume-headroom
+- Repository: D:/SwitchYardRouter-memory-headroom feat/memory-resume-headroom, isolated from full validation.
+- Task: fix actual zero-memory resume headroom: memory refresh measures oversized original transcript before loop compacts; drops ALL current decisions, then model recreates old code.
+- Required reads: Current State; context/memory.ts, harness/compaction.ts, harness/loop.ts relevant compaction/effect guards; memory tests; supervisor refresh call as needed.
+- Owns: context/memory.ts and tests/memory-v2.test.ts (new uniquely named testfile allowed); own main report memory-resume-headroom.md. Ask root before any other source path.
+- Must not touch: source outside ownership, app/runtime/config/brain writes, shared docs, existing effect fences, provider calls; no commits.
+- Proposal to investigate: compute memory headroom from a deep-cloned bounded compaction projection, reserving configured desired memory role budget, WITHOUT modifying real messages outside runAgentLoop; append freshly resolved ACL-scoped memory normally, real loop compacts with its existing effect-history accounting. Avoid moving compaction out of safety boundary.
+- Definition of done: bloated resumed transcript still includes newest current decisions within actual endpoint/tools/output/role caps; original messages unchanged by projection; no fake-expanded model window; no strip-all silent omission when reclaimable old turns exist.
+- Tests: oversized prior140k against min131072 plus larger sticky candidate, fallback-only plan, tools/output/token limits; current decision wins and actual loop compaction retains fresh memory; immovable hugehead failclosed/not overbudget; ACLrevocation/expiry unchanged; effect/handoff guards preserved.
+- Actual evidence: artifacts/t_0mvof1bldb6e51dd16e6a/a_0mvoi93ns70af33d04907.json => tokenBudget0/entries0/omissions0 generated1792973708488; source gate skip ~140k input for131072 endpoint. Read evidence only if necessary, no user-store writes.
+- Validate focused tests/typecheck/build; report correctness limits. Root independently reviews, integrates, deploys and verifies real manifest. Do not infer success from model following prompt.
+
+### Brief: retained-api-review
+- Repository: app candidate D:/SwitchYard/.switchyard/worktrees/t_0mvof2ck58bfd71573461-r1-mvof333i; READ ONLY.
+- Task: independently audit retained18 API files for functional/auth/ownership/DTO issues before native repair; root authors no appcode.
+- Required reads: Current State; candidate INTERFACES.md and app/api/**,lib/api.ts; directly referenced lib auth/store/validation/ownership/types as needed.
+- Owns: only main docs/working/supervisor-lifecycle-stall/reports/retained-api-review.md.
+- Must not touch: any app/router source, user runtime/data, config or git refs; no provider calls/commits or dependency installs.
+- Definition of done: concrete P0/P1 defects with file/line and reproduction request sequence, distinguish source inference from tested behavior. Known search import error already identified; focus actual route semantics/security. No broad testing concurrently; root will validate final hydrated candidate.
+
 ### Brief: transport-recovery-review
 - Repository: D:/SwitchYardRouter-transport-recovery; read-only independent review.
 - Task: review approved design then frozen implementation of guarded dead local transport recovery; coordinate worker freeze.
