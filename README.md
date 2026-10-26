@@ -81,6 +81,15 @@ See [cost controls](docs/setup.md#cost-controls-and-routing-defaults) before sub
 
 ### 3. Connect your agent
 
+Start background execution with the configuration path printed by setup:
+
+```sh
+node packages/router/dist/cli.js daemon start --config "/absolute/path/to/meritrouter.config.yaml"
+```
+
+MCP connections are passive by default. An explicit `mcp --worker` can run work for the
+whole installation while that client stays open; use the daemon for persistent execution.
+
 For Claude Code, run this from the repository you registered. Replace both absolute paths
 with your MeritRouter checkout and the configuration location printed by setup:
 
