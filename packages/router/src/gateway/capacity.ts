@@ -193,7 +193,7 @@ export class ProviderCapacity {
   private splitLiveSql = `(s.kind='request' OR (s.execution_grants_json IS NOT NULL AND ((s.kind='claim' AND s.since>@claimCut) OR (s.kind='wait' AND s.seen_at>@waitCut)) AND NOT EXISTS (
     SELECT 1 FROM json_each(s.execution_grants_json) j LEFT JOIN project_execution_grants g ON g.id=json_extract(j.value,'$.grantId')
     LEFT JOIN project_store_registrations p ON p.project_uuid=g.project_uuid
-    WHERE g.id IS NULL OR g.nonce!=json_extract(j.value,'$.nonce') OR g.state!='active' OR g.expires_at<=@now
+    WHERE g.id IS NULL OR g.nonce!=json_extract(j.value,'$.nonce') OR g.state!='active' OR g.authority_expires_at<=@now
       OR p.state!='registered' OR p.store_uuid!=g.store_uuid OR p.generation!=g.store_generation)))`;
 
   get enabled(): boolean {
@@ -510,3 +510,4 @@ export function liveSlotCounts(db: Db, now: number): Array<{ platform: string; k
     )
     .all({ now, requestCut: 0, claimCut: now - CLAIM_HOLD_MS, waitCut: now - WAIT_STALE_MS }) as Array<{ platform: string; kind: "request" | "claim" | "wait"; n: number }>;
 }
+

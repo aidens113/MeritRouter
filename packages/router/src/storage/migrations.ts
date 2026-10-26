@@ -1093,4 +1093,10 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX endpoint_quarantines_latest ON endpoint_quarantines(endpoint_id,created_at);
   `,
+  // Renewal authority is separate from immutable original execution bindings.
+  `
+  ALTER TABLE project_execution_grants ADD COLUMN authority_expires_at INTEGER;
+  ALTER TABLE project_execution_grants ADD COLUMN renewal_sequence INTEGER NOT NULL DEFAULT 0 CHECK(renewal_sequence>=0);
+  UPDATE project_execution_grants SET authority_expires_at=expires_at;
+  `,
 ];

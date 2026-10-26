@@ -95,3 +95,24 @@ shared role storage. Root observed final17/17 capacity PASS and separate final3/
 slice PASS with real project ledgers and fake transport. That slice proves two private
 stores share physical quota while private captures/classification stay local. Final recursive
 checks await frozen integration; this is not a live-provider or scheduler activation claim.
+
+## S3 renewal follow-on (after committed121be75)
+
+Source freeze candidate. New appended migration adds authority_expires_at (backfilled from
+original expiry) and renewal_sequence; original binding JSON/expires_at/nonce remain immutable.
+ExecutionGrant now exposes authorityExpiresAt and renewalSequence. Fourth optional constructor
+argument is trusted synchronous ExecutionGrantRenewalAuthority(grant,proof)=>number|null.
+renew(ref,{project,leases,expectedSequence,expiresAt}) validates exact original project/store/
+generation/owner/incarnation/run, active/reserved state, current registration and sequence CAS.
+Resolver must inspect actual local lease/deadline/cancel authority while caller owns local
+IMMEDIATE; it returns verified maximum expiration, not a model/request-supplied limit. Async
+resolvers and extra proof fields fail. A same-sequence+same-expiry acknowledgement replay is
+inert; changed sequence/binding/deadline refuses. Expired grant can renew only under that live
+local proof, not wallclock alone. No expiry refunds, nonce rotation or new executor authority.
+assertActive/consume and split claim/wait live comparison use current authority expiration.
+The only extra granted capacity.ts edit is expires_at -> authority_expires_at live comparison.
+Lost local commit after global renewal retains conservative global hold; local task update
+rolls back, and consume replay never creates a fresh executor. Focused real local/global SQLite
+regressions cover this rollback, stale nonce/generation/owner/incarnation/sequence/cancel/retired
+project, bounded deadline, immutable binding, expired-live renewal, reopen and invalid async input.
+Final project-capacity28/28 passed17.98s (original17 plus11 renewal). No activation.
