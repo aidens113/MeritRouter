@@ -1,4 +1,5 @@
 import type { Db } from "./db.js";
+import { ProjectEvidenceScope } from "./project-evidence-scope.js";
 import type { ModelEndpoint } from "../models/catalog.js";
 import type { Usage } from "../core/task.js";
 import { actualUsd, endpointPrice } from "../paid/spend.js";
@@ -26,6 +27,7 @@ interface ChargeRow {
  * single-task request with provider-reported tokens; batch shares are labelled estimated.
  */
 export function taskUsage(db: Db, catalog: { endpoints(): ModelEndpoint[] }, taskId: string): { usage: Usage; servedEndpoints: string[] } {
+  new ProjectEvidenceScope(db).assertTask(taskId);
   const rows = db
     .prepare(
       `SELECT c.request_id, c.input_tokens, c.output_tokens, c.tokens_exact, r.status, r.provider_attempts, r.attempts_exact,
@@ -147,6 +149,7 @@ export interface UsageSummary {
  * `project` limits tasks and requests to one project (requests charged to no task are global).
  */
 export function usageSummary(db: Db, sinceMs: number, untilMs = Date.now(), project?: string): UsageSummary {
+  const owner=new ProjectEvidenceScope(db);if(project!==undefined)owner.assertProject(project);else owner.assert();
   const scope = project ? " AND project_id = ?" : "";
   const args = (...a: unknown[]) => (project ? [...a, project] : a);
   const t = db

@@ -163,6 +163,13 @@ move existing worktrees, databases, logs or Brain data. Current storage settings
 effect. Do not move managed worktrees manually; the project-local storage migration is
 not implemented yet.
 
+The staged split-store runtime places private session logs and artifacts directly under
+the downstream owner's `.MeritRouter/sessions` and `.MeritRouter/artifacts`, beside its
+`state` database. These APIs reject coordination databases, foreign task owners and redirected
+evidence paths. This boundary is not a migration switch: ordinary installations keep their
+existing layout until the checked migration and default activation are completed. The
+MeritRouter source checkout must not be used as a downstream project's runtime owner.
+
 One install holds many projects. Each project has its own:
 - repositories;
 - brain folder (`projects/<slug>/` in the brain repository);

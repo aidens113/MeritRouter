@@ -4,6 +4,7 @@ import { z } from "zod";
 import { ProfileNameSchema, RoleNameSchema, TierNameSchema, type ProfileName, type RoleName, type TierName } from "../config/schema.js";
 import type { ChatMessage } from "../gateway/types.js";
 import { immediate, newId, type Db } from "../storage/db.js";
+import { ProjectEvidenceScope } from "../storage/project-evidence-scope.js";
 import { SessionEventSchema, SessionStatusSchema, SessionWorkspaceSchema, type CorruptLine, type SessionEndStatus, type SessionEvent, type SessionStatus, type SessionWorkspace } from "./events.js";
 import { indexUpdateFor, SessionRecorder, writeIndex } from "./recorder.js";
 import { pendingIntentsFrom, planResume, replayTranscript, type PendingIntent, type PlanResumeOptions, type ResumePlan } from "./resume.js";
@@ -89,6 +90,7 @@ const RowSchema = z.object({
   created_at: z.number(),
   updated_at: z.number(),
   ended_at: z.number().nullable(),
+  project_id:z.string().optional(),
 });
 
 const DEFAULT_EVENTS_LIMIT = 1000;
@@ -148,22 +150,26 @@ function terminateTornLine(logPath: string): void {
 
 /** Agent sessions: an append-only JSONL event log per session, indexed in SQLite. */
 export class SessionStore {
+  private readonly scope:ProjectEvidenceScope;
   constructor(
     private readonly db: Db,
     private readonly storageDir: string,
     private readonly now: () => number = Date.now,
-  ) {}
+  ) {this.scope=new ProjectEvidenceScope(db);this.storageDir=this.scope.rootFor(storageDir);}
 
   /** Absolute log path for a session id. */
   logPathFor(id: string): string {
-    return path.join(this.storageDir, SESSIONS_DIR, `${id}.jsonl`);
+    const file=path.join(this.storageDir, SESSIONS_DIR, `${id}.jsonl`);this.scope.path(file,path.join(this.storageDir,SESSIONS_DIR));return file;
   }
 
   /** Open a new running session and write its `started` event. */
   create(input: CreateSessionInput): SessionRecorder {
     const i = CreateSessionInputSchema.parse(input);
+    this.scope.assertTask(i.taskId);this.scope.assertTask(i.jobId);
+    if(this.scope.project!==null)for(const parent of [i.parentSessionId,i.previousSessionId])if(parent&&!this.get(parent))throw new Error("Session parent is unavailable in this project");
     const id = newId("s");
     const rel = `${SESSIONS_DIR}/${id}.jsonl`;
+    this.logPathFor(id);
     mkdirSync(path.join(this.storageDir, SESSIONS_DIR), { recursive: true });
     const at = this.now();
     const fields = {
@@ -178,10 +184,10 @@ export class SessionStore {
     };
     this.db
       .prepare(
-        `INSERT INTO sessions (id, task_id, job_id, parent_session_id, previous_session_id, role, agent_label, profile, tier, status, log_path, last_seq, model_requests, tool_calls, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, 0, 0, 0, ?, ?)`,
+        `INSERT INTO sessions (id, task_id, job_id, parent_session_id, previous_session_id, role, agent_label, profile, tier, status, log_path, last_seq, model_requests, tool_calls, created_at, updated_at,project_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, 0, 0, 0, ?, ?,?)`,
       )
-      .run(id, fields.taskId, fields.jobId, fields.parentSessionId, fields.previousSessionId, fields.role, fields.agentLabel, fields.profile, fields.tier, rel, at, at);
+      .run(id, fields.taskId, fields.jobId, fields.parentSessionId, fields.previousSessionId, fields.role, fields.agentLabel, fields.profile, fields.tier, rel, at, at,this.scope.project??"");
     const rec = new SessionRecorder(id, this.db, this.logPathFor(id), this.now);
     rec.append("started", { sessionId: id, ...fields });
     return rec;
@@ -226,6 +232,7 @@ export class SessionStore {
    * `process_died`), written to its log as an `ended` event. Returns the sessions it ended.
    */
   markDeadRunning(isLeaseLive: (session: SessionRecord) => boolean, stopReason: string = PROCESS_DIED): SessionRecord[] {
+    this.scope.assert();
     const out: SessionRecord[] = [];
     const running = this.db.prepare("SELECT * FROM sessions WHERE status = 'running' ORDER BY created_at, rowid").all().map((r) => this.record(r));
     for (const rec of running) {
@@ -260,12 +267,14 @@ export class SessionStore {
   }
 
   get(id: string): SessionRecord | null {
+    this.scope.assert();
     const row = this.db.prepare("SELECT * FROM sessions WHERE id = ?").get(id);
     return row ? this.record(row) : null;
   }
 
   /** Sessions matching every given filter, newest first. */
   list(filter: SessionListFilter = {}): SessionRecord[] {
+    this.scope.assert();
     const where: string[] = [];
     const args: unknown[] = [];
     if (filter.status !== undefined) {
@@ -284,6 +293,7 @@ export class SessionStore {
 
   /** Every session of a task, oldest first (retries and escalations in order). */
   forTask(taskId: string): SessionRecord[] {
+    this.scope.assertTask(taskId);
     return this.db
       .prepare("SELECT * FROM sessions WHERE task_id = ? ORDER BY created_at, rowid")
       .all(taskId)
@@ -312,6 +322,7 @@ export class SessionStore {
   }
 
   private readLog(logPath: string): { events: SessionEvent[]; corrupt: CorruptLine[] } {
+    this.scope.path(logPath,path.join(this.storageDir,SESSIONS_DIR));
     let text: string;
     try {
       text = readFileSync(logPath, "utf8");
@@ -328,6 +339,7 @@ export class SessionStore {
    * the seq to continue from.
    */
   private reattach(rec: SessionRecord): { events: SessionEvent[]; seq: number } {
+    this.scope.path(rec.logPath,path.join(this.storageDir,SESSIONS_DIR));
     terminateTornLine(rec.logPath);
     const { events } = this.readLog(rec.logPath);
     const indexed = immediate(this.db, () => {
@@ -341,7 +353,10 @@ export class SessionStore {
   }
 
   private record(raw: unknown): SessionRecord {
+    this.scope.assert();
     const r = RowSchema.parse(raw);
+    if(this.scope.project!==null&&r.project_id!==this.scope.project)throw new Error("Session belongs to another project");
+    this.scope.assertTask(r.task_id);this.scope.assertTask(r.job_id);
     let workspace: SessionWorkspace | null = null;
     if (r.workspace_json) {
       try {
@@ -351,6 +366,8 @@ export class SessionStore {
         workspace = null;
       }
     }
+    const logPath=path.resolve(this.storageDir,r.log_path);this.scope.path(logPath,path.join(this.storageDir,SESSIONS_DIR));
+    if(this.scope.project!==null&&logPath!==this.logPathFor(r.id))throw new Error("Session log pointer disagrees with its session identity");
     return {
       id: r.id,
       taskId: r.task_id,
@@ -363,7 +380,7 @@ export class SessionStore {
       tier: r.tier,
       status: r.status,
       stopReason: r.stop_reason,
-      logPath: path.resolve(this.storageDir, r.log_path),
+      logPath,
       lastSeq: r.last_seq,
       modelRequests: r.model_requests,
       toolCalls: r.tool_calls,

@@ -71,7 +71,7 @@ export function createProjectRunServices(runtime:ProjectRuntimeBundle,value:Leas
 }
 
 /** Minimal split worker compatibility: reads derive from local task policy; supplied service callbacks are unused. */
-export function createProjectWorkerReadServices(local:Pick<ProjectRuntimeBundle,"db"|"tasks"|"cfg">,value:LeaseRef):SupervisorServices {
+export function createProjectWorkerReadServices(local:Pick<ProjectRuntimeBundle,"db"|"tasks"> & {cfg:import("../config/load.js").ResolvedConfig},value:LeaseRef):SupervisorServices {
  const lease=LeaseRefSchema.parse(value),identity=projectToolIdentity(local.db,lease.project);
  if(!identity||local.tasks.db!==local.db||local.cfg.brain.project!==identity.slug)throw new Error("Worker read services require a pinned local project store");
  const observed=new Map<string,string>();

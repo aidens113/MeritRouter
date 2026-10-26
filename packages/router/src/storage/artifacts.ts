@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { z } from "zod";
 import path from "node:path";
 import type { Db } from "./db.js";
+import { ProjectEvidenceScope } from "./project-evidence-scope.js";
 import { newId } from "./db.js";
 
 export interface ArtifactRow {
@@ -17,17 +18,20 @@ export interface ArtifactRow {
   bytes: number;
   created_at: number;
 }
+const ArtifactRowSchema=z.object({id:z.string(),task_id:z.string().nullable(),execution_id:z.string().nullable(),kind:z.string(),label:z.string(),rel_path:z.string(),media_type:z.string(),sha256:z.string().regex(/^[a-f0-9]{64}$/),bytes:z.number().int().nonnegative(),created_at:z.number().int().nonnegative()}).strict();
 
 /** Artifacts are ordinary files under <storage>/artifacts, indexed in SQLite. */
 export class ArtifactStore {
   readonly root: string;
+  private readonly scope:ProjectEvidenceScope;
 
   constructor(
     private readonly db: Db,
     storageDir: string,
     private readonly now: () => number = Date.now,
   ) {
-    this.root = path.join(storageDir, "artifacts");
+    this.scope=new ProjectEvidenceScope(db);
+    this.root = path.join(this.scope.rootFor(storageDir), "artifacts");
   }
 
   write(opts: {
@@ -39,11 +43,14 @@ export class ArtifactStore {
     mediaType?: string;
     extension?: string;
   }): string {
+    this.scope.assertTask(opts.taskId);this.scope.assertExecution(opts.executionId,opts.taskId);
     const id = newId("a");
     const data = typeof opts.content === "string" ? Buffer.from(opts.content, "utf8") : opts.content;
     const dir = path.join(this.root, opts.taskId ?? "_shared");
+    this.scope.path(dir,this.root);
     mkdirSync(dir, { recursive: true });
     const file = path.join(dir, `${id}${opts.extension ?? ".txt"}`);
+    this.scope.path(file,dir);
     writeFileSync(file, data);
     this.db
       .prepare(
@@ -69,12 +76,14 @@ export class ArtifactStore {
   }
 
   get(ref: string): ArtifactRow | undefined {
+    this.scope.assert();
     const id = ref.startsWith("artifact:") ? ref.slice("artifact:".length) : ref;
-    return this.db.prepare("SELECT * FROM artifacts WHERE id = ?").get(id) as ArtifactRow | undefined;
+    const raw=this.db.prepare("SELECT * FROM artifacts WHERE id = ?").get(id);
+    if(!raw)return undefined;const row=ArtifactRowSchema.parse(raw);this.scope.assertTask(row.task_id);this.scope.assertExecution(row.execution_id,row.task_id);return row;
   }
 
   absolutePath(row: ArtifactRow): string {
-    return path.join(this.root, ...row.rel_path.split("/"));
+    const file=path.join(this.root, ...row.rel_path.split("/"));this.scope.path(file,this.root);return file;
   }
 
   read(ref: string): { row: ArtifactRow; content: Buffer } | undefined {
@@ -85,6 +94,7 @@ export class ArtifactStore {
 
   /** Authorize the indexed owner before touching artifact bytes; null/shared owners grant no project access. */
   readScoped(ref: string, project: string): { row: ArtifactRow; content: Buffer } {
+    this.scope.assertProject(project);
     const row = this.get(ref);
     const owner = row?.task_id ? z.object({ project_id: z.string() }).safeParse(this.db.prepare("SELECT project_id FROM tasks WHERE id=?").get(row.task_id)) : null;
     if (!row || !owner?.success || owner.data.project_id !== project) throw new Error("artifact is unavailable in this project");
@@ -98,6 +108,9 @@ export class ArtifactStore {
   }
 
   listForTask(taskId: string): ArtifactRow[] {
-    return this.db.prepare("SELECT * FROM artifacts WHERE task_id = ? ORDER BY created_at").all(taskId) as ArtifactRow[];
+    this.scope.assertTask(taskId);
+    const rows=z.array(ArtifactRowSchema).parse(this.db.prepare("SELECT * FROM artifacts WHERE task_id = ? ORDER BY created_at").all(taskId));
+    for(const row of rows)this.scope.assertExecution(row.execution_id,taskId);
+    return rows;
   }
 }

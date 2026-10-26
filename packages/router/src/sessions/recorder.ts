@@ -1,4 +1,6 @@
 import { closeSync, fsyncSync, openSync, writeSync } from "node:fs";
+import path from "node:path";
+import { ProjectEvidenceScope } from "../storage/project-evidence-scope.js";
 import { z } from "zod";
 import { immediate, type Db } from "../storage/db.js";
 import type { ChatMessage, ChatRequest } from "../gateway/types.js";
@@ -133,6 +135,7 @@ function capOutput(output: string): { output: string; truncated: boolean } {
  * transaction. A failure to record throws: the log is the record of truth.
  */
 export class SessionRecorder {
+  private readonly scope:ProjectEvidenceScope;
   private readonly identity: string;
   private seq: number;
   private endedSeq: number | null = null;
@@ -148,6 +151,7 @@ export class SessionRecorder {
     lastSeq = 0,
     restore?: RecorderRestore,
   ) {
+    this.scope=new ProjectEvidenceScope(db);
     this.identity = this.sessionIdentity();
     this.seq = lastSeq;
     if (restore) {
@@ -157,10 +161,18 @@ export class SessionRecorder {
   }
 
   private sessionIdentity(): string {
-    const row = z.object({ rowid: z.number().int(), created_at: z.number(), log_path: z.string(), task_id: z.string().nullable(), job_id: z.string().nullable(), role: z.string() }).safeParse(
-      this.db.prepare("SELECT rowid,created_at,log_path,task_id,job_id,role FROM sessions WHERE id=?").get(this.id),
+    this.scope.assert();
+    const row = z.object({ rowid: z.number().int(), created_at: z.number(), log_path: z.string(), task_id: z.string().nullable(), job_id: z.string().nullable(), role: z.string(),project_id:z.string() }).safeParse(
+      this.db.prepare("SELECT rowid,created_at,log_path,task_id,job_id,role,project_id FROM sessions WHERE id=?").get(this.id),
     );
     if (!row.success) throw new Error(`session ${this.id} no longer exists`);
+    if(this.scope.project!==null){
+      this.scope.assertProject(row.data.project_id);this.scope.assertTask(row.data.task_id);this.scope.assertTask(row.data.job_id);
+      const root=this.scope.rootFor(path.dirname(this.logPath)),expected=path.resolve(root,row.data.log_path);
+      if(expected!==path.resolve(root,"sessions",`${this.id}.jsonl`))throw new Error("Session log pointer disagrees with its session identity");
+      if((process.platform==="win32"?expected.toLowerCase():expected)!==(process.platform==="win32"?path.resolve(this.logPath).toLowerCase():path.resolve(this.logPath)))throw new Error("Session log pointer disagrees with its private index");
+      this.scope.path(this.logPath,path.join(root,"sessions"));
+    }
     return JSON.stringify(row.data);
   }
 

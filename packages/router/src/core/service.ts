@@ -997,7 +997,7 @@ export class MeritRouter {
     await gateDrained;
     const projectRuntimeResults=await projectRuntimesDrained;
     const projectRuntimeFailure=projectRuntimeResults.find((result):result is PromiseRejectedResult=>result.status==="rejected");
-    if(projectRuntimeFailure)throw projectRuntimeFailure.reason;
+    if(projectRuntimeFailure?.status==="rejected")throw projectRuntimeFailure.reason;
     this.db.close();
   }
 }

@@ -633,7 +633,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
   const svc = s.ctx.services!;
   const jobId = s.ctx.taskId;
 
-  return [
+  const entries:HarnessTool[] = [
     tool(
       "delegate",
       "delegate",
@@ -921,7 +921,8 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
       if (s.ctx.signal.aborted) throw new Error("interrupted while waiting for the user's answer");
       return "no answer arrived; decide with a sensible default and record it";
     }),
-  ].map(entry=>({...entry,run:async(args,env)=>{assertLocal();return entry.run(args,env);}}));
+  ];
+  return entries.map(entry=>({...entry,run:async(args,env)=>{assertLocal();return entry.run(args,env);}}));
 }
 
 export type { HarnessEnv };

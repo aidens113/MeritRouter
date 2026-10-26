@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { QUALIFICATION_PROJECT } from "../qualification/registry.js";
 import type { Db } from "./db.js";
+import { ProjectEvidenceScope } from "./project-evidence-scope.js";
 import { immediate } from "./db.js";
 import { CAPTURE_LIMITS as L, CapturePayloadSchema, CaptureOutcomeSchema, CapturedInputSchema, CapturedOutputSchema, CaptureOmissionSchema, RequestCaptureViewSchema, captureBytes, captureTreeWithinBounds, type CaptureInputProjection, type CaptureOutputProjection, type CaptureOutcome, type CapturePayload, type RequestCaptureView, type RequestCaptureStore } from "../gateway/request-capture.js";
 
@@ -14,7 +15,8 @@ const empty = (): CapturePayload => ({ input: null, output: null, outcome: null,
 
 /** Private SQLite payload store. Never exposes an artifact reference, disk path, or cross-project payload. */
 export class RequestCaptures implements RequestCaptureStore {
-  constructor(private readonly db: Db, private readonly now: () => number = Date.now) {}
+  private readonly ownership:ProjectEvidenceScope;
+  constructor(private readonly db: Db, private readonly now: () => number = Date.now) {this.ownership=new ProjectEvidenceScope(db);}
 
   private request(id: string) {
     return Request.safeParse(this.db.prepare("SELECT project_id,status FROM model_requests WHERE id=?").get(id));
@@ -34,9 +36,10 @@ export class RequestCaptures implements RequestCaptureStore {
     return { projects: projects.sort(), unknown };
   }
   private row(id: string): Row | null {
+    this.ownership.assert();
     // Never materialize an oversized corrupted DB payload in the JS process.
     const raw = this.db.prepare("SELECT request_id,project_id,scope_json,CASE WHEN length(CAST(payload_json AS BLOB))<=1048576 THEN payload_json ELSE NULL END AS payload_json,bytes,phase,unavailable_reason,created_at,expires_at FROM request_captures WHERE request_id=?").get(id);
-    return raw ? Row.parse(raw) : null;
+    if(!raw)return null;const row=Row.parse(raw);this.ownership.assertProject(row.project_id);return row;
   }
   private payload(row: Row): CapturePayload {
     if (!row.payload_json || Buffer.byteLength(row.payload_json) + Buffer.byteLength(row.scope_json) + 256 !== row.bytes) throw new Error("capture byte length mismatch");
@@ -54,6 +57,8 @@ export class RequestCaptures implements RequestCaptureStore {
     return { json, bytes };
   }
   async begin(requestId: string, raw: CaptureInputProjection, participantTaskIds: readonly string[]): Promise<void> {
+    this.ownership.assert();
+    for(const taskId of participantTaskIds)this.ownership.assertTask(taskId);
     const expected = z.array(z.string().min(1).max(128)).max(256).parse(participantTaskIds).sort();
     if (!captureTreeWithinBounds(raw)) throw new Error("capture input structure exceeds limits");
     const projection = Input.parse(raw);
@@ -61,6 +66,7 @@ export class RequestCaptures implements RequestCaptureStore {
     immediate(this.db, () => {
       if (this.db.prepare("SELECT 1 FROM request_deletion_tombstones WHERE request_id=?").get(requestId)) throw new Error("capture request was purged and cannot be recreated");
       const request = this.request(requestId); if (!request.success) throw new Error("capture requires an admitted request");
+      this.ownership.assertProject(request.data.project_id);
       const prior = this.row(requestId);
       if (prior) {
         if (!prior.payload_json || JSON.stringify(this.payload(prior).input) === JSON.stringify(projection.input)) return;
@@ -81,9 +87,11 @@ export class RequestCaptures implements RequestCaptureStore {
     });
   }
   async dispatched(requestId: string): Promise<void> {
+    this.ownership.assert();if(this.ownership.project!==null)this.row(requestId);
     this.db.prepare("UPDATE request_captures SET phase='dispatch_intent' WHERE request_id=? AND phase='reserved'").run(requestId);
   }
   async complete(requestId: string, rawOutcome: CaptureOutcome, rawProjection?: CaptureOutputProjection, notDispatched = false): Promise<void> {
+    this.ownership.assert();
     if (rawProjection && !captureTreeWithinBounds(rawProjection)) throw new Error("capture output structure exceeds limits");
     const outcome = CaptureOutcomeSchema.parse(rawOutcome), projection = rawProjection ? Output.parse(rawProjection) : undefined;
     if (projection && captureBytes(projection.output) > L.outputBytes) throw new Error("capture output exceeds byte limit");
@@ -116,6 +124,7 @@ export class RequestCaptures implements RequestCaptureStore {
     return Math.max(0, row.bytes - retained);
   }
   prune(limit = 64): { captures: number; bytes: number } {
+    this.ownership.assert();
     const bound = z.number().int().min(1).max(256).parse(limit);
     return immediate(this.db, () => {
       let captures = 0, bytes = 0;
@@ -127,6 +136,7 @@ export class RequestCaptures implements RequestCaptureStore {
       if (count + 1 > L.records || total + L.recordBytes > L.totalBytes || totals.some(row => row.bytes + L.recordBytes > L.projectBytes)) {
         const candidates = this.db.prepare("SELECT request_id,project_id,bytes FROM request_captures WHERE ? OR project_id IN (SELECT project_id FROM request_captures GROUP BY project_id HAVING SUM(bytes)+?>?) ORDER BY created_at,request_id LIMIT ?").all(count + 1 > L.records || total + L.recordBytes > L.totalBytes ? 1 : 0, L.recordBytes, L.projectBytes, bound - captures) as Array<{ request_id: string; project_id: string; bytes: number }>;
         for (const row of candidates) {
+          this.ownership.assertProject(row.project_id);
           if (count + 1 <= L.records && total + L.recordBytes <= L.totalBytes && (projects.get(row.project_id) ?? 0) + L.recordBytes <= L.projectBytes) continue;
           this.db.prepare("DELETE FROM request_captures WHERE request_id=?").run(row.request_id);
           captures++; bytes += row.bytes; count--; total -= row.bytes; projects.set(row.project_id, (projects.get(row.project_id) ?? 0) - row.bytes);
@@ -136,6 +146,7 @@ export class RequestCaptures implements RequestCaptureStore {
     });
   }
   purgeProject(project: string): { captures: number; bytes: number } {
+    this.ownership.assertProject(project);
     z.string().min(1).max(128).parse(project);
     return immediate(this.db, () => {
       const where = "project_id=@project OR EXISTS(SELECT 1 FROM json_each(scope_json) WHERE value=@project)";
@@ -144,6 +155,7 @@ export class RequestCaptures implements RequestCaptureStore {
     });
   }
   read(requestId: string, scope: { project: string | null }): RequestCaptureView | null {
+    this.ownership.assert();if(scope.project!==null)this.ownership.assertProject(scope.project);
     z.object({ project: z.string().min(1).max(128).nullable() }).strict().parse(scope);
     const request = this.request(requestId); if (!request.success || request.data.project_id !== (scope.project ?? "")) return null;
     const base = { schemaVersion: 1 as const, requestId, provenance: "normalized_gate_v1" as const, ...empty(), availability: "unavailable" as const, unavailableReason: "not_captured" as const, dispatch: "outcome_unknown" as const, storedBytes: 0, capturedAt: null, expiresAt: null };
