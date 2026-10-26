@@ -1,3 +1,4 @@
+import { assertExplicitRepairReferences } from "./repair-reference.js";
 import { resolveRepairSource } from "../workspaces/repair-hydration.js";
 import { executeSupervisorCommand, WorkerActionRequests } from "./worker-actions.js";
 import { supervisorActionTools, workerActionCapability } from "./worker-action-tools.js";
@@ -246,6 +247,17 @@ async function recordBrief(s: SupervisorState, env: HarnessEnv, brief: string): 
   else await b.brain.addBrief(b.principal(), b.actor, b.workingDoc, brief);
 }
 
+/** Preserve a draft's explicit recovery binding and require explicit choices for prose references. */
+async function assertRepairBriefSources(s:SupervisorState,items:Array<Record<string,unknown>>):Promise<void> {
+  const previous=new PlanStore(s.db,s.ctx.now).latest(s.ctx.taskId);
+  for(const item of items){
+    const node=previous?.nodes.find(node=>node.label===slug(item.label));
+    if(node?.repairFromTask && item.repair_from_task===undefined)
+      throw new Error(`repair_reference_required: ${node.label} already has planned repair_from_task ${node.repairFromTask}. Keep that explicit field or choose a fresh label; a partial plan update cannot silently remove its retained source.`);
+  }
+  await assertExplicitRepairReferences(s.ctx,s.children,items,[...s.repos.keys()][0],s.repos);
+}
+
 /**
  * Dispatch briefs through the delegate path: each new label's brief is recorded in the working
  * document, then all new tasks are submitted at once (dependencies by label, also within the
@@ -264,6 +276,7 @@ async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, un
   const dup = labels.find((l, i) => labels.indexOf(l) !== i);
   if (dup) throw new Error(`label ${dup} is used more than once`);
   const fresh = items.map((it, i) => ({ it, label: labels[i]! })).filter((x) => !s.children.has(x.label));
+  await assertRepairBriefSources(s,fresh.map(item=>item.it));
   assertPlannedBriefs(s.ctx, fresh.map(item => item.it), [...s.repos.keys()][0]);
   const ids = new Map(fresh.map((x) => [x.label, newId("t")]));
   for (const { it, label } of fresh) if (it.profile === "implement" && !((it.allowed_paths as string[] | undefined) ?? []).length) throw new Error(`${label}: implement briefs need allowed_paths`);
@@ -590,6 +603,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
         const items = parseObjectArray(a.nodes, "nodes").map((it) => ({ ...it }));
         if (!items.length) throw new Error("nodes is empty");
         if (items.length > MAX_PLAN_NODES) throw new Error(`a plan holds at most ${MAX_PLAN_NODES} nodes`);
+        await assertRepairBriefSources(s,items.filter(it=>!s.children.has(slug(str(it.label,"label")))));
         const dispatch = z.boolean().parse(a.dispatch ?? true);
         const replaceUndispatched = z.boolean().parse(a.replace_undispatched ?? false);
         const preserveFuture = s.ctx.spec.deliveryVersion === 2 && !replaceUndispatched;

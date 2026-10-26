@@ -1,3 +1,13 @@
+import * as safeGit from "../src/workspaces/git.js";
+import { mkdirSync,writeFileSync } from "node:fs";
+import path from "node:path";
+import { git } from "../src/workspaces/git.js";
+import { Worktrees } from "../src/workspaces/worktree.js";
+import { MergeQueue } from "../src/workspaces/merge-queue.js";
+import { commitAs,revertCommits } from "../src/attribution/index.js";
+import { calibrationUndoHook } from "../src/verification/calibration.js";
+import * as hydration from "../src/workspaces/repair-hydration.js";
+import { syntheticResult } from "../src/storage/tasks.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { baseConfig, makeEnv, open, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
 import type { MeritRouter } from "../src/core/service.js";
@@ -12,7 +22,7 @@ import { productDigest } from "../src/verification/product-spec.js";
 import { jobPlan } from "../src/admin/job-plans.js";
 
 let env: Env | undefined, sy: MeritRouter | undefined;
-afterEach(async () => { await sy?.close(); env?.cleanup(); sy = undefined; env = undefined; });
+afterEach(async () => { vi.restoreAllMocks(); await sy?.close(); env?.cleanup(); sy = undefined; env = undefined; });
 const goal = "Deliver a usable isolated fixture";
 const specification = { schemaVersion: 1, id: "fixture", revision: 1, source: { ref: "fixture", digest: productDigest(goal) }, originalInstruction: goal, ownerId: "initiator", users: ["operator"], platforms: ["browser"], workflows: ["open fixture"], dataInvariants: [], interfaceContracts: [], visualRequirements: [], failureStates: [], securityRequirements: [], exclusions: [], setupRecipeRefs: [], criteria: [{ id: "usable", priority: "required", behavior: "Fixture opens", applicability: { status: "applicable" }, requiredEvidence: ["journey"] }] };
 const brief = { label: "inspect", profile: "inspect", goal: "Inspect the fixture", acceptance_criteria: ["Report fixture contents"], repositories: ["core"], difficulty: "T1" };
@@ -38,7 +48,144 @@ async function fixture(version: 2 | undefined = 2) {
   return { ctx, state, run, prepare, store };
 }
 
+async function retainedSource(state:SupervisorState, options:{label?:string;allowed?:string[];changed?:string[];project?:string;parent?:string;active?:boolean}={}) {
+  const [out]=await sy!.submitTasks([{profile:"implement",label:options.label ?? "retained-source",parentTaskId:options.parent ?? state.ctx.taskId,goal:"Prior candidate",repositoryAliases:["core"],writableRepository:"core",constraints:{allowedPaths:options.allowed ?? ["app/api/**"],acceptanceCriteria:["candidate"]}}]);
+  const result=syntheticResult(out!.taskId,"budget_exhausted","budget_exhausted");result.acceptanceStatus="unmet";
+  if(options.changed!==undefined)result.changedPaths=options.changed;
+  sy!.db.prepare("UPDATE tasks SET state=?,result_json=? WHERE id=?").run(options.active?"running":"budget_exhausted",JSON.stringify(result),out!.taskId);
+  if(options.project)sy!.db.prepare("UPDATE tasks SET project_id=? WHERE id=?").run(options.project,out!.taskId);
+  state.children.set(options.label ?? "retained-source",out!.taskId);
+  return out!.taskId;
+}
+const repairBrief=(id:string)=>({label:"api-native-repair",profile:"implement",goal:`Repair the previous task ${id}; read its patch artifact and keep its API implementation`,repositories:["core"],allowed_paths:["app/api/**","INTERFACES.md"],acceptance_criteria:["API repaired"],max_requests:10});
+
+async function integratedSource(f:Awaited<ReturnType<typeof fixture>>) {
+  const id=await retainedSource(f.state,{changed:["app/api/posts/route.ts"]});
+  const base=(await git(env!.repo,["rev-parse","HEAD"])).trim();
+  f.state.repos.get("core")!.branch="main";
+  const worktrees=new Worktrees(sy!.db,path.join(env!.cfg.storageDir,"worktrees"));
+  const ws=await worktrees.prepare({taskId:id,run:1,alias:"core",sourcePath:env!.repo,baseCommit:base});
+  mkdirSync(path.join(ws.worktreePath,"app/api/posts"),{recursive:true});writeFileSync(path.join(ws.worktreePath,"app/api/posts/route.ts"),"export const retained=true;\n");
+  const head=(await commitAs(ws.worktreePath,{agent:"implementer:source",role:"implementer",model:"fake/model",task:id,job:f.ctx.taskId},"Source implementation"))!;
+  const result=syntheticResult(id,"completed","worker_submitted");result.acceptanceStatus="met";result.changedPaths=["app/api/posts/route.ts"];
+  sy!.db.prepare("UPDATE tasks SET state='completed',result_json=? WHERE id=?").run(JSON.stringify(result),id);
+  const queue=new MergeQueue(sy!.db,sy!.tasks,"fixture-integrator");
+  const item=queue.enqueue({jobId:f.ctx.taskId,taskId:id,kind:"task",repo:"core",branch:"main",integrationWorktree:env!.repo,sourceWorktree:ws.worktreePath,sourceBase:base,sourceHead:head,commits:[head],acceptance:null});
+  const integrated=await queue.run(item.id,{committer:{name:"fixture supervisor",email:"fixture@test"},integrated:()=>{}});
+  expect(integrated.state).toBe("integrated");
+  return {id,base,receipt:item.id,afterHead:integrated.afterHead!};
+}
+
 describe("supervisor lifecycle enforcement", () => {
+  it("uses the current integrated base for an ordinary follow-up reference without replay",async()=>{
+    const f=await fixture();f.prepare();const source=await integratedSource(f);
+    const item={...repairBrief(source.id),goal:`Polish UI using the API implemented by task ${source.id}`};
+    await expect(f.run("plan_work",{nodes:[item],dispatch:false})).resolves.toContain("draft");
+    await expect(f.run("delegate",{tasks:[item]})).resolves.toContain("budget 10 requests");
+    const child=sy!.tasks.childrenOf(f.ctx.taskId).find(t=>t.spec.label===item.label)!;
+    expect(child.spec.context.repairSource).toBeUndefined();expect(child.spec.context.baseCommits?.core).toBe(source.afterHead);
+    expect(await git(env!.repo,["show","HEAD:app/api/posts/route.ts"])).toContain("retained=true");
+  });
+  it.each(["job","repo","branch","worktree","lock","head","picked","reset","undo"])("does not exempt a %s integration receipt",async(condition)=>{
+    const f=await fixture();f.prepare();const source=await integratedSource(f);
+    const column={job:"job_id",repo:"repo_alias",branch:"branch",worktree:"integration_worktree",lock:"lock_key",head:"after_head",picked:"state"}[condition];
+    if(column)sy!.db.prepare(`UPDATE merge_queue SET ${column}=? WHERE id=?`).run(condition==="picked"?"picked":"wrong",source.receipt);
+    if(condition==="reset")await git(env!.repo,["reset","--hard",source.base]);
+    if(condition==="undo")await revertCommits(env!.repo,[source.afterHead],{agent:"supervisor:fixture",role:"supervisor"},"Undo retained source",{onUndone:calibrationUndoHook(sy!.db,sy!.tasks,{jobId:f.ctx.taskId,now:Date.now})});
+    await expect(f.run("plan_work",{nodes:[repairBrief(source.id)],dispatch:false})).rejects.toThrow(/repair_reference_required/);
+    expect(new PlanStore(sy!.db).latest(f.ctx.taskId)).toBeNull();
+  });
+  it("keeps ordinary fresh/disjoint drafts free of Git preflights",async()=>{
+    const f=await fixture();f.prepare();const id=await retainedSource(f.state,{allowed:["components/**"],changed:["components/Feed.tsx"]});
+    const spy=vi.spyOn(safeGit,"git");
+    await f.run("plan_work",{nodes:[repairBrief(id)],dispatch:false});
+    expect(spy).not.toHaveBeenCalled();
+  });
+  it("does not exempt when undo evidence arrives during the ancestry preflight",async()=>{
+    const f=await fixture();f.prepare();const source=await integratedSource(f);const original=safeGit.git;
+    vi.spyOn(safeGit,"git").mockImplementation(async(cwd,args,opts)=>{
+      const output=await original(cwd,args,opts);
+      if(args[0]==="merge-base")sy!.db.prepare("INSERT INTO verification_signals(task_id,kind,job_id,created_at) VALUES(?,'undone',?,?)").run(source.id,f.ctx.taskId,Date.now());
+      return output;
+    });
+    await expect(f.run("plan_work",{nodes:[repairBrief(source.id)],dispatch:false})).rejects.toThrow(/repair_reference_required/);
+  });
+  it("does not exempt when the branch resets during the ancestry preflight",async()=>{
+    const f=await fixture();f.prepare();const source=await integratedSource(f);const original=safeGit.git;
+    vi.spyOn(safeGit,"git").mockImplementation(async(cwd,args,opts)=>{
+      const output=await original(cwd,args,opts);
+      if(args[0]==="merge-base")await original(env!.repo,["reset","--hard",source.base]);
+      return output;
+    });
+    await expect(f.run("plan_work",{nodes:[repairBrief(source.id)],dispatch:false})).rejects.toThrow(/repair_reference_required/);
+  });
+  it("acceptance alone does not exempt a retained source",async()=>{
+    const f=await fixture();f.prepare();const id=await retainedSource(f.state,{changed:["app/api/route.ts"]});
+    const result=sy!.tasks.get(id)!.result!;result.acceptanceStatus="met";
+    sy!.db.prepare("UPDATE tasks SET state='completed',result_json=? WHERE id=?").run(JSON.stringify(result),id);
+    await expect(f.run("plan_work",{nodes:[repairBrief(id)],dispatch:false})).rejects.toThrow(/repair_reference_required/);
+  });
+
+  it.each(["draft","dispatch","delegate"])("requires typed retained source before %s has plan/grant/child effects",async(mode)=>{
+    const f=await fixture();f.prepare();const id=await retainedSource(f.state,{changed:["app/api/posts/route.ts"]});
+    const item=repairBrief(id);
+    if(mode==="delegate")await f.run("plan_work",{nodes:[brief],dispatch:false});
+    const before={plans:new PlanStore(sy!.db).list(f.ctx.taskId).length,children:sy!.tasks.childrenOf(f.ctx.taskId).length,held:heldRequests(sy!.db,f.ctx.taskId),requests:sy!.admission.taskTotals(f.ctx.taskId).requests};
+    await expect(f.run(mode==="delegate"?"delegate":"plan_work",mode==="delegate"?{tasks:[item]}:{nodes:[item],dispatch:mode!=="draft"})).rejects.toThrow(new RegExp(`repair_reference_required:.*repair_from_task.*${id}`));
+    expect(new PlanStore(sy!.db).list(f.ctx.taskId)).toHaveLength(before.plans);
+    expect(sy!.tasks.childrenOf(f.ctx.taskId)).toHaveLength(before.children);
+    expect(heldRequests(sy!.db,f.ctx.taskId)).toBe(before.held);
+    expect(sy!.admission.taskTotals(f.ctx.taskId).requests).toBe(before.requests);
+  });
+  it("supports actual-path compatibility and conservative original-scope fallback",async()=>{
+    const f=await fixture();f.prepare();
+    const actual=await retainedSource(f.state,{label:"wide",allowed:["app/**"],changed:["app/api/posts/route.ts"]});
+    const original=await retainedSource(f.state,{label:"original",allowed:["app/api/posts/**"]});
+    for(const id of [actual,original])await expect(f.run("plan_work",{nodes:[repairBrief(id)],dispatch:false})).rejects.toThrow(/repair_reference_required/);
+    await expect(f.run("plan_work",{nodes:[{...repairBrief(actual),goal:`Boundary is ${actual}suffix` }],dispatch:false})).resolves.toContain("draft");
+  });
+  it("keeps disjoint contract references and fresh or unowned IDs as ordinary drafts",async()=>{
+    const f=await fixture();f.prepare();const id=await retainedSource(f.state,{allowed:["components/**"],changed:["components/Feed.tsx"]});
+    const foreign=await retainedSource(f.state,{label:"foreign",project:"foreign",changed:["app/api/posts/route.ts"]});
+    const unowned=await retainedSource(f.state,{label:"unowned",parent:"outside-parent",changed:["app/api/posts/route.ts"]});
+    for(const [index,goal]of [`Use contract from UI task ${id}`,`Inspect history ${foreign} ${unowned}`,"Implement a fresh API",`Do not match ${id}suffix`].entries()){
+      await expect(f.run("plan_work",{nodes:[{...repairBrief(id),label:`fresh-${index}`,goal}],dispatch:false})).resolves.toContain("draft");
+    }
+    expect(new PlanStore(sy!.db).latest(f.ctx.taskId)!.nodes.every(n=>n.repairFromTask===null)).toBe(true);
+  });
+  it("requires the complete retained path set to fit the new target",async()=>{
+    const f=await fixture();f.prepare();
+    const id=await retainedSource(f.state,{allowed:["app/**","components/**"],changed:["app/api/posts.ts","components/Feed.tsx"]});
+    await expect(f.run("plan_work",{nodes:[repairBrief(id)],dispatch:false})).resolves.toContain("draft");
+  });
+  it("refuses ambiguous omission and mismatching typed source but permits an explicit choice",async()=>{
+    const f=await fixture();f.prepare();const a=await retainedSource(f.state,{label:"first",changed:["app/api/a.ts"]}),b=await retainedSource(f.state,{label:"second",changed:["app/api/b.ts"]});
+    const item={...repairBrief(a),goal:`Repair ${a}; compare previous attempt ${b}`};
+    await expect(f.run("plan_work",{nodes:[item],dispatch:false})).rejects.toThrow(/repair_reference_ambiguous/);
+    await expect(f.run("plan_work",{nodes:[{...item,repair_from_task:"foreign-id"}],dispatch:false})).rejects.toThrow(/repair_reference_mismatch/);
+    await expect(f.run("plan_work",{nodes:[{...item,repair_from_task:"first"}],dispatch:false})).resolves.toContain("draft");
+    expect(new PlanStore(sy!.db).latest(f.ctx.taskId)!.nodes[0]!.repairFromTask).toBe("first");
+  });
+  it("cannot erase a drafted explicit source on an omitted-field partial update",async()=>{
+    const f=await fixture();f.prepare();const id=await retainedSource(f.state,{changed:["app/api/route.ts"]});const item=repairBrief(id);
+    await f.run("plan_work",{nodes:[{...item,repair_from_task:id}],dispatch:false});
+    const version=new PlanStore(sy!.db).latest(f.ctx.taskId)!.version;
+    await expect(f.run("plan_work",{nodes:[item],dispatch:false})).rejects.toThrow(/repair_reference_required/);
+    expect(new PlanStore(sy!.db).latest(f.ctx.taskId)!.version).toBe(version);
+    await expect(f.run("plan_work",{nodes:[{...item,goal:"Implement revised API without old prose references"}],dispatch:false})).rejects.toThrow(/partial plan update cannot silently remove/);
+    expect(new PlanStore(sy!.db).latest(f.ctx.taskId)!.version).toBe(version);
+  });
+  it("leaves source authority to the native resolver for explicit dispatch",async()=>{
+    const f=await fixture();f.prepare();const id=await retainedSource(f.state,{changed:["app/api/route.ts"]});const item={...repairBrief(id),repair_from_task:id};
+    const source={taskId:id,project:"demo",alias:"core",base:"a".repeat(40),head:"b".repeat(40),tree:"c".repeat(40),commits:["b".repeat(40)]};
+    const resolver=vi.spyOn(hydration,"resolveRepairSource").mockResolvedValue(source);
+    await f.run("plan_work",{nodes:[item],dispatch:false});
+    await expect(f.run("delegate",{tasks:[item]})).resolves.toContain("budget 10 requests");
+    await expect(f.run("delegate",{tasks:[repairBrief(id)]})).resolves.toContain("already submitted");
+    expect(resolver).toHaveBeenCalledTimes(1);
+    expect(sy!.tasks.childrenOf(f.ctx.taskId).find(t=>t.spec.label===item.label)!.spec.context.repairSource).toEqual(source);
+  });
+
   it("publishes draft nodes through the actual plan view without staffing, workers, or approvals", async () => {
     const { ctx, run, prepare, store } = await fixture();
     prepare();
