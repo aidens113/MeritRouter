@@ -227,7 +227,7 @@ describe("upstream results", () => {
     const artifacts = new ArtifactStore(db, env.cfg.storageDir);
     const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd }).toString().trim();
     tasks.submit([{ id: "job", profile: "supervise", goal: "the job", repositoryAliases: ["core"], context: {}, constraints: { acceptanceCriteria: ["x"] } } as WorkerTask], { project: "demo" });
-    tasks.submit([coding("up", ["src/**"], { label: "up" }), coding("down", ["src/**"], { label: "down", dependsOn: ["up"] }), inspect("reader", { dependsOn: ["up"] })], { project: "demo" });
+    tasks.submit([coding("up", ["src/**"], { label: "up" }), coding("down", ["src/**"], { label: "down", dependsOn: ["up"] }), inspect("reader", { parentTaskId: "job", dependsOn: ["up"] })], { project: "demo" });
     tasks.claim("w", LIMITS);
 
     // The upstream worked in its own worktree and committed.
@@ -268,9 +268,9 @@ describe("upstream results", () => {
     const again = await withUpstreamContext({ cfg: env.cfg, tasks, artifacts }, tasks.get("down")!);
     expect(again.spec.context).toEqual(down.spec.context);
 
-    // A non-coding dependent gets the block but keeps its base commits.
+    // A non-coding dependent gets the same runtime-owned upstream source snapshot.
     const reader = await withUpstreamContext({ cfg: env.cfg, tasks, artifacts }, tasks.get("reader")!);
-    expect(reader.spec.context.baseCommits).toBeUndefined();
+    expect(reader.spec.context.baseCommits).toEqual({ core: upHead });
     expect(reader.spec.context.artifactRefs).toHaveLength(1);
 
     // Once integrated onto the job branch, a new dependent starts from the job branch head.

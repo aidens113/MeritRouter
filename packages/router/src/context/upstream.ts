@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { realpath } from "node:fs/promises";
+import path from "node:path";
+import { repoKey } from "../projects/context.js";
 import type { ResolvedConfig } from "../config/load.js";
 import type { WorkerTask } from "../core/task.js";
 import type { ArtifactStore } from "../storage/artifacts.js";
@@ -11,9 +14,9 @@ import { git } from "../workspaces/git.js";
  * references, acceptance and verification status, integration) are frozen into one stored
  * artifact of kind `upstream_results`. The artifact is added to the run's context: `loadSources`
  * renders it as a labelled "Upstream results" block, and the upstreams' own artifacts and
- * patches join the evidence universe (citable, not inlined). For a coding dependent the base
- * commit is chosen here too (the job branch once the upstream is integrated, else the
- * upstream's head). Both are recorded on the task (`upstream_context` event) and reused by
+ * patches join the evidence universe (citable, not inlined). Dependent read subjects are chosen
+ * at readiness: coding upstream commits, or the frozen subject of a readonly dependency.
+ * Both are recorded on the task (`upstream_context` event) and reused by
  * every later run of the task, so a resumed session keeps the context and refs it saw.
  */
 
@@ -65,9 +68,10 @@ export type UpstreamPackage = z.infer<typeof UpstreamPackageSchema>;
  * How a coding dependent's base commit was chosen. job_branch: every coding upstream in the
  * repository is integrated, so the job branch head. upstream_head: one coding upstream is not
  * integrated yet, so its worktree head. job_branch_partial: several are not integrated (they
- * cannot all be the base), so the job branch head, with a warning.
+ * cannot all be the base), so the job branch head, with a warning. upstream_snapshot: the
+ * immutable subject already read by a readonly dependency, rather than a later parent HEAD.
  */
-export const BASE_RULES = ["job_branch", "upstream_head", "job_branch_partial"] as const;
+export const BASE_RULES = ["job_branch", "upstream_head", "job_branch_partial", "upstream_snapshot"] as const;
 export const BaseChoiceSchema = z
   .object({
     alias: z.string(),
@@ -162,7 +166,7 @@ async function revParse(cwd: string, rev: string): Promise<string | null> {
 }
 
 /** The base commit rule for a coding dependent (see BASE_RULES); empty when nothing applies. */
-async function chooseBase(d: UpstreamDeps, task: StoredTask, entries: UpstreamEntry[]): Promise<BaseChoice[]> {
+async function chooseCodingBase(d: UpstreamDeps, task: StoredTask, entries: UpstreamEntry[]): Promise<BaseChoice[]> {
   const spec = task.spec;
   const alias = spec.writableRepository;
   if (!alias || d.cfg.profiles[spec.profile]?.mode !== "coding") return [];
@@ -209,11 +213,120 @@ async function chooseBase(d: UpstreamDeps, task: StoredTask, entries: UpstreamEn
   ];
 }
 
-/** The task's recorded upstream context, if an earlier run froze one (and its artifact exists). */
+const frozenRow = z.object({ data_json: z.string().max(262144) });
+
+/** Read the event type before limiting: long task logs must never erase a frozen subject. */
 export function recordedUpstream(d: UpstreamDeps, taskId: string): UpstreamContext | null {
-  const e = d.tasks.events(taskId, 500).filter((x) => x.type === UPSTREAM_CONTEXT_EVENT).at(-1);
-  const p = e ? UpstreamContextEventSchema.safeParse(e.data) : null;
-  return p?.success && d.artifacts.get(p.data.artifactRef) ? p.data : null;
+  const row = d.tasks.db.prepare("SELECT data_json FROM events WHERE task_id=? AND type=? ORDER BY id DESC LIMIT 1").get(taskId, UPSTREAM_CONTEXT_EVENT);
+  if (!row) return null;
+  try {
+    const record = UpstreamContextEventSchema.parse(JSON.parse(frozenRow.parse(row).data_json));
+    const artifact = d.artifacts.get(record.artifactRef);
+    if (!artifact || artifact.task_id !== taskId || artifact.kind !== UPSTREAM_RESULTS_KIND) throw new Error("missing owned upstream artifact");
+    return record;
+  } catch { throw new Error(`upstream_source_refused: frozen context for ${taskId} is unavailable or invalid; refusing to retarget`); }
+}
+
+const receiptSchema = z.object({ id: z.string().min(1), after_head: z.string().regex(/^[a-f0-9]{40,64}$/), branch: z.string().min(1), integration_worktree: z.string().min(1), lock_key: z.string().min(1) });
+const workspaceSchema = z.object({ worktree_path: z.string().min(1), repo_alias: z.string().min(1) });
+const terminalSource = new Set(["completed", "failed", "cancelled", "budget_exhausted"]);
+
+/** Select the dependent's first-run read subject; never infer acceptance from a source pin. */
+async function dependentSourceBases(d: UpstreamDeps, task: StoredTask, entries: UpstreamEntry[], finalChecks: Array<() => void>): Promise<BaseChoice[]> {
+  if (!task.spec.parentTaskId) return []; // Standalone readonly subjects keep their declared/canonical behavior.
+  const project = task.row.project_id;
+  if (project !== d.cfg.brain.project) throw new Error("upstream_source_refused: dependent project mismatch");
+  if (task.spec.parentTaskId) {
+    const parent = d.tasks.get(task.spec.parentTaskId);
+    if (!parent || parent.row.project_id !== project || task.spec.repositoryAliases.some(alias => !parent.spec.repositoryAliases.includes(alias))) throw new Error("upstream_source_refused: dependent parent/repository scope mismatch");
+  }
+  const sources = entries.map(entry => {
+    const source = d.tasks.get(entry.taskId);
+    if (!source || source.row.project_id !== project || source.spec.parentTaskId !== task.spec.parentTaskId || !terminalSource.has(source.row.state)) throw new Error("upstream_source_refused: upstream parent/project/execution mismatch");
+    return { source, entry };
+  });
+  // Executed without awaits inside the final IMMEDIATE freeze transaction.
+  finalChecks.push(() => {
+    const current = d.tasks.get(task.row.id), parent = d.tasks.get(task.spec.parentTaskId!);
+    if (!current || current.row.project_id !== project || JSON.stringify(current.spec) !== JSON.stringify(task.spec) || !parent || parent.row.project_id !== project || task.spec.repositoryAliases.some(alias => !parent.spec.repositoryAliases.includes(alias))) throw new Error("upstream_source_refused: dependent/parent ownership changed during proof");
+    for (const { source } of sources) {
+      const fresh = d.tasks.get(source.row.id);
+      if (!fresh || fresh.row.project_id !== project || !terminalSource.has(fresh.row.state) || JSON.stringify(fresh.spec) !== JSON.stringify(source.spec)) throw new Error("upstream_source_refused: source ownership changed during proof");
+    }
+  });
+  const opts = { timeoutMs: 10_000, maxBuffer: 65536 };
+  const common = async (root: string) => realpath(path.resolve(root, (await git(root, ["rev-parse", "--git-common-dir"], opts)).trim()));
+  const exact = async (root: string, ref: string) => {
+    if (!/^[a-f0-9]{7,64}$/.test(ref)) throw new Error("upstream_source_refused: source is not an immutable commit");
+    const resolved = await revParse(root, ref);
+    if (!resolved) throw new Error("upstream_source_refused: source commit is unavailable");
+    return resolved;
+  };
+  const result: BaseChoice[] = [];
+  for (const alias of task.spec.repositoryAliases) {
+    const repo = d.cfg.repositoryPaths[alias];
+    if (!repo) throw new Error(`upstream_source_refused: missing repository ${alias}`);
+    const candidates: Array<{ commit: string; rule: BaseChoice["rule"]; taskId: string }> = [];
+    for (const { source, entry } of sources) {
+      if (!source.spec.repositoryAliases.includes(alias)) continue;
+      if (d.cfg.profiles[source.spec.profile]?.mode === "coding" && source.spec.writableRepository === alias) {
+        const rawReceipt = task.spec.parentTaskId ? d.tasks.db.prepare(`SELECT id,after_head,branch,integration_worktree,lock_key FROM merge_queue
+          WHERE job_id=? AND task_id=? AND kind='task' AND repo_alias=? AND state='integrated' ORDER BY created_at DESC,rowid DESC LIMIT 1`).get(task.spec.parentTaskId, source.row.id, alias) : undefined;
+        if (rawReceipt) {
+          const receipt = receiptSchema.parse(rawReceipt);
+          finalChecks.push(() => {
+            const current = d.tasks.db.prepare("SELECT id,after_head,branch,integration_worktree,lock_key FROM merge_queue WHERE id=? AND job_id=? AND task_id=? AND kind='task' AND repo_alias=? AND state='integrated'").get(receipt.id,task.spec.parentTaskId,source.row.id,alias);
+            if (!current || JSON.stringify(receiptSchema.parse(current)) !== JSON.stringify(receipt) || d.tasks.db.prepare("SELECT 1 FROM verification_signals WHERE task_id=? AND kind='undone' AND (job_id=? OR job_id IS NULL) LIMIT 1").get(source.row.id,task.spec.parentTaskId)) throw new Error("upstream_source_refused: integration authority changed during proof");
+          });
+          const branch = `${d.cfg.supervisor.branch_prefix}${task.spec.parentTaskId}`;
+          if (receipt.branch !== branch || receipt.lock_key !== `${repoKey(project,alias)}:${branch}`) throw new Error("upstream_source_refused: integration ownership mismatch");
+          if (d.tasks.db.prepare("SELECT 1 FROM verification_signals WHERE task_id=? AND kind='undone' AND (job_id=? OR job_id IS NULL) LIMIT 1").get(source.row.id,task.spec.parentTaskId)) throw new Error("upstream_source_refused: upstream integration was undone");
+          if (await common(receipt.integration_worktree) !== await common(repo.path) || (await git(receipt.integration_worktree,["symbolic-ref","--quiet","HEAD"],opts)).trim() !== `refs/heads/${branch}`) throw new Error("upstream_source_refused: integration repository/branch mismatch");
+          const head = await revParse(repo.path,branch);
+          if (!head) throw new Error("upstream_source_refused: integration branch missing");
+          await git(repo.path,["merge-base","--is-ancestor",receipt.after_head,head],opts);
+          if (await revParse(repo.path,branch) !== head) throw new Error("upstream_source_refused: integration HEAD changed");
+          candidates.push({commit:head,rule:"job_branch",taskId:source.row.id});
+        } else {
+          if (entry.integrated) throw new Error("upstream_source_refused: integration claim has no owned receipt");
+          const ws = workspaceSchema.parse(d.tasks.db.prepare("SELECT worktree_path,repo_alias FROM workspaces WHERE task_id=? AND repo_alias=?").get(source.row.id,alias));
+          finalChecks.push(() => {
+            const current = d.tasks.db.prepare("SELECT worktree_path,repo_alias FROM workspaces WHERE task_id=? AND repo_alias=?").get(source.row.id,alias);
+            if (!current || JSON.stringify(workspaceSchema.parse(current)) !== JSON.stringify(ws)) throw new Error("upstream_source_refused: workspace authority changed during proof");
+          });
+          if (ws.repo_alias !== alias || await common(ws.worktree_path) !== await common(repo.path)) throw new Error("upstream_source_refused: upstream repository mismatch");
+          const head = await revParse(ws.worktree_path,"HEAD");
+          if (!head || await exact(repo.path,head) !== head || await revParse(ws.worktree_path,"HEAD") !== head) throw new Error("upstream_source_refused: upstream commit changed or missing");
+          candidates.push({commit:head,rule:"upstream_head",taskId:source.row.id});
+        }
+      } else {
+        const frozen = recordedUpstream(d,source.row.id);
+        finalChecks.push(() => {
+          if (JSON.stringify(recordedUpstream(d,source.row.id)) !== JSON.stringify(frozen)) throw new Error("upstream_source_refused: reviewed subject changed during proof");
+        });
+        const pin = frozen ? frozen.baseCommits.find(base => base.alias === alias)?.commit : source.spec.context.baseCommits?.[alias];
+        if (!pin) throw new Error(`upstream_source_refused: ${source.row.id} has no frozen read subject for ${alias}`);
+        candidates.push({commit:await exact(repo.path,pin),rule:"upstream_snapshot",taskId:source.row.id});
+      }
+    }
+    if (!candidates.length) {
+      if (task.spec.context.baseCommits?.[alias]) continue; // No upstream for this alias: preserve its existing permitted dispatch pin.
+      throw new Error(`upstream_source_refused: no source subject for ${alias}`);
+    }
+    if (new Set(candidates.map(candidate=>candidate.commit)).size !== 1) throw new Error(`upstream_source_refused: ambiguous dependent subjects for ${alias}`);
+    result.push({alias,commit:candidates[0]!.commit,rule:candidates.some(candidate=>candidate.rule==="upstream_snapshot")?"upstream_snapshot":candidates[0]!.rule,upstreams:candidates.map(candidate=>candidate.taskId)});
+  }
+  return result;
+}
+
+async function chooseBase(d: UpstreamDeps, task: StoredTask, entries: UpstreamEntry[], finalChecks: Array<() => void>): Promise<BaseChoice[]> {
+  const coding = await chooseCodingBase(d,task,entries);
+  if (coding.length) return coding;
+  try { return await dependentSourceBases(d,task,entries,finalChecks); }
+  catch (error) {
+    if ((error as Error).message.startsWith("upstream_source_refused:")) throw error;
+    throw new Error(`upstream_source_refused: cannot verify dependent source: ${(error as Error).message.slice(0,400)}`);
+  }
 }
 
 /** The spec a run of the task sees: the upstream package in its context, and the chosen base commits. */
@@ -238,12 +351,26 @@ export async function withUpstreamContext(d: UpstreamDeps, task: StoredTask): Pr
   if (!depIds.length) return task;
   let ctx = recordedUpstream(d, task.row.id);
   if (!ctx) {
-    const entries = d.tasks.getMany(depIds).map((t) => upstreamEntry(d.tasks, t));
+    const upstreams = d.tasks.getMany(depIds);
+    if (upstreams.length !== depIds.length) throw new Error("upstream_source_refused: missing dependency task");
+    const entries = upstreams.map((t) => upstreamEntry(d.tasks, t));
     const pkg: UpstreamPackage = { schemaVersion: 1, taskId: task.row.id, dependencies: entries };
-    const artifactRef = d.artifacts.writeJson({ taskId: task.row.id, kind: UPSTREAM_RESULTS_KIND, label: `upstream results for ${task.spec.label ?? task.row.id}`, value: pkg });
-    const baseCommits = await chooseBase(d, task, entries);
-    ctx = { artifactRef, dependencies: entries.map((e) => e.taskId), baseCommits };
-    d.tasks.event(task.row.id, UPSTREAM_CONTEXT_EVENT, ctx);
+    const finalChecks: Array<() => void> = [];
+    const baseCommits = await chooseBase(d, task, entries, finalChecks);
+    ctx = d.tasks.db.transaction(() => {
+      // Another process may have prepared this task while Git proof was awaiting.
+      const existing = recordedUpstream(d, task.row.id);
+      if (existing) return existing;
+      try { for (const check of finalChecks) check(); }
+      catch (error) {
+        if ((error as Error).message.startsWith("upstream_source_refused:")) throw error;
+        throw new Error("upstream_source_refused: source authority became invalid during proof");
+      }
+      const artifactRef = d.artifacts.writeJson({ taskId: task.row.id, kind: UPSTREAM_RESULTS_KIND, label: `upstream results for ${task.spec.label ?? task.row.id}`, value: pkg });
+      const frozen = { artifactRef, dependencies: entries.map((e) => e.taskId), baseCommits };
+      d.tasks.event(task.row.id, UPSTREAM_CONTEXT_EVENT, frozen);
+      return frozen;
+    }).immediate();
   }
   return { ...task, spec: applyUpstream(task.spec, ctx) };
 }
