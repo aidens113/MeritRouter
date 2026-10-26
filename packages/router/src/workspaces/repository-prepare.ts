@@ -1,11 +1,14 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { mkdir, open, stat, unlink, utimes, writeFile } from "node:fs/promises";
+import { createHash, randomBytes } from "node:crypto";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { lstat, mkdir, open, readFile, unlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { git, GitError } from "./git.js";
+import { ensureProjectMetadataExcluded } from "./metadata-exclusion.js";
+import { RepositoryMutationError, withRepositoryMutation, type RepositoryMutationCapability } from "./repository-mutation.js";
+import { commitInitialApplicationSnapshot, SelectedCommitError, unpackSelectedCommitOutcome } from "../attribution/selected-commit.js";
 
 // Repository preparation: a project's repository folder is made usable without the user touching
 // git. A missing folder is created and initialised with an empty first commit; a plain folder is
@@ -30,11 +33,6 @@ export type PrepareResult =
 
 /** The .gitignore written into a folder that is initialised and has none. */
 export const DEFAULT_GITIGNORE = ["node_modules/", ".env", ".env.*", "*.log", "dist/", "build/", ".venv/", "__pycache__/", ".DS_Store", ""].join("\n");
-
-/** The commit identity preparation uses, so it works when the user has no git identity configured. */
-const IDENTITY = ["-c", "user.name=MeritRouter", "-c", "user.email=meritrouter@localhost", "-c", "commit.gpgsign=false"];
-const CREATED_MESSAGE = "MeritRouter: initial commit";
-const SNAPSHOT_MESSAGE = "MeritRouter: initial snapshot";
 
 /**
  * What is at a repository folder, from the file system alone (no git process): `missing`,
@@ -96,7 +94,7 @@ function failure(dir: string, error: PrepareErrorKind, detail = ""): PrepareResu
             : error === "permission"
           ? `MeritRouter cannot write to ${dir} (permission denied). Give your user account write access to it, or choose a folder you own.`
           : error === "busy"
-            ? `Another MeritRouter process is still setting up ${dir}. Try again in a minute.`
+            ? `Repository setup for ${dir} is locked by another process or an interrupted setup. Verify its owner before clearing the lock; locks are not removed automatically.`
             : `git could not set up ${dir}: ${detail || "unknown error"}`;
   return { ok: false, path: dir, error, message };
 }
@@ -115,6 +113,7 @@ function done(dir: string, action: PrepareAction, gitignore: boolean): PrepareRe
 
 /** Classify a failed git call: permissions, or git failing for another reason (first stderr line). */
 function gitFailure(dir: string, err: unknown): PrepareResult {
+  if (err instanceof RepositoryMutationError || err instanceof SelectedCommitError) throw err;
   const stderr = err instanceof GitError ? err.stderr : "";
   const text = stderr || (err as Error).message;
   if (isPermission((err as NodeJS.ErrnoException).code, text)) return failure(dir, "permission");
@@ -155,43 +154,48 @@ async function hasCommit(dir: string): Promise<boolean> {
   return (await git(dir, ["rev-parse", "--verify", "-q", "HEAD^{commit}"], { allowExit: [1, 128] })).trim().length > 0;
 }
 
-const LOCK_STALE_MS = 120_000;
 const LOCK_WAIT_MS = 60_000;
 
 /**
  * Hold a lock on one folder across processes (the panel and a worker may prepare the same
  * folder at once). The lock file lives in the temp folder, never in the repository, so the
- * snapshot cannot include it; it is refreshed while held and taken over once stale.
+ * snapshot cannot include it. Unknown/dead-owner locks are never stolen merely by age.
+ * Once Git exists, lock order is preparation-folder -> lifecycle common owner -> index/ref.
  */
 async function withFolderLock<T>(dir: string, fn: () => Promise<T>): Promise<T | null> {
-  const key = process.platform === "win32" ? dir.toLowerCase() : dir;
+  const missing: string[] = [];
+  let parent = dir;
+  while (!existsSync(parent)) { missing.unshift(path.basename(parent)); const next = path.dirname(parent); if (next === parent) break; parent = next; }
+  const physical = path.join(realpathSync(parent), ...missing);
+  const key = process.platform === "win32" ? physical.toLowerCase() : physical;
   // Stable cross-version exclusion while preparing an explicitly selected existing repository.
   const lock = path.join(tmpdir(), `switchyard-prepare-${createHash("sha1").update(key).digest("hex").slice(0, 16)}.lock`);
   const deadline = Date.now() + LOCK_WAIT_MS;
+  let handle: Awaited<ReturnType<typeof open>>;
   for (;;) {
     try {
-      const fh = await open(lock, "wx");
-      await fh.writeFile(`${process.pid}\n`);
-      await fh.close();
+      handle = await open(lock, "wx", 0o600);
       break;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-      try {
-        if (Date.now() - (await stat(lock)).mtimeMs > LOCK_STALE_MS) await unlink(lock);
-      } catch {
-        // Released (or taken over) meanwhile: try again.
-      }
       if (Date.now() > deadline) return null;
       await new Promise((r) => setTimeout(r, 50 + Math.random() * 50));
     }
   }
-  const touch = setInterval(() => void utimes(lock, new Date(), new Date()).catch(() => undefined), 10_000);
-  touch.unref?.();
+  const identity = await handle.stat(), content = Buffer.from(JSON.stringify({ version: 1, pid: process.pid, token: randomBytes(16).toString("hex") }));
   try {
+    await handle.writeFile(content); await handle.sync();
     return await fn();
   } finally {
-    clearInterval(touch);
-    await unlink(lock).catch(() => undefined);
+    try {
+      const current = await lstat(lock);
+      if (!current.isFile() || current.isSymbolicLink() || current.nlink !== 1 || current.dev !== identity.dev || current.ino !== identity.ino
+        || current.size > 1024 || !(await readFile(lock)).equals(content)) throw new RepositoryMutationError("ownership_changed", "Repository preparation lock ownership changed; foreign evidence retained");
+      await handle.close();
+      const closed = await lstat(lock);
+      if (closed.isSymbolicLink() || closed.dev !== identity.dev || closed.ino !== identity.ino) throw new RepositoryMutationError("ownership_changed", "Repository preparation lock changed before release; foreign evidence retained");
+      await unlink(lock);
+    } finally { await handle.close().catch(() => undefined); }
   }
 }
 
@@ -202,15 +206,16 @@ async function withFolderLock<T>(dir: string, fn: () => Promise<T>): Promise<T |
  */
 export async function prepareRepository(dir: string): Promise<PrepareResult> {
   const abs = path.resolve(dir);
-  // Fast path, no git process and no lock: the common case of a repository with history.
+  // History is still left untouched, but unresolved publication must gate even this path.
   const before = folderState(abs);
-  if (before === "repository") return done(abs, "unchanged", false);
   if (before === "file") return failure(abs, "not_a_folder");
   if (!(await gitAvailable())) return failure(abs, "git_missing");
   let locked: PrepareResult | null;
   try {
+    if (before === "repository") return await withRepositoryMutation([realpathSync(abs)], async () => done(abs, "unchanged", false));
     locked = await withFolderLock(abs, () => prepareLocked(abs));
   } catch (err) {
+    if (err instanceof RepositoryMutationError || err instanceof SelectedCommitError) throw err;
     return isPermission((err as NodeJS.ErrnoException).code) ? failure(abs, "permission") : failure(abs, "git_failed", (err as Error).message);
   }
   return locked ?? failure(abs, "busy");
@@ -219,9 +224,9 @@ export async function prepareRepository(dir: string): Promise<PrepareResult> {
 /** The preparation itself, under the folder's lock: the state is read again, since another process may have finished first. */
 async function prepareLocked(dir: string): Promise<PrepareResult> {
   let state = folderState(dir);
-  if (state === "repository") return done(dir, "unchanged", false);
+  if (state === "repository") return withRepositoryMutation([realpathSync(dir)], async () => done(dir, "unchanged", false));
   if (state === "file") return failure(dir, "not_a_folder");
-  const broad = state === "missing" ? null : tooBroad(dir);
+  const broad = state === "missing" ? null : tooBroad(realpathSync(dir));
   if (broad) return failure(dir, "too_broad", broad);
   if (state === "folder") {
     const top = await trackingRepository(dir);
@@ -240,23 +245,34 @@ async function prepareLocked(dir: string): Promise<PrepareResult> {
     state = "folder";
   }
   const hadGit = state !== "folder";
-  let gitignore = false;
   try {
-    if (!hadGit) {
-      await git(dir, ["init", "-q"]);
-      if (!created && !existsSync(path.join(dir, ".gitignore"))) {
-        await writeFile(path.join(dir, ".gitignore"), DEFAULT_GITIGNORE);
-        gitignore = true;
-      }
-    } else if (await hasCommit(dir)) return done(dir, "unchanged", false);
-    if (!created) await git(dir, ["add", "-A"]);
-    // Re-check under the commit: a commit made meanwhile (outside MeritRouter) wins.
-    if (await hasCommit(dir)) return done(dir, "unchanged", false);
-    await git(dir, [...IDENTITY, "commit", "-q", "--allow-empty", "-m", created ? CREATED_MESSAGE : SNAPSHOT_MESSAGE]);
+    if (!hadGit) await git(dir, ["init", "-q"]);
+    const physical = realpathSync(dir);
+    return await withRepositoryMutation([physical], async mutation => snapshotRepository(physical, dir, created, hadGit, mutation));
   } catch (err) {
     return gitFailure(dir, err);
   }
-  return done(dir, created ? "created" : hadGit ? "snapshot" : "initialized", gitignore);
+}
+
+async function snapshotRepository(physical: string, displayPath: string, created: boolean, hadGit: boolean, mutation: RepositoryMutationCapability): Promise<PrepareResult> {
+  let gitignore = false;
+  try {
+    // Recheck after the lifecycle wait; an independently published first commit wins.
+    if (await hasCommit(physical)) return done(displayPath, "unchanged", false);
+    await ensureProjectMetadataExcluded(physical);
+    if (!hadGit) {
+      if (!created && !existsSync(path.join(physical, ".gitignore"))) {
+        await writeFile(path.join(physical, ".gitignore"), DEFAULT_GITIGNORE);
+        gitignore = true;
+      }
+    }
+    const outcome = await commitInitialApplicationSnapshot(physical, created ? "created" : "snapshot", { mutation });
+    unpackSelectedCommitOutcome(outcome);
+    if (outcome.kind === "unchanged") return done(displayPath, "unchanged", false);
+  } catch (err) {
+    return gitFailure(displayPath, err);
+  }
+  return done(displayPath, created ? "created" : hadGit ? "snapshot" : "initialized", gitignore);
 }
 
 /** What preparation would do at a folder, for forms: a neutral hint, or null when it is ready or a problem. */
