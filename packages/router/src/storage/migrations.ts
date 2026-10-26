@@ -1077,4 +1077,20 @@ export const MIGRATIONS: string[] = [
     PRIMARY KEY(request_id,task_id)
   );
   `,
+  // Explicit global execution authority, without project task rows.
+  `
+  CREATE TABLE project_execution_grants (
+    id TEXT PRIMARY KEY, nonce TEXT NOT NULL UNIQUE, binding_json TEXT NOT NULL,
+    project_uuid TEXT NOT NULL,store_uuid TEXT NOT NULL,store_generation INTEGER NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('worker','supervisor')), repositories_json TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('reserved','active','revoked','completed')),
+    expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX project_execution_grants_active ON project_execution_grants(state,project_uuid);
+  ALTER TABLE provider_slots ADD COLUMN execution_grants_json TEXT;
+  CREATE TABLE endpoint_quarantines (
+    request_id TEXT PRIMARY KEY,endpoint_id TEXT NOT NULL,code TEXT NOT NULL,outcome_digest TEXT NOT NULL,created_at INTEGER NOT NULL
+  );
+  CREATE INDEX endpoint_quarantines_latest ON endpoint_quarantines(endpoint_id,created_at);
+  `,
 ];

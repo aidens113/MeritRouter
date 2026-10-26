@@ -1,3 +1,4 @@
+import type { ExecutionGrantRef } from "../storage/project-execution-grants.js";
 import type { ResolvedConfig } from "../config/load.js";
 import { TIER_NAMES, type TierName } from "../config/schema.js";
 import type { WorkerTask } from "../core/task.js";
@@ -39,6 +40,7 @@ export class ProviderSlotAdmission implements ClaimAdmission {
     private readonly router: Pick<TaskRouter, "plan" | "inputModalities">,
     private readonly capacity: ProviderCapacity,
     private readonly now: () => number = Date.now,
+    private readonly executionGrants?: (row:TaskRow,owner:string)=>readonly ExecutionGrantRef[],
   ) {}
 
   /** Platforms the task can route to, in route order (union over its possible tiers). */
@@ -85,6 +87,9 @@ export class ProviderSlotAdmission implements ClaimAdmission {
   claimed(row: TaskRow, _spec: WorkerTask, owner: string): void {
     const platform = this.chosen.get(row.id);
     this.chosen.delete(row.id);
-    if (platform) this.capacity.recordClaim(row.id, owner, platform, { taskId: row.id, owner, runCount: row.run_count + 1, incarnation: row.lease_incarnation, project: row.project_id });
+    if(platform&&this.capacity.splitMode){
+      const lease={taskId:row.id,owner,runCount:row.run_count+1,incarnation:row.lease_incarnation,project:row.project_id};
+      this.capacity.recordProjectClaim({id:row.id,taskIds:[row.id],leaseOwner:owner,priority:0,since:null,leases:[lease],executionGrants:this.executionGrants?.(row,owner)},platform);
+    }else if (platform) this.capacity.recordClaim(row.id, owner, platform, { taskId: row.id, owner, runCount: row.run_count + 1, incarnation: row.lease_incarnation, project: row.project_id });
   }
 }

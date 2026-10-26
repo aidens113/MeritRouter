@@ -1,3 +1,6 @@
+import { canonicalJson } from "../storage/tasks.js";
+import { readStoreIdentity } from "../projects/store-identity.js";
+import { ProjectExecutionGrants, ExecutionGrantRefSchema, type ExecutionGrantRef } from "../storage/project-execution-grants.js";
 import { LeaseRefSchema, type LeaseRef } from "../storage/task-leases.js";
 import { z } from "zod";
 import { immediate, newId, type Db } from "../storage/db.js";
@@ -89,6 +92,7 @@ export function afterThrottle(r: ConcurrencyRecord, reason: ThrottleReason, now:
 
 /** A gate request that holds or waits for slots (one per `Gate.request` call). */
 export interface SlotHolder {
+  executionGrants?: readonly ExecutionGrantRef[];
   leases?: readonly LeaseRef[];
   id: string;
   /** Participants; the first one's task lease keeps the hold alive. */
@@ -153,6 +157,7 @@ const LIVE_SQL = `((s.nonce IS NOT NULL OR s.lease_json IS NOT NULL) AND s.kind=
  */
 export class ProviderCapacity {
   private db: Db | null = null;
+  private grants: ProjectExecutionGrants | null = null;
   private settings: () => ConcurrencySettings = () => DEFAULT_SETTINGS;
   private requestHoldMaxMs: () => number = () => 3_600_000;
   private readonly wakers = new Set<() => void>();
@@ -161,10 +166,35 @@ export class ProviderCapacity {
 
   /** Use the store (settings are read live, so a config reload applies). Unattached: no limit. */
   attach(db: Db, settings: () => ConcurrencySettings | undefined, requestHoldMaxMs: () => number): void {
+    this.grants = null;
     this.db = db;
     this.settings = () => ({ ...DEFAULT_SETTINGS, ...(settings() ?? {}) });
     this.requestHoldMaxMs = requestHoldMaxMs;
   }
+
+  /** Explicit shared-store mode: slot ownership never queries project task tables. */
+  attachCoordination(db: Db, settings: () => ConcurrencySettings | undefined, requestHoldMaxMs: () => number, grants: ProjectExecutionGrants): void {
+    if (grants.db !== db || readStoreIdentity(db)?.role !== "coordination") throw new Error("Split capacity requires matching coordination grants");
+    this.attach(db, settings, requestHoldMaxMs); this.grants = grants;
+  }
+  get splitMode(): boolean { return this.grants !== null; }
+  private splitHolder(holder: SlotHolder) {
+    if (!this.grants) throw new Error("Split capacity not attached");
+    const refs = z.array(ExecutionGrantRefSchema).min(1).max(128).parse(holder.executionGrants);
+    const leases = z.array(LeaseRefSchema).min(1).max(128).parse(holder.leases);
+    if (new Set(refs.map(r=>r.grantId)).size !== refs.length || new Set(leases.map(l=>l.taskId)).size !== leases.length) throw new Error("Duplicate split capacity authority");
+    const grants = refs.map(ref=>this.grants!.assertActive(ref)), project=grants[0]!.input.project;
+    if(grants.some(g=>g.input.project.projectId!==project.projectId||g.input.project.storeId!==project.storeId||g.input.project.generation!==project.generation))throw new Error("Cross-project split slot");
+    const bound=grants.flatMap(g=>g.input.leases);
+    if(bound.length!==leases.length||leases.some(l=>bound.filter(b=>canonicalJson(b)===canonicalJson(l)).length!==1))throw new Error("Split slot participant grant mismatch");
+    if(holder.leaseOwner!==leases[0]!.owner||holder.taskIds.length!==leases.length||holder.taskIds.some(id=>!leases.some(l=>l.taskId===id)))throw new Error("Split holder participant mismatch");
+    return {refs,leases,project};
+  }
+  private splitLiveSql = `(s.kind='request' OR (s.execution_grants_json IS NOT NULL AND ((s.kind='claim' AND s.since>@claimCut) OR (s.kind='wait' AND s.seen_at>@waitCut)) AND NOT EXISTS (
+    SELECT 1 FROM json_each(s.execution_grants_json) j LEFT JOIN project_execution_grants g ON g.id=json_extract(j.value,'$.grantId')
+    LEFT JOIN project_store_registrations p ON p.project_uuid=g.project_uuid
+    WHERE g.id IS NULL OR g.nonce!=json_extract(j.value,'$.nonce') OR g.state!='active' OR g.expires_at<=@now
+      OR p.state!='registered' OR p.store_uuid!=g.store_uuid OR p.generation!=g.store_generation)))`;
 
   get enabled(): boolean {
     return this.db !== null && this.settings().provider_concurrency_enabled;
@@ -256,12 +286,14 @@ export class ProviderCapacity {
 
   /** Delete rows that no longer count (their task's lease is gone, or they went stale). */
   private purge(): void {
+    if(this.grants){this.db!.prepare(`DELETE FROM provider_slots WHERE id IN (SELECT s.id FROM provider_slots s WHERE s.project_uuid IS NOT NULL AND NOT (${this.splitLiveSql}))`).run(this.cuts());return;}
     this.db!
       .prepare(`DELETE FROM provider_slots WHERE id IN (SELECT s.id FROM provider_slots s LEFT JOIN tasks t ON t.id = s.task_id WHERE NOT COALESCE((${LIVE_SQL}),0))`)
       .run(this.cuts());
   }
 
   private count(platform: string, kind: "request" | "claim" | "wait", extra = "", params: Record<string, unknown> = {}): number {
+    if(this.grants) return (this.db!.prepare(`SELECT COUNT(*) AS n FROM provider_slots s WHERE s.platform=@platform AND s.kind=@kind AND (${this.splitLiveSql}) ${extra}`).get({...this.cuts(),platform,kind,...params}) as {n:number}).n;
     return (
       this.db!.prepare(`SELECT COUNT(*) AS n FROM provider_slots s LEFT JOIN tasks t ON t.id = s.task_id WHERE s.platform = @platform AND s.kind = @kind AND (${LIVE_SQL}) ${extra}`).get({
         ...this.cuts(),
@@ -291,24 +323,26 @@ export class ProviderCapacity {
    * waits and its tasks' scheduler claims.
    */
   tryAcquire(holder: SlotHolder, platform: string): SlotHandle | SlotsFull {
-    if (!this.enabled) return { id: null, platform, generation: 0 };
+    if (!this.enabled && !this.grants) return { id: null, platform, generation: 0 };
     return immediate(this.db!, () => {
+      const split = this.grants ? this.splitHolder(holder) : null;
       this.purge();
       const now = this.now();
       const r = this.record(platform);
       const held = this.count(platform, "request");
-      if (held >= r.limit) return { full: true, platform, held, limit: r.limit, ahead: 0 } as SlotsFull;
+      if (this.enabled && held >= r.limit) return { full: true, platform, held, limit: r.limit, ahead: 0 } as SlotsFull;
       const ahead = this.count(platform, "wait", "AND s.holder != @holder AND (s.priority > @priority OR (s.priority = @priority AND s.since < @since))", {
         holder: holder.id,
         priority: holder.priority,
         since: holder.since ?? Number.MAX_SAFE_INTEGER,
       });
-      if (ahead >= r.limit - held) return { full: true, platform, held, limit: r.limit, ahead } as SlotsFull;
+      if (this.enabled && ahead >= r.limit - held) return { full: true, platform, held, limit: r.limit, ahead } as SlotsFull;
       const id = newId("slot"), nonce = holder.leases === undefined ? undefined : newId("nonce");
       const leases = holder.leases === undefined ? null : JSON.stringify(z.array(LeaseRefSchema).max(256).parse(holder.leases));
       this.db!
         .prepare("INSERT INTO provider_slots (id, platform, kind, holder, task_id, lease_owner, priority, since, seen_at,lease_json,nonce) VALUES (?, ?, 'request', ?, ?, ?, ?, ?, ?,?,?)")
         .run(id, platform, holder.id, holder.taskIds[0] ?? "", holder.leaseOwner, holder.priority, now, now, leases, nonce ?? null);
+      if(split)this.db!.prepare("UPDATE provider_slots SET project_uuid=?,store_uuid=?,store_generation=?,execution_grants_json=? WHERE id=?").run(split.project.projectId,split.project.storeId,split.project.generation,JSON.stringify(split.refs),id);
       this.db!.prepare("DELETE FROM provider_slots WHERE kind = 'wait' AND holder = ?").run(holder.id);
       if (holder.leases !== undefined) {
         const del = this.db!.prepare("DELETE FROM provider_slots WHERE kind='claim' AND task_id=? AND lease_owner=? AND json_extract(lease_json,'$[0].runCount')=? AND json_extract(lease_json,'$[0].incarnation')=? AND json_extract(lease_json,'$[0].project')=?");
@@ -325,11 +359,30 @@ export class ProviderCapacity {
   release(handle: SlotHandle): void {
     if (!handle.id || !this.db) return;
     try {
-      this.db.prepare("DELETE FROM provider_slots WHERE id=? AND uncertain=0 AND ((nonce IS NULL AND ? IS NULL) OR nonce=?)").run(handle.id, handle.nonce ?? null, handle.nonce ?? null);
+      const release=()=>{
+        if(this.grants){
+          const pending=this.db!.prepare("SELECT 1 FROM physical_requests WHERE slot_id=? AND slot_nonce=? AND (status='dispatch_intent' OR cost_quarantined=1 OR unbounded_cost=1 OR outcome='uncertain' OR (status='settled' AND outcome='failed' AND COALESCE(error_code,'unknown') NOT IN ('rate_limited','authentication','policy'))) LIMIT 1").get(handle.id,handle.nonce??null);
+          if(pending)return;
+        }
+        this.db!.prepare("DELETE FROM provider_slots WHERE id=? AND uncertain=0 AND ((nonce IS NULL AND ? IS NULL) OR nonce=?)").run(handle.id,handle.nonce??null,handle.nonce??null);
+      };
+      // Serialize the completion check and removal against global beginDispatch intent.
+      if(this.grants)immediate(this.db,release);else release();
     } catch {
-      // database closed: the row stops counting with the task lease
+      // Closing/busy coordination stores retain their physical hold; no expiry proves completion.
     }
     this.wake();
+  }
+
+  /** Explicit recovery only from a durable authoritative physical completion receipt. */
+  releaseReconciled(handle:SlotHandle):boolean {
+    if(!this.grants||!this.db||!handle.id||!handle.nonce)return false;
+    const released=immediate(this.db,()=>{
+      const receipt=this.db!.prepare("SELECT status,outcome,cost_quarantined,error_code,unbounded_cost FROM physical_requests WHERE slot_id=? AND slot_nonce=?").get(handle.id,handle.nonce);
+      const parsed=z.object({status:z.enum(["reserved","dispatch_intent","settled","retired"]),outcome:z.enum(["succeeded","failed","uncertain"]).nullable(),cost_quarantined:z.union([z.literal(0),z.literal(1)]),unbounded_cost:z.union([z.literal(0),z.literal(1)]),error_code:z.string().nullable()}).strict().optional().parse(receipt);
+      if(!parsed||parsed.cost_quarantined||parsed.unbounded_cost||!(parsed.status==="retired"||parsed.status==="settled"&&(parsed.outcome==="succeeded"||parsed.outcome==="failed"&&["rate_limited","authentication","policy"].includes(parsed.error_code??"unknown"))))return false;
+      return this.db!.prepare("DELETE FROM provider_slots WHERE id=? AND nonce=?").run(handle.id,handle.nonce).changes===1;
+    });if(released)this.wake();return released;
   }
 
   /** Persistence uncertainty retains the exact local transport hold for explicit reconciliation. */
@@ -339,16 +392,19 @@ export class ProviderCapacity {
 
   /** Register (or refresh) the holder's place in the queue of each full platform. */
   wait(holder: SlotHolder, platforms: string[]): void {
-    if (!this.enabled || !holder.taskIds.length) return;
+    if ((!this.enabled && !this.grants) || !holder.taskIds.length) return;
     const now = this.now();
     holder.since ??= now;
     immediate(this.db!, () => {
+      const split=this.grants?this.splitHolder(holder):null;
       for (const platform of new Set(platforms)) {
         const updated = this.db!.prepare("UPDATE provider_slots SET seen_at = ? WHERE kind = 'wait' AND holder = ? AND platform = ?").run(now, holder.id, platform);
         if (updated.changes) continue;
+        const waitId=newId("slot");
         this.db!
           .prepare("INSERT INTO provider_slots (id, platform, kind, holder, task_id, lease_owner, priority, since, seen_at,lease_json) VALUES (?, ?, 'wait', ?, ?, ?, ?, ?, ?,?)")
-          .run(newId("slot"), platform, holder.id, holder.taskIds[0]!, holder.leaseOwner, holder.priority, holder.since!, now, holder.leases === undefined ? null : JSON.stringify(holder.leases));
+          .run(waitId, platform, holder.id, holder.taskIds[0]!, holder.leaseOwner, holder.priority, holder.since!, now, holder.leases === undefined ? null : JSON.stringify(holder.leases));
+        if(split)this.db!.prepare("UPDATE provider_slots SET project_uuid=?,store_uuid=?,store_generation=?,execution_grants_json=? WHERE id=?").run(split.project.projectId,split.project.storeId,split.project.generation,JSON.stringify(split.refs),waitId);
       }
     });
   }
@@ -404,8 +460,23 @@ export class ProviderCapacity {
     return { platform: null, usage };
   }
 
+  /** Called only after local claim commit consumed the global execution grant. */
+  recordProjectClaim(holder:SlotHolder,platform:string):void {
+    if(!this.grants)throw new Error("Split capacity not attached");
+    immediate(this.db!,()=>{const bound=this.splitHolder(holder),now=this.now();
+      this.purge();
+      const existing=this.db!.prepare("SELECT COUNT(*) n FROM provider_slots WHERE kind='claim' AND holder=? AND platform=?").get(holder.id,platform) as {n:number};
+      if(existing.n===bound.leases.length)return;
+      if(existing.n!==0)throw new Error("Partial split claim binding");
+      const used=this.count(platform,"request")+this.count(platform,"claim")+this.count(platform,"wait","AND s.priority>0");
+      if(this.enabled&&used+bound.leases.length>this.limit(platform))throw new Error("Split provider claim capacity exhausted");
+      for(const lease of bound.leases)this.db!.prepare("INSERT INTO provider_slots(id,platform,kind,holder,task_id,lease_owner,priority,since,seen_at,lease_json,project_uuid,store_uuid,store_generation,execution_grants_json) VALUES(?,?,'claim',?,?,?,0,?,?,?,?,?,?,?)").run(newId("slot"),platform,holder.id,lease.taskId,lease.owner,now,now,JSON.stringify([lease]),bound.project.projectId,bound.project.storeId,bound.project.generation,JSON.stringify(bound.refs));
+    });
+  }
+
   /** The scheduler started a task on this platform: it holds a claim until its first request. */
   recordClaim(taskId: string, leaseOwner: string, platform: string, lease?: LeaseRef): void {
+    if(this.grants)throw new Error("Split claims require recordProjectClaim with execution authority");
     if (!this.enabled) return;
     const now = this.now();
     this.db!
@@ -431,6 +502,7 @@ export function readConcurrencyRecords(db: Db): ConcurrencyRecord[] {
 
 /** Slot rows by platform and kind that still count at `now` (for the panel; no request-age cut). */
 export function liveSlotCounts(db: Db, now: number): Array<{ platform: string; kind: "request" | "claim" | "wait"; n: number }> {
+  if(readStoreIdentity(db)?.role==="coordination")return z.array(z.object({platform:z.string(),kind:z.enum(["request","claim","wait"]),n:z.number().int()})).parse(db.prepare("SELECT platform,kind,COUNT(*) n FROM provider_slots WHERE kind='request' OR (project_uuid IS NOT NULL AND seen_at>?) GROUP BY platform,kind ORDER BY platform,kind").all(now-WAIT_STALE_MS));
   return db
     .prepare(
       `SELECT s.platform AS platform, s.kind AS kind, COUNT(*) AS n FROM provider_slots s LEFT JOIN tasks t ON t.id = s.task_id
