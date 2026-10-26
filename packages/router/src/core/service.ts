@@ -1,3 +1,7 @@
+import { sourceCheckoutForModule } from "../projects/source-checkout.js";
+import { ProjectRuntimeRegistry } from "../projects/runtime-registry.js";
+import { createProjectRuntimeServices,type ProjectRuntimeServiceHost } from "../projects/runtime-services.js";
+import { readStoreIdentity } from "../projects/store-identity.js";
 import { readClientSupervision } from "../config/client-supervision.js";
 import { RepositoryMutationError } from "../workspaces/repository-mutation.js";
 import { EventEmitter } from "node:events";
@@ -75,6 +79,9 @@ export interface MeritRouterOptions {
   labsMonitor?: boolean;
   pollIntervalMs?: number;
 }
+
+/** Staged split composition only. Queue/admin/runtime activation is a later explicit operation. */
+export type StagedProjectRuntimeOptions=Pick<ProjectRuntimeServiceHost,"grants"|"broker"|"executionGrants"|"privateServices"> & {forbiddenProjectDirectories?:readonly string[]};
 
 export interface TaskStatus {
   taskId: string;
@@ -161,6 +168,7 @@ export class MeritRouter {
   private readonly probeBudget: ProbeBudget;
   private reloadTimer: NodeJS.Timeout | null = null;
   private workerStarted = false;
+  private stagedRuntimeRegistry:ProjectRuntimeRegistry|null=null;
   private preparing: Promise<RepositoryPreparation[]> | null = null;
   private closing = false;
   private readonly promotionTimers = new Set<NodeJS.Timeout>();
@@ -361,6 +369,20 @@ export class MeritRouter {
     const cfg = this.projectContext(project);
     const b = this.projectBrain(cfg.project.slug);
     return { cfg, brain: b.brain, access: b.access, stores: this.projectStores(cfg.project.slug) };
+  }
+
+  /** Build isolated project services without changing legacy installation getters or starting a worker. */
+  createProjectRuntimeRegistry(options:StagedProjectRuntimeOptions):ProjectRuntimeRegistry {
+    if(this.closing||this.workerStarted||this.executor.controllers.size>0||this.db.prepare("SELECT 1 FROM tasks WHERE state IN ('running','cancel_requested') LIMIT 1").get())throw new Error("Staged project runtimes require a quiescent installation");
+    if(readStoreIdentity(this.db)?.role!=="coordination"||options.grants.db!==this.db)throw new Error("Staged project runtimes require matching bound coordination services");
+    if(this.stagedRuntimeRegistry)throw new Error("Staged project runtime registry is already constructed");
+    // A legacy Gate may already own this.health. All staged project bundles share one separate health.
+    const health=new ProviderHealth(this.now,()=>this.providers.statuses(),platform=>this.providers.statusPlatform(platform));
+    const sourceCheckout=sourceCheckoutForModule(import.meta.url);
+    const registry=new ProjectRuntimeRegistry(this.db,{context:slug=>this.projects.require(slug),
+      forbiddenProjectDirectories:[...(sourceCheckout?[sourceCheckout]:[]),...(options.forbiddenProjectDirectories??[])],
+      build:input=>createProjectRuntimeServices(input,{...options,coordinationDb:this.db,coordinationConfig:this.cfg,catalog:this.catalog,health,direct:{providers:this.providers,spend:this.spend},owner:this.owner,now:this.now})});
+    this.stagedRuntimeRegistry=registry;return registry;
   }
 
   /** Transitional project handle over existing shared stores; does not isolate or relocate data. */
@@ -960,6 +982,7 @@ export class MeritRouter {
   async close(): Promise<void> {
     this.closing = true;
     const gateDrained = this.gate.close();
+    const projectRuntimesDrained=Promise.allSettled(this.stagedRuntimeRegistry?[this.stagedRuntimeRegistry.close()]:[]);
     for (const timer of this.promotionTimers) clearTimeout(timer);
     this.promotionTimers.clear();
     if (this.discoveryTimer) clearInterval(this.discoveryTimer);
@@ -972,6 +995,9 @@ export class MeritRouter {
     // Review settlement owns brain writes and Git children independently of executor reports.
     await Promise.allSettled([...this.promotionSettles]);
     await gateDrained;
+    const projectRuntimeResults=await projectRuntimesDrained;
+    const projectRuntimeFailure=projectRuntimeResults.find((result):result is PromiseRejectedResult=>result.status==="rejected");
+    if(projectRuntimeFailure)throw projectRuntimeFailure.reason;
     this.db.close();
   }
 }

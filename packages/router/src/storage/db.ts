@@ -1,3 +1,4 @@
+import { readStoreIdentity,StoreIdentitySchema,type StoreIdentity } from "../projects/store-identity.js";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
@@ -23,14 +24,21 @@ export function databasePath(storageDir: string): string {
 export type Durability = "normal" | "full";
 
 export interface OpenDatabaseOptions {
+  /** Existing registered stores must never be replaced by an empty database. */
+  fileMustExist?: boolean;
+  /** Verify immutable role/owner before any writable pragma or schema migration. Requires fileMustExist. */
+  expectedIdentity?: StoreIdentity;
   readonly?: boolean;
   /** Defaults to `normal`. */
   durability?: Durability;
 }
 
 export function openDatabase(storageDir: string, opts: OpenDatabaseOptions = {}): Db {
-  mkdirSync(storageDir, { recursive: true });
-  const db = new Database(databasePath(storageDir), { readonly: opts.readonly ?? false });
+  if(opts.expectedIdentity&&!opts.fileMustExist)throw new Error("Expected store identity requires existing-only open");
+  if(!opts.fileMustExist)mkdirSync(storageDir, { recursive: true });
+  const db = new Database(databasePath(storageDir), { readonly: opts.readonly ?? false,fileMustExist:opts.fileMustExist??false });
+  try {
+  if(opts.expectedIdentity){const expected=StoreIdentitySchema.parse(opts.expectedIdentity),actual=readStoreIdentity(db);if(JSON.stringify(actual)!==JSON.stringify(expected))throw new Error("Existing store identity changed before migration");}
   db.pragma("busy_timeout = 10000");
   if (!opts.readonly) {
     db.pragma("journal_mode = WAL");
@@ -39,6 +47,7 @@ export function openDatabase(storageDir: string, opts: OpenDatabaseOptions = {})
     migrate(db);
   }
   return db;
+  }catch(error){db.close();throw error;}
 }
 
 /** Set the connection's `synchronous` level (a per-connection pragma). */
