@@ -25,8 +25,15 @@ Read and write metadata boundaries implemented. Review exposed actual Windows ju
 hardlink leakage; corrected bounded physical preflight now excludes unsafe aliases BEFORE
 Git grep reads content. Root final combined90/90 PASS23.50s and recursive typecheck PASS.
 Independent final metadata12/12 and actual alias probes PASS; root rebuilt-dist probe confirms
-only app.txt/PUBLIC returned and both aliases refused. Final recursive build PASS; full
-suite not yet run on this exact source. No physical separation or migration implemented.
+only app.txt/PUBLIC returned and both aliases refused. Final recursive build PASS.
+Foundation committed locally87feb17; full exact-source suite RUNNING with maxWorkers2,
+JSON output TEMP/meritrouter-project-storage-foundation-full.json (not yet a pass).
+No physical separation or migration implemented; nothing from this effort pushed yet.
+Next exclusion/preflight helper in isolated feat/project-metadata-exclusion tree under
+D:/SwitchYardRouter/.MeritRouter/development/metadata-exclusion. Root established a
+Git-local exclude block (preserving prior bytes) before creating that development tree;
+git check-ignore confirms it is ignored. This operator setup is NOT product migration.
+Keep main source/dist frozen while its full suite runs; future source changes stay isolated.
 Live Facebook job is interrupted (watchdog); profile completed, people and notifications
 failed deadline_exceeded. No pending/running command approvals at inspection. Preserve
 all retained source and accounting; do not represent the app as delivered.
@@ -213,6 +220,23 @@ or private payloads into a misleading partial project store and call migration c
   explicit commitAs paths, initial snapshot, resume, linked Git excludes locking and tests.
 - Preserve user index/exclusion bytes on refusal; classify remaining race/ownership limits.
   No broad tests, commits, live mutations or shared docs.
+
+### metadata-exclusion-foundation
+- Role: implementation worker, isolated feat/project-metadata-exclusion worktree owned by root.
+- Read: Current State; reports/metadata-staging-contract.md C1/exclude/preflight sections.
+- Own: NEW workspaces/metadata-exclusion.ts, NEW tests/project-metadata-exclusion.test.ts,
+  own reports/metadata-exclusion-foundation.md. No existing source edits/callers yet.
+- Implement assertNoTrackedProjectMetadata (HEAD/index, explicit unborn detection, NUL paths,
+  fail closed on unreadable/corrupt/unmerged relevant state) and ensureProjectMetadataExcluded.
+- Resolve actual Git/common dirs, validate exclude ancestry/file no symlink/junction escape,
+  exclusive info/exclude.lock, preserve bytes/newline/idempotency and foreign locks.
+- Reject contamination before exclude writes; no index mutations or stage API in this unit.
+  Case-insensitive any-depth ignore pattern; linked-worktree shared exclude correctness.
+- Real temp-Git tests including pretracked/indexed/forced metadata, staged deletion,
+  byte-preserved index on refusal, initial/unborn repo, existing excludes, concurrent calls,
+  linked worktree and redirected exclude paths. Keep promise limited to this API.
+- Install locked dependencies offline if needed, no source manifest edits. No commits/push,
+  live projects/providers or shared docs. Focused checks in isolated tree; report limits.
 
 ### storage-discovery
 - Role: read-only worker; do not change source or live runtime state.
