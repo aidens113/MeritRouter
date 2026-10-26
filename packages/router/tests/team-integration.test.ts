@@ -177,13 +177,15 @@ describe("plan_work with sub-supervisors", () => {
     tmp = mkdtempSync(path.join(tmpdir(), "meritrouter-team-int-"));
     db = openDatabase(tmp);
     const tasks = new TaskStore(db, () => 1_000_000);
-    tasks.submit([{ id: "job", profile: "supervise", goal: "job", repositoryAliases: ["core"], context: {}, constraints: { acceptanceCriteria: ["x"] }, label: "job" } as WorkerTask]);
-    const cfg = parseConfig(teamConfig(), path.join(tmp, "x.yaml"));
+    // This planning-only fixture reads no repository source. Match the service's explicit
+    // project attribution without inventing a canonical repository or integration worktree.
+    const cfg = parseConfig(teamConfig({ repositories: {} }), path.join(tmp, "x.yaml"));
+    tasks.submit([{ id: "job", profile: "supervise", goal: "job", repositoryAliases: [], context: {}, constraints: { acceptanceCriteria: ["x"] }, label: "job" } as WorkerTask], { project: cfg.brain.project });
     const submitted: Array<Record<string, unknown>> = [];
     const services = {
       submitTasks: async (specs: Array<Record<string, unknown>>) => {
         submitted.push(...specs);
-        tasks.submit(specs.map((sp) => ({ ...sp, context: {}, constraints: { acceptanceCriteria: ["x"] } })) as WorkerTask[]);
+        tasks.submit(specs.map((sp) => ({ ...sp, context: {}, constraints: { acceptanceCriteria: ["x"] } })) as WorkerTask[], { project: cfg.brain.project });
         return specs.map((sp) => ({ taskId: String(sp.id), state: "queued", deduplicated: false }));
       },
       getTask: (id: string) => {
@@ -217,6 +219,8 @@ describe("plan_work with sub-supervisors", () => {
     expect(redundancyFor(db, { parentTaskId: "job", label: "twice" })).toBe(2);
     expect(redundancyFor(db, { parentTaskId: "job", label: "once" })).toBe(1);
     expect(submitted.map((sp) => sp.label)).toEqual(["twice", "once"]);
+    expect(tasks.projectOf("job")).toBe(cfg.brain.project);
+    expect(tasks.childrenOf("job").map(child => child.row.project_id)).toEqual([cfg.brain.project, cfg.brain.project]);
   });
 });
 

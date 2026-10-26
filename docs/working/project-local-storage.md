@@ -14,9 +14,8 @@ Related: [working index](README.md), [delivery investigation](supervisor-lifecyc
 report: project-local-storage/reports/storage-discovery.md. Shared DB/store construction
 makes complete project-data relocation a service/accounting boundary change, not a rename.
 Standalone validated path contract and additive directory metadata are implemented.
-Root independently read source, requested/followed up Windows-path fixes, and observed
-combined51/51 tests passing (final paths28, directory14, existing projects9).
-Foundation recursive typecheck and build passed; final seam/source checks still required.
+Latest root combined90/90 covers paths31, owner config14, store seam10, metadata reads12,
+metadata writes14 and existing projects9. Recursive typecheck/build both passed.
 Independent reviews drove drive-qualified Windows paths, case-safe repository identities,
 and canonicalized device namespace rejection. State-service contract report is complete;
 same-DB project store seam implemented with independent19/19 seam+projects tests passing.
@@ -26,14 +25,31 @@ hardlink leakage; corrected bounded physical preflight now excludes unsafe alias
 Git grep reads content. Root final combined90/90 PASS23.50s and recursive typecheck PASS.
 Independent final metadata12/12 and actual alias probes PASS; root rebuilt-dist probe confirms
 only app.txt/PUBLIC returned and both aliases refused. Final recursive build PASS.
-Foundation committed locally87feb17; full exact-source suite RUNNING with maxWorkers2,
-JSON output TEMP/meritrouter-project-storage-foundation-full.json (not yet a pass).
+Foundation committed locally87feb17; full suite completed exit1:1788PASS/1FAIL/3SKIP
+of1792. Only failure: team-integration redundancy plan stub rejects empty parent project
+in delegatedSourceSnapshot. Root reproduced unchanged narrow test deterministically.
+Fixture corrected only: explicit project on parent/children and no unused source alias;
+all original assertions retained plus owner assertions. Root guard/team/store51/51 PASS83.82s
+and recursive typecheck PASS. Production guard unchanged; final full rerun pending.
+Original JSON output moved after completion into this project's ignored metadata directory:
+.MeritRouter/validation/storage-foundation-87feb17/full.json (copy/fsync/SHA256 verified,
+then removed own temp original; C:->D: rename refused EXDEV). Not a green aggregate.
 No physical separation or migration implemented; nothing from this effort pushed yet.
 Next exclusion/preflight helper in isolated feat/project-metadata-exclusion tree under
 D:/SwitchYardRouter/.MeritRouter/development/metadata-exclusion. Root established a
 Git-local exclude block (preserving prior bytes) before creating that development tree;
 git check-ignore confirms it is ignored. This operator setup is NOT product migration.
-Keep main source/dist frozen while its full suite runs; future source changes stay isolated.
+Full main source run finished; only assigned fixture correction may edit main now.
+Windows launch probe found267-character generated cwd fails Node spawning absolute Git,
+while short-directory control succeeds, even with core.longpaths=true. Before activation,
+compact hierarchy/cwd acceptance must be resolved; see reports/windows-workspace-launch.md.
+C1 helper accepted/committed only on isolated feature branch2cb0e0e: root18/18 PASS33.30s,
+root isolated package typecheck PASS, independent corrected ignore/capacity probes clear.
+It remains unwired and does not guarantee staging. C2 transactional index implementation
+assigned in same isolated tree; main source/dist remains frozen for its full suite.
+C2 author31PASS/1POSIX-only SKIP (C1+C2) plus typecheck; independent13PASS/1POSIXskip
+and expiry/HEADchange/file-redirection probes clear. Root source review read full implementation;
+root tests/acceptance still pending. No callers or commit behavior changed.
 Live Facebook job is interrupted (watchdog); profile completed, people and notifications
 failed deadline_exceeded. No pending/running command approvals at inspection. Preserve
 all retained source and accounting; do not represent the app as delivered.
@@ -238,6 +254,82 @@ or private payloads into a misleading partial project store and call migration c
 - Install locked dependencies offline if needed, no source manifest edits. No commits/push,
   live projects/providers or shared docs. Focused checks in isolated tree; report limits.
 
+### metadata-exclusion-review
+- Role: independent read-only reviewer in isolated metadata-exclusion tree.
+- Read: Current State and C1 brief; inspect new helper/tests and author report.
+- Own isolated report reports/metadata-exclusion-review.md only; focused tests permitted.
+- Verify contamination refusal before writes, unborn/corrupt/unmerged semantics, Git common/
+  worktree directory ownership, links/foreign locks, byte preservation and pattern precedence
+  limitations. Check existingpattern pluslaternegation, bare repo and missing info handling.
+- Distinguish helper foundation from transactional staging/activation; no source/live edits,
+  commits or shared docs. Main full suite source must remain untouched.
+
+### metadata-index-transaction
+- Role: implementation worker in isolated metadata-exclusion feature tree, after root C1 commit.
+- Read: Current State; reports/metadata-staging-contract.md C2; accepted exclusion helper;
+  git.ts/git-process-policy.ts. Preserve their executable config/hook/filter protections.
+- Own: workspaces/{git,git-process-policy}.ts; NEW workspaces/metadata-staging.ts;
+  NEW workspaces/git-index-transaction.ts if needed; NEW tests/project-metadata-index-transaction.test.ts;
+  own report reports/metadata-index-transaction.md. No existing callers or C1 helper edits.
+- Implement host-owned opaque active alternate-index capability; raw/env/forged/replayed/
+  cross-repo index overrides remain denied. Never generally allow GIT_INDEX_FILE from callers.
+- stageWithoutProjectMetadata holds native index.lock, snapshots original index/HEAD,
+  uses owned temp index, pre/postflights, fsync/publishes only on success and preserves original
+  index bytes on every staging refusal/failure. No commit/HEAD mutations in this unit.
+- Validate Git metadata ancestry and lock ownership, unborn/no-index cases, cleanup only own
+  temp/locks, old foreign locks untouched. Keep original positive/negative pathspec semantics;
+  explicit empty selection must not stage all. No unbounded arguments/scan or filesystem fanout.
+- Name exclusions alone do NOT stop Windows junction/hardlink aliases (reader repro): inspect
+  selected physical worktree inputs before staging, refuse/skip private aliases without copying
+  their bytes, preserve ordinary tracked deletions. Revalidate temp-index candidates before publish.
+- Real Git tests: raw/forged capability refusal, success/revoke/wrongrepo, staged unrelated files,
+  actual junction/hardlink private aliases, metadata force/negated ignore, wildcard selection,
+  pre/postflight failure index-byte preservation, native foreign lock, concurrent calls, deleted
+  files, unborn, linked worktree independent indexes, cleanup. Use fakes/temp only.
+- Root reviews commitAs --only integration design separately; do not claim C3/commit transaction
+  or full physical isolation is done. No permission broadening/source-identity changes/live
+  projects/providers/commits/shared docs. Focused tests/typecheck then freeze for review.
+
+### metadata-commit-contract
+- Role: read-only design worker in isolated metadata-exclusion tree.
+- Own report reports/metadata-commit-contract.md only; no source/fixtures/live changes.
+- Read frozen attribution/index.ts, harness/resume.ts, workspaces/worktree.ts,
+  workspaces/repository-prepare.ts and C1/C2 staging contract. C2 implementation in progress;
+  do not infer stable API from its partially edited files.
+- Proposed C2 only stages via host-owned temp-index capability, never commits/updates HEAD.
+- Resolve C3 commitAs --only behavior: preserve positive/negative trusted pathspec semantics,
+  unrelated staged app changes and attribution; Git --only rebuilds from worktree, so a clean
+  temp index alone is insufficient. Cover physical junction/hardlink aliases too.
+- Recommend smallest safe integration with exact selected candidate validation and clear
+  distinction among refusal, staged-but-not-committed failure and uncertain HEAD update.
+  Do not propose automatic history rewrite or clearing unknown effects. No permission changes.
+- Specify ordering before resume abort/reset and initial snapshot; provide bounded file briefs,
+  actual Git proof tests and any genuine architectural blockers. No tests/builds/commits.
+
+### team-plan-fixture-correction
+- Role: focused worker, MAIN tree only; C2 remains isolated and must not be edited.
+- Own: packages/router/tests/team-integration.test.ts ONLY and
+  reports/team-plan-fixture-correction.md. No production source/shared docs changes/commits.
+- Root reproduced only full failure via -t 'plan_work records and passes redundancy'.
+  Raw TaskStore stub inserts parent with empty project; actual service registers/backfills
+  project before run, new source guard correctly requires matching nonempty parent identity.
+- Verify cause, correct fixture project/service behavior. Redundancy-only test should not
+  fake source provenance: use valid no-repository setup if no files needed, or real tempGit
+  if keeping repositories. Preserve all existing redundancy/supervise assertions.
+- Do not weaken guard, skip test, increase timeout or change unrelated cases. Run exact
+  regression then complete team-integration file. Report what changed/verified and freeze.
+
+### metadata-index-review
+- Role: independent read-only reviewer in isolated metadata-exclusion tree.
+- Own report reports/metadata-index-review.md only; focused tests/probes allowed temp only.
+- Read C2 brief and frozen git-index-transaction.ts,metadata-staging.ts,Git helper/policy
+  diff,new tests/author report. Check opaque cap origin/lifetime/repo/commands, no env escape,
+  pending-command drain, native lock/temp ownership, index-byte preservation and HEAD CAS.
+- Probe actual selected physical aliases/metadata before Git object ingestion, deletions,
+  positive/negative/literal pathspecs, cleanup/faultpaths and linked-worktree indexes.
+- Distinguish stage transaction from commit publication/hostile FS race; preserve existing
+  Git executable-config restrictions. No source/live changes/commits or main validation edits.
+
 ### storage-discovery
 - Role: read-only worker; do not change source or live runtime state.
 - Read: this Current State; start at src/workspaces/worktree.ts, src/projects/deletion.ts,
@@ -247,7 +339,27 @@ or private payloads into a misleading partial project store and call migration c
 - Return: concrete file/function references, recommended file partitions, checks needed,
   unknowns; distinguish inspected facts from proposed design. No commits or pushes.
 
+### ownership-inventory
+- Role: read-only worker; use state-service-contract.md rather than rediscover architecture.
+- Own report reports/ownership-inventory.md only; no source/live edits/commits/tests.
+- Enumerate every applied schema table and content-bearing columns; classify authoritative
+  project/shared/mixed ownership, reference keys and schema validation gaps. Trace direct SQL
+  callers of tasks/charges/model_requests across source and group implementation file sets.
+- Explicitly flag transaction cross-ownership, content leaked by diagnostics, internal
+  qualification/project ownership, global promoted knowledge and captured path fields.
+- Propose the smallest same-DB service seam that can be implemented next without changing
+  behavior or claiming split storage is complete. Provide concrete constructor/caller APIs.
+- Keep report navigable with tables and exact file references. No broad code extraction.
+
 ## Work Ledger
+
+### 2026-10-26 — Verify and commit isolated exclusion preflight
+- Agent: supervisor; workers project_directory_config and runtime_path_contract
+- Changed: isolated feature branch2cb0e0e adds metadata-exclusion helper/tests/reports only.
+- Why: Protect existing tracked/indexed data and preserve effective private ignore rules before staging integration.
+- Validation: root isolated18/18 PASS33.30s and package typecheck PASS; independent effective-negation/maxsize probes clear after two corrections.
+- Outcome: Partial
+- Follow-up: C2 host-owned transactional staging, C3 caller integration and exact-source guards; no activation yet.
 
 ### 2026-10-26 — Close alias leak and verify corrected foundation
 - Agent: supervisor; workers runtime_path_contract,project_directory_config,project_storage_discovery
@@ -294,17 +406,3 @@ or private payloads into a misleading partial project store and call migration c
 - Supervisor: determine how shared request accounting stays reconciled while project records
   and artifacts become project-local; preserve audit history without duplicating authority.
 - Supervisor: determine explicit project-directory ownership for multi-repository projects.
-
-<!-- Additional read-only brief; no source ownership overlap. -->
-
-### ownership-inventory
-- Role: read-only worker; use state-service-contract.md rather than rediscover architecture.
-- Own report reports/ownership-inventory.md only; no source/live edits/commits/tests.
-- Enumerate every applied schema table and content-bearing columns; classify authoritative
-  project/shared/mixed ownership, reference keys and schema validation gaps. Trace direct SQL
-  callers of tasks/charges/model_requests across source and group implementation file sets.
-- Explicitly flag transaction cross-ownership, content leaked by diagnostics, internal
-  qualification/project ownership, global promoted knowledge and captured path fields.
-- Propose the smallest same-DB service seam that can be implemented next without changing
-  behavior or claiming split storage is complete. Provide concrete constructor/caller APIs.
-- Keep report navigable with tables and exact file references. No broad code extraction.
