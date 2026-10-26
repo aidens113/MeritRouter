@@ -5,6 +5,7 @@ import { assertNotProjectMetadataPath, isProjectMetadataPath, PROJECT_METADATA_S
 import { ensureProjectMetadataExcluded } from "./metadata-exclusion.js";
 import { assertSafeIndexInput, gitIndexSnapshot, withGitIndexTransaction, type GitIndexCapability } from "./git-index-transaction.js";
 import { git } from "./git.js";
+import { withRepositoryMutation, type RepositoryMutationCapability } from "./repository-mutation.js";
 
 const options = z.object({ paths: z.array(z.string().min(1).max(4096)).max(128).optional() }).strict();
 const MAX_INPUTS = 20000;
@@ -60,9 +61,11 @@ export async function stageSelectedIntoOwnedIndex(repo: string, index: GitIndexC
 }
 
 /** Stage-only legacy API; no commit/HEAD publication hook is supplied. */
-export async function stageWithoutProjectMetadata(repo: string, input: { paths?: readonly string[] } = {}): Promise<void> {
+export async function stageWithoutProjectMetadata(repo: string, input: { paths?: readonly string[] } = {}, control: { mutation?: RepositoryMutationCapability } = {}): Promise<void> {
   options.parse(input);
-  await ensureProjectMetadataExcluded(repo);
-  if (input.paths?.length === 0) return;
-  await withGitIndexTransaction(repo, async index => { await stageSelectedIntoOwnedIndex(repo, index, input); });
+  await withRepositoryMutation([repo], async () => {
+    await ensureProjectMetadataExcluded(repo);
+    if (input.paths?.length === 0) return;
+    await withGitIndexTransaction(repo, async index => { await stageSelectedIntoOwnedIndex(repo, index, input); });
+  }, control.mutation === undefined ? {} : { capability: control.mutation });
 }

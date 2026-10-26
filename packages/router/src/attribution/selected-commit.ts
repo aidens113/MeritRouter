@@ -8,6 +8,7 @@ import { gitIndexSnapshot, withGitIndexTransaction, withHeadGitIndex } from "../
 import { ensureProjectMetadataExcluded } from "../workspaces/metadata-exclusion.js";
 import { stageSelectedIntoOwnedIndex } from "../workspaces/metadata-staging.js";
 import { isProjectMetadataPath } from "../projects/metadata-policy.js";
+import { withRepositoryMutation, type RepositoryMutationCapability } from "../workspaces/repository-mutation.js";
 import { archiveCommitReceipt, assertNoPendingCommitPublication, CommitObjectSchema, createCommitReceipt, updateCommitReceipt, type CommitReceiptHandle } from "./selected-commit-receipts.js";
 import { publishSelectedRef, SelectedRefPublicationError, type PreparedRefControl } from "./selected-ref-publication.js";
 
@@ -28,6 +29,7 @@ export const SelectedCommitOutcomeSchema = z.discriminatedUnion("kind", [
 export type SelectedCommitOutcome = z.infer<typeof SelectedCommitOutcomeSchema>;
 /** Trusted host-only callbacks for observed validation/fault injection; not model runtime input. */
 export interface SelectedCommitControl {
+  mutation?: RepositoryMutationCapability;
   admitted?: () => Promise<void>;
   sealed?: () => Promise<void>;
   intent?: (receiptId: string) => Promise<void>;
@@ -51,12 +53,26 @@ export function commitInitialApplicationSnapshot(repo: string, kind: "created" |
 
 async function commitSelectedInternal(repo: string, input: SelectedCommitInput, control: SelectedCommitControl, setup: boolean): Promise<SelectedCommitOutcome> {
   const parsed = SelectedCommitInputSchema.parse(input);
-  const message = setup ? `${parsed.message}\n` : await prepareCommitMessage(repo, {
+  // Register nested mutation immediately, so even unawaited trusted callers are fenced
+  // and drained by their parent before its lifecycle lock can be released.
+  if (control.mutation !== undefined) return withRepositoryMutation([repo], async () => {
+    const message = await selectedMessage(repo, parsed, setup);
+    if (control.admitted) await control.admitted();
+    return publishSelectedCommit(repo, parsed, control, setup, message);
+  }, { capability: control.mutation });
+  const message = await selectedMessage(repo, parsed, setup);
+  if (control.admitted) await control.admitted();
+  return withRepositoryMutation([repo], () => publishSelectedCommit(repo, parsed, control, setup, message));
+}
+
+function selectedMessage(repo: string, parsed: z.output<typeof SelectedCommitInputSchema>, setup: boolean): Promise<string> {
+  return setup ? Promise.resolve(`${parsed.message}\n`) : prepareCommitMessage(repo, {
     message: parsed.message, trailers: trailerArgs(parsed.actor, parsed.extraTrailers).filter((_, index) => index % 2 === 1),
   });
-  await assertNoPendingCommitPublication(repo);
+}
+
+async function publishSelectedCommit(repo: string, parsed: z.output<typeof SelectedCommitInputSchema>, control: SelectedCommitControl, setup: boolean, message: string): Promise<SelectedCommitOutcome> {
   await ensureProjectMetadataExcluded(repo);
-  if (control.admitted) await control.admitted();
   const identity = setup ? { name: "MeritRouter", email: "meritrouter@localhost" } : actorIdentity(parsed.actor);
   const env = { GIT_AUTHOR_NAME: identity.name, GIT_AUTHOR_EMAIL: identity.email, GIT_COMMITTER_NAME: identity.name, GIT_COMMITTER_EMAIL: identity.email };
   let receipt: CommitReceiptHandle | null = null, publication: "none" | "attempted" | "published" | "uncertain" = "none";
