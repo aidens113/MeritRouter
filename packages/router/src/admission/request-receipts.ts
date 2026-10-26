@@ -17,6 +17,20 @@ export class RequestReceipts {
     if (digest({ ...parsed, disposition: "fresh" }) !== digest({ ...bound, disposition: "fresh" })) throw new Error("request receipt binding changed");
     return { row, bound };
   }
+  /** Validated immutable accounting authority for explicit local operator reconciliation. */
+  inspectBinding(requestId: string) {
+    const row = this.row(RequestIdSchema.parse(requestId));
+    if (!row) throw new Error("request receipt is missing or retired");
+    const binding = ReserveRequestDTOSchema.parse(JSON.parse(row.binding_json));
+    const reservation = ReservationDTOSchema.parse(JSON.parse(row.reservation_json));
+    if (reservation.requestId !== row.request_id || reservation.fingerprint !== row.fingerprint) throw new Error("request reservation identity differs from its original receipt");
+    this.bound(reservation);
+    if (binding.requestId !== row.request_id || digest(binding) !== row.fingerprint ||
+      reservation.executionId !== binding.executionId || reservation.estInputTokens !== binding.estInputTokens || reservation.reservedOutputTokens !== binding.reservedOutputTokens ||
+      canonicalJson(reservation.participants) !== canonicalJson(binding.participants) || canonicalJson(reservation.paid ?? null) !== canonicalJson(binding.paid ?? null))
+      throw new Error("request receipt immutable binding is inconsistent");
+    return { binding, reservation, fingerprint: row.fingerprint, state: row.state, dispatchId: row.dispatch_id, outcomeDigest: row.outcome_digest };
+  }
   /** Top-level bounded GC commits independently of a later admission refusal. */
   prune(): { receipts: number; keys: number } {
     if (this.db.inTransaction) throw new Error("request receipt cleanup requires a top-level transaction");
