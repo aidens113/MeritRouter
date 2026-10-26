@@ -24,6 +24,9 @@ import { agentHome, finishCoding, prepareWorkspace, resumeWorkspace, sourceDirty
 import { WorkspacePointer } from "../session-workspace.js";
 import { harnessV2Tools, harnessV2StartupContext } from "../../harness/operation-dispatch.js";
 import { refreshMemoryMessages } from "../../context/memory.js";
+import { withRepositoryMutation } from "../../workspaces/repository-mutation.js";
+import { createRepositoryEffects } from "../../workspaces/repository-command.js";
+import { assertRunAuthority } from "../../harness/task-authority.js";
 
 /**
  * MeritRouter's own coding worker. Edits go through tools that refuse paths outside
@@ -38,7 +41,10 @@ export class NativeCodingRunner implements CodingRunner {
     // A resumed session continues in the worktree it recorded; otherwise a fresh one.
     const reused = ctx.resume ? await resumeWorkspace(ctx, ctx.resume.plan.workspace) : null;
     const { ws, worktrees } = reused ?? (await prepareWorkspace(ctx));
-    const pointer = new WorkspacePointer(ctx.session, [{ alias, worktree: ws.worktreePath, branch: null, baseCommit: ws.baseSha, head: reused?.head ?? (await git(ws.worktreePath, ["rev-parse", "HEAD"])).trim() }]);
+    const pointer = await withRepositoryMutation([ws.worktreePath], async () => {
+      assertRunAuthority(ctx);
+      return new WorkspacePointer(ctx.session, [{ alias, worktree: ws.worktreePath, branch: null, baseCommit: ws.baseSha, head: reused?.head ?? (await git(ws.worktreePath, ["rev-parse", "HEAD"])).trim() }]);
+    });
     const readers = readersFor(ctx.cfg, spec);
     readers.set(alias, new RepoReader(alias, ws.worktreePath, null)); // read your own edits
     // Explicit context describes the isolated base, even when the source checkout changes
@@ -60,6 +66,7 @@ export class NativeCodingRunner implements CodingRunner {
       universe,
       allowArtifacts: true,
       workspace: { alias, root: ws.worktreePath, allowedPaths: spec.constraints.allowedPaths ?? [] },
+      repositoryEffects: createRepositoryEffects(ws.worktreePath),
       ...(patterns.length ? { commands: { patterns, cwd: ws.worktreePath, timeoutMs: ctx.cfg.execution.check_timeout_seconds * 1000 } } : {}),
       ...(declared.length ? { checks: { commands: declared, cwd: ws.worktreePath, env: minimalEnv({ HOME: home, USERPROFILE: home, CI: "1" }), timeoutMs: ctx.cfg.execution.check_timeout_seconds * 1000, maxRuns: ctx.cfg.coding.max_check_runs_per_task } } : {}),
       edits: new Set(), checkResults: [],
@@ -116,7 +123,11 @@ export class NativeCodingRunner implements CodingRunner {
       purpose: "coding",
       onResponse: async (info) => {
         const actor = { ...workerActor(ctx, role, info.endpointId), request: info.requestId };
-        pointer.setHead(alias, await commitAs(ws.worktreePath, actor, `${role}: edit ${info.edits.slice(0, 5).join(", ")}${info.edits.length > 5 ? ` (+${info.edits.length - 5})` : ""}`));
+        await withRepositoryMutation([ws.worktreePath], async mutation => {
+          assertRunAuthority(ctx);
+          const head = await commitAs(ws.worktreePath, actor, `${role}: edit ${info.edits.slice(0, 5).join(", ")}${info.edits.length > 5 ? ` (+${info.edits.length - 5})` : ""}`, {}, { mutation, assertAuthority: () => assertRunAuthority(ctx) });
+          assertRunAuthority(ctx); pointer.setHead(alias, head);
+        });
       },
     });
     ctx.gate.admission.finishExecution(executionId, loop.kind);

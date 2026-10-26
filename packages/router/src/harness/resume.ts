@@ -5,8 +5,10 @@ import type { ResumePlan } from "../sessions/resume.js";
 import { editRecoveryMessage, RESUME_TEXT, notAppliedToolProof, validNotAppliedToolProof } from "../sessions/resume.js";
 import type { ResumeAction, ResumeToolRef, WorkspaceRepo } from "../sessions/events.js";
 import type { WorkspacePointer } from "../runners/session-workspace.js";
-import { commitAs, type Actor } from "../attribution/index.js";
+import { commitAs, SelectedCommitError, type Actor } from "../attribution/index.js";
 import { git } from "../workspaces/git.js";
+import { RepositoryMutationError, withRepositoryMutation } from "../workspaces/repository-mutation.js";
+import { stageWithoutProjectMetadata } from "../workspaces/metadata-staging.js";
 import { normalizeRelPath } from "../context/repo-reader.js";
 import type { HarnessEnv, HarnessTool } from "./tools.js";
 import type { TerminalTool } from "./loop.js";
@@ -131,9 +133,9 @@ async function abortSequencer(worktree: string): Promise<string | null> {
     ["CHERRY_PICK_HEAD", "cherry-pick"],
     ["REVERT_HEAD", "revert"],
   ] as const) {
-    const p = (await git(worktree, ["rev-parse", "--git-path", marker]).catch(() => "")).trim();
+    const p = (await git(worktree, ["rev-parse", "--git-path", marker])).trim();
     if (p && existsSync(path.isAbsolute(p) ? p : path.join(worktree, p))) {
-      await git(worktree, [cmd, "--abort"]).catch(() => undefined);
+      await git(worktree, [cmd, "--abort"]);
       return cmd;
     }
   }
@@ -146,39 +148,44 @@ async function abortSequencer(worktree: string): Promise<string | null> {
  * it. Commits made after the recorded head (a per-response commit whose workspace event was
  * lost) are kept either way. Returns the files the reconciliation concerned.
  */
-async function reconcileRepo(repo: WorkspaceRepo, policy: "commit" | "reset", actor: Actor, pointer: WorkspacePointer | null): Promise<{ files: string[]; note: string | null; unchanged: boolean }> {
+async function reconcileRepo(repo: WorkspaceRepo, policy: "commit" | "reset", actor: Actor, pointer: WorkspacePointer | null, assertAuthority: () => void): Promise<{ files: string[]; note: string | null; unchanged: boolean }> {
   if (!existsSync(repo.worktree)) return { files: [], note: `${repo.alias}: worktree ${repo.worktree} is gone; nothing to reconcile`, unchanged: false };
-  const aborted = await abortSequencer(repo.worktree);
-  const note = aborted ? `${repo.alias}: an interrupted ${aborted} was aborted` : null;
-  await git(repo.worktree, ["add", "-A"]);
-  const dirty = (await git(repo.worktree, ["diff", "--cached", "--name-only", "HEAD"])).split(/\r?\n/).filter(Boolean);
-  const actual = (await git(repo.worktree, ["rev-parse", "HEAD"])).trim();
-  const unchanged = dirty.length === 0 && !!repo.head && actual === repo.head && !aborted;
-  if (policy === "reset") {
-    if (dirty.length) await git(repo.worktree, ["reset", "-q", "--hard", "HEAD"]);
-    pointer?.setHead(repo.alias, actual);
-    return { files: dirty, note, unchanged };
-  }
-  const head = dirty.length ? ((await commitAs(repo.worktree, actor, `${actor.role ?? "agent"}: recovered edits after interruption`)) ?? actual) : actual;
-  pointer?.setHead(repo.alias, head);
-  const since = repo.head && repo.head !== head ? (await git(repo.worktree, ["diff", "--name-only", repo.head, head]).catch(() => "")).split(/\r?\n/).filter(Boolean) : [];
-  return { files: [...new Set([...since, ...dirty])].sort(), note, unchanged };
+  return withRepositoryMutation([repo.worktree], async mutation => {
+    assertAuthority();
+    if (repo.head) await git(repo.worktree, ["rev-parse", "--verify", "--end-of-options", `${repo.head}^{commit}`]);
+    assertAuthority();
+    const aborted = await abortSequencer(repo.worktree);
+    const note = aborted ? `${repo.alias}: an interrupted ${aborted} was aborted` : null;
+    assertAuthority();
+    await stageWithoutProjectMetadata(repo.worktree, {}, { mutation });
+    const dirty = (await git(repo.worktree, ["diff", "--cached", "--name-only", "HEAD"])).split(/\r?\n/).filter(Boolean);
+    const actual = (await git(repo.worktree, ["rev-parse", "HEAD"])).trim();
+    const unchanged = dirty.length === 0 && !!repo.head && actual === repo.head && !aborted;
+    if (policy === "reset") {
+      assertAuthority();
+      if (dirty.length) await git(repo.worktree, ["reset", "-q", "--hard", "HEAD"]);
+      assertAuthority();
+      pointer?.setHead(repo.alias, actual);
+      return { files: dirty, note, unchanged };
+    }
+    const head = dirty.length ? ((await commitAs(repo.worktree, actor, `${actor.role ?? "agent"}: recovered edits after interruption`, {}, { mutation, assertAuthority })) ?? actual) : actual;
+    const since = repo.head && repo.head !== head ? (await git(repo.worktree, ["diff", "--name-only", repo.head, head])).split(/\r?\n/).filter(Boolean) : [];
+    assertAuthority(); pointer?.setHead(repo.alias, head);
+    return { files: [...new Set([...since, ...dirty])].sort(), note, unchanged };
+  });
 }
 
-async function reconcileEdits(action: Extract<ResumeAction, { kind: "reconcile_edits" }>, messages: ChatMessage[], r: ResumeInput): Promise<{ text: string; unchanged: boolean }> {
+async function reconcileEdits(action: Extract<ResumeAction, { kind: "reconcile_edits" }>, messages: ChatMessage[], r: ResumeInput, assertAuthority: () => void): Promise<{ text: string; unchanged: boolean }> {
   const files: string[] = [];
   const notes: string[] = [];
   let unchanged = action.repos.length > 0;
   for (const repo of action.repos) {
-    try {
-      const out = await reconcileRepo(repo, action.policy, r.actor, r.pointer);
-      files.push(...(action.repos.length > 1 ? out.files.map((f) => `${repo.alias}:${f}`) : out.files));
-      unchanged &&= out.unchanged;
-      if (out.note) notes.push(out.note);
-    } catch (err) {
-      unchanged = false;
-      notes.push(`${repo.alias}: reconciliation failed (${(err as Error).message.slice(0, 200)}); re-read the files before editing`);
-    }
+    const out = await reconcileRepo(repo, action.policy, r.actor, r.pointer, assertAuthority);
+    files.push(...(action.repos.length > 1 ? out.files.map((f) => `${repo.alias}:${f}`) : out.files));
+    unchanged &&= out.unchanged;
+    if (out.note) notes.push(out.note);
+    // A failed abort/reset/publication leaves retained state for explicit recovery.
+    // Do not turn that failure into prose and continue generating edits or absence proofs.
   }
   let text = editRecoveryMessage(action.policy, files);
   if (action.policy === "reset" && action.completedCallIds.length && files.length) text += ` This also reverted the edits of call(s) ${action.completedCallIds.join(", ")}, which had finished but were not committed.`;
@@ -217,6 +224,11 @@ function tailTerminal(messages: ChatMessage[], terminalName: string): { call: Ch
 export async function applyResume<T>(o: { env: HarnessEnv; messages: ChatMessage[]; tools: HarnessTool[]; terminal: TerminalTool<T> }, r: ResumeInput): Promise<ResumeOutcome<T>> {
   const { env, messages, plan } = { ...o, plan: r.plan };
   const session = env.ctx.session;
+  const retained = [...new Set([
+    ...(plan.workspace?.repos.map(repo => repo.worktree) ?? []),
+    ...plan.actions.flatMap(action => action.kind === "reconcile_edits" ? action.repos.map(repo => repo.worktree) : []),
+  ])].filter(worktree => existsSync(worktree));
+  if (retained.length) await withRepositoryMutation(retained, async () => undefined);
   restoreEvidence(env, messages);
 
   const byName = new Map(o.tools.map((t) => [t.def.function.name, t]));
@@ -236,13 +248,14 @@ export async function applyResume<T>(o: { env: HarnessEnv; messages: ChatMessage
           try { const output = await tool.run(args as Record<string, unknown>, env); return { ok: tool.outputSucceeded?.(output) ?? true, output }; }
           finally { env.toolInvocationId = previousInvocation; }
         } catch (err) {
+          if (err instanceof RepositoryMutationError || err instanceof SelectedCommitError) throw err;
           return { ok: false, output: `error: ${(err as Error).message}` };
         }
       });
       setTool(messages, action.messageIndex, res.output);
       done.push({ ...action, result: res.output });
     } else if (action.kind === "reconcile_edits") {
-      const reconciled = await reconcileEdits(action, messages, r);
+      const reconciled = await reconcileEdits(action, messages, r, () => assertRunAuthority(env.ctx));
       if (reconciled.unchanged) for (const call of action.calls) {
         if (!plan.notAppliedCandidateIntents?.includes(call.intentSeq)) continue;
         if (call.messageIndex !== null && messages[call.messageIndex]?.role === "tool" && (messages[call.messageIndex] as Extract<ChatMessage, { role: "tool" }>).tool_call_id === call.callId) notAppliedToolIndexes.add(call.messageIndex);

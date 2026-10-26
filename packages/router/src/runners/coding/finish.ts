@@ -15,6 +15,9 @@ import { checkRunOutcome } from "../../verification/checks.js";
 import { sealCheckedCandidate } from "../../attribution/checked-candidate.js";
 import { workerActor } from "../../harness/worker.js";
 import { assertRunAuthority } from "../../harness/task-authority.js";
+import { RepositoryMutationError, withRepositoryMutation } from "../../workspaces/repository-mutation.js";
+import { SelectedCommitError } from "../../attribution/selected-commit.js";
+import { CommitObjectSchema } from "../../attribution/selected-commit-receipts.js";
 
 export function sourceDirtyFinding(ws: Workspace): RunOutcome["result"]["findings"] {
   return ws.sourceDirty
@@ -32,8 +35,12 @@ export async function prepareWorkspace(ctx: RunContext): Promise<{ ws: Workspace
   // A quality repair continues from the submitted revision; the diff is still taken against the base.
   const start = ctx.retry?.startFrom?.alias === alias ? ctx.retry.startFrom.commit : null;
   const ws = await worktrees.prepare({ taskId: ctx.taskId, run: runNo, alias, sourcePath: repo.path, ...(ctx.spec.context.baseCommits?.[alias] ? { baseCommit: ctx.spec.context.baseCommits[alias] } : {}), ...(start ? { startCommit: start } : {}) });
-  await hydrateRepairWorkspace(ctx, ws);
-  ctx.tasks.event(ctx.taskId, "worktree_ready", { path: ws.worktreePath, baseSha: ws.baseSha, sourceDirty: ws.sourceDirty, ...(start ? { startCommit: start } : {}) });
+  await withRepositoryMutation([ws.sourcePath, ws.worktreePath], async mutation => {
+    assertRunAuthority(ctx);
+    await hydrateRepairWorkspace(ctx, ws, { mutation });
+    assertRunAuthority(ctx);
+    ctx.tasks.event(ctx.taskId, "worktree_ready", { path: ws.worktreePath, baseSha: ws.baseSha, sourceDirty: ws.sourceDirty, ...(start ? { startCommit: start } : {}) });
+  });
   return { ws, worktrees };
 }
 
@@ -52,11 +59,15 @@ export async function resumeWorkspace(ctx: RunContext, recorded: SessionWorkspac
     prev && path.resolve(prev.worktreePath) === path.resolve(rec.worktree)
       ? prev
       : { taskId: ctx.taskId, repoAlias: alias, sourcePath: ctx.cfg.repositoryPaths[alias]!.path, worktreePath: rec.worktree, baseSha: rec.baseCommit, sourceDirty: false, dirtyPaths: [] };
-  await verifyRepairHydration(ctx, ws);
-  worktrees.setStatus(ctx.taskId, "ready");
-  ctx.tasks.event(ctx.taskId, "worktree_reused", { path: ws.worktreePath, baseSha: ws.baseSha });
-  const head = (await git(ws.worktreePath, ["rev-parse", "HEAD"])).trim();
-  return { ws, worktrees, head };
+  return withRepositoryMutation([ws.sourcePath, ws.worktreePath], async mutation => {
+    assertRunAuthority(ctx);
+    await verifyRepairHydration(ctx, ws, { mutation });
+    assertRunAuthority(ctx);
+    worktrees.setStatus(ctx.taskId, "ready");
+    ctx.tasks.event(ctx.taskId, "worktree_reused", { path: ws.worktreePath, baseSha: ws.baseSha });
+    const head = (await git(ws.worktreePath, ["rev-parse", "HEAD"])).trim();
+    return { ws, worktrees, head };
+  });
 }
 
 export function agentHome(ctx: RunContext, ws: Workspace): string {
@@ -66,12 +77,8 @@ export function agentHome(ctx: RunContext, ws: Workspace): string {
 }
 
 /** The tree the worktree is submitted at (everything staged): what the checks are bound to. */
-async function stagedTree(worktree: string): Promise<string | null> {
-  try {
-    return (await git(worktree, ["write-tree"])).trim() || null;
-  } catch {
-    return null;
-  }
+async function stagedTree(worktree: string): Promise<string> {
+  return CommitObjectSchema.parse((await git(worktree, ["write-tree"])).trim());
 }
 
 /**
@@ -99,17 +106,20 @@ export async function finishCoding(
 ): Promise<RunOutcome> {
   const spec = ctx.spec;
   const alias = spec.writableRepository!;
-  const changes = await o.worktrees.collect(o.ws, spec.constraints.allowedPaths ?? [], ctx.cfg.coding.protected_paths);
-  // collect() staged everything: the staged tree is the submitted revision.
-  const revision = await stagedTree(o.ws.worktreePath);
-  // Declared commands can create allowed files without an editing response (e.g. a
-  // dependency lockfile). Final checks must run on a committed, integrable candidate.
-  if (!ctx.signal.aborted && o.state === "completed" && changes.changed.length && !changes.outOfScope.length && revision) {
-    const head = (await git(o.ws.worktreePath, ["rev-parse", "HEAD"])).trim();
-    const sealed = await sealCheckedCandidate({ worktree: o.ws.worktreePath, head, tree: revision,
-      actor: workerActor(ctx, "implementer", ctx.attempts.at(-1)?.endpointId ?? null), assertAuthority: () => assertRunAuthority(ctx) });
-    if (sealed !== head) ctx.session?.setWorkspace({ repos: [{ alias, worktree: o.ws.worktreePath, branch: null, baseCommit: o.ws.baseSha, head: sealed }] });
-  }
+  const { changes, revision } = await withRepositoryMutation([o.ws.sourcePath, o.ws.worktreePath], async mutation => {
+    assertRunAuthority(ctx);
+    const changes = await o.worktrees.collect(o.ws, spec.constraints.allowedPaths ?? [], ctx.cfg.coding.protected_paths, { mutation });
+    // Collection and sealing share one short mutation scope; checks/approval waits below do not.
+    const revision = await stagedTree(o.ws.worktreePath);
+    if (!ctx.signal.aborted && o.state === "completed" && changes.changed.length && !changes.outOfScope.length) {
+      const head = (await git(o.ws.worktreePath, ["rev-parse", "HEAD"])).trim();
+      const sealed = await sealCheckedCandidate({ worktree: o.ws.worktreePath, head, tree: revision, mutation,
+        actor: workerActor(ctx, "implementer", ctx.attempts.at(-1)?.endpointId ?? null), assertAuthority: () => assertRunAuthority(ctx) });
+      assertRunAuthority(ctx);
+      if (sealed !== head) ctx.session?.setWorkspace({ repos: [{ alias, worktree: o.ws.worktreePath, branch: null, baseCommit: o.ws.baseSha, head: sealed }] });
+    }
+    return { changes, revision };
+  });
   const artifactDigest = changes.patch ? createHash("sha256").update(changes.patch).digest("hex") : null;
   const patchRef = changes.patch
     ? ctx.artifacts.write({ taskId: ctx.taskId, executionId: o.executionId, kind: "patch", label: `patch against ${o.ws.baseSha.slice(0, 12)}`, content: changes.patch, mediaType: "text/x-diff", extension: ".patch" })
@@ -135,11 +145,14 @@ export async function finishCoding(
     try {
       taskLab = await runTaskLabChecks(ctx, o.ws, o.executionId, revision, artifactDigest);
       artifactRefs.push(ctx.artifacts.writeJson({ taskId: ctx.taskId, executionId: o.executionId, kind: "task_lab", label: "Task attempt Lab evidence", value: taskLab }));
-    } catch {
+    } catch (error) {
+      if (error instanceof RepositoryMutationError || error instanceof SelectedCommitError) throw error;
       findings.push({ description: "Required task Lab checks did not complete; the result cannot be accepted or integrated.", evidenceRefs: [] });
     }
   }
-  o.worktrees.setStatus(ctx.taskId, "collected");
+  await withRepositoryMutation([o.ws.sourcePath, o.ws.worktreePath], async () => {
+    assertRunAuthority(ctx); o.worktrees.setStatus(ctx.taskId, "collected");
+  });
 
   const labRequired = !!spec.constraints.labChecks?.length;
   const labPassed = taskLab?.status === "passed" && taskLab.cleanup === "complete";

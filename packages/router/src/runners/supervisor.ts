@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 import type { ChatMessage, ChatTool } from "../gateway/types.js";
 import { estimateTokens } from "../gateway/types.js";
@@ -8,7 +8,10 @@ import { readersFor } from "../context/sources.js";
 import { RepoReader } from "../context/repo-reader.js";
 import { planLimits } from "../routing/select.js";
 import { charterFor } from "../roles/index.js";
-import { commitAs, type Actor } from "../attribution/index.js";
+import { commitAs, SelectedCommitError, type Actor } from "../attribution/index.js";
+import { RepositoryMutationError, withRepositoryMutation, type RepositoryMutationCapability } from "../workspaces/repository-mutation.js";
+import { createRepositoryEffects } from "../workspaces/repository-command.js";
+import { assertRunAuthority } from "../harness/task-authority.js";
 import { dirtyPaths, git, headSha } from "../workspaces/git.js";
 import { runAgentLoop, type TerminalTool } from "../harness/loop.js";
 import type { ResumeInput } from "../harness/resume.js";
@@ -110,21 +113,45 @@ function questionState(ctx: RunContext, ref: ResumeToolRef): string {
 
 /** Create (or reuse after a restart) the job branch and its integration worktree per writable repo. */
 async function integrationRepos(ctx: RunContext, saved: IntegrationRepo[]): Promise<Map<string, IntegrationRepo>> {
+  const sources = ctx.spec.repositoryAliases.flatMap(alias => ctx.cfg.repositoryPaths[alias]?.writable ? [ctx.cfg.repositoryPaths[alias]!.path] : []);
+  for (const repo of saved) {
+    const source = ctx.cfg.repositoryPaths[repo.alias];
+    if (!ctx.spec.repositoryAliases.includes(repo.alias) || !source?.writable) throw new Error("Retained supervisor repository is no longer authorized");
+    if (!existsSync(repo.worktree)) throw new Error("Retained supervisor workspace disappeared; explicit recovery is required");
+    await assertIntegrationOwner(source.path, repo.worktree);
+  }
+  const requested = [...sources, ...saved.map(repo => repo.worktree)];
+  if (!requested.length) return integrationReposLocked(ctx, saved);
+  return withRepositoryMutation(requested, mutation => integrationReposLocked(ctx, saved, mutation));
+}
+
+async function assertIntegrationOwner(source: string, worktree: string): Promise<void> {
+  const common = async (repo: string) => realpathSync(path.resolve(repo, (await git(repo, ["rev-parse", "--git-common-dir"])).trim()));
+  const [expected, actual] = await Promise.all([common(source), common(worktree)]);
+  const key = (value: string) => process.platform === "win32" ? value.toLowerCase() : value;
+  if (key(expected) !== key(actual)) throw new Error("Retained supervisor workspace has a foreign Git owner");
+}
+
+async function integrationReposLocked(ctx: RunContext, saved: IntegrationRepo[], mutation?: RepositoryMutationCapability): Promise<Map<string, IntegrationRepo>> {
+  assertRunAuthority(ctx);
   const out = new Map<string, IntegrationRepo>();
   const observationRecovery = ctx.tasks.events(ctx.taskId, 500).some(event => event.type === "supervisor_observation_recovery_requested");
   if (observationRecovery && ctx.spec.repositoryAliases.some(alias => ctx.cfg.repositoryPaths[alias]?.writable && !saved.some(repo => repo.alias === alias && existsSync(repo.worktree))))
     throw new Error("Retained supervisor recovery workspace disappeared; refusing to reconstruct a different candidate");
   if (ctx.lab && ctx.lab.rootJobId === ctx.taskId) {
     const status = ctx.lab.manager.status(ctx.lab.project, ctx.lab.name);
-    for (const repo of status.lab.repositories) {
-      if (!ctx.spec.repositoryAliases.includes(repo.alias) || !ctx.cfg.repositoryPaths[repo.alias]?.writable) continue;
-      out.set(repo.alias, { alias: repo.alias, worktree: repo.worktree, branch: repo.branch, baseSha: status.heads[repo.alias] ?? repo.base });
-    }
+    const eligible = status.lab.repositories.filter(repo => ctx.spec.repositoryAliases.includes(repo.alias) && ctx.cfg.repositoryPaths[repo.alias]?.writable);
+    if (eligible.length) await withRepositoryMutation(eligible.map(repo => repo.worktree), async () => {
+      assertRunAuthority(ctx);
+      for (const repo of eligible) { await assertIntegrationOwner(ctx.cfg.repositoryPaths[repo.alias]!.path, repo.worktree); out.set(repo.alias, { alias: repo.alias, worktree: repo.worktree, branch: repo.branch, baseSha: status.heads[repo.alias] ?? repo.base }); }
+    }, mutation === undefined ? {} : { capability: mutation });
     return out;
   }
-  for (const r of saved) if (existsSync(r.worktree)) out.set(r.alias, r);
+  for (const r of saved) {
+    await assertIntegrationOwner(ctx.cfg.repositoryPaths[r.alias]!.path, r.worktree);
+    out.set(r.alias, r);
+  }
   const root = path.join(ctx.cfg.storageDir, "worktrees");
-  mkdirSync(root, { recursive: true });
   for (const alias of ctx.spec.repositoryAliases) {
     const repo = ctx.cfg.repositoryPaths[alias];
     if (!repo?.writable || out.has(alias)) continue;
@@ -133,11 +160,16 @@ async function integrationRepos(ctx: RunContext, saved: IntegrationRepo[]): Prom
     const exists = (await git(repo.path, ["branch", "--list", branch])).trim().length > 0;
     if (exists && existsSync(worktree)) {
       // A run that died before recording its workspace: reuse the job's worktree.
+      await withRepositoryMutation([worktree], async () => {
+        assertRunAuthority(ctx);
+        await assertIntegrationOwner(repo.path, worktree);
+      }, mutation === undefined ? {} : { capability: mutation });
       const baseSha = ctx.spec.context.baseCommits?.[alias] ?? (await git(repo.path, ["merge-base", "HEAD", branch])).trim();
       out.set(alias, { alias, worktree, branch, baseSha });
       continue;
     }
     const baseSha = ctx.spec.context.baseCommits?.[alias] ?? (await headSha(repo.path));
+    assertRunAuthority(ctx); mkdirSync(root, { recursive: true });
     await git(repo.path, exists ? ["worktree", "add", worktree, branch] : ["worktree", "add", "-b", branch, worktree, baseSha]);
     out.set(alias, { alias, worktree, branch, baseSha });
   }
@@ -183,10 +215,11 @@ export class SupervisorRunner implements CodingRunner {
     const queue = new MergeQueue(ctx.tasks.db, ctx.tasks, newId("mqrun"));
     const state: SupervisorState = { ctx, db: ctx.tasks.db, actor, repos, briefChecks, children, queue, depth, docSection, sharedFiles: sharedFilesOf(ctx.tasks.db, ctx.taskId) };
     ensureCarves(state);
-    const pointer = new WorkspacePointer(
-      ctx.session,
-      await Promise.all([...repos.values()].map(async (r) => ({ alias: r.alias, worktree: r.worktree, branch: r.branch, baseCommit: r.baseSha, head: (await git(r.worktree, ["rev-parse", "HEAD"])).trim() || null }))),
-    );
+    const makePointer = async () => {
+      assertRunAuthority(ctx);
+      return new WorkspacePointer(ctx.session, await Promise.all([...repos.values()].map(async r => ({ alias: r.alias, worktree: r.worktree, branch: r.branch, baseCommit: r.baseSha, head: (await git(r.worktree, ["rev-parse", "HEAD"])).trim() || null }))));
+    };
+    const pointer = repos.size ? await withRepositoryMutation([...repos.values()].map(repo => repo.worktree), makePointer) : await makePointer();
 
     let brain: HarnessEnv["brain"];
     if (ctx.brain && ctx.access) {
@@ -215,7 +248,7 @@ export class SupervisorRunner implements CodingRunner {
         const text = b.read(principal(), doc).content;
         if (!section(parseDoc(text), docSection)) {
           const body = `**Goal:** ${spec.goal.slice(0, 2000)}\n\n**Acceptance:** ${criterionTexts(spec).join("; ")}`;
-          await b.write(principal(), actor, doc, replaceSection(text, docSection, body, "Work Ledger"), `Sub-job: ${label}`).catch(() => undefined);
+          await b.write(principal(), actor, doc, replaceSection(text, docSection, body, "Work Ledger"), `Sub-job: ${label}`).catch(error => { if (error instanceof RepositoryMutationError || error instanceof SelectedCommitError) throw error; });
         }
       }
       brain = { brain: b, access, principal, actor, workingDoc: doc };
@@ -233,6 +266,7 @@ export class SupervisorRunner implements CodingRunner {
       allowArtifacts: true,
       // supervisor.implementation: delegate limits the edit tools to coordination files, in code.
       ...(primary ? { workspace: { alias: primary.alias, root: primary.worktree, allowedPaths: writeScope ?? null, guard: coordinationGuard({ cfg: ctx.cfg, db: ctx.tasks.db, jobId: ctx.taskId, alias: primary.alias, sharedFiles: () => state.sharedFiles ?? new Set() }) } } : {}),
+      ...(primary ? { repositoryEffects: createRepositoryEffects(primary.worktree) } : {}),
       ...(primary && patterns.length ? { commands: { patterns, cwd: primary.worktree, timeoutMs: ctx.cfg.execution.check_timeout_seconds * 1000 } } : {}),
       edits: new Set(),
       ...(brain ? { brain } : {}),
@@ -308,10 +342,12 @@ export class SupervisorRunner implements CodingRunner {
     try {
       recovered = await queue.recover(ctx.taskId, mergeHooks(state, env));
     } catch (err) {
-      if (isSimulatedCrash(err)) throw err;
+      if (isSimulatedCrash(err) || err instanceof RepositoryMutationError || err instanceof SelectedCommitError) throw err;
       ctx.tasks.event(ctx.taskId, "merge_recovery_failed", { error: (err as Error).message.slice(0, 500) });
     }
-    if (recovered.length) await pointer.refresh();
+    if (recovered.length && repos.size) await withRepositoryMutation([...repos.values()].map(repo => repo.worktree), async () => {
+      assertRunAuthority(ctx); await pointer.refresh();
+    });
     const queueNote = recovered.length ? `\nMerge queue after the interruption (integrate_task again reports these without picking twice):\n${recovered.map(mergeNote).join("\n")}` : "";
 
     const repoNotes = [...repos.values()].map((r) => `- ${r.alias}: branch ${r.branch} (based on ${r.baseSha.slice(0, 12)}), integration worktree is your workspace`).join("\n");
@@ -380,7 +416,11 @@ export class SupervisorRunner implements CodingRunner {
       purpose: "supervisor",
       ...(resume ? { resume } : {}),
       onResponse: async (info) => {
-        if (primary) pointer.setHead(primary.alias, await commitAs(primary.worktree, { ...state.actor, model: info.endpointId, request: info.requestId }, `supervisor: edit ${info.edits.slice(0, 5).join(", ")}`));
+        if (primary) await withRepositoryMutation([primary.worktree], async mutation => {
+          assertRunAuthority(ctx);
+          const head = await commitAs(primary.worktree, { ...state.actor, model: info.endpointId, request: info.requestId }, `supervisor: edit ${info.edits.slice(0, 5).join(", ")}`, {}, { mutation, assertAuthority: () => assertRunAuthority(ctx) });
+          assertRunAuthority(ctx); pointer.setHead(primary.alias, head);
+        });
       },
     });
     ctx.gate.admission.finishExecution(executionId, loop.kind);
@@ -390,7 +430,9 @@ export class SupervisorRunner implements CodingRunner {
     const patchRefs: string[] = [];
     const scopeViolation: string[] = [];
     const checks: RunOutcome["result"]["checks"] = [];
-    const checkHeads=new Map(await Promise.all([...repos.values()].map(async repo=>[repo.alias,await headSha(repo.worktree)] as const)));
+    const guardedRepos = [...repos.values()].map(repo => repo.worktree);
+    const captureHeads = async () => { assertRunAuthority(ctx); return new Map(await Promise.all([...repos.values()].map(async repo => [repo.alias, await headSha(repo.worktree)] as const))); };
+    const checkHeads = guardedRepos.length ? await withRepositoryMutation(guardedRepos, captureHeads) : await captureHeads();
     // A blocked/stalled v2 run has not offered a finished candidate. Do not create fresh
     // host approvals on the way out (notably for pre-plan discovery failures).
     const runFinalChecks = spec.deliveryVersion !== 2 || (loop.kind === "terminal" && loop.value.status === "completed");
@@ -414,6 +456,10 @@ export class SupervisorRunner implements CodingRunner {
       }
     }
     let checkCandidateChanged=false;
+    const finish = loop.kind === "terminal" ? loop.value : null;
+    const delivery = new ProductDeliveries(ctx.tasks.db);
+    const recordCandidate = async () => {
+    assertRunAuthority(ctx);
     for (const r of repos.values()) {
       const dirty=await dirtyPaths(r.worktree);
       if(await headSha(r.worktree)!==checkHeads.get(r.alias)||dirty.length)checkCandidateChanged=true;
@@ -430,8 +476,6 @@ export class SupervisorRunner implements CodingRunner {
       const logRef=ctx.artifacts.write({taskId:ctx.taskId,executionId,kind:"check_log",label:"Final candidate binding",content:"Integration sources changed during final checks. These checks cannot validate the resulting candidate; commit/repair and validate again.",extension:".log"});
       checks.push({command:"candidate_binding",exitCode:null,logRef});
     }
-    const finish = loop.kind === "terminal" ? loop.value : null;
-    const delivery = new ProductDeliveries(ctx.tasks.db);
     let productStatus = delivery.status(ctx.taskId, (ctx.tasks.projectOf(ctx.taskId) ?? ctx.cfg.brain.project));
     if(productStatus&&checkCandidateChanged){
       delivery.invalidateCandidate(ctx.taskId,ctx.tasks.projectOf(ctx.taskId)??ctx.cfg.brain.project);
@@ -450,6 +494,9 @@ export class SupervisorRunner implements CodingRunner {
         productStatus=delivery.status(ctx.taskId,(ctx.tasks.projectOf(ctx.taskId) ?? ctx.cfg.brain.project));
       }
     }
+    return productStatus;
+    };
+    const productStatus = guardedRepos.length ? await withRepositoryMutation(guardedRepos, recordCandidate) : await recordCandidate();
     // Job execution can return a candidate, never manufacture FINAL product acceptance.
     const acceptance = scopeViolation.length || checks.some((c) => c.exitCode !== 0) ? "unmet" : spec.deliveryVersion !== 2 && finish?.status === "completed" && checks.length > 0 && checks.every(c=>c.exitCode===0) ? "met" : "not_verified";
     // A sub-job's branches are integrated by its parent job (integrate_task), not merged by hand.
@@ -469,7 +516,7 @@ export class SupervisorRunner implements CodingRunner {
           outcome: finish?.status === "blocked" ? "Blocked" : "Partial",
           followUp: finish?.followUp ?? "resume or re-run the job",
         })
-        .catch(() => undefined);
+        .catch(error => { if (error instanceof RepositoryMutationError || error instanceof SelectedCommitError) throw error; });
     }
 
     const state2: RunOutcome["state"] = loop.kind === "budget_exhausted" ? "budget_exhausted" : finish ? "completed" : "failed";
