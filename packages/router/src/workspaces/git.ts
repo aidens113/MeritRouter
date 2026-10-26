@@ -16,11 +16,17 @@ export class GitError extends Error {
 }
 
 /** Run git without a shell. Output is capped; callers truncate further as needed. */
-export function git(cwd: string, args: string[], opts: { maxBuffer?: number; allowExit?: number[]; env?: Record<string, string>; signal?: AbortSignal; timeoutMs?: number; index?: GitIndexCapability } = {}): Promise<string> {
+export function git(cwd: string, args: string[], opts: { maxBuffer?: number; allowExit?: number[]; env?: Record<string, string>; signal?: AbortSignal; timeoutMs?: number; index?: GitIndexCapability; input?: string } = {}): Promise<string> {
   const run = async () => {
     try {
       const processPolicy = prepareGitProcess(cwd, args, opts.env, opts.index);
-      const { stdout } = await execFileAsync("git", processPolicy.args, {
+      if (opts.input !== undefined) {
+        const apply = !!opts.index && args.join("\0") === ["apply", "--cached", "--binary", "--whitespace=nowarn", "-"].join("\0");
+        const object = (value: string | undefined) => !!value && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value);
+        const message = !opts.index && args[0] === "commit-tree" && object(args[1]) && (args.length === 2 || args.length === 4 && args[2] === "-p" && object(args[3]));
+        if ((!apply && !message) || Buffer.byteLength(opts.input) > (apply ? 32 * 1024 * 1024 : 65536)) throw new Error("Git stdin requires exact bounded cached-apply or commit-message plumbing");
+      }
+      const running = execFileAsync("git", processPolicy.args, {
         cwd,
         maxBuffer: opts.index ? Math.min(opts.maxBuffer ?? 32 * 1024 * 1024, 32 * 1024 * 1024) : opts.maxBuffer ?? 32 * 1024 * 1024,
         windowsHide: true,
@@ -28,6 +34,8 @@ export function git(cwd: string, args: string[], opts: { maxBuffer?: number; all
         ...(opts.signal ? { signal: opts.signal } : {}),
         ...(opts.index ? { timeout: Math.min(opts.timeoutMs ?? 10000, 10000) } : opts.timeoutMs !== undefined ? { timeout: opts.timeoutMs } : {}),
       });
+      if (opts.input !== undefined) { running.child.stdin?.on("error", () => {}); running.child.stdin?.end(opts.input); }
+      const { stdout } = await running;
       return stdout;
     } catch (err) {
       const e = err as NodeJS.ErrnoException & { code?: number | string; stdout?: string; stderr?: string };

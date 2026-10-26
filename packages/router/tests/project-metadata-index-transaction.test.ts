@@ -63,6 +63,31 @@ describe("host-owned metadata-safe index transaction", () => {
     await clean(root);
   });
 
+  it("refreshes same-length selected tracked edits instead of trusting copied index stat cache", async () => {
+    const root = await repo();
+    await writeFile(path.join(root, "app.txt"), "partially staged B");
+    await git(root, ["add", "app.txt"]);
+    await writeFile(path.join(root, "app.txt"), "current complete B");
+    await stageWithoutProjectMetadata(root, { paths: ["app.txt"] });
+    expect(await git(root, ["show", ":app.txt"])).toBe("current complete B");
+    await clean(root);
+  });
+
+  it("preserves ordinary Git add clean-file behavior when newline policy changes", async () => {
+    const root = await repo();
+    await git(root, ["config", "core.autocrlf", "false"]);
+    await writeFile(path.join(root, "crlf.txt"), "one\r\ntwo\r\n");
+    await git(root, ["add", "crlf.txt"]);
+    await git(root, ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "CRLF fixture"]);
+    await git(root, ["config", "core.autocrlf", "true"]);
+    await git(root, ["add", "-A"]); // Actual ordinary-Git reference behavior, not a delayed fixture.
+    const expected = await git(root, ["rev-parse", ":crlf.txt"]);
+    expect(await git(root, ["diff", "--cached", "--name-only"])).toBe("");
+    await stageWithoutProjectMetadata(root, { paths: ["crlf.txt"] });
+    expect(await git(root, ["rev-parse", ":crlf.txt"])).toBe(expected);
+    expect(await git(root, ["diff", "--cached", "--name-only"])).toBe(""); await clean(root);
+  });
+
   it("preserves positive/negative wildcard selection and treats an explicit empty selection as no-op", async () => {
     const root = await repo(); await mkdir(path.join(root, "src"));
     await writeFile(path.join(root, "src", "take.txt"), "take"); await writeFile(path.join(root, "src", "skip.txt"), "skip");

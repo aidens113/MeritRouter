@@ -1,12 +1,14 @@
 import { lstatSync, realpathSync } from "node:fs";
-import { lstat, mkdtemp, open, readFile, rename, rm, unlink } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, rename, rm, unlink } from "node:fs/promises";
 import path from "node:path";
+import { randomBytes } from "node:crypto";
 import { isProjectMetadataPath } from "../projects/metadata-policy.js";
+import { assertGitWriteTopology } from "./git-write-topology.js";
 
 declare const indexBrand: unique symbol;
 /** Host-only active lease; JSON, object copies and expired leases never authorize index overrides. */
 export interface GitIndexCapability { readonly [indexBrand]: true }
-interface IndexLease { repo: string; index: string; active: boolean; deadline: number; pending: Set<Promise<unknown>> }
+interface IndexLease { repo: string; index: string; active: boolean; deadline: number; pending: Set<Promise<unknown>>; head: string; branch: string; headIndex?: boolean }
 const leases = new WeakMap<object, IndexLease>();
 const MAX_INDEX_BYTES = 32 * 1024 * 1024;
 const MAX_ENTRIES = 20000;
@@ -39,13 +41,47 @@ export function authorizedGitIndex(capability: GitIndexCapability, cwd: string, 
   if (!lease || !lease.active || Date.now() > lease.deadline || canonical(cwd) !== lease.repo) throw new Error("Inactive, forged or foreign Git index capability");
   const command = args[0];
   if (args.length > 256 || args.reduce((sum, arg) => sum + arg.length, 0) > 32768) throw new Error("Git index command exceeds supported argument bounds");
-  if (!["add", "ls-files", "diff", "write-tree"].includes(command ?? "") && !(args.length === 2 && command === "read-tree" && args[1] === "--empty")) {
+  const initialize = args.length === 2 && command === "read-tree" && (args[1] === "--empty" || lease.headIndex && args[1] === lease.head && !!lease.head);
+  const applyCached = args.join("\0") === ["apply", "--cached", "--binary", "--whitespace=nowarn", "-"].join("\0");
+  if (!["add", "ls-files", "diff", "write-tree"].includes(command ?? "") && !initialize && !applyCached) {
     throw new Error("Git index capability cannot authorize this command");
   }
   if (args.some(arg => /^--(?:index-output|output|pathspec-from-file)(?:=|$)/.test(arg))) throw new Error("Git index capability cannot redirect files");
   const stat = lstatSync(path.dirname(lease.index));
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Git index temporary directory changed");
   return lease.index;
+}
+
+/** Snapshot captured under the native index lock; no raw index filename is exposed. */
+export function gitIndexSnapshot(capability: GitIndexCapability): { head: string; branch: string } {
+  const lease = leases.get(capability);
+  if (!lease || !lease.active) throw new Error("Inactive Git index capability");
+  return { head: lease.head, branch: lease.branch };
+}
+
+/** Secondary index starts from immutable expected HEAD; callback cannot publish it directly. */
+export async function withHeadGitIndex<T>(base: GitIndexCapability, action: (candidate: GitIndexCapability) => Promise<T>): Promise<T> {
+  const parent = leases.get(base);
+  if (!parent || !parent.active) throw new Error("Inactive Git index capability");
+  const capability = Object.freeze({}) as GitIndexCapability;
+  leases.set(capability, { ...parent, index: path.join(path.dirname(parent.index), `candidate-${randomBytes(8).toString("hex")}.index`), active: true, pending: new Set(), headIndex: true });
+  const { git } = await import("./git.js");
+  try {
+    await git(parent.repo, ["read-tree", parent.head || "--empty"], { index: capability });
+    const result = await action(capability);
+    if (await revokeAndDrain(capability)) throw new Error("Candidate index commands were not awaited");
+    return result;
+  } finally { await revokeAndDrain(capability); }
+}
+
+export interface GitIndexPublicationSnapshot<T> {
+  gitDirectory: string;
+  indexPath: string;
+  originalIndex: Buffer | null;
+  nextIndex: Buffer;
+  head: string;
+  branch: string;
+  result: T;
 }
 
 async function directoryChain(directory: string): Promise<void> {
@@ -99,10 +135,11 @@ export async function assertSafeIndexInput(repo: string, relative: string, allow
  * Original index is published only after callback, full index/path preflight and HEAD/branch/index snapshot rechecks.
  * Cooperating native Git writers respect index.lock; hostile filesystem races remain out of scope.
  */
-export async function withGitIndexTransaction<T>(repo: string, action: (index: GitIndexCapability) => Promise<T>): Promise<T> {
+export async function withGitIndexTransaction<T>(repo: string, action: (index: GitIndexCapability) => Promise<T>, publication?: (snapshot: GitIndexPublicationSnapshot<T>) => Promise<void>): Promise<T> {
   const { git } = await import("./git.js");
   const { assertNoTrackedProjectMetadata } = await import("./metadata-exclusion.js");
   await assertNoTrackedProjectMetadata(repo);
+  await assertGitWriteTopology(repo);
   const gitDir = path.resolve((await git(repo, ["rev-parse", "--absolute-git-dir"])).trim());
   const index = path.resolve(repo, (await git(repo, ["rev-parse", "--git-path", "index"])).trim());
   const normalized = (value: string) => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
@@ -124,14 +161,16 @@ export async function withGitIndexTransaction<T>(repo: string, action: (index: G
   try {
     await directoryChain(gitDir);
     await assertNoTrackedProjectMetadata(repo);
+    await assertGitWriteTopology(repo);
     const before = await indexBytes(index);
     const head = (await git(repo, ["rev-parse", "--verify", "-q", "HEAD"], { allowExit: [1] })).trim();
     const branch = (await git(repo, ["symbolic-ref", "-q", "HEAD"], { allowExit: [1] })).trim();
     if (!before && head) throw new Error("A committed repository with a missing index requires explicit recovery");
-    temp = await mkdtemp(path.join(gitDir, "meritrouter-index-"));
+    temp = path.join(gitDir, `meritrouter-index-${randomBytes(12).toString("hex")}`);
+    await mkdir(temp, { mode: 0o700 });
     const temporaryIndex = path.join(temp, "index");
     capability = Object.freeze({}) as GitIndexCapability;
-    leases.set(capability, { repo: canonical(repo), index: temporaryIndex, active: true, deadline: Date.now() + 60000, pending: new Set() });
+    leases.set(capability, { repo: canonical(repo), index: temporaryIndex, active: true, deadline: Date.now() + 60000, pending: new Set(), head, branch });
     if (before) {
       const file = await open(temporaryIndex, "wx", 0o600);
       try { await file.writeFile(before); } finally { await file.close(); }
@@ -155,6 +194,7 @@ export async function withGitIndexTransaction<T>(repo: string, action: (index: G
     const after = await indexBytes(temporaryIndex);
     if (!after) throw new Error("Temporary Git index is missing");
     await revokeAndDrain(validation);
+    if (publication) await publication({ gitDirectory: gitDir, indexPath: index, originalIndex: before ? Buffer.from(before) : null, nextIndex: Buffer.from(after), head, branch, result });
     await rm(temp, { recursive: true }); temp = null;
     await handle.writeFile(after); await handle.sync(); await handle.close(); closed = true;
     await directoryChain(gitDir);
