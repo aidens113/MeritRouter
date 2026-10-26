@@ -94,4 +94,6 @@ Its1500*20ms loop was not enough for bootstrap+durable publications; actual elap
 ~60s under this run, not a native queue failure. Root replaced ONLY that crash-observation
 poll with a120s wall-clock deadline matching its existing child awaitResults120s; test's
 240s bound, fault count, original commits, replay/attribution assertions and product deadlines
-remain unchanged. Exact end-to-end rerun pending; this is not yet a passing test claim.
+remain unchanged. Exact end-to-end rerun now1PASS/6selection skips,95.15s total (92.46s
+test), proving actual fault/restart/replay, two original commits each present once and
+attribution. No assertion or product deadline was weakened.

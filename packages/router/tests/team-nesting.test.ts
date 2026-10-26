@@ -383,7 +383,10 @@ describe("merge queue under supervisor resume", () => {
     process.env[FAULT_ENV] = `after_tool_run:1:${MERGE_PICK_FAULT}`;
     const crashes = simulatedCrashCount();
     const job = await sy.startJob({ goal: "Integrate through a crash", repositories: ["core"], label: "crashy" });
-    for (let i = 0; i < 1500 && simulatedCrashCount() === crashes; i++) await sleep(20);
+    // Bootstrap, two durable worker publications and approved checks precede the
+    // injected queue crash. Use the same bounded wait as the real child-result wait.
+    const crashDeadline = Date.now() + 120000;
+    while (simulatedCrashCount() === crashes && Date.now() < crashDeadline) await sleep(20);
     expect(simulatedCrashCount(), JSON.stringify({
       tasks: sy.listTasks(undefined, 50).map(task => ({ task, result: sy!.tasks.get(task.taskId)?.result, events: sy!.tasks.events(task.taskId, 100) })),
       requests: client.requests.slice(-8).map(req => ({ supervisor: isSupervisor(req), tools: req.messages.filter(message => message.role === "tool").slice(-5) })),
