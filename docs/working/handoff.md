@@ -10,8 +10,10 @@ Latest live read: Facebook v7 supervisor interrupted/watchdog; profile completed
 notifications failed deadline_exceeded, no pending/running approvals. Retained source and
 charges must be preserved; no usable app delivered. Older process IDs and task snapshots below
 are historical, not fresh status. Do not resume/move work without checking current state.
-Latest combined framework recursive typecheck/build passed on local merged e0e6cf2 before
-storage edits; final combined full-suite validation and publication remain outstanding.
+Storage foundation87feb17 now committed locally:90 focused tests plus recursive typecheck/
+build pass; final integrated full suite running, publication pending. Main source/dist frozen.
+Next Git exclusion helper isolated under this project's .MeritRouter/development/metadata-exclusion,
+not a flat installation folder. No project store separation/migration or runtime rollout yet.
 
 Written for the next agent (Codex or Claude Code) picking this repository up cold. Read this,
 then `AGENTS.md`, then the `Current State` of the effort you work on. Every effort below has its
