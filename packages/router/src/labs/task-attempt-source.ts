@@ -8,6 +8,8 @@ import { SessionWorkspaceSchema } from "../sessions/events.js";
 import { immediate, newId } from "../storage/db.js";
 import { MeritRouterError } from "../core/errors.js";
 import { dirtyPaths, git } from "../workspaces/git.js";
+import { projectRuntimeActivationRoots } from "../workspaces/worktree.js";
+import type { ProjectContext } from "../projects/context.js";
 import { TaskAttemptStore } from "./task-attempt-store.js";
 import { RegisterTaskAttemptSchema, SubmitTaskAttemptSchema, TaskAttemptHandleSchema, type RegisterTaskAttempt, type TaskAttemptHandle, TaskAttemptRepositorySchema } from "./task-attempt-schema.js";
 export const taskHash = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -38,8 +40,9 @@ export class TaskAttemptSource {
         throw new MeritRouterError("lab_scope_denied", "task attempt handle does not match persisted identity");
     return record;
   }
-  private sourcePath(target: string) {
-    const root = path.resolve(this.manager.options.storageDir, "worktrees"), resolved = path.resolve(target), rel = path.relative(root, resolved);
+  /** The containment root is derived the same way a worktree was created for it (worktree.ts). */
+  private sourcePath(target: string, cfg: ProjectContext) {
+    const root = path.resolve(projectRuntimeActivationRoots(cfg).worktrees), resolved = path.resolve(target), rel = path.relative(root, resolved);
     if (!rel || rel.startsWith("..") || path.isAbsolute(rel))
       throw new MeritRouterError("lab_scope_denied", "source must be a managed isolated task worktree");
     let current = root;
@@ -65,7 +68,7 @@ export class TaskAttemptSource {
       throw new MeritRouterError("lab_scope_denied", "source is absent from persisted session workspace");
     if (!this.store.db.prepare("SELECT 1 FROM execution_members WHERE execution_id=? AND task_id=?").get(input.executionId, input.taskId))
       throw new MeritRouterError("lab_scope_denied", "execution membership is missing");
-    this.sourcePath(input.sourceWorktree);
+    this.sourcePath(input.sourceWorktree, cfg);
     const repositories: z.infer<typeof TaskAttemptRepositorySchema>[] = [];
     for (const repo of input.repositories) {
       const configured = cfg.repositoryPaths[repo.alias];
@@ -96,9 +99,9 @@ export class TaskAttemptSource {
     return TaskAttemptHandleSchema.parse({ id, taskId: input.taskId, project: input.project, runCount: input.runCount, leaseOwner: input.leaseOwner, executionId: input.executionId });
   }
   async submit(handle: TaskAttemptHandle, raw: z.input<typeof SubmitTaskAttemptSchema>): Promise<void> {
-    const record = this.get(handle), input = SubmitTaskAttemptSchema.parse(raw);
+    const record = this.get(handle), input = SubmitTaskAttemptSchema.parse(raw), cfg = this.manager.options.project(record.project);
     this.identity(record);
-    this.sourcePath(record.sourceWorktree);
+    this.sourcePath(record.sourceWorktree, cfg);
     const writable = record.repositories.find(r => r.alias === record.writableAlias)!;
     if (await taskCommonDirectory(record.sourceWorktree) !== writable.commonDirectory)
       throw new MeritRouterError("lab_scope_denied", "source repository identity changed");

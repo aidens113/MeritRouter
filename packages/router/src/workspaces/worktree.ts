@@ -7,8 +7,39 @@ import { dirtyPaths, git, headSha } from "./git.js";
 import { ensureProjectMetadataExcluded } from "./metadata-exclusion.js";
 import { stageWithoutProjectMetadata } from "./metadata-staging.js";
 import { withRepositoryMutation, type RepositoryMutationCapability } from "./repository-mutation.js";
-import { assertRuntimeCwdSupported } from "../projects/runtime-paths.js";
+import { assertRuntimeCwdSupported, projectRuntimePaths } from "../projects/runtime-paths.js";
 import { assertNoNativeWorktreeOperation } from "./worktree-removal.js";
+
+const sameFsPath = (a: string, b: string) =>
+  process.platform === "win32" ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b);
+
+export interface ProjectRuntimeActivationRoots {
+  /** Root for isolated task/supervisor worktrees. */
+  worktrees: string;
+  /** Root for per-worktree agent home directories. */
+  agentHome: string;
+  /** True when the project runs on its own split store, not the installation's. */
+  split: boolean;
+}
+
+/**
+ * Where worktree and agent-home roots live for a running project context. A context is
+ * split-mode exactly when its `projectDirectory` is set and its `storageDir` is already the
+ * project's own runtime state directory (what `ProjectRuntimeRegistry` sets, runtime-registry.ts
+ * line ~68): then roots move under the project's readable `<project>/.MeritRouter` directory.
+ * Any other context (no project directory, or a project directory whose storage is still the
+ * shared installation directory) keeps today's exact layout under `storageDir`, so a persisted
+ * legacy worktree path still resolves and existing same-DB projects are unaffected.
+ */
+export function projectRuntimeActivationRoots(cfg: { storageDir: string; projectDirectory?: string | null }): ProjectRuntimeActivationRoots {
+  if (cfg.projectDirectory != null) {
+    const paths = projectRuntimePaths(cfg.projectDirectory);
+    if (sameFsPath(paths.state, cfg.storageDir)) {
+      return { worktrees: path.join(paths.root, "worktrees"), agentHome: path.join(paths.root, "agent-home"), split: true };
+    }
+  }
+  return { worktrees: path.join(cfg.storageDir, "worktrees"), agentHome: path.join(cfg.storageDir, "agent-home"), split: false };
+}
 
 const absolute = z.string().min(1).max(4096).refine(value => path.isAbsolute(value) && !value.includes("\0"), "Expected an absolute repository path");
 const commit = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);

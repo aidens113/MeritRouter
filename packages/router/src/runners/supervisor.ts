@@ -11,6 +11,8 @@ import { charterFor } from "../roles/index.js";
 import { commitAs, SelectedCommitError, type Actor } from "../attribution/index.js";
 import { RepositoryMutationError, withRepositoryMutation, type RepositoryMutationCapability } from "../workspaces/repository-mutation.js";
 import { createRepositoryEffects } from "../workspaces/repository-command.js";
+import { projectRuntimeActivationRoots } from "../workspaces/worktree.js";
+import { assertRuntimeCwdSupported } from "../projects/runtime-paths.js";
 import { assertRunAuthority } from "../harness/task-authority.js";
 import { dirtyPaths, git, headSha } from "../workspaces/git.js";
 import { runAgentLoop, type TerminalTool } from "../harness/loop.js";
@@ -151,12 +153,13 @@ async function integrationReposLocked(ctx: RunContext, saved: IntegrationRepo[],
     await assertIntegrationOwner(ctx.cfg.repositoryPaths[r.alias]!.path, r.worktree);
     out.set(r.alias, r);
   }
-  const root = path.join(ctx.cfg.storageDir, "worktrees");
+  const root = projectRuntimeActivationRoots(ctx.cfg).worktrees;
   for (const alias of ctx.spec.repositoryAliases) {
     const repo = ctx.cfg.repositoryPaths[alias];
     if (!repo?.writable || out.has(alias)) continue;
     const branch = `${ctx.cfg.supervisor.branch_prefix}${ctx.taskId}`;
     const worktree = path.join(root, `job-${ctx.taskId}-${alias}`);
+    assertRuntimeCwdSupported(worktree);
     const exists = (await git(repo.path, ["branch", "--list", branch])).trim().length > 0;
     if (exists && existsSync(worktree)) {
       // A run that died before recording its workspace: reuse the job's worktree.

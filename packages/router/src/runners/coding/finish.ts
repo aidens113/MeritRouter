@@ -4,7 +4,7 @@ import type { TaskLabEvidence } from "../../labs/task-attempt-schema.js";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import type { Workspace, Worktrees } from "../../workspaces/worktree.js";
+import { projectRuntimeActivationRoots, type Workspace, type Worktrees } from "../../workspaces/worktree.js";
 import type { SessionWorkspace } from "../../sessions/events.js";
 import { git } from "../../workspaces/git.js";
 import type { EvidenceUniverse, WorkerOutput } from "../../core/worker-output.js";
@@ -29,7 +29,7 @@ export async function prepareWorkspace(ctx: RunContext): Promise<{ ws: Workspace
   const { Worktrees } = await import("../../workspaces/worktree.js");
   const alias = ctx.spec.writableRepository!;
   const repo = ctx.cfg.repositoryPaths[alias]!;
-  const worktrees = new Worktrees(ctx.tasks.db, path.join(ctx.cfg.storageDir, "worktrees"), ctx.now);
+  const worktrees = new Worktrees(ctx.tasks.db, projectRuntimeActivationRoots(ctx.cfg).worktrees, ctx.now);
   const runNo = ctx.spec.constraints.labChecks?.length ? ctx.claimedRunCount : (ctx.claimedRunCount ?? ctx.tasks.get(ctx.taskId)!.row.run_count);
   if (runNo === undefined) throw new Error("task Lab workspace requires its captured claim generation");
   // A quality repair continues from the submitted revision; the diff is still taken against the base.
@@ -53,7 +53,7 @@ export async function resumeWorkspace(ctx: RunContext, recorded: SessionWorkspac
   const rec = recorded?.repos.find((r) => r.alias === alias);
   if (!rec || !rec.baseCommit || !existsSync(rec.worktree)) return null;
   const { Worktrees } = await import("../../workspaces/worktree.js");
-  const worktrees = new Worktrees(ctx.tasks.db, path.join(ctx.cfg.storageDir, "worktrees"), ctx.now);
+  const worktrees = new Worktrees(ctx.tasks.db, projectRuntimeActivationRoots(ctx.cfg).worktrees, ctx.now);
   const prev = worktrees.previous(ctx.taskId);
   const ws: Workspace =
     prev && path.resolve(prev.worktreePath) === path.resolve(rec.worktree)
@@ -71,7 +71,7 @@ export async function resumeWorkspace(ctx: RunContext, recorded: SessionWorkspac
 }
 
 export function agentHome(ctx: RunContext, ws: Workspace): string {
-  const home = path.join(ctx.cfg.storageDir, "agent-home", path.basename(ws.worktreePath));
+  const home = path.join(projectRuntimeActivationRoots(ctx.cfg).agentHome, path.basename(ws.worktreePath));
   mkdirSync(home, { recursive: true });
   return home;
 }

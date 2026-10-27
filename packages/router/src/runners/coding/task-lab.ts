@@ -16,7 +16,7 @@ import { awaitWorkerAction, outsideRepositoryPolicy, WorkerActionRequests } from
 import { prepareGitProcess } from "../../workspaces/git-process-policy.js";
 import type { WorkerTask } from "../../core/task.js";
 import type { RunContext } from "../types.js";
-import type { Workspace } from "../../workspaces/worktree.js";
+import { projectRuntimeActivationRoots, type Workspace } from "../../workspaces/worktree.js";
 import { currentSupervisorAuthority } from "../../core/supervisor-authority.js";
 const Sha = z.string().regex(/^[a-f0-9]{40,64}$/);
 const Count = z.number().int().nonnegative();
@@ -105,7 +105,7 @@ export function taskLabAuthority(labs: LabManager, taskId: string, evidence: unk
       return output;
     };
     const common = (cwd: string) => realpathSync(git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]).trim());
-    const sourceRoot = path.resolve(labs.options.storageDir, "worktrees"), source = path.resolve(attempt.sourceWorktree), relative = path.relative(sourceRoot, source);
+    const sourceRoot = path.resolve(projectRuntimeActivationRoots(project).worktrees), source = path.resolve(attempt.sourceWorktree), relative = path.relative(sourceRoot, source);
     if (!relative || relative.startsWith("..") || path.isAbsolute(relative))
       return null;
     let cursor = sourceRoot;
