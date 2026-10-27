@@ -3,6 +3,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { z } from "zod";
 import { DB_FILE, LEGACY_DB_FILE, databasePath, SCHEMA_VERSION, openDatabase, type Db } from "../storage/db.js";
+import { readStoreIdentity } from "../projects/store-identity.js";
 import { MeritRouterError } from "../core/errors.js";
 import { logsDirFor, readDaemonLock } from "./daemon.js";
 import { backupBrain, BrainManifestSchema, planBrainRestore, stageBrainRestore, discardStagedBrainRestore, restoreBrain, type BrainMountNote, type BrainRestoreResult } from "./brain-backup.js";
@@ -41,6 +42,8 @@ export const BackupManifestSchema = z
     missing: z.array(z.string()),
     /** The brain repository (format 2; absent in format 1, null when no brain path was given). */
     brain: BrainManifestSchema.nullable().optional(),
+    /** "coordination" when the store is bound as a split-store coordination role; absent/null for a legacy (unbound) installation store. */
+    installationRole: z.literal("coordination").nullable().optional(),
   })
   .strict();
 export type BackupManifest = z.infer<typeof BackupManifestSchema>;
@@ -144,10 +147,23 @@ export async function backupStorage(input: BackupOptions): Promise<BackupManifes
   let artifacts = 0;
   let logPaths: string[] = [];
   let artifactPaths: string[] = [];
+  let installationRole: "coordination" | null = null;
   try {
     snap.pragma("journal_mode = DELETE");
     const check = snap.pragma("quick_check", { simple: true });
     if (check !== "ok") throw new MeritRouterError("internal", `snapshot failed its integrity check: ${String(check)}`);
+    // A bound coordination store carries every project's shared accounting, never a project's own
+    // tasks/sessions/artifacts (those live only in that project's own `<project>/.MeritRouter`
+    // store). Refuse rather than silently fold project-private rows into an installation backup.
+    const identity = readStoreIdentity(snap);
+    if (identity?.role === "coordination") {
+      installationRole = "coordination";
+      for (const table of ["tasks", "sessions", "artifacts"] as const) {
+        if (hasTable(snap, table) && countRows(snap, table) > 0) {
+          throw new MeritRouterError("usage", `refusing to back up: this installation's coordination store holds ${table} rows, so it is no longer coordination-only; back up the owning project's store with backupProjectStore instead`);
+        }
+      }
+    }
     schemaVersion = snap.pragma("user_version", { simple: true }) as number;
     if (hasTable(snap, "tasks")) tasks = countRows(snap, "tasks");
     if (hasTable(snap, "sessions")) {
@@ -209,6 +225,7 @@ export async function backupStorage(input: BackupOptions): Promise<BackupManifes
     includesMasterKey,
     missing,
     brain,
+    installationRole,
   };
   const manifestPath = path.join(targetDir, MANIFEST_FILE);
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
