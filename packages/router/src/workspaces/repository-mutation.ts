@@ -46,18 +46,22 @@ async function resolveOwners(input: string[]): Promise<Owner[]> {
     const physical = await realpath(repo);
     // Registered repository roots may themselves be directory aliases. Resolve that
     // authorized root first; aliases must share one physical owner and lock ordering.
-    const gitDirectory = path.resolve(physical, (await git(physical, ["rev-parse", "--absolute-git-dir"])).trim());
-    const commonDirectory = path.resolve(physical, (await git(physical, ["rev-parse", "--git-common-dir"])).trim());
+    // One rev-parse answers both locations (one line each); separate processes doubled admission cost.
+    const lines = (await git(physical, ["rev-parse", "--absolute-git-dir", "--git-common-dir"])).split("\n");
+    if (lines.length < 2 || !lines[0]!.trim() || !lines[1]!.trim()) throw new RepositoryMutationError("ownership_changed", "Repository mutation owner could not be resolved");
+    const gitDirectory = path.resolve(physical, lines[0]!.trim());
+    const commonDirectory = path.resolve(physical, lines[1]!.trim());
     await directoryChain(gitDirectory); await directoryChain(commonDirectory);
     const physicalGit = await realpath(gitDirectory), physicalCommon = await realpath(commonDirectory);
     resolved.push({ repo: physical, gitDirectory: physicalGit, commonDirectory: physicalCommon });
   }
   return resolved;
 }
-async function validateOwners(owners: Owner[], command?: RepositoryCommandPermits): Promise<void> {
+/** `resolved` is true only when `owners` were resolved after the lock that fences them was held. */
+async function validateOwners(owners: Owner[], command?: RepositoryCommandPermits, resolved = false): Promise<void> {
   await assertRepositoryCommandPermitScope(owners.map(owner => owner.gitDirectory), command);
   for (const owner of owners) {
-    const [current] = await resolveOwners([owner.repo]);
+    const [current] = resolved ? [owner] : await resolveOwners([owner.repo]);
     if (!current || key(current.gitDirectory) !== key(owner.gitDirectory) || key(current.commonDirectory) !== key(owner.commonDirectory)) throw new RepositoryMutationError("ownership_changed", "Repository mutation owner changed during admission");
     try { await assertNoPendingCommitPublication(owner.repo); }
     catch (error) {
@@ -125,10 +129,12 @@ export function withRepositoryMutation<T>(input: string[], action: (capability: 
     let lease: Lease;
     try { lease = activeLease(parsed.capability as RepositoryMutationCapability); } catch (error) { return Promise.reject(error); }
     const running = (async () => {
+      // The enclosing scope already holds every common-owner lock, so this resolution is under
+      // lock; a second resolution immediately after it cannot observe a different admission.
       const owners = await resolveOwners(requested);
       activeLease(lease.capability);
       if (owners.some(owner => !lease.owners.has(key(owner.commonDirectory)))) throw new RepositoryMutationError("invalid_capability", "Repository mutation capability cannot widen its owner scope");
-      await validateOwners(owners, parsed.command as RepositoryCommandPermits | undefined); activeLease(lease.capability);
+      await validateOwners(owners, parsed.command as RepositoryCommandPermits | undefined, true); activeLease(lease.capability);
       return action(lease.capability);
     })();
     lease.pending.add(running);

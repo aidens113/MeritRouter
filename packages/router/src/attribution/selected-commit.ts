@@ -100,9 +100,34 @@ function selectedMessage(repo: string, parsed: z.output<typeof SelectedCommitInp
   });
 }
 
+// info/exclude files this process established the private-metadata rule in, by file identity.
+const establishedExcludes = new Map<string, string>();
+const fileKey = (value: string) => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
+async function excludeSignature(file: string): Promise<string | null> {
+  try {
+    const stat = await lstat(file);
+    return stat.isFile() && !stat.isSymbolicLink() ? `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}` : null;
+  } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
+}
+/**
+ * Establishing the exclude rule costs about nine Git processes. Re-establish it only when the
+ * exclude file is not the one this process last established (identity, size, times). Tracked
+ * metadata is still refused under the index lock and every candidate path is filtered.
+ */
+async function ensureMetadataExcludedForCommit(repo: string): Promise<void> {
+  const file = (await git(repo, ["rev-parse", "--git-path", "info/exclude"])).trim();
+  if (!file) throw new Error("Git exclude location could not be resolved");
+  const key = fileKey(path.resolve(repo, file)), known = establishedExcludes.get(key);
+  if (known !== undefined && known === await excludeSignature(path.resolve(repo, file))) return;
+  establishedExcludes.delete(key);
+  await ensureProjectMetadataExcluded(repo);
+  const signature = await excludeSignature(path.resolve(repo, file));
+  if (signature) establishedExcludes.set(key, signature);
+}
+
 async function publishSelectedCommit(repo: string, parsed: z.output<typeof SelectedCommitInputSchema>, control: SelectedCommitControl, setup: boolean, message: string, captured?: CapturedTree): Promise<SelectedCommitOutcome> {
   control.assertAuthority?.();
-  await ensureProjectMetadataExcluded(repo);
+  await ensureMetadataExcludedForCommit(repo);
   const identity = setup ? { name: "MeritRouter", email: "meritrouter@localhost" } : actorIdentity(parsed.actor);
   const env = { GIT_AUTHOR_NAME: identity.name, GIT_AUTHOR_EMAIL: identity.email, GIT_COMMITTER_NAME: identity.name, GIT_COMMITTER_EMAIL: identity.email };
   let receipt: CommitReceiptHandle | null = null, publication: "none" | "attempted" | "published" | "uncertain" = "none";
@@ -115,8 +140,10 @@ async function publishSelectedCommit(repo: string, parsed: z.output<typeof Selec
       // earlier unborn check. Initial setup must not append a synthetic child commit.
       if (setup && snapshot.head) return { commit: null, tree: CommitObjectSchema.parse((await git(repo, ["rev-parse", `${snapshot.head}^{tree}`])).trim()) };
       // Do not flatten a merge/cherry-pick/revert into a misleading one-parent commit.
-      for (const marker of ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"]) {
-        const file = (await git(repo, ["rev-parse", "--git-path", marker])).trim();
+      const markers = ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"];
+      const markerFiles = (await git(repo, ["rev-parse", ...markers.flatMap(marker => ["--git-path", marker])])).split("\n").map(line => line.trim()).filter(Boolean);
+      if (markerFiles.length !== markers.length) throw new Error("Git sequencer state locations could not be resolved");
+      for (const file of markerFiles) {
         try { await lstat(path.resolve(repo, file)); throw new Error("Selected commit requires sequencer/merge recovery first"); }
         catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
       }

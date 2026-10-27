@@ -151,6 +151,7 @@ export class Brain {
   private readonly mounts: Array<{ prefix: string; abs: string; commit: boolean }>;
   private chains = new Map<string, Promise<unknown>>();
   private ready: Promise<void> | null = null;
+  private readonly queueOwners = new Map<string, string>();
   private readonly pendingPushes = new Set<string>();
   private indexRefresh: Promise<number> | null = null;
   private indexRefreshedAt = 0;
@@ -347,9 +348,15 @@ export class Brain {
     // A nested host already owns its sorted scopes. Waiting for a normal operation
     // queued behind that same host would deadlock; the original capability is revalidated.
     if (control.mutation !== undefined) return execute();
+    // Queue keys only order this process's cooperating Brain effects; the repository mutation
+    // fence re-resolves and locks the real owners. Cache the lookup instead of a Git process per write.
     const owners = [...new Set(await Promise.all(repos.map(async repo => {
+      const cached = this.queueOwners.get(repo);
+      if (cached) return cached;
       const common = realpathSync((await git(repo, ["rev-parse", "--path-format=absolute", "--git-common-dir"])).trim());
-      return process.platform === "win32" ? common.toLowerCase() : common;
+      const owner = process.platform === "win32" ? common.toLowerCase() : common;
+      this.queueOwners.set(repo, owner);
+      return owner;
     })))];
     const previous = owners.map(owner => brainMutationQueues.get(owner) ?? Promise.resolve());
     const run = Promise.all(previous.map(pending => pending.catch(() => undefined))).then(execute);

@@ -30,9 +30,12 @@ export async function publishSelectedRef(repo: string, input: {
   if (input.head) CommitObjectSchema.parse(input.head);
   await assertGitWriteTopology(repo);
   const timeoutMs = z.number().int().min(50).max(10000).parse(control.timeoutMs ?? 10000);
-  const format = (await git(repo, ["rev-parse", "--show-ref-format"])).trim();
+  // One read-only rev-parse answers backend, owner and branch location (one line each, in order).
+  const facts = (await git(repo, ["rev-parse", "--show-ref-format", "--absolute-git-dir", ...(input.branch ? ["--git-path", input.branch] : [])])).split("\n").map(line => line.trim());
+  const format = facts[0];
   if (format !== "files") throw new SelectedRefPublicationError("refused", "Git ref backend cannot prove the required prepared HEAD lock");
-  const actualGitDir = path.resolve((await git(repo, ["rev-parse", "--absolute-git-dir"])).trim());
+  if (!facts[1] || (input.branch && !facts[2])) throw new SelectedRefPublicationError("refused", "Git publication locations could not be resolved");
+  const actualGitDir = path.resolve(facts[1]);
   const normalize = (value: string) => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
   if (normalize(actualGitDir) !== normalize(input.gitDirectory)) throw new SelectedRefPublicationError("refused", "Git publication owner changed");
   const headFile = path.join(actualGitDir, "HEAD"), lock = `${headFile}.lock`;
@@ -80,7 +83,7 @@ export async function publishSelectedRef(repo: string, input: {
     const expected = input.branch ? `ref: ${input.branch}` : input.head;
     if ((await readFile(headFile, "utf8")).trim() !== expected) throw new Error("Git HEAD symbolic type/target changed before prepared publication");
     if (input.branch) {
-      const branchFile = path.resolve(repo, (await git(repo, ["rev-parse", "--git-path", input.branch], { timeoutMs: 10000 })).trim());
+      const branchFile = path.resolve(repo, facts[2]!);
       const branchLock = `${branchFile}.lock`, stat = await lstat(branchLock);
       if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) throw new Error("Git did not establish a supported native branch lock");
       ownedLocks.push({ file: branchLock, dev: stat.dev, ino: stat.ino });

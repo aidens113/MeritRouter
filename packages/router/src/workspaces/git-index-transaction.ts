@@ -138,10 +138,12 @@ export async function assertSafeIndexInput(repo: string, relative: string, allow
 export async function withGitIndexTransaction<T>(repo: string, action: (index: GitIndexCapability) => Promise<T>, publication?: (snapshot: GitIndexPublicationSnapshot<T>) => Promise<void>): Promise<T> {
   const { git } = await import("./git.js");
   const { assertNoTrackedProjectMetadata } = await import("./metadata-exclusion.js");
-  await assertNoTrackedProjectMetadata(repo);
-  await assertGitWriteTopology(repo);
-  const gitDir = path.resolve((await git(repo, ["rev-parse", "--absolute-git-dir"])).trim());
-  const index = path.resolve(repo, (await git(repo, ["rev-parse", "--git-path", "index"])).trim());
+  // Metadata and write-topology preflights run once, under the native index lock and before
+  // any effect; an unlocked copy of the same checks only repeated their Git processes.
+  const location = (await git(repo, ["rev-parse", "--absolute-git-dir", "--git-path", "index"])).split("\n").map(line => line.trim());
+  if (!location[0] || !location[1]) throw new Error("Git index location could not be resolved");
+  const gitDir = path.resolve(location[0]);
+  const index = path.resolve(repo, location[1]);
   const normalized = (value: string) => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
   if (normalized(index) !== normalized(path.join(gitDir, "index"))) throw new Error("Git index location does not match its worktree metadata");
   await directoryChain(gitDir);
@@ -160,11 +162,13 @@ export async function withGitIndexTransaction<T>(repo: string, action: (index: G
   let temp: string | null = null, capability: GitIndexCapability | null = null, validation: GitIndexCapability | null = null, closed = false, published = false;
   try {
     await directoryChain(gitDir);
-    await assertNoTrackedProjectMetadata(repo);
-    await assertGitWriteTopology(repo);
+    // Snapshot first, then check metadata: the final recheck proves HEAD and the native index
+    // are still these exact inputs, so the metadata verdict below still applies to them.
     const before = await indexBytes(index);
     const head = (await git(repo, ["rev-parse", "--verify", "-q", "HEAD"], { allowExit: [1] })).trim();
     const branch = (await git(repo, ["symbolic-ref", "-q", "HEAD"], { allowExit: [1] })).trim();
+    await assertNoTrackedProjectMetadata(repo);
+    await assertGitWriteTopology(repo);
     if (!before && head) throw new Error("A committed repository with a missing index requires explicit recovery");
     temp = path.join(gitDir, `meritrouter-index-${randomBytes(12).toString("hex")}`);
     await mkdir(temp, { mode: 0o700 });
@@ -187,10 +191,13 @@ export async function withGitIndexTransaction<T>(repo: string, action: (index: G
       if (!match || match[1] === "160000") throw new Error("Unsupported or unmerged candidate index entry");
       await assertSafeIndexInput(repo, match[2]!, true);
     }
-    await assertNoTrackedProjectMetadata(repo);
     if ((await git(repo, ["rev-parse", "--verify", "-q", "HEAD"], { allowExit: [1] })).trim() !== head
       || (await git(repo, ["symbolic-ref", "-q", "HEAD"], { allowExit: [1] })).trim() !== branch
       || !sameBytes(before, await indexBytes(index))) throw new Error("Repository HEAD/index changed during staging");
+    // The under-lock metadata check ran after `before`/`head` were read and this proves both are
+    // unchanged now: same HEAD commit (so tree) and byte-identical native index. An unborn HEAD
+    // also depends on other branch refs, so it is checked again.
+    if (!head) await assertNoTrackedProjectMetadata(repo);
     const after = await indexBytes(temporaryIndex);
     if (!after) throw new Error("Temporary Git index is missing");
     await revokeAndDrain(validation);

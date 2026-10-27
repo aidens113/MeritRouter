@@ -190,11 +190,14 @@ export class RepoReader {
     if (this.commit) args.push(this.commit);
     else args.push("--untracked");
     args.push("--", ...(opts.pathGlob ? [`:(glob)${normalizeRelPath(opts.pathGlob)}`] : []), ...PROJECT_METADATA_SEARCH_EXCLUDES);
+    let unsafe = new Set<string>();
     if (!this.commit) {
-      const listed = await git(this.root, ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--",
-        ...(opts.pathGlob ? [`:(glob)${normalizeRelPath(opts.pathGlob)}`] : []), ...PROJECT_METADATA_SEARCH_EXCLUDES], { ...(opts.signal ? { signal: opts.signal } : {}) });
-      const files = [...new Set(listed.split("\0").filter(Boolean))];
-      const unsafe = await this.unsafeWorktreePaths(files, opts.signal);
+      // No exclude magic here: Git's ls-files can drop positive matches when exclude pathspecs
+      // are present (see workspaces/metadata-staging.ts), which would hide unsafe paths.
+      const listed = await git(this.root, ["ls-files", "-z", "--cached", "--others", "--exclude-standard",
+        ...(opts.pathGlob ? ["--", `:(glob)${normalizeRelPath(opts.pathGlob)}`] : [])], { ...(opts.signal ? { signal: opts.signal } : {}) });
+      const files = [...new Set(listed.split("\0").filter(file => !!file && !isProjectMetadataPath(file)))];
+      unsafe = await this.unsafeWorktreePaths(files, opts.signal);
       if (unsafe.size > MAX_UNSAFE_EXCLUSIONS) throw new Error("Repository search exceeds 128 unsafe-path exclusions; narrow the glob");
       args.push(...[...unsafe].map(file => `:(exclude,literal)${file}`));
     }
@@ -210,7 +213,7 @@ export class RepoReader {
       if (parts.length < 3) continue;
       let p = parts[0]!;
       if (this.commit && p.startsWith(`${this.commit}:`)) p = p.slice(this.commit.length + 1);
-      if (isProjectMetadataPath(p)) continue;
+      if (isProjectMetadataPath(p) || unsafe.has(p)) continue;
       matches.push({ path: p, line: Number(parts[1]), text: parts.slice(2).join("\0").slice(0, 400) });
       if (matches.length >= limit) return { matches, truncated: true };
     }
