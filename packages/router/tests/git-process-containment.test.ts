@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import * as childProcess from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { git } from "../src/workspaces/git.js";
@@ -105,5 +105,34 @@ describe("fixed internal Git process policy",()=>{
     const f=fixture();expect(()=>prepareGitProcess(f.repo,["evil"])).toThrow(/unsupported/);
     expect(()=>prepareGitProcess(f.repo,["-c","core.hooksPath=evil","status"])).toThrow(/override denied/);
     expect(()=>prepareGitProcess(f.repo,["status"],{GIT_CONFIG_PARAMETERS:"evil"})).toThrow(/override denied/);
+  });
+  describe("cached policy verdicts",()=>{
+    const probes=()=>vi.mocked(childProcess.execFileSync).mock.calls.filter(([,args])=>Array.isArray(args)&&(args.includes("--list")||args.includes("--show-toplevel"))).length;
+    it("reuses config and root verdicts for an unchanged repository, in any path case",()=>{
+      const f=fixture();prepareGitProcess(f.repo,["status"]);
+      const before=probes();
+      for(let i=0;i<5;i++) prepareGitProcess(f.repo,["status"]);
+      if(process.platform==="win32") prepareGitProcess(f.repo.toUpperCase(),["status"]);
+      expect(probes()).toBe(before);
+    });
+    it("re-probes when config is replaced or edited in place, and still fails closed",async()=>{
+      const f=fixture();await git(f.repo,["status","--porcelain"]);
+      f.raw(["config","filter.evil.clean",f.evil]);
+      await expect(git(f.repo,["status","--porcelain"])).rejects.toThrow(/unsafe repository Git configuration: filter.evil.clean/);
+      f.raw(["config","--unset","filter.evil.clean"]);await git(f.repo,["status","--porcelain"]);
+      // Same inode, new content: an in-place edit must invalidate the verdict too.
+      appendFileSync(path.join(f.repo,".git","config"),`[diff "evil"]\n\ttextconv = ${f.evil.replace(/\\/g,"/")}\n`);
+      await expect(git(f.repo,["diff"])).rejects.toThrow(/unsafe repository Git configuration: diff.evil.textconv/);
+      expect(existsSync(f.sentinel)).toBe(false);
+    });
+    it("re-probes the root when the gitdir is redirected after a verified call",async()=>{
+      const f=fixture();writeFileSync(path.join(f.repo,"file"),"inside");await git(f.repo,["add","-A"]);
+      const outside=path.join(f.root,"outside-tree");mkdirSync(outside);
+      f.raw(["config","core.worktree",outside]);
+      await expect(git(f.repo,["status","--porcelain"])).rejects.toThrow(/escapes the authorized repository root/);
+      const linked=path.join(f.root,"linked");mkdirSync(linked);
+      writeFileSync(path.join(linked,".git"),`gitdir: ${path.join(f.repo,".git").replace(/\\/g,"/")}\n`);
+      await expect(git(linked,["status","--porcelain"])).rejects.toThrow(/escapes the authorized repository root/);
+    });
   });
 });

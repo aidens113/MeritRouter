@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { devNull } from "node:os";
 import { authorizedGitIndex, type GitIndexCapability } from "./git-index-transaction.js";
@@ -72,6 +72,68 @@ function trustedNewlineConfiguration(): string[] {
   return trustedNewlines;
 }
 
+/**
+ * Per-repository policy verdicts (config safety, trusted newline defaults, worktree-root
+ * containment). Each verdict is reused only while the repository's discovery and config
+ * fingerprint is identical; otherwise both probes run again exactly as before.
+ */
+interface PolicyVerdict { fingerprint: string; newlineDefaults: string[]; hasCoreWorktree: boolean; rootVerified: boolean }
+const verdicts = new Map<string, PolicyVerdict>();
+const MAX_VERDICTS = 256;
+const MAX_POINTER_BYTES = 4096;
+function missing(error: unknown): boolean { const code = (error as NodeJS.ErrnoException).code; return code === "ENOENT" || code === "ENOTDIR"; }
+/** Content stamp for files Git reads: identity, size, nanosecond times; "-" when absent. */
+function fileStamp(file: string): string {
+  try {
+    const stat = lstatSync(file, { bigint: true });
+    return `${stat.isFile() ? "f" : stat.isSymbolicLink() ? "l" : stat.isDirectory() ? "d" : "o"}:${stat.dev}:${stat.ino}:${stat.mode}:${stat.uid}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+  } catch (error) { if (missing(error)) return "-"; throw error; }
+}
+/** Identity stamp for directories whose entries change on every write (.git, objects, refs). */
+function directoryStamp(directory: string): string {
+  try {
+    const stat = lstatSync(directory, { bigint: true });
+    return `${stat.isDirectory() ? "d" : stat.isSymbolicLink() ? "l" : "o"}:${stat.dev}:${stat.ino}:${stat.mode}:${stat.uid}`;
+  } catch (error) { if (missing(error)) return "-"; throw error; }
+}
+function pointer(file: string): string | null {
+  try {
+    const stat = lstatSync(file);
+    if (!stat.isFile() || stat.size > MAX_POINTER_BYTES) return null;
+    return readFileSync(file, "utf8");
+  } catch (error) { if (missing(error)) return null; throw error; }
+}
+/**
+ * Everything the cached verdicts depend on, read without starting Git: the physical root, its
+ * own `.git` entry (directory, or gitfile and its target), the commondir pointer, HEAD, the
+ * repository and worktree config files (includes are refused by the config check itself), and
+ * the objects/refs directories that make the gitdir valid for discovery. Returns null, so the
+ * probes always run, when discovery would leave the root (no `.git` entry here) or is unusual.
+ */
+function repositoryFingerprint(cwd: string): { key: string; value: string } | null {
+  try {
+    // Windows paths compare case-insensitively; callers reach one root with differing case.
+    const fold = (value: string) => process.platform === "win32" ? value.toLowerCase() : value;
+    const root = realpathSync(path.resolve(cwd)), dotGit = path.join(root, ".git");
+    const entry = lstatSync(dotGit);
+    const parts = [fold(root), entry.isDirectory() ? directoryStamp(dotGit) : fileStamp(dotGit)];
+    let gitDir: string;
+    if (entry.isDirectory()) gitDir = dotGit;
+    else if (entry.isFile()) {
+      const text = pointer(dotGit);
+      const match = text === null ? null : /^gitdir: (.+?)[ \t]*\r?\n?$/.exec(text);
+      if (!text || !match) return null;
+      parts.push(text); gitDir = path.resolve(root, match[1]!);
+    } else return null;
+    const commondirFile = path.join(gitDir, "commondir"), commondir = pointer(commondirFile);
+    const common = commondir === null ? gitDir : path.resolve(gitDir, commondir.trim());
+    parts.push(fold(gitDir), directoryStamp(gitDir), fileStamp(path.join(gitDir, "HEAD")), fileStamp(commondirFile), commondir ?? "",
+      fold(common), directoryStamp(common), fileStamp(path.join(common, "config")), fileStamp(path.join(gitDir, "config.worktree")),
+      directoryStamp(path.join(common, "objects")), directoryStamp(path.join(common, "refs")));
+    return { key: process.platform === "win32" ? root.toLowerCase() : root, value: parts.join("\0") };
+  } catch { return null; }
+}
+
 /** Shared by async Git and the few fixed synchronous metadata reads. This is not a worker shell API. */
 export function prepareGitProcess(cwd: string, input: readonly string[], overrides: Record<string, string> = {}, index?: GitIndexCapability): { args: string[]; env: NodeJS.ProcessEnv } {
   const args = [...input];
@@ -88,30 +150,46 @@ export function prepareGitProcess(cwd: string, input: readonly string[], overrid
   const env = gitProcessEnvironment(overrides);
   if (index !== undefined) env.GIT_INDEX_FILE = authorizedGitIndex(index, cwd, args);
   let policy = SAFE_CONFIG.flatMap(value => ["-c", value]);
-  // Reading configuration is a built-in metadata operation; it does not run filters/hooks.
-  // Reject configured conversion/merge/trailer programs rather than silently changing file semantics.
-  const config = execFileSync("git", ["--no-pager", ...policy, "config", "--no-includes", "--null", "--list"], { cwd, env, encoding: "utf8", windowsHide: true, timeout: 10000, maxBuffer: 1024 * 1024 });
-  for (const entry of config.split("\0")) {
-    const split = entry.indexOf("\n");
-    const key = split < 0 ? entry : entry.slice(0, split);
-    const value = split < 0 ? "" : entry.slice(split + 1);
-    if (EXECUTABLE_CONFIG.test(key) && value.trim()) throw new Error(`unsafe repository Git configuration: ${key}; automatic Git operations cannot execute repository programs`);
+  // The verdicts below depend only on files the fingerprint covers; reuse them while it holds.
+  const fingerprint = repositoryFingerprint(cwd);
+  const cached = fingerprint ? verdicts.get(fingerprint.key) : undefined;
+  const verdict = cached && cached.fingerprint === fingerprint?.value ? cached : undefined;
+  let newlineDefaults: string[], hasCoreWorktree: boolean;
+  if (verdict) ({ newlineDefaults, hasCoreWorktree } = verdict);
+  else {
+    // Reading configuration is a built-in metadata operation; it does not run filters/hooks.
+    // Reject configured conversion/merge/trailer programs rather than silently changing file semantics.
+    const config = execFileSync("git", ["--no-pager", ...policy, "config", "--no-includes", "--null", "--list"], { cwd, env, encoding: "utf8", windowsHide: true, timeout: 10000, maxBuffer: 1024 * 1024 });
+    for (const entry of config.split("\0")) {
+      const split = entry.indexOf("\n");
+      const key = split < 0 ? entry : entry.slice(0, split);
+      const value = split < 0 ? "" : entry.slice(split + 1);
+      if (EXECUTABLE_CONFIG.test(key) && value.trim()) throw new Error(`unsafe repository Git configuration: ${key}; automatic Git operations cannot execute repository programs`);
+    }
+    const localKeys = new Set(config.split("\0").map(entry => entry.slice(0, entry.indexOf("\n") < 0 ? entry.length : entry.indexOf("\n")).toLowerCase()));
+    newlineDefaults = trustedNewlineConfiguration().filter(value => !localKeys.has(value.slice(0, value.indexOf("="))));
+    hasCoreWorktree = config.split("\0").some(entry => /^core\.worktree\n/i.test(entry));
   }
-  const localKeys = new Set(config.split("\0").map(entry => entry.slice(0, entry.indexOf("\n") < 0 ? entry.length : entry.indexOf("\n")).toLowerCase()));
-  const newlineDefaults = trustedNewlineConfiguration().filter(value => !localKeys.has(value.slice(0, value.indexOf("="))));
   policy = [...policy, ...newlineDefaults.flatMap(value => ["-c", value])];
   // Services hand this helper an authorized repository/worktree root. A local core.worktree
   // (or redirected gitdir) must not silently move content reads/staging outside that root.
   // Preserve the exact metadata probe used to diagnose an enclosing repository before init.
-  const enclosingProbe = args.join("\0") === ["ls-files", "-z", "--", "."].join("\0") &&
-    !config.split("\0").some(entry => /^core\.worktree\n/i.test(entry));
-  if (!["init", "config", "rev-parse", "check-ref-format"].includes(command) && !enclosingProbe) {
+  const enclosingProbe = args.join("\0") === ["ls-files", "-z", "--", "."].join("\0") && !hasCoreWorktree;
+  let rootVerified = verdict?.rootVerified ?? false;
+  if (!["init", "config", "rev-parse", "check-ref-format"].includes(command) && !enclosingProbe && !rootVerified) {
     const top = execFileSync("git", ["--no-pager", ...policy, "rev-parse", "--show-toplevel"], { cwd, env, encoding: "utf8", windowsHide: true, timeout: 10000, maxBuffer: 65536 }).trim();
     const canonical = (value: string) => {
       const resolved = path.resolve(realpathSync(value));
       return process.platform === "win32" ? resolved.toLowerCase() : resolved;
     };
     if (canonical(top) !== canonical(cwd)) throw new Error("Git working tree escapes the authorized repository root; automatic content operations denied");
+    rootVerified = true;
+  }
+  // Re-fingerprint after the probes: a change while they ran must not be cached as verified.
+  if (fingerprint && (!verdict || rootVerified !== verdict.rootVerified) && repositoryFingerprint(cwd)?.value === fingerprint.value) {
+    verdicts.delete(fingerprint.key);
+    if (verdicts.size >= MAX_VERDICTS) verdicts.delete(verdicts.keys().next().value!);
+    verdicts.set(fingerprint.key, { fingerprint: fingerprint.value, newlineDefaults, hasCoreWorktree, rootVerified });
   }
   // External diff and text conversion are opt-in for several Git readers; force them off even if callers add flags.
   if (["diff", "show", "log", "blame"].includes(command)) args.splice(1, 0, "--no-ext-diff", "--no-textconv");

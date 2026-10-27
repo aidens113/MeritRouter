@@ -68,7 +68,8 @@ afterEach(() => { spawned.on = false; spawned.dropCached = false; db?.close(); d
 const actor: Actor = { agent: "supervisor:j1", role: "supervisor", model: "paid:anthropic/x", job: "j1" };
 const gitOut = (repo: string, ...args: string[]) => realExecFileSync("git", args, { cwd: repo, encoding: "utf8" });
 
-// Budgets sit above the measured counts (see the fix report) and far below the regression.
+// Budgets sit just above the measured counts (see the fix report). Spawns barely exceed commands
+// because the process policy reuses its config/root verdicts per unchanged repository.
 // Machine load changes wall time, never these counts. Generous timeouts: the assertion is the count.
 describe("selected-commit process budget", () => {
   it("keeps Brain initialisation and steady-state Brain writes and updates bounded, and commits every update", async () => {
@@ -84,9 +85,9 @@ describe("selected-commit process budget", () => {
     // A tracked modification used to be silently skipped (commit null, file left dirty).
     expect(update.result.commit).toMatch(/^[a-f0-9]{40}$/);
     expect(gitOut(brain.root, "status", "--porcelain", "--", "projects")).toBe("");
-    for (const step of [write, update]) { expect(step.commands).toBeLessThanOrEqual(60); expect(step.spawns).toBeLessThanOrEqual(150); }
-    expect(init.commands).toBeLessThanOrEqual(75);
-    expect(init.spawns).toBeLessThanOrEqual(175);
+    for (const step of [write, update]) { expect(step.commands).toBeLessThanOrEqual(58); expect(step.spawns).toBeLessThanOrEqual(62); }
+    expect(init.commands).toBeLessThanOrEqual(76);
+    expect(init.spawns).toBeLessThanOrEqual(85);
   }, 180_000);
 
   it("keeps commitAs of a tracked modification and of a deletion bounded, and commits both", async () => {
@@ -100,7 +101,7 @@ describe("selected-commit process budget", () => {
     expect(modified.result).toMatch(/^[a-f0-9]{40}$/);
     expect(deleted.result).toMatch(/^[a-f0-9]{40}$/);
     expect(gitOut(env.repo, "status", "--porcelain")).toBe("");
-    for (const step of [modified, deleted]) { expect(step.commands).toBeLessThanOrEqual(50); expect(step.spawns).toBeLessThanOrEqual(130); }
+    for (const step of [modified, deleted]) { expect(step.commands).toBeLessThanOrEqual(50); expect(step.spawns).toBeLessThanOrEqual(53); }
   }, 180_000);
 });
 

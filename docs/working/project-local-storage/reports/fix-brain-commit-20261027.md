@@ -4,7 +4,12 @@ Worker: worker-heavy. No commits. All probes ran in OS temp or the session scrat
 
 ## Outcome
 
-**Partial.**
+**Round 2 (policy cache): Done.** Every acceptance file passes at default timeouts, including the
+projects-followups revert test, team-capacity and resilience. A `commitAs` now starts 47
+processes (171 at baseline), and a steady Brain write starts 54 (194). See "Round 2" at the end.
+The round 1 text below is kept as it was written.
+
+**Round 1: Partial.**
 
 - **B is fixed and verified.** The cause is a Git bug, not stat or index state. Any Brain update
   of a tracked file was affected, not only removals.
@@ -161,3 +166,116 @@ the ref locks are prepared.
 - The triage's "nondeterministic in plain repos" is better described as "depends on argv and
   environment". Through the policy wrapper it is close to deterministic: it failed for every
   Brain update and removal.
+
+## Round 2: cached process-policy verdicts (ownership extended to git-process-policy.ts)
+
+### What changed
+
+`src/workspaces/git-process-policy.ts` caches its two probes per repository: the
+`config --no-includes --list` safety and newline verdict, and the `rev-parse --show-toplevel`
+root-containment verdict.
+
+- **Lookup key.** The physical repository root, compared case-insensitively on Windows. Callers
+  reach the same root with different casing.
+- **Reuse rule.** A verdict is reused only when a fingerprint, read with `lstat` and small reads
+  and no Git process, is identical. The fingerprint covers:
+  - the physical root;
+  - the root's own `.git` entry: a directory's identity, or a gitfile's full stamp and content;
+  - the gitdir's identity and its `HEAD` stamp;
+  - the `commondir` pointer and its content;
+  - the common directory's identity;
+  - the full stamps (dev, ino, mode, uid, size, mtime and ctime in nanoseconds) of
+    `<common>/config` and `<gitdir>/config.worktree`;
+  - the identities of `objects/` and `refs/`, which make the gitdir valid for discovery.
+- **Cases that always probe.** A cwd with no `.git` entry of its own (discovery would climb, for
+  example the nested probe), or anything unusual, makes the fingerprint null, so both probes run
+  exactly as before.
+- **Probe races.** The fingerprint is read again after the probes, and a verdict is stored only
+  if nothing changed while they ran. Failures are never cached. The cache is bounded to 256
+  roots.
+- **Includes.** Config includes need no stamps: `include.path` and `includeIf` are still refused
+  by the config check itself. System and global config stay disabled through the environment, so
+  the repository config and worktree config are the only sources.
+
+**Security properties.** Every check that ran before still runs whenever the inputs above change.
+- `git config` writes go through a lockfile rename, so the inode changes. An in-place edit changes
+  size and mtime.
+- A `core.worktree` redirect is a config change, and a `.git` gitfile redirect is a stamp and
+  content change. Both re-run the root probe.
+- The probe-to-execute window is the same as before.
+- New tests in `tests/git-process-containment.test.ts`:
+  - no re-probe for an unchanged repository, including in uppercase path form;
+  - a replaced config, and a config edited in place (same inode), with executable keys still
+    fail closed;
+  - a `core.worktree` redirect and a gitfile redirect after a verified call are still refused.
+
+**Async probes: not done.** Probes now run only on a cache miss (once per repository per config
+change), so the synchronous `execFileSync` block is rare. An async version would need changes to
+`src/workspaces/git.ts` (lead's) and `src/runners/coding/task-lab.ts` (not owned), which call
+`prepareGitProcess` synchronously.
+
+### Measured (`tests/brain-commit-performance.test.ts`, wave-A agents still loading the CPU)
+
+| Step | Baseline: spawns / commands | Round 1 | Round 2 | Wall time, round 2 |
+| --- | --- | --- | --- | --- |
+| First Brain init | 206 / ~85 | 174 / 71 | **75 / 71** | 2.5–2.6 s |
+| Steady Brain write | 194 / ~80 | 133 / 53 | **54 / 53** | 1.9 s |
+| Brain update (tracked) | 150, no commit | 133 / 53 | **54 / 53** | 1.7 s |
+| `commitAs` modification | 171 / 70 | 118 / 47 | **47 / 47** | 1.6–1.8 s |
+| `commitAs` deletion | 171 / 70 | 118 / 47 | **47 / 47** | 1.5–1.7 s |
+
+The test budgets are now commitAs ≤ 50 commands and ≤ 53 spawns, Brain write/update ≤ 58 and ≤ 62,
+init ≤ 76 and ≤ 85.
+
+### The remaining 47 commands per commitAs, all in files I do not own
+
+| Source | Commands per commit |
+| --- | --- |
+| `git-write-topology.ts` (index transaction once, `publishSelectedRef` twice) | 3 each, 9 total |
+| `commit-message.ts` (`config --null`, `stripspace` ×2, `interpret-trailers`) | 4 |
+| `metadata-exclusion.assertNoTrackedProjectMetadata` under the index lock | 3 |
+| `selected-commit-receipts.publicationDirectory` (validate, plus in transaction) | 2 |
+| `repository-command.assertNoActiveRepositoryCommand` (one per scope) | 1–2 |
+| `brain/mount-git.ts` per Brain write (`show-toplevel` plus 2× `--git-common-dir`) | 3 |
+
+These could share a per-scope git-dir/common-dir lookup, saving about 10 commands. That needs
+those modules to accept a resolved location. I did not dedupe them, because doing so would mean
+editing files I do not own.
+
+In owned files, everything batchable was batched in round 1. What remains is distinct work:
+- the HEAD and branch reads before and after;
+- the staging listings and the cross-check;
+- apply, write-tree, ls-tree and commit-tree;
+- the check-ref-format and symbolic-ref checks in publication.
+
+### Commands run and observed results (round 2)
+
+- `npx tsc --noEmit -p .` (packages/router) → no output (clean).
+- Serial, default timeouts (logs in the scratchpad `acc2/`):
+
+| File | Result | Time |
+| --- | --- | --- |
+| projects-followups | 6/6 | 36 s |
+| attribution | 4/4 | 31 s |
+| brain | 10/10 | 87 s |
+| project-metadata-brain | 17/17 | 94 s |
+| projects-operations | 3/3 | 40 s |
+| team-capacity | 8/8 | 48 s |
+| resilience | 11/11 | 55 s |
+| brain-commit-performance | 5/5 | 21 s |
+| git-process-containment | 19/19 | 8 s |
+| project-metadata-commit-message | 37/37 | 16 s |
+
+- Related: `project-metadata-index-transaction`, `-selected-commit`, `-exclusion`, `-mutation`,
+  `-read`, `-commit`, `-worktree` and `checked-candidate-seal` → 8 files, 119 passed, 1 skipped.
+- Cache debugging (temporary env-gated log, removed) found two causes of misses, now fixed:
+  - the `.git` directory's mtime changes on every lock file, so it is stamped by identity only;
+  - the same root arrived in different path case from different callers.
+
+### Not verified (round 2)
+
+- The full router suite.
+- Non-Windows behaviour of the fingerprint. On POSIX, case folding is off and inode and ctime
+  semantics apply; I reasoned about this but did not run it.
+- The `task-lab.ts` caller of `prepareGitProcess` (not in the acceptance set).
+- Wall time on an idle machine.
