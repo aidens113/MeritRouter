@@ -5,6 +5,8 @@ import { createHash } from "node:crypto";
 import type { MeritRouter } from "../core/service.js";
 import { SessionEventSchema, type SessionEvent, type SessionEventOf } from "../sessions/events.js";
 import { maskSecrets, requestSecrets } from "../providers/secret-masking.js";
+import { openProjectStores } from "./project-reads.js";
+import type { Db } from "../storage/db.js";
 
 export const REQUEST_EVIDENCE_LIMITS = { sessions: 12, journalBytes: 512 * 1024, totalJournalBytes: 4 * 1024 * 1024, events: 5000, lineBytes: 128 * 1024, messages: 96, transcriptSlots: 4096, tools: 48, textBytes: 128 * 1024, itemBytes: 8000, tasks: 50, files: 100, artifacts: 40 } as const;
 const Id = z.string().regex(/^[A-Za-z0-9_-]{1,120}$/);
@@ -169,10 +171,10 @@ function exchange(events: SessionEvent[], row: z.infer<typeof SessionRow>, reque
 }
 
 /** Exact request-id journal correlation. Related task evidence is deliberately not causal. */
-function recordedMembersExclusive(sy: MeritRouter, project: string, execution: string, events: SessionEvent[], budget: {remaining: number}): boolean {
+function recordedMembersExclusive(db: Db, project: string, execution: string, events: SessionEvent[], budget: {remaining: number}): boolean {
   let sharedProof = false;
   const proof = new Set<string>();
-  const current = z.array(z.object({ task_id: Id, item_id: z.string(), project_id: z.string().nullable() })).max(10_000).safeParse(sy.db.prepare("SELECT m.task_id,m.item_id,t.project_id FROM execution_members m LEFT JOIN tasks t ON t.id=m.task_id WHERE m.execution_id=? LIMIT 10001").all(execution));
+  const current = z.array(z.object({ task_id: Id, item_id: z.string(), project_id: z.string().nullable() })).max(10_000).safeParse(db.prepare("SELECT m.task_id,m.item_id,t.project_id FROM execution_members m LEFT JOIN tasks t ON t.id=m.task_id WHERE m.execution_id=? LIMIT 10001").all(execution));
   if (!current.success) return false;
   const authoritative = new Map(current.data.map(member => [JSON.stringify([member.task_id, member.item_id]), member.project_id]));
   for (const event of events) {
@@ -189,19 +191,24 @@ function recordedMembersExclusive(sy: MeritRouter, project: string, execution: s
       proof.add(key);
     }
   }
-  const row = z.object({ kind: z.string() }).safeParse(sy.db.prepare("SELECT kind FROM executions WHERE id=?").get(execution));
+  const row = z.object({ kind: z.string() }).safeParse(db.prepare("SELECT kind FROM executions WHERE id=?").get(execution));
   return row.success && (row.data.kind !== "batch" || sharedProof)
     && (!sharedProof || current.data.every(member => member.project_id === project && proof.has(JSON.stringify([member.task_id, member.item_id]))));
 }
 
 export function requestEvidence(sy: MeritRouter, project: string, id: string): RequestEvidence | null {
-  const parsed = RequestRow.safeParse(sy.db.prepare("SELECT id,execution_id,project_id,status FROM model_requests WHERE id=? AND project_id=?").get(id, project));
+  // `model_requests`, `request_charges`, `sessions`, `tasks`, `executions`, `execution_members`
+  // and `artifacts` are project-private; everything below reads `project`'s own store, never `sy.db`.
+  const opened = openProjectStores(sy, project);
+  if (!opened.ok) return null;
+  const db = opened.stores.db;
+  const parsed = RequestRow.safeParse(db.prepare("SELECT id,execution_id,project_id,status FROM model_requests WHERE id=? AND project_id=?").get(id, project));
   if (!parsed.success) return null;
   const request = parsed.data, warnings: string[] = [], remaining = { bytes: REQUEST_EVIDENCE_LIMITS.totalJournalBytes };
-  const participants = z.array(z.object({ project_id: z.string().nullable() })).parse(sy.db.prepare("SELECT DISTINCT t.project_id FROM request_charges c LEFT JOIN tasks t ON t.id=c.task_id WHERE c.request_id=?").all(id));
+  const participants = z.array(z.object({ project_id: z.string().nullable() })).parse(db.prepare("SELECT DISTINCT t.project_id FROM request_charges c LEFT JOIN tasks t ON t.id=c.task_id WHERE c.request_id=?").all(id));
   let payloadAllowed = participants.length === 1 && participants[0]!.project_id === project;
   if (!payloadAllowed) warnings.push("Exchange payload withheld because participant project scope cannot be proven exclusive. Related evidence is limited to this project.");
-  const sessions = sy.db.prepare(`SELECT DISTINCT s.id,s.agent_label,s.role,s.task_id FROM sessions s JOIN request_charges c ON c.task_id=s.task_id JOIN tasks t ON t.id=c.task_id WHERE c.request_id=? AND s.project_id=? AND t.project_id=? ORDER BY s.created_at DESC LIMIT ?`).all(id, project, project, REQUEST_EVIDENCE_LIMITS.sessions + 1).flatMap(row => { const parsed = SessionRow.safeParse(row); if (!parsed.success) warnings.push("Malformed session metadata omitted."); return parsed.success ? [parsed.data] : []; });
+  const sessions = db.prepare(`SELECT DISTINCT s.id,s.agent_label,s.role,s.task_id FROM sessions s JOIN request_charges c ON c.task_id=s.task_id JOIN tasks t ON t.id=c.task_id WHERE c.request_id=? AND s.project_id=? AND t.project_id=? ORDER BY s.created_at DESC LIMIT ?`).all(id, project, project, REQUEST_EVIDENCE_LIMITS.sessions + 1).flatMap(row => { const parsed = SessionRow.safeParse(row); if (!parsed.success) warnings.push("Malformed session metadata omitted."); return parsed.success ? [parsed.data] : []; });
   if (sessions.length > REQUEST_EVIDENCE_LIMITS.sessions) warnings.push("Related session count exceeds the read limit.");
   const exchanges: RequestExchange[] = [];
   const commits = new Map<string, Array<{ repository: string; sha: string }>>();
@@ -209,7 +216,7 @@ export function requestEvidence(sy: MeritRouter, project: string, id: string): R
   const memberBudget = { remaining: 10_000 };
   for (const row of payloadAllowed ? sessions.slice(0, REQUEST_EVIDENCE_LIMITS.sessions) : []) {
     const events = journal(sy, row.id, remaining, warnings);
-    if (!recordedMembersExclusive(sy, project, request.execution_id, events, memberBudget)) {
+    if (!recordedMembersExclusive(db, project, request.execution_id, events, memberBudget)) {
       payloadAllowed = false;
       exchanges.length = 0; commits.clear();
       warnings.push("Exchange payload withheld because original recorded participant scope is unavailable.");
@@ -221,7 +228,7 @@ export function requestEvidence(sy: MeritRouter, project: string, id: string): R
     }
   }
   const relatedTasks: RequestRelatedTask[] = [];
-  const rows = sy.db.prepare("SELECT DISTINCT t.id,t.result_json FROM tasks t JOIN request_charges c ON c.task_id=t.id WHERE c.request_id=? AND t.project_id=? LIMIT ?").all(id, project, REQUEST_EVIDENCE_LIMITS.tasks) as Array<{ id: string; result_json: string | null }>;
+  const rows = db.prepare("SELECT DISTINCT t.id,t.result_json FROM tasks t JOIN request_charges c ON c.task_id=t.id WHERE c.request_id=? AND t.project_id=? LIMIT ?").all(id, project, REQUEST_EVIDENCE_LIMITS.tasks) as Array<{ id: string; result_json: string | null }>;
   const display = redactor([], warnings, displayBudget);
   for (const row of rows) {
     let summary: string | null = null, changedPaths: string[] = [];
@@ -232,7 +239,7 @@ export function requestEvidence(sy: MeritRouter, project: string, id: string): R
       } else if (row.result_json) warnings.push("Related task result exceeds the read limit.");
     } catch { warnings.push("Related task result is malformed; evidence omitted."); }
     const Artifact = z.object({ id: Id, kind: z.string().max(200), label: z.string().max(2000), bytes: z.number().nonnegative() });
-    const artifacts = sy.db.prepare("SELECT id,kind,label,bytes FROM artifacts WHERE task_id=? ORDER BY created_at DESC LIMIT ?").all(row.id, REQUEST_EVIDENCE_LIMITS.artifacts).flatMap(raw => { const parsed = Artifact.safeParse(raw); if (!parsed.success) { warnings.push("Malformed related artifact metadata omitted."); return []; } return [{ ...parsed.data, label: display(parsed.data.label) }]; });
+    const artifacts = db.prepare("SELECT id,kind,label,bytes FROM artifacts WHERE task_id=? ORDER BY created_at DESC LIMIT ?").all(row.id, REQUEST_EVIDENCE_LIMITS.artifacts).flatMap(raw => { const parsed = Artifact.safeParse(raw); if (!parsed.success) { warnings.push("Malformed related artifact metadata omitted."); return []; } return [{ ...parsed.data, label: display(parsed.data.label) }]; });
     relatedTasks.push({ taskId: row.id, summary, changedPaths, artifacts, commits: commits.get(row.id) ?? [] });
   }
   if (exchanges.length > 1) warnings.push("Multiple distinct recorded exchanges claim this request ID; inspect their session boundaries.");

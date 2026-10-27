@@ -12,6 +12,18 @@ import type { SessionRecord } from "../sessions/store.js";
 import type { SessionEvent } from "../sessions/events.js";
 import { parseTrailers } from "../attribution/index.js";
 import { git } from "../workspaces/git.js";
+import type { Db } from "../storage/db.js";
+import { adminProjectScopes, fanOutProjects, locateRequest, locateTask, newestFirst, openProjectStores, taskIn } from "./project-reads.js";
+
+/**
+ * Local-table reads here (`tasks`, `sessions`, `model_requests`, `request_charges`, `task_deps`)
+ * go through a project's own store (`sy.projectStores`), explicitly filtered by that store's own
+ * `project_id`, never a bare `sy.db` scan: see `taskRowsInStore`/`requestRowsInStore` below. A
+ * store that cannot be opened contributes no rows (never a crash); `fanOutProjects` reports which.
+ * `brain_files` (path-prefixed, not a `project_id` column) and `task_deps`/`request_charges`
+ * (keyed by an already-unique task/request id, not their own `project_id` column) are read
+ * straight off the located project's own store handle without an extra filter.
+ */
 
 /**
  * Entities and how they connect, for the panel's entity pages (panel-v2 D6): agents (the
@@ -59,28 +71,41 @@ export interface AgentRow extends AgentId {
   lastStatus: string;
 }
 
-/** Agents (grouped sessions), most recently active first; `project` limits them to one project's. */
-export function agentsView(sy: MeritRouter, opts: { project?: string; role?: string; limit?: number } = {}): AgentRow[] {
-  const where: string[] = [];
-  const args: unknown[] = [];
-  if (opts.project) {
-    where.push("project_id = ?");
-    args.push(opts.project);
-  }
-  if (opts.role) {
+function agentRowsInStore(db: Db, project: string, role: string | undefined, limit: number): Array<Omit<AgentRow, "label">> {
+  const where = ["project_id = ?"];
+  const args: unknown[] = [project];
+  if (role) {
     where.push("role = ?");
-    args.push(opts.role);
+    args.push(role);
   }
-  const rows = sy.db
+  return db
     .prepare(
       `SELECT agent_label AS id, role, project_id AS project, COUNT(*) AS sessions, SUM(status = 'running') AS running, COUNT(DISTINCT task_id) AS tasks,
               MIN(created_at) AS firstAt, MAX(updated_at) AS lastAt,
               (SELECT s2.status FROM sessions s2 WHERE s2.agent_label = s.agent_label AND s2.project_id = s.project_id ORDER BY s2.created_at DESC LIMIT 1) AS lastStatus
-         FROM sessions s ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+         FROM sessions s WHERE ${where.join(" AND ")}
         GROUP BY agent_label, project_id ORDER BY MAX(updated_at) DESC LIMIT ?`,
     )
-    .all(...args, Math.min(opts.limit ?? 200, 2000)) as Array<Omit<AgentRow, "label">>;
-  return rows.map((r) => ({ ...r, label: r.id.slice(r.id.indexOf(":") + 1), running: Number(r.running ?? 0) }));
+    .all(...args, limit) as Array<Omit<AgentRow, "label">>;
+}
+
+/**
+ * Agents (grouped sessions), most recently active first; `project` limits them to one project's.
+ * Each row is already grouped by `(agent_label, project_id)`, so without `project` every
+ * configured project (plus qualification) is read from its own store and merged; a store that
+ * cannot be opened contributes no rows for that project (never a crash or a duplicate).
+ */
+export function agentsView(sy: MeritRouter, opts: { project?: string; role?: string; limit?: number } = {}): AgentRow[] {
+  const limit = Math.min(opts.limit ?? 200, 2000);
+  let raw: Array<Omit<AgentRow, "label">>;
+  if (opts.project) {
+    const opened = openProjectStores(sy, opts.project);
+    raw = opened.ok ? agentRowsInStore(opened.stores.db, opts.project, opts.role, limit) : [];
+  } else {
+    const { rows } = fanOutProjects(sy, adminProjectScopes(sy), (stores) => agentRowsInStore(stores.db, stores.project, opts.role, limit));
+    raw = rows.sort((a, b) => b.lastAt - a.lastAt).slice(0, limit);
+  }
+  return raw.map((r) => ({ ...r, label: r.id.slice(r.id.indexOf(":") + 1), running: Number(r.running ?? 0) }));
 }
 
 export interface EntityTask {
@@ -159,15 +184,16 @@ export interface AgentDetail {
   totals: { sessions: number; running: number; tasks: number; requests: number; failedRequests: number; inputTokens: number; outputTokens: number; costUsd: number; paidUsd: number; commits: number; linesAdded: number; linesRemoved: number };
 }
 
-function taskRows(sy: MeritRouter, ids: string[]): EntityTask[] {
+/** `ids` read from one project's own store, each row confirmed to belong to `project`. */
+function taskRowsInStore(db: Db, ids: string[], project: string): EntityTask[] {
   const out: EntityTask[] = [];
-  const q = sy.db.prepare(
+  const q = db.prepare(
     `SELECT id, profile, state, tier, project_id, created_at, finished_at, json_extract(spec_json, '$.label') AS label,
             json_extract(spec_json, '$.parentTaskId') AS parent, json_extract(result_json, '$.acceptanceStatus') AS acceptance
-       FROM tasks WHERE id = ?`,
+       FROM tasks WHERE id = ? AND project_id = ?`,
   );
   for (const id of ids) {
-    const r = q.get(id) as Record<string, unknown> | undefined;
+    const r = q.get(id, project) as Record<string, unknown> | undefined;
     if (!r) continue;
     out.push({
       taskId: String(r.id),
@@ -182,12 +208,40 @@ function taskRows(sy: MeritRouter, ids: string[]): EntityTask[] {
       finishedAt: (r.finished_at as number | null) ?? null,
     });
   }
-  return out.sort((a, b) => b.createdAt - a.createdAt);
+  return out;
 }
 
-/** The requests a session made: ids named by its log's model responses, plus failed ones of its executions while it ran. */
-function sessionRequestIds(sy: MeritRouter, session: SessionRecord): string[] {
-  const page = sy.sessions.events(session.id, { limit: 100_000 });
+/**
+ * Tasks by id, from their owning project's own store. With `project` known, only that store is
+ * read; otherwise every configured project (plus qualification) is tried, each filtered to its
+ * own `project_id` so no store can return another project's row, and ids charged to no project
+ * ('') fall back to the installation database (today the same handle; see `locateTask`).
+ */
+function taskRows(sy: MeritRouter, ids: string[], project?: string): EntityTask[] {
+  if (!ids.length) return [];
+  if (project !== undefined) {
+    if (project === "") return taskRowsInStore(sy.db, ids, "").sort((a, b) => b.createdAt - a.createdAt);
+    const opened = openProjectStores(sy, project);
+    return opened.ok ? taskRowsInStore(opened.stores.db, ids, project).sort((a, b) => b.createdAt - a.createdAt) : [];
+  }
+  const { rows } = fanOutProjects(sy, adminProjectScopes(sy), (stores) => taskRowsInStore(stores.db, ids, stores.project));
+  const seen = new Set(rows.map((r) => r.taskId));
+  const remaining = ids.filter((id) => !seen.has(id));
+  if (remaining.length) rows.push(...taskRowsInStore(sy.db, remaining, ""));
+  return rows.sort((a, b) => b.createdAt - a.createdAt);
+}
+
+/**
+ * The requests a session made: ids named by its log's model responses, plus failed ones of its
+ * executions while it ran. Read through `project`'s own store when its store can be opened
+ * (today the same handle as `sy`; falls back to the installation service/db otherwise so a
+ * momentarily unavailable store degrades to the pre-split behaviour rather than losing requests).
+ */
+function sessionRequestIds(sy: MeritRouter, session: SessionRecord, project: string): string[] {
+  const opened = project ? openProjectStores(sy, project) : { ok: false as const };
+  const sessions = opened.ok && opened.stores.sessions ? opened.stores.sessions : sy.sessions;
+  const db = opened.ok ? opened.stores.db : sy.db;
+  const page = sessions.events(session.id, { limit: 100_000 });
   if (!page) return [];
   const ids = new Set<string>();
   const executions = new Set<string>();
@@ -196,7 +250,7 @@ function sessionRequestIds(sy: MeritRouter, session: SessionRecord): string[] {
     else if (e.type === "model_request") executions.add(e.data.executionId);
   }
   if (executions.size && session.taskId) {
-    const failed = sy.db
+    const failed = db
       .prepare(
         `SELECT r.id FROM model_requests r JOIN request_charges c ON c.request_id = r.id
           WHERE c.task_id = ? AND r.status != 'succeeded' AND r.reserved_at >= ? AND r.reserved_at <= ? AND r.execution_id IN (${[...executions].map(() => "?").join(",")})`,
@@ -207,18 +261,18 @@ function sessionRequestIds(sy: MeritRouter, session: SessionRecord): string[] {
   return [...ids];
 }
 
-function requestRows(sy: MeritRouter, ids: string[], sessionOf: Map<string, string> = new Map()): EntityRequest[] {
-  if (!ids.length) return [];
+/** `ids` read from one project's own store (`project` may be '' for the installation database). */
+function requestRowsInStore(db: Db, ids: string[], project: string, sessionOf: Map<string, string>): EntityRequest[] {
   const out: EntityRequest[] = [];
   for (let i = 0; i < ids.length; i += 400) {
     const chunk = ids.slice(i, i + 400);
-    const rows = sy.db
+    const rows = db
       .prepare(
         `SELECT r.*, (SELECT group_concat(task_id) FROM request_charges c WHERE c.request_id = r.id) AS task_ids,
                 (SELECT COALESCE(s.actual_usd, s.reserved_usd) FROM paid_spend s WHERE s.request_id = r.id) AS paid_usd
-           FROM model_requests r WHERE r.id IN (${chunk.map(() => "?").join(",")})`,
+           FROM model_requests r WHERE r.id IN (${chunk.map(() => "?").join(",")}) AND r.project_id = ?`,
       )
-      .all(...chunk) as Array<Record<string, unknown>>;
+      .all(...chunk, project) as Array<Record<string, unknown>>;
     for (const r of rows) {
       const id = String(r.id);
       out.push({
@@ -242,7 +296,27 @@ function requestRows(sy: MeritRouter, ids: string[], sessionOf: Map<string, stri
       });
     }
   }
-  return out.sort((a, b) => b.reservedAt - a.reservedAt);
+  return out;
+}
+
+/**
+ * Model requests by id, from their owning project's own store (see `taskRows`): with `project`
+ * known, only that store is read; otherwise every configured project (plus qualification) is
+ * tried, each filtered to its own `project_id`, and ids charged to no project fall back to the
+ * installation database (today the same handle).
+ */
+function requestRows(sy: MeritRouter, ids: string[], sessionOf: Map<string, string> = new Map(), project?: string): EntityRequest[] {
+  if (!ids.length) return [];
+  if (project !== undefined) {
+    if (project === "") return requestRowsInStore(sy.db, ids, "", sessionOf).sort((a, b) => b.reservedAt - a.reservedAt);
+    const opened = openProjectStores(sy, project);
+    return opened.ok ? requestRowsInStore(opened.stores.db, ids, project, sessionOf).sort((a, b) => b.reservedAt - a.reservedAt) : [];
+  }
+  const { rows } = fanOutProjects(sy, adminProjectScopes(sy), (stores) => requestRowsInStore(stores.db, ids, stores.project, sessionOf));
+  const seen = new Set(rows.map((r) => r.id));
+  const remaining = ids.filter((id) => !seen.has(id));
+  if (remaining.length) rows.push(...requestRowsInStore(sy.db, remaining, "", sessionOf));
+  return rows.sort((a, b) => b.reservedAt - a.reservedAt);
 }
 
 function modelUse(requests: EntityRequest[]): ModelUse[] {
@@ -265,16 +339,19 @@ function modelUse(requests: EntityRequest[]): ModelUse[] {
 export async function agentDetail(sy: MeritRouter, project: string, rawId: string): Promise<AgentDetail | null> {
   const agent = parseAgentId(rawId);
   if (!agent) return null;
-  const ids = sy.db.prepare("SELECT id FROM sessions WHERE agent_label = ? AND project_id = ? ORDER BY created_at DESC").all(agent.id, project) as Array<{ id: string }>;
-  const sessions = ids.map((r) => sy.sessions.get(r.id)).filter((s): s is SessionRecord => !!s);
+  const opened = project ? openProjectStores(sy, project) : { ok: false as const };
+  const db = opened.ok ? opened.stores.db : sy.db;
+  const sessions2 = opened.ok ? opened.stores.sessions : sy.sessions;
+  const ids = db.prepare("SELECT id FROM sessions WHERE agent_label = ? AND project_id = ? ORDER BY created_at DESC").all(agent.id, project) as Array<{ id: string }>;
+  const sessions = ids.map((r) => sessions2?.get(r.id) ?? sy.sessions.get(r.id)).filter((s): s is SessionRecord => !!s);
   if (!sessions.length) return null;
   const sessionOf = new Map<string, string>();
-  for (const s of sessions.slice(0, MAX_LOGS)) for (const id of sessionRequestIds(sy, s)) if (!sessionOf.has(id)) sessionOf.set(id, s.id);
-  const requests = requestRows(sy, [...sessionOf.keys()], sessionOf);
-  const tasks = taskRows(sy, [...new Set(sessions.map((s) => s.taskId).filter((t): t is string => !!t))]);
+  for (const s of sessions.slice(0, MAX_LOGS)) for (const id of sessionRequestIds(sy, s, project)) if (!sessionOf.has(id)) sessionOf.set(id, s.id);
+  const requests = requestRows(sy, [...sessionOf.keys()], sessionOf, project);
+  const tasks = taskRows(sy, [...new Set(sessions.map((s) => s.taskId).filter((t): t is string => !!t))], project);
   const jobIds = [...new Set([...sessions.map((s) => s.jobId), ...tasks.map((t) => (t.profile === "supervise" ? t.taskId : t.parentTaskId))].filter((j): j is string => !!j))];
   const jobs = jobIds.map((jobId) => {
-    const label = (sy.db.prepare("SELECT json_extract(spec_json, '$.label') AS l FROM tasks WHERE id = ?").get(jobId) as { l: string | null } | undefined)?.l ?? null;
+    const label = (db.prepare("SELECT json_extract(spec_json, '$.label') AS l FROM tasks WHERE id = ? AND project_id = ?").get(jobId, project) as { l: string | null } | undefined)?.l ?? null;
     return { jobId, label, supervisor: `supervisor:${label ?? jobId}` };
   });
   const { commits, errors } = await projectCommits(sy, project, { agent: agent.id });
@@ -336,16 +413,18 @@ export interface RequestDetail extends EntityRequest {
 
 /** One model request with everything it connects to; null for an unknown id. */
 export function requestDetail(sy: MeritRouter, id: string, project?: string): RequestDetail | null {
-  const r = sy.db.prepare(`SELECT * FROM model_requests WHERE id = ?${project === undefined ? "" : " AND project_id = ?"}`).get(...(project === undefined ? [id] : [id, project])) as Record<string, unknown> | undefined;
-  if (!r) return null;
-  const charges = (sy.db.prepare("SELECT c.task_id,c.input_tokens,c.output_tokens,c.tokens_exact FROM request_charges c JOIN tasks t ON t.id=c.task_id WHERE c.request_id=? AND t.project_id=? LIMIT 50").all(id, String(r.project_id)) as Array<Record<string, number | string>>).map((c) => ({
+  const located = locateRequest(sy, id, project);
+  if (!located) return null;
+  const db = located.db;
+  const charges = (db.prepare("SELECT c.task_id,c.input_tokens,c.output_tokens,c.tokens_exact FROM request_charges c JOIN tasks t ON t.id=c.task_id WHERE c.request_id=? AND t.project_id=? LIMIT 50").all(id, located.project) as Array<Record<string, number | string>>).map((c) => ({
     taskId: String(c.task_id), inputTokens: Number(c.input_tokens), outputTokens: Number(c.output_tokens), exact: Number(c.tokens_exact) === 1,
   }));
-  const evidence = requestEvidence(sy, String(r.project_id), id);
+  const r = db.prepare("SELECT * FROM model_requests WHERE id = ? AND project_id = ?").get(id, located.project) as Record<string, unknown>;
+  const evidence = requestEvidence(sy, located.project, id);
   const sessions = evidence?.exchanges.flatMap(exchange => exchange.sessions) ?? [];
-  const base = requestRows(sy, [id], new Map(sessions.length ? [[id, sessions[0]!.sessionId]] : []))[0]!;
+  const base = requestRows(sy, [id], new Map(sessions.length ? [[id, sessions[0]!.sessionId]] : []), located.project)[0]!;
   let tasks: EntityTask[] = [];
-  try { tasks = taskRows(sy, charges.map(c => c.taskId)); }
+  try { tasks = taskRows(sy, charges.map(c => c.taskId), located.project); }
   catch { if (evidence) { evidence.warnings.push("Related task metadata is malformed; task summaries omitted."); if (evidence.state === "available") evidence.state = "partial"; } }
   return {
     ...base,
@@ -384,13 +463,15 @@ export function sessionRequests(sy: MeritRouter, sessionId: string): EntityReque
   const ids = new Set(timeline.flatMap(e=>e.type === "model_response" ? [e.data.requestId] : []));
   const executions = [...new Set(timeline.flatMap(e=>e.type === "model_request" || e.type === "model_error" ? [e.data.executionId] : []))];
   if (executions.length && s.taskId) {
-    const failed = sy.db.prepare(`SELECT DISTINCT r.id FROM model_requests r JOIN request_charges c ON c.request_id=r.id
+    const opened = owner!.project_id ? openProjectStores(sy, owner!.project_id) : { ok: false as const };
+    const db = opened.ok ? opened.stores.db : sy.db;
+    const failed = db.prepare(`SELECT DISTINCT r.id FROM model_requests r JOIN request_charges c ON c.request_id=r.id
       WHERE c.task_id=? AND r.project_id=? AND r.status!='succeeded' AND r.reserved_at>=? AND r.reserved_at<=?
       AND r.execution_id IN (${executions.map(()=>"?").join(",")}) LIMIT 1000`).all(s.taskId,owner!.project_id,s.createdAt,s.endedAt ?? Date.now(),...executions) as Array<{id:string}>;
     for (const row of failed) ids.add(row.id);
   }
   const list = [...ids];
-  return requestRows(sy, list, new Map(list.map((i) => [i, sessionId])));
+  return requestRows(sy, list, new Map(list.map((i) => [i, sessionId])), owner?.project_id ?? undefined);
 }
 
 // ---------- commits and repositories ----------
@@ -590,9 +671,17 @@ export interface TaskRelated {
 
 /** Everything a task connects to, for its page's Related panel. Null for an unknown task. */
 export async function taskRelated(sy: MeritRouter, taskId: string): Promise<TaskRelated | null> {
-  const t = sy.tasks.get(taskId);
+  // No project is given, so the owning project is found the same way admin/jobs.ts and friends
+  // do: tried across every configured project's own store (plus qualification and the ''
+  // installation fallback), never a bare `sy.tasks`/`sy.db` lookup.
+  const located = locateTask(sy, taskId);
+  if (!located) return null;
+  const { project, stores } = located;
+  const db = stores?.db ?? sy.db;
+  const t = stores ? taskIn(sy, stores, taskId) : sy.tasks.get(taskId);
   if (!t) return null;
-  const project = t.row.project_id;
+  // The ancestor walk can in principle cross a reparented task into another project's job, so
+  // it keeps the installation-wide (global, unscoped) task lookup rather than one project's store.
   const parentOf = (id: string) => sy.tasks.get(id)?.spec.parentTaskId ?? null;
   const labelOf = (id: string) => sy.tasks.get(id)?.spec.label ?? null;
   const ancestors: TaskRelated["ancestors"] = [];
@@ -601,22 +690,22 @@ export async function taskRelated(sy: MeritRouter, taskId: string): Promise<Task
     ancestors.push({ jobId: cur, label: labelOf(cur) });
     cur = parentOf(cur);
   }
-  const sessions = sy.sessions.forTask(taskId);
+  const sessions = stores?.sessions ? stores.sessions.forTask(taskId) : sy.sessions.forTask(taskId);
   const agents = new Map<string, { id: string; role: string; sessions: number }>();
   for (const s of sessions) {
     const a = agents.get(s.agentLabel) ?? { id: s.agentLabel, role: s.role, sessions: 0 };
     a.sessions++;
     agents.set(s.agentLabel, a);
   }
-  const reqIds = (sy.db.prepare("SELECT request_id AS id FROM request_charges WHERE task_id = ?").all(taskId) as Array<{ id: string }>).map((r) => r.id);
-  const requests = requestRows(sy, reqIds);
+  const reqIds = (db.prepare("SELECT request_id AS id FROM request_charges WHERE task_id = ?").all(taskId) as Array<{ id: string }>).map((r) => r.id);
+  const requests = requestRows(sy, reqIds, new Map(), project);
   const { commits, errors } = project ? await projectCommits(sy, project, { task: taskId }) : { commits: [], errors: [] };
   const label = t.spec.label ?? taskId;
   const likeEscape = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
   const reports = (
-    sy.db.prepare("SELECT path FROM brain_files WHERE path LIKE ? ESCAPE '\\' ORDER BY path").all(`projects/${likeEscape(project)}/working/%/reports/${likeEscape(label)}.md`) as Array<{ path: string }>
+    db.prepare("SELECT path FROM brain_files WHERE path LIKE ? ESCAPE '\\' ORDER BY path").all(`projects/${likeEscape(project)}/working/%/reports/${likeEscape(label)}.md`) as Array<{ path: string }>
   ).map((r) => r.path);
-  const children = (sy.db.prepare("SELECT id FROM tasks WHERE json_extract(spec_json, '$.parentTaskId') = ? ORDER BY created_at").all(taskId) as Array<{ id: string }>).map((r) => r.id);
+  const children = (db.prepare("SELECT id FROM tasks WHERE json_extract(spec_json, '$.parentTaskId') = ? AND project_id = ? ORDER BY created_at").all(taskId, project) as Array<{ id: string }>).map((r) => r.id);
   return {
     job: ancestors[0] ?? null,
     ancestors,
@@ -627,8 +716,8 @@ export async function taskRelated(sy: MeritRouter, taskId: string): Promise<Task
     commits,
     commitsErrors: errors,
     reports,
-    dependsOn: (sy.db.prepare("SELECT depends_on FROM task_deps WHERE task_id = ?").all(taskId) as Array<{ depends_on: string }>).map((r) => r.depends_on),
-    children: taskRows(sy, children),
+    dependsOn: (db.prepare("SELECT depends_on FROM task_deps WHERE task_id = ?").all(taskId) as Array<{ depends_on: string }>).map((r) => r.depends_on),
+    children: taskRows(sy, children, project),
   };
 }
 
@@ -638,14 +727,23 @@ export interface ModelUsage {
   projects: Array<{ project: string; requests: number }>;
 }
 
-/** Who used a model recently: the tasks charged for its newest requests, their agents, and projects. */
+/**
+ * Who used a model recently: the tasks charged for its newest requests, their agents, and
+ * projects. Fanned out over every configured project's own store (plus qualification), each
+ * capped to `limit` and filtered to its own `project_id`, then merged, re-sorted and re-capped
+ * so the same `endpointId` scan across many projects cannot double-count or outrun `limit`.
+ */
 export function modelUsage(sy: MeritRouter, endpointId: string, limit = 200): ModelUsage {
-  const rows = sy.db
-    .prepare(
-      `SELECT r.id, r.reserved_at, r.project_id, c.task_id FROM model_requests r JOIN request_charges c ON c.request_id = r.id
-        WHERE r.endpoint_id = ? ORDER BY r.reserved_at DESC LIMIT ?`,
-    )
-    .all(endpointId, limit) as Array<{ id: string; reserved_at: number; project_id: string; task_id: string }>;
+  type Row = { id: string; reserved_at: number; project_id: string; task_id: string };
+  const { rows: fanned } = fanOutProjects(sy, adminProjectScopes(sy), (stores) =>
+    stores.db
+      .prepare(
+        `SELECT r.id, r.reserved_at, r.project_id, c.task_id FROM model_requests r JOIN request_charges c ON c.request_id = r.id
+          WHERE r.endpoint_id = ? AND r.project_id = ? ORDER BY r.reserved_at DESC LIMIT ?`,
+      )
+      .all(endpointId, stores.project, limit) as Row[],
+  );
+  const rows = newestFirst(fanned, (r) => r.reserved_at, limit);
   const perTask = new Map<string, { requests: number; lastAt: number; ids: Set<string> }>();
   const perProject = new Map<string, number>();
   for (const r of rows) {
@@ -661,9 +759,11 @@ export function modelUsage(sy: MeritRouter, endpointId: string, limit = 200): Mo
   let read = 0;
   for (const t of tasks) {
     const ids = perTask.get(t.taskId)!.ids;
-    for (const s of sy.sessions.forTask(t.taskId)) {
+    const opened = t.project ? openProjectStores(sy, t.project) : { ok: false as const };
+    const sessionsOf = opened.ok && opened.stores.sessions ? opened.stores.sessions.forTask(t.taskId) : sy.sessions.forTask(t.taskId);
+    for (const s of sessionsOf) {
       if (read++ >= MAX_LOGS) break;
-      const n = sessionRequestIds(sy, s).filter((id) => ids.has(id)).length;
+      const n = sessionRequestIds(sy, s, t.project).filter((id) => ids.has(id)).length;
       if (!n) continue;
       const key = `${t.project}\n${s.agentLabel}`;
       const a = agents.get(key) ?? { id: s.agentLabel, role: s.role, project: t.project, requests: 0 };

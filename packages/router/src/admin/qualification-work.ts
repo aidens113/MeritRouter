@@ -2,6 +2,7 @@ import type { MeritRouter } from "../core/service.js";
 import type { TaskState } from "../core/task.js";
 import { comparisons, type ComparisonRecord } from "../qualification/comparison.js";
 import { QUALIFICATION_PROJECT } from "../qualification/registry.js";
+import { locateProjectTask, openProjectStores, taskIn } from "./project-reads.js";
 
 // The work of the reserved `_qualification` project for the panel's install-wide Qualification
 // page: qualification eval tasks and team-vs-single comparison runs on eval goals. That project is
@@ -23,14 +24,21 @@ export interface QualificationTaskRow {
   run: { runId: string; evalId: string; trial: number; endpointId: string } | null;
 }
 
-/** Whether a task belongs to the qualification project. */
+/** Whether a task belongs to the qualification project (checked in that project's own store). */
 export function isQualificationTask(sy: MeritRouter, taskId: string): boolean {
-  return sy.tasks.projectOf(taskId) === QUALIFICATION_PROJECT;
+  return locateProjectTask(sy, taskId, QUALIFICATION_PROJECT) !== null;
 }
 
-/** The qualification project's top-level tasks, newest first (`purpose` limits them to one kind). */
+/**
+ * The qualification project's top-level tasks, newest first (`purpose` limits them to one kind).
+ * Read through the qualification project's own store; empty (never a crash) when that store
+ * cannot be opened.
+ */
 export function qualificationTasks(sy: MeritRouter, opts: { limit?: number; purpose?: "qualification" | "comparison" } = {}): QualificationTaskRow[] {
-  const rows = sy.db
+  const opened = openProjectStores(sy, QUALIFICATION_PROJECT);
+  if (!opened.ok) return [];
+  const stores = opened.stores;
+  const rows = stores.db
     .prepare(
       `SELECT t.id, t.purpose, q.run_id, q.eval_id, q.trial, q.endpoint_id FROM tasks t LEFT JOIN qualification_tasks q ON q.task_id = t.id
         WHERE t.project_id = ? AND json_extract(t.spec_json, '$.parentTaskId') IS NULL${opts.purpose ? " AND t.purpose = ?" : ""}
@@ -38,7 +46,7 @@ export function qualificationTasks(sy: MeritRouter, opts: { limit?: number; purp
     )
     .all(QUALIFICATION_PROJECT, ...(opts.purpose ? [opts.purpose] : []), Math.max(1, Math.min(opts.limit ?? 100, 1000))) as Array<{ id: string; purpose: string; run_id: string | null; eval_id: string | null; trial: number | null; endpoint_id: string | null }>;
   return rows.flatMap((r) => {
-    const t = sy.tasks.get(r.id);
+    const t = taskIn(sy, stores, r.id);
     if (!t) return [];
     return [
       {

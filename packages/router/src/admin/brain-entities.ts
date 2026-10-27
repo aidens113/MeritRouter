@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { MeritRouter } from "../core/service.js";
 import { normalizeBrainPath } from "../brain/brain.js";
 import { git } from "../workspaces/git.js";
+import { openProjectStores } from "./project-reads.js";
 
 const slugSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]*$/).max(120);
 const pathSchema = z.string().min(1).max(2000);
@@ -31,7 +32,9 @@ export async function brainDocumentRelated(sy: MeritRouter, project: string, pat
   const empty = { tasks: [] as string[], jobs: [] as string[] };
   if (!brainDocumentVisible(project, path) || !sy.projects.get(project)) return empty;
   const lines = await brainDocumentBlame(sy, project, path);
-  const belongs = sy.db.prepare("SELECT id FROM tasks WHERE id = ? AND project_id = ?");
+  const opened = openProjectStores(sy, project);
+  const belongs = opened.ok ? opened.stores.db.prepare("SELECT id FROM tasks WHERE id = ? AND project_id = ?") : null;
+  if (!belongs) return empty;
   return {
     tasks: [...new Set(lines.map(line => line.task).filter((id): id is string => !!id && !!belongs.get(id, project)))],
     jobs: [...new Set(lines.map(line => line.job).filter((id): id is string => !!id && !!belongs.get(id, project)))],
@@ -177,15 +180,16 @@ export async function brainDocumentBlame(sy: MeritRouter, project: string, path:
     const history = await documentHistory(sy, project, path, undefined, "HEAD", signal);
     const visible = new Set(history?.entries.map(entry => entry.commit) ?? []);
     const lines = await sy.brainFor(project).blame(path, { signal, timeoutMs: 10_000, maxBuffer: 4 * 1024 * 1024 });
-    const belongs = sy.db.prepare("SELECT id FROM tasks WHERE id = ? AND project_id = ?");
+    const opened = openProjectStores(sy, project);
+    const belongs = opened.ok ? opened.stores.db.prepare("SELECT id FROM tasks WHERE id = ? AND project_id = ?") : null;
     return lines.map(line => {
       if (!visible.has(line.commit) && !line.uncommitted) return {
         ...line, commit: "", origPath: path, agent: null, role: null, model: null,
         task: null, job: null, authorName: "Earlier history unavailable", date: "",
       };
       return { ...line,
-        task: line.task && belongs.get(line.task, project) ? line.task : null,
-        job: line.job && belongs.get(line.job, project) ? line.job : null,
+        task: line.task && belongs?.get(line.task, project) ? line.task : null,
+        job: line.job && belongs?.get(line.job, project) ? line.job : null,
       };
     });
   } catch (err) { if (opts.strict) throw err; return []; }

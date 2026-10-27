@@ -3,6 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 import type { MeritRouter } from "../core/service.js";
 import { SessionEventSchema, type SessionEvent } from "../sessions/events.js";
+import { openProjectStores } from "./project-reads.js";
 
 const Id = z.string().regex(/^[A-Za-z0-9_-]{1,200}$/);
 const Participant = z.object({ task_id: Id, project_id: z.string().min(1).nullable() });
@@ -13,9 +14,14 @@ export const SESSION_SCOPE_UNAVAILABLE = "This historical timeline is unavailabl
 /** Validate the entire historical cohort before exposing any page, including failures and pre-response input. */
 export function scopedSessionTimeline(sy: MeritRouter, id: string, project: string): SessionEvent[] | null {
   if (!Id.safeParse(id).success) return null;
-  const owner = z.object({task_id:Id.nullable(),project_id:z.string().max(200)}).safeParse(sy.db.prepare("SELECT task_id, project_id FROM sessions WHERE id=?").get(id)).data;
+  // `sessions`, `tasks`, `model_requests`, `executions`, `execution_members` and `request_charges`
+  // are project-private; this entire cohort lives in `project`'s own store, never `sy.db`.
+  const opened = openProjectStores(sy, project);
+  if (!opened.ok) return null;
+  const db = opened.stores.db;
+  const owner = z.object({task_id:Id.nullable(),project_id:z.string().max(200)}).safeParse(db.prepare("SELECT task_id, project_id FROM sessions WHERE id=?").get(id)).data;
   if (!owner || owner.project_id !== project || !owner.task_id) return null;
-  const task = z.object({project_id:z.string().max(200)}).safeParse(sy.db.prepare("SELECT project_id FROM tasks WHERE id=?").get(owner.task_id)).data;
+  const task = z.object({project_id:z.string().max(200)}).safeParse(db.prepare("SELECT project_id FROM tasks WHERE id=?").get(owner.task_id)).data;
   if (task?.project_id !== project) return null;
   let fd: number | undefined;
   try {
@@ -62,33 +68,33 @@ export function scopedSessionTimeline(sy: MeritRouter, id: string, project: stri
     }
     if (executions.size > 256 || requests.size > 1024) return null;
     for (const request of requests) {
-      const row = z.object({execution_id:Id,project_id:z.string()}).safeParse(sy.db.prepare("SELECT execution_id,project_id FROM model_requests WHERE id=?").get(request)).data;
+      const row = z.object({execution_id:Id,project_id:z.string()}).safeParse(db.prepare("SELECT execution_id,project_id FROM model_requests WHERE id=?").get(request)).data;
       if (!row || row.project_id !== project) return null;
       executions.add(Id.parse(row.execution_id));
     }
     if (executions.size > 256) return null;
     // No successful anchor is necessary: model_request/model_error execution membership is authoritative too.
     for (const execution of executions) {
-      const kind = z.object({kind:z.enum(["task","batch"])}).parse(sy.db.prepare("SELECT kind FROM executions WHERE id=?").get(execution)).kind;
+      const kind = z.object({kind:z.enum(["task","batch"])}).parse(db.prepare("SELECT kind FROM executions WHERE id=?").get(execution)).kind;
       const original = recordedMembers.get(execution);
       if (kind === "batch" && !original) return null;
       if (original) {
         for (const [taskId,itemId] of original) {
-          const proof = z.object({project_id:z.string(),item_id:z.string()}).safeParse(sy.db.prepare("SELECT t.project_id,m.item_id FROM execution_members m JOIN tasks t ON t.id=m.task_id WHERE m.execution_id=? AND m.task_id=?").get(execution,taskId)).data;
+          const proof = z.object({project_id:z.string(),item_id:z.string()}).safeParse(db.prepare("SELECT t.project_id,m.item_id FROM execution_members m JOIN tasks t ON t.id=m.task_id WHERE m.execution_id=? AND m.task_id=?").get(execution,taskId)).data;
           if (!proof || proof.project_id !== project || proof.item_id !== itemId) return null;
         }
       }
-      const members = z.array(Participant).max(10_000).parse(sy.db.prepare(`
+      const members = z.array(Participant).max(10_000).parse(db.prepare(`
         SELECT m.task_id,t.project_id FROM execution_members m LEFT JOIN tasks t ON t.id=m.task_id WHERE m.execution_id=?
         UNION SELECT c.task_id,t.project_id FROM request_charges c JOIN model_requests r ON r.id=c.request_id LEFT JOIN tasks t ON t.id=c.task_id WHERE r.execution_id=? LIMIT 10001
       `).all(execution,execution));
       if (original && members.some(m=>!original.has(m.task_id))) return null;
       if (!members.length || !members.some(m=>m.task_id===owner.task_id) || members.some(m=>m.project_id!==project)) return null;
-      const uncharged = sy.db.prepare("SELECT 1 FROM model_requests r WHERE r.execution_id=? AND NOT EXISTS(SELECT 1 FROM request_charges c WHERE c.request_id=r.id) LIMIT 1").get(execution);
+      const uncharged = db.prepare("SELECT 1 FROM model_requests r WHERE r.execution_id=? AND NOT EXISTS(SELECT 1 FROM request_charges c WHERE c.request_id=r.id) LIMIT 1").get(execution);
       if (uncharged) return null;
     }
     // A model-bearing session lacking any verifiable execution cannot safely expose its earlier context.
-    const indexed = z.object({model_requests:z.number().int().nonnegative(),last_seq:z.number().int().nonnegative()}).parse(sy.db.prepare("SELECT model_requests,last_seq FROM sessions WHERE id=?").get(id));
+    const indexed = z.object({model_requests:z.number().int().nonnegative(),last_seq:z.number().int().nonnegative()}).parse(db.prepare("SELECT model_requests,last_seq FROM sessions WHERE id=?").get(id));
     if (events.length !== indexed.last_seq || events.filter(e=>e.type === "model_request").length !== indexed.model_requests || ((indexed.model_requests > 0 || events.some(e=>e.type === "message" || e.type === "tool_intent" || e.type === "model_response")) && !executions.size)) return null;
     return events;
   } catch { return null; } finally { if (fd !== undefined) closeSync(fd); }

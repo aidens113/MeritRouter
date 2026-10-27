@@ -5,7 +5,8 @@ import { carvedRequests, carvesOf, type BudgetCarve } from "../admission/admissi
 import { ACTIVE_MERGE_STATES, MergeQueue, type MergeItem, type MergeState } from "../workspaces/merge-queue.js";
 import { CHANNEL_KINDS, CHANNEL_READ_LIMIT, ChannelStore, type ChannelKind, type ChannelPost } from "../storage/channel.js";
 import type { StoredTask } from "../storage/tasks.js";
-import { contextOfTask } from "./projects.js";
+import type { ProjectRuntimeStore } from "../projects/runtime-store.js";
+import { locateProjectTask, taskIn, taskRequestsUsed, type ProjectTask } from "./project-reads.js";
 
 // A job's team (T2) for people and supervisor clients: the job tree (sub-supervisors with their
 // branches and carved budgets, and every worker under them), the merge queue of each job branch
@@ -143,14 +144,14 @@ const MAX_TREE_DEPTH = 8;
 
 const isJob = (t: StoredTask) => t.spec.profile === "supervise";
 
-/** Supervisor level of a job (1 at the top), and its ancestor chain, nearest first. */
-function ancestry(sy: MeritRouter, taskId: string): { depth: number; parents: StoredTask[] } {
+/** Supervisor level of a job (1 at the top), and its ancestor chain within its project, nearest first. */
+function ancestry(sy: MeritRouter, located: ProjectTask): { depth: number; parents: StoredTask[] } {
   const parents: StoredTask[] = [];
-  const seen = new Set<string>([taskId]);
-  let cur = sy.tasks.get(taskId);
+  const seen = new Set<string>([located.task.row.id]);
+  let cur: StoredTask | undefined = located.task;
   while (cur?.spec.parentTaskId && !seen.has(cur.spec.parentTaskId) && parents.length < MAX_TREE_DEPTH) {
-    const p = sy.tasks.get(cur.spec.parentTaskId);
-    if (!p) break;
+    const p = taskIn(sy, located.stores, cur.spec.parentTaskId);
+    if (!p || p.row.project_id !== located.task.row.project_id) break;
     seen.add(p.row.id);
     if (isJob(p)) parents.push(p);
     cur = p;
@@ -159,24 +160,24 @@ function ancestry(sy: MeritRouter, taskId: string): { depth: number; parents: St
 }
 
 /** A job's branches, from the last workspace its supervisor sessions recorded. */
-function branchesOf(sy: MeritRouter, jobId: string): Array<{ alias: string; branch: string }> {
-  const ws = [...sy.sessions.forTask(jobId)].reverse().find((s) => s.role === "supervisor" && s.workspace?.repos.length)?.workspace;
+function branchesOf(stores: ProjectRuntimeStore, jobId: string): Array<{ alias: string; branch: string }> {
+  const ws = [...(stores.sessions?.forTask(jobId) ?? [])].reverse().find((s) => s.role === "supervisor" && s.workspace?.repos.length)?.workspace;
   return (ws?.repos ?? []).flatMap((r) => (r.branch ? [{ alias: r.alias, branch: r.branch }] : []));
 }
 
-function budgetOf(sy: MeritRouter, carve: BudgetCarve | undefined, child: StoredTask, used: number): TeamBudgetView | null {
+function budgetOf(stores: ProjectRuntimeStore, carve: BudgetCarve | undefined, child: StoredTask, used: number): TeamBudgetView | null {
   if (!carve) return null;
   const finished = isTerminal(child.row.state);
-  const held = finished ? Math.min(carve.requests, used + carvedRequests(sy.db, child.row.id)) : carve.requests;
+  const held = finished ? Math.min(carve.requests, used + carvedRequests(stores.db, child.row.id)) : carve.requests;
   return { carved: carve.requests, parentRemaining: carve.parentRemaining, share: carve.share, used, held, returned: finished ? carve.requests - held : null };
 }
 
-function treeOf(sy: MeritRouter, t: StoredTask, depth: number, carve: BudgetCarve | undefined, guard: Set<string>): TeamTreeNode {
+function treeOf(stores: ProjectRuntimeStore, t: StoredTask, depth: number, carve: BudgetCarve | undefined, guard: Set<string>): TeamTreeNode {
   guard.add(t.row.id);
   const job = isJob(t);
-  const used = sy.admission.taskTotals(t.row.id).requests;
-  const carves = job ? new Map(carvesOf(sy.db, t.row.id).map((c) => [c.childTaskId, c])) : new Map<string, BudgetCarve>();
-  const kids = job && depth <= MAX_TREE_DEPTH ? sy.tasks.childrenOf(t.row.id).filter((c) => c.row.project_id === t.row.project_id && !guard.has(c.row.id)) : [];
+  const used = taskRequestsUsed(stores, t.row.id);
+  const carves = job ? new Map(carvesOf(stores.db, t.row.id).map((c) => [c.childTaskId, c])) : new Map<string, BudgetCarve>();
+  const kids = job && depth <= MAX_TREE_DEPTH ? stores.tasks.childrenOf(t.row.id).filter((c) => c.row.project_id === t.row.project_id && !guard.has(c.row.id)) : [];
   return {
     taskId: t.row.id,
     label: t.spec.label ?? null,
@@ -186,10 +187,10 @@ function treeOf(sy: MeritRouter, t: StoredTask, depth: number, carve: BudgetCarv
     state: t.row.state,
     acceptance: t.result?.acceptanceStatus ?? null,
     depth,
-    branches: job ? branchesOf(sy, t.row.id) : [],
-    budget: budgetOf(sy, carve, t, used),
+    branches: job ? branchesOf(stores, t.row.id) : [],
+    budget: budgetOf(stores, carve, t, used),
     requestsUsed: used,
-    children: kids.map((c) => treeOf(sy, c, isJob(c) ? depth + 1 : depth, carves.get(c.row.id), guard)),
+    children: kids.map((c) => treeOf(stores, c, isJob(c) ? depth + 1 : depth, carves.get(c.row.id), guard)),
   };
 }
 
@@ -266,10 +267,18 @@ function itemView(item: MergeItem, ahead: number, labelOf: (id: string) => strin
   return { ...base, outcome: itemOutcome(base) };
 }
 
-/** The merge queue of one job: its items grouped per branch, oldest first. */
-export function mergeQueueOf(sy: MeritRouter, jobId: string): MergeBranchView[] {
-  const labelOf = labeler(sy);
-  const items = new MergeQueue(sy.db, sy.tasks, "reader").forJob(jobId);
+/**
+ * The merge queue of one job: its items grouped per branch, oldest first. Read from the job's own
+ * project store (`project` names it; every project is searched otherwise); empty for an unknown job.
+ */
+export function mergeQueueOf(sy: MeritRouter, jobId: string, project?: string): MergeBranchView[] {
+  const located = locateProjectTask(sy, jobId, project);
+  return located ? queueOf(sy, located.stores, jobId) : [];
+}
+
+function queueOf(sy: MeritRouter, stores: ProjectRuntimeStore, jobId: string): MergeBranchView[] {
+  const labelOf = labeler(sy, stores);
+  const items = new MergeQueue(stores.db, stores.tasks, "reader").forJob(jobId);
   const groups = new Map<string, MergeItem[]>();
   for (const i of items) groups.set(i.lockKey, [...(groups.get(i.lockKey) ?? []), i]);
   return [...groups.values()].map((list) => {
@@ -299,10 +308,10 @@ function postView(p: ChannelPost, labelOf: (id: string) => string | null): Chann
   };
 }
 
-function channelCounts(sy: MeritRouter, jobIds: string[]): { total: number; byKind: Record<ChannelKind, number> } {
+function channelCounts(stores: ProjectRuntimeStore, jobIds: string[]): { total: number; byKind: Record<ChannelKind, number> } {
   const byKind = Object.fromEntries(CHANNEL_KINDS.map((k) => [k, 0])) as Record<ChannelKind, number>;
   if (!jobIds.length) return { total: 0, byKind };
-  const rows = sy.db.prepare(`SELECT kind, COUNT(*) AS n FROM job_channel WHERE job_id IN (${jobIds.map(() => "?").join(",")}) GROUP BY kind`).all(...jobIds) as Array<{ kind: string; n: number }>;
+  const rows = stores.db.prepare(`SELECT kind, COUNT(*) AS n FROM job_channel WHERE job_id IN (${jobIds.map(() => "?").join(",")}) GROUP BY kind`).all(...jobIds) as Array<{ kind: string; n: number }>;
   let total = 0;
   for (const r of rows) {
     total += r.n;
@@ -311,10 +320,11 @@ function channelCounts(sy: MeritRouter, jobIds: string[]): { total: number; byKi
   return { total, byKind };
 }
 
-function labeler(sy: MeritRouter): (id: string) => string | null {
+/** Task labels from the project's own store (a task of another project gets none). */
+function labeler(sy: MeritRouter, stores: ProjectRuntimeStore): (id: string) => string | null {
   const cache = new Map<string, string | null>();
   return (id) => {
-    if (!cache.has(id)) cache.set(id, sy.tasks.get(id)?.spec.label ?? null);
+    if (!cache.has(id)) cache.set(id, taskIn(sy, stores, id)?.spec.label ?? null);
     return cache.get(id)!;
   };
 }
@@ -322,44 +332,48 @@ function labeler(sy: MeritRouter): (id: string) => string | null {
 /**
  * One job's team channel as its supervisor sees it: every post (not a worker's filtered view),
  * oldest first, at most `limit` (50) after `afterId`, optionally only some kinds; `hasMore` says
- * to read again with `afterId` set to the last id shown. Null when the id is not a job.
+ * to read again with `afterId` set to the last id shown. Null when the id is not a job. Read from the
+ * job's own project store (`opts.project` names it; every project is searched otherwise).
  */
-export function jobChannel(sy: MeritRouter, jobId: string, opts: { afterId?: number; limit?: number; kinds?: ChannelKind[] } = {}): JobChannelView | null {
-  const job = sy.tasks.get(jobId);
-  if (!job || !isJob(job)) return null;
-  const labelOf = labeler(sy);
+export function jobChannel(sy: MeritRouter, jobId: string, opts: { afterId?: number; limit?: number; kinds?: ChannelKind[]; project?: string } = {}): JobChannelView | null {
+  const located = locateProjectTask(sy, jobId, opts.project);
+  if (!located || !isJob(located.task)) return null;
+  const { stores, task: job } = located;
+  const labelOf = labeler(sy, stores);
   const limit = Math.max(1, Math.min(opts.limit ?? CHANNEL_READ_LIMIT, CHANNEL_READ_LIMIT));
   const kinds = opts.kinds?.length ? opts.kinds : null;
   const ids = (
-    sy.db
+    stores.db
       .prepare(`SELECT id FROM job_channel WHERE job_id = ? AND id > ?${kinds ? ` AND kind IN (${kinds.map(() => "?").join(",")})` : ""} ORDER BY id ASC LIMIT ?`)
       .all(jobId, opts.afterId ?? 0, ...(kinds ?? []), limit + 1) as Array<{ id: number }>
   ).map((r) => r.id);
   // Rows are read through the store, which validates them.
-  const store = new ChannelStore(sy.db);
+  const store = new ChannelStore(stores.db);
   const posts = ids.slice(0, limit).flatMap((id) => {
     const p = store.get(id);
     return p ? [postView(p, labelOf)] : [];
   });
-  const counts = channelCounts(sy, [jobId]);
+  const counts = channelCounts(stores, [jobId]);
   return { jobId, jobLabel: job.spec.label ?? null, notice: CHANNEL_NOTICE, posts, total: counts.total, byKind: counts.byKind, hasMore: ids.length > limit };
 }
 
 /**
  * A job's team: the tree under it (sub-jobs with depth, branch, and carved budget; workers),
  * the merge queue of every job branch in that tree, and its recent channel posts
- * (`channelLimit`, default 20). Null when the id is not a job.
+ * (`channelLimit`, default 20). Null when the id is not a job. Read from the job's own project store
+ * (`opts.project` names it; every project is searched otherwise).
  */
-export function jobTeam(sy: MeritRouter, jobId: string, opts: { channelLimit?: number } = {}): JobTeamView | null {
-  const job = sy.tasks.get(jobId);
-  if (!job || !isJob(job)) return null;
-  const { depth, parents } = ancestry(sy, jobId);
+export function jobTeam(sy: MeritRouter, jobId: string, opts: { channelLimit?: number; project?: string } = {}): JobTeamView | null {
+  const located = locateProjectTask(sy, jobId, opts.project);
+  if (!located || !isJob(located.task)) return null;
+  const { stores, project, task: job } = located;
+  const { depth, parents } = ancestry(sy, located);
   const parent = parents[0] ?? null;
-  const ownCarve = parent ? carvesOf(sy.db, parent.row.id).find((c) => c.childTaskId === jobId) : undefined;
-  const tree = treeOf(sy, job, depth, ownCarve, new Set());
+  const ownCarve = parent ? carvesOf(stores.db, parent.row.id).find((c) => c.childTaskId === jobId) : undefined;
+  const tree = treeOf(stores, job, depth, ownCarve, new Set());
   const jobs = jobsIn(tree);
-  const labelOf = labeler(sy);
-  const store = new ChannelStore(sy.db);
+  const labelOf = labeler(sy, stores);
+  const store = new ChannelStore(stores.db);
   const limit = Math.max(1, Math.min(opts.channelLimit ?? 20, CHANNEL_READ_LIMIT));
   const posts = jobs
     .flatMap((j) => store.list(j.taskId, { limit }))
@@ -373,11 +387,11 @@ export function jobTeam(sy: MeritRouter, jobId: string, opts: { channelLimit?: n
     parentLabel: parent?.spec.label ?? null,
     rootJobId: parents.at(-1)?.row.id ?? jobId,
     depth,
-    maxDepth: contextOfTask(sy, jobId).team.max_depth,
+    maxDepth: sy.projectContext(project).team.max_depth,
     tree,
     subJobs: jobs.length - 1,
-    queues: jobs.flatMap((j) => mergeQueueOf(sy, j.taskId)),
-    channel: { notice: CHANNEL_NOTICE, posts, ...channelCounts(sy, jobs.map((j) => j.taskId)) },
+    queues: jobs.flatMap((j) => queueOf(sy, stores, j.taskId)),
+    channel: { notice: CHANNEL_NOTICE, posts, ...channelCounts(stores, jobs.map((j) => j.taskId)) },
   };
 }
 

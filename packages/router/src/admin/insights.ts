@@ -10,6 +10,7 @@ import { patchConfig } from "./config-edit.js";
 import { contextOfTask } from "./projects.js";
 import { providerKeysView } from "./provider-keys.js";
 import type { MeritRouter } from "../core/service.js";
+import type { Db } from "../storage/db.js";
 import { criteria as taskCriteria, type Criterion, type SupervisorDecision, type TaskState, type VerificationRecord, type WorkerResult, type WorkerTask } from "../core/task.js";
 import { verificationTrail, type TaskVerificationTrail } from "../verification/trail.js";
 import { MeritRouterError } from "../core/errors.js";
@@ -22,6 +23,9 @@ import { qualificationLookup, qualificationStat, type QualificationStat } from "
 import { DEFAULT_RULEBOOK, RulebookSchema } from "../scoring/rulebook.js";
 import type { Classification } from "../scoring/score.js";
 import type { UsageSummary } from "../storage/usage.js";
+import { installationUsage } from "./project-usage.js";
+import { adminProjectScopes, fanOutProjectRows, openProjectStores, projectDbScopes, requireProjectStores } from "./project-reads.js";
+import { QUALIFICATION_PROJECT } from "../qualification/registry.js";
 import type { ArtifactRow } from "../storage/artifacts.js";
 import type { ProviderStatus, WebCitation } from "../gateway/types.js";
 import { z } from "zod";
@@ -35,6 +39,13 @@ export interface WorkerInfo {
   lastSeen: number;
 }
 
+/**
+ * Active worker processes. Deliberately not fanned out per project: `store-role.ts`'s
+ * `assertProjectContents` forbids a real (split) project store's `meta` table from holding
+ * anything but its own brain-index-generation row, so a `worker:*` claim is installation-wide
+ * state, never per-project data, even though `meta` is classified under `localTables` for schema
+ * completeness. Reading `sy.db` here is correct today and stays correct once stores split.
+ */
 export function workers(sy: MeritRouter, withinMs = 15_000): WorkerInfo[] {
   const rows = sy.db.prepare("SELECT key, value FROM meta WHERE key LIKE 'worker:%'").all() as { key: string; value: string }[];
   const now = Date.now();
@@ -57,12 +68,20 @@ export interface Overview {
   attention: string[];
 }
 
+/** Task counts by state across every project (plus unattributed tasks), summed in memory per state. */
+function tasksByState(sy: MeritRouter): Record<string, number> {
+  const { rows } = fanOutProjectRows(sy, undefined, { qualification: true }, (db, p) =>
+    db.prepare("SELECT state, COUNT(*) AS n FROM tasks WHERE project_id = ? GROUP BY state").all(p) as Array<{ state: string; n: number }>,
+  );
+  const merged = new Map<string, number>();
+  for (const r of rows) merged.set(r.state, (merged.get(r.state) ?? 0) + r.n);
+  return Object.fromEntries(merged);
+}
+
 export async function overview(sy: MeritRouter): Promise<Overview> {
   await sy.health.refresh().catch(() => undefined);
   const now = Date.now();
-  const tasksByState = Object.fromEntries(
-    (sy.db.prepare("SELECT state, COUNT(*) AS n FROM tasks GROUP BY state").all() as { state: string; n: number }[]).map((r) => [r.state, r.n]),
-  );
+  const tasksByStateNow = tasksByState(sy);
   const eps = sy.catalog.endpoints();
   const models = { active: 0, pending_confirmation: 0, disabled: 0, removed: 0, routable: 0 };
   for (const e of eps) models[e.status]++;
@@ -74,15 +93,17 @@ export async function overview(sy: MeritRouter): Promise<Overview> {
   if (switchedOff) attention.push(`${switchedOff} provider key(s) are invalid or out of credits; see the Provider keys page.`);
   if (models.pending_confirmation) attention.push(`${models.pending_confirmation} model(s) need a confirmed parameter count before they can be used.`);
   if (eps.length === 0) attention.push("No models in the catalog yet. Run a scan from the Models page.");
-  const s = sy.usage(now - DAY);
+  // Installation-wide usage is every project's own usage plus unattributed (probe/scan) requests,
+  // read through each project's store rather than scanning the installation database directly.
+  const s = installationUsage(sy, now - DAY, now);
   if (s.policyViolations) attention.push(`${s.policyViolations} served-model policy violation(s) in the last 24h; affected models are quarantined.`);
   return {
     generatedAt: now,
     usableKeys: usable.length,
     workers: workers(sy),
     usage24h: s,
-    usage7d: sy.usage(now - 7 * DAY),
-    tasksByState,
+    usage7d: installationUsage(sy, now - 7 * DAY, now),
+    tasksByState: tasksByStateNow,
     models,
     providers: sy.health.snapshot(),
     lastScan: sy.scanner.lastScan(),
@@ -138,33 +159,61 @@ export interface EndpointStats {
   tasksFailed: number;
 }
 
-function endpointStats(sy: MeritRouter, id: string, sinceMs: number): EndpointStats {
-  const r = sy.db
+/** One project's partial endpoint stats, before merging across every project. */
+interface EndpointStatsPart {
+  requests: number; ok: number; failed: number; uncertain: number; violations: number; inTok: number; outTok: number;
+  /** Sum and count of finished requests' latency, to recompute a weighted average after merging (never average an average). */
+  latencySum: number; latencyCount: number;
+  last: number | null;
+  done: number; taskFailed: number;
+}
+
+function endpointStatsPart(db: Db, project: string, id: string, sinceMs: number): EndpointStatsPart {
+  const r = db
     .prepare(
       `SELECT COUNT(*) AS requests, SUM(status='succeeded') AS ok, SUM(status='failed') AS failed, SUM(status='uncertain') AS uncertain,
               SUM(policy_violation IS NOT NULL) AS violations, COALESCE(SUM(input_tokens),0) AS inTok, COALESCE(SUM(output_tokens),0) AS outTok,
-              AVG(CASE WHEN finished_at IS NOT NULL THEN finished_at - reserved_at END) AS latency, MAX(reserved_at) AS last
-         FROM model_requests WHERE endpoint_id = ? AND reserved_at > ?`,
+              COALESCE(SUM(CASE WHEN finished_at IS NOT NULL THEN finished_at - reserved_at END),0) AS latencySum,
+              SUM(finished_at IS NOT NULL) AS latencyCount, MAX(reserved_at) AS last
+         FROM model_requests WHERE endpoint_id = ? AND reserved_at > ? AND project_id = ?`,
     )
-    .get(id, sinceMs) as Record<string, number | null>;
-  const t = sy.db
+    .get(id, sinceMs, project) as Record<string, number | null>;
+  const t = db
     .prepare(
       `SELECT SUM(t.state = 'completed') AS done, SUM(t.state IN ('failed','budget_exhausted')) AS failed FROM tasks t
-        WHERE t.finished_at > ? AND t.id IN (SELECT c.task_id FROM request_charges c JOIN model_requests m ON m.id = c.request_id WHERE m.served_endpoint_id = ?)`,
+        WHERE t.finished_at > ? AND t.project_id = ? AND t.id IN (SELECT c.task_id FROM request_charges c JOIN model_requests m ON m.id = c.request_id WHERE m.served_endpoint_id = ? AND m.project_id = ?)`,
     )
-    .get(sinceMs, id) as { done: number | null; failed: number | null };
+    .get(sinceMs, project, id, project) as { done: number | null; failed: number | null };
   return {
-    requests: r.requests ?? 0,
-    succeeded: r.ok ?? 0,
-    failed: r.failed ?? 0,
-    uncertain: r.uncertain ?? 0,
-    policyViolations: r.violations ?? 0,
-    inputTokens: r.inTok ?? 0,
-    outputTokens: r.outTok ?? 0,
-    avgLatencyMs: r.latency === null ? null : Math.round(r.latency!),
-    lastUsedAt: r.last ?? null,
-    tasksCompleted: t.done ?? 0,
-    tasksFailed: t.failed ?? 0,
+    requests: r.requests ?? 0, ok: r.ok ?? 0, failed: r.failed ?? 0, uncertain: r.uncertain ?? 0, violations: r.violations ?? 0,
+    inTok: r.inTok ?? 0, outTok: r.outTok ?? 0, latencySum: r.latencySum ?? 0, latencyCount: r.latencyCount ?? 0, last: r.last ?? null,
+    done: t.done ?? 0, taskFailed: t.failed ?? 0,
+  };
+}
+
+/** Every project's (plus unattributed requests') stats for one endpoint, merged: sums add, the average latency is recomputed from the merged sum and count. */
+function endpointStats(sy: MeritRouter, id: string, sinceMs: number): EndpointStats {
+  const { rows } = fanOutProjectRows(sy, undefined, { qualification: true }, (db, p) => [endpointStatsPart(db, p, id, sinceMs)]);
+  const m = rows.reduce(
+    (a, b) => ({
+      requests: a.requests + b.requests, ok: a.ok + b.ok, failed: a.failed + b.failed, uncertain: a.uncertain + b.uncertain, violations: a.violations + b.violations,
+      inTok: a.inTok + b.inTok, outTok: a.outTok + b.outTok, latencySum: a.latencySum + b.latencySum, latencyCount: a.latencyCount + b.latencyCount,
+      last: a.last === null ? b.last : b.last === null ? a.last : Math.max(a.last, b.last), done: a.done + b.done, taskFailed: a.taskFailed + b.taskFailed,
+    }),
+    { requests: 0, ok: 0, failed: 0, uncertain: 0, violations: 0, inTok: 0, outTok: 0, latencySum: 0, latencyCount: 0, last: null as number | null, done: 0, taskFailed: 0 },
+  );
+  return {
+    requests: m.requests,
+    succeeded: m.ok,
+    failed: m.failed,
+    uncertain: m.uncertain,
+    policyViolations: m.violations,
+    inputTokens: m.inTok,
+    outputTokens: m.outTok,
+    avgLatencyMs: m.latencyCount === 0 ? null : Math.round(m.latencySum / m.latencyCount),
+    lastUsedAt: m.last,
+    tasksCompleted: m.done,
+    tasksFailed: m.taskFailed,
   };
 }
 
@@ -224,6 +273,8 @@ export function modelsView(sy: MeritRouter): ModelView[] {
   const m = matrix(sy);
   const since = Date.now() - 7 * DAY;
   const families = [...new Set(Object.values(sy.cfg.profiles).map((p) => p.mode))];
+  // qualification_results is qualificationTables (store-role.ts): the qualification project's own store.
+  const qdb = requireProjectStores(sy, QUALIFICATION_PROJECT).db;
   return sy.catalog.endpoints().map((ep) => {
     const cells = m.get(ep.id) ?? [];
     const quarantined = sy.gate.quarantined(ep);
@@ -236,7 +287,7 @@ export function modelsView(sy: MeritRouter): ModelView[] {
       firstSeenAt: sy.catalog.discoveredRow(ep.id)?.firstSeenAt ?? null,
       stats7d: endpointStats(sy, ep.id, since),
       eligibility: cells,
-      qualification: families.flatMap((family) => TIER_NAMES.map((tier) => ({ family, tier, stat: qualificationStat(sy.db, sy.cfg, ep.id, family, tier) }))),
+      qualification: families.flatMap((family) => TIER_NAMES.map((tier) => ({ family, tier, stat: qualificationStat(qdb, sy.cfg, ep.id, family, tier) }))),
       headline: headline(ep, cells, quarantined, planRefused),
     };
   });
@@ -285,11 +336,16 @@ const RequestLogOptionsSchema = z.object({
   status: z.string().max(100).optional(), project: z.string().max(1000).optional(), purpose: z.string().max(100).optional(),
   tier: z.string().max(100).optional(), problems: z.boolean().optional(),
 }).strict();
-function requestLogScope(sy: MeritRouter, opts: RequestLogOptions): { where: string[]; args: unknown[] } {
-  opts = RequestLogOptionsSchema.parse(opts);
-  const where: string[] = [];
-  const args: unknown[] = [];
-  for (const [column, value] of [["project_id", opts.project], ["endpoint_id", opts.endpointId], ["status", opts.status], ["purpose", opts.purpose], ["tier", opts.tier]] as const) {
+/**
+ * `where`/`args` for one db scope's slice of the log. `scopeProject` is always bound (even when
+ * the caller passed no `project`): the fan-out in `requestLogCount`/`requestLog` runs this once
+ * per project (plus the installation database's `''` rows), and today every scope can share one
+ * database handle, so the explicit filter is what keeps each scope's rows from counting twice.
+ */
+function requestLogScope(opts: RequestLogOptions, scopeProject: string): { where: string[]; args: unknown[] } {
+  const where: string[] = ["r.project_id = ?"];
+  const args: unknown[] = [scopeProject];
+  for (const [column, value] of [["endpoint_id", opts.endpointId], ["status", opts.status], ["purpose", opts.purpose], ["tier", opts.tier]] as const) {
     if (value !== undefined) { where.push(`r.${column} = ?`); args.push(value); }
   }
   if (opts.taskId) {
@@ -310,21 +366,18 @@ function requestLogScope(sy: MeritRouter, opts: RequestLogOptions): { where: str
   return { where, args };
 }
 
-/** Matching physical requests, before pagination; batches count once. */
+/** Matching physical requests, before pagination; batches count once. `project` reads one project's store (or `''`'s installation rows); without it, every scope is summed. */
 export function requestLogCount(sy: MeritRouter, opts: RequestLogOptions = {}): number {
-  const { where, args } = requestLogScope(sy, opts);
-  return (sy.db.prepare(`SELECT COUNT(*) AS n FROM model_requests r ${where.length ? `WHERE ${where.join(" AND ")}` : ""}`).get(...args) as { n: number }).n;
+  const parsed = RequestLogOptionsSchema.parse(opts);
+  const { scopes } = projectDbScopes(sy, parsed.project, { qualification: true });
+  return scopes.reduce((total, s) => {
+    const { where, args } = requestLogScope(parsed, s.project);
+    return total + (s.db.prepare(`SELECT COUNT(*) AS n FROM model_requests r WHERE ${where.join(" AND ")}`).get(...args) as { n: number }).n;
+  }, 0);
 }
 
-export function requestLog(sy: MeritRouter, opts: RequestLogOptions = {}): RequestRow[] {
-  const { where, args } = requestLogScope(sy, opts);
-  const rows = sy.db
-    .prepare(
-      `SELECT r.*, (SELECT group_concat(c.task_id) FROM request_charges c JOIN tasks t ON t.id = c.task_id WHERE c.request_id = r.id AND t.project_id = r.project_id) AS task_ids
-         FROM model_requests r ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY r.reserved_at DESC, r.id DESC LIMIT ? OFFSET ?`,
-    )
-    .all(...args, Math.max(1, Math.min(1000, opts.limit ?? 200)), Math.max(0, opts.offset ?? 0)) as Array<Record<string, unknown>>;
-  return rows.map((r) => ({
+function requestRowOf(sy: MeritRouter, r: Record<string, unknown>): RequestRow {
+  return {
     id: String(r.id),
     reservedAt: Number(r.reserved_at),
     finishedAt: (r.finished_at as number | null) ?? null,
@@ -350,7 +403,34 @@ export function requestLog(sy: MeritRouter, opts: RequestLogOptions = {}): Reque
     }),
     taskIds: r.task_ids ? String(r.task_ids).split(",") : [],
     project: String(r.project_id ?? ""),
-  }));
+  };
+}
+
+/**
+ * Model requests, newest first. `project` reads one project's own store (or `''`'s installation
+ * rows); without it, every project's store (plus `''`) is read and merged in memory, re-sorting
+ * and re-paginating after the merge so ties (the same `reservedAt`) keep the stored `id DESC`
+ * order a single-scope SQL `ORDER BY` would give.
+ */
+export function requestLog(sy: MeritRouter, opts: RequestLogOptions = {}): RequestRow[] {
+  const parsed = RequestLogOptionsSchema.parse(opts);
+  const { scopes } = projectDbScopes(sy, parsed.project, { qualification: true });
+  const limit = Math.max(1, Math.min(1000, parsed.limit ?? 200));
+  const offset = Math.max(0, parsed.offset ?? 0);
+  // Each scope need only contribute its own newest (offset+limit) candidates for the merge to be
+  // correct; cap that per-scope fetch so a huge offset against many scopes stays bounded.
+  const perScopeFetch = Math.min(offset + limit, 100_000);
+  const rows = scopes.flatMap((s) => {
+    const { where, args } = requestLogScope(parsed, s.project);
+    return s.db
+      .prepare(
+        `SELECT r.*, (SELECT group_concat(c.task_id) FROM request_charges c JOIN tasks t ON t.id = c.task_id WHERE c.request_id = r.id AND t.project_id = r.project_id) AS task_ids
+           FROM model_requests r WHERE ${where.join(" AND ")} ORDER BY r.reserved_at DESC, r.id DESC LIMIT ?`,
+      )
+      .all(...args, perScopeFetch) as Array<Record<string, unknown>>;
+  });
+  rows.sort((a, b) => (Number(b.reserved_at) - Number(a.reserved_at)) || (String(b.id) < String(a.id) ? -1 : String(b.id) > String(a.id) ? 1 : 0));
+  return rows.slice(offset, offset + limit).map((r) => requestRowOf(sy, r));
 }
 
 export interface TimeseriesPoint {
@@ -362,28 +442,56 @@ export interface TimeseriesPoint {
   outputTokens: number;
 }
 
-/** Requests per time bucket per endpoint, for charts. */
+/**
+ * Requests per time bucket per endpoint, for charts. `project` reads one project's own store (or
+ * `''`'s installation rows); without it, every scope is read and merged in memory, summing each
+ * (bucket, endpoint) pair's counts and tokens (a bucket boundary is the same instant everywhere,
+ * so no recomputation beyond the sum is needed).
+ */
 export function timeseries(sy: MeritRouter, opts: { hours?: number; bucketMinutes?: number; project?: string } = {}): TimeseriesPoint[] {
   const hours = opts.hours ?? 24;
   const bucket = (opts.bucketMinutes ?? 60) * 60_000;
   const since = Date.now() - hours * 3_600_000;
-  return (
-    sy.db
+  const { rows } = fanOutProjectRows(sy, opts.project, { qualification: true }, (db, p) =>
+    db
       .prepare(
         `SELECT reserved_at - (reserved_at % CAST(? AS INTEGER)) AS bucket, COALESCE(endpoint_id, '(none)') AS ep, COUNT(*) AS n, SUM(status != 'succeeded') AS failed,
                 COALESCE(SUM(input_tokens),0) AS inTok, COALESCE(SUM(output_tokens),0) AS outTok
-           FROM model_requests WHERE reserved_at > ?${opts.project ? " AND project_id = ?" : ""} GROUP BY bucket, ep ORDER BY bucket`,
+           FROM model_requests WHERE reserved_at > ? AND project_id = ? GROUP BY bucket, ep`,
       )
-      .all(bucket, since, ...(opts.project ? [opts.project] : [])) as Array<{ bucket: number; ep: string; n: number; failed: number; inTok: number; outTok: number }>
-  ).map((r) => ({ bucketStart: r.bucket, endpointId: r.ep, requests: r.n, failed: r.failed, inputTokens: r.inTok, outputTokens: r.outTok }));
+      .all(bucket, since, p) as Array<{ bucket: number; ep: string; n: number; failed: number; inTok: number; outTok: number }>,
+  );
+  const merged = new Map<string, TimeseriesPoint>();
+  for (const r of rows) {
+    const key = `${r.bucket}:${r.ep}`;
+    const m = merged.get(key) ?? { bucketStart: r.bucket, endpointId: r.ep, requests: 0, failed: 0, inputTokens: 0, outputTokens: 0 };
+    m.requests += r.n;
+    m.failed += r.failed;
+    m.inputTokens += r.inTok;
+    m.outputTokens += r.outTok;
+    merged.set(key, m);
+  }
+  return [...merged.values()].sort((a, b) => a.bucketStart - b.bucketStart);
 }
 
+/**
+ * Tasks created since `sinceMs`, grouped by tier. `project` reads one project's own store (or
+ * `''`'s installation rows); without it, every scope is read and the per-tier counts summed.
+ */
 export function tierDistribution(sy: MeritRouter, sinceMs: number, project?: string): Array<{ tier: string; tasks: number; completed: number }> {
-  return sy.db
-    .prepare(
-      `SELECT COALESCE(tier, 'unclassified') AS tier, COUNT(*) AS tasks, SUM(state = 'completed') AS completed FROM tasks WHERE created_at > ?${project ? " AND project_id = ?" : ""} GROUP BY tier ORDER BY tier`,
-    )
-    .all(sinceMs, ...(project ? [project] : [])) as Array<{ tier: string; tasks: number; completed: number }>;
+  const { rows } = fanOutProjectRows(sy, project, { qualification: true }, (db, p) =>
+    db.prepare("SELECT COALESCE(tier, 'unclassified') AS tier, COUNT(*) AS tasks, SUM(state = 'completed') AS completed FROM tasks WHERE created_at > ? AND project_id = ? GROUP BY tier").all(sinceMs, p) as Array<{
+      tier: string; tasks: number; completed: number;
+    }>,
+  );
+  const merged = new Map<string, { tier: string; tasks: number; completed: number }>();
+  for (const r of rows) {
+    const m = merged.get(r.tier) ?? { tier: r.tier, tasks: 0, completed: 0 };
+    m.tasks += r.tasks;
+    m.completed += r.completed;
+    merged.set(r.tier, m);
+  }
+  return [...merged.values()].sort((a, b) => a.tier.localeCompare(b.tier));
 }
 
 export function routingPreview(sy: MeritRouter, profile: ProfileName, tier: TierName, modalities: Modality[] = ["text"]): { floorB: number; forced: boolean; explanations: CandidateExplanation[] } {
@@ -577,21 +685,27 @@ export interface QualificationBoard {
   dailyAllocation: number;
 }
 
+/**
+ * `qualification_runs`/`qualification_results`/`qualification_tasks` are `qualificationTables`
+ * (`store-role.ts`): they belong to the reserved qualification project's own store, not every
+ * project's, so this board reads a single scope (that project's), never a fan-out.
+ */
 export function qualificationBoard(sy: MeritRouter): QualificationBoard {
   const suite = sy.qualifier.suite();
   const families = [...new Set(suite.evals.map((e) => e.family))];
+  const qdb = requireProjectStores(sy, QUALIFICATION_PROJECT).db;
   const rows: QualificationBoard["rows"] = [];
   for (const ep of sy.catalog.endpoints()) {
     if (ep.status === "removed") continue;
     for (const family of families) {
-      for (const tier of TIER_NAMES) rows.push({ endpointId: ep.id, displayName: ep.displayName ?? ep.gatewayModelId, status: ep.status, family, tier, stat: qualificationStat(sy.db, sy.cfg, ep.id, family, tier) });
+      for (const tier of TIER_NAMES) rows.push({ endpointId: ep.id, displayName: ep.displayName ?? ep.gatewayModelId, status: ep.status, family, tier, stat: qualificationStat(qdb, sy.cfg, ep.id, family, tier) });
     }
   }
-  const runs = (sy.db.prepare("SELECT * FROM qualification_runs ORDER BY started_at DESC LIMIT 50").all() as Array<{ id: string; endpoint_id: string; status: string; started_at: number; finished_at: number | null; detail_json: string | null }>).map((r) => {
-    const c = sy.db.prepare("SELECT COUNT(*) AS total, SUM(evaluated = 1) AS graded FROM qualification_tasks WHERE run_id = ?").get(r.id) as { total: number; graded: number | null };
+  const runs = (qdb.prepare("SELECT * FROM qualification_runs ORDER BY started_at DESC LIMIT 50").all() as Array<{ id: string; endpoint_id: string; status: string; started_at: number; finished_at: number | null; detail_json: string | null }>).map((r) => {
+    const c = qdb.prepare("SELECT COUNT(*) AS total, SUM(evaluated = 1) AS graded FROM qualification_tasks WHERE run_id = ?").get(r.id) as { total: number; graded: number | null };
     return { id: r.id, endpointId: r.endpoint_id, status: r.status, startedAt: r.started_at, finishedAt: r.finished_at, detail: r.detail_json ? JSON.parse(r.detail_json) : null, graded: c.graded ?? 0, total: c.total };
   });
-  const results = (sy.db.prepare("SELECT * FROM qualification_results ORDER BY created_at DESC LIMIT 300").all() as Array<{ run_id: string; endpoint_id: string; eval_id: string; trial: number; outcome: string; detail_json: string | null; task_id: string | null; created_at: number }>).map((r) => ({
+  const results = (qdb.prepare("SELECT * FROM qualification_results ORDER BY created_at DESC LIMIT 300").all() as Array<{ run_id: string; endpoint_id: string; eval_id: string; trial: number; outcome: string; detail_json: string | null; task_id: string | null; created_at: number }>).map((r) => ({
     runId: r.run_id,
     endpointId: r.endpoint_id,
     evalId: r.eval_id,
@@ -690,17 +804,29 @@ export function brainWrite(sy: MeritRouter, path: string, content: string, proje
   return brainOf(sy, project).write(HUMAN, humanActor, path, content, `Edit ${path} in the panel`, opts);
 }
 
-/** The project a brain access request belongs to ('' when unassigned), or null for an unknown request. */
+/**
+ * The project a brain access request belongs to ('' when unassigned), or null for an unknown
+ * request. `brain_access_requests` is project-private; its numeric id is unique only within its
+ * own project's store, so every configured project (and qualification) is tried until found.
+ */
 function accessRequestProject(sy: MeritRouter, id: number): string | null {
-  const r = sy.db.prepare("SELECT project_id FROM brain_access_requests WHERE id = ?").get(id) as { project_id: string } | undefined;
-  return r ? r.project_id : null;
+  for (const p of adminProjectScopes(sy)) {
+    const opened = openProjectStores(sy, p);
+    if (!opened.ok) continue;
+    const r = opened.stores.db.prepare("SELECT project_id FROM brain_access_requests WHERE id = ?").get(id) as { project_id: string } | undefined;
+    if (r) return r.project_id;
+  }
+  return null;
 }
 
 /** Workers' brain access requests; `project` limits them to one project's (all projects when omitted). */
 export function brainAccessRequests(sy: MeritRouter, status?: "pending" | "approved" | "denied", project?: string) {
   const all = (project ? sy.brainAccessFor(project) : sy.brainAccess).list(status ? { status } : {});
   if (!project) return all;
-  const mine = new Set((sy.db.prepare("SELECT id FROM brain_access_requests WHERE project_id = ?").all(project) as Array<{ id: number }>).map((r) => r.id));
+  // `brain_access_requests` is project-private: read the id set from the project's own store.
+  const opened = openProjectStores(sy, project);
+  if (!opened.ok) return [];
+  const mine = new Set((opened.stores.db.prepare("SELECT id FROM brain_access_requests WHERE project_id = ?").all(project) as Array<{ id: number }>).map((r) => r.id));
   return all.filter((r) => mine.has(r.id));
 }
 
@@ -716,3 +842,5 @@ export * from "./client-supervision.js";
 
 export * from "./request-evidence.js";
 export * from "./request-capture.js";
+// Per-project and installation-wide usage, read through each project's own store.
+export { projectUsageSummary, installationUsage } from "./project-usage.js";

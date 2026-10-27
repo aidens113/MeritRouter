@@ -2,6 +2,7 @@ import type { MeritRouter } from "../core/service.js";
 import { ProductDeliveries } from "../verification/product-delivery.js";
 import { z } from "zod";
 import { TASK_STATES } from "../core/task.js";
+import { locateProjectTask, requireProjectStores } from "./project-reads.js";
 
 export const ProjectDeliveryReportInputSchema = z.object({
   project: z.string().min(1).max(200),
@@ -13,10 +14,11 @@ export const ProjectDeliveryReportInputSchema = z.object({
 export function projectDeliveryReport(sy: MeritRouter, input: unknown) {
   const { project, limit, after } = ProjectDeliveryReportInputSchema.parse(input);
   sy.projects.require(project);
+  const stores = requireProjectStores(sy, project);
   const rows = z.array(z.object({ task_id: z.string().min(1).max(200), state: z.enum(TASK_STATES) }).strict()).max(limit + 1).parse(
-    sy.db.prepare("SELECT d.task_id,t.state FROM product_deliveries d JOIN tasks t ON t.id=d.task_id AND t.project_id=d.project_id WHERE d.project_id=? AND d.task_id>? ORDER BY d.task_id LIMIT ?").all(project, after ?? "", limit + 1),
+    stores.db.prepare("SELECT d.task_id,t.state FROM product_deliveries d JOIN tasks t ON t.id=d.task_id AND t.project_id=d.project_id WHERE d.project_id=? AND d.task_id>? ORDER BY d.task_id LIMIT ?").all(project, after ?? "", limit + 1),
   );
-  const store = new ProductDeliveries(sy.db);
+  const store = new ProductDeliveries(stores.db);
   const deliveries = rows.slice(0, limit).map(row => {
     const status = store.status(row.task_id, project)!;
     const reasons: string[] = [];
@@ -41,7 +43,7 @@ export function projectDeliveryReport(sy: MeritRouter, input: unknown) {
 
 /** Project-scoped read model shared by the panel and external clients. */
 export function deliveryView(sy:MeritRouter,taskId:string,project:string){
-  const task=sy.tasks.get(taskId);
-  if(!task||task.row.project_id!==project)return null;
-  return new ProductDeliveries(sy.db).status(taskId,project);
+  const found=locateProjectTask(sy,taskId,project);
+  if(!found)return null;
+  return new ProductDeliveries(found.stores.db).status(taskId,project);
 }

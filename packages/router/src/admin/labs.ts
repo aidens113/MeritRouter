@@ -9,6 +9,7 @@ import { projectInfo } from "./projects.js";
 import { readConfigText, writePreparedConfigText } from "./config-edit.js";
 import { saveProjectSettings } from "./project-settings.js";
 import { ensureLabSupervisor } from "../operations/lab-supervisor.js";
+import { requireProjectStores } from "./project-reads.js";
 
 const projectConfig = (sy: MeritRouter, project: string) => ProjectConfigSchema.parse(sy.cfg.projects[project] ?? {});
 
@@ -33,7 +34,8 @@ const OperationRow = z.object({
 const OperationReason = z.object({ kind: z.string(), reason: z.string().max(2000).optional() });
 /** History needs metadata, not full operation results (which would re-read runtime/git status for every row). */
 function operationViews(sy: MeritRouter, project: string, name: string, id?: string) {
-  const rows = z.array(OperationRow).parse(sy.db.prepare(`SELECT id,kind,input_json,state,requested_by,error_code,created_at,updated_at,CASE WHEN kind='promote' AND state='completed' AND json_valid(result_json) THEN json_extract(result_json,'$.state') ELSE NULL END AS promotion_state FROM lab_operations WHERE project_id=? AND lab_name=? ${id ? "AND id=?" : ""} ORDER BY created_at DESC,rowid DESC LIMIT 20`).all(project, name, ...(id ? [id] : [])));
+  const stores = requireProjectStores(sy, project);
+  const rows = z.array(OperationRow).parse(stores.db.prepare(`SELECT id,kind,input_json,state,requested_by,error_code,created_at,updated_at,CASE WHEN kind='promote' AND state='completed' AND json_valid(result_json) THEN json_extract(result_json,'$.state') ELSE NULL END AS promotion_state FROM lab_operations WHERE project_id=? AND lab_name=? ${id ? "AND id=?" : ""} ORDER BY created_at DESC,rowid DESC LIMIT 20`).all(project, name, ...(id ? [id] : [])));
   return rows.map(row => {
     const input = OperationReason.parse(JSON.parse(row.input_json));
     return { id: row.id, kind: row.kind, state: row.state, requestedBy: row.requested_by,
@@ -84,8 +86,9 @@ export function labPromotionView(sy: MeritRouter, project: string, name: string,
 
 export function labsListView(sy: MeritRouter, project: string) {
   const p = scope(sy, project);
+  const stores = requireProjectStores(sy, project);
   const names = new Set(sy.labs.list(project).map(l => l.name));
-  const pending = z.array(z.object({ lab_name: LabNameSchema })).parse(sy.db.prepare("SELECT DISTINCT lab_name FROM lab_operations WHERE project_id = ? AND state IN ('pending','running')").all(project));
+  const pending = z.array(z.object({ lab_name: LabNameSchema })).parse(stores.db.prepare("SELECT DISTINCT lab_name FROM lab_operations WHERE project_id = ? AND state IN ('pending','running')").all(project));
   for (const row of pending) names.add(row.lab_name);
   return { project, archived: p.archived, configured: !!projectConfig(sy, project).lab, labs: [...names].map(name => {
     const detail = labDetailView(sy, project, name);

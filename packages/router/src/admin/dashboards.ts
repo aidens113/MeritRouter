@@ -4,9 +4,18 @@ import type { UsageSummary } from "../storage/usage.js";
 import { QUALIFICATION_PROJECT } from "../qualification/registry.js";
 import { overview, workers, type Overview, type WorkerInfo } from "./insights.js";
 import { projectActivity, projectAttention, projectInfo, projectList, projectNotices, QUEUED_STATES, RUNNING_STATES, type ProjectCard, type ProjectSummary } from "./projects.js";
+import { adminProjectScopes, fanOutProjects, newestFirst, openProjectStores, projectQuestions, taskIn } from "./project-reads.js";
+import type { ProjectRuntimeStore } from "../projects/runtime-store.js";
 
 // The global dashboard (every project's jobs, queues, attention, usage, and spend) and one
 // project's overview. The install-wide `overview` (providers, keys, models) stays in insights.ts.
+//
+// `tasks` reads below go through the named project's own store (`openProjectStores`), filtered to
+// its own `project_id`; `activeJobs()` with no project fans out
+// over every configured project and merges newest-first. `paid_spend` is a shared table (see
+// `storage/store-role.ts`'s `sharedTables`): `paidSpendByProject` reads it per project by joining
+// to that project's own `model_requests` rows (today the same physical database, so the join
+// resolves; the '' / unattributed bucket, which has no project store, stays on `sy.db` directly).
 
 const DAY = 86_400_000;
 
@@ -44,28 +53,52 @@ export interface ProjectUsage {
   paidSpendUsd: number;
 }
 
-/** Running and queued top-level jobs, newest first; `project` limits them to one project. */
-export function activeJobs(sy: MeritRouter, project?: string, limit = 50): ActiveJob[] {
-  const states = [...RUNNING_STATES, ...QUEUED_STATES];
-  const rows = sy.db
+function activeJobRows(stores: ProjectRuntimeStore, states: readonly string[], project: string | undefined, limit: number): Array<{ id: string; stores: ProjectRuntimeStore }> {
+  return (stores.db
     .prepare(
       `SELECT id FROM tasks WHERE profile = 'supervise' AND json_extract(spec_json, '$.parentTaskId') IS NULL
-          AND state IN (${states.map(() => "?").join(",")})${project ? " AND project_id = ?" : ""} ORDER BY created_at DESC LIMIT ?`,
+          AND state IN (${states.map(() => "?").join(",")})${project !== undefined ? " AND project_id = ?" : ""} ORDER BY created_at DESC LIMIT ?`,
     )
-    .all(...states, ...(project ? [project] : []), limit) as Array<{ id: string }>;
-  return rows.flatMap((r) => {
-    const t = sy.tasks.get(r.id);
-    if (!t) return [];
-    return [{ taskId: r.id, project: t.row.project_id, label: t.spec.label ?? null, goal: t.spec.goal, state: t.row.state, createdAt: t.row.created_at, startedAt: t.row.started_at, pendingQuestions: sy.questions({ taskId: r.id }).length }];
-  });
+    .all(...states, ...(project !== undefined ? [project] : []), limit) as Array<{ id: string }>).map((r) => ({ ...r, stores }));
 }
 
-/** Paid spend per project since `sinceMs` ('' = requests charged to no task, such as probes). */
+/**
+ * Running and queued top-level jobs, newest first; `project` limits them to one project's own
+ * store. Without `project`, every configured project (plus qualification) is read from its own
+ * store and merged back down to the top `limit` by `createdAt` (never more, never duplicated).
+ * The task row (label, goal, state) and its pending questions are read from that same row's own
+ * store, never the installation-wide `sy.tasks`/`sy.questions`.
+ */
+export function activeJobs(sy: MeritRouter, project?: string, limit = 50): ActiveJob[] {
+  const states = [...RUNNING_STATES, ...QUEUED_STATES];
+  let rows: Array<{ id: string; stores: ProjectRuntimeStore }>;
+  if (project !== undefined) {
+    const opened = openProjectStores(sy, project);
+    rows = opened.ok ? activeJobRows(opened.stores, states, project, limit) : [];
+  } else {
+    rows = fanOutProjects(sy, adminProjectScopes(sy), (stores) => activeJobRows(stores, states, stores.project, limit)).rows;
+  }
+  const withTask = rows.flatMap((r) => {
+    const t = taskIn(sy, r.stores, r.id);
+    if (!t) return [];
+    return [{ taskId: r.id, project: t.row.project_id, label: t.spec.label ?? null, goal: t.spec.goal, state: t.row.state, createdAt: t.row.created_at, startedAt: t.row.started_at, pendingQuestions: projectQuestions(r.stores, { taskId: r.id, pendingOnly: true }).length }];
+  });
+  return project !== undefined ? withTask : newestFirst(withTask, (j) => j.createdAt, limit);
+}
+
+/**
+ * Paid spend per project since `sinceMs` ('' = requests charged to no task, such as probes).
+ * `paid_spend` is a shared table with no `project_id` of its own; each configured project's own
+ * store is read, joining its own `model_requests` rows to that project's slice of `paid_spend`
+ * (today the same physical database, so the join resolves), and the '' bucket (no project store)
+ * is read from `sy.db` directly.
+ */
 export function paidSpendByProject(sy: MeritRouter, sinceMs: number): Map<string, number> {
-  const rows = sy.db
-    .prepare("SELECT COALESCE(m.project_id, '') AS project, SUM(COALESCE(s.actual_usd, s.reserved_usd)) AS usd FROM paid_spend s LEFT JOIN model_requests m ON m.id = s.request_id WHERE s.created_at > ? GROUP BY project")
-    .all(sinceMs) as Array<{ project: string; usd: number | null }>;
-  return new Map(rows.map((r) => [r.project, r.usd ?? 0]));
+  const { rows } = fanOutProjects(sy, adminProjectScopes(sy), (stores, project) =>
+    [stores.db.prepare("SELECT SUM(COALESCE(s.actual_usd, s.reserved_usd)) AS usd FROM paid_spend s JOIN model_requests m ON m.id = s.request_id WHERE s.created_at > ? AND m.project_id = ?").get(sinceMs, project) as { usd: number | null }].map((r) => ({ project, usd: r.usd ?? 0 })),
+  );
+  const unattributed = sy.db.prepare("SELECT SUM(COALESCE(s.actual_usd, s.reserved_usd)) AS usd FROM paid_spend s LEFT JOIN model_requests m ON m.id = s.request_id WHERE s.created_at > ? AND (m.project_id IS NULL OR m.project_id = '')").get(sinceMs) as { usd: number | null };
+  return new Map([...rows.map((r) => [r.project, r.usd] as const), ["", unattributed.usd ?? 0] as const]);
 }
 
 function projectUsage(s: UsageSummary, paid: number): ProjectUsage {
@@ -99,14 +132,25 @@ function unattributedUsage(sy: MeritRouter, sinceMs: number, paid: number): Proj
   return { requests: r.n, failedRequests: r.failed ?? 0, inputTokens: r.inTok, cachedInputTokens: r.cachedTok, cacheUsageKnown: r.unknownCache === 0, requestsWithUnknownCacheUsage: r.unknownCache, uncachedInputTokens: r.newTok, outputTokens: r.outTok, tasksSubmitted: 0, tasksCompleted: 0, tasksFailed: 0, reportedCostUsd: r.cost, paidSpendUsd: paid };
 }
 
-function tasksByState(sy: MeritRouter, project?: string): Record<string, number> {
-  const rows = sy.db.prepare(`SELECT state, COUNT(*) AS n FROM tasks${project ? " WHERE project_id = ?" : ""} GROUP BY state`).all(...(project ? [project] : [])) as Array<{ state: string; n: number }>;
-  return Object.fromEntries(rows.map((r) => [r.state, r.n]));
+/** With `project`, read only that project's own store; without one, every project (install-wide total), merged. */
+export function tasksByState(sy: MeritRouter, project?: string): Record<string, number> {
+  if (project !== undefined) {
+    const opened = openProjectStores(sy, project);
+    if (!opened.ok) return {};
+    const rows = opened.stores.db.prepare("SELECT state, COUNT(*) AS n FROM tasks WHERE project_id = ? GROUP BY state").all(project) as Array<{ state: string; n: number }>;
+    return Object.fromEntries(rows.map((r) => [r.state, r.n]));
+  }
+  const { rows } = fanOutProjects(sy, adminProjectScopes(sy), (stores) => stores.db.prepare("SELECT state, COUNT(*) AS n FROM tasks WHERE project_id = ? GROUP BY state").all(stores.project) as Array<{ state: string; n: number }>);
+  const totals = new Map<string, number>();
+  for (const r of rows) totals.set(r.state, (totals.get(r.state) ?? 0) + r.n);
+  return Object.fromEntries(totals);
 }
 
 /** Submission time of a project's oldest queued task (how long its queue has been waiting). */
 function oldestQueuedAt(sy: MeritRouter, project: string): number | null {
-  const r = sy.db.prepare(`SELECT MIN(created_at) AS t FROM tasks WHERE project_id = ? AND state IN (${QUEUED_STATES.map(() => "?").join(",")})`).get(project, ...QUEUED_STATES) as { t: number | null };
+  const opened = openProjectStores(sy, project);
+  if (!opened.ok) return null;
+  const r = opened.stores.db.prepare(`SELECT MIN(created_at) AS t FROM tasks WHERE project_id = ? AND state IN (${QUEUED_STATES.map(() => "?").join(",")})`).get(project, ...QUEUED_STATES) as { t: number | null };
   return r.t ?? null;
 }
 

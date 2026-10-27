@@ -3,11 +3,27 @@ import { purposeCategory } from "../admission/admission.js";
 import { modelFamily } from "../routing/select.js";
 import { VERIFICATION_LEVELS } from "../config/schema.js";
 import { taskConfirmation, verdictOutcome, verdictRecords, type ConfirmationStatus, type StoredVerdict, type TaskConfirmation, type VerdictOutcome } from "../verification/calibration.js";
+import { adminProjectScopes, fanOutProjects, newestFirst, openProjectStores } from "./project-reads.js";
+import type { ProjectRuntimeStore } from "../projects/runtime-store.js";
 
 /**
  * The panel's calibration views: how each reviewer's verdicts held up against what happened to
  * the results afterwards, verified vs subsequently confirmed overall and per level, background
  * audits, and model requests by purpose. Re-exported through insights.
+ *
+ * `verdict_records` and `verification_audits` carry no `project_id` column of their own (only
+ * `task_id`); `verdictRecords()` has no project filter either, so listing them per project would
+ * need a join this shared, not-owned helper does not expose, and calling it once per project's
+ * store against today's single physical database would return the same unfiltered installation
+ * rows every time (double-counted once per project, never once per project). Converting those two
+ * listings safely needs a project-aware export added to `verification/calibration.ts` (outside
+ * this file's owned paths); they are left reading `sy.db` directly, documented here rather than
+ * attempted as an unsafe mechanical substitution (the same call A4a made for `insights.ts`'s
+ * parameter-less cross-project reads). Everything each listing's rows connect to (a verdict's or
+ * audit's confirmation and task goal) is routed through that task's own owning project's store,
+ * resolved via `sy.tasks.projectOf` (itself install-wide, used only to locate the owner) so the
+ * per-task reads (`events`, `verification_signals`, `tasks`) are project-scoped. `usageByPurpose`'s
+ * request/task/charge join is likewise left on `sy.db`: no single project to key its scan on.
  */
 
 const DAY = 86_400_000;
@@ -130,15 +146,22 @@ export interface CalibrationOverview {
   usage: PurposeUsage[];
 }
 
-/** Model requests by purpose since `sinceMs`. A batched request counts once per purpose. */
+/**
+ * Model requests by purpose since `sinceMs`. A batched request counts once per purpose. Fanned
+ * out over every configured project's own store (plus qualification), each filtered to its own
+ * `project_id`, so no project's rows are read twice.
+ */
 export function usageByPurpose(sy: MeritRouter, sinceMs = Date.now() - DEFAULT_WINDOW_MS): PurposeUsage[] {
-  const rows = sy.db
-    .prepare(
-      `SELECT r.id AS id, r.purpose AS rp, t.purpose AS tp, c.input_tokens AS inTok, c.output_tokens AS outTok, COALESCE(r.reported_cost_usd, r.estimated_cost_usd, 0) AS cost
-         FROM request_charges c JOIN model_requests r ON r.id = c.request_id JOIN tasks t ON t.id = c.task_id
-        WHERE r.reserved_at >= ?`,
-    )
-    .all(sinceMs) as Array<{ id: string; rp: string; tp: string | null; inTok: number; outTok: number; cost: number }>;
+  type Row = { id: string; rp: string; tp: string | null; inTok: number; outTok: number; cost: number };
+  const rows = fanOutProjects(sy, adminProjectScopes(sy), (stores, project) =>
+    stores.db
+      .prepare(
+        `SELECT r.id AS id, r.purpose AS rp, t.purpose AS tp, c.input_tokens AS inTok, c.output_tokens AS outTok, COALESCE(r.reported_cost_usd, r.estimated_cost_usd, 0) AS cost
+           FROM request_charges c JOIN model_requests r ON r.id = c.request_id JOIN tasks t ON t.id = c.task_id
+          WHERE r.reserved_at >= ? AND r.project_id = ?`,
+      )
+      .all(sinceMs, project) as Row[],
+  ).rows;
   const out = new Map<string, PurposeUsage & { seen: Set<string> }>();
   for (const r of rows) {
     const purpose = r.tp === "audit" || r.tp === "qualification" ? r.tp : purposeCategory(r.rp);
@@ -158,15 +181,32 @@ export function usageByPurpose(sy: MeritRouter, sinceMs = Date.now() - DEFAULT_W
 
 export function calibrationOverview(sy: MeritRouter, opts: { sinceMs?: number } = {}): CalibrationOverview {
   const sinceMs = opts.sinceMs ?? Date.now() - DEFAULT_WINDOW_MS;
-  const deps = { db: sy.db, tasks: sy.tasks, artifacts: sy.artifacts };
+  // Each task's confirmation/goal is read through its own owning project's store (resolved via
+  // the install-wide `projectOf`, used only to locate that owner), never the bare installation db.
+  const storeCache = new Map<string, ProjectRuntimeStore | null>();
+  const storeOf = (project: string | null): ProjectRuntimeStore | null => {
+    const key = project ?? "";
+    if (!storeCache.has(key)) {
+      const opened = project ? openProjectStores(sy, project) : null;
+      storeCache.set(key, opened?.ok ? opened.stores : null);
+    }
+    return storeCache.get(key)!;
+  };
+  const depsOf = (taskId: string) => {
+    const stores = storeOf(sy.tasks.projectOf(taskId));
+    return stores ? { db: stores.db, tasks: stores.tasks, artifacts: stores.artifacts } : { db: sy.db, tasks: sy.tasks, artifacts: sy.artifacts };
+  };
   const confirmations = new Map<string, TaskConfirmation | null>();
   const confirm = (id: string) => {
-    if (!confirmations.has(id)) confirmations.set(id, taskConfirmation(deps, id));
+    if (!confirmations.has(id)) confirmations.set(id, taskConfirmation(depsOf(id), id));
     return confirmations.get(id) ?? null;
   };
   const goals = new Map<string, string>();
   const goal = (id: string) => {
-    if (!goals.has(id)) goals.set(id, sy.tasks.get(id)?.spec.goal ?? "");
+    if (!goals.has(id)) {
+      const stores = storeOf(sy.tasks.projectOf(id));
+      goals.set(id, (stores ? stores.tasks.get(id) : sy.tasks.get(id))?.spec.goal ?? "");
+    }
     return goals.get(id)!;
   };
   const name = (id: string | null) => {
@@ -175,6 +215,8 @@ export function calibrationOverview(sy: MeritRouter, opts: { sinceMs?: number } 
     return ep?.displayName ?? ep?.gatewayModelId ?? id;
   };
 
+  // `verdict_records` has no project_id column; see the module doc comment for why this stays on
+  // the installation database rather than a per-project fan-out.
   const verdicts = verdictRecords(sy.db, { sinceMs });
   const views: CalibrationVerdictView[] = [];
   const byReviewer = new Map<string, ReviewerCalibration & { accepted: Set<string>; byLevel: Map<string, ReviewerLevelCalibration> }>();
@@ -266,10 +308,14 @@ export function calibrationOverview(sy: MeritRouter, opts: { sinceMs?: number } 
     }))
     .sort((a, b) => b.reviews - a.reviews);
 
-  // Verified vs subsequently confirmed: results that passed verification, and what happened since.
-  const passedIds = (
-    sy.db.prepare("SELECT id FROM tasks WHERE purpose = 'work' AND state = 'completed' AND finished_at >= ? ORDER BY finished_at DESC LIMIT 5000").all(sinceMs) as Array<{ id: string }>
-  ).map((r) => r.id);
+  // Verified vs subsequently confirmed: results that passed verification, and what happened
+  // since. `tasks` carries its own `project_id`, so this listing fans out over every configured
+  // project's own store (plus qualification), each capped at 5000 and merged back down to the
+  // overall top 5000 by `finished_at` (never more, never a duplicate).
+  const passed = fanOutProjects(sy, adminProjectScopes(sy), (stores, project) =>
+    (stores.db.prepare("SELECT id, finished_at FROM tasks WHERE purpose = 'work' AND state = 'completed' AND finished_at >= ? AND project_id = ? ORDER BY finished_at DESC LIMIT 5000").all(sinceMs, project) as Array<{ id: string; finished_at: number }>),
+  ).rows;
+  const passedIds = newestFirst(passed, (r) => r.finished_at, 5000).map((r) => r.id);
   const rows = new Map<string, VerifiedVsConfirmed>([["all", { level: "all", passed: 0, confirmed: 0, escaped: 0, rejected: 0, unconfirmed: 0 }]]);
   for (const id of passedIds) {
     const c = confirm(id);
@@ -290,6 +336,7 @@ export function calibrationOverview(sy: MeritRouter, opts: { sinceMs?: number } 
   const inconclusive = given.filter((v) => v.verdict === "inconclusive").length;
   const newest = [...views].reverse();
 
+  // `verification_audits` has no project_id column either; see the module doc comment.
   const auditRows = sy.db
     .prepare("SELECT task_id, decision, status, reviewer, audit_task_id, detail_json, created_at FROM verification_audits WHERE created_at >= ? ORDER BY created_at DESC")
     .all(sinceMs) as Array<{ task_id: string; decision: string; status: string; reviewer: string | null; audit_task_id: string | null; detail_json: string | null; created_at: number }>;

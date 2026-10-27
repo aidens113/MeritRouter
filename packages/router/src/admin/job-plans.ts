@@ -8,7 +8,8 @@ import { splitRepoKey } from "../projects/context.js";
 import { PlanStore, criticalPath, type CriticalPath, type JobPlan, type PlanDifficulty } from "../storage/plans.js";
 import { AWAITING_ACCEPTANCE, WAITING_FOR_FILE_LEASE, WAITING_FOR_PROJECT_CAP, type StoredTask, type TaskRow } from "../storage/tasks.js";
 import { REDUNDANCY_SETTLED, REDUNDANCY_SKIPPED, REDUNDANCY_STARTED } from "../core/redundancy.js";
-import { contextOfTask } from "./projects.js";
+import type { ProjectRuntimeStore } from "../projects/runtime-store.js";
+import { locateProjectTask } from "./project-reads.js";
 
 // A job's task graph for people and supervisors: the plan's nodes joined with the tasks they
 // were dispatched as, the critical path, the job's file leases, and why waiting nodes wait.
@@ -165,8 +166,8 @@ const TwinSettledSchema = z
 const TwinSkippedSchema = z.object({ reason: z.string() }).passthrough();
 
 /** A redundant node's twin runs, from its task events (validated: stored rows are runtime input) and sessions. */
-function twinsOf(sy: MeritRouter, t: StoredTask): TwinRunsView | null {
-  const events = sy.tasks.events(t.row.id, 500);
+function twinsOf(stores: ProjectRuntimeStore, t: StoredTask): TwinRunsView | null {
+  const events = stores.tasks.events(t.row.id, 500);
   const last = (type: string) => events.filter((e) => e.type === type).at(-1);
   const started = TwinStartedSchema.safeParse(last(REDUNDANCY_STARTED)?.data);
   if (!started.success) {
@@ -180,7 +181,8 @@ function twinsOf(sy: MeritRouter, t: StoredTask): TwinRunsView | null {
   const s = settled.success ? settled.data : null;
   const runs = started.data.sessions.map((sessionId, i): TwinRunView => {
     const r = s?.runs.find((x) => x.sessionId === sessionId);
-    const session = sessionId ? sy.sessions.get(sessionId) : null;
+    // Read from the task's own project store (the session ids come from this task's events).
+    const session = sessionId ? (stores.sessions?.get(sessionId) ?? null) : null;
     return {
       sessionId,
       endpoints: started.data.endpoints[i] ?? [],
@@ -196,8 +198,8 @@ function twinsOf(sy: MeritRouter, t: StoredTask): TwinRunsView | null {
   return { status: s ? s.outcome : "racing", reason: null, cap: started.data.cap, runs };
 }
 
-function upstreamOf(sy: MeritRouter, taskId: string): PlanNodeView["upstream"] {
-  const e = sy.tasks.events(taskId, 500).filter((x) => x.type === UPSTREAM_CONTEXT_EVENT).at(-1);
+function upstreamOf(stores: ProjectRuntimeStore, taskId: string): PlanNodeView["upstream"] {
+  const e = stores.tasks.events(taskId, 500).filter((x) => x.type === UPSTREAM_CONTEXT_EVENT).at(-1);
   const p = e ? UpstreamContextEventSchema.safeParse(e.data) : null;
   return p?.success ? { artifactRef: p.data.artifactRef, baseCommits: p.data.baseCommits } : null;
 }
@@ -205,23 +207,25 @@ function upstreamOf(sy: MeritRouter, taskId: string): PlanNodeView["upstream"] {
 /**
  * A job's plan (the latest version, or `opts.version`) with each node's task state, the critical
  * path, file leases, and waiting reasons. Null when the job does not exist; `plan` is null when
- * the job has not recorded a plan (its tasks are then all in `otherTasks`).
+ * the job has not recorded a plan (its tasks are then all in `otherTasks`). Everything is read from
+ * the job's own project store (`opts.project` names it; every project is searched otherwise).
  */
-export function jobPlan(sy: MeritRouter, jobId: string, opts: { version?: number } = {}): JobPlanView | null {
-  const job = sy.tasks.get(jobId);
-  if (!job || job.spec.profile !== "supervise") return null;
-  const store = new PlanStore(sy.db);
+export function jobPlan(sy: MeritRouter, jobId: string, opts: { version?: number; project?: string } = {}): JobPlanView | null {
+  const located = locateProjectTask(sy, jobId, opts.project);
+  if (!located || located.task.spec.profile !== "supervise") return null;
+  const { stores, project, task: job } = located;
+  const store = new PlanStore(stores.db);
   const versions = store.list(jobId);
   const plan = opts.version !== undefined ? (versions.find((v) => v.version === opts.version) ?? null) : (versions.at(-1) ?? null);
   if (opts.version !== undefined && !plan) return null;
 
-  const children = sy.tasks.childrenOf(jobId);
+  const children = stores.tasks.childrenOf(jobId).filter((c) => c.row.project_id === job.row.project_id);
   const byLabel = new Map<string, StoredTask>();
   for (const c of children) if (c.spec.label) byLabel.set(c.spec.label, c);
   const labelOf = new Map(children.map((c) => [c.row.id, c.spec.label ?? null]));
   const running = children.filter((c) => c.spec.profile !== "supervise" && RUNNING.has(c.row.state)).length;
-  const maxAgents = maxAgentsPerJob(contextOfTask(sy, jobId));
-  const leaseStore = new FileLeaseStore(sy.db);
+  const maxAgents = maxAgentsPerJob(sy.projectContext(project));
+  const leaseStore = new FileLeaseStore(stores.db);
   const leases: PlanLeaseView[] = leaseStore.forJob(jobId).map((l) => ({ ...l, taskLabel: labelOf.get(l.taskId) ?? null }));
 
   const cp = plan ? criticalPath(plan.nodes) : { labels: [], cost: 0 };
@@ -239,8 +243,8 @@ export function jobPlan(sy: MeritRouter, jobId: string, opts: { version?: number
         const on = ids.map(name);
         return { kind: "acceptance", on, taskIds: ids, text: `waits until ${on.join(", ")} ${on.length === 1 ? "is" : "are"} accepted (accept or reject the upstream result)` };
       }
-      const open = sy.tasks
-        .getMany(sy.tasks.dependenciesOf(t.row.id))
+      const open = stores.tasks
+        .getMany(stores.tasks.dependenciesOf(t.row.id))
         .filter((d) => !isTerminal(d.row.state))
         .map((d) => d.spec.label ?? d.row.id);
       const on = open.length ? open : dependsOn;
@@ -290,17 +294,17 @@ export function jobPlan(sy: MeritRouter, jobId: string, opts: { version?: number
       taskId: t?.row.id ?? null,
       state: t?.row.state ?? "not_dispatched",
       stateReason: row?.state_reason ?? null,
-      agents: t ? [...new Set(sy.sessions.forTask(t.row.id).map((s) => s.agentLabel))] : [],
+      agents: t ? [...new Set((stores.sessions?.forTask(t.row.id) ?? []).map((s) => s.agentLabel))] : [],
       tier: row?.tier ?? null,
       acceptanceStatus: t?.result?.acceptanceStatus ?? null,
       verificationStatus: t?.result?.verificationStatus ?? null,
       startedAt: row?.started_at ?? null,
       finishedAt: row?.finished_at ?? null,
       waiting: t ? waitingOf(t, n.dependsOn) : null,
-      leaseWaits: t ? sy.tasks.events(t.row.id, 500).filter((e) => e.type === "waiting_for_file_lease").length : 0,
-      upstream: t ? upstreamOf(sy, t.row.id) : null,
+      leaseWaits: t ? stores.tasks.events(t.row.id, 500).filter((e) => e.type === "waiting_for_file_lease").length : 0,
+      upstream: t ? upstreamOf(stores, t.row.id) : null,
       redundancy: n.redundancy,
-      twins: t && n.redundancy > 1 ? twinsOf(sy, t) : null,
+      twins: t && n.redundancy > 1 ? twinsOf(stores, t) : null,
     };
   });
 

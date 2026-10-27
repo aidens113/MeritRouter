@@ -43,7 +43,9 @@ describe("bounded Brain provenance", () => {
     const manifest = { schemaVersion: 1, role: "inspector", project: "demo", generatedAt: 1, tokenBudget: 4000, estimatedTokens: 100, entries: [{ ref: "brain:projects/demo/notes/test.md", digest: "a".repeat(64), reason: "fixture reference", estimatedTokens: 100 }], omissions: [] };
     artifacts.writeJson({ taskId: "task-demo", kind: "memory_manifest", label: "actual stored fixture", value: manifest });
     artifacts.writeJson({ taskId: "task-foreign", kind: "memory_manifest", label: "must stay hidden", value: { ...manifest, project: "foreign" } });
-    const sy = { db, artifacts, projects: { get: (slug: string) => slug === "demo" ? { slug } : null } } as unknown as MeritRouter;
+    // brainMemoryManifestPreview reads through `sy.projectStores`; this fixture's own (transitional, same-DB) stores.
+    const sy = { db, artifacts, projects: { get: (slug: string) => slug === "demo" ? { slug } : null },
+      projectStores: (project: string) => ({ project, db, artifacts }) } as unknown as MeritRouter;
     const receipts = brainMemoryManifestPreview(sy, { project: "demo" });
     expect(receipts).toHaveLength(1); expect(receipts[0]?.manifest).toEqual(manifest);
     expect(() => brainMemoryManifestPreview(sy, { project: "demo", taskId: "task-foreign" })).toThrow(/unavailable/);

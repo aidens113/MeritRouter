@@ -3,6 +3,19 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { MeritRouter } from "../core/service.js";
+import { openProjectStores } from "./project-reads.js";
+
+/**
+ * A single-project scope reads its own project store (`openProjectStores`; today the same
+ * physical database, so every query below is unchanged); `scope: "all"` has no single project to
+ * key a store open on, so its project-scoped sources (`tasks`, `sessions`, `budget`, `requests`,
+ * `events`, `jobs`, `workerActions`, `brainAccess`, `labs`, `web`) keep reading `sy.db` across
+ * every project in one query, same as before. Converting "all" to a per-project fan-out and merge
+ * needs new mark/topic math for every one of those sources (digest-based marks cannot simply be
+ * concatenated); that is left for a dedicated follow-up rather than attempted here. The remaining
+ * sources (`keys`, `models`, `projects`, `config`, `workers`) are genuinely install-wide, not
+ * project-scoped, and read `sy.db` regardless of scope, as the module doc comment already says.
+ */
 
 /**
  * Change watching for the panel's live updates (panel-v2 U1). A cursor holds cheap high-water marks
@@ -391,9 +404,17 @@ const digest = (value: unknown): string => createHash("sha256").update(JSON.stri
 
 const same = (a: Mark | undefined, b: Mark): boolean => !!a && a.length === b.length && a.every((v, i) => v === b[i]);
 
+/** A single project's own store db when it can be opened; `sy.db` for `"all"` or an unavailable store (today the same handle). */
+function scopeDb(sy: MeritRouter, project: string | null): Db {
+  if (project === null) return sy.db;
+  const opened = openProjectStores(sy, project);
+  return opened.ok ? opened.stores.db : sy.db;
+}
+
 /** A cursor at the store's current state for `scope` (`all` or a project slug). */
 export function liveCursor(sy: MeritRouter, scope: LiveScope, now = Date.now()): LiveCursor {
-  const c: Ctx = { sy, db: sy.db, project: scopeProject(scope), now };
+  const project = scopeProject(scope);
+  const c: Ctx = { sy, db: scopeDb(sy, project), project, now };
   const dv = dataVersion(sy.db);
   return { v: 1, scope, marks: readMarks(c), dv };
 }
@@ -404,7 +425,8 @@ export function liveCursor(sy: MeritRouter, scope: LiveScope, now = Date.now()):
  * files and the worker heartbeat set are checked every time.
  */
 export function liveChanges(sy: MeritRouter, cursor: LiveCursor, now = Date.now()): LiveCheck {
-  const c: Ctx = { sy, db: sy.db, project: scopeProject(cursor.scope), now };
+  const project = scopeProject(cursor.scope);
+  const c: Ctx = { sy, db: scopeDb(sy, project), project, now };
   const dv = dataVersion(sy.db);
   const quiet = !!cursor.dv && cursor.dv[0] === dv[0] && cursor.dv[1] === dv[1];
   const next = { ...cursor.marks, ...readMarks(c, quiet ? (s) => !!s.external : undefined) };

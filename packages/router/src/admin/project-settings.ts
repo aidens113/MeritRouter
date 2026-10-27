@@ -12,6 +12,7 @@ import { patchConfig, readConfigText } from "./config-edit.js";
 import { TERMINAL_STATES } from "../core/task.js";
 import { prepareRepositoryFolders, projectActivity, projectInfo } from "./projects.js";
 import { folderState, preparationHint, type FolderState } from "../workspaces/repository-prepare.js";
+import { openProjectStores } from "./project-reads.js";
 
 // Settings split for the panel (decision D2): global sections (providers, models, routing,
 // budgets, profiles, execution, ...) vs one project's settings, which live under
@@ -160,7 +161,9 @@ export function removedAliases(current: string[], patch: SettingsPatch): string[
  */
 export function tasksUsingRepository(sy: MeritRouter, slug: string, alias: string): string[] {
   const states = [...TERMINAL_STATES];
-  const rows = sy.db
+  const opened = openProjectStores(sy, slug);
+  if (!opened.ok) return [];
+  const rows = opened.stores.db
     .prepare(
       `SELECT id FROM tasks WHERE project_id = ? AND state NOT IN (${states.map(() => "?").join(",")})
           AND (json_extract(spec_json, '$.writableRepository') = ? OR EXISTS (SELECT 1 FROM json_each(tasks.spec_json, '$.repositoryAliases') WHERE value = ?))

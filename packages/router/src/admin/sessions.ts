@@ -3,6 +3,7 @@ import type { MeritRouter } from "../core/service.js";
 import type { TaskState } from "../core/task.js";
 import type { SessionEventsPage, SessionListFilter, SessionRecord } from "../sessions/store.js";
 import type { CorruptLine, SessionEvent, SessionStatus } from "../sessions/events.js";
+import { locateSession, openProjectStores } from "./project-reads.js";
 
 // Agent sessions for the panel, CLI, and MCP: list rows, and one session with its timeline.
 
@@ -58,23 +59,26 @@ export interface SessionViewFilter extends SessionListFilter {
 export function sessionsView(sy: MeritRouter, filter: SessionViewFilter = {}): SessionView[] {
   const { project, ...rest } = filter;
   if (!project) return sessionViews(sy, sy.sessions.list(rest));
-  // The store has no project filter: read the newest sessions of the filter and keep this project's.
+  // The store has no project filter: read the newest sessions of the filter and keep this
+  // project's (`sessions` is project-private, read from the project's own store, not `sy.db`).
   const limit = Math.min(rest.limit ?? 100, 1000);
-  const mine = new Set((sy.db.prepare("SELECT id FROM sessions WHERE project_id = ? ORDER BY created_at DESC LIMIT 5000").all(project) as Array<{ id: string }>).map((r) => r.id));
+  const opened = openProjectStores(sy, project);
+  if (!opened.ok) return [];
+  const mine = new Set((opened.stores.db.prepare("SELECT id FROM sessions WHERE project_id = ? ORDER BY created_at DESC LIMIT 5000").all(project) as Array<{ id: string }>).map((r) => r.id));
   return sessionViews(sy, sy.sessions.list({ ...rest, limit: 1000 }).filter((r) => mine.has(r.id)).slice(0, limit));
 }
 
 /** One session with a page of its timeline (events after `afterSeq`), its children, and its task's other sessions. */
 export function sessionDetail(sy: MeritRouter, id: string, opts: { afterSeq?: number; limit?: number; project?: string } = {}): SessionDetail | null {
-  const owner = sy.db.prepare("SELECT project_id FROM sessions WHERE id=?").get(id) as {project_id:string}|undefined;
-  if (!owner || (opts.project !== undefined && owner.project_id !== opts.project)) return null;
-  const project = owner.project_id;
+  const located = locateSession(sy, id, opts.project);
+  if (!located) return null;
+  const { project, db } = located;
   const rec = sy.sessions.get(id);
   if (!rec) return null;
   const events = scopedSessionTimeline(sy,id,project);
-  const sameProject = (r: SessionRecord) => (sy.db.prepare("SELECT project_id FROM sessions WHERE id=?").get(r.id) as {project_id:string}|undefined)?.project_id === project && (!r.taskId || (sy.db.prepare("SELECT project_id FROM tasks WHERE id=?").get(r.taskId) as {project_id:string}|undefined)?.project_id === project);
-  const taskInProject = (id: string | null) => id !== null && (sy.db.prepare("SELECT project_id FROM tasks WHERE id=?").get(id) as {project_id:string}|undefined)?.project_id === project;
-  const sessionInProject = (id: string | null) => id !== null && (sy.db.prepare("SELECT project_id FROM sessions WHERE id=?").get(id) as {project_id:string}|undefined)?.project_id === project;
+  const sameProject = (r: SessionRecord) => (db.prepare("SELECT project_id FROM sessions WHERE id=?").get(r.id) as {project_id:string}|undefined)?.project_id === project && (!r.taskId || (db.prepare("SELECT project_id FROM tasks WHERE id=?").get(r.taskId) as {project_id:string}|undefined)?.project_id === project);
+  const taskInProject = (id: string | null) => id !== null && (db.prepare("SELECT project_id FROM tasks WHERE id=?").get(id) as {project_id:string}|undefined)?.project_id === project;
+  const sessionInProject = (id: string | null) => id !== null && (db.prepare("SELECT project_id FROM sessions WHERE id=?").get(id) as {project_id:string}|undefined)?.project_id === project;
   const safeRecord = (r: SessionRecord, payload = false): SessionRecord => ({...r,
     taskId:taskInProject(r.taskId) ? r.taskId : null,
     parentSessionId:sessionInProject(r.parentSessionId) ? r.parentSessionId : null,

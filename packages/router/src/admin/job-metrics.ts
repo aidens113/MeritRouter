@@ -4,6 +4,8 @@ import type { MeritRouter } from "../core/service.js";
 import type { TaskState } from "../core/task.js";
 import { criticalPath as plannedPath, PlanStore } from "../storage/plans.js";
 import { WAITING_FOR_FILE_LEASE, WAITING_FOR_PROJECT_CAP, type StoredTask } from "../storage/tasks.js";
+import type { ProjectRuntimeStore } from "../projects/runtime-store.js";
+import { fanOutProjects, locateProjectTask, newestFirst, projectIdFilter, projectScope, taskIn, withAvailability, type ProjectTask, type RowsWithAvailability } from "./project-reads.js";
 
 // Team metrics, derived from stored data (task events, plans, and the request ledger); nothing
 // is sampled. For a job (a supervise task) they cover every task under it, sub-jobs included;
@@ -113,21 +115,23 @@ function chunks<T>(xs: T[], n = 400): T[][] {
   return out;
 }
 
-/** The task and every task under it (sub-jobs' tasks included), root first. */
-function treeOf(sy: MeritRouter, root: StoredTask): StoredTask[] {
+/** The task and every task under it (sub-jobs' tasks included, all in the root's project), root first. */
+function treeOf(stores: ProjectRuntimeStore, root: StoredTask): StoredTask[] {
   const all = [root];
   let level = [root];
   for (let depth = 0; depth < 8 && level.length; depth++) {
-    level = level.filter((t) => t.spec.profile === "supervise").flatMap((t) => sy.tasks.childrenOf(t.row.id));
+    level = level.filter((t) => t.spec.profile === "supervise").flatMap((t) => stores.tasks.childrenOf(t.row.id).filter((c) => c.row.project_id === root.row.project_id));
     all.push(...level);
   }
   return all;
 }
 
-function eventsByTask(sy: MeritRouter, ids: string[]): Map<string, Array<{ ts: number; type: string; data: string | null }>> {
+function eventsByTask(stores: ProjectRuntimeStore, project: string, ids: string[]): Map<string, Array<{ ts: number; type: string; data: string | null }>> {
   const out = new Map<string, Array<{ ts: number; type: string; data: string | null }>>();
   for (const part of chunks(ids)) {
-    const rows = sy.db.prepare(`SELECT task_id, ts, type, data_json FROM events WHERE task_id IN (${part.map(() => "?").join(",")}) ORDER BY id`).all(...part);
+    const rows = stores.db
+      .prepare(`SELECT e.task_id, e.ts, e.type, e.data_json FROM events e JOIN tasks t ON t.id = e.task_id WHERE t.project_id = ? AND e.task_id IN (${part.map(() => "?").join(",")}) ORDER BY e.id`)
+      .all(project, ...part);
     for (const raw of rows) {
       const r = EventRow.safeParse(raw);
       if (!r.success) continue;
@@ -291,18 +295,18 @@ export function longestChain(nodes: Array<{ id: string; label: string; agentMs: 
   return { labels, agentMs: best.get(end)!.ms };
 }
 
-function requestTotals(sy: MeritRouter, taskIds: string[]): { total: number; failed: number; costUsd: number; byPurpose: Record<RequestPurpose, number> } {
+function requestTotals(stores: ProjectRuntimeStore, project: string, taskIds: string[]): { total: number; failed: number; costUsd: number; byPurpose: Record<RequestPurpose, number> } {
   const byPurpose = Object.fromEntries(REQUEST_PURPOSES.map((p) => [p, 0])) as Record<RequestPurpose, number>;
   const seen = new Set<string>();
   let failed = 0;
   let costUsd = 0;
   for (const part of chunks(taskIds)) {
-    const rows = sy.db
+    const rows = stores.db
       .prepare(
         `SELECT r.id AS id, r.purpose AS purpose, r.status AS status, COALESCE(r.reported_cost_usd, r.estimated_cost_usd) AS cost
-           FROM model_requests r WHERE r.id IN (SELECT request_id FROM request_charges WHERE task_id IN (${part.map(() => "?").join(",")}))`,
+           FROM model_requests r WHERE r.id IN (SELECT c.request_id FROM request_charges c JOIN tasks t ON t.id = c.task_id WHERE t.project_id = ? AND c.task_id IN (${part.map(() => "?").join(",")}))`,
       )
-      .all(...part) as Array<{ id: string }>;
+      .all(project, ...part) as Array<{ id: string }>;
     for (const raw of rows) {
       if (seen.has(raw.id)) continue;
       const r = RequestRow.safeParse(raw);
@@ -316,14 +320,20 @@ function requestTotals(sy: MeritRouter, taskIds: string[]): { total: number; fai
   return { total: seen.size, failed, costUsd: Math.round(costUsd * 1e6) / 1e6, byPurpose };
 }
 
-/** Metrics for a job and everything under it, or for one agent's task; null for an unknown id. */
-export function jobMetrics(sy: MeritRouter, id: string, opts: { now?: number } = {}): JobMetrics | null {
-  const root = sy.tasks.get(id);
-  if (!root) return null;
-  const now = opts.now ?? Date.now();
+/**
+ * Metrics for a job and everything under it, or for one agent's task; null for an unknown id.
+ * Read from the task's own project store (`opts.project` names it; every project is searched otherwise).
+ */
+export function jobMetrics(sy: MeritRouter, id: string, opts: { now?: number; project?: string } = {}): JobMetrics | null {
+  const located = locateProjectTask(sy, id, opts.project);
+  return located ? metricsOf(sy, located, opts.now ?? Date.now()) : null;
+}
+
+function metricsOf(sy: MeritRouter, located: ProjectTask, now: number): JobMetrics {
+  const { stores, project, task: root } = located;
   const team = root.spec.profile === "supervise";
-  const tree = treeOf(sy, root);
-  const events = eventsByTask(sy, tree.map((t) => t.row.id));
+  const tree = treeOf(stores, root);
+  const events = eventsByTask(stores, root.row.project_id, tree.map((t) => t.row.id));
   // Open intervals end now, or where the run stopped: a finished task's finish, or an interrupted
   // root's last event (an interrupted job is stalled, not running, until it is resumed).
   const horizon = root.row.finished_at ?? (root.row.state === "interrupted" ? Math.min(now, events.get(root.row.id)?.at(-1)?.ts ?? now) : now);
@@ -342,8 +352,8 @@ export function jobMetrics(sy: MeritRouter, id: string, opts: { now?: number } =
   const direct = team ? tree.filter((t) => t.spec.parentTaskId === root.row.id) : [root];
   const directIds = new Set(direct.map((t) => t.row.id));
   const agentMsOf = (taskId: string) => sum(timelines.get(taskId)?.runs ?? []);
-  const actual = longestChain(direct.map((t) => ({ id: t.row.id, label: t.spec.label ?? t.row.id, agentMs: agentMsOf(t.row.id), dependsOn: sy.tasks.dependenciesOf(t.row.id).filter((d) => directIds.has(d)) })));
-  const plan = team ? new PlanStore(sy.db).latest(root.row.id) : null;
+  const actual = longestChain(direct.map((t) => ({ id: t.row.id, label: t.spec.label ?? t.row.id, agentMs: agentMsOf(t.row.id), dependsOn: stores.tasks.dependenciesOf(t.row.id).filter((d) => directIds.has(d)) })));
+  const plan = team ? new PlanStore(stores.db).latest(root.row.id) : null;
   let planned: JobMetrics["criticalPath"]["planned"] = null;
   if (plan) {
     const cp = plannedPath(plan.nodes);
@@ -351,7 +361,7 @@ export function jobMetrics(sy: MeritRouter, id: string, opts: { now?: number } =
     planned = { labels: cp.labels, cost: cp.cost, agentMs: cp.labels.reduce((s, l) => s + (byLabel.has(l) ? agentMsOf(byLabel.get(l)!) : 0), 0) };
   }
 
-  const req = requestTotals(sy, tree.map((t) => t.row.id));
+  const req = requestTotals(stores, root.row.project_id, tree.map((t) => t.row.id));
   const workers = agentTasks.filter((t) => t.spec.profile !== "supervise");
   const completed = team ? workers.filter((t) => t.row.state === "completed").length : root.row.state === "completed" ? 1 : 0;
   const byReason = Object.fromEntries(WAIT_REASONS.map((r) => [r, 0])) as Record<WaitReason, number>;
@@ -361,11 +371,10 @@ export function jobMetrics(sy: MeritRouter, id: string, opts: { now?: number } =
     ? direct
         .filter((t) => t.spec.profile === "supervise")
         .flatMap((t) => {
-          const m = jobMetrics(sy, t.row.id, { now });
-          return m ? [summaryOf(m)] : [];
+          return [summaryOf(metricsOf(sy, { project, stores, task: t }, now))];
         })
     : [];
-  const parent = root.spec.parentTaskId ? sy.tasks.get(root.spec.parentTaskId) : undefined;
+  const parent = root.spec.parentTaskId ? taskIn(sy, stores, root.spec.parentTaskId) : undefined;
 
   return {
     jobId: root.row.id,
@@ -429,15 +438,22 @@ export function summaryOf(m: JobMetrics): JobMetricsSummary {
   };
 }
 
-/** Metric summaries of the newest jobs (sub-jobs included), newest first; `project` limits them to one project's jobs. */
-export function teamMetrics(sy: MeritRouter, opts: { limit?: number; now?: number; project?: string } = {}): JobMetricsSummary[] {
-  const rows = (
-    opts.project
-      ? sy.db.prepare("SELECT id FROM tasks WHERE profile = 'supervise' AND project_id = ? ORDER BY created_at DESC LIMIT ?").all(opts.project, opts.limit ?? 50)
-      : sy.db.prepare("SELECT id FROM tasks WHERE profile = 'supervise' ORDER BY created_at DESC LIMIT ?").all(opts.limit ?? 50)
-  ) as Array<{ id: string }>;
-  return rows.flatMap((r) => {
-    const m = jobMetrics(sy, r.id, opts.now !== undefined ? { now: opts.now } : {});
-    return m ? [summaryOf(m)] : [];
+/**
+ * Metric summaries of the newest jobs (sub-jobs included), newest first; `project` limits them to
+ * one project's jobs. Every project's store is read otherwise and the newest `limit` kept;
+ * `unavailable` names projects whose store could not be read.
+ */
+export function teamMetrics(sy: MeritRouter, opts: { limit?: number; now?: number; project?: string } = {}): RowsWithAvailability<JobMetricsSummary> {
+  const limit = opts.limit ?? 50;
+  const now = opts.now ?? Date.now();
+  const { rows, unavailable } = fanOutProjects(sy, projectScope(sy, opts.project, { qualification: true }), (stores, slug) => {
+    // Same ownedBy convention as jobsView: a project_id='' job belongs to the primary project.
+    const f = projectIdFilter(sy, slug);
+    return (stores.db.prepare(`SELECT id, created_at FROM tasks WHERE profile = 'supervise' AND ${f.sql} ORDER BY created_at DESC LIMIT ?`).all(...f.args, limit) as Array<{ id: string; created_at: number }>).map((r) => ({ ...r, stores, slug }));
   });
+  const summaries = newestFirst(rows, (r) => r.created_at, limit).flatMap((r) => {
+    const task = taskIn(sy, r.stores, r.id);
+    return task ? [summaryOf(metricsOf(sy, { project: r.slug, stores: r.stores, task }, now))] : [];
+  });
+  return withAvailability(summaries, unavailable);
 }
