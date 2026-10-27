@@ -16,9 +16,10 @@ import { TaskLabPruneRefusal } from "./task-attempt-prune.js";
 import { TaskAttemptProcesses } from "./task-attempt-processes.js";
 import { TaskAttemptSource, taskCommonDirectory, assertRegisteredTaskWorktree, taskHash } from "./task-attempt-source.js";
 import { TaskLabEvidenceSchema, type TaskAttemptRecord, type TaskLabRecord, type TaskLabEvidence } from "./task-attempt-schema.js";
-import type { LabMutationControl } from "./repository-mutation.js";
-import { RepositoryMutationError, type RepositoryMutationCapability } from "../workspaces/repository-mutation.js";
-import { SelectedCommitError } from "../attribution/selected-commit.js";
+import { labMutationLeavesUnsettled, type LabMutationControl } from "./repository-mutation.js";
+import type { RepositoryMutationCapability } from "../workspaces/repository-mutation.js";
+/** One prune generation's authority: its durable lease checks plus the admitted mutation scope. */
+export interface TaskPruneFence { assert(): void; resume: boolean; verified(): void; mutation: RepositoryMutationCapability }
 /** Cleanup may recognize a persisted pre-rename branch, never an arbitrary legacy ref. */
 export function taskLabBranchOwned(project: string, attemptId: string, alias: string, branch: string, target: string): boolean {
   const suffix = `task-lab-${taskHash(project).slice(0, 8)}-${attemptId.slice(-12)}-${taskHash(alias).slice(0, 8)}`;
@@ -181,7 +182,7 @@ export class TaskAttemptRunner {
       status = checks.every(r => r.exitCode === 0 && !r.killed) ? "passed" : "failed";
     }
     catch (cause) {
-      if (cause instanceof RepositoryMutationError || cause instanceof SelectedCommitError) throw cause;
+      if (labMutationLeavesUnsettled(cause)) throw cause;
       if (request.labId) await this.withStatus(attempt, lab, async () => {
         this.manager.store.event(request.labId!, "task_attempt_failed", { attemptId: attempt.id, error: this.manager.redact(attempt.project, this.manager.store.byId(request.labId!)!.name, cause instanceof Error ? cause.message : "invalid runtime response").slice(0, 2000) });
       });
@@ -289,7 +290,7 @@ export class TaskAttemptRunner {
       request.cleanupError = null;
     }
     catch (error) {
-      if (error instanceof RepositoryMutationError || error instanceof SelectedCommitError) throw error;
+      if (labMutationLeavesUnsettled(error)) throw error;
       cleanup = "blocked";
       request.phase = "cleanup_blocked";
       request.cleanupError = "Task cleanup could not be proved; reservations and evidence retained";
@@ -350,7 +351,12 @@ export class TaskAttemptRunner {
       }
     }
   }
-  async prune(request: TaskLabRecord, attempt: TaskAttemptRecord, fence: { assert(): void; resume: boolean; verified(): void }, control: LabMutationControl = {}) {
+  /**
+   * The caller's admitted mutation scope travels inside the fence: prune runs under the pruner's
+   * claim admission, and a separate optional argument let wrappers drop it, so the nested
+   * admission re-acquired the same non-reentrant owner lock and waited out its own deadline.
+   */
+  async prune(request: TaskLabRecord, attempt: TaskAttemptRecord, fence: TaskPruneFence) {
     const lab = this.manager.store.byId(request.labId!)!;
     return this.manager.withGitMutation(attempt.project, [...attempt.repositories.map(repo => ({ alias: repo.alias, source: repo.sourcePath })), { alias: attempt.writableAlias, source: attempt.sourceWorktree }, ...lab.repositories], async () => {
     fence.assert();
@@ -422,7 +428,7 @@ export class TaskAttemptRunner {
       request.cleanupError = null;
       this.store.save(request);
     });
-    }, { ...control, allowMissingWorktrees: fence.resume });
+    }, { mutation: fence.mutation, allowMissingWorktrees: fence.resume });
   }
 }
 import { assertNoNativeWorktreeOperation } from "../workspaces/worktree-removal.js";

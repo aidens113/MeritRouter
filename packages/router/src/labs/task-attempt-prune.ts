@@ -64,6 +64,10 @@ export class TaskAttemptPruner {
         // the service monitor behind an unrelated active attempt's native Git probes.
         if (request.phase !== "retained" || request.desiredState !== "stopped" || request.result?.cleanup !== "complete" || !request.labId) { result.blocked++; continue; }
         if (project === undefined && request.updatedAt > retentionTime - this.manager.services.config.keep_task_worktrees_days * 86400000) continue;
+        // A queued or live leased generation already serializes this attempt and may hold the
+        // repository fence for its whole removal. Refusing is read-only; waiting would only
+        // expire this caller's admission deadline. Expired generations still go to admission.
+        if (this.db.prepare("SELECT 1 FROM task_lab_operations WHERE attempt_id=? AND (state='pending' OR (state='running' AND lease_until>?))").get(row.attempt_id, Date.now())) { result.blocked++; continue; }
         this.terminalAncestry(snapshot);
         const repositories = [...snapshot.repositories.map(repo => ({ alias: repo.alias, source: repo.sourcePath })), { alias: snapshot.writableAlias, source: snapshot.sourceWorktree }, ...(lab?.repositories ?? [])];
         await this.manager.withGitMutation(snapshot.project, repositories, async mutation => {
@@ -98,10 +102,10 @@ export class TaskAttemptPruner {
         }, 250);
         heartbeat.unref();
         try {
-          await this.runner.prune(c.request, c.attempt, { assert, resume: c.verified, verified: () => {
+          await this.runner.prune(c.request, c.attempt, { assert, resume: c.verified, mutation, verified: () => {
             assert();
             this.db.prepare("UPDATE task_lab_operations SET result_json=? WHERE id=? AND owner_id=? AND state='running' AND lease_until>?").run(JSON.stringify({ kind: TASK_PRUNE_OPERATION, identity: c.identity, verified: true }), c.id, c.owner, Date.now());
-          } }, { mutation });
+          } });
           // runner's final synchronous settlement is fenced; preserve immutable proof.
           const done = this.db.prepare("UPDATE task_lab_operations SET state='completed',lease_until=0,updated_at=? WHERE id=? AND owner_id=? AND state='running' AND lease_until>?").run(Date.now(), c.id, c.owner, Date.now());
           if (!done.changes) throw new Error("prune settlement generation lost");

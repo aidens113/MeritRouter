@@ -60,10 +60,19 @@ export function ownedWindowsProcessTree(raw: unknown, pid: number, token: string
     }
   return tree;
 }
+/**
+ * The snapshot covers every process on the host, so any foreign command line is input here.
+ * Windows PowerShell writes stdout in the OEM code page: unrepresentable characters (for example
+ * another tool's check-mark argument) arrive as raw control bytes that JSON.parse rejects, failing every
+ * ownership capture, and lossy text would also corrupt stored command identities. Emit the UTF-8
+ * JSON as base64 so the transport is ASCII and command lines round-trip exactly.
+ */
 async function windowsProcessTree(pid: number, token: string): Promise<WindowsProcessSnapshot> {
-  const command = "@(Get-CimInstance Win32_Process | ForEach-Object { [PSCustomObject]@{ ProcessId=[int]$_.ProcessId; ParentProcessId=[int]$_.ParentProcessId; CreatedTicks=$_.CreationDate.ToUniversalTime().Ticks.ToString(); CommandLine=$_.CommandLine } }) | ConvertTo-Json -Compress";
-  const raw = (await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", command], { windowsHide: true, timeout: 10000 })).stdout;
-  return ownedWindowsProcessTree(JSON.parse(raw), pid, token);
+  const listing = "@(Get-CimInstance Win32_Process | ForEach-Object { [PSCustomObject]@{ ProcessId=[int]$_.ProcessId; ParentProcessId=[int]$_.ParentProcessId; CreatedTicks=$_.CreationDate.ToUniversalTime().Ticks.ToString(); CommandLine=$_.CommandLine } }) | ConvertTo-Json -Compress";
+  const command = `$ErrorActionPreference='Stop'; $json = ${listing}; [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$json))`;
+  const encoded = (await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", command], { windowsHide: true, timeout: 10000, maxBuffer: 32 * 1024 * 1024 })).stdout.trim();
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) throw new Error("process snapshot transport is not base64");
+  return ownedWindowsProcessTree(JSON.parse(Buffer.from(encoded, "base64").toString("utf8")), pid, token);
 }
 function readWindowsProof(pid: number, token: string, proofPath: string): WindowsProcessSnapshot | undefined {
   if (!existsSync(proofPath))

@@ -5,8 +5,18 @@ import type { ProjectContext } from "../projects/context.js";
 import { git } from "../workspaces/git.js";
 import { RepositoryMutationError, withRepositoryMutation, type RepositoryMutationCapability } from "../workspaces/repository-mutation.js";
 import type { RepositoryCommandPermit, RepositoryCommandPermits } from "../workspaces/repository-command.js";
+import { SelectedCommitError } from "../attribution/selected-commit.js";
 
 export interface LabMutationControl { mutation?: RepositoryMutationCapability; allowMissingWorktrees?: boolean }
+/**
+ * Admission refusals (pending publication, active command, busy fence) and host faults leave the
+ * durable operation unsettled so it retries. Command or ownership uncertainty about the Lab's own
+ * resources is not transient: callers retain it as blocked/failed evidence, never a fallback effect.
+ */
+const unsettledKinds = new Set(["pending_publication", "active_command", "lock_busy", "invalid_capability", "unawaited_mutation"]);
+export function labMutationLeavesUnsettled(error: unknown): boolean {
+  return error instanceof SelectedCommitError || (error instanceof RepositoryMutationError && unsettledKinds.has(error.detail.kind));
+}
 const Repository = z.object({ alias: z.string().min(1).max(128), source: z.string().min(1).max(4096), worktree: z.string().min(1).max(4096).optional() }).strict();
 export type LabMutationRepository = z.infer<typeof Repository>;
 const key = (value: string) => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
