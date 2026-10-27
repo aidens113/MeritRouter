@@ -25,6 +25,12 @@ B1 service.ts activation via new core/project-runtime-host.ts -> B2 entrypoints 
 setup/MCP/qualification/panel route) -> C1 end-to-end activation test (the literal exit check),
 C2 docs/panel. Fresh install: legacy import/relocation skipped; minimal idle-project migration
 with rollback still required. Install folders also move to the `.MeritRouter` spelling.
+2026-10-27 progress: baseline causes A/B/C fixed (4db4173, 0bb1a59, b22b2aa). Wave A committed
+5a11c26..5719150 (lead re-ran: router+panel typecheck clean, 70/70 new tests). Pre-existing Lab
+lock failures (labs-task-prune 3, labs-task-attempt 2, active-validation-ownership 1) predate
+today per lead bisect; fix in progress (reports/fix-lab-lock-20261027.md). B1 service
+activation in progress (reports/wave-b1.md). Open: calibration verdict_records/
+verification_audits lack project_id; qualification needs its own store (B2).
 
 2026-10-26 latest checkpoint: S6a committed d042de0 after independent tools12+
 registry19 PASS31/31. Brain/deletion22/22 independently PASS, committed ee7c5f8.
