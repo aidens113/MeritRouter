@@ -194,3 +194,46 @@ it("reopens exact local/global stores without replaying an admitted execution",a
  await port.taskLeases.recover({operationId:recoveryOperationId(f.now()),mode:"expired_only"});await port.drain();expect(global.prepare("SELECT state FROM project_execution_grants").all()).toEqual([{state:"revoked"}]);
  expect(()=>port.refsForRequest(tasks.map(capturedLease))).toThrow();
 });
+import { mkdtempSync,realpathSync,rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { open,ScriptedClient } from "./helpers.js";
+import type { MeritRouter } from "../src/core/service.js";
+const serviceRuns:Array<{sy:MeritRouter;dirs:string[]}>=[];
+afterEach(async()=>{for(const run of serviceRuns.splice(0)){await run.sy.close().catch(()=>undefined);for(const dir of run.dirs)rmSync(dir,{recursive:true,force:true});}},60000);
+/** Two split projects created through MeritRouter itself; each directory lies outside the installation. */
+async function serviceFixture(held:Set<string>){
+ const dirs=["alpha","beta"].map(slug=>realpathSync(mkdtempSync(path.join(tmpdir(),`meritrouter-test-queue-${slug}-`))));
+ const raw=baseConfig({repositories:{},storage:{directory:".meritrouter",durability:"full"},brain:{path:"brain",project:"alpha"},projects:{alpha:{priority:2,directory:dirs[0]},beta:{priority:1,directory:dirs[1]}}});
+ const profiles=raw.profiles as Record<string,Record<string,unknown>>;profiles.summarize={...profiles.summarize,batching:{enabled:false,max_items:4}};
+ const env=makeEnv({config:raw});envs.push(env);
+ const calls:string[]=[];
+ const client=new ScriptedClient(async(req,_n,signal)=>{const text=JSON.stringify(req.messages);calls.push(text);
+  if([...held].some(marker=>text.includes(marker))){await new Promise<void>(resolve=>{if(signal?.aborted)resolve();else signal?.addEventListener("abort",()=>resolve());});throw new Error("aborted");}
+  return reply(JSON.stringify(goodOutput(1,"inline")));});
+ const sy=open(env,client,{worker:true});serviceRuns.push({sy,dirs});
+ await sy.createSplitProject({slug:"alpha",directory:dirs[0]!});await sy.createSplitProject({slug:"beta",directory:dirs[1]!});
+ return{env,sy,calls};
+}
+it("runs duplicate task ids of two MeritRouter split projects in their own stores and routes id-based calls by project",async()=>{
+ const held=new Set<string>();const f=await serviceFixture(held);
+ await f.sy.submitTasks([summarizeTask({id:"same",goal:"private-alpha-same"})],{project:"alpha"});
+ await f.sy.submitTasks([summarizeTask({id:"same",goal:"private-beta-same"})],{project:"beta"});
+ for(const project of["alpha","beta"])expect((await f.sy.awaitResults(["same"],{project,timeoutSeconds:30})).completed).toHaveLength(1);
+ for(const project of["alpha","beta"]){const stores=f.sy.projectStores(project);expect(stores.tasks.get("same")!.spec.goal).toBe(`private-${project}-same`);expect(stores.db.prepare("SELECT COUNT(*) n FROM model_requests").get()).toEqual({n:1});assertStoreRole(stores.db,stores.identity!);}
+ expect(f.sy.getStatus(["same"],"beta")[0]).toMatchObject({project:"beta",state:"completed"});
+ expect(()=>f.sy.getStatus(["same"])).toThrow(/several projects/);
+ expect(f.sy.listTasks(undefined,10).map(t=>t.project).sort()).toEqual(["alpha","beta"]);
+ for(const table of["tasks","sessions","model_requests","request_captures","session_events"])expect(f.sy.db.prepare(`SELECT COUNT(*) n FROM ${table}`).get(),table).toEqual({n:0});
+ expect(f.sy.db.prepare("SELECT COUNT(*) n FROM project_execution_grants").get()).toEqual({n:2});
+ expect(JSON.stringify(f.sy.db.prepare("SELECT * FROM meta").all())).not.toContain("private-");
+},60000);
+it("cancels a held task only in its own MeritRouter split project",async()=>{
+ const held=new Set(["private-alpha-held"]);const f=await serviceFixture(held);
+ await f.sy.submitTasks([summarizeTask({id:"held",goal:"private-alpha-held"})],{project:"alpha"});
+ await f.sy.submitTasks([summarizeTask({id:"held",goal:"private-beta-held"})],{project:"beta"});
+ const deadline=Date.now()+20000;while(f.sy.getStatus(["held"],"alpha")[0]!.state!=="running"&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,25));
+ expect(f.sy.cancelTasks(["held"],"alpha")).toEqual([{taskId:"held",state:"cancel_requested"}]);
+ await f.sy.awaitResults(["held"],{project:"alpha",timeoutSeconds:30});await f.sy.awaitResults(["held"],{project:"beta",timeoutSeconds:30});
+ expect(f.sy.getStatus(["held"],"alpha")[0]!.state).toBe("cancelled");expect(f.sy.getStatus(["held"],"beta")[0]!.state).toBe("completed");
+ expect(f.sy.questions({project:"alpha"})).toEqual([]);expect(f.sy.questions()).toEqual([]);
+},60000);

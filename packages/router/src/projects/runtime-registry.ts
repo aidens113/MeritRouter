@@ -44,7 +44,8 @@ function physical(value:string,kind:"directory"|"file"):string{
 export class ProjectRuntimeRegistry {
  private readonly entries=new Map<string,ProjectRuntimeBundle>();private closing=false;private closingPromise:Promise<void>|null=null;
  constructor(readonly coordinationDb:Db,private readonly options:ProjectRuntimeRegistryOptions){if(readStoreIdentity(coordinationDb)?.role!=="coordination")throw new Error("Runtime registry requires explicit coordination store");}
- private registration(id:string,allowClosing=false){if(this.closing&&!allowClosing)throw new Error("Project runtime registry is closing");const r=readProjectStoreRegistration(this.coordinationDb,z.uuid().parse(id));if(!r||r.state!=="registered")throw new Error("Project runtime is unavailable or requires migration");return r;}
+ private readonly releasing=new Set<string>();
+ private registration(id:string,allowClosing=false){if(this.closing&&!allowClosing)throw new Error("Project runtime registry is closing");if(!allowClosing&&this.releasing.has(id))throw new Error("Project runtime is being released");const r=readProjectStoreRegistration(this.coordinationDb,z.uuid().parse(id));if(!r||r.state!=="registered")throw new Error("Project runtime is unavailable or requires migration");return r;}
  openRegistered(id:string):ProjectRuntimeBundle{
   const r=this.registration(id),identity=Object.freeze(ProjectStoreIdentitySchema.parse({version:1,role:"project",installationId:r.installationId,projectId:r.projectId,storeId:r.storeId,generation:r.generation,slug:r.slug}));
   const existing=this.entries.get(id);if(existing){if(canonicalJson(existing.identity)!==canonicalJson(identity)||!samePath(existing.paths.projectDirectory,r.projectDirectory))throw new Error("Cached project runtime generation changed; explicit drain required");existing.assertCurrent();return existing;}
@@ -81,5 +82,11 @@ export class ProjectRuntimeRegistry {
   if(!task||task.row.project_id!==lease.project||task.row.lease_incarnation!==lease.incarnation||task.row.run_count!==lease.runCount||task.row.lease_owner!==lease.owner)throw new Error("Project runtime lease generation changed");return bundle;
  }
  loaded():readonly ProjectRuntimeBundle[]{return [...this.entries.values()];}
+ /** Fence one project against new opens, run `before` (stop its dispatch), drain it and close its store. */
+ async release(id:string,before:()=>Promise<void>=async()=>{}):Promise<void>{
+  const key=z.uuid().parse(id);if(this.releasing.has(key))throw new Error("Project runtime is already being released");this.releasing.add(key);
+  try{await before();const bundle=this.entries.get(key);if(bundle){await bundle.drain();if(bundle.db.open)bundle.db.close();this.entries.delete(key);}}
+  finally{this.releasing.delete(key);}
+ }
  close():Promise<void>{if(this.closingPromise)return this.closingPromise;this.closing=true;this.closingPromise=(async()=>{const results=await Promise.allSettled([...this.entries.values()].map(async bundle=>{await bundle.drain();if(bundle.db.open)bundle.db.close();}));const errors=results.filter((r):r is PromiseRejectedResult=>r.status==="rejected").map(r=>r.reason);if(errors.length)throw new AggregateError(errors,"Project runtimes could not drain; their stores remain open");this.entries.clear();})();return this.closingPromise;}
 }

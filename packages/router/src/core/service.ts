@@ -1,7 +1,7 @@
-import { sourceCheckoutForModule } from "../projects/source-checkout.js";
-import { ProjectRuntimeRegistry } from "../projects/runtime-registry.js";
-import { createProjectRuntimeServices,type ProjectRuntimeServiceHost } from "../projects/runtime-services.js";
-import { readStoreIdentity } from "../projects/store-identity.js";
+import path from "node:path";
+import { projectRuntimePaths } from "../projects/runtime-paths.js";
+import { installationUsage } from "../admin/project-usage.js";
+import { openInstallationLayout, ProjectRuntimeHost, ProjectStoreRouter, type InstallationLayout, type SplitProjectRuntime, type TaskStores } from "./project-runtime-host.js";
 import { readClientSupervision } from "../config/client-supervision.js";
 import { RepositoryMutationError } from "../workspaces/repository-mutation.js";
 import { EventEmitter } from "node:events";
@@ -80,9 +80,6 @@ export interface MeritRouterOptions {
   pollIntervalMs?: number;
 }
 
-/** Staged split composition only. Queue/admin/runtime activation is a later explicit operation. */
-export type StagedProjectRuntimeOptions=Pick<ProjectRuntimeServiceHost,"grants"|"broker"|"executionGrants"|"privateServices"> & {forbiddenProjectDirectories?:readonly string[]};
-
 export interface TaskStatus {
   taskId: string;
   /** The task's project slug. */
@@ -139,8 +136,16 @@ export class MeritRouter {
   readonly vault: KeyVault;
   /** Providers: registry, credentials, key state, limits, client, health. */
   readonly providers: ProviderRuntime;
-  /** Agents' web search and fetch: backends, budgets, and the request record. */
-  readonly web: WebAccess;
+  /** Agents' web search and fetch: backends, budgets, and the request record (split: the primary project's). */
+  get web(): WebAccess {
+    return this.legacyWeb ?? this.host!.primaryWeb(this.projects.primary.project.slug);
+  }
+  private readonly legacyWeb: WebAccess | null;
+  /** Where project-owned data lives: this installation's store (`legacy`) or each project's directory (`split`). */
+  readonly layout: InstallationLayout;
+  private readonly host: ProjectRuntimeHost | null;
+  /** Which store (installation or split project) holds a project's, task's or session's rows. */
+  private readonly stores: ProjectStoreRouter;
   /** The projects of this install (`projects.<slug>`, or the single-project shape). */
   readonly projects: ProjectRegistry;
   readonly labs: LabManager;
@@ -168,7 +173,6 @@ export class MeritRouter {
   private readonly probeBudget: ProbeBudget;
   private reloadTimer: NodeJS.Timeout | null = null;
   private workerStarted = false;
-  private stagedRuntimeRegistry:ProjectRuntimeRegistry|null=null;
   private preparing: Promise<RepositoryPreparation[]> | null = null;
   private closing = false;
   private readonly promotionTimers = new Set<NodeJS.Timeout>();
@@ -181,14 +185,15 @@ export class MeritRouter {
     this.now = opts.now ?? Date.now;
     this.configMtime = mtime(cfg.configPath);
     this.db = openDatabase(cfg.storageDir, { durability: cfg.storage.durability });
+    this.layout = openInstallationLayout(this.db, cfg.storage.durability);
     this.tasks = new TaskStore(this.db, this.now);
     this.artifacts = new ArtifactStore(this.db, cfg.storageDir, this.now);
     this.sessions = new SessionStore(this.db, cfg.storageDir, this.now);
     this.contracts = new ContractStore(this.db);
     this.admission = new Admission(this.db, this.tasks, cfg, this.now);
     this.projects = new ProjectRegistry(cfg);
-    this.projects.attach(this.db, this.now);
-    this.labs = new LabManager({ db: this.db, storageDir: cfg.storageDir, cfg, project: slug => this.projectContext(slug), monitor: opts.labsMonitor === true });
+    this.projects.attach(this.db, this.now, { backfill: this.layout === "legacy" });
+    this.labs = new LabManager({ db: this.db, storageDir: cfg.storageDir, cfg, project: slug => this.projectContext(slug), monitor: opts.labsMonitor === true && this.layout === "legacy" });
     this.vault = new KeyVault(this.db, cfg.storageDir, this.now);
     this.spend = new PaidSpend(this.db, cfg, this.vault, this.now);
     this.providers = new ProviderRuntime(cfg, this.db, this.vault, {
@@ -196,7 +201,7 @@ export class MeritRouter {
       ...(opts.providerFetch ? { fetch: opts.providerFetch } : {}),
       now: this.now,
     });
-    this.web = new WebAccess({
+    this.legacyWeb = this.layout === "split" ? null : new WebAccess({
       cfg,
       db: this.db,
       providers: this.providers,
@@ -231,6 +236,11 @@ export class MeritRouter {
       now: this.now,
     });
     this.events.setMaxListeners(0);
+    const coding = opts.coding === undefined ? createCodingRunner(cfg) : opts.coding, supervisor = opts.supervisor === undefined ? new SupervisorRunner() : opts.supervisor;
+    this.host = this.layout === "split" ? new ProjectRuntimeHost({ db: this.db, cfg, projects: this.projects, catalog: this.catalog, providers: this.providers, spend: this.spend,
+      owner: this.owner, now: this.now, coding, supervisor, labsMonitor: opts.labsMonitor === true, reviewer: () => this.promotionReviewer,
+      ...(opts.webFetch ? { webFetch: opts.webFetch } : {}), ...(opts.webPage ? { webPage: opts.webPage } : {}), onSettled: (id) => this.events.emit("settled", id) }) : null;
+    this.stores = new ProjectStoreRouter(this.host, { db: this.db, tasks: this.tasks, sessions: this.sessions, artifacts: this.artifacts, contracts: this.contracts, admission: this.admission, bundle: null }, this.projects);
     this.executor = new Executor({
       cfg,
       db: this.db,
@@ -241,10 +251,10 @@ export class MeritRouter {
       artifacts: this.artifacts,
       owner: this.owner,
       now: this.now,
-      coding: opts.coding === undefined ? createCodingRunner(cfg) : opts.coding,
-      supervisor: opts.supervisor === undefined ? new SupervisorRunner() : opts.supervisor,
-      brain: this.brain,
-      access: this.brainAccess,
+      coding,
+      supervisor,
+      brain: this.host ? null : this.brain,
+      access: this.host ? null : this.brainAccess,
       sessions: this.sessions,
       contracts: this.contracts,
       services: {
@@ -260,7 +270,7 @@ export class MeritRouter {
       },
       onSettled: (id) => this.events.emit("settled", id),
       project: (task) => this.projectDeps(task.row.project_id),
-      web: this.web,
+      web: this.legacyWeb,
       labs: this.labs,
       ensureLabsSupervisor: async () => {
         const { ensureLabSupervisor } = await import("../operations/lab-supervisor.js");
@@ -302,6 +312,8 @@ export class MeritRouter {
   }
 
   private projectBrain(project: string): { brain: Brain; access: BrainAccess } {
+    const bundle = this.stores.runtimeOf(this.projectContext(project).project.slug);
+    if (bundle) return { brain: bundle.brain!, access: bundle.access! };
     let b = this.brains.get(project);
     if (!b) {
       const ctx = this.projects.context(project) ?? this.projects.require(project);
@@ -343,7 +355,8 @@ export class MeritRouter {
   /** When a promotion review task settles, move its project's promotions on. */
   private settlePromotionReview(taskId: string): void {
     if (this.closing) return;
-    const row = this.db.prepare("SELECT purpose, project_id FROM tasks WHERE id = ?").get(taskId) as { purpose: string; project_id: string } | undefined;
+    let row: { purpose: string; project_id: string } | undefined;
+    try { row = this.stores.ofTask(taskId).db.prepare("SELECT purpose, project_id FROM tasks WHERE id = ?").get(taskId) as typeof row; } catch { return; }
     if (row?.purpose !== PROMOTION_REVIEW_PURPOSE) return;
     // Review results are already durable. Transient writer contention must not lose
     // the only settlement notification; retry publication, never the model request.
@@ -352,7 +365,7 @@ export class MeritRouter {
       const timer = setTimeout(() => {
         this.promotionTimers.delete(timer);
         if (this.closing) return;
-        void this.settlePromotions(row.project_id || undefined).catch(error => {
+        void this.settlePromotions(row!.project_id || undefined).catch(error => {
           if (error instanceof RepositoryMutationError && error.detail.kind === "lock_busy" && attempt < 5)
             schedule(attempt + 1);
           // Unresolved publication/command evidence requires explicit recovery.
@@ -367,36 +380,59 @@ export class MeritRouter {
   /** A task's project dependencies (its context, brain, brain access); throws for an unconfigured project. */
   private projectDeps(project: string): ProjectDeps {
     const cfg = this.projectContext(project);
+    this.stores.fence(cfg.project.slug);
+    // Split projects run in their own runtimes; this executor serves only installation-store tasks.
+    if (this.host) throw new TaskValidationError(`project ${cfg.project.slug} has no installation-store runtime in a split installation`);
     const b = this.projectBrain(cfg.project.slug);
     return { cfg, brain: b.brain, access: b.access, stores: this.projectStores(cfg.project.slug) };
   }
 
-  /** Build isolated project services without changing legacy installation getters or starting a worker. */
-  createProjectRuntimeRegistry(options:StagedProjectRuntimeOptions):ProjectRuntimeRegistry {
-    if(this.closing||this.workerStarted||this.executor.controllers.size>0||this.db.prepare("SELECT 1 FROM tasks WHERE state IN ('running','cancel_requested') LIMIT 1").get())throw new Error("Staged project runtimes require a quiescent installation");
-    if(readStoreIdentity(this.db)?.role!=="coordination"||options.grants.db!==this.db)throw new Error("Staged project runtimes require matching bound coordination services");
-    if(this.stagedRuntimeRegistry)throw new Error("Staged project runtime registry is already constructed");
-    // A legacy Gate may already own this.health. All staged project bundles share one separate health.
-    const health=new ProviderHealth(this.now,()=>this.providers.statuses(),platform=>this.providers.statusPlatform(platform));
-    const sourceCheckout=sourceCheckoutForModule(import.meta.url);
-    const registry=new ProjectRuntimeRegistry(this.db,{context:slug=>this.projects.require(slug),
-      forbiddenProjectDirectories:[...(sourceCheckout?[sourceCheckout]:[]),...(options.forbiddenProjectDirectories??[])],
-      build:input=>createProjectRuntimeServices(input,{...options,coordinationDb:this.db,coordinationConfig:this.cfg,catalog:this.catalog,health,direct:{providers:this.providers,spend:this.spend},owner:this.owner,now:this.now})});
-    this.stagedRuntimeRegistry=registry;return registry;
-  }
-
-  /** Transitional project handle over existing shared stores; does not isolate or relocate data. */
+  /** A project's stores: its own isolated store (split installation), or the installation's shared one. */
   projectStores(project: string): ProjectRuntimeStore {
     const cfg = this.projectContext(project);
+    const bundle = this.stores.runtimeOf(cfg.project.slug);
+    if (bundle) return bundle;
     return createProjectRuntimeStore(cfg.project.slug, {
       db: this.db, tasks: this.tasks, sessions: this.sessions, artifacts: this.artifacts, contracts: this.contracts,
     });
   }
 
-  /** A project's Lab manager; the installation manager until project runtimes are active. */
+  /** A project's Lab manager: its own (split installation) or the installation manager. */
   labsFor(project: string): LabManager {
-    this.projectContext(project);
-    return this.labs;
+    const bundle = this.stores.runtimeOf(this.projectContext(project).project.slug);
+    return bundle ? this.host!.labsFor(bundle) : this.labs;
+  }
+
+  /**
+   * Create a configured project's local store in `directory` (`<directory>/.MeritRouter`) and start
+   * its runtime. `projects.<slug>.directory` must already name `directory`; `name`, when given, must
+   * match the configured name. Idempotent for the same directory. Legacy installations refuse.
+   */
+  async createSplitProject(input: { slug: string; name?: string; directory: string }): Promise<SplitProjectRuntime> {
+    const host = this.splitHost();
+    if (!this.projects.get(input.slug)) { this.configMtime = 0; this.reloadIfChanged(); }
+    const ctx = this.projects.require(input.slug);
+    if (input.name !== undefined && input.name !== ctx.project.name) throw new TaskValidationError(`project ${input.slug} is configured as ${ctx.project.name}, not ${input.name}`);
+    const bundle = await host.create({ slug: input.slug, directory: input.directory, installationRoots: [path.dirname(this.cfg.configPath), this.cfg.storageDir] });
+    return { identity: bundle.identity, paths: bundle.paths };
+  }
+
+  /**
+   * Stop a split project's dispatch, interrupt and drain its work, close its store and Labs, and
+   * retire its registration. Its files stay in place for the caller to remove.
+   */
+  async retireProject(slug: string): Promise<SplitProjectRuntime> {
+    return this.splitHost().retire(slug);
+  }
+
+  private kick(s: TaskStores): void {
+    if (s.bundle) this.host!.kick();
+    else this.scheduler.kick();
+  }
+
+  private splitHost(): ProjectRuntimeHost {
+    if (!this.host) throw new MeritRouterError("split_projects_unavailable", "this installation keeps project data in its own store (legacy layout); split projects cannot be mixed into it");
+    return this.host;
   }
 
   /**
@@ -411,16 +447,16 @@ export class MeritRouter {
   }
 
   /** The context of a task's project. */
-  private contextOfTask(id: string): ProjectContext {
-    const project = this.tasks.projectOf(id);
+  private contextOfTask(id: string, s: TaskStores = this.stores.local): ProjectContext {
+    const project = s.tasks.projectOf(id);
     if (project === null) throw new TaskValidationError(`unknown task ${id}`);
-    return this.projectContext(project);
+    return s.bundle?.cfg ?? this.projectContext(project);
   }
 
   /** Refuse an id-based write when the caller named a project the task is not in. */
-  private assertInProject(id: string, project: string | undefined): void {
+  private assertInProject(id: string, project: string | undefined, s: TaskStores = this.stores.local): void {
     if (!project) return;
-    const actual = this.tasks.projectOf(id);
+    const actual = s.tasks.projectOf(id);
     if (actual !== null && actual !== project) throw new TaskValidationError(`task ${id} belongs to project ${actual}, not ${project}`);
   }
 
@@ -429,7 +465,9 @@ export class MeritRouter {
     // Every configured repository is made a usable git repository (created, initialised, or given a
     // first snapshot as needed); failures are recorded and shown on the project overview.
     void this.prepareRepositories().catch(() => undefined);
-    this.scheduler.start(pollIntervalMs);
+    // A split installation's store holds no project tasks: only the project runtimes dispatch.
+    if (this.host) this.host.start(pollIntervalMs);
+    else this.scheduler.start(pollIntervalMs);
     this.reloadTimer = setInterval(() => this.reloadIfChanged(), 2000);
     this.reloadTimer.unref?.();
     const minutes = this.cfg.discovery.interval_minutes;
@@ -493,6 +531,7 @@ export class MeritRouter {
       if (labErrors.length) throw new Error(labErrors.join("; "));
       Object.assign(this.cfg, next);
       this.labs.reloadConfig();
+      this.host?.reloadConfig();
       this.projects.refresh();
       this.tasks.event(null, "config_reloaded", { at: this.now() });
       // A running service prepares repositories added or moved by the edit.
@@ -525,7 +564,7 @@ export class MeritRouter {
       const t = r as { parentTaskId?: unknown; dependsOn?: unknown };
       const ids = [t.parentTaskId, ...(Array.isArray(t.dependsOn) ? t.dependsOn : [])].filter((x): x is string => typeof x === "string");
       for (const id of ids) {
-        const p = this.tasks.projectOf(id);
+        const p = this.stores.ofTask(id, opts.project).tasks.projectOf(id);
         if (p) linked.add(p);
       }
     }
@@ -550,7 +589,9 @@ export class MeritRouter {
    */
   async submitTasks(raw: unknown[], opts: { purpose?: string; parentSessionId?: string; project?: string } = {}): Promise<SubmitOutcome[]> {
     if (!Array.isArray(raw) || raw.length === 0) throw new TaskValidationError("submit at least one task");
-    const project = this.submissionProject(raw, opts);
+    const project = this.submissionProject(raw, opts), slug = project.project.slug;
+    const s = this.stores.of(slug), labs = s.bundle ? this.host!.labsFor(s.bundle) : this.labs, router = s.bundle?.router ?? this.router, projectCfg = s.bundle?.cfg ?? project;
+    if (!s.bundle) this.stores.fence(slug);
     const specs: WorkerTask[] = [];
     const errors: string[] = [];
     this.projects.syncRuntimeRepositories();
@@ -558,9 +599,9 @@ export class MeritRouter {
     for (const [i, r] of raw.entries()) {
       try {
         const lab = typeof r === "object" && r !== null && "lab" in r && r.lab !== undefined ? LabNameSchema.parse(r.lab) : undefined;
-        const taskConfig = lab ? this.labs.configuration(project.project.slug, lab) : project;
+        const taskConfig = lab ? labs.configuration(slug, lab) : projectCfg;
         specs.push(
-          await validateTask(taskConfig, r, this.artifacts, {
+          await validateTask(taskConfig, r, s.artifacts, {
             ...(largestContext !== undefined ? { largestContext } : {}),
             knownEndpoint: (id) => this.catalog.get(id) !== undefined,
           }),
@@ -571,11 +612,11 @@ export class MeritRouter {
     }
     // A task whose verification policy cannot fit its request budget is refused now.
     if (!errors.length) specs.forEach((spec, i) => {
-      const shortfall = verificationBudgetShortfall(project, spec, parentImportance(this.tasks, this.contracts, spec));
+      const shortfall = verificationBudgetShortfall(projectCfg, spec, parentImportance(s.tasks, s.contracts, spec));
       if (shortfall) errors.push(`task[${i}]: ${shortfall}`);
     });
     if (errors.length) throw new TaskValidationError(errors.join("\n"), errors);
-    const outcomes = immediate(this.db, () => {
+    const outcomes = immediate(s.db, () => {
       if (specs.some(spec => spec.constraints.labChecks?.length)) {
         // Read by content under the config writer lock; a rapid revocation may share an mtime.
         const current = new ProjectRegistry(loadConfig(this.cfg.configPath)).get(project.project.slug);
@@ -595,26 +636,26 @@ export class MeritRouter {
         for (const spec of scoped) {
           if (current.profiles[spec.profile]?.mode !== "supervisor") throw new TaskValidationError("supervisionScope applies only to supervisor-mode tasks");
           if (spec.parentTaskId) {
-            const parent = this.tasks.get(spec.parentTaskId);
+            const parent = s.tasks.get(spec.parentTaskId);
             if (!parent || parent.row.project_id !== project.project.slug || current.profiles[parent.spec.profile]?.mode !== "supervisor") throw new TaskValidationError("parentTaskId must name a real same-project supervisor");
             if (spec.supervisionScope === "project") throw new TaskValidationError("A child task cannot declare project supervision scope");
           }
           if (spec.supervisionScope === "project" && !policy.dispatch_final_supervisor) throw new TaskValidationError("Dispatching a final project supervisor is disabled; use bounded subtask supervision");
         }
       }
-      const submitted = this.tasks.submit(specs, { project: project.project.slug });
+      const submitted = s.tasks.submit(specs, { project: slug });
       // Refuse impossible supervisor routes in the same transaction as submission. A
       // retry of an existing idempotent task remains readable even if its route changed.
       // Match TaskRouter.prepare without classification or a provider request.
       for (const outcome of submitted) {
         if (outcome.deduplicated) continue;
-        const task = this.tasks.get(outcome.taskId)!;
+        const task = s.tasks.get(outcome.taskId)!;
         if (this.cfg.profiles[task.spec.profile]?.mode !== "supervisor") continue;
         const chosen = this.cfg.supervisor.endpoints.map(endpointId => ({
           profile: task.spec.profile, tier: null, kind: "force" as const,
           endpointId, allowBelowFloor: true, enabled: true,
         }));
-        const plan = this.router.plan(task.spec.profile, "T3", this.router.inputModalities(task),
+        const plan = router.plan(task.spec.profile, "T3", router.inputModalities(task),
           task.spec.routing?.endpointId, false, this.cfg.supervisor.paid_policy, chosen, task.spec.hints?.web);
         if (!plan.candidates.length) {
           const exclusions = plan.explanations.filter(candidate => !candidate.eligible)
@@ -627,45 +668,44 @@ export class MeritRouter {
       }
       for (const outcome of submitted) {
         if (outcome.deduplicated) continue;
-        const task = this.tasks.get(outcome.taskId)!;
-        this.labs.bindTask(project.project.slug, outcome.taskId, task.spec, this.tasks);
+        labs.bindTask(slug, outcome.taskId, s.tasks.get(outcome.taskId)!.spec, s.tasks);
       }
       return submitted;
     });
-    this.projects.touch(project.project.slug);
+    this.projects.touch(slug);
     if (opts.purpose && opts.purpose !== "work") {
-      for (const o of outcomes) if (!o.deduplicated) this.db.prepare("UPDATE tasks SET purpose = ? WHERE id = ?").run(opts.purpose, o.taskId);
+      for (const o of outcomes) if (!o.deduplicated) s.db.prepare("UPDATE tasks SET purpose = ? WHERE id = ?").run(opts.purpose, o.taskId);
     }
     // Recorded before the scheduler can claim the tasks, so their first session sees it.
     if (opts.parentSessionId) {
-      for (const o of outcomes) if (!o.deduplicated) this.tasks.event(o.taskId, DELEGATED_BY_SESSION, { sessionId: opts.parentSessionId });
+      for (const o of outcomes) if (!o.deduplicated) s.tasks.event(o.taskId, DELEGATED_BY_SESSION, { sessionId: opts.parentSessionId });
     }
-    this.scheduler.kick();
+    this.kick(s);
     return outcomes;
   }
 
   /** Status of tasks by id; with `project`, a task of another project reads as unknown. */
   getStatus(ids: string[], project?: string): Array<TaskStatus | { taskId: string; state: "unknown" }> {
     return ids.map((id) => {
-      const t = this.tasks.get(id);
-      return t && (!project || t.row.project_id === project) ? this.status(t) : { taskId: id, state: "unknown" as const };
+      const s = this.stores.ofTask(id, project), t = s.tasks.get(id);
+      return t && (!project || t.row.project_id === project) ? this.status(t, s) : { taskId: id, state: "unknown" as const };
     });
   }
 
-  private status(t: StoredTask): TaskStatus {
+  private status(t: StoredTask, s: TaskStores): TaskStatus {
     const row = t.row as StoredTask["row"] & { tier?: string | null; purpose?: string };
     const tierCfg = row.tier && row.tier in this.cfg.tiers ? this.cfg.tiers[row.tier as TierName] : null;
     // With a contract, "allowed" is its total: execution, review, and repair all count against it.
     let contractBudget: { total: number; unallocated: number | null } | null = null;
     try {
-      contractBudget = this.contracts.get(t.row.id)?.contract.budget ?? null;
+      contractBudget = s.contracts.get(t.row.id)?.contract.budget ?? null;
     } catch {
       contractBudget = null; // a corrupt contract is reported where it is read, not in a status line
     }
     const configuredBudget = contractBudget
       ? contractBudget.unallocated === null ? null : contractBudget.total
       : this.cfg.profiles[t.spec.profile] ? effectiveBudget(this.cfg, t.spec, tierCfg ? (row.tier as TierName) : null).maxModelRequests : 0;
-    const budget = configuredBudget === null || configuredBudget === UNLIMITED_REQUESTS ? null : configuredBudget + extraRequests(this.db, t.row.id);
+    const budget = configuredBudget === null || configuredBudget === UNLIMITED_REQUESTS ? null : configuredBudget + extraRequests(s.db, t.row.id);
     return {
       taskId: t.row.id,
       project: t.row.project_id,
@@ -674,20 +714,21 @@ export class MeritRouter {
       state: t.row.state,
       stateReason: t.row.state_reason,
       tier: row.tier ?? null,
-      dependsOn: this.tasks.dependenciesOf(t.row.id),
+      dependsOn: s.tasks.dependenciesOf(t.row.id),
       createdAt: iso(t.row.created_at)!,
       startedAt: iso(t.row.started_at),
       finishedAt: iso(t.row.finished_at),
-      modelRequestsUsed: this.admission.taskTotals(t.row.id).requests,
+      modelRequestsUsed: s.admission.taskTotals(t.row.id).requests,
       maxModelRequests: budget,
       goal: t.spec.goal.slice(0, 300),
-      recentEvents: this.tasks.events(t.row.id, 10).map((e) => ({ at: iso(e.ts)!, type: e.type, data: e.data })),
+      recentEvents: s.tasks.events(t.row.id, 10).map((e) => ({ at: iso(e.ts)!, type: e.type, data: e.data })),
     };
   }
 
   /** Newest tasks first; `project` limits them to one project (all projects when omitted). */
   listTasks(states?: TaskState[], limit = 50, project?: string): TaskStatus[] {
-    return this.tasks.list({ ...(states ? { states } : {}), limit, ...(project ? { project } : {}) }).map((t) => this.status(t));
+    const all = (project ? [this.stores.of(project)] : this.stores.all()).flatMap(s => s.tasks.list({ ...(states ? { states } : {}), limit, ...(project ? { project } : {}) }).map((t) => this.status(t, s)));
+    return all.length > limit ? all.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit) : all;
   }
 
   /** Results for tasks that have reached a terminal (or interrupted) state. */
@@ -695,7 +736,7 @@ export class MeritRouter {
     const completed: WorkerResult[] = [];
     const pending: AwaitOutcome["pending"] = [];
     for (const id of ids) {
-      const t = this.tasks.get(id);
+      const t = this.stores.ofTask(id, project).tasks.get(id);
       if (!t || (project !== undefined && t.row.project_id !== project)) pending.push({ taskId: id, state: "unknown" });
       else if ((isTerminal(t.row.state) || t.row.state === "interrupted") && t.result) completed.push(t.result);
       else pending.push({ taskId: id, state: t.row.state });
@@ -734,20 +775,24 @@ export class MeritRouter {
 
   /** Cancel tasks; with `project`, a task of another project is refused. */
   cancelTasks(ids: string[], project?: string): Array<{ taskId: string; state: TaskState | "unknown" }> {
-    for (const id of ids) this.assertInProject(id, project);
-    const out = this.tasks.requestCancel(ids);
-    for (const o of out) {
-      if (o.state === "cancel_requested") this.executor.controllers.get(o.taskId)?.abort("cancel");
+    const groups = this.stores.groupTasks(ids, project);
+    for (const [s, group] of groups) for (const id of group) this.assertInProject(id, project, s);
+    const out = [...groups].flatMap(([s, group]) => s.tasks.requestCancel(group).map(o => ({ o, executor: s.bundle?.executor ?? this.executor })));
+    for (const { o, executor } of out) {
+      if (o.state === "cancel_requested") executor.controllers.get(o.taskId)?.abort("cancel");
       this.events.emit("settled", o.taskId);
     }
-    return out;
+    return out.map(({ o }) => o);
   }
 
   /** Awaited logical cancellation with immutable target generations and durable receipts. */
   async cancelTasksAsync(ids: string[], project?: string) {
     if (this.closing) throw new TaskValidationError("service is closing");
-    for (const id of ids) this.assertInProject(id, project);
-    return this.executor.cancelTasksAsync(ids, project);
+    const groups = [...this.stores.groupTasks(ids, project).keys()];
+    if (groups.length > 1) throw new TaskValidationError("cancel tasks of one project at a time");
+    const s = groups[0] ?? this.stores.local;
+    for (const id of ids) this.assertInProject(id, project, s);
+    return (s.bundle?.executor ?? this.executor).cancelTasksAsync(ids, project);
   }
 
   async recoverAsync(): Promise<string[]> {
@@ -798,7 +843,7 @@ export class MeritRouter {
 
   /** A task's acceptance contract, or null when it has none yet (or is a supervisor job). */
   contract(id: string): StoredContract | null {
-    return this.contracts.get(id);
+    return this.stores.ofTask(id).contracts.get(id);
   }
 
   /**
@@ -808,10 +853,12 @@ export class MeritRouter {
    * human accepts a strict result. Throws a MeritRouterError with the refusal code.
    */
   acceptTask(id: string, input: AcceptanceDecisionInput, project?: string): AcceptanceDecisionOutcome {
-    this.assertInProject(id, project);
-    const task = this.tasks.get(id);
+    const s = this.stores.ofTask(id, project), labs = s.bundle ? this.host!.labsFor(s.bundle) : this.labs;
+    this.assertInProject(id, project, s);
+    const task = s.tasks.get(id);
+    if (task && !s.bundle) this.stores.fence(task.row.project_id);
     const evidence = task?.result?.taskLab;
-    const authority = task?.spec.constraints.labChecks?.length ? taskLabAuthority(this.labs, id, evidence) : null;
+    const authority = task?.spec.constraints.labChecks?.length ? taskLabAuthority(labs, id, evidence) : null;
     if (task?.spec.constraints.labChecks?.length) {
       // A human/reviewer decision cannot waive exact, current runtime-check evidence.
       // Bounded Git inspection happens before the acceptance writer's DB transaction.
@@ -822,35 +869,38 @@ export class MeritRouter {
       if (!task?.spec.constraints.labChecks?.length) return;
       if (!authority || current.row.run_count !== task.row.run_count || current.row.project_id !== task.row.project_id
         || canonicalJson(current.spec) !== canonicalJson(task.spec) || canonicalJson(current.result) !== canonicalJson(task.result)
-        || canonicalJson(this.labs.taskAttempts.store.get(authority.attempt.id)) !== canonicalJson(authority.attempt)
-        || canonicalJson(this.labs.taskAttempts.store.lab(authority.attempt.id)) !== canonicalJson(authority.request)
-        || canonicalJson(this.labs.store.byId(authority.lab.id)) !== canonicalJson(authority.lab)) {
+        || canonicalJson(labs.taskAttempts.store.get(authority.attempt.id)) !== canonicalJson(authority.attempt)
+        || canonicalJson(labs.taskAttempts.store.lab(authority.attempt.id)) !== canonicalJson(authority.request)
+        || canonicalJson(labs.store.byId(authority.lab.id)) !== canonicalJson(authority.lab)) {
         throw new MeritRouterError("acceptance_refused", "Task Lab authority changed during acceptance; inspect and retry");
       }
       const fresh = new ProjectRegistry(loadConfig(this.cfg.configPath)).get(current.row.project_id);
-      if (!fresh || fresh.storageDir !== this.cfg.storageDir || taskLabSelectionIssues(fresh, current.spec).length
+      const sameStore = s.bundle ? fresh?.projectDirectory != null && projectRuntimePaths(fresh.projectDirectory).projectDirectory === s.bundle.paths.projectDirectory : fresh?.storageDir === this.cfg.storageDir;
+      if (!fresh || !sameStore || taskLabSelectionIssues(fresh, current.spec).length
         || canonicalJson(Object.keys(fresh.repositoryPaths).filter(alias => current.spec.repositoryAliases.includes(alias))) !== canonicalJson(authority.attempt.repositories.map(repo => repo.alias))
         || authority.attempt.repositories.some(repo => fresh.repositoryPaths[repo.alias]?.path !== repo.sourcePath)
         || canonicalJson(ProjectConfigSchema.parse(fresh.projects[current.row.project_id]).lab) !== canonicalJson(authority.request.recipe)) {
         throw new MeritRouterError("acceptance_refused", "Task Lab authorization or recipe changed during acceptance");
       }
       const lab = authority.lab.id;
-      if (this.db.prepare("SELECT 1 FROM task_lab_operations WHERE attempt_id=? AND state IN ('pending','running') LIMIT 1").get(authority.attempt.id)
-        || this.db.prepare("SELECT 1 FROM lab_ports WHERE lab_id=? LIMIT 1").get(lab)
-        || this.db.prepare("SELECT 1 FROM lab_attempt_processes WHERE lab_id=? AND state!='stopped' LIMIT 1").get(lab)
-        || this.db.prepare("SELECT 1 FROM lab_services WHERE lab_id=? AND (state!='stopped' OR pid IS NOT NULL OR token IS NOT NULL) LIMIT 1").get(lab)) {
+      if (s.db.prepare("SELECT 1 FROM task_lab_operations WHERE attempt_id=? AND state IN ('pending','running') LIMIT 1").get(authority.attempt.id)
+        || s.db.prepare("SELECT 1 FROM lab_ports WHERE lab_id=? LIMIT 1").get(lab)
+        || s.db.prepare("SELECT 1 FROM lab_attempt_processes WHERE lab_id=? AND state!='stopped' LIMIT 1").get(lab)
+        || s.db.prepare("SELECT 1 FROM lab_services WHERE lab_id=? AND (state!='stopped' OR pid IS NOT NULL OR token IS NOT NULL) LIMIT 1").get(lab)) {
         throw new MeritRouterError("acceptance_refused", "Task Lab resources changed during acceptance");
       }
     };
-    const out = recordAcceptanceDecision({ cfg: this.contextOfTask(id), tasks: this.tasks, contracts: this.contracts, now: this.now, beforeAccept }, id, "accept", input);
+    const out = recordAcceptanceDecision({ cfg: this.contextOfTask(id, s), tasks: s.tasks, contracts: s.contracts, now: this.now, beforeAccept }, id, "accept", input);
     this.events.emit("settled", id);
     return out;
   }
 
   /** Reject a finished task's result (a reason is required); it becomes unmet. */
   rejectTask(id: string, input: AcceptanceDecisionInput, project?: string): AcceptanceDecisionOutcome {
-    this.assertInProject(id, project);
-    const out = recordAcceptanceDecision({ cfg: this.contextOfTask(id), tasks: this.tasks, contracts: this.contracts, now: this.now }, id, "reject", input);
+    const s = this.stores.ofTask(id, project);
+    this.assertInProject(id, project, s);
+    if (!s.bundle) this.stores.fence(s.tasks.projectOf(id) ?? "");
+    const out = recordAcceptanceDecision({ cfg: this.contextOfTask(id, s), tasks: s.tasks, contracts: s.contracts, now: this.now }, id, "reject", input);
     this.events.emit("settled", id);
     return out;
   }
@@ -862,17 +912,19 @@ export class MeritRouter {
     if (opts.pendingOnly ?? true) where.push("q.answer IS NULL");
     if (opts.taskId) (where.push("q.task_id = ?"), args.push(opts.taskId));
     if (opts.project) (where.push("t.project_id = ?"), args.push(opts.project));
-    const rows = this.db.prepare(`SELECT q.*, t.project_id FROM job_questions q JOIN tasks t ON t.id = q.task_id ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY q.id DESC LIMIT 100`).all(...args) as Array<{ id: number; task_id: string; project_id: string; question: string; options_json: string | null; answer: string | null; asked_at: number; answered_at: number | null }>;
+    const stores = opts.project ? [this.stores.of(opts.project)] : this.stores.all();
+    const rows = stores.flatMap(s => s.db.prepare(`SELECT q.*, t.project_id FROM job_questions q JOIN tasks t ON t.id = q.task_id ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY q.id DESC LIMIT 100`).all(...args) as Array<{ id: number; task_id: string; project_id: string; question: string; options_json: string | null; answer: string | null; asked_at: number; answered_at: number | null }>);
+    if (stores.length > 1) rows.sort((a, b) => b.asked_at - a.asked_at).splice(100);
     return rows.map((r) => ({ id: r.id, taskId: r.task_id, project: r.project_id, question: r.question, options: r.options_json ? (JSON.parse(r.options_json) as string[]) : null, answer: r.answer, askedAt: r.asked_at, answeredAt: r.answered_at }));
   }
 
   /** Answer a supervisor's question; with `project`, a question of another project's job is refused. */
   answerQuestion(id: number, answer: string, by = "user", project?: string): void {
-    if (project) {
-      const q = this.db.prepare("SELECT task_id FROM job_questions WHERE id = ?").get(id) as { task_id: string } | undefined;
-      if (q) this.assertInProject(q.task_id, project);
-    }
-    const r = this.db.prepare("UPDATE job_questions SET answer = ?, answered_by = ?, answered_at = ? WHERE id = ? AND answer IS NULL").run(answer, by, this.now(), id);
+    const s = this.stores.ofQuestion(id, project);
+    const q = s.db.prepare("SELECT task_id FROM job_questions WHERE id = ?").get(id) as { task_id: string } | undefined;
+    if (q && project) this.assertInProject(q.task_id, project, s);
+    if (q && !s.bundle) this.stores.fence(s.tasks.projectOf(q.task_id) ?? "");
+    const r = s.db.prepare("UPDATE job_questions SET answer = ?, answered_by = ?, answered_at = ? WHERE id = ? AND answer IS NULL").run(answer, by, this.now(), id);
     if (r.changes === 0) throw new TaskValidationError(`question ${id} does not exist or was already answered`);
   }
 
@@ -883,45 +935,47 @@ export class MeritRouter {
    * a coding task starts over in a fresh worktree (the old one stays as evidence).
    */
   resumeTask(id: string, project?: string): TaskState {
-    this.assertInProject(id, project);
-    const t = this.tasks.get(id);
+    const st = this.stores.ofTask(id, project);
+    this.assertInProject(id, project, st);
+    const t = st.tasks.get(id);
+    if (t && !st.bundle) this.stores.fence(t.row.project_id);
     const coding = t ? this.cfg.profiles[t.spec.profile]?.mode === "coding" : false;
     let s:TaskState;
     if (t?.row.state === "failed") {
-      s = this.db.transaction(() => {
-        const current = this.tasks.get(id)!;
-        const cfg = this.projectContext(current.row.project_id);
-        const previous = this.sessions.forTask(id).at(-1);
+      s = st.db.transaction(() => {
+        const current = st.tasks.get(id)!;
+        const cfg = st.bundle?.cfg ?? this.projectContext(current.row.project_id);
+        const previous = st.sessions.forTask(id).at(-1);
         const cap = effectiveBudget(cfg, current.spec, previous?.tier ?? null).maxModelRequests;
-        const allowed = cap === UNLIMITED_REQUESTS ? cap : cap + extraRequests(this.db, id);
+        const allowed = cap === UNLIMITED_REQUESTS ? cap : cap + extraRequests(st.db, id);
         if (cfg.profiles[current.spec.profile]?.mode !== "supervisor" || !previous || previous.role !== "supervisor" || previous.status !== "failed" || previous.stopReason !== "repeated_tool_call:task_result" || !previous.workspace?.repos.length ||
-          this.admission.taskTotals(id).requests + heldRequests(this.db, id) >= allowed)
+          st.admission.taskTotals(id).requests + heldRequests(st.db, id) >= allowed)
           throw new TaskValidationError(`task ${id} is not a recoverable supervisor observation stall with remaining budget`);
         for (const repo of previous.workspace.repos) {
           if (!current.spec.repositoryAliases.includes(repo.alias) || !cfg.repositoryPaths[repo.alias]?.writable || !repo.baseCommit || !statSync(repo.worktree, { throwIfNoEntry: false })?.isDirectory())
             throw new TaskValidationError(`task ${id} recovery workspace is unavailable or outside its assigned repositories`);
         }
-        const log = this.sessions.events(previous.id, { limit: 1 });
-        const plan = this.sessions.planResume(previous.id, { recoverEdits: cfg.sessions.recover_edits });
+        const log = st.sessions.events(previous.id, { limit: 1 });
+        const plan = st.sessions.planResume(previous.id, { recoverEdits: cfg.sessions.recover_edits });
         if (!log || log.corrupt.length || !plan?.messages.length || plan.actions.length || !plan.workspace?.repos.length)
           throw new TaskValidationError(`task ${id} recovery transcript is unavailable or corrupt`);
-        return this.tasks.resumeObservationStall(id, previous.id);
+        return st.tasks.resumeObservationStall(id, previous.id);
       }).immediate();
     } else if(t?.row.state==="completed"){
-      s=this.db.transaction(()=>{
-        const rejected=new ProductDeliveries(this.db,this.now).rejectedCompleted(id,t.row.project_id);
-        const previous=this.sessions.forTask(id).filter(session=>session.role==="supervisor").at(-1);
+      s=st.db.transaction(()=>{
+        const rejected=new ProductDeliveries(st.db,this.now).rejectedCompleted(id,t.row.project_id);
+        const previous=st.sessions.forTask(id).filter(session=>session.role==="supervisor").at(-1);
         if(!rejected||!previous||previous.status!=="completed"||!previous.workspace?.repos.length)throw new TaskValidationError(`task ${id} is not a completed FINAL-rejected delivery with a retained supervisor workspace`);
         const repair=DeliveryRepairContinuationSchema.parse({...rejected,previousSessionId:previous.id,workspace:previous.workspace});
-        const projectConfig=this.projectContext(t.row.project_id);
+        const projectConfig=st.bundle?.cfg??this.projectContext(t.row.project_id);
         if(projectConfig.profiles[t.spec.profile]?.mode!=="supervisor")throw new TaskValidationError(`task ${id} no longer has current supervisor authority`);
         for(const repo of repair.workspace.repos){
           if(!t.spec.repositoryAliases.includes(repo.alias)||!projectConfig.repositoryPaths[repo.alias]?.writable||!repo.baseCommit||!statSync(repo.worktree,{throwIfNoEntry:false})?.isDirectory())throw new TaskValidationError(`task ${id} repair workspace is unavailable or outside its assigned repositories`);
         }
-        return this.tasks.resume(id,{},repair);
+        return st.tasks.resume(id,{},repair);
       }).immediate();
-    }else s = this.tasks.resume(id, coding ? { freshWorkspace: true } : {});
-    this.scheduler.kick();
+    }else s = st.tasks.resume(id, coding ? { freshWorkspace: true } : {});
+    this.kick(st);
     return s;
   }
 
@@ -930,26 +984,30 @@ export class MeritRouter {
    * coding task in the same worktree). Completion and batch work re-runs fresh, linked to it.
    */
   resumeSession(sessionId: string, project?: string): { taskId: string; state: TaskState } {
-    let s = this.sessions.get(sessionId);
+    const st = this.stores.ofSession(sessionId, project);
+    let s = st.sessions.get(sessionId);
     if (!s) throw new TaskValidationError(`unknown session ${sessionId}`);
     if (!s.taskId) throw new TaskValidationError(`session ${sessionId} belongs to no task`);
-    this.assertInProject(s.taskId, project);
-    if (s.status === "running" && !this.tasks.leaseLive(s.taskId)) {
+    this.assertInProject(s.taskId, project, st);
+    if (!st.bundle) this.stores.fence(st.tasks.projectOf(s.taskId) ?? "");
+    if (s.status === "running" && !st.tasks.leaseLive(s.taskId)) {
       // Left running by a process that died: settle the task and the session first.
-      this.tasks.recoverExpiredLeases();
-      this.sessions.markDeadRunning((x) => x.id !== sessionId);
-      s = this.sessions.get(sessionId)!;
+      st.tasks.recoverExpiredLeases();
+      st.sessions.markDeadRunning((x) => x.id !== sessionId);
+      s = st.sessions.get(sessionId)!;
     }
     if (s.status !== "interrupted") throw new TaskValidationError(`session ${sessionId} is ${s.status}; only interrupted sessions can be resumed`);
     const taskId = s.taskId!;
-    const state = this.tasks.resume(taskId, { sessionId });
-    this.scheduler.kick();
+    const state = st.tasks.resume(taskId, { sessionId });
+    this.kick(st);
     return { taskId, state };
   }
 
   /** Usage in a window; `project` limits it to one project's tasks and requests (all when omitted). */
   usage(sinceMs: number, untilMs?: number, project?: string): UsageSummary {
-    return usageSummary(this.db, sinceMs, untilMs ?? this.now(), project);
+    const until = untilMs ?? this.now();
+    if (!this.host) return usageSummary(this.db, sinceMs, until, project);
+    return project ? usageSummary(this.stores.of(project).db, sinceMs, until, project) : installationUsage(this, sinceMs, until);
   }
 
   /**
@@ -966,7 +1024,7 @@ export class MeritRouter {
   }
 
   get activeWorkers(): number {
-    return this.scheduler.busy;
+    return this.scheduler.busy + (this.host?.busy ?? 0);
   }
 
   /**
@@ -988,7 +1046,7 @@ export class MeritRouter {
   async close(): Promise<void> {
     this.closing = true;
     const gateDrained = this.gate.close();
-    const projectRuntimesDrained=Promise.allSettled(this.stagedRuntimeRegistry?[this.stagedRuntimeRegistry.close()]:[]);
+    const projectRuntimesDrained = Promise.allSettled(this.host ? [this.host.close()] : []);
     for (const timer of this.promotionTimers) clearTimeout(timer);
     this.promotionTimers.clear();
     if (this.discoveryTimer) clearInterval(this.discoveryTimer);

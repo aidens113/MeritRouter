@@ -81,6 +81,7 @@ export class ProjectScheduler {
       for(const entry of available){if(skipped.has(entry.bundle.identity.projectId))continue;try{const hint=entry.port.hint();if(hint)candidates.push(hint);}catch{skipped.add(entry.bundle.identity.projectId);this.options.onUnavailable?.(entry.bundle.identity.projectId,"runtime_unavailable");}}
       const chosen=this.bindings.fairness.choose(candidates);if(!chosen)break;
       const entry=available.find(value=>value.bundle.identity.projectId===chosen.project.projectId)!;
+      if(this.entries.get(chosen.project.projectId)!==entry){skipped.add(chosen.project.projectId);continue;}
       const before=entry.claims;entry.turn=candidates;
       try{entry.scheduler.start();await entry.scheduler.tick();entry.backoff=1000;if(entry.claims===before)skipped.add(chosen.project.projectId);}
       catch{entry.retryAt=this.now()+entry.backoff;entry.backoff=Math.min(60000,entry.backoff*2);skipped.add(chosen.project.projectId);this.options.onUnavailable?.(chosen.project.projectId,"queue_unavailable");}
@@ -88,6 +89,8 @@ export class ProjectScheduler {
     }
   }
   forProject(identity:ProjectStoreIdentity):Scheduler{const entry=this.entry(identity.projectId);if(entry.bundle.identity.storeId!==identity.storeId||entry.bundle.identity.generation!==identity.generation)throw new Error("Project scheduler generation changed");return entry.scheduler;}
+  /** Stop and drop one project's child scheduler (its in-flight work is interrupted); later ticks reopen only registered stores. */
+  async forget(projectId:string):Promise<void>{const entry=this.entries.get(projectId);if(!entry)return;this.entries.delete(projectId);await entry.scheduler.stop();}
   get busy():number{return [...this.entries.values()].reduce((total,entry)=>total+entry.scheduler.busy,0);}
   stop():Promise<void>{
     if(this.stopping)return this.stopping;this.stopped=true;if(this.timer)clearInterval(this.timer);this.timer=null;

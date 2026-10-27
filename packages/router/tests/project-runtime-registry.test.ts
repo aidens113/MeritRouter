@@ -3,13 +3,14 @@ import { pathToFileURL } from "node:url";
 import type { MeritRouter } from "../src/core/service.js";
 import { open,ScriptedClient } from "./helpers.js";
 import { randomUUID } from "node:crypto";
-import { existsSync,symlinkSync,renameSync,copyFileSync,linkSync,writeFileSync } from "node:fs";
+import { existsSync,symlinkSync,renameSync,copyFileSync,linkSync,writeFileSync,mkdtempSync,realpathSync,rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach,expect,it } from "vitest";
 import { openDatabase,type Db } from "../src/storage/db.js";
 import { initializeStoreRole,assertStoreRole } from "../src/storage/store-role.js";
 import { createCoordinationStoreIdentity,createProjectStoreIdentity,registerProjectStore,retireProjectStoreRegistration } from "../src/projects/store-identity.js";
-import { ProjectRuntimeRegistry } from "../src/projects/runtime-registry.js";
+import { ProjectRuntimeRegistry,type ProjectRuntimeBundle } from "../src/projects/runtime-registry.js";
 import { createProjectRuntimeServices } from "../src/projects/runtime-services.js";
 import { projectContext,type ProjectContext } from "../src/projects/context.js";
 import { projectRuntimePaths } from "../src/projects/runtime-paths.js";
@@ -25,8 +26,8 @@ import { Catalog } from "../src/models/catalog.js";
 import { ProviderHealth,type GateRequest } from "../src/gateway/gate.js";
 import { baseConfig,makeEnv,reply,summarizeTask,goodOutput,type Env } from "./helpers.js";
 const services:MeritRouter[]=[];
-const dbs:Db[]=[],envs:Env[]=[],registries:ProjectRuntimeRegistry[]=[];
-afterEach(async()=>{await Promise.allSettled(registries.splice(0).map(r=>r.close()));await Promise.allSettled(services.splice(0).map(s=>s.close()));for(const db of dbs.splice(0))if(db.open)db.close();for(const env of envs.splice(0))env.cleanup();});
+const dbs:Db[]=[],envs:Env[]=[],registries:ProjectRuntimeRegistry[]=[],outside:string[]=[];
+afterEach(async()=>{await Promise.allSettled(registries.splice(0).map(r=>r.close()));await Promise.allSettled(services.splice(0).map(s=>s.close()));for(const db of dbs.splice(0))if(db.open)db.close();for(const env of envs.splice(0))env.cleanup();for(const dir of outside.splice(0))rmSync(dir,{recursive:true,force:true});},60000);
 function fixture(){const env=makeEnv({config:baseConfig({repositories:{},brain:{path:"brain",project:"alpha"},projects:{alpha:{},beta:{}}})});envs.push(env);const now=Date.now(),globalDir=path.join(env.dir,"global"),global=openDatabase(globalDir,{durability:"full"});dbs.push(global);const owner=createCoordinationStoreIdentity();initializeStoreRole(global,owner);
  let barrier:Promise<void>|null=null,releaseBarrier=()=>{};const hold=()=>{barrier=new Promise<void>(resolve=>{releaseBarrier=resolve;});};
  const calls:string[]=[],vault=new KeyVault(global,globalDir),spend=new PaidSpend(global,env.cfg,vault,()=>now),providers=new ProviderRuntime(env.cfg,global,vault,{now:()=>now,client:{complete:async req=>{calls.push(JSON.stringify(req.chat.messages));await barrier;return {...reply(JSON.stringify(goodOutput(1,"inline",{summary:"private output"})),{model:req.model,provider:"openrouter"}),rateLimits:{family:"openrouter",observedAt:now,retryAfterMs:null,windows:[]}};}}});
@@ -60,8 +61,20 @@ it("holds the project database open until its in-flight fake provider and accoun
 it("refuses a redirected project state directory before opening foreign SQLite",()=>{const f=fixture();renameSync(f.alpha.paths.state,f.alpha.paths.state+".retained");symlinkSync(f.beta.paths.state,f.alpha.paths.state,"junction");expect(()=>f.registry.forSlug("alpha")).toThrow(/redirected/);expect(f.registry.loaded()).toHaveLength(0);});
 it("refuses a changed registered directory even when cached UUID generation is unchanged",()=>{const f=fixture();f.request("alpha");f.global.prepare("UPDATE project_store_registrations SET project_directory=? WHERE project_uuid=?").run(f.beta.root,f.alpha.identity.projectId);expect(()=>f.registry.forSlug("alpha")).toThrow(/generation/);});
 
-it("composes a staged service registry with separate health while leaving legacy installation getters explicit",async()=>{const env=makeEnv({config:baseConfig({repositories:{},storage:{durability:"full"},brain:{path:"brain",project:"alpha"},projects:{alpha:{directory:"alpha"}}})});envs.push(env);const sy=open(env,new ScriptedClient(()=>reply("unused")),{worker:false});services.push(sy);const grantsBefore=()=>new ProjectExecutionGrants(sy.db,()=>({maxTasks:4,maxSupervisors:1,maxWritersPerRepository:1,projectMaxTasks:null}));expect(grantsBefore).toThrow(/coordination/);const owner=createCoordinationStoreIdentity();initializeStoreRole(sy.db,owner);const identity=createProjectStoreIdentity(owner.installationId,"alpha"),root=path.join(env.dir,"alpha"),paths=projectRuntimePaths(root),local=openDatabase(paths.state,{durability:"full"});initializeStoreRole(local,identity);local.close();registerProjectStore(sy.db,identity,root);const grants=grantsBefore(),broker=new SqliteRequestAccountingBroker(sy.db,{cfg:env.cfg,spend:sy.spend,authorize:()=>null});const registry=sy.createProjectRuntimeRegistry({grants,broker,executionGrants:()=>[],privateServices:()=>({coding:null,supervisor:null,brain:null,access:null,services:null,onSettled:()=>{}})}),bundle=registry.forSlug("alpha");expect(sy.db).not.toBe(bundle.db);expect(sy.tasks.db).toBe(sy.db);expect(sy.health.capacity.splitMode).toBe(false);expect(bundle.cfg.storageDir).toBe(paths.state);expect(bundle.db.open).toBe(true);await sy.close();services.splice(services.indexOf(sy),1);expect(bundle.db.open).toBe(false);});
-
+/** A project directory outside the installation's config and storage roots. */
+function outsideProject():string{const dir=realpathSync(mkdtempSync(path.join(tmpdir(),"meritrouter-test-runtime-")));outside.push(dir);return dir;}
+function splitEnv(dir:string){const env=makeEnv({config:baseConfig({repositories:{},storage:{directory:".meritrouter",durability:"full"},brain:{path:"brain",project:"alpha"},projects:{alpha:{directory:dir}}})});envs.push(env);return env;}
+it("composes split project runtimes through MeritRouter with separate health, project Labs and Brain, and drains them on close",async()=>{const dir=outsideProject(),env=splitEnv(dir);const sy=open(env,new ScriptedClient(()=>reply("unused")),{worker:false});services.push(sy);
+ expect(sy.layout).toBe("split");const created=await sy.createSplitProject({slug:"alpha",directory:dir}),paths=projectRuntimePaths(dir);expect(created.paths).toEqual(paths);
+ const bundle=sy.projectStores("alpha") as ProjectRuntimeBundle;expect(bundle.identity).toEqual(created.identity);expect(sy.db).not.toBe(bundle.db);expect(sy.tasks.db).toBe(sy.db);expect(sy.health.capacity.splitMode).toBe(false);
+ expect(bundle.cfg.storageDir).toBe(paths.state);expect(sy.projects.get("alpha")!.storageDir).toBe(paths.state);assertStoreRole(bundle.db,bundle.identity);
+ expect(sy.labsFor("alpha")).not.toBe(sy.labs);expect(sy.labsFor("alpha").options.db).toBe(bundle.db);expect(sy.brainFor("alpha").root.toLowerCase()).toBe(path.resolve(paths.brain).toLowerCase());expect(sy.brainFor("alpha")).toBe(bundle.brain);
+ expect(()=>new ProjectExecutionGrants(sy.db,()=>({maxTasks:1,maxSupervisors:1,maxWritersPerRepository:1,projectMaxTasks:null}))).not.toThrow();
+ await sy.close();services.splice(services.indexOf(sy),1);expect(bundle.db.open).toBe(false);});
+it("reopens a MeritRouter whose project store is missing without recreating it, failing that project closed",async()=>{const dir=outsideProject(),env=splitEnv(dir);let sy=open(env,new ScriptedClient(()=>reply("unused")),{worker:false});services.push(sy);const created=await sy.createSplitProject({slug:"alpha",directory:dir});await sy.close();services.splice(services.indexOf(sy),1);
+ const file=path.join(created.paths.state,"meritrouter.db");renameSync(file,file+".retained");
+ sy=open(env,new ScriptedClient(()=>reply("unused")),{worker:true});services.push(sy);expect(sy.layout).toBe("split");expect(()=>sy.projectStores("alpha")).toThrow();await expect(sy.submitTasks([summarizeTask()],{project:"alpha"})).rejects.toThrow();
+ await new Promise(resolve=>setTimeout(resolve,200));expect(existsSync(file)).toBe(false);expect(sy.db.prepare("SELECT COUNT(*) n FROM tasks").get()).toEqual({n:0});});
 it("runs an actual project executor through local lease settlement and session end",async()=>{const f=fixture(),a=f.request("alpha");await a.bundle.runSingle(a.bundle.tasks.get("same-task")!);const task=a.bundle.tasks.get("same-task")!;expect(f.calls.length,task.row.result_json??"noresult").toBeGreaterThan(0);expect(task.row.state,task.row.result_json??"noresult").toBe("completed");const sessions=a.bundle.sessions!.forTask("same-task");expect(sessions.length).toBeGreaterThan(0);expect(sessions.every(s=>s.status!=="running")).toBe(true);expect(f.global.prepare("SELECT COUNT(*) n FROM tasks").get()).toEqual({n:0});expect(f.global.prepare("SELECT COUNT(*) n FROM sessions").get()).toEqual({n:0});assertStoreRole(a.bundle.db,a.bundle.identity);},15000);
 
 

@@ -26,6 +26,8 @@ export class ProjectRegistry {
   private internal: { ctx: ProjectContext; overlay: Record<string, unknown> } | null = null;
   private db: Db | null = null;
   private now: () => number = Date.now;
+  /** Project-local runtime roots of split projects (storage directory, brain), kept across reloads. */
+  private readonly runtime = new Map<string, { storageDir: string; brainPath: string }>();
 
   constructor(private readonly cfg: ResolvedConfig) {
     this.refresh();
@@ -36,7 +38,7 @@ export class ProjectRegistry {
     const seen = new Set<string>();
     for (const p of this.cfg.projectResolution.projects) {
       seen.add(p.slug);
-      const next = overlayFor(p);
+      const next = overlayFor(p, this.cfg, this.runtime.get(p.slug));
       const existing = this.entries.get(p.slug);
       if (existing) {
         for (const k of Object.keys(existing.overlay)) delete existing.overlay[k];
@@ -66,12 +68,23 @@ export class ProjectRegistry {
    * Bind to the store: record each configured project, give unassigned rows to the primary
    * project (see `backfillProjects`), and merge runtime-registered repositories.
    */
-  attach(db: Db, now: () => number = Date.now): void {
+  attach(db: Db, now: () => number = Date.now, opts: { backfill?: boolean } = {}): void {
     this.db = db;
     this.now = now;
     this.recordRows();
-    backfillProjects(db, this.primary.project.slug);
+    // A split installation's coordination store holds no project rows to assign.
+    if (opts.backfill !== false) backfillProjects(db, this.primary.project.slug);
     this.syncRuntimeRepositories();
+  }
+
+  /**
+   * Point a split project's context at its project-local runtime (`storageDir`, brain path), or
+   * back at the installation (null). Kept across `refresh`; the project need not be configured yet.
+   */
+  bindRuntime(slug: string, roots: { storageDir: string; brainPath: string } | null): void {
+    if (roots) this.runtime.set(slug, { ...roots });
+    else this.runtime.delete(slug);
+    this.refresh();
   }
 
   private recordRows(): void {
@@ -147,10 +160,12 @@ export class ProjectRegistry {
 }
 
 /** The keys of a project's context that differ from the global config. */
-function overlayFor(p: ResolvedProject): Record<string, unknown> {
+function overlayFor(p: ResolvedProject, cfg: ResolvedConfig, runtime?: { storageDir: string; brainPath: string }): Record<string, unknown> {
   const project: ProjectInfo = { slug: p.slug, name: p.name, legacy: p.legacy };
+  // A split project's private state lives under its own directory, never the installation's.
+  const local = runtime ? { storageDir: runtime.storageDir, brain: { ...((p.overrides.brain as ResolvedConfig["brain"] | undefined) ?? cfg.brain), path: runtime.brainPath, project: p.slug } } : {};
   // A single-project config is its own project: nothing differs, so the context reads the global
   // config throughout (runtime-registered repositories included).
-  if (p.legacy) return { project, projectDirectory: p.directory };
-  return { project, projectDirectory: p.directory, repositories: p.repositories, repositoryPaths: { ...p.repositoryPaths }, ...p.overrides };
+  if (p.legacy) return { project, projectDirectory: p.directory, ...local };
+  return { project, projectDirectory: p.directory, repositories: p.repositories, repositoryPaths: { ...p.repositoryPaths }, ...p.overrides, ...local };
 }
