@@ -10,6 +10,22 @@ Related: [working index](README.md), [delivery investigation](supervisor-lifecyc
 
 ## Current State
 
+2026-10-27 CORRECTION (Claude Code lead, verified against source): the S0-S6d/C3 building
+blocks are committed but NOTHING in production constructs them. Default service still uses the
+legacy Scheduler (service.ts:277), SqliteRequestLedger (gate.ts:247) and a non-project Brain
+(service.ts:308); createProjectRuntimeRegistry (service.ts:375) has no caller. A fresh install
+puts DB, sessions, artifacts, worktrees, agent homes, Lab sources and brain under the
+installation storage; only named Lab roots are project-local. Claims below of "active" mean
+"implemented and tested in isolation", not "running by default". Checkout is now D:/MeritRouter.
+Remaining plan (waves serial, rows parallel by file) in
+[reports/gate1-remaining-inventory-20261027.md](project-local-storage/reports/gate1-remaining-inventory-20261027.md):
+A1 provisioning, A2 project backup/restore, A3 minimal migration+rollback, A4 finish S7 admin
+reads (uncommitted admin/* work; consolidate duplicate helpers first), A5 runtime path roots ->
+B1 service.ts activation via new core/project-runtime-host.ts -> B2 entrypoints (create/delete/
+setup/MCP/qualification/panel route) -> C1 end-to-end activation test (the literal exit check),
+C2 docs/panel. Fresh install: legacy import/relocation skipped; minimal idle-project migration
+with rollback still required. Install folders also move to the `.MeritRouter` spelling.
+
 2026-10-26 latest checkpoint: S6a committed d042de0 after independent tools12+
 registry19 PASS31/31. Brain/deletion22/22 independently PASS, committed ee7c5f8.
 S6b committed985b43d, final evidence6+tools12 PASS18/18; recursive router/panel
