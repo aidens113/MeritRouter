@@ -10,6 +10,22 @@ Related: [storage](project-local-storage.md), [delivery](supervisor-lifecycle-st
 
 ## Current State
 
+2026-10-27 (Claude Code lead): repository renamed D:/SwitchYardRouter -> D:/MeritRouter and
+D:/SwitchYardProjects -> D:/MeritRouterProjects by the user. pnpm junctions were absolute and
+dangling; `pnpm install --frozen-lockfile` relinked them; recursive typecheck/build PASS.
+The old live install D:/SwitchYard (config, switchyard.db, vault, .master-key) is in the
+Recycle Bin (user deleted 2026-10-27 01:52). User chose a FRESH install, not a restore; the
+recycled copy stays untouched and recoverable. Repo-root .mcp.json still names the old paths.
+Live pilot budget reconfirmed: 400 model requests, $0 paid. Order: trustworthy test baseline
+(first full run 259/85/23 overlapped a build, untrusted) -> gate 1 default activation -> gate 2
+-> fresh install + Facebook pilot -> gates 4-6. Reports: project-local-storage/reports/
+baseline-triage-20261027.md and gate1-remaining-inventory-20261027.md.
+Naming decision (user, 2026-10-27): every runtime FOLDER is spelled `.MeritRouter`. Project
+runtime already is (projects/runtime-paths.ts). Install defaults still say `.meritrouter`:
+config/schema.ts:514 brain `~/.meritrouter/brain`, :781 storage `.meritrouter`, cli/setup.ts:35.
+Change them in gate-1 activation, with case-sensitive-FS fallback to an existing lowercase
+folder. Docker labels `io.meritrouter.*`, service ids and `.meritrouter-lab.json` stay as is.
+
 2026-10-26 latest user directive: FINISH THE PLAN; continue live Router testing on Facebook,
 delete the old Facebook project and start fresh. Also clean sibling variant folders and enforce
 all project Labs/data under that project's .MeritRouter. This supersedes earlier instructions
