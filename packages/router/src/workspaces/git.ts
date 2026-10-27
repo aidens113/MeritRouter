@@ -43,7 +43,7 @@ export function git(cwd: string, args: string[], opts: { maxBuffer?: number; all
       const e = err as NodeJS.ErrnoException & { code?: number | string; stdout?: string; stderr?: string };
       const code = typeof e.code === "number" ? e.code : null;
       if (code !== null && opts.allowExit?.includes(code)) return e.stdout ?? "";
-      throw new GitError(`git ${args[0]} failed in ${cwd}: ${(e.stderr ?? e.message).trim()}`, code, e.stderr ?? "");
+      throw new GitError(`git ${args[0]} failed in ${cwd}: ${e.stderr?.trim() || e.message.trim()}`, code, e.stderr ?? "");
     }
   };
   return opts.index === undefined ? run() : runGitIndexCommand(opts.index, run);
