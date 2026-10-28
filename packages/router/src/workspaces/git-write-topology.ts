@@ -1,6 +1,7 @@
 import { lstat, opendir } from "node:fs/promises";
 import path from "node:path";
 import { git } from "./git.js";
+import { exactRepositoryRoot } from "./repository-root.js";
 
 const normalized = (value: string) => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
 
@@ -44,8 +45,8 @@ async function namespaceTopology(root: string): Promise<void> {
  * change generic Git authorization or claim race-free protection against hostile path swaps.
  */
 export async function assertGitWriteTopology(repo: string): Promise<{ gitDirectory: string; commonDirectory: string }> {
-  const gitDirectory = path.resolve((await git(repo, ["rev-parse", "--absolute-git-dir"])).trim());
-  const commonDirectory = path.resolve(repo, (await git(repo, ["rev-parse", "--git-common-dir"])).trim());
+  // Owned writes target only `repo`'s own repository, never one enclosing a non-repository folder.
+  const { gitDirectory, commonDirectory } = await exactRepositoryRoot(repo);
   await directoryChain(gitDirectory); await directoryChain(commonDirectory);
   const relative = path.relative(commonDirectory, gitDirectory).split(path.sep);
   if (normalized(gitDirectory) !== normalized(commonDirectory) && !(relative.length === 2 && relative[0] === "worktrees" && relative[1] && relative[1] !== "..")) throw new Error("Git worktree metadata has an unexpected common owner");

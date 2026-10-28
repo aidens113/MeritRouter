@@ -120,6 +120,14 @@ it('does not accept passing operator-run ordinary checks when required Lab execu
   expect(result.taskLab).toBeUndefined(); expect(result.acceptanceStatus).toBe('unmet'); expect(fixture.ensures()).toBe(0);
   expect(sy!.labs.taskAttempts.store.all()).toHaveLength(0);
   expect(readFileSync(path.join(env!.repo, 'src/app.ts'), 'utf8')).toBe(source);
+  // Policy refuses Lab execution to every run of this worker task, so a repair would be refused the
+  // same way: the task settles with the refusal and spends no further model request (one attempt:
+  // write_file, then submit_result).
+  expect(fixture.client.requests).toHaveLength(2);
+  const events = sy!.tasks.events(id, 500).map(event => event.type);
+  expect(events).toContain('retry_refused');
+  expect(events).not.toContain('quality_repair'); expect(events).not.toContain('retry_started'); expect(events).not.toContain('escalated');
+  expect(result.verification?.reasons.some(reason => /required task Lab checks are refused by policy/.test(reason))).toBe(true);
 }, RUN_TIMEOUT);
 // Since 7e49ad3 workspace preparation rechecks the captured task lease (assertRunAuthority), so a
 // claim whose generation the task row has moved past is refused rather than prepared under its old

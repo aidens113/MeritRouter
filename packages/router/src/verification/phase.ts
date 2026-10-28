@@ -17,6 +17,7 @@ import { restoreRunState, retryStarted, RETRY_STARTED, REVIEW_RECORDED, type Ver
 import { repairCap, reviewReserveAdjustment, type StoredContract } from "./contract.js";
 import { reviewResult, type ReviewPhaseResult } from "./review.js";
 import { calibratedReview } from "./calibration.js";
+import { taskLabPolicyRefusal } from "./task-lab-policy.js";
 import { carryOverRetryContext, repairRetryContext, runTargetedChecks, submittedRevisionStart, targetedCheckAllowed, unfinishedWorkStart } from "./followup.js";
 
 /**
@@ -96,7 +97,13 @@ export function repairPossible(gate: Gate, task: StoredTask, contract: StoredCon
 
 /** Verify one outcome against the contract; a level raised by the actual change (or tier) is recorded once. */
 export function verifyRecorded(d: Pick<PhaseDeps, "cfg" | "tasks" | "labs">, task: StoredTask, contract: StoredContract, mode: ProfileMode, outcome: RunOutcome, qualityRetriesUsed: number, opts: VerifyOptions = {}, announce = true): VerifiedOutcome {
-  const v = verifyOutcome(d.cfg.verification, contract, mode, outcome, qualityRetriesUsed, { ...opts, taskLabAuthority: task.spec.constraints.labChecks?.length && d.labs ? taskLabAuthority(d.labs,task.row.id,outcome.result.taskLab) : null });
+  // Required Lab checks that policy refuses for this run's own authority cannot be repaired: the
+  // retry would be refused the same way. Decide as if no quality retry remained, with the reason.
+  const refusal = outcome.result.taskLab ? null : taskLabPolicyRefusal(d.cfg, task);
+  const v = verifyOutcome(d.cfg.verification, contract, mode, outcome, refusal ? Number.MAX_SAFE_INTEGER : qualityRetriesUsed, {
+    ...opts, ...(refusal ? { notes: [refusal, ...(opts.notes ?? [])] } : {}),
+    taskLabAuthority: task.spec.constraints.labChecks?.length && d.labs ? taskLabAuthority(d.labs,task.row.id,outcome.result.taskLab) : null,
+  });
   const re = v.reevaluation;
   if (re.raised && announce) {
     // A raised level that needs more review than the contract reserved draws it from the room under the ceiling.
@@ -245,6 +252,10 @@ export interface RetryInput {
 export async function planRetry(d: Pick<PhaseDeps, "cfg" | "db" | "gate" | "router" | "tasks" | "artifacts">, task: StoredTask, st: VerificationState, i: RetryInput): Promise<PlannedRetry | null> {
   const { plan, outcome, result, contract } = i;
   if (result.stopReason.startsWith("repeated_tool_call:")) return null;
+  // Neither a repair nor an escalation can produce Lab evidence that policy refuses this task's
+  // runs: the task settles with the refusal rather than spending a run that must fail the same way.
+  const refusal = result.taskLab ? null : taskLabPolicyRefusal(d.cfg, task);
+  if (refusal) { d.tasks.event(task.row.id, "retry_refused", { reason: refusal, tier: plan.tier }); return null; }
   const next = nextTier(plan.tier);
   const execFailure = outcome.state === "budget_exhausted" ? "budget_exhausted" : result.stopReason === "invalid_output" ? "invalid_output" : null;
   const quality = !execFailure && i.verified?.decision.action === "repair";

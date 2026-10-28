@@ -2,6 +2,7 @@ import { lstat, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import path from "node:path";
 import { isProjectMetadataPath } from "../projects/metadata-policy.js";
 import { git } from "./git.js";
+import { EnclosingRepositoryError, exactRepositoryRoot } from "./repository-root.js";
 
 const IGNORE_PATTERN = ".[mM][eE][rR][iI][tT][rR][oO][uU][tT][eE][rR]/";
 const MAX_EXCLUDE_BYTES = 1024 * 1024;
@@ -61,9 +62,11 @@ async function existingExclude(file: string): Promise<Buffer> {
 }
 
 async function excludeLocation(repo: string): Promise<{ common: string; info: string; exclude: string }> {
-  const gitDir = path.resolve((await git(repo, ["rev-parse", "--absolute-git-dir"])).trim());
-  const commonRaw = (await git(repo, ["rev-parse", "--git-common-dir"])).trim();
-  const common = path.resolve(repo, commonRaw);
+  // Only the authorized root's own repository: a folder inside an enclosing repository (a home
+  // folder can be one) must never gain an exclude rule there.
+  const owner = await exactRepositoryRoot(repo);
+  if (owner.bare) throw new EnclosingRepositoryError(repo);
+  const gitDir = owner.gitDirectory, common = owner.commonDirectory;
   const excludeRaw = (await git(repo, ["rev-parse", "--git-path", "info/exclude"])).trim();
   const exclude = path.resolve(repo, excludeRaw), info = path.join(common, "info");
   if (!samePath(exclude, path.join(info, "exclude"))) throw new Error("Git exclude location is outside its common metadata directory");
@@ -82,8 +85,8 @@ async function excludeLocation(repo: string): Promise<{ common: string; info: st
  * are bounded preflight, not race-free authorization against an actively hostile filesystem.
  */
 export async function ensureProjectMetadataExcluded(repo: string): Promise<void> {
-  await assertNoTrackedProjectMetadata(repo);
   const location = await excludeLocation(repo);
+  await assertNoTrackedProjectMetadata(repo);
   try {
     await directoryChain(location.info);
   } catch (error) {

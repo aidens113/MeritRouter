@@ -193,14 +193,15 @@ function noteEdited(env: HarnessEnv, rel: string, abs: string): void {
 /** Guard actual repository effects, including direct tool calls without runner injection. */
 export async function withRepositoryToolWrite<T>(env: HarnessEnv, action: (guarded: HarnessEnv) => T | Promise<T>): Promise<T> {
   let effects = env.repositoryEffects;
+  // Fence only the workspace root's own repository. A root that is not itself a repository
+  // gets a plain, unfenced file write: Git discovery would otherwise walk up and lock an
+  // enclosing repository (a home folder can be one) that this workspace does not own. Every
+  // MeritRouter Git effect refuses such non-root folders, so there is nothing to serialize with.
+  // A root that does look like a repository is fenced; the fence itself proves it is the exact
+  // root and fails closed otherwise.
   if (!effects && env.workspace) {
-    let directory = path.resolve(env.workspace.root);
-    while (true) {
-      if (lstatExists(path.join(directory, ".git")) || (lstatExists(path.join(directory, "HEAD")) && lstatExists(path.join(directory, "objects")))) {
-        effects = createRepositoryEffects(env.workspace.root); break;
-      }
-      const parent = path.dirname(directory); if (parent === directory) break; directory = parent;
-    }
+    const root = path.resolve(env.workspace.root);
+    if (lstatExists(path.join(root, ".git")) || (lstatExists(path.join(root, "HEAD")) && lstatExists(path.join(root, "objects")))) effects = createRepositoryEffects(env.workspace.root);
   }
   const execute = (guarded: HarnessEnv) => { assertRunAuthority(env.ctx); return action(guarded); };
   return effects ? effects.withWrite(cap => execute({ ...env, repositoryEffects: effects, repositoryMutation: cap }), env.repositoryMutation) : execute(env);

@@ -4,6 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 import { assertNoPendingCommitPublication } from "../attribution/selected-commit-receipts.js";
 import { git } from "./git.js";
+import { EXACT_ROOT_REV_PARSE, EnclosingRepositoryError, parseExactRepositoryRoot } from "./repository-root.js";
 import { assertNoActiveRepositoryCommand, assertRepositoryCommandPermitScope, type RepositoryCommandPermits } from "./repository-command.js";
 
 declare const mutationBrand: unique symbol;
@@ -46,11 +47,15 @@ async function resolveOwners(input: string[]): Promise<Owner[]> {
     const physical = await realpath(repo);
     // Registered repository roots may themselves be directory aliases. Resolve that
     // authorized root first; aliases must share one physical owner and lock ordering.
-    // One rev-parse answers both locations (one line each); separate processes doubled admission cost.
-    const lines = (await git(physical, ["rev-parse", "--absolute-git-dir", "--git-common-dir"])).split("\n");
-    if (lines.length < 2 || !lines[0]!.trim() || !lines[1]!.trim()) throw new RepositoryMutationError("ownership_changed", "Repository mutation owner could not be resolved");
-    const gitDirectory = path.resolve(physical, lines[0]!.trim());
-    const commonDirectory = path.resolve(physical, lines[1]!.trim());
+    // One rev-parse answers both locations and proves `physical` is the repository's own root.
+    // Git discovery walks up, so a non-repository folder would otherwise lock an enclosing
+    // repository (a home folder can be one); that repository is never ours to fence.
+    let gitDirectory: string, commonDirectory: string;
+    try { ({ gitDirectory, commonDirectory } = await parseExactRepositoryRoot(physical, await git(physical, [...EXACT_ROOT_REV_PARSE]))); }
+    catch (error) {
+      if (error instanceof EnclosingRepositoryError) throw new RepositoryMutationError("ownership_changed", error.message);
+      throw error;
+    }
     await directoryChain(gitDirectory); await directoryChain(commonDirectory);
     const physicalGit = await realpath(gitDirectory), physicalCommon = await realpath(commonDirectory);
     resolved.push({ repo: physical, gitDirectory: physicalGit, commonDirectory: physicalCommon });
