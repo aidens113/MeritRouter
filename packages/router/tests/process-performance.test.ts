@@ -15,7 +15,7 @@ const projectsConfig = () => baseConfig({ repositories: {}, brain: { path: 'brai
 } });
 
 it('measures bounded task throughput at concurrency 1 and 4 without lost or double work', async () => {
-  const metrics = [];
+  const metrics: Array<Record<string, number>> = [];
   for (const concurrency of [1, 4]) {
     const count = 24;
     let active = 0, peak = 0;
@@ -55,10 +55,20 @@ it('measures bounded task throughput at concurrency 1 and 4 without lost or doub
       metrics.push({ tasks: count, concurrency, elapsedMs: elapsed, tasksPerSecond: count / elapsed * 1000,
         taskLatencyP50Ms: percentile([...completedAt.values()], .5), taskLatencyP95Ms: percentile([...completedAt.values()], .95),
         fakeResponseP50Ms: percentile(responseMs, .5), fakeResponseP95Ms: percentile(responseMs, .95), providerPeak: peak });
-    } finally { await sy.close(); env.cleanup(); }
+    } finally {
+      // close() drains every pending worker report into the Brain: one selected commit per task.
+      const closing = performance.now();
+      await sy.close(); env.cleanup();
+      const measured = metrics.find(m => m.concurrency === concurrency);
+      if (measured) measured.closeDrainMs = performance.now() - closing;
+    }
   }
   console.log('PROCESS_PERFORMANCE_THROUGHPUT', JSON.stringify(metrics));
-}, 45000);
+  // Budget. Task throughput itself is about 6 s per round (24 tasks). Each round's close() then
+  // drains 24 serialized Brain report commits of about 50 Git child processes each, measured at
+  // 1.5-1.9 s per commit on Windows (tests/brain-commit-performance.test.ts budgets that cost).
+  // Measured alone on a loaded host: about 41 s of drain per round, about 95 s for the test.
+}, 180_000);
 
 it('measures quiet and write watcher ticks on a 61000-row historical store with scoped invalidation', async () => {
   const env = makeEnv({ config: projectsConfig() });

@@ -648,7 +648,7 @@ export class MergeQueue {
 
   /** The commits are on the branch: record the acceptance, the integration, and the job checks. */
   private async finish(item: MergeItem, hooks: MergeHooks): Promise<MergeItem> {
-    let done = await this.withMutation(item, hooks, async () => {
+    const verified = await this.withMutation(item, hooks, async (): Promise<{ refused: MergeItem } | { head: string }> => {
       const actualHead = await this.assertOwnedHead(item);
       if (item.afterHead && actualHead !== item.afterHead) throw new RepositoryMutationError("ownership_changed", "Merge integration HEAD no longer matches the captured picked chain");
       try {
@@ -658,7 +658,7 @@ export class MergeQueue {
         await this.restore(item);
         const refused = this.update(item.id, { state: "refused", detail: { ...item.detail, error: (error as Error).message.slice(0, 500) } });
         this.event(refused, "merge_refused", { error: refused.detail.error });
-        return refused;
+        return { refused };
       }
       if (item.acceptance && hooks.accept) {
         try {
@@ -668,16 +668,23 @@ export class MergeQueue {
           await this.restore(item);
           const refused = this.update(item.id, { state: "refused", detail: { ...item.detail, error: (err as Error).message.slice(0, 500) } });
           this.event(refused, "merge_refused", { error: refused.detail.error });
-          return refused;
+          return { refused };
         }
       }
-      const head = item.afterHead ?? (await headOf(item.integrationWorktree));
-      hooks.integrated(item, head);
-      const done = this.update(item.id, { state: "integrated", afterHead: head });
-      this.event(done, "merge_integrated", { commits: done.commits.length, head, rebased: done.rebased, attempts: done.attempts });
-      return done;
+      return { head: item.afterHead ?? (await headOf(item.integrationWorktree)) };
     });
-    if (done.state !== "integrated") return done;
+    if ("refused" in verified) return verified.refused;
+    // The owned chain is verified and accepted; what remains is database-only bookkeeping, so it
+    // runs after the Git fence is released (still inside this branch's lease). A crash in these
+    // callbacks then leaves only a `picked` item, which the next branch owner recovers by
+    // re-running finish, instead of a crash-leftover fence lock that, by the fence's contract,
+    // blocks the repository until explicit operator recovery. Recovery repeats `accept` (which
+    // must be idempotent) and `integrated`, as it always has for a crash after the picks; the
+    // checks below re-verify HEAD under the fence before recording.
+    const head = verified.head;
+    hooks.integrated(item, head);
+    let done = this.update(item.id, { state: "integrated", afterHead: head });
+    this.event(done, "merge_integrated", { commits: done.commits.length, head, rebased: done.rebased, attempts: done.attempts });
     if (hooks.checks) {
       const checks = await hooks.checks(done);
       if (checks.length) {

@@ -221,17 +221,33 @@ describe('lab lifecycle with real isolated fixture processes', () => {
     const manager = setup({ idle_stop_minutes: 0.001 });
     const lab = await manager.create('alpha', 'idle');
     await manager.start('alpha', 'idle');
+    // A natively bound service whose recorded PID is replaced by a live foreign PID: the kernel Job
+    // identity, not the DB row, decides what may be stopped. The foreign process and the real
+    // service both survive, and the row keeps its evidence.
+    const bound = manager.store.service(lab.lab.id, 'web')!;
+    expect(bound.pid && bound.token && await processOwnership(bound.pid, bound.token)).toBe('owned');
+    db!.prepare("UPDATE lab_services SET pid=? WHERE lab_id=? AND name='web'").run(process.pid, lab.lab.id);
+    await expect(manager.stop('alpha', 'idle')).rejects.toMatchObject({ detail: { kind: 'ownership_changed' }, message: expect.stringMatching(/kernel Job identity/) });
+    expect(processAlive(process.pid)).toBe(true);
+    expect(await processOwnership(bound.pid!, bound.token!)).toBe('owned');
+    expect(manager.store.service(lab.lab.id, 'web')).toMatchObject({ pid: process.pid, token: bound.token });
+    db!.prepare("UPDATE lab_services SET pid=? WHERE lab_id=? AND name='web'").run(bound.pid, lab.lab.id);
     db!.prepare('UPDATE labs SET last_activity=0 WHERE id=?').run(lab.lab.id);
     await manager.tick();
     expect(manager.status('alpha', 'idle').lab.state).toBe('stopped');
     expect(await portAvailable(lab.lab.ports.web!)).toBe(true);
+    expect(await processOwnership(bound.pid!, bound.token!)).toBe('missing');
+    // A recorded identity with no durable native command owner (a legacy or forged row) is never
+    // adopted, killed or cleared by inference: it fails closed until migration/recovery. This is
+    // the contract since 5cb43f9 replaced command-line ownership with native Job proof.
     db!.prepare("UPDATE lab_services SET pid=?,token=?,state='running',owner_until=0 WHERE lab_id=?").run(process.pid, 'a'.repeat(48), lab.lab.id);
     expect(await processOwnership(process.pid, 'a'.repeat(48))).toBe('foreign');
-    await expect(manager.stop('alpha', 'idle')).rejects.toThrow(/ownership/);
+    await expect(manager.stop('alpha', 'idle')).rejects.toMatchObject({ detail: { kind: 'command_uncertain' }, message: expect.stringMatching(/no durable repository command owner/) });
     expect(processAlive(process.pid)).toBe(true);
+    expect(manager.store.service(lab.lab.id, 'web')).toMatchObject({ pid: process.pid, token: 'a'.repeat(48), state: 'running' });
     db!.prepare("UPDATE lab_services SET pid=NULL,token=NULL,state='stopped' WHERE lab_id=?").run(lab.lab.id);
     await manager.destroy('alpha', 'idle');
-  }, 30000);
+  }, 90000);
   it('refuses public listeners and preserves uncommitted work during destroy', async () => {
     const manager = setup();
     const raw = env!.cfg.projects.alpha as {
@@ -382,7 +398,12 @@ it("excludes older unrelated processes whose parent PID was reused and rejects c
   expect(ownedWindowsProcessTree(rows, 100, token).map(row => row.ProcessId)).toEqual([100, 400, 500]);
   expect(() => ownedWindowsProcessTree(rows, 100, "b".repeat(48))).toThrow(/ownership changed/);
 });
-it.skipIf(process.platform !== "win32")("retains orphan ownership evidence and refuses destroy until every known process is gone", async () => {
+// Since 5cb43f9 a retained service is stopped only through its durable native command owner and
+// kernel Job proof; the CIM process-tree proof is no longer consulted to stop it. A recorded
+// identity without that owner (a legacy row, or one forged around an orphan) fails closed before
+// any destructive step, keeps every piece of evidence, and is never cleared by inference, even
+// after its known processes are gone: only migration/recovery may settle it.
+it.skipIf(process.platform !== "win32")("retains orphan ownership evidence and refuses destroy of a service identity without a native command owner", async () => {
   const manager = setup();
   const created = await manager.create("alpha", "orphan-proof");
   const token = "c".repeat(48);
@@ -404,7 +425,7 @@ it.skipIf(process.platform !== "win32")("retains orphan ownership evidence and r
     };
     writeFileSync(proof, JSON.stringify({ pid: fakePid, token, rows: [{ ProcessId: fakePid, ParentProcessId: 1, CreatedTicks: "1", CommandLine: `${HOST_MARKER} --sy-lab-token=${token}` }, ...captured.rows.map(row => ({ ...row, ParentProcessId: fakePid }))] }));
     manager.store.saveService({ lab_id: created.lab.id, name: "web", state: "failed", pid: fakePid, token, log_path: path.join(created.lab.root, "logs", "web.log"), restart_count: 0, next_restart: null, started_at: Date.now(), owner_id: manager.owner, owner_until: 0 });
-    await expect(manager.destroy("alpha", "orphan-proof")).rejects.toThrow(/live processes/);
+    await expect(manager.destroy("alpha", "orphan-proof")).rejects.toMatchObject({ detail: { kind: "command_uncertain" }, message: expect.stringMatching(/no durable repository command owner/) });
     expect(existsSync(proof)).toBe(true);
     expect(existsSync(created.lab.repositories[0]!.worktree)).toBe(true);
     expect(manager.status("alpha", "orphan-proof").services[0]!.pid).toBe(fakePid);
@@ -413,6 +434,13 @@ it.skipIf(process.platform !== "win32")("retains orphan ownership evidence and r
   finally {
     await stopOwnedProcess(pid, token);
   }
+  expect(processAlive(pid)).toBe(false);
+  await expect(manager.destroy("alpha", "orphan-proof")).rejects.toMatchObject({ detail: { kind: "command_uncertain" } });
+  expect(existsSync(proof)).toBe(true);
+  expect(existsSync(created.lab.repositories[0]!.worktree)).toBe(true);
+  expect(manager.store.service(created.lab.id, "web")).toMatchObject({ pid: fakePid, token });
+  // Stand-in for the recovery that settles the unbound row; destroy then proceeds normally.
+  db!.prepare("UPDATE lab_services SET pid=NULL,token=NULL,state='stopped' WHERE lab_id=?").run(created.lab.id);
   await manager.destroy("alpha", "orphan-proof");
   expect(existsSync(created.lab.root)).toBe(false);
 }, 30000);

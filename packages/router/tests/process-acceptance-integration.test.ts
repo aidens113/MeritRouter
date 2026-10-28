@@ -29,10 +29,14 @@ it.each([
   const env = makeEnv();
   const db = openDatabase(env.cfg.storageDir);
   const children: ChildProcess[] = [];
+  const output: string[] = [];
   const git = (...args: string[]) => execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', ...args], { cwd: env.repo }).toString().trim();
   const start = (id: string, owner: string) => {
     const child = spawn(process.execPath, [path.join(here, 'fixtures/process-acceptance/merge-owner.mjs'), dist, env.cfg.storageDir, id, owner, env.dir], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-    children.push(child);
+    const index = children.push(child) - 1;
+    output[index] = '';
+    child.stdout!.on('data', data => { output[index] += String(data); });
+    child.stderr!.on('data', data => { output[index] += String(data); });
     return child;
   };
   try {
@@ -57,6 +61,9 @@ it.each([
       firstChild.kill('SIGKILL');
       await exited;
       expect(queue.get(first.id)!.state).toBe('picked');
+      // The kill landed in the database-only `integrated` callback, outside the Git fence, so it
+      // leaves no crash-leftover fence lock (which would block until operator recovery).
+      expect(existsSync(path.join(env.repo, '.git', 'meritrouter-mutation.lock'))).toBe(false);
     }
     start(second.id, 'second');
     await until(() => existsSync(path.join(env.dir, 'second-started')));
@@ -64,9 +71,9 @@ it.each([
     const beforeRelease = readFileSync(path.join(env.dir, 'integrations.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
     writeFileSync(path.join(env.dir, 'release-first'), 'release');
     await until(() => children.every(c => c.exitCode !== null || c.signalCode !== null));
-    expect(children[1]!.exitCode).toBe(0);
+    expect(children[1]!.exitCode, output[1]).toBe(0);
     if (!killFirst) {
-      expect(children[0]!.exitCode).toBe(0);
+      expect(children[0]!.exitCode, output[0]).toBe(0);
       expect(beforeRelease).toEqual([{ owner: 'first', id: first.id }]);
     }
     const events = readFileSync(path.join(env.dir, 'integrations.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
