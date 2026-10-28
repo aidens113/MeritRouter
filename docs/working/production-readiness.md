@@ -1,8 +1,8 @@
 # Production readiness execution sequence
 Status: Active
-Status detail: Drive-root sprawl investigated/prevented by agent policy; standalone storage prerequisites integrated, caller activation and migration pending.
+Status detail: Gate 1 complete in code and validated; live pilot 1 failed on unenforced integration; service-enforced integration in flight; pilot 2 waits on the user budget choice.
 Created: 2026-10-26
-Last updated: 2026-10-26
+Last updated: 2026-10-28
 Owner: Senior supervisor agent
 Scope: Authoritative priority and release gates across current MeritRouter efforts.
 Paired document: none
@@ -10,73 +10,90 @@ Related: [storage](project-local-storage.md), [delivery](supervisor-lifecycle-st
 
 ## Current State
 
-2026-10-27 (Claude Code lead): repository renamed D:/SwitchYardRouter -> D:/MeritRouter and
-D:/SwitchYardProjects -> D:/MeritRouterProjects by the user. pnpm junctions were absolute and
-dangling; `pnpm install --frozen-lockfile` relinked them; recursive typecheck/build PASS.
-The old live install D:/SwitchYard (config, switchyard.db, vault, .master-key) is in the
-Recycle Bin (user deleted 2026-10-27 01:52). User chose a FRESH install, not a restore; the
-recycled copy stays untouched and recoverable. Repo-root .mcp.json still names the old paths.
-Live pilot budget reconfirmed: 400 model requests, $0 paid. Order: trustworthy test baseline
-(first full run 259/85/23 overlapped a build, untrusted) -> gate 1 default activation -> gate 2
--> fresh install + Facebook pilot -> gates 4-6. Reports: project-local-storage/reports/
-baseline-triage-20261027.md and gate1-remaining-inventory-20261027.md.
-2026-10-27 evening: gate 1 waves A-C, split Labs, operator CLI and panel landed (see
-project-local-storage.md). First full run on a clean tree (pnpm -r build PASS; router suite
-2256 pass / 92 fail / 5 skip in 1304 s, heavily CPU-bound). Serial re-run of the 33 failing
-files: 26 pass alone. Real failures: transport-recovery 24 (strict Slot schema predates
-121be75 grant columns), task-lab-caller 3, security .git containment 1, worker-lab-authority 1,
-labs.test 2, process-acceptance hard-kill 1, process-performance 1. Three Opus workers fixing
-(reports fix-transport-recovery, fix-containment-tasklab, fix-labs-process-perf). Push waits
-on these. Gate-2 inventory: gate2-inventory-20261027.md.
-2026-10-27 night: all real failures fixed (transport recovery for split slots, split slot leak
-on timeouts/errors and key retries, ledger recovery wired, Lab team admissions and leaks,
-enclosing-repository writes, doomed Lab repairs, merge lock release, stale tests). Final:
-pnpm -r build PASS; full parallel router run 2349 pass / 48 fail / 5 skip, and every one of
-the 25 failing files passes alone (CPU contention: ~13900 s of tests in 1301 s). dev pushed
-at a359200; main held until the live pilot. Next: fresh install, user enters Ollama key,
-supervised Facebook pilot (400 requests, $0 paid).
-2026-10-28 LIVE PILOT 1 (fresh split install, Ollama Cloud free key, job
-t_0mvrt9n103e8186731851, project facebook-mvp): 273 requests, $0. 11 models answered 402/403
-(not in free usage) once each and were cached unavailable, then disabled by the operator; beam,
-nemotron-3-super and gpt-oss:120b served. 12 worker tasks: scaffold, db/auth, auth API, posts,
-users/friends, notifications, shell, pages, seed, README completed; tests budget_exhausted 18/30;
-review dependency_failed. Supervisor stopped model_handoff_exhausted:repeated_tool_call:delegate
-(re-delegating the review against the failed dependency). ROOT DEFECT: integrate_task was offered
-in 78 supervisor requests and never called; accept_task does not integrate, so the job branch
-stayed at the empty initial commit and later tasks branched from it (pieces built in isolation).
-Integration must be enforced by the service, not left to the model. Also found live and fixed:
-worker startup recovery crash (3517a72); found live, fix in progress: split CLI session/job
-reads and panel by-id job/task/request pages (not found).
-Naming decision (user, 2026-10-27): every runtime FOLDER is spelled `.MeritRouter`. Project
-runtime already is (projects/runtime-paths.ts). Install defaults still say `.meritrouter`:
-config/schema.ts:514 brain `~/.meritrouter/brain`, :781 storage `.meritrouter`, cli/setup.ts:35.
-Change them in gate-1 activation, with case-sensitive-FS fallback to an existing lowercase
-folder. Docker labels `io.meritrouter.*`, service ids and `.meritrouter-lab.json` stay as is.
+Handoff 2026-10-28 (Claude Code lead, session of 2026-10-27/28). Read this first.
 
-2026-10-26 latest user directive: FINISH THE PLAN; continue live Router testing on Facebook,
-delete the old Facebook project and start fresh. Also clean sibling variant folders and enforce
-all project Labs/data under that project's .MeritRouter. This supersedes earlier instructions
-to preserve the old Facebook project's task/source payloads; shared accounting remains intact.
-Fresh trial budget announced400 model requests/$0 paid. No downstream app source by Codex.
-Do not stop at prerequisite publication; continue C3 activation, state split/migration and
-actual pilot/approval UX/repeatability acceptance. Existing checkout only, serial validation.
+**Gate 1 (project-local storage): complete in code.** New installs default to
+`storage.layout: split`: each project's DB, sessions, artifacts, worktrees, agent homes, Labs and
+brain live under `<project directory>/.MeritRouter`; the installation store holds only
+coordination data. The end-to-end exit test (tests/project-runtime-activation.test.ts) passes:
+setup, create, retry, restart/resume, task Lab, project backup/restore, delete, quiescent legacy
+migration with rollback, and no project rows or canary content under the installation. CLI has
+`projects create --directory`, `projects backup|restore|migrate`. Details and reports:
+[project-local-storage.md](project-local-storage.md). Runtime folders are spelled `.MeritRouter`
+(lowercase fallback on case-sensitive filesystems). Known limits: paid routes refused in split
+projects; legacy dispatch fence has no coordination store; forced restore leaves
+`<project>/.MeritRouter/pre-restore-*`.
 
-Drive-root folder sprawl investigated: sibling variants and hidden historical worktrees retired
-with dirty work preserved in inactive quarantine. Source-repository .MeritRouter is prohibited
-and absent. Development uses main only; validation artifacts use OS TEMP. Old Facebook reset
-verified complete. C3 runner/command guards and S2 local accounting active; runtime wiring,
-migration and actual fresh-provider acceptance remain unfinished.
+**Repository and environment.** Checkout renamed D:/SwitchYardRouter -> D:/MeritRouter and
+projects to D:/MeritRouterProjects (pnpm relinked). dev pushed through 6325718 plus this handoff;
+main held (unchanged) until a pilot delivers. Full parallel suite on this machine is CPU-bound
+(~13900 s of tests in ~1300 s): last full run 2349 pass / 48 fail / 5 skip and every failing file
+passed alone; judge failures by serial reruns.
 
-Latest accepted local checkpoint d042de0 adds lease-bound project tools/services; independent
-tools12 and runtime-registry19 pass. Root private evidence isolation6 passes; S5 coordinated
-queue and C3 Labs native-process adapters remain active. No fresh Facebook job/provider calls
-have started. Current panel projects are my-project, tetris and pomodoro, all not live.
+**Live install (user's, real data: tests must never touch it).**
+- Config `C:\Users\mrjoh\AppData\Local\MeritRouter\meritrouter.config.yaml` (fresh, split, durability
+  full, `paid.enabled: false`, supervisor `paid_policy: never`, `delivery_budget.total_requests: 400`,
+  `extension_requests: 20`). Store `...\MeritRouter\.MeritRouter\`. Old install D:\SwitchYard is in the
+  Recycle Bin by user choice (fresh install chosen); do not restore it.
+- One Ollama Cloud key, `free_tier`, entered by the user (vault:1). 22 models listed; operator
+  disabled 11 that return 402 "not included in your free usage" or 403 rollout: kimi-k3,
+  kimi-k2.6, kimi-k2.7-code, deepseek-v4-pro:0813, deepseek-v4.1-flash(+:1017), glm-5.2, glm-5.3,
+  mistral-large-3:675b, mistral-large-4, muse-spark-open. Serving: beam, nemotron-3-super,
+  gpt-oss:120b (and small gemma4/nemotron-nano for T1).
+- Panel http://127.0.0.1:4477 started by the lead (user-authorized), stop it via
+  `POST /api/panel/stop`, start with `node packages/router/dist/cli.js panel --config <config>`.
+  Current panel/dist build includes the in-flight integration worker's UNCOMMITTED edits:
+  rebuild (`pnpm -r build`) and restart the panel after that work lands or is discarded; until
+  then the user was told not to Accept/Reject tasks in the panel.
+- A `meritrouter worker` process was started from a Claude Code background shell for the pilot;
+  it may have ended with the session. Start one with
+  `node packages/router/dist/cli.js worker --config <config>` before running a job.
+- Repo-root `.mcp.json` (git-excluded) still names `D:/SwitchYardRouter/.../mcp.js` and the deleted
+  D:/SwitchYard config: update to `packages/router/dist/cli.js mcp --config <config> --project
+  facebook-mvp` before using MeritRouter over MCP.
 
-MeritRouter supports supervised use; unattended production delivery is unproven.
-User authorized continued plan execution on 2026-10-26. Current implementation focus is
-project-local storage, preserving existing project state and retained pilot source.
-Do not infer current runtime versions or readiness from older roadmap checkpoints.
-No production-readiness percentage or date is established by test counts.
+**Live pilot 1: failed, no usable app.** Project `facebook-mvp` (D:/MeritRouterProjects/facebook-mvp,
+store in its `.MeritRouter`), job `t_0mvrt9n103e8186731851` via `meritrouter run` with checks
+`npm test`, `npm run build` and three criteria (brief: original-branded "Commons" social app,
+Next.js + SQLite + Tailwind, auth/feed/profile/people/notifications, seed, vitest, README; no
+Facebook trademarks). 273 requests, $0; operator granted +120 to the supervisor (budget request 1)
+to stay under the 400 cap. Ten worker tasks completed, tests budget_exhausted 18/30, review
+dependency_failed; supervisor stopped `model_handoff_exhausted:repeated_tool_call:delegate`.
+ROOT DEFECT: supervisor never called integrate_task (offered in 78 requests) and accept_task did
+not integrate, so the job branch stayed at the empty initial commit and later tasks branched from
+it; the code exists only in 12 detached task worktrees under the project's
+`.MeritRouter/worktrees`. Slot release, model fallback, budget approval and attribution worked
+live. Remaining under the original 400 cap: 127.
+
+**In flight at handoff (UNCOMMITTED in the main tree, do not discard without review):** an Opus
+worker implementing service-enforced job integration (reports to docs/working/
+gate2-auto-integration.md): accept_task enqueues integration through the merge queue, dependents
+start from the integrated job head, review/finish refused while accepted work is unintegrated,
+delegate refused on a failed dependency, and why tests ended budget_exhausted at 18/30. Files:
+src/harness/{delivery-tools,integration-tools,supervisor-tools}.ts, src/runners/supervisor.ts,
+src/storage/tasks.ts, new src/storage/integration-obligations.ts, new
+tests/job-auto-integration.test.ts. Last observed: `pnpm -r typecheck` clean; its tests not yet
+verified by the lead. Next session: read its report, rerun its acceptance tests serially, review,
+commit, rebuild, restart the panel.
+
+**Waiting on the user:** rerun budget for pilot 2: (a) raise this pilot's cap to ~500 total or
+(b) a fresh 400; and whether to remove two stray lines MeritRouter's tests wrote into
+`C:\Users\mrjoh\.git\info\exclude` at 13:34 on 2026-10-27 (`# MeritRouter private project
+metadata` and `.[mM][eE][rR][iI][tT][rR][oO][uU][tT][eE][rR]/`); the code that wrote them is fixed.
+
+**Next steps, in order.** 1) Land the integration worker (above). 2) Rerun the pilot as a NEW job
+in facebook-mvp with the user's budget choice; watch `meritrouter status/job/usage --project
+facebook-mvp`, approve budget requests only within the cap, and verify integration onto the job
+branch as tasks are accepted. 3) As FINAL acceptor, clone the job branch to OS temp and run
+`npm install`, `npm run seed`, `npm test`, `npm run build`, then browser journeys; accept or
+reject with evidence. 4) Gates 4-6 below. Known follow-ups: native coding task spawns ~521 git
+processes and Brain report commits drain at ~0.6/s (performance pass); `setup` of a
+non-repository project directory writes a self-ignoring `.MeritRouter/.gitignore`; MeritClaude's
+report-guard hook did not enforce the return contract and its installer duplicates hooks when the
+drive-letter case differs (MeritClaude repo, not this one).
+
+MeritRouter supports supervised use; unattended delivery is unproven. No readiness percentage or
+date is established by test counts. Do not infer runtime versions from older checkpoints.
 
 ## Ordered execution and exit criteria
 
@@ -127,6 +144,14 @@ relocate active workers or replace the live daemon merely to activate a nonblock
 - Validation: not validated; planning document, no source/runtime change.
 - Outcome: Accepted
 - Follow-up: execute storage foundation and state-service contract, preserve pilot work.
+
+### 2026-10-28 — Gate 1 activation, regression fixes, fresh install and live pilot 1
+- Agent: Claude Code lead (Opus 5.5) with tiered workers (reports under project-local-storage/reports/ and gate2-*).
+- Changed: split storage made default and wired end to end (waves A-C), Lab/supervisor/capacity/transport/enclosing-repo/view fixes, docs; fresh live install; pilot job t_0mvrt9n103e8186731851.
+- Why: user directive to finish the plan and live test on a fresh Facebook project.
+- Validation: `pnpm -r build` -> both Done; `npx vitest run` (router, full parallel) -> 2349 passed / 48 failed / 5 skipped, then each of the 25 failing files alone -> all passed; after later fixes `npx vitest run` on touched files (e.g. split-detail-views, split-cli-reads, project-admin-store-isolation, zero-project-installation -> 32 passed); `pnpm -r typecheck` at handoff -> router Done, panel Done; live panel pages curled 200 after restart; live pilot -> failed (see Current State).
+- Outcome: Accepted for gate 1 code; live pilot 1 Rejected (no integrated product).
+- Follow-up: land service-enforced integration (in flight, uncommitted), then pilot 2 with the user's budget choice.
 
 ## Open Questions
 
