@@ -25,7 +25,12 @@ export interface ResolvedProject {
 
 export interface ProjectsResolution {
   projects: ResolvedProject[];
-  /** The project that owns rows from before projects existed and system tasks submitted without one. */
+  /**
+   * The project that owns rows from before projects existed and system tasks submitted without
+   * one. Empty when a split installation has no project configured yet (decision: `setup` writes
+   * none; the first one created, by any entry point, becomes primary through the ordinary
+   * fallback below).
+   */
   primary: string;
 }
 
@@ -72,6 +77,13 @@ function containsDirectory(parent: string, child: string): boolean {
 export function resolveProjects(cfg: RawConfig, baseDir: string): { resolution: ProjectsResolution; issues: ProjectIssue[] } {
   const entries = Object.entries(cfg.projects);
   if (!entries.length) {
+    // A split installation may start with no project at all (no single-project repositories to
+    // adopt either): `setup` writes none, and this is not the single-project legacy shape. The
+    // first project any entry point creates becomes primary through the ordinary fallback below,
+    // once `cfg.projects` holds it.
+    if (cfg.storage.layout === "split" && !Object.keys(cfg.repositories).length) {
+      return { resolution: { projects: [], primary: "" }, issues: [] };
+    }
     const slug = cfg.brain.project;
     const repositoryPaths = resolveRepositories(cfg.repositories, baseDir);
     return {

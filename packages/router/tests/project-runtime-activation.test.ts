@@ -252,9 +252,11 @@ it("runs the gate 1 journey with every project-owned byte under <project>/.Merit
   expect(gitSync(betaDir, "log", "--oneline")).toMatch(/init/);
   expect(projectStoreRegistrations(sy.db, "beta").map((r) => r.state)).toEqual(["retired"]);
   expect(count(sy.db, "SELECT COUNT(*) n FROM projects WHERE id='beta'")).toBe(0);
-  // The CLI's project list and installation usage read every project's own store.
+  // The CLI's project list and installation usage read every project's own store. `setup` wrote
+  // no placeholder project (decision: a split installation starts with zero projects), so only
+  // the project this journey created remains.
   expect(await cli(["list"])).toBe(0);
-  expect((JSON.parse(printed) as Array<{ slug: string }>).map((p) => p.slug).sort()).toEqual(["alpha", "my-project"]);
+  expect((JSON.parse(printed) as Array<{ slug: string }>).map((p) => p.slug).sort()).toEqual(["alpha"]);
   expect(sy.usage(0).modelRequests).toBeGreaterThan(0);
   await close(sy);
 

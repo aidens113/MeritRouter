@@ -109,6 +109,9 @@ async function main(): Promise<number> {
       force: { type: "boolean", default: false },
       "include-master-key": { type: "boolean", default: false },
       "dry-run": { type: "boolean", default: false },
+      rollback: { type: "boolean", default: false },
+      "from-config": { type: "string" },
+      directory: { type: "string" },
       "max-restarts": { type: "string" },
       window: { type: "string" },
       "max-delay": { type: "string" },
@@ -189,7 +192,10 @@ async function main(): Promise<number> {
   const explicit = values.project ?? process.env[PROJECT_ENV];
   const select: SelectOptions = { flag: values.project, env: process.env[PROJECT_ENV], cwd: process.cwd() };
   /** Writes and repository reads: a project is required (an error lists the projects). */
-  const project = () => requireProject(selectableProjects(sy), select).slug;
+  const project = () => {
+    if (!sy.projects.slugs().length) throw new MeritRouterError("usage", "create a project first: meritrouter projects create <slug> --directory <path>");
+    return requireProject(selectableProjects(sy), select).slug;
+  };
   /** Lists: the chosen project, or every project when none can be chosen. */
   const listScope = () => chooseProject(selectableProjects(sy), select)?.slug;
   /** Commands on ids: guarded by a project only when one was named. */
@@ -483,6 +489,7 @@ the planned budget does not fit what is left of today's qualification allocation
         return 0;
       }
       case "brain": {
+        if (!sy.projects.slugs().length) throw new MeritRouterError("usage", "create a project first: meritrouter projects create <slug> --directory <path>");
         const sub = args[0] ?? "ls";
         if (sub === "ls") {
           const rows = (await brainTree(sy, args[1] ?? "", listScope())).map((e) => ({ path: e.path, kind: e.kind, status: e.status ?? "", lines: e.lines, title: e.title ?? "" }));

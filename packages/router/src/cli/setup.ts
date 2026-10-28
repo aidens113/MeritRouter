@@ -36,7 +36,12 @@ export function initializeConfig(opts: InitOptions): string[] {
     doc.setIn(["storage", "layout"], "split");
     doc.setIn(["storage", "durability"], "full");
     if (opts.setup) {
-      if (!opts.repositories || !Object.keys(opts.repositories).length) doc.setIn(["projects", opts.project, "repositories"], {});
+      if (!opts.repositories || !Object.keys(opts.repositories).length) {
+        // Split installations start with no project at all (decision: no placeholder); the first
+        // one created, through admin, the CLI, MCP, or the panel, becomes primary
+        // (src/projects/resolve.ts picks the first configured project when none is named).
+        doc.deleteIn(["projects", opts.project]);
+      }
       // Application-directory installs keep the brain beside the config, not under the home directory.
       doc.setIn(["brain", "path"], ".MeritRouter/brain");
       if (opts.port !== undefined) doc.setIn(["panel", "port"], opts.port);

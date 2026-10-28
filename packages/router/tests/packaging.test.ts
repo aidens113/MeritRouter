@@ -44,13 +44,15 @@ describe("installed setup and config discovery", () => {
     expect(defaultConfigDirectory({ XDG_CONFIG_HOME: "/xdg" }, "/home", "linux")).toBe(path.resolve("/xdg", "meritrouter"));
     expect(defaultConfigDirectory({}, "/home", "linux")).toBe(path.resolve("/home", ".config", "meritrouter"));
   });
-  it("creates a valid isolated setup with no placeholder repos and never replaces existing settings", () => {
+  it("creates a valid isolated setup with no placeholder project and never replaces existing settings", () => {
     const { root, cwd } = fixture();
     const configPath = resolveConfigPath(undefined, cwd);
     const opts = { configPath, project: "example", setup: true, port: 4598 };
     expect(initializeConfig(opts)).toHaveLength(2);
     const cfg = loadConfig(configPath);
-    expect(cfg.projects.example).toMatchObject({ repositories: {} });
+    // A split installation starts with zero projects; the first one created becomes primary.
+    expect(cfg.projects).toEqual({});
+    expect(cfg.projectResolution.projects).toEqual([]);
     expect(cfg.brain.path).toBe(".MeritRouter/brain");
     expect(cfg.storageDir).toBe(path.join(root, "application", ".MeritRouter"));
     expect(cfg.storage.layout).toBe("split");

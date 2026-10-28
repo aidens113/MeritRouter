@@ -11,10 +11,13 @@ Projects (one install holds many; providers, models, routing, and budgets are gl
   show every project when none can be chosen.
   projects [list] [--all]       projects with repositories, running and queued jobs and tasks,
                                 last activity, and attention items (--all adds archived ones)
-  projects create <slug> [--name "<name>"] [--repo <alias>=<path> ...]
+  projects create <slug> [<directory>] [--directory <path>] [--name "<name>"] [--repo <alias>=<path> ...]
                                 add projects.<slug> to the config (each repository folder is created
                                 or set up with git as needed) and create its brain folders; a single-project
-                                config is converted first (its repositories move under its slug)
+                                config is converted first (its repositories move under its slug).
+                                A split installation requires a directory: its private store is
+                                created at <directory>/.MeritRouter. Setup starts with no project;
+                                the first one created, from any entry point, becomes primary.
   projects delete <slug> --confirm <slug>   delete a project: its settings, tasks, sessions,
                                 MeritRouter worktrees, and brain folder (repositories, branches,
                                 and request and spend history stay); refused while it has running
@@ -22,6 +25,15 @@ Projects (one install holds many; providers, models, routing, and budgets are gl
                                 prints what would be removed
   projects archive|unarchive <slug>   hide a project (its settings, tasks, sessions, and brain
                                 are kept); refused while it has running or queued tasks
+  projects backup <slug> <target>   snapshot a split project's own store (database, sessions,
+                                artifacts, and brain) into an empty <target> directory
+  projects restore <slug> <source> [--force]   restore a split project's store from a backup made
+                                by "projects backup"; --force moves aside any state already there
+  projects migrate <slug> --from-config <legacy-config> [--dry-run] [--rollback]
+                                migrate one quiescent project from a legacy (non-split) installation
+                                named by <legacy-config> into this split installation's own store;
+                                --dry-run reports blockers without writing anything; --rollback undoes
+                                this project's most recent migration
 
 Setup
   Config: --config, else MERITROUTER_CONFIG, else nearest ancestor meritrouter.config.yaml,

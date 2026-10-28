@@ -1,8 +1,13 @@
+import path from "node:path";
 import YAML from "yaml";
 import { PROJECT_SLUG_RE } from "../config/schema.js";
+import { loadConfig } from "../config/load.js";
 import { MeritRouterError } from "../core/errors.js";
 import type { MeritRouter } from "../core/service.js";
 import { archiveProject, createProject, deleteProject, previewProjectDeletion, projectsGrid, selectableProjects, unarchiveProject } from "../admin/insights.js";
+import { backupProjectStore, readProjectBackupManifest, restoreProjectStore } from "../operations/project-backup.js";
+import { migrateLegacyProject, planProjectMigration, ProjectMigrationRefusedError, rollbackProjectMigration } from "../projects/store-migration.js";
+import { openDatabase, type Db } from "../storage/db.js";
 import { repoFlags } from "./args.js";
 import { chooseProject, type SelectOptions } from "./project-select.js";
 import { out, stamp, table } from "./terminal.js";
@@ -16,9 +21,27 @@ export interface ProjectsFlags {
   repo?: string[];
   /** `projects delete <slug> --confirm <slug>`: the slug again, to confirm. */
   confirm?: string;
+  /** `projects create <slug> --directory <path>`: the positional form keeps working too. */
+  directory?: string;
+  /** `projects restore <slug> <source> --force`. */
+  force?: boolean;
+  /** `projects migrate <slug> --from-config <legacy-config>`: the legacy installation's config. */
+  "from-config"?: string;
+  /** `projects migrate <slug> --dry-run`: plan only, write nothing. */
+  "dry-run"?: boolean;
+  /** `projects migrate <slug> --rollback`: undo its most recent migration. */
+  rollback?: boolean;
 }
 
-const USAGE = 'usage: meritrouter projects [list [--all]] | create <slug> [<directory>] [--name "<name>"] [--repo <alias>=<path> ...] | archive <slug> | unarchive <slug> | delete <slug> [--confirm <slug>]';
+const USAGE = 'usage: meritrouter projects [list [--all]] | create <slug> [<directory>] [--directory <path>] [--name "<name>"] [--repo <alias>=<path> ...] | archive <slug> | unarchive <slug> | delete <slug> [--confirm <slug>] | backup <slug> <target> | restore <slug> <source> [--force] | migrate <slug> --from-config <legacy-config> [--dry-run] [--rollback]';
+
+/** The coordination store's most recently journaled migration for a slug (CLI convenience: the library keys recovery by migrationId, not slug). */
+function latestMigrationId(db: Db, slug: string): string | null {
+  const row = db.prepare(`SELECT m.migration_uuid AS id FROM project_store_migrations m
+    JOIN project_store_registrations r ON r.project_uuid = m.project_uuid
+    WHERE r.slug = ? ORDER BY m.created_at DESC LIMIT 1`).get(slug) as { id: string } | undefined;
+  return row?.id ?? null;
+}
 
 export async function projectsCommand(sy: MeritRouter, args: string[], values: ProjectsFlags, json: boolean, select: SelectOptions): Promise<number> {
   const sub = args[0] ?? "list";
@@ -48,8 +71,13 @@ export async function projectsCommand(sy: MeritRouter, args: string[], values: P
   if (sub === "create") {
     const slug = args[1];
     // The project's folder: required in a split installation (its private store goes in
-    // <directory>/.MeritRouter); absolute, or relative to the config file's folder.
-    const directory = args[2];
+    // <directory>/.MeritRouter); absolute, or relative to the config file's folder. The
+    // positional form and --directory both work; not both at once.
+    const positionalDirectory = args[2];
+    if (positionalDirectory !== undefined && values.directory !== undefined) {
+      throw new MeritRouterError("usage", "pass the project's directory as the positional argument or --directory, not both");
+    }
+    const directory = values.directory ?? positionalDirectory;
     if (!slug || args.length > 3) throw new MeritRouterError("usage", USAGE);
     const r = await createProject(sy, { slug, ...(values.name ? { name: values.name } : {}), ...(directory !== undefined ? { directory } : {}), repositories: repoFlags(values.repo) });
     if (!r.ok) throw new MeritRouterError("usage", `project ${slug} was not created:\n  ${r.errors.join("\n  ")}`);
@@ -108,6 +136,98 @@ export async function projectsCommand(sy: MeritRouter, args: string[], values: P
       json,
     );
     return 0;
+  }
+  if (sub === "backup") {
+    const slug = args[1], target = args[2];
+    if (!slug || !target || args.length > 3) throw new MeritRouterError("usage", USAGE);
+    const manifest = await backupProjectStore(sy.db, { slug, targetDir: path.resolve(target) });
+    out(
+      json
+        ? manifest
+        : `backed up project ${slug} to ${path.resolve(target)}: ${manifest.tasks} task(s), ${manifest.sessions} session(s), ${manifest.artifacts} artifact(s)${manifest.brain ? ", with its brain" : ""}`,
+      json,
+    );
+    return 0;
+  }
+  if (sub === "restore") {
+    const slug = args[1], source = args[2];
+    if (!slug || !source || args.length > 3) throw new MeritRouterError("usage", USAGE);
+    const manifest = readProjectBackupManifest(path.resolve(source));
+    if (manifest.identity.slug !== slug) throw new MeritRouterError("usage", `${source} is a backup of project ${manifest.identity.slug}, not ${slug}`);
+    const r = restoreProjectStore(sy.db, { backupDir: path.resolve(source), force: values.force ?? false });
+    out(
+      json
+        ? r
+        : [
+            `restored project ${slug} from ${path.resolve(source)} into ${r.projectDirectory}`,
+            ...(r.previousMovedTo ? [`its previous state was moved aside to ${r.previousMovedTo} (not removed)`] : []),
+            ...(r.leasesReleased ? [`released ${r.leasesReleased} stale task lease(s) carried over from the backup`] : []),
+          ].join("\n"),
+      json,
+    );
+    return 0;
+  }
+  if (sub === "migrate") {
+    const slug = args[1];
+    if (!slug || args.length > 2) throw new MeritRouterError("usage", USAGE);
+    const fromConfig = values["from-config"];
+    if (!fromConfig) throw new MeritRouterError("usage", "projects migrate requires --from-config <legacy-config>");
+    const legacyCfg = loadConfig(path.resolve(fromConfig));
+    const legacyDb = openDatabase(legacyCfg.storageDir);
+    try {
+      if (values.rollback) {
+        const migrationId = latestMigrationId(sy.db, slug);
+        if (!migrationId) throw new MeritRouterError("not_found", `no migration is recorded for project ${slug}`);
+        const r = await rollbackProjectMigration(sy.db, legacyDb, { migrationId, legacyStorageDir: legacyCfg.storageDir });
+        out(
+          json
+            ? r
+            : `migration ${r.migrationId} of ${r.slug} rolled back from ${r.previousState}; its store ${r.targetRemoved ? "was removed" : "could not be removed (see the error for what to do)"}`
+              + (r.legacyIntact === null ? "" : r.legacyIntact ? "; the legacy project is unchanged" : "; warning: the legacy project no longer matches the migration's checkpoint"),
+          json,
+        );
+        return 0;
+      }
+      const ctx = sy.projects.get(slug);
+      const projectDirectory = ctx?.projectDirectory;
+      if (!projectDirectory) {
+        throw new MeritRouterError(
+          "usage",
+          `project ${slug} has no configured directory; add projects.${slug}.directory to ${sy.cfg.configPath} (its store is created there as <directory>/.MeritRouter), then retry`,
+        );
+      }
+      const installationRoots = [path.dirname(sy.cfg.configPath), sy.cfg.storageDir];
+      const planInput = { slug, projectDirectory, installationRoots, legacyStorageDir: legacyCfg.storageDir };
+      const describeBlockers = (blockers: Array<{ code: string; message: string; remedy: string; sample: string[] }>) =>
+        blockers.map((b) => `  - [${b.code}] ${b.message}${b.sample.length ? ` (${b.sample.join(", ")})` : ""}. ${b.remedy}`);
+      if (values["dry-run"]) {
+        const plan = planProjectMigration(sy.db, legacyDb, planInput);
+        out(
+          json
+            ? plan
+            : [plan.ready ? `project ${slug} is ready to migrate from ${legacyCfg.storageDir}` : `project ${slug} cannot migrate yet:`, ...describeBlockers(plan.blockers)].join("\n"),
+          json,
+        );
+        return plan.ready ? 0 : 1;
+      }
+      const backupDir = path.join(sy.cfg.storageDir, "migration-backups", `${slug}-${Date.now()}`);
+      try {
+        const result = await migrateLegacyProject(sy.db, legacyDb, { ...planInput, backupDir });
+        out(
+          json ? result : `migrated project ${slug} into ${result.paths.root} (migration ${result.migrationId}); its legacy backup is at ${result.backupFile}`,
+          json,
+        );
+        return 0;
+      } catch (error) {
+        if (error instanceof ProjectMigrationRefusedError) {
+          out(json ? { ok: false, blockers: error.blockers } : [`project ${slug} was not migrated:`, ...describeBlockers(error.blockers)].join("\n"), json);
+          return 1;
+        }
+        throw error;
+      }
+    } finally {
+      legacyDb.close();
+    }
   }
   throw new MeritRouterError("usage", USAGE);
 }
