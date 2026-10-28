@@ -15,7 +15,18 @@ const EVENT = "transport_owner_reconciled";
 const OUTCOME = RequestOutcomeDTOSchema.parse({ kind: "uncertain", errorKind: "operator_transport_owner_absent", errorMessage: "Local transport owner absent; remote request outcome remains unknown" });
 const OUTCOME_DIGEST = digest(OUTCOME);
 const Decision = z.object({ requestId: RequestIdSchema, expected: Hash, reason: z.string().trim().min(1).max(1000) }).strict();
-const Slot = z.object({ id: z.string().min(1), platform: z.string().min(1), kind: z.literal("request"), holder: z.string().min(1), task_id: z.string().min(1), lease_owner: z.string().min(1), priority: z.number().int(), since: z.number(), seen_at: z.number(), lease_json: z.string(), nonce: z.string().min(1), uncertain: z.literal(0) }).strict();
+const Slot = z.object({ id: z.string().min(1), platform: z.string().min(1), kind: z.literal("request"), holder: z.string().min(1), task_id: z.string().min(1), lease_owner: z.string().min(1), priority: z.number().int(), since: z.number(), seen_at: z.number(), lease_json: z.string(), nonce: z.string().min(1), uncertain: z.literal(0),
+  // Split-store authority (migrations: global request accounting broker, project execution grants). Kept in the
+  // strict shape so slotDigest and the release compare-and-swap cover them, and a future column fails closed.
+  project_uuid: z.string().nullable(), store_uuid: z.string().nullable(), store_generation: z.number().int().nullable(), execution_grants_json: z.string().nullable() }).strict();
+/**
+ * This service reconciles the single-store request protocol only. A slot carrying project/store/grant
+ * authority was taken by a split-store project Gate: its release authority is the coordination broker's
+ * physical request receipt (ProviderCapacity.releaseReconciled), and its execution grants have their own
+ * lifecycle that no slot release settles. Deleting it here would free provider capacity while the broker
+ * still records the physical request as dispatched, so it is refused, never partially handled.
+ */
+const SPLIT_SLOT_COLUMNS = ["project_uuid", "store_uuid", "store_generation", "execution_grants_json"] as const;
 const Model = z.object({ id: RequestIdSchema, execution_id: z.string(), gateway_model: z.string(), project_id: z.string(), status: z.enum(["reserved", "succeeded", "failed", "uncertain"]), finished_at: z.number().nullable(), est_input_tokens: z.number().int().nonnegative(), reserved_output_tokens: z.number().int().nonnegative() }).strict();
 const ProcessState = z.enum(["absent", "live", "unknown"]);
 export type LocalProcessState = z.infer<typeof ProcessState>;
@@ -62,6 +73,8 @@ export class TransportRecovery {
     if (bound.state !== "dispatch_intent" || !bound.dispatchId || !binding.slot?.id || !binding.slot.nonce)
       throw new Error("only an identified dispatch-intent transport may be reconciled");
     const slot = Slot.parse(this.db.prepare("SELECT * FROM provider_slots WHERE id=?").get(binding.slot.id));
+    if (SPLIT_SLOT_COLUMNS.some(column => slot[column] !== null))
+      throw new Error("transport slot carries split-store coordination authority; single-store transport recovery cannot release it");
     if (new Set(binding.participants.map(participant => participant.taskId)).size !== binding.participants.length) throw new Error("duplicate request participant identity");
     const leases = z.array(LeaseRefSchema).min(1).max(256).parse(JSON.parse(slot.lease_json));
     const transportProvider = binding.paid?.provider ?? slot.platform;
@@ -119,7 +132,7 @@ export class TransportRecovery {
         const { paid, ...accounting } = original;
         this.admission.reconcile({ ...accounting, ...(paid ? { paid: { ...paid, spend: this.spend } } : {}) }, OUTCOME);
       });
-      const removed = this.db.prepare("DELETE FROM provider_slots WHERE id=? AND kind='request' AND nonce=? AND uncertain=0 AND holder=? AND task_id=? AND lease_owner=? AND lease_json=? AND platform=? AND priority=? AND since=? AND seen_at=?")
+      const removed = this.db.prepare("DELETE FROM provider_slots WHERE id=? AND kind='request' AND nonce=? AND uncertain=0 AND holder=? AND task_id=? AND lease_owner=? AND lease_json=? AND platform=? AND priority=? AND since=? AND seen_at=? AND project_uuid IS NULL AND store_uuid IS NULL AND store_generation IS NULL AND execution_grants_json IS NULL")
         .run(candidate.slot.id, candidate.slot.nonce, candidate.slot.holder, candidate.slot.task_id, candidate.slot.lease_owner, candidate.slot.lease_json, candidate.slot.platform, candidate.slot.priority, candidate.slot.since, candidate.slot.seen_at).changes;
       if (removed !== 1) throw new Error("exact transport slot release lost its compare-and-swap");
       const receipt = Receipt.parse({ schemaVersion: 1, requestId: input.requestId, project: candidate.project, expected: input.expected, bindingDigest: candidate.bindingDigest, reservationDigest: candidate.reservationDigest, slotDigest: candidate.slotDigest, slotId: candidate.slot.id, slotNonce: candidate.slot.nonce, dispatchId: candidate.dispatchId, owner: candidate.slot.lease_owner, actor: { kind: "local_operator", host: hostname(), pid: process.pid }, reason: input.reason, proof: { kind: "same_host_pid_absent", host: candidate.owner.host, pid: candidate.owner.pid, basis: "ESRCH" }, outcomeDigest: OUTCOME_DIGEST, at: this.admission.serverNow() });

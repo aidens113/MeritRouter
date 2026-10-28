@@ -114,6 +114,24 @@ it.each(["nonce", "holder", "lease", "uncertain", "legacy", "missing-slot", "mis
   expect(dump()).toEqual(before);
 });
 
+// A slot carrying split-store project/grant authority is released only by the coordination broker's receipt.
+it.each([
+  ["project_uuid", "11111111-1111-4111-8111-111111111111"],
+  ["store_uuid", "22222222-2222-4222-8222-222222222222"],
+  ["store_generation", 1],
+  ["execution_grants_json", JSON.stringify([{ grantId: "33333333-3333-4333-8333-333333333333", nonce: "44444444-4444-4444-8444-444444444444" }])],
+] as const)("refuses a transport slot carrying split-store authority (%s) without releasing it", async (column, value) => {
+  const { binding, slot, recovery } = await fixture();
+  const inspection = recovery.inspect(binding.requestId, "demo");
+  expect(inspection.eligible).toBe(true);
+  sy!.db.prepare(`UPDATE provider_slots SET ${column}=? WHERE id=?`).run(value, slot.id);
+  const before = dump();
+  expect(() => recovery.inspect(binding.requestId, "demo")).toThrow(/split-store coordination authority/);
+  expect(() => recovery.reconcile({ requestId: binding.requestId, expected: inspection.snapshotDigest, reason }, "demo")).toThrow(/split-store coordination authority/);
+  expect(sy!.db.prepare("SELECT status FROM model_requests WHERE id=?").pluck().get(binding.requestId)).toBe("reserved");
+  expect(dump()).toEqual(before);
+});
+
 it.each(["accounting", "protocol", "delete-abort", "delete-ignore", "audit"])("rolls back accounting, protocol and slot atomically when %s fails", async stage => {
   const { binding, recovery } = await fixture({ paid: true });
   const inspection = recovery.inspect(binding.requestId), before = dump();
