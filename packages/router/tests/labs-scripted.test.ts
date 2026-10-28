@@ -5,17 +5,28 @@ import { execFileSync } from "node:child_process";
 import type { MeritRouter } from "../src/core/service.js";
 import { LabManager } from "../src/labs/lab.js";
 import { baseConfig, goodOutput, makeEnv, openWithTestSupervisor, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
+import { labTokens, observeLabProcesses, survivingLabProcesses } from "./fixtures/lab-hosts.js";
 let env: Env | undefined;
 let sy: MeritRouter | undefined;
 let owner: LabManager | undefined;
+// Teardown stops the Lab's services through their managers (which retire each native Job), every
+// step runs even if an earlier one fails, and it then proves that none of this test's Lab hosts,
+// their Job helpers or their descendants outlived it. Windows service stops take several
+// PowerShell round trips, so the hook gets far more than vitest's 10 s default.
 afterEach(async () => {
-  await owner?.close();
+  const failures: unknown[] = [];
+  const step = async (fn: () => unknown) => { try { await fn(); } catch (error) { failures.push(error); } };
+  const observed = sy ? await observeLabProcesses(labTokens(sy.db)).catch(() => []) : [];
+  await step(() => owner?.close());
   owner = undefined;
-  await sy?.close();
+  await step(() => sy?.close());
   sy = undefined;
-  env?.cleanup();
+  await step(() => env?.cleanup());
   env = undefined;
-});
+  const survivors = await survivingLabProcesses(observed);
+  if (failures.length) throw failures[0];
+  expect(survivors).toEqual([]);
+}, 120_000);
 const call = (name: string, args: unknown) => ({ id: name, type: "function" as const, function: { name, arguments: JSON.stringify(args) } });
 it("runs a scripted bound team, scoped tools, integration restart and revision check on the lab branch", async () => {
   const node = JSON.stringify(process.execPath);
@@ -74,4 +85,8 @@ it("runs a scripted bound team, scoped tools, integration restart and revision c
   expect(readFileSync(path.join(env.dir, "brain/projects/alpha/labs/scripted.md"), "utf8")).toContain("Job completed");
   const outputs = client.requests.filter(req => String(req.messages[0]!.content).startsWith("# Supervisor charter")).at(-1)!.messages.filter(m => m.role === "tool").map(m => String(m.content));
   expect(outputs.filter(text => text.startsWith("error:"))).toEqual([]);
+  // The teardown leak check below sees this test's live service host and its Job helper.
+  const live = await observeLabProcesses(labTokens(sy.db));
+  expect(live.some(item => item.role === "host" && item.pid === status.services[0]!.pid)).toBe(true);
+  expect(live.some(item => item.role === "job-helper")).toBe(true);
 }, 180000);

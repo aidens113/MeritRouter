@@ -18,17 +18,20 @@ let manager: LabManager | undefined;
 let trap: Server | undefined;
 let hits = 0;
 let connections = 0;
+// The test's state is taken into locals so a slow teardown never touches the next test's, and
+// every step runs even if closing the manager fails. A verified Windows Lab stop takes several
+// PowerShell round trips, far beyond vitest's 10 s default hook timeout on a loaded host.
 afterEach(async () => {
-  await manager?.close();
-  manager = undefined;
-  db?.close();
-  db = undefined;
-  env?.cleanup();
-  env = undefined;
-  if (trap)
-    await new Promise<void>(resolve => trap!.close(() => resolve()));
-  trap = undefined;
-});
+  const owned = manager, store = db, fixture = env, server = trap;
+  manager = undefined; db = undefined; env = undefined; trap = undefined;
+  let failure: unknown;
+  try { await owned?.close(); } catch (error) { failure = error; }
+  store?.close();
+  fixture?.cleanup();
+  if (server)
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  if (failure) throw failure;
+}, 120_000);
 async function setup(checks: Record<string, unknown>) {
   hits = 0;
   connections = 0;

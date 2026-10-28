@@ -223,6 +223,9 @@ export function integrationHooks(s: SupervisorState, env: HarnessEnv, seam: Inte
       }
       return out;
     },
+    // A Lab's root job integrates into the Lab worktree, where the Lab's own services run: the
+    // queue admits past exactly those services (the same scope as the supervisor's own admissions).
+    admission: async item => s.ctx.lab && s.ctx.lab.rootJobId === jobId && item.jobId === jobId ? s.ctx.lab.integrationPermits(jobId, [item.repo]) : [],
     redelegate: async (item, conflict) => {
       const t = svc.getTask(item.taskId);
       if (!t) return null;

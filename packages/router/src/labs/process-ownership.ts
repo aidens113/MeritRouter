@@ -26,7 +26,7 @@ export async function processOwnership(pid: number, token: string): Promise<"own
   try {
     let command: string;
     if (process.platform === "win32")
-      command = (await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", `(Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}').CommandLine`], { windowsHide: true, timeout: 10000 })).stdout;
+      command = await windowsCommandLine(pid) ?? "";
     else if (process.platform === "linux")
       command = readFileSync(`/proc/${pid}/cmdline`, "utf8").replace(/\0/g, " ");
     else
@@ -37,7 +37,21 @@ export async function processOwnership(pid: number, token: string): Promise<"own
     return processAlive(pid) ? "foreign" : "missing";
   }
 }
-export const WindowsProcessSnapshotSchema = z.array(z.object({ ProcessId: z.number().int().nonnegative(), ParentProcessId: z.number().int().nonnegative(), CreatedTicks: z.string().regex(/^[0-9]+$/), CommandLine: z.string().nullable() }).strict());
+/**
+ * One process's exact command line on Windows, or null when the process or its command line is
+ * unavailable. Like the full snapshot below, the text travels as base64 of UTF-8, because Windows
+ * PowerShell writes stdout in the OEM code page and would replace or mangle any character it
+ * cannot represent, so the identity compared here would not be the process's real command line.
+ */
+export async function windowsCommandLine(pid: number): Promise<string | null> {
+  if (!Number.isSafeInteger(pid) || pid < 1) throw new Error("invalid process id");
+  const command = `$ErrorActionPreference='Stop'; $p = Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}'; if ($null -eq $p -or $null -eq $p.CommandLine) { '-' } else { [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$p.CommandLine)) }`;
+  const encoded = (await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", command], { windowsHide: true, timeout: 10000 })).stdout.trim();
+  if (encoded === "-") return null;
+  if (!/^(?:[A-Za-z0-9+/]+={0,2})?$/.test(encoded)) throw new Error("process command line transport is not base64");
+  return Buffer.from(encoded, "base64").toString("utf8");
+}
+export const WindowsProcessSnapshotSchema =z.array(z.object({ ProcessId: z.number().int().nonnegative(), ParentProcessId: z.number().int().nonnegative(), CreatedTicks: z.string().regex(/^[0-9]+$/), CommandLine: z.string().nullable() }).strict());
 export type WindowsProcessSnapshot = z.infer<typeof WindowsProcessSnapshotSchema>;
 /** A reused parent PID does not prove ancestry: every edge must follow creation time. */
 export function ownedWindowsProcessTree(raw: unknown, pid: number, token: string): WindowsProcessSnapshot {

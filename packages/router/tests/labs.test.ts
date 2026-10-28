@@ -22,9 +22,24 @@ const exec = promisify(execFile);
 let env: Env | undefined;
 let db: Db | undefined;
 const managers: LabManager[] = [];
+// Teardown order matters for Windows Labs. Each manager stops its own services first, which
+// retires their native Jobs (the detached job.exe helper exits only on that release). Only what
+// a manager could not stop is then killed directly as a safety net. The hook takes this test's
+// state into locals, so a slow teardown never touches the next test's, and it is given far more
+// than vitest's 10 s default: a verified stop is several PowerShell round trips per service.
 afterEach(async () => {
-  if (db) {
-    for (const m of managers) {
+  const owned = managers.splice(0).reverse(), store = db, fixture = env;
+  db = undefined;
+  env = undefined;
+  for (const m of owned) {
+    try {
+      await m.close();
+    }
+    catch {
+    }
+  }
+  if (store) {
+    for (const m of owned) {
       for (const lab of m.store.list()) {
         for (const service of m.store.services(lab.id)) {
           if (service.pid && service.token)
@@ -33,19 +48,9 @@ afterEach(async () => {
       }
     }
   }
-  for (const m of managers.reverse()) {
-    try {
-      await m.close();
-    }
-    catch {
-    }
-  }
-  managers.length = 0;
-  db?.close();
-  db = undefined;
-  env?.cleanup();
-  env = undefined;
-});
+  store?.close();
+  fixture?.cleanup();
+}, 120_000);
 const NODE = JSON.stringify(process.execPath);
 const SERVER = `const http=require('node:http'),fs=require('node:fs'),path=require('node:path'),{spawn}=require('node:child_process');
 const data=process.env.DATA_DIR;fs.mkdirSync(data,{recursive:true});fs.writeFileSync(path.join(data,'identity'),process.env.LAB_NAME);let child=null;

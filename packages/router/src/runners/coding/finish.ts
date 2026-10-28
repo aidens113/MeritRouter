@@ -25,16 +25,34 @@ export function sourceDirtyFinding(ws: Workspace): RunOutcome["result"]["finding
     : [];
 }
 
+/**
+ * The checkout a coding task's worktree is created from. A member of a Lab team below its root
+ * job uses the configured checkout pinned to the Lab branch head, never the Lab worktree itself:
+ * the Lab worktree hosts the Lab's live services, which the repository command fence (rightly)
+ * refuses every admission past except the root job's own integration. Everything else uses the
+ * configured repository path (for a Lab's root job that is the Lab worktree).
+ */
+async function workspaceSource(ctx: RunContext, alias: string): Promise<{ path: string; head: string | null }> {
+  if (ctx.lab && ctx.lab.rootJobId !== ctx.taskId) {
+    const team = await ctx.lab.teamSource(ctx.taskId, alias);
+    return { path: team.sourcePath, head: team.head };
+  }
+  return { path: ctx.cfg.repositoryPaths[alias]!.path, head: null };
+}
+
 export async function prepareWorkspace(ctx: RunContext): Promise<{ ws: Workspace; worktrees: Worktrees }> {
   const { Worktrees } = await import("../../workspaces/worktree.js");
   const alias = ctx.spec.writableRepository!;
-  const repo = ctx.cfg.repositoryPaths[alias]!;
+  const source = await workspaceSource(ctx, alias);
   const worktrees = new Worktrees(ctx.tasks.db, projectRuntimeActivationRoots(ctx.cfg).worktrees, ctx.now);
   const runNo = ctx.spec.constraints.labChecks?.length ? ctx.claimedRunCount : (ctx.claimedRunCount ?? ctx.tasks.get(ctx.taskId)!.row.run_count);
   if (runNo === undefined) throw new Error("task Lab workspace requires its captured claim generation");
   // A quality repair continues from the submitted revision; the diff is still taken against the base.
   const start = ctx.retry?.startFrom?.alias === alias ? ctx.retry.startFrom.commit : null;
-  const ws = await worktrees.prepare({ taskId: ctx.taskId, run: runNo, alias, sourcePath: repo.path, ...(ctx.spec.context.baseCommits?.[alias] ? { baseCommit: ctx.spec.context.baseCommits[alias] } : {}), ...(start ? { startCommit: start } : {}) });
+  // An explicit base (a supervisor pins its integration head at dispatch) wins; a Lab team member
+  // without one starts from the Lab branch head it would otherwise have read from the Lab worktree.
+  const base = ctx.spec.context.baseCommits?.[alias] ?? source.head;
+  const ws = await worktrees.prepare({ taskId: ctx.taskId, run: runNo, alias, sourcePath: source.path, ...(base ? { baseCommit: base } : {}), ...(start ? { startCommit: start } : {}) });
   await withRepositoryMutation([ws.sourcePath, ws.worktreePath], async mutation => {
     assertRunAuthority(ctx);
     await hydrateRepairWorkspace(ctx, ws, { mutation });
@@ -58,7 +76,7 @@ export async function resumeWorkspace(ctx: RunContext, recorded: SessionWorkspac
   const ws: Workspace =
     prev && path.resolve(prev.worktreePath) === path.resolve(rec.worktree)
       ? prev
-      : { taskId: ctx.taskId, repoAlias: alias, sourcePath: ctx.cfg.repositoryPaths[alias]!.path, worktreePath: rec.worktree, baseSha: rec.baseCommit, sourceDirty: false, dirtyPaths: [] };
+      : { taskId: ctx.taskId, repoAlias: alias, sourcePath: (await workspaceSource(ctx, alias)).path, worktreePath: rec.worktree, baseSha: rec.baseCommit, sourceDirty: false, dirtyPaths: [] };
   return withRepositoryMutation([ws.sourcePath, ws.worktreePath], async mutation => {
     assertRunAuthority(ctx);
     await verifyRepairHydration(ctx, ws, { mutation });

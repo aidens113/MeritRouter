@@ -779,15 +779,26 @@ export class LabManager {
     await Promise.allSettled([...this.operations]);
     while (this.ticking)
       await new Promise(r => setTimeout(r, 20));
+    // Every Lab is attempted even when an earlier one fails: one Lab's refusal must not leave the
+    // services this manager owns in other Labs running (their native Jobs outlive the process).
+    const failures: unknown[] = [];
     if (input.stopServices !== false) {
       for (const lab of this.list()) {
         if(lab.kind==="task_attempt")continue;
-        await this.commands.stopTransient(lab);
-        if (this.store.services(lab.id).some(s => s.owner_id === this.owner))
-          await this.stopLab(lab.project, lab.name);
+        try {
+          await this.commands.stopTransient(lab);
+          const services = this.store.services(lab.id), mine = services.filter(s => s.owner_id === this.owner);
+          if (!mine.length) continue;
+          // A service another live manager owns is not ours to stop; stop only our own then.
+          if (services.every(s => s.owner_id === this.owner || s.owner_until <= Date.now()))
+            await this.stopLab(lab.project, lab.name);
+          else
+            for (const service of mine.reverse()) await this.services.stop(lab, service.name);
+        } catch (error) { failures.push(error); }
       }
     }
     this.options.db.prepare("UPDATE lab_services SET owner_until=0 WHERE owner_id=?").run(this.owner);
+    if (failures.length) throw failures[0];
   }
 }
 

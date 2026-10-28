@@ -21,20 +21,27 @@ import { processAlive, processOwnership, stopOwnedProcess } from "../src/labs/pr
 import { portAvailable } from "../src/labs/ports.js";
 import type { TaskAttemptHandle, RegisterTaskAttempt } from "../src/labs/task-attempt-schema.js";
 let env: Env | undefined, db: Db | undefined, manager: LabManager | undefined;
+// The test's state is taken into locals so a slow teardown never touches the next test's, and
+// the store and fixture are always closed even if stopping an attempt or the manager fails. A
+// verified Windows stop is several PowerShell round trips, far beyond vitest's 10 s hook default.
 afterEach(async () => {
-  if (manager) {
-    for (const request of manager.taskAttempts.store.all()) {
-      if (request.phase !== "pruned")
-        await manager.taskAttempts.runner.stop(manager.taskAttempts.store.get(request.attemptId));
-    }
-    await manager.close();
-  }
-  db?.close();
-  env?.cleanup();
+  const owned = manager, store = db, fixture = env;
   manager = undefined;
   db = undefined;
   env = undefined;
-});
+  try {
+    if (owned) {
+      for (const request of owned.taskAttempts.store.all()) {
+        if (request.phase !== "pruned")
+          await owned.taskAttempts.runner.stop(owned.taskAttempts.store.get(request.attemptId));
+      }
+      await owned.close();
+    }
+  } finally {
+    store?.close();
+    fixture?.cleanup();
+  }
+}, 120_000);
 const NODE = JSON.stringify(process.execPath);
 const SERVER = `const fs=require('node:fs'),http=require('node:http');fs.writeFileSync(process.env.DATA_DIR+'/identity',process.env.LAB_NAME);http.createServer((q,r)=>r.end(fs.readFileSync('value.txt','utf8'))).listen(Number(process.env.PORT),'127.0.0.1');`;
 const CHECK = `const fs=require('node:fs');fetch('http://127.0.0.1:'+process.env.PORT).then(r=>r.text()).then(t=>{if(t!==fs.readFileSync('value.txt','utf8'))process.exit(2);console.log(t)}).catch(()=>process.exit(3));`;

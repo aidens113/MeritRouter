@@ -10,6 +10,7 @@ import { git } from "./git.js";
 import { repoKey } from "../projects/context.js";
 import { RepositoryMutationError, withRepositoryMutation, type RepositoryMutationCapability } from "./repository-mutation.js";
 import { SelectedCommitError } from "../attribution/selected-commit.js";
+import type { RepositoryCommandPermit } from "./repository-command.js";
 
 /**
  * The merge queue: how finished work reaches a job branch. Every integration (a coding task's
@@ -150,6 +151,13 @@ export interface MergeHooks {
   checks?: (item: MergeItem) => Promise<Array<{ command: string; exitCode: number | null; logRef?: string }>>;
   /** Re-delegate the item's task with the conflict as context; returns the new task id, or null. */
   redelegate?: (item: MergeItem, conflict: MergeConflict) => Promise<string | null>;
+  /**
+   * Repository command permits for this item's admissions, fetched afresh for every admission
+   * (a restart replaces a service's command). Only a Lab's root job supplies any: its
+   * integration worktree is the Lab worktree, and the permits cover exactly that Lab's own live
+   * services. The fence still refuses every other active command.
+   */
+  admission?: (item: MergeItem) => Promise<readonly RepositoryCommandPermit[]>;
 }
 
 export interface EnqueueInput {
@@ -207,8 +215,12 @@ async function gitPathExists(worktree: string, p: string): Promise<boolean> {
   return existsSync(path.isAbsolute(rel) ? rel : path.join(worktree, rel));
 }
 
-/** Abort a cherry-pick or rebase a dead run left in progress in this worktree. */
-export async function abortInProgress(worktree: string, control: { mutation?: RepositoryMutationCapability } = {}): Promise<string[]> {
+/**
+ * Abort a cherry-pick or rebase a dead run left in progress in this worktree. `command` permits
+ * are passed only for the integration worktree they were issued for (a permit outside the
+ * admitted worktree is refused by the fence), never for an item's source worktree.
+ */
+export async function abortInProgress(worktree: string, control: { mutation?: RepositoryMutationCapability; command?: readonly RepositoryCommandPermit[] } = {}): Promise<string[]> {
   if (!existsSync(worktree)) return [];
   return withRepositoryMutation([worktree], async () => {
     try { return await abortInProgressUnderMutation(worktree); }
@@ -216,7 +228,7 @@ export async function abortInProgress(worktree: string, control: { mutation?: Re
       if (error instanceof RepositoryMutationError || error instanceof SelectedCommitError) throw error;
       throw new RepositoryMutationError("ownership_changed", `Merge sequencer abort failed: ${(error as Error).message}`);
     }
-  }, { capability: control.mutation });
+  }, { capability: control.mutation, ...(control.command?.length ? { command: control.command } : {}) });
 }
 
 async function abortInProgressUnderMutation(worktree: string): Promise<string[]> {
@@ -251,7 +263,7 @@ export class MergeQueue {
   ) {}
 
   /** Branch mutex is acquired first; physical owners are compared before writing a lease. */
-  private async withMutation<T>(item: MergeItem, action: (mutation: RepositoryMutationCapability) => Promise<T>): Promise<T> {
+  private async withMutation<T>(item: MergeItem, hooks: MergeHooks, action: (mutation: RepositoryMutationCapability, command: readonly RepositoryCommandPermit[]) => Promise<T>): Promise<T> {
     const roots = [item.integrationWorktree];
     if (item.sourceWorktree && existsSync(item.sourceWorktree)) {
       const owner = async (root: string) => {
@@ -262,7 +274,8 @@ export class MergeQueue {
         throw new RepositoryMutationError("ownership_changed", "Merge source belongs to a different physical Git owner");
       roots.push(item.sourceWorktree);
     }
-    return withRepositoryMutation(roots, action);
+    const command = (await hooks.admission?.(item)) ?? [];
+    return withRepositoryMutation(roots, mutation => action(mutation, command), command.length ? { command } : {});
   }
 
   /** Physical Git identity, so different aliases/projects cannot bypass a branch lock. */
@@ -437,7 +450,7 @@ export class MergeQueue {
     if (!existsSync(item.integrationWorktree)) {
       throw new RepositoryMutationError("ownership_changed", "Integration worktree is missing; its publication receipts and physical owner cannot be verified. Restore the retained worktree for explicit recovery; queue state is preserved");
     }
-    const next = await this.withMutation(item, async mutation => {
+    const next = await this.withMutation(item, hooks, async (mutation, command) => {
       if (item.state === "queued") {
         this.event(item, "merge_recovered", { outcome: "started", previousOwner: item.owner });
         return { kind: "process" as const, item };
@@ -445,7 +458,7 @@ export class MergeQueue {
       await this.assertOwnedHead(item);
       if (item.sourceWorktree && existsSync(item.sourceWorktree) && await headOf(item.sourceWorktree) !== item.sourceHead)
         throw new RepositoryMutationError("ownership_changed", "Merge source HEAD changed before recovery; sequencer state is preserved");
-      const aborted = [...(await abortInProgress(item.integrationWorktree, { mutation })), ...(item.sourceWorktree ? (await abortInProgress(item.sourceWorktree, { mutation })).map((a) => `source ${a}`) : [])];
+      const aborted = [...(await abortInProgress(item.integrationWorktree, { mutation, command })), ...(item.sourceWorktree ? (await abortInProgress(item.sourceWorktree, { mutation })).map((a) => `source ${a}`) : [])];
       if (item.state === "picked") {
         const owned = this.update(item.id, { owner: this.owner });
         this.event(owned, "merge_recovered", { outcome: "completed", from: "picked", aborted });
@@ -476,7 +489,7 @@ export class MergeQueue {
   }
 
   private async process(item: MergeItem, hooks: MergeHooks): Promise<MergeItem> {
-    const started = await this.withMutation(item, async () => {
+    const started = await this.withMutation(item, hooks, async () => {
       for (const root of [item.integrationWorktree, ...(item.sourceWorktree ? [item.sourceWorktree] : [])])
         for (const marker of ["CHERRY_PICK_HEAD", "REVERT_HEAD", "sequencer", "rebase-merge", "rebase-apply"])
           if (await gitPathExists(root, marker)) throw new RepositoryMutationError("ownership_changed", "Merge admission found an existing sequencer; explicit recovery is required");
@@ -496,16 +509,16 @@ export class MergeQueue {
 
   private async pickAndFinish(item: MergeItem, hooks: MergeHooks): Promise<MergeItem> {
     try {
-      const picked = await this.withMutation(item, async mutation => {
+      const picked = await this.withMutation(item, hooks, async (mutation, command) => {
         await hooks.validateSource?.(item);
-        let r = await this.pick(item, hooks, mutation);
+        let r = await this.pick(item, hooks, mutation, command);
         if (!r.ok && (hooks.allowRebase?.(item) ?? true) && !item.rebased && item.sourceWorktree && existsSync(item.sourceWorktree) && (await isClean(item.sourceWorktree))) {
           const rb = await this.rebase(item, hooks, mutation);
           if (rb.ok) {
             const dropped = item.commits.length - rb.commits.length;
             item = this.update(item.id, { commits: rb.commits, rebased: true, sourceBase: item.beforeHead!, sourceHead: rb.head, detail: { ...this.get(item.id)!.detail, rebasedFrom: { base: item.sourceBase, head: item.sourceHead, commits: item.commits } } });
             this.event(item, "merge_rebased", { onto: item.beforeHead, commits: rb.commits.length, dropped, conflict: r.conflict });
-            r = await this.pick(item, hooks, mutation);
+            r = await this.pick(item, hooks, mutation, command);
           } else r = { ok: false, conflict: rb.conflict };
         }
         if (!r.ok) return { kind: "conflict" as const, conflict: r.conflict };
@@ -514,8 +527,8 @@ export class MergeQueue {
       return await (picked.kind === "conflict" ? this.conflicted(item, picked.conflict, hooks) : this.finish(picked.item, hooks));
     } catch (err) {
       if (isSimulatedCrash(err) || err instanceof RepositoryMutationError || err instanceof SelectedCommitError) throw err;
-      return this.withMutation(item, async mutation => {
-        await abortInProgress(item.integrationWorktree, { mutation });
+      return this.withMutation(item, hooks, async (mutation, command) => {
+        await abortInProgress(item.integrationWorktree, { mutation, command });
         await this.restore(item);
         const failed = this.update(item.id, { state: "failed", detail: { ...item.detail, error: (err as Error).message.slice(0, 500) } });
         this.event(failed, "merge_failed", { error: failed.detail.error });
@@ -559,7 +572,7 @@ export class MergeQueue {
   }
 
   /** Pick the item's commits that are not on the branch yet, one at a time. On failure the branch is restored. */
-  private async pick(item: MergeItem, hooks: MergeHooks, mutation: RepositoryMutationCapability): Promise<{ ok: true; head: string } | { ok: false; conflict: MergeConflict }> {
+  private async pick(item: MergeItem, hooks: MergeHooks, mutation: RepositoryMutationCapability, command: readonly RepositoryCommandPermit[]): Promise<{ ok: true; head: string } | { ok: false; conflict: MergeConflict }> {
     const wt = item.integrationWorktree;
     const present = await pickedSources(wt, item.beforeHead!);
     for (const c of item.commits) {
@@ -570,7 +583,7 @@ export class MergeQueue {
       } catch (err) {
         const files = await unmergedFiles(wt);
         if (err instanceof RepositoryMutationError || err instanceof SelectedCommitError) throw err;
-        await abortInProgress(wt, { mutation });
+        await abortInProgress(wt, { mutation, command });
         await this.restore(item);
         return { ok: false, conflict: { files, message: (err as Error).message.replace(/\s+/g, " ").slice(0, 300), commit: c, stage: "pick" } };
       }
@@ -619,14 +632,14 @@ export class MergeQueue {
         detail.redelegateError = (err as Error).message.slice(0, 300);
       }
       if (to) {
-        return this.withMutation(item, async () => {
+        return this.withMutation(item, hooks, async () => {
           const r = this.update(item.id, { state: "redelegated", redelegatedTo: to, detail });
           this.event(r, "merge_redelegated", { to, conflict });
           return r;
         });
       }
     }
-    return this.withMutation(item, async () => {
+    return this.withMutation(item, hooks, async () => {
       const r = this.update(item.id, { state: "conflict", detail });
       this.event(r, "merge_conflict", { conflict, redelegated: false });
       return r;
@@ -635,7 +648,7 @@ export class MergeQueue {
 
   /** The commits are on the branch: record the acceptance, the integration, and the job checks. */
   private async finish(item: MergeItem, hooks: MergeHooks): Promise<MergeItem> {
-    let done = await this.withMutation(item, async () => {
+    let done = await this.withMutation(item, hooks, async () => {
       const actualHead = await this.assertOwnedHead(item);
       if (item.afterHead && actualHead !== item.afterHead) throw new RepositoryMutationError("ownership_changed", "Merge integration HEAD no longer matches the captured picked chain");
       try {
@@ -668,7 +681,7 @@ export class MergeQueue {
     if (hooks.checks) {
       const checks = await hooks.checks(done);
       if (checks.length) {
-        done = await this.withMutation(done, async () => {
+        done = await this.withMutation(done, hooks, async () => {
           if (await headOf(done.integrationWorktree) !== done.afterHead) throw new RepositoryMutationError("ownership_changed", "Merge checks completed against a superseded HEAD");
           const checked = this.update(done.id, { detail: { ...done.detail, checks } });
           this.event(checked, "merge_checks", { head: done.afterHead, checks, passed: checks.every((c) => c.exitCode === 0) });

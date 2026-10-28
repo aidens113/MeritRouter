@@ -7,6 +7,8 @@ import type { ResolvedConfig } from "../config/load.js";
 import type { LabManager } from "./lab.js";
 import { git } from "../workspaces/git.js";
 import type { RepositoryCommandPermit } from "../workspaces/repository-command.js";
+import { realpathSync } from "node:fs";
+import path from "node:path";
 export interface LabRunContext {
   manager: LabManager;
   project: string;
@@ -19,13 +21,35 @@ export interface LabRunContext {
    * active command, and every other caller, is still refused by the repository command fence.
    */
   integrationPermits(jobId: string, aliases: readonly string[]): Promise<RepositoryCommandPermit[]>;
+  /**
+   * Where a team member below the root (`taskId !== rootJobId`) bases its own task worktree for
+   * `alias`: the configured checkout the Lab was created from, pinned to the Lab branch's
+   * current head. The Lab worktree hosts the Lab's live services, so a child that used it as its
+   * source would have to admit past them; a child never does. The branch is read through the
+   * shared Git store, never through the Lab worktree. Refused for the root job, for an alias
+   * outside the Lab, and when the configured checkout is no longer the Lab's source.
+   */
+  teamSource(taskId: string, alias: string): Promise<{ sourcePath: string; head: string }>;
 }
+const physical = (value: string) => { const real = realpathSync(path.resolve(value)); return process.platform === "win32" ? real.toLowerCase() : real; };
 function runContext(manager: LabManager, project: string, name: string, rootJobId: string, labId: string): LabRunContext {
   return {
     manager, project, name, rootJobId, labId,
     integrationPermits: async (jobId, aliases) => {
       if (jobId !== rootJobId) throw new MeritRouterError("lab_scope_denied", "only the Lab's root job may admit integration past its services");
       return manager.ownServicePermits(project, name, aliases);
+    },
+    teamSource: async (taskId, alias) => {
+      if (taskId === rootJobId) throw new MeritRouterError("lab_scope_denied", "the Lab's root job integrates in the Lab worktree; it has no team source");
+      const { lab } = manager.status(project, name);
+      if (lab.id !== labId) throw new MeritRouterError("lab_scope_denied", "the Lab was replaced after this task was bound");
+      const repo = lab.repositories.find(candidate => candidate.alias === alias);
+      const configured = manager.options.project(project).repositoryPaths[alias];
+      if (!repo || !configured) throw new MeritRouterError("lab_scope_denied", `repository ${alias} is outside this lab`);
+      if (physical(configured.path) !== physical(repo.source)) throw new MeritRouterError("lab_scope_denied", `configured repository ${alias} is no longer this Lab's source checkout`);
+      const head = (await git(configured.path, ["rev-parse", "--verify", "--end-of-options", `refs/heads/${repo.branch}^{commit}`])).trim();
+      if (!/^[a-f0-9]{40,64}$/.test(head)) throw new MeritRouterError("lab_scope_denied", `Lab branch ${repo.branch} has no readable head`);
+      return { sourcePath: configured.path, head };
     },
   };
 }
