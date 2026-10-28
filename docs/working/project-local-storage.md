@@ -31,6 +31,17 @@ lock failures (labs-task-prune 3, labs-task-attempt 2, active-validation-ownersh
 today per lead bisect; fix in progress (reports/fix-lab-lock-20261027.md). B1 service
 activation in progress (reports/wave-b1.md). Open: calibration verdict_records/
 verification_audits lack project_id; qualification needs its own store (B2).
+2026-10-27 later: B1 5f00abb, B2a+B2c ba32ab3 (explicit storage.layout; setup/init write split+
+full; `.MeritRouter` install folders; qualification store), B2b 16d5efe (split create/delete),
+Lab lock fixes 4113f63, supervisor command wait 1dbfd50, docs C2 855f880, C1 324f69c: the
+gate-1 exit journey passes (lead re-ran: 18 pass/1 POSIX skip across activation, service-close,
+install-layout). Lead decisions: split `setup` creates no placeholder project and the first
+created project becomes primary; add CLI `projects backup|restore|migrate` and
+`projects create --directory` (reports/split-operator-gaps.md). Open before the pilot: task Labs
+from worker runs in split projects, labs-scripted service permits, supervisor.test.ts
+pre-existing failure (reports/split-labs.md); panel C3 runtime check (reports/wave-c3.md).
+Known limits: paid routes refused in split projects; legacy fence has no coordination store;
+forced restore leaves <project>/.MeritRouter/pre-restore-* until removed by hand.
 
 2026-10-26 latest checkpoint: S6a committed d042de0 after independent tools12+
 registry19 PASS31/31. Brain/deletion22/22 independently PASS, committed ee7c5f8.
