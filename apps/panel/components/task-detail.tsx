@@ -56,8 +56,9 @@ const BASIS: Record<string, string> = {
  */
 export async function TaskDetailView({ sy, taskId, scope, sp = {} }: { sy: MeritRouter; taskId: string; scope: DetailScope; sp?: Record<string, string | string[] | undefined> }) {
   const base = scope.base;
-  const related = await insights.taskRelated(sy, taskId);
-  const d = insights.taskDetail(sy, taskId);
+  // Every read is scoped to the page's project: its own store holds the task.
+  const related = await insights.taskRelated(sy, taskId, scope.project);
+  const d = insights.taskDetail(sy, taskId, scope.project);
   if (!d || d.status.state === "unknown") notFound();
 
   const st = d.status as Extract<typeof d.status, { profile: string }>;
@@ -67,12 +68,12 @@ export async function TaskDetailView({ sy, taskId, scope, sp = {} }: { sy: Merit
   const unresolvedIds = res?.unresolvedCriterionIds ? new Set(res.unresolvedCriterionIds) : null;
   const verified = new Map((d.verification?.criteria ?? []).map((c) => [c.id, c]));
   const live = !isTerminal(st.state);
-  const sessions = insights.sessionsView(sy, { taskId: st.taskId });
-  const taskBudget = insights.taskBudget(sy, taskId);
+  const sessions = insights.sessionsView(sy, { taskId: st.taskId, project: scope.project });
+  const taskBudget = insights.taskBudget(sy, taskId, scope.project);
   const budgetPending = insights.budgetRequestsView(sy, { taskId, project: scope.project, status: "pending", limit: 1000 });
   const budgetHistory = insights.budgetRequestsView(sy, { taskId, project: scope.project }).filter((r) => r.status !== "pending");
-  const workerActions = insights.listWorkerActions(sy.db, { project: scope.project, taskId });
-  const webRequests = insights.taskWebRequests(sy, st.taskId);
+  const workerActions = insights.listWorkerActions(sy.projectStores(scope.project).db, { project: scope.project, taskId });
+  const webRequests = insights.taskWebRequests(sy, st.taskId, scope.project);
   const delivery = st.profile === "supervise" ? insights.deliveryView(sy,st.taskId,scope.project) : null;
 
   const tab = pickTab(sp, ["result", "verification", "routing", "usage", "sessions"]);
@@ -265,7 +266,7 @@ export async function TaskDetailView({ sy, taskId, scope, sp = {} }: { sy: Merit
                           <code className="break-all font-mono text-xs text-ink-2">{c.command}</code>
                           {c.revision !== undefined ? <span className="text-[11px] text-ink-3" title="The staged tree the check ran on">{c.revision ? `on ${c.revision.slice(0, 12)}` : "no revision"}</span> : null}
                         </div>
-                        <ArtifactViewer refId={c.logRef} kind="check_log" label="Check output" />
+                        <ArtifactViewer project={scope.project} refId={c.logRef} kind="check_log" label="Check output" />
                       </li>
                     ))}
                   </ul>
@@ -311,13 +312,13 @@ export async function TaskDetailView({ sy, taskId, scope, sp = {} }: { sy: Merit
           <CardHeader title="Artifacts" description="Files the task produced: patches (with their base commit), model responses, check logs, and context manifests." />
           <div className="space-y-2 p-4">
             {d.artifacts.length ? (
-              d.artifacts.map((a) => <ArtifactViewer key={a.id} refId={`artifact:${a.id}`} kind={a.kind} label={a.label} bytes={a.bytes} mediaType={a.media_type} defaultOpen={a.kind === "patch"} />)
+              d.artifacts.map((a) => <ArtifactViewer project={scope.project} key={a.id} refId={`artifact:${a.id}`} kind={a.kind} label={a.label} bytes={a.bytes} mediaType={a.media_type} defaultOpen={a.kind === "patch"} />)
             ) : (
               <p className="text-sm text-ink-3">No artifacts yet.</p>
             )}
           </div>
         </Card></div> : null}
-      {tab === "verification" ? <div className="space-y-6"><ContractAndVerification d={d} names={names} base={base} /></div> : null}
+      {tab === "verification" ? <div className="space-y-6"><ContractAndVerification d={d} names={names} base={base} project={scope.project} /></div> : null}
       {tab === "routing" ? <div className="space-y-6">{res ? <Card><CardHeader title="Models tried" /><div className="p-4">{res.routing ? (
         <div>
           <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-ink-3">Models tried</h3>
@@ -557,7 +558,7 @@ function importanceSource(source: string): string {
   return `${label[kind] ?? kind}${id ? ` ${id}` : ""}`;
 }
 
-function ContractAndVerification({ d, names, base }: { d: insights.TaskDetail; names: Map<string, string>; base: string }) {
+function ContractAndVerification({ d, names, base, project }: { d: insights.TaskDetail; names: Map<string, string>; base: string; project: string }) {
   const c = d.contract?.contract;
   const v = d.verification;
   const t = d.trail;
@@ -656,7 +657,7 @@ function ContractAndVerification({ d, names, base }: { d: insights.TaskDetail; n
       {followUps ? (
         <div className="space-y-3 border-t border-line p-4">
           <TrailHeading />
-          <VerificationTrail trail={t} criteria={new Map(d.criteria.map((x) => [x.id, x.text]))} names={names} base={base} />
+          <VerificationTrail trail={t} criteria={new Map(d.criteria.map((x) => [x.id, x.text]))} names={names} base={base} project={project} />
         </div>
       ) : null}
     </Card>

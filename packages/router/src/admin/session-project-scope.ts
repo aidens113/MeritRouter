@@ -19,14 +19,18 @@ export function scopedSessionTimeline(sy: MeritRouter, id: string, project: stri
   const opened = openProjectStores(sy, project);
   if (!opened.ok) return null;
   const db = opened.stores.db;
+  const sessionsStore = opened.stores.sessions;
+  if (!sessionsStore) return null;
   const owner = z.object({task_id:Id.nullable(),project_id:z.string().max(200)}).safeParse(db.prepare("SELECT task_id, project_id FROM sessions WHERE id=?").get(id)).data;
   if (!owner || owner.project_id !== project || !owner.task_id) return null;
   const task = z.object({project_id:z.string().max(200)}).safeParse(db.prepare("SELECT project_id FROM tasks WHERE id=?").get(owner.task_id)).data;
   if (task?.project_id !== project) return null;
   let fd: number | undefined;
   try {
-    const directory = path.join(sy.cfg.storageDir, "sessions");
-    const file = path.join(directory, `${id}.jsonl`);
+    // The project's own sessions directory, never the installation's `sy.cfg.storageDir` (which
+    // is a different directory from this project's in a split installation).
+    const file = sessionsStore.logPathFor(id);
+    const directory = path.dirname(file);
     if (lstatSync(directory).isSymbolicLink()) return null;
     const stat = lstatSync(file);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_BYTES) return null;

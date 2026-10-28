@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { insights } from "meritrouter";
-import { handle, HttpError } from "@/lib/api";
+import { handle, HttpError, projectParam } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -16,10 +16,12 @@ export async function GET(req: Request, ctx: Ctx) {
   return handle(async (sy) => {
     const id = decodeURIComponent((await ctx.params).id);
     if (!/^[A-Za-z0-9_-]{1,200}$/.test(id)) throw new HttpError(400, "id must be a job id");
-    const raw = new URL(req.url).searchParams.get("version");
+    const sp = new URL(req.url).searchParams;
+    const raw = sp.get("version");
     const v = raw === null ? null : Version.safeParse(raw);
     if (v && !v.success) throw new HttpError(400, "version must be a positive integer");
-    const plan = insights.jobPlan(sy, id, v?.success ? { version: v.data } : {});
+    const project = projectParam(sy, sp);
+    const plan = insights.jobPlan(sy, id, { ...(v?.success ? { version: v.data } : {}), ...(project ? { project } : {}) });
     if (!plan) throw new HttpError(404, v?.success ? `No job ${id} with plan version ${v.data}` : `No job ${id}`);
     return { plan };
   });

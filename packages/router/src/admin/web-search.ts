@@ -5,6 +5,7 @@ import { isSearchService, SEARCH_SERVICE_IDS, SEARCH_SERVICES, type SearchServic
 import type { WebBackendStatus, WebBackendView, WebStatus } from "../web/access.js";
 export type { WebAttempt, WebBackendStatus, WebBackendView, WebKeyView, WebStatus } from "../web/access.js";
 import type { WebRequestRow } from "../web/ledger.js";
+import { locateProjectTask } from "./project-reads.js";
 
 /**
  * The panel's (and `keys`') view of web search: which backend serves, the search-service keys
@@ -99,8 +100,28 @@ export function webSearchView(sy: MeritRouter, opts: { project?: string; recent?
 }
 
 /** A task's web searches and fetches, oldest first (the task page's usage). */
-export function taskWebRequests(sy: MeritRouter, taskId: string): WebRequestRow[] {
-  return sy.web.ledger.forTask(taskId);
+const WebRequestDbRow = z.object({
+  id: z.number().int(), call_id: z.string(), task_id: z.string().nullable(), project_id: z.string(), session_id: z.string().nullable(),
+  kind: z.enum(["search", "fetch"]), backend: z.string(), key_ref: z.string().nullable(), target: z.string(),
+  status: z.enum(["pending", "ok", "error"]), error_kind: z.string().nullable(), results: z.number().nullable(), bytes: z.number().nullable(),
+  error: z.string().nullable(), started_at: z.number(), finished_at: z.number().nullable(),
+});
+
+/**
+ * A task's web attempts, oldest first. A legacy installation reads its one web ledger; a split
+ * installation reads the owning project's own store (`project` limits the search to it), since the
+ * installation's web ledger is the primary project's and other projects' rows are not in it.
+ */
+export function taskWebRequests(sy: MeritRouter, taskId: string, project?: string): WebRequestRow[] {
+  if (sy.layout !== "split") return sy.web.ledger.forTask(taskId);
+  const located = locateProjectTask(sy, taskId, project);
+  if (!located) return [];
+  const rows = located.stores.db.prepare("SELECT * FROM web_requests WHERE task_id = ? AND project_id = ? ORDER BY id").all(taskId, located.project);
+  return rows.flatMap((raw) => {
+    const r = WebRequestDbRow.safeParse(raw);
+    return r.success ? [{ id: r.data.id, callId: r.data.call_id, taskId: r.data.task_id, projectId: r.data.project_id, sessionId: r.data.session_id, kind: r.data.kind, backend: r.data.backend, keyRef: r.data.key_ref,
+      target: r.data.target, status: r.data.status, errorKind: r.data.error_kind, results: r.data.results, bytes: r.data.bytes, error: r.data.error, startedAt: r.data.started_at, finishedAt: r.data.finished_at }] : [];
+  });
 }
 
 export const NewSearchKeySchema = z

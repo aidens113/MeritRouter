@@ -10,7 +10,8 @@ export async function GET(req: Request) {
     const query = Query.safeParse(Object.fromEntries(new URL(req.url).searchParams));
     if (!query.success) throw new HttpError(400, "Invalid manifest query");
     if (!findProject(sy, query.data.project)) throw new HttpError(404, "Unknown project");
-    if (query.data.taskId && !sy.db.prepare("SELECT id FROM tasks WHERE id = ? AND project_id = ?").get(query.data.taskId, query.data.project)) throw new HttpError(404, "Task is unavailable in this project");
+    // The task is looked up in the project's own store only.
+    if (query.data.taskId && insights.taskOwner(sy, query.data.taskId, query.data.project) !== query.data.project) throw new HttpError(404, "Task is unavailable in this project");
     return { receipts: insights.brainMemoryManifestPreview(sy, query.data) };
   });
 }

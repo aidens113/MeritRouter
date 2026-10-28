@@ -35,28 +35,27 @@ export function project(sy: MeritRouter, slug: string, opts: { archived?: boolea
 
 /**
  * The project a task belongs to (its own, the primary project for an unassigned row, or
- * `_qualification` for qualification and comparison work); null for an unknown task.
+ * `_qualification` for qualification and comparison work); null for an unknown task. Read from
+ * the owning project's own store (a split installation keeps no project rows in its own store);
+ * an id held by two projects is refused rather than resolved to either.
  */
 export function taskProject(sy: MeritRouter, taskId: string): string | null {
-  if (!sy.tasks.get(taskId)) return null;
-  return insights.contextOfTask(sy, taskId).project.slug;
+  return insights.taskOwner(sy, taskId);
 }
 
-/** The project a session belongs to (through its task; the primary project for a task-less session); null for an unknown session. */
+/** The project a session belongs to (its own store's project; the primary project for a legacy task-less session); null for an unknown session. */
 export function sessionProject(sy: MeritRouter, sessionId: string): string | null {
-  const s = sy.sessions.get(sessionId);
-  if (!s) return null;
-  return s.taskId ? taskProject(sy, s.taskId) : sy.projects.primary.project.slug;
+  return insights.sessionOwner(sy, sessionId);
 }
 
-/** 404 unless task `taskId` belongs to project `slug`. */
+/** 404 unless task `taskId` belongs to project `slug` (only that project's store is read). */
 export function requireTaskIn(sy: MeritRouter, slug: string, taskId: string): void {
-  if (taskProject(sy, taskId) !== slug) notFound();
+  if (insights.taskOwner(sy, taskId, slug) !== slug) notFound();
 }
 
-/** 404 unless session `sessionId` belongs to project `slug`. */
+/** 404 unless session `sessionId` belongs to project `slug` (only that project's store is read). */
 export function requireSessionIn(sy: MeritRouter, slug: string, sessionId: string): void {
-  if (sessionProject(sy, sessionId) !== slug) notFound();
+  if (insights.sessionOwner(sy, sessionId, slug) !== slug) notFound();
 }
 
 /** The last project opened (cookie), when it is still a live project. */

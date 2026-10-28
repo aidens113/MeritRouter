@@ -18,7 +18,7 @@ import { PROJECT_RUNTIME_DIRECTORY, projectRuntimePaths, type ProjectRuntimePath
 import type { ProjectStoreRegistration } from "../projects/store-identity.js";
 import { LabRepositorySchema } from "../labs/store.js";
 import { z } from "zod";
-import { openProjectStores } from "./project-reads.js";
+import { legacyStores, locateProjectTask, locateSession, openProjectStores } from "./project-reads.js";
 import { immediate, openDatabase, type Db } from "../storage/db.js";
 import { RequestReceipts } from "../admission/request-receipts.js";
 import { RepositoryMutationError, withRepositoryMutation, type RepositoryMutationCapability } from "../workspaces/repository-mutation.js";
@@ -106,9 +106,31 @@ export function projectInfo(sy: MeritRouter, slug: string): ProjectSummary {
  * work), or the primary project's for a task whose project is unassigned or no longer configured
  * (views never fail on old rows).
  */
-export function contextOfTask(sy: MeritRouter, taskId: string): ProjectContext {
-  const p = sy.tasks.projectOf(taskId);
+export function contextOfTask(sy: MeritRouter, taskId: string, project?: string): ProjectContext {
+  // The owning project's own store (a split installation keeps no project rows in `sy.tasks`).
+  const p = locateProjectTask(sy, taskId, project)?.project;
   return (p ? sy.projects.context(p) : undefined) ?? sy.projects.primary;
+}
+
+/**
+ * The project a task belongs to (its own, the primary project for an unassigned row, or
+ * `_qualification` for qualification and comparison work), found in the owning project's own
+ * store; null for an unknown task. Without `project` every project is searched and an id held by
+ * two projects is refused (`ambiguous_id`); with it, only that project is searched.
+ */
+export function taskOwner(sy: MeritRouter, taskId: string, project?: string): string | null {
+  return locateProjectTask(sy, taskId, project)?.project ?? null;
+}
+
+/** The project a session belongs to (its own store's project; the primary project for a legacy task-less session); null for an unknown session. */
+export function sessionOwner(sy: MeritRouter, sessionId: string, project?: string): string | null {
+  // A legacy session charged to no project ('') is owned through its task, so it is looked up too.
+  const located = locateSession(sy, sessionId, project) ?? (project && legacyStores(sy) ? locateSession(sy, sessionId, "") : null);
+  if (!located) return null;
+  if (located.project) return located.project;
+  // A legacy row charged to no project belongs to its task's project (the primary project without one).
+  const taskId = legacyStores(sy)?.sessions?.get(sessionId)?.taskId;
+  return (taskId ? taskOwner(sy, taskId) : null) ?? sy.projects.primary.project.slug;
 }
 
 /** Every configured project as the CLI and MCP choose among them (archived ones included, marked). */

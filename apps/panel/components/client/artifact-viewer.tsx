@@ -12,8 +12,11 @@ interface Loaded {
   kind: string;
 }
 
-/** Expandable artifact: loads on first open; patches render as a unified diff. */
-export function ArtifactViewer({ refId, kind, label, bytes, mediaType, defaultOpen = false }: { refId: string; kind: string; label: string; bytes?: number; mediaType?: string; defaultOpen?: boolean }) {
+/**
+ * Expandable artifact: loads on first open; patches render as a unified diff. `project` (the
+ * page's project) reads the artifact from that project's own store only.
+ */
+export function ArtifactViewer({ refId, kind, label, bytes, mediaType, defaultOpen = false, project }: { refId: string; kind: string; label: string; bytes?: number; mediaType?: string; defaultOpen?: boolean; project?: string }) {
   const [open, setOpen] = useState(false);
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -26,7 +29,7 @@ export function ArtifactViewer({ refId, kind, label, bytes, mediaType, defaultOp
     setOpen(next);
     if (next && !data && !loading) {
       setLoading(true);
-      const r = await callApi(`/api/artifacts?ref=${encodeURIComponent(refId)}`, "GET");
+      const r = await callApi(`/api/artifacts?ref=${encodeURIComponent(refId)}${project ? `&project=${encodeURIComponent(project)}` : ""}`, "GET");
       setLoading(false);
       if (!r.ok) setError(r.error ?? "Could not load artifact");
       else {

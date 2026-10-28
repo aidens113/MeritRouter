@@ -1,8 +1,9 @@
 import "server-only";
 import { NextResponse } from "next/server";
 import type { z } from "zod";
-import type { MeritRouter } from "meritrouter";
+import { QUALIFICATION_PROJECT, type MeritRouter } from "meritrouter";
 import { NotConfigured, requireSy } from "./sy";
+import { findProject } from "./project";
 
 export class HttpError extends Error {
   constructor(
@@ -37,14 +38,28 @@ export async function handle(fn: (sy: MeritRouter) => Promise<unknown> | unknown
         ? 400
         : code === "not_found"
           ? 404
-          : code === "cannot_accept_unmet" || code === "human_acceptance_required" || code === "usage"
+          : code === "cannot_accept_unmet" || code === "human_acceptance_required" || code === "usage" || code === "ambiguous_id"
             ? 409
+            : code === "project_store_unavailable"
+              ? 503
             : code.startsWith("gateway:")
               ? 502
               : 500;
     if (status === 500) console.error("[panel] request failed:", e);
     return json({ ok: false, error: e.message || String(err) }, status);
   }
+}
+
+/**
+ * An optional `?project=` scope for a by-id route: the project (or `_qualification`) whose own
+ * store the id is read from, or undefined (the id is then looked up across every project's store
+ * and an id held by two projects is refused). An unknown project is a 404.
+ */
+export function projectParam(sy: MeritRouter, params: URLSearchParams): string | undefined {
+  const project = params.get("project");
+  if (project === null) return undefined;
+  if (project === QUALIFICATION_PROJECT || findProject(sy, project, { archived: true })) return project;
+  throw new HttpError(404, `No project ${project}`);
 }
 
 export async function body<T extends z.ZodType>(req: Request, schema: T): Promise<z.infer<T>> {

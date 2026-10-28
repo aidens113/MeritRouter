@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { insights } from "meritrouter";
 import { body, handle, HttpError } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
@@ -16,10 +17,11 @@ const Body = z.object({ project: z.string().trim().min(1).max(100).optional(), i
 export async function POST(req: Request) {
   return handle(async (sy) => {
     const { id, project } = await body(req, Body);
-    const t = sy.tasks.get(id);
-    if (!t) throw new HttpError(404, `Unknown task ${id}`);
+    // The task's own project's store (an id held by two projects is refused without a project).
+    const owner = insights.taskOwner(sy, id, project);
+    if (!owner) throw new HttpError(404, `Unknown task ${id}${project ? ` in project ${project}` : ""}`);
     try {
-      return { state: sy.resumeTask(id, project) };
+      return { state: sy.resumeTask(id, project ?? owner) };
     } catch (error) {
       if ((error as { code?: unknown }).code === "task_invalid") {
         throw new HttpError(409, (error as Error).message);

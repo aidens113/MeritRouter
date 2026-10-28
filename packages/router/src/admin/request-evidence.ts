@@ -7,6 +7,7 @@ import { SessionEventSchema, type SessionEvent, type SessionEventOf } from "../s
 import { maskSecrets, requestSecrets } from "../providers/secret-masking.js";
 import { openProjectStores } from "./project-reads.js";
 import type { Db } from "../storage/db.js";
+import type { SessionStore } from "../sessions/store.js";
 
 export const REQUEST_EVIDENCE_LIMITS = { sessions: 12, journalBytes: 512 * 1024, totalJournalBytes: 4 * 1024 * 1024, events: 5000, lineBytes: 128 * 1024, messages: 96, transcriptSlots: 4096, tools: 48, textBytes: 128 * 1024, itemBytes: 8000, tasks: 50, files: 100, artifacts: 40 } as const;
 const Id = z.string().regex(/^[A-Za-z0-9_-]{1,120}$/);
@@ -35,11 +36,12 @@ export interface RequestEvidence {
 }
 
 /** A separate bounded reader: SessionStore.events currently reads the whole file before paging. */
-function journal(sy: MeritRouter, id: string, remaining: { bytes: number }, warnings: string[]) {
+function journal(sessions: SessionStore, id: string, remaining: { bytes: number }, warnings: string[]) {
   let fd: number | undefined;
   const events: SessionEvent[] = [];
   try {
-    const directory = path.join(sy.cfg.storageDir, "sessions"), file = path.join(directory, `${Id.parse(id)}.jsonl`);
+    // The owning project's own sessions directory (a split project's is not the installation's).
+    const file = sessions.logPathFor(Id.parse(id)), directory = path.dirname(file);
     if (lstatSync(directory).isSymbolicLink() || !lstatSync(file).isFile() || lstatSync(file).isSymbolicLink()) throw new Error("unsafe");
     fd = openSync(file, "r");
     const capacity = Math.min(REQUEST_EVIDENCE_LIMITS.journalBytes, remaining.bytes);
@@ -202,6 +204,8 @@ export function requestEvidence(sy: MeritRouter, project: string, id: string): R
   const opened = openProjectStores(sy, project);
   if (!opened.ok) return null;
   const db = opened.stores.db;
+  const sessionStore = opened.stores.sessions;
+  if (!sessionStore) return null;
   const parsed = RequestRow.safeParse(db.prepare("SELECT id,execution_id,project_id,status FROM model_requests WHERE id=? AND project_id=?").get(id, project));
   if (!parsed.success) return null;
   const request = parsed.data, warnings: string[] = [], remaining = { bytes: REQUEST_EVIDENCE_LIMITS.totalJournalBytes };
@@ -215,7 +219,7 @@ export function requestEvidence(sy: MeritRouter, project: string, id: string): R
   const displayBudget = { remaining: REQUEST_EVIDENCE_LIMITS.textBytes as number }, seen = new Map<string, RequestExchange>();
   const memberBudget = { remaining: 10_000 };
   for (const row of payloadAllowed ? sessions.slice(0, REQUEST_EVIDENCE_LIMITS.sessions) : []) {
-    const events = journal(sy, row.id, remaining, warnings);
+    const events = journal(sessionStore, row.id, remaining, warnings);
     if (!recordedMembersExclusive(db, project, request.execution_id, events, memberBudget)) {
       payloadAllowed = false;
       exchanges.length = 0; commits.clear();

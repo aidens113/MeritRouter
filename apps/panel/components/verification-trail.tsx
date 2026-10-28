@@ -66,7 +66,7 @@ type Step =
  * review (reviewer, qualification, verdict, per-criterion outcomes, findings), targeted checks
  * a reviewer asked for, and the repair or escalation with the run that carried it out.
  */
-export function VerificationTrail({ trail, criteria, names, base }: { trail: Trail; criteria: Map<string, string>; names: Map<string, string>; base: string }) {
+export function VerificationTrail({ trail, criteria, names, base, project }: { trail: Trail; criteria: Map<string, string>; names: Map<string, string>; base: string; project?: string }) {
   const steps: Step[] = [
     ...trail.raised.map((raised, i): Step => ({ kind: "raised", at: raised.at, order: i, raised })),
     ...trail.reviews.map((review, i): Step => ({ kind: "review", at: review.at, order: i, review })),
@@ -81,7 +81,7 @@ export function VerificationTrail({ trail, criteria, names, base }: { trail: Tra
       {steps.map((s) => (
         <li key={`${s.kind}${s.order}`}>
           {s.kind === "review" ? (
-            <ReviewCard r={s.review} criteria={criteria} names={names} base={base} />
+            <ReviewCard r={s.review} criteria={criteria} names={names} base={base} project={project} />
           ) : s.kind === "retry" ? (
             <RetryRow r={s.retry} base={base} />
           ) : s.kind === "targeted" ? (
@@ -184,7 +184,7 @@ function RetryRow({ r, base }: { r: insights.RetryView; base: string }) {
   );
 }
 
-function ReviewCard({ r, criteria, names, base }: { r: Review; criteria: Map<string, string>; names: Map<string, string>; base: string }) {
+function ReviewCard({ r, criteria, names, base, project }: { r: Review; criteria: Map<string, string>; names: Map<string, string>; base: string; project?: string }) {
   const unqualified = r.flags.includes("reviewer_unqualified");
   const otherFlags = r.flags.filter((f) => f !== "reviewer_unqualified");
   return (
@@ -292,7 +292,7 @@ function ReviewCard({ r, criteria, names, base }: { r: Review; criteria: Map<str
             </ul>
           </div>
         ) : null}
-        {r.artifactRef ? <ArtifactViewer refId={r.artifactRef} kind="review" label="Verdict, evidence package, and transcript" /> : null}
+        {r.artifactRef ? <ArtifactViewer project={project} refId={r.artifactRef} kind="review" label="Verdict, evidence package, and transcript" /> : null}
       </div>
     </div>
   );

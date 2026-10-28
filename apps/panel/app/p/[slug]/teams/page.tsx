@@ -27,7 +27,7 @@ export default async function TeamsPage({ params, searchParams }: { params: Prom
   const asked = typeof sp.job === "string" ? sp.job : null;
   // The selected job, else the newest job that delegated anything.
   const selectedId = asked && rows.some((x) => x.jobId === asked) ? asked : (rows.find((x) => x.peakParallelism > 0)?.jobId ?? rows[0]?.jobId ?? null);
-  const selected = selectedId ? insights.jobMetrics(sy, selectedId, { now }) : null;
+  const selected = selectedId ? insights.jobMetrics(sy, selectedId, { now, project: p.slug }) : null;
   // Comparisons are recorded install-wide; show those whose runs belong to this project (one of
   // supplied goals not started yet runs in the primary project). Comparisons on eval goals run in
   // the reserved qualification project and are listed on /all/qualification.

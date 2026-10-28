@@ -39,7 +39,7 @@ function operationViews(sy: MeritRouter, project: string, name: string, id?: str
   return rows.map(row => {
     const input = OperationReason.parse(JSON.parse(row.input_json));
     return { id: row.id, kind: row.kind, state: row.state, requestedBy: row.requested_by,
-      ...(row.kind === "promote" && input.kind === "promote" && input.reason ? { promotionReason: sy.labs.redact(project, name, input.reason) } : {}),
+      ...(row.kind === "promote" && input.kind === "promote" && input.reason ? { promotionReason: sy.labsFor(project).redact(project, name, input.reason) } : {}),
       promotionState: row.promotion_state,
       outcomeMessage: row.promotion_state && ["failed", "partial", "conflict"].includes(row.promotion_state) ? "Promotion did not complete; inspect supervisor logs and the lab check results." : null,
       errorCode: row.error_code, errorMessage: row.error_code ? "Lab operation failed; inspect local supervisor logs for details." : null,
@@ -52,17 +52,17 @@ export function labDetailView(sy: MeritRouter, project: string, name: string) {
   const p = scope(sy, project);
   validName(name);
   const operations = operationViews(sy, project, name);
-  if (!sy.labs.list(project).some(l => l.name === name)) {
+  if (!sy.labsFor(project).list(project).some(l => l.name === name)) {
     if (!operations.length) throw new MeritRouterError("not_found", `unknown lab ${name} in project ${project}`);
     return { project, archived: p.archived, status: null, operations };
   }
   // Creation persists its row before allocating placeholders; pending metadata is safe until complete.
-  if (sy.labs.store.get(project, name)?.state === "creating") return { project, archived: p.archived, status: null, operations };
-  const status = sy.labs.publicStatus(project, name);
+  if (sy.labsFor(project).store.get(project, name)?.state === "creating") return { project, archived: p.archived, status: null, operations };
+  const status = sy.labsFor(project).publicStatus(project, name);
 
   return { project, archived: p.archived, status: {
     ...status,
-    lab: { ...status.lab, goal: sy.labs.redact(project, name, status.lab.goal) },
+    lab: { ...status.lab, goal: sy.labsFor(project).redact(project, name, status.lab.goal) },
     checks: status.checks.slice(0, 20).map(c => ({ ...c, stdout: c.stdout.slice(-8_000), stderr: c.stderr.slice(-8_000) })),
   }, operations };
 }
@@ -72,13 +72,13 @@ export function labPromotionView(sy: MeritRouter, project: string, name: string,
   scope(sy, project); validName(name);
   const metadata = operationViews(sy, project, name, z.string().min(1).max(200).parse(id))[0];
   if (!metadata || metadata.kind !== "promote" || metadata.state !== "completed") throw new MeritRouterError("not_found", "Completed promotion not found in this project's lab");
-  const op = sy.labs.publicOperation(project, name, id);
+  const op = sy.labsFor(project).publicOperation(project, name, id);
   const result = LabPromotionResultSchema.parse(op?.result);
-  const text = (value: string) => sy.labs.redact(project, name, value).slice(0, 2000);
+  const text = (value: string) => sy.labsFor(project).redact(project, name, value).slice(0, 2000);
   const revisions = (rows: Record<string, string>) => Object.fromEntries(Object.entries(rows).slice(0, 100).map(([alias, sha]) => [text(alias), text(sha)]));
   const commands = result.commands.filter(command => command.length <= 16000).slice(0, 100);
   return { id, state: result.state, policy: result.policy, heads: revisions(result.heads), targets: revisions(result.targets),
-    manualCommands: commands.map(command => sy.labs.redact(project, name, command)),
+    manualCommands: commands.map(command => sy.labsFor(project).redact(project, name, command)),
     instructionsOmitted: commands.length !== result.commands.length,
     conflicts: Object.fromEntries(Object.entries(result.conflicts).slice(0, 100).map(([alias, paths]) => [text(alias), paths.slice(0, 100).map(text)])),
     checks: result.checks.slice(0, 100).map(check => ({ name: text(check.name), revision: text(check.revision), passed: check.exitCode === 0 && !check.killed })), error: result.error };
@@ -106,7 +106,7 @@ export function labsListView(sy: MeritRouter, project: string): WithUnavailable<
     if (!(error instanceof ProjectStoreUnavailableError)) throw error;
     return withUnavailable({ project, archived: p.archived, configured, labs: [] }, [{ project, reason: error.reason }]);
   }
-  const names = new Set(sy.labs.list(project).map(l => l.name));
+  const names = new Set(sy.labsFor(project).list(project).map(l => l.name));
   const pending = z.array(z.object({ lab_name: LabNameSchema })).parse(stores.db.prepare("SELECT DISTINCT lab_name FROM lab_operations WHERE project_id = ? AND state IN ('pending','running')").all(project));
   for (const row of pending) names.add(row.lab_name);
   return { project, archived: p.archived, configured, labs: [...names].map(name => labEntry(sy, project, name)) };
@@ -115,9 +115,9 @@ export function labsListView(sy: MeritRouter, project: string): WithUnavailable<
 export function labLogs(sy: MeritRouter, project: string, name: string, service: string) {
   scope(sy, project);
   validName(name); validName(service);
-  const status = sy.labs.publicStatus(project, name);
+  const status = sy.labsFor(project).publicStatus(project, name);
   if (!status.lab.serviceNames.includes(service)) throw new MeritRouterError("not_found", "unknown service in this project's lab");
-  return { log: sy.labs.logs(project, name, service, 200).slice(-64_000) };
+  return { log: sy.labsFor(project).logs(project, name, service, 200).slice(-64_000) };
 }
 
 export function labRecipeView(sy: MeritRouter, project: string) {
@@ -171,7 +171,7 @@ export async function requestLabControl(sy: MeritRouter, project: string, name: 
   const b = HumanLabControlSchema.parse(input);
   if (b.action === "create") {
     if (!projectConfig(sy, project).lab) throw new MeritRouterError("usage", "Configure this project's lab recipe before creating a lab.");
-    if (sy.labs.list(project).some(l => l.name === name)) throw new MeritRouterError("usage", "A lab with this name already exists.");
+    if (sy.labsFor(project).list(project).some(l => l.name === name)) throw new MeritRouterError("usage", "A lab with this name already exists.");
   } else {
     const status = labDetailView(sy, project, name).status;
     if (!status) throw new MeritRouterError("usage", "Wait for lab creation to finish before requesting controls.");
@@ -181,7 +181,7 @@ export async function requestLabControl(sy: MeritRouter, project: string, name: 
   const operation = b.action === "create" ? { kind: "create" as const, goal: b.goal } : b.action === "check" ? { kind: "check" as const, name: b.check } : b.action === "promote" ? { kind: "promote" as const, by: "human" as const, reason: b.reason } : b.action === "restart" ? { kind: "restart" as const, ...(b.service ? { service: b.service } : {}) } : { kind: b.action };
   try { await ensureLabSupervisor(sy); }
   catch (error) { throw new MeritRouterError("usage", `Labs supervisor is unavailable: ${(error as Error).message}`); }
-  const queued = sy.labs.requestControl(project, name, operation, "human:panel");
+  const queued = sy.labsFor(project).requestControl(project, name, operation, "human:panel");
   const operationView = operationViews(sy, project, name, queued.id)[0];
   if (!operationView) throw new MeritRouterError("not_found", "Queued operation was not found; inspect persisted Labs operations.");
   return { operation: operationView };

@@ -13,7 +13,7 @@ import type { SessionEvent } from "../sessions/events.js";
 import { parseTrailers } from "../attribution/index.js";
 import { git } from "../workspaces/git.js";
 import type { Db } from "../storage/db.js";
-import { adminProjectScopes, fanOutProjects, locateRequest, locateTask, newestFirst, openProjectStores, taskIn } from "./project-reads.js";
+import { adminProjectScopes, fanOutProjects, legacyStores, locateRequest, locateSession, locateTask, newestFirst, openProjectStores, taskIn } from "./project-reads.js";
 
 /**
  * Local-table reads here (`tasks`, `sessions`, `model_requests`, `request_charges`, `task_deps`)
@@ -239,8 +239,11 @@ function taskRows(sy: MeritRouter, ids: string[], project?: string): EntityTask[
  */
 function sessionRequestIds(sy: MeritRouter, session: SessionRecord, project: string): string[] {
   const opened = project ? openProjectStores(sy, project) : { ok: false as const };
-  const sessions = opened.ok && opened.stores.sessions ? opened.stores.sessions : sy.sessions;
-  const db = opened.ok ? opened.stores.db : sy.db;
+  // A split installation's own store is the coordination store: no project sessions, no fallback.
+  const legacy = legacyStores(sy);
+  const sessions = opened.ok && opened.stores.sessions ? opened.stores.sessions : legacy?.sessions;
+  const db = opened.ok ? opened.stores.db : legacy?.db;
+  if (!sessions || !db) return [];
   const page = sessions.events(session.id, { limit: 100_000 });
   if (!page) return [];
   const ids = new Set<string>();
@@ -340,10 +343,13 @@ export async function agentDetail(sy: MeritRouter, project: string, rawId: strin
   const agent = parseAgentId(rawId);
   if (!agent) return null;
   const opened = project ? openProjectStores(sy, project) : { ok: false as const };
-  const db = opened.ok ? opened.stores.db : sy.db;
-  const sessions2 = opened.ok ? opened.stores.sessions : sy.sessions;
+  // A split installation's own store is the coordination store: no project sessions, no fallback.
+  const legacy = legacyStores(sy);
+  const db = opened.ok ? opened.stores.db : legacy?.db;
+  const sessions2 = opened.ok ? opened.stores.sessions : legacy?.sessions;
+  if (!db) return null;
   const ids = db.prepare("SELECT id FROM sessions WHERE agent_label = ? AND project_id = ? ORDER BY created_at DESC").all(agent.id, project) as Array<{ id: string }>;
-  const sessions = ids.map((r) => sessions2?.get(r.id) ?? sy.sessions.get(r.id)).filter((s): s is SessionRecord => !!s);
+  const sessions = ids.map((r) => sessions2?.get(r.id) ?? legacy?.sessions?.get(r.id)).filter((s): s is SessionRecord => !!s);
   if (!sessions.length) return null;
   const sessionOf = new Map<string, string>();
   for (const s of sessions.slice(0, MAX_LOGS)) for (const id of sessionRequestIds(sy, s, project)) if (!sessionOf.has(id)) sessionOf.set(id, s.id);
@@ -454,24 +460,24 @@ export function requestDetail(sy: MeritRouter, id: string, project?: string): Re
 }
 
 /** The requests one session made (newest first). */
-export function sessionRequests(sy: MeritRouter, sessionId: string): EntityRequest[] {
-  const s = sy.sessions.get(sessionId);
-  if (!s) return [];
-  const owner = sy.db.prepare("SELECT project_id FROM sessions WHERE id=?").get(sessionId) as {project_id:string}|undefined;
-  const timeline = owner ? scopedSessionTimeline(sy,sessionId,owner.project_id) : null;
+export function sessionRequests(sy: MeritRouter, sessionId: string, project?: string): EntityRequest[] {
+  // The session's own project's store (`project` limits the search to that project).
+  const owner = locateSession(sy, sessionId, project);
+  const sessions = owner ? owner.stores?.sessions ?? legacyStores(sy)?.sessions : null;
+  const s = sessions?.get(sessionId);
+  if (!owner || !s) return [];
+  const timeline = scopedSessionTimeline(sy, sessionId, owner.project);
   if (!timeline) return [];
   const ids = new Set(timeline.flatMap(e=>e.type === "model_response" ? [e.data.requestId] : []));
   const executions = [...new Set(timeline.flatMap(e=>e.type === "model_request" || e.type === "model_error" ? [e.data.executionId] : []))];
   if (executions.length && s.taskId) {
-    const opened = owner!.project_id ? openProjectStores(sy, owner!.project_id) : { ok: false as const };
-    const db = opened.ok ? opened.stores.db : sy.db;
-    const failed = db.prepare(`SELECT DISTINCT r.id FROM model_requests r JOIN request_charges c ON c.request_id=r.id
+    const failed = owner.db.prepare(`SELECT DISTINCT r.id FROM model_requests r JOIN request_charges c ON c.request_id=r.id
       WHERE c.task_id=? AND r.project_id=? AND r.status!='succeeded' AND r.reserved_at>=? AND r.reserved_at<=?
-      AND r.execution_id IN (${executions.map(()=>"?").join(",")}) LIMIT 1000`).all(s.taskId,owner!.project_id,s.createdAt,s.endedAt ?? Date.now(),...executions) as Array<{id:string}>;
+      AND r.execution_id IN (${executions.map(()=>"?").join(",")}) LIMIT 1000`).all(s.taskId,owner.project,s.createdAt,s.endedAt ?? Date.now(),...executions) as Array<{id:string}>;
     for (const row of failed) ids.add(row.id);
   }
   const list = [...ids];
-  return requestRows(sy, list, new Map(list.map((i) => [i, sessionId])), owner?.project_id ?? undefined);
+  return requestRows(sy, list, new Map(list.map((i) => [i, sessionId])), owner.project);
 }
 
 // ---------- commits and repositories ----------
@@ -670,27 +676,29 @@ export interface TaskRelated {
 }
 
 /** Everything a task connects to, for its page's Related panel. Null for an unknown task. */
-export async function taskRelated(sy: MeritRouter, taskId: string): Promise<TaskRelated | null> {
-  // No project is given, so the owning project is found the same way admin/jobs.ts and friends
-  // do: tried across every configured project's own store (plus qualification and the ''
-  // installation fallback), never a bare `sy.tasks`/`sy.db` lookup.
-  const located = locateTask(sy, taskId);
+export async function taskRelated(sy: MeritRouter, taskId: string, project?: string): Promise<TaskRelated | null> {
+  // The owning project is found the same way admin/jobs.ts and friends do: `project`'s own store,
+  // or (without one) tried across every configured project's own store (plus qualification and
+  // the '' installation fallback), never a bare `sy.tasks`/`sy.db` lookup.
+  const located = locateTask(sy, taskId, project);
   if (!located) return null;
-  const { project, stores } = located;
-  const db = stores?.db ?? sy.db;
-  const t = stores ? taskIn(sy, stores, taskId) : sy.tasks.get(taskId);
+  const legacy = legacyStores(sy);
+  const { project: owner, stores } = located;
+  const scope = stores ?? legacy;
+  if (!scope) return null;
+  const db = scope.db;
+  const t = stores ? taskIn(sy, stores, taskId) : scope.tasks.get(taskId);
   if (!t) return null;
-  // The ancestor walk can in principle cross a reparented task into another project's job, so
-  // it keeps the installation-wide (global, unscoped) task lookup rather than one project's store.
-  const parentOf = (id: string) => sy.tasks.get(id)?.spec.parentTaskId ?? null;
-  const labelOf = (id: string) => sy.tasks.get(id)?.spec.label ?? null;
+  // Ancestors are read from the same store: a job and its tasks always share their project.
+  const parentOf = (id: string) => scope.tasks.get(id)?.spec.parentTaskId ?? null;
+  const labelOf = (id: string) => scope.tasks.get(id)?.spec.label ?? null;
   const ancestors: TaskRelated["ancestors"] = [];
   let cur = t.spec.parentTaskId ?? null;
   for (let depth = 0; cur && depth < 8; depth++) {
     ancestors.push({ jobId: cur, label: labelOf(cur) });
     cur = parentOf(cur);
   }
-  const sessions = stores?.sessions ? stores.sessions.forTask(taskId) : sy.sessions.forTask(taskId);
+  const sessions = scope.sessions?.forTask(taskId) ?? [];
   const agents = new Map<string, { id: string; role: string; sessions: number }>();
   for (const s of sessions) {
     const a = agents.get(s.agentLabel) ?? { id: s.agentLabel, role: s.role, sessions: 0 };
@@ -698,14 +706,14 @@ export async function taskRelated(sy: MeritRouter, taskId: string): Promise<Task
     agents.set(s.agentLabel, a);
   }
   const reqIds = (db.prepare("SELECT request_id AS id FROM request_charges WHERE task_id = ?").all(taskId) as Array<{ id: string }>).map((r) => r.id);
-  const requests = requestRows(sy, reqIds, new Map(), project);
-  const { commits, errors } = project ? await projectCommits(sy, project, { task: taskId }) : { commits: [], errors: [] };
+  const requests = requestRows(sy, reqIds, new Map(), owner);
+  const { commits, errors } = owner ? await projectCommits(sy, owner, { task: taskId }) : { commits: [], errors: [] };
   const label = t.spec.label ?? taskId;
   const likeEscape = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
   const reports = (
-    db.prepare("SELECT path FROM brain_files WHERE path LIKE ? ESCAPE '\\' ORDER BY path").all(`projects/${likeEscape(project)}/working/%/reports/${likeEscape(label)}.md`) as Array<{ path: string }>
+    db.prepare("SELECT path FROM brain_files WHERE path LIKE ? ESCAPE '\\' ORDER BY path").all(`projects/${likeEscape(owner)}/working/%/reports/${likeEscape(label)}.md`) as Array<{ path: string }>
   ).map((r) => r.path);
-  const children = (db.prepare("SELECT id FROM tasks WHERE json_extract(spec_json, '$.parentTaskId') = ? AND project_id = ? ORDER BY created_at").all(taskId, project) as Array<{ id: string }>).map((r) => r.id);
+  const children = (db.prepare("SELECT id FROM tasks WHERE json_extract(spec_json, '$.parentTaskId') = ? AND project_id = ? ORDER BY created_at").all(taskId, owner) as Array<{ id: string }>).map((r) => r.id);
   return {
     job: ancestors[0] ?? null,
     ancestors,
@@ -717,7 +725,7 @@ export async function taskRelated(sy: MeritRouter, taskId: string): Promise<Task
     commitsErrors: errors,
     reports,
     dependsOn: (db.prepare("SELECT depends_on FROM task_deps WHERE task_id = ?").all(taskId) as Array<{ depends_on: string }>).map((r) => r.depends_on),
-    children: taskRows(sy, children, project),
+    children: taskRows(sy, children, owner),
   };
 }
 
@@ -760,7 +768,7 @@ export function modelUsage(sy: MeritRouter, endpointId: string, limit = 200): Mo
   for (const t of tasks) {
     const ids = perTask.get(t.taskId)!.ids;
     const opened = t.project ? openProjectStores(sy, t.project) : { ok: false as const };
-    const sessionsOf = opened.ok && opened.stores.sessions ? opened.stores.sessions.forTask(t.taskId) : sy.sessions.forTask(t.taskId);
+    const sessionsOf = opened.ok && opened.stores.sessions ? opened.stores.sessions.forTask(t.taskId) : legacyStores(sy)?.sessions?.forTask(t.taskId) ?? [];
     for (const s of sessionsOf) {
       if (read++ >= MAX_LOGS) break;
       const n = sessionRequestIds(sy, s, t.project).filter((id) => ids.has(id)).length;

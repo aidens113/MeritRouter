@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { insights } from "meritrouter";
-import { handle, HttpError } from "@/lib/api";
+import { handle, HttpError, projectParam } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +27,8 @@ export async function GET(req: Request, ctx: Ctx) {
     const kinds = sp.getAll("kind");
     const q = Query.safeParse({ ...(sp.has("after") ? { after: sp.get("after") } : {}), ...(sp.has("limit") ? { limit: sp.get("limit") } : {}), ...(kinds.length ? { kind: kinds } : {}) });
     if (!q.success) throw new HttpError(400, `after must be a post id, limit 1..50, kind one of ${insights.CHANNEL_KINDS.join(", ")}`);
-    const channel = insights.jobChannel(sy, id, { ...(q.data.after !== undefined ? { afterId: q.data.after } : {}), ...(q.data.limit ? { limit: q.data.limit } : {}), ...(q.data.kind ? { kinds: q.data.kind } : {}) });
+    const project = projectParam(sy, sp);
+    const channel = insights.jobChannel(sy, id, { ...(project ? { project } : {}), ...(q.data.after !== undefined ? { afterId: q.data.after } : {}), ...(q.data.limit ? { limit: q.data.limit } : {}), ...(q.data.kind ? { kinds: q.data.kind } : {}) });
     if (!channel) throw new HttpError(404, `No job ${id}`);
     return { channel };
   });

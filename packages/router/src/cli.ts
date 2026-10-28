@@ -36,6 +36,7 @@ import { mcpOptions, runMcpServer } from "./mcp/serve.js";
 import type { ScanSummary } from "./models/scanner.js";
 import { cliDecisionActor } from "./cli/actor.js";
 import { projectDeliveryReport } from "./admin/deliveries.js";
+import { openProjectStores, scopesFor } from "./admin/project-reads.js";
 
 // The `meritrouter` command: argument parsing and dispatch. Terminal rendering lives in src/cli/.
 
@@ -364,8 +365,18 @@ async function main(): Promise<number> {
         return 0;
       }
       case "artifact": {
-        const a = sy.artifacts.read(args[0]!);
-        if (!a) throw new MeritRouterError("not_found", `unknown artifact ${args[0]}`);
+        // Read through the owning project's own store (never the installation store directly in
+        // split layout); falls back to the installation store only for a legacy installation,
+        // where that is the only store and an artifact may carry no task owner at all.
+        const ref = args[0]!;
+        let a: { content: Buffer } | undefined;
+        for (const p of scopesFor(sy, idScope())) {
+          const opened = openProjectStores(sy, p);
+          if (!opened.ok) continue;
+          try { a = opened.stores.artifacts.readScoped(ref, p); break; } catch { continue; }
+        }
+        if (!a && sy.layout === "legacy") a = sy.artifacts.read(ref);
+        if (!a) throw new MeritRouterError("not_found", `unknown artifact ${ref}`);
         process.stdout.write(a.content);
         return 0;
       }
@@ -404,9 +415,9 @@ ${table(rows)}`, json);
         return 0;
       }
       case "job": {
-        const j = jobDetail(sy, args[0] ?? "");
+        const j = jobDetail(sy, args[0] ?? "", { project: idScope() });
         if (!j) throw new MeritRouterError("not_found", `unknown job ${args[0]}`);
-        const team = jobTeam(sy, j.taskId)!;
+        const team = jobTeam(sy, j.taskId, { project: j.project })!;
         out(json ? { ...j, team } : [
           `${j.taskId} ${j.state}: ${j.goal}`,
           ...j.branches.map((b) => `branch ${b.branch} in ${b.alias} (${j.parentJobId ? "the parent job integrates it" : `merge with: git merge --no-ff ${b.branch}`})`),
@@ -424,7 +435,7 @@ ${table(rows)}`, json);
         if (kinds && !kinds.success) throw new MeritRouterError("usage", `--kind takes ${CHANNEL_KINDS.join(", ")} (comma-separated), got ${JSON.stringify(values.kind)}`);
         const after = countFlag("after", values.after);
         const limit = countFlag("limit", values.limit, 1);
-        const c = jobChannel(sy, args[0], { ...(after !== undefined ? { afterId: after } : {}), ...(limit ? { limit } : {}), ...(kinds?.success ? { kinds: kinds.data } : {}) });
+        const c = jobChannel(sy, args[0], { ...(after !== undefined ? { afterId: after } : {}), ...(limit ? { limit } : {}), ...(kinds?.success ? { kinds: kinds.data } : {}), project: idScope() });
         if (!c) throw new MeritRouterError("not_found", `unknown job ${args[0]}`);
         out(json ? c : channelText(c), json);
         return 0;
@@ -432,7 +443,7 @@ ${table(rows)}`, json);
       case "metrics": {
         const id = args[0];
         if (!id) throw new MeritRouterError("usage", "usage: meritrouter metrics <job-id|task-id> [--json]");
-        const m = jobMetrics(sy, id);
+        const m = jobMetrics(sy, id, { project: idScope() });
         if (!m) throw new MeritRouterError("not_found", `unknown job or task ${id}`);
         out(json ? m : metricsText(m), json);
         return 0;
@@ -473,7 +484,7 @@ the planned budget does not fit what is left of today's qualification allocation
       case "plan": {
         const id = args[0];
         if (!id) throw new MeritRouterError("usage", "usage: meritrouter plan <job-id> [--json]");
-        const p = jobPlan(sy, id);
+        const p = jobPlan(sy, id, { project: idScope() });
         if (!p) throw new MeritRouterError("not_found", `unknown job ${id}`);
         out(json ? p : planText(p), json);
         return 0;

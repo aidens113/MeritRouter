@@ -80,7 +80,8 @@ export default async function AllProjectsPage({ searchParams }: { searchParams: 
   if (awaiting.length) install.push(`${awaiting.length} promotion(s) to global knowledge wait for a person's decision.`);
   const asking = new Map<string, string[]>();
   for (const q of sy.questions({ pendingOnly: true })) {
-    const p = sy.tasks.projectOf(q.taskId) ?? "";
+    // The question's own project (read from that project's store; '' is an unassigned legacy row).
+    const p = q.project;
     const list = asking.get(p) ?? [];
     if (!list.includes(q.taskId)) list.push(q.taskId);
     asking.set(p, list);

@@ -44,33 +44,36 @@ export default async function JobDetailPage({ params, searchParams }: { params: 
   const id = decodeURIComponent(rawId);
   // Another project's job is not found here (its own project's URL is /jobs/<id>).
   requireTaskIn(sy, p.slug, id);
-  const job = insights.jobDetail(sy, id);
+  // Every read below is scoped to this project: its own store holds the job (in a split
+  // installation the installation's store holds no project rows at all).
+  const job = insights.jobDetail(sy, id, { project: p.slug });
   if (!job) notFound();
-  const spec = sy.tasks.get(id)!.spec;
+  const stores = sy.projectStores(p.slug);
+  const spec = stores.tasks.get(id)!.spec;
   // The job's own project's repositories (the global map is empty when projects are configured).
-  const repoPaths = insights.contextOfTask(sy, id).repositoryPaths;
-  const status = sy.getStatus([id])[0] as { stateReason?: string | null; maxModelRequests?: number; startedAt?: string | null };
+  const repoPaths = insights.contextOfTask(sy, id, p.slug).repositoryPaths;
+  const status = sy.getStatus([id], p.slug)[0] as { stateReason?: string | null; maxModelRequests?: number; startedAt?: string | null };
   const live = !isTerminal(job.state);
   const pending = job.questions.filter((q) => q.answer === null);
   const answered = job.questions.filter((q) => q.answer !== null);
   const docExists = sy.brainFor(p.slug).exists(job.workingDoc);
   const res = job.result;
   const delivery = insights.deliveryView(sy, id, p.slug);
-  const sessions = insights.sessionsView(sy, { jobId: id, limit: 200 });
-  const plan = insights.jobPlan(sy, id);
-  const team = insights.jobTeam(sy, id)!;
-  const metrics = insights.jobMetrics(sy, id);
-  const related = await insights.taskRelated(sy, id);
-  const budget = insights.jobBudget(sy, id);
+  const sessions = insights.sessionsView(sy, { jobId: id, project: p.slug, limit: 200 });
+  const plan = insights.jobPlan(sy, id, { project: p.slug });
+  const team = insights.jobTeam(sy, id, { project: p.slug })!;
+  const metrics = insights.jobMetrics(sy, id, { project: p.slug });
+  const related = await insights.taskRelated(sy, id, p.slug);
+  const budget = insights.jobBudget(sy, id, p.slug);
   const budgetPending = insights.budgetRequestsView(sy, { jobId: id, project: p.slug, status: "pending", limit: 1000 });
   const budgetHistory = insights.budgetRequestsView(sy, { jobId: id, project: p.slug }).filter((r) => r.status !== "pending");
   const requests = insights.requestLog(sy, { jobId: id, project: p.slug, limit: 100 });
 
-  const workerActions = insights.listWorkerActions(sy.db, { project: p.slug, jobId: id });
+  const workerActions = insights.listWorkerActions(stores.db, { project: p.slug, jobId: id });
   const requestCount = insights.requestLogCount(sy, { jobId: id, project: p.slug });
   const modelNames = new Map(sy.catalog.endpoints().map(e => [e.id, e.displayName ?? e.gatewayModelId]));
   const tab = pickTab(sp, ["overview", "plan", "team", "changes", "checks", "channel", "sessions", "requests"]);
-  const recovery = tab === "plan" ? await insights.planRecovery(sy, id) : undefined;
+  const recovery = tab === "plan" ? await insights.planRecovery(sy, id, p.slug) : undefined;
   return (
     <div className="space-y-6">
       <Link href={`${base}/jobs`} className="inline-flex items-center gap-1 text-sm text-ink-3 hover:text-ink">
@@ -266,7 +269,7 @@ export default async function JobDetailPage({ params, searchParams }: { params: 
                           {c.exitCode === 0 ? <Badge tone="good">exit 0</Badge> : <Badge tone="bad">exit {c.exitCode ?? "killed"}</Badge>}
                           <code className="break-all font-mono text-xs text-ink-2">{c.command}</code>
                         </div>
-                        <ArtifactViewer refId={c.logRef} kind="check_log" label="Check output" />
+                        <ArtifactViewer project={p.slug} refId={c.logRef} kind="check_log" label="Check output" />
                       </li>
                     ))}
                   </ul>
@@ -275,8 +278,8 @@ export default async function JobDetailPage({ params, searchParams }: { params: 
               {res.patchRefs.length ? (
                 <div className="space-y-2">
                   <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-3">Job branch diff</h3>
-                  {res.patchRefs.map((p) => (
-                    <ArtifactViewer key={p} refId={p} kind="patch" label="Changes on the job branch" />
+                  {res.patchRefs.map((ref) => (
+                    <ArtifactViewer project={p.slug} key={ref} refId={ref} kind="patch" label="Changes on the job branch" />
                   ))}
                 </div>
               ) : null}
@@ -323,7 +326,7 @@ export default async function JobDetailPage({ params, searchParams }: { params: 
           )}
         </Card>
         <Disclosure summary="Team metrics">{metrics && metrics.tasks.agents ? <JobMetricsCard m={metrics} base={base} /> : null}</Disclosure></div> : null}
-      {tab === "changes" ? <div className="space-y-6">{res?.patchRefs.length ? <Disclosure summary="Job branch diff">{res.patchRefs.map(p => <ArtifactViewer key={p} refId={p} kind="patch" label="Changes on the job branch" />)}</Disclosure> : null}<Card>
+      {tab === "changes" ? <div className="space-y-6">{res?.patchRefs.length ? <Disclosure summary="Job branch diff">{res.patchRefs.map(ref => <ArtifactViewer project={p.slug} key={ref} refId={ref} kind="patch" label="Changes on the job branch" />)}</Disclosure> : null}<Card>
         <CardHeader title="Branches" help="branch" description="Integrated work lives on these branches. Nothing is merged or pushed for you." />
         <div className="space-y-4 p-4">
           {job.branches.length ? (
@@ -355,7 +358,7 @@ export default async function JobDetailPage({ params, searchParams }: { params: 
         </div>
       </Card>
         <MergeQueueCard team={team} base={base} /></div> : null}
-      {tab === "checks" ? <div className="space-y-6"><Card><CardHeader title="Acceptance criteria and required checks" /><div className="space-y-3 p-4 text-sm"><ol className="list-decimal space-y-1 pl-5">{criterionTexts(spec).map((c, i) => <li key={i}>{c}</li>)}</ol><ul className="space-y-1">{spec.constraints.checks?.map(c => <li key={c}><code className="break-all text-xs">{c}</code></li>)}</ul></div></Card><Card><CardHeader title="Checks" /><div className="space-y-3 p-4">{res?.checks.length ? res.checks.map((c, i) => <div key={i} className="space-y-2"><code className="break-all text-xs">{c.command}</code><Badge tone={c.exitCode === 0 ? "good" : "bad"}>exit {c.exitCode ?? "killed"}</Badge><ArtifactViewer refId={c.logRef} kind="check_log" label="Check output" /></div>) : <p className="text-sm text-ink-3">No checks recorded yet.</p>}</div></Card></div> : null}
+      {tab === "checks" ? <div className="space-y-6"><Card><CardHeader title="Acceptance criteria and required checks" /><div className="space-y-3 p-4 text-sm"><ol className="list-decimal space-y-1 pl-5">{criterionTexts(spec).map((c, i) => <li key={i}>{c}</li>)}</ol><ul className="space-y-1">{spec.constraints.checks?.map(c => <li key={c}><code className="break-all text-xs">{c}</code></li>)}</ul></div></Card><Card><CardHeader title="Checks" /><div className="space-y-3 p-4">{res?.checks.length ? res.checks.map((c, i) => <div key={i} className="space-y-2"><code className="break-all text-xs">{c.command}</code><Badge tone={c.exitCode === 0 ? "good" : "bad"}>exit {c.exitCode ?? "killed"}</Badge><ArtifactViewer project={p.slug} refId={c.logRef} kind="check_log" label="Check output" /></div>) : <p className="text-sm text-ink-3">No checks recorded yet.</p>}</div></Card></div> : null}
       {tab === "channel" ? <div className="space-y-6"><ChannelCard team={team} base={base} /></div> : null}
       {tab === "requests" ? <Card><CardHeader title="Job requests" description={`Newest ${requests.length} of ${requestCount} physical requests from this supervisor and all descendant tasks and sub-jobs. Batched requests count once.`} actions={<Link href={`${base}/requests?job=${encodeURIComponent(id)}`} className="text-xs text-accent-ink hover:underline">Filter and browse all requests</Link>} /><RequestsTable rows={requests} names={modelNames} base={base} empty="No model requests for this job yet" /></Card> : null}
       {tab === "sessions" ? <div className="space-y-6"><Card>

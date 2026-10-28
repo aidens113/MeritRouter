@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 export { acknowledgeModelQuarantine } from "./quarantine.js";
 export { deliveryView, projectDeliveryReport } from "./deliveries.js";
-export { listWorkerActions, getWorkerAction, decideWorkerAction } from "./worker-actions.js";
+export { listWorkerActions, getWorkerAction, decideWorkerAction, workerActionScope } from "./worker-actions.js";
 import path from "node:path";
 import YAML from "yaml";
 import { MODALITIES, PROFILE_NAMES, TIER_NAMES, type Importance, type Modality, type ProfileName, type TierName } from "../config/schema.js";
@@ -24,7 +24,8 @@ import { DEFAULT_RULEBOOK, RulebookSchema } from "../scoring/rulebook.js";
 import type { Classification } from "../scoring/score.js";
 import type { UsageSummary } from "../storage/usage.js";
 import { installationUsage } from "./project-usage.js";
-import { adminProjectScopes, fanOutProjectRows, openProjectStores, projectDbScopes, requireProjectStores } from "./project-reads.js";
+import { admissionOf, adminProjectScopes, AmbiguousProjectIdError, fanOutProjectRows, legacyStores, locateProjectTask, openProjectStores, projectDbScopes, projectSessionsOf, requireProjectStores, taskIn } from "./project-reads.js";
+import type { ProjectRuntimeStore } from "../projects/runtime-store.js";
 import { QUALIFICATION_PROJECT } from "../qualification/registry.js";
 import type { ArtifactRow } from "../storage/artifacts.js";
 import type { ProviderStatus, WebCitation } from "../gateway/types.js";
@@ -376,7 +377,11 @@ export function requestLogCount(sy: MeritRouter, opts: RequestLogOptions = {}): 
   }, 0);
 }
 
-function requestRowOf(sy: MeritRouter, r: Record<string, unknown>): RequestRow {
+const TaskRefRow = z.object({ label: z.string().nullable(), profile: z.string() });
+
+/** `db` is the store the row came from: a request's tasks live in its own project's store. */
+function requestRowOf(db: Db, r: Record<string, unknown>): RequestRow {
+  const taskRef = db.prepare("SELECT json_extract(spec_json, '$.label') AS label, profile FROM tasks WHERE id = ? AND project_id = ?");
   return {
     id: String(r.id),
     reservedAt: Number(r.reserved_at),
@@ -398,8 +403,8 @@ function requestRowOf(sy: MeritRouter, r: Record<string, unknown>): RequestRow {
     webSearchRequests: (r.web_search_requests as number | null) ?? null,
     webCitations: parseCitations(r.web_citations_json),
     taskRefs: (r.task_ids ? String(r.task_ids).split(",") : []).flatMap(id => {
-      const task = sy.tasks.get(id);
-      return task && task.row.project_id === String(r.project_id ?? "") ? [{ id, label: task.spec.label ?? null, job: task.spec.profile === "supervise" }] : [];
+      const task = TaskRefRow.safeParse(taskRef.get(id, String(r.project_id ?? "")));
+      return task.success ? [{ id, label: task.data.label, job: task.data.profile === "supervise" }] : [];
     }),
     taskIds: r.task_ids ? String(r.task_ids).split(",") : [],
     project: String(r.project_id ?? ""),
@@ -422,15 +427,15 @@ export function requestLog(sy: MeritRouter, opts: RequestLogOptions = {}): Reque
   const perScopeFetch = Math.min(offset + limit, 100_000);
   const rows = scopes.flatMap((s) => {
     const { where, args } = requestLogScope(parsed, s.project);
-    return s.db
+    return (s.db
       .prepare(
         `SELECT r.*, (SELECT group_concat(c.task_id) FROM request_charges c JOIN tasks t ON t.id = c.task_id WHERE c.request_id = r.id AND t.project_id = r.project_id) AS task_ids
            FROM model_requests r WHERE ${where.join(" AND ")} ORDER BY r.reserved_at DESC, r.id DESC LIMIT ?`,
       )
-      .all(...args, perScopeFetch) as Array<Record<string, unknown>>;
+      .all(...args, perScopeFetch) as Array<Record<string, unknown>>).map((r) => ({ r, db: s.db }));
   });
-  rows.sort((a, b) => (Number(b.reserved_at) - Number(a.reserved_at)) || (String(b.id) < String(a.id) ? -1 : String(b.id) > String(a.id) ? 1 : 0));
-  return rows.slice(offset, offset + limit).map((r) => requestRowOf(sy, r));
+  rows.sort(({ r: a }, { r: b }) => (Number(b.reserved_at) - Number(a.reserved_at)) || (String(b.id) < String(a.id) ? -1 : String(b.id) > String(a.id) ? 1 : 0));
+  return rows.slice(offset, offset + limit).map(({ r, db }) => requestRowOf(db, r));
 }
 
 export interface TimeseriesPoint {
@@ -547,36 +552,42 @@ export interface TaskAcceptanceView {
   decisions: SupervisorDecision[];
 }
 
-export function taskDetail(sy: MeritRouter, id: string): TaskDetail | null {
-  const t = sy.tasks.get(id);
-  if (!t) return null;
+/**
+ * One task's detail, read from its own project's store. With `project`, only that project is
+ * searched (another project's task is null); without it, every project is searched and an id
+ * held by two projects is refused.
+ */
+export function taskDetail(sy: MeritRouter, id: string, project?: string): TaskDetail | null {
+  const located = locateProjectTask(sy, id, project);
+  if (!located) return null;
+  const { stores, task: t } = located;
   const row = t.row as typeof t.row & { classification_json?: string | null };
   let contract: StoredContract | null = null;
   let contractError: string | null = null;
   try {
-    contract = sy.contract(id);
+    contract = stores.contracts.get(id);
   } catch (err) {
     contractError = (err as Error).message;
   }
   const verification = t.result?.verification ?? null;
   // The task's project may override its verification policy.
-  const policy = contextOfTask(sy, id).verification;
+  const policy = contextOfTask(sy, id, located.project).verification;
   const strictAcceptor = contract?.contract.verification.strictAcceptor ?? policy.strict_acceptor;
   const supervisorAcceptance = verification ? resolveLevel(policy, verification.level).acceptance === "supervisor" || contract?.contract.verification.acceptance === "supervisor" : contract?.contract.verification.acceptance === "supervisor";
   return {
-    status: sy.getStatus([id])[0]!,
+    status: sy.getStatus([id], located.project)[0]!,
     spec: t.spec,
     result: t.result,
     classification: row.classification_json ? (JSON.parse(row.classification_json) as Classification) : null,
-    events: sy.tasks.events(id, 200),
-    artifacts: sy.artifacts.listForTask(id),
-    requests: requestLog(sy, { taskId: id, limit: 100 }),
+    events: stores.tasks.events(id, 200),
+    artifacts: stores.artifacts.listForTask(id),
+    requests: requestLog(sy, { taskId: id, project: located.project, limit: 100 }),
     criteria: taskCriteria(t.spec),
     contract,
     contractError,
     verification,
     importance: importanceView(t.spec, contract, verification),
-    trail: verificationTrail({ tasks: sy.tasks, catalog: sy.catalog, sessions: sy.sessions, admission: sy.gate.admission }, id, verification),
+    trail: verificationTrail({ tasks: stores.tasks, catalog: sy.catalog, sessions: projectSessionsOf(stores), admission: stores.db === sy.db ? sy.gate.admission : admissionOf(sy, stores) }, id, verification),
     acceptance: {
       awaitingDecision: t.row.state === "completed" && t.result?.acceptanceStatus === "needs_supervisor",
       supervisorAcceptance,
@@ -604,18 +615,42 @@ function importanceView(spec: WorkerTask, contract: StoredContract | null, verif
  * human_acceptance_required, task_invalid, not_found).
  */
 export function decideTaskAcceptance(sy: MeritRouter, id: string, decision: "accept" | "reject", by: SupervisorDecision["by"], reason: string | null, project?: string): AcceptanceDecisionOutcome {
-  const t = sy.tasks.get(id);
-  // With a project, another project's task reads as unknown (as `getStatus` does).
-  if (!t || (project && t.row.project_id !== project)) throw new MeritRouterError("not_found", `unknown task ${id}${project ? ` in project ${project}` : ""}`);
+  // Read from the task's own project's store; with a project, another project's task reads as
+  // unknown (as `getStatus` does).
+  const located = locateProjectTask(sy, id, project);
+  if (!located || (project && located.task.row.project_id !== project)) throw new MeritRouterError("not_found", `unknown task ${id}${project ? ` in project ${project}` : ""}`);
   const input = { by, reason };
-  return decision === "accept" ? sy.acceptTask(id, input, project) : sy.rejectTask(id, input, project);
+  // Name the owning project so the service writes to that project's store.
+  const owner = project ?? (located.task.row.project_id || undefined);
+  return decision === "accept" ? sy.acceptTask(id, input, owner) : sy.rejectTask(id, input, owner);
 }
 
-export function artifactText(sy: MeritRouter, ref: string, maxBytes = 200_000): { row: ArtifactRow; text: string; truncated: boolean } | null {
-  const a = sy.artifacts.read(ref);
+/**
+ * An artifact's text (the first `maxBytes`), read from the store holding it. With `project`, only
+ * that project's store is searched and an artifact of another project's task is not found;
+ * without it, a legacy installation reads its one store and a split installation searches every
+ * project's store, refusing an id held by two.
+ */
+export function artifactText(sy: MeritRouter, ref: string, maxBytes = 200_000, project?: string): { row: ArtifactRow; text: string; truncated: boolean } | null {
+  const a = readArtifact(sy, ref, project);
   if (!a) return null;
   const truncated = a.content.length > maxBytes;
   return { row: a.row, text: a.content.subarray(0, maxBytes).toString("utf8"), truncated };
+}
+
+function readArtifact(sy: MeritRouter, ref: string, project?: string): { row: ArtifactRow; content: Buffer } | undefined {
+  const legacy = legacyStores(sy);
+  if (project === undefined && legacy) return legacy.artifacts.read(ref);
+  const found: Array<{ project: string; stores: ProjectRuntimeStore }> = [];
+  for (const p of project !== undefined ? [project] : adminProjectScopes(sy)) {
+    const opened = openProjectStores(sy, p);
+    if (!opened.ok) continue;
+    const row = opened.stores.artifacts.get(ref);
+    // A task's artifact belongs to that task's project (a shared legacy store holds every project's).
+    if (row && (!row.task_id || taskIn(sy, opened.stores, row.task_id))) found.push({ project: p, stores: opened.stores });
+  }
+  if (found.length > 1) throw new AmbiguousProjectIdError("artifact", ref, found.map((f) => f.project));
+  return found[0]?.stores.artifacts.read(ref);
 }
 
 // ---------- configuration editing (config-edit.ts) ----------

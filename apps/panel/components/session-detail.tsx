@@ -38,7 +38,7 @@ export function SessionDetailView({ sy, id, sp, scope }: { sy: MeritRouter; id: 
   const s = d.session;
   const running = s.status === "running";
   const now = Date.now();
-  const requests = insights.sessionRequests(sy, s.id);
+  const requests = insights.sessionRequests(sy, s.id, scope.project);
 
   // Outcomes for intents on this page that were written after it (only when the page is cut off).
   const laterOutcomes = new Map<number, Outcome>();
@@ -70,7 +70,8 @@ export function SessionDetailView({ sy, id, sp, scope }: { sy: MeritRouter; id: 
   // Intents without an outcome on this page, less those a resume settled.
   const settledByResume = d.events.reduce((n, e) => n + (e.type === "resumed" ? e.data.resolvedIntentSeqs.length : 0), 0);
   const unanswered = d.events.filter((e) => e.type === "tool_intent").length - d.events.filter((e) => e.type === "tool_outcome").length - settledByResume;
-  const taskState = s.taskId ? (sy.tasks.get(s.taskId)?.row.state ?? null) : null;
+  // The session's own project's store holds its task (a split installation's own store holds none).
+  const taskState = s.taskId ? (sy.projectStores(scope.project).tasks.get(s.taskId)?.row.state ?? null) : null;
 
   const pager = paged ? (
     <nav aria-label="Event pages" className="flex flex-wrap items-center gap-1">

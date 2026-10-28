@@ -6,6 +6,7 @@ import { git } from "../workspaces/git.js";
 import { jobDetail } from "./jobs.js";
 import { jobPlan } from "./job-plans.js";
 import { contextOfTask } from "./projects.js";
+import { locateProjectTask, projectSessionsOf } from "./project-reads.js";
 
 export interface PlanRecoveryEvidence {
   taskId: string;
@@ -32,16 +33,19 @@ const Commit = z.object({ hash: Hash, seconds: z.coerce.number().int().nonnegati
  * failed segment passed. Keep the task's original failure and acceptance intact. Git commit
  * times have one-second precision: same-second changes cannot establish ordering and are omitted.
  */
-export async function planRecovery(sy: MeritRouter, jobId: string): Promise<PlanRecoveryView> {
+export async function planRecovery(sy: MeritRouter, jobId: string, project?: string): Promise<PlanRecoveryView> {
   const out: PlanRecoveryView = { evidence: [], errors: [], commitLimit: 500 };
-  const plan = jobPlan(sy, jobId);
-  const job = jobDetail(sy, jobId, { transcript: false });
+  // The job's own project's store (`project` limits the search to that project).
+  const located = locateProjectTask(sy, jobId, project);
+  if (!located) return out;
+  const plan = jobPlan(sy, jobId, { project: located.project });
+  const job = jobDetail(sy, jobId, { transcript: false, project: located.project });
   if (!plan || !job) return out;
   const candidates = plan.nodes.filter((n) => n.taskId && (n.state === "failed" || n.state === "budget_exhausted") && n.finishedAt !== null && n.writableRepository && n.allowedPaths?.length);
   if (!candidates.length) return out;
-  const agents = new Set(sy.sessions.forTask(jobId).filter((s) => s.role === "supervisor").map((s) => s.agentLabel));
+  const agents = new Set(projectSessionsOf(located.stores).forTask(jobId).filter((s) => s.role === "supervisor").map((s) => s.agentLabel));
   if (!agents.size) return out;
-  const ctx = contextOfTask(sy, jobId);
+  const ctx = contextOfTask(sy, jobId, located.project);
   for (const rawBranch of job.branches) {
     const parsedBranch = Branch.safeParse(rawBranch);
     if (!parsedBranch.success) { out.errors.push("Invalid recorded job branch; recovery history skipped"); continue; }

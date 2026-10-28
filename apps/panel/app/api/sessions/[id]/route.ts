@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { insights } from "meritrouter";
-import { handle, HttpError } from "@/lib/api";
+import { handle, HttpError, projectParam } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +26,8 @@ export async function GET(req: Request, ctx: Ctx) {
       const errors = q.error.issues.map((i) => `${i.path.map(String).join(".") || "query"}: ${i.message}`);
       throw new HttpError(400, errors.join("; "), errors);
     }
-    const d = insights.sessionDetail(sy, id, { afterSeq: q.data.after, limit: q.data.limit });
+    const project = projectParam(sy, sp);
+    const d = insights.sessionDetail(sy, id, { afterSeq: q.data.after, limit: q.data.limit, ...(project ? { project } : {}) });
     if (!d) throw new HttpError(404, `No session ${id}`);
     return d;
   });

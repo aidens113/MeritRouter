@@ -23,6 +23,14 @@ export function requireQualificationTask(sy: MeritRouter, taskId: string): void 
 
 /** 404 unless session `sessionId` is of a qualification project task. */
 export function requireQualificationSession(sy: MeritRouter, sessionId: string): void {
-  const s = sy.sessions.get(sessionId);
+  // The qualification project's own store (a split installation keeps no sessions in its own).
+  const sessions = (() => {
+    try {
+      return sy.projectStores(QUALIFICATION_SLUG).sessions;
+    } catch {
+      return null; // its store is unavailable: nothing to show
+    }
+  })();
+  const s = sessions?.get(sessionId);
   if (!s?.taskId || !insights.isQualificationTask(sy, s.taskId)) notFound();
 }

@@ -6,6 +6,7 @@ import type { ProjectRuntimeStore } from "../projects/runtime-store.js";
 import type { SessionStore } from "../sessions/store.js";
 import { QUALIFICATION_PROJECT } from "../qualification/registry.js";
 import type { StoredTask } from "../storage/tasks.js";
+import { Admission } from "../admission/admission.js";
 
 /**
  * Per-project reads for every admin view (jobs, plans, teams, metrics, sessions, budgets, usage,
@@ -193,18 +194,40 @@ export interface LocatedProject {
   stores: ProjectRuntimeStore | null;
 }
 
-function locate(sy: MeritRouter, table: "tasks" | "sessions", id: string, project?: string): LocatedProject | null {
+/** Thrown when an id given without a project is found in more than one project's store. */
+export class AmbiguousProjectIdError extends MeritRouterError {
+  constructor(kind: string, id: string, readonly projects: string[]) {
+    super("ambiguous_id", `${kind} ${id} exists in several projects (${projects.join(", ")}); name the project`);
+  }
+}
+
+/**
+ * The single match of an id lookup run across project stores. With a named project only that
+ * project was searched, so its first match is the answer; without one, every store was searched
+ * and an id found in two projects (possible only once projects keep their own stores, where ids
+ * are unique per store, not per installation) is refused rather than resolved to either.
+ */
+function single<T extends { project: string }>(kind: string, id: string, matches: T[]): T | null {
+  if (matches.length > 1) throw new AmbiguousProjectIdError(kind, id, matches.map((m) => m.project));
+  return matches[0] ?? null;
+}
+
+function locate(sy: MeritRouter, table: "tasks" | "sessions" | "model_requests", id: string, project?: string): LocatedProject | null {
+  const found: LocatedProject[] = [];
   if (project !== "") {
     for (const p of scopesFor(sy, project)) {
       const opened = openProjectStores(sy, p);
       if (!opened.ok) continue;
-      if (opened.stores.db.prepare(`SELECT 1 FROM ${table} WHERE id = ? AND project_id = ?`).get(id, p)) return { project: p, db: opened.stores.db, stores: opened.stores };
+      if (opened.stores.db.prepare(`SELECT 1 FROM ${table} WHERE id = ? AND project_id = ?`).get(id, p)) {
+        found.push({ project: p, db: opened.stores.db, stores: opened.stores });
+        if (project !== undefined) break;
+      }
     }
   }
   if (project === undefined || project === "") {
-    if (sy.db.prepare(`SELECT 1 FROM ${table} WHERE id = ? AND project_id = ''`).get(id)) return { project: "", db: sy.db, stores: null };
+    if (sy.db.prepare(`SELECT 1 FROM ${table} WHERE id = ? AND project_id = ''`).get(id)) found.push({ project: "", db: sy.db, stores: null });
   }
-  return null;
+  return single(table === "tasks" ? "task" : table === "sessions" ? "session" : "request", id, found);
 }
 
 /** The project (and its stores) holding a task; with `project`, only that project is searched. */
@@ -230,17 +253,7 @@ export interface LocatedRequest {
  * unattributed), only that scope is searched.
  */
 export function locateRequest(sy: MeritRouter, requestId: string, project?: string): LocatedRequest | null {
-  if (project !== "") {
-    for (const p of scopesFor(sy, project)) {
-      const opened = openProjectStores(sy, p);
-      if (!opened.ok) continue;
-      if (opened.stores.db.prepare("SELECT 1 FROM model_requests WHERE id = ? AND project_id = ?").get(requestId, p)) return { project: p, db: opened.stores.db, stores: opened.stores };
-    }
-  }
-  if (project === undefined || project === "") {
-    if (sy.db.prepare("SELECT 1 FROM model_requests WHERE id = ? AND project_id = ''").get(requestId)) return { project: "", db: sy.db, stores: null };
-  }
-  return null;
+  return locate(sy, "model_requests", requestId, project);
 }
 
 // ---------- tasks and jobs within a known project store ----------
@@ -281,6 +294,7 @@ export function projectIdFilter(sy: MeritRouter, project: string): { sql: string
 export function locateProjectTask(sy: MeritRouter, id: string, project?: string): ProjectTask | null {
   const candidates = project !== undefined ? (isKnownProject(sy, project) ? [project] : []) : [...sy.projects.slugs(), QUALIFICATION_PROJECT];
   let missing: ProjectStoreUnavailable | null = null;
+  const found: ProjectTask[] = [];
   for (const p of candidates) {
     const opened = openProjectStores(sy, p);
     if (!opened.ok) {
@@ -288,10 +302,31 @@ export function locateProjectTask(sy: MeritRouter, id: string, project?: string)
       continue;
     }
     const task = taskIn(sy, opened.stores, id);
-    if (task) return { project: p, stores: opened.stores, task };
+    if (task) found.push({ project: p, stores: opened.stores, task });
   }
+  const match = single("task", id, found);
+  if (match) return match;
   if (missing) throw new ProjectStoreUnavailableError(missing.project, missing.reason);
   return null;
+}
+
+/**
+ * The installation's own task, session and artifact stores, for a legacy installation only (where
+ * every project's rows live in them). A split installation's installation store is the
+ * coordination store, which holds no project rows and refuses private-evidence reads, so a
+ * split installation gets null: a row whose project store cannot be opened is simply not shown.
+ */
+export function legacyStores(sy: MeritRouter): Pick<ProjectRuntimeStore, "db" | "tasks" | "sessions" | "artifacts" | "contracts"> | null {
+  return sy.layout === "split" ? null : { db: sy.db, tasks: sy.tasks, sessions: sy.sessions, artifacts: sy.artifacts, contracts: sy.contracts };
+}
+
+/**
+ * Admission reads (request totals) over a project's own store: the service's own admission when
+ * the store is the installation's (legacy), else a read-only view over the project's database.
+ * `Admission`'s constructor only wires objects; nothing here writes.
+ */
+export function admissionOf(sy: MeritRouter, stores: Pick<ProjectRuntimeStore, "db" | "tasks">): Admission {
+  return stores.db === sy.db ? sy.admission : new Admission(stores.db, stores.tasks, sy.cfg);
 }
 
 /** Requests charged (or prepared) for a task, read from its project's store. */

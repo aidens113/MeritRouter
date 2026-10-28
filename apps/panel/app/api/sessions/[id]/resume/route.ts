@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { insights } from "meritrouter";
 import { body, handle, HttpError } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
@@ -19,10 +20,11 @@ export async function POST(req: Request, ctx: Ctx) {
     const id = decodeURIComponent((await ctx.params).id);
     if (!/^[A-Za-z0-9_-]{1,200}$/.test(id)) throw new HttpError(400, "id must be a session id");
     const { project } = req.headers.get("content-type")?.includes("json") ? await body(req, Body) : { project: undefined };
-    const s = sy.sessions.get(id);
-    if (!s) throw new HttpError(404, `No session ${id}`);
+    // The session's own project's store (an id held by two projects is refused without a project).
+    const owner = insights.sessionOwner(sy, id, project);
+    if (!owner || (project && owner !== project)) throw new HttpError(404, `No session ${id}${project ? ` in project ${project}` : ""}`);
     try {
-      return sy.resumeSession(id, project);
+      return sy.resumeSession(id, project ?? owner);
     } catch (err) {
       // Refusals (not interrupted, task not interrupted, no task) are conflicts with the current state.
       const code = (err as { code?: unknown }).code;

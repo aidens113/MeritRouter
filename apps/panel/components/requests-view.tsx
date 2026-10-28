@@ -30,7 +30,7 @@ export function RequestsView({ sy, project, sp }: { sy: MeritRouter; project: { 
   const filters = { ...scope, ...(status ? { status } : {}), ...(endpoint ? { endpointId: endpoint } : {}), ...(task ? { taskId: task } : {}), ...(job ? { jobId: job } : {}), ...(purpose ? { purpose } : {}), ...(tier ? { tier } : {}), ...(problems === "yes" ? { problems: true } : {}) };
   const total = insights.requestLogCount(sy, filters);
   const rows = insights.requestLog(sy, { ...filters, limit, offset: (page - 1) * limit });
-  const scopedJob = job ? insights.jobDetail(sy, job, { transcript: false }) : null;
+  const scopedJob = job ? insights.jobDetail(sy, job, { transcript: false, ...(project ? { project: project.slug } : {}) }) : null;
   const visibleJob = scopedJob && (!project || scopedJob.project === project.slug) ? scopedJob : null;
   const pageHref = (next: number) => {
     const query = new URLSearchParams(Object.entries(sp).flatMap(([key, value]) => typeof value === "string" && key !== "page" ? [[key, value]] : []));
