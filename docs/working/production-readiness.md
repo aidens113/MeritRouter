@@ -35,6 +35,18 @@ pnpm -r build PASS; full parallel router run 2349 pass / 48 fail / 5 skip, and e
 the 25 failing files passes alone (CPU contention: ~13900 s of tests in 1301 s). dev pushed
 at a359200; main held until the live pilot. Next: fresh install, user enters Ollama key,
 supervised Facebook pilot (400 requests, $0 paid).
+2026-10-28 LIVE PILOT 1 (fresh split install, Ollama Cloud free key, job
+t_0mvrt9n103e8186731851, project facebook-mvp): 273 requests, $0. 11 models answered 402/403
+(not in free usage) once each and were cached unavailable, then disabled by the operator; beam,
+nemotron-3-super and gpt-oss:120b served. 12 worker tasks: scaffold, db/auth, auth API, posts,
+users/friends, notifications, shell, pages, seed, README completed; tests budget_exhausted 18/30;
+review dependency_failed. Supervisor stopped model_handoff_exhausted:repeated_tool_call:delegate
+(re-delegating the review against the failed dependency). ROOT DEFECT: integrate_task was offered
+in 78 supervisor requests and never called; accept_task does not integrate, so the job branch
+stayed at the empty initial commit and later tasks branched from it (pieces built in isolation).
+Integration must be enforced by the service, not left to the model. Also found live and fixed:
+worker startup recovery crash (3517a72); found live, fix in progress: split CLI session/job
+reads and panel by-id job/task/request pages (not found).
 Naming decision (user, 2026-10-27): every runtime FOLDER is spelled `.MeritRouter`. Project
 runtime already is (projects/runtime-paths.ts). Install defaults still say `.meritrouter`:
 config/schema.ts:514 brain `~/.meritrouter/brain`, :781 storage `.meritrouter`, cli/setup.ts:35.
