@@ -567,6 +567,8 @@ main().then(
   (code) => process.exit(code),
   (err) => {
     process.stderr.write(`meritrouter: ${(err as Error).message}\n`);
+    // Set MERITROUTER_DEBUG=1 to see where an unexpected error came from.
+    if (process.env.MERITROUTER_DEBUG && (err as Error).stack) process.stderr.write(`${(err as Error).stack}\n`);
     process.exit(1);
   },
 );

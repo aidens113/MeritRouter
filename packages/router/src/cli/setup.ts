@@ -52,7 +52,10 @@ export function initializeConfig(opts: InitOptions): string[] {
     parseConfig(YAML.parse(text), opts.configPath);
     mkdirSync(dir, { recursive: true });
     writeFileSync(opts.configPath, text, { flag: "wx" });
-    messages.push(`wrote ${opts.configPath} (first project: ${opts.project})`);
+    const created = YAML.parse(text)?.projects?.[opts.project] !== undefined;
+    messages.push(created
+      ? `wrote ${opts.configPath} (first project: ${opts.project})`
+      : `wrote ${opts.configPath} (no projects yet: meritrouter projects create <slug> --directory <path>)`);
   }
   const models = path.join(dir, "models.yaml");
   if (existsSync(models)) messages.push(`kept existing ${models}`);

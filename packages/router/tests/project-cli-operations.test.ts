@@ -9,6 +9,7 @@ import { initializeConfig } from "../src/cli/setup.js";
 import type { MeritRouter } from "../src/core/service.js";
 import { createProject } from "../src/admin/projects.js";
 import { projectsCommand } from "../src/cli/projects.js";
+import { doctorChecks } from "../src/cli/doctor.js";
 import { baseConfig, FakeProvider, makeEnv, open, summarizeTask, type Env } from "./helpers.js";
 
 // The two split-layout operator gaps from wave-c1's open questions:
@@ -105,6 +106,16 @@ describe("a split installation starts with no project; the first one created bec
     // The CLI's own project() guard (src/cli.ts) gives the actionable message; here we confirm the
     // zero-project state it guards against.
     expect(sy.projects.slugs()).toEqual([]);
+  });
+
+  it("doctor runs on a fresh installation with no projects and says how to create one", async () => {
+    const env = splitEnvWithNoProjects();
+    const sy = open(env, new FakeProvider());
+    services.push(sy);
+    const checks = doctorChecks(sy, { prepared: await sy.prepareRepositories({}) });
+    expect(checks.find(c => c.check === "projects")).toMatchObject({ ok: true, level: "warn" });
+    expect(checks.find(c => c.check === "projects")!.detail).toMatch(/projects create/);
+    expect(checks.find(c => c.check === "web search")).toMatchObject({ ok: true });
   });
 });
 

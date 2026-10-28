@@ -220,7 +220,10 @@ export function doctorChecks(sy: MeritRouter, opts: { projects?: string[]; prepa
   const eps = sy.catalog.endpoints();
   const active = eps.filter((e) => e.status === "active").length;
   checks.push({ check: "models", ok: active > 0, level: active > 0 ? "ok" : "fail", detail: `${active} active of ${eps.length}${eps.length ? "" : ": run meritrouter models scan once a key is added"}` });
-  if (!sy.projects.primary.project.legacy) {
+  // A fresh split installation starts with no projects (and so no primary) until one is created.
+  const primary = sy.projects.slugs().length ? sy.projects.primary : undefined;
+  if (!primary) checks.push({ check: "projects", ok: true, level: "warn", detail: "none yet: create one with meritrouter projects create <slug> --directory <path>, or the panel's New project page" });
+  if (primary && !primary.project.legacy) {
     for (const m of sy.cfg.brain.mounts) {
       const abs = sy.brain.resolve(m.prefix).abs;
       const ok = existsSync(abs);
@@ -242,6 +245,10 @@ export function doctorChecks(sy: MeritRouter, opts: { projects?: string[]; prepa
  * right now.
  */
 export function webChecks(sy: MeritRouter): DoctorCheck[] {
+  // Split installations keep web state per project; with no project yet there is nothing to read.
+  if (sy.layout === "split" && !sy.projects.slugs().length) {
+    return [{ check: "web search", ok: true, level: "ok", detail: sy.cfg.web.enabled ? "checked per project once one exists" : "off (web.enabled: false)" }];
+  }
   const s = sy.web.status();
   const out: DoctorCheck[] = [];
   if (!sy.cfg.web.enabled) out.push({ check: "web search", ok: true, level: "ok", detail: "off (web.enabled: false)" });
