@@ -124,14 +124,17 @@ describe("standalone supervisor", () => {
     const client = new ScriptedClient((req) => (isSupervisor(req) ? reply(null, { ...servedFor(sy!, req), toolCalls: script[turns(req)]!() }) : worker(req)));
     sy = open(env, client, { worker: true });
     const job = await sy.startJob({ goal: "Two overlapping edits", repositories: ["core"] });
+    // The question comes only after supervisor startup (integration worktree, Brain ensure and the
+    // job's working-document commits) and two model turns. That startup alone measured ~29 s on a
+    // loaded Windows host, so a fixed 10 s window failed with no question; wait on a deadline instead.
     let q: ReturnType<MeritRouter["questions"]> = [];
-    for (let i = 0; i < 100 && !q.length; i++) {
+    for (const until = Date.now() + 90_000; !q.length && Date.now() < until;) {
       await new Promise((res) => setTimeout(res, 100));
       q = sy.questions();
     }
-    expect(q[0]).toMatchObject({ question: "Should subtract round?", options: ["yes", "no"] });
+    expect(q[0], JSON.stringify(sy.getStatus([job.taskId]))).toMatchObject({ question: "Should subtract round?", options: ["yes", "no"] });
     sy.answerQuestion(q[0]!.id, "no");
-    const r = (await sy.awaitResults([job.taskId], { timeoutSeconds: 60 })).completed[0]!;
+    const r = (await sy.awaitResults([job.taskId], { timeoutSeconds: 120 })).completed[0]!;
     expect(r.stopReason).toBe("supervisor_blocked");
     const sup = client.requests.filter(isSupervisor).at(-1)!;
     const outputs = sup.messages.filter((m) => m.role === "tool").map((m) => String(m.content));
@@ -140,7 +143,7 @@ describe("standalone supervisor", () => {
     // b's write globs overlap a's, so b waited on a's file lease rather than running beside it.
     const [a, b] = sy.tasks.childrenOf(job.taskId);
     expect(sy.tasks.events(b!.row.id).find((e) => e.type === "waiting_for_file_lease")?.data).toMatchObject({ holder: a!.row.id });
-  }, 120_000);
+  }, 240_000);
 });
 
 describe("supervisor interruption", () => {

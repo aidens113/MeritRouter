@@ -17,6 +17,7 @@ import { prepareGitProcess } from "../../workspaces/git-process-policy.js";
 import type { WorkerTask } from "../../core/task.js";
 import type { RunContext } from "../types.js";
 import { projectRuntimeActivationRoots, type Workspace } from "../../workspaces/worktree.js";
+import { projectRuntimePaths } from "../../projects/runtime-paths.js";
 import { currentSupervisorAuthority } from "../../core/supervisor-authority.js";
 const Sha = z.string().regex(/^[a-f0-9]{40,64}$/);
 const Count = z.number().int().nonnegative();
@@ -30,6 +31,7 @@ export const TaskLabAuthoritySchema = z.object({
 }).strict();
 export type TaskLabAuthority = z.infer<typeof TaskLabAuthoritySchema>;
 const equal = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
+const samePath = (a: string, b: string) => process.platform === "win32" ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b);
 /** Pure acceptance guard. Only a fresh trusted authority snapshot can establish a pass. */
 export function taskLabEvidenceProblem(spec: WorkerTask, evidence: unknown, rawAuthority: TaskLabAuthority | null): string | null {
   const names = spec.constraints.labChecks ?? [];
@@ -85,7 +87,12 @@ export function taskLabAuthority(labs: LabManager, taskId: string, evidence: unk
       return null;
     labs.taskAttempts.runner.assertLab(lab, attempt);
     const fresh = loadConfig(labs.options.cfg.configPath), project = new ProjectRegistry(fresh).get(attempt.project), config = ProjectConfigSchema.parse(fresh.projects[attempt.project]);
-    if (!project || !config.lab || fresh.storageDir !== labs.options.storageDir)
+    if (!project || !config.lab)
+      return null;
+    // The Lab manager must still be the one the trusted config names for this project: the
+    // installation's (legacy), or the project's own store under its configured directory (split).
+    const split = project.projectDirectory !== null && samePath(projectRuntimePaths(project.projectDirectory).state, labs.options.storageDir);
+    if (!split && fresh.storageDir !== labs.options.storageDir)
       return null;
     if (!equal(Object.keys(project.repositoryPaths).filter(alias => attempt.repositories.some(repo => repo.alias === alias)), attempt.repositories.map(repo => repo.alias)))
       return null;
@@ -105,7 +112,7 @@ export function taskLabAuthority(labs: LabManager, taskId: string, evidence: unk
       return output;
     };
     const common = (cwd: string) => realpathSync(git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]).trim());
-    const sourceRoot = path.resolve(projectRuntimeActivationRoots(project).worktrees), source = path.resolve(attempt.sourceWorktree), relative = path.relative(sourceRoot, source);
+    const sourceRoot = path.resolve(projectRuntimeActivationRoots(split ? { storageDir: labs.options.storageDir, projectDirectory: project.projectDirectory } : project).worktrees), source = path.resolve(attempt.sourceWorktree), relative = path.relative(sourceRoot, source);
     if (!relative || relative.startsWith("..") || path.isAbsolute(relative))
       return null;
     let cursor = sourceRoot;

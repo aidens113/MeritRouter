@@ -1,7 +1,8 @@
 import { labOwnedPath } from "./paths.js";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { closeSync, existsSync, mkdirSync, openSync, readSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { z } from "zod";
 import path from "node:path";
 import net from "node:net";
 import { immediate } from "../storage/db.js";
@@ -27,12 +28,25 @@ export class LabServices {
   private proofPath(lab: LabRecord, name: string): string {
     return labOwnedPath(path.resolve(lab.root, "../../.."), path.join(lab.root, "logs", `${name}.process-tree.json`));
   }
+  /** Remove the process-tree proof of exactly this retired pid and token; any other content is kept as evidence. */
+  private retireProof(lab: LabRecord, name: string, pid: number, token: string): void {
+    const proof = this.proofPath(lab, name);
+    if (!existsSync(proof)) return;
+    const stat = lstatSync(proof);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) return;
+    let owner: unknown;
+    try { owner = JSON.parse(readFileSync(proof, "utf8")); } catch { return; }
+    if (z.object({ pid: z.literal(pid), token: z.literal(token) }).safeParse(owner).success) unlinkSync(proof);
+  }
   private async stopProcess(lab: LabRecord, name: string, pid: number, token: string): Promise<void> {
     try {
       const authority = this.commandAuthority();
       const observed = await authority.observe(lab, { kind: "lab-service", name, token });
       if (observed && observed.pid !== pid) throw new RepositoryMutationError("ownership_changed", "Lab service PID differs from its kernel Job identity");
       await authority.stop(lab, { kind: "lab-service", name, token });
+      // Kernel retirement is now verified, so this identity's process-tree proof is settled. Left
+      // behind, it would refuse the next start's capture (a new pid and token, same path).
+      this.retireProof(lab, name, pid, token);
     }
     catch (error) {
       if (error instanceof RepositoryMutationError) throw error;

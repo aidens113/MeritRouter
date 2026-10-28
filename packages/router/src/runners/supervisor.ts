@@ -10,7 +10,7 @@ import { planLimits } from "../routing/select.js";
 import { charterFor } from "../roles/index.js";
 import { commitAs, SelectedCommitError, type Actor } from "../attribution/index.js";
 import { RepositoryMutationError, withRepositoryMutation, type RepositoryMutationCapability } from "../workspaces/repository-mutation.js";
-import { createRepositoryEffects, soleActiveRepositoryCommand } from "../workspaces/repository-command.js";
+import { createRepositoryEffects, soleActiveRepositoryCommand, type RepositoryCommandPermit } from "../workspaces/repository-command.js";
 import { projectRuntimeActivationRoots } from "../workspaces/worktree.js";
 import { assertRuntimeCwdSupported } from "../projects/runtime-paths.js";
 import { assertRunAuthority } from "../harness/task-authority.js";
@@ -124,7 +124,21 @@ async function integrationRepos(ctx: RunContext, saved: IntegrationRepo[]): Prom
   }
   const requested = [...sources, ...saved.map(repo => repo.worktree)];
   if (!requested.length) return integrationReposLocked(ctx, saved);
-  return awaitingActiveCommand(ctx, requested, () => withRepositoryMutation(requested, mutation => integrationReposLocked(ctx, saved, mutation)));
+  const writable = ctx.spec.repositoryAliases.filter(alias => ctx.cfg.repositoryPaths[alias]?.writable);
+  return awaitingActiveCommand(ctx, requested, async () => withRepositoryMutation(requested, mutation => integrationReposLocked(ctx, saved, mutation), await labAdmission(ctx, writable)));
+}
+
+/**
+ * Admission options for a Lab's root job touching its integration worktrees, which are the Lab's
+ * own worktrees: permits for exactly the Lab's live services in `aliases`, so the command fence
+ * admits past those persistent services (they never settle) and still refuses every other active
+ * command. Fetched per admission, since an integration restart replaces a service's command.
+ * Empty for every other job.
+ */
+async function labAdmission(ctx: RunContext, aliases: readonly string[]): Promise<{ command?: RepositoryCommandPermit[] }> {
+  if (!ctx.lab || ctx.lab.rootJobId !== ctx.taskId || !aliases.length) return {};
+  const command = await ctx.lab.integrationPermits(ctx.taskId, aliases);
+  return command.length ? { command } : {};
 }
 
 /**
@@ -202,7 +216,7 @@ async function integrationReposLocked(ctx: RunContext, saved: IntegrationRepo[],
     if (eligible.length) await withRepositoryMutation(eligible.map(repo => repo.worktree), async () => {
       assertRunAuthority(ctx);
       for (const repo of eligible) { await assertIntegrationOwner(ctx.cfg.repositoryPaths[repo.alias]!.path, repo.worktree); out.set(repo.alias, { alias: repo.alias, worktree: repo.worktree, branch: repo.branch, baseSha: status.heads[repo.alias] ?? repo.base }); }
-    }, mutation === undefined ? {} : { capability: mutation });
+    }, { ...(mutation === undefined ? {} : { capability: mutation }), ...await labAdmission(ctx, eligible.map(repo => repo.alias)) });
     return out;
   }
   for (const r of saved) {
@@ -278,7 +292,9 @@ export class SupervisorRunner implements CodingRunner {
       assertRunAuthority(ctx);
       return new WorkspacePointer(ctx.session, await Promise.all([...repos.values()].map(async r => ({ alias: r.alias, worktree: r.worktree, branch: r.branch, baseCommit: r.baseSha, head: (await git(r.worktree, ["rev-parse", "HEAD"])).trim() || null }))));
     };
-    const pointer = repos.size ? await withRepositoryMutation([...repos.values()].map(repo => repo.worktree), makePointer) : await makePointer();
+    // A Lab root job's integration worktrees run the Lab's own services; each admission passes them.
+    const repoAdmission = () => labAdmission(ctx, [...repos.keys()]);
+    const pointer = repos.size ? await withRepositoryMutation([...repos.values()].map(repo => repo.worktree), makePointer, await repoAdmission()) : await makePointer();
 
     let brain: HarnessEnv["brain"];
     if (ctx.brain && ctx.access) {
@@ -406,7 +422,7 @@ export class SupervisorRunner implements CodingRunner {
     }
     if (recovered.length && repos.size) await withRepositoryMutation([...repos.values()].map(repo => repo.worktree), async () => {
       assertRunAuthority(ctx); await pointer.refresh();
-    });
+    }, await repoAdmission());
     const queueNote = recovered.length ? `\nMerge queue after the interruption (integrate_task again reports these without picking twice):\n${recovered.map(mergeNote).join("\n")}` : "";
 
     const repoNotes = [...repos.values()].map((r) => `- ${r.alias}: branch ${r.branch} (based on ${r.baseSha.slice(0, 12)}), integration worktree is your workspace`).join("\n");
@@ -479,7 +495,7 @@ export class SupervisorRunner implements CodingRunner {
           assertRunAuthority(ctx);
           const head = await commitAs(primary.worktree, { ...state.actor, model: info.endpointId, request: info.requestId }, `supervisor: edit ${info.edits.slice(0, 5).join(", ")}`, {}, { mutation, assertAuthority: () => assertRunAuthority(ctx) });
           assertRunAuthority(ctx); pointer.setHead(primary.alias, head);
-        });
+        }, await labAdmission(ctx, [primary.alias]));
       },
     });
     ctx.gate.admission.finishExecution(executionId, loop.kind);
@@ -491,7 +507,7 @@ export class SupervisorRunner implements CodingRunner {
     const checks: RunOutcome["result"]["checks"] = [];
     const guardedRepos = [...repos.values()].map(repo => repo.worktree);
     const captureHeads = async () => { assertRunAuthority(ctx); return new Map(await Promise.all([...repos.values()].map(async repo => [repo.alias, await headSha(repo.worktree)] as const))); };
-    const checkHeads = guardedRepos.length ? await withRepositoryMutation(guardedRepos, captureHeads) : await captureHeads();
+    const checkHeads = guardedRepos.length ? await withRepositoryMutation(guardedRepos, captureHeads, await repoAdmission()) : await captureHeads();
     // A blocked/stalled v2 run has not offered a finished candidate. Do not create fresh
     // host approvals on the way out (notably for pre-plan discovery failures).
     const runFinalChecks = spec.deliveryVersion !== 2 || (loop.kind === "terminal" && loop.value.status === "completed");
@@ -555,7 +571,7 @@ export class SupervisorRunner implements CodingRunner {
     }
     return productStatus;
     };
-    const productStatus = guardedRepos.length ? await withRepositoryMutation(guardedRepos, recordCandidate) : await recordCandidate();
+    const productStatus = guardedRepos.length ? await withRepositoryMutation(guardedRepos, recordCandidate, await repoAdmission()) : await recordCandidate();
     // Job execution can return a candidate, never manufacture FINAL product acceptance.
     const acceptance = scopeViolation.length || checks.some((c) => c.exitCode !== 0) ? "unmet" : spec.deliveryVersion !== 2 && finish?.status === "completed" && checks.length > 0 && checks.every(c=>c.exitCode===0) ? "met" : "not_verified";
     // A sub-job's branches are integrated by its parent job (integrate_task), not merged by hand.

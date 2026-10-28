@@ -217,6 +217,8 @@ export class ProjectRuntimeHost {
           if (!web) throw new Error("Project web access is not constructed");
           return {
             coding: o.coding, supervisor: o.supervisor, services: null, onSettled: o.onSettled, taskLeases: port.taskLeases, web, labs: manager,
+            // The project's own task Labs are drained in this process (`labs serve` supervises the installation's manager).
+            ensureLabsSupervisor: () => manager.superviseTaskAttempts(),
             brain: new Brain(local.cfg, local.db, o.now, { project, reviewer: o.reviewer }),
             access: new BrainAccess(local.db, local.cfg, o.now, project),
             servicesForLease: lease => this.servicesForLease(bundle, local, manager, lease),

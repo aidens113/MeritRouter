@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { ProjectContext } from "../projects/context.js";
 import { RepositoryMutationError } from "../workspaces/repository-mutation.js";
 import { prepareRepositoryServiceCommand, recoverRepositoryServiceCommand, repositoryServiceAuditArchived, repositoryServicePermit, RepositoryServiceCommandSchema, RepositoryServiceDescriptorSchema,
-  observeRepositoryServiceCommand, startRepositoryServiceCommand, stopRepositoryServiceCommand, type RepositoryServiceCommand, type RepositoryServiceDescriptor } from "../workspaces/repository-command.js";
+  observeRepositoryServiceCommand, startRepositoryServiceCommand, stopRepositoryServiceCommand, type RepositoryCommandPermit, type RepositoryServiceCommand, type RepositoryServiceDescriptor } from "../workspaces/repository-command.js";
 import type { ServiceCommandInput, ServiceJobBinding } from "../harness/service-command-process.js";
 import { assertLabRepositoryOwners, withLabRepositoryStatus, type LabMutationRepository } from "./repository-mutation.js";
 import { substitute } from "./recipe.js";
@@ -110,6 +110,23 @@ export class LabRepositoryCommands {
     this.assertLab(lab);
     const out: RepositoryServiceCommand[] = [];
     for (const row of this.rows(lab)) { const handle = await this.load(lab, row); if (handle) out.push(handle); }
+    return out;
+  }
+  /**
+   * Admission permits for this retained Lab's own live `lab-service` commands whose declared
+   * repository is one of `aliases`. Each handle is re-verified against its DB row, sidecar,
+   * receipt and native Job (`load`). Setup, check and task-attempt commands are never included,
+   * so a caller can admit a mutation of these worktrees only past the Lab's persistent services.
+   */
+  async servicePermits(lab: LabRecord, aliases: readonly string[]): Promise<RepositoryCommandPermit[]> {
+    this.assertLab(lab);
+    if (lab.kind !== "retained") throw new RepositoryMutationError("ownership_changed", "Only retained Lab services issue integration permits");
+    const out: RepositoryCommandPermit[] = [];
+    for (const row of this.rows(lab)) {
+      if (row.kind !== "lab-service" || !aliases.includes(lab.recipe.services[row.logical_name]?.repo ?? "")) continue;
+      const handle = await this.load(lab, row);
+      if (handle) out.push(repositoryServicePermit(handle, this.group(lab)));
+    }
     return out;
   }
   async status<T>(lab: LabRecord, action: () => Promise<T>, extra: readonly RepositoryServiceCommand[] = [], repositories: LabMutationRepository[] = []): Promise<T> {

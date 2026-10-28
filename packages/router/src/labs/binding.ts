@@ -6,12 +6,28 @@ import type { TaskStore } from "../storage/tasks.js";
 import type { ResolvedConfig } from "../config/load.js";
 import type { LabManager } from "./lab.js";
 import { git } from "../workspaces/git.js";
+import type { RepositoryCommandPermit } from "../workspaces/repository-command.js";
 export interface LabRunContext {
   manager: LabManager;
   project: string;
   name: string;
   rootJobId: string;
   labId: string;
+  /**
+   * Admission permits for the Lab's own live services in `aliases`, issued only to the Lab's root
+   * job (`jobId === rootJobId`), whose integration worktrees are the Lab's worktrees. Every other
+   * active command, and every other caller, is still refused by the repository command fence.
+   */
+  integrationPermits(jobId: string, aliases: readonly string[]): Promise<RepositoryCommandPermit[]>;
+}
+function runContext(manager: LabManager, project: string, name: string, rootJobId: string, labId: string): LabRunContext {
+  return {
+    manager, project, name, rootJobId, labId,
+    integrationPermits: async (jobId, aliases) => {
+      if (jobId !== rootJobId) throw new MeritRouterError("lab_scope_denied", "only the Lab's root job may admit integration past its services");
+      return manager.ownServicePermits(project, name, aliases);
+    },
+  };
 }
 function descendantsEnded(tasks: TaskStore, id: string): boolean {
   const pending = [id];
@@ -45,7 +61,7 @@ export function claimLabJob(manager: LabManager, project: string, name: string, 
     manager.options.db.prepare("INSERT INTO lab_teams(lab_id,root_job_id,created_at) VALUES(?,?,?) ON CONFLICT(lab_id) DO UPDATE SET root_job_id=excluded.root_job_id,created_at=excluded.created_at").run(lab.id, jobId, Date.now());
   });
   manager.touch(project, name);
-  return { manager, project, name, rootJobId: jobId, labId: lab.id };
+  return runContext(manager, project, name, jobId, lab.id);
 }
 export function bindLabTask(manager: LabManager, project: string, taskId: string, raw: WorkerTask, tasks: TaskStore): LabRunContext | null {
   const spec = WorkerTaskSchema.parse(raw);
@@ -79,7 +95,7 @@ export function bindLabTask(manager: LabManager, project: string, taskId: string
   for (const alias of spec.repositoryAliases)
     if (!lab.repositories.some(r => r.alias === alias))
       throw new MeritRouterError("lab_scope_denied", `repository ${alias} is outside this lab`);
-  return { manager, project, name: spec.lab, rootJobId, labId: lab.id };
+  return runContext(manager, project, spec.lab, rootJobId, lab.id);
 }
 export function labTaskContext(manager: LabManager, project: string, taskId: string, spec: WorkerTask, tasks: TaskStore): {
   binding: LabRunContext | null;

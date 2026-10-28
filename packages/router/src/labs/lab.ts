@@ -33,6 +33,7 @@ import { assertRuntimeCwdSupported, projectRuntimePaths, validateRuntimeLocation
 import { ensureProjectMetadataExcluded } from "../workspaces/metadata-exclusion.js";
 import { withLabRepositoryMutation, type LabMutationControl, type LabMutationRepository } from "./repository-mutation.js";
 import { RepositoryMutationError, type RepositoryMutationCapability } from "../workspaces/repository-mutation.js";
+import type { RepositoryCommandPermit } from "../workspaces/repository-command.js";
 import { SelectedCommitError } from "../attribution/selected-commit.js";
 import { LabRepositoryCommands } from "./command-authority.js";
 import type { ProjectLabPortReservations } from "./port-reservations.js";
@@ -62,6 +63,7 @@ export class LabManager {
   readonly taskAttempts: TaskLabLifecycle;
   readonly commands: LabRepositoryCommands;
   private timer: ReturnType<typeof setInterval> | null = null;
+  private taskTimer: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
   private closed = false;
   private lastRetention = 0;
@@ -173,6 +175,20 @@ export class LabManager {
     const op = this.requestControl(project, name, input, by, options);
     return this.waitOperation(project, name, op.id, options);
   }
+  /**
+   * Drain this manager's task-attempt queue in this process: a split project's executor uses it as
+   * its `ensureLabsSupervisor`, because `labs serve` supervises only the installation's manager.
+   * Only task Labs are processed here (each attempt starts, checks and cleans up its own ephemeral
+   * Lab; `recover` settles one a dead process left behind); retained-Lab services stay with their
+   * explicit supervisor. Idempotent; stops with `close()`.
+   */
+  async superviseTaskAttempts(): Promise<void> {
+    if (this.closed) throw new MeritRouterError("lab_invalid_state", "lab manager is closed");
+    if (this.taskTimer || this.timer) return;
+    this.taskTimer = setInterval(() => { if (!this.closed) this.taskAttempts.schedule(); }, 200);
+    this.taskTimer.unref();
+    this.taskAttempts.schedule();
+  }
   async processControls(): Promise<void> {
     if (this.closed)
       return;
@@ -255,6 +271,10 @@ export class LabManager {
   }
   bindTask(project: string, taskId: string, spec: WorkerTask, tasks: TaskStore): LabRunContext | null {
     return bindLabTask(this, project, taskId, spec, tasks);
+  }
+  /** Admission permits for this retained Lab's own live services in `aliases` (see `LabRepositoryCommands.servicePermits`). */
+  ownServicePermits(project: string, name: string, aliases: readonly string[]): Promise<RepositoryCommandPermit[]> {
+    return this.commands.servicePermits(this.require(project, name), aliases);
   }
   configuration(project: string, name: string): ResolvedConfig {
     return labConfiguration(this, project, name);
@@ -749,7 +769,10 @@ export class LabManager {
   } = {}): Promise<void> {
     if (this.timer)
       clearInterval(this.timer);
+    if (this.taskTimer)
+      clearInterval(this.taskTimer);
     this.timer = null;
+    this.taskTimer = null;
     this.closed = true;
     this.abort.abort("lab manager closed");
     await this.taskAttempts.close();
