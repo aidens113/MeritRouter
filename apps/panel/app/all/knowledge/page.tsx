@@ -33,8 +33,10 @@ export default async function KnowledgePage() {
   const promotions = insights.promotionsView(sy);
   const live = new Map(insights.projectList(sy).map((p) => [p.slug, p.name]));
   const now = Date.now();
-  // Global files open on a live project's Brain page (every project's brain shows global/).
-  const viewer = live.has(sy.projects.primary.project.slug) ? sy.projects.primary.project.slug : ([...live.keys()][0] ?? null);
+  // Global files open on a live project's Brain page (every project's brain shows global/). No
+  // project yet (a fresh split installation): nowhere to show them.
+  const primarySlug = sy.projects.slugs().length ? sy.projects.primary.project.slug : null;
+  const viewer = (primarySlug && live.has(primarySlug) ? primarySlug : [...live.keys()][0]) ?? null;
   const viewBase = viewer ? projectBase(viewer) : null;
 
   const awaiting = promotions.filter((p) => p.awaitingPerson);

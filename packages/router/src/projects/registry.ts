@@ -1,5 +1,5 @@
 import type { ResolvedConfig } from "../config/load.js";
-import { TaskValidationError } from "../core/errors.js";
+import { MeritRouterError, TaskValidationError } from "../core/errors.js";
 import type { Db } from "../storage/db.js";
 import { QUALIFICATION_PROJECT, qualificationOverlay, syncRepositoryRegistry } from "../qualification/registry.js";
 import { backfillProjects } from "./backfill.js";
@@ -133,9 +133,16 @@ export class ProjectRegistry {
     return c;
   }
 
-  /** The project for rows from before projects existed and for system tasks (qualification, comparisons). */
+  /**
+   * The project for rows from before projects existed and for system tasks (qualification,
+   * comparisons). Throws when the install has no project yet (a fresh split installation); a
+   * caller reachable before the first project exists must check `list().length` (or
+   * `slugs().length`) first and degrade instead of relying on this getter.
+   */
   get primary(): ProjectContext {
-    return this.get(this.cfg.projectResolution.primary) ?? this.list()[0]!;
+    const p = this.get(this.cfg.projectResolution.primary) ?? this.list()[0];
+    if (!p) throw new MeritRouterError("no_project", "this installation has no project yet: create a project first");
+    return p;
   }
 
   /** The project a write goes to: the named one, or the only one; with several, a project must be named. */

@@ -256,7 +256,10 @@ const SOURCES: Record<string, Source & { topic: LiveTopic }> = {
     topic: "brain",
     external: true,
     mark: ({ sy, project }) => {
-      const roots = project ? [sy.brainFor(project).root] : [sy.brain.root, ...sy.projects.slugs().map((slug) => sy.brainFor(slug).root)];
+      // A split installation with no project yet has no primary (`sy.brain` throws): nothing to
+      // watch beyond the (empty) project roots below.
+      const installRoot = project || (sy.layout === "split" && !sy.projects.slugs().length) ? null : sy.brain.root;
+      const roots = [...(installRoot ? [installRoot] : []), ...(project ? [project] : sy.projects.slugs()).map((slug) => sy.brainFor(slug).root)];
       return [digest([...new Set(roots)].sort().map((root) => [root, gitHead(root)]))];
     },
     topics: () => ["brain"],

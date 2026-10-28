@@ -326,8 +326,9 @@ export function updateProviderKey(sy: MeritRouter, id: number, patch: KeyPatch):
   sy.vault.update(id, p);
   if (p.secret !== undefined || p.enabled === true) {
     sy.providers.keys.clear(`vault:${id}`);
-    // An ollama-cloud key also serves web search: clear its web health too.
-    sy.web.clearProviderKey(`vault:${id}`);
+    // An ollama-cloud key also serves web search: clear its web health too. A split installation
+    // with no project yet has no web access to clear (there is nothing cached to forget).
+    if (sy.layout !== "split" || sy.projects.slugs().length) sy.web.clearProviderKey(`vault:${id}`);
   }
   return providerKeyView(sy, `vault:${id}`)!;
 }

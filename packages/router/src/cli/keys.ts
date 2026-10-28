@@ -327,7 +327,8 @@ export async function keysCommand(sy: MeritRouter, args: string[], flags: KeysFl
     if (sub === "enable") {
       sy.providers.keys.clear(`vault:${id}`);
       const k = sy.vault.get(id);
-      if (k) {
+      // A split installation with no project yet has no web access to clear.
+      if (k && (sy.layout !== "split" || sy.projects.slugs().length)) {
         sy.web.clearProviderKey(`vault:${id}`);
         sy.web.clearSearchKey(k.provider, id);
       }

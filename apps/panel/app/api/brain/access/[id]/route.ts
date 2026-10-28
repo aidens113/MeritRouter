@@ -14,6 +14,8 @@ export async function POST(req: Request, ctx: Ctx) {
     const id = Number((await ctx.params).id);
     if (!Number.isInteger(id) || id <= 0) throw new HttpError(400, "Request id must be a number");
     const b = await body(req, Body);
+    // A split installation with no project yet has no brain access requests to decide.
+    if (sy.layout === "split" && !sy.projects.slugs().length) throw new HttpError(404, `Unknown access request ${id}`);
     const current = sy.brainAccess.get(id);
     if (!current) throw new HttpError(404, `Unknown access request ${id}`);
     if (current.status !== "pending") throw new HttpError(409, `Request ${id} was already ${current.status} by ${current.decidedBy ?? "someone"}`);

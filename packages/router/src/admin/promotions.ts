@@ -147,6 +147,10 @@ function entryOf(sy: MeritRouter, rel: string): GlobalEntry | null {
 
 /** The global brain's entries with provenance, and the history of removed ones. */
 export async function globalKnowledge(sy: MeritRouter, opts: { revertLimit?: number } = {}): Promise<GlobalKnowledge> {
+  // A split installation with no project yet has no brain repository to read global/ from.
+  if (sy.layout === "split" && !sy.projects.slugs().length) {
+    return { generatedAt: Date.now(), requiresApproval: sy.cfg.brain.global_requires_approval, lessons: [], glossary: null, other: [], reverts: [] };
+  }
   const brain = sy.brain;
   await brain.ensure();
   const entries = brain

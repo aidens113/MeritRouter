@@ -130,7 +130,8 @@ export function setSearchKeyEnabled(sy: MeritRouter, id: number, enabled: boolea
   if (k.removed) throw new MeritRouterError("config_invalid", `key ${id} was removed; add a new key instead`);
   sy.vault.update(id, { enabled });
   // Re-enabling is the user saying the key is fixed: clear its cooldown, invalid, or credits mark.
-  if (enabled) sy.web.clearSearchKey(k.provider, id);
+  // A split installation with no project yet has no web access to clear.
+  if (enabled && (sy.layout !== "split" || sy.projects.slugs().length)) sy.web.clearSearchKey(k.provider, id);
   return searchKeys(sy, k.provider as SearchServiceId).find((v) => v.id === id)!;
 }
 
@@ -138,7 +139,7 @@ export function removeSearchKey(sy: MeritRouter, id: number): { removed: number 
   searchVaultKey(sy, id);
   const k = sy.vault.get(id)!;
   sy.vault.remove(id);
-  sy.web.clearSearchKey(k.provider, id);
+  if (sy.layout !== "split" || sy.projects.slugs().length) sy.web.clearSearchKey(k.provider, id);
   return { removed: id };
 }
 

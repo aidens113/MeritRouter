@@ -21,6 +21,6 @@ const AddSearchKeyBody = z
 export async function POST(req: Request) {
   return handle(async (sy) => {
     const b = await body(req, AddSearchKeyBody);
-    return { key: insights.addSearchKey(sy, b), status: sy.web.status() };
+    return { key: insights.addSearchKey(sy, b), status: insights.webSearchView(sy, { recent: 0 }).status };
   });
 }

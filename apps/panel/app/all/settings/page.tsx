@@ -54,6 +54,9 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   const brainSection: Section = multiProject
     ? { ...BRAIN_SECTION, fields: [...BRAIN_SECTION.fields.filter((f) => !["brain.project", "brain.access_approver"].includes(f.path.join("."))), GLOBAL_APPROVAL_FIELD] }
     : { ...BRAIN_SECTION, fields: [...BRAIN_SECTION.fields, GLOBAL_APPROVAL_FIELD] };
+  // insights.webSearchView degrades gracefully (a split install with no project yet has no web
+  // access of its own); sy.web itself throws until a project exists.
+  const webOn = insights.webSearchView(sy, { recent: 0 }).status.on;
   const showMounts = !multiProject || sy.cfg.brain.mounts.length > 0;
   const showAutoApprove = !multiProject || sy.cfg.brain.auto_approve.length > 0;
   const profileSections: Section[] = Object.keys(sy.cfg.profiles).map((name) => ({
@@ -137,7 +140,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             ) : null}</> : null}
             {tab === "types" ? <><SectionForm section={SUPERVISOR_SECTION} values={valuesFor(SUPERVISOR_SECTION)} /></> : null}
             {tab === "web" ? <><WebStatus sy={sy} /></> : null}
-            {tab === "web" ? <><SectionForm section={WEB_SECTION} values={valuesFor(WEB_SECTION)} badge={sy.web.status().on ? "on" : "off"} /></> : null}
+            {tab === "web" ? <><SectionForm section={WEB_SECTION} values={valuesFor(WEB_SECTION)} badge={webOn ? "on" : "off"} /></> : null}
             {tab === "web" ? <><RowsForm
               id="web-limits"
               title="Web search caps"

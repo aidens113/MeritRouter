@@ -16,6 +16,9 @@ export async function GET(req: Request) {
     const input = query.data;
     if (input.scope === "project" && !input.project) throw new HttpError(400, "Project memory requires a project");
     if (input.project && !findProject(sy, input.project)) throw new HttpError(404, "Unknown project");
+    // A split installation with no project yet has no Brain repository: global preferences have
+    // nowhere to live until the first project exists.
+    if (!input.project && !sy.projects.slugs().length) return { records: [], next: null, generation: "" };
     // Global management uses the install's Brain binding, even if every configured project
     // is archived. It does not choose a live user's project as the global UI destination.
     const project = input.project ?? sy.brain.project;
@@ -46,6 +49,7 @@ export async function POST(req: Request) {
     const input = await body(req, Write);
     if (input.scope === "project" && !input.project) throw new HttpError(400, "Project memory requires a project");
     if (input.project && !findProject(sy, input.project)) throw new HttpError(404, "Unknown project");
+    if (!input.project && !sy.projects.slugs().length) throw new HttpError(400, "create a project first: there is no Brain to save a global preference in yet");
     const project = input.project ?? sy.brain.project;
     if (input.scope === "global" && input.kind !== "user_preference") throw new HttpError(400, "Only explicit user preferences are global; inferred lessons use promotion review");
     if (input.operation === "revoke" && (input.kind !== "user_preference" || !input.expectedDigest)) throw new HttpError(400, "Revocation requires an existing preference revision");
