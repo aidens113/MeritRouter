@@ -77,6 +77,18 @@ export function searchKeys(sy: MeritRouter, service?: SearchServiceId): SearchKe
 /** Everything the panel shows about web search. */
 export function webSearchView(sy: MeritRouter, opts: { project?: string; recent?: number } = {}): WebSearchView {
   const keys = searchKeys(sy);
+  // Split installations keep web state per project; a fresh one has no project to read yet.
+  if (sy.layout === "split" && !sy.projects.slugs().length) {
+    const cfg = sy.cfg.web;
+    return {
+      status: { on: false, reason: "no project yet: create one to use web search", strategy: cfg.search.strategy, search: [], fetch: [], warnings: [], roles: [],
+        budgets: { perTask: cfg.max_requests_per_task, perDay: cfg.max_requests_per_day }, usedToday: 0 },
+      services: SEARCH_SERVICE_IDS.map((id) => ({ id, ...SEARCH_SERVICES[id], baseUrl: cfg.search[id]?.base_url ?? null, keys: keys.filter((k) => k.service === id) })),
+      searxngUrl: cfg.search.searxng?.base_url ?? null,
+      recent: [],
+      configPath: sy.cfg.configPath,
+    };
+  }
   return {
     status: sy.web.status(),
     services: SEARCH_SERVICE_IDS.map((id) => ({ id, ...SEARCH_SERVICES[id], baseUrl: sy.cfg.web.search[id]?.base_url ?? null, keys: keys.filter((k) => k.service === id) })),
