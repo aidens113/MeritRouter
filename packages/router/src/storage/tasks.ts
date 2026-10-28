@@ -8,6 +8,7 @@ import type { TaskState, WorkerResult, WorkerTask } from "../core/task.js";
 import { isTerminal } from "../core/task.js";
 import { acquireLease, conflictingLease, releaseLeases, writeGlobs } from "./file-leases.js";
 import { requiresAcceptedInputs } from "./plans.js";
+import { AWAITING_INTEGRATION, awaitedIntegrations } from "./integration-obligations.js";
 import { repoKey } from "../projects/context.js";
 import { FairClaimOrder, type ProjectClaimLimits } from "./fair-claim.js";
 import { DeliveryRepairContinuationSchema, ProductDeliveries } from "../verification/product-delivery.js";
@@ -505,6 +506,21 @@ export class TaskStore {
           if (row.state_reason !== reason) {
             this.db.prepare("UPDATE tasks SET state_reason = ?, updated_at = ? WHERE id = ?").run(reason, now, row.id);
             this.event(row.id, "dependency_awaiting_acceptance", { dependencies: unaccepted.map((d) => ({ dependency: d.row.id, acceptanceStatus: d.result?.acceptanceStatus ?? null })) });
+          }
+          continue;
+        }
+        // An accepted coding upstream of the same job is integrated onto the job branch by its
+        // supervisor before the dependent starts, so the dependent's base is the branch with it
+        // (context/upstream.ts). Failure or elapsed time never satisfies this obligation.
+        const integration = awaitedIntegrations(this.db, spec, deps.map((d) => d.row.id), now);
+        if (integration.expired.length && !this.db.prepare("SELECT 1 FROM events WHERE task_id = ? AND type = 'dependency_integration_wait_expired' LIMIT 1").get(row.id)) {
+          this.event(row.id, "dependency_integration_wait_expired", { dependencies: integration.expired.map((d) => ({ dependency: d.taskId, standing: d.standing })) });
+        }
+        if (integration.waiting.length) {
+          const reason = `${AWAITING_INTEGRATION}:${integration.waiting.map((d) => d.taskId).join(",")}`;
+          if (row.state_reason !== reason) {
+            this.db.prepare("UPDATE tasks SET state_reason = ?, updated_at = ? WHERE id = ?").run(reason, now, row.id);
+            this.event(row.id, "dependency_awaiting_integration", { dependencies: integration.waiting.map((d) => ({ dependency: d.taskId, standing: d.standing })) });
           }
           continue;
         }

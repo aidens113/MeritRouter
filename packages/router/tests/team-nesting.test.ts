@@ -356,11 +356,13 @@ describe("merge queue under supervisor resume", () => {
   it("a supervisor that dies mid-integration resumes: the queue finishes the integration and integrate_task picks nothing twice", async () => {
     env = makeEnv({ config: teamConfig() });
     const script = [
-      () => [call("delegate", { tasks: [{ label: "w", profile: "implement", goal: "Add subtract and multiply", acceptance_criteria: ["subtract exists"], allowed_paths: ["src/**"], checks: [check], difficulty: "T2" }] })],
+      // No checks: the result is not verified, so it is not integrated automatically on await;
+      // this test drives the explicit integrate_task path through the crash.
+      () => [call("delegate", { tasks: [{ label: "w", profile: "implement", goal: "Add subtract and multiply", acceptance_criteria: ["subtract exists"], allowed_paths: ["src/**"], difficulty: "T2" }] })],
       () => [call("await_tasks", { timeout_seconds: 120 })],
-      () => [call("integrate_task", { task_id: "w" })], // dies after the first of two picks
+      () => [call("integrate_task", { task_id: "w", accept: true, reason: "read both commits" })], // dies after the first of two picks
       () => [call("ask_user", { question: "Hold here until the restart" })],
-      () => [call("integrate_task", { task_id: "w" })],
+      () => [call("integrate_task", { task_id: "w", accept: true, reason: "read both commits" })],
       () => [call("finish_job", { status: "completed", summary: "integrated", verified: [{ claim: "subtract on the branch", evidence: "check" }], not_verified: [] })],
     ];
     const notices: string[] = [];

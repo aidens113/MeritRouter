@@ -6,7 +6,7 @@ lines, worker briefs, append-only ledger with real validation, open questions).
 
 | Document | Status | Scope |
 | --- | --- | --- |
-| [production-readiness.md](production-readiness.md) | Active | **Current state lives here (2026-10-28).** Gate 1 done; live pilot 1 failed on unenforced integration; integration fix in flight; pilot 2 waits on the user budget choice. |
+| [production-readiness.md](production-readiness.md) | Active | **Current state lives here (2026-10-28).** Gate 1 done; integration repaired and checked; Facebook pilot 2 running with a fresh 400-request free-only cap; product acceptance open. |
 | [project-local-storage.md](project-local-storage.md) | Active | Gate 1 complete in code: split layout is the default, end-to-end activation test passes, CLI backup/restore/migrate, panel and CLI read per-project stores. Remaining: legacy fence store, paid routes in split projects. |
 | [project-grid-deletion.md](project-grid-deletion.md) | Complete | Grid deletion and pending-request retirement verified; both clones removed through UI, sources preserved, panel restarted. Full suite had one browser timing failure that passed isolated rerun. |
 | [supervisor-lifecycle-stall.md](supervisor-lifecycle-stall.md) | Active | Facebook remains undelivered; v7 interrupted, retained profile complete and other page attempts failed deadlines. Current storage priority and exact acceptance gaps recorded; preserve source/charges. |

@@ -1,6 +1,6 @@
 # Production readiness execution sequence
 Status: Active
-Status detail: Gate 1 complete in code and validated; live pilot 1 failed on unenforced integration; service-enforced integration in flight; pilot 2 waits on the user budget choice.
+Status detail: Gate 1 validated; integration enforcement repaired and independently checked; fresh Facebook pilot 2 running with a 400-request free-only cap.
 Created: 2026-10-26
 Last updated: 2026-10-28
 Owner: Senior supervisor agent
@@ -10,7 +10,11 @@ Related: [storage](project-local-storage.md), [delivery](supervisor-lifecycle-st
 
 ## Current State
 
-Handoff 2026-10-28 (Claude Code lead, session of 2026-10-27/28). Read this first.
+Latest checkpoint 2026-10-28 (Codex supervisor): user requested repeated router-driven Facebook MVP delivery with no manual application source. Retained integration fix reviewed and repaired through worker integration_review. Recursive typecheck/build pass. Full four-worker suite: 2413 passed / 7 failed / 5 skipped (1947.87s); every failing file then passed serially, 36/36 (263.52s). New integration 8/8, nesting 7/7, source binding 22/22 and lifecycle 46/46 independently observed passing. Full-run timing failures remain disclosed; no wholly-green aggregate claim. Details: [integration acceptance](gate2-auto-integration.md).
+
+Fresh pilot 2 `t_0mvsovety5bfa4069dc69` is running through supported CLI in facebook-mvp, with a new 400-request cap and paid routing still disabled. Foreground worker PID8420 (exec session73526); panel4477 started on rebuilt source, overview/list/old-job routes HTTP200. No application source manually authored. Prior pilot data/usage preserved; canonical project still initial HEAD at launch. This checkpoint supersedes the old handoff's in-flight integration, missing worker and pending rerun-budget statements below. Product acceptance remains OPEN.
+
+Earlier handoff 2026-10-28 (Claude Code lead, session of 2026-10-27/28):
 
 **Gate 1 (project-local storage): complete in code.** New installs default to
 `storage.layout: split`: each project's DB, sessions, artifacts, worktrees, agent homes, Labs and

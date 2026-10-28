@@ -22,7 +22,11 @@ import { artifactTool, availableTools, brainReadTools, brainSupervisorTools, com
 import { labHarnessTools } from "../labs/tools.js";
 import { labCheckMatchesHeads } from "../labs/checks.js";
 import { webTools } from "../harness/web-tools.js";
-import { ensureCarves, jobDepth, mergeHooks, subJobSection, supervisorTools, type IntegrationRepo, type SupervisorState } from "../harness/supervisor-tools.js";
+import { drainIntegrations, ensureCarves, jobDepth, mergeHooks, subJobSection, supervisorTools, type IntegrationRepo, type SupervisorState } from "../harness/supervisor-tools.js";
+import { integrationBlockers } from "../harness/integration-tools.js";
+
+/** Supervisor tools that may integrate accepted results onto the job branch as a side effect. */
+const AUTO_INTEGRATING_TOOLS = new Set(["accept_task", "await_tasks", "delegate", "plan_work"]);
 import { coordinationGuard, sharedFilesOf } from "../harness/coordination-edits.js";
 import { MergeQueue, type MergeItem } from "../workspaces/merge-queue.js";
 import { newId } from "../storage/db.js";
@@ -368,13 +372,20 @@ export class SupervisorRunner implements CodingRunner {
             try {
               return await t.run(a, e);
             } finally {
-              if(t.sideEffect==="edit")await pointer.refresh();
+              if(t.sideEffect==="edit"||AUTO_INTEGRATING_TOOLS.has(t.def.function.name))await pointer.refresh();
             }
           },
         };
       }),
     ].map((tool): HarnessTool => ({ ...tool, run: async (args, context) => {
       assertSupervisorTool(ctx, tool, args);
+      // Validation and handoff judge the job branch: accepted results reach it first.
+      if (tool.def.function.name === "advance_delivery_stage" && ["validate", "handoff"].includes(String(args.stage))) {
+        const integrated = await drainIntegrations(state, context);
+        if (integrated.length) await pointer.refresh();
+        const out = await tool.run(args, context);
+        return integrated.length ? [...integrated, out].join("\n") : out;
+      }
       return tool.run(args, context);
     } }));
 
@@ -392,11 +403,17 @@ export class SupervisorRunner implements CodingRunner {
           if(product?.stage!=="handoff")errors.push("Complete the persisted handoff stage before returning a completed delivery.");
           if(product?.readiness?.status!=="ready_for_final_review")errors.push("Product readiness is missing or blocked. Set the versioned specification, complete delivery stages and validate_delivery; obtain observed criterion evidence. Report blocked with exact missing tests instead of claiming completed.");
         }
-        const running = [...state.children.values()].filter((id) => {
+        const activeChildren = () => [...state.children.values()].filter((id) => {
           const t = ctx.services!.getTask(id);
           return t && ["queued", "waiting_for_dependencies", "waiting_for_capacity", "running", "cancel_requested"].includes(t.state);
         });
+        // Accepted coding results belong on the job branch the job delivers.
+        if (!activeChildren().length && (await drainIntegrations(state, env)).length) await pointer.refresh();
+        // A conflict during the drain can re-delegate a new child. Judge the resulting state.
+        const running = activeChildren();
         if (running.length) errors.push(`tasks still running: ${running.join(", ")}; continue await_tasks until they settle. Active checks cannot be abandoned to finish the job`);
+        const unintegrated = a.status === "completed" ? integrationBlockers(ctx.tasks.db, ctx.taskId) : [];
+        if (unintegrated.length) errors.push(`integration_required: ${unintegrated.length} accepted coding task(s) are not on the job branch, so the job cannot finish completed:\n${unintegrated.map(line => `- ${line}`).join("\n")}\nResolve them, or finish blocked naming them.`);
         if (errors.length) return { ok: false, errors };
         return {
           ok: true,

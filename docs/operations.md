@@ -620,8 +620,11 @@ not enable PostgreSQL or multiple hosts.
 - **Upstream results.** When a dependent first runs, its upstreams' summaries, findings, artifact
   and patch refs, and acceptance/verification status are saved as one artifact and shown to it as
   an "Upstream results" block; the upstream artifacts become citable evidence. A coding
-  dependent starts from the job branch head once the upstream is integrated, otherwise from the
-  upstream's own head. A node with `requires_accepted_inputs` (default for high and critical
+  dependent starts from the job branch head once the upstream is integrated. Accepted coding
+  upstreams of an active supervisor job block their dependents until integration succeeds;
+  conflicts, refusals and elapsed wait time do not release them. A prolonged wait is recorded
+  after 15 minutes and requires supervisor recovery or an explicit decision. Other upstreams
+  can supply their own retained head. A node with `requires_accepted_inputs` (default for high and critical
   importance) waits while an upstream is `not_verified` or `needs_supervisor`, and fails on
   `unmet`.
 - **Retained repair source.** `plan_work`/`delegate` briefs may set `repair_from_task` to an
@@ -695,7 +698,15 @@ not enable PostgreSQL or multiple hosts.
   take no job slot; they count toward the parent's `team.max_agents`. The parent integrates the
   child's branch like any task, so worker commits keep their trailers and blame still names the
   worker. Undoing a sub-job by task reverts its whole subtree.
-- **Merge queue.** `integrate_task` enqueues; each job branch integrates one item at a time and
+- **Merge queue.** Accepted coding results are integrated automatically through the queue when
+  accepted, awaited, or before new dispatch, validation, handoff and completion. Use
+  `integrate_task` for explicit retries and reviewed test changes. Validation, handoff and
+  completed finish refuse accepted work that has not integrated. A conflict replacement keeps
+  the original obligation open until its integration succeeds, or the original is explicitly
+  rejected; a failed replacement does not count as delivery. Existing dependents of the original
+  remain blocked to preserve their source identity: cancel and re-delegate them under new labels
+  depending on the replacement named by `await_tasks`. A replacement's receipt never claims the
+  original source integrated. Each job branch integrates one item at a time and
   runs the job's checks after each (a failing check is recorded, not undone automatically). A
   failed pick is retried as a clean rebase in the item's worktree; a real conflict re-delegates
   the task once with the conflict as context. Recovery after a crash picks only the commits not

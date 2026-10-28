@@ -3,7 +3,8 @@ import { LabCheckResultSchema } from "../labs/checks.js";
 import { z } from "zod";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { newId } from "../storage/db.js";
+import { newId, type Db } from "../storage/db.js";
+import { taskIntegration, unintegratedAccepted } from "../storage/integration-obligations.js";
 import { TaskStore } from "../storage/tasks.js";
 import { INTEGRATED_EVENT } from "../context/upstream.js";
 import type { RunContext } from "../runners/types.js";
@@ -17,6 +18,9 @@ import { mediateOutsideOperation, withOutsideAuthority } from "./outside-operati
 import type { HarnessEnv, HarnessTool } from "./tools.js";
 import type { IntegrationRepo, SupervisorState } from "./supervisor-tools.js";
 import { sealRetainedCheckedTask } from "./checked-task-candidate.js";
+import { isSimulatedCrash } from "../core/faults.js";
+import { RepositoryMutationError } from "../workspaces/repository-mutation.js";
+import { SelectedCommitError } from "../attribution/selected-commit.js";
 
 /**
  * Integration onto a job branch (`integrate_task`): the acceptance gate, where a finished task's
@@ -321,6 +325,74 @@ async function integrate(s: SupervisorState, seam: IntegrationSeam, a: Record<st
   return lines.join("\n");
 }
 
+/** Why the runtime did not integrate an accepted task by itself, per task (this run only). */
+const autoRefusals = new WeakMap<SupervisorState, Map<string, { at: number; reason: string }>>();
+
+/**
+ * Integrate one accepted task through the same merge queue as `integrate_task` (attribution kept,
+ * one integration per branch, conflicts rebased or re-delegated once). Returns the outcome line;
+ * a refusal (for example changed tests needing accept_test_changes) is reported, not thrown, and
+ * remembered so the automatic path does not retry it until the result changes.
+ */
+export async function integrateAccepted(s: SupervisorState, seam: IntegrationSeam, id: string, env: HarnessEnv, args: Record<string, unknown> = {}): Promise<string> {
+  const label = s.ctx.services?.getTask(id)?.spec.label ?? id;
+  try {
+    const out = await integrate(s, seam, { ...args, task_id: id }, env);
+    autoRefusals.get(s)?.delete(id);
+    return out;
+  } catch (err) {
+    // A crash, a lost mutation fence or an abort ends the run as for integrate_task; only refusals are reported.
+    if (isSimulatedCrash(err) || err instanceof RepositoryMutationError || err instanceof SelectedCommitError || s.ctx.signal?.aborted) throw err;
+    const reason = (err as Error).message;
+    if (!autoRefusals.has(s)) autoRefusals.set(s, new Map());
+    autoRefusals.get(s)!.set(id, { at: taskIntegration(s.db, id)?.updatedAt ?? 0, reason });
+    return `${label} (${id}) is accepted but NOT integrated: ${reason}. It is not on the job branch; dependents and validation wait for it. Fix that, then call integrate_task ${label}, or reject_task it to drop it.`;
+  }
+}
+
+/**
+ * Integrate every accepted (`met`) coding task of this job that is not on the job branch yet:
+ * results verified on completion, accepted by the supervisor, or accepted by a human operator.
+ * Called by the runtime (accept_task, await_tasks, before dispatch, before validation and a
+ * completed finish), so integration never depends on the model calling integrate_task.
+ * Returns one line per task it tried; empty when nothing was owed.
+ */
+export async function drainOwedIntegrations(s: SupervisorState, seam: IntegrationSeam, env: HarnessEnv): Promise<string[]> {
+  if (!s.repos.size || !s.ctx.services) return [];
+  const own = new Set(s.children.values());
+  const refused = autoRefusals.get(s);
+  const lines: string[] = [];
+  for (const i of unintegratedAccepted(s.db, s.ctx.taskId)) {
+    if (!own.has(i.taskId) || i.standing !== "owed" || !s.repos.has(i.repo)) continue;
+    // A refusal stands until the result changes (a new decision) or integrate_task is called.
+    const prior = refused?.get(i.taskId);
+    if (prior && prior.at === i.updatedAt) continue;
+    lines.push(`auto-integration: ${await integrateAccepted(s, seam, i.taskId, env)}`);
+  }
+  return lines;
+}
+
+/**
+ * What stops validation or a completed finish: accepted results not on the job branch, each with
+ * the action that clears it. Empty when every accepted coding task is integrated.
+ */
+export function integrationBlockers(db: Db, jobId: string): string[] {
+  return unintegratedAccepted(db, jobId).map((i) => {
+    const name = i.label ?? i.taskId;
+    const what =
+      i.standing === "active"
+        ? "its integration is in progress; integrate_task continues it"
+        : i.standing === "conflict"
+          ? `its integration conflicted (${i.detail ?? "see integrate_task"}); re-delegate it based on the current job branch, fix the files yourself and integrate_task it, or reject_task it to drop it`
+          : i.standing === "redelegated"
+            ? "its conflict replacement has not integrated; await and integrate the replacement, repair it if it failed, or reject_task the original to drop the obligation"
+          : i.standing === "refused" || i.standing === "failed"
+            ? `its integration was ${i.standing} (${i.detail ?? "see integrate_task"}); fix the cause and integrate_task it again, or reject_task it to drop it`
+            : "accepted but not integrated; call integrate_task (it says what is missing, e.g. accept_test_changes), or reject_task it to drop it";
+    return `${name} (${i.taskId}, ${i.repo}): ${what}`;
+  });
+}
+
 /** The supervisor's integration tool: `integrate_task`. */
 export function integrationTools(s: SupervisorState, seam: IntegrationSeam): HarnessTool[] {
   return [
@@ -330,7 +402,7 @@ export function integrationTools(s: SupervisorState, seam: IntegrationSeam): Har
         function: {
           name: "integrate_task",
           description:
-            "Integrate a finished coding task's commits, or a finished sub-job's branch, onto the job branch through the job's merge queue: one integration per branch at a time, commits cherry-picked one by one so per-line attribution is kept, and the job checks run after each. When a pick conflicts, ordinary work may be rebased once; tasks with required Lab checks preserve their checked source and are re-delegated with those checks on the current branch. A conflict that cannot be resolved is re-delegated once (the result says which task to integrate instead). Calling it again for an integrated task picks nothing twice. Refused for unmet results and for patches with out-of-scope edits. A result that is not_verified or needs_supervisor needs accept: true with a reason (judged against the job's goal and the brief; recorded as your acceptance once the integration succeeds); patches that changed tests or evaluator files also need accept_test_changes: true after you reviewed them.",
+            "Accepted coding results (accept_task, results verified on completion, operator acceptance) are integrated automatically; use this tool for a sub-job, to retry an integration, or to integrate with accept / accept_test_changes. Integrate a finished coding task's commits, or a finished sub-job's branch, onto the job branch through the job's merge queue: one integration per branch at a time, commits cherry-picked one by one so per-line attribution is kept, and the job checks run after each. When a pick conflicts, ordinary work may be rebased once; tasks with required Lab checks preserve their checked source and are re-delegated with those checks on the current branch. A conflict that cannot be resolved is re-delegated once (the result says which task to integrate instead). Calling it again for an integrated task picks nothing twice. Refused for unmet results and for patches with out-of-scope edits. A result that is not_verified or needs_supervisor needs accept: true with a reason (judged against the job's goal and the brief; recorded as your acceptance once the integration succeeds); patches that changed tests or evaluator files also need accept_test_changes: true after you reviewed them.",
           parameters: {
             type: "object",
             properties: { task_id: { type: "string" }, accept: { type: "boolean" }, reason: { type: "string" }, accept_test_changes: { type: "boolean" }, repository: { type: "string", description: "sub-jobs: only this repository's branch (default: all)" } },

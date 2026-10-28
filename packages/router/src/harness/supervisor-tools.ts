@@ -28,7 +28,8 @@ import { formatBrief, parseDoc, replaceSection, section } from "../brain/protoco
 import type { ToolSideEffect } from "../sessions/events.js";
 import { minimalEnv } from "../runners/coding/process.js";
 import { commandAllowed, type HarnessEnv, type HarnessTool } from "./tools.js";
-import { integrationHooks, integrationTools, type IntegrationSeam } from "./integration-tools.js";
+import { drainOwedIntegrations, integrateAccepted, integrationHooks, integrationTools, type IntegrationSeam } from "./integration-tools.js";
+import { AWAITING_INTEGRATION, taskIntegration } from "../storage/integration-obligations.js";
 import { rulebookTier } from "../routing/staffing.js";
 import { liveSlotCounts, readConcurrencyRecords } from "../gateway/capacity.js";
 import type { WorkerTaskInput } from "../core/task.js";
@@ -269,6 +270,25 @@ function blockedOnAcceptance(s: SupervisorState, pending: Array<{ taskId: string
   return !moving && pending.some((p) => p.state === "waiting_for_dependencies" && (stateReason(s, p.taskId) ?? "").startsWith(AWAITING_ACCEPTANCE));
 }
 
+/**
+ * Nothing open in this job can move, and an awaited task waits for an accepted upstream that the
+ * runtime could not integrate by itself (a conflict or refusal the supervisor must resolve).
+ */
+function blockedOnIntegration(s: SupervisorState, pending: Array<{ taskId: string; state: string }>): boolean {
+  const svc = s.ctx.services!;
+  const moving = [...s.children.values()].some((id) => ["queued", "running", "waiting_for_capacity", "cancel_requested"].includes(svc.getTask(id)?.state ?? ""));
+  if (moving) return false;
+  return pending.some((p) => {
+    const why = p.state === "waiting_for_dependencies" ? (stateReason(s, p.taskId) ?? "") : "";
+    if (!why.startsWith(`${AWAITING_INTEGRATION}:`)) return false;
+    // Called right after a drain: an upstream still owed was refused; integrated or in-progress ones release soon.
+    return why.slice(AWAITING_INTEGRATION.length + 1).split(",").some((id) => {
+      const standing = taskIntegration(s.db, id)?.standing;
+      return standing !== undefined && standing !== "integrated" && standing !== "active";
+    });
+  });
+}
+
 /** The state reason of a task (why it is waiting), when the store has one. */
 function stateReason(s: SupervisorState, id: string): string | null {
   try {
@@ -305,6 +325,32 @@ async function recordBrief(s: SupervisorState, env: HarnessEnv, brief: string): 
   else await b.brain.addBrief(b.principal(), b.actor, b.workingDoc, brief);
 }
 
+type ChildView = NonNullable<ReturnType<NonNullable<RunContext["services"]>["getTask"]>>;
+
+/** A task that ended without a result a dependent can use: the dependency gate fails its dependents. */
+function deadDependency(t: ChildView): boolean {
+  return ["failed", "budget_exhausted", "cancelled"].includes(t.state) || (t.state === "completed" && t.result?.acceptanceStatus === "unmet");
+}
+
+/** The latest completed, not unmet repair (repair_from_task) of a task, among this job's tasks. */
+function successfulRepairOf(s: SupervisorState, taskId: string): { id: string; label: string } | null {
+  let found: { id: string; label: string } | null = null;
+  for (const [label, id] of s.children) {
+    const t = s.ctx.services!.getTask(id);
+    if (t?.spec.context.repairSource?.taskId === taskId && t.state === "completed" && t.result?.acceptanceStatus !== "unmet") found = { id, label };
+  }
+  return found;
+}
+
+/** Why a brief that depends on a dead task is refused, and what the supervisor can do instead. */
+function deadDependencyRefusal(label: string, depId: string, dep: ChildView): string {
+  const name = dep.spec.label ?? depId;
+  const why = dep.state === "completed" ? "completed with an unmet (rejected or failed) result" : `ended ${dep.state}`;
+  const stop = dep.result?.stopReason ? ` (${dep.result.stopReason.slice(0, 160)})` : "";
+  const budget = dep.state === "budget_exhausted" ? ` It ran out of its request budget: ask for more with request_more_budget if your pool is short, and give the redo a larger max_requests.` : "";
+  return `refused: ${label} depends on ${name} (${depId}), which ${why}${stop}; a task depending on it would fail at once (dependency_failed), so it was not dispatched. Redo ${name} first under a new label${dep.spec.writableRepository ? ` (repair_from_task: "${name}" keeps its retained commits)` : ""} and make ${label} depend on that label, have the operator resume ${depId}, or drop the dependency if ${label} does not need it.${budget}`;
+}
+
 /** Preserve a draft's explicit recovery binding and require explicit choices for prose references. */
 async function assertRepairBriefSources(s:SupervisorState,items:Array<Record<string,unknown>>):Promise<void> {
   const previous=new PlanStore(s.db,s.ctx.now).latest(s.ctx.taskId);
@@ -339,8 +385,27 @@ async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, un
   const sourceSnapshot = opts.sourceSnapshot ?? (fresh.length ? await delegatedSourceSnapshot(s.ctx, s.repos, fresh.flatMap(({it}) => (it.repositories as string[] | undefined) ?? s.ctx.spec.repositoryAliases)) : {});
   const ids = new Map(fresh.map((x) => [x.label, newId("t")]));
   for (const { it, label } of fresh) if (it.profile === "implement" && !((it.allowed_paths as string[] | undefined) ?? []).length) throw new Error(`${label}: implement briefs need allowed_paths`);
+  // A dependency that already ended without a usable result fails its dependent at once
+  // (dependency_failed): refuse the brief with what to do instead, unless a successful repair
+  // of that dependency superseded it, which the dependent then waits for in its place.
+  const supersede = new Map<string, string>();
+  const notes: string[] = [];
+  for (const { it, label } of fresh) {
+    for (const ref of (it.depends_on as string[] | undefined) ?? []) {
+      const depId = s.children.get(slug(ref)) ?? s.children.get(ref) ?? ([...s.children.values()].includes(ref) ? ref : undefined);
+      const dep = depId ? svc.getTask(depId) : null;
+      if (!depId || !dep || !deadDependency(dep)) continue;
+      const repair = successfulRepairOf(s, depId);
+      if (repair) {
+        supersede.set(depId, repair.id);
+        notes.push(`note: ${label} depends on ${dep.spec.label ?? depId}, which ended ${dep.state}; it waits for its completed repair ${repair.label} (${repair.id}) instead`);
+        continue;
+      }
+      throw new Error(deadDependencyRefusal(label, depId, dep));
+    }
+  }
   const depIds = (it: Record<string, unknown>) =>
-    ((it.depends_on as string[] | undefined) ?? []).map((l) => s.children.get(slug(l)) ?? ids.get(slug(l)) ?? (s.children.has(l) ? s.children.get(l)! : l));
+    ((it.depends_on as string[] | undefined) ?? []).map((l) => s.children.get(slug(l)) ?? ids.get(slug(l)) ?? (s.children.has(l) ? s.children.get(l)! : l)).map((id) => supersede.get(id) ?? id);
 
   // Worker budgets (budget control D1): each new worker task is granted a request budget, held
   // from this job's pool while it is open; together they must fit in what the job has left.
@@ -364,7 +429,6 @@ async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, un
   }
 
   // Advisory: overlapping coding briefs in one repository run one after the other (file leases).
-  const notes: string[] = [];
   const active = [...s.children.entries()].flatMap(([label, id]) => {
     const t = svc.getTask(id);
     return t && t.spec.writableRepository && !["completed", "failed", "cancelled", "budget_exhausted"].includes(t.state) ? [{ label, repo: t.spec.writableRepository, paths: t.spec.constraints.allowedPaths ?? ["**"] }] : [];
@@ -474,7 +538,10 @@ async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, un
     const grant = grants.get(label);
     if (o) return `${label} -> ${o.taskId} (${o.state}${o.deduplicated ? ", already submitted" : ""})${carve ? `; sub-supervisor with ${carve.requests} requests on branch ${s.ctx.cfg.supervisor.branch_prefix}${o.taskId}` : ""}${grant ? `; budget ${grant.requests} requests` : ""}`;
     const id = s.children.get(label)!;
-    return `${label} -> ${id} (${svc.getTask(id)?.state ?? "unknown"}, already submitted)`;
+    const t = svc.getTask(id);
+    // A label runs once: delegating a dead label again changes nothing, so say what would.
+    const dead = t && deadDependency(t) ? `; it ended ${t.state}${t.result?.stopReason ? ` (${t.result.stopReason.slice(0, 160)})` : ""} and is not run again under this label: fix the cause, then delegate the work under a new label` : "";
+    return `${label} -> ${id} (${t?.state ?? "unknown"}, already submitted)${dead}`;
   });
   const max = maxAgentsPerJob(s.ctx.cfg);
   const live = [...s.children.values()].filter((id) => {
@@ -576,6 +643,11 @@ export function mergeHooks(s: SupervisorState, env: HarnessEnv): MergeHooks {
   return integrationHooks(s, env, seamOf(s));
 }
 
+/** Integrate every accepted coding task of this job that is not on its branch yet (see `drainOwedIntegrations`). */
+export function drainIntegrations(s: SupervisorState, env: HarnessEnv): Promise<string[]> {
+  return drainOwedIntegrations(s, seamOf(s), env);
+}
+
 function summarizeResult(id: string, s: SupervisorState): string {
   const t = s.ctx.services!.getTask(id);
   if (!t) return `${id}: unknown`;
@@ -643,7 +715,10 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
       async (a, env) => {
         const items = parseObjectArray(a.tasks, "tasks");
         if (!items.length) throw new Error("tasks is empty");
-        return dispatchBriefs(s, items, env);
+        // Accepted work reaches the job branch before new tasks pin their base to it.
+        const integrated = await drainIntegrations(s, env);
+        const out = await dispatchBriefs(s, items, env);
+        return [...integrated, out].join("\n");
       },
     ),
 
@@ -679,6 +754,8 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
           sharedFilesArg(it);
           WorkerTaskSchema.parse({ profile, goal: it.goal, repositoryAliases: repositories, ...(writable ? { writableRepository: writable } : {}), context: { ...(it.file_refs ? { fileRefs: it.file_refs } : {}) }, constraints: { acceptanceCriteria: it.acceptance_criteria, ...(paths ? { allowedPaths: paths } : {}), ...(it.checks ? { checks: it.checks } : {}), ...(it.lab_checks ? { labChecks: it.lab_checks } : {}) }, ...(it.max_requests !== undefined ? { budget: { maxModelRequests: it.max_requests } } : {}), ...(it.importance ? { importance: it.importance } : {}), ...(it.importance_reason ? { importanceReason: it.importance_reason } : {}), ...(it.difficulty || it.web !== undefined ? { hints: { ...(it.difficulty ? { difficulty: it.difficulty } : {}), ...(it.web !== undefined ? { web: it.web } : {}) } } : {}), ...(it.brain_grants ? { brain: { grants: it.brain_grants } } : {}) });
         }
+        // Accepted work reaches the job branch before new nodes pin their base to it.
+        const integrated = dispatch && items.some(it => !s.children.has(slug(it.label))) ? await drainIntegrations(s, env) : [];
         const sourceSnapshot = dispatch && items.some(it => !s.children.has(slug(it.label))) ? await delegatedSourceSnapshot(s.ctx, s.repos, items.filter(it => !s.children.has(slug(it.label))).flatMap(it => (it.repositories as string[] | undefined) ?? s.ctx.spec.repositoryAliases)) : {};
         const { tiers: plannedTiers, notes: staffed } = dispatch ? await staffNodes(s, items, sourceSnapshot) : { tiers: new Map<string, PlanDifficulty>(), notes: [] as string[] };
         const store = new PlanStore(s.db, s.ctx.now);
@@ -736,6 +813,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
           `critical path: ${cp.labels.join(" -> ")} (estimated cost ${cp.cost}); at most ${maxAgentsPerJob(s.ctx.cfg)} task(s) of this job run at once`,
           ...(staffed.length ? [`tiers from the rulebook (nodes without difficulty): ${staffed.join("; ")}`] : []),
           ...capacityLine(s),
+          ...integrated,
           ...(dispatched ? [dispatched] : []),
         ].join("\n");
       },
@@ -756,6 +834,9 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
       rememberHumanWaits();
       let operatorDecisions: string[] = [];
       let waited = false;
+      // Accepted results (verified on completion, or accepted by an operator meanwhile) are
+      // integrated while waiting, so their dependents can start from the job branch.
+      const integrated: string[] = [];
       // Wait in slices: a dependent waiting on this supervisor's acceptance, or a worker waiting on
       // its budget request, would otherwise hold the wait until the timeout.
       let r: Awaited<ReturnType<typeof svc.awaitResults>>;
@@ -764,22 +845,31 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
         // This metric comes from the service's measured wait, never model output or
         // requested timeout. Immediate returns cannot erase no-progress history.
         waited ||= (r.waitedSeconds ?? 0) > 0;
+        const drained = s.ctx.signal.aborted ? [] : await drainIntegrations(s, env);
+        integrated.push(...drained);
         const capability = workerActionCapability(s.ctx.cfg);
         if (capability.approvalPolicy === "human_only") for (const action of pendingActions()) humanWaiting.add(action.id);
         operatorDecisions = [...humanWaiting].flatMap(id => {
           const action = actionStore.get(project, id);
           return action && !["pending", "running"].includes(action.status) ? [`worker action ${id}: ${action.status}${action.decisionReason ? `; ${action.decisionReason}` : ""}`] : [];
         });
-        if (!r.pending.length || Date.now() >= until || s.ctx.signal.aborted || blockedOnAcceptance(s, r.pending) || supervisorAsked(s.db, jobId) || operatorDecisions.length || (capability.canApprove && pendingActions().length > 0)) break;
+        if (!r.pending.length || Date.now() >= until || s.ctx.signal.aborted || blockedOnAcceptance(s, r.pending) || blockedOnIntegration(s, r.pending) || supervisorAsked(s.db, jobId) || operatorDecisions.length || (capability.canApprove && pendingActions().length > 0)) break;
       }
       if (waited && !s.ctx.signal.aborted && env.observationWait) env.observationWait.epoch++;
       const budget = pendingBudgetLines(s.db, s.ctx.cfg, jobId);
       const actions = [...pendingActions(), ...actionStore.list({ project, jobId, status: "running" })];
       const capability = workerActionCapability(s.ctx.cfg);
       const guidance = capability.canApprove ? "decide_worker_action" : capability.approvalPolicy === "human_only" ? "awaiting human operator approval; supervisor cannot approve; continue await_tasks without model polling" : "outside-repository execution disabled; operator policy change or cancellation required";
-      return cap([...operatorDecisions, ...actions.map(row => `worker action ${row.id} from ${row.taskId}: ${row.action.operation?.name ?? row.action.command}; ${row.status === "running" ? currentActionGeneration(s, row) ? `running; approved by ${row.decidedBy ?? "recorded decision"}; execution in progress; continue await_tasks` : "persisted running from inactive generation; unresolved, requires operator reconciliation" : guidance}`), ...budget, ...r.completed.map((c) => summarizeResult(c.taskId, s)), ...r.pending.map((p) => {
+      return cap([...integrated, ...operatorDecisions, ...actions.map(row => `worker action ${row.id} from ${row.taskId}: ${row.action.operation?.name ?? row.action.command}; ${row.status === "running" ? currentActionGeneration(s, row) ? `running; approved by ${row.decidedBy ?? "recorded decision"}; execution in progress; continue await_tasks` : "persisted running from inactive generation; unresolved, requires operator reconciliation" : guidance}`), ...budget, ...r.completed.map((c) => summarizeResult(c.taskId, s)), ...r.pending.map((p) => {
         const why = stateReason(s, p.taskId);
-        return `${p.taskId}: still ${p.state}${why && why !== "resumed" ? ` (${why}${why.startsWith(AWAITING_ACCEPTANCE) ? "; accept_task or reject_task the upstream result" : ""})` : ""}`;
+        if (why?.startsWith(`${AWAITING_INTEGRATION}:`)) {
+          const replacements = why.slice(AWAITING_INTEGRATION.length + 1).split(",").flatMap(id => {
+            const i = taskIntegration(s.db, id);
+            return i?.standing === "redelegated" ? [`${id}: ${i.detail}`] : [];
+          });
+          if (replacements.length) return `${p.taskId}: still ${p.state} (${why}); ${replacements.join("; ")}. Cancel this waiting dependent and delegate it under a new label depending on the replacement; do not reuse the original source or claim it integrated.`;
+        }
+        return `${p.taskId}: still ${p.state}${why && why !== "resumed" ? ` (${why}${why.startsWith(AWAITING_ACCEPTANCE) ? "; accept_task or reject_task the upstream result" : why.startsWith(AWAITING_INTEGRATION) ? "; the upstream result is accepted but not on the job branch yet: integrate_task it (it says why it cannot) or reject_task it" : ""})` : ""}`;
       })].join("\n"));
       }),
       repeatBehavior: "execute",
@@ -801,13 +891,18 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
     tool(
       "accept_task",
       "delegate",
-      `${ACCEPTANCE_JUDGEMENT} Accept a finished task's result for this job. Acceptance is recorded on the task with who accepted (this job's supervisor) and your reason, so state what you checked and how it meets the goal and the brief. A reason is required unless the result is already met. Unmet results cannot be accepted: reject them or re-delegate. When verification.strict_acceptor is human, strict results are refused here and wait for a human (CLI, MCP, or panel).`,
-      { task_id: { type: "string" }, reason: { type: "string", description: "what you verified and why the result meets the job's goal and the brief's specifications" } },
+      `${ACCEPTANCE_JUDGEMENT} Accept a finished task's result for this job. Acceptance is recorded on the task with who accepted (this job's supervisor) and your reason, so state what you checked and how it meets the goal and the brief. A reason is required unless the result is already met. Unmet results cannot be accepted: reject them or re-delegate. When verification.strict_acceptor is human, strict results are refused here and wait for a human (CLI, MCP, or panel). An accepted coding task is integrated onto the job branch at once through the merge queue (the result says integrated, or why not, e.g. a conflict); its dependents start from the branch with it.`,
+      { task_id: { type: "string" }, reason: { type: "string", description: "what you verified and why the result meets the job's goal and the brief's specifications" }, accept_test_changes: { type: "boolean", description: "the patch changed tests or evaluator files and you reviewed them: integrate it anyway" } },
       ["task_id"],
-      async (a) => {
+      async (a, env) => {
         const id = ownTask(s, a.task_id);
         const r = svc.acceptTask(id, { by: supervisorIdentity(s), reason: typeof a.reason === "string" ? a.reason : null });
-        return `${id} accepted (acceptance ${r.acceptanceStatus}); recorded as ${r.decision.by.kind} ${r.decision.by.id}`;
+        const accepted = `${id} accepted (acceptance ${r.acceptanceStatus}); recorded as ${r.decision.by.kind} ${r.decision.by.id}`;
+        // An accepted coding result goes onto the job branch now, through the merge queue.
+        const owed = r.acceptanceStatus === "met" ? taskIntegration(s.db, id) : null;
+        if (!owed || owed.standing !== "owed" || !s.repos.has(owed.repo)) return accepted;
+        const integrated = await integrateAccepted(s, seamOf(s), id, env, a.accept_test_changes === true ? { accept_test_changes: true } : {});
+        return `${accepted}\nintegration: ${integrated}`;
       },
     ),
 

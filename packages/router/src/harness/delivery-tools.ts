@@ -8,6 +8,7 @@ import { executeSupervisorCommand } from "./worker-actions.js";
 import { minimalEnv } from "../runners/coding/process.js";
 import { dirtyPaths } from "../workspaces/git.js";
 import { synchronizeDeliveryCandidate } from "../verification/product-runtime.js";
+import { integrationBlockers } from "./integration-tools.js";
 
 /** Coordination tools accept specifications and stages, never model-authored observed receipts. */
 export function deliveryTools(repositories:Iterable<{alias:string;worktree:string}>):HarnessTool[] {
@@ -55,8 +56,13 @@ export function deliveryTools(repositories:Iterable<{alias:string;worktree:strin
       if(ids.length)store.recordEvidence(ctx.taskId,project,{schemaVersion:1,id:`validation-${env.toolInvocationId??startedAt}`,criterionIds:ids,kind:"structural",specDigest:deliverySpecDigest(before.spec),candidateDigest:productCandidateDigest(candidate),actor:{id:`runtime:${ctx.taskId}`,role:"runtime"},basis:"observed",outcome:passed?"pass":"fail",startedAt,completedAt:Date.now(),expiresAt:null,artifactRefs:logs,observations,unknowns:[],subjectActorIds:[`supervisor:${ctx.spec.label??ctx.taskId}`]});
       return JSON.stringify(store.status(ctx.taskId,project));
     },"command"),
-    make("advance_delivery_stage","Advance one stage after its work is complete, or return to an earlier stage for repair. Handoff requires current observed evidence.",z.object({stage:DeliveryStageSchema}).strict(),async(raw,env)=>{
+    make("advance_delivery_stage","Advance one stage after its work is complete, or return to an earlier stage for repair. Handoff requires current observed evidence. Validate and handoff are refused while any accepted coding task is not integrated onto the job branch.",z.object({stage:DeliveryStageSchema}).strict(),async(raw,env)=>{
       const {stage}=z.object({stage:DeliveryStageSchema}).strict().parse(raw);
+      // Validation and handoff judge the job branch: every accepted coding result must be on it.
+      if(stage==="validate"||stage==="handoff"){
+        const blockers=integrationBlockers(env.ctx.tasks.db,env.ctx.taskId);
+        if(blockers.length)throw new Error(`integration_required: cannot advance to ${stage} while ${blockers.length} accepted coding task(s) are not on the job branch:\n${blockers.map(line=>`- ${line}`).join("\n")}`);
+      }
       new ProductDeliveries(env.ctx.tasks.db).transition(env.ctx.taskId,(env.ctx.tasks.projectOf(env.ctx.taskId) ?? env.ctx.cfg.brain.project),stage);
       env.ctx.tasks.event(env.ctx.taskId,"delivery_stage_changed",{stage});return JSON.stringify({stage});
     },"edit"),
