@@ -42,6 +42,9 @@ async function workspaceSource(ctx: RunContext, alias: string): Promise<{ path: 
 
 export async function prepareWorkspace(ctx: RunContext): Promise<{ ws: Workspace; worktrees: Worktrees }> {
   const { Worktrees } = await import("../../workspaces/worktree.js");
+  // Before any effect: a superseded or revoked claim must not create a worktree (or resolve a Lab
+  // team source) that the checks inside the mutation below would only refuse afterwards.
+  assertRunAuthority(ctx);
   const alias = ctx.spec.writableRepository!;
   const source = await workspaceSource(ctx, alias);
   const worktrees = new Worktrees(ctx.tasks.db, projectRuntimeActivationRoots(ctx.cfg).worktrees, ctx.now);

@@ -11,7 +11,6 @@ import { ProjectRegistry } from "../src/projects/registry.js";
 import { LabRecipeSchema } from "../src/labs/recipe.js";
 import { git } from "../src/workspaces/git.js";
 import { assertLabEffect, withLabAuthority } from "../src/labs/control-authority.js";
-import * as processRunner from "../src/runners/coding/process.js";
 import { baseConfig, makeEnv, type Env } from "./helpers.js";
 
 let env: Env, db: Db, manager: LabManager;
@@ -28,7 +27,10 @@ async function setup() {
   const created = await manager.create("demo", "fixture");
   manager.store.save({ ...created.lab, recipe: LabRecipeSchema.parse({ checks: { smoke: "fixture-command" } }) });
   db.prepare("UPDATE labs SET recipe_json=? WHERE id=?").run(JSON.stringify(LabRecipeSchema.parse({ checks: { smoke: "fixture-command" } })),created.lab.id);
-  const run = vi.spyOn(processRunner, "runProcess").mockResolvedValue({ exitCode: 0, stdout: "fake", stderr: "", killed: null, durationMs: 1 });
+  // The effect boundary for a Lab command check. Since 5cb43f9 checks execute through the Lab's
+  // Job-bound repository commands, not `runProcess`; spying on the old primitive made every
+  // "never executed" assertion below vacuous and the positive count impossible.
+  const run = vi.spyOn(manager.commands, "run").mockResolvedValue({ exitCode: 0, stdout: "fake", stderr: "", killed: null, durationMs: 1 });
   return { tasks, lease: capturedLease(task), run };
 }
 function disable() {

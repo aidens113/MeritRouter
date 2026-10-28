@@ -8,6 +8,7 @@ import { prepareWorkspace } from '../src/runners/coding/finish.js';
 import { createCodingRunner } from '../src/runners/coding/index.js';
 import { taskLabAuthority, taskLabEvidenceProblem } from '../src/runners/coding/task-lab.js';
 import { WorkerTaskSchema } from '../src/core/task.js';
+import { capturedLease } from '../src/storage/task-leases.js';
 import { WorkerActionRequests, type WorkerActionRequest } from '../src/harness/worker-actions.js';
 import { LabSupervisorLease } from '../src/operations/lab-supervisor.js';
 import { baseConfig, makeEnv, open, openWithTestSupervisor, reply, goodOutput, servedFor, ScriptedClient, type Env } from './helpers.js';
@@ -64,8 +65,13 @@ async function pendingAction(id: string): Promise<WorkerActionRequest> {
   }
   throw new Error('worker did not request supervisor action');
 }
-async function completed(id: string) {
-  const outcome = await sy!.awaitResults([id], { timeoutSeconds: 10 });
+// A full native coding task runs two attempts here (the missing Lab proof earns one repair), each
+// spending a few hundred fenced Git child processes since the 2026-10-26 repository-mutation
+// fences: about 18 s on a quiet Windows host and over 50 s beside a parallel suite. Prompt
+// refusals and cancellations keep the short window; complete coding runs get RUN_SECONDS.
+const RUN_SECONDS = 120, RUN_TIMEOUT = (RUN_SECONDS + 30) * 1000;
+async function completed(id: string, timeoutSeconds = 10) {
+  const outcome = await sy!.awaitResults([id], { timeoutSeconds });
   expect(outcome.pending).toHaveLength(0);
   return outcome.completed[0]!;
 }
@@ -85,14 +91,14 @@ it('keeps worker Lab execution pending and refuses a supervisor report as immuta
   expect(new LabSupervisorLease(sy!.db, sy!.cfg.configPath).read()).toBeNull();
   expect(readFileSync(path.join(env!.repo, 'src/app.ts'), 'utf8')).toBe(source);
   await new WorkerActionRequests(sy!.db).decide({ project: 'alpha', id: action.id, decision: 'approve', reason: 'Explicit fixture operator supplies an observation only', response: 'The health check looked successful.', actor: { kind: 'operator' }, config: env!.cfg });
-  const result = await completed(id);
+  const result = await completed(id, RUN_SECONDS);
   expect(result.taskLab).toBeUndefined();
   expect(result.acceptanceStatus).toBe('unmet');
   expect(result.findings.some(finding => finding.description.includes('Required task Lab checks did not complete'))).toBe(true);
   expect(taskLabAuthority(sy!.labs, id, result.taskLab)).toBeNull();
   expect(taskLabEvidenceProblem(sy!.tasks.get(id)!.spec, result.taskLab, null)).not.toBeNull();
   expect(() => sy!.acceptTask(id, { by: { kind: 'human', id: 'fixture' }, reason: 'A report cannot waive missing Lab proof' })).toThrow(/Lab|unmet/);
-}, 20000);
+}, RUN_TIMEOUT);
 it('cancels a pending worker Lab request promptly without waiting for a dedicated daemon', async () => {
   const fixture = setup(); const id = await submit(); const action = await pendingAction(id);
   sy!.cancelTasks([id]);
@@ -109,30 +115,39 @@ it('refuses an external coding worker before models, workspaces or Lab execution
   expect(sy!.labs.taskAttempts.store.all()).toHaveLength(0);
 }, 20000);
 it('does not accept passing operator-run ordinary checks when required Lab execution is refused', async () => {
-  const fixture = setup('native', true); const id = await submit({ checks: [ordinary] }); const result = await completed(id);
+  const fixture = setup('native', true); const id = await submit({ checks: [ordinary] }); const result = await completed(id, RUN_SECONDS);
   expect(result.checks[0]?.exitCode).toBe(0);
   expect(result.taskLab).toBeUndefined(); expect(result.acceptanceStatus).toBe('unmet'); expect(fixture.ensures()).toBe(0);
   expect(sy!.labs.taskAttempts.store.all()).toHaveLength(0);
   expect(readFileSync(path.join(env!.repo, 'src/app.ts'), 'utf8')).toBe(source);
-}, 20000);
-it('uses the immutable claimed generation when task state advances before workspace preparation', async () => {
+}, RUN_TIMEOUT);
+// Since 7e49ad3 workspace preparation rechecks the captured task lease (assertRunAuthority), so a
+// claim whose generation the task row has moved past is refused rather than prepared under its old
+// generation; the context therefore carries a real claim, lease and signal.
+it('uses the immutable claimed generation and refuses preparation once task state advances', async () => {
   env = makeEnv(); sy = open(env, new ScriptedClient(() => reply('{}')));
   const spec = WorkerTaskSchema.parse({ profile: 'implement', goal: 'fixture', repositoryAliases: ['core'], writableRepository: 'core', constraints: { acceptanceCriteria: ['fixture'], allowedPaths: ['src/**'], labChecks: ['health'] } });
   const id = sy.tasks.submit([spec])[0]!.taskId;
-  sy.db.prepare('UPDATE tasks SET run_count=2 WHERE id=?').run(id);
-  const context = { taskId: id, spec, cfg: env.cfg, tasks: sy.tasks, claimedRunCount: 1, now: Date.now, retry: null } as RunContext;
+  const task = sy.tasks.claim('fixture-owner', { maxConcurrent: 1, maxWritersPerRepo: 1, leaseMs: 60000, defaultTimeoutMs: 60000 })[0]!;
+  expect(task.row.id).toBe(id);
+  const context = { taskId: id, spec, cfg: env.cfg, tasks: sy.tasks, taskLease: capturedLease(task), leaseOwner: 'fixture-owner', claimedRunCount: task.row.run_count, signal: new AbortController().signal, now: Date.now, retry: null } as unknown as RunContext;
   const { ws } = await prepareWorkspace(context);
-  expect(path.basename(ws.worktreePath)).toContain(id + '-r1-'); expect(sy.tasks.get(id)!.row.run_count).toBe(2);
+  expect(path.basename(ws.worktreePath)).toContain(`${id}-r${task.row.run_count}-`);
   await expect(prepareWorkspace({ ...context, claimedRunCount: undefined })).rejects.toThrow(/captured claim generation/);
+  sy.db.prepare('UPDATE tasks SET run_count=run_count+1 WHERE id=?').run(id);
+  await expect(prepareWorkspace(context)).rejects.toThrow(/lease/);
+  expect(sy.tasks.get(id)!.row.run_count).toBe(task.row.run_count + 1);
+  // The refused attempt created no worktree and did not replace the claimed one's record.
+  expect(sy.db.prepare('SELECT worktree_path FROM workspaces WHERE task_id=?').get(id)).toEqual({ worktree_path: ws.worktreePath });
 });
 it('retains explicit authorized source pins and dependency artifacts with native coding', async () => {
   setup('native', true);
   const base = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: env!.repo, encoding: 'utf8' }).trim();
   const upstream = await submit({ checks: [ordinary], labChecks: [] });
-  expect((await completed(upstream)).acceptanceStatus).toBe('met');
+  expect((await completed(upstream, RUN_SECONDS)).acceptanceStatus).toBe('met');
   const downstream = await submit({ checks: [ordinary], dependsOn: [upstream], base });
-  const result = await completed(downstream);
+  const result = await completed(downstream, RUN_SECONDS);
   expect(captured!.spec.context.baseCommits).toEqual({ core: base });
   expect(captured!.spec.context.artifactRefs?.some(ref => sy!.artifacts.readScoped(ref, 'alpha').content.toString().includes(upstream))).toBe(true);
   expect(result.checks[0]?.exitCode).toBe(0); expect(result.taskLab).toBeUndefined(); expect(result.acceptanceStatus).toBe('unmet');
-}, 20000);
+}, (2 * RUN_SECONDS + 30) * 1000);

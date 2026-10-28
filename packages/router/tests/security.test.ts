@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { normalizeRelPath } from "../src/context/repo-reader.js";
@@ -31,8 +31,13 @@ const a: Actor = { agent: "implementer:t1", role: "implementer", model: "m/a", t
 const sup: Actor = { agent: "supervisor:j", role: "supervisor", model: "m/s" };
 const human: Actor = { agent: "human", role: "human" };
 
-function env(root: string, allowedPaths: string[] | null): HarnessEnv {
-  return { ctx: {} as never, role: "implementer", readers: new Map(), universe: evidenceUniverse([]), allowArtifacts: false, workspace: { alias: "core", root, allowedPaths }, edits: new Set() };
+// Since b87f326 every repository write rechecks the captured task lease first (assertRunAuthority),
+// so containment is only reached under a live run authority. `dispatchable: false` models a lost lease.
+function authority(dispatchable = true): never {
+  return { taskId: "t1", taskLease: { taskId: "t1", owner: "owner", runCount: 1, project: "demo", incarnation: "a".repeat(32) }, tasks: { dispatchable: () => dispatchable }, signal: new AbortController().signal } as never;
+}
+function env(root: string, allowedPaths: string[] | null, ctx: never = authority()): HarnessEnv {
+  return { ctx, role: "implementer", readers: new Map(), universe: evidenceUniverse([]), allowArtifacts: false, workspace: { alias: "core", root, allowedPaths }, edits: new Set() };
 }
 const write = (e: HarnessEnv, p: string) => editTools()[0]!.run({ path: p, content: "x" }, e);
 
@@ -41,13 +46,18 @@ describe("workspace containment", () => {
     for (const p of [".git", ".GIT", ".Git/config", ".git./config", ".git /HEAD", "GIT~1/config", "src/.git", "src/.GIT/hooks/x", "a/b/.git"]) {
       expect(() => normalizeRelPath(p), p).toThrow(/\.git/);
     }
-    const root = tmp();
-    await expect(write(env(root, null), ".GIT")).rejects.toThrow(/\.git/);
+    // A repository of its own: a bare temp dir would bind the write fence to whatever repository
+    // encloses the OS temp directory (on this machine, the user's home directory is a Git repo).
+    const root = repo();
+    await expect(write(env(root, null), ".GIT")).rejects.toThrow(/named \.git are not accessible/);
+    await expect(write(env(root, null), "a/.git/config")).rejects.toThrow(/named \.git are not accessible/);
+    await expect(write(env(root, null, authority(false)), "src/ok.txt")).rejects.toThrow(/lease/);
+    expect(existsSync(path.join(root, "src", "ok.txt"))).toBe(false);
     expect(normalizeRelPath("src/.gitignore")).toBe("src/.gitignore");
   });
 
   it("refuses to write through a symlink", async () => {
-    const root = tmp();
+    const root = repo();
     const outside = path.join(tmp(), "target.txt");
     writeFileSync(outside, "secret");
     mkdirSync(path.join(root, "src"));
