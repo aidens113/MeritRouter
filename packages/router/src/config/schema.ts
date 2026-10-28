@@ -511,7 +511,7 @@ export const BrainConfigSchema = z
   .object({
     memory_context: MemoryContextConfigSchema,
     /** Brain repository directory (created and git-initialised when missing). `~` expands to home. */
-    path: z.string().min(1).default("~/.meritrouter/brain"),
+    path: z.string().min(1).default("~/.MeritRouter/brain"),
     /**
      * Project scope of a single-project config (brain/projects/<project>/): with no `projects`
      * section, the config is read as one project of this name. With `projects`, it names the
@@ -778,13 +778,20 @@ export const ConfigSchema = z
       .optional(),
     storage: z
       .object({
-        directory: z.string().min(1).default(".meritrouter"),
+        directory: z.string().min(1).default(".MeritRouter"),
         /**
          * SQLite durability: `normal` (synchronous=NORMAL; a power loss may drop the last commits)
          * or `full` (synchronous=FULL; every commit is on disk first). Session logs are fsynced
          * per event either way.
          */
         durability: z.enum(["normal", "full"]).default("normal"),
+        /**
+         * Where project-owned data lives: `split` (each project's rows live in its own
+         * `<directory>/.MeritRouter` store; this installation store holds only coordination data)
+         * or `legacy` (every project's rows live in this installation store). `setup` and `init`
+         * write `split` for every config they create; existing configs keep `legacy` until migrated.
+         */
+        layout: z.enum(["split", "legacy"]).default("legacy"),
       })
       .strict()
       .prefault({}),

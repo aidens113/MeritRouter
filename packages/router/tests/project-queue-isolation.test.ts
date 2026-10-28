@@ -203,7 +203,7 @@ afterEach(async()=>{for(const run of serviceRuns.splice(0)){await run.sy.close()
 /** Two split projects created through MeritRouter itself; each directory lies outside the installation. */
 async function serviceFixture(held:Set<string>){
  const dirs=["alpha","beta"].map(slug=>realpathSync(mkdtempSync(path.join(tmpdir(),`meritrouter-test-queue-${slug}-`))));
- const raw=baseConfig({repositories:{},storage:{directory:".meritrouter",durability:"full"},brain:{path:"brain",project:"alpha"},projects:{alpha:{priority:2,directory:dirs[0]},beta:{priority:1,directory:dirs[1]}}});
+ const raw=baseConfig({repositories:{},storage:{directory:".meritrouter",layout:"split"},brain:{path:"brain",project:"alpha"},projects:{alpha:{priority:2,directory:dirs[0]},beta:{priority:1,directory:dirs[1]}}});
  const profiles=raw.profiles as Record<string,Record<string,unknown>>;profiles.summarize={...profiles.summarize,batching:{enabled:false,max_items:4}};
  const env=makeEnv({config:raw});envs.push(env);
  const calls:string[]=[];

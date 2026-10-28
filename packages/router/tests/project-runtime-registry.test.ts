@@ -63,7 +63,7 @@ it("refuses a changed registered directory even when cached UUID generation is u
 
 /** A project directory outside the installation's config and storage roots. */
 function outsideProject():string{const dir=realpathSync(mkdtempSync(path.join(tmpdir(),"meritrouter-test-runtime-")));outside.push(dir);return dir;}
-function splitEnv(dir:string){const env=makeEnv({config:baseConfig({repositories:{},storage:{directory:".meritrouter",durability:"full"},brain:{path:"brain",project:"alpha"},projects:{alpha:{directory:dir}}})});envs.push(env);return env;}
+function splitEnv(dir:string){const env=makeEnv({config:baseConfig({repositories:{},storage:{directory:".meritrouter",layout:"split"},brain:{path:"brain",project:"alpha"},projects:{alpha:{directory:dir}}})});envs.push(env);return env;}
 it("composes split project runtimes through MeritRouter with separate health, project Labs and Brain, and drains them on close",async()=>{const dir=outsideProject(),env=splitEnv(dir);const sy=open(env,new ScriptedClient(()=>reply("unused")),{worker:false});services.push(sy);
  expect(sy.layout).toBe("split");const created=await sy.createSplitProject({slug:"alpha",directory:dir}),paths=projectRuntimePaths(dir);expect(created.paths).toEqual(paths);
  const bundle=sy.projectStores("alpha") as ProjectRuntimeBundle;expect(bundle.identity).toEqual(created.identity);expect(sy.db).not.toBe(bundle.db);expect(sy.tasks.db).toBe(sy.db);expect(sy.health.capacity.splitMode).toBe(false);

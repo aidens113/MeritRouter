@@ -5,8 +5,8 @@ import { jobMetrics, summaryOf, WAIT_REASONS, type JobMetrics, type WaitReason }
 import type { MeritRouter } from "../core/service.js";
 import { MeritRouterError } from "../core/errors.js";
 import { isTerminal } from "../core/task.js";
-import { newId } from "../storage/db.js";
-import { registerRepository } from "./registry.js";
+import { newId, type Db } from "../storage/db.js";
+import { QUALIFICATION_PROJECT, registerRepository } from "./registry.js";
 import { initRepo, loadSuite } from "./runner.js";
 
 // Team vs single agent: run the same goals as a team job (a supervisor that plans and delegates)
@@ -72,10 +72,9 @@ export interface ComparisonPlan {
   notes: string[];
 }
 
-/** Requests charged in the last 24 hours to comparison runs and everything they delegated. */
-export function comparisonRequestsToday(sy: MeritRouter, now = Date.now()): number {
+function comparisonRequestsInStore(db: Db, now: number): number {
   const since = now - 86_400_000;
-  const row = sy.db
+  const row = db
     .prepare(
       `WITH RECURSIVE tree(id) AS (
          SELECT id FROM tasks WHERE purpose = ? AND created_at > ?
@@ -86,6 +85,18 @@ export function comparisonRequestsToday(sy: MeritRouter, now = Date.now()): numb
     )
     .get(COMPARISON_PURPOSE, since - 7 * 86_400_000, since) as { n: number };
   return row.n;
+}
+
+/**
+ * Requests charged in the last 24 hours to comparison runs and everything they delegated. A
+ * legacy installation holds every comparison's tasks in one store; a split one spreads them
+ * across the qualification store (eval goals) and each project's own store (supplied goals), so
+ * every live store is summed.
+ */
+export function comparisonRequestsToday(sy: MeritRouter, now = Date.now()): number {
+  if (sy.layout !== "split") return comparisonRequestsInStore(sy.db, now);
+  const stores = [QUALIFICATION_PROJECT, ...sy.projects.slugs()].map((slug) => sy.projectStores(slug).db);
+  return stores.reduce((total, db) => total + comparisonRequestsInStore(db, now), 0);
 }
 
 function budgetState(sy: MeritRouter): { dailyAllocation: number; usedToday: number; remaining: number } {
@@ -270,9 +281,9 @@ function snapshot(m: JobMetrics): MetricsSnapshot {
   };
 }
 
-function servedEndpoints(sy: MeritRouter, m: JobMetrics): string[] {
+function servedEndpoints(db: Db, m: JobMetrics): string[] {
   const ids = [m.jobId, ...m.agents.map((a) => a.taskId)];
-  const rows = sy.db
+  const rows = db
     .prepare(`SELECT DISTINCT r.served_endpoint_id AS e FROM model_requests r JOIN request_charges c ON c.request_id = r.id WHERE c.task_id IN (${ids.map(() => "?").join(",")}) AND r.served_endpoint_id IS NOT NULL ORDER BY e`)
     .all(...ids) as Array<{ e: string }>;
   return rows.map((r) => r.e);
@@ -328,7 +339,8 @@ async function repositoryFor(sy: MeritRouter, comparisonId: string, g: Compariso
   cpSync(g.fixture!, dir, { recursive: true });
   await initRepo(dir);
   const alias = `c-${comparisonId.slice(-8)}-${g.id}-${kind}`;
-  registerRepository(sy.db, sy.projects.qualification, { alias, path: dir, writable: true, origin: `comparison:${comparisonId}` });
+  // The fixture belongs to the qualification project, where its run goes: its own store, split or not.
+  registerRepository(sy.projectStores(QUALIFICATION_PROJECT).db, sy.projects.qualification, { alias, path: dir, writable: true, origin: `comparison:${comparisonId}` });
   return alias;
 }
 
@@ -351,7 +363,11 @@ async function runOne(sy: MeritRouter, comparisonId: string, g: ComparisonGoal, 
         };
   // A supplied goal runs on a configured repository of the primary project, in that project; an
   // eval goal's fixture copy belongs to the qualification project, where the run goes by purpose.
-  const [sub] = await sy.submitTasks([spec], { purpose: COMPARISON_PURPOSE, ...(g.repository ? { project: sy.projects.primary.project.slug } : {}) });
+  const project = g.repository ? sy.projects.primary.project.slug : QUALIFICATION_PROJECT;
+  const store = sy.projectStores(project);
+  // `submitTasks` only accepts a named project it knows as configured; the qualification project
+  // is reached by purpose instead (see `submissionProject`), so it is never named explicitly here.
+  const [sub] = await sy.submitTasks([spec], { purpose: COMPARISON_PURPOSE, ...(g.repository ? { project } : {}) });
   const taskId = sub!.taskId;
   opts.onProgress?.(`${g.id}: ${kind} run ${taskId} started (cap ${cap} requests)`);
   const started = Date.now();
@@ -360,9 +376,9 @@ async function runOne(sy: MeritRouter, comparisonId: string, g: ComparisonGoal, 
   for (;;) {
     const r = await sy.awaitResults([taskId], { timeoutSeconds: (opts.pollMs ?? 500) / 1000, ...(opts.signal ? { signal: opts.signal } : {}) });
     if (!r.timedOut) break;
-    const m = jobMetrics(sy, taskId);
+    const m = jobMetrics(sy, taskId, { project });
     const open = () => [taskId, ...(m?.agents.map((a) => a.taskId) ?? [])].filter((t) => {
-      const s = sy.tasks.get(t)?.row.state;
+      const s = store.tasks.get(t)?.row.state;
       return s && !isTerminal(s);
     });
     if (m && m.requests >= cap) {
@@ -375,8 +391,8 @@ async function runOne(sy: MeritRouter, comparisonId: string, g: ComparisonGoal, 
     await sy.awaitResults([taskId], { timeoutSeconds: 30 });
     break;
   }
-  const t = sy.tasks.get(taskId)!;
-  const m = jobMetrics(sy, taskId)!;
+  const t = store.tasks.get(taskId)!;
+  const m = jobMetrics(sy, taskId, { project })!;
   opts.onProgress?.(`${g.id}: ${kind} run ${taskId} ${t.row.state}${t.result ? ` / ${t.result.acceptanceStatus}` : ""}; ${m.requests} requests`);
   return {
     taskId,
@@ -385,7 +401,7 @@ async function runOne(sy: MeritRouter, comparisonId: string, g: ComparisonGoal, 
     stoppedAtCap,
     timedOut,
     requestCap: cap,
-    endpoints: servedEndpoints(sy, m),
+    endpoints: servedEndpoints(store.db, m),
     metrics: snapshot(m),
   };
 }

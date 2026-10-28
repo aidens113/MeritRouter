@@ -8,6 +8,7 @@ import { prepareWorkspace } from "../src/runners/coding/finish.js";
 import { baseResult, type RunContext } from "../src/runners/types.js";
 import { openDatabase, type Db } from "../src/storage/db.js";
 import { readStoreIdentity } from "../src/projects/store-identity.js";
+import { openInstallationLayout } from "../src/core/project-runtime-host.js";
 import { baseConfig, FakeProvider, goodOutput, makeEnv, open, reply, ScriptedClient, summarizeTask, type Env } from "./helpers.js";
 
 const services: MeritRouter[] = [], envs: Env[] = [], dirs: string[] = [], dbs: Db[] = [];
@@ -34,11 +35,11 @@ function projectRepo(): string {
 
 const CANARY = "private-canary-7f3a1c";
 
-function fixture(opts: { durability?: "normal" | "full"; slugs?: string[] } = {}) {
+function fixture(opts: { layout?: "split" | "legacy"; slugs?: string[] } = {}) {
   const slugs = opts.slugs ?? ["alpha"];
   const repos = Object.fromEntries(slugs.map(slug => [slug, projectRepo()]));
   const projects = Object.fromEntries(slugs.map(slug => [slug, { directory: repos[slug], repositories: { app: { path: repos[slug] } } }]));
-  const env = makeEnv({ config: baseConfig({ storage: { directory: ".meritrouter", durability: opts.durability ?? "full" }, repositories: {}, brain: { path: "brain", project: slugs[0] }, projects }) });
+  const env = makeEnv({ config: baseConfig({ storage: { directory: ".meritrouter", layout: opts.layout ?? "split" }, repositories: {}, brain: { path: "brain", project: slugs[0] }, projects }) });
   envs.push(env);
   return { env, repos };
 }
@@ -153,7 +154,7 @@ it("reopens a split installation after restart, recovers interrupted work and ru
 }, 90_000);
 
 it("keeps a legacy installation legacy and refuses to mix split projects into it", async () => {
-  const normal = fixture({ durability: "normal" });
+  const normal = fixture({ layout: "legacy" });
   const sy = track(open(normal.env, new FakeProvider()));
   expect(sy.layout).toBe("legacy");
   expect(readStoreIdentity(sy.db)).toBeNull();
@@ -161,29 +162,37 @@ it("keeps a legacy installation legacy and refuses to mix split projects into it
   expect(existsSync(path.join(normal.repos.alpha!, ".MeritRouter"))).toBe(false);
   await close(sy);
 
-  // An installation store that already holds legacy rows stays legacy even with full durability.
-  const used = fixture({ durability: "normal" });
+  // An installation store that already holds legacy rows refuses to switch to split storage.
+  // Checked directly against `openInstallationLayout` (not through `new MeritRouter`): the
+  // service constructor has no failure path that closes its db handle, and a thrown-away handle
+  // on a store already holding rows would otherwise leak and lock the fixture's temp directory.
+  const used = fixture({ layout: "legacy" });
   const legacy = track(open(used.env, new FakeProvider()));
   await legacy.submitTasks([summarizeTask()], { project: "alpha" });
   await close(legacy);
-  used.env.cfg.storage.durability = "full";
+  const direct = openDatabase(used.env.cfg.storageDir, { durability: "full" });
+  dbs.push(direct);
+  expect(() => openInstallationLayout(direct, "split")).toThrow(/split_layout_unavailable|already holds data/);
+  direct.close();
+  dbs.pop();
   const reopened = track(open(used.env, new FakeProvider()));
   expect(reopened.layout).toBe("legacy");
   expect(readStoreIdentity(reopened.db)).toBeNull();
   await expect(reopened.retireProject("alpha")).rejects.toMatchObject({ code: "split_projects_unavailable" });
 });
 
-it("refuses an unregistered or qualification project in a split installation instead of using the coordination store", async () => {
+it("refuses an unregistered project and keeps qualification out of the coordination store in a split installation", async () => {
   const { env } = fixture();
   const sy = track(open(env, new FakeProvider()));
   await expect(sy.submitTasks([summarizeTask()], { project: "alpha" })).rejects.toThrow(/no project-local store/);
-  await expect(sy.submitTasks([summarizeTask()], { purpose: "qualification" })).rejects.toThrow(/qualification store/);
+  // Qualification has its own installation-owned store (qualification-split-store.test.ts).
+  await sy.submitTasks([summarizeTask()], { purpose: "qualification" });
   expect(sy.db.prepare("SELECT COUNT(*) n FROM tasks").get()).toEqual({ n: 0 });
 });
 
 it("refuses a project directory inside the installation", async () => {
   // makeEnv's own fixture repository lives inside the config directory.
-  const env = makeEnv({ config: baseConfig({ storage: { directory: ".meritrouter", durability: "full" }, repositories: {}, brain: { path: "brain", project: "alpha" }, projects: { alpha: { directory: "repo", repositories: { app: { path: "repo" } } } } }) });
+  const env = makeEnv({ config: baseConfig({ storage: { directory: ".meritrouter", layout: "split" }, repositories: {}, brain: { path: "brain", project: "alpha" }, projects: { alpha: { directory: "repo", repositories: { app: { path: "repo" } } } } }) });
   envs.push(env);
   const sy = track(open(env, new FakeProvider()));
   expect(sy.projects.get("alpha")!.projectDirectory).toBe(env.repo);
@@ -229,7 +238,7 @@ it("opens the coordination store read-only identical after restart (no second id
 
 it("gives a split supervisor lease-bound services that delegate and await within its own project store", async () => {
   const dir = projectRepo();
-  const raw = baseConfig({ storage: { directory: ".meritrouter", durability: "full" }, repositories: {}, brain: { path: "brain", project: "alpha" }, projects: { alpha: { directory: dir, repositories: { app: { path: dir } } } } });
+  const raw = baseConfig({ storage: { directory: ".meritrouter", layout: "split" }, repositories: {}, brain: { path: "brain", project: "alpha" }, projects: { alpha: { directory: dir, repositories: { app: { path: dir } } } } });
   (raw.profiles as Record<string, unknown>).supervise = { mode: "supervisor", tools: "supervisor", min_total_parameters_b: 30, classify: "never" };
   const env = makeEnv({ config: raw });
   envs.push(env);

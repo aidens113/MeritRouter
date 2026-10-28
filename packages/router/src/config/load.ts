@@ -57,6 +57,23 @@ export function formatIssues(issues: Array<{ path: PropertyKey[]; message: strin
   return issues.map((i) => `${i.path.map(String).join(".") || "<root>"}: ${i.message}`);
 }
 
+/** The storage directory's old, lower-case spelling (before the `.MeritRouter` rename). */
+const LEGACY_STORAGE_DIR_NAME = ".meritrouter";
+
+/**
+ * Resolve `storage.directory` against the config's directory. On a case-sensitive filesystem, a
+ * config still naming the default directory (either spelling) that does not exist under the new
+ * `.MeritRouter` spelling falls back to an existing old-spelled `.meritrouter` directory beside
+ * it, so an installation created before the rename keeps working without migration.
+ */
+function resolveStorageDir(baseDir: string, directory: string): string {
+  const resolved = path.resolve(baseDir, directory);
+  if (existsSync(resolved)) return resolved;
+  if (path.basename(directory).toLowerCase() !== LEGACY_STORAGE_DIR_NAME) return resolved;
+  const legacy = path.join(path.dirname(resolved), LEGACY_STORAGE_DIR_NAME);
+  return existsSync(legacy) ? legacy : resolved;
+}
+
 export function parseConfig(raw: unknown, configPath: string): ResolvedConfig {
   const parsed = ConfigSchema.safeParse(raw);
   if (!parsed.success) throw new ConfigError(`invalid config ${configPath}:\n  ${formatIssues(parsed.error.issues).join("\n  ")}`);
@@ -77,7 +94,7 @@ export function parseConfig(raw: unknown, configPath: string): ResolvedConfig {
   return {
     ...cfg,
     configPath,
-    storageDir: path.resolve(baseDir, cfg.storage.directory),
+    storageDir: resolveStorageDir(baseDir, cfg.storage.directory),
     repositoryPaths,
     projectResolution: projects.resolution,
     modelsPath: cfg.models.file ? path.resolve(baseDir, cfg.models.file) : null,

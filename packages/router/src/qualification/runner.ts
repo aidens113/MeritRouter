@@ -10,7 +10,7 @@ import { newId } from "../storage/db.js";
 import { FILE_REF_RE } from "../core/task.js";
 import { git } from "../workspaces/git.js";
 import { minimalEnv, runProcess } from "../runners/coding/process.js";
-import { registerRepository } from "./registry.js";
+import { QUALIFICATION_PROJECT, registerRepository } from "./registry.js";
 import { autoCriterionId } from "../core/task.js";
 import { renderEvidencePackage, validateVerdict, VERDICT_JSON_SCHEMA, VERDICTS } from "../verification/review.js";
 
@@ -121,10 +121,15 @@ export class Qualifier {
     return loadSuite(this.suiteDir);
   }
 
+  /** The qualification project's store: its own (split installations) or the installation's. */
+  private store() {
+    return this.sy.projectStores(QUALIFICATION_PROJECT);
+  }
+
   requestsUsedToday(): number {
     return (
-      this.sy.db
-        .prepare(
+      this.store()
+        .db.prepare(
           `SELECT COUNT(DISTINCT r.id) AS n FROM model_requests r JOIN request_charges c ON c.request_id = r.id JOIN tasks t ON t.id = c.task_id
             WHERE t.purpose = 'qualification' AND r.reserved_at > ?`,
         )
@@ -146,9 +151,10 @@ export class Qualifier {
       throw new Error(`qualification could use up to ${projected} requests but only ${Math.max(0, remaining)} of today's qualification allocation (${this.sy.cfg.qualification.max_requests_per_day}) remain; lower trials or pick fewer evals`);
     }
 
+    const store = this.store();
     const runId = newId("q");
     const root = path.join(this.sy.cfg.storageDir, "qualification", runId);
-    this.sy.db
+    store.db
       .prepare("INSERT INTO qualification_runs (id, endpoint_id, suite_version, status, started_at, detail_json) VALUES (?, ?, ?, 'preparing', ?, ?)")
       .run(runId, endpointId, suite.version, Date.now(), JSON.stringify({ evals: evals.map((e) => e.id), trials, projectedRequests: projected }));
 
@@ -161,7 +167,7 @@ export class Qualifier {
         await initRepo(repo);
         const alias = `q-${runId.slice(-8)}-${e.id}-${trial}`;
         // The fixture belongs to the qualification project, where the run's tasks go (by purpose).
-        registerRepository(this.sy.db, this.sy.projects.qualification, { alias, path: repo, writable: e.family === "coding", origin: `qualification:${runId}` });
+        registerRepository(store.db, this.sy.projects.qualification, { alias, path: repo, writable: e.family === "coding", origin: `qualification:${runId}` });
         specs.push({
           evalId: e.id,
           trial,
@@ -190,10 +196,10 @@ export class Qualifier {
       }
     }
     const submitted = await this.sy.submitTasks(specs.map((s) => s.spec), { purpose: "qualification" });
-    const ins = this.sy.db.prepare("INSERT INTO qualification_tasks (task_id, run_id, eval_id, trial, endpoint_id, fixture_path) VALUES (?, ?, ?, ?, ?, ?)");
-    this.sy.db.transaction(() => {
+    const ins = store.db.prepare("INSERT INTO qualification_tasks (task_id, run_id, eval_id, trial, endpoint_id, fixture_path) VALUES (?, ?, ?, ?, ?, ?)");
+    store.db.transaction(() => {
       submitted.forEach((s, i) => ins.run(s.taskId, runId, specs[i]!.evalId, specs[i]!.trial, endpointId, specs[i]!.fixture));
-      this.sy.db.prepare("UPDATE qualification_runs SET status = 'running' WHERE id = ?").run(runId);
+      store.db.prepare("UPDATE qualification_runs SET status = 'running' WHERE id = ?").run(runId);
     })();
     return { runId, endpointId, tasks: submitted.length };
   }
@@ -205,7 +211,8 @@ export class Qualifier {
     let graded = 0;
     try {
       const suite = this.suite();
-      const pending = this.sy.db.prepare("SELECT * FROM qualification_tasks WHERE evaluated = 0").all() as Array<{
+      const store = this.store();
+      const pending = store.db.prepare("SELECT * FROM qualification_tasks WHERE evaluated = 0").all() as Array<{
         task_id: string;
         run_id: string;
         eval_id: string;
@@ -214,23 +221,23 @@ export class Qualifier {
         fixture_path: string;
       }>;
       for (const q of pending) {
-        const t = this.sy.tasks.get(q.task_id);
+        const t = store.tasks.get(q.task_id);
         if (!t || !isTerminal(t.row.state) || !t.result) continue;
         // Claim the row so another process does not grade it too.
-        if (this.sy.db.prepare("UPDATE qualification_tasks SET evaluated = 2 WHERE task_id = ? AND evaluated = 0").run(q.task_id).changes === 0) continue;
+        if (store.db.prepare("UPDATE qualification_tasks SET evaluated = 2 WHERE task_id = ? AND evaluated = 0").run(q.task_id).changes === 0) continue;
         const e = suite.evals.find((x) => x.id === q.eval_id);
         const verdict = e ? await this.grade(e, t.result, q.fixture_path) : { outcome: "infra_error" as const, detail: "eval no longer in suite" };
-        this.sy.db
+        store.db
           .prepare("INSERT INTO qualification_results (run_id, endpoint_id, eval_id, family, tier, trial, outcome, task_id, detail_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
           .run(q.run_id, q.endpoint_id, q.eval_id, e?.family ?? "unknown", e?.tier ?? "T1", q.trial, verdict.outcome, q.task_id, JSON.stringify({ detail: verdict.detail, stopReason: t.result.stopReason }), Date.now());
-        this.sy.db.prepare("UPDATE qualification_tasks SET evaluated = 1 WHERE task_id = ?").run(q.task_id);
+        store.db.prepare("UPDATE qualification_tasks SET evaluated = 1 WHERE task_id = ?").run(q.task_id);
         graded++;
       }
-      for (const run of this.sy.db.prepare("SELECT id FROM qualification_runs WHERE status = 'running'").all() as { id: string }[]) {
-        const left = this.sy.db.prepare("SELECT COUNT(*) AS n FROM qualification_tasks WHERE run_id = ? AND evaluated != 1").get(run.id) as { n: number };
+      for (const run of store.db.prepare("SELECT id FROM qualification_runs WHERE status = 'running'").all() as { id: string }[]) {
+        const left = store.db.prepare("SELECT COUNT(*) AS n FROM qualification_tasks WHERE run_id = ? AND evaluated != 1").get(run.id) as { n: number };
         if (left.n > 0) continue;
-        const tally = this.sy.db.prepare("SELECT outcome, COUNT(*) AS n FROM qualification_results WHERE run_id = ? GROUP BY outcome").all(run.id) as { outcome: string; n: number }[];
-        this.sy.db
+        const tally = store.db.prepare("SELECT outcome, COUNT(*) AS n FROM qualification_results WHERE run_id = ? GROUP BY outcome").all(run.id) as { outcome: string; n: number }[];
+        store.db
           .prepare("UPDATE qualification_runs SET status = 'finished', finished_at = ?, detail_json = json_set(COALESCE(detail_json, '{}'), '$.tally', json(?)) WHERE id = ?")
           .run(Date.now(), JSON.stringify(Object.fromEntries(tally.map((r) => [r.outcome, r.n]))), run.id);
       }
@@ -251,7 +258,7 @@ export class Qualifier {
     const patchRef = result.patchRefs[0];
     if (!patchRef) return { outcome: "fail", detail: `no patch (${result.stopReason})` };
     if (result.findings.some((f) => f.description.startsWith("Out-of-scope changes"))) return { outcome: "fail", detail: "out-of-scope edits" };
-    const patch = this.sy.artifacts.read(patchRef)?.content.toString("utf8");
+    const patch = this.store().artifacts.read(patchRef)?.content.toString("utf8");
     if (!patch) return { outcome: "infra_error", detail: "patch artifact missing" };
     // Grade on a clean copy of the fixture so nothing the worker left behind can influence it.
     const gradeDir = `${fixture}-grade`;
@@ -268,7 +275,7 @@ export class Qualifier {
     // Hidden tests are copied in after the patch, overwriting anything the worker wrote there.
     cpSync(path.join(this.suiteDir, e.hidden.dir), path.join(gradeDir, "hidden"), { recursive: true, force: true });
     const r = await runProcess(e.hidden.command, [], { cwd: gradeDir, env: minimalEnv({ CI: "1" }), timeoutMs: 120_000, shell: true });
-    const log = this.sy.artifacts.write({ taskId: result.taskId, kind: "qualification_grade", label: `hidden tests for ${e.id}`, content: `$ ${e.hidden.command}\nexit ${r.exitCode}\n\n${r.stdout}\n${r.stderr}`, extension: ".log" });
+    const log = this.store().artifacts.write({ taskId: result.taskId, kind: "qualification_grade", label: `hidden tests for ${e.id}`, content: `$ ${e.hidden.command}\nexit ${r.exitCode}\n\n${r.stdout}\n${r.stderr}`, extension: ".log" });
     return r.exitCode === 0 && !r.killed ? { outcome: "pass", detail: `hidden tests passed (${log})` } : { outcome: "fail", detail: `hidden tests failed with exit ${r.exitCode} (${log})` };
   }
 }

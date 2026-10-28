@@ -143,6 +143,19 @@ async function main(): Promise<number> {
       : args[0] ? path.join(path.resolve(args[0]), DEFAULT_CONFIG_NAME) : resolveConfigPath(values.config);
     const requestedRepos = repoFlags(values.repo);
     const repositories = cmd === "setup" ? Object.fromEntries(Object.entries(requestedRepos).map(([alias, repo]) => [alias, { path: path.resolve(repo.path) }])) : requestedRepos;
+    if (cmd === "init") {
+      // Fresh `init` installs default to split project storage, so the installation directory
+      // cannot sit inside a project it would then own; this would fail later in provisioning anyway.
+      const installDir = path.dirname(configPath);
+      const comparable = (p: string) => process.platform === "win32" ? path.resolve(p).toLowerCase() : path.resolve(p);
+      const installCmp = comparable(installDir);
+      for (const [alias, repo] of Object.entries(requestedRepos)) {
+        const repoCmp = comparable(path.resolve(installDir, repo.path));
+        if (installCmp === repoCmp || installCmp.startsWith(repoCmp.endsWith(path.sep) ? repoCmp : repoCmp + path.sep)) {
+          throw new MeritRouterError("usage", `--repo ${alias}=${repo.path} would put the installation directory (${installDir}) inside that project; use "meritrouter setup" for an application-directory install, or choose a different installation directory`);
+        }
+      }
+    }
     const messages = initializeConfig({
       configPath, preset: values.preset, project: values.project ?? process.env[PROJECT_ENV] ?? "my-project",
       ...(values.name ? { name: values.name } : {}), repositories, setup: cmd === "setup",

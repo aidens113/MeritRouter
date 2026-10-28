@@ -34,7 +34,9 @@ import { projectRuntimePaths, type ProjectRuntimePaths } from "../projects/runti
 import { sourceCheckoutForModule } from "../projects/source-checkout.js";
 import { taskLabAuthority, taskLabEvidenceProblem } from "../runners/coding/task-lab.js";
 import { legacyProjectFence } from "../projects/store-migration.js";
+import { projectContext } from "../projects/context.js";
 import { QUALIFICATION_PROJECT } from "../qualification/registry.js";
+import { ensureQualificationStore, qualificationStoreDirectory } from "../qualification/store.js";
 import type { SessionStore } from "../sessions/store.js";
 import type { SupervisorServices } from "../runners/types.js";
 import type { CodingRunner } from "./executor.js";
@@ -53,12 +55,14 @@ const PROJECT_DATA_TABLES = ["projects", "tasks", "sessions", "artifacts", "mode
 const samePath = (a: string, b: string) => process.platform === "win32" ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b);
 
 /**
- * Decide (and on first open, bind) the installation layout. A coordination store marked split stays
- * split; an empty installation store opened with `storage.durability: full` is bound as the
- * coordination store and marked split; anything else (data from a legacy service, or `normal`
- * durability) stays legacy. A coordination store without the mark was bound by a legacy migration.
+ * Decide (and on first open, bind) the installation layout from `storage.layout`. A coordination
+ * store marked split stays split, and one bound without the mark (a legacy migration) stays
+ * legacy, regardless of the current config. Otherwise: `legacy` leaves an unbound store alone;
+ * `split` on an empty store binds it as the coordination store (forcing `synchronous=FULL`) and
+ * marks it split; `split` on a store that already holds rows from a legacy service throws, since
+ * switching an installation with existing data to split storage needs an explicit migration.
  */
-export function openInstallationLayout(db: Db, durability: "normal" | "full"): InstallationLayout {
+export function openInstallationLayout(db: Db, layout: "split" | "legacy"): InstallationLayout {
   const identity = readStoreIdentity(db);
   if (identity?.role === "project") throw new MeritRouterError("store_role_mismatch", "The installation storage directory holds a project store");
   const marked = () => (db.prepare("SELECT value FROM meta WHERE key=?").get(LAYOUT_KEY) as { value: string } | undefined)?.value === "split";
@@ -66,8 +70,12 @@ export function openInstallationLayout(db: Db, durability: "normal" | "full"): I
     applyDurability(db, "full");
     return marked() ? "split" : "legacy";
   }
+  if (layout !== "split") return "legacy";
   const empty = () => PROJECT_DATA_TABLES.every(table => !db.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get());
-  if (durability !== "full" || !empty()) return "legacy";
+  if (!empty()) {
+    throw new MeritRouterError("split_layout_unavailable",
+      "storage.layout is \"split\" but this installation store already holds data from a legacy service; set storage.layout: legacy, or start a fresh installation directory for split project storage");
+  }
   applyDurability(db, "full");
   // The mark goes first: a crash before binding leaves an empty unbound store that rebinds next open.
   const bind = immediate(db, () => {
@@ -75,7 +83,7 @@ export function openInstallationLayout(db: Db, durability: "normal" | "full"): I
     db.prepare("INSERT INTO meta(key,value) VALUES(?, 'split') ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(LAYOUT_KEY);
     return true;
   });
-  if (!bind) return openInstallationLayout(db, durability);
+  if (!bind) return openInstallationLayout(db, layout);
   try {
     initializeStoreRole(db, createCoordinationStoreIdentity());
   } catch (error) {
@@ -159,8 +167,16 @@ export class ProjectRuntimeHost {
     this.webState = new WebBackendState(o.db, o.now);
     this.webUsage = new WebUsageReservations(o.db, { web: () => o.cfg.web, now: o.now,
       authorize: (backend, keyRef) => keyRef === null || keyRef === backend || keyRef.startsWith(`${backend}:`) });
-    this.registry = new ProjectRuntimeRegistry(o.db, { context: slug => o.projects.require(slug), build: input => this.build(input),
-      forbiddenProjectDirectories: this.sourceCheckout ? [this.sourceCheckout] : [] });
+    // The qualification project is never configured (`projects.require` would refuse it) and its
+    // registry context always reads `projectDirectory: null` (it is not a user project); give the
+    // runtime registry its installation-owned directory instead, since `openRegistered` requires one.
+    this.registry = new ProjectRuntimeRegistry(o.db, {
+      context: slug => slug === QUALIFICATION_PROJECT
+        ? projectContext(o.projects.qualification, { projectDirectory: qualificationStoreDirectory(o.cfg) })
+        : o.projects.require(slug),
+      build: input => this.build(input),
+      forbiddenProjectDirectories: this.sourceCheckout ? [this.sourceCheckout] : [],
+    });
     this.scheduler = new ProjectScheduler(o.cfg, this.registry, this.bindings, { owner: o.owner, now: o.now });
     for (const row of this.registrations()) {
       const paths = projectRuntimePaths(row.directory);
@@ -256,6 +272,16 @@ export class ProjectRuntimeHost {
   bundle(slug: string): ProjectRuntimeBundle {
     if (!this.registered(slug)) throw new TaskValidationError(`project ${slug} has no project-local store; create it as a split project first`);
     return this.registry.forSlug(slug);
+  }
+
+  /**
+   * The installation-owned qualification store's runtime, provisioning and registering it (once,
+   * idempotently) on first use. Unlike `create`, this never needs a configured project or a
+   * directory outside the installation: qualification is not a user project.
+   */
+  qualificationBundle(): ProjectRuntimeBundle {
+    ensureQualificationStore(this.o.db, this.o.cfg, this.o.now());
+    return this.bundle(QUALIFICATION_PROJECT);
   }
 
   /** Every registered project's runtime that opens (an unavailable store is skipped). */
@@ -361,7 +387,7 @@ export class ProjectStoreRouter {
   /** The split runtime that owns a project's private data, or null (legacy installation). */
   runtimeOf(project: string): ProjectRuntimeBundle | null {
     if (!this.host) return null;
-    if (project === QUALIFICATION_PROJECT) throw new TaskValidationError("qualification and comparison runs need an installation-owned qualification store, which split installations do not have yet");
+    if (project === QUALIFICATION_PROJECT) return this.host.qualificationBundle();
     return this.host.bundle(project || this.projects.primary.project.slug);
   }
 

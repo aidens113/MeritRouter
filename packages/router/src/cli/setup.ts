@@ -29,13 +29,21 @@ export function initializeConfig(opts: InitOptions): string[] {
   if (existsSync(opts.configPath)) messages.push(`kept existing ${opts.configPath}`);
   else {
     let text = initConfigText(readFileSync(path.join(examples, "presets", `${preset}.yaml`), "utf8"), { slug: opts.project, ...(opts.name ? { name: opts.name } : {}), ...(opts.repositories ? { repositories: opts.repositories } : {}) });
+    const doc = YAML.parseDocument(text);
+    // Fresh installs (both `init` and `setup`) default to split project storage, which needs
+    // `synchronous=FULL`, and to the renamed `.MeritRouter` runtime folder.
+    doc.setIn(["storage", "directory"], ".MeritRouter");
+    doc.setIn(["storage", "layout"], "split");
+    doc.setIn(["storage", "durability"], "full");
     if (opts.setup) {
-      const doc = YAML.parseDocument(text);
       if (!opts.repositories || !Object.keys(opts.repositories).length) doc.setIn(["projects", opts.project, "repositories"], {});
-      doc.setIn(["brain", "path"], ".meritrouter/brain");
+      // Application-directory installs keep the brain beside the config, not under the home directory.
+      doc.setIn(["brain", "path"], ".MeritRouter/brain");
       if (opts.port !== undefined) doc.setIn(["panel", "port"], opts.port);
-      text = doc.toString();
+    } else {
+      doc.setIn(["brain", "path"], "~/.MeritRouter/brain");
     }
+    text = doc.toString();
     parseConfig(YAML.parse(text), opts.configPath);
     mkdirSync(dir, { recursive: true });
     writeFileSync(opts.configPath, text, { flag: "wx" });

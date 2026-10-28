@@ -185,7 +185,7 @@ export class MeritRouter {
     this.now = opts.now ?? Date.now;
     this.configMtime = mtime(cfg.configPath);
     this.db = openDatabase(cfg.storageDir, { durability: cfg.storage.durability });
-    this.layout = openInstallationLayout(this.db, cfg.storage.durability);
+    this.layout = openInstallationLayout(this.db, cfg.storage.layout);
     this.tasks = new TaskStore(this.db, this.now);
     this.artifacts = new ArtifactStore(this.db, cfg.storageDir, this.now);
     this.sessions = new SessionStore(this.db, cfg.storageDir, this.now);

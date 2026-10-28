@@ -51,8 +51,10 @@ describe("installed setup and config discovery", () => {
     expect(initializeConfig(opts)).toHaveLength(2);
     const cfg = loadConfig(configPath);
     expect(cfg.projects.example).toMatchObject({ repositories: {} });
-    expect(cfg.brain.path).toBe(".meritrouter/brain");
-    expect(cfg.storageDir).toBe(path.join(root, "application", ".meritrouter"));
+    expect(cfg.brain.path).toBe(".MeritRouter/brain");
+    expect(cfg.storageDir).toBe(path.join(root, "application", ".MeritRouter"));
+    expect(cfg.storage.layout).toBe("split");
+    expect(cfg.storage.durability).toBe("full");
     expect(cfg.panel.port).toBe(4598);
     expect(cfg.paid).toMatchObject({ enabled: true, budgets: { per_week_usd: 5 }, tiers: { T1: "on_free_exhaustion", T2: "on_free_exhaustion", T3: "on_free_exhaustion", T4: "never" } });
     expect(cfg.supervisor.paid_policy).toBe("on_free_exhaustion");
