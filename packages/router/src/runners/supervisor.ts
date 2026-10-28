@@ -10,7 +10,7 @@ import { planLimits } from "../routing/select.js";
 import { charterFor } from "../roles/index.js";
 import { commitAs, SelectedCommitError, type Actor } from "../attribution/index.js";
 import { RepositoryMutationError, withRepositoryMutation, type RepositoryMutationCapability } from "../workspaces/repository-mutation.js";
-import { createRepositoryEffects } from "../workspaces/repository-command.js";
+import { createRepositoryEffects, soleActiveRepositoryCommand } from "../workspaces/repository-command.js";
 import { projectRuntimeActivationRoots } from "../workspaces/worktree.js";
 import { assertRuntimeCwdSupported } from "../projects/runtime-paths.js";
 import { assertRunAuthority } from "../harness/task-authority.js";
@@ -124,7 +124,63 @@ async function integrationRepos(ctx: RunContext, saved: IntegrationRepo[]): Prom
   }
   const requested = [...sources, ...saved.map(repo => repo.worktree)];
   if (!requested.length) return integrationReposLocked(ctx, saved);
-  return withRepositoryMutation(requested, mutation => integrationReposLocked(ctx, saved, mutation));
+  return awaitingActiveCommand(ctx, requested, () => withRepositoryMutation(requested, mutation => integrationReposLocked(ctx, saved, mutation)));
+}
+
+/**
+ * No visibility into a repository command's own deadline from this layer. The wait only continues
+ * while the command's host-owned process is alive, so the cap covers long installs and builds.
+ */
+const ACTIVE_COMMAND_SETTLE_CAP_MS = 30 * 60_000;
+const ACTIVE_COMMAND_POLL_MS = 250;
+/** Progress note interval while waiting, so the session shows activity without one note per poll. */
+const ACTIVE_COMMAND_NOTE_MS = 30_000;
+
+/** Rejects `error` once `signal` either aborts or `ms` elapses, whichever comes first. */
+function sleepUnlessAborted(ms: number, signal: AbortSignal, onAbort: unknown): Promise<void> {
+  if (signal.aborted) return Promise.reject(onAbort);
+  return new Promise<void>((resolve, reject) => {
+    const abort = () => { clearTimeout(timer); reject(onAbort); };
+    const timer = setTimeout(() => { signal.removeEventListener("abort", abort); resolve(); }, ms);
+    signal.addEventListener("abort", abort, { once: true });
+  });
+}
+
+/**
+ * `withRepositoryMutation` refuses admission while another repository command is active (the
+ * fence added in b87f326, src/workspaces/repository-command.ts `assertNoActiveRepositoryCommand`).
+ * When that refusal names a known, live, host-owned command -- never an uncertain or foreign
+ * owner -- this job's own startup waits for it to settle instead of failing outright, since it is
+ * commonly this exact job's own operator-approved validation running directly in a repository the
+ * job also needs to touch. The fence itself is unchanged, and any other refusal kind (or an
+ * uncertain/foreign `active_command`) is rethrown immediately, as before.
+ */
+async function awaitingActiveCommand<T>(ctx: RunContext, requested: string[], attempt: () => Promise<T>): Promise<T> {
+  const deadline = Date.now() + ACTIVE_COMMAND_SETTLE_CAP_MS;
+  let waitingOn: { repo: string; id: string } | null = null, notedAt = 0;
+  for (;;) {
+    try { return await attempt(); }
+    catch (error) {
+      if (!(error instanceof RepositoryMutationError) || error.detail.kind !== "active_command") throw error;
+      assertRunAuthority(ctx);
+      const resolved = await Promise.all(requested.map(async repo => { const command = await soleActiveRepositoryCommand(repo).catch(() => null); return command ? { repo, id: command.id } : null; }));
+      const current = resolved.find((value): value is { repo: string; id: string } => value !== null);
+      // No requested path names a single, live, host-owned command: an uncertain or foreign
+      // owner, or more than one active command. Waiting could not be justified; refuse as before.
+      if (!current) throw error;
+      if (Date.now() >= deadline) throw error;
+      const changed = !waitingOn || waitingOn.id !== current.id;
+      if (changed) {
+        waitingOn = current;
+        ctx.tasks.event(ctx.taskId, "supervisor_awaiting_active_command", { repo: current.repo, commandId: current.id });
+      }
+      if (changed || Date.now() - notedAt >= ACTIVE_COMMAND_NOTE_MS) {
+        notedAt = Date.now();
+        ctx.session?.note(`Waiting for repository command ${current.id} to settle before this job's integration workspace can be created`, { commandId: current.id, repo: current.repo });
+      }
+      await sleepUnlessAborted(ACTIVE_COMMAND_POLL_MS, ctx.signal, error);
+    }
+  }
 }
 
 async function assertIntegrationOwner(source: string, worktree: string): Promise<void> {

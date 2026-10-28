@@ -65,6 +65,37 @@ export async function assertNoActiveRepositoryCommand(repo: string, permit?: Rep
     throw new RepositoryMutationError("active_command", `Repository command ${record.id} is active or lacks verified process quiescence; receipt retained`);
   }
 }
+/** True only when a PID currently exists on this host; it proves nothing about identity, only liveness. */
+function processAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; }
+  catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
+}
+/**
+ * The exact receipt that would refuse a mutation with `active_command`, when (and only when) it
+ * is the single, fully-parsed, host-owned command blocking `repo`, and its owning process is
+ * still alive on this host. A caller may then choose to wait for it to settle. Anything the fence
+ * itself cannot fully vouch for -- no active directory, more than one active command, a scan or
+ * parse failure, or a dead or unresolvable owner -- returns null, so a caller never waits on a
+ * command it cannot verify is real and will actually settle.
+ */
+export async function soleActiveRepositoryCommand(repo: string): Promise<{ id: string; createdAt: number } | null> {
+  let owner: string, active: string;
+  try { owner = await gitDirectory(repo); active = path.join(owner, "meritrouter-commands", "active"); await safeDirectory(active); }
+  catch { return null; }
+  let found: { id: string; createdAt: number } | null = null, count = 0;
+  try {
+    for await (const entry of await opendir(active)) {
+      if (++count > 4096 || found) return null;
+      idSchema.parse(entry.name);
+      const directory = path.join(active, entry.name); await safeDirectory(directory);
+      const content = await bytes(path.join(directory, "receipt.json")), record = RecordSchema.parse(JSON.parse(content.toString("utf8")));
+      if (record.id !== entry.name || !processAlive(record.ownerPid)) return null;
+      found = { id: record.id, createdAt: record.createdAt };
+    }
+  } catch { return null; }
+  return found;
+}
 async function replaceRecord(lease: CommandLease, record: CommandRecord): Promise<void> {
   await safeDirectory(lease.directory);
   const file = path.join(lease.directory, "receipt.json");

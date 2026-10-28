@@ -196,20 +196,41 @@ it("actual supervisor cannot cancel approved validation then finish blocked; it 
   let f: Awaited<ReturnType<typeof fixture>>, executing: Promise<WorkerActionRequest>, step = 0;
   f = await fixture({ long: true, script: async request => {
     const served = { model: request.model, provider: request.provider };
-    if (step++ === 0) return reply(null, { ...served, toolCalls: [call("cancel_tasks", { task_ids: ["worker"] })] });
-    if (step === 2) {
-      expect(JSON.stringify(request.messages)).toContain("operator-approved and running");
-      return reply(null, { ...served, toolCalls: [call("finish_job", { status: "blocked", summary: "Stale pending-approval claim", verified: [], not_verified: ["work unfinished"] })] });
-    }
+    if (step++ === 0) return reply(null, { ...served, toolCalls: [call("finish_job", { status: "blocked", summary: "Stale pending-approval claim", verified: [], not_verified: ["work unfinished"] })] });
     expect(JSON.stringify(request.messages)).toContain("continue await_tasks until they settle");
     expect(sy!.tasks.get("worker")!.row.cancel_requested).toBe(0);
-    f.release(); const checked = await executing; expect(checked.exitCode).toBe(0);
+    const checked = await executing; expect(checked.exitCode).toBe(0);
     sy!.tasks.finish("worker", f.context("worker").leaseOwner, syntheticResult("worker", "completed", "observed exact command exit0"), "completed");
     sy!.tasks.finish("sibling", f.context("sibling").leaseOwner, syntheticResult("sibling", "completed", "fixture independent work done"), "completed");
     return reply(null, { ...served, toolCalls: [call("finish_job", { status: "completed", summary: "Exact validation finished", verified: [{ claim: "command passed", evidence: "operator executed command exit0" }], not_verified: [] })] });
   } });
   executing = f.approve(); await f.ready();
+  // The exact action is still operator-approved and running in the source checkout: internal
+  // cancellation of it is refused, same as "refuses operator-approved running execution" above.
+  await expect(f.cancel()).rejects.toThrow(/operator-approved and running/);
+  expect(f.cancelled).not.toHaveBeenCalled();
+  // SupervisorRunner.run's own startup takes a mutation scope over that same source checkout
+  // (integrationRepos) to create its integration worktree. Since b87f326 that scope is refused
+  // while this exact approved command is active there; startup now waits for it to settle
+  // instead of failing outright (Cause 3). Nothing inside the agent loop can release it --
+  // startup blocks before any model turn runs -- so settle it from outside the loop, the way the
+  // real operator's own command completion would, rather than waiting out the command's native
+  // ~10s timeout kill (which would leave a non-zero/"uncertain" outcome instead of exitCode 0).
+  setTimeout(() => f.release(), 20);
   const outcome = await new SupervisorRunner().run(f.ctx);
-  expect(outcome.result.stopReason).toBe("supervisor_completed"); expect(step).toBe(3);
+  expect(outcome.result.stopReason).toBe("supervisor_completed"); expect(step).toBe(2);
   expect(f.cancelled).not.toHaveBeenCalled(); expect(f.store.get("demo", f.request.id)?.exitCode).toBe(0);
 }, 30_000);
+
+it("does not wait on an uncertain admission refusal; only a known active_command waits", async () => {
+  const f = await fixture();
+  const mutation = await import("../src/workspaces/repository-mutation.js");
+  const spy = vi.spyOn(mutation, "withRepositoryMutation").mockImplementationOnce(() =>
+    Promise.reject(new mutation.RepositoryMutationError("command_uncertain", "Command completion or receipt retirement is unverified; guard retained")));
+  const started = Date.now();
+  await expect(new SupervisorRunner().run(f.ctx)).rejects.toThrow(/unverified; guard retained/);
+  // A refusal of any kind other than active_command (and an active_command with no verified,
+  // known, live, host-owned receipt) is refused immediately; it never enters the settle-wait loop.
+  expect(Date.now() - started).toBeLessThan(5_000);
+  expect(spy).toHaveBeenCalledTimes(1);
+});
