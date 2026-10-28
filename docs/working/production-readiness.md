@@ -28,6 +28,13 @@ files: 26 pass alone. Real failures: transport-recovery 24 (strict Slot schema p
 labs.test 2, process-acceptance hard-kill 1, process-performance 1. Three Opus workers fixing
 (reports fix-transport-recovery, fix-containment-tasklab, fix-labs-process-perf). Push waits
 on these. Gate-2 inventory: gate2-inventory-20261027.md.
+2026-10-27 night: all real failures fixed (transport recovery for split slots, split slot leak
+on timeouts/errors and key retries, ledger recovery wired, Lab team admissions and leaks,
+enclosing-repository writes, doomed Lab repairs, merge lock release, stale tests). Final:
+pnpm -r build PASS; full parallel router run 2349 pass / 48 fail / 5 skip, and every one of
+the 25 failing files passes alone (CPU contention: ~13900 s of tests in 1301 s). dev pushed
+at a359200; main held until the live pilot. Next: fresh install, user enters Ollama key,
+supervised Facebook pilot (400 requests, $0 paid).
 Naming decision (user, 2026-10-27): every runtime FOLDER is spelled `.MeritRouter`. Project
 runtime already is (projects/runtime-paths.ts). Install defaults still say `.meritrouter`:
 config/schema.ts:514 brain `~/.meritrouter/brain`, :781 storage `.meritrouter`, cli/setup.ts:35.
