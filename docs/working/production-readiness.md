@@ -20,6 +20,14 @@ Live pilot budget reconfirmed: 400 model requests, $0 paid. Order: trustworthy t
 (first full run 259/85/23 overlapped a build, untrusted) -> gate 1 default activation -> gate 2
 -> fresh install + Facebook pilot -> gates 4-6. Reports: project-local-storage/reports/
 baseline-triage-20261027.md and gate1-remaining-inventory-20261027.md.
+2026-10-27 evening: gate 1 waves A-C, split Labs, operator CLI and panel landed (see
+project-local-storage.md). First full run on a clean tree (pnpm -r build PASS; router suite
+2256 pass / 92 fail / 5 skip in 1304 s, heavily CPU-bound). Serial re-run of the 33 failing
+files: 26 pass alone. Real failures: transport-recovery 24 (strict Slot schema predates
+121be75 grant columns), task-lab-caller 3, security .git containment 1, worker-lab-authority 1,
+labs.test 2, process-acceptance hard-kill 1, process-performance 1. Three Opus workers fixing
+(reports fix-transport-recovery, fix-containment-tasklab, fix-labs-process-perf). Push waits
+on these. Gate-2 inventory: gate2-inventory-20261027.md.
 Naming decision (user, 2026-10-27): every runtime FOLDER is spelled `.MeritRouter`. Project
 runtime already is (projects/runtime-paths.ts). Install defaults still say `.meritrouter`:
 config/schema.ts:514 brain `~/.meritrouter/brain`, :781 storage `.meritrouter`, cli/setup.ts:35.
