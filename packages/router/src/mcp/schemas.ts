@@ -71,6 +71,26 @@ export const TaskArgumentSchema = open({
   routing: open({ tier: TierNameSchema.optional(), endpointId: z.string().optional() }).optional(),
 });
 
+/**
+ * create_project's input. Portable description only (no patterns); admin/projects.ts validates the
+ * slug, aliases and folders in full and reports each problem.
+ */
+export const CreateProjectArgumentShape = {
+  slug: z.string().min(1).max(64).describe("Lower-case letters, digits, '.', '_', '-', starting with a letter or digit."),
+  name: z.string().min(1).max(80).optional().describe("Display name; default: the slug."),
+  directory: z
+    .string()
+    .min(1)
+    .max(1000)
+    .optional()
+    .describe("The project's folder, absolute or relative to the config file's folder. Required when the installation keeps each project's private data in <directory>/.MeritRouter (split layout)."),
+  repositories: z
+    .array(z.object({ alias: z.string().min(1).max(64), path: z.string().min(1).max(1000), writable: z.boolean().optional() }))
+    .max(20)
+    .optional()
+    .describe("Repository folders (absolute or config-relative); missing folders are created and set up with git."),
+};
+
 /** Portable typed description; strict runtime validation lives in admin/client-supervision.ts. */
 export const SupervisionPolicyArgumentShape = {
   workflow: z.enum(["delegated_delivery", "direct_tasks"]).optional(),

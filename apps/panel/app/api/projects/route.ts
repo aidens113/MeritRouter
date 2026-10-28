@@ -24,6 +24,14 @@ export async function GET(req: Request) {
 const Body = z.object({
   name: z.string().trim().min(1, "give the project a name").max(80, "at most 80 characters"),
   slug: z.string().trim().min(1, "enter a slug").max(64, "at most 64 characters").regex(PROJECT_SLUG_RE, "lower-case letters, digits, '.', '_', '-', starting with a letter or digit"),
+  // The project's folder (absolute, or relative to the config file's folder). A split installation
+  // requires it and keeps the project's private store in <directory>/.MeritRouter; blank means none.
+  directory: z
+    .string()
+    .trim()
+    .max(1000, "at most 1000 characters")
+    .optional()
+    .transform((value) => (value ? value : undefined)),
   repositories: z
     .array(
       z.object({
@@ -54,8 +62,8 @@ function add(errors: FieldErrors, key: string, msg: string) {
 
 /**
  * Create a project: its repository folders prepared (created and set up with git as needed),
- * `projects.<slug>` in the global config (validated, backed up, reloaded by running workers), and
- * its brain folders. Every problem comes back keyed by field
+ * `projects.<slug>` in the global config (validated, backed up, reloaded by running workers), in a
+ * split installation its private store in `<directory>/.MeritRouter`, and its brain folders. Every problem comes back keyed by field
  * (`fieldErrors["repositories.0.path"]`), so the form shows it beside the input.
  */
 export async function POST(req: Request) {
@@ -82,11 +90,12 @@ export async function POST(req: Request) {
     const input: insights.CreateProjectInput = {
       slug: b.slug,
       name: b.name,
+      ...(b.directory ? { directory: b.directory } : {}),
       repositories: Object.fromEntries(b.repositories.map((r) => [r.alias, { path: r.path, ...(r.writable ? {} : { writable: false }) }])),
       ...(b.mounts.length ? { mounts: b.mounts.map((m) => ({ prefix: m.prefix, path: m.path, ...(m.commit ? { commit: true } : {}) })) } : {}),
     };
     const out = await insights.createProject(sy, input);
-    if (out.ok) return { project: out.project, convertedLegacy: out.convertedLegacy };
+    if (out.ok) return { project: out.project, convertedLegacy: out.convertedLegacy, runtimeRoot: out.runtimeRoot };
 
     // Map the library's messages onto the form's fields; anything else is shown above the form.
     const general: string[] = [];
@@ -95,6 +104,7 @@ export async function POST(req: Request) {
       const mount = /^projects\.[^.]+\.brain\.mounts\.(\d+)(?:\.(\w+))?: (.*)$/.exec(e);
       if (/^slug |^project \S+ already exists/.test(e)) add(fieldErrors, "slug", e.replace(/^slug "[^"]*": /, ""));
       else if (/^name: /.test(e)) add(fieldErrors, "name", e.slice(6));
+      else if (/^directory: /.test(e)) add(fieldErrors, "directory", e.slice(11));
       else if (repo && aliases.includes(repo[1]!)) {
         const i = aliases.indexOf(repo[1]!);
         add(fieldErrors, /^repository alias/.test(e) ? `repositories.${i}.alias` : `repositories.${i}.path`, e.replace(/^repository (alias )?"?[^":\s]+"?:\s*/, ""));

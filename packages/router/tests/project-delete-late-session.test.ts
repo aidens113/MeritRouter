@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { openDatabase, type Db } from "../src/storage/db.js";
 import { SessionStore } from "../src/sessions/store.js";
+import { SessionRecorder } from "../src/sessions/recorder.js";
 import { purgeProjectRows } from "../src/projects/deletion.js";
 
 let root: string | undefined;
@@ -19,8 +20,11 @@ function setup() {
 it("a retained recorder cannot recreate a private error log after actual project purge", () => {
   const { db, sessions } = setup();
   db.prepare("INSERT INTO projects(id,name,created_at) VALUES('deleted','Deleted',1)").run();
-  const recorder = sessions.create({ role: "implementer", agentLabel: "late-owner" });
-  db.prepare("UPDATE sessions SET project_id='deleted' WHERE id=?").run(recorder.id);
+  const created = sessions.create({ role: "implementer", agentLabel: "late-owner" });
+  db.prepare("UPDATE sessions SET project_id='deleted' WHERE id=?").run(created.id);
+  // A recorder pins the session's identity (project included) when it is built, so the retained
+  // recorder is opened over the project's session row, not re-homed underneath a live recorder.
+  const recorder = new SessionRecorder(created.id, db, created.logPath, Date.now, created.lastSeq);
   recorder.note("private content before purge");
   expect(purgeProjectRows(db, "deleted", [])).toMatchObject({ sessions: 1 });
   rmSync(recorder.logPath);

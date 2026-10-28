@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { ResolvedConfig } from "../config/load.js";
 import { MODALITIES, PROFILE_NAMES, TIER_NAMES } from "../config/schema.js";
 import type { MeritRouter } from "../core/service.js";
-import { brainAccessRequests, budgetRequestsView, CHANNEL_KINDS, decideBudgetRequest, decideTaskAcceptance, routingPreview, jobChannel, jobDetail, jobMetrics, jobPlan, jobTeam, sessionDetail, sessionsView } from "../admin/insights.js";
+import { brainAccessRequests, budgetRequestsView, CHANNEL_KINDS, createProject, decideBudgetRequest, decideTaskAcceptance, routingPreview, jobChannel, jobDetail, jobMetrics, jobPlan, jobTeam, sessionDetail, sessionsView } from "../admin/insights.js";
 import { BUDGET_REQUEST_STATUSES } from "../admission/budget-requests.js";
 import { blame } from "../attribution/index.js";
 import type { Principal } from "../brain/access.js";
@@ -15,7 +15,7 @@ import type { LabManager } from "../labs/lab.js";
 import { LabOperationInputSchema } from "../labs/control.js";
 import { clientSupervisionFeedback, scopedMcpTasks, guardMcpResume, supervisionDispatch } from "./client-supervision.js";
 import { supervisionPolicy, setSupervisionPolicy } from "../admin/client-supervision.js";
-import { LabOperationArgumentSchema, TaskArgumentSchema, SupervisionPolicyArgumentShape } from "./schemas.js";
+import { CreateProjectArgumentShape, LabOperationArgumentSchema, TaskArgumentSchema, SupervisionPolicyArgumentShape } from "./schemas.js";
 import { ProductDeliveries } from "../verification/product-delivery.js";
 import { projectDeliveryReport, ProjectDeliveryReportInputSchema } from "../admin/deliveries.js";
 import { deliverySpecDigest, ProductDigestSchema } from "../verification/product-spec.js";
@@ -130,6 +130,34 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
 
   server.registerTool("get_supervision_policy", { title: "External client supervision policy", description: "Read current Claude/Codex outer-supervisor workflow guidance; separate from internal job supervisors and permissions.", inputSchema: {} }, async () => { try { return json(supervisionPolicy(sy)); } catch (err) { return fail(err); } });
   server.registerTool("set_supervision_policy", { title: "Change external client supervision guidance", description: "Only on explicit user request: permit or forbid final project-supervisor dispatch, or customize external Claude/Codex workflow guidance. Requires a reason. Grants no new permissions; do not self-change this policy to bypass user instructions.", inputSchema: SupervisionPolicyArgumentShape }, async input => { try { return json(setSupervisionPolicy(sy, input)); } catch (err) { return fail(err); } });
+
+  server.registerTool(
+    "create_project",
+    {
+      title: "Create a project",
+      description:
+        "Only on the user's explicit request: add projects.<slug> to the global config, prepare its repository folders, and, in a split installation, create the project's private store in <directory>/.MeritRouter. Deleting a project is not available here; use the panel or the CLI.",
+      inputSchema: CreateProjectArgumentShape,
+    },
+    async (a) => {
+      try {
+        const repositories = a.repositories ?? [];
+        const aliases = repositories.map((r) => r.alias);
+        const twice = aliases.find((alias, i) => aliases.indexOf(alias) !== i);
+        if (twice !== undefined) throw new Error(`repository alias ${twice} is used twice`);
+        const r = await createProject(sy, {
+          slug: a.slug,
+          ...(a.name !== undefined ? { name: a.name } : {}),
+          ...(a.directory !== undefined ? { directory: a.directory } : {}),
+          repositories: Object.fromEntries(repositories.map((r) => [r.alias, { path: r.path, ...(r.writable === false ? { writable: false } : {}) }])),
+        });
+        if (!r.ok) throw new Error(`project ${a.slug} was not created: ${r.errors.join("; ")}`);
+        return json(r);
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
 
   server.registerTool(
     "panel",

@@ -18,7 +18,7 @@ export interface ProjectsFlags {
   confirm?: string;
 }
 
-const USAGE = 'usage: meritrouter projects [list [--all]] | create <slug> [--name "<name>"] [--repo <alias>=<path> ...] | archive <slug> | unarchive <slug> | delete <slug> [--confirm <slug>]';
+const USAGE = 'usage: meritrouter projects [list [--all]] | create <slug> [<directory>] [--name "<name>"] [--repo <alias>=<path> ...] | archive <slug> | unarchive <slug> | delete <slug> [--confirm <slug>]';
 
 export async function projectsCommand(sy: MeritRouter, args: string[], values: ProjectsFlags, json: boolean, select: SelectOptions): Promise<number> {
   const sub = args[0] ?? "list";
@@ -47,8 +47,11 @@ export async function projectsCommand(sy: MeritRouter, args: string[], values: P
   }
   if (sub === "create") {
     const slug = args[1];
-    if (!slug) throw new MeritRouterError("usage", USAGE);
-    const r = await createProject(sy, { slug, ...(values.name ? { name: values.name } : {}), repositories: repoFlags(values.repo) });
+    // The project's folder: required in a split installation (its private store goes in
+    // <directory>/.MeritRouter); absolute, or relative to the config file's folder.
+    const directory = args[2];
+    if (!slug || args.length > 3) throw new MeritRouterError("usage", USAGE);
+    const r = await createProject(sy, { slug, ...(values.name ? { name: values.name } : {}), ...(directory !== undefined ? { directory } : {}), repositories: repoFlags(values.repo) });
     if (!r.ok) throw new MeritRouterError("usage", `project ${slug} was not created:\n  ${r.errors.join("\n  ")}`);
     out(
       json
@@ -56,6 +59,7 @@ export async function projectsCommand(sy: MeritRouter, args: string[], values: P
         : [
             `created project ${r.project.slug} (${r.project.repositories.length} repositor${r.project.repositories.length === 1 ? "y" : "ies"}) in ${sy.cfg.configPath}`,
             ...r.prepared,
+            ...(r.runtimeRoot ? [`its private store is ${r.runtimeRoot}`] : []),
             ...(r.convertedLegacy ? [`the single-project config was converted: its repositories moved under projects.${r.convertedLegacy}`] : []),
             `work in it with --project ${r.project.slug}, or from inside one of its repositories`,
           ].join("\n"),
@@ -97,6 +101,7 @@ export async function projectsCommand(sy: MeritRouter, args: string[], values: P
         ? r
         : [
             `deleted project ${r.slug}: ${c.tasks} task(s), ${c.sessions} session(s), ${c.artifacts} artifact(s), ${c.worktrees} worktree(s), and its brain folder (${c.brainEntries} file(s))${r.brainCommit ? ` in brain commit ${r.brainCommit.slice(0, 7)}` : ""}; repository folders and branches were not touched`,
+            ...(r.runtimeRoot ? [`removed its store ${r.runtimeRoot}; nothing else in its folder was touched`] : []),
             ...(r.newPrimary ? [`${r.newPrimary} is now the primary project (brain.project)`] : []),
             ...r.problems.map((p) => `warning: ${p}`),
           ].join("\n"),

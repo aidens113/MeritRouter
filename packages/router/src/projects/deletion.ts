@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { MeritRouterError } from "../core/errors.js";
 import { immediate, type Db } from "../storage/db.js";
@@ -10,6 +10,8 @@ import { z } from "zod";
 import { SessionWorkspaceSchema } from "../sessions/events.js";
 import { LabRepositorySchema } from "../labs/store.js";
 import { RepositoryMutationError, withRepositoryMutation, type RepositoryMutationCapability } from "../workspaces/repository-mutation.js";
+import { ProjectRuntimeManifestSchema, projectRuntimePaths, type ProjectRuntimePaths } from "./runtime-paths.js";
+import { ProjectStoreRegistrationSchema, type ProjectStoreRegistration } from "./store-identity.js";
 
 // Deleting a project (the mechanics; `admin/projects.ts` checks, confirms, and edits the config):
 // what a project leaves in the store and on disk, and removing it. Its per-project rows, session
@@ -306,4 +308,159 @@ export async function removeProjectWorktrees(worktrees: WorktreeRef[], control: 
     }
     return { removed, problems: [] };
   }, { capability: control.mutation });
+}
+
+// ---------- split installations: a project's own store under <project>/.MeritRouter ----------
+
+const comparable = (value: string) => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
+const samePath = (a: string, b: string) => comparable(a) === comparable(b);
+/** True when `child` lies strictly beneath `parent` (host case rules). */
+function beneath(child: string, parent: string): boolean {
+  const c = comparable(child), p = comparable(parent);
+  return c !== p && c.startsWith(p.endsWith(path.sep) ? p : p + path.sep);
+}
+/** The resolved and (when it exists) physical spellings of a path. */
+function spellings(value: string): string[] {
+  const forms = [path.resolve(value)];
+  try { forms.push(realpathSync(value)); } catch { /* a missing path compares by its resolved spelling */ }
+  return forms;
+}
+
+/** Every store registration of a slug in the coordination store, newest first. */
+export function projectStoreRegistrations(coordinationDb: Db, slug: string): ProjectStoreRegistration[] {
+  return z.array(ProjectStoreRegistrationSchema).parse(coordinationDb.prepare(`SELECT installation_uuid AS installationId,project_uuid AS projectId,slug,store_uuid AS storeId,
+    generation,project_directory AS projectDirectory,state,created_at AS createdAt,updated_at AS updatedAt,retired_at AS retiredAt
+    FROM project_store_registrations WHERE slug=? ORDER BY updated_at DESC, created_at DESC`).all(slug));
+}
+
+/**
+ * Prove that a registration's runtime root (`<directory>/.MeritRouter`) is the project's own, before
+ * anything under it is removed: the configured directory is the registered one, neither the
+ * directory nor the root is a link or junction (both are their own physical paths), the root
+ * neither contains nor lies inside an installation root, and its manifest names the registered
+ * project. Returns the paths, with `present: false` when the root is already gone.
+ */
+export function verifyProjectRuntimeRoot(registration: ProjectStoreRegistration, configuredDirectory: string | null, installationRoots: readonly string[]): { paths: ProjectRuntimePaths; present: boolean } {
+  const refuse = (message: string): never => { throw new MeritRouterError("usage", `project ${registration.slug}'s store cannot be removed: ${message}; nothing was removed`); };
+  const paths = projectRuntimePaths(registration.projectDirectory);
+  if (!configuredDirectory || !samePath(configuredDirectory, paths.projectDirectory)) refuse(`it is registered in ${paths.projectDirectory}, but the project is configured with ${configuredDirectory ?? "no directory"}`);
+  let root;
+  try { root = lstatSync(paths.root); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { paths, present: false };
+    throw error;
+  }
+  const directory = lstatSync(paths.projectDirectory);
+  if (directory.isSymbolicLink() || !directory.isDirectory()) refuse(`${paths.projectDirectory} is a link or not a folder`);
+  if (!samePath(realpathSync(paths.projectDirectory), paths.projectDirectory)) refuse(`${paths.projectDirectory} is not its own physical path`);
+  if (root.isSymbolicLink() || !root.isDirectory()) refuse(`${paths.root} is a link, junction or not a folder`);
+  if (!samePath(realpathSync(paths.root), paths.root)) refuse(`${paths.root} resolves elsewhere (${realpathSync(paths.root)})`);
+  for (const installation of installationRoots) for (const a of spellings(installation)) for (const b of spellings(paths.root)) {
+    if (samePath(a, b) || beneath(a, b) || beneath(b, a)) refuse(`${paths.root} overlaps the installation directory ${installation}`);
+  }
+  let manifest;
+  try { manifest = lstatSync(paths.manifest); } catch { refuse(`${paths.manifest} is missing, so the folder's owner cannot be proved`); }
+  if (manifest!.isSymbolicLink() || !manifest!.isFile()) refuse(`${paths.manifest} is a link or not a file`);
+  let parsed;
+  try { parsed = ProjectRuntimeManifestSchema.safeParse(JSON.parse(readFileSync(paths.manifest, "utf8"))); } catch { parsed = null; }
+  if (!parsed?.success) refuse(`${paths.manifest} is not a valid project manifest`);
+  if (parsed!.data!.projectId !== registration.projectId) refuse(`${paths.manifest} names project ${parsed!.data!.projectId}, not the registered ${registration.projectId}`);
+  return { paths, present: true };
+}
+
+/**
+ * Git worktrees registered in one of `repositories` that lie inside a project's runtime root and
+ * still exist (task, job integration and Lab worktrees MeritRouter made there). They are removed
+ * natively before the root, so the repositories keep no registration of a vanished folder.
+ */
+export async function runtimeRootWorktrees(root: string, repositories: readonly string[]): Promise<WorktreeRef[]> {
+  const out = new Map<string, WorktreeRef>();
+  const seen = new Set<string>();
+  for (const repo of repositories) {
+    if (seen.has(comparable(repo)) || !existsSync(path.join(repo, ".git")) || beneath(repo, root)) continue;
+    seen.add(comparable(repo));
+    const list = await git(repo, ["worktree", "list", "--porcelain"]);
+    for (const line of list.split(/\r?\n/)) {
+      if (!line.startsWith("worktree ")) continue;
+      const wt = path.resolve(line.slice("worktree ".length).trim());
+      if (beneath(wt, root) && existsSync(wt) && !out.has(comparable(wt))) out.set(comparable(wt), { repo, path: wt });
+    }
+  }
+  return [...out.values()];
+}
+
+/** Unlink one directory entry without following it (a symlink or junction loses only its link). */
+function unlinkEntry(entry: string, link: boolean): void {
+  try { unlinkSync(entry); }
+  catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (link && (code === "EPERM" || code === "EISDIR")) { rmdirSync(entry); return; }
+    if (!link && code === "EPERM") { chmodSync(entry, 0o666); unlinkSync(entry); return; }
+    throw error;
+  }
+}
+
+/** Remove a folder's contents depth first; links and junctions are unlinked, never followed. */
+function removeContents(dir: string, keep: string | null): void {
+  for (const name of readdirSync(dir)) {
+    const entry = path.join(dir, name);
+    if (keep && samePath(entry, keep)) continue;
+    const stat = lstatSync(entry);
+    if (stat.isSymbolicLink()) unlinkEntry(entry, true);
+    else if (stat.isDirectory()) { removeContents(entry, null); rmdirSync(entry); }
+    else unlinkEntry(entry, false);
+  }
+}
+
+/**
+ * Remove a runtime root the current operation created itself (a failed project creation's partial
+ * `<directory>/.MeritRouter`), never following a link or junction; a root that is itself a link
+ * is left alone. Returns whether it was removed.
+ */
+export function removeCreatedRuntimeRoot(root: string): boolean {
+  let stat;
+  try { stat = lstatSync(root); } catch { return false; }
+  if (stat.isSymbolicLink() || !stat.isDirectory() || !samePath(realpathSync(root), root)) return false;
+  removeContents(root, null);
+  rmdirSync(root);
+  return true;
+}
+
+/**
+ * Remove a split project's runtime root (`<directory>/.MeritRouter`) and nothing else: verified
+ * first (see `verifyProjectRuntimeRoot`), then removed without following any link or junction
+ * inside it, its manifest last so an interrupted removal can be verified and finished later.
+ * Returns whether a root was removed (false when it was already gone).
+ */
+export function removeProjectRuntimeRoot(registration: ProjectStoreRegistration, configuredDirectory: string | null, installationRoots: readonly string[]): boolean {
+  const { paths, present } = verifyProjectRuntimeRoot(registration, configuredDirectory, installationRoots);
+  if (!present) return false;
+  removeContents(paths.root, paths.manifest);
+  // Re-check immediately before the last entries go: the root must still be the same folder.
+  verifyProjectRuntimeRoot(registration, configuredDirectory, installationRoots);
+  unlinkEntry(paths.manifest, false);
+  rmdirSync(paths.root);
+  return true;
+}
+
+/** What a split project's store holds, counted from its own database (read by the caller). */
+export function projectStoreCounts(db: Db): { taskIds: string[]; jobs: number; sessions: number; artifacts: number; requests: number } {
+  const count = (sql: string) => (db.prepare(sql).pluck().get() as number) ?? 0;
+  return {
+    taskIds: db.prepare("SELECT id FROM tasks ORDER BY created_at").pluck().all() as string[],
+    jobs: count("SELECT COUNT(*) FROM tasks WHERE profile = 'supervise' AND json_extract(spec_json, '$.parentTaskId') IS NULL"),
+    sessions: count("SELECT COUNT(*) FROM sessions"),
+    artifacts: count("SELECT COUNT(*) FROM artifacts"),
+    requests: count("SELECT COUNT(*) FROM model_requests"),
+  };
+}
+
+/** The installation's accounting of a split project's physical requests (kept when it is deleted). */
+export function projectAccounting(coordinationDb: Db, projectId: string): { requests: number; paidRequests: number; unsettled: number } {
+  return z.object({ requests: z.number().int(), paidRequests: z.number().int().nullable(), unsettled: z.number().int().nullable() }).transform(r => ({ requests: r.requests, paidRequests: r.paidRequests ?? 0, unsettled: r.unsettled ?? 0 }))
+    .parse(coordinationDb.prepare("SELECT COUNT(*) AS requests, SUM(paid) AS paidRequests, SUM(status IN ('reserved','dispatch_intent')) AS unsettled FROM physical_requests WHERE project_uuid=?").get(projectId));
+}
+
+/** Each task's state and last update, to detect work that changed while a project was being retired. */
+export function projectTaskSnapshot(db: Db): string {
+  return JSON.stringify(db.prepare("SELECT id, state, updated_at FROM tasks ORDER BY id").all());
 }

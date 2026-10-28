@@ -88,7 +88,7 @@ describe("MCP over Streamable HTTP", () => {
     client = new Client({ name: "codex-test", version: "1" });
     await client.connect(new StreamableHTTPClientTransport(new URL(url)));
     const names = (await client.listTools()).tools.map((t) => t.name);
-    expect(names).toHaveLength(48);
+    expect(names).toHaveLength(49);
     expect(names).toContain("submit_tasks");
     expect(text(await client.callTool({ name: "get_plan", arguments: { jobId: "no-such-job" } }))).toBe("unknown job no-such-job");
     const ok = await client.callTool({ name: "submit_tasks", arguments: { tasks: [summarizeTask({ idempotencyKey: "http-1" })] } });
@@ -123,7 +123,7 @@ describe("MCP over Streamable HTTP", () => {
 
     client = new Client({ name: "bearer", version: "1" });
     await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } } }));
-    expect((await client.listTools()).tools).toHaveLength(48);
+    expect((await client.listTools()).tools).toHaveLength(49);
     await client.close();
 
     // ChatGPT cannot send headers: the token as the last path segment works too.
