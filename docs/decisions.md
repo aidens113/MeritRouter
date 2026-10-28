@@ -646,6 +646,37 @@ HEAD and same-object symbolic changes. Unsupported backends must refuse; neither
 publication plus index replacement nor hostile filesystem changes are one atomic operation.
 The exact adapter and its recovery receipts remain unaccepted until implementation checks.
 
+## Project-local storage: split layout (2026-10-27)
+
+`storage.layout` is an explicit `split`/`legacy` config key (`config/schema.ts:794`), not a
+trigger inferred from `storage.durability`. An earlier draft of the activation work picked split
+mode whenever an empty installation database was opened with `durability: full`, because the
+coordination role already requires `synchronous=FULL`; that was rejected because it would have
+silently flipped most of the existing test suite (115 files construct `new MeritRouter` on a
+fresh temp store) into split mode the moment they set `durability: full` for an unrelated reason.
+A named key makes the choice visible in the config and lets `setup`/`init` default fresh installs
+to `split` (`cli/setup.ts`) without changing the meaning of `durability` itself.
+
+Three scoping decisions from the same work:
+- **Qualification gets an installation-owned synthetic store**, not a user project's directory.
+  `qualify`/`compare` write fixture and run rows under `<storage.directory>/qualification`
+  (`qualification/store.ts`), registered like a project store but never validated against or
+  placed in any directory a user supplied. This keeps qualification's internal-only `_qualification`
+  slug (see [operations.md](operations.md#the-reserved-_qualification-project)) working in split
+  installations without weakening the real per-project directory checks.
+- **Paid routes are not yet authorised for split projects.** A split project's runtime host
+  grants authority only for free-tier endpoints and refuses every `origin: "paid"` endpoint
+  outright (`core/project-runtime-host.ts:187-190`). This is a deliberate narrowing until paid
+  budgets, keys and accounting are worked through for split projects, not an oversight; a split
+  installation that needs paid routing today should stay on `legacy` layout for now.
+- **The legacy fence has no production caller yet.** `legacyProjectFence` (`projects/
+  store-migration.ts`) is meant to block a migrated slug's legacy dispatch/resume/write paths once
+  its rows have moved to its own store, but it needs a coordination-bound store to read, and no
+  legacy installation binds one in production: `WebLedger` and the evidence scopes
+  (`SessionStore`/`ArtifactStore`) refuse to construct over a coordination-bound store today.
+  Wiring it needs a decision on where a legacy installation's own coordination store lives (a
+  separate file, and how it is configured) before a legacy project can be safely migrated.
+
 ## History: verified FreeLLMAPI behaviour (server v0.2.1, commit 0c456ea)
 
 FreeLLMAPI was removed on 2026-10-20 (see Direct providers). None of this applies to the current

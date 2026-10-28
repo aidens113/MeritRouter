@@ -401,12 +401,36 @@ permanently". Archived projects can be deleted too.
   A running worker or MCP server that had it as its primary keeps its old brain handle until it
   restarts.
 
+**In a split installation**, deletion removes only `<directory>/.MeritRouter` — the project's
+own store, sessions, artifacts, worktrees, agent homes, Labs and brain — proven first to be the
+project's own, registered store folder (not a link or junction, not overlapping an installation
+root, and naming the registration's own project id). The project directory itself, anything else
+in it, and the installation's accounting and the retired registration (a tombstone) are kept
+(`admin/projects.ts`'s `deleteSplitProject`, `projects/deletion.ts`'s `removeProjectRuntimeRoot`
+and `verifyProjectRuntimeRoot`). The steps are: run the usual blockers; prune stopped task Labs;
+take a task snapshot and retire the project's registration (fencing new opens of it); verify the
+snapshot is unchanged; remove the project's native Git worktrees under the root (branches are
+kept); remove the `.MeritRouter` folder, manifest last; then, in one coordination transaction,
+remove `projects.<slug>` from the config and the coordination `projects` row and its `events`.
+
+**Recovery after an interrupted deletion.** If anything after retirement fails (the task
+snapshot changed, a file could not be removed, the config write conflicted), the project stays
+configured and its registration stays `retired` with its folder still on disk. Deletion is safe
+to retry: rerunning it finds that retired registration, re-verifies the folder, and finishes the
+removal and the config/coordination cleanup. Multi-process deletion (another process still
+holding the project's store open) and recovery from a mid-removal filesystem failure are designed
+for but not exercised by an automated test as of this wave.
+
 ### The reserved `_qualification` project
 
 Qualification runs (`meritrouter qualify`) and comparison runs on the eval goals
 (`meritrouter compare`) run in an internal project, `_qualification`:
 - It holds the fixture repositories those runs check out (`q-...`, `c-...`), so no user project
   lists them.
+- In a split installation, it runs against its own store, provisioned the same way a project's
+  store is but installation-owned (`<storage.directory>/qualification`, never a user's project
+  directory); in a legacy installation it still runs against the one installation store
+  (`qualification/store.ts`'s `qualificationStoreDirectory`/`ensureQualificationStore`).
 - Its supervisor working documents go to `projects/_qualification/` in the brain.
 - No user slug can collide with it: user slugs start with a letter or digit.
 - It never appears as a project in the grid, the switcher, `doctor`, the CLI's project choice, or
@@ -427,7 +451,7 @@ in the primary project (`brain.project`). Audits run in the audited task's proje
   `needs_supervisor` (the supervisor must accept or reject). See "Verification" below.
 - `classification` shows the score breakdown (rulebook version included); `routing.attempts`
   shows every model tried and why it was skipped or failed.
-- `artifactRefs` / `patchRefs` point at files under `.meritrouter/artifacts/`
+- `artifactRefs` / `patchRefs` point at files under `.MeritRouter/artifacts/`
   (`meritrouter artifact <ref>`). Patches include the base commit in `baseCommits`; apply them
   with `git apply` after checking the base.
 - **Tokens.** `usage.inputTokens` is every input token the provider read, cached ones included;
@@ -718,7 +742,7 @@ command action and current source all agree. Dirty, changed, incomplete or Lab-b
 is refused; the runtime never substitutes the latest tree for the checked candidate.
 
 
-- State lives in `.meritrouter/meritrouter.db` (SQLite, WAL). It is written before every
+- State lives in `.MeritRouter/meritrouter.db` (SQLite, WAL). It is written before every
   acknowledgement and at every state change.
 - When a worker dies, its leases expire (`execution.lease_seconds`). The next worker marks those
   tasks `interrupted` and their still-running sessions `interrupted` (`process_died`), then
@@ -786,7 +810,7 @@ Every model-driven run is an agent session: each run of a task (a recovery re-ru
 escalation is a new session linked to the one before it), each classification, and each batch
 item. A delegated task's session names the supervisor session that delegated it as its parent.
 
-- The log is `.meritrouter/sessions/<session id>.jsonl`, one event per line, fsynced as it is
+- The log is `.MeritRouter/sessions/<session id>.jsonl`, one event per line, fsynced as it is
   written: the transcript (`message`), model requests, responses and errors, a tool journal
   (`tool_intent` written before a tool runs, `tool_outcome` after, with the tool's side-effect
   class), notes, workspace changes (worktree, branch, base commit, head), and the end state.
@@ -881,11 +905,63 @@ displayed separately and is not backfilled with invented inputs.
 
 ## Backup and restore
 
-A backup covers the whole install: every project's rows and the brain repository with every
-project's folder and `global/`. There is no per-project backup, so `backup` and `restore` refuse
-`--project`.
+In a legacy installation, a backup covers the whole install: every project's rows and the brain
+repository with every project's folder and `global/`. There is no per-project backup in that
+layout, so `backup` and `restore` refuse `--project`.
 
-`meritrouter backup <dir>` writes a new directory while workers keep running:
+### Split installations: installation and per-project backup
+
+In a split installation (`storage.layout: split`), the installation's own backup and a project's
+own backup are separate, because their stores are separate.
+
+- **Installation backup** (`meritrouter backup <dir>`, below) still backs up only the
+  coordination store: provider keys, routing, models, accounting, and the project registry. It
+  refuses outright if that store is bound as coordination but its own `tasks`, `sessions`, or
+  `artifacts` tables hold any rows, since that means it is no longer coordination-only — a project
+  somehow has rows there instead of in its own store (`operations/backup.ts:159-165`). The fix
+  named in the error is to back up the owning project's store instead, not to force the
+  installation backup through.
+- **Project backup/restore** is `backupProjectStore`/`restoreProjectStore` in
+  `operations/project-backup.ts`. As of this wave these are library functions, not yet wired to a
+  CLI or panel command. `backupProjectStore(coordinationDb, { slug, targetDir })` snapshots one
+  project's own `<directory>/.MeritRouter` store (the SQLite backup API on `state`, plus its
+  `sessions`, `artifacts`, `project.json`, and its own brain) into `targetDir`; it refuses a
+  project whose registration is not `registered` (`project-backup.ts:149-150`).
+  `restoreProjectStore(coordinationDb, { backupDir, force? })` restores into the project's
+  *current* registration (never a path from the backup itself), and refuses when: the digests
+  don't match the manifest; the backup's identity or generation disagrees with the current
+  registration; the registration is not `registered`; a worker holds a live task lease; or the
+  project holds a live execution claim (`project-backup.ts:292-312`). Existing entries are moved
+  aside only under `force`, never deleted outright.
+
+### Migrating a legacy project into split storage
+
+`projects/store-migration.ts` migrates one quiescent legacy project's rows into its own split
+store (`migrateLegacyProject`), as a library function with no CLI/panel entry point yet.
+"Quiescent" means every one of its tasks is terminal, with no live leases, Labs, retained
+worktrees, open workspace attempts, pending merges, held file leases, open questions, pending
+budget or brain-access requests, running sessions, unresolved model requests, active request
+holds or execution claims, and no execution, protocol record, or Lab shared with another
+project; `planProjectMigration` lists exactly which of these block it
+(`store-migration.ts:121-166`). The migration runs: dry-run plan, a SQLite backup of the legacy
+store, a journal row and a registration marked `migrating` (reusing the same project UUID),
+`prepareProjectStore`, an FK-ordered export of the classified tables, a copy of session logs and
+artifact files with sha256 digests, verification of counts and digests, then registration
+`registered` and journal `committed` in one transaction. A failure before that last commit leaves
+the registration `migrating`; `listProjectMigrationRecovery` reports it on startup, and
+`openProjectMigrationRecoveryStore` opens it read-only — it is never silently promoted to
+`registered`. `rollbackProjectMigration` is allowed only while a checksum of the whole migrated
+target still matches what the export produced; it deletes only the `.MeritRouter` folder the
+migration created and never writes to the legacy store. A migrated slug's legacy dispatch,
+resume and write paths are fenced by `legacyProjectFence`, but as of this wave that fence has no
+live caller: it needs a decision on where a legacy installation's own coordination store lives
+before it takes effect in production (see [decisions.md](decisions.md)).
+
+### The `backup`/`restore` commands
+
+These cover the installation's own store (the whole install in a legacy layout, or just the
+coordination store in a split one; see above). `meritrouter backup <dir>` writes a new directory
+while workers keep running:
 - `meritrouter.db`: an online SQLite snapshot of the store, consistent while workers run.
 - The session logs and artifacts that the snapshot indexes.
 - `brain.bundle`: the brain repository as a git bundle of all its refs.
@@ -912,7 +988,7 @@ is refused:
 - over an existing store, or a brain with other history, unless `--force` is given.
 
 With `--force`:
-- the old store entries move to `.meritrouter/pre-restore-<time>/`;
+- the old store entries move to `<storage.directory>/pre-restore-<time>/`;
 - the old brain moves to `<brain>.pre-restore-<time>`, next to it.
 
 Replacement store files are copied and migrated in staging, and the brain bundle is fetched
@@ -1136,7 +1212,7 @@ recompute or guarantee current/future injection. See [memory authority](roles.md
   another project are unavailable. Commit subjects are retained only when every changed path is
   visible; mixed commits expose only the selected document's changes, without shared metadata.
 - Job branches live in your repositories as `meritrouter/job-<id>`; integration worktrees under
-  `.meritrouter/worktrees/job-<id>-<alias>`. Review, then `git merge --no-ff` (not squash).
+  `.MeritRouter/worktrees/job-<id>-<alias>`. Review, then `git merge --no-ff` (not squash).
 - `meritrouter blame <repo> <path> --ref <branch>` attributes lines to agents and models.
 
 ## Known limitations

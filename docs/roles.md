@@ -341,7 +341,7 @@ Budgets are set by the supervisor that delegates and enforced by admission, neve
 
 ## The brain (shared knowledge)
 
-A git repository of markdown files (default `~/.meritrouter/brain`), one for every project of
+A git repository of markdown files (default `~/.MeritRouter/brain`), one for every project of
 the install:
 
 ```text
@@ -379,6 +379,19 @@ entries are compacted into the archive.
 
 Every agent works in one project: the project of its task. `{project}` in a grant is that
 project's slug, so the default grants never reach another project's folder.
+
+**Storage-level isolation (2026-10-27).** D4 is brain-folder isolation inside one shared
+repository; it is separate from, and older than, storage-level project isolation. A split
+installation (`storage.layout: split`, see [setup.md](setup.md#projects)) additionally gives each
+project its own on-disk store and its own brain repository under `<directory>/.MeritRouter`, so a
+split project's agents never share a database, session log, artifact store or brain repository
+with another project or with the installation at all. The reserved `_qualification` project gets
+the same store-level isolation from an installation-owned location, never a user's project
+directory (see [operations.md](operations.md#the-reserved-_qualification-project)). Paid routing
+is not yet authorised for split projects' agents (see
+[decisions.md](decisions.md#project-local-storage-split-layout-2026-10-27)); a legacy
+installation's agents are unaffected and keep sharing the one installation store as described
+below.
 
 | Role | Reads | Writes |
 | --- | --- | --- |

@@ -46,8 +46,10 @@ approval only. External coding runners are currently unavailable. See [security 
 ## Upgrading from SwitchYard
 
 The new executable/package is `meritrouter`, configuration is `meritrouter.config.yaml`,
-environment variables use `MERITROUTER_*`, and new runtime directories use `.meritrouter`.
-Old environment variables and default config filenames are not discovery aliases.
+environment variables use `MERITROUTER_*`, and new runtime directories use `.MeritRouter`
+(fresh installs write that spelling; an existing lowercase `.meritrouter` directory is still
+read on a case-sensitive filesystem — see [Projects](#projects)). Old environment variables
+and default config filenames are not discovery aliases.
 
 1. Stop old workers, MCP servers, panels and services. Back up configuration, storage/database,
    vault and its matching master key, brain repositories and working repositories. See
@@ -153,22 +155,43 @@ to be installed or running: MeritRouter calls each provider's API itself.
 
 ### Projects
 
-Projects may declare `projects.<slug>.directory` as their owner folder, relative to the
-configuration file or absolute. When omitted, a single distinct repository folder supplies
-the owner; multiple distinct repositories or no repositories leave ownership unspecified.
-Explicit owner folders must not overlap another known project's owner folder.
+**Storage layout.** `storage.layout` is `split` or `legacy` (`meritrouter.config.yaml`,
+`storage.layout`). Fresh `setup` and `init` always write `storage.layout: split`,
+`storage.durability: full`, and `.MeritRouter` spelling for `storage.directory` and
+`brain.path`; an existing config keeps whatever it already had (`layout` defaults to
+`legacy` when the key is absent, so upgraded installations are unaffected until you choose
+to migrate).
 
-This is ownership metadata in preparation for project-local runtime storage. It does not
-move existing worktrees, databases, logs or Brain data. Current storage settings remain in
-effect. Do not move managed worktrees manually; the project-local storage migration is
-not implemented yet.
+- **Split** (the fresh-install default). The installation's own store (under `storage.directory`)
+  holds only coordination data: provider keys, routing, models, accounting, and the registry of
+  projects. Each project needs its own `directory` (relative to the config file, or absolute);
+  that project's tasks, sessions, artifacts, worktrees, agent homes, named Labs, and brain live
+  under `<directory>/.MeritRouter`, git-excluded, and nowhere else. `meritrouter init` refuses to
+  create an installation whose directory is, or sits inside, a project repository you pass with
+  `--repo`, because a split installation cannot be its own project's owner; use `meritrouter setup`
+  for an application-directory install, or choose a different installation directory.
+- **Legacy** (every existing installation). Every project's rows live in the one installation
+  store, as before. Current storage settings remain in effect; this is unchanged.
 
-The staged split-store runtime places private session logs and artifacts directly under
-the downstream owner's `.MeritRouter/sessions` and `.MeritRouter/artifacts`, beside its
-`state` database. These APIs reject coordination databases, foreign task owners and redirected
-evidence paths. This boundary is not a migration switch: ordinary installations keep their
-existing layout until the checked migration and default activation are completed. The
-MeritRouter source checkout must not be used as a downstream project's runtime owner.
+**Creating a project with a directory.** In a split installation, a project's `directory` is
+required and provisions its store the first time the project is created:
+- Panel: the New project form (`/new`) takes the directory alongside name, slug and repositories.
+- CLI: `meritrouter projects create <slug> [<directory>]` (the directory is a positional
+  argument). `meritrouter projects create <slug> --name "<name>" --repo <alias>=<path>` still
+  works without a directory in a legacy installation.
+- MCP: the `create_project` tool takes `slug`, `name?`, `directory?`, and `repositories?`.
+  Deletion is not exposed over MCP; use the panel or the CLI.
+
+A missing directory is created for you. If provisioning the store then fails, the config change
+is rolled back. Deleting a split project (`meritrouter projects delete <slug> --confirm <slug>`,
+or Delete project in the panel) removes only `<directory>/.MeritRouter`; the directory itself,
+its Git history, and the installation's accounting and tombstone record are kept — see
+[deleting a project](operations.md#deleting-a-project).
+
+An existing legacy installation keeps working unchanged: declaring `projects.<slug>.directory`
+without `storage.layout: split` is ownership metadata only (it does not move existing worktrees,
+databases, logs or Brain data), and a single distinct repository still supplies an inferred
+owner when no `directory` is set.
 
 One install holds many projects. Each project has its own:
 - repositories;
@@ -251,8 +274,10 @@ everything in it).
 **On the command line.**
 - `meritrouter projects` lists the projects. `*` marks the selected one, and `--all` adds
   archived ones.
-- `meritrouter projects create <slug> --name "<name>" --repo <alias>=<path>` adds a project. It
-  prepares each repository folder (see above) and prints what it did.
+- `meritrouter projects create <slug> [<directory>] --name "<name>" --repo <alias>=<path>` adds a
+  project. It prepares each repository folder (see above) and prints what it did; in a split
+  installation `<directory>` is required and the command prints the store path it created (see
+  [Storage layout](#projects) above).
 - `meritrouter projects archive|unarchive <slug>` archives a project or brings it back; see
   [operations.md](operations.md#archiving-a-project).
 - Commands that work inside one project take `--project <slug>`. Without the flag, MeritRouter
@@ -329,8 +354,9 @@ account) share a `quota_group` (`--quota-group`). Optional `rpm`, `rpd`, `tpm`, 
 limits apply per key, per quota group, or per provider. See [operations.md](operations.md#provider-keys).
 
 Vault secrets are encrypted with a master key from `MERITROUTER_MASTER_KEY` (64 hex characters)
-or a generated `.meritrouter/.master-key` file; back that file up (or set the variable) or the
-vault keys cannot be decrypted.
+or a generated `<storage.directory>/.master-key` file (`.MeritRouter/.master-key` on a fresh
+install, `.meritrouter/.master-key` on an older one that kept the lowercase spelling); back
+that file up (or set the variable) or the vault keys cannot be decrypted.
 
 Some providers limit requests in flight rather than per minute (DeepSeek per account, DeepInfra
 per model, Ollama Cloud per plan). The number depends on the account, so MeritRouter never assumes
@@ -511,7 +537,10 @@ project's at `/p/<slug>/settings`.
 
 - `projects.<slug>.repositories`: the repositories that project's workers may read (and, for
   `implement`, edit).
-- `brain.path` (default `~/.meritrouter/brain`): one brain repository for every project. To mount
+- `brain.path` (default `~/.MeritRouter/brain`, an existing lowercase `~/.meritrouter/brain`
+  still used if present on a case-sensitive filesystem): the installation's own brain
+  repository, shared by every project in a legacy installation; in a split installation each
+  project's brain instead lives under its own `<directory>/.MeritRouter/brain`. To mount
   an existing `docs/working/` folder, use `projects.<slug>.brain.mounts` for one project or
   `brain.mounts` for every project.
 - Paid routes: set model ids and **current prices** in `paid.models`; for a pinned standalone
@@ -690,7 +719,7 @@ open. Without it, discovery and submission do not start execution. For backgroun
 `node packages/router/dist/cli.js worker` in a terminal; any number of processes can share the
 store. To keep a worker running across crashes and logins:
 - `meritrouter daemon start` runs the daemon in the background. It restarts the worker with
-  backoff and logs under `.meritrouter/logs/`. `daemon status` shows the daemon and each
+  backoff and logs under `<storage.directory>/logs/`. `daemon status` shows the daemon and each
   project's queued and running tasks, and `daemon stop` stops it. `meritrouter daemon` alone runs
   it in the foreground.
 - `meritrouter service install` installs the daemon as a user service: a systemd user unit, a
