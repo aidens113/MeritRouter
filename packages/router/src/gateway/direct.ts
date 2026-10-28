@@ -307,6 +307,8 @@ export async function requestDirect(
         if (pe.reason === "aborted") throw Object.assign(pe, { attempts });
         if (keyLevel) {
           lastKeyError = pe;
+          // Split accounting binds one physical request to one exact slot: the next key gets its own slot.
+          if (d.health.capacity.splitMode) { d.health.capacity.release(slot); slot = null; }
           continue;
         }
         if (FALLBACK_KINDS.has(pe.kind)) return { kind: "failed", error: pe, unavailable: unavailableRefusal(pe) };

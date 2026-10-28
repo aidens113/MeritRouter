@@ -19,6 +19,8 @@ import { initializeStoreRole } from "../src/storage/store-role.js";
 import { createCoordinationStoreIdentity, createProjectStoreIdentity, registerProjectStore } from "../src/projects/store-identity.js";
 import { releaseOwnerAbsentSlot, SplitRequestSlotSchema } from "../src/gateway/capacity.js";
 import { SplitTransportRecovery, type LocalProcessState } from "../src/operations/transport-recovery.js";
+import { recoverProjectSettlements } from "../src/admission/project-request-recovery.js";
+import { ProjectRequestStore } from "../src/admission/project-request-store.js";
 import type { MeritRouter } from "../src/core/service.js";
 import type { ProjectRuntimeBundle } from "../src/projects/runtime-registry.js";
 import { baseConfig, endpoint, makeEnv, open, reply, ScriptedClient, summarizeTask, type Env } from "./helpers.js";
@@ -72,7 +74,7 @@ async function setup(options: { paid?: boolean; owner?: string; active?: boolean
     global: Object.fromEntries(["physical_requests", "broker_paid_spend", "provider_slots", "provider_usage", "project_execution_grants", "meta"].map(table => [table, global.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()])),
     local: Object.fromEntries(["project_request_protocol", "project_request_holds", "project_request_spend", "model_requests", "request_charges", "tasks", "events"].map(table => [table, local.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()])),
   });
-  return { global, local, identity, broker, spend, input, recovery, dump, requestId: input.requestId };
+  return { global, local, identity, broker, spend, input, recovery, dump, requestId: input.requestId, project, reservation };
 }
 
 it.each([false, true])("settles a dead owner's physical request uncertain, retains accounting and frees its slot exactly once (paid=%s)", async paid => {
@@ -245,4 +247,48 @@ it.each(["before its candidate read", "while it waits for the coordination lock"
   expect(winner).toMatchObject({ disposition: "fresh" });
   expect(loser).toMatchObject({ disposition: "replayed", slotId: "fixture-slot", reason });
   expect(f.global.prepare("SELECT COUNT(*) FROM meta WHERE key LIKE 'transport_owner_reconciled:%'").pluck().get()).toBe(1);
+});
+
+// ---------- startup settlement recovery (recoverProjectSettlements) ----------
+
+const settlement = (f: Awaited<ReturnType<typeof setup>>) => recoverProjectSettlements({ db: f.local, identity: f.identity, ledger: { recover: id => f.project.recover(id) }, broker: f.broker, now: () => NOW });
+function saveOutcome(f: Awaited<ReturnType<typeof setup>>) {
+  const store = new ProjectRequestStore(f.local, f.identity, () => NOW);
+  store.transaction(() => store.saveOutcome(store.bound(f.reservation), { kind: "failed", errorKind: "timeout", errorMessage: "durable provider timeout" }));
+}
+
+it("settles a durable local outcome once its captured lease is gone, exactly once", async () => {
+  const f = await setup({ active: true });
+  saveOutcome(f);
+  const live = f.dump();
+  expect(await settlement(f)).toEqual([]);
+  expect(f.dump()).toEqual(live);
+  f.local.prepare("UPDATE tasks SET lease_expires_at=? WHERE id='one'").run(NOW - 1);
+  expect(await settlement(f)).toEqual([f.requestId]);
+  expect(f.broker.readReceipt(f.requestId)).toMatchObject({ state: "settled", outcome: "failed" });
+  expect(f.local.prepare("SELECT phase FROM project_request_protocol").pluck().get()).toBe("settled");
+  const settled = f.dump();
+  expect(await settlement(f)).toEqual([]);
+  expect(f.dump()).toEqual(settled);
+});
+
+it("leaves dispatch intent without an outcome, and cost-quarantined requests, to their explicit paths", async () => {
+  const f = await setup(), before = f.dump();
+  expect(await settlement(f)).toEqual([]);
+  expect(f.dump()).toEqual(before);
+  saveOutcome(f);
+  f.global.prepare("UPDATE physical_requests SET cost_quarantined=1,unexpected_liability_usd=1,quarantine_outcome_sha256=?,accounting_outcome_sha256=?").run("b".repeat(64), "c".repeat(64));
+  const quarantined = f.dump();
+  expect(await settlement(f)).toEqual([]);
+  expect(f.dump()).toEqual(quarantined);
+});
+
+it("projects an operator-settled receipt whose project projection was interrupted", async () => {
+  const f = await setup();
+  const inspection = f.recovery().inspect(f.requestId);
+  f.local.exec("CREATE TRIGGER fail_projection BEFORE UPDATE OF phase ON project_request_protocol BEGIN SELECT RAISE(ABORT,'project store unavailable'); END");
+  expect(await f.recovery().reconcile({ requestId: f.requestId, expected: inspection.snapshotDigest, reason })).toMatchObject({ projection: "pending" });
+  f.local.exec("DROP TRIGGER fail_projection");
+  expect(await settlement(f)).toEqual([f.requestId]);
+  expect(f.local.prepare("SELECT phase FROM project_request_protocol").pluck().get()).toBe("settled");
 });

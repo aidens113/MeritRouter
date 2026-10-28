@@ -42,6 +42,7 @@ import type { SupervisorServices } from "../runners/types.js";
 import type { CodingRunner } from "./executor.js";
 import { MeritRouterError, TaskValidationError } from "./errors.js";
 import { ProjectScheduler } from "./project-scheduler.js";
+import { recoverProjectSettlements } from "../admission/project-request-recovery.js";
 import { createProjectRunServices, createProjectWorkerReadServices } from "./project-services.js";
 import { taskLabSelectionIssues } from "./task-lab-validation.js";
 
@@ -154,6 +155,8 @@ export class ProjectRuntimeHost {
   private readonly labs = new Map<string, LabManager>();
   private readonly webs = new Map<string, WebAccess>();
   private readonly sourceCheckout = sourceCheckoutForModule(import.meta.url);
+  private recoveryTimer: NodeJS.Timeout | null = null;
+  private recovering: Promise<string[]> | null = null;
 
   constructor(private readonly o: ProjectRuntimeHostOptions) {
     if (readStoreIdentity(o.db)?.role !== "coordination") throw new Error("Project runtimes require the bound coordination store");
@@ -361,13 +364,42 @@ export class ProjectRuntimeHost {
     return { identity, paths: projectRuntimePaths(row.directory) };
   }
 
-  start(intervalMs?: number): void { this.scheduler.start(intervalMs); }
+  start(intervalMs?: number): void {
+    this.scheduler.start(intervalMs);
+    if (this.recoveryTimer) return;
+    // A worker process finishes what a stopped owner left durable: at start, then about once per task lease.
+    this.recoveryTimer = setInterval(() => { void this.recoverSettlements().catch(() => undefined); }, Math.max(1000, this.o.cfg.execution.lease_seconds * 1000));
+    this.recoveryTimer.unref?.();
+    void this.recoverSettlements().catch(() => undefined);
+  }
+
+  /**
+   * Settle every registered project's requests that a stopped owner left with durable evidence (a saved local
+   * outcome, or a settled global receipt not yet projected), then free split slots whose receipts are terminal.
+   * Single-flight; never reserves, dispatches or touches execution grants. Returns the settled request IDs.
+   */
+  recoverSettlements(): Promise<string[]> {
+    if (this.recovering) return this.recovering;
+    const run = (async () => {
+      const settled: string[] = [];
+      for (const bundle of this.bundles()) {
+        settled.push(...await recoverProjectSettlements({ db: bundle.db, identity: bundle.identity, ledger: bundle.ledger, broker: this.broker, now: () => bundle.admission.serverNow() }));
+      }
+      this.health.capacity.releaseSettled();
+      return settled;
+    })().finally(() => { this.recovering = null; });
+    this.recovering = run;
+    return run;
+  }
   kick(): void { this.scheduler.kick(); }
   get busy(): number { return this.scheduler.busy; }
   reloadConfig(): void { for (const labs of this.labs.values()) labs.reloadConfig(); }
 
   async close(): Promise<void> {
+    if (this.recoveryTimer) clearInterval(this.recoveryTimer);
+    this.recoveryTimer = null;
     await this.scheduler.stop();
+    await this.recovering?.catch(() => undefined);
     await Promise.allSettled(this.registry.loaded().map(async bundle => {
       await bundle.drain();
       await this.bindings.forProject(bundle.identity).drain();

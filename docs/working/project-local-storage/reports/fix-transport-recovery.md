@@ -165,3 +165,93 @@ Done.
 - **Remaining gap 1:** a split request with a durable local outcome but an unsettled broker row is refused here as "project ledger recovery must settle it". `ProjectRequestLedger.recover` has no caller anywhere in `src/` (only tests), so nothing runs it automatically.
 - **Remaining gap 2:** split slots whose physical row settled `failed` with `timeout` or `provider_error`, or settled `uncertain` by the live owner, are held forever by `release()` and `releaseReconciled`, and this tool does not cover them.
 - Both gaps likely need a lead decision.
+
+---
+
+# Follow-up 2: pilot blockers — split slot leak and the uncalled ledger recovery (lead brief after d9f95f2)
+
+## Outcome
+
+Done. Both gaps are closed, plus a third leak the reproduction test exposed.
+
+1. **Slot leak (reproduced through the real Gate first).** I ran `tests/split-slot-settlement.test.ts` before changing anything: a split installation, one slot per provider, a scripted provider that fails.
+   - 408 timeout: the physical receipt settled `uncertain`/`timeout`, the slot stayed held, and the task sat in `waiting_for_capacity`.
+   - 502: same as the timeout.
+   - 400: settled `failed`/`provider_error` and the slot stayed held.
+2. **Key-level retry leak (found by the same test with two keys).** A 429 on key 1 retried key 2 on the *same* slot.
+   - The broker refuses a second physical request per slot (`physical_requests_slot_authority` unique index, `reserveGlobal` → `conflict`).
+   - The ledger turned that into a `RequestPersistenceError`, and `direct.ts` quarantined the slot (`uncertain=1`), which is a permanent leak. The task failed with `internal_error ... Global accounting refused: conflict`.
+   - This matters for a multi-key free provider.
+3. **Ledger recovery wired in.** A durable local outcome left before broker settlement is now settled automatically by a restarted worker, exactly once.
+
+## What changed and why
+
+- **`src/gateway/capacity.ts`**
+  - **`release()` (split mode).** The live owner frees its slot once the physical receipt is terminal, *whatever the outcome*. The hold remains only while the row is `dispatch_intent`, cost-quarantined or unbounded. The rule that also held `outcome='uncertain'` and every `failed` except rate_limited, authentication and policy is gone.
+    - Why this is safe: every settlement path runs after the transport call returned. That is the live owner after the call, startup recovery from a durable outcome, or the operator after proving the owner dead. Holding capacity proves nothing once the receipt is terminal.
+    - Legacy mode already released unconditionally.
+    - Accounting is untouched. An uncertain receipt keeps `actual_usd` NULL with the reservation counted as liability, so nothing is refunded. Failures keep the existing settlement semantics.
+  - **`releaseReconciled`** is aligned to the same terminal-receipt rule, which keeps the cost-incident refusal. It still has no production caller.
+  - **New `releaseSettled()` sweep.** It deletes split request slots whose exact receipt (by `slot_id`+`slot_nonce`) is settled or retired with no cost incident. This covers a crash after settlement but before the owner's `finally` release, and slots quarantined by persistence uncertainty whose receipt later settled. A live owner releasing afterwards finds no row.
+- **`src/gateway/direct.ts`**: after a key-level failure, split mode releases the slot (its receipt is already terminal) and the next key acquires its own slot. Legacy keeps reusing the slot; that branch is guarded by `capacity.splitMode`.
+- **`src/admission/project-request-recovery.ts`** (new): `recoverProjectSettlements`. For each project request not yet settled or retired it:
+  - skips the request if any participant's captured lease is still live (its owner may be settling it right now);
+  - skips cost-quarantined or unbounded receipts;
+  - otherwise calls the project's own `ProjectRequestLedger.recover` only when durable evidence already decides the outcome: a saved local outcome (global settle, then local projection) or a settled or retired global receipt (projection only).
+  - It never reserves or dispatches. Dispatch intent without an outcome is left to `transport reconcile`, and prepared requests are not re-admitted.
+- **`src/core/project-runtime-host.ts`** (recovery wiring only):
+  - `start()`, which runs only in worker processes, now runs `recoverSettlements()` immediately and then every `max(1s, execution.lease_seconds)`. The timer is unref'd and the pass is single-flight. Each pass runs `recoverProjectSettlements` for every registered bundle, then `health.capacity.releaseSettled()`.
+  - `close()` clears the timer and awaits an in-flight pass before draining the bundles.
+  - Nothing touches execution grants.
+- **Tests**
+  - `tests/split-slot-settlement.test.ts` (new, 5 tests):
+    - timeout, 502 and 400 cases (real Gate, split, 1 slot): slots return to 0, a later request is served, and receipts keep `uncertain`, `uncertain` and `failed` respectively;
+    - a two-key 429 retry that completes and leaks nothing;
+    - a crash and restart: durable local outcome with broker `dispatch_intent` and the lease expired, then close, then reopen with `worker:true`. Result: broker settled `succeeded` 80/20, local phase `settled`, `model_requests` and `request_charges` exact, the slot freed, and a second `recoverSettlements()` pass changes nothing.
+  - `tests/split-transport-recovery.test.ts`: 3 `recoverProjectSettlements` cases.
+    - A live lease is skipped; after expiry the request settles; a second pass leaves the stores identical.
+    - Dispatch intent without an outcome is untouched, and so is a cost-quarantined request.
+    - An interrupted operator projection is completed.
+  - `tests/project-capacity.test.ts`: the test "refuses uncertain/failed_timeout physical hold release" encoded the old design, so it now asserts the new contract. Uncertain and failed-timeout release (held 0); unbounded is still held (held 1); the receipt still reads `settled`, the original outcome, and `actual_usd` NULL. A new case covers a quarantined slot released by `releaseReconciled` and an orphaned slot freed by `releaseSettled`.
+- **Proof the tests catch the bugs.** I temporarily reverted the fixes, then restored them byte-for-byte from scratch copies.
+  - With the old release predicate and no key-retry change, the timeout and client-error cases failed ("condition not reached": slot never freed) and the key-level case failed (task not completed).
+  - With startup recovery disabled, the restart case failed ("condition not reached").
+
+## Commands run and observed results
+
+- `npx tsc --noEmit` exited 0 and `npx tsc -p tsconfig.build.json` exited 0. `dist/` was rebuilt after the final source change, a comment-only edit in `capacity.ts`.
+- The serial 170-set, now 174 tests (project-capacity +1, split-transport-recovery +3), gave 174/174 with `success: true`:
+  - transport-recovery 31, split-transport-recovery 25, team-capacity 8, project-accounting-broker 26, project-accounting-protocol 18, project-capacity 32, project-request-protocol 4, paid 13, gate-request-ledger 12, project-gate-isolation 5.
+- A serial batch gave 68/68: split-slot-settlement 5, project-service-activation 9, project-runtime-activation 3, project-delete-pending-requests 6, project-queue-isolation 24, project-runtime-registry 21.
+- providers-routing plus gate-request-capture, which exercise `direct.ts`, gave 32/32.
+- Before the project-capacity update, the first batch run gave 171/173: the two old-contract cases failed as expected.
+
+## Not verified
+
+- I did not run the full router suite or the `pnpm -r` checks.
+- I did not test against real Ollama Cloud. The provider behaviour is scripted (408, 502, 400, 429).
+- The restart test forces the lease to expire. A real crash where the scheduler re-claims the task with a new incarnation before recovery runs would leave the local projection pending: the broker is still settled and the slot freed, but `assertOriginalProjectParticipants` refuses. I did not reproduce that ordering.
+- Recovery runs only in worker processes (`host.start`). A deployment with no worker never runs it.
+
+## Open questions or contradictions found
+
+- **Uncertain release is a policy change.** It matches legacy and the brief. The trade-off is that a request still running remotely after a client-side timeout no longer occupies a local slot. Paid exposure is unaffected, because the reservation stays as liability.
+- **`releaseReconciled` was broadened.** It still has no production caller; `releaseSettled` is the sweep actually used.
+
+## Text for `docs/operations.md` (split transport recovery)
+
+> ### Split installations: stuck provider slots and requests
+>
+> In a split installation (the default), each physical model request is recorded in the shared coordination store (`physical_requests`) and holds one provider slot until its receipt is terminal.
+>
+> - **Normal settlement.** The worker that sent a request frees its slot as soon as the request settles, whether it succeeded, failed (for example a 4xx or a rate limit) or became uncertain (for example a timeout or a 5xx after sending). Accounting is unaffected. Uncertain requests are never refunded: tokens stay estimated, and paid reservations stay counted as liability. A key-level refusal retries the next key on a fresh slot.
+> - **Automatic recovery after a crash.** Every worker, at start and then about once per task lease, settles requests that a stopped worker left with durable evidence. A saved local outcome is settled globally and recorded in the project exactly once; a settled global receipt is copied into the project. The worker then frees every slot whose receipt is terminal. It skips requests whose task lease is still held, and it never sends, re-admits or invents an outcome.
+> - **Operator recovery for a dead owner.** A request whose owning process died after dispatch, with no saved outcome, stays in dispatch intent and keeps its slot. Recover it explicitly on the same host:
+>
+>   ```
+>   meritrouter --project <slug> transport inspect <requestId> --json
+>   meritrouter --project <slug> transport reconcile <requestId> --expected <snapshotDigest> --reason "<why>"
+>   ```
+>
+>   Reconcile refuses unless the owner process is proved absent (ESRCH only), no captured task lease is live, and nothing changed since inspection. It refuses any request that has a saved local outcome or a cost quarantine. It settles the physical request as `uncertain` (no refund), frees exactly that slot and records a receipt (coordination `meta` key `transport_owner_reconciled:<requestId>`), all in one transaction. It then copies the settlement into the project store. If that copy fails, the result says `projection: "pending"`; rerun the same command to retry it. Retries return the same receipt as `replayed`. Execution grants are never changed.
+> - **Not recovered automatically.** A slot held because a request is cost-quarantined (unexpected or unbounded cost) needs the quarantine resolved first. A slot marked uncertain by a persistence failure, whose request never settled, needs operator review.

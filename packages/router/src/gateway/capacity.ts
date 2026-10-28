@@ -374,7 +374,10 @@ export class ProviderCapacity {
     try {
       const release=()=>{
         if(this.grants){
-          const pending=this.db!.prepare("SELECT 1 FROM physical_requests WHERE slot_id=? AND slot_nonce=? AND (status='dispatch_intent' OR cost_quarantined=1 OR unbounded_cost=1 OR outcome='uncertain' OR (status='settled' AND outcome='failed' AND COALESCE(error_code,'unknown') NOT IN ('rate_limited','authentication','policy'))) LIMIT 1").get(handle.id,handle.nonce??null);
+          // The live owner frees its slot once its transport is over and the physical receipt is terminal, whatever the
+          // outcome (failed, uncertain): accounting stays on the receipt, so holding capacity proves nothing more. Only an
+          // undurable dispatch intent or a cost-quarantine incident keeps the hold for explicit reconciliation.
+          const pending=this.db!.prepare("SELECT 1 FROM physical_requests WHERE slot_id=? AND slot_nonce=? AND (status='dispatch_intent' OR cost_quarantined=1 OR unbounded_cost=1) LIMIT 1").get(handle.id,handle.nonce??null);
           if(pending)return;
         }
         this.db!.prepare("DELETE FROM provider_slots WHERE id=? AND uncertain=0 AND ((nonce IS NULL AND ? IS NULL) OR nonce=?)").run(handle.id,handle.nonce??null,handle.nonce??null);
@@ -393,9 +396,23 @@ export class ProviderCapacity {
     const released=immediate(this.db,()=>{
       const receipt=this.db!.prepare("SELECT status,outcome,cost_quarantined,error_code,unbounded_cost FROM physical_requests WHERE slot_id=? AND slot_nonce=?").get(handle.id,handle.nonce);
       const parsed=z.object({status:z.enum(["reserved","dispatch_intent","settled","retired"]),outcome:z.enum(["succeeded","failed","uncertain"]).nullable(),cost_quarantined:z.union([z.literal(0),z.literal(1)]),unbounded_cost:z.union([z.literal(0),z.literal(1)]),error_code:z.string().nullable()}).strict().optional().parse(receipt);
-      if(!parsed||parsed.cost_quarantined||parsed.unbounded_cost||!(parsed.status==="retired"||parsed.status==="settled"&&(parsed.outcome==="succeeded"||parsed.outcome==="failed"&&["rate_limited","authentication","policy"].includes(parsed.error_code??"unknown"))))return false;
+      // A terminal receipt (any outcome) means the transport is over: only a cost incident keeps the hold.
+      if(!parsed||parsed.cost_quarantined||parsed.unbounded_cost||!(parsed.status==="retired"||parsed.status==="settled"))return false;
       return this.db!.prepare("DELETE FROM provider_slots WHERE id=? AND nonce=?").run(handle.id,handle.nonce).changes===1;
     });if(released)this.wake();return released;
+  }
+
+  /**
+   * Recovery sweep: free every split request slot whose exact physical receipt is terminal (settled or retired,
+   * no cost incident). Its transport is over whoever settled it (the live owner, startup recovery from a durable
+   * outcome, or the operator), so the hold protects nothing; accounting stays on the receipt. A live owner that
+   * releases afterwards finds no row. Dispatch intent without a receipt is never touched.
+   */
+  releaseSettled(): number {
+    if(!this.grants||!this.db)return 0;
+    const released=immediate(this.db,()=>this.db!.prepare(`DELETE FROM provider_slots WHERE kind='request' AND project_uuid IS NOT NULL AND EXISTS (SELECT 1 FROM physical_requests r
+      WHERE r.slot_id=provider_slots.id AND r.slot_nonce=provider_slots.nonce AND r.status IN ('settled','retired') AND r.cost_quarantined=0 AND r.unbounded_cost=0)`).run().changes);
+    if(released)this.wake();return released;
   }
 
   /** Persistence uncertainty retains the exact local transport hold for explicit reconciliation. */
@@ -543,9 +560,8 @@ export const SplitRequestSlotSchema = z.object({
 export type SplitRequestSlot = z.infer<typeof SplitRequestSlotSchema>;
 
 /**
- * Operator absent-owner recovery's release of one split request slot. `ProviderCapacity.releaseReconciled`
- * keeps an uncertain outcome's hold on purpose (the remote request may still run); this release is allowed
- * only inside the caller's coordination transaction, after the broker settled this exact slot's physical
+ * Operator absent-owner recovery's release of one split request slot, settled in the same transaction (the
+ * owner died in dispatch intent, so no receipt-driven release could apply). It is allowed only inside the caller's coordination transaction, after the broker settled this exact slot's physical
  * receipt `uncertain` with `outcomeDigest` on the operator's proof that the local owner process is gone.
  * It never reads or changes execution grants.
  */
