@@ -13,6 +13,12 @@ import { accountingIdentityDigest, accountingOwnerDigest, GlobalEndpointAuthorit
   type ReserveGlobalRequest, type SettleGlobalRequest, type UnboundedGlobalCost } from "./accounting-broker.js";
 
 const DAY = 86_400_000;
+/** Trusted operator input: the exact dispatch and transport identity an absent-owner recovery inspected. */
+export const AbsentTransportSettlementSchema = GlobalRequestReferenceSchema.extend({
+  dispatchId: z.string().min(1).max(300), slot: z.object({ id: z.string().min(1).max(300), nonce: z.string().min(1).max(300) }).strict(),
+  outcomeDigest: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict();
+export type AbsentTransportSettlement = z.infer<typeof AbsentTransportSettlementSchema>;
 const rowSchema = z.object({
   id: z.string(), installation_uuid: z.string(), project_uuid: z.string(), store_uuid: z.string(), generation: z.number().int(),
   fingerprint: z.string(), accounting_json: z.string().max(131072), endpoint_id: z.string(), provider: z.string(), key_ref: z.string().nullable(),
@@ -230,17 +236,41 @@ export class SqliteRequestAccountingBroker implements RequestAccountingBroker {
         quarantined = true;
         return this.receipt(this.row(row.id)!);
       }
-      const now = this.now();
-      this.db.prepare("UPDATE physical_requests SET status='settled',outcome_digest=?,accounting_outcome_sha256=?,outcome=?,input_tokens=?,output_tokens=?,error_code=?,finished_at=? WHERE id=?")
-        .run(input.outcomeDigest, digest, input.outcome, input.inputTokens, input.outputTokens, input.errorCode, now, row.id);
-      const actual = input.outcome === "uncertain" || input.costBasis === "uncertain" ? null : input.actualUsd;
-      this.db.prepare("UPDATE broker_paid_spend SET actual_usd=?,liability_usd=MAX(liability_usd,?),cost_basis=?,settled_at=? WHERE request_id=?")
-        .run(actual, input.actualUsd ?? 0, actual === null ? "uncertain" : input.costBasis, now, row.id);
-      return this.receipt(this.row(row.id)!);
+      return this.applySettlement(row, input, digest);
     });
     // Commit incident evidence before surfacing failure; throwing inside mutation would erase the quarantine.
     if (quarantined) throw new GlobalAccountingCostQuarantine(receipt);
     return receipt;
+  }
+  /** The settled write shared by provider settlement and operator recovery; caller holds the coordination transaction. */
+  private applySettlement(row: Row, input: SettleGlobalRequest, digest: string): GlobalReceipt {
+    const now = this.now();
+    this.db.prepare("UPDATE physical_requests SET status='settled',outcome_digest=?,accounting_outcome_sha256=?,outcome=?,input_tokens=?,output_tokens=?,error_code=?,finished_at=? WHERE id=?")
+      .run(input.outcomeDigest, digest, input.outcome, input.inputTokens, input.outputTokens, input.errorCode, now, row.id);
+    const actual = input.outcome === "uncertain" || input.costBasis === "uncertain" ? null : input.actualUsd;
+    this.db.prepare("UPDATE broker_paid_spend SET actual_usd=?,liability_usd=MAX(liability_usd,?),cost_basis=?,settled_at=? WHERE request_id=?")
+      .run(actual, input.actualUsd ?? 0, actual === null ? "uncertain" : input.costBasis, now, row.id);
+    return this.receipt(this.row(row.id)!);
+  }
+  /**
+   * Trusted operator recovery only, never a model or MCP tool. Settles one exact dispatch-intent physical
+   * request whose local transport owner was proved absent as `uncertain`: tokens unknown, quota and the
+   * paid reservation retained as liability (never refunded, never reset). `guard` re-checks the operator's
+   * evidence and `commit` releases the exact slot and records the receipt, all in this one transaction.
+   */
+  settleAbsentTransportOwner(value: AbsentTransportSettlement, hooks: { guard(): void; commit(receipt: GlobalReceipt): void }): GlobalReceipt {
+    const input = AbsentTransportSettlementSchema.parse(value);
+    return this.mutation(() => {
+      const row = this.bound({ requestId: input.requestId, fingerprint: input.fingerprint });
+      if (row.status !== "dispatch_intent" || row.dispatch_id !== input.dispatchId || row.cost_quarantined !== 0 || row.unbounded_cost !== 0) throw new GlobalAccountingDenied("state");
+      if (row.slot_id !== input.slot.id || row.slot_nonce !== input.slot.nonce) throw new GlobalAccountingDenied("slot");
+      hooks.guard();
+      const settle = SettleGlobalRequestSchema.parse({ requestId: input.requestId, fingerprint: input.fingerprint, outcomeDigest: input.outcomeDigest,
+        outcome: "uncertain", inputTokens: null, outputTokens: null, actualUsd: null, costBasis: "uncertain", errorCode: "unknown" });
+      const receipt = this.applySettlement(row, settle, createHash("sha256").update(JSON.stringify(settle)).digest("hex"));
+      hooks.commit(receipt);
+      return receipt;
+    });
   }
   readReceipt(requestId: string): GlobalReceipt | null {
     const parsed = ReserveGlobalRequestSchema.shape.requestId.parse(requestId), row = this.row(parsed);

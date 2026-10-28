@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { TransportRecovery } from "./operations/transport-recovery.js";
+import { transportRecovery } from "./cli/transport.js";
 import { readFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import path from "node:path";
@@ -208,8 +208,8 @@ async function main(): Promise<number> {
         const [action, requestId, extra] = args;
         if (!requestId || extra || !["inspect", "reconcile"].includes(action ?? "") || values.force || values.yes || values.human)
           throw new MeritRouterError("usage", "usage: transport inspect <requestId> | transport reconcile <requestId> --expected <snapshotDigest> --reason <text>");
-        const recovery = new TransportRecovery(sy.db, sy.admission, sy.spend);
-        const result = action === "inspect" ? recovery.inspect(requestId, idScope()) : recovery.reconcile({ requestId, expected: values.expected, reason: values.reason }, idScope());
+        const recovery = transportRecovery(sy, cfg);
+        const result = action === "inspect" ? recovery.inspect(requestId, idScope()) : await recovery.reconcile({ requestId, expected: values.expected, reason: values.reason }, idScope());
         out(result, true);
         return 0;
       }

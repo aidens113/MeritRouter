@@ -532,3 +532,33 @@ export function liveSlotCounts(db: Db, now: number): Array<{ platform: string; k
     .all({ now, requestCut: 0, claimCut: now - CLAIM_HOLD_MS, waitCut: now - WAIT_STALE_MS }) as Array<{ platform: string; kind: "request" | "claim" | "wait"; n: number }>;
 }
 
+
+/** One split request slot exactly as an operator recovery read it (every column, so the release is a full compare-and-swap). */
+export const SplitRequestSlotSchema = z.object({
+  id: z.string().min(1), platform: z.string().min(1), kind: z.literal("request"), holder: z.string().min(1), task_id: z.string().min(1),
+  lease_owner: z.string().min(1), priority: z.number().int(), since: z.number(), seen_at: z.number(), lease_json: z.string(), nonce: z.string().min(1),
+  uncertain: z.literal(0), project_uuid: z.string().min(1), store_uuid: z.string().min(1), store_generation: z.number().int().positive(),
+  execution_grants_json: z.string().min(1),
+}).strict();
+export type SplitRequestSlot = z.infer<typeof SplitRequestSlotSchema>;
+
+/**
+ * Operator absent-owner recovery's release of one split request slot. `ProviderCapacity.releaseReconciled`
+ * keeps an uncertain outcome's hold on purpose (the remote request may still run); this release is allowed
+ * only inside the caller's coordination transaction, after the broker settled this exact slot's physical
+ * receipt `uncertain` with `outcomeDigest` on the operator's proof that the local owner process is gone.
+ * It never reads or changes execution grants.
+ */
+export function releaseOwnerAbsentSlot(db: Db, value: SplitRequestSlot, outcomeDigest: string): void {
+  const slot = SplitRequestSlotSchema.parse(value);
+  if (!db.inTransaction || readStoreIdentity(db)?.role !== "coordination") throw new Error("Owner-absent slot release requires the coordination transaction");
+  const receipt = z.object({ status: z.literal("settled"), outcome: z.literal("uncertain"), outcome_digest: z.literal(z.string().regex(/^[a-f0-9]{64}$/).parse(outcomeDigest)),
+    cost_quarantined: z.literal(0), unbounded_cost: z.literal(0), project_uuid: z.literal(slot.project_uuid), store_uuid: z.literal(slot.store_uuid), generation: z.literal(slot.store_generation) }).strict()
+    .safeParse(db.prepare("SELECT status,outcome,outcome_digest,cost_quarantined,unbounded_cost,project_uuid,store_uuid,generation FROM physical_requests WHERE slot_id=? AND slot_nonce=?").get(slot.id, slot.nonce));
+  if (!receipt.success) throw new Error("Owner-absent slot release lacks its exact uncertain physical receipt");
+  const removed = db.prepare(`DELETE FROM provider_slots WHERE id=? AND kind='request' AND nonce=? AND uncertain=0 AND holder=? AND task_id=? AND lease_owner=? AND lease_json=?
+    AND platform=? AND priority=? AND since=? AND seen_at=? AND project_uuid=? AND store_uuid=? AND store_generation=? AND execution_grants_json=?`)
+    .run(slot.id, slot.nonce, slot.holder, slot.task_id, slot.lease_owner, slot.lease_json, slot.platform, slot.priority, slot.since, slot.seen_at,
+      slot.project_uuid, slot.store_uuid, slot.store_generation, slot.execution_grants_json).changes;
+  if (removed !== 1) throw new Error("exact transport slot release lost its compare-and-swap");
+}
