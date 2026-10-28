@@ -20,6 +20,8 @@ import { teamMetrics } from "../src/admin/job-metrics.js";
 import { activeJobs, tasksByState } from "../src/admin/dashboards.js";
 import { taskRelated } from "../src/admin/entities.js";
 import { modelsView, overview, qualificationBoard, requestLog, requestLogCount, tierDistribution, timeseries } from "../src/admin/insights.js";
+import { sessionsView } from "../src/admin/sessions.js";
+import { labsListView } from "../src/admin/labs.js";
 
 /**
  * Proves the admin views converted in gate 1 wave A (S7) read a project's own store
@@ -310,6 +312,41 @@ describe("project store isolation: dashboards (owned)", () => {
       .run();
     expect(tasksByState(f.sy, "alpha")).toEqual({ queued: 2 });
     expect(tasksByState(f.sy, "beta")).toEqual({ queued: 1 });
+  });
+});
+
+describe("project store isolation: sessions (split-admin-reads)", () => {
+  it("sessionsView reads each project's own sessions store, never sy.db's decoy, and merges with 'broken' unavailable", () => {
+    const f = fixture();
+    const alphaTask = canaryTask(f.alpha, { id: "sess-alpha-task", label: "a", goal: "a" });
+    const betaTask = canaryTask(f.beta, { id: "sess-beta-task", label: "b", goal: "b" });
+    const alphaRec = f.alpha.stores.sessions!.create({ taskId: alphaTask, role: "implementer", agentLabel: "canary:alpha" });
+    f.alpha.db.prepare("UPDATE sessions SET project_id = ? WHERE id = ?").run("alpha", alphaRec.id);
+    const betaRec = f.beta.stores.sessions!.create({ taskId: betaTask, role: "implementer", agentLabel: "canary:beta" });
+    f.beta.db.prepare("UPDATE sessions SET project_id = ? WHERE id = ?").run("beta", betaRec.id);
+    // An installation decoy, charged to 'alpha' in sy.db, that must never surface through alpha's view.
+    const decoy = f.sy.sessions.create({ taskId: null, role: "implementer", agentLabel: "decoy" });
+    f.sy.db.prepare("UPDATE sessions SET project_id = ? WHERE id = ?").run("alpha", decoy.id);
+
+    const alphaView = sessionsView(f.sy, { project: "alpha" });
+    expect(alphaView.map((s) => s.id)).toContain(alphaRec.id);
+    expect(alphaView.map((s) => s.id)).not.toContain(decoy.id);
+    expect(alphaView.map((s) => s.id)).not.toContain(betaRec.id);
+    expect(alphaView.unavailable).toEqual([]);
+
+    const all = sessionsView(f.sy);
+    expect(all.map((s) => s.id)).toEqual(expect.arrayContaining([alphaRec.id, betaRec.id]));
+    expect(all.map((s) => s.id)).not.toContain(decoy.id);
+    expect(all.unavailable).toEqual(expect.arrayContaining([expect.objectContaining({ project: "broken" })]));
+  });
+});
+
+describe("project store isolation: labs (split-admin-reads)", () => {
+  it("labsListView reports 'broken' unavailable with a marker instead of throwing", () => {
+    const f = fixture();
+    const view = labsListView(f.sy, "broken");
+    expect(view.labs).toEqual([]);
+    expect(view.unavailableProjects).toEqual(expect.arrayContaining([expect.objectContaining({ project: "broken" })]));
   });
 });
 

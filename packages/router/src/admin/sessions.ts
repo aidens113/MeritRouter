@@ -1,9 +1,11 @@
 import { scopedSessionTimeline, SESSION_SCOPE_UNAVAILABLE } from "./session-project-scope.js";
 import type { MeritRouter } from "../core/service.js";
 import type { TaskState } from "../core/task.js";
-import type { SessionEventsPage, SessionListFilter, SessionRecord } from "../sessions/store.js";
-import type { CorruptLine, SessionEvent, SessionStatus } from "../sessions/events.js";
-import { locateSession, openProjectStores } from "./project-reads.js";
+import type { SessionEventsPage, SessionListFilter, SessionRecord, SessionStore } from "../sessions/store.js";
+import { SessionStatusSchema, type CorruptLine, type SessionEvent, type SessionStatus } from "../sessions/events.js";
+import type { TaskStore } from "../storage/tasks.js";
+import type { ProjectRuntimeStore } from "../projects/runtime-store.js";
+import { fanOutProjects, locateSession, newestFirst, projectIdFilter, projectScope, withAvailability, type RowsWithAvailability } from "./project-reads.js";
 
 // Agent sessions for the panel, CLI, and MCP: list rows, and one session with its timeline.
 
@@ -28,18 +30,29 @@ export interface SessionDetail extends Omit<SessionEventsPage, "sessionId"> {
   taskSessions: SessionView[];
 }
 
-function sessionViews(sy: MeritRouter, records: SessionRecord[]): SessionView[] {
+/** The task/session reads `sessionViews` needs, scoped to one project's own store (never the installation store directly, so split layout's per-project isolation is respected). */
+interface SessionViewContext {
+  tasks: Pick<TaskStore, "get">;
+  sessions: Pick<SessionStore, "get" | "list" | "forTask">;
+}
+
+/** `ctx` for a located project's own store, falling back to the installation service when there is none (an unowned '' row). */
+function contextFor(sy: MeritRouter, stores: ProjectRuntimeStore | null): SessionViewContext {
+  return stores ? { tasks: stores.tasks, sessions: stores.sessions ?? sy.sessions } : { tasks: sy.tasks, sessions: sy.sessions };
+}
+
+function sessionViews(ctx: SessionViewContext, records: SessionRecord[]): SessionView[] {
   const tasks = new Map<string, { label: string | null; state: TaskState | null }>();
   const task = (taskId: string) => {
     if (!tasks.has(taskId)) {
-      const t = sy.tasks.get(taskId);
+      const t = ctx.tasks.get(taskId);
       tasks.set(taskId, { label: t?.spec.label ?? null, state: t?.row.state ?? null });
     }
     return tasks.get(taskId)!;
   };
   const latest = new Map<string, string | null>();
   const latestAgentSession = (taskId: string) => {
-    if (!latest.has(taskId)) latest.set(taskId, sy.sessions.forTask(taskId).filter((s) => s.role !== "classifier").at(-1)?.id ?? null);
+    if (!latest.has(taskId)) latest.set(taskId, ctx.sessions.forTask(taskId).filter((s) => s.role !== "classifier").at(-1)?.id ?? null);
     return latest.get(taskId)!;
   };
   return records.map((r) => ({
@@ -55,25 +68,65 @@ export interface SessionViewFilter extends SessionListFilter {
   project?: string;
 }
 
-/** Sessions matching the filter, newest first; `project` limits them to one project's (all projects when omitted). */
-export function sessionsView(sy: MeritRouter, filter: SessionViewFilter = {}): SessionView[] {
+/** `filter`'s non-project fields, as a SQL fragment over a project's own `sessions` table (the `project_id` clause is added separately per project). Null when the filter can match nothing (an empty `status` array). */
+function sessionFilterSql(filter: SessionListFilter): { sql: string; args: unknown[] } | null {
+  const where: string[] = [];
+  const args: unknown[] = [];
+  if (filter.status !== undefined) {
+    const statuses = (Array.isArray(filter.status) ? filter.status : [filter.status]).map((s) => SessionStatusSchema.parse(s));
+    if (statuses.length === 0) return null;
+    where.push(`status IN (${statuses.map(() => "?").join(", ")})`);
+    args.push(...statuses);
+  }
+  if (filter.taskId !== undefined) (where.push("task_id = ?"), args.push(filter.taskId));
+  if (filter.jobId !== undefined) (where.push("job_id = ?"), args.push(filter.jobId));
+  if (filter.parentSessionId !== undefined) (where.push("parent_session_id = ?"), args.push(filter.parentSessionId));
+  return { sql: where.join(" AND "), args };
+}
+
+/**
+ * Sessions matching the filter, newest first; `project` limits them to one project's (all
+ * projects when omitted, merged from each project's own store). Every project is read through
+ * its own `sy.projectStores(slug)` handle, never the installation store directly (which is
+ * refused for any read in split layout), so this works the same whether every project shares one
+ * database (legacy) or each has its own (split). `unavailable` names projects whose store could
+ * not be read.
+ */
+export function sessionsView(sy: MeritRouter, filter: SessionViewFilter = {}): RowsWithAvailability<SessionView> {
   const { project, ...rest } = filter;
-  if (!project) return sessionViews(sy, sy.sessions.list(rest));
-  // The store has no project filter: read the newest sessions of the filter and keep this
-  // project's (`sessions` is project-private, read from the project's own store, not `sy.db`).
-  const limit = Math.min(rest.limit ?? 100, 1000);
-  const opened = openProjectStores(sy, project);
-  if (!opened.ok) return [];
-  const mine = new Set((opened.stores.db.prepare("SELECT id FROM sessions WHERE project_id = ? ORDER BY created_at DESC LIMIT 5000").all(project) as Array<{ id: string }>).map((r) => r.id));
-  return sessionViews(sy, sy.sessions.list({ ...rest, limit: 1000 }).filter((r) => mine.has(r.id)).slice(0, limit));
+  const limit = Math.max(1, Math.min(Math.floor(rest.limit ?? 100), 1000));
+  const extra = sessionFilterSql(rest);
+  if (!extra) return withAvailability([], []);
+  const { rows, unavailable } = fanOutProjects(sy, projectScope(sy, project, { qualification: true }), (stores, slug) => {
+    const f = projectIdFilter(sy, slug);
+    const where = extra.sql ? `${f.sql} AND ${extra.sql}` : f.sql;
+    const found = stores.db
+      .prepare(`SELECT id, created_at FROM sessions WHERE ${where} ORDER BY created_at DESC, rowid DESC LIMIT ?`)
+      .all(...f.args, ...extra.args, limit) as Array<{ id: string; created_at: number }>;
+    return found.map((r) => ({ ...r, stores }));
+  });
+  const merged = newestFirst(rows, (r) => r.created_at, limit);
+  const located = merged.flatMap((r) => {
+    const rec = (r.stores.sessions ?? sy.sessions).get(r.id);
+    return rec ? [{ rec, stores: r.stores }] : [];
+  });
+  // Build each session's view with its own project's task/session lookups (split layout isolates
+  // them from every other project's store), then put the views back in the merged, newest-first order.
+  const groups = new Map<ProjectRuntimeStore, SessionRecord[]>();
+  for (const { rec, stores } of located) groups.set(stores, [...(groups.get(stores) ?? []), rec]);
+  const viewsById = new Map<string, SessionView>();
+  for (const [stores, recs] of groups) for (const v of sessionViews(contextFor(sy, stores), recs)) viewsById.set(v.id, v);
+  const views = located.map(({ rec }) => viewsById.get(rec.id)!);
+  return withAvailability(views, unavailable);
 }
 
 /** One session with a page of its timeline (events after `afterSeq`), its children, and its task's other sessions. */
 export function sessionDetail(sy: MeritRouter, id: string, opts: { afterSeq?: number; limit?: number; project?: string } = {}): SessionDetail | null {
   const located = locateSession(sy, id, opts.project);
   if (!located) return null;
-  const { project, db } = located;
-  const rec = sy.sessions.get(id);
+  const { project, db, stores } = located;
+  const ctx = contextFor(sy, stores);
+  const rec = ctx.sessions.get(id);
   if (!rec) return null;
   const events = scopedSessionTimeline(sy,id,project);
   const sameProject = (r: SessionRecord) => (db.prepare("SELECT project_id FROM sessions WHERE id=?").get(r.id) as {project_id:string}|undefined)?.project_id === project && (!r.taskId || (db.prepare("SELECT project_id FROM tasks WHERE id=?").get(r.taskId) as {project_id:string}|undefined)?.project_id === project);
@@ -89,9 +142,9 @@ export function sessionDetail(sy: MeritRouter, id: string, opts: { afterSeq?: nu
   return {
     events:selected, corrupt:[], hasMore:events ? selected.length < events.filter(e=>e.seq > (opts.afterSeq ?? 0)).length : false, lastSeq:rec.lastSeq,
     timelineUnavailable:events ? null : SESSION_SCOPE_UNAVAILABLE,
-    session:sessionViews(sy,[safeRecord(rec,events !== null)])[0]!,
-    children:sessionViews(sy,sy.sessions.list({parentSessionId:id,limit:1000}).reverse().filter(sameProject).map(r=>safeRecord(r))),
-    taskSessions:rec.taskId ? sessionViews(sy,sy.sessions.forTask(rec.taskId).filter(sameProject).map(r=>safeRecord(r))) : [],
+    session:sessionViews(ctx,[safeRecord(rec,events !== null)])[0]!,
+    children:sessionViews(ctx,ctx.sessions.list({parentSessionId:id,limit:1000}).reverse().filter(sameProject).map(r=>safeRecord(r))),
+    taskSessions:rec.taskId ? sessionViews(ctx,ctx.sessions.forTask(rec.taskId).filter(sameProject).map(r=>safeRecord(r))) : [],
   };
 }
 

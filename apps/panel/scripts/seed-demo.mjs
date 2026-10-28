@@ -173,6 +173,11 @@ fixtureRepo(repo, files);
 fixtureRepo(path.join(demo, "web"), { "index.html": "<!doctype html><title>Calculator</title>\n", "README.md": "# Calculator web front end\n" });
 fixtureRepo(path.join(demo, "storefront"), { "src/cart.ts": "export function total(items: Array<{ price: number; qty: number }>) {\n  return items.reduce((s, i) => s + i.price * i.qty, 0);\n}\n", "README.md": "# Storefront\n" });
 fixtureRepo(path.join(demo, "billing"), { "invoice.py": "def total(lines):\n    return sum(l['amount'] for l in lines)\n", "README.md": "# Legacy billing\n" });
+// `demo`'s explicit project `directory` (see `raw.projects` below) must exist on disk before its
+// fixture Labs are created (`validateRuntimeLocation`, `runtime-paths.ts`, requires the project
+// directory itself to already be a real directory). `storefront` and `billing` already exist as
+// their own repository folders above; `demo` has two repositories, so it gets a dedicated one.
+mkdirSync(path.join(demo, "project-demo"), { recursive: true });
 
 const checkedAt = new Date().toISOString();
 const ep = (o) => ({
@@ -361,10 +366,17 @@ const raw = {
   models: { file: "models.yaml" },
   // Enrichment sources are offline too: the demo never fetches the OpenRouter catalog or Hugging Face.
   discovery: { interval_minutes: 0, openrouter_models_url: `${OFFLINE}/openrouter-catalog/models`, huggingface_api_url: `${OFFLINE}/huggingface/api/models` },
+  // Each project names its own `directory` explicitly (never activates relocation in legacy
+  // layout: storage stays shared under `.meritrouter`). `demo` has two distinct repositories
+  // (core, app), so it has no *implicit* directory (the single-repository default does not
+  // apply), and its fixture Labs below need one (`labs/lab.ts`'s `labStorageDirectory` requires
+  // `ctx.projectDirectory` before creating a project-local Lab). `storefront` and `legacy-billing`
+  // already get one implicitly (their one repository's path); naming it explicitly here too is
+  // just clearer, not a behaviour change. None of the three nest inside another.
   projects: {
-    demo: { name: "Calculator service", repositories: { core: { path: "repo" }, app: { path: "web" } } },
-    storefront: { name: "Storefront", repositories: { app: { path: "storefront" } }, team: { max_agents: 2 } },
-    "legacy-billing": { name: "Legacy billing", repositories: { billing: { path: "billing", writable: false } } },
+    demo: { name: "Calculator service", directory: "project-demo", repositories: { core: { path: "repo" }, app: { path: "web" } } },
+    storefront: { name: "Storefront", directory: "storefront", repositories: { app: { path: "storefront" } }, team: { max_agents: 2 } },
+    "legacy-billing": { name: "Legacy billing", directory: "billing", repositories: { billing: { path: "billing", writable: false } } },
   },
   execution: { max_concurrent_tasks: 4, lease_seconds: 30 },
   scoring: { batch_window_ms: 50 },

@@ -23,10 +23,10 @@ export default async function JobsPage({ params }: { params: Promise<{ slug: str
   const base = projectBase(p.slug);
   const enabled = Boolean(sy.cfg.profiles.supervise);
   const jobs = insights.jobsView(sy, 100, p.slug);
-  // `labsListView` throws (rather than reporting unavailable) for a project whose store cannot be
-  // opened right now; `jobs.unavailable` already covers that case for this page, so skip it then
-  // instead of crashing the whole page over a store that `labsListView` itself cannot read either.
-  const labs = jobs.unavailable.length ? [] : insights.labsListView(sy, p.slug).labs.flatMap(l => l.status && ["running", "stopped"].includes(l.status.lab.state) ? [{ name: l.name, state: l.status.lab.state }] : []);
+  // `labsListView` reports an unavailable store with its own marker (never throws), so skip the
+  // list only when it names this project, rather than crashing the whole page.
+  const labsView = insights.labsListView(sy, p.slug);
+  const labs = labsView.unavailableProjects?.length ? [] : labsView.labs.flatMap(l => l.status && ["running", "stopped"].includes(l.status.lab.state) ? [{ name: l.name, state: l.status.lab.state }] : []);
   const now = Date.now();
   const live = jobs.some((j) => !isTerminal(j.state));
   const waiting = jobs.reduce((n, j) => n + j.pendingQuestions, 0);

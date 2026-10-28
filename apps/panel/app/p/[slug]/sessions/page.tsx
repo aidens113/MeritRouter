@@ -38,27 +38,15 @@ export default async function SessionsPage({ params, searchParams }: { params: P
     ...(job ? { jobId: job } : {}),
     ...(parent ? { parentSessionId: parent } : {}),
   };
-  // `sessionsView` can throw (not just report unavailable) for reasons unrelated to whether this
-  // project's own store can be opened; treat that the same as unavailable rather than crash the
-  // whole page, in addition to the explicit marker below for a store that cannot be opened at all.
-  let sessionsReadFailed = false;
-  const safeSessionsView = (filter: Parameters<typeof insights.sessionsView>[1]) => {
-    try {
-      return insights.sessionsView(sy, filter);
-    } catch {
-      sessionsReadFailed = true;
-      return [];
-    }
-  };
-  let sessions = safeSessionsView({ ...baseFilter, limit: LIMIT });
-  if (role) sessions = sessions.filter((s) => s.role === role);
-  const running = safeSessionsView({ project: p.slug, status: "running", limit: 1000 }).length;
-  const interrupted = safeSessionsView({ project: p.slug, status: "interrupted", limit: 1000 }).length;
-  const failed = safeSessionsView({ project: p.slug, status: "failed", limit: 1000 }).length;
-  // `sessionsView` reads this project's own store directly and returns an empty list rather than
-  // throwing when that store cannot be opened; check separately so "0 sessions" is not shown as
-  // if the project simply has none.
-  const unavailable = insights.unavailableProjectStores(sy, p.slug)[0] ?? (sessionsReadFailed ? { project: p.slug, reason: "read_failed" } : null);
+  // `sessionsView` reads this project's own store (never the installation store directly) and
+  // reports an unavailable store with its own marker rather than throwing or silently returning
+  // an empty list, so the page shows the same notice a real read failure would.
+  const allSessions = insights.sessionsView(sy, { ...baseFilter, limit: LIMIT });
+  const unavailable = allSessions.unavailable[0] ?? null;
+  const sessions = role ? allSessions.filter((s) => s.role === role) : allSessions;
+  const running = insights.sessionsView(sy, { project: p.slug, status: "running", limit: 1000 }).length;
+  const interrupted = insights.sessionsView(sy, { project: p.slug, status: "interrupted", limit: 1000 }).length;
+  const failed = insights.sessionsView(sy, { project: p.slug, status: "failed", limit: 1000 }).length;
   const now = Date.now();
   const filtered = Boolean(status || role || task || job || parent);
   const scope = job ? (

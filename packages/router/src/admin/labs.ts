@@ -9,7 +9,7 @@ import { projectInfo } from "./projects.js";
 import { readConfigText, writePreparedConfigText } from "./config-edit.js";
 import { saveProjectSettings } from "./project-settings.js";
 import { ensureLabSupervisor } from "../operations/lab-supervisor.js";
-import { requireProjectStores } from "./project-reads.js";
+import { ProjectStoreUnavailableError, requireProjectStores, withUnavailable, type WithUnavailable } from "./project-reads.js";
 
 const projectConfig = (sy: MeritRouter, project: string) => ProjectConfigSchema.parse(sy.cfg.projects[project] ?? {});
 
@@ -84,18 +84,32 @@ export function labPromotionView(sy: MeritRouter, project: string, name: string,
     checks: result.checks.slice(0, 100).map(check => ({ name: text(check.name), revision: text(check.revision), passed: check.exitCode === 0 && !check.killed })), error: result.error };
 }
 
-export function labsListView(sy: MeritRouter, project: string) {
+function labEntry(sy: MeritRouter, project: string, name: string) {
+  const detail = labDetailView(sy, project, name);
+  if (!detail.status) return { name, ...detail, status: null };
+  const { checks: ignoredChecks, ...status } = detail.status;
+  return { name, ...detail, status };
+}
+
+/**
+ * A project's labs. Returns an `unavailableProjects` marker (never throws) when the project's
+ * store cannot be read right now, since callers (the panel's project pages) need to show a
+ * notice, not crash, for a split-layout project whose store is temporarily unavailable.
+ */
+export function labsListView(sy: MeritRouter, project: string): WithUnavailable<{ project: string; archived: boolean; configured: boolean; labs: ReturnType<typeof labEntry>[] }> {
   const p = scope(sy, project);
-  const stores = requireProjectStores(sy, project);
+  const configured = !!projectConfig(sy, project).lab;
+  let stores: ReturnType<typeof requireProjectStores>;
+  try {
+    stores = requireProjectStores(sy, project);
+  } catch (error) {
+    if (!(error instanceof ProjectStoreUnavailableError)) throw error;
+    return withUnavailable({ project, archived: p.archived, configured, labs: [] }, [{ project, reason: error.reason }]);
+  }
   const names = new Set(sy.labs.list(project).map(l => l.name));
   const pending = z.array(z.object({ lab_name: LabNameSchema })).parse(stores.db.prepare("SELECT DISTINCT lab_name FROM lab_operations WHERE project_id = ? AND state IN ('pending','running')").all(project));
   for (const row of pending) names.add(row.lab_name);
-  return { project, archived: p.archived, configured: !!projectConfig(sy, project).lab, labs: [...names].map(name => {
-    const detail = labDetailView(sy, project, name);
-    if (!detail.status) return { name, ...detail, status: null };
-    const { checks: ignoredChecks, ...status } = detail.status;
-    return { name, ...detail, status };
-  }) };
+  return { project, archived: p.archived, configured, labs: [...names].map(name => labEntry(sy, project, name)) };
 }
 
 export function labLogs(sy: MeritRouter, project: string, name: string, service: string) {
