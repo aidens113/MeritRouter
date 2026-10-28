@@ -185,120 +185,142 @@ export class MeritRouter {
     this.now = opts.now ?? Date.now;
     this.configMtime = mtime(cfg.configPath);
     this.db = openDatabase(cfg.storageDir, { durability: cfg.storage.durability });
-    this.layout = openInstallationLayout(this.db, cfg.storage.layout);
-    this.tasks = new TaskStore(this.db, this.now);
-    this.artifacts = new ArtifactStore(this.db, cfg.storageDir, this.now);
-    this.sessions = new SessionStore(this.db, cfg.storageDir, this.now);
-    this.contracts = new ContractStore(this.db);
-    this.admission = new Admission(this.db, this.tasks, cfg, this.now);
-    this.projects = new ProjectRegistry(cfg);
-    this.projects.attach(this.db, this.now, { backfill: this.layout === "legacy" });
-    this.labs = new LabManager({ db: this.db, storageDir: cfg.storageDir, cfg, project: slug => this.projectContext(slug), monitor: opts.labsMonitor === true && this.layout === "legacy" });
-    this.vault = new KeyVault(this.db, cfg.storageDir, this.now);
-    this.spend = new PaidSpend(this.db, cfg, this.vault, this.now);
-    this.providers = new ProviderRuntime(cfg, this.db, this.vault, {
-      client: opts.providerClient ?? createProviderClient({ ...(opts.providerFetch ? { fetch: opts.providerFetch } : {}), now: this.now }),
-      ...(opts.providerFetch ? { fetch: opts.providerFetch } : {}),
-      now: this.now,
-    });
-    this.legacyWeb = this.layout === "split" ? null : new WebAccess({
-      cfg,
-      db: this.db,
-      providers: this.providers,
-      ...(opts.webFetch ? { fetch: opts.webFetch } : {}),
-      ...(opts.webPage ? { page: opts.webPage } : {}),
-      event: (taskId, type, data) => this.tasks.event(taskId, type, data),
-      now: this.now,
-    });
-    this.probeBudget = dailyProbeBudget(cfg.discovery.max_probe_requests_per_day, this.now);
-    this.catalog = new Catalog(this.db, cfg.modelsPath, {
-      requireConfirmationForHeuristicParams: cfg.discovery.require_confirmation_for_heuristic_params,
-      extra: {
-        list: () => paidEndpoints(this.cfg, this.db, (p) => this.providers.credentials().usable(p).filter((c) => c.billingClass !== "free_tier").length, this.now()),
-        key: () => paidFingerprint(this.cfg, this.db),
-      },
-    });
-    this.owner = `${hostname()}:${process.pid}:${randomBytes(3).toString("hex")}`;
-
-    this.health = new ProviderHealth(
-      this.now,
-      () => this.providers.statuses(),
-      (platform) => this.providers.statusPlatform(platform),
-    );
-    this.gate = new Gate(this.db, cfg, this.admission, this.health, { providers: this.providers, spend: this.spend });
-    this.router = new TaskRouter(cfg, this.db, this.catalog, this.gate, this.artifacts, this.now);
-    this.scanner = new Scanner({
-      db: this.db,
-      catalog: this.catalog,
-      discover: () => this.discover(),
-      refreshPrices: () => refreshPaidPrices(this.db, this.cfg),
-      anyProvider: () => this.providers.discoverable().length > 0 || Object.keys(this.cfg.paid.providers).length > 0,
-      now: this.now,
-    });
-    this.events.setMaxListeners(0);
-    const coding = opts.coding === undefined ? createCodingRunner(cfg) : opts.coding, supervisor = opts.supervisor === undefined ? new SupervisorRunner() : opts.supervisor;
-    this.host = this.layout === "split" ? new ProjectRuntimeHost({ db: this.db, cfg, projects: this.projects, catalog: this.catalog, providers: this.providers, spend: this.spend,
-      owner: this.owner, now: this.now, coding, supervisor, labsMonitor: opts.labsMonitor === true, reviewer: () => this.promotionReviewer,
-      ...(opts.webFetch ? { webFetch: opts.webFetch } : {}), ...(opts.webPage ? { webPage: opts.webPage } : {}), onSettled: (id) => this.events.emit("settled", id) }) : null;
-    this.stores = new ProjectStoreRouter(this.host, { db: this.db, tasks: this.tasks, sessions: this.sessions, artifacts: this.artifacts, contracts: this.contracts, admission: this.admission, bundle: null }, this.projects);
-    this.executor = new Executor({
-      cfg,
-      db: this.db,
-      gate: this.gate,
-      catalog: this.catalog,
-      router: this.router,
-      tasks: this.tasks,
-      artifacts: this.artifacts,
-      owner: this.owner,
-      now: this.now,
-      coding,
-      supervisor,
-      brain: this.host ? null : this.brain,
-      access: this.host ? null : this.brainAccess,
-      sessions: this.sessions,
-      contracts: this.contracts,
-      services: {
-        submitTasks: (raw, o) => this.submitTasks(raw, o),
-        awaitResults: (ids, o) => this.awaitResults(ids, o),
-        getTask: (id) => {
-          const t = this.tasks.get(id);
-          return t ? { spec: t.spec, state: t.row.state, result: t.result } : null;
+    // Nothing else holds this handle until the constructor returns: a failure below must close
+    // it, or the database file stays open (and locked on Windows) for the life of the process.
+    try {
+      this.layout = openInstallationLayout(this.db, cfg.storage.layout);
+      this.tasks = new TaskStore(this.db, this.now);
+      this.artifacts = new ArtifactStore(this.db, cfg.storageDir, this.now);
+      this.sessions = new SessionStore(this.db, cfg.storageDir, this.now);
+      this.contracts = new ContractStore(this.db);
+      this.admission = new Admission(this.db, this.tasks, cfg, this.now);
+      this.projects = new ProjectRegistry(cfg);
+      this.projects.attach(this.db, this.now, { backfill: this.layout === "legacy" });
+      this.labs = new LabManager({ db: this.db, storageDir: cfg.storageDir, cfg, project: slug => this.projectContext(slug), monitor: opts.labsMonitor === true && this.layout === "legacy" });
+      this.vault = new KeyVault(this.db, cfg.storageDir, this.now);
+      this.spend = new PaidSpend(this.db, cfg, this.vault, this.now);
+      this.providers = new ProviderRuntime(cfg, this.db, this.vault, {
+        client: opts.providerClient ?? createProviderClient({ ...(opts.providerFetch ? { fetch: opts.providerFetch } : {}), now: this.now }),
+        ...(opts.providerFetch ? { fetch: opts.providerFetch } : {}),
+        now: this.now,
+      });
+      this.legacyWeb = this.layout === "split" ? null : new WebAccess({
+        cfg,
+        db: this.db,
+        providers: this.providers,
+        ...(opts.webFetch ? { fetch: opts.webFetch } : {}),
+        ...(opts.webPage ? { page: opts.webPage } : {}),
+        event: (taskId, type, data) => this.tasks.event(taskId, type, data),
+        now: this.now,
+      });
+      this.probeBudget = dailyProbeBudget(cfg.discovery.max_probe_requests_per_day, this.now);
+      this.catalog = new Catalog(this.db, cfg.modelsPath, {
+        requireConfirmationForHeuristicParams: cfg.discovery.require_confirmation_for_heuristic_params,
+        extra: {
+          list: () => paidEndpoints(this.cfg, this.db, (p) => this.providers.credentials().usable(p).filter((c) => c.billingClass !== "free_tier").length, this.now()),
+          key: () => paidFingerprint(this.cfg, this.db),
         },
-        cancelTasks: (ids) => this.cancelTasks(ids),
-        acceptTask: (id, input) => this.acceptTask(id, input),
-        rejectTask: (id, input) => this.rejectTask(id, input),
-      },
-      onSettled: (id) => this.events.emit("settled", id),
-      project: (task) => this.projectDeps(task.row.project_id),
-      web: this.legacyWeb,
-      labs: this.labs,
-      ensureLabsSupervisor: async () => {
-        const { ensureLabSupervisor } = await import("../operations/lab-supervisor.js");
-        await ensureLabSupervisor(this);
-      },
-    });
-    this.qualifier = new Qualifier(this);
-    this.auditor = new Auditor(
-      { cfg, db: this.db, tasks: this.tasks, artifacts: this.artifacts, admission: this.admission, catalog: this.catalog, router: this.router, contracts: this.contracts, submitTasks: (raw, o) => this.submitTasks(raw, o) },
-      this.now,
-    );
-    this.promotionReviewer = new PromotionReviewer({ cfg, tasks: this.tasks, catalog: this.catalog, router: this.router, admission: this.admission, submitTasks: (raw, o) => this.submitTasks(raw, o) });
-    this.events.on("settled", (id: string) => this.settlePromotionReview(id));
-    this.scheduler = new Scheduler(
-      cfg,
-      this.tasks,
-      this.executor,
-      this.owner,
-      () => {
-        this.projects.syncRuntimeRepositories();
-        void this.qualifier.gradePending().catch(() => undefined);
-        void this.auditor.sweep().catch(() => undefined);
-      },
-      this.sessions,
-      new ProviderSlotAdmission(cfg, this.router, this.health.capacity, this.now),
-      (slug) => this.projects.get(slug),
-    );
-    if (opts.worker) this.startWorker(opts.pollIntervalMs);
+      });
+      this.owner = `${hostname()}:${process.pid}:${randomBytes(3).toString("hex")}`;
+
+      this.health = new ProviderHealth(
+        this.now,
+        () => this.providers.statuses(),
+        (platform) => this.providers.statusPlatform(platform),
+      );
+      this.gate = new Gate(this.db, cfg, this.admission, this.health, { providers: this.providers, spend: this.spend });
+      this.router = new TaskRouter(cfg, this.db, this.catalog, this.gate, this.artifacts, this.now);
+      this.scanner = new Scanner({
+        db: this.db,
+        catalog: this.catalog,
+        discover: () => this.discover(),
+        refreshPrices: () => refreshPaidPrices(this.db, this.cfg),
+        anyProvider: () => this.providers.discoverable().length > 0 || Object.keys(this.cfg.paid.providers).length > 0,
+        now: this.now,
+      });
+      this.events.setMaxListeners(0);
+      const coding = opts.coding === undefined ? createCodingRunner(cfg) : opts.coding, supervisor = opts.supervisor === undefined ? new SupervisorRunner() : opts.supervisor;
+      this.host = this.layout === "split" ? new ProjectRuntimeHost({ db: this.db, cfg, projects: this.projects, catalog: this.catalog, providers: this.providers, spend: this.spend,
+        owner: this.owner, now: this.now, coding, supervisor, labsMonitor: opts.labsMonitor === true, reviewer: () => this.promotionReviewer,
+        ...(opts.webFetch ? { webFetch: opts.webFetch } : {}), ...(opts.webPage ? { webPage: opts.webPage } : {}), onSettled: (id) => this.events.emit("settled", id) }) : null;
+      this.stores = new ProjectStoreRouter(this.host, { db: this.db, tasks: this.tasks, sessions: this.sessions, artifacts: this.artifacts, contracts: this.contracts, admission: this.admission, bundle: null }, this.projects);
+      this.executor = new Executor({
+        cfg,
+        db: this.db,
+        gate: this.gate,
+        catalog: this.catalog,
+        router: this.router,
+        tasks: this.tasks,
+        artifacts: this.artifacts,
+        owner: this.owner,
+        now: this.now,
+        coding,
+        supervisor,
+        brain: this.host ? null : this.brain,
+        access: this.host ? null : this.brainAccess,
+        sessions: this.sessions,
+        contracts: this.contracts,
+        services: {
+          submitTasks: (raw, o) => this.submitTasks(raw, o),
+          awaitResults: (ids, o) => this.awaitResults(ids, o),
+          getTask: (id) => {
+            const t = this.tasks.get(id);
+            return t ? { spec: t.spec, state: t.row.state, result: t.result } : null;
+          },
+          cancelTasks: (ids) => this.cancelTasks(ids),
+          acceptTask: (id, input) => this.acceptTask(id, input),
+          rejectTask: (id, input) => this.rejectTask(id, input),
+        },
+        onSettled: (id) => this.events.emit("settled", id),
+        project: (task) => this.projectDeps(task.row.project_id),
+        web: this.legacyWeb,
+        labs: this.labs,
+        ensureLabsSupervisor: async () => {
+          const { ensureLabSupervisor } = await import("../operations/lab-supervisor.js");
+          await ensureLabSupervisor(this);
+        },
+      });
+      this.qualifier = new Qualifier(this);
+      this.auditor = new Auditor(
+        { cfg, db: this.db, tasks: this.tasks, artifacts: this.artifacts, admission: this.admission, catalog: this.catalog, router: this.router, contracts: this.contracts, submitTasks: (raw, o) => this.submitTasks(raw, o) },
+        this.now,
+      );
+      this.promotionReviewer = new PromotionReviewer({ cfg, tasks: this.tasks, catalog: this.catalog, router: this.router, admission: this.admission, submitTasks: (raw, o) => this.submitTasks(raw, o) });
+      this.events.on("settled", (id: string) => this.settlePromotionReview(id));
+      this.scheduler = new Scheduler(
+        cfg,
+        this.tasks,
+        this.executor,
+        this.owner,
+        () => {
+          this.projects.syncRuntimeRepositories();
+          void this.qualifier.gradePending().catch(() => undefined);
+          void this.auditor.sweep().catch(() => undefined);
+        },
+        this.sessions,
+        new ProviderSlotAdmission(cfg, this.router, this.health.capacity, this.now),
+        (slug) => this.projects.get(slug),
+      );
+      if (opts.worker) this.startWorker(opts.pollIntervalMs);
+    } catch (error) {
+      this.abandonConstruction();
+      throw error;
+    }
+  }
+
+  /**
+   * Undo a constructor that threw after opening the installation database: stop what may have
+   * started (timers, Lab monitor, schedulers) and close the handle. Background cleanup that
+   * needs the database fails quietly once it is closed.
+   */
+  private abandonConstruction(): void {
+    this.closing = true;
+    if (this.discoveryTimer) clearInterval(this.discoveryTimer);
+    if (this.reloadTimer) clearInterval(this.reloadTimer);
+    // Fields assigned after the failure point are still undefined here.
+    const self = this as unknown as { labs?: LabManager; scheduler?: Scheduler; host?: ProjectRuntimeHost | null };
+    for (const pending of [self.labs?.close({ stopServices: false }), self.scheduler?.stop(), self.host?.close()]) void pending?.catch(() => undefined);
+    if (this.db.open) this.db.close();
   }
 
   /** A project's brain (one per project, over the shared brain repository). */

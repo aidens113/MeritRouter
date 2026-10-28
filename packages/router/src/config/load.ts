@@ -57,7 +57,7 @@ export function formatIssues(issues: Array<{ path: PropertyKey[]; message: strin
   return issues.map((i) => `${i.path.map(String).join(".") || "<root>"}: ${i.message}`);
 }
 
-/** The storage directory's old, lower-case spelling (before the `.MeritRouter` rename). */
+/** The runtime folder's old, lower-case spelling (before the `.MeritRouter` rename). */
 const LEGACY_STORAGE_DIR_NAME = ".meritrouter";
 
 /**
@@ -74,11 +74,26 @@ function resolveStorageDir(baseDir: string, directory: string): string {
   return existsSync(legacy) ? legacy : resolved;
 }
 
+/**
+ * `brain.path` as the config gives it (`~` expands to home), or, when that directory does not
+ * exist but the same path with every `.MeritRouter` segment spelled `.meritrouter` does, that old
+ * spelling. On a case-insensitive filesystem the first lookup already finds an old-spelled brain,
+ * so this only redirects on a case-sensitive one (Linux), as `storage.directory` does above. The
+ * result keeps the config's form (relative or `~`), so every reader resolves it the same way.
+ */
+export function resolveBrainPath(baseDir: string, brainPath: string, exists: (p: string) => boolean = existsSync, home = homedir()): string {
+  const absolute = (p: string) => path.resolve(baseDir, p === "~" || p.startsWith("~/") || p.startsWith("~\\") ? path.join(home, p.slice(2)) : p);
+  if (exists(absolute(brainPath))) return brainPath;
+  const legacy = brainPath.split(/([\\/])/).map((part) => (part.toLowerCase() === LEGACY_STORAGE_DIR_NAME ? LEGACY_STORAGE_DIR_NAME : part)).join("");
+  return legacy !== brainPath && exists(absolute(legacy)) ? legacy : brainPath;
+}
+
 export function parseConfig(raw: unknown, configPath: string): ResolvedConfig {
   const parsed = ConfigSchema.safeParse(raw);
   if (!parsed.success) throw new ConfigError(`invalid config ${configPath}:\n  ${formatIssues(parsed.error.issues).join("\n  ")}`);
-  const cfg = parsed.data;
   const baseDir = path.dirname(configPath);
+  // Before project resolution: each project's brain settings start from the top-level ones.
+  const cfg = { ...parsed.data, brain: { ...parsed.data.brain, path: resolveBrainPath(baseDir, parsed.data.brain.path) } };
 
   const repositoryPaths = resolveRepositories(cfg.repositories, baseDir);
   const projects = resolveProjects(cfg, baseDir);
