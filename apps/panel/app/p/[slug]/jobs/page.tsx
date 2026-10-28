@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { MessageCircleQuestion, Network, Settings2 } from "lucide-react";
+import { CircleAlert, MessageCircleQuestion, Network, Settings2 } from "lucide-react";
 import { insights, isTerminal } from "meritrouter";
 import { getSy } from "@/lib/sy";
 import { project } from "@/lib/project";
@@ -23,7 +23,10 @@ export default async function JobsPage({ params }: { params: Promise<{ slug: str
   const base = projectBase(p.slug);
   const enabled = Boolean(sy.cfg.profiles.supervise);
   const jobs = insights.jobsView(sy, 100, p.slug);
-  const labs = insights.labsListView(sy, p.slug).labs.flatMap(l => l.status && ["running", "stopped"].includes(l.status.lab.state) ? [{ name: l.name, state: l.status.lab.state }] : []);
+  // `labsListView` throws (rather than reporting unavailable) for a project whose store cannot be
+  // opened right now; `jobs.unavailable` already covers that case for this page, so skip it then
+  // instead of crashing the whole page over a store that `labsListView` itself cannot read either.
+  const labs = jobs.unavailable.length ? [] : insights.labsListView(sy, p.slug).labs.flatMap(l => l.status && ["running", "stopped"].includes(l.status.lab.state) ? [{ name: l.name, state: l.status.lab.state }] : []);
   const now = Date.now();
   const live = jobs.some((j) => !isTerminal(j.state));
   const waiting = jobs.reduce((n, j) => n + j.pendingQuestions, 0);
@@ -40,6 +43,12 @@ export default async function JobsPage({ params }: { params: Promise<{ slug: str
         }
         live={["jobs", "tasks", "labs"]}
       />
+
+      {jobs.unavailable.length ? (
+        <Callout tone="bad" icon={<CircleAlert size={16} />} title={`This project's jobs cannot be read right now (${jobs.unavailable[0]!.reason})`}>
+          Its store is unavailable, so the list below is empty rather than accurate. If this is a split installation, check that the project's directory still exists and is reachable, then reload.
+        </Callout>
+      ) : null}
 
       {waiting ? (
         <Callout tone="warn" icon={<MessageCircleQuestion size={16} />} title={`${waiting} question${waiting === 1 ? "" : "s"} waiting for your answer`}>

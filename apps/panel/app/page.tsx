@@ -24,8 +24,12 @@ function Count({ n, label, tone }: { n: number; label: string; tone?: "live" | "
   );
 }
 
+/** Whether an attention item names this project's store as missing or unreadable (`project-reads.ts`'s wording). */
+const STORE_ISSUE_RE = /store is unavailable|has no store yet/;
+
 function ProjectTile({ p, now }: { p: ProjectCard; now: number }) {
   const live = p.runningTasks > 0;
+  const storeIssue = p.attentionItems.find((item) => STORE_ISSUE_RE.test(item));
   return (
     <li className="flex min-w-0 flex-col rounded-xl border border-line bg-surface shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
       <Link
@@ -43,7 +47,11 @@ function ProjectTile({ p, now }: { p: ProjectCard; now: number }) {
               {p.primary ? " · primary" : ""}
             </div>
           </div>
-          {p.attention ? (
+          {storeIssue ? (
+            <Badge tone="bad" icon={<CircleAlert size={11} />} title={storeIssue}>
+              store unavailable
+            </Badge>
+          ) : p.attention ? (
             <Badge tone="warn" icon={<CircleAlert size={11} />} title={p.attentionItems.join("\n")}>
               {p.attention} need{p.attention === 1 ? "s" : ""} you
             </Badge>
@@ -76,7 +84,11 @@ function ProjectTile({ p, now }: { p: ProjectCard; now: number }) {
           <Count n={p.queuedTasks} label="tasks queued" tone="queued" />
         </div>
 
-        {p.attentionItems.length ? <p className="mt-3 line-clamp-2 text-xs text-warn-ink">{p.attentionItems[0]}</p> : null}
+        {storeIssue ? (
+          <p className="mt-3 text-xs text-bad-ink">{storeIssue}</p>
+        ) : p.attentionItems.length ? (
+          <p className="mt-3 line-clamp-2 text-xs text-warn-ink">{p.attentionItems[0]}</p>
+        ) : null}
 
         <div className="mt-auto flex items-center gap-1.5 pt-3 text-[11px] text-ink-3" title={p.lastActivityAt ? dateTime(p.lastActivityAt) : undefined}>
           <Clock size={12} aria-hidden /> {p.lastActivityAt ? `active ${ago(p.lastActivityAt, now)}` : "no activity yet"}

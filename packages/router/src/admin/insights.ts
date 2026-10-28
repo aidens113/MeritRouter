@@ -746,6 +746,11 @@ export * from "./sessions.js";
 // Projects: the grid, create and archive, the global dashboard and per-project overview, and the
 // global vs per-project settings split.
 export * from "./projects.js";
+// A project whose store is unavailable right now (and the check for one or every project), for
+// panel views (sessions, teams, ...) that read a single project's store directly and would
+// otherwise show silence instead of a reason. `projectsGrid`'s own `attentionItems` already
+// covers the grid.
+export { unavailableProjectStores, type ProjectStoreUnavailable } from "./project-reads.js";
 export * from "./dashboards.js";
 export * from "./project-settings.js";
 // Global knowledge (D9): global entries with provenance, promotions awaiting a person, reverts.

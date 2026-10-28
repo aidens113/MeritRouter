@@ -43,12 +43,13 @@ function Field({ id, label, hint, errors, children }: { id: string; label: React
  * it will do), and optional brain mounts. The server validates everything; its errors come back
  * per field and show beside the input.
  */
-export function NewProjectForm({ configDir }: { configDir: string }) {
+export function NewProjectForm({ configDir, split }: { configDir: string; split: boolean }) {
   const router = useRouter();
   const uid = useId();
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [slugEdited, setSlugEdited] = useState(false);
+  const [directory, setDirectory] = useState("");
   const [repos, setRepos] = useState<Repo[]>([{ alias: "app", path: "", writable: true }]);
   const [mounts, setMounts] = useState<Mount[]>([]);
   const [busy, setBusy] = useState(false);
@@ -90,6 +91,7 @@ export function NewProjectForm({ configDir }: { configDir: string }) {
     const body = {
       name: name.trim(),
       slug: slug.trim(),
+      ...(directory.trim() ? { directory: directory.trim() } : {}),
       // Rows left completely empty are ignored rather than reported.
       repositories: repos.filter(repoUsed).map((r) => ({ alias: r.alias.trim(), path: r.path.trim(), writable: r.writable })),
       mounts: mounts.filter(mountUsed).map((m) => ({ prefix: m.prefix.trim(), path: m.path.trim(), commit: m.commit })),
@@ -117,6 +119,7 @@ export function NewProjectForm({ configDir }: { configDir: string }) {
 
   const nameId = `${uid}-name`;
   const slugId = `${uid}-slug`;
+  const directoryId = `${uid}-directory`;
 
   return (
     <form
@@ -168,6 +171,26 @@ export function NewProjectForm({ configDir }: { configDir: string }) {
           />
         </Field>
       </div>
+
+      {split ? (
+        <Field
+          id={directoryId}
+          label="Directory"
+          hint={<>MeritRouter keeps this project&apos;s data in <span className="break-all font-mono">{`<directory>/.MeritRouter`}</span>, separate from every other project&apos;s. Absolute, or relative to <span className="break-all font-mono">{configDir}</span>.</>}
+          errors={fe("directory")}
+        >
+          <input
+            id={directoryId}
+            value={directory}
+            onChange={(e) => setDirectory(e.target.value)}
+            className={cx("field font-mono text-[13px]", invalid("directory") && "border-bad")}
+            placeholder="e.g. ../projects/storefront"
+            spellCheck={false}
+            aria-invalid={invalid("directory")}
+            aria-describedby={describedBy(directoryId, "directory")}
+          />
+        </Field>
+      ) : null}
 
       <fieldset className="space-y-3">
         <legend className="text-sm font-medium text-ink">Repositories</legend>

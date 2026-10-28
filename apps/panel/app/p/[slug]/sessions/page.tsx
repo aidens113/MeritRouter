@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ScrollText } from "lucide-react";
+import { CircleAlert, ScrollText } from "lucide-react";
 import { insights, SESSION_STATUSES, type SessionStatus } from "meritrouter";
 import { getSy } from "@/lib/sy";
 import { project } from "@/lib/project";
@@ -31,18 +31,34 @@ export default async function SessionsPage({ params, searchParams }: { params: P
   const parent = str("parent");
   const statusFilter = (SESSION_STATUSES as readonly string[]).includes(status) ? (status as SessionStatus) : undefined;
 
-  let sessions = insights.sessionsView(sy, {
+  const baseFilter = {
     project: p.slug,
     ...(statusFilter ? { status: statusFilter } : {}),
     ...(task ? { taskId: task } : {}),
     ...(job ? { jobId: job } : {}),
     ...(parent ? { parentSessionId: parent } : {}),
-    limit: LIMIT,
-  });
+  };
+  // `sessionsView` can throw (not just report unavailable) for reasons unrelated to whether this
+  // project's own store can be opened; treat that the same as unavailable rather than crash the
+  // whole page, in addition to the explicit marker below for a store that cannot be opened at all.
+  let sessionsReadFailed = false;
+  const safeSessionsView = (filter: Parameters<typeof insights.sessionsView>[1]) => {
+    try {
+      return insights.sessionsView(sy, filter);
+    } catch {
+      sessionsReadFailed = true;
+      return [];
+    }
+  };
+  let sessions = safeSessionsView({ ...baseFilter, limit: LIMIT });
   if (role) sessions = sessions.filter((s) => s.role === role);
-  const running = insights.sessionsView(sy, { project: p.slug, status: "running", limit: 1000 }).length;
-  const interrupted = insights.sessionsView(sy, { project: p.slug, status: "interrupted", limit: 1000 }).length;
-  const failed = insights.sessionsView(sy, { project: p.slug, status: "failed", limit: 1000 }).length;
+  const running = safeSessionsView({ project: p.slug, status: "running", limit: 1000 }).length;
+  const interrupted = safeSessionsView({ project: p.slug, status: "interrupted", limit: 1000 }).length;
+  const failed = safeSessionsView({ project: p.slug, status: "failed", limit: 1000 }).length;
+  // `sessionsView` reads this project's own store directly and returns an empty list rather than
+  // throwing when that store cannot be opened; check separately so "0 sessions" is not shown as
+  // if the project simply has none.
+  const unavailable = insights.unavailableProjectStores(sy, p.slug)[0] ?? (sessionsReadFailed ? { project: p.slug, reason: "read_failed" } : null);
   const now = Date.now();
   const filtered = Boolean(status || role || task || job || parent);
   const scope = job ? (
@@ -85,6 +101,12 @@ export default async function SessionsPage({ params, searchParams }: { params: P
         <Stat label="Interrupted" value={interrupted} tone={interrupted ? "warn" : undefined} sub="stopped before they finished" />
         <Stat label="Failed" value={failed} tone={failed ? "bad" : undefined} sub="ended with an error" />
       </div>
+
+      {unavailable ? (
+        <Callout tone="bad" icon={<CircleAlert size={16} />} title={`This project's sessions cannot be read right now (${unavailable.reason})`}>
+          Its store is unavailable, so the list below is empty rather than accurate. If this is a split installation, check that the project's directory still exists and is reachable, then reload.
+        </Callout>
+      ) : null}
 
       {scope ? (
         <Callout tone="accent" title={<>Showing only {scope}</>}>

@@ -15,6 +15,7 @@ export default function NewProjectPage() {
   const r = getSy();
   if (!r.sy) return <SetupScreen error={r.error} configPath={r.configPath} />;
   const configDir = path.dirname(r.sy.cfg.configPath);
+  const split = r.sy.layout === "split";
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <Link href="/" className="inline-flex items-center gap-1 text-sm text-ink-3 hover:text-ink">
@@ -29,7 +30,7 @@ export default function NewProjectPage() {
         }
       />
       <Card className="p-4 sm:p-6">
-        <NewProjectForm configDir={configDir} />
+        <NewProjectForm configDir={configDir} split={split} />
       </Card>
     </div>
   );
