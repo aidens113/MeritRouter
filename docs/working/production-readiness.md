@@ -1,6 +1,6 @@
 # Production readiness execution sequence
 Status: Active
-Status detail: Gate 1 validated; integration enforcement repaired and independently checked; fresh Facebook pilot 2 running with a 400-request free-only cap.
+Status detail: Split integration/recovery/shutdown fixes checked; fresh Commons retry running within remaining357 requests; product acceptance open.
 Created: 2026-10-26
 Last updated: 2026-10-28
 Owner: Senior supervisor agent
@@ -10,9 +10,17 @@ Related: [storage](project-local-storage.md), [delivery](supervisor-lifecycle-st
 
 ## Current State
 
+Latest execution2026-10-28: combined split integration/lock/refusal/startup/Resume fixes independently119/119 PASS, shutdown24/24 PASS, recursive typecheck/build PASS. Actual production stop API tested on isolated seeded split demo:2clean cycles, no repository/Brain lock, database ok, foreign-Origin403, rendered screenshot viewed. Current combined-tree full-suite rerun remains outstanding; older full/serial evidence below is predecessor source only. Detailed record: [gate2-auto-integration.md](gate2-auto-integration.md).
+
+Active retry t_0mvsr8qoi4c6b92cdff6b, cap357/maxPaidUsd0, supervisor s_0mvsr8ziid56f0ef3550b, worker17808 (exec28651), rebuilt panel4477. Earlier t_0mvsovety5bfa4069dc69 retains43requests/$0 and all source/history; aggregate trial cap400, no refunds/reset. Its expired attempt recovered into run2, then failed safely before model send on retained mutation marker. Root checked absentPID18308/exact hash/physical identity/all16worktree guards and reversibly archived only marker; GitHEAD/status unchanged, bytes retained. Panel stop race separately reproduced/repaired without attributing historical PID from timestamp alone. New retry adds verified Windows/Node/dependency context and ignore/CSS/deterministic-test requirements. No manually authored application source; canonical delivery/FINAL acceptance still OPEN. Main held. This supersedes all older in-flight/runtime statements below.
+
+Earlier checkpoints and lead handoff:
+
 Latest checkpoint 2026-10-28 (Codex supervisor): user requested repeated router-driven Facebook MVP delivery with no manual application source. Retained integration fix reviewed and repaired through worker integration_review. Recursive typecheck/build pass. Full four-worker suite: 2413 passed / 7 failed / 5 skipped (1947.87s); every failing file then passed serially, 36/36 (263.52s). New integration 8/8, nesting 7/7, source binding 22/22 and lifecycle 46/46 independently observed passing. Full-run timing failures remain disclosed; no wholly-green aggregate claim. Details: [integration acceptance](gate2-auto-integration.md).
 
-Fresh pilot 2 `t_0mvsovety5bfa4069dc69` is running through supported CLI in facebook-mvp, with a new 400-request cap and paid routing still disabled. Foreground worker PID8420 (exec session73526); panel4477 started on rebuilt source, overview/list/old-job routes HTTP200. No application source manually authored. Prior pilot data/usage preserved; canonical project still initial HEAD at launch. This checkpoint supersedes the old handoff's in-flight integration, missing worker and pending rerun-budget statements below. Product acceptance remains OPEN.
+Fresh pilot2 `t_0mvsovety5bfa4069dc69`, cap400/free-only, paused at43 requests/$0. Split mutex classification failure caused supervisor session s_0mvsovmzo8ebfbc0be76a to interrupt `lease lost`; children terminal, branch empty. Bound-mutex repair is independently checked33/33, typecheck/build PASS and panel4477 rebuilt. Root caught/repaired6 intermediate admission regressions without weakening old tests. Custom supervisor-profile split integration and unbound legacy crash locks remain scoped limitations. This source is not yet committed/pushed; dev6227470 is the initial integration unit only.
+
+Restart then exposed recovery gaps: new worker7732 did not recover an expired-running-only project (managed scheduler starts only after queued fairness hint); CLI Resume reads installation-private sessions before scoped dispatch.7732 stopped idle; split_recovery worker implementing supported startup/CLI repair in temp fixtures. Parent still running with expired owner8420 lease, interrupted session28requests; no state surgery/budget reset. Root rejected scaffold6359879 through CLI for literal-backslash-n .gitignore, requesting retained-source worker repair. No application source manually authored; all usage/source retained. This supersedes older deployment/in-flight/budget statements below. Product acceptance remains OPEN.
 
 Earlier handoff 2026-10-28 (Claude Code lead, session of 2026-10-27/28):
 

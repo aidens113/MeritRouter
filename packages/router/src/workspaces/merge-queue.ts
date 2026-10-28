@@ -1,5 +1,5 @@
 import { existsSync, realpathSync } from "node:fs";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import path from "node:path";
 import { z } from "zod";
@@ -11,6 +11,8 @@ import { repoKey } from "../projects/context.js";
 import { RepositoryMutationError, withRepositoryMutation, type RepositoryMutationCapability } from "./repository-mutation.js";
 import { SelectedCommitError } from "../attribution/selected-commit.js";
 import type { RepositoryCommandPermit } from "./repository-command.js";
+import { mergeBranchKey, QueueBranchOwnerSchema, type MergeBranchBindingSchema } from "../storage/merge-branch-lock.js";
+import { readStoreIdentity } from "../projects/store-identity.js";
 
 /**
  * The merge queue: how finished work reaches a job branch. Every integration (a coding task's
@@ -177,12 +179,7 @@ export interface EnqueueInput {
 /** Local ordering complements the durable physical-branch mutex below. */
 const chains = new Map<string, Promise<unknown>>();
 const processInstance = randomUUID();
-const BranchOwnerSchema = z.object({
-  nonce: z.string().uuid(), host: z.string().min(1), pid: z.number().int().positive(), instance: z.string().uuid(),
-  owner: z.string().min(1), heartbeat: z.number().finite(), jobId: z.string(),
-  leaseOwner: z.string().nullable(), runCount: z.number().int().nonnegative().nullable(),
-}).strict();
-type BranchOwner = z.infer<typeof BranchOwnerSchema>;
+type BranchOwner = z.infer<typeof QueueBranchOwnerSchema>;
 function serial<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const prev = chains.get(key) ?? Promise.resolve();
   const next = prev.then(fn, fn);
@@ -279,11 +276,14 @@ export class MergeQueue {
   }
 
   /** Physical Git identity, so different aliases/projects cannot bypass a branch lock. */
-  private async branchKey(item: MergeItem): Promise<string> {
+  private async physicalOwner(item: MergeItem): Promise<string> {
     const common = (await git(item.integrationWorktree, ["rev-parse", "--git-common-dir"])).trim();
     const physical = realpathSync(path.resolve(item.integrationWorktree, common));
     const canonical = process.platform === "win32" ? physical.toLowerCase() : physical;
-    return `merge-branch:${createHash("sha256").update(JSON.stringify([canonical, item.branch])).digest("hex")}`;
+    return canonical;
+  }
+  private async branchKey(item: MergeItem): Promise<string> {
+    return mergeBranchKey(await this.physicalOwner(item), item.branch);
   }
 
   /**
@@ -292,21 +292,29 @@ export class MergeQueue {
    * malformed and PID-reuse ambiguity remain busy, regardless of heartbeat/lease age.
    */
   private async withBranch<T>(item: MergeItem, fn: (key: string) => Promise<T>): Promise<T> {
-    const key = await this.branchKey(item);
+    const physicalOwner = await this.physicalOwner(item);
+    const key = mergeBranchKey(physicalOwner, item.branch);
+    const store = readStoreIdentity(this.db);
+    const binding: z.infer<typeof MergeBranchBindingSchema> = { itemId: item.id, physicalOwner, branch: item.branch, integrationWorktree: item.integrationWorktree, queueOwner: this.owner, projectStore: store?.role === "project" ? store : null };
     const task = this.db.prepare("SELECT lease_owner, run_count FROM tasks WHERE id = ?").get(item.jobId) as { lease_owner: string | null; run_count: number } | undefined;
     const mine: BranchOwner = { nonce: randomUUID(), host: hostname(), pid: process.pid, instance: processInstance, owner: this.owner,
-      heartbeat: Date.now(), jobId: item.jobId, leaseOwner: task?.lease_owner ?? null, runCount: task?.run_count ?? null };
+      heartbeat: Date.now(), jobId: item.jobId, leaseOwner: task?.lease_owner ?? null, runCount: task?.run_count ?? null, binding };
+    let provisional: { before: Row; after: Row } | undefined;
+    let refusedAdmission = false;
     const deadline = Date.now() + 30_000;
     for (;;) {
       const acquired = immediate(this.db, () => {
         const row = this.db.prepare("SELECT value FROM meta WHERE key = ?").get(key) as { value: string } | undefined;
         if (row) {
-          let parsed: ReturnType<typeof BranchOwnerSchema.safeParse>;
-          try { parsed = BranchOwnerSchema.safeParse(JSON.parse(row.value)); } catch { return false; }
+          let parsed: ReturnType<typeof QueueBranchOwnerSchema.safeParse>;
+          try { parsed = QueueBranchOwnerSchema.safeParse(JSON.parse(row.value)); } catch { return false; }
           if (!parsed.success || parsed.data.host !== mine.host) return false;
           try { process.kill(parsed.data.pid, 0); return false; }
           catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") return false; }
         }
+        const before = this.db.prepare("SELECT * FROM merge_queue WHERE id = ?").get(item.id) as Row;
+        this.update(item.id, { detail: { ...this.get(item.id)!.detail, mergeBranchBinding: binding } });
+        provisional = { before, after: this.db.prepare("SELECT * FROM merge_queue WHERE id = ?").get(item.id) as Row };
         this.db.prepare("INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, JSON.stringify(mine));
         return true;
       });
@@ -318,14 +326,26 @@ export class MergeQueue {
       const row = this.db.prepare("SELECT value FROM meta WHERE key = ?").get(key) as { value: string } | undefined;
       if (!row) return;
       let current: BranchOwner;
-      try { current = BranchOwnerSchema.parse(JSON.parse(row.value)); } catch { return; }
+      try { current = QueueBranchOwnerSchema.parse(JSON.parse(row.value)); } catch { return; }
       if (current.nonce !== mine.nonce) return;
-      if (release) this.db.prepare("DELETE FROM meta WHERE key = ? AND value = ?").run(key, row.value);
+      if (release) {
+        // A refused admission must leave queue evidence byte-for-byte untouched. Restore only
+        // this invocation's provisional binding, and only while the entire row is still exactly
+        // what acquisition wrote. Any queue progress, ownership change or other update survives.
+        if (refusedAdmission && provisional) {
+          const currentItem = this.db.prepare("SELECT * FROM merge_queue WHERE id = ?").get(item.id);
+          if (JSON.stringify(currentItem) === JSON.stringify(provisional.after)) {
+            this.db.prepare("UPDATE merge_queue SET detail_json = ?, updated_at = ? WHERE id = ?").run(provisional.before.detail_json, provisional.before.updated_at, item.id);
+          }
+        }
+        this.db.prepare("DELETE FROM meta WHERE key = ? AND value = ?").run(key, row.value);
+      }
       else this.db.prepare("UPDATE meta SET value = ? WHERE key = ? AND value = ?").run(JSON.stringify({ ...current, heartbeat: Date.now() }), key, row.value);
     });
     const heartbeat = setInterval(() => { try { updateOwned(false); } catch { /* never expire a mutex on heartbeat failure */ } }, 1000);
     heartbeat.unref?.();
     try { return await fn(key); }
+    catch (error) { refusedAdmission = error instanceof RepositoryMutationError; throw error; }
     finally { clearInterval(heartbeat); updateOwned(true); }
   }
 
@@ -369,7 +389,10 @@ export class MergeQueue {
     if (patch.sourceBase !== undefined) set("source_base", patch.sourceBase);
     if (patch.sourceHead !== undefined) set("source_head", patch.sourceHead);
     if (patch.redelegatedTo !== undefined) set("redelegated_to", patch.redelegatedTo);
-    if (patch.detail !== undefined) set("detail_json", JSON.stringify(patch.detail));
+    if (patch.detail !== undefined) {
+      const binding = patch.detail.mergeBranchBinding ?? this.get(id)?.detail.mergeBranchBinding;
+      set("detail_json", JSON.stringify({ ...patch.detail, ...(binding ? { mergeBranchBinding: binding } : {}) }));
+    }
     if (patch.acceptance !== undefined) set("acceptance_json", patch.acceptance ? JSON.stringify(patch.acceptance) : null);
     set("updated_at", this.now());
     this.db.prepare(`UPDATE merge_queue SET ${cols.join(", ")} WHERE id = ?`).run(...vals, id);

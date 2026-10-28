@@ -708,6 +708,9 @@ not enable PostgreSQL or multiple hosts.
   depending on the replacement named by `await_tasks`. A replacement's receipt never claims the
   original source integrated. Each job branch integrates one item at a time and
   runs the job's checks after each (a failing check is recorded, not undone automatically). A
+  split project's branch mutex is local metadata bound to its exact store generation, own
+  supervisor and queue item, and acquired physical Git owner. Unrelated or malformed metadata
+  is refused; role checks stay active during integration callbacks. A
   failed pick is retried as a clean rebase in the item's worktree; a real conflict re-delegates
   the task once with the conflict as context. Recovery after a crash picks only the commits not
   yet on the branch.
@@ -767,9 +770,18 @@ is refused; the runtime never substitutes the latest tree for the checked candid
     without another model request. Coding work continues in the same worktree.
   - external coding runner recovery is unavailable: those runners fail closed without an accepted OS sandbox.
   - completion, batch, and classification runs re-run fresh in a new linked session.
+- Split workers initialize each registered project's lease recovery before considering fair
+  queue hints, including projects whose only task is an expired running attempt. Recovery
+  preserves consumed requests, deadline and incarnation; agent-loop tasks retain their
+  session. A still-live owner's lease is not taken over, and no provider work starts before
+  recovery settles.
 - Manual resume: `meritrouter resume <session-id>` continues that session; `meritrouter resume
   <task-id>` restarts the task (a coding task in a fresh worktree; the old one stays as
   evidence). MCP `resume_session` / `resume_task` and the panel's Resume buttons do the same.
+  CLI resume resolves the owning project store before dispatching to these same guarded
+  controls; use `--project` for duplicate IDs, including a session/task collision across
+  projects. An interrupted session whose task still has an expired running lease requires
+  worker recovery first; manual Resume does not bypass lease reconciliation.
 - Repeated observations remain bounded: three identical fresh reads without progress stop a
   spinning loop. A successful `await_tasks` with a service-measured wait starts a fresh
   observation window; an immediate return or wait-like model text does not.
@@ -887,8 +899,13 @@ retained model-request/spend rows do not retain those payloads. Historical journ
 displayed separately and is not backfilled with invented inputs.
 
 - The power button at the top of the panel, beside the project switcher, turns the panel off
-  after a confirmation: `POST /api/panel/stop` writes `<storage>/panel.stopped`, answers, and the
-  panel process exits; the page then shows "Panel turned off". Agents and workers keep running.
+  after a confirmation: `POST /api/panel/stop` writes `<storage>/panel.stopped`, awaits the
+  panel Router's asynchronous shutdown, then answers and schedules process exit. Tracked
+  repository preparation and reports release their ownership before exit; concurrent stop
+  requests share that drain. If shutdown fails, the request reports the failure and retains
+  the marker and evidence without forcing exit. The page then shows "Panel turned off" on
+  success. Agents and workers in other processes keep running. The low-level synchronous
+  `turnPanelOff` API remains available for callers that have already drained their Router.
   It comes back on its own as soon as agents use MeritRouter again: any MCP tool call (checked at
   most every 30 seconds per server, in the background), a new MCP session, `meritrouter run`, or
   `meritrouter submit` clears the marker and starts it (unless `panel.auto_start` is off). Only the

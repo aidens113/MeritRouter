@@ -352,8 +352,7 @@ async function main(): Promise<number> {
         const id = args[0];
         if (!id) throw new MeritRouterError("usage", "usage: meritrouter resume <session-id|task-id>");
         // A session id continues that session; anything else is a task id. Output is JSON, as before.
-        if (sy.sessions.get(id) || (id.startsWith("s_") && !sy.tasks.get(id))) out({ sessionId: id, ...sy.resumeSession(id, idScope()) }, true);
-        else out({ taskId: id, state: sy.resumeTask(id, idScope()) }, true);
+        out(sy.resumeTarget(id, idScope()), true);
         return 0;
       }
       case "accept":

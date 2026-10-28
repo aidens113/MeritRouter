@@ -16,7 +16,7 @@ export interface ProjectSchedulerOptions {
   onTick?():void;
   onUnavailable?(projectId:string,code:"runtime_unavailable"|"queue_unavailable"):void;
 }
-interface Entry {bundle:ProjectRuntimeBundle;port:SqliteProjectTaskQueue;scheduler:Scheduler;turn:readonly ProjectFairCandidate[]|null;claims:number;retryAt:number;backoff:number}
+interface Entry {bundle:ProjectRuntimeBundle;port:SqliteProjectTaskQueue;scheduler:Scheduler;initialized:boolean;turn:readonly ProjectFairCandidate[]|null;claims:number;retryAt:number;backoff:number}
 
 /** Global fair fan-out over actual project-local queues and Executors; no global task facade. */
 export class ProjectScheduler {
@@ -34,6 +34,7 @@ export class ProjectScheduler {
   }
   start(intervalMs=1000):void{
     if(this.timer||this.stopping)return;this.stopped=false;
+    for(const entry of this.entries.values())entry.initialized=false;
     this.timer=setInterval(()=>this.kick(),z.number().int().min(10).max(60000).parse(intervalMs));this.timer.unref?.();this.kick();
   }
   kick():void{if(this.timer)void this.tick().catch(()=>undefined);}
@@ -55,7 +56,7 @@ export class ProjectScheduler {
     const scheduler=new Scheduler(bundle.cfg,bundle.tasks,bundle.executor,this.owner,()=>bundle.assertCurrent(),bundle.sessions,null,slug=>slug===bundle.identity.slug?bundle.cfg:undefined,queue,{
       managed:true,heartbeat:active=>{if(active)this.heartbeat();},wake:()=>this.kick(),beforeDispatch:members=>this.beforeDispatch(port,members),
     });
-    entry={bundle,port,scheduler,turn:null,claims:0,retryAt:0,backoff:1000};this.entries.set(id,entry);return entry;
+    entry={bundle,port,scheduler,initialized:false,turn:null,claims:0,retryAt:0,backoff:1000};this.entries.set(id,entry);return entry;
   }
   private async beforeDispatch(port:SqliteProjectTaskQueue,members:readonly StoredTask[]):Promise<"fresh"|"already_started"|"deferred">{
     try{return port.authorizeStart(members);}catch(error){
@@ -72,7 +73,15 @@ export class ProjectScheduler {
     const ids=z.array(z.object({id:z.uuid()}).strict()).max(1000).parse(this.registry.coordinationDb.prepare("SELECT project_uuid id FROM project_store_registrations WHERE state='registered' ORDER BY project_uuid").all());
     const available:Entry[]=[];
     for(const {id} of ids){
-      try{const entry=this.entry(id);if(entry.retryAt>this.now())continue;entry.port.reconcile();available.push(entry);}
+      if(this.stopped)break;
+      try{
+        const entry=this.entry(id);if(entry.retryAt>this.now())continue;
+        // Recovery cannot depend on a queued-work hint: a stopped owner's expired running
+        // task may be the project's only work. No fair turn exists here, so this first tick
+        // waits for lease-port startup recovery without authorizing a claim or transport.
+        if(!entry.initialized){entry.scheduler.start();await entry.scheduler.tick();if(this.stopped)break;entry.initialized=true;}
+        entry.port.reconcile();available.push(entry);
+      }
       catch{this.options.onUnavailable?.(id,"runtime_unavailable");}
     }
     const skipped=new Set<string>(),turns=z.number().int().positive().max(10000).parse(this.options.maxTurnsPerTick??Math.max(1,this.cfg.execution.max_concurrent_tasks+this.cfg.supervisor.max_concurrent_jobs+available.length));
@@ -83,8 +92,8 @@ export class ProjectScheduler {
       const entry=available.find(value=>value.bundle.identity.projectId===chosen.project.projectId)!;
       if(this.entries.get(chosen.project.projectId)!==entry){skipped.add(chosen.project.projectId);continue;}
       const before=entry.claims;entry.turn=candidates;
-      try{entry.scheduler.start();await entry.scheduler.tick();entry.backoff=1000;if(entry.claims===before)skipped.add(chosen.project.projectId);}
-      catch{entry.retryAt=this.now()+entry.backoff;entry.backoff=Math.min(60000,entry.backoff*2);skipped.add(chosen.project.projectId);this.options.onUnavailable?.(chosen.project.projectId,"queue_unavailable");}
+      try{await entry.scheduler.tick();entry.backoff=1000;if(entry.claims===before)skipped.add(chosen.project.projectId);}
+      catch{entry.initialized=false;entry.retryAt=this.now()+entry.backoff;entry.backoff=Math.min(60000,entry.backoff*2);skipped.add(chosen.project.projectId);this.options.onUnavailable?.(chosen.project.projectId,"queue_unavailable");}
       finally{entry.turn=null;}
     }
   }

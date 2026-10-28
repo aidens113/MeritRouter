@@ -950,6 +950,19 @@ export class MeritRouter {
     if (r.changes === 0) throw new TaskValidationError(`question ${id} does not exist or was already answered`);
   }
 
+  /** Resolve a CLI-style resume target only through its owning project stores. */
+  resumeTarget(id: string, project?: string): { taskId: string; state: TaskState; sessionId?: string } {
+    const stores = project ? [this.stores.of(project)] : this.stores.all();
+    const sessions = stores.filter(store => store.sessions.get(id));
+    const tasks = stores.filter(store => store.tasks.get(id));
+    if (sessions.length > 1) throw new TaskValidationError(`session ${id} exists in several projects; name the project`);
+    if (sessions.length && new Set([...sessions, ...tasks]).size > 1) throw new TaskValidationError(`resume target ${id} exists in several projects; name the project`);
+    if (sessions.length) return { sessionId: id, ...this.resumeSession(id, project ?? sessions[0]!.bundle?.project) };
+    if (tasks.length > 1) throw new TaskValidationError(`task ${id} exists in several projects; name the project`);
+    if (tasks.length) return { taskId: id, state: this.resumeTask(id, project ?? tasks[0]!.bundle?.project) };
+    throw new TaskValidationError(`unknown ${id.startsWith("s_") ? "session" : "task"} ${id}`);
+  }
+
   /**
    * Re-queue an interrupted task, or explicitly repair a completed FINAL-rejected delivery.
    * Delivery repair opens a fresh linked supervisor session in its retained workspace.
@@ -1020,6 +1033,9 @@ export class MeritRouter {
     }
     if (s.status !== "interrupted") throw new TaskValidationError(`session ${sessionId} is ${s.status}; only interrupted sessions can be resumed`);
     const taskId = s.taskId!;
+    const task = st.tasks.get(taskId);
+    if (task && ["running", "cancel_requested"].includes(task.row.state) && !st.tasks.leaseLive(taskId))
+      throw new TaskValidationError(`task ${taskId} has an expired lease awaiting recovery; start a worker to reconcile it before resuming this session`);
     const state = st.tasks.resume(taskId, { sessionId });
     this.kick(st);
     return { taskId, state };

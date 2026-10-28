@@ -1,15 +1,15 @@
-import { turnPanelOff } from "meritrouter";
+import { turnPanelOffAfterDrain } from "meritrouter";
 import { handle, HttpError } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
 /**
  * The power button: record that the user turned the panel off (background checks then leave it
- * off), answer, and end this process. Agents keep running; a new agent session or
+ * off), drain the Router, answer, and end this process. Agents keep running; a new agent session or
  * `meritrouter panel` starts the panel again. Same-origin only: a cross-site form cannot turn it off.
  */
 export async function POST(req: Request) {
-  return handle((sy) => {
+  return handle(async (sy) => {
     const origin = req.headers.get("origin");
     if (origin) {
       let host: string | null = null;
@@ -20,7 +20,7 @@ export async function POST(req: Request) {
       }
       if (host !== req.headers.get("host")) throw new HttpError(403, "the panel can be turned off only from its own pages");
     }
-    const { stoppedAt } = turnPanelOff(sy.cfg);
+    const { stoppedAt } = await turnPanelOffAfterDrain(sy);
     return { stopped: true, stoppedAt };
   });
 }

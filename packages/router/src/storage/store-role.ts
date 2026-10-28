@@ -2,6 +2,7 @@ import { immediate, type Db } from "./db.js";
 import { z } from "zod";
 import { QUALIFICATION_PROJECT } from "../qualification/registry.js";
 import { assertCriticalStoreDurability, readStoreIdentity, StoreIdentitySchema, type StoreIdentity } from "../projects/store-identity.js";
+import { ownMergeBranchMetadata } from "./merge-branch-lock.js";
 
 const sharedTables = ["endpoints", "endpoint_overrides", "routing_overrides", "scans", "paid_keys", "paid_spend",
   "provider_slots", "provider_key_state", "provider_usage", "web_backend_state", "request_deletion_tombstones",
@@ -53,7 +54,8 @@ function assertProjectContents(db: Db, identity: Extract<StoreIdentity, { role: 
   if (db.prepare("SELECT 1 FROM lab_capacity_owners o LEFT JOIN labs l ON l.id=o.lab_id WHERE l.id IS NULL OR l.project_id!=o.project_id OR l.project_id!=? LIMIT 1").get(identity.slug)) throw new Error("Lab capacity owner contains a foreign Lab identity");
   if (db.prepare("SELECT 1 FROM lab_command_owners o LEFT JOIN labs l ON l.id=o.lab_id WHERE l.id IS NULL OR l.project_id!=o.project_id OR l.project_id!=? LIMIT 1").get(identity.slug)) throw new Error("Lab command owner contains a foreign Lab identity");
   if (db.prepare("SELECT 1 FROM project_execution_claims WHERE project_uuid!=? OR store_uuid!=? OR store_generation!=? LIMIT 1").get(identity.projectId,identity.storeId,identity.generation)) throw new Error("Project execution claims contain a foreign store generation");
-  if (db.prepare("SELECT 1 FROM meta WHERE key!=? LIMIT 1").get(`brain:index-generation:project:${identity.slug}`)) throw new Error("Project store contains unclassified or shared metadata");
+  const metadata = z.array(z.object({ key: z.string(), value: z.string() })).parse(db.prepare("SELECT key,value FROM meta WHERE key!=?").all(`brain:index-generation:project:${identity.slug}`));
+  if (metadata.some(row => !ownMergeBranchMetadata(db, identity, row.key, row.value))) throw new Error("Project store contains unclassified or shared metadata");
 }
 /** Checked role boundary only; does not migrate data or make existing services project-scoped. */
 export function assertStoreRole(db: Db, expected: StoreIdentity): StoreIdentity {

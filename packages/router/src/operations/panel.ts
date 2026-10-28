@@ -63,9 +63,33 @@ export function markPanelStopped(cfg: Pick<ResolvedConfig, "storageDir">, by = "
  */
 export function turnPanelOff(cfg: Pick<ResolvedConfig, "storageDir">, opts: { delayMs?: number; exit?: () => void } = {}): { stoppedAt: string; marker: string } {
   markPanelStopped(cfg);
+  return schedulePanelExit(cfg, opts);
+}
+
+function schedulePanelExit(cfg: Pick<ResolvedConfig, "storageDir">, opts: { delayMs?: number; exit?: () => void }): { stoppedAt: string; marker: string } {
   const exit = opts.exit ?? (() => process.exit(0));
   setTimeout(exit, opts.delayMs ?? 300).unref?.();
   return { stoppedAt: new Date().toISOString(), marker: panelStopFile(cfg) };
+}
+
+const drainingPanels = new WeakMap<object, Promise<{ stoppedAt: string; marker: string }>>();
+
+/**
+ * The API power button drains its process-local Router before scheduling exit. Repository
+ * preparation, reports and other tracked work must release their ownership first. A failed
+ * drain retains the stop marker and evidence; it never schedules a forced process exit.
+ */
+export function turnPanelOffAfterDrain(router: { cfg: Pick<ResolvedConfig, "storageDir">; close(): Promise<void> }, opts: { delayMs?: number; exit?: () => void } = {}): Promise<{ stoppedAt: string; marker: string }> {
+  const existing = drainingPanels.get(router);
+  if (existing) return existing;
+  const stopping = Promise.resolve().then(async () => {
+    markPanelStopped(router.cfg);
+    await router.close();
+    return schedulePanelExit(router.cfg, opts);
+  });
+  drainingPanels.set(router, stopping);
+  void stopping.catch(() => { if (drainingPanels.get(router) === stopping) drainingPanels.delete(router); });
+  return stopping;
 }
 
 export interface PanelStatus {
