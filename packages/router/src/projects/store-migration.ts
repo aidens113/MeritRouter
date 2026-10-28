@@ -16,7 +16,7 @@ import {
   projectExportClosureViolations, projectExportManifest, projectExportManifestSha256, PROJECT_EXPORT_TABLES, unclassifiedExportTables,
   type ProjectExportManifest, type ProjectFileEntry, type ProjectFileProblem,
 } from "./store-export.js";
-import { prepareProjectStore, type ProjectStoreProvisionOptions } from "./store-provision.js";
+import { prepareProjectStore, SELF_IGNORE, type ProjectStoreProvisionOptions } from "./store-provision.js";
 import {
   assertCriticalStoreDurability, createProjectStoreIdentity, ProjectStoreIdentitySchema, ProjectStoreMigrationSchema,
   ProjectStoreRegistrationSchema, readProjectStoreMigration, readProjectStoreRegistration, readStoreIdentity,
@@ -398,6 +398,12 @@ function projectStoreManifest(db: Db, slug: string, paths: ProjectRuntimePaths):
 const PARTIAL_ROOT_ENTRIES = new Set(["state", "project.json", "project.json.provision.tmp"]);
 const PARTIAL_STATE_ENTRIES = new Set(["meritrouter.db-wal", "meritrouter.db-shm", "meritrouter.db-journal"]);
 function refuseTarget(message: string): never { throw new Error(`Migration rollback refused: ${message}`); }
+/** Provisioning writes exactly this self-ignore file when the project directory is not a repository root. */
+function provisionedSelfIgnore(root: string): boolean {
+  const file = path.join(root, ".gitignore");
+  const stat = lstatSync(file);
+  return stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1 && readFileSync(file, "utf8") === SELF_IGNORE;
+}
 
 /** "owned" when the target root holds this migration's store (or its pre-binding remains). */
 function inspectTarget(paths: ProjectRuntimePaths, identity: ProjectStoreIdentity, strict: boolean): "absent" | "owned" {
@@ -426,7 +432,7 @@ function inspectTarget(paths: ProjectRuntimePaths, identity: ProjectStoreIdentit
     } finally { db.close(); }
   }
   if (strict) refuseTarget(`${paths.root} has no store database to prove ownership; inspect it manually`);
-  const unexpected = readdirSync(paths.root).filter(name => !PARTIAL_ROOT_ENTRIES.has(name));
+  const unexpected = readdirSync(paths.root).filter(name => !PARTIAL_ROOT_ENTRIES.has(name) && !(name === ".gitignore" && provisionedSelfIgnore(paths.root)));
   if (existsSync(paths.state)) unexpected.push(...readdirSync(paths.state).filter(name => !PARTIAL_STATE_ENTRIES.has(name)).map(name => `state/${name}`));
   if (unexpected.length) refuseTarget(`${paths.root} holds unexpected entries (${unexpected.join(", ")}); inspect it manually`);
   if (existsSync(paths.manifest)) {

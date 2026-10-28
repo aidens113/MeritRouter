@@ -177,7 +177,7 @@ async function writeManifestAtomically(paths: ProjectRuntimePaths, projectId: st
   }
 }
 
-const SELF_IGNORE = "*\n";
+export const SELF_IGNORE = "*\n";
 
 /**
  * Keep private metadata out of Git without ever touching a repository the project does not own.
