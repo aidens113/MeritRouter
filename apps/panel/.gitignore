@@ -1,3 +1,4 @@
 .next/
 .demo/
+.demo-split/
 *.tsbuildinfo
