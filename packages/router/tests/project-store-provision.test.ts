@@ -1,5 +1,6 @@
-import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { databasePath, openDatabase, type Db } from "../src/storage/db.js";
@@ -41,6 +42,19 @@ function fixture() {
 function localIdentity(projectDirectory: string) {
   const db = openDatabase(projectRuntimePaths(projectDirectory).state, { readonly: true, fileMustExist: true });
   try { return readStoreIdentity(db); } finally { db.close(); }
+}
+/** Every path under a .git directory with its content hash (exclude, index, refs, locks). */
+function gitSnapshot(gitDirectory: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const walk = (directory: string) => {
+    for (const name of readdirSync(directory).sort()) {
+      const file = path.join(directory, name), rel = path.relative(gitDirectory, file).split(path.sep).join("/");
+      if (lstatSync(file).isDirectory()) { out[`${rel}/`] = "dir"; walk(file); }
+      else out[rel] = createHash("sha256").update(readFileSync(file)).digest("hex");
+    }
+  };
+  walk(gitDirectory);
+  return out;
 }
 const crash = (at: ProjectStoreProvisionStep) => ({ afterStep: (step: ProjectStoreProvisionStep) => { if (step === at) throw new Error(`injected crash after ${step}`); } });
 
@@ -96,10 +110,40 @@ describe("project store provisioning", () => {
     expect(await git(repo, ["status", "--porcelain", "--untracked-files=all"])).toBe("");
   });
 
-  it("excludes metadata in the enclosing repository when the project is a subdirectory", async () => {
-    const f = fixture(), sub = path.join(f.env.repo, "src");
+  it("hides a subdirectory project's metadata with its own .gitignore, never the enclosing repository's exclude", async () => {
+    const f = fixture(), sub = path.join(f.env.repo, "src"), exclude = path.join(f.env.repo, ".git", "info", "exclude");
+    const before = existsSync(exclude) ? readFileSync(exclude) : null;
     await provisionProjectStore(f.coordination, f.input("alpha", sub));
+    expect(existsSync(exclude) ? readFileSync(exclude) : null).toEqual(before);
+    expect(readFileSync(path.join(sub, ".MeritRouter", ".gitignore"), "utf8")).toBe("*\n");
     expect(await git(f.env.repo, ["status", "--porcelain", "--untracked-files=all"])).toBe("");
+  });
+
+  it("leaves an enclosing repository's .git byte-identical when the project directory is a plain folder inside it", async () => {
+    const f = fixture(), enclosing = f.dir("enclosing"), project = path.join(enclosing, "work", "alpha");
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: enclosing });
+    writeFileSync(path.join(enclosing, "README.md"), "enclosing\n");
+    execFileSync("git", ["add", "README.md"], { cwd: enclosing });
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", "init"], { cwd: enclosing });
+    mkdirSync(path.join(enclosing, ".git", "info"), { recursive: true });
+    writeFileSync(path.join(enclosing, ".git", "info", "exclude"), "# owner rules\n");
+    mkdirSync(project, { recursive: true });
+    const before = gitSnapshot(path.join(enclosing, ".git"));
+    const result = await provisionProjectStore(f.coordination, f.input("alpha", project));
+    expect(localIdentity(project)).toEqual(result.identity);
+    expect(gitSnapshot(path.join(enclosing, ".git"))).toEqual(before);
+    expect(execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: enclosing, encoding: "utf8" })).toBe("");
+    // Idempotent: a second provisioning accepts its own .gitignore and still writes nothing to Git.
+    await provisionProjectStore(f.coordination, f.input("alpha", project));
+    expect(gitSnapshot(path.join(enclosing, ".git"))).toEqual(before);
+  });
+
+  it("refuses a metadata .gitignore that would re-include private files", async () => {
+    const f = fixture(), alpha = f.dir("alpha");
+    mkdirSync(path.join(alpha, ".MeritRouter"));
+    writeFileSync(path.join(alpha, ".MeritRouter", ".gitignore"), "*\n!state/\n");
+    await expect(provisionProjectStore(f.coordination, f.input("alpha", alpha))).rejects.toThrow(/last rule must be "\*"/);
+    expect(existsSync(path.join(alpha, ".MeritRouter", "state"))).toBe(false);
   });
 
   it("refuses an unbound or non-FULL coordination database before touching the project directory", async () => {

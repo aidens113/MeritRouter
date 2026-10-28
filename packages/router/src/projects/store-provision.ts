@@ -6,8 +6,9 @@ import { z } from "zod";
 import { PROJECT_SLUG_RE } from "../config/schema.js";
 import { databasePath, immediate, openDatabase, type Db } from "../storage/db.js";
 import { initializeStoreRole } from "../storage/store-role.js";
-import { git, isGitRepo } from "../workspaces/git.js";
+import { isGitRepo } from "../workspaces/git.js";
 import { ensureProjectMetadataExcluded } from "../workspaces/metadata-exclusion.js";
+import { isExactRepositoryRoot } from "../workspaces/repository-root.js";
 import { isProjectMetadataPath } from "./metadata-policy.js";
 import { ProjectRuntimeManifestSchema, projectRuntimePaths, validateRuntimeLocation, type ProjectRuntimePaths } from "./runtime-paths.js";
 import {
@@ -176,13 +177,45 @@ async function writeManifestAtomically(paths: ProjectRuntimePaths, projectId: st
   }
 }
 
-async function excludeFromGit(projectDirectory: string): Promise<void> {
-  if (!(await isGitRepo(projectDirectory))) {
-    if (existsSync(path.join(projectDirectory, ".git"))) refuse(`${projectDirectory} has a .git entry but Git cannot read it, so private metadata cannot be excluded`);
+const SELF_IGNORE = "*\n";
+
+/**
+ * Keep private metadata out of Git without ever touching a repository the project does not own.
+ * A project directory that is exactly a repository root gets the Git-local exclude rule in its
+ * own `.git`. Any other directory (one inside an enclosing repository, such as a home folder that
+ * is a repository, or one in no repository) gets a self-ignoring `.MeritRouter/.gitignore`
+ * instead: it lives inside the authorized project directory and hides the metadata from every
+ * enclosing repository, whose `.git` is never written or locked.
+ */
+async function excludeFromGit(paths: ProjectRuntimePaths): Promise<void> {
+  const projectDirectory = paths.projectDirectory;
+  if (existsSync(path.join(projectDirectory, ".git"))) {
+    if (!(await isGitRepo(projectDirectory)) || !(await isExactRepositoryRoot(projectDirectory))) {
+      refuse(`${projectDirectory} has a .git entry but Git cannot read it as this directory's own repository, so private metadata cannot be excluded`);
+    }
+    await ensureProjectMetadataExcluded(projectDirectory);
     return;
   }
-  const top = path.resolve((await git(projectDirectory, ["rev-parse", "--show-toplevel"])).trim());
-  await ensureProjectMetadataExcluded(top);
+  if (await isExactRepositoryRoot(projectDirectory)) { await ensureProjectMetadataExcluded(projectDirectory); return; }
+  await selfIgnoreMetadata(paths);
+}
+
+async function selfIgnoreMetadata(paths: ProjectRuntimePaths): Promise<void> {
+  await mkdir(paths.root).catch(error => { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; });
+  await validateRuntimeLocation(paths.projectDirectory, paths.root);
+  const file = path.join(paths.root, ".gitignore");
+  try {
+    const handle = await open(file, "wx", 0o644);
+    try { await handle.writeFile(SELF_IGNORE); await handle.sync(); } finally { await handle.close(); }
+    return;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+  const stat = await lstat(file);
+  if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink !== 1 || stat.size > 65536) refuse(`${file} must be an unlinked regular file`);
+  const rules = (await readFile(file, "utf8")).split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith("#"));
+  // A later negation could re-include metadata; only an effective trailing `*` is accepted.
+  if (rules.at(-1) !== "*") refuse(`${file} does not ignore the private metadata directory; its last rule must be "*"`);
 }
 
 /**
@@ -225,7 +258,7 @@ async function prepare(coordinationDb: Db, parsed: Input, requested: ProjectStor
   await step("validated");
 
   // Before creating anything, so private files are never visible to Git even transiently.
-  await excludeFromGit(paths.projectDirectory);
+  await excludeFromGit(paths);
   await step("excluded");
 
   await mkdir(paths.state, { recursive: true });

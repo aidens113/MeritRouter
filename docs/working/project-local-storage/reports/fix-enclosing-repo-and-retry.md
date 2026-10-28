@@ -183,3 +183,130 @@ Sites I reviewed and left alone because they are read-only comparisons or alread
    root of, file tools now write without a fence instead of refusing. The brief allowed this. The
    cost is that a direct tool call in a subfolder of a real worktree does not serialize with
    MeritRouter Git operations on that worktree. Runner-injected effects still fence normal runs.
+
+---
+
+## Follow-up after lead decisions (on top of 313a382)
+
+Lead decisions:
+
+1. Apply the store-provision patch.
+2. `runTaskLabChecks` shares one predicate with verification.
+3. Brain mounts stay as they are.
+
+### Outcome
+
+Done for decisions 1 and 2. Decision 3 needs no change.
+
+### What changed and why
+
+#### `src/projects/store-provision.ts` (`excludeFromGit(paths)`)
+
+The function now decides as follows:
+
+- **The project directory has its own `.git` entry.** It must be readable as this directory's own
+  repository, checked with `isExactRepositoryRoot`. If it is not, provisioning is refused. If it is,
+  the directory gets `ensureProjectMetadataExcluded(projectDirectory)`.
+- **There is no `.git` entry, but the directory is still an exact root.** The exclude is applied
+  in the same way.
+- **Any other directory** gets a self-ignoring `<project>/.MeritRouter/.gitignore` containing
+  `*`. This covers a folder inside an enclosing repository and a folder in no repository at all.
+  An enclosing repository is never written or locked.
+  - The `.MeritRouter` directory is created without recursion and validated by
+    `validateRuntimeLocation`, so symbolic links are refused.
+  - The file is created with `wx`.
+  - An existing `.gitignore` is accepted only if it is an unlinked regular file whose last
+    effective rule is `*`. Anything else is refused, because a later `!rule` could re-include
+    metadata.
+  - The `git` import is no longer used and was removed.
+
+#### `src/verification/task-lab-policy.ts` (the predicate is now shared)
+
+- `taskLabPolicyRefusal(cfg, spec, supervisorAuthority)` checks the trusted
+  `security.outside_repository` policy first: `disabled`, then anything not `supervisor`. It then
+  asks the supplied live-authority callback.
+- An unreadable trusted configuration throws, so the gate fails closed.
+
+**Why I changed the predicate's shape.** The first version hard-coded "profile mode is not
+supervisor" instead of asking `currentSupervisorAuthority`. Once the gate used it, that broke
+`project-split-labs`. That test grants a worker run supervisor authority by mocking
+`currentSupervisorAuthority` and expects real Lab evidence. The authority question now always goes
+through `currentSupervisorAuthority`, which remains the single source of truth.
+
+`taskLabRetryRefusal(d, task)` is the verification wrapper:
+
+- It evaluates the same predicate against the task's own claim, using
+  `currentSupervisorAuthority(db, cfg, capturedLease(task), now)`.
+- A missing claim or an unreadable configuration returns null, so ordinary retry rules apply.
+- A policy refusal needs no claim.
+
+#### `src/verification/phase.ts`
+
+`verifyRecorded` and `planRetry` call `taskLabRetryRefusal`. Their dependency `Pick` types gain
+`db` and `now`; the only callers are inside `phase.ts`, which passes the full `PhaseDeps`.
+
+#### `src/runners/coding/task-lab.ts` (`runTaskLabChecks`)
+
+The gate is now:
+
+```
+refusal = taskLabPolicyRefusal(ctx.cfg, ctx.spec,
+  () => !!lease && currentSupervisorAuthority(...))
+```
+
+Behaviour is kept:
+
+- `disabled` throws immediately. The message is now the shared refusal reason.
+- Every other refusal still files the `lab_check` worker action, waits for it, and then throws.
+
+One explicit guard was added: a call with no declared Lab checks throws rather than passing the
+predicate.
+
+#### Tests
+
+- **`tests/project-store-provision.test.ts`**
+  - The test at line 99 is rewritten to the new contract. A subdirectory project leaves the
+    enclosing repository's `info/exclude` byte-identical, writes `.MeritRouter/.gitignore` = `*\n`,
+    and `git status` stays clean.
+  - New: a plain folder inside an enclosing repository built in OS temp. A hash of every file
+    under its `.git` is byte-identical after provisioning and after a second, idempotent
+    provisioning, and status stays clean.
+  - New: an existing `.MeritRouter/.gitignore` with `*` followed by `!state/` is refused before
+    `state/` is created.
+- **`tests/task-lab-caller.test.ts`.** New: with `disabled` policy, `runTaskLabChecks` throws
+  exactly the reason `taskLabPolicyRefusal` gives.
+- **`tests/verification-lab-policy.test.ts`** was updated to the new signature:
+  - authority is consulted only after the policy checks;
+  - the gate fails closed on an unreadable configuration;
+  - the retry wrapper returns null without a claim or configuration, except for policy refusals.
+
+### Commands run and observed results (follow-up)
+
+| Command | Result |
+| --- | --- |
+| `npx tsc --noEmit` (final) | exit 0 |
+| First acceptance pass, using the hard-coded mode predicate | `project-split-labs` "runs a worker run's task Lab check..." failed: the action stayed pending, because the mocked authority grant was bypassed. This caused the redesign above |
+| `npx vitest run tests/verification-lab-policy.test.ts tests/task-lab-caller.test.ts tests/project-split-labs.test.ts --maxWorkers=1 --minWorkers=1` (after the redesign) | 12/12 passed. `task-lab-caller` still asserts 2 model requests and `retry_refused` |
+| `npx vitest run tests/project-store-migration.test.ts --maxWorkers=1 --minWorkers=1` | 19/19 passed |
+| Final serial acceptance: `npx vitest run tests/enclosing-repository.test.ts tests/project-store-provision.test.ts tests/task-lab-caller.test.ts tests/project-split-labs.test.ts tests/project-runtime-activation.test.ts tests/project-entrypoint-isolation.test.ts tests/verification-lab-policy.test.ts --maxWorkers=1 --minWorkers=1` | 7 files, 56/56 passed (230 s) |
+| Mutation check: old enclosing-top exclusion temporarily restored in `excludeFromGit` (removed afterwards; grep confirms no probe is left) | Both new store-provision tests failed: the exclude buffer grew, and the `.git` snapshot differed |
+| `C:\Users\mrjoh\.git\info` mtime (read-only check) | still 21:44:11 after every run |
+
+### Not verified (follow-up)
+
+- The full router suite, `pnpm -r build` and `dist/`.
+- Other callers of provisioning beyond the listed acceptance files, apart from
+  `project-store-migration`, which passed.
+
+### Open questions (follow-up)
+
+1. **Latent migration-rollback issue.** `src/projects/store-migration.ts:398`
+   (`PARTIAL_ROOT_ENTRIES`, not owned) proves ownership of a partial target by its root entries.
+   A migration that crashes after the `excluded` step in a directory that is not a repository now
+   leaves `.MeritRouter/.gitignore` behind, and rollback would refuse it as "unexpected entries".
+   The current migration tests pass. Suggested fix: accept `.gitignore` there when its content is
+   exactly `*\n`.
+2. **Gate files a futile worker action.** For refusals other than `disabled`, `runTaskLabChecks`
+   still files and waits on a `lab_check` worker action before throwing. Tests encode this. With
+   the predicate shared, filing could be skipped for a deterministic refusal, but that changes the
+   tested contract and is your call.

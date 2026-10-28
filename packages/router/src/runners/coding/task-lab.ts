@@ -19,6 +19,7 @@ import type { RunContext } from "../types.js";
 import { projectRuntimeActivationRoots, type Workspace } from "../../workspaces/worktree.js";
 import { projectRuntimePaths } from "../../projects/runtime-paths.js";
 import { currentSupervisorAuthority } from "../../core/supervisor-authority.js";
+import { taskLabPolicyRefusal } from "../../verification/task-lab-policy.js";
 const Sha = z.string().regex(/^[a-f0-9]{40,64}$/);
 const Count = z.number().int().nonnegative();
 export const TaskLabAuthoritySchema = z.object({
@@ -160,8 +161,13 @@ export function taskLabAuthority(labs: LabManager, taskId: string, evidence: unk
 }
 /** Called only after the attributed coding outcome and its ordinary command checks exist. */
 export async function runTaskLabChecks(ctx: RunContext, workspace: Workspace, executionId: string, tree: string, digest: string): Promise<TaskLabEvidence> {
-  if (!ctx.taskLease || !currentSupervisorAuthority(ctx.tasks.db, ctx.cfg, ctx.taskLease, ctx.now()) || outsideRepositoryPolicy(ctx.cfg) !== "supervisor") {
-    if (outsideRepositoryPolicy(ctx.cfg) === "disabled") throw new Error("Task Lab effects are disabled by security.outside_repository");
+  // One predicate with verification (verification/task-lab-policy.ts): the refusal here is the
+  // one that settles the task without a retry. Unreadable trusted configuration throws (fails closed).
+  if (!ctx.spec.constraints.labChecks?.length) throw new Error("task Lab execution requires declared Lab checks");
+  const lease = ctx.taskLease;
+  const refusal = taskLabPolicyRefusal(ctx.cfg, ctx.spec, () => !!lease && currentSupervisorAuthority(ctx.tasks.db, ctx.cfg, lease, ctx.now()));
+  if (refusal) {
+    if (outsideRepositoryPolicy(ctx.cfg) === "disabled") throw new Error(refusal);
     const action = await new WorkerActionRequests(ctx.tasks.db, ctx.now).fileOperation(ctx, { operation: "lab_check", args: { taskId: ctx.taskId, checks: ctx.spec.constraints.labChecks ?? [], tree, artifactDigest: digest }, reason: "Task Lab execution requires supervisor authority; a reported response cannot replace durable Task Lab execution proof." });
     await awaitWorkerAction(ctx, action, Math.max(1, (ctx.tasks.get(ctx.taskId)?.row.deadline_at ?? ctx.now() + 60000) - ctx.now()));
     throw new Error("Task Lab execution remains unavailable to workers until supervisor-executed durable attempt proof is supported; no Lab was started and supervisor responses are not check evidence");

@@ -6,7 +6,8 @@ import type { MeritRouter } from '../src/core/service.js';
 import type { RunContext } from '../src/runners/types.js';
 import { prepareWorkspace } from '../src/runners/coding/finish.js';
 import { createCodingRunner } from '../src/runners/coding/index.js';
-import { taskLabAuthority, taskLabEvidenceProblem } from '../src/runners/coding/task-lab.js';
+import { runTaskLabChecks, taskLabAuthority, taskLabEvidenceProblem } from '../src/runners/coding/task-lab.js';
+import { taskLabPolicyRefusal } from '../src/verification/task-lab-policy.js';
 import { WorkerTaskSchema } from '../src/core/task.js';
 import { capturedLease } from '../src/storage/task-leases.js';
 import { WorkerActionRequests, type WorkerActionRequest } from '../src/harness/worker-actions.js';
@@ -159,3 +160,10 @@ it('retains explicit authorized source pins and dependency artifacts with native
   expect(captured!.spec.context.artifactRefs?.some(ref => sy!.artifacts.readScoped(ref, 'alpha').content.toString().includes(upstream))).toBe(true);
   expect(result.checks[0]?.exitCode).toBe(0); expect(result.taskLab).toBeUndefined(); expect(result.acceptanceStatus).toBe('unmet');
 }, (2 * RUN_SECONDS + 30) * 1000);
+it('refuses disabled Lab effects with the same policy reason verification settles on, before any action or Lab', async () => {
+  env = makeEnv({ config: baseConfig({ security: { outside_repository: 'disabled' } }) });
+  const spec = { profile: 'implement', constraints: { acceptanceCriteria: ['x'], labChecks: ['health'] } };
+  const reason = taskLabPolicyRefusal(env.cfg, spec as never, () => true);
+  expect(reason).toMatch(/Lab effects are disabled by security\.outside_repository/);
+  await expect(runTaskLabChecks({ cfg: env.cfg, spec, tasks: { db: null }, now: () => 0 } as never, {} as never, 'execution', 'a'.repeat(40), 'b'.repeat(64))).rejects.toThrow(reason!);
+});
