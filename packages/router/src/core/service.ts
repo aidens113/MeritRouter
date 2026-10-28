@@ -1042,6 +1042,9 @@ export class MeritRouter {
 
   /** Run recovery once (expired leases, auto-resume of side-effect-free work). */
   recover(): string[] {
+    // Split layout: the installation store holds no tasks or sessions; each project's own
+    // scheduler recovers its store when it starts (Scheduler.start -> recoverAsync).
+    if (this.layout === "split") return [];
     return this.scheduler.recover();
   }
 

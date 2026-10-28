@@ -108,6 +108,16 @@ describe("a split installation starts with no project; the first one created bec
     expect(sy.projects.slugs()).toEqual([]);
   });
 
+  it("the worker's startup recovery does not touch the coordination store in split layout", async () => {
+    const env = splitEnvWithNoProjects();
+    const sy = open(env, new FakeProvider(), { worker: true });
+    services.push(sy);
+    const alphaDir = gitRepo(tempDir());
+    expect(await createProject(sy, { slug: "alpha", directory: alphaDir, repositories: { app: { path: alphaDir } } })).toMatchObject({ ok: true });
+    // `meritrouter worker`, `daemon` and `mcp --worker` call recover() before running.
+    expect(() => sy.recover()).not.toThrow();
+  });
+
   it("doctor runs on a fresh installation with no projects and says how to create one", async () => {
     const env = splitEnvWithNoProjects();
     const sy = open(env, new FakeProvider());
