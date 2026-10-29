@@ -49,6 +49,10 @@ stale or self-claimed required evidence blocks handoff. The external FINAL MCP c
   Human-only authority remains enforced. `accepted` indicates effective acceptance: a historical
   accept decision does not override subsequently blocked evidence or a reopened delivery stage.
 
+The merge queue keeps a picked result unpublished while integrated command checks are pending. A thrown check or approval-filing error rolls back without an integrated receipt or releasing dependents. A completed check returning a nonzero exit remains recorded as a failed check on integrated source; it still prevents treating that check as passing evidence.
+
+In split installations, FINAL tools resolve the selected project's own tasks, delivery records, retained supervisor workspace, contracts and Lab manager. A missing project store fails closed; installation-private rows are not a fallback. Host-command approval likewise matches the exact assigned job workspace under the project activation roots, with the original lease and source identity still required.
+
 The panel separates execution status, task acceptance and the product's FINAL decision. A green
 completed task or passed structural check is not a usability verdict. Review the integrated
 product and its failure/loading/empty paths before accepting. Activity includes completed

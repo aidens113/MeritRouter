@@ -1,6 +1,6 @@
 # Production readiness execution sequence
 Status: Active
-Status detail: Split integration/recovery/shutdown fixes checked; fresh Commons retry running within remaining357 requests; product acceptance open.
+Status detail: Additional split controls independently checked and rebuilt; retained Commons retry running, full final suite active; product acceptance open.
 Created: 2026-10-26
 Last updated: 2026-10-28
 Owner: Senior supervisor agent
@@ -9,6 +9,8 @@ Paired document: none
 Related: [storage](project-local-storage.md), [delivery](supervisor-lifecycle-stall.md), [supervised delivery](supervised-delivery-v2.md), [platform backlog](roadmap-completion.md)
 
 ## Current State
+
+Latest checkpoint: dev f8f89bd pushed (split mutex/recovery/Resume/shutdown). Additional split command/FINAL/queue publication repairs root51/51 PASS plus final fixture rerun5/5, recursive typecheck/build PASS. Actual scoped FINAL status now resolves retained retry. Worker20592 (exec98097) reconciled same supervisor/session with requests preserved (latest66 +prior43 =109/400, paid0); rebuilt panel4477 job200. Full final suite active exec66121, OS-temp meritrouter-gate2-final-full.json, aggregate pending. Initial serial full rerun was interrupted, not passing evidence. No application code authored by Codex; actual MVP/FINAL acceptance still open, main held. Earlier cwd refusal/rollback and FINAL store failures retained in gate2 working record.
 
 Latest execution2026-10-28: combined split integration/lock/refusal/startup/Resume fixes independently119/119 PASS, shutdown24/24 PASS, recursive typecheck/build PASS. Actual production stop API tested on isolated seeded split demo:2clean cycles, no repository/Brain lock, database ok, foreign-Origin403, rendered screenshot viewed. Current combined-tree full-suite rerun remains outstanding; older full/serial evidence below is predecessor source only. Detailed record: [gate2-auto-integration.md](gate2-auto-integration.md).
 

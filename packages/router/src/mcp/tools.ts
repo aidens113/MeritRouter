@@ -85,14 +85,16 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
       return json(projectDeliveryReport(sy, parsed));
     } catch (err) { return fail(err); }
   });
-  const deliveryStore = new ProductDeliveries(sy.db);
   const deliveryTask = (id: string, named: unknown) => {
-    const p=scope(named),task=sy.tasks.get(id);
+    const p=scope(named),stores=sy.projectStores(p);
+    if(stores.project!==p)throw new Error(`Delivery store does not belong to project ${p}`);
+    const task=stores.tasks.get(id);
     if(!task||task.row.project_id!==p||task.spec.profile!=="supervise") throw new Error(`unknown delivery ${id} in project ${p}`);
-    return {p,task};
+    return {p,task,stores,deliveryStore:new ProductDeliveries(stores.db)};
   };
-  const guardDeliveryDecision = (id:string,decision:"accept"|"reject") => {
-    const verification=sy.contract(id)?.contract.verification;
+  type DeliveryContext = ReturnType<typeof deliveryTask>;
+  const guardDeliveryDecision = (id:string,decision:"accept"|"reject",context:DeliveryContext) => {
+    const verification=context.stores.contracts.get(id)?.contract.verification;
     if(decision==="accept"&&verification?.acceptance==="supervisor"&&verification.strictAcceptor==="human")
       throw new Error("human_acceptance_required: this delivery requires an authenticated human decision");
   };
@@ -102,21 +104,22 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
     if(!state?.candidate||deliverySpecDigest(state.spec)!==expectedSpecDigest||productCandidateDigest(state.candidate)!==expectedCandidateDigest)
       throw new Error("delivery_candidate_conflict: the specification or product changed since review; inspect the current candidate again");
   };
-  const refreshDeliveryCandidate = async (id:string,p:string,task:NonNullable<ReturnType<typeof sy.tasks.get>>) => {
+  const refreshDeliveryCandidate = async (id:string,{p,task,stores,deliveryStore}:DeliveryContext) => {
     const status=deliveryStore.status(id,p);
     if(!status?.candidate)return;
-    const workspace=sy.sessions.forTask(id).filter(session=>session.role==="supervisor").at(-1)?.workspace;
+    const workspace=stores.sessions?.forTask(id).filter(session=>session.role==="supervisor").at(-1)?.workspace;
     if(!workspace?.repos.length)throw new Error("Cannot establish current integration workspace for FINAL review");
-    const runtime=task.spec.lab?{manager:sy.labs,lab:sy.labs.status(p,task.spec.lab).lab,specDigest:deliverySpecDigest(status.spec)}:undefined;
+    const manager=task.spec.lab?sy.labsFor(p):undefined;
+    const runtime=manager&&task.spec.lab?{manager,lab:manager.status(p,task.spec.lab).lab,specDigest:deliverySpecDigest(status.spec)}:undefined;
     const resolved=await currentDeliveryCandidate({spec:task.spec,signal:AbortSignal.timeout(30000)},workspace.repos,runtime);
     deliveryStore.setCandidate(id,p,resolved.candidate);
   };
   server.registerTool("delivery_status", {title:"Delivery readiness and FINAL decision",description:"Versioned specification, exact candidate, observed criterion coverage, missing evidence and separate FINAL decision.",inputSchema:{taskId:z.string(),...projectInput}},async({taskId,project:named})=>{
-    try{const {p,task}=deliveryTask(taskId,named);await refreshDeliveryCandidate(taskId,p,task);return json(deliveryStore.status(taskId,p));}catch(err){return fail(err);}
+    try{const context=deliveryTask(taskId,named);await refreshDeliveryCandidate(taskId,context);return json(context.deliveryStore.status(taskId,context.p));}catch(err){return fail(err);}
   });
   server.registerTool("record_delivery_observation", {title:"Record FINAL supervisor's independent observation",description:"Record only behavior you independently checked on the exact current candidate, with evidence references. Worker claims are insufficient. Does not accept the product or raise permissions.",inputSchema:{taskId:z.string(),criterionIds:z.array(z.string()).min(1),kind:ProductEvidenceKindSchema,outcome:z.enum(["pass","fail","inconclusive","unavailable"]),artifactRefs:z.array(z.string()).min(1),observations:z.array(z.string()).min(1),...expectedDelivery,...projectInput}},async({taskId,criterionIds,kind,outcome,artifactRefs,observations,expectedSpecDigest,expectedCandidateDigest,project:named})=>{
     try{
-      const {p,task}=deliveryTask(taskId,named);await refreshDeliveryCandidate(taskId,p,task);const state=deliveryStore.status(taskId,p);
+      const context=deliveryTask(taskId,named),{p,task,deliveryStore}=context;await refreshDeliveryCandidate(taskId,context);const state=deliveryStore.status(taskId,p);
       guardObservedCandidate(state,expectedSpecDigest,expectedCandidateDigest);
       if(!state?.candidate)throw new Error("No runtime-resolved candidate exists yet");
       const at=Date.now(),actorId=`mcp:${server.server.getClientVersion()?.name??"client"}`;
@@ -125,7 +128,7 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
     }catch(err){return fail(err);}
   });
   server.registerTool("decide_delivery",{title:"FINAL supervisor delivery decision",description:"Accept or reject the exact checked product candidate. Acceptance requires complete observed criterion evidence. Rejection reopens validation. This decision is distinct from task execution acceptance.",inputSchema:{taskId:z.string(),decision:z.enum(["accept","reject"]),reason:z.string().min(1),...expectedDelivery,...projectInput}},async({taskId,decision,reason,expectedSpecDigest,expectedCandidateDigest,project:named})=>{
-    try{const {p,task}=deliveryTask(taskId,named);guardDeliveryDecision(taskId,decision);await refreshDeliveryCandidate(taskId,p,task);const state=deliveryStore.status(taskId,p);guardObservedCandidate(state,expectedSpecDigest,expectedCandidateDigest);if(!state?.candidate)throw new Error("No current candidate");deliveryStore.finalDecision(taskId,p,{schemaVersion:1,decision,reason,actor:{id:`mcp:${server.server.getClientVersion()?.name??"client"}`,role:"initiator"},specDigest:deliverySpecDigest(state.spec),candidateDigest:productCandidateDigest(state.candidate),at:Date.now()});return json(deliveryStore.status(taskId,p));}catch(err){return fail(err);}
+    try{const context=deliveryTask(taskId,named),{p,deliveryStore}=context;guardDeliveryDecision(taskId,decision,context);await refreshDeliveryCandidate(taskId,context);const state=deliveryStore.status(taskId,p);guardObservedCandidate(state,expectedSpecDigest,expectedCandidateDigest);if(!state?.candidate)throw new Error("No current candidate");deliveryStore.finalDecision(taskId,p,{schemaVersion:1,decision,reason,actor:{id:`mcp:${server.server.getClientVersion()?.name??"client"}`,role:"initiator"},specDigest:deliverySpecDigest(state.spec),candidateDigest:productCandidateDigest(state.candidate),at:Date.now()});return json(deliveryStore.status(taskId,p));}catch(err){return fail(err);}
   });
 
   server.registerTool("get_supervision_policy", { title: "External client supervision policy", description: "Read current Claude/Codex outer-supervisor workflow guidance; separate from internal job supervisors and permissions.", inputSchema: {} }, async () => { try { return json(supervisionPolicy(sy)); } catch (err) { return fail(err); } });

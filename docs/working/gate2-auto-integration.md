@@ -12,11 +12,11 @@ Related: [production readiness](production-readiness.md)
 
 Facebook/Commons MVP remains UNDELIVERED. User requested repeated router-driven builds with no manually authored application source. Root supervises/tests; only MeritRouter workers author the application. Main is held until actual product acceptance.
 
-Active fresh job: t_0mvsr8qoi4c6b92cdff6b (commons-retry-357), supervisor session s_0mvsr8ziid56f0ef3550b. Worker17808 runs in exec28651; panel http://127.0.0.1:4477/p/facebook-mvp/jobs/t_0mvsr8qoi4c6b92cdff6b . At last read: running,12 requests/$0, no children/actions yet. Cap357 plus prior failed pilot43 =400-request trial envelope. maxPaidUsd0 and paid routing disabled. Never reset old usage or silently extend this envelope.
+Retained retry: t_0mvsr8qoi4c6b92cdff6b (commons-retry-357), supervisor s_0mvsr8ziid56f0ef3550b. Root independently verified additional split cwd/FINAL/queue-publication fixes51/51 (9files210.38s), corrected2 test fixture types, reran FINAL5/5 (16.21s), recursive typecheck/build PASS. Worker20592 running in exec98097; rebuilt panel4477 job route200. Actual FINAL delivery_status now resolves specification at plan stage/no candidate. Usage at latest read66 requests/$0, aggregate109/400; cap and config unchanged. Full final four-worker suite active (exec66121, OS-temp meritrouter-gate2-final-full.json), no aggregate result yet. No manually authored application code or accepted product; main held.
 
 Prior pilot t_0mvsovety5bfa4069dc69 retained43 requests/$0, two completed workers, and source. Scaffold6359879/task t_0mvsoxf1g7939912adcbd rejected through CLI for one literal-backslash-n ignore line; operator reason requires real ignore behavior, ignored secrets/SQLite/build/dependencies, tracked lockfile and deterministic tests. Contracts task t_0mvsoxf1g5eb9fc1bb131 was accepted. Both failed integration because split role guard rejected queue mutex metadata. Initial integration unit6227470 was pushed to dev; its full suite2413pass/7fail/5skip (1947.87s), all five failed files then36/36 serial pass (263.52s). These are predecessor-tree results, not a full green run of current source.
 
-Follow-up source is reviewed/frozen: strict bound merge mutex classification, exact refusal-snapshot preservation, managed split startup before fairness hints, scoped CLI Resume, and panel drain-before-exit. Root independently observed119/119 across11 split/recovery/queue/integration/identity/lease files (254.18s), plus24/24 shutdown/service/operations tests (13.69s). Latest recursive typecheck/build PASS. Earlier wider lock revision had6 real admission failures; repaired without weakening original tests. Root review also found2 shutdown/restart scheduler failures; reproduced and repaired. Full-suite rerun on the combined final tree remains outstanding.
+Checkpoint f8f89bd source was independently reviewed and pushed: strict bound merge mutex classification, exact refusal-snapshot preservation, managed split startup before fairness hints, scoped CLI Resume, and panel drain-before-exit. Root independently observed119/119 across11 split/recovery/queue/integration/identity/lease files (254.18s), plus24/24 shutdown/service/operations tests (13.69s). Latest recursive typecheck/build PASS. Earlier wider lock revision had6 real admission failures; repaired without weakening original tests. Root review also found2 shutdown/restart scheduler failures; reproduced and repaired. Full-suite rerun on the combined final tree remains outstanding.
 
 Live restart proved expired attempt recovery/global grant reconciliation into run2 with usage retained, then old pilot failed before new model transport on a retained repository mutation marker. All16 worktrees passed publication/command guards; all tasks/sessions/actions terminal, worker16184/panel stopped. Marker PID18308 absent; SHA2566BA2928C8CB0454776915A1F31FBE0B56AA68BA2FCA0530700616CABBD03DD31, local fixed drive/single inode/nlink1/unchanged bytes verified. Root reversibly renamed ONLY this marker to app .git/meritrouter-mutation.lock.retained-21c51838-5dda-4bce-91e3-417b13dd9a7d. Bytes retained; HEAD/status unchanged; no DB/ref/index edits. Its timestamp correlates with an old stop request but does not prove old PID identity.
 
@@ -24,7 +24,7 @@ Panel stop race separately reproduced with actual handler and real tracked mutat
 
 Live config C:/Users/mrjoh/AppData/Local/MeritRouter/meritrouter.config.yaml hash9BBEC711E4B3501ECE3206776A57CFB582B3CAD5F61E7500847D74C5C64F4BA6 unchanged. Project D:/MeritRouterProjects/facebook-mvp; canonical HEAD a63e3be664d0b7fa94d7480723f119271e272284 at latest startup. Runtime data stays under owning project .MeritRouter; no D:/MeritRouter/.MeritRouter. Unrelated retained-api/ui review files remain untracked/untouched.
 
-Next: monitor fresh job, verify real accepted commits reach job branch, handle exact routine command approvals/budget within cap, inspect candidate. Final acceptance requires clean isolated install/seed/test/build; signup/wrong-password/login/logout/session isolation; posts/newest-first/like/unlike/comments; own bio and ownership refusal; people search/friend send/accept/decline; notifications/unread count; viewed desktop/mobile pages/overflow; persistence after restart; exact validated source materialized canonically with reproducible startup and independent FINAL decision. Never accept from compilation or worker report alone. Scope limits and policy-rejected temp cleanup are under Open Questions.
+Next: independently verify current framework repairs, rebuild/reconcile retained retry without resetting usage, then monitor job, verify real accepted commits reach job branch, handle exact routine command approvals/budget within cap, inspect candidate. Final acceptance requires clean isolated install/seed/test/build; signup/wrong-password/login/logout/session isolation; posts/newest-first/like/unlike/comments; own bio and ownership refusal; people search/friend send/accept/decline; notifications/unread count; viewed desktop/mobile pages/overflow; persistence after restart; exact validated source materialized canonically with reproducible startup and independent FINAL decision. Never accept from compilation or worker report alone. Scope limits and policy-rejected temp cleanup are under Open Questions.
 
 ## Worker Briefs
 
@@ -157,3 +157,58 @@ Next: monitor fresh job, verify real accepted commits reach job branch, handle e
 - Validation: action wa_0mvsrbi213e1a843343e3 completed exit1: unpublished @types/better-sqlite3@^12.0.0. Build action wa_0mvsre78faa636fcfc92c denied through supported panel API. Fresh job42 requests/$0 at latest read (trial85/400).
 - Outcome: Partial; application still not accepted; no application source authored by supervisor.
 - Follow-up: worker repairs dependencies; full follow-up framework suite started serially, evidence OS-temp meritrouter-gate2-followup-full.json, outcome pending.
+
+### Brief: split FINAL control read-only audit
+- Worker: split_recovery; mode owned by supervisor, read-only discovery only.
+- Current State: fresh live job t_0mvsr8qoi4c6b92cdff6b running in facebook-mvp split store; no application acceptance yet. Full router suite running; do not edit source/tests during it.
+- Reproduction: passive real MCP --project facebook-mvp --no-worker delivery_status for that actual job returns unknown delivery, whereas insights.jobDetail resolves it.
+- Read: packages/router/src/mcp/tools.ts delivery tools, src/admin/deliveries.ts, src/admin/project-reads.ts, src/core/service.ts projectStores/public project scope access; related focused tests as needed.
+- Task: identify exact cause, safest supported existing FINAL control path if any, and minimal future source/test fix by file. Check all three delivery tools and guard/refresh authority.
+- Allowed edits: only docs/working/gate2-auto-integration/reports/split-final-controls.md.
+- Forbidden: source edits, app edits, real store writes, provider requests, broad tests, commit/push.
+- Return: concrete diagnosis, verified existing alternatives, proposed file ownership and validation. Claims are not acceptance.
+
+### Brief: live integration command authority audit
+- Worker: integration_review; read-only while root full-suite validation active.
+- Current State: fresh split pilot t_0mvsr8qoi4c6b92cdff6b, supervisor s_0mvsr8ziid56f0ef3550b.
+- Observed live outcomes283/289: accept/integrate contracts t_0mvsrakgpd5608912c7d0 refused `worker action cwd must be an assigned repository or task workspace`; diagnostic claims job branch unchanged but root Git log shows ff18404 contract commit on job branch. Supervisor reads remain initial empty tree.
+- Read: src/workspaces/merge-queue.ts; harness/worker-actions.ts; team integration code; focused tests needed.
+- Task: trace post-merge checks/rollback/source identity and supervisor readers. Diagnose exact assigned-cwd gap, branch/worktree truth, narrow safe fix and regression test. Read-only real repo inspection allowed, no DB writes/provider requests/approvals/source changes yet.
+- Allowed edits: only docs/working/gate2-auto-integration/reports/integration-command-authority.md.
+- Return: concrete diagnosis and proposed bounded source/test brief; report unverified claims honestly. Do not run broad tests concurrently.
+
+### Brief: repair split integration command cwd
+- Worker: integration_review; source edits now authorized, full suite and model worker stopped; root confirmed no surviving test/model processes.
+- Own: src/harness/worker-actions.ts and new tests/split-integration-command-authority.test.ts; your report integration-command-authority.md only.
+- Fix: actual supervisor job workspace comes from projectRuntimeActivationRoots(cfg).worktrees, not cfg.storageDir/worktrees. Preserve exact own task/job identity, realpath comparison, lease, source and project guards; never allow arbitrary project-root descendants or another job's cwd.
+- Reproduce with temp split service real auto-integrated contracts and declared checks under human_only; approval request must file for exact actual integration cwd, approved check and source receipt allow integration, dependent uses integrated head. Assert foreign job/project cwd and unauthorized task remain refused. No real provider/DB/source edits.
+- Run red then green narrow new/existing worker-action/integration checks serially. Report exact results; do not run repository-wide checks or commit.
+- Root owns authored shared docs and independent verification; only own report edits allowed outside assigned source/tests.
+
+### Brief: repair split FINAL MCP controls
+- Worker: split_recovery; source edits now authorized after full suite interruption/quiescence.
+- Own: packages/router/src/mcp/tools.ts and new packages/router/tests/split-final-controls.test.ts, plus own split-final-controls.md report.
+- Implement narrow per-call selected-project delivery context identified in your read-only report: correct tasks/db/sessions/contracts and labsFor(project). No installation fallback. Preserve all existing human/digest/current-source/actor/readiness/handoff/descendant guards.
+- Test actual registered MCP tools with temp split stores: all3 success on scoped exact candidate, duplicate-ID isolation, explicit project override, unavailable/foreign store refusal, stale source/spec/dirty workspace refusal, human-only acceptance, incomplete evidence and active descendants. Include project-local Lab refresh; tests use fake providers only.
+- Run red then green focused tests serially; no broad validation or live writes/provider calls/commits. Root verifies and integrates. No application source edits.
+
+### 2026-10-28 - Additional split boundaries reproduced
+- Agent: supervisor; read-only workers integration_review and split_recovery.
+- Validation: actual scoped MCP delivery_status returned unknown delivery; live integration outcomes283/289 refused wrong cwd root. Git reflog confirms transient cherry-pick was rolled back safely, not permanent false integration. Runtime supervisor rejected scaffold as instructed. Full follow-up serial run interrupted before results because these source repairs became necessary; no full green claim. All owned test/model processes stopped; panel remains available.
+- Follow-up: bounded disjoint framework repairs, independent verification, rebuild then reconcile retained job without resetting its usage.
+
+### Brief: post-integration check exception ordering
+- Worker: split_lock_review; focused framework repair audit, source editable only in assigned files.
+- Read: integration-command-authority.md diagnosis; src/workspaces/merge-queue.ts and tests/merge-queue.test.ts plus relevant integration tests.
+- Own: src/workspaces/merge-queue.ts and new tests/merge-check-publication.test.ts, own report merge-check-publication.md. Do not edit worker-actions.ts/mcp/tools.ts (other workers own them).
+- Reproduce risk: finish publishes integrated state/event before awaited checks. A check-filing exception rolls back Git and records failed, but dependent may observe transient integrated. Trace scheduler actual admission; add deterministic deferred-check test proving dependencies remain blocked through checks, including thrown check and rollback.
+- If confirmed, repair publication ordering so integrated receipt/state only become visible after hooks checks return normally; preserve existing semantics for returned nonzero checks and rollback/conflict/cancellation ownership. Keep final branch/queue/event/dependent truth consistent. If not confirmed, report evidence and no speculative source edit.
+- Tests only temp fixtures/fake providers; focused red-green serial tests. No live writes/provider calls/app edits/broad validation/commit. Shared docs root only, report your own exact checks.
+
+### 2026-10-28 - Additional split controls independently verified
+- Agent: supervisor; workers integration_review, split_recovery, split_lock_review.
+- Changed: exact split activation root for command filing; selected-project FINAL tasks/DB/sessions/contracts/Labs; queue withholds integrated state/event until awaited checks and captured HEAD validation settle.
+- Why: live assigned-cwd and unknown-delivery failures plus deterministic reproduction of dependent release during pending checks.
+- Validation: root focused51/51 across9files210.38s, OS-temp meritrouter-split-controls-root.json. Includes real approved integration/dependent source, split FINAL isolation/guards, actual queue claim/exception rollback, legacy delivery/approval controls. Initial recursive typecheck caught2 missing context fields in new test fixtures; correction pending, no production type errors observed. Root source review confirms narrow guards preserved.
+- Outcome: focused behavior accepted; build/typecheck/full-suite and live retry still pending.
+- Follow-up: correct fixture types, rerun affected checks/build, safely restart panel/worker and resume retained job usage.

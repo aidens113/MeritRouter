@@ -697,28 +697,26 @@ export class MergeQueue {
       return { head: item.afterHead ?? (await headOf(item.integrationWorktree)) };
     });
     if ("refused" in verified) return verified.refused;
-    // The owned chain is verified and accepted; what remains is database-only bookkeeping, so it
-    // runs after the Git fence is released (still inside this branch's lease). A crash in these
-    // callbacks then leaves only a `picked` item, which the next branch owner recovers by
-    // re-running finish, instead of a crash-leftover fence lock that, by the fence's contract,
-    // blocks the repository until explicit operator recovery. Recovery repeats `accept` (which
-    // must be idempotent) and `integrated`, as it always has for a crash after the picks; the
-    // checks below re-verify HEAD under the fence before recording.
+    // Checks run outside the Git fence, while the branch mutex still excludes other queue
+    // integrations. Keep the item picked and withhold integration receipts until these awaited
+    // checks return: a filing/execution exception can still restore the branch. A returned
+    // nonzero check is recorded without undoing integration, as before.
     const head = verified.head;
-    hooks.integrated(item, head);
-    let done = this.update(item.id, { state: "integrated", afterHead: head });
-    this.event(done, "merge_integrated", { commits: done.commits.length, head, rebased: done.rebased, attempts: done.attempts });
+    let checked: MergeItem = { ...item, afterHead: head };
+    const checks = hooks.checks ? await hooks.checks(checked) : [];
     if (hooks.checks) {
-      const checks = await hooks.checks(done);
-      if (checks.length) {
-        done = await this.withMutation(done, hooks, async () => {
-          if (await headOf(done.integrationWorktree) !== done.afterHead) throw new RepositoryMutationError("ownership_changed", "Merge checks completed against a superseded HEAD");
-          const checked = this.update(done.id, { detail: { ...done.detail, checks } });
-          this.event(checked, "merge_checks", { head: done.afterHead, checks, passed: checks.every((c) => c.exitCode === 0) });
-          return checked;
-        });
-      }
+      checked = await this.withMutation(checked, hooks, async () => {
+        if (await headOf(checked.integrationWorktree) !== head) throw new RepositoryMutationError("ownership_changed", "Merge checks completed against a superseded HEAD");
+        return checks.length ? this.update(checked.id, { detail: { ...this.get(checked.id)!.detail, checks } }) : checked;
+      });
     }
+    // These callbacks remain outside the Git fence. A crash leaves a picked item for normal
+    // recovery, rather than a crash-retained mutation fence. No dependent may observe success
+    // before the awaited checks and final captured-head validation have settled.
+    hooks.integrated(checked, head);
+    const done = this.update(checked.id, { state: "integrated", afterHead: head });
+    this.event(done, "merge_integrated", { commits: done.commits.length, head, rebased: done.rebased, attempts: done.attempts });
+    if (checks.length) this.event(done, "merge_checks", { head, checks, passed: checks.every((c) => c.exitCode === 0) });
     return done;
   }
 }

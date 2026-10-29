@@ -13,6 +13,7 @@ import type { RunContext } from "../runners/types.js";
 import { loadConfig, type ResolvedConfig } from "../config/load.js";
 import { currentSupervisorAuthority,projectToolIdentity } from "../core/supervisor-authority.js";
 import { operationExecutionTimeRemaining, pauseOperationExecutionTimeout } from "./operation-lifecycle.js";
+import { projectRuntimeActivationRoots } from "../workspaces/worktree.js";
 
 export function outsideRepositoryPolicy(cfg: ResolvedConfig): "disabled" | "human_only" | "supervisor" {
   // Always re-read the trusted config path; queued actions cannot retain a looser stale policy.
@@ -149,7 +150,7 @@ export class WorkerActionRequests {
     const task = new TaskStore(this.db, this.now).get(ctx.taskId);
     if (!task) throw new Error("action requires a persisted task");
     const workspace = this.db.prepare("SELECT worktree_path FROM workspaces WHERE task_id=?").get(ctx.taskId) as { worktree_path: string } | undefined;
-    const integrationRoots = currentSupervisorAuthority(this.db, ctx.cfg, lease, this.now()) ? task.spec.repositoryAliases.map(alias => path.join(ctx.cfg.storageDir, "worktrees", `job-${ctx.taskId}-${alias}`)) : [];
+    const integrationRoots = currentSupervisorAuthority(this.db, ctx.cfg, lease, this.now()) ? task.spec.repositoryAliases.map(alias => path.join(projectRuntimeActivationRoots(ctx.cfg).worktrees, `job-${ctx.taskId}-${alias}`)) : [];
     const allowed = [...task.spec.repositoryAliases.map(alias => ctx.cfg.repositoryPaths[alias]?.path).filter((p): p is string => !!p), ...(workspace ? [workspace.worktree_path] : []), ...integrationRoots];
     const cwd = realpathSync(input.cwd);
     if (!allowed.some(root => { try { return path.resolve(realpathSync(root)) === path.resolve(cwd); } catch { return false; } })) throw new Error("worker action cwd must be an assigned repository or task workspace");
