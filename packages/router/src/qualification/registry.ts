@@ -9,6 +9,17 @@ import type { ProjectInfo } from "../projects/context.js";
  * A user project's slug starts with a letter or digit, so this one never collides with it.
  */
 export const QUALIFICATION_PROJECT = "_qualification";
+export const SUPERVISOR_EVAL_INPUT_TOKENS = 16000;
+export const SUPERVISOR_EVAL_OUTPUT_TOKENS = 8000;
+export const SUPERVISOR_EVAL_CONTEXT_TOKENS = SUPERVISOR_EVAL_INPUT_TOKENS + SUPERVISOR_EVAL_OUTPUT_TOKENS;
+
+/** Fixed internal inspect lane. This overlay never changes the user's inspect profile. */
+export const SUPERVISOR_EVAL_PROFILE = {
+  mode: "read_only" as const, min_total_parameters_b: 0.001, max_model_requests: 1,
+  max_input_tokens: SUPERVISOR_EVAL_INPUT_TOKENS, max_output_tokens: SUPERVISOR_EVAL_OUTPUT_TOKENS, tools: "none" as const,
+  workspace: "none" as const, requires_structured_output: false, classify: "never" as const,
+  min_tier: "T1" as const, batching: { enabled: false, max_items: 2, per_item_output_tokens: SUPERVISOR_EVAL_OUTPUT_TOKENS },
+};
 
 /** The overlay of the qualification project's context: no configured repositories, its own brain folder. */
 export function qualificationOverlay(cfg: ResolvedConfig): Record<string, unknown> {

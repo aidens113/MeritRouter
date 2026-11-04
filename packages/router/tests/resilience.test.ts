@@ -30,13 +30,13 @@ let sy: MeritRouter | undefined;
 let db: Db | undefined;
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => {
-  for (const c of cleanups.splice(0).reverse()) await c();
-  await sy?.close();
-  sy = undefined;
-  db?.close();
-  db = undefined;
-  env?.cleanup();
-  env = undefined;
+  const ownedService = sy, ownedDatabase = db, ownedEnvironment = env;
+  const ownedCleanups = cleanups.splice(0).reverse();
+  sy = undefined; db = undefined; env = undefined;
+  for (const cleanup of ownedCleanups) await cleanup();
+  await ownedService?.close();
+  ownedDatabase?.close();
+  ownedEnvironment?.cleanup();
 });
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

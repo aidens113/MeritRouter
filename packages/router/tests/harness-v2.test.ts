@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { z } from "zod";
+import { ConfigSchema } from "../src/config/schema.js";
 import { RepoReader, normalizeRelPath } from "../src/context/repo-reader.js";
 import type { HarnessEnv } from "../src/harness/tools.js";
 import { harnessV2Tools } from "../src/harness/operation-dispatch.js";
@@ -12,6 +13,7 @@ import { operationRegistry } from "../src/harness/operation-registry.js";
 import * as tools from "../src/harness/tools.js";
 import { FAULT_ENV, resetFaults } from "../src/core/faults.js";
 import { runProcess, minimalEnv } from "../src/runners/coding/process.js";
+import { workerSourceIdentity } from "../src/harness/worker-actions.js";
 const roots: string[] = [];
 afterEach(() => {
   delete process.env[FAULT_ENV]; resetFaults(); for (const root of roots.splice(0))
@@ -35,7 +37,7 @@ function fixture() {
   }> = [];
   const env = {
     ctx: {
-      taskId: "task", taskProject: "demo", signal: new AbortController().signal, now: Date.now, taskLease: { taskId: "task", owner: "worker", runCount: 1, incarnation: "a".repeat(32), project: "demo" }, tasks: { dispatchable: () => true, get: () => ({ row: { deadline_at: null } }) }, cfg: { configPath: path.join(root, "private.yaml"), brain: { project: "demo" } }, spec: { profile: "implement", context: {} }, session: { toolIntent: (value: Record<string, unknown>) => { events.push({ type: "intent", ...value }); return events.length; }, toolOutcome: (intent: number, value: Record<string, unknown>) => events.push({ type: "outcome", intent, ...value }) }, artifacts: {
+      taskId: "task", taskProject: "demo", signal: new AbortController().signal, now: Date.now, taskLease: { taskId: "task", owner: "worker", runCount: 1, incarnation: "a".repeat(32), project: "demo" }, tasks: { dispatchable: () => true, get: () => ({ row: { deadline_at: null } }) }, cfg: { configPath: path.join(root, "private.yaml"), brain: { project: "demo" }, execution: ConfigSchema.shape.execution.parse({}) }, spec: { profile: "implement", context: {} }, session: { toolIntent: (value: Record<string, unknown>) => { events.push({ type: "intent", ...value }); return events.length; }, toolOutcome: (intent: number, value: Record<string, unknown>) => events.push({ type: "outcome", intent, ...value }) }, artifacts: {
         write: ({ content }: {
           content: string;
         }) => { const ref = `artifact:a${++counter}`; stored.set(ref, Buffer.from(content)); return ref; }, get: (ref: string) => stored.has(ref) ? { id: ref.slice(9), task_id: "task" } : undefined, readScoped: (ref: string) => ({ row: { id: ref.slice(9), task_id: "task" }, content: stored.get(ref)! })
@@ -44,6 +46,11 @@ function fixture() {
   } as unknown as HarnessEnv;
   const invoke = async (name: string, args: Record<string, unknown> = {}) => JSON.parse(await harnessV2Tools(env).find(tool => tool.def.function.name === name)!.run(args, env));
   return { root, env, invoke, events, stored };
+}
+async function currentAction(env: HarnessEnv, command: string, status: "pending" | "denied" | "cancelled" | "uncertain") {
+  return { id: "wa_current_fixture", project: env.ctx.taskLease!.project, taskId: env.ctx.taskId, status,
+    action: { command, cwd: env.checks!.cwd, source: await workerSourceIdentity(env.checks!.cwd), lease: env.ctx.taskLease!, timeoutMs: env.checks!.timeoutMs, reason: "Fixture current check", jobId: null },
+    decisionReason: null, decidedBy: null, output: null, exitCode: null, createdAt: Date.now() };
 }
 describe("Harness v2 executable contract", () => {
   it("advertises nested edit/read/batch fields without requiring union-aware clients", async () => {
@@ -61,7 +68,7 @@ describe("Harness v2 executable contract", () => {
     const edits = portable(definitions.get("apply_edits")).properties.edits.items;
     expect(edits.type).toBe("object");
     expect(edits.required).toEqual(["action", "path"]);
-    expect(edits.properties.action.enum).toEqual(["create", "patch", "replace", "delete"]);
+    expect(edits.properties.action.enum).toEqual(["create", "patch", "replace", "replace_lines", "delete"]);
     expect(edits.properties.old_text.type).toBe("string");
     expect(portable(definitions.get("read_files")).properties.files.items.required).toContain("path");
     const batch = portable(definitions.get("batch")).properties.items.items;
@@ -102,7 +109,7 @@ describe("Harness v2 executable contract", () => {
       async run(args, child) {
         active++; peak = Math.max(peak, active); calls.push(args.command as string);
         await new Promise(resolve => setTimeout(resolve, 5)); active--;
-        if (pending) return JSON.stringify({ status: "pending" });
+        if (pending) return JSON.stringify(await currentAction(child, args.command as string, "pending"));
         child.checkResults!.push({ command: args.command as string, exitCode: args.command === "check one" ? 1 : 0, logRef: "artifact:fixture" });
         return "completed check";
       },
@@ -115,10 +122,53 @@ describe("Harness v2 executable contract", () => {
       const stop = await invoke("run_checks");
       expect(stop.data.notStarted).toEqual(["check:2", "check:3"]);
       pending = true; calls.length = 0;
+      const evidenceBefore = env.checkResults!.length;
       const approval = await invoke("run_checks", { stop_on_failure: false });
       expect(approval.status).toBe("waiting_approval");
       expect(approval.data.notStarted).toEqual(["check:2", "check:3"]);
       expect(calls).toEqual(["check one"]);
+      expect(env.checkResults).toHaveLength(evidenceBefore);
+    } finally { spy.mockRestore(); }
+  });
+  it.each(["denied", "cancelled", "uncertain"] as const)("preserves the authoritative current %s action status through single and grouped recipe wrappers", async status => {
+    const { env, invoke } = fixture();
+    env.checks = { commands: ["check one", "check two"], cwd: env.workspace!.root, env: {}, timeoutMs: 1000, maxRuns: 10 };
+    env.checkResults = [];
+    const calls: string[] = [];
+    const spy = vi.spyOn(tools, "declaredCheckTool").mockReturnValue({
+      def: { type: "function", function: { name: "run_check", description: "fixture", parameters: {} } }, sideEffect: "command",
+      async run(args, child) { calls.push(args.command as string); return JSON.stringify(await currentAction(child, args.command as string, status)); },
+    });
+    try {
+      const expected = status === "uncertain" ? "unknown_effect" : status;
+      const single = await invoke("run_recipe", { id: "check:1" });
+      expect(single.status).toBe(expected); expect(single.data.status).toBe(expected);
+      calls.length = 0;
+      const grouped = await invoke("run_checks", { stop_on_failure: false });
+      expect(grouped.status).toBe(expected); expect(grouped.data.results[0].status).toBe(expected);
+      expect(grouped.data.notStarted).toEqual(["check:2"]); expect(calls).toEqual(["check one"]);
+      expect(env.checkResults).toEqual([]);
+    } finally { spy.mockRestore(); }
+  });
+  it.each(["bare_pending", "bare_denied", "malformed_pending", "foreign_action"] as const)("does not treat %s command output as approval or executed check evidence", async kind => {
+    const { env, invoke } = fixture();
+    env.checks = { commands: ["check one", "check two"], cwd: env.workspace!.root, env: {}, timeoutMs: 1000, maxRuns: 10 };
+    env.checkResults = [];
+    const calls: string[] = [];
+    const spy = vi.spyOn(tools, "declaredCheckTool").mockReturnValue({
+      def: { type: "function", function: { name: "run_check", description: "fixture", parameters: {} } }, sideEffect: "command",
+      async run(args, child) {
+        calls.push(args.command as string);
+        if (kind === "bare_pending" || kind === "bare_denied") return JSON.stringify({ status: kind === "bare_pending" ? "pending" : "denied" });
+        const action = await currentAction(child, args.command as string, "pending");
+        return JSON.stringify(kind === "malformed_pending" ? { ...action, action: { ...action.action, source: "not a source digest" } } : { ...action, taskId: "another-task" });
+      },
+    });
+    try {
+      const result = await invoke("run_checks", { stop_on_failure: false });
+      expect(result.status).toBe("unknown_effect"); expect(result.data.results[0].status).toBe("unknown_effect");
+      expect(result.data.notStarted).toEqual(["check:2"]); expect(calls).toEqual(["check one"]);
+      expect(env.checkResults).toEqual([]);
     } finally { spy.mockRestore(); }
   });
   it("pages listings and literal search without omission", async () => {

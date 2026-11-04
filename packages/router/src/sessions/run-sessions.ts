@@ -9,6 +9,10 @@ import type { SessionRecord, SessionStore } from "./store.js";
 import type { SessionRecorder } from "./recorder.js";
 import type { SessionEndStatus } from "./events.js";
 import type { ResumePlan } from "./resume.js";
+import { assertInfrastructureRecoveryReceipt, infrastructureRecoveryMemory } from "../storage/task-infrastructure-recovery.js";
+import { assertMaintenanceContinuation } from "../storage/task-deadline-continuation.js";
+import { assertBlockedJobContinuation, blockedJobContinuationNote } from "../storage/blocked-job-continuation.js";
+import { assertSupervisorBudgetContinuation, assertSupervisorBudgetContinuationSource, supervisorBudgetContinuationNote, SUPERVISOR_BUDGET_CONTINUED } from "../storage/supervisor-budget-continuation.js";
 
 /**
  * The session lifecycle of a task's runs, as the executor drives it: open a run's session
@@ -26,7 +30,11 @@ const DelegatedBySchema = z.object({ sessionId: z.string().min(1) });
  * worktree (the operator's `resume <task>`). Without either, an interrupted latest session is
  * resumed when its role allows it.
  */
-export const ResumeDirectiveSchema = z.object({ sessionId: z.string().min(1).optional(), freshWorkspace: z.boolean().optional(), failedObservationRecovery: z.literal(true).optional() }).strict();
+export const ResumeDirectiveSchema = z.object({ sessionId: z.string().min(1).optional(), freshWorkspace: z.boolean().optional(), failedObservationRecovery: z.literal(true).optional(), failedInfrastructureRecovery: z.literal(true).optional(), infrastructureRecoveryOperationId: z.string().min(1).max(200).optional(), blockedJobContinuation: z.literal(true).optional(), blockedJobOperationId: z.string().min(1).max(200).optional(), maintenanceContinuation: z.literal(true).optional(), maintenanceOperationId: z.string().min(1).max(200).optional(), supervisorBudgetContinuation: z.literal(true).optional(), supervisorBudgetOperationId: z.string().min(1).max(200).optional() }).strict()
+  .refine(value => value.failedInfrastructureRecovery === undefined ? value.infrastructureRecoveryOperationId === undefined : !!value.sessionId && !!value.infrastructureRecoveryOperationId && value.failedObservationRecovery === undefined && value.blockedJobContinuation === undefined, "Infrastructure recovery requires its exact session and operation")
+  .refine(value => value.blockedJobContinuation === undefined ? value.blockedJobOperationId === undefined : !!value.sessionId && !!value.blockedJobOperationId && value.freshWorkspace === undefined && value.failedObservationRecovery === undefined && value.failedInfrastructureRecovery === undefined, "Blocked job continuation requires its exact exclusive session and operation")
+  .refine(value => value.maintenanceContinuation === undefined ? value.maintenanceOperationId === undefined : !!value.sessionId && !!value.maintenanceOperationId && value.freshWorkspace === undefined && value.failedObservationRecovery === undefined && value.failedInfrastructureRecovery === undefined && value.blockedJobContinuation === undefined && value.infrastructureRecoveryOperationId === undefined && value.blockedJobOperationId === undefined, "Maintenance continuation requires its exact exclusive session and operation")
+  .refine(value => value.supervisorBudgetContinuation === undefined ? value.supervisorBudgetOperationId === undefined : !!value.sessionId && !!value.supervisorBudgetOperationId && value.freshWorkspace === undefined && value.failedObservationRecovery === undefined && value.failedInfrastructureRecovery === undefined && value.blockedJobContinuation === undefined && value.maintenanceContinuation === undefined && value.infrastructureRecoveryOperationId === undefined && value.blockedJobOperationId === undefined && value.maintenanceOperationId === undefined, "Supervisor budget continuation requires its exact exclusive session and operation");
 export type ResumeDirective = z.infer<typeof ResumeDirectiveSchema>;
 
 /** Profile modes whose runs continue an interrupted session (agent loops); the others re-run fresh. */
@@ -115,10 +123,83 @@ function resumeDirective(tasks: TaskStore, taskId: string): ResumeDirective {
     if (e.type === "claimed") break;
     if (e.type === "resumed") {
       const d = ResumeDirectiveSchema.safeParse(e.data ?? {});
+      if (!d.success && e.data && typeof e.data === "object" && (Object.hasOwn(e.data, "failedObservationRecovery") || Object.hasOwn(e.data, "failedInfrastructureRecovery") || Object.hasOwn(e.data, "infrastructureRecoveryOperationId") || Object.hasOwn(e.data, "blockedJobContinuation") || Object.hasOwn(e.data, "blockedJobOperationId") || Object.hasOwn(e.data, "maintenanceContinuation") || Object.hasOwn(e.data, "maintenanceOperationId") || Object.hasOwn(e.data, "supervisorBudgetContinuation") || Object.hasOwn(e.data, "supervisorBudgetOperationId"))) throw new Error("Continuation directive is malformed");
       return d.success ? d.data : {};
     }
   }
   return {};
+}
+
+/** Current explicit recoveries must retain their session instead of taking ordinary fresh fallback. */
+export function assertExplicitResumeDirective(d: RunSessionDeps, task: StoredTask): boolean {
+  const directive = resumeDirective(d.tasks, task.row.id);
+  const row = d.tasks.db.prepare("SELECT data_json FROM events WHERE task_id=? AND type='blocked_job_continued' AND json_extract(data_json,'$.input.expectedRunCount')=? ORDER BY id DESC LIMIT 1")
+    .get(task.row.id, task.row.run_count - 1) as { data_json: string } | undefined;
+  if (row) {
+    const expected = z.object({ input: z.object({ sessionId: z.string(), operationId: z.string() }) }).parse(JSON.parse(row.data_json));
+    if (!directive.blockedJobContinuation || directive.sessionId !== expected.input.sessionId || directive.blockedJobOperationId !== expected.input.operationId)
+      throw new Error("Blocked job continuation receipt has a missing or changed resume directive");
+  }
+  if (directive.blockedJobContinuation) {
+    if (!d.sessions || !directive.sessionId || !directive.blockedJobOperationId) throw new Error("Blocked continuation lost its exact session authority");
+    assertBlockedJobContinuation(d.tasks, d.sessions, d.cfg, task, directive.sessionId, directive.blockedJobOperationId);
+  }
+  return directive.blockedJobContinuation === true || directive.failedInfrastructureRecovery === true || directive.failedObservationRecovery === true;
+}
+
+/** Fail closed before routing/classification can send any request; does not create a session. */
+export function assertMaintenanceResumeDirective(d: RunSessionDeps, task: StoredTask): boolean {
+  const directive = resumeDirective(d.tasks, task.row.id);
+  // A missing/replaced directive must never fall through to ordinary resume after a time grant.
+  const maintenanceGrant = d.tasks.db.prepare("SELECT data_json FROM events WHERE task_id=? AND type='execution_time_continued' AND json_extract(data_json,'$.input.expectedRunCount')=? AND json_extract(data_json,'$.input.maintenance.cause')='operator_framework_maintenance' ORDER BY id DESC LIMIT 1")
+    .get(task.row.id, task.row.run_count - 1) as { data_json: string } | undefined;
+  if (maintenanceGrant) {
+    const expected = z.object({ input: z.object({ sessionId: z.string(), operationId: z.string() }) }).parse(JSON.parse(maintenanceGrant.data_json));
+    if (!directive.maintenanceContinuation || directive.maintenanceOperationId !== expected.input.operationId || directive.sessionId !== expected.input.sessionId) throw new Error("Maintenance continuation directive is missing or changed");
+  }
+  if (!directive.maintenanceContinuation) return false;
+  if (!d.sessions || !directive.sessionId || !directive.maintenanceOperationId) throw new Error("Maintenance continuation lost its exact session authority");
+  assertMaintenanceContinuation(d.tasks, d.sessions, task, directive.sessionId, directive.maintenanceOperationId);
+  return true;
+}
+
+/** A missing or downgraded directive cannot turn the queued budget recovery into a fresh run. */
+function supervisorBudgetDirective(d: RunSessionDeps, task: StoredTask): ResumeDirective | null {
+  const directive = resumeDirective(d.tasks, task.row.id);
+  const row = d.tasks.db.prepare("SELECT data_json FROM events WHERE task_id=? AND type=? AND json_extract(data_json,'$.input.expectedRunCount')=? ORDER BY id DESC LIMIT 1")
+    .get(task.row.id, SUPERVISOR_BUDGET_CONTINUED, task.row.run_count - 1) as { data_json: string } | undefined;
+  if (row) {
+    const expected = z.object({ input: z.object({ sessionId: z.string(), operationId: z.string() }) }).parse(JSON.parse(row.data_json));
+    if (!directive.supervisorBudgetContinuation || directive.sessionId !== expected.input.sessionId || directive.supervisorBudgetOperationId !== expected.input.operationId) throw new Error("Supervisor budget continuation directive is missing or changed");
+  }
+  if (!directive.supervisorBudgetContinuation) return null;
+  if (!d.sessions || !directive.sessionId || !directive.supervisorBudgetOperationId) throw new Error("Supervisor budget continuation lost its exact session authority");
+  return directive;
+}
+
+/** Fail before routing/classification, and revalidate linked memory before runner effects. */
+export async function assertSupervisorBudgetResumeDirective(d: RunSessionDeps, task: StoredTask, linkedSessionId?: string): Promise<boolean> {
+  const directive = supervisorBudgetDirective(d, task);
+  if (!directive) return false;
+  await assertSupervisorBudgetContinuationSource(d.tasks, d.sessions!, d.cfg, task, directive.sessionId!, directive.supervisorBudgetOperationId!, linkedSessionId);
+  // Git proof awaits must not allow a concurrently replaced directive to pass admission.
+  const current = supervisorBudgetDirective(d, task);
+  if (JSON.stringify(current) !== JSON.stringify(directive)) throw new Error("Supervisor budget continuation directive changed during source proof");
+  return true;
+}
+
+/** Own a linked recorder until every initialization write succeeds and the executor receives it. */
+function initializeLinkedResume(d: RunSessionDeps, task: StoredTask, target: SessionRecord, plan: ResumePlan,
+  failureReason: string, initialize: (session: SessionRecorder) => void): RunResume {
+  if (!d.sessions) throw new Error("Linked recovery requires its session store");
+  const session = d.sessions.create({ taskId: target.taskId, jobId: target.jobId, parentSessionId: target.parentSessionId, previousSessionId: target.id, role: target.role, agentLabel: target.agentLabel, profile: target.profile, tier: target.tier });
+  try {
+    initialize(session);
+    return { session, plan };
+  } catch (error) {
+    endRunSession(d.tasks, task, session, "failed", failureReason);
+    throw error;
+  }
 }
 
 /**
@@ -131,6 +212,53 @@ export function resumeFor(d: RunSessionDeps, task: StoredTask): RunResume | null
   const store = d.sessions;
   const mode = d.cfg.profiles[task.spec.profile]?.mode;
   const directive = resumeDirective(d.tasks, task.row.id);
+  assertMaintenanceResumeDirective(d, task);
+  assertExplicitResumeDirective(d, task);
+  const budgetDirective = supervisorBudgetDirective(d, task);
+  if (budgetDirective) {
+    const { receipt, memory } = assertSupervisorBudgetContinuation(d.tasks, store!, d.cfg, task, budgetDirective.sessionId!, budgetDirective.supervisorBudgetOperationId!);
+    const target = memory.session;
+    return initializeLinkedResume(d, task, target, memory.plan, "supervisor_budget_continuation_recording_failed", session => {
+      session.syncMessages(memory.plan.messages);
+      session.setWorkspace(memory.workspace);
+      session.note("supervisor_budget_continuation", supervisorBudgetContinuationNote(receipt));
+      d.tasks.event(task.row.id, "session_resumed", { sessionId: session.id, previousSessionId: target.id, supervisorBudgetOperationId: budgetDirective.supervisorBudgetOperationId, actions: [] });
+    });
+  }
+  if (directive.maintenanceContinuation) {
+    if (!store || !directive.sessionId || !directive.maintenanceOperationId || !mode || !RESUMABLE_MODES.has(mode)) throw new Error("Maintenance continuation lost its exact session authority");
+    const { receipt, memory } = assertMaintenanceContinuation(d.tasks, store, task, directive.sessionId, directive.maintenanceOperationId);
+    const target = memory.session;
+    return initializeLinkedResume(d, task, target, memory.plan, "maintenance_continuation_recording_failed", session => {
+      session.syncMessages(memory.plan.messages);
+      if (target.workspace) session.setWorkspace(target.workspace);
+      session.note("operator_framework_maintenance", { operationId: receipt.input.operationId, previousSessionId: target.id, authorization: receipt.input.maintenance, previousStopReason: "shutdown" });
+      d.tasks.event(task.row.id, "session_resumed", { sessionId: session.id, previousSessionId: target.id, maintenanceOperationId: directive.maintenanceOperationId, actions: [] });
+    });
+  }
+  if (directive.blockedJobContinuation) {
+    if (!store || !directive.sessionId || !directive.blockedJobOperationId) throw new Error("Blocked continuation lost its exact session authority");
+    const { receipt, memory } = assertBlockedJobContinuation(d.tasks, store, d.cfg, task, directive.sessionId, directive.blockedJobOperationId);
+    const target = memory.session;
+    return initializeLinkedResume(d, task, target, memory.plan, "blocked_job_continuation_recording_failed", session => {
+      session.syncMessages(memory.plan.messages);
+      session.setWorkspace(memory.workspace);
+      session.note("blocked_job_continuation", blockedJobContinuationNote(receipt));
+      d.tasks.event(task.row.id, "session_resumed", { sessionId: session.id, previousSessionId: target.id, blockedJobOperationId: directive.blockedJobOperationId, actions: [] });
+    });
+  }
+  if (directive.failedInfrastructureRecovery) {
+    if (!store || !directive.sessionId || !directive.infrastructureRecoveryOperationId) throw new Error("Infrastructure recovery lost its retained session authority");
+    assertInfrastructureRecoveryReceipt(d.tasks, task, directive.sessionId, directive.infrastructureRecoveryOperationId);
+    const recovery = infrastructureRecoveryMemory(d.tasks, store, d.cfg, task, directive.sessionId);
+    const target = recovery.session, plan = recovery.plan;
+    return initializeLinkedResume(d, task, target, plan, "infrastructure_recovery_recording_failed", session => {
+      session.syncMessages(plan.messages);
+      session.setWorkspace(target.workspace!);
+      session.note("infrastructure_failure_recovery", { previousSessionId: target.id, previousStopReason: target.stopReason, operationId: directive.infrastructureRecoveryOperationId });
+      d.tasks.event(task.row.id, "session_resumed", { sessionId: session.id, previousSessionId: target.id, actions: plan.actions.map(action => action.kind), warnings: plan.warnings });
+    });
+  }
   if (directive.failedObservationRecovery && (!store || mode !== "supervisor" || !directive.sessionId)) throw new Error("Supervisor observation recovery lost its session authority");
   if (!store || !mode || !RESUMABLE_MODES.has(mode)) return null;
   if (directive.freshWorkspace && mode === "coding" && !directive.sessionId) return null;
@@ -151,14 +279,17 @@ export function resumeFor(d: RunSessionDeps, task: StoredTask): RunResume | null
     if (failedRecovery) throw new Error("Supervisor observation recovery transcript is missing");
     return null; // nothing logged: start fresh
   }
-  const session = failedRecovery ? store.create({ taskId: target.taskId, jobId: target.jobId, parentSessionId: target.parentSessionId, previousSessionId: target.id, role: target.role, agentLabel: target.agentLabel, profile: target.profile, tier: target.tier }) : store.reopen(target.id);
   if (failedRecovery) {
-    session.syncMessages(plan.messages);
-    session.setWorkspace(target.workspace!);
-    session.resumed("Explicit continuation of a settled supervisor observation failure; no additional budget granted.", [], { notAppliedTools: plan.notAppliedTools });
-    session.note("supervisor_observation_recovery", { previousSessionId: target.id, previousStopReason: target.stopReason });
+    return initializeLinkedResume(d, task, target, plan, "supervisor_observation_recovery_recording_failed", session => {
+      session.syncMessages(plan.messages);
+      session.setWorkspace(target.workspace!);
+      session.resumed("Explicit continuation of a settled supervisor observation failure; no additional budget granted.", [], { notAppliedTools: plan.notAppliedTools });
+      session.note("supervisor_observation_recovery", { previousSessionId: target.id, previousStopReason: target.stopReason });
+      d.tasks.event(task.row.id, "session_resumed", { sessionId: session.id, previousSessionId: target.id, actions: plan.actions.map(a => a.kind), warnings: plan.warnings });
+    });
   }
-  d.tasks.event(task.row.id, "session_resumed", { sessionId: session.id, ...(failedRecovery ? { previousSessionId: target.id } : {}), actions: plan.actions.map((a) => a.kind), warnings: plan.warnings });
+  const session = store.reopen(target.id);
+  d.tasks.event(task.row.id, "session_resumed", { sessionId: session.id, actions: plan.actions.map((a) => a.kind), warnings: plan.warnings });
   return { session, plan };
 }
 

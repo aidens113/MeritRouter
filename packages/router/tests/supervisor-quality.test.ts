@@ -14,14 +14,14 @@ function model(id: string, providerId = "openrouter", paid = false): ModelEndpoi
   return { ...ModelEndpointSchema.parse(endpoint({ id, providerId, totalParametersB: null, ...(paid ? { pricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 2, freeVerified: false } } : {}) })), available: true, deniedProfiles: [], status: "active", statusReason: null } as ModelEndpoint;
 }
 function plan(models: ModelEndpoint[], evidence: unknown[], options: { paid?: boolean; policy?: "never" | "preferred" | "on_free_exhaustion"; forced?: string; strict?: boolean; profile?: "supervise" | "implement" | "review" | "inspect" } = {}) {
-  const cfg = baseConfig({ supervisor: { routing: { quality_evidence: evidence, ...(options.strict ? { minimum_quality: "frontier_or_qualified_supervisor" } : {}) } }, paid: { enabled: options.paid ?? false } });
+  const cfg = baseConfig({ supervisor: { routing: { quality_evidence: evidence, minimum_quality: options.strict ? "frontier_or_qualified_supervisor" : "best_available" } }, paid: { enabled: options.paid ?? false } });
   (cfg.profiles as Record<string, unknown>).supervise = { mode: "supervisor", tools: "supervisor", min_total_parameters_b: 100 };
   env = makeEnv({ config: cfg });
   return planRoute(env.cfg, models, [], { profile: options.profile ?? "supervise", tier: "T3", inputModalities: ["text"], needsStructuredOutput: false, paidPolicy: options.policy ?? "never", ...(options.forced ? { forcedEndpointId: options.forced } : {}) }, { now, qualification: () => null });
 }
 describe("actual supervisor route quality policy", () => {
-  it("defaults to best_available and ranks strongest eligible unverified capacity", () => {
-    expect(SupervisorQualityRoutingSchema.parse({}).minimum_quality).toBe("best_available");
+  it("retains explicitly opted-in legacy best_available capacity ranking", () => {
+    expect(SupervisorQualityRoutingSchema.parse({ minimum_quality: "best_available" }).minimum_quality).toBe("best_available");
     const result = plan([
       { ...model("smaller"), totalParametersB: 120 },
       { ...model("strongest"), totalParametersB: 400 },
@@ -41,7 +41,7 @@ describe("actual supervisor route quality policy", () => {
     expect(result.candidates.map(e => e.id)).toEqual(["proven", "unverified"]);
     expect(result.explanations[1]!.supervisorQuality!.score).toBeNull();
   });
-  it("dispatches default unverified capacity and rechecks changed floors", async () => {
+  it("dispatches explicitly opted-in legacy unverified capacity and rechecks changed floors", async () => {
     const route = plan([{ ...model("stronger"), totalParametersB: 400 }, { ...model("weaker"), totalParametersB: 120 }], []);
     const client = new ScriptedClient(() => reply("observed"));
     sy = open(env!, client, { worker: false });

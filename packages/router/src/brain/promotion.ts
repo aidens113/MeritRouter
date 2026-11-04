@@ -231,6 +231,8 @@ const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9_]+/g, "-").repl
 
 /** What the promotion workflow needs from its Brain (bound to the Brain's private writer). */
 export interface PromotionHost {
+  /** Lifecycle admission must happen before an operation enters the serial queue. */
+  operation?<T>(work: () => Promise<T>): Promise<T>;
   scope(): ProjectScope;
   /** Whether a brain path exists. */
   exists(rel: string): boolean;
@@ -263,9 +265,12 @@ export class GlobalPromotions {
    * recording its review task would otherwise see no review running and start a second one.
    */
   private serial<T>(fn: () => Promise<T>): Promise<T> {
-    const run = this.queue.catch(() => undefined).then(fn);
-    this.queue = run;
-    return run;
+    const enqueue = () => {
+      const run = this.queue.catch(() => undefined).then(fn);
+      this.queue = run;
+      return run;
+    };
+    return this.h.operation ? this.h.operation(enqueue) : enqueue();
   }
 
   private get slug(): string {

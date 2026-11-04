@@ -18,7 +18,7 @@ const screenshots = path.join(demo, "client-supervision-screenshots"); mkdirSync
 const config = path.join(fixture, "meritrouter.config.yaml"); const repo = path.join(fixture, "repo"); mkdirSync(repo);
 execFileSync("git", ["init", "-q", repo]); execFileSync("git", ["-C",repo,"-c","user.name=Fixture","-c","user.email=fixture@example.test","commit","--allow-empty","-qm","fixture"]);
 writeFileSync(config,YAML.stringify({version:1,profiles:{},providers:{},storage:{directory:".meritrouter"},brain:{project:"demo",path:"brain"},repositories:{core:{path:"repo"}},discovery:{interval_minutes:0},panel:{auto_start:false,port:4499},paid:{enabled:false}})+"# preserved policy fixture comment\n");
-const before = YAML.parse(readFileSync(config,"utf8")); const sy = new MeritRouter(loadConfig(config),{worker:false});
+const before = YAML.parse(readFileSync(config,"utf8")); const sy = new MeritRouter(loadConfig(config),{ panelLifecycle: "passive",worker:false});
 const client = new Client({name:"production-policy-browser",version:"1"});
 const require = createRequire(import.meta.url); const port=4499, cdpPort=9371, base=`http://127.0.0.1:${port}`;
 const delay=ms=>new Promise(r=>setTimeout(r,ms));

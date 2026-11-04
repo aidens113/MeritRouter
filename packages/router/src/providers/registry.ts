@@ -312,7 +312,8 @@ export const BUILTIN_PROVIDERS: readonly ProviderDefinition[] = [
     sourceUrl: `${RESEARCH}#hugging-face-inference-providers`,
   }),
   {
-    ...openAiCompatible({ id: "anthropic", displayName: "Anthropic", baseUrl: "https://api.anthropic.com/v1", sourceUrl: `${RESEARCH}#anthropic-paid` }),
+    ...openAiCompatible({ id: "anthropic", displayName: "Anthropic", baseUrl: "https://api.anthropic.com/v1", sourceUrl: "https://platform.claude.com/docs/en/api/models/list" }),
+    checkedAt: "2026-10-28",
     api: "anthropic",
     chatPath: "/messages",
     auth: "x-api-key",
@@ -321,7 +322,7 @@ export const BUILTIN_PROVIDERS: readonly ProviderDefinition[] = [
     toolChoice: { auto: "auto", none: "none", required: "any" },
     promptCache: "cache_control",
     rateLimitHeaders: { family: "anthropic", requestsPeriod: "unknown", tokensPeriod: "unknown" },
-    quirks: ["no free tier", "spend-cap 429 (enforced_spend_limit_reached) has no retry-after and is not retried", "OpenAI compatibility is not production-ready; the native Messages API is used"],
+    quirks: ["no free tier", "forced tool choice is model-dependent; native always-adaptive metadata selects auto and caller tool validation remains required", "spend-cap 429 (enforced_spend_limit_reached) has no retry-after and is not retried", "OpenAI compatibility is not production-ready; the native Messages API is used"],
   },
   openAiCompatible({
     id: "openai",

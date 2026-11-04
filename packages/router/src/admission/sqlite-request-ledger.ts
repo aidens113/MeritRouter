@@ -8,6 +8,7 @@ import { actualUsd, type PaidSpend } from "../paid/spend.js";
 import { projectLimits } from "../projects/schema.js";
 import type { Admission, ReservationRequest, Reservation, TaskUsageTotals } from "./admission.js";
 import { ReserveRequestDTOSchema, ReservationDTOSchema, RequestOutcomeDTOSchema, type RequestLedger, type ReserveRequestDTO, type ReservationDTO, type RequestOutcomeDTO } from "./request-ledger.js";
+import { assertJobPaidBudget } from "./job-paid-budget.js";
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -105,6 +106,7 @@ export class SqliteRequestAccounting {
 
       if (req.paid) {
         const p = req.paid;
+        assertJobPaidBudget(this.db, project, req.participants, p.worstCaseUsd, false, "legacy", req.executionId);
         const global = p.spend.globalDenial(p.worstCaseUsd);
         if (global) throw new AdmissionDenied("paid_budget_exhausted", global);
         const own = limits ? p.spend.projectDenial(project, limits.paid_budgets, p.worstCaseUsd) : null;
@@ -276,7 +278,17 @@ export class SqliteRequestLedger implements RequestLedger {
     });
   }
   async beginDispatch(reservation: ReservationDTO, dispatchId: string) {
-    return this.receipts.beginDispatch(reservation, dispatchId, participants => this.admission.assertDispatch(participants));
+    return this.receipts.beginDispatch(reservation, dispatchId, participants => {
+      this.admission.assertDispatch(participants);
+      if (reservation.paid) assertJobPaidBudget(this.admission.db, participants[0]?.lease.project ?? "", participants, 0, true, "legacy", reservation.executionId);
+    });
+  }
+  assertDispatch(reservation: ReservationDTO, dispatchId: string): void {
+    immediate(this.admission.db, () => {
+      this.receipts.assertDispatch(reservation, dispatchId);
+      if (reservation.paid) assertJobPaidBudget(this.admission.db, reservation.participants[0]?.lease.project ?? "",
+        reservation.participants, 0, true, "legacy", reservation.executionId);
+    });
   }
   async reconcile(reservation: ReservationDTO, outcome: RequestOutcomeDTO): Promise<void> {
     const parsed = RequestOutcomeDTOSchema.parse(outcome);

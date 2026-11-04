@@ -19,9 +19,12 @@ import { criterionTexts } from "../core/task.js";
 import { labHarnessTools } from "../labs/tools.js";
 import { minimalEnv } from "./coding/process.js";
 import { refreshMemoryMessages } from "../context/memory.js";
+import { runSupervisorSandbox } from "../qualification/supervisor-qualification.js";
 
 /** Read-only repository investigation (inspect, analyze, review) on the shared agent harness. */
 export async function runReadOnly(ctx: RunContext): Promise<RunOutcome> {
+  const sandbox = await runSupervisorSandbox(ctx);
+  if (sandbox) return sandbox;
   const { spec, profile } = ctx;
   const role = roleForProfile(spec.profile);
   const readers = readersFor(ctx.cfg, spec);

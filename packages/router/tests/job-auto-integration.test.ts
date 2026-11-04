@@ -101,7 +101,9 @@ describe("automatic integration of accepted coding tasks", () => {
   }, 120_000);
 
   it("accept_task alone puts A then B on the job branch, and B starts from the branch with A", async () => {
-    env = makeEnv({ config: teamConfig() });
+    const config = teamConfig();
+    (config.profiles as Record<string, { max_model_requests: number }>).supervise!.max_model_requests = 80;
+    env = makeEnv({ config });
     const script = [
       // B needs A's accepted result; neither has checks, so both end not_verified and need the supervisor.
       () => [call("plan_work", { nodes: [node("a", "subtract"), node("b", "multiply", { depends_on: ["a"], requires_accepted_inputs: true })], note: "a then b" })],
@@ -119,7 +121,7 @@ describe("automatic integration of accepted coding tasks", () => {
       return reply(null, { ...s, toolCalls: [call("submit_result", goodOutput(1, "core:src/app.ts#L1-L3"))] });
     });
     sy = open(env, client, { worker: true });
-    const job = await sy.startJob({ goal: "Add subtract, then multiply on top of it", repositories: ["core"], label: "auto-int" });
+    const job = await sy.startJob({ goal: "Add subtract, then multiply on top of it", repositories: ["core"], label: "auto-int", maxModelRequests: 80 });
     const done = await sy.awaitResults([job.taskId], { timeoutSeconds: 170 });
     expect(done.timedOut, JSON.stringify(sy.listTasks(undefined, 20).map(({ taskId, state, stateReason, goal }) => ({ taskId, state, stateReason, goal })))).toBe(false);
     const sup = client.requests.filter(isSupervisor).at(-1)!;

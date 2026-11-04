@@ -16,6 +16,12 @@ export const PASS_THROUGH_PARAMS: ReadonlySet<string> = new Set(["seed", "top_p"
 
 function mapMessages(p: ResolvedProvider, messages: ChatMessage[]): unknown[] {
   return messages.map((m) => {
+    // Native signed continuation state is private wire data for its own adapter, never
+    // an OpenAI-compatible message field or content sent to another provider.
+    if (m.role === "assistant" && m.nativeContinuation) {
+      const { nativeContinuation: _native, ...visible } = m;
+      m = visible;
+    }
     if (p.imagesBase64Only && m.role === "user" && Array.isArray(m.content)) {
       const remote = m.content.find((part) => part.type === "image_url" && !part.image_url.url.startsWith("data:"));
       if (remote) throw new ProviderError("bad_request", `${p.id} accepts only base64 (data:) images`, { provider: p.id, possiblyConsumed: false });

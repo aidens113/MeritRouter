@@ -87,8 +87,9 @@ describe("nested supervisor upward grants", () => {
     expect(await pending).toContain("approved by external:final");
     expect(ctx.budget.maxModelRequests).toBe(100+expected);
   });
-  it("protects both delivery supervisor and validation reserves without expanding an explicit lower cap", () => {
+  it("fixed mode protects absolute delivery reserves without expanding an explicit lower cap", () => {
     setup();
+    sy!.cfg.supervisor.delivery_budget.reserve_mode = "fixed";
     sy!.cfg.supervisor.delivery_budget.supervisor_reserve_requests = 80;
     sy!.cfg.supervisor.delivery_budget.validation_reserve_requests = 80;
     const create = (cap: number) => sy!.tasks.submit([WorkerTaskSchema.parse({ profile: "supervise", deliveryVersion: 2, goal: "deliver", constraints: { acceptanceCriteria: ["usable"] }, budget: { maxModelRequests: cap } })])[0]!.taskId;

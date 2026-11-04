@@ -1,4 +1,5 @@
 import type { ChatMessage } from "../gateway/types.js";
+import { assistantMessage } from "../gateway/types.js";
 import { compileOutputSchema } from "../core/validate.js";
 import { evidenceUniverse, extractJson, validateWorkerOutput } from "../core/worker-output.js";
 import { loadSources, renderSources, readersFor, type ContextSource } from "../context/sources.js";
@@ -85,7 +86,7 @@ export async function runCompletion(ctx: RunContext): Promise<RunOutcome> {
       }
       lastErrors = v.errors;
     }
-    messages.push({ role: "assistant", content: text });
+    messages.push(assistantMessage(response.message));
     messages.push({
       role: "user",
       content: `Your answer was rejected:\n- ${lastErrors.join("\n- ")}\nReturn a corrected JSON object only.`,

@@ -16,7 +16,7 @@ export interface RepoOption {
 }
 
 /** Form for starting a standalone job in `project`. The job is queued; a worker runs it. */
-export function NewJobForm({ project, repos, enabled, labs = [] }: { project: string; repos: RepoOption[]; enabled: boolean; labs?: Array<{ name: string; state: string }> }) {
+export function NewJobForm({ project, repos, enabled, defaultPaidCapUsd, labs = [] }: { project: string; repos: RepoOption[]; enabled: boolean; defaultPaidCapUsd: number; labs?: Array<{ name: string; state: string }> }) {
   const router = useRouter();
   const [lab, setLab] = useState("");
   const [goal, setGoal] = useState("");
@@ -112,12 +112,12 @@ export function NewJobForm({ project, repos, enabled, labs = [] }: { project: st
         <label className="block text-sm font-medium text-ink">
           Request budget (optional)
           <input value={maxRequests} onChange={(e) => setMaxRequests(e.target.value)} inputMode="numeric" className="field tabular mt-1 font-normal" placeholder="task type default" />
-          <span className="mt-1 block text-xs font-normal text-ink-3">Most model requests the supervisor itself may use (workers have their own budgets).</span>
+          <span className="mt-1 block text-xs font-normal text-ink-3">Maximum model requests allocated to this job, including delegated work.</span>
         </label>
         <label className="block text-sm font-medium text-ink">
           Paid budget (optional, USD)
-          <input value={maxPaid} onChange={(e) => setMaxPaid(e.target.value)} inputMode="decimal" className="field tabular mt-1 font-normal" placeholder="no job-level cap" />
-          <span className="mt-1 block text-xs font-normal text-ink-3">Hard cap on paid-model spend for this job. Global paid budgets still apply.</span>
+          <input value={maxPaid} onChange={(e) => setMaxPaid(e.target.value)} inputMode="decimal" className="field tabular mt-1 font-normal" placeholder={`$${defaultPaidCapUsd} default`} />
+          <span className="mt-1 block text-xs font-normal text-ink-3">Leave empty for the ${defaultPaidCapUsd} shared job budget, including delegated work. Enter 0 for free only. Global and key limits still apply.</span>
         </label>
       </fieldset>
       <div className="flex flex-wrap items-center gap-3">

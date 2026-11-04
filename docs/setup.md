@@ -473,55 +473,97 @@ profiles:
 ```
 
 This leaves the profile uncapped; the default delivery job still receives a 600-request aggregate
-envelope. Existing explicit smaller caps remain effective. Supervisor delivery works without
-manually entered benchmark scores: `supervisor.routing.minimum_quality` defaults to
-`best_available`. Current reviewed evidence ranks first; otherwise the strongest eligible route
-is used and reported as unverified, subject to supervisor size floors and existing access, tool,
-modality and paid restrictions. `supervisor.routing.quality_evidence` is empty by default.
-A discovered model, API key, vendor/model name or forced endpoint is not quality evidence.
-Set `minimum_quality: frontier_or_qualified_supervisor` to require reviewed evidence. Under that
-explicit policy, no eligible current record produces `supervisor_quality_unavailable`; the
-router does not substitute an unverified supervisor. Unusable supervisor submissions are rejected
-before queueing rather than becoming failed jobs.
+envelope. Existing explicit smaller caps remain effective. Supervisor routing defaults to
+`minimum_quality: ranked_capable`. With `ranking_policy: null`, missing observations trigger
+the built-in bounded supervisor decision suite through the normal Gate and accounting path.
+It evaluates planning, tool arguments, dependency repair, integration, review and final
+evidence decisions in an isolated data-only sandbox. Each run uses one model request with
+at most 16,000 input and 8,000 output tokens. Free candidates are evaluated first; paid
+evaluation needs caller credit authority and runs only when no capable free route can serve.
+Its allocation reduces the caller's remaining execution budget. Scanning metadata alone
+does not run this benchmark.
 
-For each catalog endpoint, record a reviewed evaluation/source, verification and expiry dates,
-trial count, confidence and measured scores from 0 to 1. Every relevant capability and confidence
-must reach 0.75. Image/video supervisor inputs additionally require `scores.visual`. This format
-example is deliberately expired/under-floor: replace its values with actual evidence, rather
-than copying scores to make routing pass.
+When evaluations are still queued, the submission returns `supervisor_qualification_pending`
+with real run IDs and a retained submission reference. The application job has not yet been
+submitted. Start a MeritRouter worker and use MCP `resume_supervisor_submission` or SDK
+`resumeSupervisorSubmission` with that reference and project. Original goals, limits and
+idempotency are retained. Infrastructure failures are reported separately from observed
+bad model decisions; output exhaustion without a complete decision is inconclusive rather
+than six observed wrong decisions. Neither a failed transport nor a model's self-reported score establishes
+quality. One local trial provides limited observed role evidence, not universal frontier,
+visual or product-delivery proof.
+
+For an external benchmark instead, configure its comparable evaluation source, suite version,
+metric scale, primary ranking metric and explicit capability floors. Records must identify
+the exact catalog endpoint, provider route, evaluated model and reviewed identity mapping,
+with actual observation and expiry timestamps. Every configured metric floor must be met;
+the primary ranking metric must itself have a floor. Image/video inputs additionally require
+a measured and floored `visual_metric`.
+
+The example below is deliberately expired and under its floors. Replace it with real observed
+measurements from one comparable source; never copy scores just to make routing pass. Source
+URLs identify evidence, and the router does not fetch arbitrary URLs or infer missing scores.
 
 ```yaml
 supervisor:
   routing:
     strategy: highest_eligible_quality
-    minimum_quality: frontier_or_qualified_supervisor
-    quality_evidence:
-      - schemaVersion: 1
-        endpointId: provider/model-from-your-catalog
-        source: path/to/reviewed-supervisor-evaluation.md
-        checkedAt: "2000-01-01T00:00:00.000Z"
-        expiresAt: "2000-02-01T00:00:00.000Z"
-        classification: qualified_supervisor # or frontier, supported by your evidence
-        confidence: 0.0
-        trials: 1
-        scores:
-          planning: 0.0
-          architecture: 0.0
-          supervision: 0.0
-          integration: 0.0
-          review: 0.0
-          product: 0.0
-          visual: 0.0
+    minimum_quality: ranked_capable
+    ranking_policy:
+      source: your-reviewed-evaluation
+      suite_version: actual-suite-version
+      metric_scale: actual-source-native-scale
+      rank_metric: agentic
+      capability_floors: {agentic: 60, coding: 50}
+    ranking_evidence:
+      - endpoint_id: provider/model-from-your-catalog
+        provider: exact-provider-route
+        model: exact-model-route
+        source_model_id: exact-evaluated-model-and-inference-variant
+        mapping_source: your-reviewed-identity-mapping
+        source: your-reviewed-evaluation
+        source_url: https://example.invalid/replace-with-actual-result
+        suite_version: actual-suite-version
+        metric_scale: actual-source-native-scale
+        checked_at: "2000-01-01T00:00:00.000Z"
+        expires_at: "2000-02-01T00:00:00.000Z"
+        metrics: {agentic: 0, coding: 0}
 ```
 
-Use exact endpoint IDs from your catalog; records are not inferred across providers. Provenance
-remains operator-owned: ordinary worker qualification does not generate supervisor evidence
-automatically. Under strict policy, expired/revoked evidence stops subsequent dispatch too.
-Under the default policy, such endpoints must meet the ordinary unverified-route requirements.
+Ranked routing never falls back to capacity heuristics or ordinary worker pass rates. Equal
+measured scores are disclosed as ties, with availability/explicit preferences and endpoint
+identity resolving order; they are not proof of a strongest model. Expired or revoked evidence
+stops subsequent dispatch, including when evidence changes during asynchronous admission.
+Model availability, tool/context requirements, credential entitlement and paid limits remain
+separate prerequisites. Discovery alone is not a successful provider call or a quality test.
+
+Explicit legacy `best_available` still permits unverified capacity-based selection, while
+`frontier_or_qualified_supervisor` accepts the previous sourced confidence-weighted six-score
+`quality_evidence` format. These are compatibility opt-outs, not fallback modes of ranked
+routing. Existing explicitly saved settings are preserved; review them when upgrading.
 Review route explanations
 with `meritrouter route supervise T3 --project <slug>` and inspect quality exclusions. Model
 quality ranking never enables paid routing or raises spending caps; paid-disabled, `never`,
 zero-dollar and explicit free-first settings still apply.
+
+When a new supervisor job omits `maxPaidUsd`, its initial paid ceiling comes from
+`supervisor.default_max_paid_usd` (default 500 USD). Explicit supplied caps, including 0, are
+preserved. Existing submitted specs are not rewritten. Each submitted parent ceiling bounds
+the combined spend of that job and all descendants; a child cap can only narrow it. Settled
+costs and outstanding/uncertain exposure count, with batched request shares counted once.
+The existing reservation transactions prevent competing children from oversubscribing the
+remaining job budget, and dispatch rechecks retained exposure. Free control requests remain
+available after paid spend reaches its ceiling. Account credits, global/project/key limits
+and paid-routing policies remain separate checks.
+
+`supervisor.credit_usage_alerts` enables MCP notices to external FINAL. Dollar thresholds
+default to 10/25/50/100/250/500 USD and root-cap fractions to 50/80/95 percent. Each connection
+reports newly crossed thresholds, and reconnecting reviews current usage again. Notices
+separate settled accounting spend, outstanding reservations/uncertain liability and unknown
+prices. They cover the selected project's job descendants and preserve the original tool
+result; provider credit balance remains independently unknown. FINAL should review progress,
+failures and served models and report material spend to the user while continuing authorized
+work. Alerts do not impose an additional approval flow or change a cap.
 
 Delivery defaults under `supervisor.delivery_budget` are `total_requests: 600`,
 `supervisor_reserve_requests: 80`, `validation_reserve_requests: 80`, and
@@ -601,6 +643,12 @@ provider's models at once, and so does setting up a keyless local server in the 
 panel's Scan button does the same as `models scan` for every provider; a running worker repeats it every
 `discovery.interval_minutes` (60). Point the CLI at the config with `--config` or
 `MERITROUTER_CONFIG` when you run it from another directory.
+
+Vault key changes also invalidate the service's cached provider availability, including its
+shared split-project routing cache. Adding a replacement key, disabling or re-enabling a key,
+changing its secret, or removing it is reflected on the next lookup in that service without
+waiting for the cache to expire. This does not reset circuit breakers, limits or recorded spend;
+other running processes refresh their own short-lived caches independently.
 
 ## 4. Connect an MCP client (Claude Code, Codex, ChatGPT)
 

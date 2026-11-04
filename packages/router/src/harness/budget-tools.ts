@@ -4,8 +4,9 @@ import { LeaseRefSchema } from "../storage/lease-ref.js";
 import type { ToolSideEffect } from "../sessions/events.js";
 import type { ResolvedConfig } from "../config/load.js";
 import type { Db } from "../storage/db.js";
-import type { ProfileName } from "../config/schema.js";
 import { approverFor, BudgetRequests, defaultTaskGrant, jobOfTask, jobPool, MAX_BUDGET_REQUEST, poolLine, type BudgetRequest, type JobPool } from "../admission/budget-requests.js";
+import type { WorkerTask } from "../core/task.js";
+import type { TaskAllocationParent } from "../verification/task-allocation-feedback.js";
 import type { HarnessEnv, HarnessTool } from "./tools.js";
 import { z } from "zod";
 
@@ -108,7 +109,7 @@ export interface BriefGrant {
   requests: number;
   /** supervisor: the brief's max_requests; default: the configured default. */
   source: "supervisor" | "default";
-  /** Whether it becomes the task's budget.maxModelRequests (explicit, or team.default_task_requests set). */
+  /** Every newly dispatched worker pins its total to the held grant. */
   setBudget: boolean;
 }
 
@@ -117,23 +118,24 @@ export interface BriefGrant {
  * (`defaultTaskGrant`). Together they must fit in what the job's pool has available; otherwise
  * nothing is granted and the error names the number left.
  */
-export function grantBriefs(db: Db, cfg: ResolvedConfig, jobId: string, briefs: Array<{ it: Record<string, unknown>; label: string }>): { grants: Map<string, BriefGrant>; total: number } {
+export function grantBriefs(db: Db, cfg: ResolvedConfig, jobId: string, briefs: Array<{ it: Record<string, unknown>; label: string; spec?: WorkerTask }>, parent: TaskAllocationParent = null): { grants: Map<string, BriefGrant>; total: number } {
   projectToolIdentity(db,cfg.brain.project);
   const grants = new Map<string, BriefGrant>();
   let total = 0;
   if (!briefs.length) return { grants, total };
   const pool = poolOrNull(db, cfg, jobId);
-  for (const { it, label } of briefs) {
+  for (const { it, label, spec } of briefs) {
     const explicit = it.max_requests !== undefined && it.max_requests !== null;
-    const requests = explicit ? Number(it.max_requests) : defaultTaskGrant(cfg, String(it.profile) as ProfileName, typeof it.difficulty === "string" ? it.difficulty : null);
+    if (!explicit && cfg.team.default_task_requests === undefined && !spec) throw new Error(`${label}: implicit allocation requires the normalized worker specification`);
+    const requests = explicit ? Number(it.max_requests) : cfg.team.default_task_requests ?? defaultTaskGrant(cfg, spec!, parent);
     if (!Number.isInteger(requests) || requests < 1) throw new Error(`${label}: max_requests must be a whole number of at least 1`);
     if (pool?.available !== null && pool && total + requests > pool.available) {
       throw new Error(
-        `${label}: needs ${requests} model requests but your job has ${Math.max(0, pool.available - total)} left for new tasks (budget ${pool.cap}: you used ${pool.used}, open tasks hold ${pool.held}, ${pool.reserve} kept for your own requests${total ? `, ${total} granted earlier in this call` : ""}); nothing was dispatched. Lower max_requests, dispatch fewer tasks now, or await running tasks first.`,
+        `${label}: needs ${requests} model requests but your job has ${Math.max(0, pool.available - total)} left for new tasks (budget ${pool.cap}: you used ${pool.used}, descendant usage/open grants ${pool.held}, ${pool.reserve} protected supervision/validation reserves${total ? `, ${total} granted earlier in this call` : ""}); nothing was dispatched. Completed-task usage is spent and waiting cannot release it. Size total grants including mandatory review, dispatch fewer tasks, or await genuinely running tasks to release unused grants. Request additional authorized resources if the required work cannot fit.`,
       );
     }
     total += requests;
-    grants.set(label, { requests, source: explicit ? "supervisor" : "default", setBudget: explicit || cfg.team.default_task_requests !== undefined });
+    grants.set(label, { requests, source: explicit ? "supervisor" : "default", setBudget: true });
   }
   return { grants, total };
 }

@@ -1,5 +1,5 @@
 import { MAX_PLAN_NODES } from "../storage/plans.js";
-import { loadConfig } from "../config/load.js";
+import { assertSupervisorCancelUnprotected } from "../storage/supervisor-cancel-protection.js";
 import { z } from "zod";
 import { immediate } from "../storage/db.js";
 import { LeaseRefSchema,type LeaseRef } from "../storage/task-leases.js";
@@ -55,11 +55,7 @@ export function createProjectRunServices(runtime:ProjectRuntimeBundle,value:Leas
   awaitResults:async(ids,opts={})=>{const input=z.array(z.string().min(1)).max(MAX_PLAN_NODES).parse(ids),options=z.object({timeoutSeconds:z.number().finite().min(0).max(3600).optional(),signal:z.custom<AbortSignal>(v=>v instanceof AbortSignal).optional(),uncapped:z.boolean().optional()}).strict().parse(opts),start=Date.now(),until=start+(options.timeoutSeconds??30)*1000;for(;;){const result=collect(input);if(!result.pending.length||Date.now()>=until||options.signal?.aborted)return {...result,timedOut:result.pending.length>0&&Date.now()>=until,waitedSeconds:(Date.now()-start)/1000};await new Promise(resolve=>setTimeout(resolve,Math.min(100,Math.max(1,until-Date.now()))));}},
   cancelTasks:ids=>immediate(runtime.db,()=>{
    authority();const targets=ids.map(id=>owned(id));
-   // This repeats the tool's protection inside the same mutation transaction for direct callers.
-   for(const target of targets){const blocked=runtime.db.prepare(`WITH RECURSIVE owned(id) AS (SELECT id FROM tasks WHERE id=? AND project_id=? UNION SELECT t.id FROM tasks t JOIN owned p ON json_extract(t.spec_json,'$.parentTaskId')=p.id WHERE t.project_id=?) SELECT w.value_json FROM worker_action_requests w JOIN tasks t ON t.id=w.task_id WHERE w.project_id=? AND w.task_id IN(SELECT id FROM owned) AND t.state='running' AND t.cancel_requested=0 AND t.lease_expires_at>? AND json_extract(w.value_json,'$.action.lease.owner')=t.lease_owner AND json_extract(w.value_json,'$.action.lease.runCount')=t.run_count AND json_extract(w.value_json,'$.action.lease.incarnation')=t.lease_incarnation AND json_extract(w.value_json,'$.status') IN ('pending','running')`).all(target.row.id,lease.project,lease.project,lease.project,now());
-    for(const raw of blocked){const row=z.object({value_json:z.string()}).parse(raw),action=z.object({status:z.enum(["pending","running"]),decidedBy:z.string().nullable()}).passthrough().parse(JSON.parse(row.value_json));
-     const {security}=loadConfig(runtime.cfg.configPath); if(action.status==="running"&&action.decidedBy==="operator"||action.status==="pending"&&security.outside_repository==="human_only")throw new Error("Owning supervisor cannot cancel protected operator worker action");}
-   }
+   assertSupervisorCancelUnprotected(runtime.db,runtime.cfg,lease.project,targets.map(target=>target.row.id),now());
    const result=runtime.tasks.requestCancel(ids);
    queueMicrotask(()=>{const changed:string[]=[];try{runtime.assertCurrent();for(const target of targets){const current=runtime.tasks.get(target.row.id);if(!current||current.row.lease_incarnation!==target.row.lease_incarnation||current.row.run_count!==target.row.run_count||current.row.lease_owner!==target.row.lease_owner||!current.row.cancel_requested||!["cancel_requested","cancelled"].includes(current.row.state))continue;
     changed.push(current.row.id);if(target.row.lease_owner)runtime.executor.abortLease({taskId:target.row.id,owner:target.row.lease_owner,project:lease.project,runCount:target.row.run_count,incarnation:target.row.lease_incarnation},"cancel");}if(changed.length)policies.changed(changed);}catch{/* A closed/replaced store cannot authorize an abort or publish a speculative cancellation. */}});

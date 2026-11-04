@@ -80,7 +80,7 @@ describe("plan_work with sub-supervisors", () => {
     const childScript = [
       // At depth 2 (team.max_depth 2) a plan's supervise node is refused like a delegated one.
       () => [call("plan_work", { nodes: [{ label: "deeper", profile: "supervise", goal: "nested further", acceptance_criteria: ["x"] }] })],
-      () => [call("plan_work", { nodes: [{ label: "w1", profile: "implement", goal: "Add subtract(a, b) to src/app.ts", acceptance_criteria: ["subtract exists"], allowed_paths: ["src/**"], checks: [check], difficulty: "T2" }] })],
+      () => [call("plan_work", { nodes: [{ label: "w1", profile: "implement", max_requests: 8, goal: "Add subtract(a, b) to src/app.ts", acceptance_criteria: ["subtract exists"], allowed_paths: ["src/**"], checks: [check], difficulty: "T2" }] })],
       () => [call("await_tasks", { timeout_seconds: 120 })],
       () => [call("integrate_task", { task_id: "w1" })],
       () => [call("finish_job", { status: "completed", summary: "subtract added", verified: [{ claim: "subtract exists", evidence: "check" }], not_verified: [] })],

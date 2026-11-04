@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
 import { z } from "zod";
@@ -13,7 +13,6 @@ import { git } from "../workspaces/git.js";
 // the promotions waiting for a person, and reverting a global entry. Supervisors write `global/`
 // only through the gated promotion in brain/promotion.ts; people review it here.
 
-const HUMAN = { kind: "human" } as const;
 const PROMOTION_ID_RE = /^[a-z0-9_-]{1,120}$/;
 const GLOSSARY = "global/glossary.md";
 /** Commit trailers a revert records (who, why, and what was removed). */
@@ -137,9 +136,9 @@ export function parseGlobalProvenance(text: string): { provenance: GlobalProvena
 }
 
 function entryOf(sy: MeritRouter, rel: string): GlobalEntry | null {
-  const r = sy.brain.resolve(rel);
-  if (!existsSync(r.abs)) return null;
-  const text = readFileSync(r.abs, "utf8");
+  const r = sy.globalKnowledge.resolve(rel), record = sy.globalKnowledge.read(rel);
+  if (!record) return null;
+  const text = record.content;
   const { provenance, body, title } = parseGlobalProvenance(text);
   const kind: GlobalEntry["kind"] = rel === GLOSSARY ? "glossary" : rel.startsWith("global/lessons/") ? "lesson" : "other";
   return { path: rel, title: title ?? path.posix.basename(rel, ".md"), kind, body, provenance, mtime: statSync(r.abs).mtimeMs, revertable: rel !== GLOSSARY };
@@ -147,57 +146,46 @@ function entryOf(sy: MeritRouter, rel: string): GlobalEntry | null {
 
 /** The global brain's entries with provenance, and the history of removed ones. */
 export async function globalKnowledge(sy: MeritRouter, opts: { revertLimit?: number } = {}): Promise<GlobalKnowledge> {
-  // A split installation with no project yet has no brain repository to read global/ from.
-  if (sy.layout === "split" && !sy.projects.slugs().length) {
-    return { generatedAt: Date.now(), requiresApproval: sy.cfg.brain.global_requires_approval, lessons: [], glossary: null, other: [], reverts: [] };
-  }
-  const brain = sy.brain;
-  await brain.ensure();
-  const entries = brain
-    .list(HUMAN, "global")
-    .map((e) => entryOf(sy, e.path))
-    .filter((e): e is GlobalEntry => e !== null);
-  const byNewest = (a: GlobalEntry, b: GlobalEntry) => (b.provenance?.promotedAt ?? "").localeCompare(a.provenance?.promotedAt ?? "") || b.mtime - a.mtime;
-  return {
-    generatedAt: Date.now(),
-    requiresApproval: sy.cfg.brain.global_requires_approval,
-    lessons: entries.filter((e) => e.kind === "lesson").sort(byNewest),
-    glossary: entries.find((e) => e.kind === "glossary") ?? null,
-    other: entries.filter((e) => e.kind === "other").sort(byNewest),
-    reverts: await globalReverts(sy, opts.revertLimit ?? 50),
-  };
+  return sy.globalKnowledge.runOperation(async () => {
+    const entries = sy.globalKnowledge
+      .list("global")
+      .map((e) => entryOf(sy, e.path))
+      .filter((e): e is GlobalEntry => e !== null);
+    const byNewest = (a: GlobalEntry, b: GlobalEntry) => (b.provenance?.promotedAt ?? "").localeCompare(a.provenance?.promotedAt ?? "") || b.mtime - a.mtime;
+    return {
+      generatedAt: Date.now(),
+      requiresApproval: sy.cfg.brain.global_requires_approval,
+      lessons: entries.filter((e) => e.kind === "lesson").sort(byNewest),
+      glossary: entries.find((e) => e.kind === "glossary") ?? null,
+      other: entries.filter((e) => e.kind === "other").sort(byNewest),
+      reverts: await globalReverts(sy, opts.revertLimit ?? 50),
+    };
+  });
 }
 
 /** Global entries removed from the brain (by a revert, or by hand), newest first. */
 export async function globalReverts(sy: MeritRouter, limit = 50): Promise<GlobalRevert[]> {
-  const r = sy.brain.resolve("global");
-  if (!r.repo || !r.commit || !existsSync(path.join(r.repo, ".git"))) return [];
-  const raw = await git(r.repo, ["log", `-${Math.max(1, Math.min(limit, 500))}`, "--diff-filter=D", "--name-only", "--format=%x1e%H%x1f%aI%x1f%s%x1f%(trailers:unfold)%x1f", "--", r.repoRel || "."]).catch(() => "");
-  const prefix = r.repoRel ? `${r.repoRel}/` : "";
-  return raw
-    .split("\x1e")
-    .map((rec) => rec.trim())
-    .filter(Boolean)
-    .map((rec) => {
-      const [commit, date, subject, trailers, files] = rec.split("\x1f");
-      const t = parseTrailers(trailers ?? "");
-      const paths = (files ?? "")
-        .split(/\r?\n/)
-        .map((f) => f.trim())
-        .filter(Boolean)
-        .map((f) => `global/${prefix && f.startsWith(prefix) ? f.slice(prefix.length) : f.replace(/^global\//, "")}`);
-      return {
-        commit: commit!,
-        date: date!,
-        subject: subject ?? "",
-        paths,
-        revertedBy: t[REVERT_TRAILERS.by] ?? t.Agent ?? null,
-        reason: t[REVERT_TRAILERS.reason] ?? null,
-        title: t[REVERT_TRAILERS.title] ?? null,
-        promotion: t[REVERT_TRAILERS.promotion] ?? null,
-        project: t[REVERT_TRAILERS.project] ?? null,
-      };
-    });
+  return sy.globalKnowledge.runOperation(async () => {
+    const result = new Map<string, GlobalRevert>(), count = z.number().int().min(1).max(500).parse(Math.max(1, Math.min(limit, 500)));
+    for (const scope of await sy.globalKnowledge.historyScopes()) {
+      const raw = await git(scope.repo, ["log", `-${count}`, "--diff-filter=D", "--name-only", "--format=%x1e%H%x1f%aI%x1f%s%x1f%(trailers:unfold)%x1f", "--", scope.repoRel || "."]);
+      const prefix = scope.repoRel ? `${scope.repoRel}/` : "";
+      for (const record of raw.split("\x1e").map(value => value.trim()).filter(Boolean)) {
+        const [commit, date, subject, trailers, files] = record.split("\x1f"), t = parseTrailers(trailers ?? "");
+        const paths = (files ?? "").split(/\r?\n/).map(value => value.trim()).filter(Boolean)
+          .filter(value => !prefix || value.startsWith(prefix))
+          .map(value => `${scope.prefix}/${prefix ? value.slice(prefix.length) : value}`)
+          .filter(rel => sy.globalKnowledge.resolve(rel).repo === scope.repo);
+        if (!paths.length) continue;
+        const item: GlobalRevert = { commit: commit!, date: date!, subject: subject ?? "", paths,
+          revertedBy: t[REVERT_TRAILERS.by] ?? t.Agent ?? null, reason: t[REVERT_TRAILERS.reason] ?? null,
+          title: t[REVERT_TRAILERS.title] ?? null, promotion: t[REVERT_TRAILERS.promotion] ?? null, project: t[REVERT_TRAILERS.project] ?? null };
+        const prior = result.get(item.commit);
+        result.set(item.commit, prior ? { ...prior, paths: [...new Set([...prior.paths, ...item.paths])] } : item);
+      }
+    }
+    return [...result.values()].sort((a, b) => b.date.localeCompare(a.date)).slice(0, count);
+  });
 }
 
 /** A promotion as the panel lists it: the record plus whether a person may decide it now. */
@@ -272,8 +260,8 @@ function revertPath(input: string): string {
 }
 
 /**
- * Revert a global entry: one brain commit, made as a person through `Brain.remove` (the brain's own
- * lock and commit protocol), that removes the file. The commit records who reverted it and why
+ * Revert a global entry: one audited human deletion through the legacy Brain or the explicit
+ * split global capability. The commit records who reverted it and why
  * (trailers `Reverted-By`, `Revert-Reason`, and the entry's title, promotion, and project), so the
  * entry and its removal stay in the brain's history. The promotion record (if any) becomes
  * `reverted` with who, when, and why; `settle()` never writes a reverted lesson again.
@@ -283,33 +271,35 @@ export async function revertGlobalEntry(sy: MeritRouter, input: string, by: stri
   const why = reason.trim().replace(/\s+/g, " ");
   if (!why) throw new MeritRouterError("reason_required", "say why the entry is reverted; the reason is recorded in the brain's history");
   const who = by.trim() || "user";
-  const brain = sy.brain;
-  await brain.ensure();
-  const r = brain.resolve(rel);
-  if (!r.repo || !r.commit) throw new MeritRouterError("usage", `${rel} is not committed by MeritRouter (brain.commit is off, or its mount does not commit), so a revert could not be recorded`);
-  if (!existsSync(r.abs)) throw new MeritRouterError("not_found", `${rel} does not exist (already reverted?)`);
-  let removed: { title: string; provenance: GlobalProvenance | null } = { title: path.posix.basename(rel, ".md"), provenance: null };
-  let res: { path: string; commit: string | null };
-  try {
-    res = await brain.remove({ kind: "human", name: who }, { agent: "human", role: "human" }, rel, why, {
-      message: `Revert global entry ${rel}`,
-      trailers: (text) => {
+  const knowledge = sy.globalKnowledge, original = knowledge.read(rel);
+  if (!original) throw new MeritRouterError("not_found", `${rel} does not exist (already reverted?)`);
+  const provenanceProject = parseGlobalProvenance(original.content).provenance?.project ?? null;
+  return sy.runGlobalKnowledgeOperation(provenanceProject, async () => {
+    const r = knowledge.resolve(rel);
+    if (!r.commit) throw new MeritRouterError("usage", `${rel} is not committed by MeritRouter (brain.commit is off, or its mount does not commit), so a revert could not be recorded`);
+    let removed: { title: string; provenance: GlobalProvenance | null } = { title: path.posix.basename(rel, ".md"), provenance: null };
+    let res: { path: string; commit: string | null };
+    try {
+      const trailers = (text: string) => {
+        if (text !== original.content) throw new BrainError("Global entry changed before its human revert; reload it");
         const parsed = parseGlobalProvenance(text);
         removed = { title: (parsed.title ?? removed.title).slice(0, 200), provenance: parsed.provenance };
         const t: Record<string, string> = { [REVERT_TRAILERS.by]: who.slice(0, 200), [REVERT_TRAILERS.reason]: why.slice(0, 1000), [REVERT_TRAILERS.title]: removed.title };
         if (parsed.provenance?.promotion) t[REVERT_TRAILERS.promotion] = parsed.provenance.promotion;
         if (parsed.provenance?.project) t[REVERT_TRAILERS.project] = parsed.provenance.project;
         return t;
-      },
-    });
-  } catch (err) {
-    if (err instanceof BrainError) throw new MeritRouterError(existsSync(r.abs) ? "usage" : "not_found", err.message);
-    throw err;
-  }
-  if (!res.commit) throw new MeritRouterError("usage", `removing ${rel} produced no commit`);
-  const promotion = removed.provenance?.promotion ?? null;
-  const project = removed.provenance?.project ?? null;
-  return { path: rel, commit: res.commit, revertedBy: who, reason: why, title: removed.title, promotion, project, promotionStatus: await markPromotionReverted(sy, project, promotion, who, why) };
+      };
+      res = sy.layout === "split" ? await knowledge.remove(rel, who, why, original.content, trailers)
+        : await sy.brainFor(provenanceProject && sy.projects.context(provenanceProject) ? provenanceProject : sy.projects.primary.project.slug).remove({ kind: "human", name: who }, { agent: "human", role: "human" }, rel, why, { message: `Revert global entry ${rel}`, trailers });
+    } catch (err) {
+      if (err instanceof BrainError) throw new MeritRouterError(existsSync(r.abs) ? "usage" : "not_found", err.message);
+      throw err;
+    }
+    if (!res.commit) throw new MeritRouterError("usage", `removing ${rel} produced no commit`);
+    const promotion = removed.provenance?.promotion ?? null;
+    const project = removed.provenance?.project ?? null;
+    return { path: rel, commit: res.commit, revertedBy: who, reason: why, title: removed.title, promotion, project, promotionStatus: await markPromotionReverted(sy, project, promotion, who, why) };
+  });
 }
 
 /**

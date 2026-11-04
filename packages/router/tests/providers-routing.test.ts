@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { cpSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import type { MeritRouter } from "../src/core/service.js";
+import type { ProjectRuntimeBundle } from "../src/projects/runtime-registry.js";
 import { MIGRATIONS } from "../src/storage/migrations.js";
 import { DB_FILE, openDatabase } from "../src/storage/db.js";
 import { Catalog } from "../src/models/catalog.js";
@@ -13,10 +14,13 @@ import { baseConfig, directEndpoint, endpoint, FakeProvider, goodOutput, makeEnv
 
 let env: Env | undefined;
 let sy: MeritRouter | undefined;
+let projectDirectory: string | undefined;
 afterEach(async () => {
   await sy?.close();
   sy = undefined;
   env?.cleanup();
+  if (projectDirectory) rmSync(projectDirectory, { recursive: true, force: true });
+  projectDirectory = undefined;
 });
 
 const KEY_A = "sk-free-aaaa1111";
@@ -87,6 +91,92 @@ describe("direct free requests", () => {
     // One key still serves: the provider is healthy, not cooling.
     expect(sy.health.lookup("acme")).toMatchObject({ status: "healthy" });
     expect(requestRows(sy).map((x) => x.status)).toEqual(["failed", "succeeded"]);
+  });
+
+  it("rotates past an exhausted key and keeps using the remaining key without paid spend", async () => {
+    env = makeEnv({ config: acmeCfg(), endpoints: [directEndpoint("acme", "big-free")] });
+    const fake = new FakeProvider(call => call.key === KEY_A
+      ? providerJson({ error: { message: "insufficient credits" } }, 402)
+      : providerChat(String(call.body?.model)));
+    sy = open(env, fake, { worker: true });
+    const [first] = await sy.submitTasks([summarizeTask()]);
+    const result = (await sy.awaitResults([first!.taskId], { timeoutSeconds: 10 })).completed[0]!;
+    expect(result.executionStatus).toBe("completed");
+    expect(result.routing!.attempts.map(attempt => attempt.outcome)).toEqual(["pool_exhausted", "succeeded"]);
+    expect(sy.providers.keys.get(REF_A)).toMatchObject({ disabledReason: "out_of_credits" });
+    expect(sy.health.breakers.get("acme")).toMatchObject({ state: "closed", failures: 0 });
+    const [second] = await sy.submitTasks([summarizeTask({ goal: "Summarise another log" })]);
+    expect((await sy.awaitResults([second!.taskId], { timeoutSeconds: 10 })).completed[0]!.executionStatus).toBe("completed");
+    expect(fake.chats().map(call => call.key)).toEqual([KEY_A, KEY_B, KEY_B]);
+    expect(requestRows(sy).map(row => row.status)).toEqual(["failed", "succeeded", "succeeded"]);
+    expect(sy.health.lookup("acme")).toMatchObject({ status: "healthy" });
+    expect((sy.db.prepare("SELECT COUNT(*) AS n FROM paid_spend").get() as { n: number }).n).toBe(0);
+  });
+
+  it("uses a newly added vault key after the existing key is exhausted without restarting", async () => {
+    env = makeEnv({ config: acmeCfg({ keys: [{ label: "a", api_key: KEY_A, billing_class: "free_tier" }] }), endpoints: [directEndpoint("acme", "big-free")] });
+    const fake = new FakeProvider();
+    sy = open(env, fake, { worker: true });
+    sy.providers.keys.recordFailure(sy.providers.credentials().get(REF_A)!, new ProviderError("out_of_credits", "402 no credits", { provider: "acme", status: 402 }));
+    expect(sy.health.lookup("acme")).toMatchObject({ status: "invalid" });
+    const added = insights.addProviderKey(sy, { provider: "acme", secret: KEY_B, billingClass: "free_tier", label: "replacement" });
+    expect(sy.health.lookup("acme")).toMatchObject({ status: "healthy" });
+    const [task] = await sy.submitTasks([summarizeTask()]);
+    expect((await sy.awaitResults([task!.taskId], { timeoutSeconds: 10 })).completed[0]!.executionStatus).toBe("completed");
+    expect(fake.chats().map(call => call.key)).toEqual([KEY_B]);
+    expect(sy.providers.keys.get(REF_A)).toMatchObject({ disabledReason: "out_of_credits" });
+    expect(sy.providers.keys.get(added.ref)!.lastSuccessAt).not.toBeNull();
+    expect(requestRows(sy).map(row => row.status)).toEqual(["succeeded"]);
+    expect((sy.db.prepare("SELECT COUNT(*) AS n FROM paid_spend").get() as { n: number }).n).toBe(0);
+  });
+
+  it.each(["legacy", "split"] as const)("reflects vault key changes immediately in %s routing health without changing breaker state", async layout => {
+    const now = Date.now();
+    if (layout === "split") projectDirectory = realpathSync(mkdtempSync(path.join(tmpdir(), "meritrouter-key-project-")));
+    env = makeEnv({ config: acmeCfg({ keys: [{ label: "a", api_key: KEY_A, billing_class: "free_tier" }] }, {
+      storage: { layout, directory: "coordination" },
+      ...(projectDirectory ? { repositories: {}, projects: { alpha: { directory: projectDirectory, repositories: { core: { path: projectDirectory } } } } } : {}),
+    }), endpoints: [directEndpoint("acme", "big-free")] });
+    const fake = new FakeProvider();
+    sy = open(env, fake, { now: () => now });
+    let routingHealth = sy.health;
+    if (projectDirectory) {
+      cpSync(env.repo, projectDirectory, { recursive: true });
+      await sy.createSplitProject({ slug: "alpha", directory: projectDirectory });
+      routingHealth = (sy.projectStores("alpha") as ProjectRuntimeBundle).gate.health;
+      expect(routingHealth).not.toBe(sy.health);
+    }
+    const healthViews = [...new Set([sy.health, routingHealth])];
+    const expectHealth = (status: string) => {
+      for (const health of healthViews) expect(health.lookup("acme")).toMatchObject({ status });
+    };
+    const exhausted = new ProviderError("out_of_credits", "fixture credits exhausted", { provider: "acme", status: 402 });
+    sy.providers.keys.recordFailure(sy.providers.credentials().get(REF_A)!, exhausted);
+    expectHealth("invalid");
+    const breakers = healthViews.map(health => health.breakers.get("acme"));
+
+    const added = insights.addProviderKey(sy, { provider: "acme", secret: KEY_B, billingClass: "free_tier" });
+    expectHealth("healthy");
+    insights.updateProviderKey(sy, added.vaultKeyId!, { enabled: false });
+    expectHealth("invalid");
+    insights.updateProviderKey(sy, added.vaultKeyId!, { enabled: true });
+    expectHealth("healthy");
+
+    sy.providers.keys.recordFailure(sy.providers.credentials().get(added.ref)!, exhausted);
+    // Prepare both cached failed views before replacing the secret; time never advances.
+    for (const health of healthViews) await health.refresh();
+    expectHealth("invalid");
+    insights.updateProviderKey(sy, added.vaultKeyId!, { secret: "sk-free-replaced3333" });
+    expectHealth("healthy");
+    expect(sy.providers.keys.get(added.ref)).toMatchObject({ disabledReason: null });
+
+    insights.removeProviderKey(sy, added.vaultKeyId!);
+    expectHealth("invalid");
+    expect(healthViews.map(health => health.breakers.get("acme"))).toEqual(breakers);
+    expect(sy.providers.keys.get(REF_A)).toMatchObject({ disabledReason: "out_of_credits" });
+    expect(fake.chats()).toEqual([]);
+    expect(requestRows(sy)).toEqual([]);
+    expect((sy.db.prepare("SELECT COUNT(*) AS n FROM paid_spend").get() as { n: number }).n).toBe(0);
   });
 
   it("disables an invalid key and skips it on later requests", async () => {

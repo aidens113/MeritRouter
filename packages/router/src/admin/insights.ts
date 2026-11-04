@@ -19,7 +19,7 @@ import type { StoredContract } from "../verification/contract.js";
 import { resolveLevel } from "../verification/policy.js";
 import type { EndpointOverride, ModelEndpoint, RoutingOverride } from "../models/catalog.js";
 import { planRoute, type CandidateExplanation } from "../routing/select.js";
-import { qualificationLookup, qualificationStat, type QualificationStat } from "../qualification/stats.js";
+import { qualificationLookupFrom, qualificationStat, type QualificationStat, type QualificationStatReader } from "../qualification/stats.js";
 import { DEFAULT_RULEBOOK, RulebookSchema } from "../scoring/rulebook.js";
 import type { Classification } from "../scoring/score.js";
 import type { UsageSummary } from "../storage/usage.js";
@@ -30,6 +30,7 @@ import { QUALIFICATION_PROJECT } from "../qualification/registry.js";
 import type { ArtifactRow } from "../storage/artifacts.js";
 import type { ProviderStatus, WebCitation } from "../gateway/types.js";
 import { z } from "zod";
+import { requestLifecycle, type RequestLifecycle } from "./request-lifecycle.js";
 import { parseCitations } from "./request-citations.js";
 import { readBreakerRecords, type BreakerRecord, type BreakerSettings } from "../gateway/breaker.js";
 
@@ -169,52 +170,73 @@ interface EndpointStatsPart {
   done: number; taskFailed: number;
 }
 
-function endpointStatsPart(db: Db, project: string, id: string, sinceMs: number): EndpointStatsPart {
-  const r = db
-    .prepare(
-      `SELECT COUNT(*) AS requests, SUM(status='succeeded') AS ok, SUM(status='failed') AS failed, SUM(status='uncertain') AS uncertain,
-              SUM(policy_violation IS NOT NULL) AS violations, COALESCE(SUM(input_tokens),0) AS inTok, COALESCE(SUM(output_tokens),0) AS outTok,
-              COALESCE(SUM(CASE WHEN finished_at IS NOT NULL THEN finished_at - reserved_at END),0) AS latencySum,
-              SUM(finished_at IS NOT NULL) AS latencyCount, MAX(reserved_at) AS last
-         FROM model_requests WHERE endpoint_id = ? AND reserved_at > ? AND project_id = ?`,
-    )
-    .get(id, sinceMs, project) as Record<string, number | null>;
-  const t = db
-    .prepare(
-      `SELECT SUM(t.state = 'completed') AS done, SUM(t.state IN ('failed','budget_exhausted')) AS failed FROM tasks t
-        WHERE t.finished_at > ? AND t.project_id = ? AND t.id IN (SELECT c.task_id FROM request_charges c JOIN model_requests m ON m.id = c.request_id WHERE m.served_endpoint_id = ? AND m.project_id = ?)`,
-    )
-    .get(sinceMs, project, id, project) as { done: number | null; failed: number | null };
-  return {
-    requests: r.requests ?? 0, ok: r.ok ?? 0, failed: r.failed ?? 0, uncertain: r.uncertain ?? 0, violations: r.violations ?? 0,
-    inTok: r.inTok ?? 0, outTok: r.outTok ?? 0, latencySum: r.latencySum ?? 0, latencyCount: r.latencyCount ?? 0, last: r.last ?? null,
-    done: t.done ?? 0, taskFailed: t.failed ?? 0,
-  };
+const AggregateNumber = z.number().finite();
+const EndpointRequestAggregate = z.object({
+  id: z.string().nullable(), requests: AggregateNumber, ok: AggregateNumber, failed: AggregateNumber,
+  uncertain: AggregateNumber, violations: AggregateNumber, inTok: AggregateNumber, outTok: AggregateNumber,
+  latencySum: AggregateNumber, latencyCount: AggregateNumber, last: AggregateNumber.nullable(),
+}).strict();
+const EndpointTaskAggregate = z.object({ id: z.string(), done: AggregateNumber.nullable(), taskFailed: AggregateNumber.nullable() }).strict();
+
+/** Read each scope once, grouping by requested endpoint for requests and served endpoint for tasks. */
+function endpointStats(sy: MeritRouter, sinceMs: number): Map<string, EndpointStats> {
+  const qualification = sy.layout !== "split" || !!sy.db.prepare("SELECT 1 FROM project_store_registrations WHERE slug=? AND state='registered'").get(QUALIFICATION_PROJECT);
+  const { rows } = fanOutProjectRows(sy, undefined, { qualification }, (db, project) => {
+    const requests = z.array(EndpointRequestAggregate).parse(db.prepare(
+      `SELECT endpoint_id AS id, COUNT(*) AS requests, SUM(status='succeeded') AS ok,
+         SUM(status='failed') AS failed, SUM(status='uncertain') AS uncertain,
+         SUM(policy_violation IS NOT NULL) AS violations, COALESCE(SUM(input_tokens),0) AS inTok,
+         COALESCE(SUM(output_tokens),0) AS outTok,
+         COALESCE(SUM(CASE WHEN finished_at IS NOT NULL THEN finished_at-reserved_at END),0) AS latencySum,
+         SUM(finished_at IS NOT NULL) AS latencyCount, MAX(reserved_at) AS last
+       FROM model_requests WHERE reserved_at > ? AND project_id = ? GROUP BY endpoint_id`,
+    ).all(sinceMs, project));
+    // The request itself may be older than the window. Count each finished task once per
+    // served endpoint, even when several requests charged it or it requested another model.
+    const tasks = z.array(EndpointTaskAggregate).parse(db.prepare(
+      `SELECT served.endpoint_id AS id, SUM(t.state='completed') AS done,
+         SUM(t.state IN ('failed','budget_exhausted')) AS taskFailed
+       FROM tasks t JOIN (
+         SELECT DISTINCT m.served_endpoint_id AS endpoint_id, c.task_id
+         FROM request_charges c JOIN model_requests m ON m.id=c.request_id
+         WHERE m.project_id = ? AND m.served_endpoint_id IS NOT NULL
+       ) served ON served.task_id=t.id
+       WHERE t.finished_at > ? AND t.project_id = ? GROUP BY served.endpoint_id`,
+    ).all(project, sinceMs, project));
+    const parts = new Map<string, EndpointStatsPart>();
+    for (const row of requests) if (row.id !== null) parts.set(row.id, { ...row, done: 0, taskFailed: 0 });
+    for (const row of tasks) {
+      const part = parts.get(row.id) ?? emptyEndpointStatsPart();
+      part.done = row.done ?? 0; part.taskFailed = row.taskFailed ?? 0;
+      parts.set(row.id, part);
+    }
+    return [...parts].map(([id, part]) => ({ id, part }));
+  });
+  const merged = new Map<string, EndpointStatsPart>();
+  for (const { id, part } of rows) {
+    const total = merged.get(id) ?? emptyEndpointStatsPart();
+    for (const key of ["requests", "ok", "failed", "uncertain", "violations", "inTok", "outTok", "latencySum", "latencyCount", "done", "taskFailed"] as const) total[key] += part[key] ?? 0;
+    total.last = total.last === null ? part.last : part.last === null ? total.last : Math.max(total.last, part.last);
+    merged.set(id, total);
+  }
+  return new Map([...merged].map(([id, m]) => [id, {
+    requests: m.requests, succeeded: m.ok, failed: m.failed, uncertain: m.uncertain,
+    policyViolations: m.violations, inputTokens: m.inTok, outputTokens: m.outTok,
+    avgLatencyMs: m.latencyCount === 0 ? null : Math.round(m.latencySum / m.latencyCount),
+    lastUsedAt: m.last, tasksCompleted: m.done, tasksFailed: m.taskFailed,
+  }]));
 }
 
-/** Every project's (plus unattributed requests') stats for one endpoint, merged: sums add, the average latency is recomputed from the merged sum and count. */
-function endpointStats(sy: MeritRouter, id: string, sinceMs: number): EndpointStats {
-  const { rows } = fanOutProjectRows(sy, undefined, { qualification: true }, (db, p) => [endpointStatsPart(db, p, id, sinceMs)]);
-  const m = rows.reduce(
-    (a, b) => ({
-      requests: a.requests + b.requests, ok: a.ok + b.ok, failed: a.failed + b.failed, uncertain: a.uncertain + b.uncertain, violations: a.violations + b.violations,
-      inTok: a.inTok + b.inTok, outTok: a.outTok + b.outTok, latencySum: a.latencySum + b.latencySum, latencyCount: a.latencyCount + b.latencyCount,
-      last: a.last === null ? b.last : b.last === null ? a.last : Math.max(a.last, b.last), done: a.done + b.done, taskFailed: a.taskFailed + b.taskFailed,
-    }),
-    { requests: 0, ok: 0, failed: 0, uncertain: 0, violations: 0, inTok: 0, outTok: 0, latencySum: 0, latencyCount: 0, last: null as number | null, done: 0, taskFailed: 0 },
-  );
-  return {
-    requests: m.requests,
-    succeeded: m.ok,
-    failed: m.failed,
-    uncertain: m.uncertain,
-    policyViolations: m.violations,
-    inputTokens: m.inTok,
-    outputTokens: m.outTok,
-    avgLatencyMs: m.latencyCount === 0 ? null : Math.round(m.latencySum / m.latencyCount),
-    lastUsedAt: m.last,
-    tasksCompleted: m.done,
-    tasksFailed: m.taskFailed,
+function emptyEndpointStatsPart(): EndpointStatsPart {
+  return { requests: 0, ok: 0, failed: 0, uncertain: 0, violations: 0, inTok: 0, outTok: 0, latencySum: 0, latencyCount: 0, last: null, done: 0, taskFailed: 0 };
+}
+
+/** Cache only inside one synchronous view; the next invocation rechecks live authority. */
+function viewLookup<K, V>(read: (key: K) => V): (key: K) => V {
+  const values = new Map<K, V>();
+  return key => {
+    if (!values.has(key)) values.set(key, read(key));
+    return values.get(key)!;
   };
 }
 
@@ -241,14 +263,13 @@ export interface ModelView {
   headline: string;
 }
 
-function matrix(sy: MeritRouter): Map<string, EligibilityCell[]> {
+function matrix(sy: MeritRouter, eps: ModelEndpoint[], qual: ReturnType<typeof qualificationLookupFrom>, excluded: (ep: ModelEndpoint) => string | null, now: Date): Map<string, EligibilityCell[]> {
   const out = new Map<string, EligibilityCell[]>();
-  const qual = qualificationLookup(sy.db, sy.cfg);
-  const eps = sy.catalog.endpoints();
+  const health = viewLookup(sy.health.lookup);
   const overrides = sy.catalog.routingOverrides();
   for (const profile of Object.keys(sy.cfg.profiles) as ProfileName[]) {
     for (const tier of TIER_NAMES) {
-      const plan = planRoute(sy.cfg, eps, overrides, { profile, tier, inputModalities: ["text"], needsStructuredOutput: false }, { now: new Date(), qualification: qual, health: sy.health.lookup, quarantined: (ep) => sy.gate.excluded(ep) });
+      const plan = planRoute(sy.cfg, eps, overrides, { profile, tier, inputModalities: ["text"], needsStructuredOutput: false }, { now, qualification: qual, health, quarantined: excluded });
       for (const ex of plan.explanations) {
         const cells = out.get(ex.endpointId) ?? [];
         cells.push({ profile, tier, eligible: ex.eligible, rank: ex.rank, reasons: ex.reasons });
@@ -271,30 +292,44 @@ function headline(ep: ModelEndpoint, cells: EligibilityCell[], quarantined: stri
 }
 
 export function modelsView(sy: MeritRouter): ModelView[] {
-  const m = matrix(sy);
-  const since = Date.now() - 7 * DAY;
+  return sy.withQualificationStats(reader => modelsViewWithQualification(sy, reader));
+}
+
+function modelsViewWithQualification(sy: MeritRouter, snapshot: QualificationStatReader): ModelView[] {
+  const now = new Date();
+  const eps = sy.catalog.endpoints();
+  const qualifications = new Map<string, QualificationStat | null>();
+  const readQualification: QualificationStatReader = (cfg, id, family, tier, threshold = cfg.qualification.pass_threshold) => {
+    const key = JSON.stringify([id, family, tier, threshold]);
+    if (!qualifications.has(key)) qualifications.set(key, snapshot(cfg, id, family, tier, threshold));
+    return qualifications.get(key)!;
+  };
+  const quarantined = viewLookup((ep: ModelEndpoint) => sy.gate.quarantined(ep));
+  const planRefused = viewLookup((ep: ModelEndpoint) => sy.gate.planRefused(ep));
+  const m = matrix(sy, eps, qualificationLookupFrom(readQualification, sy.cfg), ep => quarantined(ep) ?? planRefused(ep), now);
+  const stats = endpointStats(sy, now.getTime() - 7 * DAY);
+  const emptyStats: EndpointStats = { requests: 0, succeeded: 0, failed: 0, uncertain: 0, policyViolations: 0, inputTokens: 0, outputTokens: 0, avgLatencyMs: null, lastUsedAt: null, tasksCompleted: 0, tasksFailed: 0 };
   const families = [...new Set(Object.values(sy.cfg.profiles).map((p) => p.mode))];
-  // qualification_results is qualificationTables (store-role.ts): the qualification project's own store.
-  const qdb = requireProjectStores(sy, QUALIFICATION_PROJECT).db;
-  return sy.catalog.endpoints().map((ep) => {
+  // Aggregate capability reads an existing reserved store without provisioning during model inspection.
+  return eps.map((ep) => {
     const cells = m.get(ep.id) ?? [];
-    const quarantined = sy.gate.quarantined(ep);
-    const planRefused = sy.gate.planRefused(ep);
+    const quarantine = quarantined(ep);
+    const refusal = planRefused(ep);
     return {
       endpoint: ep,
       override: sy.catalog.override(ep.id),
-      quarantined,
-      planRefused,
+      quarantined: quarantine,
+      planRefused: refusal,
       firstSeenAt: sy.catalog.discoveredRow(ep.id)?.firstSeenAt ?? null,
-      stats7d: endpointStats(sy, ep.id, since),
+      stats7d: stats.get(ep.id) ?? { ...emptyStats },
       eligibility: cells,
-      qualification: families.flatMap((family) => TIER_NAMES.map((tier) => ({ family, tier, stat: qualificationStat(qdb, sy.cfg, ep.id, family, tier) }))),
-      headline: headline(ep, cells, quarantined, planRefused),
+      qualification: families.flatMap((family) => TIER_NAMES.map((tier) => ({ family, tier, stat: readQualification(sy.cfg, ep.id, family, tier) }))),
+      headline: headline(ep, cells, quarantine, refusal),
     };
   });
 }
 
-export interface RequestRow {
+export interface RequestRow extends RequestLifecycle {
   id: string;
   reservedAt: number;
   finishedAt: number | null;
@@ -383,6 +418,7 @@ const TaskRefRow = z.object({ label: z.string().nullable(), profile: z.string() 
 function requestRowOf(db: Db, r: Record<string, unknown>): RequestRow {
   const taskRef = db.prepare("SELECT json_extract(spec_json, '$.label') AS label, profile FROM tasks WHERE id = ? AND project_id = ?");
   return {
+    ...requestLifecycle(db, r),
     id: String(r.id),
     reservedAt: Number(r.reserved_at),
     finishedAt: (r.finished_at as number | null) ?? null,
@@ -505,7 +541,7 @@ export function routingPreview(sy: MeritRouter, profile: ProfileName, tier: Tier
     sy.catalog.endpoints(),
     sy.catalog.routingOverrides(),
     { profile, tier, inputModalities: modalities, needsStructuredOutput: false },
-    { now: new Date(), qualification: qualificationLookup(sy.db, sy.cfg), health: sy.health.lookup, quarantined: (ep) => sy.gate.excluded(ep) },
+    { now: new Date(), qualification: qualificationLookupFrom(sy.qualificationStat, sy.cfg), health: sy.health.lookup, quarantined: (ep) => sy.gate.excluded(ep) },
   );
   return { floorB: plan.floorB, forced: plan.forced, explanations: plan.explanations };
 }

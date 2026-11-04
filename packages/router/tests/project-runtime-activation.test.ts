@@ -78,7 +78,7 @@ function testConfig(written: { storage: unknown; brain: Record<string, unknown>;
   raw.client_supervision = { workflow: "direct_tasks" };
   raw.supervisor = {
     delivery_budget: { supervisor_reserve_requests: 0, validation_reserve_requests: 0 },
-    routing: { quality_evidence: [{ schemaVersion: 1, endpointId: "openrouter/vendor/big-a:free", source: "test-fixture:fake-supervisor-evaluation", checkedAt: new Date(Date.now() - 60_000).toISOString(), expiresAt: new Date(Date.now() + 86_400_000).toISOString(), classification: "qualified_supervisor", confidence: 1, trials: 10, scores: { planning: 1, architecture: 1, supervision: 1, integration: 1, review: 1, product: 1, visual: 1 } }] },
+    routing: { minimum_quality: "frontier_or_qualified_supervisor", quality_evidence: [{ schemaVersion: 1, endpointId: "openrouter/vendor/big-a:free", source: "test-fixture:fake-supervisor-evaluation", checkedAt: new Date(Date.now() - 60_000).toISOString(), expiresAt: new Date(Date.now() + 86_400_000).toISOString(), classification: "qualified_supervisor", confidence: 1, trials: 10, scores: { planning: 1, architecture: 1, supervision: 1, integration: 1, review: 1, product: 1, visual: 1 } }] },
   };
   return raw;
 }

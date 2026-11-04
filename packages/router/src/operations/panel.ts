@@ -32,7 +32,8 @@ export const panelStopFile = (cfg: Pick<ResolvedConfig, "storageDir">): string =
 
 /** How often one process revives the panel at most (a busy agent makes many tool calls). */
 export const REVIVE_EVERY_MS = 30_000;
-let lastRevive = 0;
+const lastRevive = new Map<string, number>();
+const panelTarget = (cfg: ResolvedConfig) => JSON.stringify([path.resolve(cfg.configPath), path.resolve(cfg.storageDir), cfg.panel.port]);
 
 /**
  * Agents are using MeritRouter: bring the panel back if nothing answers, even one the user turned
@@ -40,14 +41,15 @@ let lastRevive = 0;
  * throws, and never blocks the caller (the start runs in the background).
  */
 export function revivePanel(cfg: ResolvedConfig, now = Date.now()): Promise<PanelStatus> | null {
-  if (now - lastRevive < REVIVE_EVERY_MS) return null;
-  lastRevive = now;
+  const target = panelTarget(cfg);
+  if (now - (lastRevive.get(target) ?? 0) < REVIVE_EVERY_MS) return null;
+  lastRevive.set(target, now);
   return ensurePanel(cfg, { resume: true }).catch(() => null as unknown as PanelStatus);
 }
 
 /** Forget the throttle (tests). */
 export function resetPanelRevive(): void {
-  lastRevive = 0;
+  lastRevive.clear();
 }
 
 /** Record that the user turned the panel off (call before the panel process exits). */
@@ -246,20 +248,74 @@ export function panelBuildCheck(): { ok: boolean; detail: string } {
  * start, which also clears the marker and starts it even with `panel.auto_start` off). Never
  * throws: the result says what happened.
  */
-export async function ensurePanel(cfg: ResolvedConfig, opts: { waitMs?: number; force?: boolean; resume?: boolean } = {}): Promise<PanelStatus> {
+export interface EnsurePanelOptions { waitMs?: number; force?: boolean; resume?: boolean; signal?: AbortSignal }
+interface PanelAttempt { options: EnsurePanelOptions; controller: AbortController; subscribers: Set<symbol>; promise: Promise<PanelStatus> }
+const panelAttempts = new Map<string, PanelAttempt>();
+const retiredPanelAttempt = (cfg: ResolvedConfig): PanelStatus => ({ state: "stopped", url: panelUrl(cfg), detail: "panel startup owner closed before availability completed" });
+
+/** Shared single-flight startup. Each caller retires only its own interest, never another active owner. */
+export async function ensurePanel(cfg: ResolvedConfig, opts: EnsurePanelOptions = {}): Promise<PanelStatus> {
+  if (opts.signal?.aborted) return retiredPanelAttempt(cfg);
+  const key = panelTarget(cfg);
+  let attempt = panelAttempts.get(key);
+  if (!attempt) {
+    const controller = new AbortController();
+    const options: EnsurePanelOptions = { ...opts, signal: controller.signal };
+    const snapshot = { ...cfg, panel: { ...cfg.panel } };
+    const current: PanelAttempt = { controller, options, subscribers: new Set(), promise: Promise.resolve(retiredPanelAttempt(cfg)) };
+    current.promise = Promise.resolve().then(() => ensurePanelOnce(snapshot, options)).catch(error => ({ state: "unavailable" as const, url: panelUrl(snapshot), detail: `the panel could not be started: ${String((error as Error)?.message ?? error)}` })).finally(() => { if (panelAttempts.get(key) === current) panelAttempts.delete(key); });
+    panelAttempts.set(key, current);
+    attempt = current;
+  } else {
+    // A live explicit start/new session may strengthen an idle check, never the other way around.
+    if (opts.force) attempt.options.force = true;
+    if (opts.resume) attempt.options.resume = true;
+    if (opts.waitMs !== undefined) attempt.options.waitMs = Math.max(attempt.options.waitMs ?? START_WAIT_MS, opts.waitMs);
+  }
+  const owner = Symbol("panel-availability-owner"), ownedAttempt = attempt;
+  ownedAttempt.subscribers.add(owner);
+  let onAbort: (() => void) | undefined;
+  const retired = new Promise<PanelStatus>(resolve => {
+    onAbort = () => {
+      ownedAttempt.subscribers.delete(owner);
+      if (!ownedAttempt.subscribers.size) ownedAttempt.controller.abort();
+      resolve(retiredPanelAttempt(cfg));
+    };
+    opts.signal?.addEventListener("abort", onAbort, { once: true });
+    if (opts.signal?.aborted) onAbort();
+  });
+  try {
+    const status = await Promise.race([ownedAttempt.promise, retired]);
+    // A late force/resume joined just after an idle check decided to leave a marker alone.
+    if (!opts.signal?.aborted && ((opts.force && ["stopped", "disabled"].includes(status.state)) || (opts.resume && status.state === "stopped"))) {
+      await ownedAttempt.promise;
+      return ensurePanel(cfg, opts);
+    }
+    return status;
+  } finally {
+    if (onAbort) opts.signal?.removeEventListener("abort", onAbort);
+    ownedAttempt.subscribers.delete(owner);
+  }
+}
+
+async function ensurePanelOnce(cfg: ResolvedConfig, opts: EnsurePanelOptions): Promise<PanelStatus> {
   const url = panelUrl(cfg);
   const warned = (st: PanelStatus): PanelStatus => {
     const app = findPanelApp();
     const warning = "problem" in app ? null : panelBuildStale(app.dir);
     return warning ? { ...st, detail: `${st.detail}; warning: ${warning}`, warning } : st;
   };
-  if (await panelListening(cfg.panel.port)) return warned({ state: "running", url, detail: `the panel is running at ${url}` });
+  if (opts.signal?.aborted) return retiredPanelAttempt(cfg);
+  const listening = await panelListening(cfg.panel.port);
+  if (opts.signal?.aborted) return retiredPanelAttempt(cfg);
+  if (listening) return warned({ state: "running", url, detail: `the panel is running at ${url}` });
   // resume (a new agent session): forget a power-off, but keep panel.auto_start's say.
   if (opts.force || opts.resume) rmSync(panelStopFile(cfg), { force: true });
   else if (existsSync(panelStopFile(cfg))) return { state: "stopped", url, detail: `the panel was turned off from its power button; meritrouter panel or a new agent session starts it again` };
   if (!cfg.panel.auto_start && !opts.force) return { state: "disabled", url, detail: `nothing answers at ${url} and panel.auto_start is off: start it with meritrouter panel` };
   const app = findPanelApp();
   if ("problem" in app) return { state: "unavailable", url, detail: `the panel cannot start: ${app.problem}` };
+  if (opts.signal?.aborted) return retiredPanelAttempt(cfg);
   let logFile: string;
   try {
     const logs = logsDirFor(cfg.storageDir);
@@ -267,6 +323,7 @@ export async function ensurePanel(cfg: ResolvedConfig, opts: { waitMs?: number; 
     logFile = path.join(logs, "panel.log");
     const out = openSync(logFile, "a");
     try {
+      if (opts.signal?.aborted) return retiredPanelAttempt(cfg);
       const child = spawn(process.execPath, [app.nextBin, "start", "-H", "127.0.0.1", "-p", String(cfg.panel.port)], {
         cwd: app.dir,
         detached: true,
@@ -279,6 +336,7 @@ export async function ensurePanel(cfg: ResolvedConfig, opts: { waitMs?: number; 
           ...(app.runtimeModules ? { NODE_PATH: [app.runtimeModules, process.env.NODE_PATH].filter(Boolean).join(path.delimiter) } : {}),
         },
       });
+      child.once("error", () => undefined); // Startup failure remains an availability result, never an uncaught worker error.
       child.unref();
     } finally {
       // The child has its own handle; this process keeps none (it may start the panel many times).
@@ -288,9 +346,67 @@ export async function ensurePanel(cfg: ResolvedConfig, opts: { waitMs?: number; 
     return { state: "unavailable", url, detail: `the panel could not be started: ${(err as Error).message}` };
   }
   const deadline = Date.now() + (opts.waitMs ?? START_WAIT_MS);
-  while (Date.now() < deadline) {
+  while (Date.now() < deadline && !opts.signal?.aborted) {
     if (await panelListening(cfg.panel.port)) return warned({ state: "started", url, detail: `started the panel at ${url} (log: ${logFile})` });
-    await new Promise((r) => setTimeout(r, 300));
+    await panelPollDelay(opts.signal);
   }
+  if (opts.signal?.aborted) return retiredPanelAttempt(cfg);
   return warned({ state: "starting", url, detail: `the panel was started but does not answer at ${url} yet; see ${logFile}` });
+}
+
+function panelPollDelay(signal?: AbortSignal): Promise<void> {
+  return new Promise(resolve => {
+    let timer: ReturnType<typeof setTimeout>;
+    const done = () => { clearTimeout(timer); signal?.removeEventListener("abort", done); resolve(); };
+    timer = setTimeout(done, 300);
+    signal?.addEventListener("abort", done, { once: true });
+    if (signal?.aborted) done();
+  });
+}
+
+export const PANEL_AVAILABILITY_EVERY_MS = 60_000;
+/** Service-owned availability; idle checks respect a manual stop, new activity may resume it. */
+export class PanelAvailability {
+  private readonly timer: ReturnType<typeof setInterval>;
+  private running: Promise<PanelStatus> | null = null;
+  private controller: AbortController | null = null;
+  private closed = false;
+  private pending: "idle" | "resume" | null = null;
+  private lastActivity = -Infinity;
+  constructor(private readonly config: () => ResolvedConfig) {
+    this.timer = setInterval(() => { this.request(false); }, PANEL_AVAILABILITY_EVERY_MS);
+    this.timer.unref?.();
+    this.activity();
+  }
+  activity(now = Date.now()): void {
+    if (this.closed || now - this.lastActivity < REVIVE_EVERY_MS) return;
+    this.lastActivity = now;
+    this.request(true);
+  }
+  configurationChanged(): void {
+    if (this.closed) return;
+    this.controller?.abort();
+    this.request(false);
+  }
+  private request(resume: boolean): void {
+    if (this.closed || !this.config().panel.auto_start) return;
+    if (this.running) { if (resume || this.pending === null) this.pending = resume ? "resume" : "idle"; return; }
+    const controller = this.controller = new AbortController();
+    this.running = ensurePanel(this.config(), { resume, signal: controller.signal });
+    void this.running.finally(() => {
+      this.running = null;
+      if (this.controller === controller) this.controller = null;
+      const pending = this.pending;
+      this.pending = null;
+      if (!this.closed && pending) this.request(pending === "resume");
+    });
+  }
+  /** Retire synchronously; drain only this owner's bounded probe, never stop the detached panel. */
+  stop(): Promise<void> {
+    this.closed = true;
+    clearInterval(this.timer);
+    this.pending = null;
+    this.controller?.abort();
+    return this.running?.then(() => undefined, () => undefined) ?? Promise.resolve();
+  }
 }

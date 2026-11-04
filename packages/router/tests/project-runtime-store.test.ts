@@ -88,21 +88,23 @@ describe("transitional project runtime store handle", () => {
     expect(projectStoresForTask(sy!.projectStores(""), stored, sy!.projectContext(""))).toBeDefined();
   });
 
-  it("refuses a mismatched store handle before provider or runner execution", async () => {
+  it.each(["single", "batch"])("refuses a mismatched store handle before provider or runner execution (%s)", async mode => {
     const client = setup();
     task();
     executor = new Executor(deps(() => ({ cfg: sy!.projectContext("alpha"), brain: null, access: null, stores: sy!.projectStores("beta") })));
-    await executor.runSingle(claim());
+    const claimed = claim();
+    await (mode === "single" ? executor.runSingle(claimed) : executor.runBatch([claimed]));
     expect(client.requests).toHaveLength(0);
     expect(sy!.tasks.get("fixture")!.row.state).toBe("failed");
     expect(sy!.tasks.get("fixture")!.result?.stopReason).toMatch(/identity disagrees/);
   });
 
-  it("fails unknown project selection before provider use", async () => {
+  it.each(["single", "batch"])("fails unknown project selection before provider use (%s)", async mode => {
     const client = setup();
     task("missing");
     executor = new Executor(deps(stored => ({ cfg: sy!.projectContext(stored.row.project_id), brain: null, access: null })));
-    await executor.runSingle(claim());
+    const claimed = claim();
+    await (mode === "single" ? executor.runSingle(claimed) : executor.runBatch([claimed]));
     expect(client.requests).toHaveLength(0);
     expect(sy!.tasks.get("fixture")!.result?.stopReason).toMatch(/not configured/);
   });

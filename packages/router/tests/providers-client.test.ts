@@ -76,7 +76,10 @@ describe("provider registry", () => {
     expect([...BUILTIN_PROVIDER_IDS].sort()).toEqual([...first, ...coverage].sort());
     for (const p of providers().values()) {
       expect(p.sourceUrl).toMatch(/^(https:\/\/|docs\/working\/direct-providers\/research\.md#)/);
-      expect(p.checkedAt).toBe(coverage.includes(p.id) ? "2026-10-20" : "2026-10-19");
+      // Anthropic's Models API/capability research was refreshed separately;
+      // the remaining researched entries retain their original check dates.
+      expect(p.checkedAt).toBe(p.id === "anthropic" ? "2026-10-28" : coverage.includes(p.id) ? "2026-10-20" : "2026-10-19");
+      if (p.id === "anthropic") expect(p.sourceUrl).toBe("https://platform.claude.com/docs/en/api/models/list");
       expect(p.baseUrl).not.toMatch(/\/$/);
     }
   });

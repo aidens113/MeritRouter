@@ -8,7 +8,7 @@ afterEach(async () => { await router?.close(); router = undefined; env?.cleanup(
 
 function setup(options: { strict?: boolean; endpoints?: unknown[] } = {}) {
   const config = baseConfig({ supervisor: { routing: {
-    ...(options.strict ? { minimum_quality: "frontier_or_qualified_supervisor" } : {}), quality_evidence: [],
+    minimum_quality: options.strict ? "frontier_or_qualified_supervisor" : "best_available", quality_evidence: [],
   } } });
   (config.profiles as Record<string, unknown>).supervise = {
     mode: "supervisor", tools: "supervisor", min_total_parameters_b: 100, max_model_requests: 600,
@@ -38,7 +38,7 @@ describe("supervisor submission preflight", () => {
     expect(client.requests).toHaveLength(0);
   });
 
-  it("admits a usable default job with no quality evidence without spending requests", async () => {
+  it("admits an explicitly opted-in legacy job without quality evidence or spending requests", async () => {
     const { router, client } = setup();
     const job = await router.startJob({ goal: "Build a working app", repositories: ["core"], idempotencyKey: "startup-job" });
     expect(job).toMatchObject({ state: "queued", deduplicated: false });

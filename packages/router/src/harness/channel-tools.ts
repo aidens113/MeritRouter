@@ -26,7 +26,7 @@ interface JobView {
   labels: Map<string, string>;
 }
 
-function jobOf(env: HarnessEnv): JobView {
+export function channelJobView(env: HarnessEnv): JobView {
   const { ctx } = env;
   const jobId = ctx.jobId;
   if (!jobId) throw new ChannelError("this task is not part of a job, so it has no team channel");
@@ -166,7 +166,7 @@ export function channelTools(): HarnessTool[] {
       if (!input.success) throw new ChannelError(input.error.issues.map((i) => `${i.path.join(".") || "args"}: ${i.message}`).join("; "));
       const team = env.ctx.cfg.team;
       if (input.data.text.length > team.channel_max_post_chars) throw new ChannelError(`text: text is longer than ${team.channel_max_post_chars} characters (team.channel_max_post_chars)`);
-      const view = jobOf(env);
+      const view = channelJobView(env);
       const refs = resolveRefs(view, input.data.refs);
       const store = new ChannelStore(env.ctx.tasks.db, env.ctx.now);
       const { post: p, created } = store.post({
@@ -205,7 +205,7 @@ export function channelTools(): HarnessTool[] {
     async run(args, env) {
       const a = ReadArgsSchema.safeParse(args);
       if (!a.success) throw new ChannelError(a.error.issues.map((i) => `${i.path.join(".") || "args"}: ${i.message}`).join("; "));
-      const view = jobOf(env);
+      const view = channelJobView(env);
       const posts = new ChannelStore(env.ctx.tasks.db, env.ctx.now).list(view.jobId, {
         ...(view.supervisor ? {} : { forTask: env.ctx.taskId }),
         ...(a.data.kinds ? { kinds: a.data.kinds } : {}),

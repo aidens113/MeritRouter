@@ -1,3 +1,18 @@
+import { z } from "zod";
+
+/** Opaque native assistant state is conversation data, never tool/action authority. */
+export const NativeContinuationSchema = z.object({
+  provider: z.literal("anthropic"),
+  routeProvider: z.string().min(1).max(200),
+  baseUrl: z.url().max(4096),
+  model: z.string().min(1).max(500),
+  prefixDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  content: z.array(z.object({ type: z.string().min(1).max(200) }).catchall(z.json())).max(512),
+}).strict().superRefine((value, ctx) => {
+  if (Buffer.byteLength(JSON.stringify(value), "utf8") > 2 * 1024 * 1024) ctx.addIssue({ code: "custom", message: "Native continuation exceeds the 2 MiB bound; signed content cannot be truncated" });
+});
+export type NativeContinuation = z.infer<typeof NativeContinuationSchema>;
+
 /** Minimal OpenAI-compatible chat shapes used between the package and its provider clients. */
 export interface ChatToolCall {
   id: string;
@@ -10,7 +25,7 @@ export type ContentPart = { type: "text"; text: string } | { type: "image_url"; 
 export type ChatMessage =
   | { role: "system"; content: string }
   | { role: "user"; content: string | ContentPart[] }
-  | { role: "assistant"; content: string | null; tool_calls?: ChatToolCall[] }
+  | { role: "assistant"; content: string | null; tool_calls?: ChatToolCall[]; nativeContinuation?: NativeContinuation }
   | { role: "tool"; tool_call_id: string; content: string };
 
 export interface ChatTool {
@@ -76,12 +91,20 @@ export interface NativeWebSearchOutcome {
 }
 
 export interface ChatResponse {
-  message: { content: string | null; tool_calls?: ChatToolCall[] };
+  message: { content: string | null; tool_calls?: ChatToolCall[]; nativeContinuation?: NativeContinuation };
   finishReason: string | null;
   usage: NormalizedUsage;
   telemetry: GatewayTelemetry;
   httpStatus: number;
   webSearch?: NativeWebSearchOutcome;
+}
+
+/** Preserve validated native state without exposing it as visible text or tool authority. */
+export function assistantMessage(message: ChatResponse["message"]): Extract<ChatMessage, { role: "assistant" }> {
+  return { role: "assistant", content: message.content,
+    ...(message.tool_calls?.length ? { tool_calls: message.tool_calls } : {}),
+    ...(message.nativeContinuation === undefined ? {} : { nativeContinuation: NativeContinuationSchema.parse(message.nativeContinuation) }),
+  };
 }
 
 export interface ProviderStatus {
@@ -124,6 +147,12 @@ export function estimateTokens(messages: ChatMessage[], tools?: ChatTool[]): num
   };
   for (const m of messages) {
     chars += 16;
+    if (m.role === "assistant" && m.nativeContinuation) {
+      // Native content already includes its text/tool blocks; count the entire opaque
+      // representation once, including thinking/signatures/server state, conservatively.
+      add(JSON.stringify(NativeContinuationSchema.parse(m.nativeContinuation).content));
+      continue;
+    }
     if ("content" in m && typeof m.content === "string") add(m.content);
     else if ("content" in m && Array.isArray(m.content)) {
       // Images are billed per tile; ~1,000 tokens is a conservative per-image bound.

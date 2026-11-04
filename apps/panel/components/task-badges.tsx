@@ -101,7 +101,10 @@ export function OutcomeBadge({ outcome }: { outcome: string }) {
   return <Badge tone={tone}>{outcome.replace(/_/g, " ")}</Badge>;
 }
 
-export function RequestStatusBadge({ status }: { status: string }) {
-  const tone: Tone = status === "succeeded" ? "good" : status === "failed" ? "bad" : status === "uncertain" ? "warn" : "accent";
-  return <Badge tone={tone}>{status === "reserved" ? "in flight" : status}</Badge>;
+export function RequestStatusBadge({ status, activity = "unknown" }: { status: string; activity?: "active_owner" | "owner_lost" | "unknown" }) {
+  const pending = status === "reserved";
+  const label = pending ? activity === "active_owner" ? "awaiting result" : activity === "owner_lost" ? "owner interrupted" : "outcome pending" : status;
+  const tone: Tone = status === "succeeded" ? "good" : status === "failed" ? "bad" : status === "uncertain" || pending && activity === "owner_lost" ? "warn" : pending && activity === "active_owner" ? "accent" : "neutral";
+  const title = pending ? activity === "active_owner" ? "The owning task is active; no result has been recorded." : activity === "owner_lost" ? "The owning task was interrupted or replaced. The provider outcome remains unconfirmed." : "The request is unsettled; current execution activity cannot be verified." : undefined;
+  return <Badge tone={tone} title={title}>{label}</Badge>;
 }

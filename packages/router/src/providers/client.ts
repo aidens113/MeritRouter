@@ -7,6 +7,7 @@ import type { ResolvedProvider } from "./registry.js";
 import { maskProviderError } from "./secret-masking.js";
 import type { NativeSearchRequest } from "./native-search.js";
 import type { FetchLike } from "./transport.js";
+import type { AnthropicModelProtocol } from "../models/catalog.js";
 
 /** The secret and account for one request. `apiKey` is null only for keyless (local) providers. */
 export interface RequestCredential {
@@ -20,6 +21,8 @@ export interface ProviderRequest {
   credential: RequestCredential;
   /** The provider's own model id (no `<provider>/` prefix). */
   model: string;
+  /** Exact native route observation; it does not authorize spending or change tool contracts. */
+  anthropicProtocol?: AnthropicModelProtocol;
   chat: Omit<ChatRequest, "model">;
   /** Extra OpenAI parameters (`seed`, `top_p`, ...): filtered and renamed by the provider's rules. */
   params?: Record<string, unknown>;

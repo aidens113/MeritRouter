@@ -145,7 +145,7 @@ describe("team channel end to end", () => {
     const seen: Record<string, string> = {};
     const script = [
       () => [call("post_channel", { kind: "interface_contract", text: "Every part reports its line count as `lines: N`." }, "sup_post")],
-      () => [call("plan_work", { nodes: [brief("a"), brief("b", { depends_on: ["a"] }), brief("c", { depends_on: ["a"] })] })],
+      () => [call("plan_work", { nodes: [brief("a"), brief("b", { depends_on: ["a"] }), brief("c", { depends_on: ["a"] })].map(node => ({ ...node, max_requests: 4 })) })],
       () => [call("await_tasks", { timeout_seconds: 120 })],
       () => [call("read_channel", {})],
       () => [call("finish_job", { status: "completed", summary: "parts inspected", verified: [{ claim: "all nodes finished", evidence: "await_tasks" }], not_verified: [] })],

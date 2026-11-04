@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -13,10 +13,11 @@ import { baseConfig, commitAll, endpoint, FakeProvider, makeEnv, open, type Env 
 let env: Env | undefined;
 let sy: MeritRouter | undefined;
 afterEach(async () => {
-  await sy?.close();
-  sy = undefined;
-  env?.cleanup();
-  env = undefined;
+  const ownedService = sy, ownedEnvironment = env;
+  sy = undefined; env = undefined;
+  await ownedService?.close();
+  ownedEnvironment?.cleanup();
+  vi.restoreAllMocks();
 });
 
 const SUPERVISOR_EP = endpoint({ providerId: "openrouter", gatewayModelId: "alpha/alpha-1:free", totalParametersB: 700 });
@@ -87,6 +88,37 @@ async function promote(s: MeritRouter, project: string, lesson: { title: string;
 const git = (repo: string, ...args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf8" });
 
 describe("admin promotions: global knowledge for people (D9)", () => {
+  it("drains a direct human promotion decision admitted before close", async () => {
+    const s = setup(true);
+    fakeReviewer(s);
+    const id = await promote(s, "alpha", LESSONS[0]!);
+    const brain = s.brainFor("alpha"), ensure = brain.ensure.bind(brain);
+    let entered!: () => void, release!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const held = new Promise<void>(resolve => { release = resolve; });
+    vi.spyOn(brain, "ensure").mockImplementationOnce(async control => { entered(); await held; await ensure(control); });
+    const decision = brain.promotions.approve({ kind: "human", name: "fixture" }, id);
+    await started;
+    const closeDb = vi.spyOn(s.db, "close"), closing = s.close();
+    try {
+      await expect(brain.promotions.reject({ kind: "human", name: "late" }, id, "Too late")).rejects.toThrow(/closing/);
+      expect(closeDb).not.toHaveBeenCalled();
+      release();
+      expect((await decision).status).toBe("approved");
+      await closing;
+      expect(closeDb).toHaveBeenCalledOnce();
+    } finally { release(); await closing; }
+  });
+
+  it("allows an authorized global Brain read from another same-service project operation", async () => {
+    const s = setup(true), primary = s.brainFor("alpha"), other = s.brainFor("beta");
+    await primary.write({ kind: "human" }, { agent: "fixture", role: "tool" }, "global/preferences/lifecycle.md", "# Preference\n\nKeep retries bounded.\n");
+    const page = await other.runOperation(() => primary.catalog({ kind: "human" }, { prefix: "global/preferences", scope: "all" }));
+    expect(page.entries.some(entry => entry.path === "global/preferences/lifecycle.md")).toBe(true);
+  });
+
+  // This two-project journey publishes roughly sixteen durable Git transitions. It is
+  // a correctness test; retain I/O headroom alongside the separate commit-budget tests.
   it("lists promotions awaiting a person and lets a person approve (into global/ with provenance) or reject (reason required)", async () => {
     const s = setup(true);
     fakeReviewer(s);
@@ -134,17 +166,23 @@ describe("admin promotions: global knowledge for people (D9)", () => {
     expect(lesson.provenance!.sources[0]).toMatch(/^projects\/alpha\/decisions\//);
     expect(k.glossary).toMatchObject({ path: "global/glossary.md", kind: "glossary", revertable: false });
     expect(promotionsView(s, { status: "awaiting_person" })).toEqual([]);
-  });
+  }, 60_000);
 
-  it("a promotion under review cannot be decided; one with no review running (no reviewer) can", async () => {
+  it("a promotion under review cannot be decided or listed as awaiting a person", async () => {
     const s = setup(false);
     fakeReviewer(s, { running: true });
     const a = await promote(s, "alpha", LESSONS[0]!);
     const view = promotionsView(s, { project: "alpha" })[0]!;
     expect(view).toMatchObject({ id: a, status: "pending_review", awaitingPerson: false });
     await expect(decideGlobalPromotion(s, "alpha", a, true, "panel")).rejects.toThrow(/under review/);
+    expect(promotionsView(s, { status: "awaiting_person" })).toEqual([]);
+  });
 
-    // Without a reviewer the next one waits for a person, who may decide it.
+  it("a cached Brain observes an unavailable reviewer and allows a human decision", async () => {
+    const s = setup(false);
+    fakeReviewer(s, { running: true });
+    // Cache the Brain before changing the service's dynamically resolved reviewer.
+    s.brainFor("alpha");
     (s as unknown as { promotionReviewer: null }).promotionReviewer = null;
     const b = await promote(s, "alpha", LESSONS[1]!);
     expect(promotionsView(s, { status: "awaiting_person" }).map((p) => p.id)).toEqual([b]);

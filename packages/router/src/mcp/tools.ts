@@ -24,6 +24,8 @@ import { ProductEvidenceKindSchema } from "../verification/product-spec.js";
 import { currentDeliveryCandidate } from "../verification/product-candidate.js";
 import { randomUUID } from "node:crypto";
 import { MemoryPreferences, type PreferenceAuthorizationResolver } from "../brain/preferences.js";
+import { creditUsageFeedback } from "./credit-usage.js";
+import { ARTIFACT_REF_RE } from "../core/task.js";
 
 /** What every connection's server shares: the service, its config, and the project it serves. */
 export interface McpContext {
@@ -42,6 +44,7 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
   const projectInput = { project: z.string().min(1).optional().describe(`Project slug; default: this server's project (${project}).`) };
 
   const guidance = clientSupervisionFeedback(sy);
+  const creditNotices = creditUsageFeedback(sy);
   const server = new McpServer(
     { name: "meritrouter", version: "0.1.0" },
     {
@@ -60,10 +63,14 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
       let update: string | null = null;
       try { update = guidance.changed(); } catch { /* Invalid external config must not break unrelated tool calls. */ }
       const result = await handler(...args);
-      if (name === "set_supervision_policy" && !(result as { isError?: boolean }).isError) { guidance.acknowledge(); return result; }
-      if (!update) return result;
+      if (name === "set_supervision_policy" && !(result as { isError?: boolean }).isError) { guidance.acknowledge(); update = null; }
+      let notices: string[] = [];
+      try { notices = creditNotices(scope((args[0] as { project?: unknown } | undefined)?.project)); }
+      catch { /* Invalid project arguments retain the handler's original error and scope. */ }
+      const appended = [...(update ? [update] : []), ...notices];
+      if (!appended.length) return result;
       const response = result as { content: unknown[] };
-      return { ...response, content: [...response.content, { type: "text", text: update }] };
+      return { ...response, content: [...response.content, ...appended.map(text => ({ type: "text", text }))] };
     });
   const json = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] });
   const fail = (err: unknown) => ({ isError: true, content: [{ type: "text" as const, text: (err as Error).message ?? String(err) }] });
@@ -201,6 +208,22 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
       } catch (err) {
         return fail(err);
       }
+    },
+  );
+
+  server.registerTool(
+    "resume_supervisor_submission",
+    {
+      title: "Resume a supervisor submission awaiting qualification",
+      description: "Retry the exact project-owned saved supervisor submission after bounded model qualification. Restores its original goal, context, idempotency and limits; returns actual submitted outcomes or the current pending/refusal error. Does not claim a job exists while qualification is pending.",
+      inputSchema: { submissionRef: z.string().max(220).describe("Exact artifact:<id> reference returned for the saved submission; validated strictly before resuming."), ...projectInput },
+    },
+    async ({ submissionRef, project: named }) => {
+      try {
+        const ref = z.string().max(220).regex(ARTIFACT_REF_RE).parse(submissionRef);
+        return json({ submitted: await sy.resumeSupervisorSubmission(ref, scope(named)) });
+      }
+      catch (err) { return fail(err); }
     },
   );
 

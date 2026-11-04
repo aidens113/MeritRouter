@@ -71,7 +71,7 @@ describe("sub-supervisors", () => {
     const childScript = [
       // Depth 2 is the limit (team.max_depth 2): a sub-job cannot start another sub-job.
       () => [call("delegate", { tasks: [{ label: "deeper", profile: "supervise", goal: "nested further", acceptance_criteria: ["x"] }] })],
-      () => [call("delegate", { tasks: [{ label: "w1", profile: "implement", goal: "Add subtract(a, b) to src/app.ts", acceptance_criteria: ["subtract exists"], allowed_paths: ["src/**"], checks: [check], difficulty: "T2" }] })],
+      () => [call("delegate", { tasks: [{ label: "w1", profile: "implement", max_requests: 8, goal: "Add subtract(a, b) to src/app.ts", acceptance_criteria: ["subtract exists"], allowed_paths: ["src/**"], checks: [check], difficulty: "T2" }] })],
       () => [call("await_tasks", { timeout_seconds: 120 })],
       () => [call("integrate_task", { task_id: "w1" })],
       () => [call("brain_set_job_section", { body: "w1 integrated; subtract exists on the sub-job branch." })],

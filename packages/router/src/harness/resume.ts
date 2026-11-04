@@ -5,7 +5,7 @@ import type { ResumePlan } from "../sessions/resume.js";
 import { editRecoveryMessage, RESUME_TEXT, notAppliedToolProof, validNotAppliedToolProof } from "../sessions/resume.js";
 import type { ResumeAction, ResumeToolRef, WorkspaceRepo } from "../sessions/events.js";
 import type { WorkspacePointer } from "../runners/session-workspace.js";
-import { commitAs, SelectedCommitError, type Actor } from "../attribution/index.js";
+import { SelectedCommitError, type Actor } from "../attribution/index.js";
 import { git } from "../workspaces/git.js";
 import { RepositoryMutationError, withRepositoryMutation } from "../workspaces/repository-mutation.js";
 import { stageWithoutProjectMetadata } from "../workspaces/metadata-staging.js";
@@ -16,6 +16,8 @@ import { journaled, parseArgs } from "./journal.js";
 import { assertRunAuthority } from "./task-authority.js";
 import { scopedArtifact } from "./check-evidence.js";
 import { resolveReader } from "./operation-contract.js";
+import { recoveredEditActor } from "../attribution/recovered-edit-provenance.js";
+import { commitCapturedApplication, unpackSelectedCommitOutcome } from "../attribution/selected-commit.js";
 
 /**
  * What a runner hands the agent loop to continue an interrupted session (S2). The loop's
@@ -31,6 +33,8 @@ export interface ResumeInput {
   external?: (ref: ResumeToolRef) => string;
   /** Runner-specific text appended to the resume notice (answers received meanwhile, ...). */
   notice?: string;
+  /** Trusted operator continuation of a settled blocked job; never model-supplied. */
+  settledTerminalPolicy?: "continue_blocked_job";
 }
 
 export type ResumeOutcome<T> = { kind: "finished"; value: T } | {
@@ -148,7 +152,7 @@ async function abortSequencer(worktree: string): Promise<string | null> {
  * it. Commits made after the recorded head (a per-response commit whose workspace event was
  * lost) are kept either way. Returns the files the reconciliation concerned.
  */
-async function reconcileRepo(repo: WorkspaceRepo, policy: "commit" | "reset", actor: Actor, pointer: WorkspacePointer | null, assertAuthority: () => void): Promise<{ files: string[]; note: string | null; unchanged: boolean }> {
+async function reconcileRepo(repo: WorkspaceRepo, policy: "commit" | "reset", actor: Actor, pointer: WorkspacePointer | null, assertAuthority: () => void, env: HarnessEnv): Promise<{ files: string[]; note: string | null; unchanged: boolean }> {
   if (!existsSync(repo.worktree)) return { files: [], note: `${repo.alias}: worktree ${repo.worktree} is gone; nothing to reconcile`, unchanged: false };
   return withRepositoryMutation([repo.worktree], async mutation => {
     assertAuthority();
@@ -168,19 +172,26 @@ async function reconcileRepo(repo: WorkspaceRepo, policy: "commit" | "reset", ac
       pointer?.setHead(repo.alias, actual);
       return { files: dirty, note, unchanged };
     }
-    const head = dirty.length ? ((await commitAs(repo.worktree, actor, `${actor.role ?? "agent"}: recovered edits after interruption`, {}, { mutation, assertAuthority })) ?? actual) : actual;
+    let recovered: Awaited<ReturnType<typeof recoveredEditActor>> | null = null;
+    if (dirty.length) {
+      if (!env.ctx.session) throw new Error("recovered_edit_provenance_refused: recovered edits require a retained author session");
+      recovered = await recoveredEditActor({ tasks: env.ctx.tasks, cfg: env.ctx.cfg, now: env.ctx.now }, { taskId: env.ctx.taskId, sessionId: env.ctx.session.id, alias: repo.alias, worktree: repo.worktree, actor });
+      assertAuthority();
+      if (recovered.observedProjection) env.ctx.session.note("Observed native edit recovery proof", recovered.observedProjection);
+    }
+    const head = recovered ? (unpackSelectedCommitOutcome(await commitCapturedApplication(repo.worktree, { actor: recovered.actor, head: recovered.head, tree: recovered.tree, message: `${actor.role ?? "agent"}: recovered edits after interruption` }, { mutation, assertAuthority })) ?? actual) : actual;
     const since = repo.head && repo.head !== head ? (await git(repo.worktree, ["diff", "--name-only", repo.head, head])).split(/\r?\n/).filter(Boolean) : [];
     assertAuthority(); pointer?.setHead(repo.alias, head);
     return { files: [...new Set([...since, ...dirty])].sort(), note, unchanged };
   });
 }
 
-async function reconcileEdits(action: Extract<ResumeAction, { kind: "reconcile_edits" }>, messages: ChatMessage[], r: ResumeInput, assertAuthority: () => void): Promise<{ text: string; unchanged: boolean }> {
+async function reconcileEdits(action: Extract<ResumeAction, { kind: "reconcile_edits" }>, messages: ChatMessage[], r: ResumeInput, assertAuthority: () => void, env: HarnessEnv): Promise<{ text: string; unchanged: boolean }> {
   const files: string[] = [];
   const notes: string[] = [];
   let unchanged = action.repos.length > 0;
   for (const repo of action.repos) {
-    const out = await reconcileRepo(repo, action.policy, r.actor, r.pointer, assertAuthority);
+    const out = await reconcileRepo(repo, action.policy, r.actor, r.pointer, assertAuthority, env);
     files.push(...(action.repos.length > 1 ? out.files.map((f) => `${repo.alias}:${f}`) : out.files));
     unchanged &&= out.unchanged;
     if (out.note) notes.push(out.note);
@@ -255,7 +266,7 @@ export async function applyResume<T>(o: { env: HarnessEnv; messages: ChatMessage
       setTool(messages, action.messageIndex, res.output);
       done.push({ ...action, result: res.output });
     } else if (action.kind === "reconcile_edits") {
-      const reconciled = await reconcileEdits(action, messages, r, () => assertRunAuthority(env.ctx));
+      const reconciled = await reconcileEdits(action, messages, r, () => assertRunAuthority(env.ctx), env);
       if (reconciled.unchanged) for (const call of action.calls) {
         if (!plan.notAppliedCandidateIntents?.includes(call.intentSeq)) continue;
         if (call.messageIndex !== null && messages[call.messageIndex]?.role === "tool" && (messages[call.messageIndex] as Extract<ChatMessage, { role: "tool" }>).tool_call_id === call.callId) notAppliedToolIndexes.add(call.messageIndex);
@@ -275,7 +286,7 @@ export async function applyResume<T>(o: { env: HarnessEnv; messages: ChatMessage
 
   // A submission made before the interruption: finish with it rather than asking the model again.
   const terminalName = o.terminal.def.function.name;
-  const tail = tailTerminal(messages, terminalName);
+  const tail = r.settledTerminalPolicy === "continue_blocked_job" ? null : tailTerminal(messages, terminalName);
   if (tail) {
     const slot = messages[tail.index] as Extract<ChatMessage, { role: "tool" }>;
     const args = parseArgs(tail.call.function.arguments);

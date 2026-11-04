@@ -151,6 +151,15 @@ async function runChunk(chunk: Item[], done: Done): Promise<void> {
   for (let round = 0; round < maxRounds && pending.length; round++) {
     // Members whose own request budget is spent cannot join another physical request.
     for (const item of [...pending]) {
+      try {
+        if (!item.ctx.purpose && item.ctx.executionRequestCap) item.ctx.budget = { ...item.ctx.budget, maxModelRequests: item.ctx.executionRequestCap() };
+      } catch (error) {
+        if (!(error instanceof AdmissionDenied) || error.taskId !== item.ctx.taskId || !["cancel_requested", "lease_lost", "task_not_active", "deadline_exceeded"].includes(error.reason)) throw error;
+        pending = pending.filter(p => p !== item);
+        const state = error.reason === "cancel_requested" ? "cancelled" : error.reason === "deadline_exceeded" ? "failed" : "interrupted";
+        await done(item, { state, result: baseResult({ executionStatus: state, stopReason: error.reason, unresolvedCriteria: criterionTexts(item.ctx.spec) }) }, []);
+        continue;
+      }
       if (admission.taskTotals(item.ctx.taskId).requests >= item.ctx.budget.maxModelRequests) {
         pending = pending.filter((p) => p !== item);
         await done(item, { state: "budget_exhausted", result: baseResult({ executionStatus: "budget_exhausted", stopReason: "model request budget exhausted during batch retries", unresolvedCriteria: criterionTexts(item.ctx.spec) }) }, []);
@@ -184,6 +193,9 @@ async function runChunk(chunk: Item[], done: Done): Promise<void> {
     let res: GateResponse;
     const requestContext = pending[0]!.ctx;
     try {
+      // Each member owns a separate captured allowance. A copied first context cannot
+      // refresh the explicit participant budgets or authorize another member's grant.
+      for (const { ctx } of pending) if (!ctx.purpose && ctx.executionRequestCap) ctx.budget = { ...ctx.budget, maxModelRequests: ctx.executionRequestCap() };
       res = await ask(
         { ...requestContext, session: null },
         { ...request, participants: pending.map((p) => ({ taskId: p.ctx.taskId, leaseOwner: p.ctx.leaseOwner, lease: LeaseRefSchema.parse(p.ctx.taskLease), budget: p.ctx.budget, weight: p.estTokens })) },

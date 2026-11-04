@@ -5,6 +5,7 @@ import { sliceLines } from "../context/repo-reader.js";
 import { git } from "../workspaces/git.js";
 import { scopedArtifact } from "./check-evidence.js";
 import { OutputPageArgs } from "./output-pages.js";
+import { commandTimeoutMs } from "./command-timeout.js";
 const FileArgs = z.object({ path: z.string().min(1), start_line: z.number().int().positive().optional(), end_line: z.number().int().positive().optional() });
 // SDK registration also parses inputs. Retain legacy string acceptance there while
 // advertising the preferred object fields even to clients that discard union branches.
@@ -14,9 +15,9 @@ const ModelFileArgs = z.union([z.string().min(1), FileArgs]).meta(fileModelSchem
 const PagingArgs = { offset: z.number().int().nonnegative().max(1000000).default(0), limit: z.number().int().min(1).max(1000).default(1000) };
 export function repositoryOperations(): OperationDefinition[] {
   return [
-    { name: "workspace_info", description: "Inspect granted repositories, OS, writable scope and declared recipe IDs. Batch observations; commands must use authorized recipes.", args: z.object(DeadlineArgs), sideEffect: "read", async run(_, env) { return { platform: platform(), repositories: [...env.readers].map(([alias, r]) => ({ alias, root: r.root, revision: r.commit })), writable: env.workspace ? { alias: env.workspace.alias, allowedPaths: env.workspace.allowedPaths } : null, recipes: env.checks?.commands.map((command, i) => ({ id: `check:${i + 1}`, command })) ?? [], limits: { timeout_ms: 30000, max_timeout_ms: 300000, batch_items: 64, read_concurrency: 4 } }; } },
+    { name: "workspace_info", description: "Inspect granted repositories, OS, writable scope and declared recipe IDs. Batch observations; commands must use authorized recipes. limits.timeout_ms is the read/edit default; command_timeout_ms is the configured default aggregate command budget. Explicit stricter ancestor budgets remain binding.", args: z.object(DeadlineArgs), sideEffect: "read", async run(_, env) { return { platform: platform(), repositories: [...env.readers].map(([alias, r]) => ({ alias, root: r.root, revision: r.commit })), writable: env.workspace ? { alias: env.workspace.alias, allowedPaths: env.workspace.allowedPaths } : null, recipes: env.checks?.commands.map((command, i) => ({ id: `check:${i + 1}`, command })) ?? [], limits: { timeout_ms: 30000, command_timeout_ms: commandTimeoutMs(env.ctx.cfg), max_timeout_ms: 300000, batch_items: 64, read_concurrency: 4 } }; } },
     {
-      name: "read_files", description: "Read up to 64 files in one call. Use one call for all known independent files: {\"files\":[{\"path\":\"src/a.ts\"},{\"path\":\"src/b.ts\",\"start_line\":1,\"end_line\":80}]}. Independent outcomes preserve successful files when another is missing; ranges use numbered lines.", args: z.object({ ...RepositoryArgs, ...DeadlineArgs, files: z.array(z.union([z.string().min(1), FileArgs])).min(1).max(64) }), modelArgs: z.object({ ...RepositoryArgs, ...DeadlineArgs, files: z.array(ModelFileArgs).min(1).max(64) }), sideEffect: "read", async run(a, env) {
+      name: "read_files", description: "Read up to 64 files in one call. Use one call for all known independent files: {\"files\":[{\"path\":\"src/a.ts\"},{\"path\":\"src/b.ts\",\"start_line\":1,\"end_line\":80}]}. Independent outcomes preserve successful files when another is missing; ranges use numbered lines. Each successful item returns the exact qualified ref you may cite in evidenceRefs. sha256 identifies the entire original file bytes even for partial or truncated displays; reread after edits or revision conflicts before using expected_sha256.", args: z.object({ ...RepositoryArgs, ...DeadlineArgs, files: z.array(z.union([z.string().min(1), FileArgs])).min(1).max(64) }), modelArgs: z.object({ ...RepositoryArgs, ...DeadlineArgs, files: z.array(ModelFileArgs).min(1).max(64) }), sideEffect: "read", async run(a, env) {
         const r = resolveReader(env, a.alias), inputs = a.files as Array<string | z.infer<typeof FileArgs>>, results: unknown[] = new Array(inputs.length);
         if(!r.commit)await r.dirtyPaths(env.ctx.signal);
         let next = 0;
@@ -28,7 +29,8 @@ export function repositoryOperations(): OperationDefinition[] {
               const f = await r.readFile(spec.path, env.ctx.signal);
               const lines = sliceLines(f.content, spec.start_line, spec.end_line);
               env.universe.refs.set(`${r.alias}:${f.relPath}`, f.totalLines);
-              results[i] = { path: f.relPath, status: "succeeded", sha256: f.sha256, revision: f.commit, totalLines: f.totalLines, ...lines };
+              const ref = `${r.alias}:${f.relPath}`;
+              results[i] = { path: f.relPath, ref: lines.end >= lines.start ? `${ref}#L${lines.start}-L${lines.end}` : ref, status: "succeeded", sha256: f.sha256, revision: f.commit, totalLines: f.totalLines, ...lines };
             }
             catch (e) {
               results[i] = { path: spec.path, status: "failed", diagnostic: String((e as Error).message) };

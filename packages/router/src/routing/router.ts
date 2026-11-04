@@ -13,7 +13,7 @@ import { qualificationLookup } from "../qualification/stats.js";
 import { Classifier } from "../scoring/classifier.js";
 import { loadRulebook, rulebookFingerprint, type Rulebook } from "../scoring/rulebook.js";
 import { classifierCouldMatter, decide, featureScore, measureFeatures, bumpTier, type Classification } from "../scoring/score.js";
-import { planRoute, type ReviewerQualificationRequirement, type RoutePlan } from "./select.js";
+import { planRoute, type QualificationLookup, type ReviewerQualificationRequirement, type RoutePlan } from "./select.js";
 
 export function modalitiesFromMediaType(mediaType: string): Modality | null {
   if (mediaType.startsWith("image/")) return "image";
@@ -42,6 +42,7 @@ export class TaskRouter {
     private readonly gate: Gate,
     private readonly artifacts: ArtifactStore,
     private readonly now: () => number = Date.now,
+    private readonly qualificationSource?: (config: ResolvedConfig) => QualificationLookup,
   ) {
     if (gate.projectIdentity && (db !== gate.projectDb || cfg.brain.project !== gate.projectIdentity.slug))
       throw new Error("Task router does not match its pinned project Gate");
@@ -51,9 +52,16 @@ export class TaskRouter {
   }
 
   /** `web` is the task's `hints.web` (native web search: preferred when true, always-on models excluded when false). */
-  plan(profile: ProfileName, tier: TierName, inputModalities: Modality[], forcedEndpointId?: string, skipQualification = false, paidPolicy?: PaidPolicy, extraOverrides: RoutingOverride[] = [], web?: boolean): RoutePlan {
+  qualification(config: ResolvedConfig = this.cfg): QualificationLookup {
+    if (this.qualificationSource) return this.qualificationSource(config);
+    if (this.gate.projectIdentity) throw new Error("Split routing requires an explicit qualification statistics capability");
+    return qualificationLookup(this.db, config);
+  }
+
+  /** Plan with the owning installation's aggregate qualification capability. */
+  plan(profile: ProfileName, tier: TierName, inputModalities: Modality[], forcedEndpointId?: string, skipQualification = false, paidPolicy?: PaidPolicy, extraOverrides: RoutingOverride[] = [], web?: boolean, config: ResolvedConfig = this.cfg): RoutePlan {
     return planRoute(
-      this.cfg,
+      config,
       this.catalog.endpoints(),
       // Qualification runs measure one model in isolation: routing overrides do not apply.
       skipQualification ? [] : [...this.catalog.routingOverrides(), ...extraOverrides],
@@ -69,7 +77,7 @@ export class TaskRouter {
       },
       {
         now: new Date(this.now()),
-        qualification: qualificationLookup(this.gate.coordinationDb ?? this.db, this.cfg),
+        qualification: this.qualification(config),
         health: this.gate.health.lookup,
         quarantined: (ep) => this.gate.excluded(ep),
       },
@@ -108,7 +116,7 @@ export class TaskRouter {
       },
       {
         now: new Date(this.now()),
-        qualification: qualificationLookup(this.gate.coordinationDb ?? this.db, this.cfg),
+        qualification: this.qualification(),
         health: this.gate.health.lookup,
         quarantined: (ep) => this.gate.excluded(ep),
       },
@@ -148,7 +156,7 @@ export class TaskRouter {
   }
   /**
    * Classify a task and plan its route. `project` is the task's project context (its
-   * repositories and verification budget); routing itself (tiers, profiles, models) is global.
+   * repositories, profiles, routing policy and verification budget).
    */
   async prepare(task: StoredTask, leaseOwner: string, project: ResolvedConfig = this.cfg): Promise<Prepared> {
     const lease = capturedLease(task);
@@ -156,7 +164,7 @@ export class TaskRouter {
     await this.gate.health.refresh();
     this.assertLease(lease);
     const spec = task.spec;
-    const profile = this.cfg.profiles[spec.profile]!;
+    const profile = project.profiles[spec.profile]!;
     const inputModalities = this.inputModalities(task);
     const sources = await loadSources(project, spec, this.artifacts);
     const features = await measureFeatures(project, spec, sources, {
@@ -169,20 +177,20 @@ export class TaskRouter {
     let classification: Classification;
     if (profile.mode === "supervisor") {
       // Supervisors are not scored: they run at T3 on the models you chose for the role.
-      classification = decide(this.cfg, this.rulebook, spec, features, { ...base, basis: "forced", tags: null });
+      classification = decide(project, this.rulebook, spec, features, { ...base, basis: "forced", tags: null });
       classification.tier = "T3";
       classification.rejectReason = null;
       this.recordClassification(lease, "T3", classification);
-      const chosen: RoutingOverride[] = this.cfg.supervisor.endpoints.map((endpointId) => ({ profile: spec.profile, tier: null, kind: "force", endpointId, allowBelowFloor: true, enabled: true }));
-      const plan = this.plan(spec.profile, "T3", inputModalities, spec.routing?.endpointId, false, this.cfg.supervisor.paid_policy, chosen, spec.hints?.web);
+      const chosen: RoutingOverride[] = project.supervisor.endpoints.map((endpointId) => ({ profile: spec.profile, tier: null, kind: "force", endpointId, allowBelowFloor: true, enabled: true }));
+      const plan = this.plan(spec.profile, "T3", inputModalities, spec.routing?.endpointId, false, project.supervisor.paid_policy, chosen, spec.hints?.web, project);
       if (plan.blocker) throw new MeritRouterError(plan.blocker.code, plan.blocker.message);
       return { classification, plan, inputModalities };
     }
     if (spec.routing?.tier || spec.routing?.endpointId) {
-      classification = decide(this.cfg, this.rulebook, spec, features, { ...base, basis: "forced", tags: spec.hints?.tags ?? null });
+      classification = decide(project, this.rulebook, spec, features, { ...base, basis: "forced", tags: spec.hints?.tags ?? null });
     } else if (spec.hints?.difficulty || spec.hints?.tags) {
-      classification = decide(this.cfg, this.rulebook, spec, features, { ...base, basis: "rules+hint", tags: spec.hints.tags ?? null });
-    } else if (profile.classify === "always" || (profile.classify === "auto" && classifierCouldMatter(this.cfg, this.rulebook, detScore))) {
+      classification = decide(project, this.rulebook, spec, features, { ...base, basis: "rules+hint", tags: spec.hints.tags ?? null });
+    } else if (profile.classify === "always" || (profile.classify === "auto" && classifierCouldMatter(project, this.rulebook, detScore))) {
       const verdict = await this.classifier.classify({
         taskId: task.row.id,
         leaseOwner, lease,
@@ -192,7 +200,7 @@ export class TaskRouter {
         features,
       });
       if (verdict) {
-        classification = decide(this.cfg, this.rulebook, spec, features, {
+        classification = decide(project, this.rulebook, spec, features, {
           rulebookVersion: this.fingerprint,
           basis: "rules+classifier",
           tags: verdict.tags,
@@ -204,26 +212,26 @@ export class TaskRouter {
         // Classifier unavailable or invalid: be conservative and round up one tier, but never out
         // of the workers' reach (live: a T3-scored task became T4 "too difficult" because the
         // classifier's reply was cut off, and never ran). T4 needs a real verdict or a hint.
-        classification = decide(this.cfg, this.rulebook, spec, features, { ...base, basis: "rules+classifier_failed", tags: null });
+        classification = decide(project, this.rulebook, spec, features, { ...base, basis: "rules+classifier_failed", tags: null });
         if (classification.tier !== "T4" && classification.tier !== "T3") {
           classification.tier = bumpTier(classification.tier);
           classification.breakdown.push({ rule: "classifier_failed", points: 0, detail: `classifier unavailable: rounded up to ${classification.tier}` });
         }
       }
     } else {
-      classification = decide(this.cfg, this.rulebook, spec, features, { ...base, basis: "rules", tags: null });
+      classification = decide(project, this.rulebook, spec, features, { ...base, basis: "rules", tags: null });
     }
 
     this.recordClassification(lease, classification.tier, classification);
     if (classification.tier === "T4") {
       // Premium: T4 work goes to paid models (at T3 limits) instead of back to the supervisor.
-      if (this.cfg.paid.enabled && this.cfg.paid.tiers.T4 === "premium" && !classification.rejectReason?.includes("clarification")) {
-        const plan = this.plan(spec.profile, "T3", inputModalities, spec.routing?.endpointId, false, "premium", [], spec.hints?.web);
+      if (project.paid.enabled && project.paid.tiers.T4 === "premium" && !classification.rejectReason?.includes("clarification")) {
+        const plan = this.plan(spec.profile, "T3", inputModalities, spec.routing?.endpointId, false, "premium", [], spec.hints?.web, project);
         if (plan.candidates.length) return { classification, plan, inputModalities };
       }
       return { classification, plan: null, inputModalities };
     }
     const qualifying = (task.row as typeof task.row & { purpose?: string }).purpose === "qualification";
-    return { classification, plan: this.plan(spec.profile, classification.tier, inputModalities, spec.routing?.endpointId, qualifying, undefined, [], spec.hints?.web), inputModalities };
+    return { classification, plan: this.plan(spec.profile, classification.tier, inputModalities, spec.routing?.endpointId, qualifying, undefined, [], spec.hints?.web, project), inputModalities };
   }
 }

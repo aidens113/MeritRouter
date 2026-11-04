@@ -33,12 +33,11 @@ You need **Node.js 22.11 or later**, **Git**, and **pnpm 10.5**. You also need a
 to a model provider or a compatible local model server to run model tasks. An existing
 Claude Code or other MCP-capable agent can act as your supervisor.
 
-Supervisor routing works with your eligible configured models by default. Current, sourced
-capability evidence in `supervisor.routing.quality_evidence` improves selection; without it,
-the router uses the strongest eligible route and labels its quality unverified. Model size
-is a selection heuristic, not proof of supervisor ability. Set
-`supervisor.routing.minimum_quality: frontier_or_qualified_supervisor` to require reviewed
-evidence and block unqualified dispatch. See [supervisor setup](docs/setup.md). Legacy task-by-task
+Supervisor routing defaults to `supervisor.routing.minimum_quality: ranked_capable`.
+It compares current, sourced capability measurements for exact model routes; parameter counts
+and model names cannot establish supervisor quality. Missing measurements require qualification,
+and paid fallback still requires authorized keys, known prices and available budgets.
+See [supervisor setup](docs/setup.md). Legacy task-by-task
 coordination remains available with `client_supervision.workflow: direct_tasks`.
 
 If `pnpm` is missing, install it with `npm install --global pnpm@10.5.0`.

@@ -15,6 +15,16 @@ import { ConfigSchema } from "../src/config/schema.js";
 let env: Env | undefined;
 afterEach(() => { env?.cleanup(); env = undefined; });
 const content = (value: unknown) => (value as { content: Array<{text: string}> }).content;
+function expectFinalOversight(instructions: string | undefined): void {
+  expect(instructions).toContain("Keep working through delegated completion and repair");
+  expect(instructions).toContain("A dispatch acknowledgement is not a handoff");
+  expect(instructions).toMatch(/strongest ranked capable supervisor available through current keys[\s\S]*parameter threshold alone/);
+  expect(instructions).toMatch(/Verify the actual served supervisor model[\s\S]*downgrade or unavailability/);
+  expect(instructions).toMatch(/delivery_status[\s\S]*record_delivery_observation[\s\S]*decide_delivery[\s\S]*resume_task/);
+  expect(instructions).toContain("runtime, browser, journey and persistence evidence as applicable");
+  expect(instructions).toMatch(/User status questions steer[\s\S]*do not cancel[\s\S]*Explicit user pause or cancellation takes precedence/);
+  expect(instructions).toContain("grants no deployment, spending, messaging or policy-change authority");
+}
 
 describe("external client supervision", () => {
   it("defaults final dispatch off; strictly validates narrow writes and preserves unrelated YAML/comments", async () => {
@@ -23,6 +33,7 @@ describe("external client supervision", () => {
       writeFileSync(env.cfg.configPath, readFileSync(env.cfg.configPath, "utf8") + "\n# keep this comment\n");
       const original = YAML.parse(readFileSync(env.cfg.configPath, "utf8"));
       expect(supervisionPolicy(sy)).toMatchObject({ dispatch_final_supervisor: false, instructions: "", effectiveInstructions: expect.stringContaining("Delegate as much practical work") });
+      expectFinalOversight(supervisionPolicy(sy).effectiveInstructions);
       for (const bad of [{ reason: "why" }, { dispatch_final_supervisor: false, reason: " " }, { dispatch_final_supervisor: false, reason: "why", paid: true }, { instructions: "x".repeat(8001), reason: "why" }]) expect(() => setSupervisionPolicy(sy, bad)).toThrow();
       expect(() => ConfigSchema.parse({ ...original, client_supervision: { dispatch_final_supervisor: "yes" } })).toThrow();
       expect(setSupervisionPolicy(sy, { dispatch_final_supervisor: true, reason: "User permits project supervisor" })).toMatchObject({ dispatch_final_supervisor: true, reason: "User permits project supervisor" });
@@ -139,6 +150,7 @@ describe("external client supervision", () => {
       expect(client.getInstructions()).toContain("delivery-supervisor job");
       expect(client.getInstructions()).toContain("runtime testing and repair");
       expect(client.getInstructions()).toContain("You retain FINAL acceptance");
+      expectFinalOversight(client.getInstructions());
       let result = await client.callTool({ name: "get_supervision_policy", arguments: {} }); expect(content(result)).toHaveLength(1); expect(JSON.parse(content(result)[0]!.text).dispatch_final_supervisor).toBe(false);
       const denied = await client.callTool({ name: "start_job", arguments: { goal: "Whole project", repositories: ["core"], supervisionScope: "project" } }); expect(denied.isError).toBe(true); expect(content(denied)[0]!.text).toContain("disabled");
       const custom = await client.callTool({ name: "submit_tasks", arguments: { tasks: [{ profile: "inspect", goal: "Whole project", supervisionScope: "project", repositoryAliases: ["core"], constraints: { acceptanceCriteria: ["done"] } }] } }); expect(custom.isError).toBe(true); expect(content(custom)[0]!.text).toContain("disabled");
@@ -160,6 +172,7 @@ describe("external client supervision", () => {
       try { await disabledClient.connect(new StdioClientTransport({ command: process.execPath, args, env: processEnv })); expect(disabledClient.getInstructions()).toContain("final supervisors are permitted"); expect(disabledClient.getInstructions()).toContain("Delegate as much practical work"); } finally { await disabledClient.close(); }
       const raw = YAML.parseDocument(readFileSync(env.cfg.configPath, "utf8")); raw.setIn(["client_supervision", "dispatch_final_supervisor"], false); raw.setIn(["client_supervision", "instructions"], "UI-originated custom plan"); writeFileSync(env.cfg.configPath, raw.toString());
       result = await client.callTool({ name: "job_status", arguments: { jobId: "missing" } }); expect(result.isError).toBe(true); expect(content(result)[0]!.text).toBe("unknown job missing"); expect(content(result)).toHaveLength(2); expect(content(result)[1]!.text).toContain("UI-originated custom plan");
+      expectFinalOversight(content(result)[1]!.text);
       result = await client.callTool({ name: "get_supervision_policy", arguments: {} }); expect(content(result)).toHaveLength(1); expect(JSON.parse(content(result)[0]!.text).instructions).toBe("UI-originated custom plan");
       result = await client.callTool({ name: "set_supervision_policy", arguments: { dispatch_final_supervisor: false, reason: "" } }); expect(result.isError).toBe(true);
     } finally { await client.close(); if (child && child.exitCode === null && child.signalCode === null) { const stopped = new Promise(resolve => child!.once("exit", resolve)); child.kill(); await stopped; } }

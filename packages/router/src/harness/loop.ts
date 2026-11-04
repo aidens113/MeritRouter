@@ -1,7 +1,7 @@
 import { RepositoryMutationError } from "../workspaces/repository-mutation.js";
 import { SelectedCommitError } from "../attribution/selected-commit.js";
 import type { ChatMessage, ChatTool, ChatToolCall } from "../gateway/types.js";
-import { estimateTokens } from "../gateway/types.js";
+import { assistantMessage, estimateTokens } from "../gateway/types.js";
 import type { GateResponse } from "../gateway/gate.js";
 import type { ModelEndpoint } from "../models/catalog.js";
 import { AdmissionDenied, MeritRouterError } from "../core/errors.js";
@@ -13,6 +13,7 @@ import { compact } from "./compaction.js";
 import { RepeatObservations, type RepeatOutcome } from "./repeat-policy.js";
 import { assertRunAuthority } from "./task-authority.js";
 import { StallHandoff } from "./stall-handoff.js";
+import { acknowledgeChannelDelivery, prepareChannelDelivery } from "./channel-delivery.js";
 
 export { compact } from "./compaction.js";
 
@@ -96,6 +97,8 @@ interface TurnRetry {
   avoid: string[];
   /** The truncated response, used as is when no endpoint can take the retry. */
   fallback: GateResponse;
+  /** Exact request history that produced fallback's opaque native continuation. */
+  fallbackMessages: ChatMessage[];
 }
 
 /**
@@ -183,7 +186,8 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
   // a coding run that has edited nothing by half its requests is told to write now;
   // supervisors receive coordination guidance instead. One exact
   // repeated observation is always fresh; three unchanged observations stop a stalled run.
-  const canEdit = byName.has("write_file");
+  const canEdit = byName.has("apply_edits") || byName.has("write_file");
+  const editInstruction = byName.has("apply_edits") ? "apply_edits with current read_files hashes" : "write_file within your granted paths";
   const isSupervisor = env.ctx.profile?.mode === "supervisor";
   const runStart = env.ctx.gate.admission.taskTotals(env.ctx.taskId).requests;
   const allowance = env.ctx.budget.maxModelRequests - runStart;
@@ -225,6 +229,9 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
   for (;;) {
     // Shutdown, cancellation, or deadline: stop before spending another request.
     if (env.ctx.signal.aborted) throw new Error(`aborted: ${String(env.ctx.signal.reason ?? "aborted")}`);
+    // External approvals do not mutate this process's context. Derive the absolute current
+    // execution cap before the local remaining check as well as Gate's independent admission.
+    if (!env.ctx.purpose && env.ctx.executionRequestCap) env.ctx.budget = { ...env.ctx.budget, maxModelRequests: env.ctx.executionRequestCap() };
     const used = env.ctx.gate.admission.taskTotals(env.ctx.taskId).requests;
     const remaining = env.ctx.budget.maxModelRequests - used;
     if (env.ctx.budget.maxModelRequests > cap) {
@@ -244,7 +251,7 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
         role: "user",
         content: isSupervisor
           ? `You have used ${used - runStart} of ${allowance} requests without recording a coordination change. Advance the persisted delivery specification and task plan, dispatch bounded worker briefs, review their results, and verify the integrated product when possible. Respect your implementation policy: delegate-only supervisors must delegate application changes. If progress requires an unavailable dependency or human approval, report the exact blocker instead of repeating discovery or bypassing approval. Builds alone do not prove product acceptance.`
-          : `You have used ${used - runStart} of ${allowance} requests and have not changed any file yet. Write your implementation now with write_file. If something you depend on does not exist yet (another task's module or interface), define the smallest version you need yourself, state that assumption in your result, and continue; do not search for it again.`,
+          : `You have used ${used - runStart} of ${allowance} requests and have not changed any file yet. Implement your bounded brief now using ${editInstruction}. If an assigned dependency is missing, report the exact blocker to your supervisor; respect file ownership and do not recreate another task's module.`,
       });
     }
     if (remaining <= 0) {
@@ -262,11 +269,15 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
     }
     const requestDefs = policy ? defs.filter(def => def.function.name === terminalName || policy.allowedToolNames.includes(def.function.name)) : defs;
     const budget = servingBudget ?? o.inputBudget;
-    if (compact(messages, budget) && effects.size && !effectsStillVisible(messages, effects.keys())) handoff?.recordLostEffectHistory(o.executionId);
+    const channel = byName.has("read_channel") && allowedNow("read_channel")
+      ? prepareChannelDelivery(env, messages, budget)
+      : { compacted: compact(messages, budget), pending: null };
+    if (channel.compacted && effects.size && !effectsStillVisible(messages, effects.keys())) handoff?.recordLostEffectHistory(o.executionId);
 
     const pending: TurnRetry | null = retry;
     retry = null;
     let res: GateResponse;
+    let servedCurrentRequest = false;
     try {
       res = await ask(env.ctx, {
         executionId: o.executionId,
@@ -278,6 +289,7 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
         cacheKey,
         ...((pending?.avoid.length || handoff?.excluded.size) ? { avoidEndpointIds: [...new Set([...(pending?.avoid ?? []), ...(handoff?.excluded.size ? handoff.avoid() : [])])] } : {}),
       });
+      servedCurrentRequest = true;
     } catch (err) {
       if (err instanceof AdmissionDenied && err.reason === "task_request_budget_exhausted") {
         sync();
@@ -294,9 +306,18 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
         return { kind: "stalled", reason: `model_handoff_exhausted:${handoff.reason}`, messages };
       }
       // No endpoint could take the retry of a cut-short turn: keep the truncated response as it is.
-      if (pending && err instanceof AdmissionDenied) res = pending.fallback;
+      if (pending && err instanceof AdmissionDenied) {
+        // The old response belongs after its original request, not after notices or compaction
+        // from this denied retry. New channel posts stay unacknowledged for the next boundary.
+        messages.splice(0, messages.length, ...pending.fallbackMessages.map(message => ({ ...message })));
+        policyNotices.clear();
+        for (const message of messages) if (message.role === "user" && typeof message.content === "string") policyNotices.add(message.content);
+        res = pending.fallback;
+      }
       else throw err;
     }
+    // Only this successful ask carried the prepared page. A retry's old fallback response did not.
+    if (servedCurrentRequest && channel.pending) acknowledgeChannelDelivery(env, o.executionId, channel.pending, res.requestId);
     const endpointId = res.endpoint.id;
     const requestId = res.requestId;
     sticky = endpointId;
@@ -308,8 +329,10 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
       env.brain.actor.request = requestId;
     }
     const response = res.response;
-    let content = response.message.content;
-    let calls: ChatToolCall[] = response.message.tool_calls ?? [];
+    const assistant = assistantMessage(response.message);
+    let content = assistant.content;
+    const nativeContinuation = assistant.nativeContinuation;
+    let calls: ChatToolCall[] = assistant.tool_calls ?? [];
 
     // The answer to a continuation request: join it to the reply it continues.
     if (continued) {
@@ -322,7 +345,7 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
       const broken = calls.some((c) => parseArgs(c.function.arguments) === undefined);
       // A tool call (or the whole reply) cut short: retry the turn once without keeping the broken reply.
       if ((broken || (!calls.length && !content)) && !retriedThisTurn) {
-        const next = turnRetry(res, estimateTokens(messages, defs), o.maxTokens, env.ctx.plan.candidates);
+        const next = turnRetry(res, estimateTokens(messages, defs), o.maxTokens, env.ctx.plan.candidates, messages);
         if (next) {
           retriedThisTurn = true;
           retry = next;
@@ -331,14 +354,14 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
       } else if (!calls.length && content && !continuedThisTurn) {
         // Plain text cut short: ask the same endpoint to continue it.
         continuedThisTurn = true;
-        const partial: ChatMessage = { role: "assistant", content };
+        const partial: ChatMessage = { role: "assistant", content, ...(nativeContinuation === undefined ? {} : { nativeContinuation }) };
         continued = partial;
         messages.push(partial, { role: "user", content: CONTINUE_TEXT });
         continue;
       }
     }
 
-    messages.push({ role: "assistant", content, ...(calls.length ? { tool_calls: calls } : {}) });
+    messages.push({ role: "assistant", content, ...(calls.length ? { tool_calls: calls } : {}), ...(nativeContinuation === undefined ? {} : { nativeContinuation }) });
     continuedThisTurn = false;
     retriedThisTurn = false;
     env.edits.clear();
@@ -353,7 +376,9 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
     const executeCall = async (call: ChatToolCall, args: unknown, t: HarnessTool | undefined, previous?: RepeatOutcome): Promise<RepeatOutcome> => {
       assertRunAuthority(env.ctx);
       return journaled(session, call, args, t ? { sideEffect: t.sideEffect, idempotent: t.idempotent } : { sideEffect: "none" }, async () => {
-        if (!t) return { ok: false, output: `error: unknown or unavailable tool ${call.function.name}` };
+        if (!t) return { ok: false, output: remaining === 1
+          ? `error: final model request is submission-only because the execution request budget is exhausted after this turn. ${call.function.name} was not executed. Call ${terminalName} with actual evidence and mark unverified criteria unknown.`
+          : `error: unknown or unavailable tool ${call.function.name}` };
         if (previous) return { ok: false, output: `the exact call already ran; MeritRouter did not repeat it to avoid duplicating its side effect. Its previous outcome was: ${previous.output}` };
         try {
           if (args === undefined) throw new Error(`${call.function.name} arguments are not valid JSON`);
@@ -413,7 +438,10 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
       const waitEpoch = observationWait.epoch;
       const r = prefetched.get(call) ?? await executeCall(call, args, t, previous);
       if (r.ok && observationWait.epoch > waitEpoch) observations.progress();
-      if (r.ok && t?.sideEffect === "edit") edited = true;
+      // Nested operations use a command wrapper, but actual repository edit tools
+      // add host-owned receipts to this shared set. Successful output alone is not
+      // proof that a batch changed a file (it may contain only observations).
+      if (env.edits.size > 0 || r.ok && t?.sideEffect === "edit") edited = true;
       let output = r.output;
       if (previous) {
         output += `\n[Repeated identical effect. No action was repeated; the task is stopping for reconciliation.]`;
@@ -477,11 +505,12 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
  * endpoint when its output limit and context allow more than now, otherwise the same allowance
  * on any other candidate. Null when neither is possible (the truncated reply is then kept).
  */
-export function turnRetry(res: GateResponse, inputTokens: number, maxTokens: number, candidates: readonly ModelEndpoint[]): TurnRetry | null {
+export function turnRetry(res: GateResponse, inputTokens: number, maxTokens: number, candidates: readonly ModelEndpoint[], messages: readonly ChatMessage[]): TurnRetry | null {
   const ep = res.endpoint;
   const room = Math.min(ep.outputLimitTokens ?? maxTokens, (ep.contextLimitTokens ?? Infinity) - inputTokens);
   const larger = Math.min(maxTokens * 2, room);
-  if (larger > maxTokens) return { maxTokens: larger, avoid: [], fallback: res };
-  if (candidates.some((c) => c.id !== ep.id)) return { maxTokens, avoid: [ep.id], fallback: res };
+  const fallbackMessages = messages.map(message => ({ ...message }));
+  if (larger > maxTokens) return { maxTokens: larger, avoid: [], fallback: res, fallbackMessages };
+  if (candidates.some((c) => c.id !== ep.id)) return { maxTokens, avoid: [ep.id], fallback: res, fallbackMessages };
   return null;
 }

@@ -1,5 +1,6 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { comparisonRequestsToday } from "./comparison.js";
+import { qualificationRequestsHeld } from "./supervisor-qualification.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -146,7 +147,7 @@ export class Qualifier {
     if (!evals.length) throw new Error("no evaluations match (or their task types are not configured)");
     const trials = opts.trials ?? this.sy.cfg.qualification.trials_per_task;
     const projected = evals.reduce((s, e) => s + e.budget.maxModelRequests, 0) * trials;
-    const remaining = this.sy.cfg.qualification.max_requests_per_day - this.requestsUsedToday();
+    const remaining = this.sy.cfg.qualification.max_requests_per_day - this.requestsUsedToday() - qualificationRequestsHeld(this.store().db, this.sy.cfg.qualification.max_requests_per_day);
     if (projected > remaining) {
       throw new Error(`qualification could use up to ${projected} requests but only ${Math.max(0, remaining)} of today's qualification allocation (${this.sy.cfg.qualification.max_requests_per_day}) remain; lower trials or pick fewer evals`);
     }
@@ -212,7 +213,7 @@ export class Qualifier {
     try {
       const suite = this.suite();
       const store = this.store();
-      const pending = store.db.prepare("SELECT * FROM qualification_tasks WHERE evaluated = 0").all() as Array<{
+      const pending = store.db.prepare("SELECT qt.* FROM qualification_tasks qt JOIN qualification_runs qr ON qr.id=qt.run_id WHERE qt.evaluated=0 AND qr.suite_version NOT LIKE 'supervisor-decisions-%'").all() as Array<{
         task_id: string;
         run_id: string;
         eval_id: string;
@@ -233,7 +234,7 @@ export class Qualifier {
         store.db.prepare("UPDATE qualification_tasks SET evaluated = 1 WHERE task_id = ?").run(q.task_id);
         graded++;
       }
-      for (const run of store.db.prepare("SELECT id FROM qualification_runs WHERE status = 'running'").all() as { id: string }[]) {
+      for (const run of store.db.prepare("SELECT id FROM qualification_runs WHERE status = 'running' AND suite_version NOT LIKE 'supervisor-decisions-%'").all() as { id: string }[]) {
         const left = store.db.prepare("SELECT COUNT(*) AS n FROM qualification_tasks WHERE run_id = ? AND evaluated != 1").get(run.id) as { n: number };
         if (left.n > 0) continue;
         const tally = store.db.prepare("SELECT outcome, COUNT(*) AS n FROM qualification_results WHERE run_id = ? GROUP BY outcome").all(run.id) as { outcome: string; n: number }[];

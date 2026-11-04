@@ -12,7 +12,7 @@ const app = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const demo = path.join(app, ".demo"), config = path.join(demo, "meritrouter.config.yaml");
 const cfg = loadConfig(config); assert(path.resolve(cfg.storageDir).startsWith(demo + path.sep));
 assert(path.resolve(path.dirname(config), cfg.brain.path).startsWith(demo + path.sep));
-const sy = new MeritRouter(cfg, { worker: false });
+const sy = new MeritRouter(cfg, { panelLifecycle: "passive", worker: false });
 for (const project of sy.projects.list()) for (const repo of Object.values(project.repositoryPaths)) assert(path.resolve(repo.path).startsWith(demo + path.sep));
 const port = 4497, cdpPort = 9373, base = `http://127.0.0.1:${port}`;
 const require = createRequire(import.meta.url), profile = mkdtempSync(path.join(demo, "request-evidence-browser-"));

@@ -1,4 +1,8 @@
 import path from "node:path";
+import { PanelAvailability } from "../operations/panel.js";
+import { ServiceOperations } from "./service-operations.js";
+import { GlobalKnowledge } from "../brain/global-knowledge.js";
+import { qualificationLookupFrom, qualificationStat, withQualificationStats, type QualificationStatReader } from "../qualification/stats.js";
 import { projectRuntimePaths } from "../projects/runtime-paths.js";
 import { installationUsage } from "../admin/project-usage.js";
 import { openInstallationLayout, ProjectRuntimeHost, ProjectStoreRouter, type InstallationLayout, type SplitProjectRuntime, type TaskStores } from "./project-runtime-host.js";
@@ -13,6 +17,11 @@ import { loadConfig, parseConfig, readConfigFile, type ResolvedConfig } from "..
 import { UNLIMITED_REQUESTS, type ProfileName, type TierName } from "../config/schema.js";
 import { immediate, openDatabase, type Db } from "../storage/db.js";
 import { TaskStore, canonicalJson, type StoredTask, type SubmitOutcome } from "../storage/tasks.js";
+import { continueTaskDeadline, DeadlineContinuationSchema, type DeadlineContinuationInput } from "../storage/task-deadline-continuation.js";
+import { recoverInfrastructureFailure, InfrastructureRecoverySchema, type InfrastructureRecoveryInput } from "../storage/task-infrastructure-recovery.js";
+import { continueBlockedJob, BlockedJobContinuationSchema, type BlockedJobContinuationInput } from "../storage/blocked-job-continuation.js";
+import { continueSupervisorBudget, SupervisorBudgetContinuationSchema, type SupervisorBudgetContinuationInput } from "../storage/supervisor-budget-continuation.js";
+import { inspectRecoveredEditProvenance, attestRecoveredEditProvenance, RecoveredEditInspectionSchema, RecoveredEditAttestationSchema, type RecoveredEditInspectionInput, type RecoveredEditAttestationInput } from "../attribution/recovered-edit-provenance.js";
 import { ArtifactStore } from "../storage/artifacts.js";
 import { usageSummary, type UsageSummary } from "../storage/usage.js";
 import { Admission, effectiveBudget, heldRequests } from "../admission/admission.js";
@@ -23,6 +32,7 @@ import { Scanner, type ScanSummary } from "../models/scanner.js";
 import { TaskRouter } from "../routing/router.js";
 import { ProviderSlotAdmission } from "../routing/claim-capacity.js";
 import { Qualifier } from "../qualification/runner.js";
+import { SupervisorQualifier, supervisorSandboxBinding, supervisorSandboxConfig } from "../qualification/supervisor-qualification.js";
 import { KeyVault } from "../providers/vault.js";
 import { Brain } from "../brain/brain.js";
 import { BrainAccess } from "../brain/access.js";
@@ -75,6 +85,8 @@ export interface MeritRouterOptions {
   now?: () => number;
   /** Run the in-process worker loop (MCP server and `meritrouter worker`). */
   worker?: boolean;
+  /** The panel itself and deliberately passive embedding hosts must not start/revive their own UI. */
+  panelLifecycle?: "automatic" | "passive";
   /** Supervise lab services independently of model workers; off for ordinary API instances. */
   labsMonitor?: boolean;
   pollIntervalMs?: number;
@@ -129,6 +141,7 @@ export class MeritRouter {
   readonly scanner: Scanner;
   readonly owner: string;
   readonly qualifier: Qualifier;
+  readonly supervisorQualifier: SupervisorQualifier;
   /** Audit sampling: background reviews of passed results, recorded for calibration only. */
   readonly auditor: Auditor;
   /** The independent reviewer of supervisors' global promotions (decision D9). */
@@ -153,11 +166,17 @@ export class MeritRouter {
   get brain(): Brain {
     return this.brainFor(this.projects.primary.project.slug);
   }
+  /** Installation-owned public knowledge; never a project's private Brain root. */
+  readonly globalKnowledge: GlobalKnowledge;
   /** The primary project's brain access (see `brainAccessFor`). */
   get brainAccess(): BrainAccess {
     return this.brainAccessFor(this.projects.primary.project.slug);
   }
   private readonly brains = new Map<string, { brain: Brain; access: BrainAccess }>();
+  private readonly operations = new ServiceOperations();
+  private closePromise: Promise<void> | null = null;
+  private panelAvailability: PanelAvailability | null = null;
+  private readonly legacyPolicyGraphs = new Map<string, { gate: Gate; router: TaskRouter }>();
   readonly spend: PaidSpend;
   /** Agent sessions: per-run event logs (transcript, model calls, tool journal). */
   readonly sessions: SessionStore;
@@ -196,6 +215,13 @@ export class MeritRouter {
       this.admission = new Admission(this.db, this.tasks, cfg, this.now);
       this.projects = new ProjectRegistry(cfg);
       this.projects.attach(this.db, this.now, { backfill: this.layout === "legacy" });
+      this.globalKnowledge = new GlobalKnowledge(cfg, {
+        assertCurrent: () => {
+          if (!this.db.open || this.closing && !this.operations.owns("@global-knowledge") && !this.projects.slugs().some(slug => this.operations.owns(slug))) throw new TaskValidationError("service is closing");
+        },
+        privateRoots: () => this.projects.list().flatMap(project => [...(project.projectDirectory ? [project.projectDirectory] : []), ...Object.values(project.repositoryPaths).map(repository => repository.path)]),
+        operation: work => this.operations.run("@global-knowledge", work),
+      });
       this.labs = new LabManager({ db: this.db, storageDir: cfg.storageDir, cfg, project: slug => this.projectContext(slug), monitor: opts.labsMonitor === true && this.layout === "legacy" });
       this.vault = new KeyVault(this.db, cfg.storageDir, this.now);
       this.spend = new PaidSpend(this.db, cfg, this.vault, this.now);
@@ -229,7 +255,7 @@ export class MeritRouter {
         (platform) => this.providers.statusPlatform(platform),
       );
       this.gate = new Gate(this.db, cfg, this.admission, this.health, { providers: this.providers, spend: this.spend });
-      this.router = new TaskRouter(cfg, this.db, this.catalog, this.gate, this.artifacts, this.now);
+      this.router = new TaskRouter(cfg, this.db, this.catalog, this.gate, this.artifacts, this.now, config => qualificationLookupFrom(this.qualificationStat, config));
       this.scanner = new Scanner({
         db: this.db,
         catalog: this.catalog,
@@ -241,7 +267,8 @@ export class MeritRouter {
       this.events.setMaxListeners(0);
       const coding = opts.coding === undefined ? createCodingRunner(cfg) : opts.coding, supervisor = opts.supervisor === undefined ? new SupervisorRunner() : opts.supervisor;
       this.host = this.layout === "split" ? new ProjectRuntimeHost({ db: this.db, cfg, projects: this.projects, catalog: this.catalog, providers: this.providers, spend: this.spend,
-        owner: this.owner, now: this.now, coding, supervisor, labsMonitor: opts.labsMonitor === true, reviewer: () => this.promotionReviewer,
+        owner: this.owner, now: this.now, coding, supervisor, labsMonitor: opts.labsMonitor === true, reviewer: () => this.promotionReviewer, operations: this.operations,
+        sharedKnowledge: this.globalKnowledge.shared,
         ...(opts.webFetch ? { webFetch: opts.webFetch } : {}), ...(opts.webPage ? { webPage: opts.webPage } : {}), onSettled: (id) => this.events.emit("settled", id) }) : null;
       this.stores = new ProjectStoreRouter(this.host, { db: this.db, tasks: this.tasks, sessions: this.sessions, artifacts: this.artifacts, contracts: this.contracts, admission: this.admission, bundle: null }, this.projects);
       this.executor = new Executor({
@@ -281,6 +308,8 @@ export class MeritRouter {
         },
       });
       this.qualifier = new Qualifier(this);
+      this.supervisorQualifier = new SupervisorQualifier(this);
+      this.bindSupervisorEvidence();
       this.auditor = new Auditor(
         { cfg, db: this.db, tasks: this.tasks, artifacts: this.artifacts, admission: this.admission, catalog: this.catalog, router: this.router, contracts: this.contracts, submitTasks: (raw, o) => this.submitTasks(raw, o) },
         this.now,
@@ -295,6 +324,7 @@ export class MeritRouter {
         () => {
           this.projects.syncRuntimeRepositories();
           void this.qualifier.gradePending().catch(() => undefined);
+          void this.supervisorQualifier.gradePending().catch(() => undefined);
           void this.auditor.sweep().catch(() => undefined);
         },
         this.sessions,
@@ -302,6 +332,7 @@ export class MeritRouter {
         (slug) => this.projects.get(slug),
       );
       if (opts.worker) this.startWorker(opts.pollIntervalMs);
+      if (opts.panelLifecycle !== "passive") this.panelAvailability = new PanelAvailability(() => this.cfg);
     } catch (error) {
       this.abandonConstruction();
       throw error;
@@ -315,6 +346,7 @@ export class MeritRouter {
    */
   private abandonConstruction(): void {
     this.closing = true;
+    void this.panelAvailability?.stop();
     if (this.discoveryTimer) clearInterval(this.discoveryTimer);
     if (this.reloadTimer) clearInterval(this.reloadTimer);
     // Fields assigned after the failure point are still undefined here.
@@ -328,18 +360,25 @@ export class MeritRouter {
     return this.projectBrain(project).brain;
   }
 
+  /** Admit the whole human global action, including its existing project promotion audit. */
+  runGlobalKnowledgeOperation<T>(project: string | null, work: () => Promise<T>): Promise<T> {
+    const scope = project && this.projects.context(project) ? project : this.layout === "legacy" ? this.projects.primary.project.slug : "@global-knowledge";
+    return this.operations.run(scope, work);
+  }
+
   /** A project's brain access (grants and requests scoped to that project's brain). */
   brainAccessFor(project: string): BrainAccess {
     return this.projectBrain(project).access;
   }
 
   private projectBrain(project: string): { brain: Brain; access: BrainAccess } {
+    if (this.closing && !this.operations.owns(project)) throw new TaskValidationError("service is closing");
     const bundle = this.stores.runtimeOf(this.projectContext(project).project.slug);
     if (bundle) return { brain: bundle.brain!, access: bundle.access! };
     let b = this.brains.get(project);
     if (!b) {
       const ctx = this.projects.context(project) ?? this.projects.require(project);
-      b = { brain: new Brain(ctx, this.db, this.now, { reviewer: () => this.promotionReviewer }), access: new BrainAccess(this.db, ctx, this.now) };
+      b = { brain: new Brain(ctx, this.db, this.now, { reviewer: () => this.promotionReviewer, operation: (work, promotion) => this.operations.run(ctx.project.slug, work, promotion), producerOperation: work => this.operations.runRoot(ctx.project.slug, work) }), access: new BrainAccess(this.db, ctx, this.now) };
       this.brains.set(project, b);
     }
     return b;
@@ -357,11 +396,8 @@ export class MeritRouter {
   /** Collect finished promotion reviews and retry waiting ones (also runs when a review task settles). */
   async settlePromotions(project?: string): Promise<number> {
     if (this.closing) return 0;
-    const run = (async () => {
-      let n = 0;
-      for (const p of project ? [this.projectContext(project).project.slug] : this.projects.slugs()) n += await this.brainFor(p).promotions.settle();
-      return n;
-    })();
+    const projects = project ? [this.projectContext(project).project.slug] : this.projects.slugs();
+    const run = Promise.all(projects.map(p => this.operations.run(p, () => this.brainFor(p).promotions.settle(), true))).then(counts => counts.reduce((sum, count) => sum + count, 0));
     this.promotionSettles.add(run);
     try { return await run; }
     finally { this.promotionSettles.delete(run); }
@@ -387,7 +423,8 @@ export class MeritRouter {
       const timer = setTimeout(() => {
         this.promotionTimers.delete(timer);
         if (this.closing) return;
-        void this.settlePromotions(row!.project_id || undefined).catch(error => {
+        const project = row!.project_id || this.projects.primary.project.slug;
+        void this.operations.runRoot(project, () => this.settlePromotions(project)).catch(error => {
           if (error instanceof RepositoryMutationError && error.detail.kind === "lock_busy" && attempt < 5)
             schedule(attempt + 1);
           // Unresolved publication/command evidence requires explicit recovery.
@@ -399,6 +436,26 @@ export class MeritRouter {
     schedule(0);
   }
 
+  /** Key mutations affect both installation health and the shared split-project routing health. */
+  invalidateProviderHealth(): void {
+    this.health.invalidate();
+    this.host?.health.invalidate();
+  }
+
+  /** Read a fresh aggregate snapshot during one synchronous panel operation; never provisions. */
+  withQualificationStats<T>(work: (reader: QualificationStatReader) => T): T {
+    if (this.closing) throw new TaskValidationError("service is closing");
+    try { return this.host ? this.host.withQualificationStats(work) : withQualificationStats(this.db, work); }
+    finally { if (this.closing || !this.db.open) throw new TaskValidationError("service closed during qualification inspection"); }
+  }
+
+  /** Read-only benchmark aggregate resolved through the installation's actual storage layout. */
+  readonly qualificationStat: QualificationStatReader = (cfg, endpointId, family, tier, threshold) => {
+    if (this.closing) throw new Error("Qualification statistics are unavailable while the service is closing");
+    return this.host ? this.host.qualificationStat(cfg, endpointId, family, tier, threshold)
+      : qualificationStat(this.db, cfg, endpointId, family, tier, threshold);
+  };
+
   /** A task's project dependencies (its context, brain, brain access); throws for an unconfigured project. */
   private projectDeps(project: string): ProjectDeps {
     const cfg = this.projectContext(project);
@@ -406,7 +463,14 @@ export class MeritRouter {
     // Split projects run in their own runtimes; this executor serves only installation-store tasks.
     if (this.host) throw new TaskValidationError(`project ${cfg.project.slug} has no installation-store runtime in a split installation`);
     const b = this.projectBrain(cfg.project.slug);
-    return { cfg, brain: b.brain, access: b.access, stores: this.projectStores(cfg.project.slug) };
+    let graph = this.legacyPolicyGraphs.get(cfg.project.slug);
+    if (!graph) {
+      if (this.closing && !this.operations.owns(cfg.project.slug)) throw new TaskValidationError("service is closing");
+      const gate = new Gate(this.db, cfg, this.admission, this.health, { providers: this.providers, spend: this.spend });
+      graph = { gate, router: new TaskRouter(cfg, this.db, this.catalog, gate, this.artifacts, this.now, config => qualificationLookupFrom(this.qualificationStat, config)) };
+      this.legacyPolicyGraphs.set(cfg.project.slug, graph);
+    }
+    return { cfg, brain: b.brain, access: b.access, stores: this.projectStores(cfg.project.slug), ...graph };
   }
 
   /** A project's stores: its own isolated store (split installation), or the installation's shared one. */
@@ -448,6 +512,7 @@ export class MeritRouter {
   }
 
   private kick(s: TaskStores): void {
+    if (!this.closing) this.panelAvailability?.activity();
     if (s.bundle) this.host!.kick();
     else this.scheduler.kick();
   }
@@ -490,7 +555,7 @@ export class MeritRouter {
     // A split installation's store holds no project tasks: only the project runtimes dispatch.
     if (this.host) this.host.start(pollIntervalMs);
     else this.scheduler.start(pollIntervalMs);
-    this.reloadTimer = setInterval(() => this.reloadIfChanged(), 2000);
+    this.reloadTimer = setInterval(() => { this.reloadIfChanged(); this.bindSupervisorEvidence(); void this.supervisorQualifier.gradePending().catch(() => undefined); }, 2000);
     this.reloadTimer.unref?.();
     const minutes = this.cfg.discovery.interval_minutes;
     if (minutes > 0) {
@@ -552,9 +617,11 @@ export class MeritRouter {
       const labErrors = retainedLabConfigErrors(this.db, next);
       if (labErrors.length) throw new Error(labErrors.join("; "));
       Object.assign(this.cfg, next);
+      this.panelAvailability?.configurationChanged();
       this.labs.reloadConfig();
       this.host?.reloadConfig();
       this.projects.refresh();
+      this.bindSupervisorEvidence();
       this.tasks.event(null, "config_reloaded", { at: this.now() });
       // A running service prepares repositories added or moved by the edit.
       if (this.workerStarted) void this.prepareRepositories().catch(() => undefined);
@@ -571,6 +638,15 @@ export class MeritRouter {
       .filter((e) => e.status === "active")
       .map((e) => e.contextLimitTokens ?? 0);
     return ctx.length ? Math.max(...ctx) : undefined;
+  }
+
+  private bindSupervisorEvidence(): void {
+    for (const cfg of [this.cfg, ...this.projects.list()]) this.supervisorQualifier.bind(cfg.supervisor.routing);
+  }
+
+  /** Resume the exact retained submission after its durable qualification runs settle. */
+  resumeSupervisorSubmission(submissionRef: string, project: string): Promise<SubmitOutcome[]> {
+    return this.supervisorQualifier.resume(submissionRef, project);
   }
 
   /**
@@ -610,100 +686,145 @@ export class MeritRouter {
    * their repository aliases are that project's.
    */
   async submitTasks(raw: unknown[], opts: { purpose?: string; parentSessionId?: string; project?: string } = {}): Promise<SubmitOutcome[]> {
+    const drainingRetry = this.closing;
+    if (drainingRetry && (!this.operations.allowsPromotionRetry() || opts.purpose !== "promotion_review")) throw new TaskValidationError("service is closing");
     if (!Array.isArray(raw) || raw.length === 0) throw new TaskValidationError("submit at least one task");
     const project = this.submissionProject(raw, opts), slug = project.project.slug;
-    const s = this.stores.of(slug), labs = s.bundle ? this.host!.labsFor(s.bundle) : this.labs, router = s.bundle?.router ?? this.router, projectCfg = s.bundle?.cfg ?? project;
-    if (!s.bundle) this.stores.fence(slug);
-    const specs: WorkerTask[] = [];
-    const errors: string[] = [];
-    this.projects.syncRuntimeRepositories();
-    const largestContext = this.largestContext();
-    for (const [i, r] of raw.entries()) {
-      try {
-        const lab = typeof r === "object" && r !== null && "lab" in r && r.lab !== undefined ? LabNameSchema.parse(r.lab) : undefined;
-        const taskConfig = lab ? labs.configuration(slug, lab) : projectCfg;
-        specs.push(
-          await validateTask(taskConfig, r, s.artifacts, {
-            ...(largestContext !== undefined ? { largestContext } : {}),
-            knownEndpoint: (id) => this.catalog.get(id) !== undefined,
-          }),
-        );
-      } catch (err) {
-        errors.push(`task[${i}]: ${(err as Error).message}`);
-      }
-    }
-    // A task whose verification policy cannot fit its request budget is refused now.
-    if (!errors.length) specs.forEach((spec, i) => {
-      const shortfall = verificationBudgetShortfall(projectCfg, spec, parentImportance(s.tasks, s.contracts, spec));
-      if (shortfall) errors.push(`task[${i}]: ${shortfall}`);
-    });
-    if (errors.length) throw new TaskValidationError(errors.join("\n"), errors);
-    const outcomes = immediate(s.db, () => {
-      if (specs.some(spec => spec.constraints.labChecks?.length)) {
-        // Read by content under the config writer lock; a rapid revocation may share an mtime.
-        const current = new ProjectRegistry(loadConfig(this.cfg.configPath)).get(project.project.slug);
-        if (!current) throw new TaskValidationError("the task Lab project is no longer configured");
-        for (const spec of specs) {
-          const problems = taskLabSelectionIssues(current, spec);
-          if (problems.length) throw new TaskValidationError(problems.join("; "), problems);
+    if (drainingRetry && !this.operations.allowsPromotionRetry(slug)) throw new TaskValidationError("service operation does not own this promotion project");
+    return this.operations.run(slug, async () => {
+      const s = this.stores.of(slug), labs = s.bundle ? this.host!.labsFor(s.bundle) : this.labs, router = s.bundle?.router ?? this.router, projectCfg = s.bundle?.cfg ?? project;
+      if (!s.bundle) this.stores.fence(slug);
+      let specs: WorkerTask[] = [];
+      const errors: string[] = [];
+      this.projects.syncRuntimeRepositories();
+      const largestContext = this.largestContext();
+      for (const [i, original] of raw.entries()) {
+        try {
+          const r = opts.purpose === "qualification" && typeof original === "object" && original !== null
+            ? { ...original, budget: { maxPaidUsd: 0, ...("budget" in original && typeof original.budget === "object" && original.budget !== null ? original.budget : {}) } }
+            : original;
+          const lab = typeof r === "object" && r !== null && "lab" in r && r.lab !== undefined ? LabNameSchema.parse(r.lab) : undefined;
+          const baseTaskConfig = lab ? labs.configuration(slug, lab) : projectCfg;
+          const taskConfig = supervisorSandboxBinding(s.db, r, slug, opts.purpose) ? supervisorSandboxConfig(baseTaskConfig) : baseTaskConfig;
+          specs.push(
+            await validateTask(taskConfig, r, s.artifacts, {
+              ...(largestContext !== undefined ? { largestContext } : {}),
+              knownEndpoint: (id) => this.catalog.get(id) !== undefined,
+            }),
+          );
+        } catch (err) {
+          errors.push(`task[${i}]: ${(err as Error).message}`);
         }
       }
-      // Explicit external authority is checked at insertion, under the config writer's DB lock.
-      // Validation above awaits filesystem work; a human may revoke policy while it is running.
-      const scoped = specs.filter(spec => spec.supervisionScope !== undefined);
-      if (scoped.length) {
+      // A task whose verification policy cannot fit its request budget is refused now.
+      if (!errors.length) specs.forEach((spec, i) => {
+        const scopedCfg = supervisorSandboxBinding(s.db, spec, slug, opts.purpose) ? supervisorSandboxConfig(projectCfg) : projectCfg;
+        const shortfall = verificationBudgetShortfall(scopedCfg, spec, parentImportance(s.tasks, s.contracts, spec));
+        if (shortfall) errors.push(`task[${i}]: ${shortfall}`);
+      });
+      if (errors.length) throw new TaskValidationError(errors.join("\n"), errors);
+      const inputSpecs = specs;
+      if (opts.purpose !== "qualification") specs = specs.map((spec, index) => {
+        if (projectCfg.profiles[spec.profile]?.mode !== "supervisor" || spec.budget?.maxPaidUsd !== undefined) return spec;
+        const existing = spec.idempotencyKey ? s.db.prepare("SELECT spec_json FROM tasks WHERE idempotency_key=? AND project_id=?").get(spec.idempotencyKey, slug) as { spec_json: string } | undefined : undefined;
+        const preserved = existing ? (JSON.parse(existing.spec_json) as WorkerTask).budget?.maxPaidUsd : undefined;
+        return { ...spec, budget: { ...spec.budget, maxPaidUsd: preserved ?? this.supervisorQualifier.retainedPaidDefault(raw[index]) ?? projectCfg.supervisor.default_max_paid_usd } };
+      });
+      // Qualification consumes real request/credit authority. Refuse an unauthorized final
+      // supervisor before starting it; insertion repeats the check after the bounded await.
+      if (specs.some(spec => spec.supervisionScope !== undefined)) {
         this.reloadIfChanged();
-        const current = this.projectContext(project.project.slug);
-        const policy = readClientSupervision(this.cfg.configPath);
-        for (const spec of scoped) {
+        const current = this.projectContext(slug), policy = readClientSupervision(this.cfg.configPath);
+        for (const spec of specs.filter(spec => spec.supervisionScope !== undefined)) {
           if (current.profiles[spec.profile]?.mode !== "supervisor") throw new TaskValidationError("supervisionScope applies only to supervisor-mode tasks");
           if (spec.parentTaskId) {
             const parent = s.tasks.get(spec.parentTaskId);
-            if (!parent || parent.row.project_id !== project.project.slug || current.profiles[parent.spec.profile]?.mode !== "supervisor") throw new TaskValidationError("parentTaskId must name a real same-project supervisor");
+            if (!parent || parent.row.project_id !== slug || current.profiles[parent.spec.profile]?.mode !== "supervisor") throw new TaskValidationError("parentTaskId must name a real same-project supervisor");
             if (spec.supervisionScope === "project") throw new TaskValidationError("A child task cannot declare project supervision scope");
           }
           if (spec.supervisionScope === "project" && !policy.dispatch_final_supervisor) throw new TaskValidationError("Dispatching a final project supervisor is disabled; use bounded subtask supervision");
         }
       }
-      const submitted = s.tasks.submit(specs, { project: slug });
-      // Refuse impossible supervisor routes in the same transaction as submission. A
-      // retry of an existing idempotent task remains readable even if its route changed.
-      // Match TaskRouter.prepare without classification or a provider request.
-      for (const outcome of submitted) {
-        if (outcome.deduplicated) continue;
-        const task = s.tasks.get(outcome.taskId)!;
-        if (this.cfg.profiles[task.spec.profile]?.mode !== "supervisor") continue;
-        const chosen = this.cfg.supervisor.endpoints.map(endpointId => ({
-          profile: task.spec.profile, tier: null, kind: "force" as const,
-          endpointId, allowBelowFloor: true, enabled: true,
-        }));
-        const plan = router.plan(task.spec.profile, "T3", router.inputModalities(task),
-          task.spec.routing?.endpointId, false, this.cfg.supervisor.paid_policy, chosen, task.spec.hints?.web);
-        if (!plan.candidates.length) {
-          const exclusions = plan.explanations.filter(candidate => !candidate.eligible)
-            .map(candidate => `${candidate.endpointId}: ${candidate.reasons.join("; ")}`).join(" | ");
-          throw new MeritRouterError(plan.blocker?.code ?? "no_eligible_endpoint",
-            `${plan.blocker?.message ?? "No eligible supervisor endpoint is configured."} ` +
-            `Supervisor task was not submitted. Check the model catalog, supervisor routing policy, credentials and endpoint exclusions; paid routing remains subject to its configured policy.` +
-            (exclusions ? ` Exclusions: ${exclusions}` : " The model catalog has no candidate endpoints."));
+      const assertDrainingRetry = () => {
+        this.operations.assertCurrent(slug);
+        if (this.closing && this.operations.allowsPromotionRetry(slug) && opts.purpose === "promotion_review"
+          && specs.some(spec => projectCfg.profiles[spec.profile]?.mode !== "completion"))
+          throw new TaskValidationError("shutdown promotion retries must use a configured completion-mode review profile");
+      };
+      assertDrainingRetry();
+      // The qualifier only qualifies supervisor-mode tasks. Completion-only publication
+      // has no qualification work and remains possible for an admitted draining owner.
+      if (opts.purpose !== "qualification" && specs.some(spec => projectCfg.profiles[spec.profile]?.mode === "supervisor")) specs = await this.supervisorQualifier.preflight(specs, slug, {
+        ...(opts.purpose ? { purpose: opts.purpose } : {}), ...(opts.parentSessionId ? { parentSessionId: opts.parentSessionId } : {}),
+      }, inputSpecs);
+      assertDrainingRetry();
+      const outcomes = immediate(s.db, () => {
+        if (specs.some(spec => spec.constraints.labChecks?.length)) {
+          // Read by content under the config writer lock; a rapid revocation may share an mtime.
+          const current = new ProjectRegistry(loadConfig(this.cfg.configPath)).get(project.project.slug);
+          if (!current) throw new TaskValidationError("the task Lab project is no longer configured");
+          for (const spec of specs) {
+            const problems = taskLabSelectionIssues(current, spec);
+            if (problems.length) throw new TaskValidationError(problems.join("; "), problems);
+          }
         }
+        // Explicit external authority is checked at insertion, under the config writer's DB lock.
+        // Validation above awaits filesystem work; a human may revoke policy while it is running.
+        const scoped = specs.filter(spec => spec.supervisionScope !== undefined);
+        if (scoped.length) {
+          this.reloadIfChanged();
+          const current = this.projectContext(project.project.slug);
+          const policy = readClientSupervision(this.cfg.configPath);
+          for (const spec of scoped) {
+            if (current.profiles[spec.profile]?.mode !== "supervisor") throw new TaskValidationError("supervisionScope applies only to supervisor-mode tasks");
+            if (spec.parentTaskId) {
+              const parent = s.tasks.get(spec.parentTaskId);
+              if (!parent || parent.row.project_id !== project.project.slug || current.profiles[parent.spec.profile]?.mode !== "supervisor") throw new TaskValidationError("parentTaskId must name a real same-project supervisor");
+              if (spec.supervisionScope === "project") throw new TaskValidationError("A child task cannot declare project supervision scope");
+            }
+            if (spec.supervisionScope === "project" && !policy.dispatch_final_supervisor) throw new TaskValidationError("Dispatching a final project supervisor is disabled; use bounded subtask supervision");
+          }
+        }
+        const submitted = s.tasks.submit(specs, { project: slug });
+        if (opts.purpose && opts.purpose !== "work") {
+          for (const outcome of submitted) if (!outcome.deduplicated) s.db.prepare("UPDATE tasks SET purpose=? WHERE id=?").run(opts.purpose, outcome.taskId);
+        }
+        // Refuse impossible supervisor routes in the same transaction as submission. A
+        // retry of an existing idempotent task remains readable even if its route changed.
+        // Match TaskRouter.prepare without classification or a provider request.
+        for (const outcome of submitted) {
+          if (outcome.deduplicated) continue;
+          const task = s.tasks.get(outcome.taskId)!;
+          if (supervisorSandboxBinding(s.db, task.spec, slug, opts.purpose) || projectCfg.profiles[task.spec.profile]?.mode !== "supervisor") continue;
+          const chosen = projectCfg.supervisor.endpoints.map(endpointId => ({
+            profile: task.spec.profile, tier: null, kind: "force" as const,
+            endpointId, allowBelowFloor: true, enabled: true,
+          }));
+          const plan = router.plan(task.spec.profile, "T3", router.inputModalities(task),
+            task.spec.routing?.endpointId, false, projectCfg.supervisor.paid_policy, chosen, task.spec.hints?.web, projectCfg);
+          if (!plan.candidates.length) {
+            const exclusions = plan.explanations.filter(candidate => !candidate.eligible)
+              .map(candidate => `${candidate.endpointId}: ${candidate.reasons.join("; ")}`).join(" | ");
+            throw new MeritRouterError(plan.blocker?.code ?? "no_eligible_endpoint",
+              `${plan.blocker?.message ?? "No eligible supervisor endpoint is configured."} ` +
+              `Supervisor task was not submitted. Check the model catalog, supervisor routing policy, credentials and endpoint exclusions; paid routing remains subject to its configured policy.` +
+              (exclusions ? ` Exclusions: ${exclusions}` : " The model catalog has no candidate endpoints."));
+          }
+        }
+        for (const outcome of submitted) {
+          if (outcome.deduplicated) continue;
+          labs.bindTask(slug, outcome.taskId, s.tasks.get(outcome.taskId)!.spec, s.tasks);
+        }
+        return submitted;
+      });
+      this.projects.touch(slug);
+      // Recorded before the scheduler can claim the tasks, so their first session sees it.
+      if (opts.parentSessionId) {
+        for (const o of outcomes) if (!o.deduplicated) s.tasks.event(o.taskId, DELEGATED_BY_SESSION, { sessionId: opts.parentSessionId });
       }
-      for (const outcome of submitted) {
-        if (outcome.deduplicated) continue;
-        labs.bindTask(slug, outcome.taskId, s.tasks.get(outcome.taskId)!.spec, s.tasks);
-      }
-      return submitted;
+      if (!this.closing) this.kick(s);
+      return outcomes;
     });
-    this.projects.touch(slug);
-    if (opts.purpose && opts.purpose !== "work") {
-      for (const o of outcomes) if (!o.deduplicated) s.db.prepare("UPDATE tasks SET purpose = ? WHERE id = ?").run(opts.purpose, o.taskId);
-    }
-    // Recorded before the scheduler can claim the tasks, so their first session sees it.
-    if (opts.parentSessionId) {
-      for (const o of outcomes) if (!o.deduplicated) s.tasks.event(o.taskId, DELEGATED_BY_SESSION, { sessionId: opts.parentSessionId });
-    }
-    this.kick(s);
-    return outcomes;
   }
 
   /** Status of tasks by id; with `project`, a task of another project reads as unknown. */
@@ -1014,6 +1135,63 @@ export class MeritRouter {
     return s;
   }
 
+  /** Explicit FINAL grant after pause/process death, or opt-in proven maintenance shutdown with default timeout; never exposed to runtime model tools. */
+  continueTaskExecution(input: DeadlineContinuationInput) {
+    const parsed = DeadlineContinuationSchema.parse(input);
+    const st = this.stores.ofTask(parsed.taskId, parsed.project);
+    this.assertInProject(parsed.taskId, parsed.project, st);
+    if (!st.bundle) this.stores.fence(parsed.project);
+    const result = continueTaskDeadline(st.tasks, st.sessions, st.bundle?.cfg ?? this.projectContext(parsed.project), parsed);
+    this.kick(st);
+    return result;
+  }
+
+  /** Trusted FINAL repair of a proven pre-dispatch repository-lock failure, without resetting budgets. */
+  recoverTaskInfrastructureFailure(input: InfrastructureRecoveryInput) {
+    const parsed = InfrastructureRecoverySchema.parse(input);
+    const st = this.stores.ofTask(parsed.taskId, parsed.project);
+    this.assertInProject(parsed.taskId, parsed.project, st);
+    if (!st.bundle) this.stores.fence(parsed.project);
+    const result = recoverInfrastructureFailure(st.tasks, st.sessions, st.bundle?.cfg ?? this.projectContext(parsed.project), parsed);
+    this.kick(st);
+    return result;
+  }
+
+  /** Explicit FINAL continuation of honestly blocked pre-candidate work without resetting its budgets. */
+  async continueBlockedJob(input: BlockedJobContinuationInput) {
+    const parsed = BlockedJobContinuationSchema.parse(input), st = this.stores.ofTask(parsed.taskId, parsed.project);
+    this.assertInProject(parsed.taskId, parsed.project, st);
+    if (!st.bundle) this.stores.fence(parsed.project);
+    const result = await continueBlockedJob(st.tasks, st.sessions, st.bundle?.cfg ?? this.projectContext(parsed.project), parsed);
+    this.kick(st);
+    return result;
+  }
+
+  /** Trusted FINAL continuation using an already approved same-root budget; grants no time or requests. */
+  async continueSupervisorBudget(input: SupervisorBudgetContinuationInput) {
+    const parsed = SupervisorBudgetContinuationSchema.parse(input), st = this.stores.ofTask(parsed.taskId, parsed.project);
+    this.assertInProject(parsed.taskId, parsed.project, st);
+    if (!st.bundle) this.stores.fence(parsed.project);
+    const result = await continueSupervisorBudget(st.tasks, st.sessions, st.bundle?.cfg ?? this.projectContext(parsed.project), parsed);
+    this.kick(st);
+    return result;
+  }
+
+  /** Read-only exact provenance inspection of a historical framework recovery commit. */
+  inspectRecoveredEditProvenance(input: RecoveredEditInspectionInput) {
+    const parsed = RecoveredEditInspectionSchema.parse(input), st = this.stores.ofTask(parsed.taskId, parsed.project);
+    this.assertInProject(parsed.taskId, parsed.project, st);
+    return inspectRecoveredEditProvenance({ tasks: st.tasks, cfg: st.bundle?.cfg ?? this.projectContext(parsed.project), now: this.now }, parsed);
+  }
+
+  /** Additive FINAL provenance attestation; never changes Git history or grants model requests. */
+  attestRecoveredEditProvenance(input: RecoveredEditAttestationInput) {
+    const parsed = RecoveredEditAttestationSchema.parse(input), st = this.stores.ofTask(parsed.taskId, parsed.project);
+    this.assertInProject(parsed.taskId, parsed.project, st);
+    if (!st.bundle) this.stores.fence(parsed.project);
+    return attestRecoveredEditProvenance({ tasks: st.tasks, cfg: st.bundle?.cfg ?? this.projectContext(parsed.project), now: this.now }, parsed);
+  }
+
   /**
    * Re-queue the task of an interrupted session so its next run continues that session (a
    * coding task in the same worktree). Completion and batch work re-runs fresh, linked to it.
@@ -1084,14 +1262,27 @@ export class MeritRouter {
     }
   }
 
-  async close(): Promise<void> {
+  close(): Promise<void> {
+    if (!this.closePromise) {
+      this.closing = true;
+      void this.panelAvailability?.stop();
+      this.operations.seal();
+      this.closePromise = Promise.resolve().then(() => this.closeOnce());
+    }
+    return this.closePromise;
+  }
+
+  private async closeOnce(): Promise<void> {
     this.closing = true;
+    const panelDrained = this.panelAvailability?.stop();
     const gateDrained = this.gate.close();
-    const projectRuntimesDrained = Promise.allSettled(this.host ? [this.host.close()] : []);
+    const policyGatesDrained = Promise.allSettled([...this.legacyPolicyGraphs.values()].map(graph => graph.gate.close()));
     for (const timer of this.promotionTimers) clearTimeout(timer);
     this.promotionTimers.clear();
     if (this.discoveryTimer) clearInterval(this.discoveryTimer);
     if (this.reloadTimer) clearInterval(this.reloadTimer);
+    await this.supervisorQualifier.close();
+    const projectRuntimesDrained = Promise.allSettled(this.host ? [this.host.close()] : []);
     await this.preparing?.catch(() => undefined);
     await this.discovering?.catch(() => undefined);
     await this.scheduler.stop();
@@ -1099,10 +1290,13 @@ export class MeritRouter {
     await this.labs.close();
     // Review settlement owns brain writes and Git children independently of executor reports.
     await Promise.allSettled([...this.promotionSettles]);
+    await this.operations.drain();
     await gateDrained;
+    await policyGatesDrained;
     const projectRuntimeResults=await projectRuntimesDrained;
     const projectRuntimeFailure=projectRuntimeResults.find((result):result is PromiseRejectedResult=>result.status==="rejected");
     if(projectRuntimeFailure?.status==="rejected")throw projectRuntimeFailure.reason;
+    await panelDrained;
     this.db.close();
   }
 }

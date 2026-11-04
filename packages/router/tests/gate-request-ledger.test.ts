@@ -5,7 +5,8 @@ import type { MeritRouter } from "../src/core/service.js";
 import type { GateRequest } from "../src/gateway/gate.js";
 import { WorkerTaskSchema } from "../src/core/task.js";
 import { AdmissionDenied, GatewayError } from "../src/core/errors.js";
-import { RequestPersistenceError } from "../src/admission/request-ledger.js";
+import { RequestPersistenceError, ReserveRequestDTOSchema, ReservationDTOSchema, RequestOutcomeDTOSchema } from "../src/admission/request-ledger.js";
+import { SqliteRequestLedger } from "../src/admission/sqlite-request-ledger.js";
 import { baseConfig, endpoint, goodOutput, makeEnv, open, reply, ScriptedClient, summarizeTask, type Env, type ScriptedRequest } from "./helpers.js";
 
 let env: Env | undefined, sy: MeritRouter | undefined;
@@ -134,12 +135,23 @@ it.each([false, true])("settlement rejection after a paid provider attempt prese
 
 it("the actual default submitted-task path uses data-only ledger requests and persists unchanged charges", async () => {
   const { client } = setup({ worker: true });
-  const reserve = vi.spyOn(sy!.gate.ledger, "reserve");
-  const reconcile = vi.spyOn(sy!.gate.ledger, "reconcile");
+  // Submitted tasks use their project's policy graph, whose Gate is distinct from
+  // the installation Gate. Observe the real adapter without replacing that graph.
+  const reserve = vi.spyOn(SqliteRequestLedger.prototype, "reserve");
+  const reconcile = vi.spyOn(SqliteRequestLedger.prototype, "reconcile");
   const [task] = await sy!.submitTasks([summarizeTask()]);
   const result = await sy!.awaitResults([task!.taskId], { timeoutSeconds: 15 });
   expect(result.completed[0]!.executionStatus).toBe("completed");
   expect(reserve).toHaveBeenCalledTimes(1); expect(reconcile).toHaveBeenCalledTimes(1);
+  expect(reserve.mock.instances[0]).not.toBe(sy!.gate.ledger);
+  expect(reconcile.mock.instances[0]).toBe(reserve.mock.instances[0]);
+  const reserved = ReserveRequestDTOSchema.parse(reserve.mock.calls[0]![0]);
+  expect(reserved.participants.map(p => p.taskId)).toEqual([task!.taskId]);
+  expect(reserve.mock.calls[0]![0]).toEqual(JSON.parse(JSON.stringify(reserved)));
+  const reservation = ReservationDTOSchema.parse(reconcile.mock.calls[0]![0]);
+  const outcome = RequestOutcomeDTOSchema.parse(reconcile.mock.calls[0]![1]);
+  expect(reservation.requestId).toBe(reserved.requestId);
+  expect(reconcile.mock.calls[0]![1]).toEqual(JSON.parse(JSON.stringify(outcome)));
   expect(client.requests).toHaveLength(1);
   expect(sy!.db.prepare("SELECT status,input_tokens,output_tokens FROM model_requests").get()).toEqual({ status: "succeeded", input_tokens: 100, output_tokens: 50 });
   expect(sy!.db.prepare("SELECT task_id,input_tokens,output_tokens,tokens_exact FROM request_charges").get()).toEqual({ task_id: task!.taskId, input_tokens: 100, output_tokens: 50, tokens_exact: 1 });

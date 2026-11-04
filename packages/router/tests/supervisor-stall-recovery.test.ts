@@ -1,21 +1,28 @@
-import { afterEach, expect, it } from "vitest";
-import { appendFileSync, rmSync } from "node:fs";
+import { afterEach, expect, it, vi } from "vitest";
+import { appendFileSync, rmSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { execFileSync } from "node:child_process";
 import type { MeritRouter } from "../src/core/service.js";
 import { syntheticResult } from "../src/storage/tasks.js";
 import { resumeFor } from "../src/sessions/run-sessions.js";
 import { recordGrant } from "../src/admission/job-pool.js";
+import type { Executor } from "../src/core/executor.js";
+import { baseResult, type RunContext, type RunOutcome } from "../src/runners/types.js";
+import { SessionStore } from "../src/sessions/store.js";
+import { Gate } from "../src/gateway/gate.js";
+import { TaskRouter } from "../src/routing/router.js";
 import { baseConfig, makeEnv, open, ScriptedClient, reply, type Env } from "./helpers.js";
 
 let env: Env | undefined, sy: MeritRouter | undefined;
-afterEach(async () => { await sy?.close(); sy = undefined; env?.cleanup(); env = undefined; });
+afterEach(async () => { vi.restoreAllMocks(); await sy?.close(); sy = undefined; env?.cleanup(); env = undefined; });
 const reason = "repeated_tool_call:task_result";
 const limits = { maxConcurrent: 4, maxWritersPerRepo: 4, leaseMs: 60_000, defaultTimeoutMs: 3600_000, supervisorProfiles: ["supervise"], maxSupervisors: 4, supervisorTimeoutMs: 3600_000 };
 async function fixture(profile: "supervise" | "inspect" = "supervise", failure = reason) {
   const cfg = baseConfig();
   (cfg.profiles as Record<string, unknown>).supervise = { mode: "supervisor", tools: "supervisor", min_total_parameters_b: 100, max_model_requests: 40, classify: "never", min_tier: "T3" };
   env = makeEnv({ config: cfg });
-  sy = open(env, new ScriptedClient(() => reply("unused")), { worker: false });
+  const client = new ScriptedClient(() => reply("unused"));
+  sy = open(env, client, { worker: false });
   const [task] = await sy.submitTasks([{ profile, goal: "Recover settled supervisor observations", repositoryAliases: ["core"], budget: { maxModelRequests: 40 }, constraints: { acceptanceCriteria: ["deliver reviewed result"] } }]);
   const id = task!.taskId;
   sy.tasks.claim("fixture", limits);
@@ -25,7 +32,7 @@ async function fixture(profile: "supervise" | "inspect" = "supervise", failure =
   session.syncMessages([{ role: "system", content: "supervisor charter" }, { role: "user", content: "goal" }, { role: "assistant", content: "", tool_calls: [{ id: "effect", type: "function", function: { name: "integrate_task", arguments: '{"task_id":"child"}' } }] }, { role: "tool", tool_call_id: "effect", content: "integrated exactly once" }]);
   session.end("failed", failure);
   sy.tasks.finish(id, "fixture", syntheticResult(id, "failed", failure), "failed");
-  return { id, session, head };
+  return { id, session, head, client };
 }
 
 it("explicitly continues a settled failed supervisor in a linked session while preserving history, child grants, budget and deadline", async () => {
@@ -98,4 +105,71 @@ it.each(["missing-workspace", "corrupt-log", "changed-mode", "missing-named-sess
   if (condition === "missing-named-session") sy!.db.prepare("UPDATE events SET data_json=? WHERE task_id=? AND type='resumed'").run(JSON.stringify({ sessionId: "missing-retained-session", failedObservationRecovery: true }), id);
   expect(() => resumeFor({ cfg: env!.cfg, tasks: sy!.tasks, sessions: sy!.sessions }, sy!.tasks.get(id)!)).toThrow();
   expect(sy!.sessions.forTask(id)).toHaveLength(1);
+});
+
+
+it.each(["syncMessages", "setWorkspace", "resumed", "note", "task_event"] as const)("closes and settles observation recovery after its linked %s write fails", async fault => {
+  const f = await fixture(), original = sy!.tasks.get(f.id)!;
+  const history = readFileSync(sy!.sessions.get(f.session.id)!.logPath), source = readFileSync(path.join(env!.repo, "src/app.ts"));
+  const accounting = () => JSON.stringify(["model_requests", "request_charges", "paid_spend", "budget_requests", "task_request_grants", "job_budget_carves"].map(table => sy!.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()));
+  const before = accounting(); sy!.resumeTask(f.id, "demo");
+  let injected = false;
+  const create = SessionStore.prototype.create;
+  vi.spyOn(SessionStore.prototype, "create").mockImplementation(function (this: SessionStore, input) {
+    const recorder = create.call(this, input);
+    if (input.previousSessionId === f.session.id && fault !== "task_event") vi.spyOn(recorder, fault).mockImplementationOnce(() => { injected = true; throw new Error("Transient observation recording failure"); });
+    return recorder;
+  });
+  if (fault === "task_event") {
+    const event = sy!.tasks.event.bind(sy!.tasks);
+    vi.spyOn(sy!.tasks, "event").mockImplementation((id, type, data) => {
+      if (!injected && id === f.id && type === "session_resumed") { injected = true; throw new Error("Transient observation task-event failure"); }
+      return event(id, type, data);
+    });
+  }
+  const [task] = sy!.tasks.claim(sy!.owner, limits), executor = (sy as unknown as { executor: Executor }).executor;
+  const gate = vi.spyOn(Gate.prototype, "request");
+  const runner = vi.spyOn(executor as unknown as { runMode: (ctx: RunContext) => Promise<RunOutcome> }, "runMode").mockRejectedValue(new Error("Broken linked observation recovery reached a runner"));
+  await expect(executor.runSingle(task!)).resolves.toBeUndefined(); expect(injected).toBe(true);
+  expect(runner).not.toHaveBeenCalled(); expect(gate).not.toHaveBeenCalled();
+  const authors = sy!.sessions.forTask(f.id), linked = authors.find(session => session.previousSessionId === f.session.id)!;
+  expect(authors).toHaveLength(2); expect(authors.some(session => session.status === "running")).toBe(false);
+  expect(linked).toMatchObject({ status: "failed", stopReason: "supervisor_observation_recovery_recording_failed" });
+  expect(sy!.sessions.events(linked.id, { limit: 10000 })!.events.at(-1)).toMatchObject({ type: "ended", data: { status: "failed", stopReason: "supervisor_observation_recovery_recording_failed" } });
+  expect(sy!.tasks.get(f.id)!.row).toMatchObject({ state: "failed", lease_owner: null, lease_expires_at: null, deadline_at: original.row.deadline_at });
+  expect(sy!.tasks.get(f.id)!.spec).toEqual(original.spec); expect(accounting()).toBe(before);
+  expect(readFileSync(sy!.sessions.get(f.session.id)!.logPath)).toEqual(history); expect(readFileSync(path.join(env!.repo, "src/app.ts"))).toEqual(source);
+});
+
+it.each([false, true])("retains ordinary unreadable-session fallback after a historical explicit recovery (malformed unknown: %s)", async malformedUnknown => {
+  const f = await fixture(); sy!.resumeTask(f.id, "demo");
+  const [first] = sy!.tasks.claim("linked-owner", limits), linked = resumeFor({ cfg: env!.cfg, tasks: sy!.tasks, sessions: sy!.sessions }, first!)!;
+  linked.session.end("interrupted", "user_paused"); sy!.tasks.interrupt(f.id, "linked-owner", "user paused"); sy!.resumeTask(f.id, "demo");
+  if (malformedUnknown) sy!.db.prepare("UPDATE events SET data_json=? WHERE id=(SELECT MAX(id) FROM events WHERE task_id=? AND type='resumed')").run(JSON.stringify({ unknownResumeOption: true }), f.id);
+  const [task] = sy!.tasks.claim(sy!.owner, limits), executor = (sy as unknown as { executor: Executor }).executor;
+  vi.spyOn(SessionStore.prototype, "reopen").mockImplementationOnce(() => { throw new Error("Transient ordinary session read failure"); });
+  const runner = vi.spyOn(executor as unknown as { runMode: (ctx: RunContext) => Promise<RunOutcome> }, "runMode").mockImplementation(async ctx => {
+    expect(ctx.resume).toBeNull();
+    return { state: "completed", result: baseResult({ executionStatus: "completed", acceptanceStatus: "not_verified", stopReason: "supervisor_blocked" }) };
+  });
+  const gate = vi.spyOn(Gate.prototype, "request"); await expect(executor.runSingle(task!)).resolves.toBeUndefined();
+  expect(runner).toHaveBeenCalledOnce(); expect(gate).not.toHaveBeenCalled();
+  expect(sy!.tasks.get(f.id)!.row.state).toBe("completed");
+  expect(sy!.tasks.events(f.id).some(event => event.type === "session_resume_failed" && (event.data as { error?: string }).error === "Transient ordinary session read failure")).toBe(true);
+});
+
+it("fails closed for malformed current observation directive key failedObservationRecovery", async () => {
+  const f = await fixture(), original = sy!.tasks.get(f.id)!;
+  const history = readFileSync(sy!.sessions.get(f.session.id)!.logPath), source = readFileSync(path.join(env!.repo, "src/app.ts"));
+  const accounting = () => JSON.stringify(["model_requests", "request_charges", "paid_spend", "budget_requests", "task_request_grants", "job_budget_carves"].map(table => sy!.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()));
+  const before = accounting(); sy!.resumeTask(f.id, "demo");
+  sy!.db.prepare("UPDATE events SET data_json=json_set(data_json,'$.failedObservationRecovery',0) WHERE task_id=? AND type='resumed'").run(f.id);
+  const [task] = sy!.tasks.claim(sy!.owner, limits), executor = (sy as unknown as { executor: Executor }).executor;
+  const route = vi.spyOn(TaskRouter.prototype, "prepare"), gate = vi.spyOn(Gate.prototype, "request");
+  const runner = vi.spyOn(executor as unknown as { runMode: (ctx: RunContext) => Promise<RunOutcome> }, "runMode").mockRejectedValue(new Error("Malformed observation recovery reached a runner"));
+  await expect(executor.runSingle(task!)).resolves.toBeUndefined();
+  expect(runner).not.toHaveBeenCalled(); expect(route).not.toHaveBeenCalled(); expect(gate).not.toHaveBeenCalled(); expect(f.client.calls).toHaveLength(0);
+  expect(sy!.tasks.get(f.id)!.row).toMatchObject({ state: "failed", lease_owner: null, lease_expires_at: null, deadline_at: original.row.deadline_at });
+  expect(sy!.tasks.get(f.id)!.spec).toEqual(original.spec); expect(accounting()).toBe(before); expect(sy!.sessions.forTask(f.id)).toHaveLength(1);
+  expect(readFileSync(sy!.sessions.get(f.session.id)!.logPath)).toEqual(history); expect(readFileSync(path.join(env!.repo, "src/app.ts"))).toEqual(source);
 });

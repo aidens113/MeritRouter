@@ -286,6 +286,7 @@ export class TaskStore {
         if (control.order !== "project_fifo" || canonicalJson(readStoreIdentity(this.db)) !== canonicalJson(identity)) throw new Error("Project claim order requires the exact local store identity");
       }
       const now = this.now();
+      this.expireQueuedDeadlines();
       this.resolveDependencyGates(now);
 
       const sup = new Set(limits.supervisorProfiles ?? []);
@@ -432,6 +433,7 @@ export class TaskStore {
     if (max <= 0) return [];
     return immediate(this.db, () => {
       const now = this.now();
+      this.expireQueuedDeadlines();
       const rows = this.db
         .prepare(
           `SELECT * FROM tasks WHERE cancel_requested = 0 AND profile = ? AND id != ? AND project_id = ?
@@ -546,6 +548,16 @@ export class TaskStore {
       .run(state, reason, JSON.stringify(result), now, now, row.id);
     releaseLeases(this.db, row.id, state, now);
     this.event(row.id, state, { reason });
+  }
+
+  /** Settle expired work before a split claim can reserve an already-expired execution grant. */
+  expireQueuedDeadlines(): string[] {
+    return immediate(this.db, () => {
+      const now = this.now();
+      const rows = this.db.prepare("SELECT * FROM tasks WHERE state IN ('queued','waiting_for_capacity','waiting_for_dependencies') AND cancel_requested=0 AND lease_owner IS NULL AND deadline_at IS NOT NULL AND deadline_at<=?").all(now) as TaskRow[];
+      for (const row of rows) this.finalizeWithoutRun(row, "failed", "deadline_exceeded", now);
+      return rows.map(row => row.id);
+    });
   }
 
   /** Extend a lease. Returns false when the lease was lost; the caller must stop dispatching. */

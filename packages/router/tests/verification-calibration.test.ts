@@ -18,9 +18,10 @@ import { baseConfig, commitAll, endpoint, goodOutput, makeEnv, openWithTestSuper
 let env: Env | undefined;
 let sy: MeritRouter | undefined;
 afterEach(async () => {
-  await sy?.close();
-  sy = undefined;
-  env?.cleanup();
+  const ownedService = sy, ownedEnvironment = env;
+  sy = undefined; env = undefined;
+  await ownedService?.close();
+  ownedEnvironment?.cleanup();
 });
 
 // The author routes first (most capable); the reviewer is another family on another platform.

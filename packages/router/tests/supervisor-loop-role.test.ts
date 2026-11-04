@@ -60,8 +60,8 @@ describe("role-aware agent loop stall guidance", () => {
 
   it("preserves implementation guidance for coding workers", async () => {
     const guidance = await runWithoutEdits("coding");
-    expect(guidance).toContain("Write your implementation now with write_file");
-    expect(guidance).toContain("define the smallest version");
+    expect(guidance).toContain("Implement your bounded brief now using write_file");
+    expect(guidance).toContain("respect file ownership and do not recreate another task's module");
     expect(guidance).not.toContain("delegate-only supervisors");
   });
 });

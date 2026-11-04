@@ -10,6 +10,7 @@ import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import { SessionEventSchema } from "../sessions/events.js";
 import { z } from "zod";
+import { commandTimeoutMs } from "./command-timeout.js";
 interface OperationState {
   result: OperationResult | null;
   controller: AbortController;
@@ -90,7 +91,8 @@ export async function executeOperation(def: OperationDefinition, input: Record<s
   const row = env.ctx.tasks.get(env.ctx.taskId)?.row;
   if(row?.deadline_at!=null&&env.ctx.now()>=row.deadline_at)return {version:"2",operationId:id,status:"denied",durationMs:Date.now()-started,diagnostics:["Task deadline already expired; no operation executed."]};
   const remaining = row?.deadline_at == null ? Infinity : Math.max(1, row.deadline_at - env.ctx.now());
-  const timeout = Math.min(Number(parsed.data.timeout_ms ?? 30000), 300000);
+  const explicitTimeout = parsed.data.timeout_ms as number | undefined;
+  const timeout = def.sideEffect === "command" ? commandTimeoutMs(env.ctx.cfg, explicitTimeout) : Math.min(explicitTimeout ?? 30000, 300000);
   let executionRemaining = timeout, activeSince = Date.now(), pauses = 0, settled = false;
   let chargedIntervals: Array<[number, number]> = [], chargedWhilePaused = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -154,7 +156,10 @@ export async function executeOperation(def: OperationDefinition, input: Record<s
     const status = typeof data === "object" && data !== null && "status" in data ? (data as {
       status: unknown;
     }).status : null;
-    result = { version: "2", operationId: id, status: signal.aborted ? (def.sideEffect === "read" ? (env.ctx.signal.aborted ? "cancelled" : "timed_out") : "unknown_effect") : status === "partial" ? "unknown_effect" : status === "failed" ? "failed" : status === "waiting_approval" ? "waiting_approval" : "succeeded", durationMs: Date.now() - started, data: boundedOutput(data, env), diagnostics: signal.aborted ? [String(signal.reason??"cancelled after partial work")] : [] };
+    // This is the handler's structured result, not parsed command stdout. Recipe handlers
+    // already derive these statuses from check evidence or a validated current action.
+    const outcome = status === "partial" ? "unknown_effect" : status === "failed" || status === "waiting_approval" || status === "denied" || status === "cancelled" || status === "unknown_effect" ? status : "succeeded";
+    result = { version: "2", operationId: id, status: signal.aborted ? (def.sideEffect === "read" ? (env.ctx.signal.aborted ? "cancelled" : "timed_out") : "unknown_effect") : outcome, durationMs: Date.now() - started, data: boundedOutput(data, env), diagnostics: signal.aborted ? [String(signal.reason??"cancelled after partial work")] : [] };
   }
   catch (error) {
     if (isSimulatedCrash(error) || error instanceof RepositoryMutationError || error instanceof SelectedCommitError)

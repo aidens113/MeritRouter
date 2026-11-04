@@ -303,9 +303,9 @@ describe("plan_work", () => {
     const started: string[] = [];
     const seenByE: string[] = [];
     const script = [
-      () => [call("plan_work", { nodes: [brief("a"), brief("b"), brief("c"), brief("d"), brief("e", { depends_on: ["a", "b"], difficulty: "T2" })], note: "first cut" })],
+      () => [call("plan_work", { nodes: [brief("a"), brief("b"), brief("c"), brief("d"), brief("e", { depends_on: ["a", "b"], difficulty: "T2" })].map(node => ({ ...node, max_requests: 4 })), note: "first cut" })],
       () => [call("await_tasks", { timeout_seconds: 120 })],
-      () => [call("plan_work", { nodes: [brief("a", { goal: "Inspect part a differently" }), brief("f", { depends_on: ["e"] })], note: "add f" })],
+      () => [call("plan_work", { nodes: [brief("a", { goal: "Inspect part a differently" }), brief("f", { depends_on: ["e"] })].map(node => ({ ...node, max_requests: 4 })), note: "add f" })],
       () => [call("await_tasks", { timeout_seconds: 120 })],
       () => [call("finish_job", { status: "completed", summary: "all parts inspected", verified: [{ claim: "every node finished", evidence: "await_tasks" }], not_verified: [] })],
     ];

@@ -1,7 +1,6 @@
 import { quiescentRecipeSource } from "../harness/repair-operation-quiescence.js";
 import { z } from "zod";
 import picomatch from "picomatch";
-import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { RepairSourceSchema, type RepairSource } from "../core/task.js";
@@ -13,18 +12,23 @@ import { SessionStore } from "../sessions/store.js";
 import { authorSessions } from "../sessions/run-sessions.js";
 import { workerSourceIdentity, WorkerActionRequests } from "../harness/worker-actions.js";
 import { withRepositoryMutation, type RepositoryMutationCapability } from "./repository-mutation.js";
+import { commitCapturedApplication, unpackSelectedCommitOutcome } from "../attribution/selected-commit.js";
+import { newRepairLineageState, RepairCopyCreatedSchema, RepairHydrationReceiptSchema as Receipt, repairSourceDigest as digest, verifyRepairCommitOrigin, type RepairLineageState } from "./repair-copy-provenance.js";
 
 interface RepairMutationControl { mutation?: RepositoryMutationCapability }
 
 const EVENT = "repair_hydration";
-const Receipt = z.object({ status: z.enum(["started", "completed", "failed"]), digest: z.string().regex(/^[0-9a-f]{64}$/),
-  worktree: z.string(), base: z.string(), head: z.string().regex(/^[0-9a-f]{40,64}$/).optional(), tree: z.string().regex(/^[0-9a-f]{40,64}$/).optional() }).strict().superRefine((v,c)=>{if(v.status==="completed"&&(!v.head||!v.tree))c.addIssue({code:"custom",message:"completed hydration requires head/tree"});});
 function refuse(why: string): never { throw new Error(`repair_hydration_refused: ${why}`); }
 const options = (ctx: RunContext) => ({ signal: ctx.signal, timeoutMs: 30_000 });
-const digest = (source: RepairSource) => createHash("sha256").update(JSON.stringify(source)).digest("hex");
 
 /** Resolve only a terminal sibling's immutable, attributed, fully scoped retained commit chain. */
-export async function resolveRepairSource(ctx: RunContext, id: string, alias: string, constraints: {allowedPaths?: string[]}, parent: string): Promise<RepairSource> {
+export async function resolveRepairSource(ctx: RunContext, id: string, alias: string, constraints: {allowedPaths?: string[]}, parent: string, lineage: RepairLineageState = newRepairLineageState()): Promise<RepairSource> {
+  if(lineage.active.has(id)||lineage.active.size>=16)refuse("repair provenance ancestry is cyclic or exceeds its depth bound");
+  lineage.active.add(id);
+  try{return await resolveRepairSourceInternal(ctx,id,alias,constraints,parent,lineage);}finally{lineage.active.delete(id);}
+}
+
+async function resolveRepairSourceInternal(ctx: RunContext, id: string, alias: string, constraints: {allowedPaths?: string[]}, parent: string, lineage: RepairLineageState): Promise<RepairSource> {
   assertRunAuthority(ctx);
   const task = ctx.tasks.get(id);
   if (!task || task.spec.parentTaskId !== parent || task.row.project_id !== ctx.tasks.projectOf(ctx.taskId) ||
@@ -68,10 +72,15 @@ export async function resolveRepairSource(ctx: RunContext, id: string, alias: st
   let previous=ws.base_sha;
   let remainingPatchBytes=8*1024*1024;
   for (const commit of commits) {
+    if(++lineage.visits>500)refuse("repair provenance exceeds its aggregate commit bound");
     const parents=(await git(cwd,["rev-list","--parents","-n","1",commit],opts)).trim().split(" ");
     if (parents.length!==2 || parents[1]!==previous) refuse("source is not a linear bounded chain");
     const message=await git(cwd,["show","-s","--format=%B",commit],opts);
-    if (!["Agent","Model","Task"].every(k=>new RegExp(`^${k}: .+`,"m").test(message))) refuse("source attribution missing");
+    if (!["Agent","Task"].every(k=>new RegExp(`^${k}: .+`,"m").test(message))) refuse("source attribution missing");
+    if (!/^Model: .+/m.test(message)) {
+      try { await verifyRepairCommitOrigin(ctx,{taskId:id,alias,commit,worktree:cwd,base:ws.base_sha,head},ancestor=>resolveRepairSource(ctx,ancestor,alias,constraints,parent,lineage)); }
+      catch { refuse("source attribution missing or recovered-edit proof is invalid"); }
+    }
     const raw=await git(cwd,["diff-tree","--no-commit-id","--no-renames","--name-only","-r","-z",commit],opts);
     for (const name of raw.split("\0").filter(Boolean)) if (!allowed(name)||!original(name)) refuse(`inherited path outside scope: ${name}`);
     const tree=await git(cwd,["ls-tree","-r",commit],{...opts,maxBuffer:4*1024*1024});
@@ -104,6 +113,10 @@ async function verifyRepairHydrationUnderMutation(ctx:RunContext,ws:Workspace):P
   // Later worker commits are valid; the immutable hydrated head must remain an ancestor.
   await git(ws.worktreePath,["merge-base","--is-ancestor",receipt.head!,"HEAD"],options(ctx));
   if ((await git(ws.worktreePath,["rev-parse",`${receipt.head}^{tree}`],options(ctx))).trim()!==receipt.tree) refuse("hydrated tree mismatch");
+  // A target-tree receipt cannot replace original authorship evidence. Recheck missing-trailer
+  // provenance on resume as well as first hydration; receipts and original logs remain bound.
+  const resolved=await resolveRepairSource(ctx,source.taskId,source.alias,ctx.spec.constraints,ctx.spec.parentTaskId??"");
+  if(JSON.stringify(resolved)!==JSON.stringify(source))refuse("retained source provenance changed");
   assertRunAuthority(ctx);
 }
 
@@ -132,10 +145,10 @@ export async function hydrateRepairWorkspace(ctx:RunContext,ws:Workspace,control
     return process.platform==="win32" ? physical.toLowerCase() : physical;
   };
   if(await common(ws.worktreePath)!==await common(sourceWorkspace.worktree_path))refuse("source and target Git owners differ");
-  await withRepositoryMutation([ws.worktreePath,sourceWorkspace.worktree_path],()=>hydrateRepairWorkspaceUnderMutation(ctx,ws),{capability:control.mutation});
+  await withRepositoryMutation([ws.worktreePath,sourceWorkspace.worktree_path],mutation=>hydrateRepairWorkspaceUnderMutation(ctx,ws,mutation),{capability:control.mutation});
 }
 
-async function hydrateRepairWorkspaceUnderMutation(ctx:RunContext,ws:Workspace):Promise<void> {
+async function hydrateRepairWorkspaceUnderMutation(ctx:RunContext,ws:Workspace,mutation:RepositoryMutationCapability):Promise<void> {
   const source=ctx.spec.context.repairSource;
   if (!source) return;
   if (ctx.spec.lab || ctx.spec.constraints.labChecks?.length || ctx.retry?.startFrom) refuse("unsupported Lab or quality-retry hydration");
@@ -167,7 +180,22 @@ async function hydrateRepairWorkspaceUnderMutation(ctx:RunContext,ws:Workspace):
       await assertSourceCurrent();
       const previousHead=(await git(ws.worktreePath,["rev-parse","HEAD"],options(ctx))).trim();
       assertRunAuthority(ctx);
-      await git(ws.worktreePath,["cherry-pick","-x","--allow-empty",commit],{...options(ctx),env:{GIT_COMMITTER_NAME:"MeritRouter repair hydration",GIT_COMMITTER_EMAIL:"repair@meritrouter.local"}});
+      const message=await git(ws.worktreePath,["show","-s","--format=%B",commit],options(ctx));
+      if(/^Model: .+/m.test(message)) {
+        await assertSourceCurrent();
+        await git(ws.worktreePath,["cherry-pick","-x","--allow-empty",commit],{...options(ctx),env:{GIT_COMMITTER_NAME:"MeritRouter repair hydration",GIT_COMMITTER_EMAIL:"repair@meritrouter.local"}});
+      } else {
+        const origin=await verifyRepairCommitOrigin(ctx,{taskId:source.taskId,alias:source.alias,commit,worktree:sourceWorkspace.worktree_path,base:source.base,head:source.head},ancestor=>resolveRepairSource(ctx,ancestor,source.alias,ctx.spec.constraints,ctx.spec.parentTaskId??""));
+        await assertSourceCurrent();
+        await git(ws.worktreePath,["cherry-pick","--no-commit",commit],options(ctx));
+        assertRunAuthority(ctx);
+        const tree=(await git(ws.worktreePath,["write-tree"],options(ctx))).trim();
+        await validateTargetDelta(ctx,ws,previousHead,tree);
+        const subject=message.split(/\r?\n/,1)[0]!.slice(0,4096);
+        const copied=unpackSelectedCommitOutcome(await commitCapturedApplication(ws.worktreePath,{actor:origin.actor,head:previousHead,tree,message:`${subject}\n\n(cherry picked from commit ${commit})\n`,extraTrailers:{"Repair-Source-Task":source.taskId,"Repair-Source-Commit":commit,"Repair-Origin-Commit":origin.originalCommit,"Repair-Provenance":origin.proofDigest}},{mutation,assertAuthority:()=>assertRunAuthority(ctx)}));
+        if(!copied)refuse("unattributed source copy became empty; refusing to drop its ordered lineage");
+        assertRunAuthority(ctx);ctx.tasks.event(ctx.taskId,"repair_copy_created",RepairCopyCreatedSchema.parse({version:1,sourceDigest:digest(source),sourceTaskId:source.taskId,sourceCommit:commit,targetParent:previousHead,targetCommit:copied,targetTree:tree,originTaskId:origin.originalTaskId,originCommit:origin.originalCommit,originProofDigest:origin.proofDigest,actor:origin.actor}));
+      }
       assertRunAuthority(ctx);
       await validateTargetDelta(ctx,ws,previousHead,"HEAD");
     }

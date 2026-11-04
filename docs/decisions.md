@@ -11,10 +11,39 @@ Verified interfaces, routing boundaries, and every departure from the original p
 (`plan.md`, written for "fluxiq-workers"). Dates are 2026-10-19 unless noted. FreeLLMAPI, the
 gateway MeritRouter used until 2026-10-20, appears here only as history (last section).
 
-## Usable supervisor routing default (corrective user request, 2026-10-23)
+## Native Anthropic tool and signed-content protocol (2026-10-28)
+
+Provider capability metadata and official tool-workflow rules determine supported tool choice.
+Adaptive-model requests that require auto/none must not be mapped unconditionally to forced
+any/tool. Returning tool results preserves the complete ordered signed assistant content
+through normal loops, persistence and restart. Opaque provider-native continuation remains
+data, never tool authority, and must not leak into another provider's wire format. Context
+rewrites invalidate only the documented suffix; no unaccounted transport retry is implied.
+
+Official preserved-thinking rules leave cross-model signed-block readability to the API.
+Stored continuation model identity records origin provenance; target capability and quality
+evidence stay bound separately to the requested route. Prefix and provider/host boundaries
+remain enforced. See the official [tool workflow documentation](https://platform.claude.com/docs/en/build-with-claude/thinking-tool-workflows)
+and [preserved-thinking rules](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking#switching-models-mid-conversation).
+
+## Measured supervisor ranking (corrective user request, 2026-10-28)
+
+The earlier capacity-based fallback below did not satisfy the user's supervisor-quality
+requirement. The default is now `ranked_capable`: exact endpoint/provider/model observations
+on one configured source, suite version and metric scale must meet every capability floor.
+The primary metric ranks eligible models within the authorized free/paid class; equal scores
+do not make model size or ordinary worker qualification evidence of superior supervision.
+Evidence expires and is rechecked immediately before transport, after asynchronous admission.
+Legacy modes remain explicit compatibility choices, never automatic fallback from ranked mode.
+Missing evidence requires independently graded model qualification rather than a permanent
+empty-evidence guard.
+Framework validation is recorded in [the framework validation record](working/framework-validation.md);
+routing evidence does not establish downstream application acceptance.
+
+## Usable supervisor routing default (historical corrective request, 2026-10-23)
 
 The Facebook delivery pilot could not start any supervisor because omitted quality settings
-resolved to a mandatory evidence policy with an empty evidence list. Delivery now defaults to
+resolved to a mandatory evidence policy with an empty evidence list. At that checkpoint delivery defaulted to
 `supervisor.routing.minimum_quality: best_available`: reviewed current evidence ranks first,
 otherwise eligible supervisor models are ordered by existing qualification and capacity
 heuristics and explicitly reported as unverified. No benchmark scores or frontier claims are
@@ -717,3 +746,11 @@ Lab origin over CDP rather than giving the browser host-network access. These pr
 were checked independently during integration. They do not establish that this implementation
 has passed real-engine acceptance: the local Docker Desktop Linux pipe was absent. No daemon
 was started, image downloaded, or host-browser substitute admitted as isolated journey evidence.
+
+### Provider credit visibility and model metadata (2026-10-28)
+
+Anthropic documents monthly promotional credits in the linked Console organization's Promotional credits section, with amount and expiry, shared across keys/workspaces. They cover direct Claude API requests; Claude Code and app extra usage are excluded. Purchased-balance auto-reload is separate from included credits. Source checked: [API credits](https://platform.claude.com/docs/en/about-claude/api-credits-for-subscribers). The [public Admin API](https://platform.claude.com/docs/en/manage-claude/admin-api) and billing guidance reviewed here did not establish a public promotional-balance read endpoint for an ordinary model API key. MeritRouter therefore must not claim automatic balance detection. Its entered balance is a manual snapshot; estimated remaining subtracts only MeritRouter-recorded spend and can differ from an organization used elsewhere.
+
+The [Anthropic Models API](https://platform.claude.com/docs/en/api/models/list) reports available model IDs, capability metadata, lifecycle, model line and input/output limits. Parameter counts are not published by that schema. Do not require inventing counts to route a verified proprietary model, or infer its line from the ID. A successful list operation establishes model-list access, not inference success or account credit balance.
+
+Ollama's [current pricing](https://ollama.com/pricing) describes token-priced cloud usage and plan credits; [cloud documentation](https://docs.ollama.com/cloud) requires exact API tag names. A stored free_tier key label or a public model listing alone cannot prove a particular account/model request will be uncharged. Existing included/free entitlements require their own provenance; keep provider billing unknown rather than manufacture zero prices from the label. Current account-level billing was not independently verified in this review.

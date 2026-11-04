@@ -13,6 +13,7 @@ import { randomBytes } from "node:crypto";
 import { inspectServiceCommandProcess, releaseServiceCommandProcess, serviceJobObservation, startServiceCommandProcess, type ServiceJobBinding } from "../src/harness/service-command-process.js";
 import { prepareRepositoryServiceCommand, repositoryServicePermit, startRepositoryServiceCommand, stopRepositoryServiceCommand, withRepositoryServiceStatus, type RepositoryServiceCommand } from "../src/workspaces/repository-command.js";
 import { withRepositoryMutation } from "../src/workspaces/repository-mutation.js";
+import { minimalEnv } from "../src/runners/coding/process.js";
 
 let env: Env | undefined, db: Db | undefined, manager: LabManager | undefined;
 const serviceJobs: Array<{ binding: ServiceJobBinding; directory: string; released: boolean }> = [];
@@ -106,7 +107,7 @@ describe.skipIf(process.platform !== "win32")("native named service Job proof", 
     const directory = path.join(env!.dir, `service-${randomBytes(8).toString("hex")}`); mkdirSync(directory);
     const control = { id: `rc_${randomBytes(16).toString("hex")}`, nonce: randomBytes(32).toString("hex"), directory };
     let job!: typeof serviceJobs[number];
-    const binding = await startServiceCommandProcess({ file: process.execPath, args: ["-e", script], cwd: env!.repo, env: {}, timeoutMs }, control, async binding => {
+    const binding = await startServiceCommandProcess({ file: process.execPath, args: ["-e", script], cwd: env!.repo, env: minimalEnv({}), timeoutMs }, control, async binding => {
       job = { binding, directory, released: false }; serviceJobs.push(job); await before?.(binding);
     });
     return { binding, directory, control, job };
@@ -150,7 +151,7 @@ describe.skipIf(process.platform !== "win32")("opaque own-service metadata admis
       expect(() => { command.descriptor.group = "other-lab"; }).toThrow();
       expect(() => { command.repo = path.join(env!.dir, "foreign"); }).toThrow();
       repositoryServices.push(command);
-      await startRepositoryServiceCommand(command, { file: process.execPath, args: ["-e", "setInterval(()=>{},1000)"], cwd: env!.repo, env: {}, timeoutMs: null }, async () => undefined, repositoryServices.filter(other => other !== command));
+      await startRepositoryServiceCommand(command, { file: process.execPath, args: ["-e", "setInterval(()=>{},1000)"], cwd: env!.repo, env: minimalEnv({}), timeoutMs: null }, async () => undefined, repositoryServices.filter(other => other !== command));
     }
     let writes = 0;
     await withRepositoryServiceStatus([env!.repo], repositoryServices, group, async (...args) => { expect(args).toHaveLength(0); writes++; }); expect(writes).toBe(1);

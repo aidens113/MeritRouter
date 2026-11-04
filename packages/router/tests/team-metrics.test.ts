@@ -263,7 +263,7 @@ describe("team vs single comparison", () => {
       const s = servedFor(sy!, req);
       if (isSupervisor(req)) {
         const script = [
-          () => [call("delegate", { tasks: [{ label: "find-add", profile: "inspect", goal: "Find where add() is defined.", acceptance_criteria: ["cites the line"], file_refs: ["core:src/app.ts"] }] })],
+          () => [call("delegate", { tasks: [{ label: "find-add", profile: "inspect", max_requests: 4, goal: "Find where add() is defined.", acceptance_criteria: ["cites the line"], file_refs: ["core:src/app.ts"] }] })],
           () => [call("await_tasks", { timeout_seconds: 30 })],
           () => [call("finish_job", { status: "completed", summary: "add() is in src/app.ts.", verified: [{ claim: "add is defined in src/app.ts", evidence: "worker citation" }], not_verified: [] })],
         ];

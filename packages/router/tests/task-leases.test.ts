@@ -1,3 +1,4 @@
+import YAML from "yaml";
 import { afterEach, expect, it } from "vitest";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -150,8 +151,11 @@ it('validates live supervisor project and ancestry within the cancellation trans
   setup();
   // Use the actual resolved profile map; no authority is gained merely from a role string.
   env!.cfg.profiles.supervise = {
-    ...env!.cfg.profiles.implement!, mode: 'supervisor'
+    ...env!.cfg.profiles.implement!, mode: 'supervisor', tools: 'supervisor'
   };
+  const trusted = YAML.parse(readFileSync(env!.cfg.configPath, 'utf8'));
+  trusted.profiles.supervise = env!.cfg.profiles.supervise;
+  writeFileSync(env!.cfg.configPath, YAML.stringify(trusted));
   submit('parent', { profile: 'supervise' });
   submit('own', { parentTaskId: 'parent' });
   submit('foreign');
@@ -297,7 +301,10 @@ it('rejects non-JSON finish data and invalid stored task inputs before mutation'
 });
 it('refuses supervisor cancellation after its deadline even while its lease remains live', async () => {
   setup();
-  env!.cfg.profiles.supervise = { ...env!.cfg.profiles.implement!, mode: 'supervisor' };
+  env!.cfg.profiles.supervise = { ...env!.cfg.profiles.implement!, mode: 'supervisor', tools: 'supervisor' };
+  const trusted = YAML.parse(readFileSync(env!.cfg.configPath, 'utf8'));
+  trusted.profiles.supervise = env!.cfg.profiles.supervise;
+  writeFileSync(env!.cfg.configPath, YAML.stringify(trusted));
   submit('parent', { profile: 'supervise' });
   submit('own', { parentTaskId: 'parent' });
   const actor = capturedLease(claim().find(task => task.row.id === 'parent')!), target = tasks.get('own')!.row;
@@ -307,7 +314,10 @@ it('refuses supervisor cancellation after its deadline even while its lease rema
 });
 it('rejects a cross-project intermediate even when target and supervisor share a project', async () => {
   setup();
-  env!.cfg.profiles.supervise = { ...env!.cfg.profiles.implement!, mode: 'supervisor' };
+  env!.cfg.profiles.supervise = { ...env!.cfg.profiles.implement!, mode: 'supervisor', tools: 'supervisor' };
+  const trusted = YAML.parse(readFileSync(env!.cfg.configPath, 'utf8'));
+  trusted.profiles.supervise = env!.cfg.profiles.supervise;
+  writeFileSync(env!.cfg.configPath, YAML.stringify(trusted));
   submit('parent', { profile: 'supervise' });
   submit('bridge', { parentTaskId: 'parent' });
   submit('own', { parentTaskId: 'bridge' });

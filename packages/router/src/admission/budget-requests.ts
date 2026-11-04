@@ -2,14 +2,16 @@ import { z } from "zod";
 import type { Db } from "../storage/db.js";
 import { immediate } from "../storage/db.js";
 import type { ResolvedConfig } from "../config/load.js";
-import { TIER_NAMES, type ProfileName, type TierName } from "../config/schema.js";
+import { taskAllocationAlternatives, type TaskAllocationParent } from "../verification/task-allocation-feedback.js";
+import type { WorkerTask } from "../core/task.js";
 import { MeritRouterError } from "../core/errors.js";
-import { TaskStore } from "../storage/tasks.js";
+import { TaskStore, type StoredTask } from "../storage/tasks.js";
 import { ChannelStore, type ChannelKind } from "../storage/channel.js";
 import { ContractStore } from "../verification/contract.js";
 import { effectiveBudget, heldRequests, UNLIMITED_REQUESTS, verificationTotal } from "./admission.js";
 import { extraRequests, grantOf } from "./job-pool.js";
 import { taskRequestsIncludingPreparations } from "./project-request-totals.js";
+import { deliveryReserves } from "./delivery-reserves.js";
 
 /**
  * Budget control (docs/working/budget-control.md, D1-D5): the request pool of a job and the
@@ -102,30 +104,36 @@ export interface JobPool {
   used: number;
   /** Requests its open tasks and sub-supervisors hold (finished ones count what they used). */
   held: number;
-  /** Kept for the supervisor's own turns (team.supervisor_reserve_requests). */
+  /** Combined delivery reserves, with team.supervisor_reserve_requests as a lower bound. */
   reserve: number;
   /** What new grants and approvals may still take. */
   /** Null when uncapped. */
   available: number | null;
 }
 
+/** Same effective aggregate cap for pool allocation and physical validation protection. */
+function requestCap(db: Db, cfg: ResolvedConfig, job: StoredTask): number | null {
+  const baseLimit = Math.min(effectiveBudget(cfg, job.spec, null).maxModelRequests, verificationTotal(cfg, job.spec));
+  return baseLimit === UNLIMITED_REQUESTS ? null : baseLimit + extraRequests(db, job.row.id);
+}
+
 export function protectedValidationRequests(db: Db, cfg: ResolvedConfig, taskId: string): number {
   const task = new TaskStore(db).get(taskId);
   if (task?.spec.deliveryVersion !== 2) return 0;
   const row = db.prepare("SELECT stage FROM product_deliveries WHERE task_id=?").get(taskId) as { stage: string } | undefined;
-  return row && ["integrate", "validate", "handoff"].includes(row.stage) ? 0 : cfg.supervisor.delivery_budget.validation_reserve_requests;
+  return row && ["integrate", "validate", "handoff"].includes(row.stage) ? 0
+    : deliveryReserves(cfg.supervisor.delivery_budget, requestCap(db, cfg, task)).validation;
 }
 
 /** The pool of a supervising task (null for a task that is not a supervisor job). */
 export function jobPool(db: Db, cfg: ResolvedConfig, jobId: string): JobPool | null {
   const job = new TaskStore(db).get(jobId);
   if (!job || cfg.profiles[job.spec.profile]?.mode !== "supervisor") return null;
-  const baseLimit = Math.min(effectiveBudget(cfg, job.spec, null).maxModelRequests, verificationTotal(cfg, job.spec));
-  const limit = baseLimit === UNLIMITED_REQUESTS ? baseLimit : baseLimit + extraRequests(db, jobId);
+  const cap = requestCap(db, cfg, job);
   const used = taskRequestsIncludingPreparations(db, jobId);
   const held = heldRequests(db, jobId);
-  const reserve = job.spec.deliveryVersion === 2 ? Math.max(cfg.team.supervisor_reserve_requests, cfg.supervisor.delivery_budget.supervisor_reserve_requests + protectedValidationRequests(db, cfg, jobId)) : cfg.team.supervisor_reserve_requests;
-  const cap = limit === UNLIMITED_REQUESTS ? null : limit;
+  const reserve = job.spec.deliveryVersion === 2 ? Math.max(cfg.team.supervisor_reserve_requests,
+    deliveryReserves(cfg.supervisor.delivery_budget, cap).supervisor + protectedValidationRequests(db, cfg, jobId)) : cfg.team.supervisor_reserve_requests;
   const available = cap === null ? null : Math.max(0, cap - used - held - reserve);
   return { jobId, cap, used, held, reserve, available };
 }
@@ -133,23 +141,22 @@ export function jobPool(db: Db, cfg: ResolvedConfig, jobId: string): JobPool | n
 /** One line describing a pool, for supervisors and the CLI. */
 export function poolLine(p: JobPool): string {
   return p.cap === null
-    ? `job ${p.jobId} pool: uncapped (supervisor used ${p.used}, tasks hold ${p.held}, ${p.reserve} reserved for the supervisor)`
-    : `job ${p.jobId} pool: ${p.available} available of ${p.cap} (supervisor used ${p.used}, tasks hold ${p.held}, ${p.reserve} kept for the supervisor)`;
+    ? `job ${p.jobId} pool: uncapped (supervisor used ${p.used}, descendant usage/open grants ${p.held}, ${p.reserve} protected supervision/validation reserves)`
+    : `job ${p.jobId} pool: ${p.available} available of ${p.cap} (supervisor used ${p.used}, descendant usage/open grants ${p.held}, ${p.reserve} protected supervision/validation reserves; completed-task usage is spent)`;
 }
 
 /**
  * The budget a delegated worker task gets when its brief sets no max_requests:
- * team.default_task_requests, else the execution cap at the brief's tier (its difficulty; without
- * one T2, or the profile's minimum tier when higher; T4 counts as T3), bounded by the profile and
- * per-task caps. A task classified higher may use more; the pool then counts what it used.
+ * team.default_task_requests, else the largest canonical finite allocation across possible
+ * worker tiers. This includes review/repair rather than holding only execution requests.
+ * Classification, if needed, is charged within the pinned total, not added outside the grant.
  */
-export function defaultTaskGrant(cfg: ResolvedConfig, profile: ProfileName, difficulty?: string | null): number {
+export function defaultTaskGrant(cfg: ResolvedConfig, spec: WorkerTask, parent: TaskAllocationParent = null): number {
   if (cfg.team.default_task_requests !== undefined) return cfg.team.default_task_requests;
-  const p = cfg.profiles[profile];
-  const named = difficulty === "T4" ? "T3" : difficulty;
-  const floor = p && TIER_NAMES.indexOf(p.min_tier) > TIER_NAMES.indexOf("T2") ? p.min_tier : "T2";
-  const tier: TierName = named && (TIER_NAMES as readonly string[]).includes(named) ? (named as TierName) : floor;
-  return Math.min(p?.max_model_requests ?? UNLIMITED_REQUESTS, cfg.tiers[tier].max_model_requests, cfg.execution.max_model_requests_per_task);
+  const alternatives = taskAllocationAlternatives(cfg, spec, parent);
+  const totals = alternatives.flatMap(({ result }) => result.ok ? [result.contract.budget.total] : []);
+  if (!totals.length) throw new Error(`Cannot allocate an implicit worker total: ${alternatives.map(({ result }) => result.ok ? "" : result.message).join("; ") || "worker routing must resolve before dispatch"}. Specify a valid bounded max_requests.`);
+  return Math.max(...totals);
 }
 
 /** The supervising job a task's pool belongs to: its parent, when that is a supervisor job. */

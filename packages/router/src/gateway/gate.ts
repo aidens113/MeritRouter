@@ -197,8 +197,13 @@ export class ProviderHealth {
 
   /** Re-read key-derived health now (another process may have changed key state). */
   async refresh(): Promise<void> {
-    this.cache = null;
+    this.invalidate();
     this.statuses();
+  }
+
+  /** Forget cached key availability without changing breakers, capacity or limit state. */
+  invalidate(): void {
+    this.cache = null;
   }
 
   snapshot(): ProviderStatus[] {
@@ -216,6 +221,7 @@ export class ProviderHealth {
 export class Gate {
   private closing = false;
   private readonly inFlight = new Set<Promise<GateResponse>>();
+  private readonly policyForks = new Set<Gate>();
   readonly ledger: RequestLedger;
   readonly captures: RequestCaptureStore;
   readonly coordinationDb: Db;
@@ -231,6 +237,7 @@ export class Gate {
     ledger?: RequestLedger,
     captures?: RequestCaptureStore,
     private readonly projectContext?: ProjectGateContext,
+    private readonly taskRequestAssertion?: (request: GateRequest) => void,
   ) {
     this.projectDb = db;
     this.coordinationDb = projectContext?.coordinationDb ?? db;
@@ -248,8 +255,18 @@ export class Gate {
     this.ledger = ledger ?? new SqliteRequestLedger(admission, direct.spend);
     this.captures = captures ?? new RequestCaptures(db, () => direct.providers.now());
     // Settings are read live (a config reload mutates cfg in place); state is mirrored to meta.
-    if (projectContext) health.attachCoordination(this.coordinationDb, projectContext.coordinationConfig, projectContext.capacityGrants);
-    else health.attachLegacy(db, cfg);
+    if (!taskRequestAssertion) {
+      if (projectContext) health.attachCoordination(this.coordinationDb, projectContext.coordinationConfig, projectContext.capacityGrants);
+      else health.attachLegacy(db, cfg);
+    }
+  }
+
+  /** Trusted executor seam: same accounting and private project authority, narrower task policy. */
+  forkForTask(config: ResolvedConfig, assertRequest: (request: GateRequest) => void): Gate {
+    if (this.closing) throw new Error("model request gate is closed");
+    const child = new Gate(this.db, config, this.admission, this.health, this.direct, this.ledger, this.captures, this.projectContext, assertRequest);
+    this.policyForks.add(child);
+    return child;
   }
 
   /**
@@ -281,7 +298,7 @@ export class Gate {
       // must be checked on every physical dispatch rather than only at session creation.
       const visual = req.chat.messages.some(m => Array.isArray(m.content) && m.content.some(part => part.type === "image_url"));
       const eligible = list.filter(ep => {
-        const quality = assessSupervisorQuality(ep.id, this.cfg.supervisor.routing, new Date(this.direct.providers.now()), visual);
+        const quality = assessSupervisorQuality(ep.id, this.cfg.supervisor.routing, new Date(this.direct.providers.now()), visual, ep.route);
         if (!quality.eligible) return false;
         return quality.classification !== null || ep.ignoreSizeFloor || req.plan.belowFloorEndpoints.has(ep.id) || (ep.totalParametersB !== null && ep.totalParametersB >= Math.max(req.plan.floorB, sizeFloor(this.cfg, req.plan.profile, req.plan.tier)));
       });
@@ -295,8 +312,8 @@ export class Gate {
           if (paid) return paid;
         }
         const now = new Date(this.direct.providers.now());
-        const qa = assessSupervisorQuality(a.id, this.cfg.supervisor.routing, now, visual);
-        const qb = assessSupervisorQuality(b.id, this.cfg.supervisor.routing, now, visual);
+        const qa = assessSupervisorQuality(a.id, this.cfg.supervisor.routing, now, visual, a.route);
+        const qb = assessSupervisorQuality(b.id, this.cfg.supervisor.routing, now, visual, b.route);
         const quality = (qb.score ?? -1) - (qa.score ?? -1);
         if (quality) return quality;
         if (qa.classification === null && qb.classification === null) {
@@ -372,6 +389,7 @@ export class Gate {
   async request(req: GateRequest): Promise<GateResponse> {
     if (this.closing) throw new Error("model request gate is closed");
     this.assertProjectRuntime();
+    this.taskRequestAssertion?.(req);
     req = { ...req, chat: structuredClone(req.chat), participants: req.participants.map(p => {
       const lease = Object.freeze(LeaseRefSchema.parse(p.lease));
       if (p.taskId !== lease.taskId || p.leaseOwner !== lease.owner) throw new Error("participant fields disagree with captured lease");
@@ -392,8 +410,11 @@ export class Gate {
   /** Stop new routed requests and drain accounting before its SQLite connection closes. */
   async close(): Promise<void> {
     this.closing = true;
+    const forks = await Promise.allSettled([...this.policyForks].map(child => child.close()));
     await Promise.allSettled([...this.inFlight]);
     await this.ledger.drain();
+    const failure = forks.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failure) throw failure.reason;
   }
 
   private async performRequest(req: GateRequest): Promise<GateResponse> {
@@ -451,6 +472,8 @@ export class Gate {
     }));
 
     for (const ep of this.candidatesFor(req)) {
+      const supervisorRequest = this.cfg.profiles[req.plan.profile]?.mode === "supervisor";
+      const dispatchRoute = { ...ep.route };
       const paid = requestPaid(ep, this.cfg, req.plan);
       // Definite unavailable free routes do not exhaust the transient retry cap.
       // This is still one finite pass; every dispatch remains admission-accounted, and
@@ -480,6 +503,13 @@ export class Gate {
       assertValidationReserve(false);
       const r = await requestDirect({ cfg: this.cfg, ledger: this.ledger, captures: this.captures, assertDispatch: (participants, reservation, dispatchId) => {
         this.assertProjectRuntime();
+          this.taskRequestAssertion?.(req);
+        if (supervisorRequest || this.cfg.profiles[req.plan.profile]?.mode === "supervisor") {
+          const visual = req.chat.messages.some(m => Array.isArray(m.content) && m.content.some(part => part.type === "image_url"));
+          const quality = assessSupervisorQuality(ep.id, this.cfg.supervisor.routing, new Date(this.direct.providers.now()), visual, dispatchRoute);
+          if (!quality.eligible || ep.route.provider !== dispatchRoute.provider || ep.route.model !== dispatchRoute.model || this.cfg.profiles[req.plan.profile]?.mode !== "supervisor")
+            throw new AdmissionDenied("no_eligible_endpoint", `supervisor_quality_unavailable before transport: ${quality.reason}; route and role identity must remain current`);
+        }
         assertValidationReserve(true);
         this.admission.assertDispatch(participants);
         if (reservation && dispatchId) {

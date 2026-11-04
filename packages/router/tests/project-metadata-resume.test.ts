@@ -14,6 +14,7 @@ import { git } from "../src/workspaces/git.js";
 import * as gitModule from "../src/workspaces/git.js";
 import { commitSelectedApplication } from "../src/attribution/selected-commit.js";
 import { readCommitReceipt } from "../src/attribution/selected-commit-receipts.js";
+import type { ModelEndpoint } from "../src/models/catalog.js";
 import type { RunContext } from "../src/runners/types.js";
 import type { ResumePlan } from "../src/sessions/resume.js";
 import type { HarnessEnv } from "../src/harness/tools.js";
@@ -22,7 +23,7 @@ import { makeEnv, open, reply, ScriptedClient, type Env } from "./helpers.js";
 
 let environment: Env | undefined, router: MeritRouter | undefined;
 afterEach(async () => { vi.restoreAllMocks(); await router?.close(); router = undefined; environment?.cleanup(); environment = undefined; });
-const actor = { agent: "worker:resume", role: "implementer" };
+const actor = { agent: "worker:resume", role: "implementer", task: "fixture" };
 async function fixture(policy: "commit" | "reset" = "commit") {
   environment = makeEnv(); const client = new ScriptedClient(() => reply("must not call provider")); router = open(environment, client);
   router.tasks.submit([WorkerTaskSchema.parse({ id: "fixture", profile: "implement", goal: "recover fixture", repositoryAliases: ["core"], writableRepository: "core", constraints: { acceptanceCriteria: ["checked"], allowedPaths: ["**"] } })], { project: environment.cfg.brain.project });
@@ -31,12 +32,18 @@ async function fixture(policy: "commit" | "reset" = "commit") {
   const ws = await worktrees.prepare({ taskId: task.row.id, run: task.row.run_count, alias: "core", sourcePath: environment.repo });
   worktrees.setStatus(task.row.id, "collected");
   const head = (await git(ws.worktreePath, ["rev-parse", "HEAD"])).trim();
-  const rec = router.sessions.create({ taskId: task.row.id, role: "implementer", agentLabel: "fixture" });
+  const rec = router.sessions.create({ taskId: task.row.id, role: "implementer", agentLabel: actor.agent, profile: "implement" });
   const workspace = { repos: [{ alias: "core", worktree: ws.worktreePath, branch: null, baseCommit: ws.baseSha, head }] };
-  const args = { path: "src/app.ts", content: "interrupted edit" }, call = { id: "edit", type: "function" as const, function: { name: "write_file", arguments: JSON.stringify(args) } };
+  const args = { path: "src/app.ts", content: "export const recovered = true;\n" }, call = { id: "edit", type: "function" as const, function: { name: "write_file", arguments: JSON.stringify(args) } };
   const messages = [{ role: "system" as const, content: "fixture" }, { role: "user" as const, content: "recover" }, { role: "assistant" as const, content: null, tool_calls: [call] }, { role: "tool" as const, tool_call_id: "edit", content: "interrupted; recovering" }];
   rec.syncMessages(messages); rec.setWorkspace(workspace);
+  const executionId = router.admission.createExecution("task", "implement", [{ taskId: task.row.id, itemId: task.row.id }]);
+  rec.modelRequest({ executionId, purpose: "coding", chat: { messages, max_tokens: 1000 } });
+  rec.modelResponse({ requestId: "original-request", endpoint: { id: "fixture/model" } as ModelEndpoint, estimatedInputTokens: 10, attempts: [], response: reply(null, { model: "model", provider: "fixture", toolCalls: [call] }) });
   const intentSeq = rec.toolIntent({ callId: "edit", name: "write_file", args, sideEffect: "edit" });
+  rec.toolOutcome(intentSeq, { ok: true, output: "wrote original edit before interruption" });
+  router.db.prepare("INSERT INTO model_requests(id,execution_id,purpose,gateway_model,status,reserved_at,est_input_tokens,reserved_output_tokens,endpoint_id,served_model,served_provider,project_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run("original-request", executionId, "coding", "fixture/model", "succeeded", Date.now(), 10, 1000, "fixture/model", "model", "fixture", task.row.project_id);
+  router.db.prepare("INSERT INTO request_charges(request_id,task_id,input_tokens,output_tokens,run_count,lease_incarnation) VALUES(?,?,?,?,?,?)").run("original-request", task.row.id, 10, 20, task.row.run_count, task.row.lease_incarnation);
   const plan: ResumePlan = { messages, actions: [{ kind: "reconcile_edits", policy, repos: workspace.repos, calls: [{ intentSeq, callId: "edit", name: "write_file", args, messageIndex: 3 }], completedCallIds: [] }], summary: "resume fixture", resolvedIntentSeqs: [intentSeq], droppedRequestSeqs: [], workspace, reason: "interrupted", lastEndpointId: null, warnings: [], notAppliedCandidateIntents: [intentSeq] };
   const pointer = new WorkspacePointer(rec, workspace.repos);
   const ctx = { cfg: environment.cfg, taskId: task.row.id, spec: task.spec, tasks: router.tasks, taskLease: capturedLease(task), claimedRunCount: task.row.run_count, taskProject: task.row.project_id, signal: new AbortController().signal, session: rec, attempts: [], now: Date.now, resume: { plan } } as unknown as RunContext;

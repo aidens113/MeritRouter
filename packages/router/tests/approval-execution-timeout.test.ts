@@ -12,6 +12,7 @@ import { capturedLease } from "../src/storage/task-leases.js";
 import * as gitCommands from "../src/workspaces/git.js";
 import { z } from "zod";
 import { operationExecutionTimeRemaining, pauseOperationExecutionTimeout } from "../src/harness/operation-lifecycle.js";
+import { DeadlineArgs, type OperationDefinition } from "../src/harness/operation-contract.js";
 import { baseConfig, makeEnv, open, reply, ScriptedClient, type Env } from "./helpers.js";
 
 let env: Env | undefined, sy: MeritRouter | undefined;
@@ -22,11 +23,11 @@ async function until<T>(read: () => T, accepts: (value: T) => boolean): Promise<
   for (;;) { const value = read(); if (accepts(value)) return value; if (Date.now() >= deadline) throw new Error("Fixture condition timed out"); await sleep(10); }
 }
 
-async function fixture(command = `"${process.execPath}" --version`, taskTimeout = 15000) {
+async function fixture(command = `"${process.execPath}" --version`, taskTimeout = 15000, leaseMs = 30000) {
   env = makeEnv({ config: baseConfig({ security: { outside_repository: "human_only" }, coding: { runner: "native" } }) });
   sy = open(env, new ScriptedClient(() => reply("{}")));
   const [submitted] = await sy.submitTasks([{ profile: "implement", goal: "Exercise separately bounded approval/execution phases", repositoryAliases: ["core"], writableRepository: "core", hints: { difficulty: "T2" }, constraints: { acceptanceCriteria: ["Check remains bounded"], allowedPaths: ["src/**"], checks: [command] } }]);
-  const stored = sy.tasks.claim("operation-test", { maxConcurrent: 1, maxWritersPerRepo: 1, leaseMs: 30000, defaultTimeoutMs: taskTimeout })[0]!;
+  const stored = sy.tasks.claim("operation-test", { maxConcurrent: 1, maxWritersPerRepo: 1, leaseMs, defaultTimeoutMs: taskTimeout })[0]!;
   expect(stored.row.id).toBe(submitted!.taskId);
   const controller = new AbortController();
   const ctx = { cfg: env.cfg, tasks: sy.tasks, taskId: stored.row.id, taskLease: capturedLease(stored), spec: stored.spec, now: Date.now, signal: controller.signal, artifacts: sy.artifacts, session: null } as unknown as RunContext;
@@ -75,14 +76,21 @@ it("still kills approved execution at its requested timeout and waits for confir
 }, 10000);
 
 it("denial resolves the wait without execution or a replacement approval", async () => {
-  const f = await fixture();
+  const f = await fixture(`"${process.execPath}" denied-check.cjs`);
+  const marker = path.join(env!.repo, "denied-command-executed");
+  writeFileSync(path.join(env!.repo, "denied-check.cjs"), `require('node:fs').writeFileSync(${JSON.stringify(marker)},'must not execute');`);
   const operation = f.invoke();
   const request = await f.pending();
   await sleep(500);
   expect((await f.decide(request!.id, "deny")).status).toBe("denied");
-  expect((await operation).status).toBe("waiting_approval");
+  const result = await operation;
+  expect(result.status).toBe("denied");
+  expect(result.data).toMatchObject({ status: "denied" });
   expect(f.requests()).toHaveLength(1);
   expect(f.actions.get(request!.project, request!.id)?.status).toBe("denied");
+  expect(f.actions.get(request!.project, request!.id)?.executionStartedAt).toBeUndefined();
+  expect(f.harness.checkResults).toEqual([]);
+  expect(existsSync(marker)).toBe(false);
 });
 
 it.each(["task", "operation"] as const)("preserves explicit %s cancellation and refuses late execution", async cancellation => {
@@ -143,7 +151,10 @@ it.each([false, true])("charges fast completion between polls before starting an
   const realTimer = setTimeout;
   const realSleep = (ms: number) => new Promise(resolve => realTimer(resolve, ms));
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-  const operation = f.invoke("run_checks", { ids: ["check:1", "check:1"], timeout_ms: 50 });
+  // The broker's process timer is real even while this test controls Date/polls.
+  // Do not require Windows process startup within 50ms; advance the logical
+  // clock past the whole budget after real completion to exercise the race.
+  const operation = f.invoke("run_checks", { ids: ["check:1", "check:1"], timeout_ms: 5000 });
   for (let i = 0; i < 500 && !f.requests().some(row => row.status === "pending"); i++) await realSleep(10);
   const request = f.requests().find(row => row.status === "pending")!;
   expect(request).toBeDefined();
@@ -152,7 +163,7 @@ it.each([false, true])("charges fast completion between polls before starting an
   expect(executed.executionStartedAt).toBeTypeOf("number");
   if (legacy) sy!.db.prepare("UPDATE worker_action_requests SET value_json=json_remove(value_json,'$.executionStartedAt','$.executionTimeoutMs') WHERE id=?").run(request.id);
   // No waiter poll has run. Its first observation sees completed, never running.
-  await vi.advanceTimersByTimeAsync(100);
+  await vi.advanceTimersByTimeAsync(10000);
   expect((await operation).status).toBe("unknown_effect");
   expect(f.requests()).toHaveLength(1);
   expect(f.requests()[0]!.status).toBe("completed");
@@ -217,4 +228,106 @@ it("does not carry approval across a changed source while execution time is paus
   expect((await operation).status).toBe("unknown_effect");
   expect(f.actions.get(request!.project, request!.id)?.status).toBe("cancelled");
   expect(f.requests()).toHaveLength(1);
+});
+
+it("lets an approved real command finish beyond thirty seconds with both batch and recipe deadlines omitted", async () => {
+  const f = await fixture(`"${process.execPath}" src/default-long-check.cjs`, 90000, 90000);
+  const marker = path.join(env!.dir, "default-command-completed");
+  writeFileSync(path.join(env!.repo, "src/default-long-check.cjs"), `setTimeout(()=>require('node:fs').writeFileSync(${JSON.stringify(marker)},'done'),35000);`);
+  f.ctx.cfg.execution.check_timeout_seconds = 60;
+  f.harness.checks!.timeoutMs = 60000;
+  const operation = f.invoke("batch", { items: [{ id: "install-shaped-check", operation: "run_checks", args: { ids: ["check:1"] } }] });
+  try {
+    const request = await f.pending();
+    expect(request!.action.timeoutMs).toBe(60000);
+    expect(request!.executionTimeoutMs).toBeGreaterThan(30000);
+    const executed = await f.decide(request!.id, "approve");
+    expect(executed).toMatchObject({ status: "completed", exitCode: 0, quiescedAt: expect.any(Number) });
+    expect((await operation).status).toBe("succeeded");
+    expect(readFileSync(marker, "utf8")).toBe("done");
+    expect(f.requests()).toHaveLength(1);
+  } finally {
+    f.controller.abort("Fixture cleanup");
+    await operation;
+  }
+}, 60000);
+
+it.each([
+  { name: "run_recipe", seconds: 45, checkLimit: 60000, expected: 45000 },
+  { name: "run_checks", seconds: 45, checkLimit: 60000, expected: 45000 },
+  { name: "batch", seconds: 45, checkLimit: 60000, expected: 45000 },
+  { name: "run_recipe", seconds: 600, checkLimit: 400000, expected: 300000 },
+  { name: "run_checks", seconds: 600, checkLimit: 400000, expected: 300000 },
+  { name: "batch", seconds: 600, checkLimit: 400000, expected: 300000 },
+  { name: "run_recipe", seconds: 60, checkLimit: 12000, expected: 12000 },
+  { name: "run_checks", seconds: 60, checkLimit: 12000, expected: 12000 },
+])("captures the actual omitted $name command budget ($seconds seconds, check cap $checkLimit)", async ({ name, seconds, checkLimit, expected }) => {
+  const f = await fixture(undefined, 400000);
+  f.ctx.cfg.execution.check_timeout_seconds = seconds;
+  f.harness.checks!.timeoutMs = checkLimit;
+  const args = name === "run_recipe" ? { id: "check:1" } : name === "batch"
+    ? { items: [{ id: "checks", operation: "run_checks", args: { ids: ["check:1"] } }] }
+    : { ids: ["check:1"], timeout_policy: { version: "configured-v1", default_ms: 1, check_limit_ms: 1 } };
+  const operation = f.invoke(name, args);
+  try {
+    const request = await f.pending();
+    expect(request!.action.timeoutMs).toBe(expected);
+    expect(request!.executionTimeoutMs).toBeGreaterThan(expected - 5000);
+    expect(request!.executionTimeoutMs).toBeLessThanOrEqual(expected);
+    await f.decide(request!.id, "deny");
+    await operation;
+    expect(f.requests()).toHaveLength(1);
+  } finally {
+    f.controller.abort("Fixture cleanup");
+    await operation;
+  }
+});
+
+it.each([45, 600])("uses configured command budget (%ss), bounded by operation maximum, through nested execution", async seconds => {
+  const f = await fixture(undefined, 400000);
+  f.ctx.cfg.execution.check_timeout_seconds = seconds;
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const initialBudget = Math.min(seconds * 1000, 300000);
+  const info = await operationRegistry().find(def => def.name === "workspace_info")!.run({}, f.harness);
+  expect(info).toMatchObject({ limits: { timeout_ms: 30000, command_timeout_ms: initialBudget, max_timeout_ms: 300000 } });
+  const child: OperationDefinition = { name: "long-command", description: "controlled command execution", args: z.object(DeadlineArgs), sideEffect: "command", async run(_, childEnv) {
+    expect(operationExecutionTimeRemaining(childEnv.ctx.signal)).toBe(initialBudget);
+    const resume = pauseOperationExecutionTimeout(childEnv.ctx.signal);
+    await sleep(60000); // Approval time must consume neither ancestor's active budget.
+    resume();
+    expect(operationExecutionTimeRemaining(childEnv.ctx.signal)).toBe(initialBudget);
+    await sleep(40000);
+    expect(childEnv.ctx.signal.aborted).toBe(false);
+    return { status: "succeeded" };
+  } };
+  const parent: OperationDefinition = { name: "command-composition", description: "aggregate execution fixture", args: z.object(DeadlineArgs), sideEffect: "command", async run(_, parentEnv) {
+    return executeOperation(child, { timeout_ms: 300000 }, parentEnv);
+  } };
+  const pending = executeOperation(parent, {}, f.harness);
+  await vi.advanceTimersByTimeAsync(100000);
+  expect((await pending).status).toBe("succeeded");
+});
+
+it.each(["explicit-parent", "read-default", "task-deadline"] as const)("keeps %s strict and awaits child quiescence", async boundary => {
+  const f = await fixture(undefined, boundary === "task-deadline" ? 20000 : 400000);
+  f.ctx.cfg.execution.check_timeout_seconds = 600;
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  let quiesced = false, settled = false;
+  const child: OperationDefinition = { name: "quiescing-command", description: "controlled stop fixture", args: z.object(DeadlineArgs), sideEffect: "command", async run(_, childEnv) {
+    await new Promise<void>(resolve => childEnv.ctx.signal.addEventListener("abort", () => resolve(), { once: true }));
+    await sleep(100);
+    quiesced = true;
+    return { status: "unknown_effect" };
+  } };
+  const parent: OperationDefinition = { name: "bounded-composition", description: "ancestor fixture", args: z.object(DeadlineArgs), sideEffect: boundary === "read-default" ? "read" : "command", async run(_, parentEnv) {
+    return executeOperation(child, { timeout_ms: 300000 }, parentEnv);
+  } };
+  const pending = executeOperation(parent, boundary === "explicit-parent" ? { timeout_ms: 10000 } : {}, f.harness).then(result => { settled = true; return result; });
+  const cap = boundary === "explicit-parent" ? 10000 : boundary === "read-default" ? 30000 : f.ctx.tasks.get(f.ctx.taskId)!.row.deadline_at! - Date.now();
+  await vi.advanceTimersByTimeAsync(cap);
+  expect(settled).toBe(false);
+  expect(quiesced).toBe(false);
+  await vi.advanceTimersByTimeAsync(100);
+  expect((await pending).status).toBe(boundary === "read-default" ? "timed_out" : "unknown_effect");
+  expect(quiesced).toBe(true);
 });

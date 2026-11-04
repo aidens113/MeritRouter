@@ -310,6 +310,7 @@ export function addProviderKey(sy: MeritRouter, input: NewKey): ProviderKeyView 
   const k = NewKeySchema.parse(input);
   keyProvider(sy, k.provider, k.accountId);
   const added = sy.vault.add(k);
+  sy.invalidateProviderHealth();
   return providerKeyView(sy, `vault:${added.id}`)!;
 }
 
@@ -324,6 +325,7 @@ export function updateProviderKey(sy: MeritRouter, id: number, patch: KeyPatch):
   const p = KeyPatchSchema.parse(patch);
   if (p.accountId !== undefined) keyProvider(sy, current.provider, p.accountId);
   sy.vault.update(id, p);
+  sy.invalidateProviderHealth();
   if (p.secret !== undefined || p.enabled === true) {
     sy.providers.keys.clear(`vault:${id}`);
     // An ollama-cloud key also serves web search: clear its web health too. A split installation
@@ -338,6 +340,7 @@ export function removeProviderKey(sy: MeritRouter, id: number): { removed: numbe
   vaultKey(sy, id);
   sy.vault.remove(id);
   sy.providers.keys.forget(`vault:${id}`);
+  sy.invalidateProviderHealth();
   return { removed: id, keptForHistory: sy.vault.get(id) !== null };
 }
 

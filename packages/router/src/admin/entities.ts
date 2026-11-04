@@ -4,6 +4,7 @@ import { requestEvidence, type RequestEvidence } from "./request-evidence.js";
 import { requestCapture } from "./request-capture.js";
 import type { WebCitation } from "../gateway/types.js";
 import { parseCitations } from "./request-citations.js";
+import { requestLifecycle, type RequestLifecycle } from "./request-lifecycle.js";
 import { existsSync } from "node:fs";
 import { ROLE_NAMES } from "../config/schema.js";
 import type { MeritRouter } from "../core/service.js";
@@ -122,7 +123,7 @@ export interface EntityTask {
   finishedAt: number | null;
 }
 
-export interface EntityRequest {
+export interface EntityRequest extends RequestLifecycle {
   id: string;
   reservedAt: number;
   finishedAt: number | null;
@@ -279,6 +280,7 @@ function requestRowsInStore(db: Db, ids: string[], project: string, sessionOf: M
     for (const r of rows) {
       const id = String(r.id);
       out.push({
+        ...requestLifecycle(db, r),
         id,
         reservedAt: Number(r.reserved_at),
         finishedAt: (r.finished_at as number | null) ?? null,

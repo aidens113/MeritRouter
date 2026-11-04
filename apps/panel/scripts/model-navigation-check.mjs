@@ -15,7 +15,7 @@ assert(base.hostname === '127.0.0.1' && base.port !== '4477', 'Use an isolated s
 const debugPort = 9343;
 const cfg = loadConfig(path.join(demo, 'meritrouter.config.yaml'));
 assert(path.resolve(cfg.storageDir).startsWith(demo + path.sep));
-const sy = new MeritRouter(cfg, { worker: false });
+const sy = new MeritRouter(cfg, { panelLifecycle: "passive", worker: false });
 const catalogFile = path.join(demo, 'models.yaml');
 const original = readFileSync(catalogFile, 'utf8');
 const originalDoc = YAML.parse(original);

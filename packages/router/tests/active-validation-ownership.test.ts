@@ -126,14 +126,23 @@ it("allows ordinary unprotected cancellation and pending supervisor-policy clean
   expect(await f.cancel(["sibling", "worker"])).toBe("cancellation requested");
   expect(f.cancelled).toHaveBeenCalledOnce(); expect(sy!.tasks.get("worker")!.row.cancel_requested).toBe(1);
 });
-it.each(["run", "incarnation", "foreign-action", "terminal"])("does not protect stale or nonauthoritative action state: %s", async mutation => {
+it.each(["run", "incarnation", "terminal"])("does not protect stale or nonauthoritative action state: %s", async mutation => {
   const f = await fixture();
   if (mutation === "run") sy!.db.prepare("UPDATE worker_action_requests SET value_json=json_set(value_json,'$.action.lease.runCount',999) WHERE id=?").run(f.request.id);
   if (mutation === "incarnation") sy!.db.prepare("UPDATE worker_action_requests SET value_json=json_set(value_json,'$.action.lease.incarnation',?) WHERE id=?").run("f".repeat(32), f.request.id);
-  if (mutation === "foreign-action") sy!.db.prepare("UPDATE worker_action_requests SET project_id='foreign' WHERE id=?").run(f.request.id);
   if (mutation === "terminal") await f.store.decide({ project: "demo", id: f.request.id, decision: "deny", reason: "Explicit fixture denial", actor: { kind: "operator" }, config: env!.cfg });
   expect(await f.cancel()).toBe("cancellation requested");
   expect(sy!.tasks.get("worker")!.row.cancel_requested).toBe(1);
+});
+it("refuses corrupt foreign action authority without changing the cancellation batch", async () => {
+  const f = await fixture();
+  sy!.db.prepare("UPDATE worker_action_requests SET project_id='foreign' WHERE id=?").run(f.request.id);
+  const worker = sy!.tasks.get("worker"), sibling = sy!.tasks.get("sibling"), before = row();
+  await expect(f.cancel(["sibling", "worker"])).rejects.toThrow(/project authority mismatch/);
+  expect(f.cancelled).not.toHaveBeenCalled();
+  expect(sy!.tasks.get("worker")).toEqual(worker);
+  expect(sy!.tasks.get("sibling")).toEqual(sibling);
+  expect(row()).toBe(before);
 });
 it("allows cancellation after approved execution has quiesced normally", async () => {
   const f = await fixture(); expect((await f.approve()).status).toBe("completed");
@@ -176,6 +185,16 @@ it("serializes an operator approval racing internal cancellation without revokin
   await f.ready();
   expect(sy!.tasks.get("worker")!.row.cancel_requested).toBe(0);
   f.release(); expect((await executing).exitCode).toBe(0);
+});
+it("does not let later operator approval revive a generation cancelled first", async () => {
+  const f = await fixture({ policy: "supervisor", long: true });
+  expect(await f.cancel()).toBe("cancellation requested");
+  const before = sy!.tasks.get("worker");
+  const result = await f.approve();
+  expect(result.status).toBe("cancelled");
+  expect(result.executionStartedAt).toBeUndefined();
+  expect(existsSync(path.join(env!.repo, ".check-ready"))).toBe(false);
+  expect(sy!.tasks.get("worker")).toEqual(before);
 });
 it("allows expired-action cleanup without treating the old action as current authority", async () => {
   const f = await fixture();

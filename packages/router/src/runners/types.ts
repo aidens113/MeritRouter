@@ -1,6 +1,6 @@
 import { RequestPersistenceError } from "../admission/request-ledger.js";
 import { AdmissionDenied } from "../core/errors.js";
-import type { LeaseRef } from "../storage/task-leases.js";
+import type { LeaseReceipt, LeaseRef } from "../storage/task-leases.js";
 import type { LabManager } from "../labs/lab.js";
 import type { LabRunContext } from "../labs/binding.js";
 import type { ResolvedConfig } from "../config/load.js";
@@ -38,7 +38,7 @@ export interface SupervisorServices {
   submitTasks(raw: unknown[], opts?: { purpose?: string; parentSessionId?: string }): Promise<Array<{ taskId: string; state: string; deduplicated: boolean }>>;
   awaitResults(ids: string[], opts?: { timeoutSeconds?: number; signal?: AbortSignal; uncapped?: boolean }): Promise<{ completed: WorkerResult[]; pending: Array<{ taskId: string; state: string }>; timedOut: boolean; waitedSeconds?: number }>;
   getTask(id: string): { spec: WorkerTask; state: string; result: WorkerResult | null } | null;
-  cancelTasks(ids: string[]): unknown;
+  cancelTasks(ids: string[]): Array<{ taskId: string; state: TaskState | "unknown" }> | Promise<LeaseReceipt[]>;
   /** Record the supervisor's (or a human's) acceptance; throws with the refusal reason. */
   acceptTask(id: string, input: AcceptanceDecisionInput): AcceptanceDecisionOutcome;
   rejectTask(id: string, input: AcceptanceDecisionInput): AcceptanceDecisionOutcome;
@@ -75,6 +75,9 @@ export interface RunContext {
   taskLabs?: LabManager;
   ensureLabsSupervisor?: () => Promise<void>;
   budget: EffectiveBudget;
+  /** Absolute persisted execution allowance, bound to the original captured lease/allocation.
+   * Absent from reviewer, twin and repair contexts, whose allocated caps stay fixed. */
+  executionRequestCap?: () => number;
   gate: Gate;
   tasks: TaskStore;
   artifacts: ArtifactStore;
@@ -123,6 +126,7 @@ export async function ask(ctx: RunContext, req: Omit<GateRequest, "plan" | "part
     return lease;
   };
   const taskLease = assertLease();
+  if (!ctx.purpose && ctx.executionRequestCap) ctx.budget = { ...ctx.budget, maxModelRequests: ctx.executionRequestCap() };
   const session = ctx.session;
   if (session) {
     session.syncMessages(req.chat.messages);

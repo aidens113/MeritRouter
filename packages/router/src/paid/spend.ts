@@ -5,8 +5,24 @@ import type { KeyVault, PaidKey } from "../providers/vault.js";
 import type { ProviderCredential } from "../providers/credentials.js";
 import type { ProjectLimits } from "../projects/schema.js";
 import { ACCOUNTING_SPEND_SQL, assertAccountingOverlap } from "../admission/accounting-usage.js";
+import { z } from "zod";
 
 const DAY = 86_400_000;
+
+/** Legacy owning-store task shares; exact-ID ledger overlap is counted once, not once per ancestor. */
+export function paidTaskSetSpend(db: Db, taskIds: string[], project: string): number {
+  const ids = z.array(z.string().min(1)).min(1).max(4096).parse(taskIds);
+  z.string().parse(project);
+  assertAccountingOverlap(db);
+  const value = db.prepare(`WITH selected AS (
+      SELECT c.request_id,COUNT(*) n FROM request_charges c JOIN tasks t ON t.id=c.task_id
+      WHERE t.project_id=? AND c.task_id IN (${ids.map(() => "?").join(",")}) GROUP BY c.request_id),
+    spend AS (${ACCOUNTING_SPEND_SQL})
+    SELECT COALESCE(SUM(COALESCE(p.actual_usd,p.reserved_usd) * selected.n * 1.0 /
+      (SELECT COUNT(*) FROM request_charges all_charges WHERE all_charges.request_id=p.request_id)),0) usd
+    FROM spend p JOIN selected ON selected.request_id=p.request_id`).get(project, ...ids);
+  return z.object({ usd: z.number().finite().nonnegative() }).parse(value).usd;
+}
 
 export interface SpendSummary {
   day: number;
@@ -66,7 +82,12 @@ export class PaidSpend {
   }
 
   keySpendSince(keyRef: string, sinceMs: number): number {
-    return this.sum("key_ref = ? AND created_at > ?", keyRef, sinceMs);
+    // A refreshed balance describes provider credit, not permission to discard requests that
+    // can still consume it. Keep their existing union exposure until definitively settled;
+    // the union counts overlapping legacy/broker projections once at the larger liability.
+    return this.sum(`key_ref = ? AND (created_at > ?
+      OR EXISTS(SELECT 1 FROM broker_paid_spend b WHERE b.request_id=spend.request_id AND (b.actual_usd IS NULL OR b.settled_at >= ?))
+      OR EXISTS(SELECT 1 FROM paid_spend p WHERE p.request_id=spend.request_id AND (p.actual_usd IS NULL OR p.settled_at >= ?)))`, keyRef, sinceMs, sinceMs, sinceMs);
   }
 
   taskSpend(taskId: string): number {

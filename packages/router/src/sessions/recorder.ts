@@ -1,4 +1,5 @@
 import { closeSync, fsyncSync, openSync, writeSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { ProjectEvidenceScope } from "../storage/project-evidence-scope.js";
 import { z } from "zod";
@@ -109,7 +110,7 @@ export function writeIndex(db: Db, sessionId: string, seq: number, type: Session
 /** Cheap identity of a logged message; tool outputs are keyed by call id because compaction rewrites them in place. */
 function fingerprint(m: ChatMessage): string {
   if (m.role === "tool") return `tool:${m.tool_call_id}`;
-  if (m.role === "assistant") return `assistant:${(m.tool_calls ?? []).map((c) => c.id).join(",")}:${(m.content ?? "").slice(0, 200)}`;
+  if (m.role === "assistant") return `assistant:${(m.tool_calls ?? []).map((c) => c.id).join(",")}:${(m.content ?? "").slice(0, 200)}:${createHash("sha256").update(JSON.stringify(m.nativeContinuation ?? null)).digest("hex")}`;
   const c = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
   return `${m.role}:${c.length}:${c.slice(0, 200)}`;
 }
@@ -233,6 +234,7 @@ export class SessionRecorder {
         endpointId: res.endpoint.id,
         content: r.message.content,
         toolCalls: r.message.tool_calls ?? [],
+        ...(r.message.nativeContinuation === undefined ? {} : { nativeContinuation: r.message.nativeContinuation }),
         finishReason: r.finishReason,
         usage: r.usage,
         servedModel: r.telemetry.servedModel,

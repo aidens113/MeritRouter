@@ -162,7 +162,7 @@ export default async function JobsPage({ params }: { params: Promise<{ slug: str
               </Callout>
             </div>
           ) : null}
-          <NewJobForm project={p.slug} repos={repos} enabled={enabled} labs={labs} />
+          <NewJobForm project={p.slug} repos={repos} enabled={enabled} defaultPaidCapUsd={sy.projectContext(p.slug).supervisor.default_max_paid_usd} labs={labs} />
         </div>
       </JobCreateSection>
     </div>

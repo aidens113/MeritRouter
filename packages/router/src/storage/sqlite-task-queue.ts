@@ -116,6 +116,9 @@ export class SqliteProjectTaskQueue {
   async claimTurn(raw:QueueClaim,candidates:readonly ProjectFairCandidate[]):Promise<StoredTaskDTO[]>{
     const {owner}=QueueClaimSchema.parse(raw);this.assertLocal();
     if(this.local.db.inTransaction)throw new Error("Project claim requires an independent local transaction");
+    // Commit terminal expiry separately: a later admission refusal must not roll it back
+    // and leave an expired FIFO leader permanently blocking this project's queue.
+    this.local.tasks.expireQueuedDeadlines();
     this.fairness.publish(candidates);
     try{return immediate(this.local.db,()=>{
       this.assertLocal();const cfg=this.local.cfg,admission=this.options.providerSlots;

@@ -82,10 +82,18 @@ supervisor:
   endpoints: []                 # empty = rank eligible models across all configured providers by quality
   routing:
     strategy: highest_eligible_quality
-    minimum_quality: best_available # frontier_or_qualified_supervisor requires reviewed evidence
-    quality_evidence: []        # optional sourced capability evidence; absent evidence is labelled unverified
+    minimum_quality: ranked_capable # missing measurements trigger bounded supervisor qualification
+    ranking_policy: null       # null uses measured local suite; external sources need a comparable explicit policy
+    ranking_evidence: []       # actual sourced measurements only; never invent scores
+    quality_evidence: []       # legacy policies only; never an automatic ranked fallback
+  default_max_paid_usd: 500     # omitted job cap; explicit user caps, including 0, win
+  credit_usage_alerts:
+    enabled: true              # inform external FINAL; does not change spending authority
+    usd_thresholds: [10, 25, 50, 100, 250, 500]
+    cap_fraction_thresholds: [0.5, 0.8, 0.95]
   delivery_budget:
     total_requests: 600
+    reserve_mode: proportional # fixed keeps absolute reserves for smaller explicit job caps
     supervisor_reserve_requests: 80
     validation_reserve_requests: 80
     extension_requests: 200     # requested upward; never an automatic grant

@@ -16,7 +16,7 @@ assert(["127.0.0.1", "localhost"].includes(parsedUrl.hostname) && parsedUrl.port
 const port = z.coerce.number().int().min(1024).max(65535).parse(process.argv[3] ?? 9335);
 const cfg = loadConfig(path.join(demo, "meritrouter.config.yaml"));
 assert(path.resolve(cfg.storageDir).startsWith(demo + path.sep), "Demo storage must remain under .demo");
-const sy = new MeritRouter(cfg, { worker: false });
+const sy = new MeritRouter(cfg, { panelLifecycle: "passive", worker: false });
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const results = [];
 let ws;

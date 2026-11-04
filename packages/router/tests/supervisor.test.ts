@@ -111,8 +111,8 @@ describe("standalone supervisor", () => {
   it("serialises overlapping coding briefs through file leases and asks the user when needed", async () => {
     env = makeEnv({ config: standaloneConfig() });
     const overlap = [
-      { label: "a", profile: "implement", goal: "edit app", acceptance_criteria: ["x"], allowed_paths: ["src/**"], difficulty: "T2" },
-      { label: "b", profile: "implement", goal: "edit app too", acceptance_criteria: ["x"], allowed_paths: ["src/app.ts"], difficulty: "T2" },
+      { label: "a", profile: "implement", max_requests: 8, goal: "edit app", acceptance_criteria: ["x"], allowed_paths: ["src/**"], difficulty: "T2" },
+      { label: "b", profile: "implement", max_requests: 8, goal: "edit app too", acceptance_criteria: ["x"], allowed_paths: ["src/app.ts"], difficulty: "T2" },
     ];
     const script = [
       () => [call("delegate", { tasks: overlap })],

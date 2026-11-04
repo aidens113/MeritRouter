@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { ChatMessage } from "../gateway/types.js";
+import { assistantMessage } from "../gateway/types.js";
 import type { NotAppliedToolProof, RecoverEditsPolicy, ResumeAction, ResumeToolRef, SessionEvent, SessionEventOf, SessionWorkspace, ToolSideEffect } from "./events.js";
 
 /**
@@ -223,7 +224,7 @@ export function planResume(events: readonly SessionEvent[], opts: PlanResumeOpti
   if (lastRequest && lastResponseAfterRequest && messages.length <= lastRequest.data.messageCount) {
     if (messages.length < lastRequest.data.messageCount) warnings.push(`transcript has ${messages.length} message(s) but the last request sent ${lastRequest.data.messageCount}`);
     const r = lastResponseAfterRequest.data;
-    messages.push(r.toolCalls.length ? { role: "assistant", content: r.content, tool_calls: r.toolCalls } : { role: "assistant", content: r.content });
+    messages.push(assistantMessage({ content: r.content, tool_calls: r.toolCalls, ...(r.nativeContinuation === undefined ? {} : { nativeContinuation: r.nativeContinuation }) }));
   }
 
   const actions: ResumeAction[] = [];

@@ -265,3 +265,9 @@ export { DeliverySpecSchema, deliverySpecDigest } from "./verification/product-s
 export { ProductCandidateSchema, EvidenceReceiptSchema, productCandidateDigest } from "./verification/product-evidence.js";
 export { evaluateProductReadiness } from "./verification/product-readiness.js";
 export { projectDeliveryReport, ProjectDeliveryReportInputSchema } from "./admin/deliveries.js";
+export { inspectRepositoryMutationLock, reconcileRepositoryMutationLock, inspectRepositoryMutationRecoveryFence, reconcileRepositoryMutationRecoveryFence } from "./workspaces/repository-mutation-recovery.js";
+export { inspectNativeIndexLock, reconcileNativeIndexLock, inspectNativeIndexRecoveryFence, reconcileNativeIndexRecoveryFence } from "./workspaces/native-index-lock-recovery.js";
+export type { DeadlineContinuationInput } from "./storage/task-deadline-continuation.js";
+export type { BlockedJobContinuationInput } from "./storage/blocked-job-continuation.js";
+export type { InfrastructureRecoveryInput } from "./storage/task-infrastructure-recovery.js";
+export type { RecoveredEditInspectionInput, RecoveredEditAttestationInput } from "./attribution/recovered-edit-provenance.js";

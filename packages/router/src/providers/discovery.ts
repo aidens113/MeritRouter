@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { RawConfig } from "../config/schema.js";
-import { endpointIdFor, type EndpointOverride, type ModelEndpointInput } from "../models/catalog.js";
+import { endpointIdFor, type EndpointOverride, type ModelEndpointInput, type AnthropicModelProtocol } from "../models/catalog.js";
 import type { ProviderClient } from "./client.js";
 import type { ProviderCredential, ProviderCredentials } from "./credentials.js";
 import {
@@ -40,6 +40,11 @@ const optPositiveInt = z.number().int().positive().nullable().optional().catch(n
 const optString = z.string().nullable().optional().catch(null);
 const optBool = z.boolean().nullable().optional().catch(null);
 const optStrings = z.array(z.string()).nullable().optional().catch(null);
+const capabilitySupport = z.object({ supported: optBool }).nullable().optional().catch(null);
+const anthropicLifecycle = z.enum(["active", "deprecated", "retired"]).nullable().optional().catch(null);
+const optTimestamp = z.iso.datetime({ offset: true }).nullable().optional().catch(null);
+const ANTHROPIC_MODELS_SOURCE = "https://platform.claude.com/docs/en/api/models/list";
+const ANTHROPIC_STRUCTURED_SOURCE = "https://platform.claude.com/docs/en/build-with-claude/structured-outputs";
 
 const OpenAiItemSchema = z.object({
   id: z.string().min(1),
@@ -84,16 +89,39 @@ const CloudflareItemSchema = z.object({
 });
 const AnthropicItemSchema = z.object({
   id: z.string().min(1),
+  type: z.literal("model").nullable().optional().catch(null),
   display_name: optString,
+  line: optString,
+  lifecycle: anthropicLifecycle,
+  deprecated_at: optTimestamp,
+  retires_at: optTimestamp,
   max_input_tokens: optPositiveInt,
   max_tokens: optPositiveInt,
   /** `server_tools.web_search.supported`: the model accepts at least one web search tool version (models overview, 2026-10-21). */
   capabilities: z
-    .object({ server_tools: z.object({ web_search: z.object({ supported: optBool }).nullable().optional().catch(null) }).nullable().optional().catch(null) })
+    .object({
+      structured_outputs: capabilitySupport,
+      thinking: z.object({ supported: optBool, types: z.object({ adaptive: capabilitySupport, enabled: capabilitySupport, disabled: capabilitySupport }).nullable().optional().catch(null) }).nullable().optional().catch(null),
+      image_input: capabilitySupport,
+      pdf_input: capabilitySupport,
+      server_tools: z.object({ web_search: capabilitySupport }).nullable().optional().catch(null),
+    })
     .nullable()
     .optional()
     .catch(null),
 });
+const AnthropicIdentitySchema = z.object({
+  type: z.literal("model"), line: z.string().min(1).nullable(), lifecycle: z.enum(["active", "deprecated"]),
+}).strict();
+type AnthropicListedModel = ListedModel & { anthropicIdentity: { type: "model" | null; line: string | null; lifecycle: "active" | "deprecated" | "retired" | null }; anthropicThinking: AnthropicModelProtocol["thinking"] };
+
+/** An authenticated official native catalog identity, never a name-only or compatible-host guess. */
+function officialAnthropicModel(provider: ResolvedProvider, listed: ListedModel): boolean {
+  if (!provider.builtIn || provider.id !== "anthropic" || provider.api !== "anthropic" || provider.models.shape !== "anthropic" ||
+    provider.baseUrl !== "https://api.anthropic.com/v1" || !listed.id.startsWith("claude-")) return false;
+  if (expandUrl(provider.models.url, provider, provider.accountId) !== "https://api.anthropic.com/v1/models") return false;
+  return "anthropicIdentity" in listed && AnthropicIdentitySchema.safeParse(listed.anthropicIdentity).success;
+}
 const DeepInfraItemSchema = z.object({
   model_name: z.string().min(1),
   type: optString,
@@ -234,15 +262,30 @@ export function parseModelListPage(shape: ModelListShape, body: unknown, provide
       const env = PageSchemas.data.safeParse(body).data ?? fail();
       for (const it of parseItems(AnthropicItemSchema, env.data, excluded)) {
         const ws = it.capabilities?.server_tools?.web_search?.supported;
+        const structured = it.capabilities?.structured_outputs?.supported ?? null;
+        const image = it.capabilities?.image_input?.supported, pdf = it.capabilities?.pdf_input?.supported;
+        const m: AnthropicListedModel = {
+          ...blank(it.id),
+          displayName: it.display_name ?? null,
+          contextLimitTokens: it.max_input_tokens ?? null,
+          outputLimitTokens: it.max_tokens ?? null,
+          contextDetail: "Anthropic models API max_input_tokens",
+          outputDetail: "Anthropic models API max_tokens",
+          supportsStructuredOutput: structured,
+          // The published capability includes strict client-tool schemas. Its absence/false
+          // does not prove ordinary client tools unsupported; server tools are independent.
+          supportsTools: structured === true ? true : null,
+          inputModalities: typeof image === "boolean" || typeof pdf === "boolean"
+            ? ["text", ...(image === true ? ["image" as const] : []), ...(pdf === true ? ["file" as const] : [])] : null,
+          anthropicIdentity: { type: it.type ?? null, line: it.line ?? null, lifecycle: it.lifecycle ?? null },
+          anthropicThinking: { supported: it.capabilities?.thinking?.supported ?? null, adaptive: it.capabilities?.thinking?.types?.adaptive?.supported ?? null,
+            enabled: it.capabilities?.thinking?.types?.enabled?.supported ?? null, disabled: it.capabilities?.thinking?.types?.disabled?.supported ?? null },
+          notes: [`Anthropic models API line=${it.line ?? "unknown"}; lifecycle=${it.lifecycle ?? "unknown"}${it.deprecated_at ? `; deprecated_at=${it.deprecated_at}` : ""}${it.retires_at ? `; retires_at=${it.retires_at}` : ""}`],
+          ...(typeof ws === "boolean" ? { webSearch: { supported: ws, usdPerSearch: null, usdPerRequest: null, detail: "Anthropic models API capabilities.server_tools.web_search.supported" } } : {}),
+        };
         keep(
-          {
-            ...blank(it.id),
-            displayName: it.display_name ?? null,
-            contextLimitTokens: it.max_input_tokens ?? null,
-            outputLimitTokens: it.max_tokens ?? null,
-            ...(typeof ws === "boolean" ? { webSearch: { supported: ws, usdPerSearch: null, usdPerRequest: null, detail: "Anthropic models API capabilities.server_tools.web_search.supported" } } : {}),
-          },
-          null,
+          m,
+          it.lifecycle === "retired" ? "retired by Anthropic models API" : null,
         );
       }
       return { models, excluded, next: env.has_more && env.last_id ? { after_id: env.last_id } : null };
@@ -508,7 +551,7 @@ export function freeStatus(
   return { value: false, usable: true, reason: freeKey ? "priced model" : "only paid or trial keys" };
 }
 
-function toEndpoint(provider: ResolvedProvider, e: EnrichedModel, free: { value: boolean; reason: string; basis?: "model" | "key" }, override: EndpointOverride | undefined, now: number): ModelEndpointInput {
+function toEndpoint(provider: ResolvedProvider, e: EnrichedModel, free: { value: boolean; reason: string; basis?: "model" | "key" }, override: EndpointOverride | undefined, now: number, proprietary = false, protocol?: AnthropicModelProtocol): ModelEndpointInput {
   const freeValue = override?.freeVerified ?? free.value;
   // The user saying a model is free covers every key; otherwise a key-based free model stays on free keys.
   const freeBasis = !freeValue ? undefined : override?.freeVerified !== undefined ? "model" : (free.basis ?? "key");
@@ -522,6 +565,8 @@ function toEndpoint(provider: ResolvedProvider, e: EnrichedModel, free: { value:
     origin: "discovered",
     route: { kind: "direct", provider: provider.id, model: e.modelId },
     quotaScopeIds: [`${provider.id}:${provider.quotaScope}`],
+    // The official hosted model has no published size; quality/capability and paid gates still apply.
+    ignoreSizeFloor: proprietary,
     totalParametersB: e.params.totalParametersB,
     activeParametersB: e.params.activeParametersB,
     params: { source: e.params.source, confidence: e.params.confidence, confirmed: e.params.confirmed, evidence: e.params.evidence },
@@ -535,6 +580,7 @@ function toEndpoint(provider: ResolvedProvider, e: EnrichedModel, free: { value:
     // Unknown support is stored as null: routing excludes it from work that needs it.
     supportsTools: e.supportsTools,
     supportsStructuredOutput: e.supportsStructuredOutput,
+    ...(protocol ? { anthropicProtocol: protocol } : {}),
     nativeWebSearch: detectNativeWebSearch(provider.id, e.modelId, e.webSearch),
     pricing: {
       inputUsdPerMillion: freeValue ? 0 : (usd?.input ?? null),
@@ -546,7 +592,9 @@ function toEndpoint(provider: ResolvedProvider, e: EnrichedModel, free: { value:
     },
     available: true,
     enabled: true,
-    sourceUrls: [...(provider.sourceUrl.startsWith("http") ? [provider.sourceUrl] : []), ...e.sourceUrls],
+    ...(e.notes.length ? { notes: e.notes.join("; ") } : {}),
+    sourceUrls: [...new Set([...(provider.sourceUrl.startsWith("http") ? [provider.sourceUrl] : []), ...e.sourceUrls,
+      ...(proprietary ? [ANTHROPIC_MODELS_SOURCE, ANTHROPIC_STRUCTURED_SOURCE] : [])])],
     checkedAt: new Date(now).toISOString(),
   };
 }
@@ -627,8 +675,27 @@ export async function discoverModels(opts: DiscoveryOptions): Promise<DiscoveryR
         continue;
       }
       listed.add(id);
-      const enriched = await enrichModel(provider.id, m, overrides[id], { openRouter, huggingFaceTotal, probe });
-      result.endpoints.push({ endpoint: toEndpoint(provider, enriched, free, overrides[id], now()), enriched, free: { value: overrides[id]?.freeVerified ?? free.value, reason: free.reason } });
+      const proprietary = officialAnthropicModel(provider, m);
+      // A different host's catalog cannot fill omissions in this official model's contract.
+      // Leaving omissions unknown also lets an explicitly enabled budgeted tool probe run.
+      const enriched = await enrichModel(provider.id, m, overrides[id], { openRouter: proprietary ? null : openRouter, huggingFaceTotal, probe });
+      if (proprietary) {
+        const override = overrides[id];
+        // Claude's typed official catalog reports no parameter count. Do not turn names or
+        // third-party prose into an invented size; preserve explicitly supplied operator counts.
+        enriched.params = {
+          totalParametersB: override?.totalParametersB ?? null, activeParametersB: override?.activeParametersB ?? null,
+          source: override?.totalParametersB !== undefined || override?.activeParametersB !== undefined ? "override" : "unknown",
+          confidence: override?.totalParametersB !== undefined || override?.activeParametersB !== undefined ? "exact" : "unknown",
+          confirmed: override?.totalParametersB !== undefined || override?.activeParametersB !== undefined, evidence: [],
+        };
+        enriched.provenance.parameters = { source: enriched.params.source === "override" ? "override" : "provider", detail: "Official Anthropic model identity; parameter counts are not reported by its models API" };
+        enriched.notes.push("Official Anthropic hosted model: parameter count unreported; size floor exempt, independent supervisor quality and capability requirements remain enforced");
+      }
+      const observedAt = now();
+      const protocol: AnthropicModelProtocol | undefined = proprietary ? { api: "anthropic", provider: provider.id, baseUrl: provider.baseUrl, model: m.id,
+        thinking: (m as AnthropicListedModel).anthropicThinking, sourceUrl: ANTHROPIC_MODELS_SOURCE, checkedAt: new Date(observedAt).toISOString() } : undefined;
+      result.endpoints.push({ endpoint: toEndpoint(provider, enriched, free, overrides[id], observedAt, proprietary, protocol), enriched, free: { value: overrides[id]?.freeVerified ?? free.value, reason: free.reason } });
       report.kept++;
     }
     for (const e of known) {

@@ -19,6 +19,7 @@ import { PaidSpend } from "../src/paid/spend.js";
 import { Catalog } from "../src/models/catalog.js";
 import { Gate, ProviderHealth, type GateRequest } from "../src/gateway/gate.js";
 import { TaskRouter } from "../src/routing/router.js";
+import { qualificationLookup } from "../src/qualification/stats.js";
 import { ArtifactStore } from "../src/storage/artifacts.js";
 import { baseConfig, makeEnv, reply, summarizeTask, type Env } from "./helpers.js";
 
@@ -60,7 +61,7 @@ function fixture(){
     const request:GateRequest={executionId,purpose:"execution",plan:{profile:"summarize",tier:"T1",floorB:0,candidates:[endpoint],explanations:[],forced:false,belowFloorEndpoints:new Set()},
       participants:[{taskId:"same-task",leaseOwner:"worker",lease,budget:{maxModelRequests:4,maxInputTokens:null,maxOutputTokens:null,maxPaidUsd:null}}],
       chat:{messages:[{role:"user",content:`private-${slug}`}],max_tokens:100}};
-    const router=new TaskRouter(cfg,local,catalog,gate,new ArtifactStore(local,cfg.storageDir,()=>now),()=>now);
+    const router=new TaskRouter(cfg,local,catalog,gate,new ArtifactStore(local,cfg.storageDir,()=>now),()=>now,config=>qualificationLookup(global,config));
     return {local,identity,cfg,gate,admission,ledger,context,request,router,tasks};
   }
   return {global,owner,providers,spend,health,calls,project};

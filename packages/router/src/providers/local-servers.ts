@@ -208,7 +208,9 @@ export function applyOllamaShow(listed: ListedModel, show: OllamaShow | null, lo
   }
   const info = show?.model_info ?? null;
   const arch = typeof info?.["general.architecture"] === "string" ? (info["general.architecture"] as string) : null;
-  const max = arch ? positiveInt(info?.[`${arch}.context_length`]) : null;
+  // Hosted metadata may explicitly report an empty architecture and `.context_length`.
+  // Empty is a reported namespace; only absent/malformed architecture is unknown.
+  const max = arch !== null ? positiveInt(info?.[`${arch}.context_length`]) : null;
   const numCtx = parameter(show?.parameters, "num_ctx");
   const numPredict = parameter(show?.parameters, "num_predict");
   const notes = [...(listed.notes ?? [])];
@@ -228,6 +230,7 @@ export function applyOllamaShow(listed: ListedModel, show: OllamaShow | null, lo
   }
   if (context !== null && max !== null && max < context) [context, detail] = [max, `${detail}, capped at the model's maximum ${max}`];
   const output = context === null ? null : numPredict ? Math.min(numPredict, context) : context;
+  if (!provider.local && output !== null && !numPredict) notes.push("output limit is a context-derived ceiling, not an independently reported or measured generation maximum");
 
   const exact = positiveInt(info?.["general.parameter_count"]);
   const params: ListedModel["providerParams"] = exact

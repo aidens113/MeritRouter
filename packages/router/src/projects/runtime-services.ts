@@ -15,11 +15,14 @@ import type { ExecutionGrantRef,ProjectExecutionGrants } from "../storage/projec
 import { assertStoreRole } from "../storage/store-role.js";
 import { createSplitProjectRuntimeStore,projectStoresForTask } from "./runtime-store.js";
 import type { ProjectRuntimeBundle,ProjectRuntimeConstruction } from "./runtime-registry.js";
+import type { QualificationLookup } from "../routing/select.js";
 
 export type ProjectPrivateExecutorServices=Pick<ExecutorDeps,"coding"|"supervisor"|"brain"|"access"|"services"|"onSettled"> & Partial<Pick<ExecutorDeps,"web"|"labs"|"ensureLabsSupervisor"|"taskLeases"|"servicesForLease">>;
 export interface ProjectRuntimeServiceHost {
  coordinationDb:Db;coordinationConfig:ResolvedConfig;catalog:Catalog;health:ProviderHealth;direct:DirectRuntime;
  grants:ProjectExecutionGrants;broker:RequestAccountingBroker;owner:string;now?:()=>number;
+ /** Aggregate-only capability; hosts without one expose no qualification evidence. */
+ qualification?(config:ResolvedConfig):QualificationLookup;
  executionGrants(input:ProjectRuntimeConstruction,request:GateRequest):readonly ExecutionGrantRef[];
  /** Scope every callback to this exact local project; never return installation task/session stores. */
  privateServices(input:ProjectRuntimeConstruction & {tasks:TaskStore;sessions:SessionStore;artifacts:ArtifactStore;contracts:ContractStore;admission:Admission;gate:Gate;router:TaskRouter}):ProjectPrivateExecutorServices;
@@ -33,7 +36,7 @@ export function createProjectRuntimeServices(input:ProjectRuntimeConstruction,ho
  const ledger=new ProjectRequestLedger(admission,{identity,cfg,broker:host.broker});
  const gate=new Gate(db,cfg,admission,host.health,host.direct,ledger,undefined,{coordinationDb:host.coordinationDb,coordinationConfig:host.coordinationConfig,identity,capacityGrants:host.grants,assertRuntime:()=>{input.assertCurrent();return undefined;},executionGrants:request=>host.executionGrants(input,request)});
  const request=gate.request.bind(gate);gate.request=value=>{input.assertCurrent();return request(value);};
- const router=new TaskRouter(cfg,db,host.catalog,gate,artifacts,now);
+ const router=new TaskRouter(cfg,db,host.catalog,gate,artifacts,now,config=>host.qualification?.(config)??(()=>null));
  const local={...input,tasks,sessions,artifacts,contracts,admission,gate,router},privateServices=host.privateServices(local);
  const executor=new Executor({...privateServices,cfg,db,gate,catalog:host.catalog,router,tasks,artifacts,owner:host.owner,now,sessions,contracts});
  const store=createSplitProjectRuntimeStore(identity,{db,tasks,sessions,artifacts,contracts});

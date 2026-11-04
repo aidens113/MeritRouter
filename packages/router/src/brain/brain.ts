@@ -123,6 +123,9 @@ export interface ProjectBrainOptions {identity:ProjectStoreIdentity;assertRuntim
 const BrainEntrySchema=z.object({path:z.string(),kind:z.enum(["working_doc","report","archive","lesson","glossary","decision","fact","repo_notes","index","note"]),title:z.string().nullable(),status:z.string().nullable(),lines:z.number().int().nonnegative(),mtime:z.number().finite()}).strict();
 
 export interface BrainOptions {
+  /** Host-owned lifecycle admission; standalone brains have no service lifecycle. */
+  operation?: <T>(work: () => Promise<T>, promotion?: boolean) => Promise<T>;
+  producerOperation?: <T>(work: () => Promise<T>) => Promise<T>;
   project?:ProjectBrainOptions;
   /** The independent reviewer of global promotions (a function: the service builds it after its brains). */
   reviewer?: PromotionReviewPort | (() => PromotionReviewPort | null | undefined) | null;
@@ -149,6 +152,8 @@ export class Brain {
   readonly root: string;
   private readonly projectMode:ProjectBrainOptions|undefined;
   private readonly mounts: Array<{ prefix: string; abs: string; commit: boolean }>;
+  private readonly operation: BrainOptions["operation"];
+  private readonly producerOperation: BrainOptions["producerOperation"];
   private chains = new Map<string, Promise<unknown>>();
   private ready: Promise<void> | null = null;
   private readonly queueOwners = new Map<string, string>();
@@ -164,6 +169,8 @@ export class Brain {
     private readonly now: () => number = Date.now,
     opts: BrainOptions = {},
   ) {
+    this.operation = opts.operation;
+    this.producerOperation = opts.producerOperation;
     this.projectMode=opts.project?{...opts.project,identity:Object.freeze(ProjectStoreIdentitySchema.parse(opts.project.identity))}:undefined;
     const role=readStoreIdentity(db);if(role?.role==="coordination")throw new BrainError("Private Brain cannot use coordination store");if(role?.role==="project"&&!opts.project)throw new BrainError("Project Brain requires explicit pinned local options");
     const base = path.dirname(cfg.configPath);
@@ -174,6 +181,7 @@ export class Brain {
     if(this.projectMode){const identity=ProjectStoreIdentitySchema.parse(this.projectMode.identity),directory=(cfg as {projectDirectory?:unknown}).projectDirectory;if(typeof directory!=="string"||path.resolve(projectRuntimePaths(directory).brain).toLowerCase()!==this.root.toLowerCase()||cfg.brain.project!==identity.slug)throw new BrainError("Project Brain root/configuration differs from pinned project runtime");for(const mount of this.mounts){if(!mount.prefix.startsWith(`projects/${identity.slug}/`))throw new BrainError("Project Brain mounts must remain in its own namespace");if(!this.localTarget(mount.abs))throw new BrainError("Project Brain mount must stay beneath its own canonical .MeritRouter runtime");}this.owner();}
     const reviewer = opts.reviewer;
     this.promotions = new GlobalPromotions({
+      operation: work => this.operation ? this.operation(work, true) : work(),
       scope: () => this.scope(),
       exists: (rel) => this.exists(rel),
       readText: (rel) => {
@@ -248,13 +256,25 @@ export class Brain {
     return `projects/${this.project}/working/${effort}.md`;
   }
 
+  /** Admit a complete host effect, including work before its first Brain call. */
+  runOperation<T>(work: () => Promise<T>): Promise<T> {
+    return this.operation ? this.operation(work) : work();
+  }
+
+  /** Host scheduler entry; a new admitted run cannot inherit a previous task's scope. */
+  runProducerOperation<T>(work: () => Promise<T>): Promise<T> {
+    return this.producerOperation ? this.producerOperation(work) : this.runOperation(work);
+  }
+
   /** Create the brain repository and its skeleton on first use. */
   ensure(control: BrainMutationControl = {}): Promise<void> {
-    this.owner();
-    // A host already holding the common lease must not wait for an initializer queued
-    // behind that same lease. Bootstrap is idempotent and revalidates its supplied scope.
-    if (control.mutation !== undefined) return this.initialize(control);
-    return this.ready ??= this.initialize(control);
+    return this.runOperation(async () => {
+      this.owner();
+      // A host already holding the common lease must not wait for an initializer queued
+      // behind that same lease. Bootstrap is idempotent and revalidates its supplied scope.
+      if (control.mutation !== undefined) return this.initialize(control);
+      return this.ready ??= this.initialize(control);
+    });
   }
 
   private async initialize(control: BrainMutationControl): Promise<void> {
@@ -288,6 +308,8 @@ export class Brain {
       // Reopening a Brain must not scan/adopt every user file or stage unrelated changes.
       if (this.cfg.brain.commit && created.length) await commitAs(this.root, { agent: "meritrouter", role: "tool" }, "Initialise brain", { paths: created.map(rel => `:(literal)${rel}`) }, { mutation });
     }), control);
+    // A prior read may have cached an empty or plain-folder catalogue.
+    this.indexRefreshedAt = 0;
   }
 
   /** A non-committing mount can still be Git-backed and must honor its owner's fence. */
@@ -310,10 +332,12 @@ export class Brain {
 
   /** Host calls only after releasing its outer repository lease. */
   async pushPending(): Promise<void> {
-    for (const repo of [...this.pendingPushes]) {
-      this.pendingPushes.delete(repo);
-      await git(repo, ["push", "-q"]).catch(() => undefined);
-    }
+    return this.runOperation(async () => {
+      for (const repo of [...this.pendingPushes]) {
+        this.pendingPushes.delete(repo);
+        await git(repo, ["push", "-q"]).catch(() => undefined);
+      }
+    });
   }
 
   /** Map a brain path to a file, honouring mounts (e.g. a repository's docs/working). */
@@ -333,7 +357,9 @@ export class Brain {
 
   /** Resolve a configured document mount to its verified Git root without broadening mount visibility. */
   async resolveGitDocument(relInput: string): Promise<BrainGitDocument | null> {
-    return resolveBrainGitDocument(this.resolve(relInput));
+    return this.runOperation(async () => {
+      return resolveBrainGitDocument(this.resolve(relInput));
+    });
   }
 
   private check(p: Principal, rel: string, mode: BrainMode): void {
@@ -503,75 +529,85 @@ export class Brain {
 
   /** Create or replace a file. Working documents keep their ledger append-only. */
   async write(p: Principal, actor: Actor, rel: string, content: string, message?: string, opts: { expectedDigest?: string | null } = {}): Promise<{ path: string; commit: string | null; digest: string }> {
-    const r = this.resolve(rel);
-    if (!r.rel.toLowerCase().endsWith(".md")) throw new BrainError(`brain entries are markdown files ending in .md: ${r.rel}`);
-    this.check(p, r.rel, "write");
-    const kind = kindOf(r.rel);
-    if (kind === "report") {
-      const issues = validateReport(content);
-      if (issues.length) throw new BrainError(`report rejected: ${issues.join("; ")}`, issues);
-    }
-    if (kind === "working_doc") {
-      const doc = parseDoc(content);
-      const issues = validateHeader(doc);
-      const cs = section(doc, "Current State");
-      if (!cs) issues.push("working documents need a '## Current State' section");
-      else issues.push(...validateCurrentState(cs.body, this.cfg.brain.current_state_max_lines));
-      if (existsSync(r.abs)) {
-        const oldLedger = section(parseDoc(readFileSync(r.abs, "utf8")), "Work Ledger")?.body.trim() ?? "";
-        const newLedger = section(doc, "Work Ledger")?.body.trim() ?? "";
-        if (oldLedger && !newLedger.startsWith(oldLedger)) issues.push("the Work Ledger is append-only: existing entries must stay unchanged (use compaction to archive history)");
-        const oldChannel = section(parseDoc(readFileSync(r.abs, "utf8")), TEAM_CHANNEL_SECTION)?.body.trim() ?? "";
-        const newChannel = section(doc, TEAM_CHANNEL_SECTION)?.body.trim() ?? "";
-        if (oldChannel && !newChannel.startsWith(oldChannel)) issues.push(`the ${TEAM_CHANNEL_SECTION} is append-only: it mirrors the job's channel and must stay unchanged`);
+    return this.runOperation(async () => {
+      const r = this.resolve(rel);
+      if (!r.rel.toLowerCase().endsWith(".md")) throw new BrainError(`brain entries are markdown files ending in .md: ${r.rel}`);
+      this.check(p, r.rel, "write");
+      const kind = kindOf(r.rel);
+      if (kind === "report") {
+        const issues = validateReport(content);
+        if (issues.length) throw new BrainError(`report rejected: ${issues.join("; ")}`, issues);
       }
-      if (issues.length) throw new BrainError(`working document rejected: ${issues.join("; ")}`, issues);
-      content = setHeaderField(content, "Last updated", new Date(this.now()).toISOString().slice(0, 10));
-    }
-    return this.writeFile(r.rel, content, actor, message ?? `${existsSync(r.abs) ? "Update" : "Add"} ${r.rel}`, opts);
+      if (kind === "working_doc") {
+        const doc = parseDoc(content);
+        const issues = validateHeader(doc);
+        const cs = section(doc, "Current State");
+        if (!cs) issues.push("working documents need a '## Current State' section");
+        else issues.push(...validateCurrentState(cs.body, this.cfg.brain.current_state_max_lines));
+        if (existsSync(r.abs)) {
+          const oldLedger = section(parseDoc(readFileSync(r.abs, "utf8")), "Work Ledger")?.body.trim() ?? "";
+          const newLedger = section(doc, "Work Ledger")?.body.trim() ?? "";
+          if (oldLedger && !newLedger.startsWith(oldLedger)) issues.push("the Work Ledger is append-only: existing entries must stay unchanged (use compaction to archive history)");
+          const oldChannel = section(parseDoc(readFileSync(r.abs, "utf8")), TEAM_CHANNEL_SECTION)?.body.trim() ?? "";
+          const newChannel = section(doc, TEAM_CHANNEL_SECTION)?.body.trim() ?? "";
+          if (oldChannel && !newChannel.startsWith(oldChannel)) issues.push(`the ${TEAM_CHANNEL_SECTION} is append-only: it mirrors the job's channel and must stay unchanged`);
+        }
+        if (issues.length) throw new BrainError(`working document rejected: ${issues.join("; ")}`, issues);
+        content = setHeaderField(content, "Last updated", new Date(this.now()).toISOString().slice(0, 10));
+      }
+      return this.writeFile(r.rel, content, actor, message ?? `${existsSync(r.abs) ? "Update" : "Add"} ${r.rel}`, opts);
+    });
   }
 
   async createWorkingDoc(p: Principal, actor: Actor, effort: string, f: { title: string; statusDetail: string; owner: string; scope: string; related?: string; currentState: string }): Promise<{ path: string; commit: string | null }> {
-    const rel = this.workingDocPath(slugify(effort));
-    if (this.exists(rel)) throw new BrainError(`${rel} already exists`);
-    const r = await this.write(p, actor, rel, workingDocTemplate(f, new Date(this.now()).toISOString().slice(0, 10)), `Start working document ${rel}`);
-    await this.regenerateIndex(actor);
-    return r;
+    return this.runOperation(async () => {
+      const rel = this.workingDocPath(slugify(effort));
+      if (this.exists(rel)) throw new BrainError(`${rel} already exists`);
+      const r = await this.write(p, actor, rel, workingDocTemplate(f, new Date(this.now()).toISOString().slice(0, 10)), `Start working document ${rel}`);
+      await this.regenerateIndex(actor);
+      return r;
+    });
   }
 
   /** Rewrite `Current State` (the authoritative section). Workers never may. */
   async setCurrentState(p: Principal, actor: Actor, rel: string, body: string): Promise<{ path: string; commit: string | null }> {
-    const r = this.resolve(rel);
-    this.check(p, r.rel, "write");
-    if (kindOf(r.rel) !== "working_doc") throw new BrainError(`${r.rel} is not a working document`);
-    const issues = validateCurrentState(body, this.cfg.brain.current_state_max_lines);
-    if (issues.length) throw new BrainError(issues.join("; "));
-    const text = readFileSync(r.abs, "utf8");
-    const next = setHeaderField(replaceSection(text, "Current State", body), "Last updated", new Date(this.now()).toISOString().slice(0, 10));
-    return this.writeFile(r.rel, next, actor, `Update Current State of ${r.rel}`);
+    return this.runOperation(async () => {
+      const r = this.resolve(rel);
+      this.check(p, r.rel, "write");
+      if (kindOf(r.rel) !== "working_doc") throw new BrainError(`${r.rel} is not a working document`);
+      const issues = validateCurrentState(body, this.cfg.brain.current_state_max_lines);
+      if (issues.length) throw new BrainError(issues.join("; "));
+      const text = readFileSync(r.abs, "utf8");
+      const next = setHeaderField(replaceSection(text, "Current State", body), "Last updated", new Date(this.now()).toISOString().slice(0, 10));
+      return this.writeFile(r.rel, next, actor, `Update Current State of ${r.rel}`);
+    });
   }
 
   /** Append one ledger entry. Requires a real validation record. */
   async appendLedger(p: Principal, actor: Actor, rel: string, entry: string | LedgerFields): Promise<{ path: string; commit: string | null; compactionDue: boolean }> {
-    const r = this.resolve(rel);
-    this.check(p, r.rel, "append");
-    if (kindOf(r.rel) !== "working_doc") throw new BrainError(`${r.rel} is not a working document`);
-    const text = typeof entry === "string" ? entry.trim() : formatLedgerEntry(entry, new Date(this.now()).toISOString().slice(0, 10));
-    const issues = validateLedgerEntry(text);
-    if (issues.length) throw new BrainError(`ledger entry rejected: ${issues.join("; ")}`, issues);
-    const current = readFileSync(r.abs, "utf8");
-    const next = setHeaderField(appendToSection(current, "Work Ledger", text, "Open Questions"), "Last updated", new Date(this.now()).toISOString().slice(0, 10));
-    const res = await this.writeFile(r.rel, next, actor, `Ledger: ${text.split("\n")[0]!.replace(/^### /, "")}`);
-    const doc = parseDoc(next);
-    return { ...res, compactionDue: doc.lines.length > this.cfg.brain.compact_at_lines || ledgerEntryCount(doc) > this.cfg.brain.compact_at_ledger_entries };
+    return this.runOperation(async () => {
+      const r = this.resolve(rel);
+      this.check(p, r.rel, "append");
+      if (kindOf(r.rel) !== "working_doc") throw new BrainError(`${r.rel} is not a working document`);
+      const text = typeof entry === "string" ? entry.trim() : formatLedgerEntry(entry, new Date(this.now()).toISOString().slice(0, 10));
+      const issues = validateLedgerEntry(text);
+      if (issues.length) throw new BrainError(`ledger entry rejected: ${issues.join("; ")}`, issues);
+      const current = readFileSync(r.abs, "utf8");
+      const next = setHeaderField(appendToSection(current, "Work Ledger", text, "Open Questions"), "Last updated", new Date(this.now()).toISOString().slice(0, 10));
+      const res = await this.writeFile(r.rel, next, actor, `Ledger: ${text.split("\n")[0]!.replace(/^### /, "")}`);
+      const doc = parseDoc(next);
+      return { ...res, compactionDue: doc.lines.length > this.cfg.brain.compact_at_lines || ledgerEntryCount(doc) > this.cfg.brain.compact_at_ledger_entries };
+    });
   }
 
   /** Record a worker brief in the working document before dispatch. */
   async addBrief(p: Principal, actor: Actor, rel: string, brief: string): Promise<{ path: string; commit: string | null }> {
-    const r = this.resolve(rel);
-    this.check(p, r.rel, "write");
-    const next = appendToSection(readFileSync(r.abs, "utf8"), "Worker Briefs", brief, "Work Ledger");
-    return this.writeFile(r.rel, next, actor, `Brief: ${brief.split("\n")[0]!.replace(/^### Brief: /, "")}`);
+    return this.runOperation(async () => {
+      const r = this.resolve(rel);
+      this.check(p, r.rel, "write");
+      const next = appendToSection(readFileSync(r.abs, "utf8"), "Worker Briefs", brief, "Work Ledger");
+      return this.writeFile(r.rel, next, actor, `Brief: ${brief.split("\n")[0]!.replace(/^### Brief: /, "")}`);
+    });
   }
 
   /**
@@ -581,30 +617,34 @@ export class Brain {
    * holds (by post id) are skipped, under the repository lock. Returns the ids now mirrored.
    */
   async appendChannel(actor: Actor, rel: string, entries: ChannelEntryFields[]): Promise<{ path: string; commit: string | null; mirrored: number[] }> {
-    const r = this.resolve(rel);
-    if (kindOf(r.rel) !== "working_doc") throw new BrainError(`${r.rel} is not a working document`);
-    if (!existsSync(r.abs)) throw new BrainError(`${r.rel} does not exist`);
-    let mirrored: number[] = [];
-    const res = await this.writeFile(
-      r.rel,
-      (current) => {
-        if (current === null) return null;
-        const present = channelEntryIds(section(parseDoc(current), TEAM_CHANNEL_SECTION)?.body ?? "");
-        const fresh = entries.filter((e) => !present.has(e.id));
-        mirrored = entries.map((e) => e.id);
-        if (!fresh.length) return null;
-        let next = current;
-        for (const e of fresh) next = appendToSection(next, TEAM_CHANNEL_SECTION, formatChannelEntry(e), "Work Ledger");
-        return next;
-      },
-      actor,
-      `Team channel: ${entries.map((e) => `#${e.id}`).join(", ")}`,
-    );
-    return { ...res, mirrored };
+    return this.runOperation(async () => {
+      const r = this.resolve(rel);
+      if (kindOf(r.rel) !== "working_doc") throw new BrainError(`${r.rel} is not a working document`);
+      if (!existsSync(r.abs)) throw new BrainError(`${r.rel} does not exist`);
+      let mirrored: number[] = [];
+      const res = await this.writeFile(
+        r.rel,
+        (current) => {
+          if (current === null) return null;
+          const present = channelEntryIds(section(parseDoc(current), TEAM_CHANNEL_SECTION)?.body ?? "");
+          const fresh = entries.filter((e) => !present.has(e.id));
+          mirrored = entries.map((e) => e.id);
+          if (!fresh.length) return null;
+          let next = current;
+          for (const e of fresh) next = appendToSection(next, TEAM_CHANNEL_SECTION, formatChannelEntry(e), "Work Ledger");
+          return next;
+        },
+        actor,
+        `Team channel: ${entries.map((e) => `#${e.id}`).join(", ")}`,
+      );
+      return { ...res, mirrored };
+    });
   }
 
   async writeReport(p: Principal, actor: Actor, rel: string, report: string | ReportFields): Promise<{ path: string; commit: string | null }> {
-    return this.write(p, actor, rel, typeof report === "string" ? report : formatReport(report), `Report ${path.posix.basename(rel, ".md")}`);
+    return this.runOperation(async () => {
+      return this.write(p, actor, rel, typeof report === "string" ? report : formatReport(report), `Report ${path.posix.basename(rel, ".md")}`);
+    });
   }
 
   /**
@@ -613,29 +653,33 @@ export class Brain {
    * and usually comes back pending review, or rejected and kept in the project with the reason.
    */
   async promoteLesson(p: Principal, actor: Actor, title: string, body: string, sources: string[]): Promise<PromotionOutcome> {
-    if(this.projectMode)assertProjectBrainPrincipal(this.db,p);
-    if (p.kind === "agent" && p.role !== "supervisor") throw new BrainError("only supervisors promote lessons");
-    await this.ensure();
-    return this.promotions.promote(p, actor, { title, body, sources });
+    return this.runOperation(async () => {
+      if(this.projectMode)assertProjectBrainPrincipal(this.db,p);
+      if (p.kind === "agent" && p.role !== "supervisor") throw new BrainError("only supervisors promote lessons");
+      await this.ensure();
+      return this.promotions.promote(p, actor, { title, body, sources });
+    });
   }
 
   /** Move ledger history to the archive, leaving a pointer (compaction). */
   async compact(p: Principal, actor: Actor, rel: string, keepLastEntries = 5): Promise<{ archive: string }> {
-    const r = this.resolve(rel);
-    this.check(p, r.rel, "write");
-    const text = readFileSync(r.abs, "utf8");
-    const doc = parseDoc(text);
-    const ledger = section(doc, "Work Ledger")?.body ?? "";
-    const entries = ledger.split(/\n(?=### )/).filter((e) => e.trim());
-    if (entries.length <= keepLastEntries) return { archive: "" };
-    const moved = entries.slice(0, entries.length - keepLastEntries);
-    const effort = path.posix.basename(r.rel, ".md");
-    const archive = `${path.posix.dirname(r.rel)}/${effort}/archive/${new Date(this.now()).toISOString().slice(0, 10)}-ledger.md`;
-    await this.writeFile(archive, `# ${doc.title ?? effort}: archived ledger\n\n${moved.join("\n\n")}\n`, actor, `Archive ${moved.length} ledger entries of ${r.rel}`);
-    const pointer = `Earlier entries archived in [${path.posix.basename(archive)}](./${effort}/archive/${path.posix.basename(archive)}).`;
-    // Compaction is the one sanctioned rewrite of the ledger.
-    await this.writeFile(r.rel, replaceSection(text, "Work Ledger", [pointer, ...entries.slice(-keepLastEntries)].join("\n\n")), actor, `Compact ${r.rel}`);
-    return { archive };
+    return this.runOperation(async () => {
+      const r = this.resolve(rel);
+      this.check(p, r.rel, "write");
+      const text = readFileSync(r.abs, "utf8");
+      const doc = parseDoc(text);
+      const ledger = section(doc, "Work Ledger")?.body ?? "";
+      const entries = ledger.split(/\n(?=### )/).filter((e) => e.trim());
+      if (entries.length <= keepLastEntries) return { archive: "" };
+      const moved = entries.slice(0, entries.length - keepLastEntries);
+      const effort = path.posix.basename(r.rel, ".md");
+      const archive = `${path.posix.dirname(r.rel)}/${effort}/archive/${new Date(this.now()).toISOString().slice(0, 10)}-ledger.md`;
+      await this.writeFile(archive, `# ${doc.title ?? effort}: archived ledger\n\n${moved.join("\n\n")}\n`, actor, `Archive ${moved.length} ledger entries of ${r.rel}`);
+      const pointer = `Earlier entries archived in [${path.posix.basename(archive)}](./${effort}/archive/${path.posix.basename(archive)}).`;
+      // Compaction is the one sanctioned rewrite of the ledger.
+      await this.writeFile(r.rel, replaceSection(text, "Work Ledger", [pointer, ...entries.slice(-keepLastEntries)].join("\n\n")), actor, `Compact ${r.rel}`);
+      return { archive };
+    });
   }
 
   /**
@@ -653,37 +697,39 @@ export class Brain {
     reason: string,
     opts: { message?: string; trailers?: Record<string, string> | ((removedText: string) => Record<string, string>) } = {},
   ): Promise<{ path: string; commit: string | null; text: string }> {
-    const r = this.resolve(relInput);
-    const lower = r.rel.toLowerCase();
-    if (!lower.endsWith(".md")) throw new BrainError(`brain entries are markdown files ending in .md: ${r.rel}`);
-    if ((lower === "global" || lower.startsWith("global/")) && p.kind !== "human") throw new BrainError(`only a person removes global knowledge: ${r.rel}`);
-    if (isBrainIndex(r.rel)) throw new BrainError(`${r.rel} is generated by MeritRouter and cannot be removed`);
-    this.check(p, r.rel, "write");
-    const why = reason.trim().replace(/\s+/g, " ");
-    if (!why) throw new BrainError("say why the entry is removed; the reason is recorded in the brain's history");
-    await this.ensure();
-    const binding = r.repo && r.commit ? await this.resolveGitDocument(r.rel) : null;
-    const effectRepo = binding?.repo ?? r.repo ?? await this.effectRepository(r.abs);
-    const doRemove = async (mutation?: RepositoryMutationCapability) => {
-      this.owner();
-      if (binding) assertBrainGitPath(binding, r.abs);
-      if (!existsSync(r.abs) || !statSync(r.abs).isFile()) throw new BrainError(`${r.rel} does not exist`);
-      // A file written outside MeritRouter and never committed is recorded first, so its text stays in the history.
-      if (binding) await this.adoptExternalEdits(binding.repo, binding, mutation!);
-      const text = readFileSync(r.abs, "utf8");
-      const who = p.kind === "human" ? (p.name ?? actor.agent) : actor.agent;
-      const trailers = typeof opts.trailers === "function" ? opts.trailers(text) : (opts.trailers ?? { "Removed-By": who.slice(0, 200), "Remove-Reason": why.slice(0, 1000) });
-      unlinkSync(r.abs);
-      let commit: string | null = null;
-      if (binding) {
-        commit = await commitAs(binding.repo, actor, (opts.message ?? `Remove ${r.rel}`).slice(0, 200), { paths: [`:(literal)${binding.repoRel}`], extraTrailers: trailers }, { mutation });
-      }
-      this.indexFile(r.rel);
-      return { path: r.rel, commit, text };
-    };
-    const result = effectRepo ? await this.mutate([effectRepo], mutation => this.locked(r.repo ?? effectRepo, () => doRemove(mutation))) : await doRemove();
-    if (binding && this.cfg.brain.push && result.commit) await git(binding.repo, ["push", "-q"]).catch(() => undefined);
-    return result;
+    return this.runOperation(async () => {
+      const r = this.resolve(relInput);
+      const lower = r.rel.toLowerCase();
+      if (!lower.endsWith(".md")) throw new BrainError(`brain entries are markdown files ending in .md: ${r.rel}`);
+      if ((lower === "global" || lower.startsWith("global/")) && p.kind !== "human") throw new BrainError(`only a person removes global knowledge: ${r.rel}`);
+      if (isBrainIndex(r.rel)) throw new BrainError(`${r.rel} is generated by MeritRouter and cannot be removed`);
+      this.check(p, r.rel, "write");
+      const why = reason.trim().replace(/\s+/g, " ");
+      if (!why) throw new BrainError("say why the entry is removed; the reason is recorded in the brain's history");
+      await this.ensure();
+      const binding = r.repo && r.commit ? await this.resolveGitDocument(r.rel) : null;
+      const effectRepo = binding?.repo ?? r.repo ?? await this.effectRepository(r.abs);
+      const doRemove = async (mutation?: RepositoryMutationCapability) => {
+        this.owner();
+        if (binding) assertBrainGitPath(binding, r.abs);
+        if (!existsSync(r.abs) || !statSync(r.abs).isFile()) throw new BrainError(`${r.rel} does not exist`);
+        // A file written outside MeritRouter and never committed is recorded first, so its text stays in the history.
+        if (binding) await this.adoptExternalEdits(binding.repo, binding, mutation!);
+        const text = readFileSync(r.abs, "utf8");
+        const who = p.kind === "human" ? (p.name ?? actor.agent) : actor.agent;
+        const trailers = typeof opts.trailers === "function" ? opts.trailers(text) : (opts.trailers ?? { "Removed-By": who.slice(0, 200), "Remove-Reason": why.slice(0, 1000) });
+        unlinkSync(r.abs);
+        let commit: string | null = null;
+        if (binding) {
+          commit = await commitAs(binding.repo, actor, (opts.message ?? `Remove ${r.rel}`).slice(0, 200), { paths: [`:(literal)${binding.repoRel}`], extraTrailers: trailers }, { mutation });
+        }
+        this.indexFile(r.rel);
+        return { path: r.rel, commit, text };
+      };
+      const result = effectRepo ? await this.mutate([effectRepo], mutation => this.locked(r.repo ?? effectRepo, () => doRemove(mutation))) : await doRemove();
+      if (binding && this.cfg.brain.push && result.commit) await git(binding.repo, ["push", "-q"]).catch(() => undefined);
+      return result;
+    });
   }
 
   /** Files under another project's folder (`projects/<slug>/`) in the shared brain repository, for a deletion preview. */
@@ -715,35 +761,37 @@ export class Brain {
    * brain; never on the folder's own project. Mounts outside the brain repository are not touched.
    */
   async removeProjectFolder(slug: string, actor: Actor, reason: string, control: BrainMutationControl = {}): Promise<{ files: number; commit: string | null }> {
-    if (slug.toLowerCase() === this.project.toLowerCase()) throw new BrainError(`a project's brain cannot remove its own folder (${slug})`);
-    const dir = this.projectFolder(slug);
-    await this.ensure(control);
-    const rel = `projects/${slug}`;
-    const out = await this.mutate([this.root], async mutation => {
-      const nested = { ...control, mutation };
-      const removed = await this.locked(this.root, async () => {
-        const files = this.projectFolderFiles(slug);
-        if (!existsSync(dir)) return { files: 0, commit: null };
-        const commits = this.cfg.brain.commit && existsSync(path.join(this.root, ".git"));
-        if (commits) await this.adoptExternalEdits(this.root, undefined, mutation);
-        rmSync(dir, { recursive: true, force: true });
-        let commit: string | null = null;
-        if (commits && (await git(this.root, ["ls-files", "--", `:(literal)${rel}`])).trim()) {
-          commit = await commitAs(this.root, actor, `Remove project ${slug}`.slice(0, 200), { paths: [`:(literal)${rel}`], extraTrailers: { "Removed-By": actor.agent.slice(0, 200), "Remove-Reason": reason.trim().replace(/\s+/g, " ").slice(0, 1000) } }, { mutation });
-        }
-        return { files, commit };
-      });
-      // Both publications precede SQL/config deletion. The configured project still exists
-      // here, so explicitly omit its link rather than publishing again after task purge.
-      await this.writeFile("README.md", this.renderIndex(this.list({ kind: "human" }), [slug]), actor, "Regenerate brain index", {}, nested);
-      const like = `${likeEscape(`${rel}/`)}%`;
-      this.db.prepare("DELETE FROM brain_fts WHERE path LIKE ? ESCAPE '\\'").run(like);
-      this.db.prepare("DELETE FROM brain_files WHERE path LIKE ? ESCAPE '\\'").run(like);
-      return removed;
-    }, control);
-    await this.pushAfterMutation(this.root, out.commit, control);
-    if (!control.mutation && !control.deferPush) await this.pushPending();
-    return out;
+    return this.runOperation(async () => {
+      if (slug.toLowerCase() === this.project.toLowerCase()) throw new BrainError(`a project's brain cannot remove its own folder (${slug})`);
+      const dir = this.projectFolder(slug);
+      await this.ensure(control);
+      const rel = `projects/${slug}`;
+      const out = await this.mutate([this.root], async mutation => {
+        const nested = { ...control, mutation };
+        const removed = await this.locked(this.root, async () => {
+          const files = this.projectFolderFiles(slug);
+          if (!existsSync(dir)) return { files: 0, commit: null };
+          const commits = this.cfg.brain.commit && existsSync(path.join(this.root, ".git"));
+          if (commits) await this.adoptExternalEdits(this.root, undefined, mutation);
+          rmSync(dir, { recursive: true, force: true });
+          let commit: string | null = null;
+          if (commits && (await git(this.root, ["ls-files", "--", `:(literal)${rel}`])).trim()) {
+            commit = await commitAs(this.root, actor, `Remove project ${slug}`.slice(0, 200), { paths: [`:(literal)${rel}`], extraTrailers: { "Removed-By": actor.agent.slice(0, 200), "Remove-Reason": reason.trim().replace(/\s+/g, " ").slice(0, 1000) } }, { mutation });
+          }
+          return { files, commit };
+        });
+        // Both publications precede SQL/config deletion. The configured project still exists
+        // here, so explicitly omit its link rather than publishing again after task purge.
+        await this.writeFile("README.md", this.renderIndex(this.list({ kind: "human" }), [slug]), actor, "Regenerate brain index", {}, nested);
+        const like = `${likeEscape(`${rel}/`)}%`;
+        this.db.prepare("DELETE FROM brain_fts WHERE path LIKE ? ESCAPE '\\'").run(like);
+        this.db.prepare("DELETE FROM brain_files WHERE path LIKE ? ESCAPE '\\'").run(like);
+        return removed;
+      }, control);
+      await this.pushAfterMutation(this.root, out.commit, control);
+      if (!control.mutation && !control.deferPush) await this.pushPending();
+      return out;
+    });
   }
 
   // ---------- index and search ----------
@@ -780,17 +828,21 @@ export class Brain {
 
   /** Bring the index up to date with the files (cheap when nothing changed). */
   async refreshIndex(opts: { maxAgeMs?: number } = {}): Promise<number> {
-    this.owner();if (this.indexRefresh) return this.indexRefresh;
-    if (this.indexRefreshedAt && this.now() - this.indexRefreshedAt < (opts.maxAgeMs ?? 0)) return 0;
-    this.indexRefresh = this.reconcileIndex().then(changed => {
-      this.indexRefreshedAt = this.now();
-      return changed;
-    }).finally(() => { this.indexRefresh = null; });
-    return this.indexRefresh;
+    return this.runOperation(async () => {
+      this.owner();if (this.indexRefresh) return this.indexRefresh;
+      if (this.indexRefreshedAt && this.now() - this.indexRefreshedAt < (opts.maxAgeMs ?? 0)) return 0;
+      this.indexRefresh = this.reconcileIndex().then(changed => {
+        this.indexRefreshedAt = this.now();
+        return changed;
+      }).finally(() => { this.indexRefresh = null; });
+      return this.indexRefresh;
+    });
   }
 
   private async reconcileIndex(): Promise<number> {
-    await this.ensure();
+    // Catalogue reads index what exists; they must not initialize Git or publish a
+    // skeleton before a worker can ask its model. Explicit ensure and writes bootstrap.
+    this.owner();
     const seen = new Set<string>();
     const pending: string[] = [];
     const removed = new Set<string>();
@@ -832,28 +884,30 @@ export class Brain {
 
   /** Indexed metadata, scoped before ordering and pagination. No document bodies are loaded. */
   async catalog(p: Principal, opts: { prefix?: string; scope?: "project" | "all"; after?: string; limit?: number } = {}): Promise<{ entries: BrainEntry[]; next: string | null; refreshedAt: number; generation: string }> {
-    await this.refreshIndex({ maxAgeMs: 5000 });
-    const prefix = normalizeBrainPath(opts.prefix ?? "");
-    if(this.projectMode){assertProjectBrainPrincipal(this.db,p);const local=z.array(BrainEntrySchema).parse(this.db.prepare("SELECT path,title,kind,status,lines,mtime FROM brain_files").all());const shared=this.projectMode.sharedKnowledge&&(!prefix||this.globalPath(prefix))?this.sharedEntries(prefix||"global/"):[];const entries=[...local,...shared].filter(entry=>entry.path.startsWith(prefix)&&entry.path>(opts.after??"")&&denial(p,entry.path,"read")===null).sort((a,b)=>a.path.localeCompare(b.path));const limit=Math.min(100,Math.max(1,Math.trunc(opts.limit??50)));const generations=z.array(z.object({key:z.string(),value:z.string()}).strict()).parse(this.db.prepare("SELECT key,value FROM meta WHERE key=?").all(`brain:index-generation:project:${this.project}`));return {entries:entries.slice(0,limit),next:entries.length>limit?entries[limit-1]!.path:null,refreshedAt:this.indexRefreshedAt,generation:brainContentDigest(JSON.stringify({generations,shared:shared.map(entry=>[entry.path,entry.mtime])}))};}
-    const limit = Math.min(100, Math.max(1, Math.trunc(opts.limit ?? 50)));
-    const scoped = opts.scope !== "all";
-    const generations = (scoped
-      ? this.db.prepare("SELECT key, value FROM meta WHERE key IN (?, ?) ORDER BY key").all("brain:index-generation:global", `brain:index-generation:project:${this.project}`)
-      : this.db.prepare("SELECT key, value FROM meta WHERE key LIKE 'brain:index-generation:%' ORDER BY key").all()) as Array<{ key: string; value: string }>;
-    const generation = brainContentDigest(JSON.stringify(generations));
-    const sql = `SELECT path, title, kind, status, lines, mtime FROM brain_files WHERE path > ? AND path LIKE ? ESCAPE '\\'${scoped ? " AND (path LIKE ? ESCAPE '\\' OR path LIKE 'global/%' OR path = 'README.md')" : ""} ORDER BY path LIMIT ?`;
-    // Scan bounded chunks through ACLs so denied rows cannot crowd out visible metadata.
-    const entries: BrainEntry[] = [];
-    let cursor = opts.after ?? "";
-    for (;;) {
-      const rows = this.db.prepare(sql).all(cursor, `${likeEscape(prefix)}%`, ...(scoped ? [`${likeEscape(`projects/${this.project}/`)}%`] : []), 100) as BrainEntry[];
-      for (const row of rows) if (denial(p, row.path, "read") === null) {
-        entries.push(row);
-        if (entries.length > limit) return { entries: entries.slice(0, limit), next: entries[limit - 1]!.path, refreshedAt: this.indexRefreshedAt, generation };
+    return this.runOperation(async () => {
+      await this.refreshIndex({ maxAgeMs: 5000 });
+      const prefix = normalizeBrainPath(opts.prefix ?? "");
+      if(this.projectMode){assertProjectBrainPrincipal(this.db,p);const local=z.array(BrainEntrySchema).parse(this.db.prepare("SELECT path,title,kind,status,lines,mtime FROM brain_files").all());const shared=this.projectMode.sharedKnowledge&&(!prefix||this.globalPath(prefix))?this.sharedEntries(prefix||"global/"):[];const entries=[...local,...shared].filter(entry=>entry.path.startsWith(prefix)&&entry.path>(opts.after??"")&&denial(p,entry.path,"read")===null).sort((a,b)=>a.path.localeCompare(b.path));const limit=Math.min(100,Math.max(1,Math.trunc(opts.limit??50)));const generations=z.array(z.object({key:z.string(),value:z.string()}).strict()).parse(this.db.prepare("SELECT key,value FROM meta WHERE key=?").all(`brain:index-generation:project:${this.project}`));return {entries:entries.slice(0,limit),next:entries.length>limit?entries[limit-1]!.path:null,refreshedAt:this.indexRefreshedAt,generation:brainContentDigest(JSON.stringify({generations,shared:shared.map(entry=>[entry.path,entry.mtime])}))};}
+      const limit = Math.min(100, Math.max(1, Math.trunc(opts.limit ?? 50)));
+      const scoped = opts.scope !== "all";
+      const generations = (scoped
+        ? this.db.prepare("SELECT key, value FROM meta WHERE key IN (?, ?) ORDER BY key").all("brain:index-generation:global", `brain:index-generation:project:${this.project}`)
+        : this.db.prepare("SELECT key, value FROM meta WHERE key LIKE 'brain:index-generation:%' ORDER BY key").all()) as Array<{ key: string; value: string }>;
+      const generation = brainContentDigest(JSON.stringify(generations));
+      const sql = `SELECT path, title, kind, status, lines, mtime FROM brain_files WHERE path > ? AND path LIKE ? ESCAPE '\\'${scoped ? " AND (path LIKE ? ESCAPE '\\' OR path LIKE 'global/%' OR path = 'README.md')" : ""} ORDER BY path LIMIT ?`;
+      // Scan bounded chunks through ACLs so denied rows cannot crowd out visible metadata.
+      const entries: BrainEntry[] = [];
+      let cursor = opts.after ?? "";
+      for (;;) {
+        const rows = this.db.prepare(sql).all(cursor, `${likeEscape(prefix)}%`, ...(scoped ? [`${likeEscape(`projects/${this.project}/`)}%`] : []), 100) as BrainEntry[];
+        for (const row of rows) if (denial(p, row.path, "read") === null) {
+          entries.push(row);
+          if (entries.length > limit) return { entries: entries.slice(0, limit), next: entries[limit - 1]!.path, refreshedAt: this.indexRefreshedAt, generation };
+        }
+        if (rows.length < 100) return { entries, next: null, refreshedAt: this.indexRefreshedAt, generation };
+        cursor = rows[rows.length - 1]!.path;
       }
-      if (rows.length < 100) return { entries, next: null, refreshedAt: this.indexRefreshedAt, generation };
-      cursor = rows[rows.length - 1]!.path;
-    }
+    });
   }
 
   /**
@@ -889,17 +943,21 @@ export class Brain {
   // ---------- history ----------
 
   async history(rel: string, limit = 50): Promise<Array<{ commit: string; date: string; agent: string | null; model: string | null; subject: string }>> {
-    try {
-      const binding = await this.resolveGitDocument(rel);
-      return binding ? await brainMountHistory(binding, limit) : [];
-    } catch { return []; }
+    return this.runOperation(async () => {
+      try {
+        const binding = await this.resolveGitDocument(rel);
+        return binding ? await brainMountHistory(binding, limit) : [];
+      } catch { return []; }
+    });
   }
 
   async blame(rel: string, opts: { signal?: AbortSignal; timeoutMs?: number; maxBuffer?: number } = {}): Promise<BlameLine[]> {
-    const r = await this.resolveGitDocument(rel);
-    if (!r) throw new BrainError(`${rel} is not tracked by MeritRouter`);
-    const lines = await blame(r.repo, r.repoRel, "HEAD", opts);
-    return lines.map(line => ({ ...line, origPath: line.origPath.startsWith(r.mountPrefix) ? line.origPath.slice(r.mountPrefix.length) : line.origPath }));
+    return this.runOperation(async () => {
+      const r = await this.resolveGitDocument(rel);
+      if (!r) throw new BrainError(`${rel} is not tracked by MeritRouter`);
+      const lines = await blame(r.repo, r.repoRel, "HEAD", opts);
+      return lines.map(line => ({ ...line, origPath: line.origPath.startsWith(r.mountPrefix) ? line.origPath.slice(r.mountPrefix.length) : line.origPath }));
+    });
   }
 
   // ---------- index document ----------
@@ -940,8 +998,10 @@ export class Brain {
 
   /** Regenerate the root index and this project's index. */
   async regenerateIndex(actor: Actor, control: BrainMutationControl = {}): Promise<void> {
-    const entries = this.list({ kind: "human" });
-    await this.writeFile("README.md", this.renderIndex(entries), actor, "Regenerate brain index", {}, control);
-    await this.writeFile(projectIndexPath(this.project), this.renderProjectIndex(entries), actor, `Regenerate the ${this.project} index`, {}, control);
+    return this.runOperation(async () => {
+      const entries = this.list({ kind: "human" });
+      await this.writeFile("README.md", this.renderIndex(entries), actor, "Regenerate brain index", {}, control);
+      await this.writeFile(projectIndexPath(this.project), this.renderProjectIndex(entries), actor, `Regenerate the ${this.project} index`, {}, control);
+    });
   }
 }

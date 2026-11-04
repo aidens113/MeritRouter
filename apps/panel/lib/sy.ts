@@ -21,7 +21,7 @@ function open(): Holder {
   const configPath = configPathFor();
   try {
     const cfg = loadConfig(configPath);
-    const sy = new MeritRouter(cfg, { worker: false });
+    const sy = new MeritRouter(cfg, { worker: false, panelLifecycle: "passive" });
     // Library calls such as submitTasks()/resumeTask() (used by qualification) kick the in-process
     // scheduler even with worker: false, which would run tasks inside the panel. Stopping the
     // scheduler makes every kick a no-op; a real worker (MCP server or `meritrouter worker`)

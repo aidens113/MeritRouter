@@ -1,6 +1,7 @@
 import { createRepositoryEffects, type RepositoryEffects } from "../workspaces/repository-command.js";
 import type { RepositoryMutationCapability } from "../workspaces/repository-mutation.js";
 import { assertRunAuthority } from "./task-authority.js";
+import { nativeEditPathArgument as pathArg, projectNativeWrite, projectNativeReplace } from "../attribution/native-edit-projection.js";
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import picomatch from "picomatch";
@@ -107,12 +108,12 @@ export function repoTools(aliases: string[]): HarnessTool[] {
       const filter = typeof a.glob === "string" && a.glob && a.glob !== "*" && a.glob !== "**/*" ? ` matching ${a.glob}` : "";
       return `No files${filter} in ${where}. This is a complete answer, not an error: ${filter ? "nothing matches" : "it is empty (a task that edits creates files with write_file)"}.`;
     }),
-    tool("read_file", "read", "Read a file with numbered lines. Use line ranges for large files.", { alias, path: { type: "string" }, start_line: { type: "integer" }, end_line: { type: "integer" } }, ["alias", "path"], async (a, env) => {
+    tool("read_file", "read", "Read a file with numbered lines. Use line ranges for large files. sha256 identifies the entire original file bytes, even for partial or truncated displays; reread after edits or revision conflicts before using expected_sha256.", { alias, path: { type: "string" }, start_line: { type: "integer" }, end_line: { type: "integer" } }, ["alias", "path"], async (a, env) => {
       const r = reader(env, a.alias);
       const f = await r.readFile(str(a.path, "path"));
       env.universe.refs.set(`${r.alias}:${f.relPath}`, f.totalLines);
       const s = sliceLines(f.content, Number(a.start_line) || undefined, Number(a.end_line) || undefined);
-      return cap(`ref: ${r.alias}:${f.relPath}#L${s.start}-L${s.end} (of ${f.totalLines} lines)\n${s.text}`);
+      return cap(`ref: ${r.alias}:${f.relPath}#L${s.start}-L${s.end} (of ${f.totalLines} lines)\nsha256: ${f.sha256} (entire original file bytes)${f.commit ? `\nrevision: ${f.commit}` : ""}\n${s.text}`);
     }),
     tool("search", "read", "Search file contents with an extended regular expression. Returns path:line matches.", { alias, pattern: { type: "string" }, path_glob: { type: "string" }, ignore_case: { type: "boolean" } }, ["alias", "pattern"], async (a, env) => {
       const r = reader(env, a.alias);
@@ -171,18 +172,6 @@ export function workspacePath(env: HarnessEnv, input: unknown): { rel: string; a
   return { rel, abs };
 }
 
-/**
- * The file argument of an edit tool. Models also send it as `file_path`, `filename`, or `file`
- * (live: a 2197-token write_file without `path` was refused and lost); a call with none is refused
- * with what is needed, saying that nothing was written.
- */
-function pathArg(a: Record<string, unknown>, toolName: string): string {
-  const values = ["path", "file_path", "filename", "file"].map(key => a[key]).filter((value): value is string => typeof value === "string" && !!value.trim());
-  if (new Set(values.map(value => value.replace(/\\/g, "/"))).size > 1) throw new Error(`${toolName} received conflicting path fields; provide exactly one path. Nothing was written.`);
-  if (values.length) return values[0]!;
-  throw new Error(`${toolName} needs path: the file, relative to the repository root (for example "src/posts.js"). Nothing was written; call ${toolName} again with path.`);
-}
-
 /** A file the worker edited is citable evidence, like one it read. */
 function noteEdited(env: HarnessEnv, rel: string, abs: string): void {
   env.edits.add(rel);
@@ -213,9 +202,8 @@ export function editTools(): HarnessTool[] {
       const { rel, abs } = workspacePath(env, pathArg(a, "write_file"));
       mkdirSync(path.dirname(abs), { recursive: true });
       // Keep an existing file's line-ending style.
-      const crlf = existsSync(abs) && readFileSync(abs, "utf8").includes("\r\n");
-      const content = String(a.content ?? "").replace(/\r\n/g, "\n");
-      writeFileSync(abs, crlf ? content.replace(/\n/g, "\r\n") : content);
+      const previous = existsSync(abs) ? readFileSync(abs, "utf8") : null;
+      writeFileSync(abs, projectNativeWrite(previous, String(a.content ?? "")));
       noteEdited(env, rel, abs);
       return `wrote ${rel} (${String(a.content ?? "").split("\n").length} lines)`;
     })),
@@ -231,17 +219,10 @@ export function editTools(): HarnessTool[] {
         // Match on LF-normalised text and write back in the file's own line-ending style, so
         // CRLF checkouts work with model output that uses \n.
         const raw = readFileSync(abs, "utf8");
-        const crlf = raw.includes("\r\n");
-        const text = crlf ? raw.replace(/\r\n/g, "\n") : raw;
-        const oldText = str(a.old_text, "old_text").replace(/\r\n/g, "\n");
-        const newText = String(a.new_text ?? "").replace(/\r\n/g, "\n");
-        const count = text.split(oldText).length - 1;
-        if (count === 0) throw new Error("old_text not found; read the file again and copy the exact text");
-        if (count > 1 && a.replace_all !== true) throw new Error(`old_text matches ${count} times; add surrounding context or set replace_all`);
-        const next = a.replace_all === true ? text.split(oldText).join(newText) : text.replace(oldText, () => newText);
-        writeFileSync(abs, crlf ? next.replace(/\n/g, "\r\n") : next);
+        const projected = projectNativeReplace(raw, str(a.old_text, "old_text"), String(a.new_text ?? ""), a.replace_all === true);
+        writeFileSync(abs, projected.content);
         noteEdited(env, rel, abs);
-        return `replaced ${a.replace_all === true ? count : 1} occurrence(s) in ${rel}`;
+        return `replaced ${projected.count} occurrence(s) in ${rel}`;
       }),
     ),
     tool("delete_file", "edit", "Delete a file in your workspace.", { path: { type: "string" } }, ["path"], async (a, env) => withRepositoryToolWrite(env, async env => {

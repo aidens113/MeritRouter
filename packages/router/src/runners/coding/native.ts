@@ -27,6 +27,7 @@ import { refreshMemoryMessages } from "../../context/memory.js";
 import { withRepositoryMutation } from "../../workspaces/repository-mutation.js";
 import { createRepositoryEffects } from "../../workspaces/repository-command.js";
 import { assertRunAuthority } from "../../harness/task-authority.js";
+import { executionAllocationNotice } from "../../verification/task-allocation-feedback.js";
 
 /**
  * MeritRouter's own coding worker. Edits go through tools that refuse paths outside
@@ -109,6 +110,9 @@ export class NativeCodingRunner implements CodingRunner {
     }
     const lost = ctx.resume && !reused ? "\nYour previous worktree no longer exists: this is a fresh worktree, and your earlier edits are not in it. Re-apply them." : "";
     const messages = ctx.resume ? await refreshMemoryMessages(env, ctx.resume.plan.messages, memoryOptions) : fresh;
+    if (ctx.resume) messages.push({ role: "user", content: `Current tool facts after resume (prior transcript is historical):\n${harnessV2StartupContext(env)}` });
+    messages.push({ role: "user", content: executionAllocationNotice(ctx.contract, ctx.budget.maxModelRequests,
+      ctx.gate.admission.taskTotals(ctx.taskId).requests) });
     const executionId = ctx.gate.admission.createExecution("task", spec.profile, [{ taskId: ctx.taskId, itemId: ctx.taskId }]);
     const loop = await runAgentLoop({
       env,

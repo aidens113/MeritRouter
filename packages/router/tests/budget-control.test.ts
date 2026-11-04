@@ -112,7 +112,7 @@ describe("budget control: supervisor-set budgets (D1, D2)", () => {
     expect(r.stopReason).toBe("supervisor_completed");
     const outputs = toolOutputs(client.requests.filter(isSupervisor).at(-1)!);
     // 30 budget, 1 used by the supervisor, 4 kept for it: 25 left, so 40 is refused with that number.
-    expect(outputs[0]).toMatch(/^error: big: needs 40 model requests but your job has 25 left for new tasks \(budget 30: you used 1, open tasks hold 0, 4 kept for your own requests\); nothing was dispatched/);
+    expect(outputs[0]).toMatch(/^error: big: needs 40 model requests but your job has 25 left for new tasks \(budget 30: you used 1, descendant usage\/open grants 0, 4 protected supervision\/validation reserves\); nothing was dispatched/);
     expect(sy.tasks.childrenOf(job).map((c) => c.spec.label)).toEqual(["small"]);
     expect(outputs[1]).toMatch(/small -> t_\w+ \(queued\); budget 3 requests/);
     const small = sy.tasks.childrenOf(job)[0]!;
@@ -131,7 +131,8 @@ describe("budget control: supervisor-set budgets (D1, D2)", () => {
     env = makeEnv({ config: jobConfig() });
     const client = scripted(
       [
-        () => [call("delegate", { tasks: JSON.stringify([brief("stringified")]) })],
+        // This test isolates JSON-array compatibility, so give its two-turn worker an explicit total.
+        () => [call("delegate", { tasks: JSON.stringify([brief("stringified", { max_requests: 3 })]) })],
         () => [call("await_tasks", { timeout_seconds: 60 })],
         () => [finish()],
       ],
@@ -145,7 +146,7 @@ describe("budget control: supervisor-set budgets (D1, D2)", () => {
     expect(toolOutputs(client.requests.filter(isSupervisor)[1]!).join("\n")).toMatch(/stringified -> t_\w+ \(queued\)/);
   }, 120_000);
 
-  it("gives a brief without max_requests the configured default (the tier cap unless team.default_task_requests is set)", async () => {
+  it("gives a brief without max_requests the configured team default total", async () => {
     env = makeEnv({ config: jobConfig({ default_task_requests: 5 }) });
     const client = scripted([() => [call("delegate", { tasks: [brief("a")] })], () => [call("await_tasks", { timeout_seconds: 60 })], () => [finish()]], readThenSubmit);
     sy = open(env, client, { worker: true });

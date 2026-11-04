@@ -151,7 +151,8 @@ describe("native web search: request switches, counts, and citations per provide
     const tools = f.calls[0]!.body.tools as Array<Record<string, unknown>>;
     expect(tools[0]).toEqual({ type: "web_search_20250305", name: "web_search", max_uses: 3 });
     expect(tools[1]).toMatchObject({ name: "read", cache_control: { type: "ephemeral" } });
-    expect(res.message).toEqual({ content: "Release 2 adds X." });
+    expect(res.message).toMatchObject({ content: "Release 2 adds X." });
+    expect(res.message.nativeContinuation?.content.map(block => block.type)).toEqual(["server_tool_use", "web_search_tool_result", "text"]);
     expect(res.webSearch).toEqual({ via: "anthropic_server_tool", alwaysOn: false, requests: 2, requestsBasis: "provider_reported", citations: [{ url: "https://example.org/notes", title: "Notes", text: "Release 2 adds X" }] });
     // Without client tools the server tool is the only one, and no tool_choice is sent.
     await createProviderClient({ fetch: f, now: () => NOW }).complete(request("anthropic", "claude-a", { via: "anthropic_server_tool", alwaysOn: false, maxUses: 3, maxResults: 5 }));

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { tmpdir } from "node:os";
 import YAML from "yaml";
 import { ConfigSchema } from "../src/config/schema.js";
 import { initializeConfig } from "../src/cli/setup.js";
@@ -8,7 +9,7 @@ import { initializeConfig } from "../src/cli/setup.js";
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) {
-    if (!root.startsWith(path.resolve(import.meta.dirname) + path.sep)) throw new Error("fixture escaped tests directory");
+    if (!root.startsWith(path.resolve(tmpdir()) + path.sep)) throw new Error("fixture escaped OS temporary directory");
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -23,14 +24,15 @@ describe("cost-first paid defaults", () => {
     for (const preset of ["claude-code", "standalone-free", "standalone-hybrid", "standalone-paid"]) {
       const cfg = ConfigSchema.parse(YAML.parse(readFileSync(path.resolve(import.meta.dirname, `../examples/presets/${preset}.yaml`), "utf8")));
       expect(cfg.execution).toMatchObject({ max_concurrent_tasks: 4, max_concurrent_writers_per_repository: 4 });
-      expect(cfg.supervisor.routing.minimum_quality).toBe("best_available");
+      expect(cfg.supervisor.routing.minimum_quality).toBe("ranked_capable");
     }
   });
   it("defaults to bounded paid routing, including the standalone supervisor", () => {
     const cfg = parse();
     expect(cfg.paid).toMatchObject({ enabled: true, budgets: { per_week_usd: 5 }, tiers: policies, providers: {}, models: [] });
     expect(cfg.supervisor.paid_policy).toBe("on_free_exhaustion");
-    expect(cfg.supervisor.routing.minimum_quality).toBe("best_available");
+    expect(cfg.supervisor.routing.minimum_quality).toBe("ranked_capable");
+    expect(cfg.supervisor.default_max_paid_usd).toBe(500);
     expect(parse({ paid: { budgets: {}, tiers: {} } }).paid).toEqual(cfg.paid);
   });
   it("preserves explicit disabled, zero and never choices", () => {
@@ -45,7 +47,7 @@ describe("cost-first paid defaults", () => {
     expect(() => parse({ paid: { tiers: { T4: "on_free_exhaustion" } } })).toThrow(/T4 accepts only never or premium/);
   });
   it.each([false, true])("initializes bounded defaults for setup=%s without replacing existing choices", (setup) => {
-    const root = mkdtempSync(path.join(import.meta.dirname, ".cost-defaults-"));
+    const root = mkdtempSync(path.join(tmpdir(), "meritrouter-cost-defaults-"));
     roots.push(root);
     const configPath = path.join(root, "meritrouter.config.yaml");
     initializeConfig({ configPath, project: "demo", setup });

@@ -4,6 +4,7 @@ import type { SessionEndStatus } from "../sessions/events.js";
 import { sessionEnd } from "../sessions/run-sessions.js";
 import { AdmissionDenied, GatewayError } from "./errors.js";
 import { ProviderError } from "../providers/errors.js";
+import { RepositoryMutationError, isLocalRepositoryMutationContention } from "../workspaces/repository-mutation.js";
 
 /**
  * What becomes of a run that ended without an outcome (an error or an abort): a final state,
@@ -39,10 +40,20 @@ export function classifyFailure(err: unknown, signal: AbortSignal, f: FailureCon
 
   const now = f.now();
   const deadline = f.deadline();
+  // A lease/check can observe the deadline before the abort timer gets its turn.
+  // Explicit cancellation and lost ownership retain their existing precedence.
+  const authorityFailure = err instanceof AdmissionDenied && ["cancel_requested", "lease_lost", "task_not_active"].includes(err.reason);
+  if (now >= deadline && !authorityFailure) return { kind: "final", state: "failed", stopReason: "deadline_exceeded" };
   const capacity = (at: number, why: string): Disposition =>
     f.cfg.execution.on_capacity_exhausted === "queue" && at < deadline
       ? { kind: "defer", at, reason: why }
       : { kind: "final", state: "failed", stopReason: `capacity_exhausted: ${why}` };
+
+  // Only the mutation module's exact live in-host observation is transient.
+  // Foreign/stale/unknown markers and constructed/serialized errors remain interrupted.
+  if (err instanceof RepositoryMutationError && isLocalRepositoryMutationContention(err)) return capacity(now + 1000, err.message);
+  if (err instanceof RepositoryMutationError && err.detail.kind === "lock_busy")
+    return { kind: "final", state: "interrupted", stopReason: "repository_mutation_blocked: lock_busy", summary: err.message };
 
   if (err instanceof AdmissionDenied) {
     switch (err.reason) {

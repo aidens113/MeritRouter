@@ -8,13 +8,28 @@ explains evidence; [recovery](#recovery) covers interrupted work; and
 commands. [Teams](#teams-plans-leases-and-capacity) and [Labs](#labs-isolated-services-and-checked-promotion)
 describe coordination and environment features.
 
+## Automatic panel availability
+
+Every ordinary `MeritRouter` SDK instance manages panel availability, including worker,
+CLI and MCP entry points. Startup runs in the background; unavailable panel builds do not
+prevent router work. With `panel.auto_start` enabled, the service checks availability every
+minute and restarts a crashed panel. Idle checks respect the panel power button; a new service
+session or subsequent execution activity can resume it. Set `panel.auto_start: false` to disable
+automatic startup. Explicit `meritrouter panel` remains available.
+
+The panel backend and deliberately passive inspection/demo hosts use
+`{ panelLifecycle: "passive" }` when constructing the SDK. Closing a router retires its pending
+startup and availability checks, while leaving an already started shared panel available.
+
 ## Delivery v2 readiness and FINAL decisions
 
 Default `client_supervision.workflow: delegated_delivery` keeps the initiating client as FINAL
 supervisor and delegates multi-step execution to MeritRouter supervisors. Do not enable
 `dispatch_final_supervisor` just to get delegation. `direct_tasks` remains an explicit workflow.
-Supervisor dispatch requires current `supervisor.routing.quality_evidence`; a model pin or
-familiar provider name cannot bypass it. See [quality setup](setup.md#supervisor-quality-evidence-required-for-delivery-jobs).
+Ranked supervisor dispatch requires current comparable `supervisor.routing.ranking_evidence`
+meeting its `ranking_policy` capability floors; a model pin or familiar provider name cannot
+bypass it. Evidence is rechecked immediately before transport, including after awaited admission.
+See [quality setup](setup.md#supervisor-quality-evidence-and-strict-routing).
 
 Version-2 jobs follow discover, specify, prepare, plan, implement, integrate, validate and
 handoff. They persist a versioned specification and criterion-linked receipts for an exact
@@ -95,7 +110,7 @@ zero caps and `never` policies remain effective; omitted fields take new default
 | Eligible free and paid models under configured policy; one model per request; served model must match | Hard | Route plan, gate |
 | Worker size floors; modalities, tool support and metadata age | Hard | Route plan |
 | Supervisor quality floor and current provenance | Hard | Route plan and per-dispatch Gate revalidation; never inferred from vendor/model names |
-| Paid spend | Hard | Worst-case cost reserved per request against global, per-key, prepaid-balance, and per-task budgets before dispatch; settled to billed cost |
+| Paid spend | Hard | Worst-case cost reserved against global, project, key, prepaid-balance, task and inherited job-tree ceilings before dispatch; settled costs and uncertain liabilities retain their allocation |
 | Paid policy | Hard | Paid models (priced models, or any model through a paid key) only where `paid.tiers` / `supervisor.paid_policy` allow |
 | Worker file edits | Hard (native runner) | Edit tools refuse paths outside `allowedPaths` |
 | Brain access | Hard | Every brain read and write checked against role grants; workers write only their report |
@@ -132,6 +147,14 @@ MeritRouter calls every provider directly with your keys: keys in the encrypted 
 the panel or with `meritrouter keys add`) and keys declared under `providers` in the config.
 `meritrouter keys list` shows every key with its source, billing class, status, and last four
 characters; `meritrouter doctor` adds one line per provider.
+
+The key page's spending total covers requests recorded by MeritRouter over 30 days; it is not
+the provider's credit balance. A credit-balance snapshot is a manually entered provider balance,
+including promotional credits where applicable. Remaining credit is a conservative local
+estimate and cannot account for spending by other applications. Saving a new snapshot never
+discards outstanding or uncertain request liabilities; those remain reserved until settled.
+Anthropic's ordinary model-list API does not expose promotional balance. Enter the balance
+shown in the provider's billing console rather than treating local zero spend as zero credits.
 
 - **Rotation between keys.** Each request takes the provider's next available key, least
   recently chosen first. A key is skipped while it is cooling down, disabled, at a rate limit its
@@ -444,6 +467,16 @@ Qualification runs (`meritrouter qualify`) and comparison runs on the eval goals
 - It has priority 1 and no project caps. The global caps and
   `qualification.max_requests_per_day` still apply.
 
+Routing and reviewer selection read benchmark aggregates from that authoritative store through
+a read-only statistics capability, including on a fresh service before the qualification board
+is opened. Model details and routing previews use the same source. Missing qualification
+storage returns no evidence without creating it; changed or retired store identity refuses the
+read. Legacy installations retain their single-store lookup. Benchmark statistics exclude
+infrastructure failures and remain separate from ordinary production-task outcomes. An explicit
+`prefer` routing override precedes soft benchmark ordering, while required qualification and
+other hard eligibility checks still apply. Operators should record why they prefer an endpoint
+and revise that choice when observed results do not support it.
+
 A comparison on goals you supply (`compare --goals <file>`) uses your repositories, so it runs
 in the primary project (`brain.project`). Audits run in the audited task's project.
 
@@ -566,8 +599,12 @@ without relaxing file-target, symlink/hardlink, configuration or lease boundarie
 | `read_output_page` | Lossless pages from a task-scoped artifact when output exceeds inline limits |
 | `operation_status`, `cancel_operation` | Task-owned durable status and cancellation request; do not spend model calls polling |
 
-Operations default to a 30-second active-work budget. `timeout_ms` can request up to 300,000
-milliseconds, subject to applicable check limits and an independent task deadline. Only a
+Read, edit and Brain operations default to a 30-second active-work budget. Command operations,
+including `batch` and `run_checks`, default to `execution.check_timeout_seconds`, capped at
+300,000 milliseconds. `workspace_info` reports the read/edit default as `limits.timeout_ms`
+and the configured command default as `limits.command_timeout_ms`. An explicit `timeout_ms`
+still bounds the whole operation and its children; a longer child budget never extends a
+stricter parent. Applicable check limits and the independent task deadline remain binding. Only a
 persisted, owned pending approval pauses the operation and enclosing execution clocks; source
 capture remains active work. Task deadlines and explicit operation/task cancellation continue
 throughout the wait. Approved commands are capped by the requested and remaining enclosing
@@ -580,10 +617,43 @@ preserved in scoped artifacts rather than silently discarded. Default inline out
 with context-sensitive bounds; `read_output_page` defaults to 16,000 UTF-16 characters/page.
 
 Malformed arguments return structured diagnostics. A missing file does not erase successful
-siblings. Hash/match conflicts require rereading current content, not fuzzy edits. Full-file
+siblings. Both `read_file` and `read_files` expose the SHA-256 of the entire original file bytes,
+even for partial or truncated displays; pinned reads also retain their snapshot revision.
+Each successful `read_files` item returns a qualified `ref` (repository alias, path and displayed
+line range) that can be cited directly in result evidence. Bare filesystem paths do not replace
+scoped evidence references. Resumed workers and supervisors receive current harness facts as
+an appended notice; historical provider transcripts are preserved.
+Hash/match conflicts require rereading current content, not fuzzy edits. Full-file
 replacement needs `whole_file: true` and its old hash; omission placeholders are rejected.
+For a known numbered span, `apply_edits` also accepts `action:"replace_lines"`, the original
+file's `expected_sha256`, and `replacements:[{start_line,end_line,new_lines:[...]}]`.
+Ranges are positive, inclusive, ascending and nonoverlapping, all against the same original
+file. Put every range for one file into one edit. Each `new_lines` entry is one record without
+CR/LF; an empty array deletes the selected records, and the final empty record represents a
+terminal newline. The write rechecks the hash and ranges under its repository capability.
+This explicitly addresses lines after whitespace-copy conflicts; it does not relax exact-text
+patch matching. Journaling, original-model provenance and crash recovery use the same pure
+projection, including the file's existing newline style.
 Batch graph/schema preflight precedes effects, but filesystem edits are not a multi-file atomic
 transaction: inspect every child outcome and any reported partial application.
+Progress guidance uses actual edit receipts, including edits inside a partially failed batch;
+a successful read-only batch or rejected edit does not establish implementation progress.
+The final execution request allows only result submission. Other requested tools are refused
+with an explicit budget-policy diagnostic, rather than executing after the allowance expires.
+
+Worker `max_requests` is a total allocation across classification, execution, mandatory review
+and repair. `plan_work` with `dispatch:false` previews allocation using the verification policy,
+without provider calls, grants or dispatch. Its forecast is provisional until classification
+and contract compilation; runtime feedback shows the actual stored allocation when available.
+The worker sees its remaining execution allowance, which must cover setup, edits, checks and a
+valid report. For example, a 20-request total with 12 reserved for review leaves 8 execution
+requests, including submission. Protected supervision/validation reserves and spent descendant
+usage remain separate from available new-task capacity; waiting cannot refund completed usage.
+When neither the brief nor `team.default_task_requests` supplies a total, the implicit grant
+uses a finite canonical contract allocation for the normalized brief and parent policy, rather
+than holding only the execution tier's cap. That total is pinned into the submitted task, so
+held capacity, draft feedback and actual execution cannot silently disagree. Classification
+usage counts inside the pinned total; an unknown tier/policy forecast remains provisional.
 
 Model-facing schemas expose concrete nested fields and examples, including each edit's
 required `action` and `path`. Runtime discriminated validation remains authoritative.
@@ -636,7 +706,13 @@ not enable PostgreSQL or multiple hosts.
   replays its immutable attributed commits on the current integration base before any model
   request; source acceptance is unchanged, and the repair must pass fresh checks/review.
   Same-project/parent/repository, clean author workspace, complete quiescent history, per-commit
-  scope and actual target scope/modes are enforced. Replay is bounded to 100 linear commits and
+  scope and actual target scope/modes are enforced. A single unresolved nested recipe may be
+  eligible only when an exact executed host action proves quiescence and the outer operation
+  retains its matching unknown-effect result. Completed, failed, cancelled and budget-exhausted
+  source authors require matching persisted session and final end records; task success is not
+  command quiescence. This never fills in the missing outcome, replays the command or changes
+  old results, source, usage or charges.
+  Replay is bounded to 100 linear commits and
   8 MiB cumulative patch bytes, using internal guarded Git. Lab/quality-retry starts, conflicts,
   ambiguous provenance and incomplete hydration receipts fail closed; no partial replay is
   silently resumed. A completed receipt retains subsequent legitimate repair commits across
@@ -652,8 +728,13 @@ not enable PostgreSQL or multiple hosts.
   remain uncapped. Each delegated task holds a grant while open: the brief's `max_requests`,
   else `team.default_task_requests`, else its tier's execution cap. A finished task holds what it
   used; the rest returns. Finite caps are checked against the supervisor's usage, open holds, and
-  protected reserves. Delivery v2 protects 80 supervisor plus 80 validation requests, initially
-  leaving at most 440 for child grants before usage/other limits. The validation reserve opens
+  protected reserves. At the default 600-request size, delivery v2 protects 80 supervisor plus
+  80 validation requests, initially leaving at most 440 for child grants before usage/other
+  limits. `delivery_budget.reserve_mode: proportional` scales each reserve down for a smaller
+  effective job cap, rounding upward; larger and uncapped jobs retain the nominal reserves.
+  `reserve_mode: fixed` preserves absolute configured counts. For a nominal400-request policy
+  with60+60 reserves, a252-request job protects38+38, preserving room for actual implementation.
+  Allocation and physical dispatch use the same computed validation floor. The validation reserve opens
   during integrate/validate/handoff; child grants still protect supervisor turns. Physical
   dispatch protects validation headroom in earlier stages. Legacy
   `team.supervisor_reserve_requests` (4) remains a lower bound. Capacity, provider allocation, timeouts, paid-spend budgets, and
@@ -725,6 +806,13 @@ not enable PostgreSQL or multiple hosts.
   call, mirrored into a "Team Channel" section of the job's working document, and shown to other
   agents as quoted data, never as instructions. A worker sees job-wide posts and posts that
   reference its task.
+  When channel access is permitted, the native loop also includes unseen scoped posts before
+  its next model request, including after resume or a blocking tool. Oldest-first pages fit
+  bounded text and context limits; remaining posts stay pending. A task-local receipt advances
+  only after a newly successful request charged to the exact execution and attempt. Admission
+  failures, truncated-response fallback and process death cannot consume undelivered posts.
+  A crash before the receipt can redeliver a page. The receipt establishes delivery, not
+  comprehension, authorization or acceptance; `read_channel` remains available after compaction.
 - **Provider capacity.** Each provider (platform) has an adaptive limit on in-flight requests,
   shared by every process on the store: it starts at `team.provider_concurrency_start` (2),
   grows by one after `team.provider_concurrency_increase_after` (5) consecutive successes, and
@@ -772,6 +860,18 @@ is refused; the runtime never substitutes the latest tree for the checked candid
     agent's identity, or discarded with `sessions.recover_edits: reset`; a pending `ask_user`
     is answered from the stored question). A submission accepted before the crash finishes
     without another model request. Coding work continues in the same worktree.
+    Recovered commits require the exact original model response, charged request and matching
+    Git blobs. A recorded successful write retains its original proof; interrupted writes,
+    replacements, deletions and recipe prefixes use bounded deterministic replay from the
+    recorded pre-effect Git base. Missing outcomes are recorded as observed effects, never
+    invented successes. Shared native newline/edit semantics and exact full-delta checks
+    preserve attribution; the newly selected resume model cannot claim authorship. Publication
+    uses the captured checked tree. Ambiguous origins or unsupported effects remain uncommitted
+    for operator review.
+    Legacy edit paths and recovery use the same `path`, `file_path`, `filename`, and `file`
+    aliases. Blank or nonstring values are ignored; conflicting nonblank aliases are refused
+    after slash normalization. An unsupported field such as `filePath` cannot supply recovery
+    evidence for a file the original tool did not target.
   - external coding runner recovery is unavailable: those runners fail closed without an accepted OS sandbox.
   - completion, batch, and classification runs re-run fresh in a new linked session.
 - Split workers initialize each registered project's lease recovery before considering fair
@@ -779,6 +879,14 @@ is refused; the runtime never substitutes the latest tree for the checked candid
   preserves consumed requests, deadline and incarnation; agent-loop tasks retain their
   session. A still-live owner's lease is not taken over, and no provider work starts before
   recovery settles.
+- Historical framework recovery commits missing Model attribution can be inspected with
+  trusted SDK `inspectRecoveredEditProvenance({project,taskId,alias,commit})`. After reviewing
+  the exact proof, `attestRecoveredEditProvenance` takes those inputs plus `operationId`,
+  `expectedDigest` and `reason`. It validates original session ancestry, request/charge and
+  exact file bytes, physical repository ownership, clean terminal source and bounded linear
+  history, then records an additive receipt. It never rewrites Git objects, application source
+  or usage. Repair hydration independently revalidates the receipt; ordinary missing or
+  changed attribution remains refused. These controls are unavailable to runtime model tools.
 - Manual resume: `meritrouter resume <session-id>` continues that session; `meritrouter resume
   <task-id>` restarts the task (a coding task in a fresh worktree; the old one stays as
   evidence). MCP `resume_session` / `resume_task` and the panel's Resume buttons do the same.
@@ -786,6 +894,90 @@ is refused; the runtime never substitutes the latest tree for the checked candid
   controls; use `--project` for duplicate IDs, including a session/task collision across
   projects. An interrupted session whose task still has an expired running lease requires
   worker recovery first; manual Resume does not bypass lease reconciliation.
+- A supervisor can finish honestly blocked before producing a product candidate. Trusted
+  FINAL controls use SDK `continueBlockedJob` with exact project/task/latest completed blocked
+  session, expected deadline/run/incarnation, stable `operationId` and `reason`. The operator
+  receipt preserves the old result, typed native transcript, clean owned workspace, request
+  grants and financial history. The next run creates a linked author log and continues after
+  the settled blocked terminal; it cannot reaccept that old report as a new result. Later real
+  accepted-terminal crash recovery remains available. An optional explicit `additionalSeconds`
+  grants bounded wall time; otherwise the deadline remains unchanged. This does not authorize
+  paid routing, extend request/spend caps or accept any product criterion. Jobs with a candidate
+  use the existing separate FINAL decision and delivery-repair path.
+  A terminal descendant's validated host-quiesced timeout stays UNKNOWN history; continuation
+  does not mark it successful or replay it. Active, unquiesced, owned, malformed and root-owned
+  uncertain actions remain ineligible. Runtime continuation rechecks the captured task lease
+  around asynchronous source proof and repository mutation admission.
+  The current claimed attempt must retain its matching continuation receipt and exclusive
+  resume directive before routing. Missing or changed authority fails the claim; it cannot
+  silently start a fresh runner without the retained transcript and workspace.
+- Active execution contexts reread approved request grants before each model request. The
+  current cap is derived from the original execution allocation plus persisted approvals;
+  polling an approval and refreshing it cannot count the same grant twice. Automatic reviewer,
+  redundant-run and repair allocations retain their own bounded caps.
+  A supervisor already stopped on a local pre-provider budget refusal can use trusted SDK
+  `continueSupervisorBudget` with its exact project/task/latest failed session,
+  `approvedBudgetRequestId`, expected deadline/run/incarnation, stable `operationId` and reason.
+  This requires an external approval decided during that failed run, current spendable
+  headroom, complete settled memory, unchanged clean owned source, an unexpired original
+  deadline and quiescent descendants. It records a receipt and links a new session while
+  preserving terminal history. Receipt, directive, source and claim are rechecked before
+  routing and runner effects. It grants neither requests nor time and is unavailable to
+  runtime model tools. Historical logs do not capture the rejected participant cap, so the
+  receipt proves the refusal and current financing rather than an unrecorded old wire cap.
+- Explicit user pauses and stopped-process repairs can outlast the original wall deadline. Ordinary crash recovery and
+  Resume of interrupted work retain that deadline. Explicit repair of a completed, currently FINAL-rejected delivery
+  uses the separate `resume_task` path described above: it opens a linked session in the retained workspace and gets
+  the task's configured execution allowance on its next claim, even if the completed attempt's deadline elapsed.
+  Consumed requests, request/spend caps and history remain intact; repair still requires fresh evidence and another
+  FINAL decision. Trusted FINAL controls may use the SDK's
+  `continueTaskExecution` operation after recovery to grant a bounded execution window on
+  the same task. It requires the latest exact interrupted `user_paused` or `process_died` author session,
+  project, expected deadline and attempt identity, an operation ID and a reason. The
+  owning store records old/new deadlines and a replay receipt; request usage, paid caps,
+  held charges and source remain unchanged. Runtime model tools cannot grant this time.
+  For a proven-dead owner, settle its exact task attempt and session through supported
+  interruption bookkeeping before the grant. A terminal deadline failure is ineligible.
+  Clean SDK shutdown retains its actual `shutdown` interruption reason. A trusted FINAL
+  may explicitly opt into maintenance continuation on `continueTaskExecution` with
+  `maintenance: { cause: "operator_framework_maintenance", timeoutProvenance:
+  "configured_default", authorizationReference: "<current user instruction>",
+  noUserHardDeadline: true }`. FINAL must verify that instruction has no hard deadline.
+  This branch requires an interrupted, ownerless exact shutdown attempt, no explicit
+  task timeout, its durable interruption receipt and complete retained session memory.
+  It rejects live descendant work, unresolved commands, requests or integration effects.
+  It records the authorization and bounded time grant, then resumes the same task in a
+  linked author session after rechecking the receipt against the claimed generation.
+  It cannot renew itself through runtime tools, stack grants on one interruption, reset
+  charges, enable paid coding or convert uncertain historical effects into success.
+  Expired queued split tasks otherwise finish visibly with `deadline_exceeded` before
+  execution-grant reservation, so an expired queue leader cannot block eligible work.
+- Linked recovery owns its new session until transcript, workspace and continuation records
+  are initialized. A recording failure invokes failed-session cleanup and settles the task
+  instead of handing an incomplete session to a runner. The original session remains intact.
+  This applies to maintenance, blocked-job, budget, infrastructure and observation recovery;
+  an ordinary interrupted-session resume retains its existing fresh-start fallback.
+- Repository mutation locks retain evidence after a stopped owner. New lock records bind
+  host and physical Git owner; recovery inspects every registered worktree's publication,
+  command and native Git guards before conditionally archiving the exact marker. Old
+  records additionally require an explicit FINAL same-host ownership attestation. A busy
+  fence with unknown, foreign, stale or changed ownership interrupts work for inspection.
+  Proven contention on this process's still-open exact lock instead follows the configured
+  capacity queue policy: bounded acquisition ends, and the scheduler defers without a model
+  request while the task deadline remains binding. The proof requires the active host-owned
+  handle, unchanged path identity and bytes, owner record and absent recovery fence; same-PID
+  text or a serialized error is insufficient. Neither case bypasses or steals the fence.
+  Historical pre-model lock failures can use the trusted SDK's
+  `recoverTaskInfrastructureFailure` only with exact retained attempt/session identity and
+  proof of no dispatch in that failed attempt. Continuation links a new session to the
+  failed log and retains source and accounting. Any extra execution time is explicit,
+  bounded and audited, independently of request and paid ceilings.
+  Native `index.lock` has no owner identity. Its separate inspection/reconciliation control
+  additionally requires explicit FINAL process-quiescence evidence, the exact dead outer
+  mutation fence, and unchanged native index/HEAD. Only an empty index marker can be
+  archived by this control; a nonempty file needs publication investigation. The index,
+  HEAD, source and original marker bytes are preserved. Other native Git locks remain
+  refused.
 - Repeated observations remain bounded: three identical fresh reads without progress stop a
   spinning loop. A successful `await_tasks` with a service-measured wait starts a fresh
   observation window; an immediate return or wait-like model text does not.
@@ -823,6 +1015,10 @@ is refused; the runtime never substitutes the latest tree for the checked candid
 - Tasks waiting for capacity (`waiting_for_capacity`) retry automatically until their deadline.
 
 ### Awaited task lifecycle
+
+`MeritRouter.close()` returns one shared drain promise, including repeated calls. New top-level Brain operations stop at shutdown; admitted Brain writes, promotion decisions and executor reports drain before their owning SQLite stores close. Tracking belongs to that service instance. Live resource scopes preserve authorized shared-preference reads without transferring promotion authority between projects. Host scheduler/timer callbacks start fresh owned work while the service is open; ended task contexts cannot authorize detached work. An already admitted promotion settlement can persist its exact same-project, configured completion-mode retry review after the scheduler stops. This does not reopen supervisor qualification or permit an unrelated submission during shutdown.
+
+Brain catalogue refresh indexes existing authorized files without creating a directory, initializing Git or committing a skeleton. Explicit `ensure()` and write operations retain bootstrap behavior and invalidate a previously empty catalogue. Preparing a resumed model's memory therefore does not need an initial repository commit just to discover that no memory exists.
 
 Default SQLite workers await generation-bound renew, finish, interrupt, defer, recovery and supervisor cancellation receipts. Captured identity includes task insertion incarnation, owner, run count and project, so task-ID reuse cannot grant an old worker authority. The existing synchronous control APIs remain local compatibility facades. Shutdown drains pending async controls and receipt work before closing storage.
 
@@ -923,6 +1119,11 @@ displayed separately and is not backfilled with invented inputs.
   `pnpm --filter meritrouter-panel build`) and a panel restart. When `.next/BUILD_ID` is older than
   the newest file in the router's `dist/`, starting or checking the panel reports it
   (`ensurePanel`'s `warning`; `panelBuildCheck` for `doctor`).
+- Models inspection reads grouped usage totals once per project and uses an aggregate
+  qualification snapshot scoped to one synchronous page calculation. The snapshot verifies
+  the existing qualification-store identity before and after the calculation, expires when
+  it returns, and does not provision a store. The next page request reads fresh evidence;
+  live routing retains its independent qualification checks.
 
 ## Housekeeping
 
@@ -1230,8 +1431,16 @@ The Memory tab's lazy **What agents actually received** view reads real project-
 `memory_manifest` artifacts with hashes, caps, selection reasons and omissions. It does not
 recompute or guarantee current/future injection. See [memory authority](roles.md#automatic-context-and-typed-memory).
 
-- The brain is one git repository (`brain.path`) for every project: `projects/<slug>/` per
-  project and `global/` for knowledge shared by all of them (see [roles.md](roles.md#the-brain-shared-knowledge)).
+- In the legacy layout, the brain is one Git repository (`brain.path`) with
+  `projects/<slug>/` and shared `global/` knowledge. Split projects keep their private Brain
+  under their own runtime directory and read public global knowledge through an explicit
+  read-only port (see [roles.md](roles.md#the-brain-shared-knowledge)). The Knowledge panel
+  reads only the installation's configured global directory and global-prefixed mounts;
+  it does not initialize a repository on page load. Global paths cannot overlap project
+  directories or repository roots. Missing global data is an empty view; permission,
+  containment and corruption errors remain errors. Human reverts retain their reason and
+  history in the configured global Git repository, without granting project models a
+  global filesystem or publication capability.
   `meritrouter brain ls|read|search` (in the selected project, or every project when none is
   chosen) and each project's Brain page browse it. Every change is a commit under the writing
   agent, so `git log` and `git blame` inside it show who (and which model) wrote what.
@@ -1341,6 +1550,13 @@ labels do not alter provider billing or conservative paid reservations.
 
 
 ### Reconciling a dead local model transport
+
+A reserved request has no recorded outcome; it does not prove the provider is still running.
+The panel distinguishes the recorded outcome from ownership of the exact captured task
+attempt: a live owner is awaiting a result, a lost owner is interrupted, and unprovable
+ownership leaves the outcome pending. A newer attempt cannot make an older request active.
+Task changes and captured lease expiry refresh this view without changing usage or liability.
+An uncertain request's reconciliation time is not presented as provider latency.
 
 An interrupted process can leave a nonce-bound provider slot whose remote request outcome is
 unknown. Lease expiry alone cannot release it. The trusted local operator can inspect one

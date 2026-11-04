@@ -96,7 +96,7 @@ export function RequestsTable({ rows, names, base, hideModel = false, empty }: {
                 <Link href={requestHref(r.project && r.project !== QUALIFICATION_SLUG ? projectBase(r.project) : "", r.id)} className="text-accent-ink hover:underline" title={`${dateTime(r.reservedAt)}: open request ${r.id}`}>
                   {shortDateTime(r.reservedAt)}
                 </Link>
-                <div className="text-[11px] text-ink-3">{r.finishedAt ? duration(r.finishedAt - r.reservedAt) : "in flight"}</div>
+                <div className="text-[11px] text-ink-3">{r.status === "uncertain" ? "outcome unknown" : r.finishedAt ? duration(r.finishedAt - r.reservedAt) : "outcome pending"}</div>
               </td>
               <td className="whitespace-nowrap">{purposeLabel(r.purpose)}</td>
               <td>
@@ -116,7 +116,7 @@ export function RequestsTable({ rows, names, base, hideModel = false, empty }: {
                 </td>
               )}
               <td>
-                <RequestStatusBadge status={r.status} />
+                <RequestStatusBadge status={r.status} activity={r.activity} />
                 {r.nativeWebSearch ? <WebSearchLine row={r} /> : null}
               </td>
               <td className="text-right">{num(r.providerAttempts)}</td>

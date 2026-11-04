@@ -9,18 +9,20 @@ import { PageHeader } from "@/components/page-header";
 import { AgentLink, TaskLink, ModelLink } from "@/components/entity-links";
 import { RelatedPanel } from "@/components/related";
 import { Disclosure } from "@/components/disclosure";
-import { Card, KeyValue, Badge, Callout } from "@/components/ui";
+import { Card, KeyValue, Callout } from "@/components/ui";
+import { RequestStatusBadge } from "./task-badges";
 
 export function RequestDetailView({ sy, slug, id, name }: { sy: MeritRouter; slug: string; id: string; name: string }) {
   const q = insights.requestDetail(sy, id, slug);
   if (!q || q.project !== slug) notFound();
   const base = slug ? itemBase(slug) : "";
   return <div className="space-y-4">
-    <PageHeader title="Model request" description={q.id} meta={<Badge>{q.status}</Badge>} live={["requests"]} back={{ href: !slug ? "/all/requests" : slug === QUALIFICATION_SLUG ? base : `${base}/requests`, label: slug === QUALIFICATION_SLUG ? "Qualification" : "Requests" }} />
+    <PageHeader title="Model request" description={q.id} meta={<RequestStatusBadge status={q.status} activity={q.activity} />} live={["requests"]} back={{ href: !slug ? "/all/requests" : slug === QUALIFICATION_SLUG ? base : `${base}/requests`, label: slug === QUALIFICATION_SLUG ? "Qualification" : "Requests" }} />
+    {q.status === "reserved" && q.activity === "owner_lost" && <Callout tone="warn" title="Owner interrupted">The request remains unsettled. The provider outcome and final usage have not been confirmed.</Callout>}
     {q.errorMessage && <Callout tone="bad" title={q.errorKind ?? "Request failed"}>{q.errorMessage}</Callout>}
     <Card><div className="p-4"><KeyValue items={[
       ["Purpose", q.purpose], ["Model", q.endpointId ? <ModelLink id={q.endpointId} name={q.servedModel} /> : q.servedModel ?? "Unknown"],
-      ["Provider", q.servedProvider ?? "Unknown"], ["Reserved", dateTime(q.reservedAt)], ["Finished", dateTime(q.finishedAt)], ["Latency", q.finishedAt === null ? "Pending" : duration(q.finishedAt - q.reservedAt)],
+      ["Provider", q.servedProvider ?? "Unknown"], ["Reserved", dateTime(q.reservedAt)], [q.status === "uncertain" ? "Outcome recorded" : "Finished", dateTime(q.finishedAt)], ["Latency", q.status === "uncertain" ? "Unknown" : q.finishedAt === null ? "Pending" : duration(q.finishedAt - q.reservedAt)],
       ["Tokens in / out", `${q.inputTokens ?? "Unknown"} / ${q.outputTokens ?? "Unknown"}`], ["Cached / reasoning", `${q.cachedInputTokens ?? "Unknown"} / ${q.reasoningTokens ?? "Unknown"}`],
       ["Cost", q.costUsd === null ? "Unknown" : `$${q.costUsd.toFixed(6)}`], ["Paid", q.paidUsd === null ? "-" : `$${q.paidUsd.toFixed(6)}`], ["Attempts", `${q.attempts ?? "Unknown"}${q.attemptsExact === false ? " (estimated)" : ""}`],
       ["Tier", q.tier ?? "-"], ["HTTP status", q.httpStatus ?? "-"], ["Policy", q.policyViolation ?? "-"], ["Route", q.routeNote ?? "-"], ["Web search", `${q.nativeWebSearch ?? "-"} (${q.webSearchRequests ?? 0} requests)`],

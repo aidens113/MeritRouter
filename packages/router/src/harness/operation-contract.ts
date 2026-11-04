@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { HarnessEnv } from "./tools.js";
 import type { ToolSideEffect } from "../sessions/events.js";
 export const HARNESS_VERSION = "2";
-export const DeadlineArgs = { timeout_ms: z.number().int().min(1).max(300000).optional() };
+export const DeadlineArgs = { timeout_ms: z.number().int().min(1).max(300000).optional().describe("Active execution budget in milliseconds (maximum 300000), excluding approval waits. Omitted command operations, including batch and run_checks, use execution.check_timeout_seconds capped at 300000; other operations default to 30000. A parent's budget covers aggregate child execution. Every stricter ancestor budget, task deadline and cancellation remains binding; a longer child timeout cannot extend its parent.") };
 export const RepositoryArgs = { alias: z.string().optional() };
 export const OperationResultSchema = z.object({ version: z.literal("2"), operationId: z.string(), status: z.enum(["succeeded", "failed", "denied", "waiting_approval", "timed_out", "cancelled", "unknown_effect"]), durationMs: z.number(), workspace: z.object({alias:z.string(),revision:z.string().nullable(),mode:z.enum(["pinned","worktree"])}).optional(), data: z.unknown().optional(), diagnostics: z.array(z.string()).default([]) });
 export type OperationResult = z.infer<typeof OperationResultSchema>;

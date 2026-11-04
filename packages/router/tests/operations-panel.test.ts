@@ -1,10 +1,22 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { ensurePanel, panelBuildStale, routerBuildFingerprint, PANEL_ROUTER_FINGERPRINT, PANEL_ROUTER_FINGERPRINT_ALGORITHM, findPanelApp, markPanelStopped, PANEL_DIR_ENV, panelListening, panelStopFile, resetPanelRevive, revivePanel } from "../src/operations/panel.js";
 import { baseConfig, makeEnv, type Env } from "./helpers.js";
+
+const panelChildren = vi.hoisted(() => new Map<string, Array<{ child: ChildProcess; closed: Promise<void> }>>());
+vi.mock("node:child_process", async importOriginal => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return { ...actual, spawn(command: string, args: readonly string[] = [], options: SpawnOptions = {}) {
+    const child = actual.spawn(command, args, options);
+    const owned = panelChildren.get(String(options.cwd));
+    if (owned) owned.push({ child, closed: new Promise<void>(resolve => child.once("close", () => resolve())) });
+    return child;
+  } };
+});
 
 // The panel stays reachable while agents use MeritRouter: ensurePanel starts it (detached) when
 // nothing answers on panel.port. A fake panel app stands in for `next start`.
@@ -39,6 +51,17 @@ function envOnPort(port: number, autoStart: boolean): Env {
 /** A fake panel app: `next start -H host -p port` listens and records its pid and MERITROUTER_CONFIG. */
 function fakePanel(opts: { built?: boolean; deps?: boolean } = {}): string {
   dir = mkdtempSync(path.join(tmpdir(), "meritrouter-panel-"));
+  const app = dir;
+  const children: Array<{ child: ChildProcess; closed: Promise<void> }> = [];
+  panelChildren.set(app, children);
+  cleanups.push(async () => {
+    for (const owned of children) {
+      if (owned.child.exitCode === null && owned.child.signalCode === null) owned.child.kill();
+      // Await the actual child lifecycle before removing its cwd and inherited log.
+      await owned.closed;
+    }
+    panelChildren.delete(app);
+  });
   writeFileSync(path.join(dir, "package.json"), "{}");
   if (opts.deps !== false) {
     const bin = path.join(dir, "node_modules", "next", "dist", "bin");
@@ -77,19 +100,6 @@ describe("ensurePanel", () => {
     const app = fakePanel();
     const r = await ensurePanel(env.cfg, { waitMs: 10_000 });
     const started = JSON.parse(readFileSync(path.join(app, "started.json"), "utf8")) as { pid: number; host: string; config: string };
-    // Stop the fake panel and wait until it is gone: it holds panel.log open (Windows EBUSY on cleanup).
-    cleanups.push(async () => {
-      const alive = () => {
-        try {
-          process.kill(started.pid, 0);
-          return true;
-        } catch {
-          return false;
-        }
-      };
-      if (alive()) process.kill(started.pid);
-      for (let i = 0; i < 50 && alive(); i++) await new Promise((r) => setTimeout(r, 100));
-    });
     expect(r).toMatchObject({ state: "started", url: `http://127.0.0.1:${port}` });
     expect(r.detail).toContain(path.join(env.cfg.storageDir, "logs", "panel.log"));
     expect(started).toMatchObject({ host: "127.0.0.1", config: env.cfg.configPath });
@@ -106,22 +116,7 @@ describe("ensurePanel", () => {
     expect(await ensurePanel(env.cfg)).toMatchObject({ state: "stopped", detail: expect.stringMatching(/turned off from its power button/) });
     expect(existsSync(path.join(app, "started.json"))).toBe(false);
     const r = await ensurePanel(env.cfg, { force: true, waitMs: 10_000 });
-    const started = JSON.parse(readFileSync(path.join(app, "started.json"), "utf8")) as { pid: number };
-    cleanups.push(async () => {
-      try {
-        process.kill(started.pid);
-      } catch {
-        // already gone
-      }
-      for (let i = 0; i < 50; i++) {
-        try {
-          process.kill(started.pid, 0);
-        } catch {
-          return;
-        }
-        await new Promise((res) => setTimeout(res, 100));
-      }
-    });
+    expect(JSON.parse(readFileSync(path.join(app, "started.json"), "utf8"))).toMatchObject({ pid: expect.any(Number) });
     expect(r.state).toBe("started");
     expect(existsSync(panelStopFile(env.cfg))).toBe(false);
   });
@@ -143,27 +138,14 @@ describe("ensurePanel", () => {
     resetPanelRevive();
     const t0 = Date.now();
     const r = await revivePanel(env.cfg, t0);
-    const started = JSON.parse(readFileSync(path.join(app, "started.json"), "utf8")) as { pid: number };
-    cleanups.push(async () => {
-      try {
-        process.kill(started.pid);
-      } catch {
-        // already gone
-      }
-      for (let i = 0; i < 50; i++) {
-        try {
-          process.kill(started.pid, 0);
-        } catch {
-          return;
-        }
-        await new Promise((res) => setTimeout(res, 100));
-      }
-    });
+    expect(JSON.parse(readFileSync(path.join(app, "started.json"), "utf8"))).toMatchObject({ pid: expect.any(Number) });
     expect(r?.state).toBe("started");
     expect(existsSync(panelStopFile(env.cfg))).toBe(false);
     // Throttled: a burst of tool calls checks once.
     expect(revivePanel(env.cfg, t0 + 1000)).toBeNull();
-    expect(revivePanel(env.cfg, t0 + 31_000)).not.toBeNull();
+    const nextRevival = revivePanel(env.cfg, t0 + 31_000);
+    expect(nextRevival).not.toBeNull();
+    await nextRevival;
     resetPanelRevive();
   });
 

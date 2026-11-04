@@ -18,7 +18,6 @@ import { MeritRouter } from "../core/service.js";
 import { MeritRouterError } from "../core/errors.js";
 import { selectableProjects } from "../admin/insights.js";
 import { PROJECT_ENV, requireProject } from "../cli/project-select.js";
-import { ensurePanel } from "../operations/panel.js";
 import { MCP_TOKEN_ENV, httpAccessProblem, serveHttp } from "./http.js";
 import { buildMcpServer } from "./tools.js";
 
@@ -95,14 +94,7 @@ export async function runMcpServer(opts: McpOptions, env: NodeJS.ProcessEnv = pr
   }
   // Recovery belongs to the process that runs the worker (the daemon, with --no-worker).
   if (opts.worker) sy.recover();
-  // The panel stays reachable while agents use this server: started now if nothing answers, and
-  // checked again every minute (a crashed panel comes back; one the user turned off stays off).
-  // Never blocks the MCP handshake. A new server turns a panel the user switched off back on (force); the minute checks respect it.
-  // A new session forgets a power-off (resume) but respects panel.auto_start; the minute checks leave a panel the user turned off stopped.
-  const keepPanel = (resume: boolean) => void ensurePanel(cfg, { resume }).then((p) => p.state !== "running" && p.state !== "stopped" && p.state !== "disabled" && log(p.detail));
-  keepPanel(true);
-  const panelTimer = setInterval(() => keepPanel(false), 60_000);
-  panelTimer.unref();
+  // Shared service lifecycle keeps the panel reachable for SDK, MCP and CLI alike.
   const ctx = { sy, cfg, project };
 
   let stopTransport: () => Promise<void>;
@@ -117,7 +109,6 @@ export async function runMcpServer(opts: McpOptions, env: NodeJS.ProcessEnv = pr
       stopTransport = () => server.close();
     }
   } catch (err) {
-    clearInterval(panelTimer);
     await sy.close();
     throw err;
   }
@@ -127,7 +118,6 @@ export async function runMcpServer(opts: McpOptions, env: NodeJS.ProcessEnv = pr
     const shutdown = () => {
       if (closing) return;
       closing = true;
-      clearInterval(panelTimer);
       void stopTransport()
         .catch(() => undefined)
         .then(() => sy.close())

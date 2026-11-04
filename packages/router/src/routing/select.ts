@@ -159,7 +159,7 @@ export function endpointExclusions(
 ): string[] {
   const reasons: string[] = [];
   const profile = cfg.profiles[req.profile]!;
-  const supervisorQuality = profile.mode === "supervisor" ? assessSupervisorQuality(ep.id, cfg.supervisor.routing, opts.now, req.inputModalities.some(m => m === "image" || m === "video")) : null;
+  const supervisorQuality = profile.mode === "supervisor" ? assessSupervisorQuality(ep.id, cfg.supervisor.routing, opts.now, req.inputModalities.some(m => m === "image" || m === "video"), ep.route) : null;
   if (supervisorQuality && !supervisorQuality.eligible) reasons.push(supervisorQuality.reason);
   if (ep.status !== "active") reasons.push(ep.statusReason ?? `status is ${ep.status}`);
   if (!ep.available && ep.status === "active") reasons.push("no enabled key for this provider");
@@ -227,7 +227,7 @@ export function planRoute(
   const prefer = cfg.tiers[req.tier].prefer;
   const policy = paidPolicyFor(cfg, req);
   const supervisor = cfg.profiles[req.profile]!.mode === "supervisor";
-  const quality = (ep: ModelEndpoint) => assessSupervisorQuality(ep.id, cfg.supervisor.routing, deps.now, req.inputModalities.some(m => m === "image" || m === "video"));
+  const quality = (ep: ModelEndpoint) => assessSupervisorQuality(ep.id, cfg.supervisor.routing, deps.now, req.inputModalities.some(m => m === "image" || m === "video"), ep.route);
 
   const explanations: CandidateExplanation[] = [];
   const eligible: Array<{ ep: ModelEndpoint; ex: CandidateExplanation }> = [];
@@ -313,6 +313,9 @@ export function planRoute(
     const ia = independence(a);
     const ib = independence(b);
     if (ia !== ib) return ia - ib;
+    // Equal observed supervisor scores carry no evidence that parameter count,
+    // worker pass rate or token price establishes superior supervision.
+    if (supervisor && cfg.supervisor.routing.minimum_quality === "ranked_capable") return a.ep.id.localeCompare(b.ep.id);
     const sa = a.ep.totalParametersB ?? (a.ep.ignoreSizeFloor ? 1e6 : 0);
     const sb = b.ep.totalParametersB ?? (b.ep.ignoreSizeFloor ? 1e6 : 0);
     if (prefer === "smallest_sufficient") {
@@ -325,6 +328,11 @@ export function planRoute(
   eligible.forEach((e, i) => {
     e.ex.rank = i + 1;
     e.ex.via = forced ? "forced" : preferIds.includes(e.ep.id) ? "preferred" : "automatic";
+    if (supervisor && cfg.supervisor.routing.minimum_quality === "ranked_capable" && e.ex.supervisorQuality) {
+      const tied = eligible.filter(other => other.ep.id !== e.ep.id && quality(other.ep).score === e.ex.supervisorQuality!.score
+        && paidRank(other.ep) === paidRank(e.ep));
+      if (tied.length) e.ex.supervisorQuality.reason += `; equal measured score with ${tied.length} other eligible endpoint(s); availability/explicit preferences then endpoint identity break ties, not proven quality superiority`;
+    }
   });
   explanations.sort((a, b) => (a.rank ?? 1e9) - (b.rank ?? 1e9) || a.endpointId.localeCompare(b.endpointId));
   return {

@@ -17,6 +17,36 @@ let db: ReturnType<typeof openDatabase> | undefined;
 afterEach(() => { vi.restoreAllMocks(); db?.close(); env?.cleanup(); });
 
 describe("indexed Brain browsing", () => {
+  it("returns an empty catalogue without creating a missing Brain or Git repository", async () => {
+    env = makeEnv(); db = openDatabase(env.cfg.storageDir);
+    const brain = new Brain(env.cfg, db);
+    expect(fs.existsSync(brain.root)).toBe(false);
+    expect((await brain.catalog({ kind: "human" })).entries).toEqual([]);
+    expect(fs.existsSync(brain.root)).toBe(false);
+    expect(db.prepare("SELECT COUNT(*) count FROM brain_files").get()).toEqual({ count: 0 });
+    await brain.ensure();
+    expect(fs.existsSync(path.join(brain.root, ".git"))).toBe(true);
+    expect(fs.existsSync(path.join(brain.root, "README.md"))).toBe(true);
+    expect((await brain.catalog({ kind: "human" })).entries.map(entry => entry.path)).toContain("README.md");
+  });
+
+  it("indexes existing authorized notes without bootstrapping or changing their bytes", async () => {
+    env = makeEnv(); db = openDatabase(env.cfg.storageDir);
+    const brain = new Brain(env.cfg, db);
+    const note = path.join(brain.root, "projects/demo/notes/manual.md");
+    const foreign = path.join(brain.root, "projects/foreign/notes/private.md");
+    for (const file of [note, foreign]) fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(note, "# Existing note\r\nHandwritten content.\r\n");
+    fs.writeFileSync(foreign, "# Foreign private note\n");
+    const before = fs.readFileSync(note);
+    const page = await brain.catalog({ kind: "human" }, { scope: "project" });
+    expect(page.entries.map(entry => entry.path)).toEqual(["projects/demo/notes/manual.md"]);
+    expect(fs.readFileSync(note)).toEqual(before);
+    expect(fs.existsSync(path.join(brain.root, ".git"))).toBe(false);
+    expect(fs.existsSync(path.join(brain.root, "README.md"))).toBe(false);
+    expect(fs.existsSync(path.join(brain.root, "global"))).toBe(false);
+  });
+
   it("pages visible metadata and scopes search before ranking/limit without rereading unchanged bodies", async () => {
     env = makeEnv();
     db = openDatabase(env.cfg.storageDir);

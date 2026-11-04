@@ -1,3 +1,4 @@
+import { assertSupervisorCancelUnprotected } from "../storage/supervisor-cancel-protection.js";
 import { delegatedSourceSnapshot } from "./delegated-source.js";
 import { assertExplicitRepairReferences } from "./repair-reference.js";
 import { resolveRepairSource } from "../workspaces/repair-hydration.js";
@@ -35,6 +36,8 @@ import { liveSlotCounts, readConcurrencyRecords } from "../gateway/capacity.js";
 import type { WorkerTaskInput } from "../core/task.js";
 import { narrowedScope, taskWriteScope } from "./task-scope.js";
 import { assertPlannedBriefs } from "./supervisor-lifecycle.js";
+import { taskAllocationForecast, type TaskAllocationParent } from "../verification/task-allocation-feedback.js";
+import { ContractStore } from "../verification/contract.js";
 
 export { queueOf } from "./integration-tools.js";
 
@@ -179,40 +182,19 @@ function currentActionGeneration(s: SupervisorState, row: WorkerActionRequest): 
 }
 
 /** Internal model cancellation cannot revoke the operator's active exact-generation work. */
-function cancelUnprotectedChildren(s: SupervisorState, ids: string[]): unknown {
-  return immediate(s.db, () => {
+async function cancelUnprotectedChildren(s: SupervisorState, ids: string[]): Promise<void> {
+  immediate(s.db, () => {
     const actor = LeaseRefSchema.parse(s.ctx.taskLease);
     if (actor.taskId !== s.ctx.taskId || !currentSupervisorAuthority(s.db, s.ctx.cfg, actor, s.ctx.now())) throw new Error("active owning supervisor authority required for cancellation");
     for (const id of ids) {
       const task = s.ctx.tasks.get(id);
       if (!task || task.row.project_id !== actor.project || task.spec.parentTaskId !== actor.taskId) throw new Error("only this supervisor's current project children may be cancelled");
     }
-    const humanOnly = workerActionCapability(s.ctx.cfg).approvalPolicy === "human_only";
-    const now = s.ctx.now();
-    for (const id of ids) {
-      const rows = s.db.prepare(`WITH RECURSIVE owned(id) AS (
-        SELECT id FROM tasks WHERE id=? AND project_id=?
-        UNION SELECT t.id FROM tasks t JOIN owned p ON json_extract(t.spec_json,'$.parentTaskId')=p.id WHERE t.project_id=?
-      ) SELECT w.id,w.task_id,w.value_json FROM worker_action_requests w JOIN tasks t ON t.id=w.task_id AND t.project_id=w.project_id
-      WHERE w.project_id=? AND w.task_id IN (SELECT id FROM owned) AND t.state='running' AND t.cancel_requested=0
-        AND t.lease_expires_at>? AND (t.deadline_at IS NULL OR t.deadline_at>?)
-        AND json_extract(w.value_json,'$.status') IN ('pending','running')
-        AND json_extract(w.value_json,'$.action.lease.taskId')=t.id
-        AND json_extract(w.value_json,'$.action.lease.project')=t.project_id
-        AND json_extract(w.value_json,'$.action.lease.owner')=t.lease_owner
-        AND json_extract(w.value_json,'$.action.lease.runCount')=t.run_count
-        AND json_extract(w.value_json,'$.action.lease.incarnation')=t.lease_incarnation`).all(id, actor.project, actor.project, actor.project, now, now);
-      const actions = z.array(z.object({ id: z.string(), task_id: z.string(), value_json: z.string() }).strict()).parse(rows);
-      for (const record of actions) {
-        const action = z.object({ status: z.enum(["pending", "running"]), decidedBy: z.string().nullable(), action: z.object({ lease: LeaseRefSchema }).passthrough() }).passthrough().parse(JSON.parse(record.value_json));
-        if ((action.status === "pending" && humanOnly) || (action.status === "running" && action.decidedBy === "operator"))
-          throw new Error(`cannot cancel ${record.task_id}: exact worker action ${record.id} is ${action.status === "pending" ? "awaiting human approval" : "operator-approved and running"}; continue await_tasks. External operator cancellation and runtime deadlines remain authoritative.`);
-      }
-    }
-    // This service facade is synchronous. There is no await between action/lease preflight
-    // and logical cancellation, so approval and mixed-batch cancellation serialize atomically.
-    return s.ctx.services!.cancelTasks(ids);
+    assertSupervisorCancelUnprotected(s.db, s.ctx.cfg, actor.project, ids, s.ctx.now());
   });
+  // The captured legacy service is asynchronous. Its mutation boundary repeats authority
+  // and action protection after this read-only preflight, inside its own transaction.
+  await s.ctx.services!.cancelTasks(ids);
 }
 
 function repoFor(s: SupervisorState, alias: unknown): IntegrationRepo {
@@ -231,6 +213,28 @@ const slug = (l: unknown) => String(l ?? "").toLowerCase().replace(/[^a-z0-9-]+/
  * One brief's properties, shared by `delegate` tasks and `plan_work` nodes. `supervise` (a
  * sub-supervisor for a sub-goal) is offered only while the job is below `team.max_depth`.
  */
+function allocationParent(s: SupervisorState): TaskAllocationParent {
+  const importance = s.ctx.contract?.importance.level ?? s.ctx.spec.importance;
+  return importance ? { taskId: s.ctx.taskId, importance } : null;
+}
+
+/** Normalize the same policy-relevant worker fields for draft estimates and held grants. */
+function allocationSpecForBrief(s: SupervisorState, it: Record<string, unknown>) {
+  const profile = String(it.profile ?? "");
+  const repositories = (it.repositories as string[] | undefined) ?? s.ctx.spec.repositoryAliases;
+  const writable = profile === "implement" ? String(it.writable_repository ?? [...s.repos.keys()][0] ?? "") : undefined;
+  const paths = writable || profile === "supervise" ? narrowedScope(taskWriteScope(s.ctx.spec, s.ctx.tasks), it.allowed_paths) : undefined;
+  return WorkerTaskSchema.parse({ profile, goal: it.goal, parentTaskId: s.ctx.taskId, repositoryAliases: repositories,
+    ...(writable ? { writableRepository: writable } : {}),
+    context: { ...(it.file_refs ? { fileRefs: it.file_refs } : {}) },
+    constraints: { acceptanceCriteria: it.acceptance_criteria, ...(paths ? { allowedPaths: paths } : {}),
+      ...(it.checks ? { checks: it.checks } : {}), ...(it.lab_checks ? { labChecks: it.lab_checks } : {}) },
+    ...(it.max_requests !== undefined ? { budget: { maxModelRequests: it.max_requests } } : {}),
+    ...(it.importance ? { importance: it.importance } : {}), ...(it.importance_reason ? { importanceReason: it.importance_reason } : {}),
+    ...(it.difficulty || it.web !== undefined ? { hints: { ...(it.difficulty ? { difficulty: it.difficulty } : {}), ...(it.web !== undefined ? { web: it.web } : {}) } } : {}),
+    ...(it.brain_grants ? { brain: { grants: it.brain_grants } } : {}) });
+}
+
 function briefProperties(allowSupervise: boolean): Record<string, unknown> {
   return {
     label: { type: "string", description: "short unique id, e.g. fix-parser" },
@@ -254,7 +258,7 @@ function briefProperties(allowSupervise: boolean): Record<string, unknown> {
     importance: { type: "string", enum: [...IMPORTANCE_LEVELS], description: "how much the result matters (default normal); raises verification, never difficulty" },
     importance_reason: { type: "string", description: "why; required for high and critical" },
     depends_on: { type: "array", items: { type: "string" }, description: "labels of tasks this one needs first (in this call, or dispatched earlier); it starts once they finish and sees their results" },
-    max_requests: { type: "integer", minimum: 1, description: "the task's model request budget, held from your job's budget while it runs (default: team.default_task_requests, else its tier's cap); it must fit in what your job has left. Workers can ask you for more." },
+    max_requests: { type: "integer", minimum: 1, description: "TOTAL task model requests across classification, execution, mandatory review and repair, held from your job pool and pinned as the task total. This is not the number of coding turns: review is reserved first. Execution covers setup, reads, edits, checks and a valid report; its final request is submission-only. Default: team.default_task_requests, else the largest canonical allocation across possible tiers using this brief/parent and zero classification requests; any actual classification is charged inside that total. Use plan_work dispatch:false to inspect allocation before staffing; workers can ask for more." },
     shared_files: { type: "array", items: { type: "string" }, description: "repository-relative files you maintain yourself for the workers (interface contracts, shared docs such as INTERFACES.md); you may edit these, workers read them" },
     brain_grants: { type: "array", items: { type: "object", properties: { pattern: { type: "string" }, mode: { type: "string", enum: ["read", "append"] } } } },
   };
@@ -410,7 +414,10 @@ async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, un
   // Worker budgets (budget control D1): each new worker task is granted a request budget, held
   // from this job's pool while it is open; together they must fit in what the job has left.
   const team = s.ctx.cfg.team;
-  const { grants, total: granting } = grantBriefs(s.db, s.ctx.cfg, jobId, fresh.filter((x) => x.it.profile !== "supervise"));
+  const allocationSpecs = new Map(fresh.filter(x => x.it.profile !== "supervise")
+    .map(x => [x.label, allocationSpecForBrief(s, x.it)]));
+  const { grants, total: granting } = grantBriefs(s.db, s.ctx.cfg, jobId,
+    fresh.filter(x => x.it.profile !== "supervise").map(x => ({ ...x, spec: allocationSpecs.get(x.label)! })), allocationParent(s));
 
   // Sub-supervisors: the depth limit, then a budget carved from what this job has left.
   const subs = fresh.filter((x) => x.it.profile === "supervise");
@@ -515,6 +522,9 @@ async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, un
     const body = `${sp.brief}\n\n- Sub-job ${String(sp.spec.id)} of job ${jobId} (depth ${depthOf(s) + 1}); request budget ${sp.carve!.requests} of ${sp.carve!.remaining} remaining (share ${team.child_budget_share})\n- Branches: ${forks.join("; ") || "none (read-only)"}`;
     await writeDoc(env, (t) => replaceSection(t, subJobSection(sp.label), body, "Work Ledger"), `Sub-job: ${sp.label}`);
   }
+  const allocationForecasts = new Map(specs.map(sp => [sp.label, taskAllocationForecast(s.ctx.cfg,
+    WorkerTaskSchema.parse(sp.spec), s.ctx.contract ? { taskId: jobId, importance: s.ctx.contract.importance.level }
+      : s.ctx.spec.importance ? { taskId: jobId, importance: s.ctx.spec.importance } : null)]));
   // The delegating session becomes each new task's parent session.
   const out = specs.length ? await svc.submitTasks(specs.map((sp) => sp.spec), { purpose: "work", ...(s.ctx.session ? { parentSessionId: s.ctx.session.id } : {}) }) : [];
   immediate(s.db,()=>{assertSplitSupervisorState(s);
@@ -536,7 +546,7 @@ async function dispatchBriefs(s: SupervisorState, items: Array<Record<string, un
     const o = submitted.get(label);
     const carve = carves.get(label);
     const grant = grants.get(label);
-    if (o) return `${label} -> ${o.taskId} (${o.state}${o.deduplicated ? ", already submitted" : ""})${carve ? `; sub-supervisor with ${carve.requests} requests on branch ${s.ctx.cfg.supervisor.branch_prefix}${o.taskId}` : ""}${grant ? `; budget ${grant.requests} requests` : ""}`;
+    if (o) return `${label} -> ${o.taskId} (${o.state}${o.deduplicated ? ", already submitted" : ""})${carve ? `; sub-supervisor with ${carve.requests} requests on branch ${s.ctx.cfg.supervisor.branch_prefix}${o.taskId}` : ""}${grant ? `; budget ${grant.requests} requests` : ""}${allocationForecasts.get(label) ? `\n  ${allocationForecasts.get(label)}` : ""}`;
     const id = s.children.get(label)!;
     const t = svc.getTask(id);
     // A label runs once: delegating a dead label again changes nothing, so say what would.
@@ -619,7 +629,7 @@ export function ensureCarves(s: SupervisorState): void {
     } else if (!grantOf(s.db, id)) {
       // A worker's grant (budget control D1): its explicit budget, else the default it was given.
       const explicit = t.spec.budget?.maxModelRequests;
-      recordGrant(s.db, { taskId: id, jobId: s.ctx.taskId, requests: explicit ?? defaultTaskGrant(s.ctx.cfg, t.spec.profile, t.spec.hints?.difficulty ?? null), source: explicit ? "supervisor" : "default" }, Date.now());
+      recordGrant(s.db, { taskId: id, jobId: s.ctx.taskId, requests: explicit ?? defaultTaskGrant(s.ctx.cfg, t.spec, allocationParent(s)), source: explicit ? "supervisor" : "default" }, Date.now());
     }
   }
 }
@@ -651,8 +661,10 @@ export function drainIntegrations(s: SupervisorState, env: HarnessEnv): Promise<
 function summarizeResult(id: string, s: SupervisorState): string {
   const t = s.ctx.services!.getTask(id);
   if (!t) return `${id}: unknown`;
+  const allocation = new ContractStore(s.db).get(id)?.contract.budget;
+  const allocationLine = allocation ? `  persisted contract allocation: classification ${allocation.classification}, execution ${allocation.execution}, review ${allocation.review}, repair ${allocation.repair}, total ${allocation.total} (approved extensions are additional; see budget_requests)` : null;
   const r = t.result;
-  if (!r) return `${id} (${t.spec.label ?? t.spec.profile}): ${t.state}`;
+  if (!r) return [`${id} (${t.spec.label ?? t.spec.profile}): ${t.state}`, ...(allocationLine ? [allocationLine] : [])].join("\n");
   const v = r.verification;
   return [
     `${id} (${t.spec.label ?? t.spec.profile}): ${r.executionStatus}, acceptance ${r.acceptanceStatus}, ${r.stopReason}`,
@@ -665,6 +677,7 @@ function summarizeResult(id: string, s: SupervisorState): string {
     ...r.checks.map((c) => `  check: ${c.command} -> ${c.exitCode} (${c.logRef})`),
     ...(r.unresolvedCriteria.length ? [`  unresolved: ${r.unresolvedCriteria.join("; ")}`] : []),
     `  requests ${r.usage.modelRequests}, served by ${r.servedEndpoints.join(", ") || "none"}`,
+    ...(allocationLine ? [allocationLine] : []),
   ].join("\n");
 }
 
@@ -741,6 +754,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
         const dispatch = z.boolean().parse(a.dispatch ?? true);
         const replaceUndispatched = z.boolean().parse(a.replace_undispatched ?? false);
         const preserveFuture = s.ctx.spec.deliveryVersion === 2 && !replaceUndispatched;
+        const allocationForecasts: string[] = [];
         // Drafts validate scope and task inputs without Gate/classification or budget effects.
         for (const it of items) {
           const profile = String(it.profile ?? "");
@@ -752,7 +766,15 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
           if (profile === "supervise" && !maySupervise(s)) throw new Error(`${slug(it.label)}: sub-supervisors are limited to team.max_depth ${s.ctx.cfg.team.max_depth}; this job is at depth ${depthOf(s)}, so delegate workers instead`);
           const paths = writable || profile === "supervise" ? narrowedScope(taskWriteScope(s.ctx.spec, s.ctx.tasks), it.allowed_paths) : undefined;
           sharedFilesArg(it);
-          WorkerTaskSchema.parse({ profile, goal: it.goal, repositoryAliases: repositories, ...(writable ? { writableRepository: writable } : {}), context: { ...(it.file_refs ? { fileRefs: it.file_refs } : {}) }, constraints: { acceptanceCriteria: it.acceptance_criteria, ...(paths ? { allowedPaths: paths } : {}), ...(it.checks ? { checks: it.checks } : {}), ...(it.lab_checks ? { labChecks: it.lab_checks } : {}) }, ...(it.max_requests !== undefined ? { budget: { maxModelRequests: it.max_requests } } : {}), ...(it.importance ? { importance: it.importance } : {}), ...(it.importance_reason ? { importanceReason: it.importance_reason } : {}), ...(it.difficulty || it.web !== undefined ? { hints: { ...(it.difficulty ? { difficulty: it.difficulty } : {}), ...(it.web !== undefined ? { web: it.web } : {}) } } : {}), ...(it.brain_grants ? { brain: { grants: it.brain_grants } } : {}) });
+          const forecastSpec = allocationSpecForBrief(s, it);
+          if (profile !== "supervise" && it.max_requests === undefined) forecastSpec.budget = {
+            ...forecastSpec.budget, maxModelRequests: defaultTaskGrant(s.ctx.cfg, forecastSpec, allocationParent(s)) };
+          if (!dispatch) {
+            const forecast = taskAllocationForecast(s.ctx.cfg, forecastSpec, s.ctx.contract
+              ? { taskId: jobId, importance: s.ctx.contract.importance.level }
+              : s.ctx.spec.importance ? { taskId: jobId, importance: s.ctx.spec.importance } : null);
+            if (forecast) allocationForecasts.push(`${String(it.label)}: ${forecast}`);
+          }
         }
         // Accepted work reaches the job branch before new nodes pin their base to it.
         const integrated = dispatch && items.some(it => !s.children.has(slug(it.label))) ? await drainIntegrations(s, env) : [];
@@ -813,6 +835,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
           `critical path: ${cp.labels.join(" -> ")} (estimated cost ${cp.cost}); at most ${maxAgentsPerJob(s.ctx.cfg)} task(s) of this job run at once`,
           ...(staffed.length ? [`tiers from the rulebook (nodes without difficulty): ${staffed.join("; ")}`] : []),
           ...capacityLine(s),
+          ...allocationForecasts,
           ...integrated,
           ...(dispatched ? [dispatched] : []),
         ].join("\n");
@@ -884,7 +907,7 @@ export function supervisorTools(s: SupervisorState): HarnessTool[] {
 
     tool("cancel_tasks", "delegate", "Cancel this job's unprotected tasks. Pending human-only approvals and operator-approved running actions must settle through await_tasks; only the external operator or runtime cancellation may interrupt those exact active generations.", { task_ids: { type: "array", items: { type: "string" } } }, ["task_ids"], async (a) => {
       const ids = z.array(z.string().min(1)).min(1).max(MAX_PLAN_NODES).parse(a.task_ids).map(id => ownTask(s, id));
-      cancelUnprotectedChildren(s, [...new Set(ids)]);
+      await cancelUnprotectedChildren(s, [...new Set(ids)]);
       return "cancellation requested";
     }),
 

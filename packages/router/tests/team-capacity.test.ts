@@ -15,10 +15,10 @@ import { baseConfig, endpoint, makeEnv, open, reply, ScriptedClient, servedFor, 
 let env: Env | undefined;
 let sy: MeritRouter | undefined;
 afterEach(async () => {
-  await sy?.close();
-  sy = undefined;
-  env?.cleanup();
-  env = undefined;
+  const ownedService = sy, ownedEnvironment = env;
+  sy = undefined; env = undefined;
+  await ownedService?.close();
+  ownedEnvironment?.cleanup();
 });
 
 const call = (name: string, args: unknown, id = name) => ({ id, type: "function" as const, function: { name, arguments: JSON.stringify(args) } });
@@ -253,7 +253,7 @@ describe("scheduler admission", () => {
     let inflight = 0;
     let maxInflight = 0;
     const script = [
-      () => [call("plan_work", { nodes: ["a", "b", "c", "d"].map((l) => ({ label: l, profile: "inspect", goal: `Inspect part ${l}`, acceptance_criteria: ["described"], file_refs: ["core:README.md"] })) })],
+      () => [call("plan_work", { nodes: ["a", "b", "c", "d"].map((l) => ({ label: l, profile: "inspect", max_requests: 4, goal: `Inspect part ${l}`, acceptance_criteria: ["described"], file_refs: ["core:README.md"] })) })],
       () => [call("await_tasks", { timeout_seconds: 120 })],
       () => [call("finish_job", { status: "completed", summary: "all parts inspected", verified: [{ claim: "every node finished", evidence: "await_tasks" }], not_verified: [] })],
     ];

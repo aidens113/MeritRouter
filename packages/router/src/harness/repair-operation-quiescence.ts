@@ -7,9 +7,12 @@ import type { SessionEvent } from "../sessions/events.js";
 import { OperationResultSchema } from "./operation-contract.js";
 import { LeaseRefSchema } from "../storage/task-leases.js";
 
-const recipeArgs=z.object({id:z.string().regex(/^check:[1-9]\d*$/),timeout_ms:z.number().int().min(1).max(300000).optional()}).strict();
+const timeoutPolicy=z.object({version:z.literal("configured-v1"),default_ms:z.number().int().min(1).max(300000),check_limit_ms:z.number().int().min(1).max(300000)}).strict();
+const recipeArgs=z.object({id:z.string().regex(/^check:[1-9]\d*$/),timeout_ms:z.number().int().min(1).max(300000).optional(),timeout_policy:timeoutPolicy.optional()}).strict();
 const groupArgs=z.object({ids:z.array(z.string().regex(/^check:[1-9]\d*$/)).min(1).max(64).optional(),stop_on_failure:z.boolean().optional(),timeout_ms:z.number().int().min(1).max(300000).optional()}).strict();
 const operationNote=z.object({kind:z.literal("harness_v2_operation"),taskId:z.string(),operationId:z.string(),sideEffect:z.literal("command"),result:OperationResultSchema.optional()}).strict();
+const terminal=z.enum(["completed","failed","cancelled","budget_exhausted"]);
+const persistedAuthor=z.object({task_id:z.string(),project_id:z.string(),status:terminal,ended_at:z.number().int(),last_seq:z.number().int(),stop_reason:z.string()}).strict();
 const broker=z.object({id:z.string(),project:z.string(),taskId:z.string(),status:z.enum(["completed","uncertain"]),createdAt:z.number().int(),executionStartedAt:z.number().int(),executionTimeoutMs:z.number().int().positive(),quiescedAt:z.number().int(),action:z.object({command:z.string(),cwd:z.string(),invocationId:z.string(),timeoutMs:z.number().int().positive(),source:z.string().regex(/^[a-f0-9]{64}$/),lease:LeaseRefSchema,jobId:z.string(),operation:z.unknown().optional()}).passthrough()}).passthrough();
 
 /** Eligibility only: reconcile one missing nested recipe outcome from exact host quiescence proof.
@@ -17,9 +20,11 @@ const broker=z.object({id:z.string(),project:z.string(),taskId:z.string(),status
  */
 export function quiescentRecipeSource(ctx:RunContext,source:StoredTask,author:SessionRecord,events:SessionEvent[],pending:Extract<SessionEvent,{type:"tool_intent"}>,workspace:{path:string;alias:string},sourceHash:string):boolean{
  try {
-  if(source.row.state!=="completed" || author.status!=="completed" || author.taskId!==source.row.id || author.endedAt===null || pending.data.name!=="run_recipe" || pending.data.sideEffect!=="command")return false;
-  const session=z.object({task_id:z.string(),project_id:z.string(),status:z.literal("completed")}).parse(ctx.tasks.db.prepare("SELECT task_id,project_id,status FROM sessions WHERE id=?").get(author.id));
-  if(session.task_id!==source.row.id || session.project_id!==source.row.project_id)return false;
+  if(!terminal.safeParse(source.row.state).success || !terminal.safeParse(author.status).success || author.taskId!==source.row.id || author.endedAt===null || pending.data.name!=="run_recipe" || pending.data.sideEffect!=="command")return false;
+  const current=ctx.tasks.get(source.row.id);
+  if(!current||current.row.state!==source.row.state||current.row.project_id!==source.row.project_id||current.row.run_count!==source.row.run_count||current.row.lease_incarnation!==source.row.lease_incarnation)return false;
+  const session=persistedAuthor.parse(ctx.tasks.db.prepare("SELECT task_id,project_id,status,ended_at,last_seq,stop_reason FROM sessions WHERE id=?").get(author.id));
+  if(session.task_id!==source.row.id || session.project_id!==source.row.project_id || session.status!==author.status || session.ended_at!==author.endedAt || session.last_seq!==author.lastSeq || session.stop_reason!==author.stopReason)return false;
   if(events.filter(e=>e.type==="tool_intent"&&e.data.callId===pending.data.callId).length!==1||events.some(e=>e.type==="tool_outcome"&&e.data.callId===pending.data.callId))return false;
   const child=recipeArgs.parse(pending.data.args),prefix=`${author.id}:`,separator=pending.data.callId.lastIndexOf(":recipe:");
   if(!pending.data.callId.startsWith(prefix)||separator<=prefix.length)return false;
@@ -54,7 +59,7 @@ export function quiescentRecipeSource(ctx:RunContext,source:StoredTask,author:Se
   const outer=OperationResultSchema.parse(JSON.parse(outcome.data.output));
   if(JSON.stringify(outer)!==JSON.stringify(result))return false;
   const ended=events.filter(e=>e.type==="ended");
-  if(ended.length!==1||ended[0]!.seq<=outcome.seq||ended[0]!.data.status!=="completed")return false;
+  if(ended.length!==1||events.at(-1)!==ended[0]||ended[0]!.seq<=outcome.seq||ended[0]!.seq!==author.lastSeq||ended[0]!.at!==author.endedAt||ended[0]!.data.status!==author.status||ended[0]!.data.stopReason!==author.stopReason)return false;
   const rows=ctx.tasks.db.prepare("SELECT id,project_id,task_id,request_key,value_json FROM worker_action_requests WHERE task_id=? AND json_extract(value_json,'$.action.invocationId')=? LIMIT 2").all(source.row.id,pending.data.callId) as Array<{id:string;project_id:string;task_id:string;request_key:string;value_json:string}>;
   if(rows.length!==1)return false;
   const row=rows[0]!,raw=JSON.parse(row.value_json),action=broker.parse(raw),lease=action.action.lease;
@@ -62,7 +67,10 @@ export function quiescentRecipeSource(ctx:RunContext,source:StoredTask,author:Se
       action.action.invocationId!==pending.data.callId||action.action.cwd!==workspace.path||action.action.command!==command||action.action.operation!==undefined||action.action.jobId!==source.spec.parentTaskId||
       lease.taskId!==source.row.id||lease.project!==source.row.project_id||lease.runCount!==source.row.run_count||lease.incarnation!==source.row.lease_incarnation||action.action.source!==sourceHash)return false;
   if(createHash("sha256").update(JSON.stringify({...raw.action,reason:undefined})).digest("hex")!==row.request_key)return false;
-  if(action.action.timeoutMs!==Math.min(child.timeout_ms??30000,ctx.cfg.execution.check_timeout_seconds*1000)||action.executionTimeoutMs>action.action.timeoutMs||
+  const expectedTimeout=child.timeout_policy
+    ? Math.min(child.timeout_ms??child.timeout_policy.default_ms,child.timeout_policy.check_limit_ms,300000)
+    : Math.min(child.timeout_ms??30000,ctx.cfg.execution.check_timeout_seconds*1000); // Exact historical pre-policy behavior.
+  if(action.action.timeoutMs!==expectedTimeout||action.executionTimeoutMs>action.action.timeoutMs||
       action.createdAt<pending.at||action.executionStartedAt<action.createdAt||action.quiescedAt<action.executionStartedAt||action.quiescedAt>end.at||end.at>author.endedAt)return false;
   return true;
  } catch { return false; }

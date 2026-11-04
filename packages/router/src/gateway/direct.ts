@@ -286,6 +286,7 @@ export async function requestDirect(
           provider: requestProvider,
           credential,
           model: route.model,
+          ...(ep.anthropicProtocol ? { anthropicProtocol: ep.anthropicProtocol } : {}),
           chat,
           timeoutMs,
           ...(req.signal ? { signal: req.signal } : {}),

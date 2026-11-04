@@ -16,7 +16,7 @@ raw.storage = { ...raw.storage, directory: ".meritrouter-legacy-panel" };
 raw.brain = { ...raw.brain, project: "demo", path: "brain-legacy-panel" };
 const configPath = path.join(demo, "legacy-labs.config.yaml");
 writeFileSync(configPath, YAML.stringify(raw));
-const sy = new MeritRouter(loadConfig(configPath), { worker: false });
+const sy = new MeritRouter(loadConfig(configPath), { panelLifecycle: "passive", worker: false });
 const beforeRow = sy.projects.rows().find(p => p.id === "demo");
 const paths = structuredClone(sy.projects.primary.repositoryPaths);
 const port = Number(process.argv[2] ?? 4498); assert(port >= 1024 && port !== 4477);

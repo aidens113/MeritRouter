@@ -1,6 +1,8 @@
 import type { Db } from "../storage/db.js";
 import type { ResolvedConfig } from "../config/load.js";
-import { TIER_NAMES, type ProfileMode, type ProfileName, type TierName } from "../config/schema.js";
+import { TIER_NAMES, TierNameSchema, type ProfileMode, type ProfileName, type TierName } from "../config/schema.js";
+import { z } from "zod";
+import type { QualificationLookup } from "../routing/select.js";
 
 export interface QualificationStat {
   passRate: number;
@@ -10,6 +12,24 @@ export interface QualificationStat {
   /** Wilson 95% interval for the pass rate. */
   low: number;
   high: number;
+}
+
+/** Aggregate-only capability; never exposes another project's database or private rows. */
+export type QualificationStatReader = (cfg: ResolvedConfig, endpointId: string, family: string, tier: TierName, threshold?: number) => QualificationStat | null;
+const StatQuery = z.object({ endpointId: z.string().min(1), family: z.string().min(1), tier: TierNameSchema,
+  threshold: z.number().min(0).max(1) }).strict();
+const StatCounts = z.object({ n: z.number().int().min(0), passes: z.number().int().min(0).nullable() }).strict();
+
+export function validateQualificationStatQuery(endpointId: string, family: string, tier: TierName, threshold: number): void {
+  StatQuery.parse({ endpointId, family, tier, threshold });
+}
+
+export function qualificationLookupFrom(reader: QualificationStatReader, cfg: ResolvedConfig): QualificationLookup {
+  return (endpointId, profile, tier, family) => {
+    const mode = cfg.profiles[profile]?.mode;
+    return family ? reader(cfg, endpointId, family.family, family.tier, family.threshold)
+      : mode ? reader(cfg, endpointId, familyOf(mode), tier) : null;
+  };
 }
 
 export function wilson(passes: number, n: number): { low: number; high: number } {
@@ -32,13 +52,14 @@ export function familyOf(mode: ProfileMode): string {
  * evidence for easier work. Infrastructure failures are excluded.
  */
 export function qualificationStat(db: Db, cfg: ResolvedConfig, endpointId: string, family: string, tier: TierName, threshold = cfg.qualification.pass_threshold): QualificationStat | null {
+  validateQualificationStatQuery(endpointId, family, tier, threshold);
   const tiers = TIER_NAMES.slice(TIER_NAMES.indexOf(tier));
-  const row = db
+  const row = StatCounts.parse(db
     .prepare(
       `SELECT COUNT(*) AS n, SUM(outcome = 'pass') AS passes FROM qualification_results
         WHERE endpoint_id = ? AND family = ? AND outcome != 'infra_error' AND tier IN (${tiers.map(() => "?").join(",")})`,
     )
-    .get(endpointId, family, ...tiers) as { n: number; passes: number | null };
+    .get(endpointId, family, ...tiers));
   if (row.n === 0) return null;
   const passes = row.passes ?? 0;
   const passRate = passes / row.n;
@@ -49,6 +70,39 @@ export function qualificationStat(db: Db, cfg: ResolvedConfig, endpointId: strin
     qualified: row.n >= cfg.qualification.min_trials && passRate >= threshold,
     ...wilson(passes, row.n),
   };
+}
+
+/** One synchronous aggregate-only snapshot. No handle or private result rows escape this scope. */
+export function withQualificationStats<T>(db: Db | null, work: (reader: QualificationStatReader) => T): T {
+  const rows = db === null ? [] : z.array(z.object({
+    endpointId: z.string().min(1), family: z.string().min(1), tier: TierNameSchema,
+    n: z.number().int().positive(), passes: z.number().int().nonnegative(),
+  }).strict().refine(row => row.passes <= row.n)).parse(db.prepare(
+    `SELECT endpoint_id AS endpointId, family, tier, COUNT(*) AS n, SUM(outcome='pass') AS passes
+     FROM qualification_results WHERE outcome != 'infra_error' GROUP BY endpoint_id, family, tier`,
+  ).all());
+  const counts = new Map<string, { n: number; passes: number }>();
+  for (const row of rows) for (const tier of TIER_NAMES.slice(0, TIER_NAMES.indexOf(row.tier) + 1)) {
+    const key = JSON.stringify([row.endpointId, row.family, tier]);
+    const count = counts.get(key) ?? { n: 0, passes: 0 };
+    count.n += row.n; count.passes += row.passes; counts.set(key, count);
+  }
+  let active = true;
+  const reader: QualificationStatReader = (cfg, endpointId, family, tier, threshold = cfg.qualification.pass_threshold) => {
+    if (!active) throw new Error("Qualification snapshot reader is no longer active");
+    validateQualificationStatQuery(endpointId, family, tier, threshold);
+    const count = counts.get(JSON.stringify([endpointId, family, tier]));
+    if (!count) return null;
+    const passRate = count.passes / count.n;
+    return { passRate, trials: count.n, passes: count.passes,
+      qualified: count.n >= cfg.qualification.min_trials && passRate >= threshold, ...wilson(count.passes, count.n) };
+  };
+  try {
+    const result = work(reader);
+    if (result !== null && (typeof result === "object" || typeof result === "function") && typeof (result as { then?: unknown }).then === "function")
+      throw new Error("Qualification snapshot callback must be synchronous");
+    return result;
+  } finally { active = false; }
 }
 
 export function qualificationLookup(db: Db, cfg: ResolvedConfig) {

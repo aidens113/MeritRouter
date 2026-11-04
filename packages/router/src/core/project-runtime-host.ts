@@ -16,9 +16,11 @@ import type { Catalog } from "../models/catalog.js";
 import type { ProviderRuntime } from "../providers/runtime.js";
 import { limitScopes } from "../providers/limits.js";
 import type { FetchLike } from "../providers/transport.js";
-import type { PaidSpend } from "../paid/spend.js";
-import { Brain } from "../brain/brain.js";
-import { BrainAccess } from "../brain/access.js";
+import { endpointPrice, type PaidSpend } from "../paid/spend.js";
+import { freeKeyOnly, isPaid } from "../routing/select.js";
+import { nativeSearchUse } from "../routing/native-search.js";
+import { Brain, type SharedBrainKnowledgePort } from "../brain/brain.js";
+import { BrainAccess, type ProjectBrainAccessOptions } from "../brain/access.js";
 import type { PromotionReviewPort } from "../brain/promotion.js";
 import { LabManager } from "../labs/lab.js";
 import { ProjectLabPortReservations } from "../labs/port-reservations.js";
@@ -28,6 +30,7 @@ import { ProjectRegistry } from "../projects/registry.js";
 import { projectLimits } from "../projects/schema.js";
 import { ProjectRuntimeRegistry, type ProjectRuntimeBundle, type ProjectRuntimeConstruction } from "../projects/runtime-registry.js";
 import { createProjectRuntimeServices } from "../projects/runtime-services.js";
+import { qualificationLookupFrom, qualificationStat, withQualificationStats, validateQualificationStatQuery, type QualificationStatReader } from "../qualification/stats.js";
 import { provisionProjectStore } from "../projects/store-provision.js";
 import { createCoordinationStoreIdentity, readProjectStoreRegistration, readStoreIdentity, retireProjectStoreRegistration, type ProjectStoreIdentity } from "../projects/store-identity.js";
 import { projectRuntimePaths, type ProjectRuntimePaths } from "../projects/runtime-paths.js";
@@ -116,6 +119,8 @@ function grantLimits(cfg: ResolvedConfig, slug: string): ExecutionGrantLimits {
 }
 
 export interface ProjectRuntimeHostOptions {
+  /** Shared only with the owning service, never with another installation instance. */
+  operations?: import("./service-operations.js").ServiceOperations;
   /** The installation's bound coordination store. */
   db: Db;
   cfg: ResolvedConfig;
@@ -131,6 +136,8 @@ export interface ProjectRuntimeHostOptions {
   webPage?: { transport?: PageTransport; resolve?: Resolver };
   labsMonitor: boolean;
   reviewer: () => PromotionReviewPort | null;
+  /** Read-only installation global knowledge; never supplies publication or project paths. */
+  sharedKnowledge?: SharedBrainKnowledgePort;
   /** A task of some project reached a new state. */
   onSettled(taskId: string): void;
 }
@@ -187,15 +194,30 @@ export class ProjectRuntimeHost {
     }
   }
 
-  /** Free-tier endpoints only: paid routes are not yet authorized for split projects. */
+  /** Re-resolved by the broker at reservation and dispatch; no request-supplied pricing authority. */
   private endpointAuthority(endpointId: string, keyRef: string | null): GlobalEndpointAuthority | null {
     const endpoint = this.o.catalog.get(endpointId);
-    if (!endpoint || endpoint.origin === "paid") return null;
+    if (!endpoint || endpoint.status !== "active" || !endpoint.enabled || !endpoint.available
+      || endpoint.route.kind !== "direct" || endpoint.route.model !== endpoint.gatewayModelId) return null;
     const providerId = endpoint.route.provider, provider = this.o.providers.provider(providerId);
     const credential = keyRef ? this.o.providers.credentials().get(keyRef) : null;
-    if (!provider || (keyRef && (!credential || credential.provider !== providerId || credential.billingClass !== "free_tier"))) return null;
-    return { endpointId, keyRef, provider: providerId, platform: providerId, enabled: provider.enabled && (credential?.enabled ?? true),
-      providerUsageScopes: credential ? limitScopes(provider, credential, { model: endpoint.route.model }).map(scope => scope.id) : [], paid: null };
+    if (!provider || (keyRef && (!credential || credential.provider !== providerId || credential.unusableReason !== null))) return null;
+    if (credential && !this.o.providers.keys.availability(provider, credential, this.o.providers.keys.get(credential.ref), { model: endpoint.route.model }).available) return null;
+    // The host cannot see the private request's web hint. Bound optional search conservatively
+    // for paid endpoints; free endpoints with charged search stay fail-closed under this DTO.
+    const search = nativeSearchUse(endpoint, this.o.cfg, { web: true, paidAllowed: true });
+    const paid = isPaid(endpoint);
+    if (!paid && search?.charged) return null;
+    if (credential && (paid ? credential.billingClass === "free_tier" : freeKeyOnly(endpoint) && credential.billingClass !== "free_tier")) return null;
+    const key = paid && credential ? this.o.spend.spendKey(credential) : null;
+    if (paid && (!this.o.cfg.paid.enabled || !key || !key.enabled)) return null;
+    const price = { ...endpointPrice(endpoint.pricing), ...(search ? { perSearch: search.usdPerSearch } : {}) };
+    if (paid && Object.values(price).some(value => value !== null && (!Number.isFinite(value) || value < 0))) return null;
+    if (paid && search?.charged && search.usdPerSearch === null) return null;
+    return { endpointId, keyRef, provider: providerId, platform: endpoint.providerId, enabled: provider.enabled && (credential?.enabled ?? true),
+      providerUsageScopes: credential ? limitScopes(provider, credential, { model: endpoint.route.model }).map(scope => scope.id) : [],
+      paid: key ? { price, maxSearches: search?.maxSearches ?? 0, monthlyCapUsd: key.monthlyCapUsd,
+        prepaidBalanceUsd: key.prepaidBalanceUsd, balanceCheckedAt: key.balanceCheckedAt } : null };
   }
 
   private build(input: ProjectRuntimeConstruction): ProjectRuntimeBundle {
@@ -205,6 +227,7 @@ export class ProjectRuntimeHost {
       bundle = createProjectRuntimeServices(input, {
         coordinationDb: o.db, coordinationConfig: o.cfg, catalog: o.catalog, health: this.health, direct: { providers: o.providers, spend: o.spend },
         grants: this.grants, broker: this.broker, owner: o.owner, now: o.now,
+        qualification: cfg => qualificationLookupFrom(this.qualificationStat, cfg),
         executionGrants: (local, request) => this.bindings.forProject(local.identity).refsForRequest(request.participants.map(p => p.lease)),
         privateServices: local => {
           const scope = (name: string) => { if (name !== slug) throw new TaskValidationError(`project ${name} is not served by the ${slug} runtime`); return local.cfg; };
@@ -212,7 +235,8 @@ export class ProjectRuntimeHost {
             portAuthority: new ProjectLabPortReservations(o.db, local.db, local.identity, { assertCurrent: input.assertCurrent, assertPinned: input.assertPinned ?? input.assertCurrent }, o.now) });
           const port = this.bindings.bindLocal(local, { providerSlots: new ProviderSlotAdmission(local.cfg, local.router, this.health.capacity, o.now),
             repositoryDigests: task => writerDigests(local.cfg, task.spec.writableRepository) });
-          const project = { identity: local.identity, assertRuntime: input.assertCurrent };
+          const project: ProjectBrainAccessOptions = { identity: local.identity, assertRuntime: input.assertCurrent,
+            authorizeHarnessRole: proof => { input.assertCurrent(); return bundle?.executor.authorizeHarnessRole(proof) === true; } };
           web = new WebAccess({ cfg: o.cfg, db: local.db, providers: o.providers, project: { ...project, usage: this.webUsage, backendState: this.webState },
             ...(o.webFetch ? { fetch: o.webFetch } : {}), ...(o.webPage ? { page: o.webPage } : {}),
             event: (taskId, type, data) => local.tasks.event(taskId, type, data), now: o.now });
@@ -222,7 +246,7 @@ export class ProjectRuntimeHost {
             coding: o.coding, supervisor: o.supervisor, services: null, onSettled: o.onSettled, taskLeases: port.taskLeases, web, labs: manager,
             // The project's own task Labs are drained in this process (`labs serve` supervises the installation's manager).
             ensureLabsSupervisor: () => manager.superviseTaskAttempts(),
-            brain: new Brain(local.cfg, local.db, o.now, { project, reviewer: o.reviewer }),
+            brain: new Brain(local.cfg, local.db, o.now, { project: { ...project, ...(o.sharedKnowledge ? { sharedKnowledge: o.sharedKnowledge } : {}) }, reviewer: o.reviewer, ...(o.operations ? { operation: <T>(work: () => Promise<T>, promotion?: boolean) => o.operations!.run(slug, work, promotion), producerOperation: <T>(work: () => Promise<T>) => o.operations!.runRoot(slug, work) } : {}) }),
             access: new BrainAccess(local.db, local.cfg, o.now, project),
             servicesForLease: lease => this.servicesForLease(bundle, local, manager, lease),
           };
@@ -271,6 +295,34 @@ export class ProjectRuntimeHost {
   /** Whether a project has a live project-local store. */
   registered(slug: string): boolean {
     return this.registrations().some(row => row.slug === slug);
+  }
+
+  /** Existing registered qualification evidence only; an ordinary route never provisions it. */
+  readonly qualificationStat: QualificationStatReader = (cfg, endpointId, family, tier, threshold) => {
+    validateQualificationStatQuery(endpointId, family, tier, threshold ?? cfg.qualification.pass_threshold);
+    const rows = z.array(z.object({ state: z.enum(["registered", "migrating", "retired"]) }).strict()).parse(
+      this.o.db.prepare("SELECT state FROM project_store_registrations WHERE slug=?").all(QUALIFICATION_PROJECT));
+    if (rows.length === 0) return null;
+    if (rows.length !== 1 || rows[0]!.state !== "registered") throw new Error("Qualification store registration is unavailable or ambiguous");
+    const bundle = this.registry.forSlug(QUALIFICATION_PROJECT);
+    bundle.assertCurrent();
+    return qualificationStat(bundle.db, cfg, endpointId, family, tier, threshold);
+  };
+
+  /** Pin an existing reserved store only for this synchronous aggregate inspection. */
+  withQualificationStats<T>(work: (reader: QualificationStatReader) => T): T {
+    const registration = () => z.array(z.object({ state: z.enum(["registered", "migrating", "retired"]) }).strict()).parse(
+      this.o.db.prepare("SELECT state FROM project_store_registrations WHERE slug=?").all(QUALIFICATION_PROJECT));
+    const rows = registration();
+    if (rows.length === 0) {
+      try { return withQualificationStats(null, work); }
+      finally { if (registration().length !== 0) throw new Error("Qualification store registration changed during inspection"); }
+    }
+    if (rows.length !== 1 || rows[0]!.state !== "registered") throw new Error("Qualification store registration is unavailable or ambiguous");
+    const bundle = this.registry.forSlug(QUALIFICATION_PROJECT);
+    bundle.assertCurrent();
+    try { return withQualificationStats(bundle.db, work); }
+    finally { bundle.assertCurrent(); }
   }
 
   /** The project's runtime; throws when it has no live store or the store cannot be opened. */
@@ -396,6 +448,7 @@ export class ProjectRuntimeHost {
   reloadConfig(): void { for (const labs of this.labs.values()) labs.reloadConfig(); }
 
   async close(): Promise<void> {
+    this.o.operations?.seal();
     if (this.recoveryTimer) clearInterval(this.recoveryTimer);
     this.recoveryTimer = null;
     await this.scheduler.stop();
@@ -407,6 +460,7 @@ export class ProjectRuntimeHost {
     await Promise.allSettled([...this.labs.values()].map(labs => labs.close()));
     this.labs.clear();
     this.webs.clear();
+    await this.o.operations?.drain();
     await this.registry.close();
   }
 }

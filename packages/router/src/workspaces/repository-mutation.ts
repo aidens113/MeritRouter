@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import { lstat, open, readFile, realpath, unlink } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
@@ -6,6 +5,7 @@ import { assertNoPendingCommitPublication } from "../attribution/selected-commit
 import { git } from "./git.js";
 import { EXACT_ROOT_REV_PARSE, EnclosingRepositoryError, parseExactRepositoryRoot } from "./repository-root.js";
 import { assertNoActiveRepositoryCommand, assertRepositoryCommandPermitScope, type RepositoryCommandPermits } from "./repository-command.js";
+import { newRepositoryMutationOwner, RepositoryMutationOwnerSchema, repositoryMutationRecoveryInProgress } from "./repository-mutation-recovery.js";
 
 declare const mutationBrand: unique symbol;
 /** Host-only scope; object copies, serialized values and expired scopes cannot authorize writes. */
@@ -27,9 +27,17 @@ interface Owner { repo: string; gitDirectory: string; commonDirectory: string }
 interface Lease { active: boolean; owners: Set<string>; pending: Set<Promise<unknown>>; capability: RepositoryMutationCapability }
 interface OwnedLock { file: string; directory: string; content: Buffer; handle: Awaited<ReturnType<typeof open>>; dev: number; ino: number }
 const leases = new WeakMap<object, Lease>();
+// Only this module's still-open exact lock handle can establish local contention.
+// A same-PID JSON marker, serialized error or copied error is not that authority.
+const activeLocks = new Map<string, OwnedLock>();
+const localContentions = new WeakSet<RepositoryMutationError>();
+export function isLocalRepositoryMutationContention(error: unknown): boolean {
+  return error instanceof RepositoryMutationError && localContentions.has(error);
+}
 const repositories = z.array(z.string().min(1).max(4096).refine(value => !value.includes("\0"))).min(1).max(128);
-const optionsSchema = z.object({ capability: z.unknown().optional(), command: z.unknown().optional(), timeoutMs: z.number().int().min(50).max(60000).default(10000) }).strict();
-const lockRecord = z.object({ version: z.literal(1), token: z.string().regex(/^[a-f0-9]{32}$/), pid: z.number().int().positive() }).strict();
+const expectedDirectories = repositories.refine(values => values.every(value => path.isAbsolute(value) && path.resolve(value) === value), "Expected common directories must be canonical absolute physical paths");
+const optionsSchema = z.object({ capability: z.unknown().optional(), command: z.unknown().optional(), expectedCommonDirectories: expectedDirectories.optional(), timeoutMs: z.number().int().min(50).max(60000).default(10000) }).strict();
+const lockRecord = RepositoryMutationOwnerSchema;
 const key = (value: string) => process.platform === "win32" ? value.toLowerCase() : value;
 
 async function directoryChain(directory: string): Promise<void> {
@@ -62,6 +70,13 @@ async function resolveOwners(input: string[]): Promise<Owner[]> {
   }
   return resolved;
 }
+function assertExpectedOwners(owners: Owner[], expected?: string[]): void {
+  if (expected === undefined) return;
+  // These strings pin authority established by an earlier physical proof. Resolving them
+  // again through realpath would let a replacement link redefine the approved owner.
+  const pinned = new Set(expected.map(key)), actual = new Set(owners.map(owner => key(owner.commonDirectory)));
+  if (pinned.size !== actual.size || [...actual].some(directory => !pinned.has(directory))) throw new RepositoryMutationError("ownership_changed", "Repository mutation owner differs from the pinned common directories");
+}
 /** `resolved` is true only when `owners` were resolved after the lock that fences them was held. */
 async function validateOwners(owners: Owner[], command?: RepositoryCommandPermits, resolved = false): Promise<void> {
   await assertRepositoryCommandPermitScope(owners.map(owner => owner.gitDirectory), command);
@@ -82,25 +97,58 @@ async function acquire(directory: string, deadline: number): Promise<OwnedLock> 
   const file = path.join(directory, "meritrouter-mutation.lock");
   for (;;) {
     await directoryChain(directory);
+    if (await repositoryMutationRecoveryInProgress(directory)) {
+      if (Date.now() >= deadline) throw new RepositoryMutationError("lock_busy", "Repository mutation recovery is in progress; guard retained");
+      await new Promise(resolve => setTimeout(resolve, 25)); continue;
+    }
     let handle: Awaited<ReturnType<typeof open>>;
     try { handle = await open(file, "wx", 0o600); }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      if (Date.now() >= deadline) throw new RepositoryMutationError("lock_busy", "Repository mutation lock is busy; foreign or stale locks are preserved");
+      if (Date.now() >= deadline) throw await contentionFailure(directory);
       await new Promise(resolve => setTimeout(resolve, 25)); continue;
     }
-    const content = Buffer.from(JSON.stringify(lockRecord.parse({ version: 1, token: randomBytes(16).toString("hex"), pid: process.pid })));
+    const content = Buffer.from(JSON.stringify(newRepositoryMutationOwner(directory)));
     const stat = await handle.stat();
     const owned = { file, directory, content, handle, dev: stat.dev, ino: stat.ino };
-    try { await handle.writeFile(content); await handle.sync(); return owned; }
+    try {
+      await handle.writeFile(content); await handle.sync();
+      if (await repositoryMutationRecoveryInProgress(directory)) {
+        throw new RepositoryMutationError("lock_busy", "Repository mutation recovery is in progress; guard retained");
+      }
+      activeLocks.set(key(directory), owned);
+      return owned;
+    }
     catch (error) { await release(owned); throw error; }
   }
 }
+/** Classify an observation, never acquire a capability or retire another owner's marker. */
+async function contentionFailure(directory: string): Promise<RepositoryMutationError> {
+  const unknown = () => new RepositoryMutationError("lock_busy", "Repository mutation lock is busy; foreign or stale locks are preserved");
+  const owned = activeLocks.get(key(directory));
+  if (!owned) return unknown();
+  try {
+    if (await repositoryMutationRecoveryInProgress(directory)) return unknown();
+    const before = await lstat(owned.file), handle = await owned.handle.stat();
+    const matches = (stat: typeof before) => stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1 && stat.dev === owned.dev && stat.ino === owned.ino && stat.size === owned.content.length;
+    if (!matches(before) || !matches(handle)) return unknown();
+    const content = await readFile(owned.file), owner = lockRecord.parse(JSON.parse(content.toString("utf8")));
+    if (!content.equals(owned.content) || owner.version !== 2 || owner.pid !== process.pid || key(owner.commonDirectory) !== key(directory)) return unknown();
+    const after = await lstat(owned.file);
+    if (!matches(after) || await repositoryMutationRecoveryInProgress(directory)) return unknown();
+    // No await after this identity check: release revokes the registry synchronously.
+    if (activeLocks.get(key(directory)) !== owned) return unknown();
+    const error = new RepositoryMutationError("lock_busy", `Repository mutation live local owner ${owner.pid}/${owner.token} holds ${directory}; bounded admission deferred without taking its lock`);
+    localContentions.add(error);
+    return error;
+  } catch { return unknown(); }
+}
 async function release(owned: OwnedLock): Promise<void> {
+  if (activeLocks.get(key(owned.directory)) === owned) activeLocks.delete(key(owned.directory));
   try {
     await directoryChain(owned.directory);
     const stat = await lstat(owned.file);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.dev !== owned.dev || stat.ino !== owned.ino || stat.size > 1024) throw new RepositoryMutationError("ownership_changed", "Repository mutation lock ownership changed; replacement is preserved");
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.dev !== owned.dev || stat.ino !== owned.ino || stat.size > 32768) throw new RepositoryMutationError("ownership_changed", "Repository mutation lock ownership changed; replacement is preserved");
     const content = await readFile(owned.file);
     try { lockRecord.parse(JSON.parse(content.toString("utf8"))); }
     catch { throw new RepositoryMutationError("ownership_changed", "Repository mutation lock record changed; replacement is preserved"); }
@@ -120,7 +168,13 @@ function activeLease(capability: RepositoryMutationCapability): Lease {
   return lease;
 }
 
-export interface RepositoryMutationOptions { capability?: RepositoryMutationCapability; command?: RepositoryCommandPermits; timeoutMs?: number }
+export interface RepositoryMutationOptions {
+  capability?: RepositoryMutationCapability;
+  command?: RepositoryCommandPermits;
+  /** Previously proven canonical physical owners; compared lexically before any lock acquisition. */
+  expectedCommonDirectories?: string[];
+  timeoutMs?: number;
+}
 /**
  * Lock order: sorted physical common Git owners, then native index/ref locks inside action.
  * Never call while holding a SQLite transaction. Locks are cooperative, never stolen by age.
@@ -137,6 +191,7 @@ export function withRepositoryMutation<T>(input: string[], action: (capability: 
       // The enclosing scope already holds every common-owner lock, so this resolution is under
       // lock; a second resolution immediately after it cannot observe a different admission.
       const owners = await resolveOwners(requested);
+      assertExpectedOwners(owners, parsed.expectedCommonDirectories);
       activeLease(lease.capability);
       if (owners.some(owner => !lease.owners.has(key(owner.commonDirectory)))) throw new RepositoryMutationError("invalid_capability", "Repository mutation capability cannot widen its owner scope");
       await validateOwners(owners, parsed.command as RepositoryCommandPermits | undefined, true); activeLease(lease.capability);
@@ -148,6 +203,7 @@ export function withRepositoryMutation<T>(input: string[], action: (capability: 
   }
   return (async () => {
     const owners = await resolveOwners(requested);
+    assertExpectedOwners(owners, parsed.expectedCommonDirectories);
     const directories = [...new Map(owners.map(owner => [key(owner.commonDirectory), owner.commonDirectory])).values()].sort((a, b) => key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0);
     const locks: OwnedLock[] = [], deadline = Date.now() + parsed.timeoutMs;
     try {

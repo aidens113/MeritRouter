@@ -8,6 +8,7 @@ import { extraRequests, grantOf } from "./job-pool.js";
 import { jobPool, protectedValidationRequests } from "./budget-requests.js";
 import { projectTaskPaidSpend } from "./project-request-totals.js";
 import type { ReserveRequestDTO } from "./request-ledger.js";
+import { assertJobPaidBudget } from "./job-paid-budget.js";
 
 const cap = (requested: number | null, policy: number | null) => requested === null ? policy : policy === null ? requested : Math.min(requested, policy);
 const addRequests = (base: number, extra: number) => base === UNLIMITED_REQUESTS ? base : base + extra;
@@ -20,6 +21,8 @@ export function assertProjectRequestAuthority(admission: Admission, cfg: Resolve
   if (input.paid && input.paid.key.ref !== input.keyRef) throw new Error("Private paid key reference disagrees with the request binding");
   const execution = z.object({ status: z.string() }).strict().optional().parse(admission.db.prepare("SELECT status FROM executions WHERE id=?").get(input.executionId));
   if (!execution || execution.status !== "running") throw new Error("Project execution is not active");
+  if (input.paid) assertJobPaidBudget(admission.db, identity.slug, input.participants,
+    paidOverride ?? input.paid.worstCaseUsd, alreadyCounted, "project");
   let dispatchNotAfter = Number.MAX_SAFE_INTEGER;
   const extra = alreadyCounted ? 0 : 1;
   for (const part of input.participants) {
@@ -46,7 +49,7 @@ export function assertProjectRequestAuthority(admission: Admission, cfg: Resolve
     const paidCap = cap(part.budget.maxPaidUsd, configured.maxPaidUsd), paid = paidOverride ?? input.paid?.worstCaseUsd ?? 0;
     // On bind/dispatch, preparations or charge projections already include the request's held amount.
     const paidUsed = projectTaskPaidSpend(admission.db, part.taskId);
-    if (paidCap !== null && paidUsed + (alreadyCounted ? 0 : paid / input.participants.length) > paidCap)
+    if (input.paid && paidCap !== null && paidUsed + (alreadyCounted ? 0 : paid / input.participants.length) > paidCap)
       throw new AdmissionDenied("paid_budget_exhausted", "Project participant paid budget exhausted", undefined, part.taskId);
     const pool = jobPool(admission.db, cfg, part.taskId), protectedRequests = protectedValidationRequests(admission.db, cfg, part.taskId);
     if (pool?.cap !== null && pool && protectedRequests > 0 && pool.cap - pool.used - pool.held - extra < protectedRequests)

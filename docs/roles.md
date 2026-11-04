@@ -70,17 +70,19 @@ agent should change the setting only on an explicit user request.
 The supervisor plans, writes briefs, judges evidence, and resolves conflicts. It needs the
 strongest reasoning and the most reliable tool use you can afford, and a large context window.
 
-- Supervisor routing defaults to `supervisor.routing.minimum_quality: best_available`.
-  It prefers current `supervisor.routing.quality_evidence` across eligible providers; otherwise
-  it selects the strongest eligible route using qualification and model size as heuristics,
-  explicitly reporting quality as unverified. Normal supervisor size floors apply to unverified
-  candidates. This requires no manually supplied benchmark scores to start a delivery.
-  Set `minimum_quality: frontier_or_qualified_supervisor` to require reviewed evidence.
-  Strict qualification needs current, sourced evidence classified `frontier` or `qualified_supervisor`,
-  confidence at least 0.75, and scores at least 0.75 for planning, architecture, supervision,
-  integration, review and product judgment. Image/video inputs also require that visual score.
-  Eligible evidence is ranked by confidence-weighted mean capability. A vendor name, parameter
-  count, existing key or model pin does not qualify a supervisor. See the
+- Supervisor routing defaults to `supervisor.routing.minimum_quality: ranked_capable`.
+  With no external ranking policy, missing evidence starts a bounded independently graded
+  local supervisor decision evaluation; pending submissions retain their original intent for
+  MCP/SDK resume. Only its measured aggregate observations enter ranking, and infrastructure
+  failures never become fabricated zero scores. This limited trial does not prove universal
+  frontier capability or successful product delivery.
+  A ranking policy specifies one comparable source, suite version, metric scale and explicit
+  capability floors. Current evidence must match the exact endpoint/provider/model route.
+  Only measured candidates meeting every floor are eligible; the primary measured score ranks
+  them within the permitted free/paid class. Equal scores do not establish superiority;
+  availability and explicit preferences then endpoint identity resolve ties without size inference.
+  Image/video supervision needs its own measured visual metric and floor. A vendor name,
+  parameter count, existing key or model pin does not qualify a supervisor. See the
   [quality evidence setup](setup.md#supervisor-quality-evidence-and-strict-routing).
 - `supervisor.endpoints` can restrict the endpoint pool; it cannot bypass the quality floor.
   Under strict policy, empty/expired evidence blocks execution with
@@ -91,6 +93,17 @@ strongest reasoning and the most reliable tool use you can afford, and a large c
 - Default delivery jobs have a 600-request aggregate envelope, with protected supervisor and
   validation reserves; profile/task/verification caps can reduce it. Waiting on workers costs
   no model requests. Request-count grants never increase paid authorization or dollar caps.
+- New supervisor jobs use `supervisor.default_max_paid_usd: 500` when no paid cap was supplied.
+  Explicit caps, including zero, win. The ceiling covers the job and all descendants;
+  nested jobs and workers cannot create another allowance or exceed a lower ancestor cap.
+  Settled charges, outstanding reservations and uncertain liabilities retain their share of
+  that budget. Credentials, real credit headroom and global/project/key limits still apply.
+  MCP reports high measured job-tree credit usage to FINAL, with settled spend separated from
+  outstanding reservations and unknown prices. FINAL should review progress and waste as
+  thresholds are crossed; notices never change budgets or permissions.
+- Explicit legacy `best_available` and `frontier_or_qualified_supervisor` policies remain
+  compatibility choices, with their previous unverified/legacy-evidence behavior. Ranked
+  routing never falls back to those policies or invents missing capability scores.
 - Presets provide profiles and paid policies, not quality evidence. A free-only preset needs
   an eligible free supervisor; hybrid/paid configurations need authorized keys and current
   prices. Explicit strict policy additionally requires evidence for selected endpoints.

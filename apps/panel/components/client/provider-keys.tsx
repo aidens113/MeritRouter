@@ -96,7 +96,7 @@ function ExtrasFields({ value, onChange, billing }: { value: Extras; onChange: (
             <Field label="Monthly cap (USD)">
               <input value={value.cap} onChange={(e) => onChange({ ...value, cap: e.target.value })} inputMode="decimal" className="field tabular mt-1" placeholder="no cap" />
             </Field>
-            <Field label="Prepaid balance (USD)">
+            <Field label="Credit balance snapshot (USD)" help="Enter the balance from your provider, including promotional credits. This is a manual snapshot; the remaining estimate subtracts only spending recorded by MeritRouter.">
               <input value={value.balance} onChange={(e) => onChange({ ...value, balance: e.target.value })} inputMode="decimal" className="field tabular mt-1" placeholder="not tracked" />
             </Field>
           </>
@@ -524,9 +524,9 @@ export function KeyRow({ k, now }: { k: KeyView; now: number }) {
           <div className="text-ink-3">{lim ?? "limits from headers"}</div>
           {paid ? (
             <div className="tabular text-ink-2">
-              {usd(k.spent30dUsd)} in 30 days
+              {usd(k.spent30dUsd)} spent through MeritRouter (30 days)
               {k.monthlyCapUsd !== null ? <> · {usd(k.remainingCapUsd)} of {usd(k.monthlyCapUsd)} cap left</> : null}
-              {k.prepaidBalanceUsd !== null ? <> · balance {usd(k.remainingBalanceUsd)}</> : null}
+              {k.prepaidBalanceUsd !== null ? <> · estimated credits {usd(k.remainingBalanceUsd)} (manual snapshot)</> : k.billingClass === "paid_credits" || k.billingClass === "trial" ? <> · credit balance unknown</> : null}
             </div>
           ) : null}
         </div>

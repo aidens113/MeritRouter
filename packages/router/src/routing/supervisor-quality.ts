@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { assessSupervisorRanking, SupervisorRankingEvidenceSchema, SupervisorRankingPolicySchema, type SupervisorEndpointRoute } from "./supervisor-ranking.js";
+import { LOCAL_SUPERVISOR_RANKING_POLICY } from "../qualification/supervisor-suite.js";
 
 const score = z.number().min(0).max(1);
 export const SupervisorQualityEvidenceSchema = z.object({
@@ -12,15 +14,26 @@ export const SupervisorQualityEvidenceSchema = z.object({
 });
 export const SupervisorQualityRoutingSchema = z.object({
   strategy: z.literal("highest_eligible_quality").default("highest_eligible_quality"),
-  minimum_quality: z.enum(["best_available", "frontier_or_qualified_supervisor"]).default("best_available"),
+  minimum_quality: z.enum(["ranked_capable", "best_available", "frontier_or_qualified_supervisor"]).default("ranked_capable"),
   quality_evidence: z.array(SupervisorQualityEvidenceSchema).max(10_000).default([]),
+  ranking_policy: SupervisorRankingPolicySchema.nullable().default(null),
+  ranking_evidence: z.array(SupervisorRankingEvidenceSchema).max(10_000).default([]),
 }).strict().prefault({});
 export type SupervisorQualityEvidence = z.infer<typeof SupervisorQualityEvidenceSchema>;
 export type SupervisorQualityRouting = z.infer<typeof SupervisorQualityRoutingSchema>;
 
-export interface SupervisorQualityAssessment { eligible: boolean; score: number | null; source: string | null; classification: SupervisorQualityEvidence["classification"] | null; reason: string }
+// Host-owned aggregate port. It never opens a private project store or changes saved policy.
+const observedEvidence = new WeakMap<SupervisorQualityRouting, () => unknown[]>();
+export function bindSupervisorEvidence(policy: SupervisorQualityRouting, read: () => unknown[]): void { observedEvidence.set(policy, read); }
+
+export interface SupervisorQualityAssessment { eligible: boolean; score: number | null; source: string | null; classification: SupervisorQualityEvidence["classification"] | "benchmark_qualified_supervisor" | null; reason: string }
 /** Configured provenance is reviewed/user-owned; vendor names and parameter size are never inferred quality. */
-export function assessSupervisorQuality(endpointId: string, policy: SupervisorQualityRouting, now: Date, visualRequired = false): SupervisorQualityAssessment {
+export function assessSupervisorQuality(endpointId: string, policy: SupervisorQualityRouting, now: Date, visualRequired = false, route?: SupervisorEndpointRoute): SupervisorQualityAssessment {
+  if (policy.minimum_quality === "ranked_capable") {
+    const local = observedEvidence.get(policy)?.() ?? [];
+    return assessSupervisorRanking(endpointId, policy.ranking_policy ?? LOCAL_SUPERVISOR_RANKING_POLICY,
+      policy.ranking_policy ? policy.ranking_evidence : [...policy.ranking_evidence, ...local], now, route, visualRequired);
+  }
   const current = policy.quality_evidence.filter(e => e.endpointId === endpointId && Date.parse(e.checkedAt) <= now.getTime() && Date.parse(e.expiresAt) > now.getTime());
   const scored = current.map(e => {
     const capabilities = [e.scores.planning, e.scores.architecture, e.scores.supervision, e.scores.integration, e.scores.review, e.scores.product, ...(visualRequired ? [e.scores.visual ?? 0] : [])];

@@ -52,6 +52,7 @@ import { productCandidateDigest } from "../verification/product-evidence.js";
 import { z } from "zod";
 import { memoryContext, refreshMemoryMessages } from "../context/memory.js";
 import { assertSupervisorTool, supervisorToolPolicy } from "../harness/supervisor-lifecycle.js";
+import { blockedJobRunPolicy } from "../storage/blocked-job-continuation.js";
 
 interface Finish {
   status: "completed" | "blocked";
@@ -266,6 +267,7 @@ function mergeNote(i: MergeItem): string {
  */
 export class SupervisorRunner implements CodingRunner {
   async run(ctx: RunContext): Promise<RunOutcome> {
+    const blockedContinuation = await blockedJobRunPolicy(ctx);
     const spec = ctx.spec;
     const writeScope = taskWriteScope(spec, ctx.tasks);
     const label = spec.label ?? ctx.taskId;
@@ -449,6 +451,7 @@ export class SupervisorRunner implements CodingRunner {
       messages = ctx.resume.plan.messages;
       resume = {
         plan: ctx.resume.plan,
+        ...(blockedContinuation?.skipSettledTerminal ? { settledTerminalPolicy: "continue_blocked_job" as const } : {}),
         actor: state.actor,
         pointer,
         external: (ref) => questionState(ctx, ref),
@@ -475,7 +478,7 @@ export class SupervisorRunner implements CodingRunner {
       messages = [
         {
           role: "system",
-          content: `${charterFor(ctx.cfg, "supervisor")}\n\n## This job\n- Job id: ${ctx.taskId}\n- Working document: brain:${brain?.workingDoc ?? "(brain disabled)"}\n- Repositories:\n${repoNotes || "- none writable (read-only job)"}\n- Model request budget: ${requestBudget} (await_tasks costs none). It is the job's pool: each task you delegate holds its budget (max_requests, default ${ctx.cfg.team.default_task_requests ?? "its tier's cap"}) from it while open, and approved requests for more come out of it\n- ${ctx.cfg.supervisor.implementation === "delegate" ? `Implementation: delegate. Your edit tools change only coordination files (${ctx.cfg.supervisor.coordination_paths.join(", ")}, files your briefs name in shared_files, and files of an integration conflict you fix); delegate every other change, and re-delegate when a worker fails or runs out` : "Implementation: allowed. You may edit files in your integration worktree, but prefer delegating"}\n- Tasks of this job running at once (team.max_agents): ${maxAgentsPerJob(ctx.cfg)}; more wait queued${subNote}${boundedNote}\n\nEnd with finish_job.`,
+          content: `${charterFor(ctx.cfg, "supervisor")}\n\n## This job\n- Job id: ${ctx.taskId}\n- Working document: brain:${brain?.workingDoc ?? "(brain disabled)"}\n- Repositories:\n${repoNotes || "- none writable (read-only job)"}\n- Model request budget: ${requestBudget} (await_tasks costs none). It is the job's pool: each task you delegate holds its budget (max_requests, default ${ctx.cfg.team.default_task_requests ?? "its canonical execution/review/repair allocation"}) from it while open, and approved requests for more come out of it\n- ${ctx.cfg.supervisor.implementation === "delegate" ? `Implementation: delegate. Your edit tools change only coordination files (${ctx.cfg.supervisor.coordination_paths.join(", ")}, files your briefs name in shared_files, and files of an integration conflict you fix); delegate every other change, and re-delegate when a worker fails or runs out` : "Implementation: allowed. You may edit files in your integration worktree, but prefer delegating"}\n- Tasks of this job running at once (team.max_agents): ${maxAgentsPerJob(ctx.cfg)}; more wait queued${subNote}${boundedNote}\n\nEnd with finish_job.`,
         },
         {
           role: "user",
@@ -490,7 +493,11 @@ export class SupervisorRunner implements CodingRunner {
 
     const maxTokens = ctx.profile.max_output_tokens;
     const memoryOptions = { tools: [...availableTools(tools, env).map(tool => tool.def), terminal.def], outputTokens: maxTokens, reservedTokens: 1000 };
-    if (ctx.resume) messages = await refreshMemoryMessages(env, messages, memoryOptions);
+    if (ctx.resume) {
+      messages = await refreshMemoryMessages(env, messages, memoryOptions);
+      // Append current host facts; retained provider-signed history stays untouched.
+      messages.push({ role: "user", content: `Current harness contract for this resumed run:\n${harnessV2StartupContext(env)}\nWorker max_requests is a TOTAL allocation including mandatory review; use plan_work dispatch:false for a provisional execution/review forecast before assigning work. Budget execution for setup, reads, edits, checks and a valid final report. Preserve review/validation reserves and report repeated no-progress repairs to FINAL.` });
+    }
     else { const memory = await memoryContext(env, { messages, ...memoryOptions }); if (memory) messages.push({ role: "user", content: memory }); }
     const limits = planLimits(ctx.plan, ctx.cfg.routing.max_endpoint_fallbacks);
     const inputBudget = Math.max(4000, limits.contextLimitTokens - maxTokens - estimateTokens([], tools.map((t) => t.def)) - 1000);

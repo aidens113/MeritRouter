@@ -1,3 +1,5 @@
+import { currentSupervisorAuthority } from "../core/supervisor-authority.js";
+import { assertSupervisorCancelUnprotected } from "./supervisor-cancel-protection.js";
 import { StoredTaskDTOSchema } from "./task-queue.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -218,9 +220,13 @@ export class SqliteTaskLeases implements TaskLeases {
         if (!input.actorLease)
           throw new Error("supervisor cancellation requires its captured lease");
         const actor = this.owned(input.actorLease, now, scopes).task;
-        if (!actor || actor.row.project_id !== input.project || (actor.row.deadline_at !== null && actor.row.deadline_at <= now) || actor.row.cancel_requested || this.cfg.profiles[actor.spec.profile]?.mode !== "supervisor")
+        if (!actor || actor.row.project_id !== input.project || (actor.row.deadline_at !== null && actor.row.deadline_at <= now) || actor.row.cancel_requested || !currentSupervisorAuthority(this.tasks.db, this.cfg, input.actorLease, now))
           throw new Error("supervisor cancellation authority lost");
-        for (const target of input.targets) {
+        const matching = input.targets.filter(target => {
+          const task = this.read(target.taskId);
+          return task && task.row.lease_incarnation === target.incarnation && task.row.run_count === target.runCount;
+        });
+        for (const target of matching) {
           let task = this.read(target.taskId), found = false;
           const seen = new Set<string>();
           while (task?.spec.parentTaskId && !seen.has(task.row.id)) {
@@ -236,6 +242,9 @@ export class SqliteTaskLeases implements TaskLeases {
           if (!found)
             throw new Error("supervisor cancellation is outside its task ancestry");
         }
+        // Every matching subtree is checked before the first supplied target is changed.
+        // Stale snapshots remain per-target unknown outcomes, never authority over new runs.
+        assertSupervisorCancelUnprotected(this.tasks.db, this.cfg, input.project, matching.map(target => target.taskId), now);
       }
       const affected: LeaseReceipt["affected"] = [];
       for (const target of input.targets) {

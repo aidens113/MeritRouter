@@ -15,7 +15,7 @@ const config = path.join(demo, "meritrouter.config.yaml");
 const cfg = loadConfig(config);
 assert(path.resolve(cfg.storageDir).startsWith(demo + path.sep));
 assert(path.resolve(path.dirname(config), cfg.brain.path).startsWith(demo + path.sep), "Demo brain must stay in .demo");
-const sy = new MeritRouter(cfg, { worker: false });
+const sy = new MeritRouter(cfg, { panelLifecycle: "passive", worker: false });
 for (const project of sy.projects.list()) for (const repo of Object.values(project.repositoryPaths)) assert(path.resolve(repo.path).startsWith(demo + path.sep), "Demo repositories must stay in .demo");
 const modelRequestsBefore = sy.db.prepare("SELECT COUNT(*) AS n FROM model_requests").get().n;
 const routerCli = path.resolve(app, "../../packages/router/dist/cli.js");

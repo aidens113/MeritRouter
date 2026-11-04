@@ -542,8 +542,22 @@ export type BrainConfig = z.infer<typeof BrainConfigSchema>;
 export const SupervisorConfigSchema = z
   .object({
     routing: SupervisorQualityRoutingSchema.prefault({}),
+    /** New supervisor job's shared paid ceiling when omitted; explicit caps, including zero, win. */
+    default_max_paid_usd: z.number().finite().min(0).default(500),
+    /** Inform FINAL about measured job-tree exposure; these notices never change spending authority. */
+    credit_usage_alerts: z.object({
+      enabled: z.boolean().default(true),
+      usd_thresholds: z.array(z.number().finite().positive()).max(32)
+        .refine(values => values.every((value, i) => i === 0 || value > values[i - 1]!), "Dollar thresholds must be strictly increasing")
+        .default([10, 25, 50, 100, 250, 500]),
+      cap_fraction_thresholds: z.array(z.number().finite().positive().max(1)).max(16)
+        .refine(values => values.every((value, i) => i === 0 || value > values[i - 1]!), "Cap fractions must be strictly increasing")
+        .default([0.5, 0.8, 0.95]),
+    }).strict().prefault({}),
     delivery_budget: z.object({
       total_requests: z.number().int().positive().default(600),
+      /** Smaller capped jobs scale nominal reserves; fixed keeps absolute configured counts. */
+      reserve_mode: z.enum(["proportional", "fixed"]).default("proportional"),
       supervisor_reserve_requests: z.number().int().min(0).default(80),
       validation_reserve_requests: z.number().int().min(0).default(80),
       extension_requests: z.number().int().positive().default(200),

@@ -106,7 +106,7 @@ export function makeEnv(opts: { config?: Record<string, unknown>; endpoints?: un
   const supervisor = raw.supervisor as Record<string, unknown> | undefined;
   if (!supervisor?.delivery_budget) raw.supervisor = {...supervisor,delivery_budget:{supervisor_reserve_requests:0,validation_reserve_requests:0}};
   if (!supervisor?.routing) {
-    raw.supervisor = { ...(raw.supervisor as Record<string,unknown>), routing: { quality_evidence: (opts.endpoints ?? [endpoint()]).map(value => {
+    raw.supervisor = { ...(raw.supervisor as Record<string,unknown>), routing: { minimum_quality: "frontier_or_qualified_supervisor", quality_evidence: (opts.endpoints ?? [endpoint()]).map(value => {
       const model = value as {id: string};
       return {schemaVersion:1,endpointId:model.id,source:"test-fixture:fake-supervisor-evaluation",checkedAt:new Date(Date.now()-60_000).toISOString(),expiresAt:new Date(Date.now()+86_400_000).toISOString(),classification:"qualified_supervisor",confidence:1,trials:10,scores:{planning:1,architecture:1,supervision:1,integration:1,review:1,product:1,visual:1}};
     }) } };

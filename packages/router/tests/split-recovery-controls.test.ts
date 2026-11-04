@@ -82,7 +82,8 @@ it("recovers an expired running split task with an interrupted session even when
   const client = new ScriptedClient(() => reply(null, { toolCalls: [{ id: "submit", type: "function", function: { name: "submit_result", arguments: JSON.stringify(goodOutput(1, "inline")) } }] }));
   const worker = track(open(env, client, { worker: true, pollIntervalMs: 25 }));
   const done = await worker.awaitResults([expired.id], { timeoutSeconds: 12, project: "alpha" });
-  expect(done.timedOut, JSON.stringify(worker.getStatus([expired.id], "alpha"))).toBe(false);
+  expect(done.timedOut, JSON.stringify({ tasks: worker.getStatus([expired.id], "alpha"), transportRequests: client.requests.length,
+    sessionEvents: worker.projectStores("alpha").sessions?.events(expired.sessionId, { limit: 1000 })?.events.map(event => ({ seq: event.seq, type: event.type })) })).toBe(false);
   expect(done.completed).toHaveLength(1);
   expect(client.requests).toHaveLength(1);
   const alpha = worker.projectStores("alpha"), beta = worker.projectStores("beta");

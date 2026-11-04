@@ -10,6 +10,14 @@ export const ParamConfidenceSchema = z.enum(["exact", "agreed", "heuristic", "un
 export const EndpointStatusSchema = z.enum(["active", "pending_confirmation", "disabled", "removed"]);
 export type EndpointStatus = z.infer<typeof EndpointStatusSchema>;
 
+/** Native model-list observations, bound to their actual API route rather than a model name. */
+export const AnthropicModelProtocolSchema = z.object({
+  api: z.literal("anthropic"), provider: z.string().min(1), baseUrl: z.url(), model: z.string().min(1),
+  thinking: z.object({ supported: z.boolean().nullable(), adaptive: z.boolean().nullable(), enabled: z.boolean().nullable(), disabled: z.boolean().nullable() }).strict(),
+  sourceUrl: z.url(), checkedAt: z.iso.datetime({ offset: true }),
+}).strict();
+export type AnthropicModelProtocol = z.infer<typeof AnthropicModelProtocolSchema>;
+
 const EvidenceSchema = z.object({
   source: ParamSourceSchema,
   totalB: z.number().positive().nullable(),
@@ -110,6 +118,7 @@ export const ModelEndpointSchema = z
     /** Null when no source reports it: unknown support is excluded from work that needs it, never guessed. */
     supportsTools: z.boolean().nullable(),
     supportsStructuredOutput: z.boolean().nullable(),
+    anthropicProtocol: AnthropicModelProtocolSchema.optional(),
     /** Web search inside the model call; absent or null: none known. */
     nativeWebSearch: NativeWebSearchSchema.nullable().optional(),
     pricing: z
@@ -332,6 +341,14 @@ export class Catalog {
     }
     const out: ModelEndpoint[] = [];
     const routes = new Set<string>();
+    const nativeProtocols = new Map<string, AnthropicModelProtocol>();
+    for (const candidate of base.values()) {
+      const fact = candidate.anthropicProtocol;
+      if (candidate.origin !== "discovered" || candidate.route.kind !== "direct" || !fact
+        || fact.provider !== candidate.route.provider || fact.model !== candidate.route.model) continue;
+      const key = JSON.stringify([fact.provider, fact.model]), prior = nativeProtocols.get(key);
+      if (!prior || Date.parse(fact.checkedAt) > Date.parse(prior.checkedAt)) nativeProtocols.set(key, fact);
+    }
     for (const ep of base.values()) {
       const route = `${ep.providerId}/${ep.gatewayModelId}`;
       if (routes.has(route)) throw new ConfigError(`model catalog: duplicate route ${route}`);
@@ -340,6 +357,12 @@ export class Catalog {
       const panel = applyOverride(cur.ep, dbOverrides.get(ep.id));
       const forceStatus = panel.forceStatus ?? cur.forceStatus;
       cur = panel;
+      // Configured paid aliases use the exact native route's observed protocol. Metadata does
+      // not confer access or prices, and the adapter rechecks the currently configured host.
+      if (!cur.ep.anthropicProtocol && cur.ep.route.kind === "direct") {
+        const observed = nativeProtocols.get(JSON.stringify([cur.ep.route.provider, cur.ep.route.model]));
+        if (observed) cur = { ...cur, ep: { ...cur.ep, anthropicProtocol: observed } };
+      }
       const s = computeStatus(cur.ep, forceStatus, this.opts.requireConfirmationForHeuristicParams);
       out.push({ ...cur.ep, status: s.status, statusReason: s.reason });
     }

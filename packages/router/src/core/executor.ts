@@ -2,23 +2,25 @@ import { createProjectWorkerReadServices } from "./project-services.js";
 import { projectToolIdentity } from "./supervisor-authority.js";
 import { createHash } from "node:crypto";
 import { TaskRunLeases } from "./task-run-leases.js";
-import { leaseOperationId, reconcileLeaseOperation, receiptApplied, type LeaseRef, type LeaseReceipt, type TaskLeases } from "../storage/task-leases.js";
+import { capturedLease, LeaseRefSchema, leaseOperationId, reconcileLeaseOperation, receiptApplied, type LeaseRef, type LeaseReceipt, type TaskLeases } from "../storage/task-leases.js";
 import { canonicalJson } from "../storage/tasks.js";
 import type { ResolvedConfig } from "../config/load.js";
 import { projectStoresForTask, type ProjectRuntimeStore } from "../projects/runtime-store.js";
 import type { WebAccess } from "../web/access.js";
-import { TIER_NAMES, type ProfileMode, type TierName } from "../config/schema.js";
+import { TIER_NAMES, UNLIMITED_REQUESTS, type ProfileMode, type TierName } from "../config/schema.js";
 import type { Db } from "../storage/db.js";
 import type { ArtifactStore } from "../storage/artifacts.js";
 import type { StoredTask, TaskStore } from "../storage/tasks.js";
 import { taskUsage } from "../storage/usage.js";
 import type { Gate, GateAttempt } from "../gateway/gate.js";
 import type { Catalog } from "../models/catalog.js";
-import type { TaskRouter, Prepared } from "../routing/router.js";
+import { TaskRouter, type Prepared } from "../routing/router.js";
+import { assertSupervisorSandboxRequest, supervisorSandboxBinding, supervisorSandboxConfig } from "../qualification/supervisor-qualification.js";
 import type { RoutePlan } from "../routing/select.js";
 import { effectiveBudget } from "../admission/admission.js";
 import { extraRequests } from "../admission/job-pool.js";
 import { criterionTexts, WorkerResultSchema, type TaskState, type WorkerResult } from "./task.js";
+import { AdmissionDenied } from "./errors.js";
 import { restoreRunState } from "./retry-state.js";
 import { baseResult, type RetryContext, type RunContext, type RunOutcome, type RunnerResult } from "../runners/types.js";
 import type { LabManager } from "../labs/lab.js";
@@ -30,7 +32,7 @@ import { runReadOnly } from "../runners/readonly.js";
 import { runBatch } from "../runners/batch.js";
 import type { Classification } from "../scoring/score.js";
 import type { Brain } from "../brain/brain.js";
-import type { BrainAccess } from "../brain/access.js";
+import type { BrainAccess, ProjectBrainAccessOptions } from "../brain/access.js";
 import type { SupervisorServices } from "../runners/types.js";
 import { writeWorkerReport } from "../harness/worker.js";
 import { roleForProfile } from "../roles/index.js";
@@ -38,7 +40,7 @@ import type { SessionStore } from "../sessions/store.js";
 import type { SessionRecorder } from "../sessions/recorder.js";
 import type { SessionEndStatus } from "../sessions/events.js";
 import type { ResumePlan } from "../sessions/resume.js";
-import { endRunSession, interruptedTier, jobIdFor, openRunSession, resumeFor, sessionEnd, type RunResume } from "../sessions/run-sessions.js";
+import { assertExplicitResumeDirective, assertMaintenanceResumeDirective, assertSupervisorBudgetResumeDirective, endRunSession, interruptedTier, jobIdFor, openRunSession, resumeFor, sessionEnd, type RunResume } from "../sessions/run-sessions.js";
 import { isSimulatedCrash } from "./faults.js";
 import { withUpstreamContext } from "../context/upstream.js";
 import { abortStuckRuns, type WatchedRun } from "./watchdog.js";
@@ -104,6 +106,9 @@ export interface ProjectDeps {
   access: BrainAccess | null;
   /** Optional same-DB seam; omitted preserves legacy project callback behavior. */
   stores?: ProjectRuntimeStore;
+  /** Same-store project policy graph; no alternate ledger or authority. */
+  gate?: Gate;
+  router?: TaskRouter;
 }
 
 interface Routing {
@@ -121,8 +126,11 @@ export class Executor {
   private readonly runLeases: TaskRunLeases;
   private readonly published = new WeakSet<LeaseRef>();
   private readonly reports = new Set<Promise<unknown>>();
+  private readonly sandboxGraphs = new Map<string, { cfg: ResolvedConfig; gate: Gate; router: TaskRouter }>();
   /** Single-task runs the progress watchdog looks at (see `WatchedRun`). */
   private readonly watched = new Map<string, WatchedRun>();
+  /** Only verification orchestration can bind a reviewer session to a captured live run. */
+  private readonly reviewerPhases = new Map<string, { lease: LeaseRef; session: SessionRecorder; signal: AbortSignal }>();
 
   /** Wait for pending brain report writes (called on shutdown). */
   async flush(): Promise<void> {
@@ -140,20 +148,46 @@ export class Executor {
     return this.runLeases.cancelTasksAsync(ids, project, actorLease);
   }
   abortLease(lease: LeaseRef, reason: AbortReason): void { this.runLeases.abortLease(lease, reason); }
+
+  /** Narrow in-process capability consumed by the pinned project's Brain role guard. */
+  authorizeHarnessRole(proof: Parameters<NonNullable<ProjectBrainAccessOptions["authorizeHarnessRole"]>>[0]): boolean {
+    if (proof.role !== "reviewer") return false;
+    const parsed = LeaseRefSchema.safeParse(proof.lease), phase = this.reviewerPhases.get(proof.sessionId);
+    if (!parsed.success || !phase || phase.signal.aborted || phase.session.ended || canonicalJson(parsed.data) !== canonicalJson(phase.lease)) return false;
+    const task = this.d.tasks.get(parsed.data.taskId), session = this.d.sessions?.get(proof.sessionId);
+    const now = this.d.now();
+    return !!task && task.row.project_id === parsed.data.project && task.row.state === "running" && !task.row.cancel_requested &&
+      task.row.lease_owner === parsed.data.owner && task.row.run_count === parsed.data.runCount && task.row.lease_incarnation === parsed.data.incarnation &&
+      (task.row.lease_expires_at ?? 0) > now && (task.row.deadline_at === null || task.row.deadline_at > now) &&
+      session?.id === phase.session.id && session.taskId === parsed.data.taskId && session.role === "reviewer" && session.status === "running";
+  }
   /**
    * The executor's dependencies as one task sees them: its project's configuration, brain, and
    * brain access in place of the global ones. Throws when the task's project is not configured.
    */
   private depsFor(task: StoredTask): ExecutorDeps {
     const project = this.d.project?.(task);
-    let deps = project ? { ...this.d, cfg: project.cfg, brain: project.brain, access: project.access } : this.d;
+    let deps = project ? { ...this.d, cfg: project.cfg, brain: project.brain, access: project.access,
+      ...(project.gate ? { gate: project.gate } : {}), ...(project.router ? { router: project.router } : {}) } : this.d;
     if (project?.stores) {
       const stores = projectStoresForTask(project.stores, task, project.cfg);
       deps = { ...deps, db: stores.db, tasks: stores.tasks, sessions: stores.sessions, artifacts: stores.artifacts, contracts: stores.contracts };
     }
-    if (!deps.labs) return deps;
-    const scoped = deps.labs.contextForTask(task.row.project_id || deps.cfg.brain.project, task.row.id, task.spec, deps.tasks);
-    return { ...deps, cfg: scoped.cfg };
+    if (deps.labs) {
+      const scoped = deps.labs.contextForTask(task.row.project_id || deps.cfg.brain.project, task.row.id, task.spec, deps.tasks);
+      deps = { ...deps, cfg: scoped.cfg };
+    }
+    const binding = supervisorSandboxBinding(deps.db, task.spec, task.row.project_id, (task.row as typeof task.row & { purpose?: string }).purpose);
+    if (!binding) return deps;
+    const key = `${binding.runId}:${task.row.lease_incarnation}:${task.row.run_count}`;
+    let graph = this.sandboxGraphs.get(key);
+    if (!graph) {
+      const cfg = supervisorSandboxConfig(deps.cfg);
+      const gate = deps.gate.forkForTask(cfg, request => assertSupervisorSandboxRequest(deps.db, task, request));
+      graph = { cfg, gate, router: new TaskRouter(cfg, deps.db, deps.catalog, gate, deps.artifacts, deps.now, config => deps.router.qualification(config)) };
+      this.sandboxGraphs.set(key, graph);
+    }
+    return { ...deps, ...graph, brain: null, access: null, services: null, web: null };
   }
 
   /** `depsFor`, or null when the task's project is not configured (reports are then skipped). */
@@ -196,7 +230,17 @@ export class Executor {
     const budget = effectiveBudget(d.cfg, task.spec, plan.tier);
     // A repair (or escalation) run draws on the repair reserve, on top of the execution cap. A
     // first run also gets every request its approved requests for more granted (budget control D3).
-    const cap = v.repairCap ?? runCap(d.cfg, task.spec, plan.tier, v.contract) + extraRequests(this.d.db, task.row.id);
+    const baseCap = runCap(d.cfg, task.spec, plan.tier, v.contract), lease = this.runLeases.lease(task);
+    const approvedCap = () => {
+      if (signal.aborted) throw new Error(`aborted: ${String(signal.reason ?? "aborted")}`);
+      if (!d.tasks.dispatchable(lease.taskId, lease.owner, lease.runCount, lease.incarnation, lease.project)) throw new AdmissionDenied("lease_lost", "approved execution budget requires the original captured task lease", undefined, lease.taskId);
+      projectToolIdentity(d.db, lease.project);
+      if (d.gate.admission.db !== d.tasks.db) throw new Error("Approved execution budget requires the task's own admission store");
+      const cap = baseCap === UNLIMITED_REQUESTS ? baseCap : baseCap + extraRequests(d.db, task.row.id);
+      if (!Number.isSafeInteger(cap) || cap < baseCap) throw new Error("Approved execution request cap is invalid");
+      return cap;
+    };
+    const cap = v.repairCap ?? approvedCap();
     if(d.cfg.profiles[task.spec.profile]?.mode==="supervisor"&&projectToolIdentity(d.db,d.cfg.brain.project)&&!this.d.servicesForLease)throw new Error("Split supervisor requires captured lease-bound services factory");
     return {
       cfg: d.cfg,
@@ -211,10 +255,11 @@ export class Executor {
       ensureLabsSupervisor: d.ensureLabsSupervisor,
       // The contract's allocation keeps the review (and, on the first run, repair) reserves free.
       budget: { ...budget, maxModelRequests: cap },
+      ...(v.repairCap == null ? { executionRequestCap: approvedCap } : {}),
       contract: v.contract?.contract ?? null,
       retry: v.retry,
       ...(v.repairCap != null ? { purpose: "repair" as const } : {}),
-      gate: this.d.gate,
+      gate: d.gate,
       tasks: d.tasks,
       artifacts: d.artifacts,
       signal,
@@ -275,6 +320,8 @@ export class Executor {
    * (the reviewer's run context, and the watchdog following the reviewer while it works).
    */
   private reviewRun(task: StoredTask, signal: AbortSignal, routing: Routing, session: SessionRecorder | null, contract: StoredContract, tier: TierName, repairPossible: boolean): ReviewRun {
+    const lease = capturedLease(task);
+    let activeReviewer: SessionRecorder | null = null;
     return {
       tier,
       signal,
@@ -283,9 +330,12 @@ export class Executor {
       repairPossible,
       reviewerContext: (plan, reviewer, maxModelRequests, attempts, profile) => {
         const ctx = this.context(task, signal, plan, routing, reviewer, { contract, retry: null });
-        return { ...ctx, profile: this.d.cfg.profiles[profile]!, budget: { ...ctx.budget, maxModelRequests }, attempts, purpose: "verification" };
+        return { ...ctx, executionRequestCap: undefined, profile: this.d.cfg.profiles[profile]!, budget: { ...ctx.budget, maxModelRequests }, attempts, purpose: "verification" };
       },
       onReviewer: (reviewer) => {
+        if (activeReviewer) this.reviewerPhases.delete(activeReviewer.id);
+        activeReviewer = reviewer;
+        if (reviewer) this.reviewerPhases.set(reviewer.id, { lease, session: reviewer, signal });
         const watch = this.watched.get(task.row.id);
         if (watch?.task.row.lease_incarnation === task.row.lease_incarnation && watch.task.row.run_count === task.row.run_count && (reviewer || watch.reviewer)) Object.assign(watch, { reviewer, phaseAt: this.d.now() });
       },
@@ -327,7 +377,7 @@ export class Executor {
       open: (plan, prev) => this.openSession(task, plan, prev),
       run: (r) => {
         const ctx = this.context(task, r.controller.signal, r.plan, routing, r.session, { contract, retry: null });
-        return this.runMode({ ...ctx, budget: { ...ctx.budget, maxModelRequests: twin.cap } });
+        return this.runMode({ ...ctx, executionRequestCap: undefined, budget: { ...ctx.budget, maxModelRequests: twin.cap } });
       },
       verify: (r, outcome) => verifyWithReview(this.depsFor(task), task, contract, mode, outcome, st, this.reviewRun(task, r.controller.signal, routing, r.session, contract, r.plan.tier, repairPossible(this.d.gate, task, contract, st, false))),
       end: (s, status, stopReason) => this.endSession(task, s, status, stopReason),
@@ -352,128 +402,119 @@ export class Executor {
   }
 
   async runSingle(task: StoredTask): Promise<void> {
-    this.runLeases.lease(task);
-    const controller = new AbortController();
-    this.controllers.set(task.row.id, controller);
-    const release = this.runLeases.supervise(task, controller);
-    const routing: Routing = { classification: null, tier: null, escalatedFrom: null, attempts: [] };
-    this.routing.set(task.row.id, routing);
-    let session: SessionRecorder | null = null;
-    this.watched.set(task.row.id, { task, controller, session: () => session, reviewer: null, phaseAt: this.d.now() });
-    // A simulated crash (fault injection) skips every cleanup a dying process could not do.
-    let crashed = false;
-    try {
-      // Sessions of this task still running belong to a dead process: this one holds the lease now.
-      this.d.sessions?.markDeadRunning((s) => s.taskId !== task.row.id);
-      let prepared: Prepared;
-      let d: ExecutorDeps;
+    // Scope discovery must not bypass the leased run's authoritative error handling.
+    // Invalid project/store contexts are still rejected inside the run before effects.
+    const brain = this.tryDepsFor(task)?.brain;
+    const run = async () => {
+      this.runLeases.lease(task);
+      const controller = new AbortController();
+      this.controllers.set(task.row.id, controller);
+      const release = this.runLeases.supervise(task, controller);
+      const routing: Routing = { classification: null, tier: null, escalatedFrom: null, attempts: [] };
+      this.routing.set(task.row.id, routing);
+      let session: SessionRecorder | null = null;
+      this.watched.set(task.row.id, { task, controller, session: () => session, reviewer: null, phaseAt: this.d.now() });
+      // A simulated crash (fault injection) skips every cleanup a dying process could not do.
+      let crashed = false;
       try {
-        d = this.depsFor(task);
-        if (d.labs) {
-          const binding = d.labs.bindTask(task.row.project_id || d.cfg.brain.project, task.row.id, task.spec, d.tasks);
-          if (binding) await d.labs.assertTaskBases(binding, task.spec, d.tasks);
-        }
-        prepared = await this.d.router.prepare(task, this.d.owner, d.cfg);
-      } catch (err) {
-        if (isSimulatedCrash(err)) {
-          crashed = true;
-          return;
-        }
-        await this.settle(task, this.classify(err, controller.signal, task));
-        return;
-      }
-      routing.classification = prepared.classification;
-      if (!prepared.plan) {
-        await this.tooDifficult(task, prepared);
-        return;
-      }
-      // A dependent sees its upstream results (and, for coding, its chosen base commit) from here on.
-      task = await this.withUpstream(task);
-      let plan = prepared.plan;
-      const mode = this.d.cfg.profiles[task.spec.profile]!.mode;
-      // Supervisor jobs are judged by their own job checks; every other task gets a contract.
-      let contract: StoredContract | null = null;
-      if (mode !== "supervisor") {
-        const c = await this.contractFor(task, plan.tier, prepared.classification);
-        if (!c) return;
-        contract = c;
-      }
-      let previous: string | null | undefined;
-      const forced = !!task.spec.routing?.endpointId;
-      // Only the first attempt resumes; an escalation always starts fresh.
-      let resume: RunResume | null = null;
-      try {
-        resume = resumeFor(d, task);
-      } catch (err) {
-        // Explicit failed-supervisor recovery must retain its transcript/workspace or fail closed.
-        if (this.d.tasks.events(task.row.id, 500).some(event => event.type === "resumed" && (event.data as { failedObservationRecovery?: boolean } | undefined)?.failedObservationRecovery)) throw err;
-        // An unreadable or already-claimed session: run fresh (linked to it) rather than not at all.
-        this.d.tasks.event(task.row.id, "session_resume_failed", { error: (err as Error).message });
-      }
-      // Verification and the one retry span the task's runs: a run after an interruption
-      // continues them (the same repair run, at its tier) instead of starting over.
-      const exempt = mode === "supervisor" || forced || (task.row as typeof task.row & { purpose?: string }).purpose === "qualification";
-      const continued = continueRun(d, task, plan, prepared.inputModalities, { interruptedTier: () => interruptedTier(this.d.sessions, task, resume), exempt });
-      const st = continued.st;
-      let retry: RetryContext | null = continued.retry;
-      let repairing = continued.repairing;
-      plan = continued.plan;
-      routing.escalatedFrom = continued.escalatedFrom;
-      // Redundant execution (T2): a plan node's first attempt may run twice, on different endpoints.
-      let twin = this.redundancy(task, mode, plan, contract, { firstAttempt: !resume && !repairing && !retry, pinned: exempt });
-      if (twin?.kind === "refuse") {
-        await this.record(task, "failed", redundancyRefused(task.spec, twin.reason));
-        return;
-      }
-      for (;;) {
-        routing.tier = plan.tier;
-        let outcome: RunOutcome;
-        let raced: VerifiedRun | null = null;
+        // Sessions of this task still running belong to a dead process: this one holds the lease now.
+        this.d.sessions?.markDeadRunning((s) => s.taskId !== task.row.id);
+        let prepared: Prepared;
+        let d: ExecutorDeps;
+        let maintenanceResume = false;
+        let budgetResume = false;
+        let explicitResume = false;
         try {
-          if (twin?.kind === "twin" && contract) {
-            const t = twin;
-            twin = null;
-            const r = await this.runTwins(task, controller, routing, contract, mode, st, t, previous, (s) => (session = s));
-            if (r.kind === "error") throw r.error;
-            outcome = r.outcome;
-            raced = r.verified;
-          } else {
-            session = resume ? resume.session : this.openSession(task, plan, previous);
-            // A repair run (also one resumed after an interruption) draws on the repair reserve.
-            const cap = repairing && contract ? repairCap(contract.contract.budget, requestsUsed(this.d.gate, task.row.id)) : null;
-            const ctx = this.context(task, controller.signal, plan, routing, session, { contract, retry, repairCap: cap }, resume ? { plan: resume.plan } : null);
-            resume = null;
-            outcome = await this.runMode(ctx);
+          d = this.depsFor(task);
+          explicitResume = assertExplicitResumeDirective(d, task);
+          maintenanceResume = assertMaintenanceResumeDirective(d, task);
+          budgetResume = await assertSupervisorBudgetResumeDirective(d, task);
+          if (d.labs) {
+            const binding = d.labs.bindTask(task.row.project_id || d.cfg.brain.project, task.row.id, task.spec, d.tasks);
+            if (binding) await d.labs.assertTaskBases(binding, task.spec, d.tasks);
           }
+          prepared = await d.router.prepare(task, this.d.owner, d.cfg);
         } catch (err) {
           if (isSimulatedCrash(err)) {
             crashed = true;
             return;
           }
-          const d = this.classify(err, controller.signal, task);
-          this.endForDisposition(task, session, d);
-          await this.settle(task, d);
+          await this.settle(task, this.classify(err, controller.signal, task));
           return;
         }
-        if (controller.signal.aborted) {
-          const d = this.classify(new Error("aborted"), controller.signal, task);
-          this.endForDisposition(task, session, d);
-          await this.settle(task, d, outcome.result);
+        routing.classification = prepared.classification;
+        if (!prepared.plan) {
+          await this.tooDifficult(task, prepared);
           return;
         }
-        let verified: VerifiedRun["verified"] | null = null;
-        let settle: VerifiedRun["settle"] | null = null;
-        if (raced) {
-          // The redundant runs were verified as they finished.
-          verified = raced.verified;
-          settle = raced.settle;
-        } else if (contract) {
+        // A dependent sees its upstream results (and, for coding, its chosen base commit) from here on.
+        task = await this.withUpstream(task);
+        let plan = prepared.plan;
+        const mode = d.cfg.profiles[task.spec.profile]!.mode;
+        // Supervisor jobs are judged by their own job checks; every other task gets a contract.
+        let contract: StoredContract | null = null;
+        if (mode !== "supervisor") {
+          const c = await this.contractFor(task, plan.tier, prepared.classification);
+          if (!c) return;
+          contract = c;
+        }
+        let previous: string | null | undefined;
+        const forced = !!task.spec.routing?.endpointId;
+        // Only the first attempt resumes; an escalation always starts fresh.
+        let resume: RunResume | null = null;
+        try {
+          resume = resumeFor(d, task);
+        } catch (err) {
+          if (explicitResume || maintenanceResume || budgetResume) {
+            // Required retained recovery cannot silently start fresh after a recording failure.
+            // Recheck authority, then settle either the original failure or a raced proof failure.
+            let failure = err;
+            try {
+              if (maintenanceResume) assertMaintenanceResumeDirective(d, task);
+              if (budgetResume) await assertSupervisorBudgetResumeDirective(d, task);
+            } catch (authorityError) { failure = authorityError; }
+            await this.settle(task, this.classify(failure, controller.signal, task));
+            return;
+          }
+          // An unreadable or already-claimed session: run fresh (linked to it) rather than not at all.
+          this.d.tasks.event(task.row.id, "session_resume_failed", { error: (err as Error).message });
+        }
+        // Verification and the one retry span the task's runs: a run after an interruption
+        // continues them (the same repair run, at its tier) instead of starting over.
+        const exempt = mode === "supervisor" || forced || (task.row as typeof task.row & { purpose?: string }).purpose === "qualification";
+        const continued = continueRun(d, task, plan, prepared.inputModalities, { interruptedTier: () => interruptedTier(this.d.sessions, task, resume), exempt });
+        const st = continued.st;
+        let retry: RetryContext | null = continued.retry;
+        let repairing = continued.repairing;
+        plan = continued.plan;
+        routing.escalatedFrom = continued.escalatedFrom;
+        // Redundant execution (T2): a plan node's first attempt may run twice, on different endpoints.
+        let twin = this.redundancy(task, mode, plan, contract, { firstAttempt: !resume && !repairing && !retry, pinned: exempt });
+        if (twin?.kind === "refuse") {
+          await this.record(task, "failed", redundancyRefused(task.spec, twin.reason));
+          return;
+        }
+        for (;;) {
+          routing.tier = plan.tier;
+          let outcome: RunOutcome;
+          let raced: VerifiedRun | null = null;
           try {
-            const run = this.reviewRun(task, controller.signal, routing, session, contract, plan.tier, repairPossible(this.d.gate, task, contract, st, forced));
-            const v = await verifyWithReview(d, task, contract, mode, outcome, st, run);
-            outcome = v.outcome;
-            verified = v.verified;
-            settle = v.settle;
+            if (twin?.kind === "twin" && contract) {
+              const t = twin;
+              twin = null;
+              const r = await this.runTwins(task, controller, routing, contract, mode, st, t, previous, (s) => (session = s));
+              if (r.kind === "error") throw r.error;
+              outcome = r.outcome;
+              raced = r.verified;
+            } else {
+              session = resume ? resume.session : this.openSession(task, plan, previous);
+              // A repair run (also one resumed after an interruption) draws on the repair reserve.
+              const cap = repairing && contract ? repairCap(contract.contract.budget, requestsUsed(this.d.gate, task.row.id)) : null;
+              const ctx = this.context(task, controller.signal, plan, routing, session, { contract, retry, repairCap: cap }, resume ? { plan: resume.plan } : null);
+              if (budgetResume) await assertSupervisorBudgetResumeDirective(d, task, session?.id);
+              resume = null;
+              outcome = await this.runMode(ctx);
+            }
           } catch (err) {
             if (isSimulatedCrash(err)) {
               crashed = true;
@@ -481,157 +522,193 @@ export class Executor {
             }
             const d = this.classify(err, controller.signal, task);
             this.endForDisposition(task, session, d);
+            await this.settle(task, d);
+            return;
+          }
+          if (controller.signal.aborted) {
+            const d = this.classify(new Error("aborted"), controller.signal, task);
+            this.endForDisposition(task, session, d);
             await this.settle(task, d, outcome.result);
             return;
           }
-        }
-        let result: RunnerResult = verified ? verified.result : { ...outcome.result, verificationStatus: "not_required" };
-        const planned = await planRetry(d, task, st, { mode, plan, inputModalities: prepared.inputModalities, outcome, result, verified, contract, escalatedFrom: routing.escalatedFrom, forced });
-        if (planned) {
-          retry = planned.retry;
-          repairing = true;
-          const e = sessionEnd(outcome.state, outcome.result.stopReason);
-          this.endSession(task, session, e.status, planned.tier !== plan.tier ? `${e.stopReason}; escalated to ${planned.tier}` : `${e.stopReason}; repair at ${planned.tier}`);
-          previous = session?.id ?? null;
-          session = null;
-          if (planned.tier !== plan.tier) {
-            routing.escalatedFrom = plan.tier;
-            this.d.db.prepare("UPDATE tasks SET tier = ? WHERE id = ?").run(planned.tier, task.row.id);
+          let verified: VerifiedRun["verified"] | null = null;
+          let settle: VerifiedRun["settle"] | null = null;
+          if (raced) {
+            // The redundant runs were verified as they finished.
+            verified = raced.verified;
+            settle = raced.settle;
+          } else if (contract) {
+            try {
+              const run = this.reviewRun(task, controller.signal, routing, session, contract, plan.tier, repairPossible(this.d.gate, task, contract, st, forced));
+              const v = await verifyWithReview(d, task, contract, mode, outcome, st, run);
+              outcome = v.outcome;
+              verified = v.verified;
+              settle = v.settle;
+            } catch (err) {
+              if (isSimulatedCrash(err)) {
+                crashed = true;
+                return;
+              }
+              const d = this.classify(err, controller.signal, task);
+              this.endForDisposition(task, session, d);
+              await this.settle(task, d, outcome.result);
+              return;
+            }
           }
-          plan = planned.plan;
-          continue;
+          let result: RunnerResult = verified ? verified.result : { ...outcome.result, verificationStatus: "not_required" };
+          const planned = await planRetry(d, task, st, { mode, plan, inputModalities: prepared.inputModalities, outcome, result, verified, contract, escalatedFrom: routing.escalatedFrom, forced });
+          if (planned) {
+            retry = planned.retry;
+            repairing = true;
+            const e = sessionEnd(outcome.state, outcome.result.stopReason);
+            this.endSession(task, session, e.status, planned.tier !== plan.tier ? `${e.stopReason}; escalated to ${planned.tier}` : `${e.stopReason}; repair at ${planned.tier}`);
+            previous = session?.id ?? null;
+            session = null;
+            if (planned.tier !== plan.tier) {
+              routing.escalatedFrom = plan.tier;
+              this.d.db.prepare("UPDATE tasks SET tier = ? WHERE id = ?").run(planned.tier, task.row.id);
+            }
+            plan = planned.plan;
+            continue;
+          }
+          // A repair was called for but cannot run (forced endpoint, no budget or candidates): decide
+          // as if no retry remained.
+          if (verified?.decision.action === "repair" && settle) result = settle().result;
+          const e = sessionEnd(outcome.state, outcome.result.stopReason);
+          this.endSession(task, session, e.status, e.stopReason);
+          await this.record(task, outcome.state, result);
+          return;
         }
-        // A repair was called for but cannot run (forced endpoint, no budget or candidates): decide
-        // as if no retry remained.
-        if (verified?.decision.action === "repair" && settle) result = settle().result;
-        const e = sessionEnd(outcome.state, outcome.result.stopReason);
-        this.endSession(task, session, e.status, e.stopReason);
-        await this.record(task, outcome.state, result);
-        return;
+      } finally {
+        // Whatever escaped above (a store or recording failure), never leave the session running.
+        if (!crashed) this.endSession(task, session, "failed", "executor_error");
+        if (this.controllers.get(task.row.id) === controller) { this.watched.delete(task.row.id); this.routing.delete(task.row.id); }
+        await release();
       }
-    } finally {
-      // Whatever escaped above (a store or recording failure), never leave the session running.
-      if (!crashed) this.endSession(task, session, "failed", "executor_error");
-      if (this.controllers.get(task.row.id) === controller) { this.watched.delete(task.row.id); this.routing.delete(task.row.id); }
-      await release();
-    }
+    };
+    return brain ? brain.runProducerOperation(run) : run();
   }
 
   async runBatch(tasks: StoredTask[]): Promise<void> {
-    // Members share one physical request; a member's cancellation is applied when it finishes.
-    for (const task of tasks) this.runLeases.lease(task);
-    const shared = new AbortController();
-    const ownControllers = new Map<string, AbortController>();
-    const releases = tasks.map((t) => {
-      const c = new AbortController();
-      ownControllers.set(t.row.id, c);
-      this.controllers.set(t.row.id, c);
-      c.signal.addEventListener("abort", () => {
-        if (c.signal.reason === "shutdown" || tasks.every((x) => ownControllers.get(x.row.id)?.signal.aborted)) shared.abort(c.signal.reason);
+    if (!tasks.length) return;
+    const brain = this.tryDepsFor(tasks[0]!)?.brain;
+    const run = async () => {
+      // Members share one physical request; a member's cancellation is applied when it finishes.
+      for (const task of tasks) this.runLeases.lease(task);
+      const shared = new AbortController();
+      const ownControllers = new Map<string, AbortController>();
+      const releases = tasks.map((t) => {
+        const c = new AbortController();
+        ownControllers.set(t.row.id, c);
+        this.controllers.set(t.row.id, c);
+        c.signal.addEventListener("abort", () => {
+          if (c.signal.reason === "shutdown" || tasks.every((x) => ownControllers.get(x.row.id)?.signal.aborted)) shared.abort(c.signal.reason);
+        });
+        return this.runLeases.supervise(t, c);
       });
-      return this.runLeases.supervise(t, c);
-    });
-    const sessions = new Map<string, SessionRecorder>();
-    let crashed = false;
-    try {
-      // Classify each member; the shared request uses the hardest member's tier.
-      const members: StoredTask[] = [];
-      const prepared = new Map<string, Prepared>();
-      for (const t of tasks) {
-        const routing: Routing = { classification: null, tier: null, escalatedFrom: null, attempts: [] };
-        this.routing.set(t.row.id, routing);
-        try {
-          const deps = this.depsFor(t);
-          const binding = deps.labs?.bindTask(t.row.project_id || deps.cfg.brain.project, t.row.id, t.spec, deps.tasks);
-          if (binding) await deps.labs!.assertTaskBases(binding, t.spec, deps.tasks);
-          const p = await this.d.router.prepare(t, this.d.owner, deps.cfg);
-          routing.classification = p.classification;
-          if (!p.plan) await this.tooDifficult(t, p);
-          else {
-            prepared.set(t.row.id, p);
-            members.push(await this.withUpstream(t));
-          }
-        } catch (err) {
-          await this.settle(t, this.classify(err, ownControllers.get(t.row.id)!.signal, t));
-        }
-      }
-      if (!members.length) return;
-      const tier = members.map((m) => prepared.get(m.row.id)!.plan!.tier).reduce((a, b) => (TIER_NAMES.indexOf(b) > TIER_NAMES.indexOf(a) ? b : a));
-      const plan = prepared.get(members.find((m) => prepared.get(m.row.id)!.plan!.tier === tier)!.row.id)!.plan!;
-      for (const m of members) this.routing.get(m.row.id)!.tier = tier;
-      // Each member's contract is compiled at its own classified tier; a member whose policy
-      // cannot fit its budget fails before the shared request.
-      const contracts = new Map<string, StoredContract>();
-      for (const m of [...members]) {
-        const c = await this.contractFor(m, prepared.get(m.row.id)!.plan!.tier, prepared.get(m.row.id)!.classification);
-        if (c) contracts.set(m.row.id, c);
-        else members.splice(members.indexOf(m), 1);
-      }
-      if (!members.length) return;
-
-      let outcomes: Map<string, RunOutcome>;
+      const sessions = new Map<string, SessionRecorder>();
+      let crashed = false;
       try {
-        // Each member is its own session; the batch runner records the shared request in every one.
-        const ctxs: RunContext[] = [];
-        for (const t of members) {
-          const session = this.openSession(t, plan);
-          if (session) sessions.set(t.row.id, session);
-          ctxs.push(this.context(t, shared.signal, plan, this.routing.get(t.row.id)!, session, { contract: contracts.get(t.row.id) ?? null, retry: null }));
-        }
-        outcomes = await runBatch(ctxs);
-      } catch (err) {
-        if (isSimulatedCrash(err)) {
-          crashed = true;
-          return;
-        }
-        const retained = err as { batchOutcomes?: Map<string, RunOutcome>; batchPendingTaskIds?: string[] };
-        outcomes = retained.batchOutcomes ?? new Map();
-        const pendingIds = retained.batchPendingTaskIds ?? members.map((t) => t.row.id);
-        for (const t of [...members]) {
-          if (!pendingIds.includes(t.row.id)) continue;
-          const d = this.classify(err, ownControllers.get(t.row.id)?.signal ?? shared.signal, t);
-          this.endForDisposition(t, sessions.get(t.row.id) ?? null, d);
-          await this.settle(t, d);
-          members.splice(members.indexOf(t), 1);
-        }
-        // Retained completions go through the same session end, verification and recording
-        // path as a successful batch. Pending members have already received their disposition.
-      }
-      for (const t of members) {
-        const o = outcomes.get(t.row.id);
-        const session = sessions.get(t.row.id) ?? null;
-        if (o) {
-          const e = sessionEnd(o.state, o.result.stopReason);
-          this.endSession(t, session, e.status, e.stopReason);
-          const contract = contracts.get(t.row.id);
-          if (!contract) {
-            await this.record(t, o.state, o.result);
-            continue;
-          }
-          // Members are reviewed one by one when their level requires it (no repair inside a batch).
-          const signal = ownControllers.get(t.row.id)?.signal ?? shared.signal;
+        // Classify each member; the shared request uses the hardest member's tier.
+        const members: StoredTask[] = [];
+        const prepared = new Map<string, Prepared>();
+        for (const t of tasks) {
+          const routing: Routing = { classification: null, tier: null, escalatedFrom: null, attempts: [] };
+          this.routing.set(t.row.id, routing);
           try {
-            const run = this.reviewRun(t, signal, this.routing.get(t.row.id)!, session, contract, tier, false);
-            const v = await verifyWithReview(this.depsFor(t), t, contract, this.d.cfg.profiles[t.spec.profile]!.mode, o, restoreRunState(this.d.tasks, t.row.id).st, run);
-            await this.record(t, o.state, v.verified.decision.action === "repair" ? v.settle().result : v.verified.result);
-          } catch (err) {
-            if (isSimulatedCrash(err)) {
-              crashed = true;
-              return;
+            const deps = this.depsFor(t);
+            const binding = deps.labs?.bindTask(t.row.project_id || deps.cfg.brain.project, t.row.id, t.spec, deps.tasks);
+            if (binding) await deps.labs!.assertTaskBases(binding, t.spec, deps.tasks);
+            const p = await this.d.router.prepare(t, this.d.owner, deps.cfg);
+            routing.classification = p.classification;
+            if (!p.plan) await this.tooDifficult(t, p);
+            else {
+              prepared.set(t.row.id, p);
+              members.push(await this.withUpstream(t));
             }
-            await this.settle(t, this.classify(err, signal, t), o.result);
+          } catch (err) {
+            await this.settle(t, this.classify(err, ownControllers.get(t.row.id)!.signal, t));
           }
-        } else {
-          this.endSession(t, session, "failed", "batch_member_unaccounted");
-          await this.settle(t, { kind: "final", state: "failed", stopReason: "batch_member_unaccounted" });
         }
+        if (!members.length) return;
+        const tier = members.map((m) => prepared.get(m.row.id)!.plan!.tier).reduce((a, b) => (TIER_NAMES.indexOf(b) > TIER_NAMES.indexOf(a) ? b : a));
+        const plan = prepared.get(members.find((m) => prepared.get(m.row.id)!.plan!.tier === tier)!.row.id)!.plan!;
+        for (const m of members) this.routing.get(m.row.id)!.tier = tier;
+        // Each member's contract is compiled at its own classified tier; a member whose policy
+        // cannot fit its budget fails before the shared request.
+        const contracts = new Map<string, StoredContract>();
+        for (const m of [...members]) {
+          const c = await this.contractFor(m, prepared.get(m.row.id)!.plan!.tier, prepared.get(m.row.id)!.classification);
+          if (c) contracts.set(m.row.id, c);
+          else members.splice(members.indexOf(m), 1);
+        }
+        if (!members.length) return;
+
+        let outcomes: Map<string, RunOutcome>;
+        try {
+          // Each member is its own session; the batch runner records the shared request in every one.
+          const ctxs: RunContext[] = [];
+          for (const t of members) {
+            const session = this.openSession(t, plan);
+            if (session) sessions.set(t.row.id, session);
+            ctxs.push(this.context(t, shared.signal, plan, this.routing.get(t.row.id)!, session, { contract: contracts.get(t.row.id) ?? null, retry: null }));
+          }
+          outcomes = await runBatch(ctxs);
+        } catch (err) {
+          if (isSimulatedCrash(err)) {
+            crashed = true;
+            return;
+          }
+          const retained = err as { batchOutcomes?: Map<string, RunOutcome>; batchPendingTaskIds?: string[] };
+          outcomes = retained.batchOutcomes ?? new Map();
+          const pendingIds = retained.batchPendingTaskIds ?? members.map((t) => t.row.id);
+          for (const t of [...members]) {
+            if (!pendingIds.includes(t.row.id)) continue;
+            const d = this.classify(err, ownControllers.get(t.row.id)?.signal ?? shared.signal, t);
+            this.endForDisposition(t, sessions.get(t.row.id) ?? null, d);
+            await this.settle(t, d);
+            members.splice(members.indexOf(t), 1);
+          }
+          // Retained completions go through the same session end, verification and recording
+          // path as a successful batch. Pending members have already received their disposition.
+        }
+        for (const t of members) {
+          const o = outcomes.get(t.row.id);
+          const session = sessions.get(t.row.id) ?? null;
+          if (o) {
+            const e = sessionEnd(o.state, o.result.stopReason);
+            this.endSession(t, session, e.status, e.stopReason);
+            const contract = contracts.get(t.row.id);
+            if (!contract) {
+              await this.record(t, o.state, o.result);
+              continue;
+            }
+            // Members are reviewed one by one when their level requires it (no repair inside a batch).
+            const signal = ownControllers.get(t.row.id)?.signal ?? shared.signal;
+            try {
+              const run = this.reviewRun(t, signal, this.routing.get(t.row.id)!, session, contract, tier, false);
+              const v = await verifyWithReview(this.depsFor(t), t, contract, this.d.cfg.profiles[t.spec.profile]!.mode, o, restoreRunState(this.d.tasks, t.row.id).st, run);
+              await this.record(t, o.state, v.verified.decision.action === "repair" ? v.settle().result : v.verified.result);
+            } catch (err) {
+              if (isSimulatedCrash(err)) {
+                crashed = true;
+                return;
+              }
+              await this.settle(t, this.classify(err, signal, t), o.result);
+            }
+          } else {
+            this.endSession(t, session, "failed", "batch_member_unaccounted");
+            await this.settle(t, { kind: "final", state: "failed", stopReason: "batch_member_unaccounted" });
+          }
+        }
+      } finally {
+        // Members that left the batch without an outcome (an error escaped) still end their sessions.
+        if (!crashed) for (const t of tasks) this.endSession(t, sessions.get(t.row.id) ?? null, "failed", "batch_aborted");
+        for (const t of tasks) if (this.controllers.get(t.row.id) === ownControllers.get(t.row.id)) this.routing.delete(t.row.id);
+        await Promise.all(releases.map(release => release()));
       }
-    } finally {
-      // Members that left the batch without an outcome (an error escaped) still end their sessions.
-      if (!crashed) for (const t of tasks) this.endSession(t, sessions.get(t.row.id) ?? null, "failed", "batch_aborted");
-      for (const t of tasks) if (this.controllers.get(t.row.id) === ownControllers.get(t.row.id)) this.routing.delete(t.row.id);
-      await Promise.all(releases.map(release => release()));
-    }
+    };
+    return brain ? brain.runProducerOperation(run) : run();
   }
 
   private classify(err: unknown, signal: AbortSignal, task: StoredTask): Disposition {
@@ -693,12 +770,12 @@ export class Executor {
     const mode = this.d.cfg.profiles[task.spec.profile]?.mode;
     const d = this.tryDepsFor(task);
     if (d?.brain && mode && mode !== "supervisor" && final !== "running") {
-      const p = writeWorkerReport(
+      const p = d.brain.runOperation(() => writeWorkerReport(
         { cfg: d.cfg, brain: d.brain, access: d.access, spec: task.spec, taskId: task.row.id, effort: effortFor(task.spec, task.row.id), jobId: task.spec.parentTaskId ?? null,taskLease:lease,taskReceipt:receipt, tier: (r?.tier ?? null) as never },
         roleForProfile(task.spec.profile),
         runner,
         final,
-      ).finally(() => {
+      )).finally(() => {
         this.reports.delete(p);
       });
       this.reports.add(p);

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { RoleNameSchema } from "../config/schema.js";
+import { NativeContinuationSchema } from "../gateway/types.js";
 
 /**
  * Agent session event log: one JSON object per line, `{seq, at, type, data}`, appended (and
@@ -44,7 +45,7 @@ const ContentPartSchema = z.union([
 export const LoggedMessageSchema = z.union([
   z.object({ role: z.literal("system"), content: z.string() }),
   z.object({ role: z.literal("user"), content: z.union([z.string(), z.array(ContentPartSchema)]) }),
-  z.object({ role: z.literal("assistant"), content: z.string().nullable(), tool_calls: z.array(ToolCallSchema).optional() }),
+  z.object({ role: z.literal("assistant"), content: z.string().nullable(), tool_calls: z.array(ToolCallSchema).optional(), nativeContinuation: NativeContinuationSchema.optional() }),
   z.object({ role: z.literal("tool"), tool_call_id: z.string(), content: z.string() }),
 ]);
 
@@ -107,6 +108,7 @@ export const ModelResponseDataSchema = z.object({
   endpointId: z.string(),
   content: z.string().nullable(),
   toolCalls: z.array(ToolCallSchema),
+  nativeContinuation: NativeContinuationSchema.optional(),
   finishReason: z.string().nullable(),
   usage: UsageSchema,
   servedModel: z.string().nullable(),

@@ -9,22 +9,25 @@ import { DeadlineArgs, type OperationDefinition } from "./operation-contract.js"
 import { journaled } from "./journal.js";
 import { isSimulatedCrash } from "../core/faults.js";
 import { assertRunAuthority } from "./task-authority.js";
+import { LineReplacementsSchema, projectNativeReplaceLines } from "../attribution/native-edit-projection.js";
 const Edit = z.discriminatedUnion("action", [
   z.object({ action: z.literal("create"), path: z.string().min(1), content: z.string() }),
   z.object({ action: z.literal("replace"), path: z.string().min(1), expected_sha256: z.string().regex(/^[a-f0-9]{64}$/), content: z.string(), whole_file: z.literal(true) }),
   z.object({ action: z.literal("patch"), path: z.string().min(1), expected_sha256: z.string().regex(/^[a-f0-9]{64}$/), old_text: z.string().min(1), new_text: z.string(), replace_all: z.boolean().default(false) }),
+  z.object({ action: z.literal("replace_lines"), path: z.string().min(1), expected_sha256: z.string().regex(/^[a-f0-9]{64}$/), replacements: LineReplacementsSchema }),
   z.object({ action: z.literal("delete"), path: z.string().min(1), expected_sha256: z.string().regex(/^[a-f0-9]{64}$/) })
 ]);
 export function editOperations(): OperationDefinition[] {
   return [{
-    name: "apply_edits", description: 'Submit up to 64 edits together, each with required action and path. Create example: {"edits":[{"action":"create","path":"src/new.ts","content":"complete file"}]}. Patch requires expected_sha256, old_text and new_text; replace requires expected_sha256, content and whole_file:true; delete requires expected_sha256. Preflight all edits before writing. Sequential effects are individually journaled; partial application is explicitly returned.', args: z.object({ ...DeadlineArgs, edits: z.array(Edit).min(1).max(64) }),
+    name: "apply_edits", description: 'Submit up to 64 edits together, each with required action and path. Create example: {"edits":[{"action":"create","path":"src/new.ts","content":"complete file"}]}. Patch requires expected_sha256, old_text and new_text; replace requires expected_sha256, content and whole_file:true; delete requires expected_sha256. replace_lines requires expected_sha256 and replacements:[{start_line:2,end_line:3,new_lines:["replacement line"]}]. Inclusive original-file line numbers match reads; ranges must be ascending/nonoverlapping. new_lines entries contain no CR/LF; [] deletes records, [""] creates a blank record; a trailing newline is the final empty record. Put all ranges for one file into one edit. Use this explicit action after whitespace conflicts; patch remains exact. Preflight all edits before writing. Sequential effects are individually journaled; partial application is explicitly returned.', args: z.object({ ...DeadlineArgs, edits: z.array(Edit).min(1).max(64) }),
     // Clients that drop anyOf/oneOf otherwise lose every field of the discriminated
     // union, including action. Keep the advertised shape flat and validate the union.
     modelArgs: z.object({ ...DeadlineArgs, edits: z.array(z.object({
-      action: z.enum(["create", "patch", "replace", "delete"]), path: z.string().min(1),
+      action: z.enum(["create", "patch", "replace", "replace_lines", "delete"]), path: z.string().min(1),
       content: z.string().optional(), expected_sha256: z.string().optional(),
       old_text: z.string().optional(), new_text: z.string().optional(),
       replace_all: z.boolean().optional(), whole_file: z.boolean().optional(),
+      replacements: LineReplacementsSchema.optional(),
     })).min(1).max(64) }), sideEffect: "edit", available: env => !!env.workspace, async run(a, env) {
       const edits = a.edits as z.infer<typeof Edit>[];
       const seen = new Set<string>();
@@ -44,6 +47,7 @@ export function editOperations(): OperationDefinition[] {
           const raw = readFileSync(target.abs), hash = createHash("sha256").update(raw).digest("hex");
           if (hash !== edit.expected_sha256)
             throw new Error(`${target.rel} revision conflict; current sha256=${hash}; nothing written. Read current content before retrying.`);
+          if (edit.action === "replace_lines") projectNativeReplaceLines(raw.toString("utf8"), edit.replacements);
           if (edit.action === "patch") {
             const text = raw.toString("utf8").replace(/\r\n/g, "\n"), old = edit.old_text.replace(/\r\n/g, "\n"), count = text.split(old).length - 1;
             if (count === 0 || count > 1 && !edit.replace_all)
@@ -66,9 +70,17 @@ export function editOperations(): OperationDefinition[] {
         try {
           await withRepositoryToolWrite(env, async guarded => {
           preflight(edit);
-          const name = edit.action === "delete" ? "delete_file" : edit.action === "patch" ? "replace_in_file" : "write_file";
-          const args = edit.action === "patch" ? { path: edit.path, old_text: edit.old_text, new_text: edit.new_text, replace_all: edit.replace_all } : { path: edit.path, ...("content" in edit ? { content: edit.content } : {}) };
-          const tool = legacy.find(t => t.def.function.name === name)!;
+          const name = edit.action === "replace_lines" ? "replace_lines" : edit.action === "delete" ? "delete_file" : edit.action === "patch" ? "replace_in_file" : "write_file";
+          const args = edit.action === "replace_lines" ? { path: edit.path, replacements: edit.replacements } : edit.action === "patch" ? { path: edit.path, old_text: edit.old_text, new_text: edit.new_text, replace_all: edit.replace_all } : { path: edit.path, ...("content" in edit ? { content: edit.content } : {}) };
+          const tool = edit.action === "replace_lines" ? {
+            sideEffect: "edit" as const,
+            async run(_: Record<string, unknown>, context: typeof guarded) {
+              // Recheck original bytes/ranges while holding the actual write capability.
+              const target = preflight(edit);
+              const content = projectNativeReplaceLines(readFileSync(target.abs, "utf8"), edit.replacements);
+              return legacy.find(t => t.def.function.name === "write_file")!.run({ path: edit.path, content }, context);
+            },
+          } : legacy.find(t => t.def.function.name === name)!;
           const id = `${env.toolInvocationId ?? "edit"}:file:${i}`;
           const outcome = await journaled(env.ctx.session, { id, function: { name, arguments: JSON.stringify(args) } }, args, tool, async () => { env.ctx.signal.throwIfAborted(); return { ok: true, output: await tool.run(args, { ...guarded, toolInvocationId: id }) }; });
           results.push({ path: edit.path, status: "succeeded", output: outcome.output });

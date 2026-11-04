@@ -3,7 +3,9 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { MeritRouter } from "../core/service.js";
-import { openProjectStores } from "./project-reads.js";
+import { openProjectStores, projectScope } from "./project-reads.js";
+import { requestLeaseActivityMark } from "./request-lifecycle.js";
+import { QUALIFICATION_PROJECT } from "../qualification/registry.js";
 
 /**
  * A single-project scope reads its own project store (`openProjectStores`; today the same
@@ -65,6 +67,44 @@ const MAX_JOB_DEPTH = 6;
 
 type Db = MeritRouter["db"];
 type Ctx = { sy: MeritRouter; db: Db; project: string | null; now: number };
+type RequestOwnerWatch = { project: string; db: Db };
+// Cache handles only. Each cursor retains its own observed version and lease deadline, so
+// parallel clients cannot consume one another's invalidations or require periodic table scans.
+const requestOwnerWatches = new WeakMap<MeritRouter, Map<string, RequestOwnerWatch[]>>();
+const ownerScope = (c: Ctx) => JSON.stringify(c.project);
+function ownerVersions(c: Ctx): string | null {
+  const watches = requestOwnerWatches.get(c.sy)?.get(ownerScope(c));
+  if (!watches) return null;
+  const versions = new Map<Db, [number, number] | "closed">();
+  for (const watch of watches) if (!versions.has(watch.db)) versions.set(watch.db, watch.db.open ? dataVersion(watch.db) : "closed");
+  return digest([c.project === null ? c.sy.projects.slugs() : c.project, watches.map(w => [w.project, versions.get(w.db)])]);
+}
+function requestOwnerMark(c: Ctx): Mark {
+  const watches: RequestOwnerWatch[] = [], missing: string[] = [];
+  if (c.project !== null) watches.push({ project: c.project, db: c.db });
+  else if (c.sy.layout !== "split") {
+    // Legacy project scopes share this already-open handle; watching must not materialize
+    // a reserved qualification runtime or call lazy project-store constructors.
+    for (const project of ["", ...projectScope(c.sy, undefined, { qualification: true })]) watches.push({ project, db: c.sy.db });
+  } else {
+    watches.push({ project: "", db: c.sy.db });
+    for (const project of projectScope(c.sy, undefined, { qualification: true })) {
+      if (project === QUALIFICATION_PROJECT && !c.sy.db.prepare("SELECT 1 FROM project_store_registrations WHERE slug=? AND state='registered' LIMIT 1").get(project)) continue;
+      const opened = openProjectStores(c.sy, project);
+      if (opened.ok) watches.push({ project, db: opened.stores.db }); else missing.push(project);
+    }
+  }
+  let cache = requestOwnerWatches.get(c.sy);
+  if (!cache) { cache = new Map(); requestOwnerWatches.set(c.sy, cache); }
+  cache.set(ownerScope(c), watches);
+  let deadline = 0;
+  const activity = watches.map(watch => {
+    const [n, live, expiry] = requestLeaseActivityMark(watch.db, watch.project, c.now);
+    if (expiry > 0) deadline = deadline > 0 ? Math.min(deadline, expiry) : expiry;
+    return [watch.project, n, live];
+  });
+  return [digest([activity, missing]), deadline, ownerVersions(c)];
+}
 type Source = {
   /** Read without touching the database (files, clocks): checked even when the store is unchanged. */
   external?: boolean;
@@ -132,12 +172,12 @@ const SOURCES: Record<string, Source & { topic: LiveTopic }> = {
       return [num(r.m), r.n];
     },
     topics: ({ db, project }, prev) => {
-      if (!prev) return ["tasks"];
+      if (!prev) return ["tasks", "requests"];
       const s = scoped(project);
       const rows = db.prepare(`SELECT id FROM tasks WHERE updated_at >= ? AND ${s.sql} ORDER BY updated_at DESC LIMIT ${MAX_IDS + 1}`).all(num(prev[0]), ...s.args) as Array<{ id: string }>;
       const cut = rows.length > MAX_IDS;
       const changed = rows.slice(0, MAX_IDS).map((r) => r.id);
-      return ["tasks", ...ids("tasks", changed, cut), ...jobAncestors(db, changed), ...(cut ? ["jobs", "jobs:*"] : [])];
+      return ["tasks", "requests", ...ids("tasks", changed, cut), ...jobAncestors(db, changed), ...(cut ? ["jobs", "jobs:*"] : [])];
     },
   },
   sessions: {
@@ -193,6 +233,10 @@ const SOURCES: Record<string, Source & { topic: LiveTopic }> = {
       return [num(newest.m), num(recent.f), num(recent.open)];
     },
     topics: () => ["requests"],
+  },
+  requestOwners: {
+    topic: "requests", mark: requestOwnerMark,
+    topics: (_c, previous, next) => previous?.[0] === next[0] ? [] : ["requests"],
   },
   events: {
     topic: "events",
@@ -432,7 +476,10 @@ export function liveChanges(sy: MeritRouter, cursor: LiveCursor, now = Date.now(
   const c: Ctx = { sy, db: scopeDb(sy, project), project, now };
   const dv = dataVersion(sy.db);
   const quiet = !!cursor.dv && cursor.dv[0] === dv[0] && cursor.dv[1] === dv[1];
-  const next = { ...cursor.marks, ...readMarks(c, quiet ? (s) => !!s.external : undefined) };
+  const owner = cursor.marks.requestOwners;
+  const ownerDue = typeof owner?.[1] === "number" && owner[1] > 0 && now >= owner[1];
+  const ownerChanged = !owner || ownerVersions(c) !== owner[2];
+  const next = { ...cursor.marks, ...readMarks(c, quiet ? (s) => !!s.external || s === SOURCES.requestOwners && (ownerDue || ownerChanged) : undefined) };
   const topics = new Set<string>();
   for (const [name, src] of Object.entries(SOURCES)) {
     const mark = next[name];
@@ -444,6 +491,7 @@ export function liveChanges(sy: MeritRouter, cursor: LiveCursor, now = Date.now(
       topics.add(`${name}:*`);
       topics.add("jobs:*");
       if (name === "sessions") topics.add("tasks:*");
+      if (name === "tasks") topics.add("requests");
     }
   }
   return { cursor: { v: 1, scope: cursor.scope, marks: next, dv }, topics: [...topics].sort() };

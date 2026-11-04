@@ -75,7 +75,7 @@ export function RequestsView({ sy, project, sp }: { sy: MeritRouter; project: { 
           <UrlFilters
             values={{ status, endpoint, purpose, tier, problems, task, job, limit: str("limit") }}
             fields={[
-              { name: "status", label: "Status", kind: "select", options: [["succeeded", "Succeeded"], ["failed", "Failed"], ["uncertain", "Uncertain"], ["reserved", "In flight"]] },
+              { name: "status", label: "Status", kind: "select", options: [["succeeded", "Succeeded"], ["failed", "Failed"], ["uncertain", "Uncertain"], ["reserved", "Unsettled"]] },
               { name: "endpoint", label: "Model", kind: "select", options: eps.map((e) => [e.id, e.displayName ?? e.gatewayModelId] as [string, string]) },
               { name: "purpose", label: "Purpose", kind: "select", options: purposes.map((p) => [p, purposeLabel(p)] as [string, string]) },
               { name: "tier", label: "Tier", kind: "select", options: ["T1", "T2", "T3"].map((t) => [t, t] as [string, string]) },

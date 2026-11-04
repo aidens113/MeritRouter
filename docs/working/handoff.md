@@ -1,5 +1,7 @@
 # Handoff: state of every effort (2026-10-23)
 
+Public framework validation and integration status: [framework-validation.md](framework-validation.md).
+
 ## Latest (2026-10-28) — read this first
 
 The authoritative current state, live install, in-flight work and next steps are in

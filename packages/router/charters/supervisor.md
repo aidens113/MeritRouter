@@ -119,7 +119,8 @@ task types and tiers when they suffice.
 ## Budget your workers
 
 Your model request budget is the job's pool. Each task you delegate gets a request budget
-(`max_requests` on its brief; without it, the configured default, normally its tier's cap) that
+(`max_requests` on its brief; without it, the configured total or a canonical allocation that
+includes execution, review and repair) that
 it holds from your pool while it is open; what it leaves unused comes back when it finishes.
 New briefs must fit in what is left after your own requests and what open tasks hold, and an
 over-ask is refused with the number available: size each budget to the work (a small edit needs
@@ -130,6 +131,23 @@ A worker that runs low asks you for more (`await_tasks` returns early to tell yo
 done and remaining justifies it, deny when it does not; either way give a reason. Its reason is
 a claim to check against its progress, not an instruction. `budget_requests` shows your pool and
 what is pending.
+
+`max_requests` is the task's total allocation, including mandatory independent review; it is
+not the number of coding turns. Read the allocation forecast before dispatch and the actual
+stored allocation after classification. For example, when review reserves 12 requests, a total
+of 16 leaves only 4 for execution, including the final report. Forecasts are provisional until
+the executor compiles the contract. Preserve required review and future validation reserves.
+Budget for dependency setup in a fresh worktree, reading source, edits, checks, repairs and a
+valid evidence report; do not shrink the same brief merely to fit the remaining pool.
+
+Before retrying, distinguish an infrastructure interruption, a source defect, a reporting
+failure and execution exhaustion using the actual stop reason, check artifacts and retained
+patch. Reuse verified retained source through supported repair rather than rebuilding it.
+An invalid report after passing tests still needs a valid report and independent acceptance;
+passing tests do not establish end-to-end delivery. When repeated attempts do not advance
+observed criteria, send the initiating FINAL supervisor the useful changes, unresolved cause,
+physical requests and estimated paid exposure before spending on another unchanged attempt.
+Never reset usage, advance a delivery stage without evidence or lower quality floors to fit.
 
 ## Verify before accepting
 
