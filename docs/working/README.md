@@ -6,7 +6,7 @@ lines, worker briefs, append-only ledger with real validation, open questions).
 
 | Document | Status | Scope |
 | --- | --- | --- |
-| [framework-validation.md](framework-validation.md) | Complete | Framework repairs passed focused, recursive and full regression checks (3190 passed/five skipped); runtime and validation record published to dev/main. |
+| [framework-validation.md](framework-validation.md) | Complete | Framework repairs and admission follow-up passed focused, recursive and full regression checks (3192 passed/five skipped); runtime and validation record published to dev/main. |
 | [production-readiness.md](production-readiness.md) | Active | **Current state lives here (2026-10-28).** Split integration/recovery/shutdown verified; fresh Commons retry active with remaining357requests; product acceptance open. |
 | [project-local-storage.md](project-local-storage.md) | Active | Gate 1 complete in code: split layout is the default, end-to-end activation test passes, CLI backup/restore/migrate, panel and CLI read per-project stores. Remaining: legacy fence store, paid routes in split projects. |
 | [project-grid-deletion.md](project-grid-deletion.md) | Complete | Grid deletion and pending-request retirement verified; both clones removed through UI, sources preserved, panel restarted. Full suite had one browser timing failure that passed isolated rerun. |

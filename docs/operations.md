@@ -1558,6 +1558,14 @@ ownership leaves the outcome pending. A newer attempt cannot make an older reque
 Task changes and captured lease expiry refresh this view without changing usage or liability.
 An uncertain request's reconciliation time is not presented as provider latency.
 
+A split-project reservation denied before global admission releases its provider slot only
+when the ledger can verify that the request was never admitted. For an existing preparation,
+this requires a retired record with no dispatch or consumed transport and an authoritative
+accounting read finding no physical receipt. A failed accounting read is not evidence of
+absence; it preserves the preparation and transport quarantine for recovery. This prevents
+new slots from being held by ordinary pre-admission denials. It does not reclaim historical quarantined slots that
+lack the receipt required by the operator recovery below.
+
 An interrupted process can leave a nonce-bound provider slot whose remote request outcome is
 unknown. Lease expiry alone cannot release it. The trusted local operator can inspect one
 identified modern request and reconcile only its exact retained snapshot:

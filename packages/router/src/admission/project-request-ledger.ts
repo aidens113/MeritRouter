@@ -35,7 +35,16 @@ export class ProjectRequestLedger implements RequestLedger {
   private operation<T>(stage: "reserve" | "dispatch" | "reconcile", id: string | null, work: () => Promise<T>): Promise<T> {
     const promise = Promise.resolve().then(work).catch(error => {
       if (error instanceof RequestPersistenceError) throw error;
-      if (error instanceof AdmissionDenied && stage === "reserve" && id !== null && !this.store.read(id)) throw error;
+      if (error instanceof AdmissionDenied && stage === "reserve" && id !== null) {
+        let definitelyUnadmitted = false;
+        try {
+          const record = this.store.read(id);
+          definitelyUnadmitted = record === null || (record.row.phase === "retired" && record.row.reason_code === "never_globally_admitted"
+            && record.row.dispatch_id === null && record.row.transport_consumed === 0 && record.receipt === null && record.outcome === null
+            && this.global(record) === null);
+        } catch { /* An unreadable local/global binding cannot prove the request was never admitted. */ }
+        if (definitelyUnadmitted) throw error;
+      }
       throw new RequestPersistenceError(stage, id, error);
     });
     this.pending.add(promise); void promise.then(() => this.pending.delete(promise), () => this.pending.delete(promise)); return promise;
@@ -98,9 +107,9 @@ export class ProjectRequestLedger implements RequestLedger {
         await this.checkpoint("local_bound", input.requestId);
         return { ...record.reservation, disposition: result.disposition };
       } catch (error) {
-        let receipt: GlobalReceipt | null = null;
-        try { receipt = this.global(record); } catch { /* Unknown coordinator state must retain local preparation. */ }
-        if (!receipt && (error instanceof GlobalAccountingDenied || error instanceof AdmissionDenied)) {
+        let receipt: GlobalReceipt | null = null, receiptKnown = false;
+        try { receipt = this.global(record); receiptKnown = true; } catch { /* Unknown coordinator state must retain local preparation. */ }
+        if (receiptKnown && !receipt && (error instanceof GlobalAccountingDenied || error instanceof AdmissionDenied)) {
           this.store.transaction(() => { const fresh = this.store.read(input.requestId)!; this.store.releasePreparation(fresh); this.store.update(fresh, "retired", undefined, "never_globally_admitted"); });
         } else if (receipt?.state === "reserved" && error instanceof AdmissionDenied) {
           try {

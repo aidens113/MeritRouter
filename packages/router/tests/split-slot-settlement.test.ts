@@ -1,19 +1,21 @@
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import path from "node:path";
-import { GatewayError } from "../src/core/errors.js";
+import { AdmissionDenied, GatewayError } from "../src/core/errors.js";
 import type { MeritRouter } from "../src/core/service.js";
 import type { ProjectRuntimeBundle } from "../src/projects/runtime-registry.js";
 import { ProjectRequestStore } from "../src/admission/project-request-store.js";
-import { requestAttemptId } from "../src/admission/request-ledger.js";
+import { RequestPersistenceError, requestAttemptId } from "../src/admission/request-ledger.js";
+import type { ProjectRequestLedgerOptions } from "../src/admission/project-request-ledger.js";
 import { capturedLease } from "../src/storage/task-leases.js";
 import { baseConfig, endpoint, goodOutput, makeEnv, open, reply, ScriptedClient, summarizeTask, testProviders, type Env } from "./helpers.js";
 
 const services: MeritRouter[] = [], envs: Env[] = [], dirs: string[] = [];
 afterEach(async () => {
   await Promise.allSettled(services.splice(0).map(sy => sy.close()));
+  vi.restoreAllMocks();
   for (const env of envs.splice(0)) env.cleanup();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 }, 60_000);
@@ -42,6 +44,50 @@ async function until(check: () => boolean, ms = 30_000): Promise<void> {
   while (!check()) { if (Date.now() > end) throw new Error("condition not reached"); await new Promise(resolve => setTimeout(resolve, 50)); }
 }
 const physical = (sy: MeritRouter) => sy.db.prepare("SELECT status,outcome,error_code FROM physical_requests ORDER BY reserved_at,id").all() as Array<{ status: string; outcome: string | null; error_code: string | null }>;
+
+it.each([false, true])("a reserve deadline denial retains a slot only when global admission cannot be read (unreadable=%s)", async unreadable => {
+  const client = new ScriptedClient(req => answer(req)), sy = await split(client);
+  const bundle = sy.projectStores("alpha") as ProjectRuntimeBundle;
+  const options = (bundle.ledger as unknown as { options: ProjectRequestLedgerOptions }).options;
+  const reserve = vi.spyOn(bundle.ledger, "reserve");
+  let requestId = "";
+  options.checkpoint = async (phase, id) => {
+    if (phase !== "local_prepared") return;
+    requestId = id;
+    if (unreadable) {
+      // Global admission may have committed, but its read is unavailable. Absence is not proved.
+      const store = new ProjectRequestStore(bundle.db, bundle.identity, () => bundle.admission.serverNow());
+      options.broker.reserveGlobal(store.read(id)!.global);
+      vi.spyOn(options.broker, "readReceipt").mockImplementation(() => { throw new Error("fixture receipt read unavailable"); });
+    }
+    const store = new ProjectRequestStore(bundle.db, bundle.identity, () => bundle.admission.serverNow());
+    bundle.db.prepare("UPDATE tasks SET deadline_at=? WHERE id=?").run(Date.now() - 1, store.read(id)!.input.participants[0]!.taskId);
+  };
+  const [submitted] = await sy.submitTasks([summarizeTask()], { project: "alpha" });
+  await until(() => sy.getStatus([submitted!.taskId], "alpha")[0]?.state === "failed");
+  expect(reserve).toHaveBeenCalledTimes(1);
+  const request = reserve.mock.results[0]!.value as Promise<unknown>;
+  const rejected = await request.catch(error => error);
+  expect(requestId).not.toBe("");
+  expect(client.requests).toHaveLength(0);
+  expect(bundle.db.prepare("SELECT COUNT(*) FROM model_requests").pluck().get()).toBe(0);
+  expect(bundle.db.prepare("SELECT COUNT(*) FROM request_charges").pluck().get()).toBe(0);
+  const protocol = bundle.db.prepare("SELECT phase,reason_code,dispatch_id,transport_consumed FROM project_request_protocol WHERE request_id=?").get(requestId);
+  const holds = bundle.db.prepare("SELECT active FROM project_request_holds WHERE request_id=?").all(requestId);
+  if (unreadable) {
+    expect(rejected).toBeInstanceOf(RequestPersistenceError);
+    expect(protocol).toMatchObject({ phase: "uncertain", reason_code: "reservation_reconciliation_pending", dispatch_id: null, transport_consumed: 0 });
+    expect(holds).toEqual([{ active: 1 }]);
+    expect(sy.db.prepare("SELECT status FROM physical_requests WHERE id=?").get(requestId)).toEqual({ status: "reserved" });
+    expect(sy.db.prepare("SELECT uncertain FROM provider_slots WHERE kind='request'").all()).toEqual([{ uncertain: 1 }]);
+  } else {
+    expect(protocol).toEqual({ phase: "retired", reason_code: "never_globally_admitted", dispatch_id: null, transport_consumed: 0 });
+    expect(holds).toEqual([{ active: 0 }]);
+    expect(physical(sy)).toEqual([]);
+    expect(requestSlots(sy)).toBe(0);
+    expect(rejected).toBeInstanceOf(AdmissionDenied);
+  }
+}, 30_000);
 
 it.each([
   // Possibly-consumed failures settle uncertain (no refund); a definite 4xx refusal settles failed.

@@ -1,6 +1,6 @@
 # Framework repair and validation
 Status: Complete
-Status detail: Framework checks pass and coherent runtime commit e235983 is published to dev and main.
+Status detail: Framework integration and follow-up admission repair pass focused, recursive and complete regression checks.
 Created: 2026-11-03
 Last updated: 2026-11-03
 Owner: Senior supervisor agent
@@ -29,10 +29,21 @@ The resumed investigation also found and corrected immediate key-health cache in
 and mismatched path selection between editing and recovery proof. The latter was reproduced
 through actual edit journaling and resume, then verified by 109/109 focused tests.
 Continuation authority and linked-session initialization fixes pass 250/250 focused tests.
-Final recursive typecheck and build also pass on the repaired source. The final complete
+Final recursive typecheck and build also pass on the repaired source. The original complete
 regression passed: 265 files passed and one skipped; 3,190 tests passed, five skipped,
 zero failed, exit0 in 3,984.81s. All 1,850 source/test/build identities were unchanged.
 The lead independently inspected logs, JSON, exit status and the identity comparison.
+
+A follow-up found that a proven pre-admission denial could retain a provider slot, while
+an unreadable accounting lookup could incorrectly retire the local preparation. Two real
+Gate regressions reproduced both failures. The narrow ledger fix preserves ordinary
+admission denial only after verified non-admission and retains uncertainty when accounting
+cannot be read. Focused checks passed 11/11; recursive typecheck and build passed after
+correcting two required clock arguments in the test fixture. The final complete run on
+that source passed 3,192 tests, with five existing skips and zero failures, across 265
+passing files and one skipped file (4,032.91s, exit0). All 1,850 file identities were
+unchanged, and no owned test processes remained. Historical quarantined slots are not
+automatically reclaimed by this fix.
 
 No live-provider or downstream application acceptance is established by these framework
 checks. Private application state and detailed local execution history remain outside
@@ -52,6 +63,9 @@ licensing, development-instruction and private-history changes remain local and 
 - Required blocked continuation authority is checked for the current claim before routing.
   Linked-session initialization failures must settle without dispatching a fresh runner,
   while ordinary interrupted-session fallback remains available.
+- A retired preparation with verified absent global admission preserves its ordinary
+  admission-denial result so the Gate can release its unused slot. Unreadable accounting
+  retains preparation and quarantine; missing evidence is never treated as proof of absence.
 - Native service tests use the same minimal environment as real callers. A direct Windows
   helper launch with an empty environment reproduced a Node cryptographic-startup abort;
   adding only `SystemRoot` made the measured probe start successfully. No generic helper
@@ -152,6 +166,16 @@ the critical provenance and continuation review/fix work.
 - Validation: Compared all 1850 before/after source/test/build identities -> zero differences; manifests byte-identical. Worker reported no retained owned Node/helper processes; lead checked the process inventory too.
 - Outcome: Complete aggregate accepted together with recursive and demo/browser checks above.
 - Follow-up: Review/stage exact runtime manifest and public documentation sections; publish only this coherent unit.
+
+### 2026-11-03 - Pre-admission slot retention follow-up
+- Agent: Lead; worker `regression_resume`.
+- Changed: Project request ledger, real Gate slot regressions and operations documentation.
+- Validation: Actual Gate regressions failed first: retained unused slot and false retirement on an unreadable global receipt. `pnpm exec vitest run tests/project-request-protocol.test.ts tests/split-slot-settlement.test.ts --maxWorkers=2` -> 11/11 passed, exit0, 101.65s.
+- Validation: `pnpm -r typecheck` initially found two missing clock arguments in new test fixtures. After supplying the existing fixture clock, typecheck passed in 17.98s and `pnpm -r build` passed in 34.91s.
+- Validation: `pnpm exec vitest run --maxWorkers=2 --reporter=default --reporter=json --outputFile.json=<temporary-result>` -> exit0, 265 files passed/one skipped; 3,192 tests passed/five skipped/zero failed, 4,032.91s. This aggregate covers the final fixture correction.
+- Validation: Lead inspected logs, JSON, wrapper exit, all 1,850 identical before/after file identities and the empty owned-process inventory.
+- Outcome: Accepted. No provider spending, budget, migration or historical slot-release authority was added by the code change.
+- Follow-up: Downstream application acceptance remains separate from framework validation.
 
 ## Open Questions
 
