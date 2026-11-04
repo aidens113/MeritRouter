@@ -1,6 +1,6 @@
 # Framework repair and validation
-Status: Active
-Status detail: Focused, recursive and complete regression checks pass; coherent integration is in progress.
+Status: Complete
+Status detail: Framework checks pass and coherent runtime commit e235983 is published to dev and main.
 Created: 2026-11-03
 Last updated: 2026-11-03
 Owner: Senior supervisor agent
@@ -36,7 +36,9 @@ The lead independently inspected logs, JSON, exit status and the identity compar
 
 No live-provider or downstream application acceptance is established by these framework
 checks. Private application state and detailed local execution history remain outside
-this public validation record. No commits or pushes have been made for this unit yet.
+this public validation record. Runtime commit `e235983` was pushed to `dev` and `main`;
+both remote branches and the local branches were verified at that commit. Unrelated
+licensing, development-instruction and private-history changes remain local and unstaged.
 
 ## Changes and invariants
 
@@ -153,4 +155,4 @@ the critical provenance and continuation review/fix work.
 
 ## Open Questions
 
-- Lead: Publication remains pending. No downstream application acceptance follows from framework validation alone.
+- No open framework integration step. Downstream live repair and application acceptance are separate work; this record establishes neither.
