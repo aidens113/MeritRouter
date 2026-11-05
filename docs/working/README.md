@@ -6,7 +6,7 @@ lines, worker briefs, append-only ledger with real validation, open questions).
 
 | Document | Status | Scope |
 | --- | --- | --- |
-| [unpublished-model-sizes.md](unpublished-model-sizes.md) | Active | Verified official hosted model identity permits truthful unknown parameter counts without lowering known-size floors. |
+| [unpublished-model-sizes.md](unpublished-model-sizes.md) | Complete | Official Gemini unknown-size routing verified through successful live coding requests; known-size floors preserved. |
 | [client-connections.md](client-connections.md) | Complete | Persistent default-off local client APIs and global panel controls; focused, build and production browser validation passed. |
 | [framework-validation.md](framework-validation.md) | Complete | Framework repairs and admission follow-up passed focused, recursive and full regression checks (3192 passed/five skipped); runtime and validation record published to dev/main. |
 | [production-readiness.md](production-readiness.md) | Active | **Current state lives here (2026-10-28).** Split integration/recovery/shutdown verified; fresh Commons retry active with remaining357requests; product acceptance open. |

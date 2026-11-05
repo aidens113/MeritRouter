@@ -1,6 +1,6 @@
 # Routing models with unpublished parameter counts
-Status: Active
-Status detail: Implemented and validated; live Google catalog refreshed successfully. Live project continuation remains separately controlled.
+Status: Complete
+Status detail: Implemented, validated, refreshed live metadata and verified successful live Gemini coding requests. Project delivery continues separately.
 Created: 2026-11-05
 Last updated: 2026-11-05
 Owner: Senior supervisor agent
@@ -26,7 +26,9 @@ Focused discovery tests (31), Anthropic protocol tests (11), recursive typecheck
 build passed. Independent source review found one null-override regression, corrected and covered
 before final validation. A supported Google-only catalog refresh made five metadata GET requests,
 zero inference calls, saved 46 endpoints and returned no warnings. The configured coding route
-now includes 18 Google candidates. Listing/routing eligibility is not proof of inference success.
+now includes 18 Google candidates. Subsequent live coding requests through Gate succeeded on
+Gemini after automatic fallback past three older models that returned account-specific 404s.
+This verifies the repaired routing path, not downstream application acceptance.
 
 ## Worker Briefs
 
@@ -67,3 +69,9 @@ now includes 18 Google candidates. Listing/routing eligibility is not proof of i
 - Validation: `npx vitest run tests/providers-discovery.test.ts` — 31 passed, 4.28s; `npx vitest run tests/provider-anthropic-protocol.test.ts` — 11 passed, 4.19s; `pnpm --filter meritrouter typecheck`, `pnpm -r typecheck`, `pnpm --filter meritrouter build`, `pnpm -r build` — exit 0. Lead inspected logs and source diff.
 - Outcome: Metadata fix verified in tests and configured live catalog; production panel restored and Models page HTTP 200. No complete aggregate-suite result or inference availability claimed.
 - Follow-up: Separately resume the existing live project through supported repair under its unchanged approved limits.
+
+### 2026-11-05 — Live inference verification
+- Agent: Lead.
+- Validation: Read-only inspection of durable model-request receipts after supported project continuation: Google Gemini coding requests succeeded with HTTP 200; three older listed models returned 404 and automatic fallback selected a working model. No extra inference smoke calls were made.
+- Outcome: Unknown-size routing repair verified end to end; project worker remains active under existing limits. Code and documentation published to dev/main.
+- Follow-up: Project delivery and its required reviews continue independently; no application acceptance claimed.
