@@ -771,3 +771,14 @@ a promise of compatibility with every Ollama client: model management, embedding
 multimodal inputs and unsupported generation options are outside this implementation.
 Tool execution remains the client's responsibility. Protocol support does not prove a particular
 editor integration; route capabilities and returned constraints are checked separately.
+
+### Google hosted models with unpublished sizes (2026-11-05)
+
+The [Google Models API](https://aistudio.google.com/api-reference/models) reports model resource
+names, generation methods and input/output token limits, but its schema does not report parameter
+counts. MeritRouter therefore retains null sizes for verified native official Gemini entries and
+permits a size-floor exception while the count is unknown. This is an identity-backed exception,
+not evidence that a model exceeds a numeric threshold. Existing independent capability enrichment
+and all qualification, budget and billing controls still apply. Known counts retain their normal
+floors; custom hosts and unknown open-weight models do not acquire this exception. A successful
+model listing proves catalog access, not inference availability or account quota.

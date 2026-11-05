@@ -222,7 +222,12 @@ function applyOverride(ep: BaseEndpoint, o: EndpointOverride | undefined): { ep:
   if (!o) return { ep };
   const next: BaseEndpoint = { ...ep, params: { ...ep.params, evidence: [...ep.params.evidence] }, pricing: { ...ep.pricing } };
   if (o.totalParametersB !== undefined || o.activeParametersB !== undefined) {
-    if (o.totalParametersB !== undefined) next.totalParametersB = o.totalParametersB;
+    if (o.totalParametersB !== undefined) {
+      next.totalParametersB = o.totalParametersB;
+      // Google's discovered exemption describes an unreported count. A later explicit
+      // count restores the normal floor; manual/paid and Anthropic exemptions retain policy.
+      if (o.totalParametersB !== null && ep.origin === "discovered" && ep.route.provider === "google") next.ignoreSizeFloor = false;
+    }
     if (o.activeParametersB !== undefined) next.activeParametersB = o.activeParametersB;
     next.params = { ...next.params, source: "override", confidence: "exact", confirmed: true };
   }

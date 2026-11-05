@@ -45,6 +45,7 @@ const anthropicLifecycle = z.enum(["active", "deprecated", "retired"]).nullable(
 const optTimestamp = z.iso.datetime({ offset: true }).nullable().optional().catch(null);
 const ANTHROPIC_MODELS_SOURCE = "https://platform.claude.com/docs/en/api/models/list";
 const ANTHROPIC_STRUCTURED_SOURCE = "https://platform.claude.com/docs/en/build-with-claude/structured-outputs";
+const GOOGLE_MODELS_SOURCE = "https://aistudio.google.com/api-reference/models";
 
 const OpenAiItemSchema = z.object({
   id: z.string().min(1),
@@ -114,6 +115,17 @@ const AnthropicIdentitySchema = z.object({
   type: z.literal("model"), line: z.string().min(1).nullable(), lifecycle: z.enum(["active", "deprecated"]),
 }).strict();
 type AnthropicListedModel = ListedModel & { anthropicIdentity: { type: "model" | null; line: string | null; lifecycle: "active" | "deprecated" | "retired" | null }; anthropicThinking: AnthropicModelProtocol["thinking"] };
+const GoogleIdentitySchema = z.object({ name: z.string().regex(/^models\/gemini-[A-Za-z0-9._-]+$/), methods: z.array(z.string()).refine(methods => methods.includes("generateContent")) }).strict();
+type GoogleListedModel = ListedModel & { googleIdentity: { name: string; methods: string[] | null } };
+
+/** Native official identity and generation support, never a compatible host or model-name guess. */
+function officialGoogleModel(provider: ResolvedProvider, listed: ListedModel): boolean {
+  if (!provider.builtIn || provider.id !== "google" || provider.api !== "openai_compatible" || provider.models.shape !== "google_native" ||
+    provider.baseUrl !== "https://generativelanguage.googleapis.com/v1beta/openai" ||
+    expandUrl(provider.models.url, provider, provider.accountId) !== "https://generativelanguage.googleapis.com/v1beta/models") return false;
+  const identity = "googleIdentity" in listed ? GoogleIdentitySchema.safeParse(listed.googleIdentity) : null;
+  return identity?.success === true && identity.data.name === `models/${listed.id}`;
+}
 
 /** An authenticated official native catalog identity, never a name-only or compatible-host guess. */
 function officialAnthropicModel(provider: ResolvedProvider, listed: ListedModel): boolean {
@@ -294,7 +306,8 @@ export function parseModelListPage(shape: ModelListShape, body: unknown, provide
       const env = PageSchemas.google.safeParse(body).data ?? fail();
       for (const it of parseItems(GoogleItemSchema, env.models, excluded)) {
         const id = it.name.replace(/^models\//, "");
-        const m: ListedModel = { ...blank(id), displayName: it.displayName ?? null, description: it.description ?? null, contextLimitTokens: it.inputTokenLimit ?? null, outputLimitTokens: it.outputTokenLimit ?? null };
+        const m: GoogleListedModel = { ...blank(id), displayName: it.displayName ?? null, description: it.description ?? null, contextLimitTokens: it.inputTokenLimit ?? null, outputLimitTokens: it.outputTokenLimit ?? null,
+          googleIdentity: { name: it.name, methods: it.supportedGenerationMethods ?? null } };
         keep(m, it.supportedGenerationMethods && !it.supportedGenerationMethods.includes("generateContent") ? "does not support generateContent" : null);
       }
       return { models, excluded, next: env.nextPageToken ? { pageToken: env.nextPageToken } : null };
@@ -551,7 +564,7 @@ export function freeStatus(
   return { value: false, usable: true, reason: freeKey ? "priced model" : "only paid or trial keys" };
 }
 
-function toEndpoint(provider: ResolvedProvider, e: EnrichedModel, free: { value: boolean; reason: string; basis?: "model" | "key" }, override: EndpointOverride | undefined, now: number, proprietary = false, protocol?: AnthropicModelProtocol): ModelEndpointInput {
+function toEndpoint(provider: ResolvedProvider, e: EnrichedModel, free: { value: boolean; reason: string; basis?: "model" | "key" }, override: EndpointOverride | undefined, now: number, proprietary = false, protocol?: AnthropicModelProtocol, unpublishedGoogle = false): ModelEndpointInput {
   const freeValue = override?.freeVerified ?? free.value;
   // The user saying a model is free covers every key; otherwise a key-based free model stays on free keys.
   const freeBasis = !freeValue ? undefined : override?.freeVerified !== undefined ? "model" : (free.basis ?? "key");
@@ -566,7 +579,7 @@ function toEndpoint(provider: ResolvedProvider, e: EnrichedModel, free: { value:
     route: { kind: "direct", provider: provider.id, model: e.modelId },
     quotaScopeIds: [`${provider.id}:${provider.quotaScope}`],
     // The official hosted model has no published size; quality/capability and paid gates still apply.
-    ignoreSizeFloor: proprietary,
+    ignoreSizeFloor: proprietary || unpublishedGoogle,
     totalParametersB: e.params.totalParametersB,
     activeParametersB: e.params.activeParametersB,
     params: { source: e.params.source, confidence: e.params.confidence, confirmed: e.params.confirmed, evidence: e.params.evidence },
@@ -594,7 +607,7 @@ function toEndpoint(provider: ResolvedProvider, e: EnrichedModel, free: { value:
     enabled: true,
     ...(e.notes.length ? { notes: e.notes.join("; ") } : {}),
     sourceUrls: [...new Set([...(provider.sourceUrl.startsWith("http") ? [provider.sourceUrl] : []), ...e.sourceUrls,
-      ...(proprietary ? [ANTHROPIC_MODELS_SOURCE, ANTHROPIC_STRUCTURED_SOURCE] : [])])],
+      ...(proprietary ? [ANTHROPIC_MODELS_SOURCE, ANTHROPIC_STRUCTURED_SOURCE] : []), ...(unpublishedGoogle ? [GOOGLE_MODELS_SOURCE] : [])])],
     checkedAt: new Date(now).toISOString(),
   };
 }
@@ -679,6 +692,13 @@ export async function discoverModels(opts: DiscoveryOptions): Promise<DiscoveryR
       // A different host's catalog cannot fill omissions in this official model's contract.
       // Leaving omissions unknown also lets an explicitly enabled budgeted tool probe run.
       const enriched = await enrichModel(provider.id, m, overrides[id], { openRouter: proprietary ? null : openRouter, huggingFaceTotal, probe });
+      const unpublishedGoogle = officialGoogleModel(provider, m) && enriched.params.totalParametersB === null;
+      if (unpublishedGoogle) {
+        // Google's native API identifies the hosted model and its token limits, not a
+        // parameter count. Retain capability enrichment and every actually known count.
+        enriched.provenance.parameters = { source: "provider", detail: "Official Google Gemini model identity; parameter counts are not reported by its models API" };
+        enriched.notes.push("Official Google Gemini hosted model: parameter count unreported; size floor exempt only while unknown, independent capability, qualification and budget requirements remain enforced");
+      }
       if (proprietary) {
         const override = overrides[id];
         // Claude's typed official catalog reports no parameter count. Do not turn names or
@@ -695,7 +715,7 @@ export async function discoverModels(opts: DiscoveryOptions): Promise<DiscoveryR
       const observedAt = now();
       const protocol: AnthropicModelProtocol | undefined = proprietary ? { api: "anthropic", provider: provider.id, baseUrl: provider.baseUrl, model: m.id,
         thinking: (m as AnthropicListedModel).anthropicThinking, sourceUrl: ANTHROPIC_MODELS_SOURCE, checkedAt: new Date(observedAt).toISOString() } : undefined;
-      result.endpoints.push({ endpoint: toEndpoint(provider, enriched, free, overrides[id], observedAt, proprietary, protocol), enriched, free: { value: overrides[id]?.freeVerified ?? free.value, reason: free.reason } });
+      result.endpoints.push({ endpoint: toEndpoint(provider, enriched, free, overrides[id], observedAt, proprietary, protocol, unpublishedGoogle), enriched, free: { value: overrides[id]?.freeVerified ?? free.value, reason: free.reason } });
       report.kept++;
     }
     for (const e of known) {

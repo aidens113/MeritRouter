@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { ConfigSchema, ProvidersSectionSchema } from "../src/config/schema.js";
-import { ModelEndpointSchema, type ModelEndpointInput } from "../src/models/catalog.js";
+import { Catalog, ModelEndpointSchema, type ModelEndpointInput } from "../src/models/catalog.js";
+import { openDatabase } from "../src/storage/db.js";
+import { planRoute } from "../src/routing/select.js";
 import {
   ProviderCredentials,
   dailyProbeBudget,
@@ -12,7 +14,7 @@ import {
   type FetchLike,
   type ProviderClient,
 } from "../src/providers/index.js";
-import { baseConfig } from "./helpers.js";
+import { baseConfig, makeEnv } from "./helpers.js";
 
 const NOW = Date.UTC(2026, 9, 20, 12, 0, 0);
 const OR_URL = "https://openrouter.ai/api/v1/models";
@@ -251,6 +253,81 @@ describe("model-list shapes", () => {
     const r = await run({ google: key("GEMINI_KEY") }, { GEMINI_KEY: "k" }, f);
     expect(r.providers[0]!.pages).toBe(2);
     expect(r.endpoints).toHaveLength(1);
+  });
+});
+
+describe("official Google hosted models with unpublished sizes", () => {
+  const native = "https://generativelanguage.googleapis.com/v1beta/models";
+  const listed = (id: string, methods: string[] | undefined = ["generateContent"]) => ({ name: "models/" + id, inputTokenLimit: 262144, outputTokenLimit: 8192,
+    ...(methods ? { supportedGenerationMethods: methods } : {}) });
+  const supported = (id: string) => ({ id: "google/" + id, name: id, context_length: 262144, top_provider: { max_completion_tokens: 8192 },
+    architecture: { input_modalities: ["text"], output_modalities: ["text"] }, supported_parameters: ["tools", "response_format"] });
+  function routing(records: ModelEndpointInput[], check: (catalog: Catalog, cfg: ReturnType<typeof makeEnv>["cfg"]) => void) {
+    const env = makeEnv({ endpoints: [], config: baseConfig({ paid: { enabled: false } }) }), db = openDatabase(env.cfg.storageDir);
+    try {
+      const catalog = new Catalog(db, env.cfg.modelsPath, { requireConfirmationForHeuristicParams: true });
+      catalog.saveProviderDiscovery(records, ["google", "google-copy"], NOW);
+      check(catalog, env.cfg);
+    } finally { db.close(); env.cleanup(); }
+  }
+  const plan = (catalog: Catalog, cfg: ReturnType<typeof makeEnv>["cfg"]) => planRoute(cfg, catalog.endpoints(), [],
+    { profile: "implement", tier: "T3", inputModalities: ["text"], needsStructuredOutput: false }, { now: new Date(NOW), qualification: () => null });
+
+  it("routes verified native Gemini with null size and independently sourced tools while preserving known-small floors", async () => {
+    const ids = ["gemini-fixture", "gemini-explicit-small", "gemma-3-27b-it", "mystery-open-weight", "gemini-missing-method", "gemini-no-tools"];
+    const f = fakeFetch({
+      [OR_URL]: () => json({ data: ids.filter(id => id !== "gemini-no-tools").map(supported) }),
+      [native]: () => json({ models: [...ids.map(id => id === "gemini-missing-method" ? { ...listed(id), supportedGenerationMethods: undefined } : listed(id)), listed("gemini-count-only", ["countTokens"])] }),
+    });
+    const result = await run({ google: key("GEMINI_KEY") }, { GEMINI_KEY: "fake-key" }, f, {
+      overrides: { "google/gemini-explicit-small": { totalParametersB: 27 }, "google/gemma-3-27b-it": { totalParametersB: 27 } },
+    });
+    const official = result.endpoints.find(value => value.endpoint.id === "google/gemini-fixture")!;
+    expect(official.endpoint).toMatchObject({ totalParametersB: null, activeParametersB: null, ignoreSizeFloor: true, supportsTools: true, pricing: { freeVerified: true, freeBasis: "key" } });
+    expect(official.enriched.provenance.supportsTools.source).toBe("openrouter");
+    expect(official.enriched.provenance.parameters).toMatchObject({ source: "provider", detail: expect.stringContaining("not reported") });
+    expect(official.endpoint.sourceUrls).toContain("https://aistudio.google.com/api-reference/models");
+    expect(official.endpoint.sourceUrls).not.toContain("https://platform.claude.com/docs/en/api/models/list");
+    expect(result.endpoints.some(value => value.endpoint.id === "google/gemini-count-only")).toBe(false);
+    routing(result.endpoints.map(value => value.endpoint), (catalog, cfg) => {
+      const route = plan(catalog, cfg);
+      expect(cfg.profiles.implement!.min_total_parameters_b).toBe(100);
+      expect(route.paidPolicy).toBe("never");
+      expect(route.candidates.map(value => value.id)).toContain("google/gemini-fixture");
+      expect(catalog.get("google/gemini-fixture")).toMatchObject({ status: "active", totalParametersB: null });
+      for (const id of ["google/gemini-explicit-small", "google/gemma-3-27b-it"]) {
+        expect(catalog.get(id)).toMatchObject({ ignoreSizeFloor: false, totalParametersB: 27 });
+        expect(route.explanations.find(value => value.endpointId === id)?.reasons).toContain("27B is below the 100B floor for implement/T3");
+      }
+      for (const id of ["google/mystery-open-weight", "google/gemini-missing-method"]) {
+        expect(catalog.get(id)).toMatchObject({ ignoreSizeFloor: false, status: "pending_confirmation", totalParametersB: null });
+        expect(route.candidates.map(value => value.id)).not.toContain(id);
+      }
+      expect(catalog.get("google/gemini-no-tools")).toMatchObject({ ignoreSizeFloor: true, supportsTools: null });
+      expect(route.explanations.find(value => value.endpointId === "google/gemini-no-tools")?.reasons).toContain("tool calling unknown (required for repository work; set it in an override)");
+      catalog.setOverride("google/gemini-fixture", { totalParametersB: null }, NOW);
+      expect(catalog.get("google/gemini-fixture")).toMatchObject({ totalParametersB: null, ignoreSizeFloor: true, status: "active" });
+      expect(plan(catalog, cfg).candidates.map(value => value.id)).toContain("google/gemini-fixture");
+      catalog.setOverride("google/gemini-fixture", { totalParametersB: 27 }, NOW);
+      expect(catalog.get("google/gemini-fixture")).toMatchObject({ totalParametersB: 27, ignoreSizeFloor: false });
+      expect(plan(catalog, cfg).explanations.find(value => value.endpointId === "google/gemini-fixture")?.reasons).toContain("27B is below the 100B floor for implement/T3");
+    });
+    expect(f.calls.some(call => call.url.includes("chat/completions") || call.url.includes(":generateContent"))).toBe(false);
+  });
+
+  it.each(["google", "google-copy"])("does not exempt a Gemini name from a custom %s host", async provider => {
+    const base = "https://proxy.test/v1beta/openai", model = "gemini-fixture";
+    const f = fakeFetch({ [OR_URL]: () => json({ data: [supported(model)] }),
+      "https://proxy.test/v1beta/models": () => json({ models: [listed(model)] }),
+      [base + "/models"]: () => json({ data: [{ id: model, context_window: 262144, max_completion_tokens: 8192 }] }),
+    });
+    const result = await run({ [provider]: { ...key("FAKE_KEY"), base_url: base } }, { FAKE_KEY: "fake-key" }, f);
+    expect(result.endpoints).toHaveLength(1);
+    expect(result.endpoints[0]!.endpoint).toMatchObject({ totalParametersB: null, ignoreSizeFloor: false });
+    routing(result.endpoints.map(value => value.endpoint), (catalog, cfg) => {
+      expect(catalog.get(provider + "/" + model)).toMatchObject({ status: "pending_confirmation" });
+      expect(plan(catalog, cfg).candidates).toHaveLength(0);
+    });
   });
 });
 

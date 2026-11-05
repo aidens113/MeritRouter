@@ -233,6 +233,12 @@ shown in the provider's billing console rather than treating local zero spend as
   successful listing no longer includes become unavailable. The same run refreshes OpenRouter's
   free daily quota for each key and fetches paid prices. `meritrouter keys test` lists what one
   key can use without changing the catalog.
+- **Unpublished model sizes.** Verified official Gemini entries from Google's native model list
+  retain a null parameter count and can route without a numeric size floor. This requires the
+  official inference/list URLs and explicit generation support; a Gemini name on another host
+  is insufficient. Tool support, context/output limits, qualification, free/paid rules and budgets
+  remain independent checks. A known numeric count, including a later operator override, restores
+  the ordinary Google size floor. Unknown open-weight models still require parameter evidence.
 - **Replacing a key.** Add the new key, `meritrouter keys test vault:<new id>`, then
   `meritrouter keys remove <old id>` (a removed key with recorded spend keeps its row, without the
   secret). For a config key, change the environment variable and restart the worker and panel,
