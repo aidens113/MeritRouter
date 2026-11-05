@@ -119,7 +119,7 @@ export class PaidSpend {
 
   /** Immutable split-project accounting; unmapped legacy history is held conservatively, never guessed from a reused slug. */
   projectAccountingSpendSince(projectId: string, sinceMs: number): number {
-    return this.sum("created_at > ? AND (project_uuid=? OR project_uuid IS NULL)", sinceMs, projectId);
+    return this.sum("created_at > ? AND installation_direct=0 AND (project_uuid=? OR project_uuid IS NULL)", sinceMs, projectId);
   }
 
   /**

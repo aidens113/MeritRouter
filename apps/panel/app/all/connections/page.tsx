@@ -12,7 +12,7 @@ export default async function ConnectionsPage() {
   if (!r.sy) return <SetupScreen error={r.error} configPath={r.configPath} />;
   await syncConnections(r.sy);
   return <div className="space-y-6">
-    <PageHeader title="Connections" description="Use MeritRouter from your editor or chat app through a local Ollama or OpenAI-compatible connection." />
+    <PageHeader title="Connections" description="Connect your editor or chat app to MeritRouter." />
     <Connections initial={connectionsView(r.sy)} />
   </div>;
 }

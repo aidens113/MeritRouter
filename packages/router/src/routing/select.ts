@@ -1,11 +1,11 @@
 import type { ResolvedConfig } from "../config/load.js";
-import type { Modality, PaidPolicy, ProfileName, TierName } from "../config/schema.js";
+import type { Modality, PaidPolicy, ProfileConfig, RequestProfileName, TierName } from "../config/schema.js";
 import type { ModelEndpoint, RoutingOverride } from "../models/catalog.js";
 import { alwaysSearches, nativeSearchUse, type NativeSearchUse } from "./native-search.js";
 import { assessSupervisorQuality, type SupervisorQualityAssessment } from "./supervisor-quality.js";
 
 export interface RouteRequirements {
-  profile: ProfileName;
+  profile: RequestProfileName;
   tier: TierName;
   inputModalities: Modality[];
   needsStructuredOutput: boolean;
@@ -99,7 +99,7 @@ export interface QualificationLookup {
    * Pass rate and trial count for (endpoint, task family, tier), or null when unqualified. With
    * `family`, that family (e.g. review) at its tier and threshold instead of the profile's.
    */
-  (endpointId: string, profile: ProfileName, tier: TierName, family?: { family: string; tier: TierName; threshold: number }): { passRate: number; trials: number; qualified: boolean } | null;
+  (endpointId: string, profile: RequestProfileName, tier: TierName, family?: { family: string; tier: TierName; threshold: number }): { passRate: number; trials: number; qualified: boolean } | null;
 }
 
 export interface ProviderHealthLookup {
@@ -128,7 +128,7 @@ export interface CandidateExplanation {
 export interface RoutePlan {
   /** Supervisor quality cannot silently degrade when eligible capacity is absent. */
   blocker?: { code: "supervisor_quality_unavailable"; message: string };
-  profile: ProfileName;
+  profile: RequestProfileName;
   tier: TierName;
   floorB: number;
   candidates: ModelEndpoint[];
@@ -142,12 +142,16 @@ export interface RoutePlan {
   paidPolicy?: PaidPolicy;
 }
 
-function overrideApplies(o: RoutingOverride, profile: ProfileName, tier: TierName): boolean {
+function overrideApplies(o: RoutingOverride, profile: RequestProfileName, tier: TierName): boolean {
   return o.enabled && (o.profile === null || o.profile === profile) && (o.tier === null || o.tier === tier);
 }
 
-export function sizeFloor(cfg: ResolvedConfig, profile: ProfileName, tier: TierName): number {
-  return Math.max(cfg.profiles[profile]!.min_total_parameters_b, cfg.tiers[tier].min_total_parameters_b);
+/** Intrinsic direct chat inherits installation tiers, never a configured worker profile. */
+export function requestRoutingPolicy(cfg: ResolvedConfig, profile: RequestProfileName): Pick<ProfileConfig, "mode" | "min_total_parameters_b" | "requires_structured_output"> {
+  return profile === "direct" ? { mode: "completion", min_total_parameters_b: 0, requires_structured_output: false } : cfg.profiles[profile]!;
+}
+export function sizeFloor(cfg: ResolvedConfig, profile: RequestProfileName, tier: TierName): number {
+  return Math.max(requestRoutingPolicy(cfg, profile).min_total_parameters_b, cfg.tiers[tier].min_total_parameters_b);
 }
 
 /** Checks independent of request size. Returns plain-language exclusion reasons. */
@@ -158,12 +162,12 @@ export function endpointExclusions(
   opts: { now: Date; allowBelowFloor: boolean; qualification: ReturnType<QualificationLookup> },
 ): string[] {
   const reasons: string[] = [];
-  const profile = cfg.profiles[req.profile]!;
+  const profile = requestRoutingPolicy(cfg, req.profile);
   const supervisorQuality = profile.mode === "supervisor" ? assessSupervisorQuality(ep.id, cfg.supervisor.routing, opts.now, req.inputModalities.some(m => m === "image" || m === "video"), ep.route) : null;
   if (supervisorQuality && !supervisorQuality.eligible) reasons.push(supervisorQuality.reason);
   if (ep.status !== "active") reasons.push(ep.statusReason ?? `status is ${ep.status}`);
   if (!ep.available && ep.status === "active") reasons.push("no enabled key for this provider");
-  if (ep.deniedProfiles.includes(req.profile)) reasons.push(`blocked for ${req.profile} tasks by an override`);
+  if (req.profile !== "direct" && ep.deniedProfiles.includes(req.profile)) reasons.push(`blocked for ${req.profile} tasks by an override`);
   const floor = Math.max(sizeFloor(cfg, req.profile, req.tier), req.minTotalParametersB ?? 0);
   if ((profile.mode !== "supervisor" || supervisorQuality?.classification === null) && ep.totalParametersB !== null && ep.totalParametersB < floor && !opts.allowBelowFloor && !ep.ignoreSizeFloor) {
     reasons.push(`${ep.totalParametersB}B is below the ${floor}B floor for ${req.profile}/${req.tier}`);
@@ -226,7 +230,7 @@ export function planRoute(
   const forced = forceIds.size > 0;
   const prefer = cfg.tiers[req.tier].prefer;
   const policy = paidPolicyFor(cfg, req);
-  const supervisor = cfg.profiles[req.profile]!.mode === "supervisor";
+  const supervisor = requestRoutingPolicy(cfg, req.profile).mode === "supervisor";
   const quality = (ep: ModelEndpoint) => assessSupervisorQuality(ep.id, cfg.supervisor.routing, deps.now, req.inputModalities.some(m => m === "image" || m === "video"), ep.route);
 
   const explanations: CandidateExplanation[] = [];

@@ -4,6 +4,10 @@ import { PanelAvailability } from "../operations/panel.js";
 import { ServiceOperations } from "./service-operations.js";
 import { ClientConnectionError, ClientConnectionRequestSchema, type ClientConnectionRequest } from "../connections/protocol.js";
 import { dispatchClientConnection } from "../connections/dispatch.js";
+import { ClientConnectionRequestLedger } from "../connections/request-ledger.js";
+import { clientConnectionTokenMatches } from "../connections/access.js";
+import { submitClientJob, getClientJob, cancelClientJob, assertClientJobAncestorsActive, type ClientJobHost, type ClientJobSubmission, type ClientJobAccess, type ClientJobAccepted, type ClientJobStatus } from "../connections/jobs.js";
+import { assessSupervisorQuality } from "../routing/supervisor-quality.js";
 import type { ChatResponse } from "../gateway/types.js";
 import { GlobalKnowledge } from "../brain/global-knowledge.js";
 import { qualificationLookupFrom, qualificationStat, withQualificationStats, type QualificationStatReader } from "../qualification/stats.js";
@@ -142,6 +146,7 @@ export class MeritRouter {
   readonly catalog: Catalog;
   readonly health: ProviderHealth;
   readonly gate: Gate;
+  private readonly clientConnectionLedger: ClientConnectionRequestLedger;
   readonly router: TaskRouter;
   readonly scanner: Scanner;
   readonly owner: string;
@@ -259,7 +264,8 @@ export class MeritRouter {
         () => this.providers.statuses(),
         (platform) => this.providers.statusPlatform(platform),
       );
-      this.gate = new Gate(this.db, cfg, this.admission, this.health, { providers: this.providers, spend: this.spend });
+      this.clientConnectionLedger = new ClientConnectionRequestLedger(this.admission, this.spend, cfg);
+      this.gate = new Gate(this.db, cfg, this.admission, this.health, { providers: this.providers, spend: this.spend }, this.clientConnectionLedger);
       this.router = new TaskRouter(cfg, this.db, this.catalog, this.gate, this.artifacts, this.now, config => qualificationLookupFrom(this.qualificationStat, config));
       this.scanner = new Scanner({
         db: this.db,
@@ -478,37 +484,59 @@ export class MeritRouter {
     return { cfg, brain: b.brain, access: b.access, stores: this.projectStores(cfg.project.slug), ...graph };
   }
 
-  /** Dispatch a connected client's chat through the selected project's task, lease and Gate. */
-  requestClientConnection(raw: ClientConnectionRequest, signal: AbortSignal): Promise<ChatResponse> {
+  /** Dispatch arbitrary supported chat through installation accounting, without project work. */
+  requestClientConnection(raw: ClientConnectionRequest, signal: AbortSignal, accessToken?: string): Promise<ChatResponse> {
     const request = ClientConnectionRequestSchema.parse(raw);
     if (this.closing) return Promise.reject(new TaskValidationError("service is closing"));
     const settings = this.cfg.client_connections;
-    if (!settings.enabled || settings.project !== request.project || settings.profile !== request.profile)
-      return Promise.reject(new ClientConnectionError(503, "connections_disabled", "Client connections are disabled or their selected project/profile changed."));
-    return this.operations.run(request.project, async () => {
-      this.projects.require(request.project);
-      this.stores.fence(request.project);
-      const stores = this.stores.of(request.project), bundle = stores.bundle;
-      if (this.host && !bundle) throw new TaskValidationError("Client connections require the selected project's registered runtime");
-      const legacy = bundle ? null : this.projectDeps(request.project);
-      const gate = bundle?.gate ?? legacy?.gate, router = bundle?.router ?? legacy?.router;
-      if (!gate || !router) throw new TaskValidationError("The selected project has no configured model runtime");
-      return dispatchClientConnection({
-        cfg: bundle?.cfg ?? legacy!.cfg, tasks: stores.tasks,
-        gate, router,
-        ...(bundle ? {
-          taskLeases: bundle.taskLeases, queue: this.host!.bindings.forProject(bundle.identity),
-          readyProjects: () => this.host!.bundles().flatMap(item => {
-            const hint = this.host!.bindings.forProject(item.identity).hint();
-            return hint ? [hint] : [];
-          }),
-        } : {}),
-        assertCurrent: () => {
-          if (bundle) bundle.assertCurrent();
-          else { this.projects.require(request.project); this.stores.fence(request.project); }
-        },
-      }, request, signal);
+    if (!settings.enabled || !settings.enabled_modes.includes("direct"))
+      return Promise.reject(new ClientConnectionError(503, "connections_disabled", "Connections direct mode is disabled."));
+    return this.operations.run("@connections", async () => {
+      return dispatchClientConnection({ cfg: this.cfg, gate: this.gate, router: this.router, ledger: this.clientConnectionLedger,
+        assertCurrent: () => this.operations.assertCurrent("@connections"),
+      }, request, signal, accessToken);
     });
+  }
+
+  /** Create a durable, project-scoped job without starting a worker or automatic qualification. */
+  submitClientJob(request: ClientJobSubmission, signal?: AbortSignal, accessToken?: string): Promise<ClientJobAccepted> {
+    if (this.closing) return Promise.reject(new TaskValidationError("service is closing"));
+    return submitClientJob(this.clientJobHost(accessToken), request, signal);
+  }
+  getClientJob(access: ClientJobAccess): ClientJobStatus { return getClientJob(this.clientJobHost(), access); }
+  cancelClientJob(access: ClientJobAccess): Promise<ClientJobStatus> { return cancelClientJob(this.clientJobHost(), access); }
+
+  private assertClientTeamReady(project: string, cfg: ProjectContext): void {
+    // This is precisely the qualifier's unchanged-input branch. The other branch creates
+    // qualification intents and may spend requests before the client job can own them.
+    if (cfg.profiles.supervise?.mode !== "supervisor" || (cfg.supervisor.routing.minimum_quality === "ranked_capable" && !cfg.supervisor.routing.ranking_policy))
+      throw new ClientConnectionError(400, "supervisor_qualification_required", "Qualify the configured supervisor separately before enabling connection team jobs.");
+    const stores = this.stores.of(project), router = stores.bundle?.router ?? this.projectDeps(project).router;
+    if (!router) throw new ClientConnectionError(400, "supervisor_qualification_required", "The selected project has no configured supervisor routing runtime.");
+    const chosen = cfg.supervisor.endpoints.map(endpointId => ({ profile: "supervise" as const, tier: null, kind: "force" as const, endpointId, allowBelowFloor: true, enabled: true }));
+    const plan = router.plan("supervise", "T3", ["text"], undefined, false, cfg.supervisor.paid_policy, chosen, false, cfg);
+    if (!plan.candidates.some(endpoint => {
+      const quality = assessSupervisorQuality(endpoint.id, cfg.supervisor.routing, new Date(this.now()), false, endpoint.route);
+      return quality.eligible && quality.classification !== null;
+    })) throw new ClientConnectionError(400, "supervisor_qualification_required", "No currently eligible, proven supervisor route is configured. Qualify it separately before submitting a connection team job.");
+  }
+
+  private clientJobHost(accessToken?: string): ClientJobHost {
+    return { cfg: this.cfg, project: project => this.projects.require(project),
+      assertAccess: cfg => {
+        if (!clientConnectionTokenMatches(cfg.client_connections, accessToken)) throw new ClientConnectionError(401, "connection_token_required", "Send a valid Connections access token in the Authorization: Bearer header.");
+      },
+      store: project => {
+        this.projects.require(project); this.stores.fence(project);
+        const stores = this.stores.of(project);
+        if (this.host && !stores.bundle) throw new TaskValidationError("Connection jobs require the selected project's registered runtime");
+        return { db: stores.db, tasks: stores.tasks, admission: stores.admission,
+          assertCurrent: () => { this.projects.require(project); this.stores.fence(project); stores.bundle?.assertCurrent(); } };
+      },
+      assertTeamReady: (project, cfg) => this.assertClientTeamReady(project, cfg),
+      submit: async (spec, project, purpose, beforeInsert) => (await this.submitTasksInternal([spec], { project, purpose, connection: { beforeInsert } }))[0]!,
+      cancel: (ids, project) => this.cancelTasksAsync(ids, project),
+    };
   }
 
   /** A project's stores: its own isolated store (split installation), or the installation's shared one. */
@@ -724,6 +752,9 @@ export class MeritRouter {
    * their repository aliases are that project's.
    */
   async submitTasks(raw: unknown[], opts: { purpose?: string; parentSessionId?: string; project?: string } = {}): Promise<SubmitOutcome[]> {
+    return this.submitTasksInternal(raw, opts);
+  }
+  private async submitTasksInternal(raw: unknown[], opts: { purpose?: string; parentSessionId?: string; project?: string; connection?: { beforeInsert(specs: readonly WorkerTask[]): void } } = {}): Promise<SubmitOutcome[]> {
     const drainingRetry = this.closing;
     if (drainingRetry && (!this.operations.allowsPromotionRetry() || opts.purpose !== "promotion_review")) throw new TaskValidationError("service is closing");
     if (!Array.isArray(raw) || raw.length === 0) throw new TaskValidationError("submit at least one task");
@@ -792,7 +823,11 @@ export class MeritRouter {
       assertDrainingRetry();
       // The qualifier only qualifies supervisor-mode tasks. Completion-only publication
       // has no qualification work and remains possible for an admitted draining owner.
-      if (opts.purpose !== "qualification" && specs.some(spec => projectCfg.profiles[spec.profile]?.mode === "supervisor")) specs = await this.supervisorQualifier.preflight(specs, slug, {
+      if (opts.connection) {
+        // This private capability never comes from an HTTP body or ordinary submitTasks.
+        // Recheck before any preflight work and again under the atomic insertion lock.
+        opts.connection.beforeInsert(specs);
+      } else if (opts.purpose !== "qualification" && specs.some(spec => projectCfg.profiles[spec.profile]?.mode === "supervisor")) specs = await this.supervisorQualifier.preflight(specs, slug, {
         ...(opts.purpose ? { purpose: opts.purpose } : {}), ...(opts.parentSessionId ? { parentSessionId: opts.parentSessionId } : {}),
       }, inputSpecs);
       assertDrainingRetry();
@@ -823,6 +858,8 @@ export class MeritRouter {
             if (spec.supervisionScope === "project" && !policy.dispatch_final_supervisor) throw new TaskValidationError("Dispatching a final project supervisor is disabled; use bounded subtask supervision");
           }
         }
+        opts.connection?.beforeInsert(specs);
+        assertClientJobAncestorsActive(s.db, specs, slug);
         const submitted = s.tasks.submit(specs, { project: slug });
         if (opts.purpose && opts.purpose !== "work") {
           for (const outcome of submitted) if (!outcome.deduplicated) s.db.prepare("UPDATE tasks SET purpose=? WHERE id=?").run(opts.purpose, outcome.taskId);

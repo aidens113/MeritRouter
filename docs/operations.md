@@ -26,32 +26,72 @@ startup and availability checks, while leaving an already started shared panel a
 The global **Connections** page controls a separate panel-owned compatibility listener.
 `client_connections.enabled` defaults to `false`; saved settings are restored at panel startup
 and after configuration reloads. Ordinary SDK, worker and MCP instances do not bind this port.
-The default address is `127.0.0.1:4479`; the listener never takes over an occupied port or binds
-to a remote interface. The page distinguishes saved enablement from running, starting and error
-states. A disabled listener or stopped panel drains/cancels its admitted requests before closing.
+The default address is `127.0.0.1:4479`; host/IP and port are editable. The listener never
+replaces an existing service on an occupied address. The page distinguishes saved enablement
+from running, starting and error states. Disabling the listener or stopping the panel cancels
+its admitted HTTP requests before closing.
 
-Settings select one configured project and a completion profile (`summarize` by default).
-The default limits are two concurrent requests, a 2 MiB request body, 4,096 output tokens and
-a 120-second request timeout. Profile input/output limits, task capacity, provider quotas,
-package allocation and paid-routing policy still apply. Request output cannot raise a profile's
-ceiling. The SDK dispatch method independently enforces timeout and scope, even without HTTP.
+Direct requests need neither a project nor a completion profile. They retain caller messages,
+images and tools and use the installation's normal model selection, key rotation and fallback.
+The intrinsic direct route uses the installation's T1 floor, ordering and paid policy, with
+completion-family qualification evidence. Image inputs require a capable route; images are
+never silently replaced with text.
 
-Each chat creates and atomically claims a durable task for the selected project. Split storage
-uses its registered project Gate, fairness coordinator, exact execution grant and private request
-ledger. It does not use taskless admission or the installation Gate as a fallback. Client requests
-renew and settle their captured leases, retain consumed accounting on failures, and never execute
-the tool calls returned to the client. A full queue reports capacity refusal rather than claiming
-an unrelated queued task. Disabling, disconnecting or timing out propagates cancellation to Gate.
+Default limits are two concurrent HTTP requests, a 2 MiB body, 4,096 output tokens and a
+120-second timeout. Each direct call owns an installation execution with no task members;
+it creates no project or task. Gate records every physical attempt, including failed or
+uncertain attempts, and applies shared provider capacity, package quotas and paid admission.
+The direct request's attempt ceiling is enforced atomically when reserving each request.
+Split project requests retain their existing project grants and private ledger authority;
+the separate installation execution capability does not bypass those checks. Global quota
+counts include both accounting ledgers without counting a physical request twice. Positively
+identified installation calls do not consume each project's private request share or paid cap;
+ambiguous historical accounting retains its conservative attribution. Unknown dispatch or
+persistence outcomes retain their holds for explicit reconciliation, including after restart.
+Returned tool calls execute in the client. Disconnection, timeout or a listener settings change
+cancels the active direct request. SDK calls enforce the same connection policy independently
+of HTTP.
 
-The virtual model `meritrouter` (`meritrouter:latest` is also accepted) uses configured automatic
-routing. OpenAI-compatible routes are `GET /v1/models` and `POST /v1/chat/completions`.
+The virtual model `meritrouter` (`meritrouter:latest` is also accepted) selects the saved default
+mode. Explicit names are `meritrouter-direct`, `meritrouter-agent` and `meritrouter-team`;
+discovery lists only enabled modes. Direct is enabled by default; agent/team access is opt-in.
+OpenAI-compatible routes are `GET /v1/models` and `POST /v1/chat/completions`.
 Native Ollama routes are `GET /api/tags`, `GET /api/version`, `POST /api/show`, `POST /api/chat`
 and `POST /api/generate`. Streaming responses use buffered SSE/NDJSON with completion and usage
 frames; this is not upstream token-by-token streaming. Unsupported model-management, embeddings,
-Responses, multimodal or request-option features return errors rather than being silently ignored.
+Responses, unsupported modalities or request-option features return errors rather than being silently ignored.
 
-Only the listener's loopback Host is accepted. HTTP(S) browser origins on localhost, `127.0.0.1`
-and `[::1]` receive CORS/preflight responses; remote, null and extension origins are rejected.
+Agent mode creates one worker task; team mode submits supervised work using the normal project
+workflow. Configure the permitted repositories, default writable repository for single coding
+agents, worker profile, request/spend ceilings, root/worker timeout and
+maximum active jobs before enabling them. They retain existing admission, tool permissions and
+reviews. The panel queues jobs; an existing MeritRouter worker executes them. An acknowledgment
+does not mean the job ran or passed verification.
+The timeout uses existing task execution semantics; team children retain their configured task
+deadlines. Cancel the job to stop the whole team. Surviving children still count toward active-job
+limits and remain visible after a root finishes.
+Team submissions require an already eligible configured supervisor. They refuse requests that
+would need automatic qualification before the client job exists; run qualification separately.
+
+`POST /api/jobs` accepts an agent/team goal and optional narrower repository/path/budget scope.
+It returns HTTP 202 with a job ID, project, access token and status/cancel URLs. Send the token
+as `Authorization: Bearer <token>` to `GET /api/jobs/:project/:id` or
+`POST /api/jobs/:project/:id/cancel`. Only the token hash is stored. These endpoints cannot inspect
+or cancel unrelated project jobs. Chat requests choosing an agent/team model return the same
+job acknowledgment as assistant content; use the returned URLs for actual progress/results.
+Caller-owned tool conversations belong in direct mode rather than being silently converted into
+agent tool permissions.
+
+A non-loopback bind requires a separate Connections bearer key; loopback can also use one.
+The panel generates or rotates a random key and returns it once for copying. Configuration
+stores only its SHA-256 hash; ordinary status responses expose whether a key is configured,
+never the key or hash. Discovery, chat and job submission use this key. Job status/cancellation
+continue to use the job-specific token. Changing the connection key fences pending work.
+
+Host checks use the configured bind address or the socket's actual local address and port,
+including normalized IPv6 addresses. Wildcard binding does not authorize arbitrary Host
+headers, and forwarded headers do not confer authority. Browser CORS allows local and
+binding/destination origins; null and unrelated origins are rejected.
 Provider credentials are not returned to clients. See [client setup](setup.md#connect-an-editor-or-chat-app)
 for URLs and copyable configuration.
 

@@ -3,7 +3,8 @@ import type { Db } from "../storage/db.js";
 import { immediate, newId } from "../storage/db.js";
 import type { TaskStore } from "../storage/tasks.js";
 import type { ResolvedConfig } from "../config/load.js";
-import { TIER_NAMES, UNLIMITED_REQUESTS, type ProfileName, type TierName } from "../config/schema.js";
+import { TIER_NAMES, UNLIMITED_REQUESTS, type ProfileName, type RequestProfileName, type TierName } from "../config/schema.js";
+import { physicalRequestCount } from "./accounting-usage.js";
 import type { BudgetInput } from "../verification/contract.js";
 import type { WorkerTask } from "../core/task.js";
 import { AdmissionDenied } from "../core/errors.js";
@@ -180,7 +181,7 @@ export interface Participant {
 export interface ReservationRequest {
   requestId?: string;
   executionId: string;
-  profile: ProfileName;
+  profile: RequestProfileName;
   purpose: string;
   gatewayModel: string;
   endpointId: string | null;
@@ -230,7 +231,7 @@ export class Admission {
 
   serverNow(): number { return this.now(); }
 
-  createExecution(kind: "task" | "batch", profile: ProfileName, members: Array<{ taskId: string; itemId: string }>, retryOf?: string): string {
+  createExecution(kind: "task" | "batch", profile: RequestProfileName, members: Array<{ taskId: string; itemId: string }>, retryOf?: string): string {
     const id = newId(kind === "batch" ? "b" : "x");
     immediate(this.db, () => {
       this.db
@@ -290,7 +291,7 @@ export class Admission {
   }
 
   packageCount(sinceMs: number): number {
-    return (this.db.prepare("SELECT COUNT(*) AS n FROM model_requests WHERE reserved_at > ?").get(sinceMs) as { n: number }).n;
+    return physicalRequestCount(this.db, sinceMs);
   }
 
   /** Requests one project reserved since `sinceMs` (attributed by `model_requests.project_id`). */
@@ -302,7 +303,10 @@ export class Admission {
   private windowReopensAt(windowMs: number, limit: number, now: number, project?: string): number {
     const row = (
       project === undefined
-        ? this.db.prepare("SELECT reserved_at FROM model_requests WHERE reserved_at > ? ORDER BY reserved_at DESC LIMIT 1 OFFSET ?").get(now - windowMs, limit - 1)
+        ? this.db.prepare(`WITH requests AS (
+            SELECT b.id,MAX(b.reserved_at,COALESCE(r.reserved_at,b.reserved_at)) reserved_at FROM physical_requests b LEFT JOIN model_requests r ON r.id=b.id
+            UNION ALL SELECT r.id,r.reserved_at FROM model_requests r WHERE NOT EXISTS(SELECT 1 FROM physical_requests b WHERE b.id=r.id))
+            SELECT reserved_at FROM requests WHERE reserved_at>? ORDER BY reserved_at DESC LIMIT 1 OFFSET ?`).get(now - windowMs, limit - 1)
         : this.db.prepare("SELECT reserved_at FROM model_requests WHERE project_id = ? AND reserved_at > ? ORDER BY reserved_at DESC LIMIT 1 OFFSET ?").get(project, now - windowMs, limit - 1)
     ) as { reserved_at: number } | undefined;
     return row ? row.reserved_at + windowMs + 1 : now;

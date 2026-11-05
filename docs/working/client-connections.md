@@ -10,16 +10,23 @@ Related: [operations](../operations.md), [setup](../setup.md), [decisions](../de
 
 ## Current State
 
-The global Connections page provides a persistent enable switch, explicit project and completion
-profile selection, listener status, and copyable Ollama/Chat Completions setup values. The listener
-is off by default, binds loopback only, and starts with the panel when saved as enabled. Closing
+The global Connections page provides a persistent enable switch, listener status and copyable
+Ollama/Chat Completions setup values. The simplification revision removes direct project
+and profile selection, adds editable host/IP and port, and places agent scope in advanced settings.
+The listener remains off by default and starts with the panel when saved as enabled. Closing
 the panel or disabling Connections drains active client requests.
 
-Validated text/tool requests use the selected project's Gate, durable task lease, admission and
-accounting. Split projects require their exact execution grant; no taskless or installation-wide
-fallback exists. Native chat/generate NDJSON and Chat Completions SSE are buffered until the model
-finishes. Model management, embeddings, Responses, multimodal inputs and universal editor support
+Direct requests use an explicitly authorized installation execution, independent
+of project tasks, while preserving strict project grants for agent execution. Shared
+quota/capacity checks passed and are recorded in the follow-up document.
+Native chat/generate NDJSON and Chat Completions SSE are buffered until the model
+finishes. Model management, embeddings, Responses, unsupported modalities and universal editor support
 are not promised. Tools execute in the calling client.
+
+The [connection modes follow-up](connection-modes.md) adds explicit direct/agent/team virtual
+model names and scoped asynchronous agent jobs, with token-owned status/cancellation and global
+panel mode/repository/budget controls. Direct requests preserve caller history and use normal
+key/model fallback; agent jobs use existing workers and retain approvals and verification.
 
 Independent review corrections prevent abandoned client requests from replaying as background
 jobs, reject silently dropped tool/format constraints, and isolate synchronous schema validation
@@ -29,8 +36,8 @@ Related validated fixes classify explicit monthly quota refusals correctly, reco
 never-admitted historical slots, allow one proof-gated maintenance startup retry, and optionally
 preserve the original deadline for a completed FINAL-rejected repair. None authorizes extra spend.
 
-The final focused checks, recursive builds and production demo/browser checks passed. Broader
-aggregate regression was interrupted and is not claimed as passing. External application-specific
+The final focused checks, recursive builds and production demo/browser checks passed. Current
+aggregate regression results are tracked in the connection modes follow-up. External application-specific
 compatibility and downstream application acceptance remain separate from this delivered feature.
 Operational project history and detailed dispatch evidence remain in the local archive/handoff;
 private runtime records are excluded from publication.

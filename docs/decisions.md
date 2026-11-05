@@ -782,3 +782,29 @@ not evidence that a model exceeds a numeric threshold. Existing independent capa
 and all qualification, budget and billing controls still apply. Known counts retain their normal
 floors; custom hosts and unknown open-weight models do not acquire this exception. A successful
 model listing proves catalog access, not inference availability or account quota.
+
+### Connection modes and external job ownership (2026-11-05)
+
+Direct connections use installation-level Gate model/key routing without requiring a project
+or a configured completion profile. They preserve caller messages and caller-owned tools.
+An intrinsic direct routing policy and an empty-member execution provide accounting without
+creating a hidden project or task. Shared quotas include both installation and project request
+ledgers; project execution grants remain mandatory on the project path.
+Ollama documents chat tools and structured formats in
+its [chat API](https://docs.ollama.com/api/chat), and image content parts in its
+[compatibility API](https://docs.ollama.com/api/openai-compatibility). Support is bounded by the
+router's actual provider transport contract; unsupported options must fail explicitly.
+
+Agent and team virtual models acknowledge asynchronous project jobs. They do not impersonate
+completed model answers or convert caller function definitions into host tool permissions.
+Dedicated submission/status/cancel routes expose the same lifecycle. Server-generated purpose,
+project, root identity and a random token hash bind access to the created job; the bearer token
+is returned only to its submitting client. Saved scope and resource ceilings are rechecked at
+insertion, and jobs retain ordinary worker scheduling, Gate admission, approvals and verification.
+
+The connection address is configurable rather than restricted to loopback. Remote bindings
+require a distinct generated connection bearer key, stored only as a hash and returned once
+through the panel. Host validation follows the actual binding/socket address; wildcard binding
+does not accept arbitrary Host headers. Job-specific tokens still authorize only their own
+status and cancellation routes. The panel keeps address and client setup visible while placing
+agent project/repository settings in a separate advanced section.

@@ -2,6 +2,8 @@ import { LabsConfigSchema } from "../labs/recipe.js";
 import { SupervisorQualityRoutingSchema } from "../routing/supervisor-quality.js";
 import { MemoryContextConfigSchema } from "../context/memory-manifest.js";
 import { z } from "zod";
+import { isIP } from "node:net";
+import { isClientConnectionLoopback } from "../connections/access.js";
 import { TAG_GROUPS } from "../scoring/rulebook.js";
 import { BillingClassSchema } from "../providers/vault.js";
 import { BUILTIN_PROVIDER_IDS } from "../providers/registry.js";
@@ -14,6 +16,9 @@ export const PROFILE_NAMES = ["summarize", "inspect", "analyze", "implement", "r
 export const ProfileNameSchema = z.enum(PROFILE_NAMES);
 /** Task type chosen by the supervisor: decides tools, sandbox, and output handling. */
 export type ProfileName = z.infer<typeof ProfileNameSchema>;
+/** Request accounting includes intrinsic direct chat; worker task profiles remain unchanged. */
+export const RequestProfileNameSchema = z.enum([...PROFILE_NAMES, "direct"]);
+export type RequestProfileName = z.infer<typeof RequestProfileNameSchema>;
 
 export const TIER_NAMES = ["T1", "T2", "T3"] as const;
 export const TierNameSchema = z.enum(TIER_NAMES);
@@ -784,16 +789,30 @@ export const ClientSupervisionSchema = z.object({
 }).strict();
 
 /** Opt-in local compatibility API; it never binds a public interface. */
+export const ClientConnectionModeSchema = z.enum(["direct", "agent", "team"]);
+export type ClientConnectionMode = z.infer<typeof ClientConnectionModeSchema>;
 export const ClientConnectionsConfigSchema = z.object({
   enabled: z.boolean().default(false),
+  host: z.string().trim().max(64).refine(value => value === "localhost" || (!value.includes("%") && isIP(value) !== 0), "Use an IPv4/IPv6 address or localhost, without a protocol, zone or port").default("127.0.0.1"),
+  access_token_hash: z.string().regex(/^[a-f0-9]{64}$/).nullable().default(null),
   port: z.number().int().min(1024).max(65535).default(4479),
   project: z.string().regex(PROJECT_SLUG_RE).max(128).nullable().default(null),
-  profile: ProfileNameSchema.default("summarize"),
   max_output_tokens: z.number().int().min(1).max(32768).default(4096),
   max_concurrent: z.number().int().min(1).max(16).default(2),
   request_timeout_seconds: z.number().int().min(1).max(600).default(120),
+  enabled_modes: z.array(ClientConnectionModeSchema).min(1).max(3).refine(modes => new Set(modes).size === modes.length, "list each mode once").default(["direct"]),
+  default_mode: ClientConnectionModeSchema.default("direct"),
+  agent_profile: ProfileNameSchema.default("implement"),
+  agent_writable_repository: z.string().regex(REPOSITORY_ALIAS_RE).nullable().default(null),
+  repositories: z.array(z.string().regex(REPOSITORY_ALIAS_RE)).max(32).refine(aliases => new Set(aliases).size === aliases.length, "list each repository once").default([]),
+  agent_max_model_requests: z.number().int().min(1).max(10000).default(32),
+  agent_timeout_seconds: z.number().int().min(1).max(7200).default(1200),
+  agent_max_paid_usd: z.number().min(0).max(500).default(0),
+  agent_max_active_jobs: z.number().int().min(1).max(16).default(2),
 }).strict().superRefine((value, ctx) => {
-  if (value.enabled && !value.project) ctx.addIssue({ code: "custom", path: ["project"], message: "select an explicit project before enabling client connections" });
+  if (value.enabled && !isClientConnectionLoopback(value.host) && !value.access_token_hash)
+    ctx.addIssue({ code: "custom", path: ["access_token_hash"], message: "configure a Connections access token before enabling a non-loopback listener" });
+  if (!value.enabled_modes.includes(value.default_mode)) ctx.addIssue({ code: "custom", path: ["default_mode"], message: "the default mode must be enabled" });
 });
 export type ClientConnectionsConfig = z.infer<typeof ClientConnectionsConfigSchema>;
 
@@ -998,7 +1017,11 @@ export const ConfigSchema = z
     coding: CodingConfigSchema.prefault({}),
     labs: LabsConfigSchema.prefault({}),
     client_supervision: ClientSupervisionSchema.prefault({}),
-    client_connections: ClientConnectionsConfigSchema.prefault({}),
+    client_connections: z.preprocess(value => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+      const { profile: _obsoleteDirectProfile, ...settings } = value as Record<string, unknown>;
+      return settings;
+    }, ClientConnectionsConfigSchema).prefault({}),
     /** Importance and verification policy: what evidence a result needs before it is accepted. */
     verification: VerificationConfigSchema.prefault({}),
     /** Agents' web search and page fetch: backends, roles, budgets. */

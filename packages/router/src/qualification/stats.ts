@@ -1,6 +1,6 @@
 import type { Db } from "../storage/db.js";
 import type { ResolvedConfig } from "../config/load.js";
-import { TIER_NAMES, TierNameSchema, type ProfileMode, type ProfileName, type TierName } from "../config/schema.js";
+import { TIER_NAMES, TierNameSchema, type ProfileMode, type RequestProfileName, type TierName } from "../config/schema.js";
 import { z } from "zod";
 import type { QualificationLookup } from "../routing/select.js";
 
@@ -26,7 +26,7 @@ export function validateQualificationStatQuery(endpointId: string, family: strin
 
 export function qualificationLookupFrom(reader: QualificationStatReader, cfg: ResolvedConfig): QualificationLookup {
   return (endpointId, profile, tier, family) => {
-    const mode = cfg.profiles[profile]?.mode;
+    const mode = profile === "direct" ? "completion" : cfg.profiles[profile]?.mode;
     return family ? reader(cfg, endpointId, family.family, family.tier, family.threshold)
       : mode ? reader(cfg, endpointId, familyOf(mode), tier) : null;
   };
@@ -106,9 +106,9 @@ export function withQualificationStats<T>(db: Db | null, work: (reader: Qualific
 }
 
 export function qualificationLookup(db: Db, cfg: ResolvedConfig) {
-  return (endpointId: string, profile: ProfileName, tier: TierName, family?: { family: string; tier: TierName; threshold: number }) => {
+  return (endpointId: string, profile: RequestProfileName, tier: TierName, family?: { family: string; tier: TierName; threshold: number }) => {
     if (family) return qualificationStat(db, cfg, endpointId, family.family, family.tier, family.threshold);
-    const mode = cfg.profiles[profile]?.mode;
+    const mode = profile === "direct" ? "completion" : cfg.profiles[profile]?.mode;
     return mode ? qualificationStat(db, cfg, endpointId, familyOf(mode), tier) : null;
   };
 }

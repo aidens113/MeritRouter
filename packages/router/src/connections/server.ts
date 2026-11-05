@@ -1,20 +1,24 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { z } from "zod";
-import { AdmissionDenied, GatewayError } from "../core/errors.js";
+import { AdmissionDenied, GatewayError, TaskValidationError } from "../core/errors.js";
 import { ClientConnectionsConfigSchema, type ClientConnectionsConfig } from "../config/schema.js";
 import {
-  CLIENT_CONNECTION_HOST, CLIENT_CONNECTION_MAX_BODY_BYTES, CLIENT_CONNECTION_MODEL, CLIENT_CONNECTION_MODELS,
+  CLIENT_CONNECTION_MAX_BODY_BYTES,
   ClientConnectionError, ClientConnectionRequestSchema, ClientConnectionShowSchema,
-  clientResponse, finishReason, ollamaMessage, openaiUsage, parseClientChat,
+  clientResponse, clientConnectionModels, clientConnectionMode, clientChatJobRequest, finishReason, ollamaMessage, openaiUsage, parseClientChat,
   type ClientConnectionDispatch, type ClientChatResponse, type ParsedClientChat,
 } from "./protocol.js";
+import { ClientJobRequestSchema, ClientJobAccessSchema, type ClientJobCallbacks, type ClientJobAccess } from "./jobs.js";
+import { normalizeClientConnectionHost, isClientConnectionLoopback, clientConnectionTokenRequired, clientConnectionTokenMatches, clientConnectionBaseUrl } from "./access.js";
 
 export interface ClientConnectionsStatus {
   enabled: boolean;
   state: "off" | "starting" | "running" | "error";
   running: boolean;
-  host: "127.0.0.1";
+  host: string;
+  tokenConfigured: boolean;
+  tokenRequired: boolean;
   port: number;
   project: string | null;
   openaiBaseUrl: string;
@@ -24,12 +28,11 @@ export interface ClientConnectionsStatus {
   error: string | null;
   bufferedStreaming: true;
 }
-export interface ClientConnectionsOptions { dispatch: ClientConnectionDispatch }
-const localNames = new Set(["localhost", "127.0.0.1", "[::1]"]);
-function localUrl(value: string): URL | null {
+export interface ClientConnectionsOptions { dispatch: ClientConnectionDispatch; jobs?: ClientJobCallbacks }
+function httpUrl(value: string): URL | null {
   try {
     const url = new URL(value);
-    return (url.protocol === "http:" || url.protocol === "https:") && localNames.has(url.hostname.toLowerCase()) && !url.username && !url.password ? url : null;
+    return (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password ? url : null;
   } catch { return null; }
 }
 function json(res: ServerResponse, status: number, value: unknown): void {
@@ -46,14 +49,15 @@ function safeError(error: unknown, signal?: AbortSignal): ClientConnectionError 
   if (signal?.aborted) return signal.reason instanceof ClientConnectionError ? signal.reason : new ClientConnectionError(499, "request_cancelled", "The client request was cancelled.");
   if (error instanceof ClientConnectionError) return error;
   if (error instanceof z.ZodError) return new ClientConnectionError(400, "invalid_request", error.issues.slice(0, 8).map(issue => issue.path.map(String).join(".") + ": " + issue.message).join("; "));
-  if (error instanceof AdmissionDenied) return new ClientConnectionError(429, error.reason, "The selected project's routing or budget policy refused this request.");
+  if (error instanceof TaskValidationError) return new ClientConnectionError(400, "job_policy_refused", "The selected project's task validation or review budget refused this job. Inspect its configured profiles and job limits in MeritRouter.");
+  if (error instanceof AdmissionDenied) return new ClientConnectionError(429, error.reason, "MeritRouter's routing or budget policy refused this request.");
   if (error instanceof GatewayError) {
     if (error.kind === "timeout") return new ClientConnectionError(504, "request_timeout", "The model request timed out.");
     if (error.kind === "aborted") return new ClientConnectionError(499, "request_cancelled", "The model request was cancelled.");
     if (error.kind === "rate_limited" || error.kind === "pool_exhausted") return new ClientConnectionError(429, "capacity_unavailable", "Configured model capacity is unavailable.");
   }
   // Provider exceptions can include credential-bearing URLs or headers. Keep their details local.
-  return new ClientConnectionError(502, "model_request_failed", "The selected project could not complete this model request. Inspect its request history in MeritRouter.");
+  return new ClientConnectionError(502, "model_request_failed", "MeritRouter could not complete this request. Inspect its request history for details.");
 }
 async function readJson(req: IncomingMessage, signal: AbortSignal): Promise<unknown> {
   const advertised = req.headers["content-length"];
@@ -83,7 +87,7 @@ function deliver(res: ServerResponse, parsed: ParsedClientChat, value: ClientCha
   const created = Date.now(), content = value.message.content;
   res.setHeader("x-meritrouter-streaming", "buffered");
   if (parsed.protocol === "openai") {
-    const base = { id: "chatcmpl-" + randomUUID(), created: Math.floor(created / 1000), model: CLIENT_CONNECTION_MODEL };
+    const base = { id: "chatcmpl-" + randomUUID(), created: Math.floor(created / 1000), model: parsed.model };
     const usage = openaiUsage(value);
     if (!parsed.stream) return json(res, 200, { ...base, object: "chat.completion",
       choices: [{ index: 0, message: { role: "assistant", content, ...(value.message.tool_calls ? { tool_calls: value.message.tool_calls } : {}) }, finish_reason: finishReason(value), logprobs: null }], usage });
@@ -98,7 +102,7 @@ function deliver(res: ServerResponse, parsed: ParsedClientChat, value: ClientCha
     res.end("data: [DONE]\n\n");
     return;
   }
-  const base = { model: CLIENT_CONNECTION_MODEL, created_at: new Date(created).toISOString() };
+  const base = { model: parsed.model, created_at: new Date(created).toISOString() };
   const payload = parsed.protocol === "ollama-chat" ? { message: ollamaMessage(value) } : { response: content ?? "" };
   const final = { ...base, done: true, done_reason: finishReason(value), ...nativeUsage(value) };
   if (!parsed.stream) return json(res, 200, { ...final, ...payload });
@@ -119,10 +123,11 @@ export class ClientConnectionsController {
   constructor(private readonly options: ClientConnectionsOptions) {}
 
   status(): ClientConnectionsStatus {
-    const url = "http://" + CLIENT_CONNECTION_HOST + ":" + this.desired.port;
+    const url = clientConnectionBaseUrl(this.desired);
     return { enabled: this.desired.enabled, state: this.state, running: this.state === "running",
-      host: CLIENT_CONNECTION_HOST, port: this.desired.port, project: this.desired.project,
-      openaiBaseUrl: url + "/v1", ollamaBaseUrl: url, models: CLIENT_CONNECTION_MODELS.map(value => ({ ...value })),
+      host: this.desired.host, port: this.desired.port, project: this.desired.project,
+      tokenConfigured: this.desired.access_token_hash !== null, tokenRequired: clientConnectionTokenRequired(this.desired),
+      openaiBaseUrl: url + "/v1", ollamaBaseUrl: url, models: clientConnectionModels(this.desired),
       activeRequests: this.active.size, error: this.error, bufferedStreaming: true };
   }
 
@@ -168,7 +173,7 @@ export class ClientConnectionsController {
       await new Promise<void>((resolve, reject) => {
         const error = (err: Error) => reject(err);
         server.once("error", error);
-        server.listen({ host: CLIENT_CONNECTION_HOST, port: config.port, exclusive: true }, () => { server.off("error", error); resolve(); });
+        server.listen({ host: config.host, port: config.port, exclusive: true }, () => { server.off("error", error); resolve(); });
       });
       this.state = "running";
       server.on("error", () => { this.state = "error"; this.error = "The local compatibility listener failed. Toggle connections to retry."; });
@@ -176,20 +181,24 @@ export class ClientConnectionsController {
       this.server = null;
       this.state = "error";
       this.error = (error as NodeJS.ErrnoException).code === "EADDRINUSE" ? "Port " + config.port + " is already in use. Choose another port."
-        : "Cannot bind the local compatibility listener on port " + config.port + ".";
+        : "Cannot bind the compatibility listener to " + config.host + ":" + config.port + ".";
     }
     return this.status();
   }
 
-  private admit(req: IncomingMessage, res: ServerResponse): void {
-    const host = req.headers.host, parsedHost = host ? localUrl("http://" + host) : null;
+  private admit(req: IncomingMessage, res: ServerResponse, config: ClientConnectionsConfig): void {
+    const host = req.headers.host, parsedHost = host ? httpUrl("http://" + host) : null;
     if (!parsedHost || parsedHost.pathname !== "/" || parsedHost.search || parsedHost.hash || Number(parsedHost.port || 80) !== req.socket.localPort)
-      throw new ClientConnectionError(403, "forbidden_host", "Only the local listener's loopback Host is accepted.");
+      throw new ClientConnectionError(403, "forbidden_host", "Host must identify this listener's configured address and actual port.");
+    const requested = normalizeClientConnectionHost(parsedHost.hostname), actual = normalizeClientConnectionHost(req.socket.localAddress ?? ""), configured = normalizeClientConnectionHost(config.host);
+    const wildcard = configured === "0.0.0.0" || configured === "::";
+    if (requested !== actual && !(!wildcard && requested === configured) && !(isClientConnectionLoopback(actual) && isClientConnectionLoopback(requested)))
+      throw new ClientConnectionError(403, "forbidden_host", "Host must identify this listener's configured address or destination interface.");
     const origin = req.headers.origin;
     if (origin) {
-      const parsedOrigin = localUrl(origin);
-      if (!parsedOrigin || parsedOrigin.origin !== origin)
-        throw new ClientConnectionError(403, "forbidden_origin", "Only HTTP(S) origins on localhost, 127.0.0.1 or [::1] are accepted.");
+      const parsedOrigin = httpUrl(origin), source = parsedOrigin ? normalizeClientConnectionHost(parsedOrigin.hostname) : "";
+      if (!parsedOrigin || parsedOrigin.origin !== origin || !(isClientConnectionLoopback(source) || source === actual || (!wildcard && source === configured)))
+        throw new ClientConnectionError(403, "forbidden_origin", "The browser origin must use loopback or this listener's bound address.");
       res.setHeader("access-control-allow-origin", origin);
       res.setHeader("vary", "Origin");
       res.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
@@ -202,20 +211,32 @@ export class ClientConnectionsController {
     let abort: AbortController | undefined, timer: NodeJS.Timeout | undefined;
     const disconnected = () => { if (!res.writableEnded) abort?.abort(new ClientConnectionError(499, "request_cancelled", "The client disconnected.")); };
     try {
-      this.admit(req, res);
+      this.admit(req, res, config);
       path = new URL(req.url ?? "/", "http://localhost").pathname.replace(/\/$/, "") || "/";
       if (this.state !== "running") throw new ClientConnectionError(503, "connections_disabled", "Client connections are disabled.");
       if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
       const method = req.method;
+      const jobPath = /^\/api\/jobs\/([^/]+)\/([^/]+)(\/cancel)?$/.exec(path);
+      const accessToken = /^Bearer ([a-f0-9]{64})$/.exec(req.headers.authorization ?? "")?.[1];
+      if (!jobPath && !clientConnectionTokenMatches(config, accessToken))
+        throw new ClientConnectionError(401, "connection_token_required", "Send a valid Connections access token in the Authorization: Bearer header.");
       if ((method === "GET" || method === "HEAD") && path === "/") {
         res.writeHead(200, { "content-type": "text/plain; charset=utf-8" }); res.end(method === "HEAD" ? "" : "MeritRouter compatibility API is running."); return;
       }
-      if (method === "GET" && path === "/v1/models") return json(res, 200, { object: "list", data: [{ id: CLIENT_CONNECTION_MODEL, object: "model", created: 0, owned_by: "meritrouter" }] });
+      if (method === "GET" && path === "/v1/models") return json(res, 200, { object: "list", data: clientConnectionModels(config).map(value => ({ id: value.id, object: "model", created: 0, owned_by: "meritrouter" })) });
       if (method === "GET" && path === "/api/version") return json(res, 200, { version: "0.1.0-meritrouter", meritrouter: true });
-      if (method === "GET" && path === "/api/tags") return json(res, 200, { models: [{ name: CLIENT_CONNECTION_MODEL + ":latest", model: CLIENT_CONNECTION_MODEL + ":latest",
+      if (method === "GET" && path === "/api/tags") return json(res, 200, { models: clientConnectionModels(config).map(value => ({ name: value.id + ":latest", model: value.id + ":latest",
         modified_at: "1970-01-01T00:00:00.000Z", size: 0, digest: "meritrouter-virtual-route",
-        details: { parent_model: "", format: "meritrouter", family: "meritrouter", families: ["meritrouter"], parameter_size: "automatic", quantization_level: "" } }] });
-      if (method !== "POST" || !["/v1/chat/completions", "/api/chat", "/api/generate", "/api/show"].includes(path))
+        details: { parent_model: "", format: "meritrouter", family: "meritrouter", families: ["meritrouter"], parameter_size: "automatic", quantization_level: "" } })) });
+      let access: ClientJobAccess | undefined;
+      if (jobPath) {
+        const token = /^Bearer ([a-f0-9]{64})$/.exec(req.headers.authorization ?? "")?.[1];
+        if (!token) throw new ClientConnectionError(401, "job_token_required", "Send this job's access token in the Authorization: Bearer header.");
+        access = ClientJobAccessSchema.parse({ project: decodeURIComponent(jobPath[1]!), job_id: decodeURIComponent(jobPath[2]!), access_token: token });
+        if (!this.options.jobs) throw new ClientConnectionError(503, "jobs_unavailable", "This host does not provide connection jobs.");
+        if (method === "GET" && !jobPath[3]) return json(res, 200, this.options.jobs.get(access));
+      }
+      if (method !== "POST" || (!access && !["/v1/chat/completions", "/api/chat", "/api/generate", "/api/show", "/api/jobs"].includes(path)) || (access && !jobPath?.[3]))
         throw new ClientConnectionError(404, "unsupported_endpoint", "This endpoint is not supported by MeritRouter client connections.");
       if (this.active.size >= config.max_concurrent) throw new ClientConnectionError(429, "concurrency_limit", "The Connections concurrent request limit is reached.");
       abort = new AbortController();
@@ -224,17 +245,32 @@ export class ClientConnectionsController {
       const controller = abort;
       timer = setTimeout(() => controller.abort(new ClientConnectionError(504, "request_timeout", "The client request exceeded its configured timeout.")), config.request_timeout_seconds * 1000);
       timer.unref();
+      if (access) return json(res, 200, await this.options.jobs!.cancel(access));
       const raw = await readJson(req, abort.signal);
+      if (path === "/api/jobs") {
+        if (!this.options.jobs) throw new ClientConnectionError(503, "jobs_unavailable", "This host does not provide connection jobs.");
+        const request = ClientJobRequestSchema.parse(raw);
+        if (!config.project) throw new ClientConnectionError(400, "agent_project_required", "Configure a project and allowed repositories in agent settings before submitting jobs.");
+        const accepted = await this.options.jobs.submit({ ...request, project: config.project }, abort.signal, accessToken);
+        return json(res, 202, accepted);
+      }
       if (path === "/api/show") {
-        ClientConnectionShowSchema.parse(raw);
-        return json(res, 200, { capabilities: ["completion", "tools"], parameters: "num_predict " + config.max_output_tokens,
+        const show = ClientConnectionShowSchema.parse(raw), mode = clientConnectionMode(show.model, config);
+        return json(res, 200, { capabilities: mode === "direct" ? ["completion", "tools", "vision"] : ["completion"], parameters: "num_predict " + config.max_output_tokens,
           details: { format: "meritrouter", family: "meritrouter", families: ["meritrouter"], parameter_size: "automatic", quantization_level: "" },
           model_info: { "general.architecture": "meritrouter" }, template: "", license: "Upstream model terms apply." });
       }
       const parsed = parseClientChat(path, raw, config);
-      const request = ClientConnectionRequestSchema.parse({ project: config.project, profile: config.profile, chat: parsed.chat });
+      if (parsed.mode !== "direct") {
+        if (!this.options.jobs) throw new ClientConnectionError(503, "jobs_unavailable", "This host does not provide connection jobs.");
+        if (!config.project) throw new ClientConnectionError(400, "agent_project_required", "Configure a project and allowed repositories in agent settings before submitting jobs.");
+        const accepted = await this.options.jobs.submit({ ...clientChatJobRequest(parsed), project: config.project }, abort.signal, accessToken);
+        deliver(res, parsed, { message: { content: JSON.stringify(accepted) }, finishReason: "stop", usage: { inputTokens: 0, outputTokens: 0 } });
+        return;
+      }
+      const request = ClientConnectionRequestSchema.parse({ chat: parsed.chat });
       if (abort.signal.aborted) throw abort.signal.reason;
-      const result = await this.options.dispatch(request, abort.signal);
+      const result = await this.options.dispatch(request, abort.signal, accessToken);
       if (abort.signal.aborted) throw abort.signal.reason;
       deliver(res, parsed, clientResponse(result));
     } catch (error) { failure(res, path, safeError(error, abort?.signal)); }

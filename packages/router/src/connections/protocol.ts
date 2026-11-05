@@ -1,11 +1,15 @@
 import { z } from "zod";
-import { ProfileNameSchema, PROJECT_SLUG_RE, type ClientConnectionsConfig } from "../config/schema.js";
-import { estimateTokens, type ChatMessage, type ChatRequest, type ChatResponse, type ChatToolCall } from "../gateway/types.js";
+import { type ClientConnectionsConfig, type ClientConnectionMode } from "../config/schema.js";
+import { estimateTokens, type ChatMessage, type ChatRequest, type ChatResponse, type ChatToolCall, type ContentPart } from "../gateway/types.js";
 
 export const CLIENT_CONNECTION_MODEL = "meritrouter";
 export const CLIENT_CONNECTION_HOST = "127.0.0.1";
 export const CLIENT_CONNECTION_MAX_BODY_BYTES = 2 * 1024 * 1024;
-export const CLIENT_CONNECTION_MODELS = [{ id: CLIENT_CONNECTION_MODEL, name: "MeritRouter" }] as const;
+export const CLIENT_CONNECTION_MODELS = [{ id: CLIENT_CONNECTION_MODEL, name: "MeritRouter" },
+  { id: "meritrouter-direct", name: "MeritRouter Direct" }, { id: "meritrouter-agent", name: "MeritRouter Agent" }, { id: "meritrouter-team", name: "MeritRouter Team" }] as const;
+export function clientConnectionModels(config: ClientConnectionsConfig): Array<{ id: string; name: string }> {
+  return CLIENT_CONNECTION_MODELS.filter(value => value.id === CLIENT_CONNECTION_MODEL || config.enabled_modes.includes(value.id.replace("meritrouter-", "") as ClientConnectionMode)).map(value => ({ ...value }));
+}
 const text = z.string().max(CLIENT_CONNECTION_MAX_BODY_BYTES);
 const name = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 const jsonObject = z.record(z.string(), z.json());
@@ -17,8 +21,10 @@ const tool = z.object({
   type: z.literal("function"),
   function: z.object({ name, description: text.default(""), parameters: jsonObject, strict: z.literal(false).optional() }).strict(),
 }).strict().transform(value => ({ type: value.type, function: { name: value.function.name, description: value.function.description, parameters: value.function.parameters } }));
-const userText = z.union([text, z.array(z.object({ type: z.literal("text"), text }).strict()).min(1).max(256)])
-  .transform(value => typeof value === "string" ? value : value.map(part => part.text).join("\n"));
+const imageUrl = z.string().max(CLIENT_CONNECTION_MAX_BODY_BYTES).refine(value => /^https?:\/\/[^\s]+$/i.test(value) || /^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(value), "Use an HTTP(S) image URL or supported base64 image data URL");
+const imagePart = z.object({ type: z.literal("image_url"), image_url: z.object({ url: imageUrl }).strict() }).strict();
+const userText = z.union([text, z.array(z.union([z.object({ type: z.literal("text"), text }).strict(), imagePart])).min(1).max(256)])
+  .transform(value => value);
 const message = z.discriminatedUnion("role", [
   z.object({ role: z.literal("system"), content: text, name: name.optional() }).strict(),
   z.object({ role: z.literal("developer"), content: text, name: name.optional() }).strict(),
@@ -46,8 +52,6 @@ const chat = z.object({
 }).strict();
 
 export const ClientConnectionRequestSchema = z.object({
-  project: z.string().regex(PROJECT_SLUG_RE).max(128),
-  profile: ProfileNameSchema,
   chat,
 }).strict().superRefine((value, ctx) => {
   if (Buffer.byteLength(JSON.stringify(value), "utf8") > CLIENT_CONNECTION_MAX_BODY_BYTES)
@@ -56,11 +60,17 @@ export const ClientConnectionRequestSchema = z.object({
     ctx.addIssue({ code: "custom", path: ["chat", "tool_choice"], message: "tool_choice requires at least one tool definition" });
 });
 export type ClientConnectionRequest = z.infer<typeof ClientConnectionRequestSchema>;
-export type ClientConnectionDispatch = (request: ClientConnectionRequest, signal: AbortSignal) => Promise<ChatResponse>;
+export type ClientConnectionDispatch = (request: ClientConnectionRequest, signal: AbortSignal, accessToken?: string) => Promise<ChatResponse>;
 export class ClientConnectionError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) { super(message); }
 }
-const model = z.enum(["meritrouter", "meritrouter:latest"]);
+const model = z.enum(["meritrouter", "meritrouter:latest", "meritrouter-direct", "meritrouter-direct:latest", "meritrouter-agent", "meritrouter-agent:latest", "meritrouter-team", "meritrouter-team:latest"]);
+export function clientConnectionMode(value: string, config: ClientConnectionsConfig): ClientConnectionMode {
+  const id = model.parse(value).replace(/:latest$/, "");
+  const mode = id === CLIENT_CONNECTION_MODEL ? config.default_mode : id.replace("meritrouter-", "") as ClientConnectionMode;
+  if (!config.enabled_modes.includes(mode)) throw new ClientConnectionError(400, "connection_mode_disabled", "The requested connection mode is disabled.");
+  return mode;
+}
 const openai = z.object({
   model, messages: z.array(message).min(1).max(1024),
   stream: z.boolean().default(false),
@@ -84,7 +94,7 @@ const nativeCall = z.object({
 const nativeMessage = z.object({
   role: z.enum(["system", "user", "assistant", "tool"]),
   content: text.optional(), tool_calls: z.array(nativeCall).max(128).optional(),
-  tool_name: name.optional(), tool_call_id: z.string().min(1).max(200).optional(),
+  tool_name: name.optional(), tool_call_id: z.string().min(1).max(200).optional(), images: z.array(text.min(1)).min(1).max(16).optional(),
 }).strict();
 const nativeOptions = z.object({
   temperature: z.number().min(0).max(2).optional(),
@@ -100,10 +110,12 @@ const nativeFields = {
   think: z.union([z.literal(false), z.null()]).optional(),
 };
 const nativeChat = z.object({ ...nativeFields, messages: z.array(nativeMessage).min(1).max(1024), tools: z.array(tool).max(128).optional() }).strict();
-const nativeGenerate = z.object({ ...nativeFields, prompt: text.min(1), system: text.optional(), raw: z.literal(false).optional() }).strict();
+const nativeGenerate = z.object({ ...nativeFields, prompt: text.min(1), system: text.optional(), raw: z.literal(false).optional(), images: z.array(text.min(1)).min(1).max(16).optional() }).strict();
 export const ClientConnectionShowSchema = z.object({ model, verbose: z.boolean().optional() }).strict();
 
 export interface ParsedClientChat {
+  mode: ClientConnectionMode;
+  model: string;
   protocol: "openai" | "ollama-chat" | "ollama-generate";
   stream: boolean;
   includeUsage: boolean;
@@ -124,6 +136,7 @@ function validateHistory(messages: ChatMessage[]): void {
 function nativeHistory(values: z.infer<typeof nativeMessage>[]): ChatMessage[] {
   const pending: ChatToolCall[] = [], messages: ChatMessage[] = [];
   values.forEach((item, index) => {
+    if (item.images && item.role !== "user") throw new ClientConnectionError(400, "invalid_images", "Only user messages may carry images.");
     if (item.role === "assistant") {
       if (item.tool_name || item.tool_call_id) throw new ClientConnectionError(400, "invalid_tool_history", "Assistant messages carry tool calls; tool ids and names belong on tool results.");
       const calls = item.tool_calls?.map((call, offset): ChatToolCall => ({
@@ -141,10 +154,24 @@ function nativeHistory(values: z.infer<typeof nativeMessage>[]): ChatMessage[] {
       messages.push({ role: "tool", content: item.content ?? "", tool_call_id: match.id });
     } else {
       if (item.tool_calls || item.tool_name || item.tool_call_id) throw new ClientConnectionError(400, "invalid_tool_history", "Only assistant and tool messages may carry tool call fields.");
-      messages.push({ role: item.role, content: item.content ?? "" });
+      if (item.role === "user") messages.push({ role: "user", content: nativeUserContent(item.content ?? "", item.images) });
+      else messages.push({ role: "system", content: item.content ?? "" });
     }
   });
   return messages;
+}
+function nativeUserContent(content: string, images?: string[]): string | ContentPart[] {
+  if (!images) return content;
+  return [{ type: "text", text: content }, ...images.map(value => {
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value) || value.length % 4 !== 0) throw new ClientConnectionError(400, "invalid_images", "Ollama images must contain base64 encoded PNG, JPEG, GIF or WebP data.");
+    const bytes = Buffer.from(value, "base64"), head = bytes.subarray(0, 16);
+    const mime = head.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])) ? "png"
+      : head[0] === 255 && head[1] === 216 && head[2] === 255 ? "jpeg"
+      : /^GIF8[79]a/.test(head.toString("ascii")) ? "gif"
+      : head.subarray(0,4).toString("ascii") === "RIFF" && head.subarray(8,12).toString("ascii") === "WEBP" ? "webp" : null;
+    if (!mime) throw new ClientConnectionError(400, "invalid_images", "Unsupported image encoding; use PNG, JPEG, GIF or WebP.");
+    return { type: "image_url" as const, image_url: { url: "data:image/" + mime + ";base64," + value } };
+  })];
 }
 
 /** Validate protocol inputs once; the service seam validates the resulting request again. */
@@ -152,16 +179,22 @@ export function parseClientChat(path: string, raw: unknown, config: ClientConnec
   let result: ParsedClientChat;
   if (path === "/v1/chat/completions") {
     const value = openai.parse(raw);
-    result = { protocol: "openai", stream: value.stream, includeUsage: value.stream_options?.include_usage === true,
+    const mode = clientConnectionMode(value.model, config);
+    if (mode !== "direct" && (value.tools?.length || value.tool_choice || (value.response_format && value.response_format.type !== "text") || value.max_tokens != null || value.max_completion_tokens != null || value.temperature != null))
+      throw new ClientConnectionError(400, "unsupported_agent_options", "Agent modes accept conversation text; use the jobs API for job limits. Caller tools and generation options belong to direct mode.");
+    result = { mode, model: value.model, protocol: "openai", stream: value.stream, includeUsage: value.stream_options?.include_usage === true,
       chat: { messages: value.messages, max_tokens: value.max_completion_tokens ?? value.max_tokens ?? config.max_output_tokens,
         ...(value.temperature == null ? {} : { temperature: value.temperature }),
         ...(value.tools ? { tools: value.tools } : {}), ...(value.tool_choice ? { tool_choice: value.tool_choice } : {}),
         ...(value.response_format && value.response_format.type !== "text" ? { response_format: value.response_format } : {}) } };
   } else {
     const value = path === "/api/chat" ? nativeChat.parse(raw) : nativeGenerate.parse(raw);
+    const mode = clientConnectionMode(value.model, config);
+    if (mode !== "direct" && (("tools" in value && value.tools?.length) || value.format || value.options))
+      throw new ClientConnectionError(400, "unsupported_agent_options", "Agent modes accept conversation text; use the jobs API for job limits. Caller tools and generation options belong to direct mode.");
     const messages: ChatMessage[] = "messages" in value ? nativeHistory(value.messages)
-      : [...(value.system ? [{ role: "system" as const, content: value.system }] : []), { role: "user", content: value.prompt }];
-    result = { protocol: path === "/api/chat" ? "ollama-chat" : "ollama-generate", stream: value.stream, includeUsage: true,
+      : [...(value.system ? [{ role: "system" as const, content: value.system }] : []), { role: "user", content: nativeUserContent(value.prompt, value.images) }];
+    result = { mode, model: value.model, protocol: path === "/api/chat" ? "ollama-chat" : "ollama-generate", stream: value.stream, includeUsage: true,
       chat: { messages, max_tokens: value.options?.num_predict ?? config.max_output_tokens,
         ...(value.options?.temperature === undefined ? {} : { temperature: value.options.temperature }),
         ...("tools" in value && value.tools ? { tools: value.tools } : {}),
@@ -174,7 +207,19 @@ export function parseClientChat(path: string, raw: unknown, config: ClientConnec
   if (result.chat.tool_choice && result.chat.tool_choice !== "none" && !result.chat.tools?.length)
     throw new ClientConnectionError(400, "invalid_tools", "tool_choice requires at least one tool definition.");
   validateHistory(result.chat.messages);
+  if (result.mode !== "direct" && result.chat.messages.some(item => item.role === "tool" || (item.role === "assistant" && item.tool_calls?.length) || (item.role === "user" && typeof item.content !== "string" && item.content.some(part => part.type !== "text"))))
+    throw new ClientConnectionError(400, "unsupported_agent_conversation", "Agent jobs accept text conversations without caller-owned tool history or images.");
   return result;
+}
+
+export function clientChatJobRequest(parsed: ParsedClientChat): import("./jobs.js").ClientJobRequest {
+  if (parsed.mode === "direct") throw new Error("Direct conversations do not submit jobs");
+  const messages = parsed.chat.messages, last = [...messages].reverse().find(item => item.role === "user");
+  const goal = last?.role === "user" ? typeof last.content === "string" ? last.content : last.content.filter(part => part.type === "text").map(part => part.text).join("\n") : "";
+  if (!goal.trim() || goal.length > 20000) throw new ClientConnectionError(400, "invalid_agent_goal", "End the conversation with a user request of 1–20,000 characters.");
+  const context = JSON.stringify(messages);
+  if (context.length > 400000) throw new ClientConnectionError(400, "agent_context_too_large", "Agent conversation context exceeds 400,000 characters.");
+  return { mode: parsed.mode, goal, context };
 }
 
 const output = z.object({

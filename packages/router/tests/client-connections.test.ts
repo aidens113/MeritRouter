@@ -42,7 +42,7 @@ async function listener(dispatch: ClientConnectionDispatch = async () => reply("
 }
 const body = { model: "meritrouter", messages: [{ role: "user", content: "hello" }] };
 const post = (url: string, value: unknown, headers: Record<string, string> = {}) => fetch(url, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(value) });
-const request = (project = "demo") => ClientConnectionRequestSchema.parse({ project, profile: "summarize", chat: { messages: [{ role: "user", content: "private client message" }], max_tokens: 100 } });
+const request = () => ClientConnectionRequestSchema.parse({ chat: { messages: [{ role: "user", content: "private client message" }], max_tokens: 100 } });
 function service(config: Record<string, unknown> = {}, client = new ScriptedClient(req => reply("private response", { model: req.model, provider: req.provider })), endpoints?: unknown[]) {
   const env = makeEnv({ config: baseConfig({ client_connections: { enabled: true, project: "demo" }, ...config }), ...(endpoints ? { endpoints } : {}) }); environments.push(env);
   const sy = new MeritRouter(env.cfg, { providerFetch: client.fetch, panelLifecycle: "passive" }); services.push(sy);
@@ -183,17 +183,18 @@ it.each(["required_without_call", "none_with_call", "invalid_arguments", "invali
       : kind === "schema_mismatch" ? { response_format: { type: "json_schema", json_schema: { name: "answer", strict: true, schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"], additionalProperties: false } } } }
       : { tools: [editorTool], tool_choice: kind === "none_with_call" ? "none" : "required" }) } });
   await expect(sy.requestClientConnection(value, new AbortController().signal)).rejects.toMatchObject({ status: 502 });
-  expect(client.requests).toHaveLength(1); expect(sy.db.prepare("SELECT COUNT(*) n FROM request_charges").get()).toEqual({ n: 1 });
-  expect(sy.tasks.list()[0]!.row).toMatchObject({ state: "failed", lease_owner: null });
-  expect(sy.tasks.list()[0]!.result!.usage.modelRequests).toBe(1);
+  expect(client.requests).toHaveLength(1); expect(sy.db.prepare("SELECT COUNT(*) n FROM model_requests").get()).toEqual({ n: 1 });
+  expect(sy.db.prepare("SELECT status FROM executions").get()).toEqual({ status: "failed" });
+  expect(sy.tasks.list()).toEqual([]); expect(sy.db.prepare("SELECT COUNT(*) n FROM request_charges").get()).toEqual({ n: 0 });
 });
 
-it("defaults off and requires an explicit configured project and completion profile before enabling", () => {
-  expect(ClientConnectionsConfigSchema.parse({})).toEqual({ enabled: false, port: 4479, project: null, profile: "summarize", max_output_tokens: 4096, max_concurrent: 2, request_timeout_seconds: 120 });
-  expect(ClientConnectionsConfigSchema.safeParse({ enabled: true }).success).toBe(false);
-  expect(ClientConnectionsConfigSchema.safeParse({ host: "0.0.0.0" }).success).toBe(false);
-  expect(() => parseConfig(baseConfig({ client_connections: { enabled: true, project: "missing" } }), "C:/test/config.yaml")).toThrow(/configured project/);
-  expect(() => parseConfig(baseConfig({ client_connections: { enabled: true, project: "demo", profile: "implement" } }), "C:/test/config.yaml")).toThrow(/completion profile/);
+it("defaults off, enables without project or completion profile and discards the legacy profile selection", () => {
+  expect(ClientConnectionsConfigSchema.parse({})).toEqual({ enabled: false, host: "127.0.0.1", access_token_hash: null, port: 4479, project: null, max_output_tokens: 4096, max_concurrent: 2, request_timeout_seconds: 120,
+    enabled_modes: ["direct"], default_mode: "direct", agent_profile: "implement", agent_writable_repository: null, repositories: [], agent_max_model_requests: 32, agent_timeout_seconds: 1200, agent_max_paid_usd: 0, agent_max_active_jobs: 2 });
+  expect(ClientConnectionsConfigSchema.safeParse({ enabled: true }).success).toBe(true);
+  expect(ClientConnectionsConfigSchema.safeParse({ enabled: true, host: "0.0.0.0" }).success).toBe(false);
+  const parsed = parseConfig(baseConfig({ profiles: {}, client_connections: { enabled: true, profile: "implement" } }), "C:/test/config.yaml");
+  expect(parsed.client_connections).not.toHaveProperty("profile"); expect(parsed.client_connections.project).toBeNull();
   const controller = new ClientConnectionsController({ dispatch: async () => reply("unused") }); controllers.push(controller);
   expect(controller.status()).toMatchObject({ enabled: false, running: false, state: "off", port: 4479 });
 });
@@ -212,13 +213,22 @@ it("persists opt-in and opt-out through patchConfig and reload/restart without a
   expect(client.requests).toEqual([]);
 });
 
+it("enables an existing saved legacy profile config through the real config patch boundary", () => {
+  const { sy, env, client } = service({ profiles: {}, client_connections: { enabled: false, profile: "summarize" } });
+  expect(sy.cfg.client_connections).not.toHaveProperty("profile");
+  expect(patchConfig(sy, [{ path: ["client_connections", "enabled"], value: true }])).toEqual({ ok: true });
+  expect(loadConfig(env.cfg.configPath).client_connections).toMatchObject({ enabled: true, project: null });
+  expect(loadConfig(env.cfg.configPath).client_connections).not.toHaveProperty("profile");
+  expect(client.requests).toHaveLength(0);
+});
+
 it("serves safe discovery and real OpenAI SSE/native NDJSON final frames with usage", async () => {
   const { sy, client } = service();
   const { url } = await listener((value, signal) => sy.requestClientConnection(value, signal));
-  expect(await (await fetch(url + "/v1/models")).json()).toMatchObject({ data: [{ id: "meritrouter", owned_by: "meritrouter" }] });
+  expect(await (await fetch(url + "/v1/models")).json()).toMatchObject({ data: [{ id: "meritrouter", owned_by: "meritrouter" }, { id: "meritrouter-direct", owned_by: "meritrouter" }] });
   const tags = await (await fetch(url + "/api/tags")).json();
-  expect(tags).toMatchObject({ models: [{ name: "meritrouter:latest", details: { format: "meritrouter" } }] });
-  expect(await (await post(url + "/api/show", { model: "meritrouter" })).json()).toMatchObject({ capabilities: ["completion", "tools"] });
+  expect(tags).toMatchObject({ models: [{ name: "meritrouter:latest", details: { format: "meritrouter" } }, { name: "meritrouter-direct:latest", details: { format: "meritrouter" } }] });
+  expect(await (await post(url + "/api/show", { model: "meritrouter" })).json()).toMatchObject({ capabilities: ["completion", "tools", "vision"] });
   expect(await (await fetch(url + "/api/version")).json()).toMatchObject({ meritrouter: true });
   expect(JSON.stringify(tags)).not.toMatch(/test-openrouter-key|api_key|vendor\/big/);
   const response = await post(url + "/v1/chat/completions", { ...body, stream: true, stream_options: { include_usage: true } });
@@ -238,8 +248,9 @@ it("serves safe discovery and real OpenAI SSE/native NDJSON final frames with us
   expect(chunks.at(-1)).toMatchObject({ done: true, prompt_eval_count: 100, eval_count: 50 });
   expect(await (await post(url + "/api/generate", { model: "meritrouter", prompt: "hello", stream: false })).json()).toMatchObject({ done: true, response: "private response" });
   expect(client.requests).toHaveLength(3);
-  expect(sy.tasks.list().every(task => task.row.state === "completed" && task.row.lease_owner === null)).toBe(true);
-  expect(sy.db.prepare("SELECT COUNT(*) n FROM request_charges").get()).toEqual({ n: 3 });
+  expect(sy.tasks.list()).toEqual([]);
+  expect(sy.db.prepare("SELECT COUNT(*) n FROM executions WHERE profile='direct' AND status='completed'").get()).toEqual({ n: 3 });
+  expect(sy.db.prepare("SELECT COUNT(*) n FROM request_charges").get()).toEqual({ n: 0 });
 });
 
 it("passes client tool definitions/results through Gate without executing them, including native tool ids", async () => {
@@ -302,7 +313,7 @@ it("bounds bodies, requested output and concurrency, rejects unsupported input a
   expect(controller.status()).toMatchObject({ enabled: false, running: false, state: "off", activeRequests: 0 });
 });
 
-it("cancels Gate transport on client abort and timeout and keeps its terminal task/accounting", async () => {
+it("cancels Gate transport on client abort and timeout and keeps installation execution/accounting", async () => {
   let entered!: () => void, transportAborted = 0;
   const started = new Promise<void>(resolve => { entered = resolve; });
   const client = new ScriptedClient(async (_request, _count, signal) => {
@@ -314,14 +325,14 @@ it("cancels Gate transport on client abort and timeout and keeps its terminal ta
   const { controller, url } = await listener((value, signal) => sy.requestClientConnection(value, signal), { request_timeout_seconds: 1 });
   const timeout = await post(url + "/v1/chat/completions", body);
   expect(timeout.status).toBe(504); expect(transportAborted).toBe(1);
-  expect(sy.tasks.list()[0]!.row.state).toBe("cancelled");
+  expect(sy.db.prepare("SELECT status FROM executions").get()).toEqual({ status: "cancelled" }); expect(sy.tasks.list()).toEqual([]);
   const abort = new AbortController();
   const pending = fetch(url + "/api/chat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: abort.signal }).catch(error => error);
   await started; // The first call proved the provider boundary is reached.
   while (client.requests.length < 2) await new Promise(resolve => setTimeout(resolve, 10));
   abort.abort(); await pending; await controller.close();
   expect(transportAborted).toBe(2);
-  expect(sy.tasks.list().every(task => task.row.lease_owner === null)).toBe(true);
+  expect(sy.tasks.list()).toEqual([]); expect(sy.db.prepare("SELECT COUNT(*) n FROM executions WHERE status='cancelled'").get()).toEqual({ n: 2 });
 });
 
 it("shows a bind error without stealing an occupied listener or changing persisted desired state", async () => {
@@ -335,7 +346,7 @@ it("shows a bind error without stealing an occupied listener or changing persist
   } finally { await new Promise<void>(resolve => occupied.close(() => resolve())); }
 });
 
-it("enforces the service timeout for direct SDK callers and releases the exact task lease", async () => {
+it("enforces the service timeout for direct SDK callers without creating task authority", async () => {
   let aborted = false;
   const client = new ScriptedClient(async (_request, _count, signal) => {
     await new Promise<void>(resolve => { if (signal?.aborted) resolve(); else signal?.addEventListener("abort", () => resolve(), { once: true }); });
@@ -343,21 +354,21 @@ it("enforces the service timeout for direct SDK callers and releases the exact t
   });
   const { sy } = service({ client_connections: { enabled: true, project: "demo", request_timeout_seconds: 1 } }, client);
   await expect(sy.requestClientConnection(request(), new AbortController().signal)).rejects.toMatchObject({ status: 504, code: "request_timeout" });
-  expect(aborted).toBe(true); expect(sy.tasks.list()[0]!.row).toMatchObject({ state: "cancelled", lease_owner: null });
+  expect(aborted).toBe(true); expect(sy.tasks.list()).toEqual([]); expect(sy.db.prepare("SELECT status FROM executions").get()).toEqual({ status: "cancelled" });
 });
 
-it("still finishes the task lease when execution finalization fails", async () => {
+it("retains the settled request if installation execution finalization fails", async () => {
   const { sy } = service();
-  vi.spyOn(sy.admission, "setMemberOutcome").mockImplementationOnce(() => { throw new Error("fixture finalization failure"); });
-  const finish = vi.spyOn(sy.admission, "finishExecution");
-  await expect(sy.requestClientConnection(request(), new AbortController().signal)).rejects.toThrow(/cleanup requires recovery/);
+  const finish = vi.spyOn(sy.admission, "finishExecution").mockImplementationOnce(() => { throw new Error("fixture finalization failure"); });
+  await expect(sy.requestClientConnection(request(), new AbortController().signal)).rejects.toThrow(/fixture finalization failure/);
   expect(finish).toHaveBeenCalled();
-  const task = sy.tasks.list()[0]!;
-  expect(task.row).toMatchObject({ state: "completed", lease_owner: null });
-  expect(sy.tasks.events(task.row.id)).toEqual(expect.arrayContaining([expect.objectContaining({ type: "client_connection_cleanup_failed" })]));
+  expect(sy.tasks.list()).toEqual([]);
+  expect(sy.db.prepare("SELECT status FROM model_requests").get()).toEqual({ status: "succeeded" });
+  expect(sy.db.prepare("SELECT state FROM request_protocol").get()).toEqual({ state: "settled" });
+  expect(sy.db.prepare("SELECT COUNT(*) n FROM provider_slots").get()).toEqual({ n: 0 });
 });
 
-it("uses the pinned split project and atomic queue grant, preserving older queued work and shared allocation", async () => {
+it("routes direct at installation scope without provisioning a selected split project or claiming its queued work", async () => {
   const env = makeEnv(); environments.push(env);
   const install = path.join(env.dir, "installation"), alpha = path.join(env.dir, "alpha"), beta = path.join(env.dir, "beta");
   for (const dir of [install, alpha, beta]) mkdirSync(dir);
@@ -367,26 +378,25 @@ it("uses the pinned split project and atomic queue grant, preserving older queue
   const configPath = path.join(install, "meritrouter.config.yaml"); writeFileSync(configPath, YAML.stringify(raw));
   const client = new ScriptedClient(req => reply("alpha private response", { model: req.model, provider: req.provider }));
   const sy = new MeritRouter(parseConfig(raw, configPath), { providerFetch: client.fetch, panelLifecycle: "passive" }); services.push(sy);
-  await expect(sy.requestClientConnection(request("alpha"), new AbortController().signal)).rejects.toThrow(/no project-local store/);
   await sy.createSplitProject({ slug: "alpha", directory: alpha }); await sy.createSplitProject({ slug: "beta", directory: beta });
   const [queued] = await sy.submitTasks([summarizeTask({ id: "older-queued", goal: "Unrelated queued work" })], { project: "alpha" });
   expect(queued!.state).toBe("queued");
-  const result = await sy.requestClientConnection(request("alpha"), new AbortController().signal);
+  const result = await sy.requestClientConnection(request(), new AbortController().signal);
   expect(result.message.content).toBe("alpha private response");
   const alphaStore = sy.projectStores("alpha"), betaStore = sy.projectStores("beta");
   expect(alphaStore.tasks.get("older-queued")!.row).toMatchObject({ state: "queued", run_count: 0 });
-  const external = alphaStore.tasks.list().find(task => task.row.id !== "older-queued")!;
-  expect(external.row).toMatchObject({ state: "completed", lease_owner: null, project_id: "alpha" });
-  expect(alphaStore.db.prepare("SELECT phase FROM project_execution_claims").get()).toEqual({ phase: "terminal" });
-  expect(sy.db.prepare("SELECT state FROM project_execution_grants").get()).toEqual({ state: "completed" });
-  expect(alphaStore.db.prepare("SELECT COUNT(*) n FROM request_charges").get()).toEqual({ n: 1 });
+  expect(alphaStore.tasks.list()).toHaveLength(1);
+  expect(alphaStore.db.prepare("SELECT COUNT(*) n FROM project_execution_claims").get()).toEqual({ n: 0 });
+  expect(sy.db.prepare("SELECT COUNT(*) n FROM project_execution_grants").get()).toEqual({ n: 0 });
+  expect(alphaStore.db.prepare("SELECT COUNT(*) n FROM request_charges").get()).toEqual({ n: 0 });
   expect(betaStore.db.prepare("SELECT COUNT(*) n FROM tasks").get()).toEqual({ n: 0 });
-  for (const table of ["tasks", "model_requests", "request_captures"]) expect(sy.db.prepare("SELECT COUNT(*) n FROM " + table).get()).toEqual({ n: 0 });
-  expect(JSON.stringify(alphaStore.db.prepare("SELECT * FROM request_captures").all())).toContain("private client message");
+  for (const table of ["tasks", "request_captures"]) expect(sy.db.prepare("SELECT COUNT(*) n FROM " + table).get()).toEqual({ n: 0 });
+  expect(sy.db.prepare("SELECT COUNT(*) n FROM model_requests WHERE project_id=''").get()).toEqual({ n: 1 });
+  expect(alphaStore.db.prepare("SELECT COUNT(*) n FROM request_captures").get()).toEqual({ n: 0 });
   expect(JSON.stringify(sy.db.prepare("SELECT * FROM physical_requests").all())).not.toMatch(/private client message|alpha private response/);
-  await expect(sy.requestClientConnection(request("beta"), new AbortController().signal)).rejects.toThrow(/selected project/);
-  await expect(sy.requestClientConnection(request("alpha"), new AbortController().signal)).rejects.toThrow();
+  expect(ClientConnectionRequestSchema.safeParse({ ...request(), project: "beta" }).success).toBe(false);
+  await expect(sy.requestClientConnection(request(), new AbortController().signal)).rejects.toThrow();
   expect(client.requests).toHaveLength(1);
-  expect(sy.db.prepare("SELECT COUNT(*) n FROM physical_requests").get()).toEqual({ n: 1 });
-  expect(alphaStore.tasks.list().filter(task => task.row.id !== "older-queued").every(task => task.row.lease_owner === null)).toBe(true);
+  expect(sy.db.prepare("SELECT COUNT(*) n FROM physical_requests").get()).toEqual({ n: 0 });
+  expect(sy.db.prepare("SELECT COUNT(*) n FROM model_requests").get()).toEqual({ n: 1 });
 });

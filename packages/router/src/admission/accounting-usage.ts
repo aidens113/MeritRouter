@@ -1,19 +1,25 @@
 import type { Db } from "../storage/db.js";
 
+/** Positive installation ownership, not a guess based on missing legacy project metadata. */
+const intrinsicDirect = `r.project_id='' AND r.purpose='client_connection'
+  AND EXISTS(SELECT 1 FROM executions e WHERE e.id=r.execution_id AND e.profile='direct')
+  AND NOT EXISTS(SELECT 1 FROM execution_members m WHERE m.execution_id=r.execution_id)
+  AND NOT EXISTS(SELECT 1 FROM request_charges c WHERE c.request_id=r.id)`;
+
 /** Exact-ID overlap counts once at the more conservative exposure until legacy projection purge. */
 export const ACCOUNTING_SPEND_SQL = `SELECT p.request_id,p.key_ref,p.provider,p.endpoint_id,
   MAX(COALESCE(p.actual_usd,p.liability_usd),COALESCE(old.actual_usd,old.reserved_usd,0)) AS reserved_usd,
   NULL AS actual_usd,MAX(p.created_at,COALESCE(old.created_at,p.created_at)) AS created_at,
-  r.project_uuid AS project_uuid FROM broker_paid_spend p JOIN physical_requests r ON r.id=p.request_id
+  r.project_uuid AS project_uuid,0 AS installation_direct FROM broker_paid_spend p JOIN physical_requests r ON r.id=p.request_id
   LEFT JOIN paid_spend old ON old.request_id=p.request_id
   UNION ALL SELECT p.request_id,p.key_ref,p.provider,p.endpoint_id,p.reserved_usd,p.actual_usd,p.created_at,
-  NULL AS project_uuid
+  NULL AS project_uuid,CASE WHEN ${intrinsicDirect} THEN 1 ELSE 0 END AS installation_direct
   FROM paid_spend p JOIN model_requests r ON r.id=p.request_id
   WHERE NOT EXISTS(SELECT 1 FROM broker_paid_spend b WHERE b.request_id=p.request_id)
     AND NOT EXISTS(SELECT 1 FROM physical_requests q WHERE q.id=p.request_id AND q.cost_quarantined=1)
   UNION ALL SELECT r.id,COALESCE(r.key_ref,old.key_ref,'unresolved:'||r.provider),r.provider,r.endpoint_id,
     MAX(r.unexpected_liability_usd,COALESCE(old.actual_usd,old.reserved_usd,0)),NULL,
-    MAX(r.reserved_at,COALESCE(old.created_at,r.reserved_at)),r.project_uuid
+    MAX(r.reserved_at,COALESCE(old.created_at,r.reserved_at)),r.project_uuid,0
   FROM physical_requests r LEFT JOIN paid_spend old ON old.request_id=r.id WHERE r.cost_quarantined=1 AND r.paid=0`;
 export function assertAccountingOverlap(db: Db): void {
   if (db.prepare(`SELECT 1 FROM physical_requests r LEFT JOIN broker_paid_spend b ON b.request_id=r.id
@@ -28,10 +34,10 @@ export function assertAccountingOverlap(db: Db): void {
 }
 export function physicalRequestCount(db: Db, since: number, projectId?: string): number {
   const sql = `WITH requests AS (
-    SELECT b.id,MAX(b.reserved_at,COALESCE(r.reserved_at,b.reserved_at)) AS reserved_at,b.project_uuid
+    SELECT b.id,MAX(b.reserved_at,COALESCE(r.reserved_at,b.reserved_at)) AS reserved_at,b.project_uuid,0 AS installation_direct
     FROM physical_requests b LEFT JOIN model_requests r ON r.id=b.id
-    UNION ALL SELECT r.id,r.reserved_at,NULL
+    UNION ALL SELECT r.id,r.reserved_at,NULL,CASE WHEN ${intrinsicDirect} THEN 1 ELSE 0 END
     FROM model_requests r WHERE NOT EXISTS(SELECT 1 FROM physical_requests b WHERE b.id=r.id))
-    SELECT COUNT(*) AS count FROM requests WHERE reserved_at>? ${projectId ? "AND (project_uuid=? OR project_uuid IS NULL)" : ""}`;
+    SELECT COUNT(*) AS count FROM requests WHERE reserved_at>? ${projectId ? "AND installation_direct=0 AND (project_uuid=? OR project_uuid IS NULL)" : ""}`;
   return (db.prepare(sql).get(...(projectId ? [since, projectId] : [since])) as { count: number }).count;
 }

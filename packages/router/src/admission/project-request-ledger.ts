@@ -111,6 +111,11 @@ export class ProjectRequestLedger implements RequestLedger {
         try { receipt = this.global(record); receiptKnown = true; } catch { /* Unknown coordinator state must retain local preparation. */ }
         if (receiptKnown && !receipt && (error instanceof GlobalAccountingDenied || error instanceof AdmissionDenied)) {
           this.store.transaction(() => { const fresh = this.store.read(input.requestId)!; this.store.releasePreparation(fresh); this.store.update(fresh, "retired", undefined, "never_globally_admitted"); });
+          // Only this proven, durably retired quota refusal is definitely unadmitted.
+          // operation() repeats that proof before preserving the typed denial. Unknown
+          // coordinator state or failed retirement still retains persistence uncertainty.
+          if (error instanceof GlobalAccountingDenied && error.code === "quota")
+            throw new AdmissionDenied("project_allocation_exhausted", error.message);
         } else if (receipt?.state === "reserved" && error instanceof AdmissionDenied) {
           try {
             const retired = this.store.assertGlobalReceipt(record, this.options.broker.retireDefinitelyUnsent({ requestId: receipt.requestId, fingerprint: receipt.fingerprint }));

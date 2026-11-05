@@ -271,7 +271,10 @@ export type { DeadlineContinuationInput } from "./storage/task-deadline-continua
 export type { BlockedJobContinuationInput } from "./storage/blocked-job-continuation.js";
 export type { InfrastructureRecoveryInput } from "./storage/task-infrastructure-recovery.js";
 export type { RecoveredEditInspectionInput, RecoveredEditAttestationInput } from "./attribution/recovered-edit-provenance.js";
-export { ClientConnectionsConfigSchema, type ClientConnectionsConfig } from "./config/schema.js";
+export { ClientConnectionsConfigSchema, ClientConnectionModeSchema, type ClientConnectionsConfig, type ClientConnectionMode } from "./config/schema.js";
 export { ClientConnectionsController, type ClientConnectionsStatus, type ClientConnectionsOptions } from "./connections/server.js";
 export { ClientConnectionRequestSchema, ClientConnectionError, CLIENT_CONNECTION_MODEL, CLIENT_CONNECTION_HOST, CLIENT_CONNECTION_MODELS, type ClientConnectionRequest, type ClientConnectionDispatch } from "./connections/protocol.js";
 export { dispatchClientConnection, type ClientConnectionContext } from "./connections/dispatch.js";
+export { isClientConnectionLoopback, clientConnectionTokenRequired, clientConnectionBaseUrl } from "./connections/access.js";
+export { ClientJobModeSchema, ClientJobRequestSchema, ClientJobSubmissionSchema, ClientJobAccessSchema,
+  type ClientJobRequest, type ClientJobSubmission, type ClientJobAccess, type ClientJobAccepted, type ClientJobStatus, type ClientJobCallbacks } from "./connections/jobs.js";

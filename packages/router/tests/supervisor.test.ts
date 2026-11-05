@@ -159,8 +159,16 @@ describe("supervisor interruption", () => {
     });
     sy = open(env, client, { worker: true });
     const job = await sy.startJob({ goal: "Pick a format", repositories: ["core"] });
-    for (let i = 0; i < 100 && !sy.questions().length; i++) await new Promise((r) => setTimeout(r, 100));
-    expect(sy.questions()).toHaveLength(1);
+    // Git-backed startup can exceed ten seconds under suite load, as in the
+    // question case above. Wait for readiness before testing shutdown/resume.
+    for (const until = Date.now() + 90_000; !sy.questions().length && Date.now() < until;) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(sy.questions(), JSON.stringify({
+      status: sy.getStatus([job.taskId]),
+      requests: client.requests.length,
+      events: sy.tasks.events(job.taskId, 30),
+    })).toHaveLength(1);
     await sy.close(); // worker shuts down while the supervisor waits
     sy = undefined;
     expect(client.requests).toHaveLength(1);

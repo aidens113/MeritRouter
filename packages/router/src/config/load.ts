@@ -98,13 +98,8 @@ export function parseConfig(raw: unknown, configPath: string): ResolvedConfig {
   const repositoryPaths = resolveRepositories(cfg.repositories, baseDir);
   const projects = resolveProjects(cfg, baseDir);
   if (projects.issues.length) throw new ConfigError(`invalid config ${configPath}:\n  ${formatIssues(projects.issues).join("\n  ")}`);
-  if (cfg.client_connections.enabled) {
-    const target = cfg.client_connections.project;
-    if (!target || !projects.resolution.projects.some(project => project.slug === target))
-      throw new ConfigError("client_connections.project must name a configured project");
-    if (cfg.profiles[cfg.client_connections.profile]?.mode !== "completion")
-      throw new ConfigError("client_connections.profile must name a configured completion profile");
-  }
+  // Saved agent preferences may be incomplete or refer to a retired project. They never
+  // prevent enabling direct chat; job submission validates its current project and scope.
   for (const [name, profile] of Object.entries(cfg.profiles) as [ProfileName, ProfileConfig][]) {
     // Supervisors have their own (larger) request budget; the per-task cap applies to workers.
     if (profile.mode !== "supervisor" && profile.max_model_requests !== null && profile.max_model_requests > cfg.execution.max_model_requests_per_task) {

@@ -155,8 +155,8 @@ to be installed or running: MeritRouter calls each provider's API itself.
 
 ### Connect an editor or chat app
 
-Open **All projects → Connections** (`/all/connections`). Select the project whose routing,
-credentials and budgets should serve client requests, then enable connections. The switch
+Open **All projects > Connections** (`/all/connections`) and turn connections on.
+Direct requests use installation-level routing; no project or completion profile is required. The switch
 defaults off; its saved value survives panel restarts. Enabling does not make a model request.
 
 With the default port, use these settings in your client:
@@ -166,17 +166,41 @@ With the default port, use these settings in your client:
 | Ollama | `http://127.0.0.1:4479` | `meritrouter` |
 | Custom OpenAI-compatible | `http://127.0.0.1:4479/v1` | `meritrouter` |
 
-If an OpenAI-compatible client requires an API key field, enter `meritrouter-local`; do not
-paste an upstream provider key. The local listener uses the keys already managed by MeritRouter.
+Choose an explicit virtual model when you want to select the mode per request:
+
+| Model | Behavior |
+| --- | --- |
+| `meritrouter-direct` | Return a model response using automatic routing and key/model fallback. Your client executes any returned tools. |
+| `meritrouter-agent` | Queue one worker in the selected project and return a job acknowledgment. |
+| `meritrouter-team` | Queue a supervised team and return a job acknowledgment. |
+
+`meritrouter` uses the default mode saved on the Connections page. Only enabled modes appear
+in model discovery. To use agent/team modes, enable them explicitly, select permitted project
+repositories, a default writable repository for coding agents, and their request, root/worker
+timeout, spending and active-job limits. Team children keep their configured task deadlines;
+cancel the job to stop the whole team. An existing MeritRouter
+worker must be running to execute queued work, just as for jobs created in the panel.
+The acknowledgment contains a job ID, access token and URLs for status/results and cancellation.
+Keep the token and send it as a Bearer header when using those URLs; it is not a provider key.
+
+Host/IP and port are editable in the Connection card. For a non-local address, save and copy
+the generated connection key into your client's API-key field or Authorization Bearer header.
+The key is shown once; use Regenerate if you lose it. Binding to `0.0.0.0` or `::` listens on
+all matching interfaces; another device should use this computer's reachable IP in its URL.
+
+For an unprotected local listener, enter `meritrouter-local` if the client requires an API key.
+Never use an upstream provider key here; MeritRouter manages those separately.
 The Connections page includes copy buttons and terminal examples, and shows whether the saved
 listener is actually running. A port conflict is reported without stopping the other application.
 
-The listener runs with the panel, binds only to `127.0.0.1`, and accepts browser origins on
-localhost, `127.0.0.1` and `[::1]`. Stopping the panel or disabling connections cancels active
+The listener runs with the panel. Its host/IP and port are editable; the default address is
+`127.0.0.1:4479`. Stopping the panel or disabling connections cancels active
 client requests. A saved enabled listener starts again with the panel without visiting its page.
+Already accepted agent/team jobs remain durable project work; manage them using their job
+controls or the panel rather than assuming closing the chat window cancels them.
 
 Supported protocols include OpenAI Chat Completions/model discovery and Ollama chat, generate,
-tags, show and version. Text and client tool messages pass through the selected project's Gate;
+tags, show and version. Direct text, supported image inputs and client tool messages pass through Gate;
 tools execute in the client. Streaming clients receive SSE or NDJSON frames after the upstream
 response completes (buffered delivery). Model downloads, embeddings, OpenAI Responses and other
 unsupported request features return explicit errors; compatibility depends on the client's API use.

@@ -1,7 +1,7 @@
 import { capturedLease, type LeaseRef } from "../storage/task-leases.js";
 import { AdmissionDenied, MeritRouterError } from "../core/errors.js";
 import type { ResolvedConfig } from "../config/load.js";
-import type { Modality, PaidPolicy, ProfileName, TierName } from "../config/schema.js";
+import type { Modality, PaidPolicy, ProfileName, RequestProfileName, TierName } from "../config/schema.js";
 import type { Db } from "../storage/db.js";
 import type { ArtifactStore } from "../storage/artifacts.js";
 import type { StoredTask } from "../storage/tasks.js";
@@ -59,7 +59,7 @@ export class TaskRouter {
   }
 
   /** Plan with the owning installation's aggregate qualification capability. */
-  plan(profile: ProfileName, tier: TierName, inputModalities: Modality[], forcedEndpointId?: string, skipQualification = false, paidPolicy?: PaidPolicy, extraOverrides: RoutingOverride[] = [], web?: boolean, config: ResolvedConfig = this.cfg): RoutePlan {
+  plan(profile: RequestProfileName, tier: TierName, inputModalities: Modality[], forcedEndpointId?: string, skipQualification = false, paidPolicy?: PaidPolicy, extraOverrides: RoutingOverride[] = [], web?: boolean, config: ResolvedConfig = this.cfg): RoutePlan {
     return planRoute(
       config,
       this.catalog.endpoints(),

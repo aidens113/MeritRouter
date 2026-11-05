@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { randomBytes } from "node:crypto";
 import { LeaseRefSchema } from "../storage/task-leases.js";
-import { ProfileNameSchema } from "../config/schema.js";
+import { RequestProfileNameSchema } from "../config/schema.js";
 
 const Count = z.number().int().nonnegative();
 const Money = z.number().nonnegative();
@@ -21,7 +21,7 @@ export const ReserveRequestDTOSchema = z.object({
   requestId: RequestIdSchema, payloadDigest: z.string().regex(/^[a-f0-9]{64}$/),
   keyRef: z.string().max(300), providerReservationId: z.string().nullable(),
   slot: z.object({ id: z.string().nullable(), nonce: z.string() }).strict().optional(),
-  executionId: z.string().min(1), profile: ProfileNameSchema, purpose: z.string(), gatewayModel: z.string(), endpointId: z.string().nullable(), tier: z.string().nullable(), routeNote: z.string().nullable().optional(),
+  executionId: z.string().min(1), profile: RequestProfileNameSchema, purpose: z.string(), gatewayModel: z.string(), endpointId: z.string().nullable(), tier: z.string().nullable(), routeNote: z.string().nullable().optional(),
   estInputTokens: Count, reservedOutputTokens: Count, participants: z.array(Participant), paid: Paid.optional(),
 }).strict();
 export const ReservationDTOSchema = z.object({

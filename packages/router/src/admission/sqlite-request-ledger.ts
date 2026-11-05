@@ -265,12 +265,13 @@ export class SqliteRequestAccounting {
 /** SQLite remains synchronous internally; the routed runtime consumes this awaited port. */
 export class SqliteRequestLedger implements RequestLedger {
   readonly receipts: RequestReceipts;
-  constructor(private readonly admission: Admission, private readonly spend: PaidSpend) {
+  constructor(private readonly admission: Admission, private readonly spend: PaidSpend, private readonly options: { beforeReserve?(input: ReserveRequestDTO): void } = {}) {
     this.receipts = new RequestReceipts(admission.db, () => admission.serverNow());
   }
   async reserve(input: ReserveRequestDTO): Promise<ReservationDTO> {
     const parsed = ReserveRequestDTOSchema.parse(input);
     return this.receipts.reserve(parsed, () => {
+      this.options.beforeReserve?.(parsed);
       const { paid, payloadDigest, keyRef, providerReservationId, slot, ...data } = parsed;
       const result = this.admission.reserve({ ...data, ...(paid ? { paid: { ...paid, spend: this.spend } } : {}) });
       const { paid: charged, ...bound } = result;

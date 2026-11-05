@@ -6,6 +6,7 @@ lines, worker briefs, append-only ledger with real validation, open questions).
 
 | Document | Status | Scope |
 | --- | --- | --- |
+| [connection-modes.md](connection-modes.md) | Complete | Global profile-free direct routing, editable listener host/port, compact Connections UI and scoped agent/team jobs. |
 | [unpublished-model-sizes.md](unpublished-model-sizes.md) | Complete | Official Gemini unknown-size routing verified through successful live coding requests; known-size floors preserved. |
 | [client-connections.md](client-connections.md) | Complete | Persistent default-off local client APIs and global panel controls; focused, build and production browser validation passed. |
 | [framework-validation.md](framework-validation.md) | Complete | Framework repairs and admission follow-up passed focused, recursive and full regression checks (3192 passed/five skipped); runtime and validation record published to dev/main. |

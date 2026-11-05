@@ -27,6 +27,7 @@ import { jobPool, protectedValidationRequests } from "../admission/budget-reques
 import { assertStoreRole } from "../storage/store-role.js";
 import { ProjectStoreIdentitySchema, readStoreIdentity, type ProjectStoreIdentity } from "../projects/store-identity.js";
 import type { ExecutionGrantRef, ProjectExecutionGrants } from "../storage/project-execution-grants.js";
+import { assertInstallationExecution, type InstallationExecution } from "../connections/installation-execution.js";
 
 export interface ProjectGateContext {
   coordinationDb: Db;
@@ -41,6 +42,8 @@ export interface ProjectGateContext {
 export type { DirectRuntime } from "./direct.js";
 
 export interface GateRequest {
+  /** Host-issued installation request authority; never accepted from an HTTP/model DTO. */
+  installationExecution?: InstallationExecution;
   plan: RoutePlan;
   executionId: string;
   purpose: string;
@@ -297,7 +300,7 @@ export class Gate {
   private candidatesFor(req: GateRequest): ModelEndpoint[] {
     const avoid = new Set(req.avoidEndpointIds ?? []);
     const list = avoid.size ? req.plan.candidates.filter((c) => !avoid.has(c.id)) : req.plan.candidates;
-    if (this.cfg.profiles[req.plan.profile]?.mode === "supervisor") {
+    if (this.isSupervisor(req)) {
       // Session stickiness cannot override quality ordering, and evidence expiry/revocation
       // must be checked on every physical dispatch rather than only at session creation.
       const visual = req.chat.messages.some(m => Array.isArray(m.content) && m.content.some(part => part.type === "image_url"));
@@ -333,8 +336,9 @@ export class Gate {
   /** Supervisors and independent reviewers are served before waiting workers. */
   private priorityOf(req: GateRequest): 0 | 1 {
     if (req.purpose === "supervisor" || req.purpose === "verification") return 1;
-    return this.cfg.profiles[req.plan.profile]?.mode === "supervisor" ? 1 : 0;
+    return this.isSupervisor(req) ? 1 : 0;
   }
+  private isSupervisor(req: GateRequest): boolean { return req.plan.profile !== "direct" && this.cfg.profiles[req.plan.profile]?.mode === "supervisor"; }
 
   /**
    * Take a slot on the endpoint's platform, then its breaker admission. Null (recorded as a
@@ -422,9 +426,15 @@ export class Gate {
   }
 
   private async performRequest(req: GateRequest): Promise<GateResponse> {
+    if (req.installationExecution || req.plan.profile === "direct") {
+      if (!req.installationExecution || this.projectIdentity || req.plan.profile !== "direct" || req.purpose !== "client_connection" || req.participants.length || req.installationExecution.executionId !== req.executionId)
+        throw new Error("Intrinsic direct requests require exact installation authority and no task participants");
+      assertInstallationExecution(this.db, req.installationExecution, this.direct.providers.now());
+    }
     if (this.projectIdentity && (!req.participants.length || req.participants.some(p => p.lease.project !== this.projectIdentity!.slug)))
       throw new Error("Project Gate participants do not belong to its pinned store");
     const holder: SlotHolder = { id: newId("h"), taskIds: req.participants.map((p) => p.taskId), leases: req.participants.map(p => LeaseRefSchema.parse(p.lease)), leaseOwner: req.participants[0]?.leaseOwner ?? null, priority: this.priorityOf(req), since: null,
+      ...(req.installationExecution ? { installationExecution: req.installationExecution } : {}),
       ...(this.projectContext ? { executionGrants: this.projectContext.executionGrants(req) } : {}) };
     const started = Date.now();
     const maxWaitMs = this.cfg.providers.request_timeout_seconds * 1000;
@@ -476,7 +486,7 @@ export class Gate {
     }));
 
     for (const ep of this.candidatesFor(req)) {
-      const supervisorRequest = this.cfg.profiles[req.plan.profile]?.mode === "supervisor";
+      const supervisorRequest = this.isSupervisor(req);
       const dispatchRoute = { ...ep.route };
       const paid = requestPaid(ep, this.cfg, req.plan);
       // Definite unavailable free routes do not exhaust the transient retry cap.
@@ -494,7 +504,7 @@ export class Gate {
         continue;
       }
       const assertValidationReserve = (reserved: boolean) => {
-        if (this.cfg.profiles[req.plan.profile]?.mode === "supervisor") {
+        if (this.isSupervisor(req)) {
           for (const p of req.participants) {
             const pool = jobPool(this.db, this.cfg, p.taskId);
             const protectedRequests = protectedValidationRequests(this.db, this.cfg, p.taskId);
@@ -508,10 +518,10 @@ export class Gate {
       const r = await requestDirect({ cfg: this.cfg, ledger: this.ledger, captures: this.captures, assertDispatch: (participants, reservation, dispatchId) => {
         this.assertProjectRuntime();
           this.taskRequestAssertion?.(req);
-        if (supervisorRequest || this.cfg.profiles[req.plan.profile]?.mode === "supervisor") {
+        if (supervisorRequest || this.isSupervisor(req)) {
           const visual = req.chat.messages.some(m => Array.isArray(m.content) && m.content.some(part => part.type === "image_url"));
           const quality = assessSupervisorQuality(ep.id, this.cfg.supervisor.routing, new Date(this.direct.providers.now()), visual, dispatchRoute);
-          if (!quality.eligible || ep.route.provider !== dispatchRoute.provider || ep.route.model !== dispatchRoute.model || this.cfg.profiles[req.plan.profile]?.mode !== "supervisor")
+          if (!quality.eligible || ep.route.provider !== dispatchRoute.provider || ep.route.model !== dispatchRoute.model || !this.isSupervisor(req))
             throw new AdmissionDenied("no_eligible_endpoint", `supervisor_quality_unavailable before transport: ${quality.reason}; route and role identity must remain current`);
         }
         assertValidationReserve(true);

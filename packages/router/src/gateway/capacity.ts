@@ -5,6 +5,7 @@ import { ProjectExecutionGrants, ExecutionGrantRefSchema, type ExecutionGrantRef
 import { LeaseRefSchema, type LeaseRef } from "../storage/task-leases.js";
 import { z } from "zod";
 import { immediate, newId, type Db } from "../storage/db.js";
+import { assertInstallationExecution, type InstallationExecution } from "../connections/installation-execution.js";
 
 export class ProviderClaimCapacityError extends Error { constructor(){super("Split provider claim capacity exhausted");this.name="ProviderClaimCapacityError";} }
 
@@ -95,6 +96,7 @@ export function afterThrottle(r: ConcurrencyRecord, reason: ThrottleReason, now:
 
 /** A gate request that holds or waits for slots (one per `Gate.request` call). */
 export interface SlotHolder {
+  installationExecution?: InstallationExecution;
   executionGrants?: readonly ExecutionGrantRef[];
   leases?: readonly LeaseRef[];
   id: string;
@@ -195,12 +197,20 @@ export class ProviderCapacity {
   }
   /** Public holder IDs are local; coordination keys bind their exact store generation and grants. */
   private storageHolder(holder: SlotHolder): string {
+    if (holder.installationExecution) {
+      return "installation_" + holder.installationExecution.executionId + "_" + holder.installationExecution.nonce;
+    }
     if (!this.grants) return holder.id;
     const refs = z.array(ExecutionGrantRefSchema).min(1).max(128).parse(holder.executionGrants);
     const grants = refs.map(ref => { const grant = this.grants!.read(ref.grantId); if (!grant || grant.ref.nonce !== ref.nonce) throw new Error("Split holder grant nonce lost"); return grant; });
     const project = grants[0]!.input.project;
     if (grants.some(grant => canonicalJson(grant.input.project) !== canonicalJson(project))) throw new Error("Cross-project split holder");
     return `split_${createHash("sha256").update(canonicalJson({project,id:holder.id,refs:[...refs].sort((a,b)=>a.grantId.localeCompare(b.grantId))})).digest("hex")}`;
+  }
+  private installationHolder(holder: SlotHolder): void {
+    if (!this.db || !holder.installationExecution || holder.taskIds.length || holder.leaseOwner !== null || holder.leases?.length || holder.executionGrants?.length)
+      throw new Error("Installation slots cannot claim project task authority");
+    assertInstallationExecution(this.db, holder.installationExecution, this.now());
   }
   private splitLiveSql = `(s.kind='request' OR (s.execution_grants_json IS NOT NULL AND ((s.kind='claim' AND s.since>@claimCut) OR (s.kind='wait' AND s.seen_at>@waitCut)) AND NOT EXISTS (
     SELECT 1 FROM json_each(s.execution_grants_json) j LEFT JOIN project_execution_grants g ON g.id=json_extract(j.value,'$.grantId')
@@ -335,9 +345,10 @@ export class ProviderCapacity {
    * waits and its tasks' scheduler claims.
    */
   tryAcquire(holder: SlotHolder, platform: string): SlotHandle | SlotsFull {
+    if (holder.installationExecution) this.installationHolder(holder);
     if (!this.enabled && !this.grants) return { id: null, platform, generation: 0 };
     return immediate(this.db!, () => {
-      const split = this.grants ? this.splitHolder(holder) : null;
+      const split = this.grants && !holder.installationExecution ? this.splitHolder(holder) : null;
       const storedHolder = this.storageHolder(holder);
       this.purge();
       const now = this.now();
