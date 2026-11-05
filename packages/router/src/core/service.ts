@@ -1,6 +1,10 @@
 import path from "node:path";
+import { z } from "zod";
 import { PanelAvailability } from "../operations/panel.js";
 import { ServiceOperations } from "./service-operations.js";
+import { ClientConnectionError, ClientConnectionRequestSchema, type ClientConnectionRequest } from "../connections/protocol.js";
+import { dispatchClientConnection } from "../connections/dispatch.js";
+import type { ChatResponse } from "../gateway/types.js";
 import { GlobalKnowledge } from "../brain/global-knowledge.js";
 import { qualificationLookupFrom, qualificationStat, withQualificationStats, type QualificationStatReader } from "../qualification/stats.js";
 import { projectRuntimePaths } from "../projects/runtime-paths.js";
@@ -17,7 +21,7 @@ import { loadConfig, parseConfig, readConfigFile, type ResolvedConfig } from "..
 import { UNLIMITED_REQUESTS, type ProfileName, type TierName } from "../config/schema.js";
 import { immediate, openDatabase, type Db } from "../storage/db.js";
 import { TaskStore, canonicalJson, type StoredTask, type SubmitOutcome } from "../storage/tasks.js";
-import { continueTaskDeadline, DeadlineContinuationSchema, type DeadlineContinuationInput } from "../storage/task-deadline-continuation.js";
+import { continueTaskDeadline, DeadlineContinuationSchema, retryMaintenanceStartup, StartupRetrySchema, type DeadlineContinuationInput, type StartupRetryInput } from "../storage/task-deadline-continuation.js";
 import { recoverInfrastructureFailure, InfrastructureRecoverySchema, type InfrastructureRecoveryInput } from "../storage/task-infrastructure-recovery.js";
 import { continueBlockedJob, BlockedJobContinuationSchema, type BlockedJobContinuationInput } from "../storage/blocked-job-continuation.js";
 import { continueSupervisorBudget, SupervisorBudgetContinuationSchema, type SupervisorBudgetContinuationInput } from "../storage/supervisor-budget-continuation.js";
@@ -127,6 +131,7 @@ const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOStrin
  */
 const SYSTEM_PURPOSES = new Set(["qualification", "comparison", "audit"]);
 const QUALIFICATION_PURPOSES = new Set(["qualification", "comparison"]);
+const ResumeTaskOptionsSchema = z.object({ preserveDeadline: z.boolean().optional() }).strict();
 
 /** Library entry point shared by the CLI, the MCP server, and the web panel. */
 export class MeritRouter {
@@ -471,6 +476,39 @@ export class MeritRouter {
       this.legacyPolicyGraphs.set(cfg.project.slug, graph);
     }
     return { cfg, brain: b.brain, access: b.access, stores: this.projectStores(cfg.project.slug), ...graph };
+  }
+
+  /** Dispatch a connected client's chat through the selected project's task, lease and Gate. */
+  requestClientConnection(raw: ClientConnectionRequest, signal: AbortSignal): Promise<ChatResponse> {
+    const request = ClientConnectionRequestSchema.parse(raw);
+    if (this.closing) return Promise.reject(new TaskValidationError("service is closing"));
+    const settings = this.cfg.client_connections;
+    if (!settings.enabled || settings.project !== request.project || settings.profile !== request.profile)
+      return Promise.reject(new ClientConnectionError(503, "connections_disabled", "Client connections are disabled or their selected project/profile changed."));
+    return this.operations.run(request.project, async () => {
+      this.projects.require(request.project);
+      this.stores.fence(request.project);
+      const stores = this.stores.of(request.project), bundle = stores.bundle;
+      if (this.host && !bundle) throw new TaskValidationError("Client connections require the selected project's registered runtime");
+      const legacy = bundle ? null : this.projectDeps(request.project);
+      const gate = bundle?.gate ?? legacy?.gate, router = bundle?.router ?? legacy?.router;
+      if (!gate || !router) throw new TaskValidationError("The selected project has no configured model runtime");
+      return dispatchClientConnection({
+        cfg: bundle?.cfg ?? legacy!.cfg, tasks: stores.tasks,
+        gate, router,
+        ...(bundle ? {
+          taskLeases: bundle.taskLeases, queue: this.host!.bindings.forProject(bundle.identity),
+          readyProjects: () => this.host!.bundles().flatMap(item => {
+            const hint = this.host!.bindings.forProject(item.identity).hint();
+            return hint ? [hint] : [];
+          }),
+        } : {}),
+        assertCurrent: () => {
+          if (bundle) bundle.assertCurrent();
+          else { this.projects.require(request.project); this.stores.fence(request.project); }
+        },
+      }, request, signal);
+    });
   }
 
   /** A project's stores: its own isolated store (split installation), or the installation's shared one. */
@@ -1090,11 +1128,13 @@ export class MeritRouter {
    * Agent-loop roles continue their latest interrupted session;
    * a coding task starts over in a fresh worktree (the old one stays as evidence).
    */
-  resumeTask(id: string, project?: string): TaskState {
+  resumeTask(id: string, project?: string, options: { preserveDeadline?: boolean } = {}): TaskState {
+    const requested = ResumeTaskOptionsSchema.parse(options);
     const st = this.stores.ofTask(id, project);
     this.assertInProject(id, project, st);
     const t = st.tasks.get(id);
     if (t && !st.bundle) this.stores.fence(t.row.project_id);
+    if (requested.preserveDeadline && t?.row.state !== "completed") throw new TaskValidationError("Deadline preservation requires a completed FINAL-rejected repair");
     const coding = t ? this.cfg.profiles[t.spec.profile]?.mode === "coding" : false;
     let s:TaskState;
     if (t?.row.state === "failed") {
@@ -1122,7 +1162,7 @@ export class MeritRouter {
         const rejected=new ProductDeliveries(st.db,this.now).rejectedCompleted(id,t.row.project_id);
         const previous=st.sessions.forTask(id).filter(session=>session.role==="supervisor").at(-1);
         if(!rejected||!previous||previous.status!=="completed"||!previous.workspace?.repos.length)throw new TaskValidationError(`task ${id} is not a completed FINAL-rejected delivery with a retained supervisor workspace`);
-        const repair=DeliveryRepairContinuationSchema.parse({...rejected,previousSessionId:previous.id,workspace:previous.workspace});
+        const repair=DeliveryRepairContinuationSchema.parse({...rejected,previousSessionId:previous.id,workspace:previous.workspace,...(requested.preserveDeadline ? {preserveDeadlineAt:t.row.deadline_at} : {})});
         const projectConfig=st.bundle?.cfg??this.projectContext(t.row.project_id);
         if(projectConfig.profiles[t.spec.profile]?.mode!=="supervisor")throw new TaskValidationError(`task ${id} no longer has current supervisor authority`);
         for(const repo of repair.workspace.repos){
@@ -1142,6 +1182,21 @@ export class MeritRouter {
     this.assertInProject(parsed.taskId, parsed.project, st);
     if (!st.bundle) this.stores.fence(parsed.project);
     const result = continueTaskDeadline(st.tasks, st.sessions, st.bundle?.cfg ?? this.projectContext(parsed.project), parsed);
+    this.kick(st);
+    return result;
+  }
+
+  /** Retry the first maintenance claim after a proven pre-dispatch supervisor routing refusal. */
+  retryTaskStartup(input: StartupRetryInput) {
+    const parsed = StartupRetrySchema.parse(input), st = this.stores.ofTask(parsed.taskId, parsed.project);
+    this.assertInProject(parsed.taskId, parsed.project, st);
+    if (!st.bundle) this.stores.fence(parsed.project);
+    const cfg = st.bundle?.cfg ?? this.projectContext(parsed.project), task = st.tasks.get(parsed.taskId)!;
+    const router = st.bundle?.router ?? this.router;
+    const chosen = cfg.supervisor.endpoints.map(endpointId => ({ profile: task.spec.profile, tier: null, kind: "force" as const, endpointId, allowBelowFloor: true, enabled: true }));
+    const plan = router.plan(task.spec.profile, "T3", router.inputModalities(task), task.spec.routing?.endpointId, false, cfg.supervisor.paid_policy, chosen, task.spec.hints?.web, cfg);
+    if (plan.blocker || !plan.candidates.length) throw new TaskValidationError("startup retry requires a currently eligible supervisor route");
+    const result = retryMaintenanceStartup(st.tasks, st.sessions, cfg, parsed);
     this.kick(st);
     return result;
   }

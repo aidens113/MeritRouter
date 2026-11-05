@@ -3,7 +3,10 @@ import { writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import type { MeritRouter } from "../src/core/service.js";
-import { ProductDeliveries } from "../src/verification/product-delivery.js";
+import { DeliveryRepairContinuationSchema, ProductDeliveries } from "../src/verification/product-delivery.js";
+import { emptyUsage, WorkerResultSchema } from "../src/core/task.js";
+import { baseResult } from "../src/runners/types.js";
+import { TaskStore } from "../src/storage/tasks.js";
 import { deliverySpecDigest, type DeliverySpec } from "../src/verification/product-spec.js";
 import { productCandidateDigest } from "../src/verification/product-evidence.js";
 import { baseConfig, makeEnv, openWithTestSupervisor, reply, ScriptedClient, servedFor, type Env } from "./helpers.js";
@@ -15,7 +18,7 @@ const spec:DeliverySpec={schemaVersion:1,id:"repair",revision:1,source:{ref:"fix
 const call=(name:string,args:unknown,id=name)=>({id,type:"function" as const,function:{name,arguments:JSON.stringify(args)}});
 const finish=()=>call("finish_job",{status:"completed",summary:"candidate checked",verified:[{claim:"runtime checked",evidence:"validate_delivery"}],not_verified:[]});
 
-it.each([{project:"demo",expired:false},{project:"other",expired:true}])("repairs a rejected completed delivery with its configured allowance and retained budget/history ($project, expired=$expired)",async({project,expired})=>{
+it.each([{project:"demo",expired:false,preserve:undefined},{project:"other",expired:true,preserve:false},{project:"demo",expired:false,preserve:true}])("repairs a rejected completed delivery with retained budget/history ($project, expired=$expired, preserve=$preserve)",async({project,expired,preserve})=>{
   const allowanceSeconds=600;
   let now=Date.now(),expectedRepairDeadline:number|undefined,originalRunCount=0;
   // Runtime delivery tools also read Date.now; share the task clock without
@@ -72,8 +75,10 @@ it.each([{project:"demo",expired:false},{project:"other",expired:true}])("repair
   const store=new ProductDeliveries(sy.db,()=>now),state=store.status(id,project)!,original=sy.sessions.forTask(id).filter(session=>session.role==="supervisor").at(-1)!;
   const originalEvents=sy.sessions.events(original.id);
   expect(()=>sy!.resumeTask(id,project)).toThrow(/FINAL-rejected/);
+  expect(()=>sy!.resumeTask(id,project,{preserveDeadline:true})).toThrow(/FINAL-rejected/);
   store.finalDecision(id,project,{schemaVersion:1,decision:"accept",actor:{id:"FINAL",role:"initiator"},specDigest:deliverySpecDigest(state.spec),candidateDigest:productCandidateDigest(state.candidate!),reason:"initial review",at:now});
   expect(()=>sy!.resumeTask(id,project)).toThrow(/FINAL-rejected/);
+  expect(()=>sy!.resumeTask(id,project,{preserveDeadline:true})).toThrow(/FINAL-rejected/);
   store.finalDecision(id,project,{schemaVersion:1,decision:"reject",actor:{id:"FINAL",role:"initiator"},specDigest:deliverySpecDigest(state.spec),candidateDigest:productCandidateDigest(state.candidate!),reason:"Rejected visible behavior",at:now});
   const completed=sy.tasks.get(id)!,used=sy.admission.taskTotals(id).requests,cap=completed.spec.budget;
   expect(used).toBeGreaterThan(0);expect(cap?.maxModelRequests).toBe(40);expect(cap?.timeoutSeconds).toBeUndefined();
@@ -85,15 +90,16 @@ it.each([{project:"demo",expired:false},{project:"other",expired:true}])("repair
     now=completed.row.deadline_at!+1;
     expect(completed.row.deadline_at).toBeLessThan(now);
   }
-  expectedRepairDeadline=now+allowanceSeconds*1000;
+  if(preserve)now+=1000;
+  expectedRepairDeadline=preserve?completed.row.deadline_at!:now+allowanceSeconds*1000;
   const accounting=()=>["model_requests","request_charges","paid_spend","budget_requests","task_request_grants","job_budget_carves","execution_members","project_request_protocol","project_request_holds","project_request_spend"].map(table=>sy!.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
   const beforeAccounting=accounting(),beforeTaskEvents=sy.db.prepare("SELECT * FROM events WHERE task_id=? ORDER BY id").all(id);
   const beforeDelivery=sy.db.prepare("SELECT * FROM product_deliveries WHERE task_id=? AND project_id=?").get(id,project);
   expect(()=>sy!.resumeTask(id,"foreign")).toThrow();
   expect(()=>sy!.tasks.resume(id)).toThrow(/trusted repair continuation/);
   repair=true;
-  expect(sy.resumeTask(id,project)).toBe("queued");
-  expect(sy.tasks.get(id)!.row).toMatchObject({state:"queued",state_reason:"resumed",deadline_at:null,run_count:originalRunCount,started_at:completed.row.started_at});
+  expect(sy.resumeTask(id,project,preserve===undefined?{}:{preserveDeadline:preserve})).toBe("queued");
+  expect(sy.tasks.get(id)!.row).toMatchObject({state:"queued",state_reason:"resumed",deadline_at:preserve?completed.row.deadline_at:null,run_count:originalRunCount,started_at:completed.row.started_at});
   expect(()=>sy!.resumeTask(id,project)).toThrow();
   expect(sy.admission.taskTotals(id).requests).toBe(used);
   expect(sy.tasks.get(id)!.spec.budget).toEqual(cap);
@@ -102,6 +108,7 @@ it.each([{project:"demo",expired:false},{project:"other",expired:true}])("repair
   expect(sy.db.prepare("SELECT * FROM product_deliveries WHERE task_id=? AND project_id=?").get(id,project)).toEqual(beforeDelivery);
   expect(sy.db.prepare("SELECT * FROM events WHERE task_id=? ORDER BY id").all(id).slice(0,beforeTaskEvents.length)).toEqual(beforeTaskEvents);
   expect(sy.tasks.events(id,1000).find(event=>event.type==="delivery_repair_requested")?.data).toMatchObject({previousSessionId:original.id,previousResult:completed.result});
+  if(preserve)expect(sy.tasks.events(id,1000).find(event=>event.type==="delivery_repair_requested")?.data).toMatchObject({preserveDeadlineAt:completed.row.deadline_at,previousDeadlineAt:completed.row.deadline_at});
   expect(sy.sessions.get(original.id)).toEqual(original);expect(sy.sessions.events(original.id)).toEqual(originalEvents);
   // Long delivery jobs may have far more than the default event-page size.
   for(let i=0;i<600;i++)sy.tasks.event(id,"fixture_repair_noise",{i});
@@ -132,4 +139,69 @@ it("does not reopen completed nonproduct supervisors or other completed roles",a
     expect(sy.tasks.events(task!.taskId,100).some(event=>event.type==="delivery_repair_requested")).toBe(false);
   }
   expect(client.requests).toHaveLength(0);
+});
+
+async function preservingFixture(){
+  let now=Date.now();
+  vi.spyOn(Date,"now").mockImplementation(()=>now);
+  const cfg=baseConfig({team:{provider_concurrency_enabled:false}});
+  (cfg.profiles as Record<string,unknown>).supervise={mode:"supervisor",tools:"supervisor",min_total_parameters_b:100,max_model_requests:40,classify:"never",min_tier:"T3"};
+  env=makeEnv({config:cfg});
+  const client=new ScriptedClient(()=>reply("unused"));
+  sy=openWithTestSupervisor(env,client,{worker:false,now:()=>now});
+  const [submitted]=await sy.submitTasks([{profile:"supervise",goal,repositoryAliases:["core"],deliveryVersion:2,budget:{maxModelRequests:40},constraints:{acceptanceCriteria:["checked candidate"]}}]);
+  const id=submitted!.taskId,task=sy.tasks.claim("fixture-owner",{maxConcurrent:1,maxWritersPerRepo:1,leaseMs:30000,defaultTimeoutMs:600000})[0]!;
+  const head=execFileSync("git",["rev-parse","HEAD"],{cwd:env.repo,encoding:"utf8"}).trim(),tree=execFileSync("git",["rev-parse","HEAD^{tree}"],{cwd:env.repo,encoding:"utf8"}).trim();
+  const session=sy.sessions.create({taskId:id,jobId:id,role:"supervisor",agentLabel:"blocked",profile:"supervise",tier:"T3"});
+  session.syncMessages([{role:"user",content:goal},{role:"assistant",content:"Candidate lacks observed product evidence"}]);
+  session.setWorkspace({repos:[{alias:"core",worktree:env.repo,baseCommit:head,head,branch:"main"}]});
+  session.end("completed","supervisor_blocked");
+  sy.tasks.finish(id,"fixture-owner",WorkerResultSchema.parse({...baseResult({stopReason:"supervisor_blocked"}),taskId:id,usage:emptyUsage(),servedEndpoints:[]}),"completed");
+  const delivery=new ProductDeliveries(sy.db,()=>now);
+  delivery.saveSpec(id,"demo",spec);
+  delivery.setCandidate(id,"demo",{repositories:{core:{head,tree}},testDigest:"a".repeat(64),recipeDigest:"b".repeat(64),environmentDigest:"c".repeat(64),dependencyDigest:"d".repeat(64),fixtureDigest:"e".repeat(64),browserGeneration:null});
+  const state=delivery.status(id,"demo")!;
+  delivery.finalDecision(id,"demo",{schemaVersion:1,decision:"reject",actor:{id:"FINAL",role:"initiator"},specDigest:deliverySpecDigest(state.spec),candidateDigest:productCandidateDigest(state.candidate!),reason:"Missing observed product evidence",at:now});
+  const snapshot=()=>JSON.stringify({task:sy!.tasks.get(id)!.row,delivery:sy!.db.prepare("SELECT * FROM product_deliveries WHERE task_id=?").get(id),events:sy!.db.prepare("SELECT * FROM events WHERE task_id=? ORDER BY id").all(id),sessions:sy!.sessions.forTask(id),log:sy!.sessions.events(session.id),accounting:["request_charges","model_requests","budget_requests","task_request_grants","paid_spend"].map(t=>sy!.db.prepare(`SELECT * FROM ${t} ORDER BY rowid`).all())});
+  return{id,task,session:sy.sessions.get(session.id)!,delivery,client,snapshot,setNow:(value:number)=>{now=value;},now:()=>now};
+}
+
+it.each(["missing","expired","equal_now","changed_before_store","changed_during_queue"] as const)("preserving FINAL repair refuses %s deadline without control effects",async kind=>{
+  const f=await preservingFixture(),service=sy!;
+  if(kind==="missing")service.db.prepare("UPDATE tasks SET deadline_at=NULL WHERE id=?").run(f.id);
+  if(kind==="expired")f.setNow(f.task.row.deadline_at!+1);
+  if(kind==="equal_now")f.setNow(f.task.row.deadline_at!);
+  if(kind==="changed_before_store"){
+    const original=TaskStore.prototype.resume;
+    vi.spyOn(service.tasks,"resume").mockImplementation(function(this:TaskStore,...args){
+      this.db.prepare("UPDATE tasks SET deadline_at=deadline_at+1000 WHERE id=?").run(f.id);
+      return original.apply(this,args);
+    });
+  }
+  if(kind==="changed_during_queue")service.db.exec(`CREATE TEMP TRIGGER replace_preserved_deadline AFTER INSERT ON events WHEN NEW.type='delivery_repair_requested' BEGIN UPDATE tasks SET deadline_at=deadline_at+1000 WHERE id=NEW.task_id; END`);
+  const before=f.snapshot();
+  expect(()=>service.resumeTask(f.id,"demo",{preserveDeadline:true})).toThrow();
+  expect(f.snapshot()).toBe(before);
+  expect(f.client.requests).toHaveLength(0);
+});
+
+it("refuses a changed trusted preserve value and malformed SDK options before writing repair history",async()=>{
+  const f=await preservingFixture(),service=sy!,rejected=f.delivery.rejectedCompleted(f.id,"demo")!;
+  const repair=DeliveryRepairContinuationSchema.parse({...rejected,previousSessionId:f.session.id,workspace:f.session.workspace,preserveDeadlineAt:f.task.row.deadline_at!+1}),before=f.snapshot();
+  expect(()=>service.tasks.resume(f.id,{},repair)).toThrow(/changed/);
+  for(const options of [null,[],"true",{preserveDeadline:"true"},{preserveDeadline:true,unknown:true}])
+    expect(()=>service.resumeTask(f.id,"demo",options as unknown as {preserveDeadline?:boolean})).toThrow();
+  expect(f.snapshot()).toBe(before);
+  expect(f.client.requests).toHaveLength(0);
+});
+
+it("expires a preserved queued FINAL repair through normal claim without another model charge",async()=>{
+  const f=await preservingFixture(),service=sy!,count=service.admission.taskTotals(f.id).requests;
+  expect(service.resumeTask(f.id,"demo",{preserveDeadline:true})).toBe("queued");
+  f.setNow(f.task.row.deadline_at!+1);
+  expect(service.tasks.claim("new-owner",{maxConcurrent:1,maxWritersPerRepo:1,leaseMs:30000,defaultTimeoutMs:600000})).toEqual([]);
+  expect(service.tasks.get(f.id)!.row).toMatchObject({state:"failed",state_reason:"deadline_exceeded",deadline_at:f.task.row.deadline_at});
+  expect(service.admission.taskTotals(f.id).requests).toBe(count);
+  expect(service.sessions.forTask(f.id)).toHaveLength(1);
+  expect(f.client.requests).toHaveLength(0);
 });

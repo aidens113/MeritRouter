@@ -9,6 +9,7 @@ import { MIGRATIONS } from "../src/storage/migrations.js";
 import { DB_FILE, openDatabase } from "../src/storage/db.js";
 import { Catalog } from "../src/models/catalog.js";
 import { ProviderError } from "../src/providers/errors.js";
+import { GatewayError } from "../src/core/errors.js";
 import { insights } from "../src/index.js";
 import { baseConfig, directEndpoint, endpoint, FakeProvider, goodOutput, makeEnv, open, providerChat, providerJson, providerModels, summarizeTask, type Env } from "./helpers.js";
 
@@ -47,6 +48,14 @@ const acmeCfg = (entry: Record<string, unknown> = {}, extra: Record<string, unkn
 const requestRows = (s: MeritRouter) => s.db.prepare("SELECT gateway_model, endpoint_id, status, error_kind, route_note FROM model_requests ORDER BY reserved_at").all() as Array<{ gateway_model: string; endpoint_id: string; status: string; error_kind: string | null; route_note: string | null }>;
 
 describe("direct free requests", () => {
+  it.each([false, true])("keeps defensive AIMD for an unclassified 429 (keyLevel=%s)", keyLevel => {
+    env = makeEnv({ config: acmeCfg({}, { team: { provider_concurrency_start: 4, provider_concurrency_max: 4 } }) });
+    sy = open(env, new FakeProvider(), { worker: false });
+    const before = sy.health.capacity.record("acme");
+    sy.health.recordOutcome("acme", new GatewayError("pool_exhausted", "unclassified fixture 429", 429), before.generation, { keyLevel });
+    expect(sy.health.capacity.record("acme")).toMatchObject({ limit: 2, generation: before.generation + 1 });
+  });
+
   it("serve a free model through a free_tier key, with no paid spend", async () => {
     env = makeEnv({ config: acmeCfg(), endpoints: [directEndpoint("acme", "big-free")] });
     const fake = new FakeProvider();
@@ -76,6 +85,7 @@ describe("direct free requests", () => {
     const fake = new FakeProvider((call) => (call.key === KEY_A ? providerJson({ error: { message: "rate limit reached" } }, 429, { "retry-after": "30" }) : providerChat(String(call.body?.model))));
     sy = open(env, fake, { worker: true });
     const before = Date.now();
+    const beforeLimit = sy.health.capacity.record("acme").limit;
     const [sub] = await sy.submitTasks([summarizeTask()]);
     const r = (await sy.awaitResults([sub!.taskId], { timeoutSeconds: 10 })).completed[0]!;
     expect(r.executionStatus).toBe("completed");
@@ -87,10 +97,39 @@ describe("direct free requests", () => {
     const a = sy.providers.keys.get(REF_A)!;
     expect(a.cooldownUntil).toBeGreaterThanOrEqual(before + 29_000);
     expect(a.lastError).toMatch(/rate_limited/);
+    expect(sy.health.capacity.record("acme").limit).toBe(Math.max(1, Math.floor(beforeLimit / 2)));
     expect(sy.health.breakers.get("acme")).toMatchObject({ state: "closed", failures: 0 });
     // One key still serves: the provider is healthy, not cooling.
     expect(sy.health.lookup("acme")).toMatchObject({ status: "healthy" });
     expect(requestRows(sy).map((x) => x.status)).toEqual(["failed", "succeeded"]);
+  });
+
+  it.each([
+    "you (fixture-account) have reached your monthly usage limit, upgrade for higher limits: https://ollama.com/upgrade or add usage credits: https://ollama.com/settings (ref: fixture-reference)",
+    "enforced_spend_limit_reached: spend limit hit",
+  ])("rotates past an Ollama credit-quota 429 without decreasing provider capacity: %s", async message => {
+    env = makeEnv({ config: baseConfig({ providers: { "ollama-cloud": { keys: [
+      { label: "a", api_key: KEY_A, billing_class: "free_tier" }, { label: "b", api_key: KEY_B, billing_class: "free_tier" },
+    ] } }, team: { provider_concurrency_start: 4, provider_concurrency_max: 4, provider_concurrency_increase_after: 100 } }), endpoints: [directEndpoint("ollama-cloud", "fixture-model")] });
+    const fake = new FakeProvider(call => call.key === KEY_A
+      ? providerJson({ error: { type: "api_error", message } }, 429)
+      : providerChat(String(call.body?.model)));
+    sy = open(env, fake, { worker: true });
+    const initialCapacity = sy.health.capacity.record("ollama-cloud");
+    const [first] = await sy.submitTasks([summarizeTask()]);
+    const result = (await sy.awaitResults([first!.taskId], { timeoutSeconds: 10 })).completed[0]!;
+    expect(result.executionStatus).toBe("completed");
+    // Capacity must distinguish credit exhaustion from a genuine throughput 429.
+    expect(sy.health.capacity.record("ollama-cloud")).toMatchObject({ limit: initialCapacity.limit, generation: initialCapacity.generation });
+    expect(result.routing!.attempts.map(attempt => attempt.outcome)).toEqual(["pool_exhausted", "succeeded"]);
+    expect(sy.providers.keys.get("config:ollama-cloud:literal:0")).toMatchObject({ disabledReason: "out_of_credits", cooldownUntil: null });
+    const [second] = await sy.submitTasks([summarizeTask({ goal: "Summarise again after the quota refusal" })]);
+    expect((await sy.awaitResults([second!.taskId], { timeoutSeconds: 10 })).completed[0]!.executionStatus).toBe("completed");
+    expect(fake.chats().map(call => call.key)).toEqual([KEY_A, KEY_B, KEY_B]);
+    expect(requestRows(sy).map(row => row.status)).toEqual(["failed", "succeeded", "succeeded"]);
+    expect(sy.health.breakers.get("ollama-cloud")).toMatchObject({ state: "closed", failures: 0 });
+    expect(sy.health.lookup("ollama-cloud")).toMatchObject({ status: "healthy" });
+    expect(sy.db.prepare("SELECT COUNT(*) FROM paid_spend").pluck().get()).toBe(0);
   });
 
   it("rotates past an exhausted key and keeps using the remaining key without paid spend", async () => {

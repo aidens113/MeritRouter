@@ -20,6 +20,7 @@ import { requestPaid, stickyOrder } from "../routing/select.js";
 import type { ProviderClient } from "../providers/client.js";
 import { probeClient, requestDirect, type DirectRuntime } from "./direct.js";
 import { NOT_IN_PLAN_RECHECK_MS } from "../providers/keys.js";
+import { ProviderError } from "../providers/errors.js";
 import { quarantineReason } from "./quarantine.js";
 import { assessSupervisorQuality } from "../routing/supervisor-quality.js";
 import { jobPool, protectedValidationRequests } from "../admission/budget-requests.js";
@@ -169,7 +170,8 @@ export class ProviderHealth {
    * (null error: it answered). `generation` is the slot's AIMD generation: a 429 halves the
    * platform's slots once per generation, and so does a breaker opening. `keyLevel` marks a
    * provider's key failing on its own (429, invalid key, out of credits): key rotation and key
-   * health handle it, so it never counts toward the breaker; a 429 still halves the slots.
+   * health handle it, so it never counts toward the breaker; a throughput 429 still halves
+   * the slots, while a classified credit-quota refusal does not.
    */
   recordOutcome(platform: string, err: GatewayError | null, generation?: number, opts: { keyLevel?: boolean } = {}): void {
     this.cache = null;
@@ -179,9 +181,11 @@ export class ProviderHealth {
       return;
     }
     if (err.kind === "aborted") return this.breakers.release(platform);
+    const creditQuota = err instanceof ProviderError && err.reason === "out_of_credits";
+    const rateLimited = err.kind === "rate_limited" || (err.status === 429 && !creditQuota);
     if (opts.keyLevel) {
       this.breakers.release(platform);
-      if (err.kind === "rate_limited" || err.status === 429) this.capacity.throttle(platform, "rate_limited", generation);
+      if (rateLimited) this.capacity.throttle(platform, "rate_limited", generation);
       return;
     }
     const cooling = this.status(platform);
@@ -191,7 +195,7 @@ export class ProviderHealth {
     // A 4xx, auth, or unknown-model answer came from something that is up.
     else if (!["rate_limited", "pool_exhausted"].includes(err.kind)) this.breakers.success(platform);
     else this.breakers.release(platform);
-    const throttled = (err.kind === "rate_limited" || err.status === 429) && this.capacity.throttle(platform, "rate_limited", generation);
+    const throttled = rateLimited && this.capacity.throttle(platform, "rate_limited", generation);
     if (!throttled && !wasOpen && this.breakers.get(platform).state === "open") this.capacity.throttle(platform, "circuit_open", generation);
   }
 

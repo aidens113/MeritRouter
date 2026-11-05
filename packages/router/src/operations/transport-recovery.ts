@@ -8,8 +8,10 @@ import { RequestReceipts } from "../admission/request-receipts.js";
 import { RequestIdSchema, RequestOutcomeDTOSchema } from "../admission/request-ledger.js";
 import type { Admission } from "../admission/admission.js";
 import type { PaidSpend } from "../paid/spend.js";
-import { readProjectStoreRegistration, type ProjectStoreIdentity } from "../projects/store-identity.js";
+import { assertCriticalStoreDurability, readStoreIdentity, readProjectStoreRegistration, type ProjectStoreIdentity } from "../projects/store-identity.js";
 import { ProjectRequestStore } from "../admission/project-request-store.js";
+import { globalReservationFingerprint } from "../admission/accounting-broker.js";
+import { ExecutionGrantRefSchema, ProjectExecutionGrants } from "../storage/project-execution-grants.js";
 import type { SqliteRequestAccountingBroker } from "../admission/sqlite-accounting-broker.js";
 import { releaseOwnerAbsentSlot, SplitRequestSlotSchema } from "../gateway/capacity.js";
 
@@ -157,6 +159,19 @@ const SplitReceipt = z.object({ schemaVersion: z.literal(1), layout: z.literal("
   outcomeDigest: Hash, at: z.number() }).strict();
 type SplitReceiptValue = z.infer<typeof SplitReceipt>;
 const Charges = z.array(z.object({ task_id: z.string(), input_tokens: z.number(), output_tokens: z.number(), tokens_exact: z.literal(0), lease_incarnation: z.string(), run_count: z.number().int() }).strict());
+const NEVER_EVENT = "never_admitted_slot_released";
+const NeverSlot = SplitRequestSlotSchema.extend({ uncertain: z.literal(1) });
+const NeverReceipt = SplitReceipt.omit({ dispatchId: true, outcomeDigest: true }).extend({
+  action: z.literal("release_never_admitted_slot"), conclusion: z.literal("never_globally_admitted"), installationId: z.uuid(),
+  globalFingerprint: Hash, reservationDigest: Hash, recordDigest: Hash, scopeDigest: Hash, authorityDigest: Hash,
+}).strict();
+const NeverInspection = Inspection.omit({ dispatchId: true, activeCapturedLease: true }).extend({ action: z.literal("release_never_admitted_slot") }).strict();
+const NeverTask = z.object({ id: z.string(), project_id: z.string(), lease_incarnation: z.string(), run_count: z.number().int().positive(),
+  state: z.enum(["completed", "failed", "cancelled", "budget_exhausted"]), lease_owner: z.null(), lease_expires_at: z.null() }).strict();
+const NeverHolds = z.array(z.object({ request_id: RequestIdSchema, task_id: z.string(), project_id: z.string(), lease_incarnation: z.string(),
+  run_count: z.number().int().positive(), input_tokens: z.number().int().nonnegative(), output_tokens: z.number().int().nonnegative(),
+  paid_usd: z.number().nonnegative(), active: z.literal(0) }).strict()).min(1).max(128);
+const NeverRequestIds = z.array(z.object({ request_id: RequestIdSchema }).strict()).max(100000);
 
 /** The pinned local services of one split project, resolved by its registered slug (trusted host wiring). */
 export interface SplitRecoveryProject {
@@ -173,12 +188,188 @@ type SplitBroker = Pick<SqliteRequestAccountingBroker, "readReceipt" | "settleAb
  * is proved absent (ESRCH) while the coordination broker still records its physical dispatch intent. One
  * coordination transaction settles the physical request `uncertain` (quota, tokens and paid liability retained,
  * never refunded), releases the exact request slot, and records an idempotent receipt; the project ledger then
- * projects that settlement into the project store. Execution grants are never read for authority or changed.
+ * projects that settlement into the project store. That dispatched branch does not use execution grants as
+ * release authority. The separate never-admitted branch requires exact revoked grants and releases only
+ * the unused slot, without settling a request. Neither branch changes execution grants.
  */
 export class SplitTransportRecovery {
   constructor(private readonly db: Db, private readonly broker: SplitBroker, private readonly project: (slug: string) => SplitRecoveryProject,
     // Trusted dependency injection for tests, never supplied by CLI flags or model arguments.
     private readonly probe: (pid: number) => LocalProcessState = localProcessState) {}
+  /** Resolve/open before taking locks; the same capability is revalidated under both writer locks. */
+  private neverLocal(project: string): SplitRecoveryProject & { slug: string; store: ProjectRequestStore } {
+    const slug = z.string().min(1).max(128).parse(project), local = this.project(slug);
+    if (local.db === this.db || local.identity.slug !== slug) throw new Error("never-admitted recovery requires its explicit split project");
+    const pinned = { ...local, slug, store: new ProjectRequestStore(local.db, local.identity, () => local.now()) };
+    this.neverScope(pinned);
+    return pinned;
+  }
+  private neverScope(local: ReturnType<SplitTransportRecovery["neverLocal"]>) {
+    assertCriticalStoreDurability(this.db); local.store.assertOwner();
+    const coordination = readStoreIdentity(this.db), identity = readStoreIdentity(local.db);
+    if (coordination?.role !== "coordination" || identity?.role !== "project" || coordination.installationId !== identity.installationId
+      || canonicalJson(identity) !== canonicalJson(local.identity)) throw new Error("never-admitted project store identity changed");
+    const registration = readProjectStoreRegistration(this.db, identity.projectId);
+    if (!registration || registration.state !== "registered" || registration.slug !== local.slug || registration.storeId !== identity.storeId
+      || registration.generation !== identity.generation) throw new Error("never-admitted project store is not registered at this generation");
+    return { coordination, identity, registration };
+  }
+  /** Empty queries must succeed on both stores. No read error is interpreted as absence. */
+  private neverAbsent(requestId: string, slot: { id: string; nonce: string }, providerReservationId: string | null, local: ReturnType<SplitTransportRecovery["neverLocal"]>) {
+    const collides = (binding: { requestId: string; slot?: { id: string | null; nonce: string } | null; providerReservationId: string | null }) =>
+      binding.requestId === requestId || binding.slot?.id === slot.id || binding.slot?.nonce === slot.nonce
+      || (providerReservationId !== null && binding.providerReservationId === providerReservationId);
+    for (const db of [local.db, this.db]) {
+      const authority = db.prepare(`SELECT 1 FROM physical_requests WHERE id=@request OR slot_id=@slot OR slot_nonce=@nonce
+        OR (@reservation IS NOT NULL AND provider_reservation_id=@reservation)
+        UNION ALL SELECT 1 FROM request_deletion_tombstones WHERE request_id=@request OR slot_id=@slot OR slot_nonce=@nonce
+        UNION ALL SELECT 1 FROM model_requests WHERE id=@request
+        UNION ALL SELECT 1 FROM request_charges WHERE request_id=@request
+        UNION ALL SELECT 1 FROM project_request_spend WHERE request_id=@request
+        UNION ALL SELECT 1 FROM paid_spend WHERE request_id=@request
+        UNION ALL SELECT 1 FROM broker_paid_spend WHERE request_id=@request
+        UNION ALL SELECT 1 FROM request_protocol_keys WHERE id=@request
+        UNION ALL SELECT 1 FROM request_protocol_projects WHERE request_id=@request
+        UNION ALL SELECT 1 FROM request_protocol WHERE request_id=@request
+        UNION ALL SELECT 1 FROM meta WHERE key=@legacyReceipt LIMIT 1`)
+        .get({ request: requestId, slot: slot.id, nonce: slot.nonce, reservation: providerReservationId, legacyReceipt: SPLIT_RECEIPT_KEY(requestId) });
+      if (authority) throw new Error("never-admitted recovery found physical, accounting, legacy or deletion authority");
+      // Valid JSON is insufficient negative evidence: '{}' may hide a conflicting old binding.
+      // Read at most one beyond the protocol's bound, and refuse overflow rather than truncate.
+      const ids = NeverRequestIds.parse(db.prepare("SELECT request_id FROM request_protocol ORDER BY request_id LIMIT 100001").all());
+      const receipts = new RequestReceipts(db);
+      for (const row of ids) if (collides(receipts.inspectBinding(row.request_id).binding))
+        throw new Error("never-admitted recovery found conflicting legacy request authority");
+    }
+    if (this.db.prepare("SELECT 1 FROM project_request_protocol UNION ALL SELECT 1 FROM project_request_holds LIMIT 1").get())
+      throw new Error("never-admitted request has unexpected coordination preparation authority");
+    const others = NeverRequestIds.parse(local.db.prepare("SELECT request_id FROM project_request_protocol WHERE request_id!=? ORDER BY request_id LIMIT 100001").all(requestId));
+    for (const row of others) {
+      const other = local.store.read(row.request_id);
+      if (!other || collides(other.input) || collides(other.global)) throw new Error("never-admitted preparation binding is ambiguous or unreadable");
+    }
+  }
+  private neverRecord(requestId: string, local: ReturnType<SplitTransportRecovery["neverLocal"]>) {
+    const record = local.store.read(requestId);
+    if (!record || record.row.phase !== "retired" || record.row.reason_code !== "never_globally_admitted" || record.row.dispatch_id !== null
+      || record.row.transport_consumed !== 0 || record.row.global_receipt_json !== null || record.receipt !== null || record.outcome !== null
+      || record.row.outcome_json !== null || record.row.outcome_digest !== null || !record.input.slot?.id || !record.global.slot)
+      throw new Error("request lacks an exact retired never-globally-admitted preparation");
+    return record;
+  }
+  private neverCandidate(requestId: string, local: ReturnType<SplitTransportRecovery["neverLocal"]>) {
+    const scope = this.neverScope(local), record = this.neverRecord(requestId, local);
+    const slot = NeverSlot.parse(this.db.prepare("SELECT * FROM provider_slots WHERE id=?").get(record.input.slot!.id));
+    if (this.db.prepare("SELECT 1 FROM provider_slots WHERE nonce=? AND id!=? LIMIT 1").get(slot.nonce, slot.id))
+      throw new Error("never-admitted slot nonce is ambiguous");
+    const participants = record.input.participants, leases = z.array(LeaseRefSchema).min(1).max(128).parse(JSON.parse(slot.lease_json));
+    const provider = slot.platform.startsWith("paid:") ? slot.platform.slice(5) : slot.platform;
+    if (new Set(participants.map(part => part.taskId)).size !== participants.length || !participants.length
+      || slot.project_uuid !== local.identity.projectId || slot.store_uuid !== local.identity.storeId || slot.store_generation !== local.identity.generation
+      || slot.id !== record.global.slot!.id || slot.nonce !== record.global.slot!.nonce || slot.nonce !== record.input.slot!.nonce
+      || slot.task_id !== participants[0]!.taskId || canonicalJson(leases) !== canonicalJson(participants.map(part => part.lease))
+      || participants.some(part => part.leaseOwner !== slot.lease_owner || part.lease.owner !== slot.lease_owner || part.lease.project !== local.slug)
+      || !record.input.gatewayModel.startsWith(`direct:${provider}/`) || !record.input.endpointId?.startsWith(`${provider}/`)
+      || (record.input.paid && record.input.paid.provider !== provider)) throw new Error("never-admitted request and slot immutable identities disagree");
+    const tasks = leases.map(lease => {
+      const task = NeverTask.parse(local.db.prepare("SELECT id,project_id,lease_incarnation,run_count,state,lease_owner,lease_expires_at FROM tasks WHERE id=?").get(lease.taskId));
+      if (task.id !== lease.taskId || task.project_id !== lease.project || task.lease_incarnation !== lease.incarnation || task.run_count !== lease.runCount
+        || local.db.prepare("SELECT 1 FROM sessions WHERE task_id=? AND status='running' LIMIT 1").get(lease.taskId))
+        throw new Error("never-admitted participant authority is live or changed");
+      return task;
+    });
+    const refs = z.array(ExecutionGrantRefSchema).min(1).max(128).parse(JSON.parse(slot.execution_grants_json));
+    if (new Set(refs.map(ref => ref.grantId)).size !== refs.length) throw new Error("duplicate never-admitted execution grant");
+    const reader = new ProjectExecutionGrants(this.db, () => { throw new Error("recovery cannot allocate execution authority"); });
+    const grants = refs.map(ref => {
+      const grant = reader.read(ref.grantId);
+      if (!grant || grant.ref.nonce !== ref.nonce || grant.state !== "revoked" || canonicalJson(grant.input.project) !== canonicalJson(local.identity))
+        throw new Error("never-admitted captured execution grant is not exactly revoked");
+      return grant;
+    });
+    const granted = grants.flatMap(grant => grant.input.leases);
+    if (granted.length !== leases.length || leases.some(lease => granted.filter(bound => canonicalJson(bound) === canonicalJson(lease)).length !== 1))
+      throw new Error("never-admitted execution grant participant binding changed");
+    const holds = NeverHolds.parse(local.db.prepare("SELECT * FROM project_request_holds WHERE request_id=? ORDER BY task_id").all(requestId));
+    if (holds.length !== participants.length || participants.some(part => !holds.some(hold => hold.task_id === part.taskId && hold.project_id === local.slug
+      && hold.lease_incarnation === part.lease.incarnation && hold.run_count === part.lease.runCount && hold.input_tokens === part.estInputTokens
+      && hold.output_tokens === part.reservedOutputTokens && hold.paid_usd === (record.input.paid ? Math.ceil(record.input.paid.worstCaseUsd * 1e6) / 1e6 / participants.length : 0))))
+      throw new Error("never-admitted inactive preparation history changed");
+    this.neverAbsent(requestId, slot, record.global.providerReservationId, local);
+    const owner = processOwner(slot.lease_owner);
+    if (owner.host !== hostname()) throw new Error("foreign-host transport ownership cannot be proved locally");
+    const slotDigest = digest(slot), scopeDigest = digest(scope), recordDigest = digest(record.row), authorityDigest = digest({ tasks, grants, holds });
+    const snapshotDigest = digest({ action: "release_never_admitted_slot", scopeDigest, recordDigest, slotDigest, authorityDigest, authorityAbsent: true });
+    return { record, slot, owner, leases, slotDigest, scopeDigest, recordDigest, authorityDigest, snapshotDigest };
+  }
+  inspectNeverAdmitted(requestId: string, project: string) {
+    const id = RequestIdSchema.parse(requestId), local = this.neverLocal(project), candidate = this.neverCandidate(id, local);
+    const state = localProcessState(candidate.owner.pid), refusals = state === "absent" ? [] : [`local owner process is ${state}`];
+    return NeverInspection.parse({ action: "release_never_admitted_slot", requestId: id, project: local.slug, snapshotDigest: candidate.snapshotDigest,
+      slotId: candidate.slot.id, slotNonce: candidate.slot.nonce, platform: candidate.slot.platform, owner: candidate.slot.lease_owner,
+      participantsDigest: digest(candidate.leases), process: { host: candidate.owner.host, pid: candidate.owner.pid, state }, eligible: !refusals.length, refusals });
+  }
+  private neverReplay(input: z.infer<typeof Decision>, local: ReturnType<SplitTransportRecovery["neverLocal"]>) {
+    // Parse every receipt in this project before selecting the request. A null/numeric/invalid
+    // requestId is corrupt evidence, not an absent receipt. Other projects' private audits are
+    // irrelevant unless they explicitly claim this same request ID.
+    const recorded = z.array(Recorded).max(100000).parse(this.db.prepare(`SELECT id,project_id,data_json FROM events WHERE type=? AND (project_id=?
+      OR json_extract(CASE WHEN json_valid(data_json) THEN data_json ELSE '{}' END,'$.requestId')=?) ORDER BY id LIMIT 100001`).all(NEVER_EVENT, local.slug, input.requestId));
+    const rows = recorded.map(row => {
+      const receipt = NeverReceipt.parse(JSON.parse(row.data_json));
+      if (row.project_id !== receipt.project) throw new Error("never-admitted recovery audit project binding changed");
+      return { row, receipt };
+    }).filter(recorded => recorded.receipt.requestId === input.requestId);
+    if (!rows.length) return null;
+    if (rows.length !== 1) throw new Error("never-admitted recovery audit receipt is ambiguous");
+    const { row, receipt } = rows[0]!, scope = this.neverScope(local), record = this.neverRecord(input.requestId, local);
+    const owner = processOwner(receipt.owner);
+    if (row.project_id !== local.slug || receipt.requestId !== input.requestId || receipt.project !== local.slug || receipt.expected !== input.expected
+      || receipt.installationId !== local.identity.installationId || receipt.projectId !== local.identity.projectId || receipt.storeId !== local.identity.storeId
+      || receipt.generation !== local.identity.generation || receipt.scopeDigest !== digest(scope) || receipt.recordDigest !== digest(record.row)
+      || receipt.fingerprint !== record.row.fingerprint || receipt.globalFingerprint !== globalReservationFingerprint(record.global)
+      || receipt.reservationDigest !== digest(record.reservation) || receipt.slotId !== record.global.slot!.id || receipt.slotNonce !== record.global.slot!.nonce
+      || receipt.owner !== record.input.participants[0]?.leaseOwner || receipt.proof.host !== owner.host || receipt.proof.pid !== owner.pid || owner.host !== hostname()
+      || digest({ action: receipt.action, scopeDigest: receipt.scopeDigest, recordDigest: receipt.recordDigest, slotDigest: receipt.slotDigest,
+        authorityDigest: receipt.authorityDigest, authorityAbsent: true }) !== receipt.expected
+      || this.db.prepare("SELECT 1 FROM provider_slots WHERE id=? OR nonce=? LIMIT 1").get(receipt.slotId, receipt.slotNonce))
+      throw new Error("never-admitted recovery retry differs from its committed receipt");
+    this.neverAbsent(input.requestId, { id: receipt.slotId, nonce: receipt.slotNonce }, record.global.providerReservationId, local);
+    return { ...receipt, eventId: row.id, disposition: "replayed" as const };
+  }
+  /** Trusted operator only. No caller proof/force flag, transport settlement, accounting projection or local write. */
+  releaseNeverAdmitted(value: unknown, project: string) {
+    const input = Decision.parse(value);
+    if (this.db.inTransaction) throw new Error("never-admitted recovery requires top-level coordination transaction");
+    const local = this.neverLocal(project);
+    if (local.db.inTransaction) throw new Error("never-admitted recovery requires top-level local transaction");
+    // Match ProjectRequestLedger.beginDispatch's local -> coordination order. Only coordination writes.
+    return local.store.transaction(() => immediate(this.db, () => {
+      this.neverScope(local);
+      const previous = this.neverReplay(input, local);
+      if (previous) return previous;
+      const candidate = this.neverCandidate(input.requestId, local);
+      if (candidate.snapshotDigest !== input.expected) throw new Error("never-admitted recovery snapshot changed; inspect again");
+      // Always use the real ESRCH-only OS check, never the legacy constructor's injected probe.
+      if (localProcessState(candidate.owner.pid) !== "absent") throw new Error("local transport owner is live or absence is unknown");
+      const slot = candidate.slot;
+      const removed = this.db.prepare(`DELETE FROM provider_slots WHERE id=? AND platform=? AND kind='request' AND holder=? AND task_id=?
+        AND lease_owner=? AND priority=? AND since=? AND seen_at=? AND lease_json=? AND nonce=? AND uncertain=1
+        AND project_uuid=? AND store_uuid=? AND store_generation=? AND execution_grants_json=?`)
+        .run(slot.id, slot.platform, slot.holder, slot.task_id, slot.lease_owner, slot.priority, slot.since, slot.seen_at, slot.lease_json,
+          slot.nonce, slot.project_uuid, slot.store_uuid, slot.store_generation, slot.execution_grants_json).changes;
+      if (removed !== 1) throw new Error("exact never-admitted slot release lost its compare-and-swap");
+      const receipt = NeverReceipt.parse({ schemaVersion: 1, layout: "split", action: "release_never_admitted_slot", conclusion: "never_globally_admitted",
+        requestId: input.requestId, project: local.slug, installationId: local.identity.installationId, projectId: local.identity.projectId,
+        storeId: local.identity.storeId, generation: local.identity.generation, expected: input.expected, fingerprint: candidate.record.row.fingerprint,
+        globalFingerprint: globalReservationFingerprint(candidate.record.global), reservationDigest: digest(candidate.record.reservation), recordDigest: candidate.recordDigest,
+        scopeDigest: candidate.scopeDigest, authorityDigest: candidate.authorityDigest, slotDigest: candidate.slotDigest, slotId: slot.id, slotNonce: slot.nonce, owner: slot.lease_owner,
+        actor: { kind: "local_operator", host: hostname(), pid: process.pid }, reason: input.reason,
+        proof: { kind: "same_host_pid_absent", host: candidate.owner.host, pid: candidate.owner.pid, basis: "ESRCH" }, at: local.now() });
+      const event = this.db.prepare("INSERT INTO events(task_id,project_id,ts,type,data_json) VALUES(NULL,?,?,?,?)").run(local.slug, receipt.at, NEVER_EVENT, JSON.stringify(receipt));
+      return { ...receipt, eventId: Number(event.lastInsertRowid), disposition: "fresh" as const };
+    }));
+  }
   private local(projectId: string, storeId: string, generation: number, project?: string) {
     const registration = readProjectStoreRegistration(this.db, projectId);
     if (!registration || registration.state !== "registered" || registration.storeId !== storeId || registration.generation !== generation)

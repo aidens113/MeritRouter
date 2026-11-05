@@ -7,6 +7,7 @@ import { WorkerTaskSchema } from "../src/core/task.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
+import net from "node:net";
 import { execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { spawn, execFile } from "node:child_process";
@@ -55,11 +56,45 @@ const NODE = JSON.stringify(process.execPath);
 const SERVER = `const http=require('node:http'),fs=require('node:fs'),path=require('node:path'),{spawn}=require('node:child_process');
 const data=process.env.DATA_DIR;fs.mkdirSync(data,{recursive:true});fs.writeFileSync(path.join(data,'identity'),process.env.LAB_NAME);let child=null;
 http.createServer((req,res)=>{if(req.url==='/crash'){res.end('bye');setTimeout(()=>process.exit(7),30);return;}if(req.url==='/child'){child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore',windowsHide:true});res.end(String(child.pid));return;}res.setHeader('content-type','application/json');res.end(JSON.stringify({lab:process.env.LAB_NAME,data,pid:process.pid}));}).listen(Number(process.env.PORT),process.env.HOST||'127.0.0.1',()=>console.log('fixture-ready '+process.env.LAB_NAME));`;
-function setup(over: Record<string, unknown> = {}) {
+async function fixturePortRange(): Promise<[number, number]> {
+  // Let the OS choose a usable starting port, then prove enough adjacent ports for
+  // both active labs plus headroom. Hold every probe until the whole range is checked.
+  // A fixed high range can be entirely excluded by Windows even without listeners.
+  const width = 8;
+  for (let attempt = 0; attempt < 32; attempt++) {
+    const probes: net.Server[] = [];
+    const bind = async (port: number) => {
+      const server = net.createServer();
+      probes.push(server);
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen({ host: "127.0.0.1", port, exclusive: true }, resolve);
+      });
+      return (server.address() as net.AddressInfo).port;
+    };
+    try {
+      const start = await bind(0);
+      if (start < 1024 || start + width - 1 > 65535)
+        continue;
+      for (let offset = 1; offset < width; offset++)
+        await bind(start + offset);
+      return [start, start + width - 1];
+    }
+    catch (error) {
+      if (!(error instanceof Error) || !("code" in error) || !["EADDRINUSE", "EACCES"].includes(String(error.code)))
+        throw error;
+    }
+    finally {
+      await Promise.all(probes.filter(server => server.listening).map(server => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))));
+    }
+  }
+  throw new Error("Could not discover eight available loopback fixture ports after 32 attempts");
+}
+async function setup(over: Record<string, unknown> = {}) {
   const cfg: Record<string, unknown> = baseConfig();
   cfg.repositories = {};
   cfg.brain = { path: '.brain', project: 'alpha' };
-  cfg.labs = { port_range: [55000, 55500], max_active: 2, max_services: 3, idle_stop_minutes: 30, service_ready_timeout_seconds: 10, restart_backoff_ms: 20, ...over };
+  cfg.labs = { port_range: await fixturePortRange(), max_active: 2, max_services: 3, idle_stop_minutes: 30, service_ready_timeout_seconds: 10, restart_backoff_ms: 20, ...over };
   cfg.projects = { alpha: { repositories: { app: { path: 'repo' } }, lab: { ports: ['web'], data: ['db'], env: { PORT: '{port.web}', DATA_DIR: '{lab.data.db}' }, setup: [`${NODE} -e "require('node:fs').writeFileSync(process.env.DATA_DIR+'/setup','ok')"`], services: { web: { repo: 'app', command: `${NODE} server.cjs`, ready: { http: 'http://127.0.0.1:{port.web}/' } } }, checks: { health: { repo: 'app', command: `${NODE} check.cjs` } } } }, beta: { repositories: { app: { path: 'repo' } } } };
   env = makeEnv({ config: cfg, files: { 'server.cjs': SERVER, 'check.cjs': "fetch('http://127.0.0.1:'+process.env.PORT).then(r=>{if(!r.ok)process.exit(1);console.log('healthy')}).catch(()=>process.exit(1));" } });
   db = openDatabase(env.cfg.storageDir);
@@ -100,7 +135,7 @@ describe('lab recipes', () => {
 });
 describe('lab lifecycle with real isolated fixture processes', () => {
   it("refreshes from the target without writing it and refuses dirty revision checks", async () => {
-    const manager = setup();
+    const manager = await setup();
     const created = await manager.create("alpha", "refresh");
     const original = manager.status("alpha", "refresh").heads.app;
     writeFileSync(path.join(env!.repo, "target.txt"), "target changes");
@@ -117,7 +152,7 @@ describe('lab lifecycle with real isolated fixture processes', () => {
     await manager.destroy("alpha", "refresh");
   });
   it("serializes starts and cancels an in-flight service when the owner closes", async () => {
-    const manager = setup();
+    const manager = await setup();
     const lab = await manager.create("alpha", "cancelled-start");
     const starting = manager.start("alpha", "cancelled-start");
     const rejected = expect(starting).rejects.toThrow();
@@ -128,7 +163,7 @@ describe('lab lifecycle with real isolated fixture processes', () => {
     expect(await portAvailable(lab.lab.ports.web!)).toBe(true);
   }, 30000);
   it("retains dirty or active worktrees and prunes only old registered terminal attempts", async () => {
-    const manager = setup();
+    const manager = await setup();
     env!.cfg.labs.keep_task_worktrees_days = 0;
     manager.services.config.keep_task_worktrees_days = 0;
     const tasks = new TaskStore(db!);
@@ -145,7 +180,7 @@ describe('lab lifecycle with real isolated fixture processes', () => {
     expect(existsSync(workspace.worktreePath)).toBe(false);
   });
   it('runs two isolated labs, persists checks, adopts across an owner process, restarts crashes and preserves branches on destroy', async () => {
-    const first = setup({ max_restarts: 1 });
+    const first = await setup({ max_restarts: 1 });
     const one = await first.create('alpha', 'one');
     const two = await first.create('alpha', 'two');
     expect(one.lab.ports.web).not.toBe(two.lab.ports.web);
@@ -218,7 +253,7 @@ describe('lab lifecycle with real isolated fixture processes', () => {
     expect(await portAvailable(two.lab.ports.web!)).toBe(true);
   }, 90000);
   it('stops idle services and never adopts or kills a foreign recorded PID', async () => {
-    const manager = setup({ idle_stop_minutes: 0.001 });
+    const manager = await setup({ idle_stop_minutes: 0.001 });
     const lab = await manager.create('alpha', 'idle');
     await manager.start('alpha', 'idle');
     // A natively bound service whose recorded PID is replaced by a live foreign PID: the kernel Job
@@ -249,7 +284,7 @@ describe('lab lifecycle with real isolated fixture processes', () => {
     await manager.destroy('alpha', 'idle');
   }, 90000);
   it('refuses public listeners and preserves uncommitted work during destroy', async () => {
-    const manager = setup();
+    const manager = await setup();
     const raw = env!.cfg.projects.alpha as {
       lab: {
         env: Record<string, string>;
@@ -270,7 +305,7 @@ describe('lab lifecycle with real isolated fixture processes', () => {
 });
 describe("lab integration and promotion", () => {
   it("queues creation without an API instance taking service ownership, then runs declared check on exact head", async () => {
-    const manager = setup();
+    const manager = await setup();
     const op = manager.requestControl("alpha", "queued", { kind: "create" }, "fixture");
     expect(manager.operation("beta", "queued", op.id)).toBeNull();
     expect(manager.store.get("alpha", "queued")).toBeNull();
@@ -296,7 +331,7 @@ describe("lab integration and promotion", () => {
     await expect(manager.http("alpha", "queued", { service: "web" })).rejects.toThrow(/running/);
   }, 30000);
   it("requires a persisted supervisor root team, inherits scope and previews lab-only context", async () => {
-    const manager = setup();
+    const manager = await setup();
     env!.cfg.profiles.supervise = { ...env!.cfg.profiles.implement!, mode: "supervisor", tools: "supervisor" };
     const created = await manager.create("alpha", "team");
     const tasks = new TaskStore(db!);
@@ -316,7 +351,7 @@ describe("lab integration and promotion", () => {
     expect(() => manager.bindTask("alpha", "lab-other", competitor, tasks)).toThrow(/already/);
   });
   it("manual promotion checks an exact candidate without changing target", async () => {
-    const manager = setup();
+    const manager = await setup();
     const lab = await manager.create("alpha", "candidate");
     const repo = lab.lab.repositories[0]!;
     const target = execFileSync("git", ["rev-parse", "HEAD"], { cwd: env!.repo, encoding: "utf8" }).trim();
@@ -333,7 +368,7 @@ describe("lab integration and promotion", () => {
 });
 describe("lab coordination boundaries", () => {
   it("routes another controller's restart to the existing owner and refuses foreign rebound HTTP", async () => {
-    const manager = setup();
+    const manager = await setup();
     await manager.create("alpha", "owned");
     await manager.start("alpha", "owned");
     const other = new LabManager({ ...manager.options, monitor: false });
@@ -365,7 +400,7 @@ describe("lab coordination boundaries", () => {
     }
   }, 30000);
   it("serializes targets, detects overlap and leaves the second conflicting lab intact", async () => {
-    const manager = setup();
+    const manager = await setup();
     writeFileSync(path.join(env!.repo, "shared.txt"), "base\n");
     commitAll(env!.repo);
     env!.cfg.projects.alpha = { ...ProjectConfigSchema.parse(env!.cfg.projects.alpha), labs: { promotion: "supervisor" } };
@@ -385,7 +420,7 @@ describe("lab coordination boundaries", () => {
   }, 30000);
 });
 it("redacts short configured environment values and expired ownership nonces", async () => {
-  const manager = setup();
+  const manager = await setup();
   await manager.create("alpha", "redaction");
   const status = manager.status("alpha", "redaction");
   status.lab.env = { SECRET: "abc" };
@@ -404,7 +439,7 @@ it("excludes older unrelated processes whose parent PID was reused and rejects c
 // any destructive step, keeps every piece of evidence, and is never cleared by inference, even
 // after its known processes are gone: only migration/recovery may settle it.
 it.skipIf(process.platform !== "win32")("retains orphan ownership evidence and refuses destroy of a service identity without a native command owner", async () => {
-  const manager = setup();
+  const manager = await setup();
   const created = await manager.create("alpha", "orphan-proof");
   const token = "c".repeat(48);
   const child = spawn(process.execPath, ["-e", `// ${HOST_MARKER}\nsetInterval(()=>{},1000)`, "--", `--sy-lab-token=${token}`], { stdio: "ignore", windowsHide: true });
@@ -445,7 +480,7 @@ it.skipIf(process.platform !== "win32")("retains orphan ownership evidence and r
   expect(existsSync(created.lab.root)).toBe(false);
 }, 30000);
 it("keeps raw lifecycle failure commands out of waiting clients and public operations", async () => {
-  const manager = setup();
+  const manager = await setup();
   await manager.create("alpha", "failure");
   const op = manager.requestControl("alpha", "failure", { kind: "check", name: "health" });
   db!.prepare("UPDATE lab_operations SET state='failed',error_code='fixture_failure',error_message=? WHERE id=?").run("private command secret-value", op.id);
@@ -453,7 +488,7 @@ it("keeps raw lifecycle failure commands out of waiting clients and public opera
   expect(JSON.stringify(manager.publicOperation("alpha", "failure", op.id))).not.toContain("secret-value");
 });
 it("refuses to promote committed changes in a configured read-only repository", async () => {
-  const manager = setup();
+  const manager = await setup();
   const context = manager.options.project("alpha");
   context.repositoryPaths.app!.writable = false;
   const created = await manager.create("alpha", "read-only");

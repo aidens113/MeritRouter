@@ -24,6 +24,7 @@ import {
   LayoutGrid,
   Library,
   FlaskConical,
+  PlugZap,
   type LucideIcon,
 } from "lucide-react";
 import { cx, Mono } from "../ui";
@@ -55,6 +56,7 @@ function projectNav(slug: string): NavItem[] {
 /** "All projects" and the projects grid: the install-wide pages (Requests under Dashboard, Routing under Models, Calibration under Quality). */
 const GLOBAL_NAV: NavItem[] = [
   { href: "/", label: "Projects", icon: LayoutGrid, exact: true },
+  { href: `${ALL}/connections`, label: "Connections", icon: PlugZap },
   { href: ALL, label: "Dashboard", icon: LayoutDashboard, exact: true, also: [`${ALL}/requests`] },
   { href: `${ALL}/models`, label: "Models", icon: Boxes, also: [`${ALL}/routing`] },
   { href: `${ALL}/keys`, label: "Provider keys", icon: KeyRound },

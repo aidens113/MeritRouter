@@ -61,6 +61,8 @@ export interface ClaimLimits {
   /** Deadline applied when a task sets no budget.timeoutSeconds. */
   defaultTimeoutMs: number;
   limit?: number;
+  /** Trusted host selection for an atomically submitted external request; all capacity checks still apply. */
+  targetTaskId?: string;
   /** Supervisor task types run under their own concurrency limit and deadline. */
   supervisorProfiles?: string[];
   maxSupervisors?: number;
@@ -315,9 +317,11 @@ export class TaskStore {
           `SELECT * FROM tasks
            WHERE cancel_requested = 0
              AND (state = 'queued' OR (state = 'waiting_for_capacity' AND COALESCE(next_attempt_at, 0) <= ?))
+             AND (? IS NULL OR id = ?)
+             AND (purpose != 'client_connection' OR (? IS NOT NULL AND id = ?))
            ORDER BY created_at ASC`,
         )
-        .all(now) as TaskRow[];
+        .all(now, limits.targetTaskId ?? null, limits.targetTaskId ?? null, limits.targetTaskId ?? null, limits.targetTaskId ?? null) as TaskRow[];
 
       // Running delegated tasks per job (team.max_agents).
       const perJob = new Map<string, number>();
@@ -438,6 +442,7 @@ export class TaskStore {
         .prepare(
           `SELECT * FROM tasks WHERE cancel_requested = 0 AND profile = ? AND id != ? AND project_id = ?
              AND (state = 'queued' OR (state = 'waiting_for_capacity' AND COALESCE(next_attempt_at, 0) <= ?))
+             AND purpose != 'client_connection'
            ORDER BY created_at ASC`,
         )
         .all(leader.row.profile, leader.row.id, leader.row.project_id, now) as TaskRow[];
@@ -464,10 +469,14 @@ export class TaskStore {
   interrupt(id: string, owner: string, reason: string, expectedRunCount?: number): boolean {
     return immediate(this.db, () => {
       const now = this.now();
-      const row = this.db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as TaskRow | undefined;
+      const row = this.db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as (TaskRow & { purpose: string }) | undefined;
       if (!row || row.lease_owner !== owner || (expectedRunCount !== undefined && row.run_count !== expectedRunCount) || !["running", "cancel_requested"].includes(row.state)) return false;
       if (row.cancel_requested) {
         this.finalizeWithoutRun(row, "cancelled", "cancelled during shutdown", now);
+        return true;
+      }
+      if (row.purpose === "client_connection") {
+        this.finalizeWithoutRun(row, "cancelled", "client_connection_owner_lost", now);
         return true;
       }
       this.db
@@ -689,15 +698,22 @@ export class TaskStore {
 
   /**
    * Expired leases mean the worker process died. Mark those tasks interrupted (cancelled if a
-   * cancellation was pending). Interrupted tasks are not replayed automatically here.
+   * cancellation was pending). Client connections are terminal: their HTTP request cannot be replayed.
+   * Interrupted ordinary tasks are not replayed automatically here.
    */
   recoverExpiredLeases(limit = Number.MAX_SAFE_INTEGER, serverNow?: number): string[] {
     return immediate(this.db, () => {
       const now = serverNow ?? this.now();
       const rows = this.db
-        .prepare("SELECT * FROM tasks WHERE state IN ('running','cancel_requested') AND lease_expires_at <= ? ORDER BY rowid LIMIT ?")
-        .all(now, limit) as TaskRow[];
+        .prepare("SELECT * FROM tasks WHERE (state IN ('running','cancel_requested') AND lease_expires_at <= ?) OR (purpose='client_connection' AND state='interrupted') ORDER BY rowid LIMIT ?")
+        .all(now, limit) as Array<TaskRow & { purpose: string }>;
       for (const row of rows) {
+        if (row.purpose === "client_connection") {
+          // Keep model requests, reservations and uncertain transport evidence intact. Only
+          // the request-owned task/lease ends; no background executor may invent a new chat.
+          this.finalizeWithoutRun(row, "cancelled", "client_connection_owner_lost", now);
+          continue;
+        }
         if (row.cancel_requested) {
           this.finalizeWithoutRun(row, "cancelled", "cancelled; worker lease expired before confirmation", now);
           continue;
@@ -723,14 +739,18 @@ export class TaskStore {
    */
   resume(id: string, directive: { sessionId?: string; freshWorkspace?: boolean } = {}, repair?: unknown): TaskState {
     return immediate(this.db, () => {
-      const row = this.db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as TaskRow | undefined;
+      const row = this.db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as (TaskRow & { purpose: string }) | undefined;
       if (!row) throw new TaskValidationError(`unknown task ${id}`);
+      if (row.purpose === "client_connection") throw new TaskValidationError("Client connection requests cannot be resumed; the client must send a new request");
       if(row.state==="completed"){
         const context=DeliveryRepairContinuationSchema.safeParse(repair);
         const current=new ProductDeliveries(this.db,this.now).rejectedCompleted(id,row.project_id);
         if(!context.success||!current||JSON.stringify(current.rejection)!==JSON.stringify(context.data.rejection)||Object.keys(directive).length)throw new TaskValidationError(`task ${id} requires a current FINAL-rejected delivery and a trusted repair continuation`);
-        this.event(id,"delivery_repair_requested",{...context.data,previousResult:this.hydrate(row).result});
-        this.db.prepare("UPDATE tasks SET finished_at=NULL,deadline_at=NULL,cancel_requested=0 WHERE id=?").run(id);
+        const preservedAt=context.data.preserveDeadlineAt,now=this.serverNow();
+        if(preservedAt!==undefined&&(row.deadline_at!==preservedAt||preservedAt<=now))throw new TaskValidationError("FINAL repair original deadline is missing, expired or changed");
+        this.event(id,"delivery_repair_requested",{...context.data,previousDeadlineAt:row.deadline_at,previousResult:this.hydrate(row).result});
+        const changed=this.db.prepare("UPDATE tasks SET finished_at=NULL,deadline_at=?,cancel_requested=0 WHERE id=? AND deadline_at IS ?").run(preservedAt??null,id,row.deadline_at);
+        if(changed.changes!==1)throw new TaskValidationError("FINAL repair deadline changed before queueing");
       }else if (row.state !== "interrupted") throw new TaskValidationError(`task ${id} is ${row.state}, not interrupted`);
       this.db
         .prepare("UPDATE tasks SET state = 'queued', state_reason = 'resumed', result_json = NULL, updated_at = ? WHERE id = ?")

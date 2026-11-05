@@ -7,7 +7,7 @@ import { evaluateProductReadiness } from "./product-readiness.js";
 import { SessionWorkspaceSchema } from "../sessions/events.js";
 import { PlanStore } from "../storage/plans.js";
 
-export const DeliveryRepairContinuationSchema=z.object({previousSessionId:z.string().min(1),workspace:SessionWorkspaceSchema,spec:DeliverySpecSchema,candidate:ProductCandidateSchema,rejection:ProductFinalDecisionSchema.refine(value=>value.decision==="reject")}).strict();
+export const DeliveryRepairContinuationSchema=z.object({previousSessionId:z.string().min(1),workspace:SessionWorkspaceSchema,spec:DeliverySpecSchema,candidate:ProductCandidateSchema,rejection:ProductFinalDecisionSchema.refine(value=>value.decision==="reject"),preserveDeadlineAt:z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional()}).strict();
 
 export const DELIVERY_STAGES = ["discover","specify","prepare","plan","implement","integrate","validate","handoff"] as const;
 export const DeliveryStageSchema = z.enum(DELIVERY_STAGES);

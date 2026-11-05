@@ -783,6 +783,20 @@ export const ClientSupervisionSchema = z.object({
   instructions: z.string().trim().max(8000).default(""),
 }).strict();
 
+/** Opt-in local compatibility API; it never binds a public interface. */
+export const ClientConnectionsConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  port: z.number().int().min(1024).max(65535).default(4479),
+  project: z.string().regex(PROJECT_SLUG_RE).max(128).nullable().default(null),
+  profile: ProfileNameSchema.default("summarize"),
+  max_output_tokens: z.number().int().min(1).max(32768).default(4096),
+  max_concurrent: z.number().int().min(1).max(16).default(2),
+  request_timeout_seconds: z.number().int().min(1).max(600).default(120),
+}).strict().superRefine((value, ctx) => {
+  if (value.enabled && !value.project) ctx.addIssue({ code: "custom", path: ["project"], message: "select an explicit project before enabling client connections" });
+});
+export type ClientConnectionsConfig = z.infer<typeof ClientConnectionsConfigSchema>;
+
 export const ConfigSchema = z
   .object({
     version: z.literal(1),
@@ -984,6 +998,7 @@ export const ConfigSchema = z
     coding: CodingConfigSchema.prefault({}),
     labs: LabsConfigSchema.prefault({}),
     client_supervision: ClientSupervisionSchema.prefault({}),
+    client_connections: ClientConnectionsConfigSchema.prefault({}),
     /** Importance and verification policy: what evidence a result needs before it is accepted. */
     verification: VerificationConfigSchema.prefault({}),
     /** Agents' web search and page fetch: backends, roles, budgets. */

@@ -21,6 +21,40 @@ The panel backend and deliberately passive inspection/demo hosts use
 `{ panelLifecycle: "passive" }` when constructing the SDK. Closing a router retires its pending
 startup and availability checks, while leaving an already started shared panel available.
 
+## External client connections
+
+The global **Connections** page controls a separate panel-owned compatibility listener.
+`client_connections.enabled` defaults to `false`; saved settings are restored at panel startup
+and after configuration reloads. Ordinary SDK, worker and MCP instances do not bind this port.
+The default address is `127.0.0.1:4479`; the listener never takes over an occupied port or binds
+to a remote interface. The page distinguishes saved enablement from running, starting and error
+states. A disabled listener or stopped panel drains/cancels its admitted requests before closing.
+
+Settings select one configured project and a completion profile (`summarize` by default).
+The default limits are two concurrent requests, a 2 MiB request body, 4,096 output tokens and
+a 120-second request timeout. Profile input/output limits, task capacity, provider quotas,
+package allocation and paid-routing policy still apply. Request output cannot raise a profile's
+ceiling. The SDK dispatch method independently enforces timeout and scope, even without HTTP.
+
+Each chat creates and atomically claims a durable task for the selected project. Split storage
+uses its registered project Gate, fairness coordinator, exact execution grant and private request
+ledger. It does not use taskless admission or the installation Gate as a fallback. Client requests
+renew and settle their captured leases, retain consumed accounting on failures, and never execute
+the tool calls returned to the client. A full queue reports capacity refusal rather than claiming
+an unrelated queued task. Disabling, disconnecting or timing out propagates cancellation to Gate.
+
+The virtual model `meritrouter` (`meritrouter:latest` is also accepted) uses configured automatic
+routing. OpenAI-compatible routes are `GET /v1/models` and `POST /v1/chat/completions`.
+Native Ollama routes are `GET /api/tags`, `GET /api/version`, `POST /api/show`, `POST /api/chat`
+and `POST /api/generate`. Streaming responses use buffered SSE/NDJSON with completion and usage
+frames; this is not upstream token-by-token streaming. Unsupported model-management, embeddings,
+Responses, multimodal or request-option features return errors rather than being silently ignored.
+
+Only the listener's loopback Host is accepted. HTTP(S) browser origins on localhost, `127.0.0.1`
+and `[::1]` receive CORS/preflight responses; remote, null and extension origins are rejected.
+Provider credentials are not returned to clients. See [client setup](setup.md#connect-an-editor-or-chat-app)
+for URLs and copyable configuration.
+
 ## Delivery v2 readiness and FINAL decisions
 
 Default `client_supervision.workflow: delegated_delivery` keeps the initiating client as FINAL
@@ -162,7 +196,7 @@ shown in the provider's billing console rather than treating local zero spend as
   a configured limit. A key-level failure (429, invalid key, out of credits) moves the same
   request to the provider's next key before the gate moves to the next model; every one of
   those calls is admitted and counted against the task's request budget.
-- **Cooldowns.** A 429 cools the key for every model of that provider, for the wait the provider
+- **Cooldowns.** A throughput 429 cools the key for every model of that provider, for the wait the provider
   named (`retry-after` or a rate-limit reset header), else 30 s doubling with consecutive 429s
   up to 15 minutes. A provider whose every key is cooling reports `rate_limited` with the
   earliest return time; routing ranks it last (`routing.respect_provider_cooldowns`), and a
@@ -173,6 +207,10 @@ shown in the provider's billing console rather than treating local zero spend as
   <id>`, or by a `meritrouter keys test` whose listing now works; each clears the mark.
 - **Out of credits.** A 402 or a spend-cap refusal disables only that key. After 6 hours one
   request may check it again; `keys enable <id>` clears it at once.
+  Ollama's explicit HTTP 429 "have reached your monthly usage limit" response follows this
+  same policy: routing tries the next eligible key without reducing provider concurrency.
+  Ordinary throughput 429s still reduce concurrency and apply cooldowns. Adding a key does
+  not establish that its provider account has available quota.
 - **Limits.** Optional `rpm`, `rpd`, `tpm`, `tpd` on a provider (`providers.<id>.rpm`), on a key
   (config or `keys add --rpm ...`), and per quota group (`quota_group`, `--quota-group`: keys
   sharing one provider quota, such as a Google project or a Cloudflare account; the tightest
@@ -930,7 +968,14 @@ is refused; the runtime never substitutes the latest tree for the checked candid
   uses the separate `resume_task` path described above: it opens a linked session in the retained workspace and gets
   the task's configured execution allowance on its next claim, even if the completed attempt's deadline elapsed.
   Consumed requests, request/spend caps and history remain intact; repair still requires fresh evidence and another
-  FINAL decision. Trusted FINAL controls may use the SDK's
+  FINAL decision. Trusted SDK callers can instead use
+  `resumeTask(taskId, project, { preserveDeadline: true })` for this completed FINAL-rejected
+  repair when no additional execution time is authorized. The store requires the exact original
+  deadline to remain present, unchanged and in the future, records it in the repair audit, and
+  preserves it through queueing and the next claim. Missing, expired or concurrently changed
+  deadlines reject the operation; this option is unavailable for ordinary interrupted tasks.
+  Omitting the option preserves the existing repair behavior described above.
+  Trusted FINAL controls may use the SDK's
   `continueTaskExecution` operation after recovery to grant a bounded execution window on
   the same task. It requires the latest exact interrupted `user_paused` or `process_died` author session,
   project, expected deadline and attempt identity, an operation ID and a reason. The
@@ -950,6 +995,12 @@ is refused; the runtime never substitutes the latest tree for the checked candid
   linked author session after rechecking the receipt against the claimed generation.
   It cannot renew itself through runtime tools, stack grants on one interruption, reset
   charges, enable paid coding or convert uncertain historical effects into success.
+  If the first maintenance claim fails supervisor route eligibility before opening a new
+  session or request, the trusted `retryTaskStartup` operation permits one audited retry
+  after eligible routing is restored. It requires the exact failed claim, unchanged retained
+  memory and maintenance receipt, no dispatch/effect evidence, and unexpired granted time.
+  The retry preserves the existing deadline, request usage, caps and historical receipts;
+  it neither grants another time window nor retries unrelated or repeated failures.
   Expired queued split tasks otherwise finish visibly with `deadline_exceeded` before
   execution-grant reservation, so an expired queue leader cannot block eligible work.
 - Linked recovery owns its new session until transcript, workspace and continuation records
@@ -1563,8 +1614,24 @@ when the ledger can verify that the request was never admitted. For an existing 
 this requires a retired record with no dispatch or consumed transport and an authoritative
 accounting read finding no physical receipt. A failed accounting read is not evidence of
 absence; it preserves the preparation and transport quarantine for recovery. This prevents
-new slots from being held by ordinary pre-admission denials. It does not reclaim historical quarantined slots that
-lack the receipt required by the operator recovery below.
+new slots from being held by ordinary pre-admission denials.
+
+Historical uncertain slots with no physical receipt have a separate trusted operator API:
+`SplitTransportRecovery.inspectNeverAdmitted(requestId, project)` and
+`releaseNeverAdmitted({ requestId, expected, reason }, project)`. This is not exposed to
+models, MCP, automatic recovery or the transport CLI. Release requires the exact retired
+never-admitted preparation, inactive preparation history, terminal original task attempts,
+revoked captured execution grants, registered store identities, no physical or accounting
+authority, and fresh OS proof that the same-host owner PID is absent. Unknown evidence
+refuses; lease expiry alone is insufficient.
+
+Recovery locks the project store before coordination, rereads the proof, and atomically
+removes only the exact slot while recording a project-scoped audit event. It does not write
+the project store, settle a request, refund quota or spend, or change task budgets. An identical
+retry returns the original receipt without probing a potentially reused PID. Changed or
+missing evidence refuses. Project deletion removes the audit; a stale recovery cannot recreate
+it or reopen retired project authority. This operation does not establish provider quota
+availability or resume a job.
 
 An interrupted process can leave a nonce-bound provider slot whose remote request outcome is
 unknown. Lease expiry alone cannot release it. The trusted local operator can inspect one

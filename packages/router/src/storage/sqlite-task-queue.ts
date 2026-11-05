@@ -7,7 +7,7 @@ import { ExecutionGrantInputSchema, ProjectExecutionGrants, ExecutionGrantCapaci
 import { CoordinatedFairClaims, ProjectFairnessDeferred, type ProjectFairCandidate } from "./fair-claim.js";
 import { ProjectStoreIdentitySchema, type ProjectStoreIdentity } from "../projects/store-identity.js";
 import { assertStoreRole } from "./store-role.js";
-import { isTerminal } from "../core/task.js";
+import { isTerminal, WorkerTaskSchema, type WorkerTask } from "../core/task.js";
 import type { Db } from "./db.js";
 import type { ProviderSlotAdmission } from "../routing/claim-capacity.js";
 import type { ResolvedConfig } from "../config/load.js";
@@ -15,7 +15,7 @@ import { maxAgentsPerJob } from "../config/schema.js";
 import { projectLimits } from "../projects/schema.js";
 import { batchKey } from "../runners/batch.js";
 import { redundancyFor } from "./plans.js";
-import { immediate } from "./db.js";
+import { immediate, newId } from "./db.js";
 import type { ClaimAdmission, StoredTask, TaskStore } from "./tasks.js";
 import { QueueClaimSchema, QueueCompanionsSchema, QueueTasksSchema, type QueueClaim, type QueueCompanions, type TaskQueue, type StoredTaskDTO } from "./task-queue.js";
 
@@ -114,6 +114,20 @@ export class SqliteProjectTaskQueue {
   /** A raw project queue is never an autonomous fairness bypass. */
   async claim(_input:QueueClaim):Promise<StoredTaskDTO[]>{throw new Error("Project claims require an explicit coordination fair turn");}
   async claimTurn(raw:QueueClaim,candidates:readonly ProjectFairCandidate[]):Promise<StoredTaskDTO[]>{
+    return this.claimLocal(raw,candidates);
+  }
+  /** Trusted host only: submit and claim exactly one completion without exposing a queued race. */
+  claimExternal(value:WorkerTask,owner:string,candidates:readonly ProjectFairCandidate[]):StoredTaskDTO{
+    const spec=WorkerTaskSchema.parse(value);
+    if(this.local.cfg.profiles[spec.profile]?.mode!=="completion"||spec.repositoryAliases.length||spec.writableRepository||spec.parentTaskId||spec.dependsOn?.length||spec.routing?.endpointId)
+      throw new Error("External client claims require an independent completion with no repository or forced endpoint authority");
+    const now=this.local.tasks.serverNow(),existing=candidates.find(candidate=>candidate.project.projectId===this.local.identity.projectId);
+    const ready=[...candidates.filter(candidate=>candidate.project.projectId!==this.local.identity.projectId),{project:this.local.identity,oldestReadyAt:Math.min(existing?.oldestReadyAt??now,now),priority:projectLimits(this.local.cfg,this.local.identity.slug).priority}];
+    const members=this.claimLocal({owner},ready,{...spec,id:spec.id??newId("t")});
+    if(members.length!==1)throw new ExecutionGrantCapacityError("External client execution capacity is unavailable");
+    return members[0]!;
+  }
+  private claimLocal(raw:QueueClaim,candidates:readonly ProjectFairCandidate[],external?:WorkerTask):StoredTaskDTO[]{
     const {owner}=QueueClaimSchema.parse(raw);this.assertLocal();
     if(this.local.db.inTransaction)throw new Error("Project claim requires an independent local transaction");
     // Commit terminal expiry separately: a later admission refusal must not roll it back
@@ -122,11 +136,12 @@ export class SqliteProjectTaskQueue {
     this.fairness.publish(candidates);
     try{return immediate(this.local.db,()=>{
       this.assertLocal();const cfg=this.local.cfg,admission=this.options.providerSlots;
+      if(external){this.local.tasks.submit([external],{project:this.local.identity.slug});this.local.db.prepare("UPDATE tasks SET purpose='client_connection' WHERE id=?").run(external.id);}
       const buffered:ClaimAdmission|undefined=admission?{check:(row,spec)=>admission.check(row,spec),claimed:()=>{}}:undefined;
-      const claimed=this.local.tasks.claim(owner,{maxConcurrent:cfg.execution.max_concurrent_tasks,maxWritersPerRepo:cfg.execution.max_concurrent_writers_per_repository,leaseMs:cfg.execution.lease_seconds*1000,defaultTimeoutMs:cfg.execution.job_timeout_seconds*1000,limit:1,supervisorProfiles:Object.entries(cfg.profiles).filter(([,p])=>p?.mode==="supervisor").map(([name])=>name),maxSupervisors:cfg.supervisor.max_concurrent_jobs,supervisorTimeoutMs:cfg.supervisor.job_timeout_seconds*1000,maxAgentsPerJob:maxAgentsPerJob(cfg),...(buffered?{providerSlots:buffered}:{}),projectLimits:()=>({priority:1})},{project:this.local.identity,order:"project_fifo"});
-      if(!claimed.length)return [];
+      const claimed=this.local.tasks.claim(owner,{maxConcurrent:cfg.execution.max_concurrent_tasks,maxWritersPerRepo:cfg.execution.max_concurrent_writers_per_repository,leaseMs:cfg.execution.lease_seconds*1000,defaultTimeoutMs:cfg.execution.job_timeout_seconds*1000,limit:1,...(external?{targetTaskId:external.id}:{}),supervisorProfiles:Object.entries(cfg.profiles).filter(([,p])=>p?.mode==="supervisor").map(([name])=>name),maxSupervisors:cfg.supervisor.max_concurrent_jobs,supervisorTimeoutMs:cfg.supervisor.job_timeout_seconds*1000,maxAgentsPerJob:maxAgentsPerJob(cfg),...(buffered?{providerSlots:buffered}:{}),projectLimits:()=>({priority:1})},{project:this.local.identity,order:"project_fifo"});
+      if(!claimed.length){if(external)throw new ExecutionGrantCapacityError("External client execution capacity is unavailable");return [];}
       if(claimed.length!==1)throw new Error("Sealed project claim must select exactly one leader before companions");
-      const leader=claimed[0]!,profile=cfg.profiles[leader.spec.profile]!,key=profile.mode==="completion"&&profile.batching.enabled&&!this.redundant(leader)?projectBatchKey(leader):null;
+      const leader=claimed[0]!,profile=cfg.profiles[leader.spec.profile]!,key=!external&&profile.mode==="completion"&&profile.batching.enabled&&!this.redundant(leader)?projectBatchKey(leader):null;
       const companions=key?this.local.tasks.claimCompanions(owner,leader,task=>projectBatchKey(task)===key&&!this.redundant(task),profile.batching.max_items-1,cfg.execution.lease_seconds*1000,cfg.execution.job_timeout_seconds*1000):[];
       const members=QueueTasksSchema.parse([leader,...companions]);
       if(members.some(task=>task.row.project_id!==this.local.identity.slug))throw new Error("Project claim returned foreign participants");
@@ -145,7 +160,7 @@ export class SqliteProjectTaskQueue {
       const put=this.local.db.prepare("INSERT INTO project_execution_claim_members(grant_id,project_id,task_id,lease_incarnation,run_count,lease_owner) VALUES(?,?,?,?,?,?)");
       for(const lease of input.leases)put.run(ref.grantId,lease.project,lease.taskId,lease.incarnation,lease.runCount,lease.owner);
       return members;
-    });}catch(error){if(error instanceof ProjectFairnessDeferred||error instanceof ExecutionGrantCapacityError)return [];throw error;}
+    });}catch(error){if(!external&&(error instanceof ProjectFairnessDeferred||error instanceof ExecutionGrantCapacityError))return [];throw error;}
   }
   /** The immutable group was already sealed in claimTurn; no later companion can join it. */
   async claimCompanions(raw:QueueCompanions):Promise<StoredTaskDTO[]>{

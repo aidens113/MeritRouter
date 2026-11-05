@@ -754,3 +754,20 @@ Anthropic documents monthly promotional credits in the linked Console organizati
 The [Anthropic Models API](https://platform.claude.com/docs/en/api/models/list) reports available model IDs, capability metadata, lifecycle, model line and input/output limits. Parameter counts are not published by that schema. Do not require inventing counts to route a verified proprietary model, or infer its line from the ID. A successful list operation establishes model-list access, not inference success or account credit balance.
 
 Ollama's [current pricing](https://ollama.com/pricing) describes token-priced cloud usage and plan credits; [cloud documentation](https://docs.ollama.com/cloud) requires exact API tag names. A stored free_tier key label or a public model listing alone cannot prove a particular account/model request will be uncharged. Existing included/free entitlements require their own provenance; keep provider billing unknown rather than manufacture zero prices from the label. Current account-level billing was not independently verified in this review.
+
+### External client protocol scope (2026-11-04)
+
+Ollama's [chat contract](https://docs.ollama.com/api/chat) accepts message history, function tools
+and JSON formats, with streaming enabled by default. Its [streaming contract](https://docs.ollama.com/api/streaming)
+uses newline-delimited JSON and permits explicit nonstreaming responses. Its
+[compatibility documentation](https://docs.ollama.com/api/openai-compatibility) also describes
+custom base URLs and placeholder keys for local Chat Completions clients. These primary
+contracts were independently checked during integration.
+
+MeritRouter exposes a bounded text/chat subset on its own loopback port and virtual model,
+with native discovery/chat/generate and Chat Completions discovery/SSE framing. Gate currently
+returns complete responses, so streaming frames are buffered until completion. This is not
+a promise of compatibility with every Ollama client: model management, embeddings, Responses,
+multimodal inputs and unsupported generation options are outside this implementation.
+Tool execution remains the client's responsibility. Protocol support does not prove a particular
+editor integration; route capabilities and returned constraints are checked separately.

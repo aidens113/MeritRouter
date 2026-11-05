@@ -119,6 +119,8 @@ const POLICY = /content[ _-]?policy|content[ _-]?filter|moderation|flagged|safet
  */
 const NOT_IN_PLAN = /not included in your (?:free )?(?:usage|plan)|not (?:available|included) (?:on|in|with) your (?:current )?plan|requires? a (?:paid|pro|higher) (?:plan|tier|subscription)|upgrade (?:your plan )?to (?:use|access) this model|being rolled out|not yet available to you/i;
 const CREDITS = /enforced_spend_limit|spend[ _-]?limit|insufficient_quota|insufficient[ _-]?credits|out of credits|credit balance/i;
+/** Observed Ollama account-quota refusal; ordinary throughput 429s keep their transient backoff. */
+const OLLAMA_MONTHLY_USAGE = /\bhave reached your monthly usage limit\b/i;
 
 function parseJson(text: string): unknown {
   try {
@@ -145,7 +147,8 @@ export function classifyProviderError(provider: string, status: number, bodyText
   if (status === 451 || ((status === 400 || status === 403) && POLICY.test(haystack))) return new ProviderError("policy", msg, { ...base, ...consumed });
   if (status === 401 || status === 403) return new ProviderError("auth_invalid", msg, { ...base, ...consumed });
   if (status === 429) {
-    if (CREDITS.test(haystack)) return new ProviderError("out_of_credits", `${msg} (spend limit)`, { ...base, ...consumed });
+    if (CREDITS.test(haystack) || (provider === "ollama-cloud" && OLLAMA_MONTHLY_USAGE.test(haystack)))
+      return new ProviderError("out_of_credits", `${msg} (spend limit)`, { ...base, ...consumed });
     const wait = rateLimits ? cooldownMs(rateLimits) : null;
     return new ProviderError("rate_limited", msg, { ...base, ...consumed, ...(wait !== null ? { retryAfterMs: wait } : {}) });
   }

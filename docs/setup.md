@@ -153,6 +153,34 @@ pnpm --filter meritrouter-panel start
 The panel binds to 127.0.0.1. Set `MERITROUTER_PANEL_TOKEN` to require a login. Nothing else has
 to be installed or running: MeritRouter calls each provider's API itself.
 
+### Connect an editor or chat app
+
+Open **All projects → Connections** (`/all/connections`). Select the project whose routing,
+credentials and budgets should serve client requests, then enable connections. The switch
+defaults off; its saved value survives panel restarts. Enabling does not make a model request.
+
+With the default port, use these settings in your client:
+
+| Client provider setting | Base URL | Model |
+| --- | --- | --- |
+| Ollama | `http://127.0.0.1:4479` | `meritrouter` |
+| Custom OpenAI-compatible | `http://127.0.0.1:4479/v1` | `meritrouter` |
+
+If an OpenAI-compatible client requires an API key field, enter `meritrouter-local`; do not
+paste an upstream provider key. The local listener uses the keys already managed by MeritRouter.
+The Connections page includes copy buttons and terminal examples, and shows whether the saved
+listener is actually running. A port conflict is reported without stopping the other application.
+
+The listener runs with the panel, binds only to `127.0.0.1`, and accepts browser origins on
+localhost, `127.0.0.1` and `[::1]`. Stopping the panel or disabling connections cancels active
+client requests. A saved enabled listener starts again with the panel without visiting its page.
+
+Supported protocols include OpenAI Chat Completions/model discovery and Ollama chat, generate,
+tags, show and version. Text and client tool messages pass through the selected project's Gate;
+tools execute in the client. Streaming clients receive SSE or NDJSON frames after the upstream
+response completes (buffered delivery). Model downloads, embeddings, OpenAI Responses and other
+unsupported request features return explicit errors; compatibility depends on the client's API use.
+
 ### Projects
 
 **Storage layout.** `storage.layout` is `split` or `legacy` (`meritrouter.config.yaml`,

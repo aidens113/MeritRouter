@@ -321,6 +321,25 @@ describe("error classification", () => {
   const p = () => provider("groq");
   const status = (code: number, body: unknown, headers: Record<string, string> = {}) => failure(createProviderClient({ fetch: fakeFetch(() => json(body, code, headers)), now: () => NOW }).complete(request(p())));
 
+  it("classifies the explicit Ollama monthly usage refusal as credits rather than transient throttling", async () => {
+    const message = "you (fixture-account) have reached your monthly usage limit, upgrade for higher limits: https://ollama.com/upgrade or add usage credits: https://ollama.com/settings (ref: fixture-reference)";
+    const err = await failure(createProviderClient({ fetch: fakeFetch(() => json({ error: { type: "api_error", message } }, 429)) }).complete(request(provider("ollama-cloud"))));
+    expect(err).toMatchObject({ reason: "out_of_credits", kind: "pool_exhausted", status: 429, retryable: false, possiblyConsumed: false, providerCode: "api_error" });
+    expect(err.message).toContain(message);
+  });
+
+  it.each([
+    ["ollama-cloud", "rate limit reached; retry shortly"],
+    ["ollama-cloud", "you have reached your requests per minute (RPM) limit"],
+    ["ollama-cloud", "tokens per minute (TPM) limit exceeded"],
+    ["ollama-cloud", "you have reached your minute usage limit"],
+    ["ollama-cloud", "monthly usage limit information is temporarily unavailable"],
+    ["groq", "you have reached your monthly usage limit"],
+  ])("preserves transient 429 backoff for %s: %s", async (id, message) => {
+    const err = await failure(createProviderClient({ fetch: fakeFetch(() => json({ error: { type: "api_error", message } }, 429, { "retry-after": "12" })) }).complete(request(provider(id))));
+    expect(err).toMatchObject({ reason: "rate_limited", kind: "rate_limited", status: 429, retryable: true, retryAfterMs: 12000, possiblyConsumed: false });
+  });
+
   it("maps every HTTP class to a reason and a gateway kind", async () => {
     expect(await status(401, { error: { message: "Invalid API Key", type: "invalid_request_error", code: "invalid_api_key" } })).toMatchObject({ reason: "auth_invalid", kind: "auth", retryable: false, possiblyConsumed: false });
     expect(await status(403, { error: { message: "forbidden" } })).toMatchObject({ reason: "auth_invalid" });

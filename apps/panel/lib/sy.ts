@@ -1,6 +1,7 @@
 import "server-only";
 import path from "node:path";
 import { MeritRouter, loadConfig } from "meritrouter";
+import { syncConnections } from "./connections";
 
 /**
  * One MeritRouter per panel process. The panel never runs the worker loop: tasks execute in the
@@ -47,9 +48,25 @@ export function getSy(): { sy: MeritRouter; error: null; configPath: string } | 
   if (h.sy) {
     // Pick up edits made by the CLI, a worker, or a text editor, and prepare repositories they added.
     if (h.sy.reloadIfChanged().reloaded) void h.sy.prepareRepositories().catch(() => undefined);
+    void syncConnections(h.sy).catch(err => console.error("[panel] connections synchronization failed:", err));
     return { sy: h.sy, error: null, configPath: h.configPath };
   }
   return { sy: null, error: h.error ?? "unknown error", configPath: h.configPath };
+}
+
+const WATCH_KEY = Symbol.for("meritrouter.panel.connections.watch");
+const watchers = globalThis as unknown as Record<symbol, NodeJS.Timeout | undefined>;
+
+/** One unref'ed watch survives dev-module reloads and notices external config edits while idle. */
+export function startPanelConnections(): void {
+  if (watchers[WATCH_KEY]) return;
+  const refresh = () => {
+    try { getSy(); }
+    catch (err) { console.error("[panel] connections config reload failed:", err); }
+  };
+  refresh();
+  watchers[WATCH_KEY] = setInterval(refresh, 3000);
+  watchers[WATCH_KEY]!.unref();
 }
 
 export class NotConfigured extends Error {
