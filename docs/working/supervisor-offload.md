@@ -359,5 +359,22 @@ summary) installed only with `--hooks`. Report: `lane-d.md`.
   mcp-offload, task-queue, supervisor-loop-role, offload-channel -> 8 files, 76 passed.
 - Not verified: restriction through a full live executor run with a real grant reply.
 
+### 2026-11-26 — Check commands environment_failure: half-deleted helper cache
+- Outcome: Accepted. Worker: check-environment-failure (worker-heavy).
+- Root cause: Windows Storage Sense / SilentCleanup removed manifest.json but kept job.exe in the
+  %TEMP% command and service helper caches (~2026-11-25 23:34); windows-job-executable.ts refused
+  an incomplete cache forever and command-process.ts dropped the error, so checks returned exitCode
+  null -> environment_failure -> needs_supervisor (service path: "node --version: terminated").
+  Not caused by source changes since de3d28d or the Next.js bump.
+- Fix: an incomplete cache is rebuilt under the existing lock, remnants renamed unverified-* and
+  never executed; a complete cache disagreeing with its manifest is still refused; long-running
+  processes re-verify per call; the setup error is reported. Lead: delivery-runtime test now sets
+  `workflow: delegated_delivery` explicitly (direct_tasks is the default since 4cd1ad2).
+- Validation: `pnpm typecheck` -> 0 errors; `npx vitest run --no-file-parallelism`
+  delivery-runtime, command-environment, native, session-recording, task-lab-caller,
+  project-task-lab-deletion, external-task-tools -> 7 files, 49 passed (before: 11 failed).
+  command-environment against the old helper file -> 5 of 6 fail.
+- Open risk: a lock left by a crashed process reports "busy" forever (not changed).
+
 ## Open Questions
 - Budget for the live smoke and the Claude-usage cost of the offload eval (asked before Phase 3).

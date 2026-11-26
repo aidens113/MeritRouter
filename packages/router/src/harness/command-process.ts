@@ -39,7 +39,10 @@ export async function runCommandProcess(input: RepositoryCommandInput, host: Pro
   if (signal?.aborted) return unsent("cancelled");
   let executable: string;
   try { executable = await windowsCommandJobExecutable(); }
-  catch { return unsent("containment_unavailable", "Verified command helper could not initialize; reviewed command was not started"); }
+  catch (error) {
+    const reason = (error instanceof Error ? error.message : String(error)).replace(/\s+/g, " ").slice(0, 300);
+    return unsent("containment_unavailable", `Verified command helper could not initialize (${reason}); reviewed command was not started`);
+  }
   if (signal?.aborted) return unsent("cancelled");
   const key = randomBytes(32);
   const shell = process.env.COMSPEC ?? process.env.ComSpec ?? path.join(process.env.SystemRoot ?? "C:/Windows", "System32", "cmd.exe");
