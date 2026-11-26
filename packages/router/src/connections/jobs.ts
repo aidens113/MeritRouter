@@ -10,6 +10,7 @@ import type { ProjectContext } from "../projects/context.js";
 import { jobPool } from "../admission/budget-requests.js";
 import { effectiveBudget, type Admission } from "../admission/admission.js";
 import { ClientConnectionError } from "./protocol.js";
+import { deliveryJobs } from "../config/client-supervision.js";
 
 export const ClientJobModeSchema = z.enum(["agent", "team"]);
 const alias = z.string().regex(REPOSITORY_ALIAS_RE).max(128);
@@ -161,7 +162,7 @@ export async function submitClientJob(host: ClientJobHost, raw: ClientJobSubmiss
   const spec = WorkerTaskSchema.parse({ id: "tclientjob_" + randomUUID().replaceAll("-", ""), idempotencyKey: key, profile, goal: request.goal,
     repositoryAliases: repositories, ...(writable ? { writableRepository: writable } : {}), context: request.context ? { inlineText: request.context } : {},
     constraints: { acceptanceCriteria: request.acceptance_criteria ?? ["Complete the requested work and report the verified outcome."], ...(mode === "coding" ? { allowedPaths: safePaths(request.allowed_paths ?? ["**"]) } : {}) },
-    ...(request.mode === "team" ? { supervisionScope: "subtask", ...(cfg.client_supervision.workflow === "delegated_delivery" ? { deliveryVersion: 2 } : {}) } : {}), budget: limits });
+    ...(request.mode === "team" ? { supervisionScope: "subtask", ...(deliveryJobs(cfg.client_supervision) ? { deliveryVersion: 2 } : {}) } : {}), budget: limits });
   const paths = Object.fromEntries(repositories.map(alias => [alias, { ...cfg.repositoryPaths[alias]! }]));
   await host.submit(spec, request.project, purpose(request.mode), finalSpecs => {
     if (signal?.aborted) throw signal.reason;

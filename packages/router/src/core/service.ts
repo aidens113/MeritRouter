@@ -79,6 +79,7 @@ import { Scheduler } from "./scheduler.js";
 import { isTerminal, type TaskState, type WorkerResult, type WorkerTask } from "./task.js";
 import type { SupervisorChannelService } from "./channel.js";
 import { ChannelService } from "./channel-service.js";
+import { deliveryJobs } from "../config/client-supervision.js";
 
 export interface MeritRouterOptions {
   coding?: CodingRunner | null;
@@ -1062,13 +1063,13 @@ export class MeritRouter {
   }): Promise<SubmitOutcome> {
     if (!this.cfg.profiles.supervise) throw new TaskValidationError("this configuration has no supervise task type; use a standalone preset or add profiles.supervise");
     const project = this.projects.forWrite(input.project).project.slug;
-    const maxModelRequests = input.maxModelRequests ?? (this.cfg.client_supervision.workflow === "delegated_delivery"
+    const maxModelRequests = input.maxModelRequests ?? (deliveryJobs(this.cfg.client_supervision)
       ? Math.min(this.cfg.supervisor.delivery_budget.total_requests, this.cfg.profiles.supervise.max_model_requests ?? Infinity)
       : undefined);
     const [out] = await this.submitTasks([
       {
         profile: "supervise",
-        ...(this.cfg.client_supervision.workflow === "delegated_delivery" ? {deliveryVersion:2 as const} : {}),
+        ...(deliveryJobs(this.cfg.client_supervision) ? {deliveryVersion:2 as const} : {}),
         ...(input.supervisionScope ? { supervisionScope: input.supervisionScope } : {}),
         goal: input.goal,
         repositoryAliases: input.repositories,

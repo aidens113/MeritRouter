@@ -796,7 +796,13 @@ export type WebConfig = z.infer<typeof WebConfigSchema>;
 /** Advice for the connected outer MCP client; grants no permissions. */
 export const ClientSupervisionSchema = z.object({
   dispatch_final_supervisor: z.boolean().default(false),
-  workflow: z.enum(["delegated_delivery", "direct_tasks"]).default("direct_tasks"),
+  /**
+   * Unset by default. External-client guidance treats unset as direct_tasks (the offload playbook);
+   * jobs started explicitly (start_job, team connections) treat unset as delegated_delivery, so an
+   * explicit job keeps its delivery engine. Only an explicit "direct_tasks" changes jobs. See
+   * config/client-supervision.ts guidanceWorkflow / deliveryJobs.
+   */
+  workflow: z.enum(["delegated_delivery", "direct_tasks"]).optional(),
   instructions: z.string().trim().max(8000).default(""),
   /**
    * Which MCP tools this server registers (supervisor-offload Phase 2 lane A). `core`: only the

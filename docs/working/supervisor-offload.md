@@ -376,5 +376,23 @@ summary) installed only with `--hooks`. Report: `lane-d.md`.
   command-environment against the old helper file -> 5 of 6 fail.
 - Open risk: a lock left by a crashed process reports "busy" forever (not changed).
 
+### 2026-11-26 — Full suite after integration; job-engine regression fixed
+- Full run: `pnpm build` -> exit 0; `npx vitest run` -> 282 files, 3,472 passed, 42 failed, 5
+  skipped, 1 vitest RPC timeout (24 of the 42 "Test timed out" under parallel load). Serial rerun of
+  the 27 failing files -> 274 passed, 4 failed.
+- Real defects found and fixed: (1) the 4cd1ad2 workflow default silently made explicitly started
+  jobs (start_job, team connections, MCP job dispatch) non-delivery jobs. `workflow` is now optional:
+  guidance treats unset as direct_tasks, jobs treat unset as delegated_delivery; only explicit
+  direct_tasks changes jobs (config/client-supervision.ts guidanceWorkflow/deliveryJobs).
+  (2) coding and gate-request-capture tests still configured the removed external runner: now assert
+  config-parse refusal / native only. (3) projects-surfaces init test used a shared `%TEMP%/web`
+  repository that init now provisions; given a private parent and asserts the store exists.
+- Validation: `pnpm typecheck` -> 0 errors; `npx vitest run --no-file-parallelism`
+  supervisor-lifecycle, delivery-runtime, client-supervision, mcp-lifecycle-v2, mcp, mcp-offload,
+  projects-surfaces, coding, gate-request-capture, client-connection-routing, client-connections,
+  connection-listener-access, connection-modes -> 13 files, 174 passed. projects-surfaces init test
+  passed on two consecutive runs.
+- Not rerun: a complete full-suite aggregate after these fixes.
+
 ## Open Questions
 - Budget for the live smoke and the Claude-usage cost of the offload eval (asked before Phase 3).

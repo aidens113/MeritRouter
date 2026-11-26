@@ -16,29 +16,11 @@ const implementTask = {
 };
 
 describe("external coding containment", () => {
-  it.each(["command", "opencode"] as const)("refuses %s workers under every host policy without launching processes or models", async runner => {
-    for (const outside_repository of ["disabled", "human_only", "supervisor"]) {
-      env = makeEnv({ config: baseConfig({ coding: { runner, command: "placeholder" }, security: { outside_repository } }) });
-      const marker = path.join(env.dir, "external-process-started");
-      const script = path.join(env.dir, "forbidden-agent.cjs");
-      writeFileSync(script, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'started');`);
-      env.cfg.coding.command = `"${process.execPath}" "${script}"`;
-      const before = readFileSync(path.join(env.repo, "src/app.ts"), "utf8");
-      const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: env.repo }).toString().trim();
-      const client = new ScriptedClient(() => reply(JSON.stringify(goodOutput())));
-      sy = open(env, client, { worker: true, coding: createCodingRunner(env.cfg) });
-      const [submitted] = await sy.submitTasks([implementTask]);
-      const result = (await sy.awaitResults([submitted!.taskId], { timeoutSeconds: 15 })).completed[0]!;
-      expect(result).toMatchObject({ executionStatus: "failed", acceptanceStatus: "not_verified", stopReason: "worker_sandbox_unavailable", patchRefs: [], checks: [] });
-      expect(result.usage.modelRequests).toBe(0);
-      expect(client.requests).toHaveLength(0);
-      expect(existsSync(marker)).toBe(false);
-      expect(readFileSync(path.join(env.repo, "src/app.ts"), "utf8")).toBe(before);
-      expect(execFileSync("git", ["rev-parse", "HEAD"], { cwd: env.repo }).toString().trim()).toBe(head);
-      expect(sy.db.prepare("SELECT task_id FROM workspaces WHERE task_id=?").get(submitted!.taskId)).toBeUndefined();
-      await sy.close(); sy = undefined; env.cleanup(); env = undefined;
-    }
-  }, 30000);
+  // The external command/opencode runner was removed (supervisor-offload): it can no longer be
+  // configured, so no external process or model can ever be launched through it.
+  it.each(["command", "opencode"] as const)("refuses a %s runner at config parse", runner => {
+    expect(() => makeEnv({ config: baseConfig({ coding: { runner, command: "placeholder" } }) })).toThrow(/coding\.runner.*no longer supported.*native/s);
+  });
 });
 
 describe("process quoting", () => {

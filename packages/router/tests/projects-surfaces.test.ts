@@ -228,17 +228,23 @@ describe("CLI with projects", () => {
   }, 120_000);
 
   it("init writes a global config plus a first project", () => {
-    const dir = mkdtempSync(path.join(tmpdir(), "meritrouter-init-"));
+    // A private parent keeps "../web" (which init now provisions) out of the shared temp folder.
+    const parent = mkdtempSync(path.join(tmpdir(), "meritrouter-init-"));
+    const dir = path.join(parent, "install");
     try {
       const r = spawnSync(process.execPath, [cliJs, "init", dir, "--project", "shop", "--repo", "web=../web"], { encoding: "utf8", env: childEnv(), timeout: 30_000 });
       expect(r.status, r.stderr).toBe(0);
       const raw = YAML.parse(readFileSync(path.join(dir, "meritrouter.config.yaml"), "utf8")) as { brain: { project: string }; projects: Record<string, unknown>; repositories?: unknown };
-      expect(raw.projects).toEqual({ shop: { name: "shop", repositories: { web: { path: "../web" } } } });
+      // init provisions the project it writes; with one repository its directory is that repository.
+      expect(Object.keys(raw.projects)).toEqual(["shop"]);
+      expect(raw.projects.shop).toMatchObject({ name: "shop", repositories: { web: { path: "../web" } } });
+      expect((raw.projects.shop as { directory?: string }).directory).toBe(path.join(parent, "web"));
+      expect(existsSync(path.join(parent, "web", ".MeritRouter")), r.stdout).toBe(true);
       expect(raw.brain.project).toBe("shop");
       expect(raw.repositories).toBeUndefined();
       expect(() => parseConfig(raw, path.join(dir, "meritrouter.config.yaml"))).not.toThrow();
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      rmSync(parent, { recursive: true, force: true });
     }
   });
 });

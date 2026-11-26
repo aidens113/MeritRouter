@@ -2,6 +2,7 @@ import type { MeritRouter } from "../core/service.js";
 import { WorkerTaskSchema, type WorkerTask } from "../core/task.js";
 import { MeritRouterError } from "../core/errors.js";
 import { supervisionPolicy } from "../admin/client-supervision.js";
+import { deliveryJobs } from "../config/client-supervision.js";
 
 /** Per-connection delivery state; never alters the first tool result block. */
 export function clientSupervisionFeedback(sy: MeritRouter) {
@@ -36,7 +37,7 @@ export function scopedMcpTasks(sy: MeritRouter, project: string, raw: unknown[])
       return spec;
     }
     spec.supervisionScope ??= "subtask";
-    if(sy.cfg.client_supervision.workflow === "delegated_delivery") spec.deliveryVersion ??= 2;
+    if(deliveryJobs(sy.cfg.client_supervision)) spec.deliveryVersion ??= 2;
     if (spec.supervisionScope === "project") projectGuard(sy);
     return spec;
   });

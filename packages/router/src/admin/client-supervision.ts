@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { MeritRouter } from "../core/service.js";
-import { readClientSupervision } from "../config/client-supervision.js";
+import { guidanceWorkflow, readClientSupervision } from "../config/client-supervision.js";
 import { MeritRouterError } from "../core/errors.js";
 import { patchConfig } from "./config-edit.js";
 
@@ -29,8 +29,9 @@ export function supervisionPolicy(sy: MeritRouter) {
   // Content, rather than filesystem timestamp, detects rapid saves on an active connection.
   const policy = readClientSupervision(sy.cfg.configPath);
   const ownership = policy.dispatch_final_supervisor ? "Explicit project-scoped MeritRouter final supervisors are permitted. Bounded subtask supervisors remain available; the requested supervisionScope determines final ownership." : "Claude/Codex remains the final project supervisor. Dispatching a MeritRouter final project supervisor is disabled; bounded subtask supervisors are permitted. Completing a bounded job is not final project acceptance.";
-  const workflow = policy.workflow === "direct_tasks" ? "Selected workflow: direct_tasks. Coordinate bounded tasks directly; retain FINAL product acceptance." : "Selected workflow: delegated_delivery. Use MeritRouter delivery supervisors for multi-step work; you remain FINAL supervisor.";
-  return { ...policy, effectiveInstructions: ownership + "\n\n" + workflow + "\n\n" + DEFAULT_CLIENT_SUPERVISION + (policy.tools === "full" || policy.workflow === "delegated_delivery" ? "\n\n" + DELIVERY_JOB_SUPERVISION : "") + (policy.instructions ? "\n\nHuman customization:\n" + policy.instructions : "") };
+  const effective = guidanceWorkflow(policy);
+  const workflow = effective === "direct_tasks" ? "Selected workflow: direct_tasks. Coordinate bounded tasks directly; retain FINAL product acceptance." : "Selected workflow: delegated_delivery. Use MeritRouter delivery supervisors for multi-step work; you remain FINAL supervisor.";
+  return { ...policy, workflow: effective, effectiveInstructions: ownership + "\n\n" + workflow + "\n\n" + DEFAULT_CLIENT_SUPERVISION + (policy.tools === "full" || effective === "delegated_delivery" ? "\n\n" + DELIVERY_JOB_SUPERVISION : "") + (policy.instructions ? "\n\nHuman customization:\n" + policy.instructions : "") };
 }
 
 /** Only call in response to an explicit human request to change external client guidance. */

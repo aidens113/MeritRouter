@@ -160,11 +160,12 @@ it("captures the default completion batch once while preserving each participant
 });
 
 
-it.each(["native", "command"])("captures actual %s coding calls through the default Gate", async runner => {
+// Only the native runner exists since supervisor-offload removed the external command/opencode runner.
+it.each(["native"])("captures actual %s coding calls through the default Gate", async runner => {
   const agent = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "fake-agent.mjs");
-  env = makeEnv({ config: baseConfig({ coding: runner === "native" ? { runner } : { runner, command: `node "${agent}" good` } }) });
+  env = makeEnv({ config: baseConfig({ coding: { runner } }) });
   const client = new ScriptedClient((req, n) => {
-    if (runner === "native") return reply(null, { model: req.model, provider: req.provider, toolCalls: [{ id: `call-${n}`, type: "function", function: n === 1 ? { name: "write_file", arguments: JSON.stringify({ path: "src/app.ts", content: "export function add(a: number, b: number) { return a + b; }\nexport function subtract(a: number, b: number) { return a - b; }\n" }) } : { name: "submit_result", arguments: JSON.stringify(goodOutput(1, "core:src/app.ts#L1-L2")) } }] });
+    return reply(null, { model: req.model, provider: req.provider, toolCalls: [{ id: `call-${n}`, type: "function", function: n === 1 ? { name: "write_file", arguments: JSON.stringify({ path: "src/app.ts", content: "export function add(a: number, b: number) { return a + b; }\nexport function subtract(a: number, b: number) { return a - b; }\n" }) } : { name: "submit_result", arguments: JSON.stringify(goodOutput(1, "core:src/app.ts#L1-L2")) } }] });
     return reply(JSON.stringify(goodOutput()), { model: req.model, provider: req.provider });
   });
   sy = open(env, client, { worker: true, coding: createCodingRunner(env.cfg) });
@@ -173,13 +174,6 @@ it.each(["native", "command"])("captures actual %s coding calls through the defa
   await sy.brain.ensure();
   const [task] = await sy.submitTasks([{ profile: "implement", goal: "Add subtract", repositoryAliases: ["core"], writableRepository: "core", hints: { difficulty: "T2" }, context: { fileRefs: ["core:src/app.ts"] }, constraints: { acceptanceCriteria: ["subtract exists"], allowedPaths: ["src/**"] } }]);
   const result = await sy.awaitResults([task!.taskId], { timeoutSeconds: 60 });
-  if (runner === "command") {
-    expect(result.completed[0]!.stopReason).toBe("worker_sandbox_unavailable");
-    expect(client.requests).toHaveLength(0);
-    expect(rows()).toHaveLength(0);
-    expect(sy.db.prepare("SELECT COUNT(*) AS n FROM request_captures").get()).toEqual({ n: 0 });
-    return;
-  }
   expect(result.completed[0]!.executionStatus).toBe("completed");
   expect(client.requests.length).toBeGreaterThan(0);
   expect(rows()).toHaveLength(client.requests.length);
