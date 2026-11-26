@@ -22,6 +22,7 @@ import { scopedArtifact } from "./check-evidence.js";
 import { dirtyPaths } from "../workspaces/git.js";
 import { currentSupervisorAuthority } from "../core/supervisor-authority.js";
 import { assertNotProjectMetadataPath } from "../projects/metadata-policy.js";
+import { ALWAYS_ON_WORKER_TOOLS } from "../core/brief.js";
 
 export interface HarnessEnv {
   /** Trusted journal identity for this invocation; never taken from model arguments. */
@@ -76,6 +77,28 @@ export interface HarnessTool {
 /** The tools this run may have (see `HarnessTool.available`). */
 export function availableTools(tools: HarnessTool[], env: HarnessEnv): HarnessTool[] {
   return tools.filter((t) => t.available?.(env) ?? true);
+}
+
+/**
+ * The dynamic `LoopOptions.toolPolicy` for a brief-originated task (`ctx.spec.tools`,
+ * core/brief.ts resolveBriefTools): the model is offered, and may call, only the brief's granted
+ * tools plus whatever the supervisor channel has granted this task so far
+ * (SupervisorChannelService.grantedTools) plus the always-on tools. Recomputed fresh on every
+ * call (the loop calls it once per turn), so a mid-run grant takes effect starting the worker's
+ * next turn without restarting the loop. Returns undefined for a legacy task with no brief
+ * grant: the caller should then omit `toolPolicy` entirely, leaving behaviour unchanged.
+ */
+export function workerToolPolicy(ctx: RunContext): (() => { allowedToolNames: string[]; notice?: string }) | undefined {
+  const grant = ctx.spec.tools;
+  if (!grant) return undefined;
+  return () => {
+    const granted = ctx.channel?.grantedTools(ctx.taskId) ?? [];
+    const allowedToolNames = [...new Set([...grant.allow, ...granted, ...ALWAYS_ON_WORKER_TOOLS])];
+    return {
+      allowedToolNames,
+      notice: `Your current tool grant for this task: ${allowedToolNames.join(", ")}. If you need a tool outside this list, call request_tools to ask your supervisor for it.`,
+    };
+  };
 }
 
 const MAX = 16_000;

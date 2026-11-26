@@ -14,7 +14,7 @@ import { charterFor } from "../../roles/index.js";
 import { commitAs } from "../../attribution/index.js";
 import { runAgentLoop } from "../../harness/loop.js";
 import { webTools } from "../../harness/web-tools.js";
-import { artifactTool, availableTools, brainReadTools, commandTool, declaredCheckTool, editTools, repoTools, type HarnessEnv, type HarnessTool } from "../../harness/tools.js";
+import { artifactTool, availableTools, brainReadTools, commandTool, declaredCheckTool, editTools, repoTools, workerToolPolicy, type HarnessEnv, type HarnessTool } from "../../harness/tools.js";
 import { requestBudgetTool } from "../../harness/budget-tools.js";
 import { labHarnessTools } from "../../labs/tools.js";
 import { minimalEnv } from "./process.js";
@@ -123,11 +123,13 @@ export class NativeCodingRunner implements CodingRunner {
     messages.push({ role: "user", content: executionAllocationNotice(ctx.contract, ctx.budget.maxModelRequests,
       ctx.gate.admission.taskTotals(ctx.taskId).requests) });
     const executionId = ctx.gate.admission.createExecution("task", spec.profile, [{ taskId: ctx.taskId, itemId: ctx.taskId }]);
+    const toolPolicy = workerToolPolicy(ctx);
     const loop = await runAgentLoop({
       env,
       executionId,
       messages,
       tools,
+      ...(toolPolicy ? { toolPolicy } : {}),
       ...(ctx.resume ? { resume: { plan: ctx.resume.plan, actor: workerActor(ctx, role), pointer, ...(lost ? { notice: lost } : {}) } } : {}),
       terminal: submitResultTool(spec, universe, validator),
       maxTokens,

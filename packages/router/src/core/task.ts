@@ -93,6 +93,21 @@ export const WorkerTaskSchema = z
     lab: z.string().regex(/^[a-z0-9][a-z0-9-]{0,40}$/).optional(),
     /** Short agent label used for the report file and commit identity. */
     label: z.string().regex(/^[a-z0-9][a-z0-9-]{0,40}$/).optional(),
+    /**
+     * A brief's resolved tool grant (core/brief.ts resolveBriefTools): the worker-side runners
+     * offer and allow only `allow`, plus any tools granted mid-run over the supervisor channel
+     * (SupervisorChannelService.grantedTools), plus the always-on tools. Absent on legacy tasks
+     * (no brief), whose tool surface this field does not restrict.
+     */
+    tools: z
+      .object({
+        /** The profile name the grant came from, when it did (an explicit list has none). */
+        profile: z.string().min(1).max(64).optional(),
+        /** Every tool name initially offered (profile or explicit list), always-on tools included. */
+        allow: z.array(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)).min(1).max(100),
+      })
+      .strict()
+      .optional(),
     /** Brain context: the working document (effort) this task reports into, and extra grants. */
     brain: z
       .object({

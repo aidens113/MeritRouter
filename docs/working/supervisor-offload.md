@@ -347,5 +347,17 @@ summary) installed only with `--hooks`. Report: `lane-d.md`.
   reasons logged from native.test.ts), same symptom as project-task-lab-deletion and
   delivery-runtime (`node --version: terminated`). Assigned to command-execution diagnosis.
 
+### 2026-11-26 — Supervisor-chosen worker tool sets and required self-check
+- Outcome: Accepted. Worker: tool-restriction.
+- WorkerTaskSchema gains optional `tools {profile?, allow}` set by briefToTaskArgument;
+  workerToolPolicy recomputes allow + grantedTools + always-on each turn; the loop filters the
+  tool definitions sent on every request (verified loop.ts requestDefs filter) and refuses calls
+  outside the set; a policy notice tells the worker to use request_tools. selfCheck is required in
+  submit_result for brief-originated tasks only. Legacy tasks unchanged.
+- Validation: `pnpm typecheck` -> 0 errors; `npx vitest run --no-file-parallelism`
+  worker-tool-restriction, worker-tool-profiles, worker-channel-tools, offload-contracts,
+  mcp-offload, task-queue, supervisor-loop-role, offload-channel -> 8 files, 76 passed.
+- Not verified: restriction through a full live executor run with a real grant reply.
+
 ## Open Questions
 - Budget for the live smoke and the Claude-usage cost of the offload eval (asked before Phase 3).

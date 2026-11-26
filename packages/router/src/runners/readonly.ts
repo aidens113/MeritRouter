@@ -9,7 +9,7 @@ import { loadSources, readersFor, renderSources } from "../context/sources.js";
 import { planLimits } from "../routing/select.js";
 import { charterFor, roleForProfile } from "../roles/index.js";
 import { runAgentLoop } from "../harness/loop.js";
-import { artifactTool, availableTools, brainReadTools, declaredCheckTool, repoTools, type HarnessEnv, type HarnessTool } from "../harness/tools.js";
+import { artifactTool, availableTools, brainReadTools, declaredCheckTool, repoTools, workerToolPolicy, type HarnessEnv, type HarnessTool } from "../harness/tools.js";
 import { webTools } from "../harness/web-tools.js";
 import { requestBudgetTool } from "../harness/budget-tools.js";
 import { brainContext, SUBMIT_RESULT_DEF, submitResultTool, workerActor, workerBrainEnv } from "../harness/worker.js";
@@ -80,11 +80,13 @@ export async function runReadOnly(ctx: RunContext): Promise<RunOutcome> {
   // A resumed session continues its own transcript (the fresh one above still registered the evidence).
   const messages = ctx.resume ? await refreshMemoryMessages(env, ctx.resume.plan.messages, memoryOptions) : fresh;
   const executionId = ctx.gate.admission.createExecution("task", spec.profile, [{ taskId: ctx.taskId, itemId: ctx.taskId }]);
+  const toolPolicy = workerToolPolicy(ctx);
   const loop = await runAgentLoop({
     env,
     executionId,
     messages,
     tools,
+    ...(toolPolicy ? { toolPolicy } : {}),
     ...(ctx.resume ? { resume: { plan: ctx.resume.plan, actor: workerActor(ctx, role), pointer: null } } : {}),
     terminal: submitResultTool(spec, universe, validator),
     maxTokens,

@@ -318,6 +318,8 @@ export function briefToTaskArgument(input: BriefV1Input | BriefV1): WorkerTaskIn
     },
   };
   if (coding) task.writableRepository = writableRepository(brief);
+  const profileName = Array.isArray(brief.tools) ? undefined : brief.tools ?? brief.kind;
+  task.tools = { ...(profileName ? { profile: profileName } : {}), allow: resolveBriefTools(brief) };
   if (brief.budget?.requests !== undefined) task.budget = { maxModelRequests: brief.budget.requests };
   if (brief.idempotencyKey) task.idempotencyKey = brief.idempotencyKey;
   if (brief.label) task.label = brief.label;

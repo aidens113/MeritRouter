@@ -69,6 +69,11 @@ export function submitResultTool(spec: WorkerTask, universe: EvidenceUniverse, d
         const parsed = SelfCheckSchema.safeParse(raw.selfCheck);
         if (!parsed.success) return { ok: false, errors: parsed.error.issues.map((i) => `selfCheck${i.path.length ? `.${i.path.join(".")}` : ""}: ${i.message}`) };
         selfCheck = parsed.data;
+      } else if (spec.tools) {
+        // Required (not just asked for) only for a brief-originated task (spec.tools set by
+        // briefToTaskArgument); a legacy task without a tool grant keeps the softer contract
+        // above (missing selfCheck renders as "NOT PROVIDED" rather than failing the result).
+        return { ok: false, errors: ["selfCheck is required for this task: answer notTested, assumptions, riskiestChange and checkNext before calling submit_result."] };
       }
       const v = validateWorkerOutput(args, { acceptanceCriteria: criterionTexts(spec), universe, ...(dataValidator ? { dataValidator } : {}) });
       return v.ok ? { ok: true, value: { ...v.value, ...(selfCheck ? { selfCheck } : {}) } } : { ok: false, errors: v.errors };

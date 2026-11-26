@@ -74,6 +74,7 @@ describe("Brief v1", () => {
         allowedPaths: ["src/cli.ts", "tests/cli.test.ts"],
         checks: ["pnpm vitest run tests/cli.test.ts"],
       },
+      tools: { profile: "implement", allow: resolveBriefTools(implementBrief()) },
       budget: { maxModelRequests: 40 },
       idempotencyKey: "k1",
       label: "cli-json",
