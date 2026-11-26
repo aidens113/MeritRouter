@@ -806,6 +806,37 @@ Inside Codex, `/mcp` lists the servers and their tools. Codex reads a reduced fo
 for tool inputs. MeritRouter's tool inputs stay inside that form, and the service still checks
 every task in full. So a task Codex fills in wrongly is refused with the reason, not run.
 
+### One-command connect (Claude Code, Codex)
+
+`meritrouter connect claude|codex --project <slug> [--repo <dir>] [--project-dir <dir>] [--hooks]`
+does steps 2 and 4 above together, idempotently:
+
+- Ensures `<slug>` exists (creating it, exactly as `projects create` would, when it does not).
+  `--repo <dir>` is the repository this connection works in (default: the current directory);
+  it is registered as the project's `app` repository the same way `--repo app=<dir>` does
+  elsewhere in this guide.
+- Writes the stdio registration this guide shows above: a `.mcp.json` at the repository root for
+  Claude Code (merged — any other `mcpServers` entry already there is kept), or the
+  `[mcp_servers.meritrouter]` section of Codex's `config.toml` (merged the same way).
+- Appends a short offload reminder — pointing at `meritrouter inbox` and the delegation tools —
+  to the repository's `CLAUDE.md` (Claude Code) or `AGENTS.md` (Codex), between
+  `<!-- meritrouter:offload:start -->`/`...:end -->` markers. Re-running `connect` replaces only
+  that marked block; everything else in the file is left as found.
+- `--project-dir <dir>`: the project's own store (`<dir>/.MeritRouter`) when it should not live
+  inside the repository itself — for example when connecting a repository (such as this one, see
+  [Code Structure](../AGENTS.md#code-structure) in a project with that rule) that must never hold
+  a `.MeritRouter` of its own. Defaults to the repository directory.
+- `--hooks` (Claude Code only; refused with `codex`, which has no equivalent) additionally
+  installs three opt-in hooks into `.claude/settings.json` (merged, keeping any other hooks
+  already configured), from the `integrations/claude-code/hooks/` scripts shipped beside this
+  package — plain Node, no dependencies, and each one fails open (any error exits 0, never
+  blocking): a `PreToolUse` nudge toward delegating a large direct `Write`/`Edit` or a
+  test/build-shaped `Bash` command; a `Stop` hook that blocks ending the turn while
+  `meritrouter inbox --json` shows a worker message still awaiting an answer; and a
+  `SessionStart` hook that prints the inbox's size as context. None of the three ever
+  mutate anything; `meritrouter inbox [--json]` (also used by the Stop/SessionStart hooks) is a
+  read-only view of the same two-way channel the `inbox`/`probe`/`reply` MCP tools use.
+
 ### Remote MCP clients
 
 The HTTP transport can serve remote clients through a separately managed HTTPS tunnel.

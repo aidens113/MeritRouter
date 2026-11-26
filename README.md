@@ -80,6 +80,25 @@ See [cost controls](docs/setup.md#cost-controls-and-routing-defaults) before sub
 
 ### 3. Connect your agent
 
+The fastest path for Claude Code or Codex is one command, run from the repository you
+registered (replace the checkout path and project slug with your own):
+
+```sh
+node /absolute/path/to/MeritRouter/packages/router/dist/cli.js connect claude --project my-app
+# or: connect codex --project my-app
+```
+
+This writes (or merges, keeping any other registered server) the `.mcp.json` Claude Code
+reads from this repository, or Codex's `~/.codex/config.toml` entry, pointing at this checkout
+and project, so no manual `claude mcp add`/`codex mcp add` step is needed. It also
+appends a short, idempotent offload reminder to the repository's `CLAUDE.md` (Claude) or
+`AGENTS.md` (Codex) — re-running `connect` updates that block in place rather than duplicating
+it. Add `--hooks` with `connect claude` to also install opt-in hooks that nudge against large
+direct edits and keep the session from ending with an unanswered worker message in
+`meritrouter inbox`. Pass `--project-dir <dir>` when the project's own `.MeritRouter` store
+should not live inside the repository itself. See [setup](docs/setup.md#4-connect-an-mcp-client-claude-code-codex-chatgpt)
+for the manual `claude mcp add`/`codex mcp add` form, other MCP clients, and standalone use.
+
 Start background execution with the configuration path printed by setup:
 
 ```sh
@@ -89,16 +108,7 @@ node packages/router/dist/cli.js daemon start --config "/absolute/path/to/meritr
 MCP connections are passive by default. An explicit `mcp --worker` can run work for the
 whole installation while that client stays open; use the daemon for persistent execution.
 
-For Claude Code, run this from the repository you registered. Replace both absolute paths
-with your MeritRouter checkout and the configuration location printed by setup:
-
-```sh
-claude mcp add --transport stdio --scope local meritrouter -- node "/absolute/path/to/MeritRouter/packages/router/dist/cli.js" mcp --config "/absolute/path/to/meritrouter.config.yaml" --project my-app
-```
-
 Reconnect or restart your agent, then paste the prompt at the top of this page.
-For other MCP clients, installed packages and standalone use, follow the
-[setup guide](docs/setup.md).
 
 ### 4. Try a small task
 

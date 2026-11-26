@@ -273,5 +273,19 @@ summary) installed only with `--hooks`. Report: `lane-d.md`.
   `environment_failure`; same result with the init fix stashed and (per worker) without the
   contracts. Lab area is paused; revisit at the full-suite run.
 
+### 2026-11-25 — Lane D: connect command, inbox, Claude Code hooks
+- Outcome: Accepted. Worker: lane-d.
+- Lead changes: Stop hook blocks at most once per stop (`stop_hook_active`) and only on worker
+  messages awaiting the supervisor (not undelivered replies); PreToolUse nudge emits
+  `hookSpecificOutput.additionalContext` JSON (plain stdout never reaches the model; verified
+  against code.claude.com/docs/en/hooks.md), no permissionDecision; `integrations` added to the
+  published `files`; README wording fix.
+- Validation: `npx vitest run tests/cli-connect.test.ts` -> 9 passed; `npx vitest run
+  tests/packaging.test.ts` -> 4 passed; manual hook runs: Stop with one pending request -> block
+  JSON, with stop_hook_active -> no output, reply-only -> no output; nudge on `pnpm -r test` and a
+  9,000-char Write -> additionalContext JSON, on Read -> no output; all exit 0.
+- Not verified: hooks inside a live Claude Code session; `inbox` against the real channel (lane B);
+  Codex config against an installed Codex CLI.
+
 ## Open Questions
 - Budget for the live smoke and the Claude-usage cost of the offload eval (asked before Phase 3).

@@ -37,6 +37,8 @@ import type { ScanSummary } from "./models/scanner.js";
 import { cliDecisionActor } from "./cli/actor.js";
 import { projectDeliveryReport } from "./admin/deliveries.js";
 import { openProjectStores, scopesFor } from "./admin/project-reads.js";
+import { connectCommand, connectText, type ConnectFlags } from "./cli/connect.js";
+import { inboxCommand } from "./cli/inbox.js";
 
 // The `meritrouter` command: argument parsing and dispatch. Terminal rendering lives in src/cli/.
 
@@ -130,6 +132,9 @@ async function main(): Promise<number> {
       http: { type: "boolean", default: false },
       host: { type: "string" },
       port: { type: "string" },
+      // meritrouter connect claude|codex (cli/connect.ts)
+      "project-dir": { type: "string" },
+      hooks: { type: "boolean", default: false },
       help: { type: "boolean", short: "h", default: false },
     },
   });
@@ -216,7 +221,9 @@ async function main(): Promise<number> {
   const idScope = () => (explicit ? project() : undefined);
   const multi = sy.projects.slugs().length > 1;
   try {
-    if (explicit && cmd !== "projects") project();
+    // `connect` may be naming a project that does not exist yet (it creates it); every other
+    // command with an explicit --project requires the project to already exist.
+    if (explicit && cmd !== "projects" && cmd !== "connect") project();
     switch (cmd) {
       case "transport": {
         const [action, requestId, extra] = args;
@@ -229,6 +236,15 @@ async function main(): Promise<number> {
       }
       case "projects":
         return await projectsCommand(sy, args, values, json, select);
+      case "connect": {
+        const target = args[0];
+        const flags: ConnectFlags = { project: values.project, repo: values.repo, "project-dir": values["project-dir"], hooks: values.hooks };
+        const r = await connectCommand(sy, target ?? "", flags, path.dirname(CLI_PATH));
+        out(json ? r : connectText(r), json);
+        return 0;
+      }
+      case "inbox":
+        return inboxCommand(sy, listScope(), json);
       case "labs": {
         const action = args[0] ?? "list";
         if (explicit && ["serve", "supervisor-start", "supervisor-stop", "supervisor-status"].includes(action)) throw new MeritRouterError("usage", "Labs supervision serves every project in this installation; remove --project and MERITROUTER_PROJECT");
