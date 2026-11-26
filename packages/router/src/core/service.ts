@@ -77,6 +77,7 @@ import { prepareProjectRepositories, type RepositoryPreparation } from "../proje
 import type { ProjectContext } from "../projects/context.js";
 import { Scheduler } from "./scheduler.js";
 import { isTerminal, type TaskState, type WorkerResult, type WorkerTask } from "./task.js";
+import type { SupervisorChannelService } from "./channel.js";
 
 export interface MeritRouterOptions {
   coding?: CodingRunner | null;
@@ -140,6 +141,11 @@ const ResumeTaskOptionsSchema = z.object({ preserveDeadline: z.boolean().optiona
 /** Library entry point shared by the CLI, the MCP server, and the web panel. */
 export class MeritRouter {
   readonly db: Db;
+  /**
+   * Supervisor offload channel (core/channel.ts). Declared here so MCP and harness lanes build
+   * against it; lane B assigns the implementation in the constructor. Writable so tests can inject.
+   */
+  channel!: SupervisorChannelService;
   readonly tasks: TaskStore;
   readonly artifacts: ArtifactStore;
   readonly admission: Admission;

@@ -11,7 +11,7 @@ import { LeaseRefSchema } from "../storage/task-leases.js";
 export const WATCHDOG_MARGIN_MS = 60_000;
 
 /** Tools that wait on purpose (other tasks, the user, a budget decision): a session inside one is never stuck. */
-export const WATCHDOG_EXEMPT_TOOLS = new Set(["await_tasks", "ask_user", "request_more_budget", "await_supervisor_action"]);
+export const WATCHDOG_EXEMPT_TOOLS = new Set(["await_tasks", "ask_user", "request_more_budget", "await_supervisor_action", "ask_supervisor", "request_tools", "report_blocked"]);
 
 /**
  * Tools that run the task's checks inside one call: `integrate_task` runs every job check after

@@ -32,6 +32,7 @@ export interface AcceptanceDecisionOutcome {
 }
 import type { ResumePlan } from "../sessions/resume.js";
 import { faultPoint } from "../core/faults.js";
+import type { SupervisorChannelService } from "../core/channel.js";
 
 /** What a supervisor needs from the service (kept as an interface to avoid import cycles). */
 export interface SupervisorServices {
@@ -68,6 +69,8 @@ export interface RunContext {
   spec: WorkerTask;
   taskId: string;
   leaseOwner: string;
+  /** Supervisor offload channel for worker<->supervisor messages (core/channel.ts); absent in legacy paths. */
+  channel?: SupervisorChannelService;
   /** Immutable generation captured from the executor claim, never re-read by opted-in runners. */
   claimedRunCount?: number;
   taskLease?: LeaseRef;
