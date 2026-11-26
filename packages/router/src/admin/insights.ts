@@ -2,6 +2,8 @@ import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 export { acknowledgeModelQuarantine } from "./quarantine.js";
 export { deliveryView, projectDeliveryReport } from "./deliveries.js";
 export { listWorkerActions, getWorkerAction, decideWorkerAction, workerActionScope } from "./worker-actions.js";
+export { offloadReport, OffloadReportSchema, type OffloadReport, type OffloadReportInput } from "./offload-metrics.js";
+export { exportExchanges, exchangeRecordLine } from "./exchange-export.js";
 import path from "node:path";
 import YAML from "yaml";
 import { MODALITIES, PROFILE_NAMES, TIER_NAMES, type Importance, type Modality, type ProfileName, type TierName } from "../config/schema.js";

@@ -1,0 +1,11 @@
+{
+  "id": "05-bugfix",
+  "kind": "implement",
+  "setup": "buggy-money",
+  "title": "Bug fix with a failing test",
+  "writable": true,
+  "allowedPaths": ["src/money.ts"],
+  "contextFiles": ["src/money.ts", "tests/money.test.ts"],
+  "goal": "Fix formatCurrencyCents so tests/money.test.ts's negative-cents test passes, without weakening the test.",
+  "prompt": "`npm test` has a failing test: tests/money.test.ts expects `formatCurrencyCents(-150)` to return \"-$1.50\", but it currently returns something else. Fix src/money.ts so the test passes. Do not change the test."
+}

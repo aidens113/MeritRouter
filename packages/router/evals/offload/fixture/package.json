@@ -1,0 +1,14 @@
+{
+  "name": "offload-eval-fixture",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "A tiny, self-contained TypeScript project used only by the supervisor-offload eval suite (packages/router/evals/offload). Never published, never part of the pnpm workspace.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && cd dist && node --test"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}

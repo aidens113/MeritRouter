@@ -46,6 +46,7 @@ import { withUpstreamContext } from "../context/upstream.js";
 import { abortStuckRuns, type WatchedRun } from "./watchdog.js";
 import { classifyFailure, dispositionSessionEnd, WATCHDOG_STOP, type AbortReason, type Disposition } from "./disposition.js";
 import { redundancyFor } from "../storage/plans.js";
+import { reworkEventFor, RunChannel } from "./channel-service.js";
 import { planRedundancy, raceTwins, redundancyRefused, REDUNDANCY_SKIPPED, type RedundancyPlan, type TwinResult } from "./redundancy.js";
 
 // Moved to their owning modules; re-exported so existing importers keep working.
@@ -253,6 +254,8 @@ export class Executor {
       taskProject: task.row.project_id || d.cfg.brain.project,
       taskLabs: d.labs,
       ensureLabsSupervisor: d.ensureLabsSupervisor,
+      // The worker's side of the supervisor offload channel, bound to this run's task and lease.
+      channel: new RunChannel({ db: d.tasks.db, tasks: d.tasks }, task.row.id, lease, this.d.now),
       // The contract's allocation keeps the review (and, on the first run, repair) reserves free.
       budget: { ...budget, maxModelRequests: cap },
       ...(v.repairCap == null ? { executionRequestCap: approvedCap } : {}),
@@ -277,6 +280,30 @@ export class Executor {
       resume,
       web: this.d.web ?? null,
       ...(lab ? { lab } : {}),
+    };
+  }
+
+  /**
+   * A coding rework (core/channel-service.ts) starts its worktree at the candidate commit the
+   * task it reworks submitted, on that task's base, so its patch stays cumulative. The first run
+   * gets a retry context that says so; a later repair that has no start of its own keeps it.
+   */
+  private reworkRetry(d: ExecutorDeps, task: StoredTask, retry: RetryContext | null, tier: TierName): RetryContext | null {
+    const alias = task.spec.writableRepository;
+    if (!alias || d.cfg.profiles[task.spec.profile]?.mode !== "coding") return retry;
+    const rework = reworkEventFor(d.tasks.db, task.row.id);
+    const start = rework?.start;
+    if (!rework || !start || start.alias !== alias) return retry;
+    if (retry) return retry.startFrom ? retry : { ...retry, startFrom: start };
+    return {
+      fromTier: tier,
+      reason: "supervisor_rework",
+      stopReason: `the supervisor sent task ${rework.reworkOf} back with feedback`,
+      findings: [],
+      unresolvedCriteria: [],
+      failingChecks: [],
+      verificationReasons: [`Your workspace starts at the revision task ${rework.reworkOf} submitted (${start.commit.slice(0, 12)}). Apply the supervisor's rework feedback in the goal to that work; do not start over.`],
+      startFrom: start,
     };
   }
 
@@ -330,7 +357,8 @@ export class Executor {
       repairPossible,
       reviewerContext: (plan, reviewer, maxModelRequests, attempts, profile) => {
         const ctx = this.context(task, signal, plan, routing, reviewer, { contract, retry: null });
-        return { ...ctx, executionRequestCap: undefined, profile: this.d.cfg.profiles[profile]!, budget: { ...ctx.budget, maxModelRequests }, attempts, purpose: "verification" };
+        // A reviewer judges the worker independently: it does not speak on the worker's channel.
+        return { ...ctx, channel: undefined, executionRequestCap: undefined, profile: this.d.cfg.profiles[profile]!, budget: { ...ctx.budget, maxModelRequests }, attempts, purpose: "verification" };
       },
       onReviewer: (reviewer) => {
         if (activeReviewer) this.reviewerPhases.delete(activeReviewer.id);
@@ -484,7 +512,7 @@ export class Executor {
         const exempt = mode === "supervisor" || forced || (task.row as typeof task.row & { purpose?: string }).purpose === "qualification";
         const continued = continueRun(d, task, plan, prepared.inputModalities, { interruptedTier: () => interruptedTier(this.d.sessions, task, resume), exempt });
         const st = continued.st;
-        let retry: RetryContext | null = continued.retry;
+        let retry: RetryContext | null = this.reworkRetry(d, task, continued.retry, plan.tier);
         let repairing = continued.repairing;
         plan = continued.plan;
         routing.escalatedFrom = continued.escalatedFrom;
@@ -558,7 +586,7 @@ export class Executor {
           let result: RunnerResult = verified ? verified.result : { ...outcome.result, verificationStatus: "not_required" };
           const planned = await planRetry(d, task, st, { mode, plan, inputModalities: prepared.inputModalities, outcome, result, verified, contract, escalatedFrom: routing.escalatedFrom, forced });
           if (planned) {
-            retry = planned.retry;
+            retry = this.reworkRetry(d, task, planned.retry, planned.tier);
             repairing = true;
             const e = sessionEnd(outcome.state, outcome.result.stopReason);
             this.endSession(task, session, e.status, planned.tier !== plan.tier ? `${e.stopReason}; escalated to ${planned.tier}` : `${e.stopReason}; repair at ${planned.tier}`);

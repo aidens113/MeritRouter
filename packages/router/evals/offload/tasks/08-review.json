@@ -1,0 +1,10 @@
+{
+  "id": "08-review",
+  "kind": "review",
+  "title": "Review a diff",
+  "writable": true,
+  "allowedPaths": ["ANSWER.md"],
+  "contextFiles": ["review/sample.diff", "src/stats.ts"],
+  "goal": "Review review/sample.diff (a proposed change to src/stats.ts's average()) and flag its correctness bug.",
+  "prompt": "review/sample.diff is a proposed change to src/stats.ts's `average()`. Review it as you would a pull request and write your findings to ANSWER.md (create it; do not change any other file, and do not apply the diff)."
+}

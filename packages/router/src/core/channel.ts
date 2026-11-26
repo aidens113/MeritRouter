@@ -224,4 +224,18 @@ export interface SupervisorChannelService {
    * project the calling supervisor may see (each project's own store).
    */
   listPendingForSupervisor(projectScope?: string): ChannelMessage[];
+  /** Worker side: answer a supervisor probe addressed to this worker (kind "answer"). Supervisor side refuses. */
+  replyFromWorker(input: { messageId: string; kind: "answer"; body: string; refs?: string[] }): Promise<ChannelMessage>;
+
+  /** Worker side: mark a supervisor reply or notice received after the harness put it in the worker's turn. Probes stay pending until answered. */
+  markDelivered(messageId: string): ChannelMessage;
+
+  /** Supervisor side: mark worker replies (probe answers) read so they leave the inbox. Worker side refuses. */
+  acknowledge(messageIds: string[]): ChannelMessage[];
+
+  /** The reply recorded for a request (a probe's answer, a question's answer), or null. */
+  replyTo(messageId: string): ChannelMessage | null;
+
+  /** Every message of a task, oldest first. */
+  messagesForTask(taskId: string): ChannelMessage[];
 }

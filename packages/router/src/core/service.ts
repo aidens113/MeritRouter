@@ -78,6 +78,7 @@ import type { ProjectContext } from "../projects/context.js";
 import { Scheduler } from "./scheduler.js";
 import { isTerminal, type TaskState, type WorkerResult, type WorkerTask } from "./task.js";
 import type { SupervisorChannelService } from "./channel.js";
+import { ChannelService } from "./channel-service.js";
 
 export interface MeritRouterOptions {
   coding?: CodingRunner | null;
@@ -146,6 +147,8 @@ export class MeritRouter {
    * against it; lane B assigns the implementation in the constructor. Writable so tests can inject.
    */
   channel!: SupervisorChannelService;
+  /** The channel implementation `channel` starts as; its settle hook and shutdown stay bound to it even if a test swaps `channel`. */
+  private readonly channelService: ChannelService;
   readonly tasks: TaskStore;
   readonly artifacts: ArtifactStore;
   readonly admission: Admission;
@@ -288,6 +291,16 @@ export class MeritRouter {
         sharedKnowledge: this.globalKnowledge.shared,
         ...(opts.webFetch ? { webFetch: opts.webFetch } : {}), ...(opts.webPage ? { webPage: opts.webPage } : {}), onSettled: (id) => this.events.emit("settled", id) }) : null;
       this.stores = new ProjectStoreRouter(this.host, { db: this.db, tasks: this.tasks, sessions: this.sessions, artifacts: this.artifacts, contracts: this.contracts, admission: this.admission, bundle: null }, this.projects);
+      this.channelService = new ChannelService({
+        stores: { ofTask: (id) => this.stores.ofTask(id), of: (project) => this.stores.of(project), all: () => this.stores.all() },
+        submitTasks: (raw, o) => this.submitTasks(raw, o),
+        awaitResults: (ids, o) => this.awaitResults(ids, o),
+        now: this.now,
+        probeWaitSeconds: () => Math.min(60, this.cfg.execution.await_max_seconds),
+      });
+      this.channel = this.channelService;
+      // A finished task settles its open channel rows (probes answered from its record, stale requests expired).
+      this.events.on("settled", (id: string) => this.channelService.onTaskSettled(id));
       this.executor = new Executor({
         cfg,
         db: this.db,
@@ -348,7 +361,11 @@ export class MeritRouter {
         new ProviderSlotAdmission(cfg, this.router, this.health.capacity, this.now),
         (slug) => this.projects.get(slug),
       );
-      if (opts.worker) this.startWorker(opts.pollIntervalMs);
+      if (opts.worker) {
+        this.startWorker(opts.pollIntervalMs);
+        // Settle what a crash or another process left open (rework lineage, unanswered probes).
+        void this.channelService.reconcile().catch(() => undefined);
+      }
       if (opts.panelLifecycle !== "passive") this.panelAvailability = new PanelAvailability(() => this.cfg);
     } catch (error) {
       this.abandonConstruction();
@@ -1379,6 +1396,7 @@ export class MeritRouter {
     this.promotionTimers.clear();
     if (this.discoveryTimer) clearInterval(this.discoveryTimer);
     if (this.reloadTimer) clearInterval(this.reloadTimer);
+    await this.channelService.close();
     await this.supervisorQualifier.close();
     const projectRuntimesDrained = Promise.allSettled(this.host ? [this.host.close()] : []);
     await this.preparing?.catch(() => undefined);

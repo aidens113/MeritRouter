@@ -1,0 +1,10 @@
+--- a/src/stats.ts
++++ b/src/stats.ts
+@@ -1,8 +1,8 @@
+ export function average(nums: number[]): number {
+   if (nums.length === 0) throw new Error("average of empty array");
+   let sum = 0;
+-  for (let i = 0; i < nums.length; i++) sum += nums[i];
++  for (let i = 0; i <= nums.length; i++) sum += nums[i];
+   return sum / nums.length;
+ }

@@ -39,6 +39,7 @@ import { projectDeliveryReport } from "./admin/deliveries.js";
 import { openProjectStores, scopesFor } from "./admin/project-reads.js";
 import { connectCommand, connectText, type ConnectFlags } from "./cli/connect.js";
 import { inboxCommand } from "./cli/inbox.js";
+import { exchangesExportCommand, parseExchangesExportArgs } from "./cli/exchanges.js";
 
 // The `meritrouter` command: argument parsing and dispatch. Terminal rendering lives in src/cli/.
 
@@ -134,6 +135,9 @@ async function main(): Promise<number> {
       port: { type: "string" },
       // meritrouter connect claude|codex (cli/connect.ts)
       "project-dir": { type: "string" },
+      // meritrouter exchanges export (cli/exchanges.ts)
+      since: { type: "string" },
+      out: { type: "string" },
       hooks: { type: "boolean", default: false },
       help: { type: "boolean", short: "h", default: false },
     },
@@ -242,6 +246,12 @@ async function main(): Promise<number> {
         const r = await connectCommand(sy, target ?? "", flags, path.dirname(CLI_PATH));
         out(json ? r : connectText(r), json);
         return 0;
+      }
+      case "exchanges": {
+        if (args[0] !== "export") { out("usage: meritrouter exchanges export --project <slug> [--since <epoch ms>] [--out <file>]", false); return 1; }
+        return exchangesExportCommand(sy, parseExchangesExportArgs([
+          ...(values.project ? ["--project", values.project] : []), ...(values.since ? ["--since", values.since] : []), ...(values.out ? ["--out", values.out] : []),
+        ]));
       }
       case "inbox":
         return inboxCommand(sy, listScope(), json);

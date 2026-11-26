@@ -1,0 +1,11 @@
+{
+  "id": "01-scout",
+  "kind": "scout",
+  "setup": "buggy-money",
+  "title": "Find the currency sign bug",
+  "writable": true,
+  "allowedPaths": ["ANSWER.md"],
+  "contextFiles": ["src/money.ts"],
+  "goal": "Find which function mis-places the sign when formatting negative currency and report the exact wrong and right output for -150 cents.",
+  "prompt": "This repository has a bug in how it formats negative currency amounts. Find the function responsible, explain why it is wrong, and state exactly what `formatCurrencyCents(-150)` currently returns and what it should return instead. Write your findings to ANSWER.md (create it; do not change any other file)."
+}

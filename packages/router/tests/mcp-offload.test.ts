@@ -128,8 +128,9 @@ describe("supervisor-offload core MCP tool set", () => {
     const status = body(await c.callTool({ name: "status", arguments: { taskIds: [sub!.taskId] } }));
     expect(status).toHaveLength(1);
     expect(status[0]).toMatchObject({ taskId: sub!.taskId });
-    const stub = body(await c.callTool({ name: "offload_report", arguments: {} }));
-    expect(stub).toMatchObject({ available: false });
+    const report = body(await c.callTool({ name: "offload_report", arguments: { taskIds: [sub!.taskId] } }));
+    expect(report.totalTasks).toBe(1);
+    expect(report.window.project).toBeTruthy();
   });
 
   it("inbox, reply, probe and rework delegate to the injected channel service (fake sy.channel)", async () => {
@@ -138,6 +139,7 @@ describe("supervisor-offload core MCP tool set", () => {
     const createdAt = Date.now();
     const message = (over: Partial<ChannelMessage> = {}): ChannelMessage =>
       ({ id: "m1", taskId: "t1", projectId: "demo", direction: "worker_to_supervisor", kind: "question", body: "Which repo?", status: "pending", createdAt, ...over }) as ChannelMessage;
+    const probeAnswer = message({ id: "a0", direction: "worker_to_supervisor", kind: "answer", body: "The auth test.", inReplyTo: "p0" });
     const fakeChannel: SupervisorChannelService = {
       postFromWorker: async () => { throw new Error("not exercised by the MCP surface"); },
       awaitReply: async () => { throw new Error("not exercised by the MCP surface"); },
@@ -146,23 +148,32 @@ describe("supervisor-offload core MCP tool set", () => {
       rework: async (taskId, feedback, criteria) => { calls.push(["rework", taskId, feedback, criteria]); return "t1-rework-1"; },
       pendingForWorker: () => [],
       grantedTools: () => [],
-      listPendingForSupervisor: () => [message()],
+      listPendingForSupervisor: () => [message(), probeAnswer],
+      replyFromWorker: async () => { throw new Error("worker side only"); },
+      markDelivered: () => { throw new Error("worker side only"); },
+      acknowledge: (ids) => { calls.push(["acknowledge", ids]); return []; },
+      replyTo: (id) => (id === "m2" ? message({ id: "a2", taskId: "t1", direction: "worker_to_supervisor", kind: "answer", body: "It prints ENOENT.", inReplyTo: "m2", refs: ["session:s1"] }) : null),
+      messagesForTask: () => [message({ id: "p0", direction: "supervisor_to_worker", kind: "probe", body: "Which test failed?" })],
     };
     sy!.channel = fakeChannel;
 
     const inboxed = body(await c.callTool({ name: "inbox", arguments: {} }));
-    expect(inboxed).toEqual([message()]);
+    expect(inboxed.requests).toEqual([message()]);
+    // Probe answers come with their question, once, and are then acknowledged.
+    expect(inboxed.answers).toEqual([{ ...probeAnswer, question: "Which test failed?" }]);
+    expect(calls.shift()).toEqual(["acknowledge", ["a0"]]);
 
     const replied = body(await c.callTool({ name: "reply", arguments: { messageId: "m1", kind: "answer", body: "The core repo." } }));
     expect(replied.body).toBe("The core repo.");
     expect(calls[0]).toEqual(["reply", { messageId: "m1", kind: "answer", body: "The core repo." }]);
 
     const probed = body(await c.callTool({ name: "probe", arguments: { taskId: "t1", question: "What does the failing check print?" } }));
-    expect(probed.body).toBe("What does the failing check print?");
+    expect(probed).toEqual({ status: "answered", probeId: "m2", answer: "It prints ENOENT.", refs: ["session:s1"] });
     expect(calls[1]).toEqual(["probe", "t1", "What does the failing check print?"]);
+    expect(calls[2]).toEqual(["acknowledge", ["a2"]]);
 
     const reworked = body(await c.callTool({ name: "rework", arguments: { taskId: "t1", feedback: "Criterion c1 unmet: the summary omits the error line.", criteria: ["Mention the ERROR line verbatim"] } }));
     expect(reworked).toEqual({ taskId: "t1-rework-1" });
-    expect(calls[2]).toEqual(["rework", "t1", "Criterion c1 unmet: the summary omits the error line.", ["Mention the ERROR line verbatim"]]);
+    expect(calls[3]).toEqual(["rework", "t1", "Criterion c1 unmet: the summary omits the error line.", ["Mention the ERROR line verbatim"]]);
   });
 });

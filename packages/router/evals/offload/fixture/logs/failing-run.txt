@@ -1,0 +1,28 @@
+$ npm test
+
+> offload-eval-fixture@0.0.0 test
+> npm run build && node --test dist/tests
+
+▶ money
+  ✔ formats positive cents (0.6ms)
+  ✖ formats negative cents with the sign before the dollar sign (1.1ms)
+    AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+    + actual - expected
+
+    + '$-1.50'
+    - '-$1.50'
+
+        at TestContext.<anonymous> (file:///fixture/dist/tests/money.test.js:10:5)
+  ✔ clampRange keeps an in-range value (0.2ms)
+  ✔ clampRange clamps below the minimum (0.1ms)
+▶ money (3.4ms)
+
+▶ strings
+  ✔ slugifies a title (0.3ms)
+  ✔ trims surrounding punctuation (0.2ms)
+▶ strings (1.1ms)
+
+ℹ tests 6
+ℹ pass 5
+ℹ fail 1

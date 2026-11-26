@@ -1,0 +1,10 @@
+{
+  "id": "02-summarize",
+  "kind": "summarize",
+  "title": "Summarize a failing test log",
+  "writable": true,
+  "allowedPaths": ["ANSWER.md"],
+  "contextFiles": ["logs/failing-run.txt"],
+  "goal": "Summarize the root cause of the one failing test in logs/failing-run.txt.",
+  "prompt": "Read logs/failing-run.txt, a captured test run with one failing test. Summarize which test failed and why (the root cause, not just the stack trace) in ANSWER.md (create it; do not change any other file)."
+}

@@ -1,0 +1,10 @@
+{
+  "id": "07-refactor",
+  "kind": "edit",
+  "title": "Refactor duplicated clamp logic",
+  "writable": true,
+  "allowedPaths": ["src/money.ts", "src/stats.ts", "src/clamp.ts"],
+  "contextFiles": ["src/money.ts", "src/stats.ts"],
+  "goal": "Extract the duplicated min/max clamping in money.ts's clampRange and stats.ts's clampToUnitRange into one shared clamp() helper, keeping behaviour (tests) unchanged.",
+  "prompt": "src/money.ts's `clampRange` and src/stats.ts's `clampToUnitRange` both inline the same min/max clamping logic. Extract it into one shared `clamp(value, min, max)` helper (a new src/clamp.ts is a reasonable place) and have both functions call it. Behaviour must not change; `npm test` must still pass."
+}

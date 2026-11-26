@@ -13,6 +13,8 @@ import type { MeritRouter } from "../core/service.js";
 import { brainAccessRequests, budgetRequestsView, CHANNEL_KINDS, createProject, decideBudgetRequest, decideTaskAcceptance, routingPreview, jobChannel, jobDetail, jobMetrics, jobPlan, jobTeam, sessionDetail, sessionsView } from "../admin/insights.js";
 import { BUDGET_REQUEST_STATUSES } from "../admission/budget-requests.js";
 import { blame } from "../attribution/index.js";
+import { offloadReport } from "../admin/offload-metrics.js";
+import { CHANNEL_REQUEST_KINDS } from "../core/channel.js";
 import type { Principal } from "../brain/access.js";
 import { SessionStatusSchema } from "../sessions/events.js";
 import { ensurePanel, panelUrl, revivePanel } from "../operations/panel.js";
@@ -746,26 +748,40 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
       try {
         const p = scope(named);
         const outcome = await sy.awaitResults(taskIds, { ...(timeoutSeconds ? { timeoutSeconds } : {}), project: p });
-        const pending = sy.channel.listPendingForSupervisor(p).filter((m) => taskIds.includes(m.taskId));
+        const { requests, answers } = drainInbox(p, taskIds);
         const reports: Record<string, string> = {};
-        for (const result of outcome.completed) reports[result.taskId] = renderReportV1(result, { ...(detail ? { detail } : {}), messages: pending.filter((m) => m.taskId === result.taskId) });
-        return json({ pending: outcome.pending, timedOut: outcome.timedOut, waitedSeconds: outcome.waitedSeconds, completed: outcome.completed.map((r) => r.taskId), reports, pendingMessages: pending });
+        for (const result of outcome.completed) reports[result.taskId] = renderReportV1(result, { ...(detail ? { detail } : {}), messages: [...requests, ...answers].filter((m) => m.taskId === result.taskId) });
+        return json({ pending: outcome.pending, timedOut: outcome.timedOut, waitedSeconds: outcome.waitedSeconds, completed: outcome.completed.map((r) => r.taskId), reports, workerRequests: requests, probeAnswers: answers });
       } catch (err) {
         return fail(err);
       }
     },
   );
 
+  /**
+   * Split the supervisor inbox into worker requests (need a reply) and worker answers to probes
+   * (informational). Answers are returned with the question they answer and then acknowledged,
+   * so they are shown once instead of sitting in the inbox forever.
+   */
+  const drainInbox = (project: string, taskIds?: string[]) => {
+    const pending = sy.channel.listPendingForSupervisor(project).filter((m) => !taskIds || taskIds.includes(m.taskId));
+    const requests = pending.filter((m) => CHANNEL_REQUEST_KINDS.has(m.kind));
+    const answerRows = pending.filter((m) => !CHANNEL_REQUEST_KINDS.has(m.kind));
+    const answers = answerRows.map((m) => ({ ...m, question: m.inReplyTo ? sy.channel.messagesForTask(m.taskId).find((q) => q.id === m.inReplyTo)?.body ?? null : null }));
+    if (answerRows.length) sy.channel.acknowledge(answerRows.map((m) => m.id));
+    return { requests, answers };
+  };
+
   server.registerTool(
     "inbox",
     {
       title: "Worker messages waiting for an answer",
-      description: "Worker requests (question, tool_request, help, blocked) not yet answered, and worker answers to your probes not yet read, oldest first. Answer every one with reply before ending your turn.",
+      description: "Worker requests (question, tool_request, help, blocked) still waiting for your reply, and worker answers to your probes (each with its question; shown once, then marked read), oldest first. Answer every request with reply before ending your turn.",
       inputSchema: { ...projectInput },
     },
     async ({ project: named }) => {
       try {
-        return json(sy.channel.listPendingForSupervisor(scope(named)));
+        return json(drainInbox(scope(named)));
       } catch (err) {
         return fail(err);
       }
@@ -797,7 +813,11 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
     },
     async ({ taskId, question }) => {
       try {
-        return json(await sy.channel.probe(taskId, question));
+        const probe = await sy.channel.probe(taskId, question);
+        const answer = sy.channel.replyTo(probe.id);
+        if (!answer) return json({ status: "queued", probeId: probe.id, note: "The task is running; its worker answers at its next turn. The answer appears in await/inbox as probeAnswers." });
+        if (answer.direction === "worker_to_supervisor" && answer.status === "pending") sy.channel.acknowledge([answer.id]);
+        return json({ status: "answered", probeId: probe.id, answer: answer.body, refs: answer.refs ?? [] });
       } catch (err) {
         return fail(err);
       }
@@ -895,10 +915,16 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
     "offload_report",
     {
       title: "Offload metrics",
-      description: "Stub: per-session offload share, free-vs-paid request counts and acceptance rate are not computed yet (lane E delivers src/admin/offload-metrics.ts). Returns a placeholder so callers can integrate the tool name now.",
-      inputSchema: { ...projectInput },
+      description: "How much work workers did for you: tasks by kind and outcome, accepted lines by free/paid worker models vs other authors, worker commands, bytes read vs report bytes returned, probes, reworks, worker questions and acceptance rate. Each figure states whether it is exact or an estimate. Returns a placeholder so callers can integrate the tool name now.",
+      inputSchema: { since: z.number().int().optional().describe("Epoch ms; default: all time"), taskIds: z.array(z.string()).optional().describe("Limit to these tasks (e.g. this session's)"), ...projectInput },
     },
-    async () => json({ available: false, note: "Offload metrics land with supervisor-offload lane E (src/admin/offload-metrics.ts)." }),
+    async ({ since, taskIds, project: named }) => {
+      try {
+        return json(await offloadReport(sy, { project: scope(named), ...(since !== undefined ? { since } : {}), ...(taskIds?.length ? { sessionTaskIds: taskIds } : {}) }));
+      } catch (err) {
+        return fail(err);
+      }
+    },
   );
 
   server.registerPrompt(

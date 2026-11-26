@@ -305,5 +305,30 @@ summary) installed only with `--hooks`. Report: `lane-d.md`.
   expected phrase changed); `tests/delivery-runtime.test.ts` 2 failures (worker: fail inside
   harness execution, `node --version: terminated`; recheck after lane C lands).
 
+### 2026-11-26 — Lanes B and E: channel backend, offload metrics, exchange export, eval suite
+- Outcome: Accepted. Worker: lane-b (worker-heavy), lane-e.
+- Behaviour: `MeritRouter.channel` (ChannelService) and per-run `RunContext.channel` (RunChannel).
+  Worker waits poll the store without model requests, pause operation clocks, honour abort/lease
+  loss, end answered/expired/timeout. Probe on a running task is delivered at the next turn; on a
+  finished task one gated read-only summarize task answers from the task's record and transcript
+  tail (sessions cannot be reopened without a lease). Rework = new task with feedback, same scope,
+  worktree starting at the prior submitted commit, lineage in task_rework, idempotent.
+- Lead changes: interface gains replyFromWorker, markDelivered, acknowledge, replyTo,
+  messagesForTask (both classes implement; wrong-side calls throw). MCP `probe` returns the answer
+  for finished tasks (else queued id); `inbox`/`await` split workerRequests from probeAnswers, show
+  each answer with its question once, then acknowledge it. `offload_report` wired to
+  offloadReport (since, taskIds). `meritrouter exchanges export` registered; facade exports in
+  admin/insights.ts. mcp-offload test fake/expectations updated.
+- Validation: `pnpm typecheck` -> clean except lane C's in-progress
+  tests/worker-channel-tools.test.ts fake; `pnpm build` -> exit 0; `npx vitest run` mcp,
+  mcp-http, mcp-lifecycle-v2, mcp-passive-startup, mcp-credit-usage, mcp-offload,
+  client-supervision, offload-channel, offload-contracts, offload-metrics, exchange-export,
+  cli-connect, task-queue, task-startup-recovery, project-cli-operations -> 15 files, 129 passed;
+  `node evals/offload/run.mjs --dry-run` -> 8/8 tasks self-test cleanly; no flags -> usage only.
+- Not verified: live two-arm eval (needs approval); restart through a resumed executor run; lane B
+  reports 18 failures in session-faults, session-recording, verification-resume, coding,
+  approval-execution-timeout that also occur without its changes (lane C runner removal in
+  flight); recheck at the full-suite run.
+
 ## Open Questions
 - Budget for the live smoke and the Claude-usage cost of the offload eval (asked before Phase 3).

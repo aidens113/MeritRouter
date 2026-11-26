@@ -1,0 +1,10 @@
+{
+  "id": "06-write-tests",
+  "kind": "implement",
+  "title": "Write missing tests for average()",
+  "writable": true,
+  "allowedPaths": ["tests/stats.test.ts"],
+  "contextFiles": ["src/stats.ts"],
+  "goal": "Add tests/stats.test.ts covering average(), including the empty-array error, without changing src/stats.ts.",
+  "prompt": "src/stats.ts's `average()` function has no tests. Add tests/stats.test.ts that covers a normal case and the empty-array error it throws. Do not change src/stats.ts; `npm test` must pass."
+}
