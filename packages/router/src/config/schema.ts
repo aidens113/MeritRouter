@@ -661,7 +661,19 @@ export type TeamConfig = z.infer<typeof TeamConfigSchema>;
 
 export const CodingConfigSchema = z
   .object({
-    runner: z.enum(["native", "opencode", "command"]).default("native"),
+    /**
+     * Only "native" is a real runner today: the external/opencode/command path always failed
+     * closed (no enforced OS repository sandbox) and was removed (supervisor-offload, lane C).
+     * The old values are kept here only so a stale config names them in its own refusal.
+     */
+    runner: z
+      .enum(["native", "opencode", "command"])
+      .default("native")
+      .check((ctx) => {
+        if (ctx.value !== "native") {
+          ctx.issues.push({ code: "custom", input: ctx.value, message: `coding.runner: "${ctx.value}" is no longer supported. The external/opencode/command coding runner always failed closed (no enforced OS repository sandbox) and has been removed. Set coding.runner to "native" (the default) or remove this setting.` });
+        }
+      }),
     /** Executable for the opencode runner, or the full command for the generic runner. */
     command: z.string().min(1).default("opencode"),
     /** Shell command patterns the coding agent may run (OpenCode permission syntax); everything else is denied. */

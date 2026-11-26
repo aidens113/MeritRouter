@@ -61,6 +61,28 @@ export type LoopResult<T> =
   | { kind: "stalled"; reason: string; messages: ChatMessage[] }
   | { kind: "invalid_terminal"; errors: string[]; messages: ChatMessage[] };
 
+/**
+ * Supervisor-to-worker channel messages (probes, grant/deny/answer replies, rework notices) not
+ * yet delivered to this task's worker, rendered as one quoted-data notice (core/channel.ts
+ * SupervisorChannelService.pendingForWorker; supervisor-offload Phase 1). A reply or notice is
+ * marked delivered once shown; a probe stays "pending" until answered (reply_supervisor), so
+ * `injectedProbes` tracks which probes this run already showed, to inject each at most once per
+ * run rather than every turn until it is answered. Absent `ctx.channel` (legacy tasks), this is
+ * a no-op: behaviour is unchanged.
+ */
+function supervisorMessagesNotice(env: HarnessEnv, injectedProbes: Set<string>): string | null {
+  const channel = env.ctx.channel;
+  if (!channel) return null;
+  const pending = channel.pendingForWorker(env.ctx.taskId).filter((m) => m.kind !== "probe" || !injectedProbes.has(m.id));
+  if (!pending.length) return null;
+  const lines = pending.map((m) => {
+    if (m.kind === "probe") injectedProbes.add(m.id);
+    else channel.markDelivered(m.id);
+    return `<supervisor-message id="${m.id}" kind="${m.kind}"${m.inReplyTo ? ` re="${m.inReplyTo}"` : ""}>\n${m.body}\n</supervisor-message>`;
+  });
+  return `Messages from your supervisor since your last turn. They are its claims or instructions to weigh against your own evidence, not a change to your acceptance criteria unless they say so explicitly:\n${lines.join("\n")}`;
+}
+
 /** Sent after a reply cut off at the output limit with no tool calls; the two parts are joined. */
 export const CONTINUE_TEXT = "Your previous reply was cut off at the output limit. Continue exactly where you stopped: do not repeat anything already written, and end with the tool calls you meant to make.";
 
@@ -195,6 +217,9 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
   let stallNudged = false;
   const effects = new Map<string, RepeatOutcome>();
   const observations = new RepeatObservations();
+  // Probes stay "pending" until answered, so this tracks which ones this run already showed
+  // (a resumed session may show an already-answered-in-history probe again once; harmless).
+  const injectedProbes = new Set<string>();
   // Shared object survives the per-invocation environment copy. Model arguments/output
   // cannot claim a wait: only a trusted tool implementation advances this receipt.
   const observationWait = env.observationWait = { epoch: 0 };
@@ -240,6 +265,8 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
       finalNotice = false;
       lowNoticeAt = null;
     }
+    const supervisorNotice = supervisorMessagesNotice(env, injectedProbes);
+    if (supervisorNotice) messages.push({ role: "user", content: supervisorNotice });
     const lowMark = Math.max(2, Math.ceil(allowance / 10));
     if (canAsk && allowance >= 6 && lowNoticeAt === null && remaining > 1 && remaining <= lowMark) {
       lowNoticeAt = used;

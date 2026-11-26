@@ -206,19 +206,13 @@ describe("coding runner sessions", () => {
     expect(s!.workspace!.repos[0]!.head).toBe(after!.head);
   }, 90_000);
 
-  it("external agent: records refusal without a workspace or gateway requests", async () => {
-    env = makeEnv({ config: baseConfig({ coding: { runner: "command", command: `node "${agent}" good` } }) });
-    const client = new ScriptedClient((req) => reply(JSON.stringify(goodOutput()), servedFor(sy!, req)));
-    sy = open(env, client, { worker: true, coding: createCodingRunner(env.cfg) });
-    const [sub] = await sy.submitTasks([implement()]);
-    const result = (await sy.awaitResults([sub!.taskId], { timeoutSeconds: 60 })).completed[0]!;
-    expect(result.stopReason).toBe("worker_sandbox_unavailable");
-    expect(client.requests).toHaveLength(0);
-    const [session] = runs(sub!.taskId);
-    expect(session).toMatchObject({ status: "failed", stopReason: "worker_sandbox_unavailable", modelRequests: 0 });
-    expect(ofType(eventsOf(session!.id), "model_request")).toHaveLength(0);
-    expect(ofType(eventsOf(session!.id), "workspace")).toHaveLength(0);
-  }, 90_000);
+  it("a non-native coding.runner is refused at config parse, before any session, workspace or gateway request could exist", () => {
+    // The external coding runner (which this once exercised at runtime, recording a refusal
+    // session with no workspace or model requests) was removed: coding.runner now only accepts
+    // "native", refused at config parse (supervisor-offload lane C). No session is ever created.
+    expect(() => makeEnv({ config: baseConfig({ coding: { runner: "command", command: `node "${agent}" good` } }) }))
+      .toThrow(/coding\.runner.*"command".*no longer supported.*native/s);
+  });
 });
 
 describe("supervisor sessions", () => {

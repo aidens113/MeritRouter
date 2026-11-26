@@ -2,6 +2,7 @@ import type { WorkerTask } from "../core/task.js";
 import { OUTPUT_CONTRACT } from "../core/worker-output.js";
 import { criterionTexts } from "../core/task.js";
 import type { RetryContext } from "./types.js";
+import type { HarnessTool } from "../harness/tools.js";
 
 export function systemPrompt(role: string): string {
   return `You are a bounded worker delegated one task by a supervising engineer. ${role}
@@ -27,6 +28,38 @@ export function renderRetryContext(retry: RetryContext | null | undefined): stri
     lines.push(`Failing check \`${c.command}\` (exit ${c.exitCode ?? "killed"}, log ${c.logRef}):`, "<check-log>", c.logTail, "</check-log>");
   }
   return `${lines.join("\n")}\n`;
+}
+
+/** One worked example per tool, for a lite numbered prompt (small/free tiers; supervisor-offload lane C). */
+const WORKED_TOOL_EXAMPLES: Readonly<Record<string, string>> = {
+  read_file: `read_file({"alias":"<repo>","path":"src/app.ts"})`,
+  list_files: `list_files({"alias":"<repo>","dir":"src"})`,
+  search: `search({"alias":"<repo>","pattern":"functionName"})`,
+  write_file: `write_file({"path":"src/app.ts","content":"<the full new file content>"})`,
+  replace_in_file: `replace_in_file({"path":"src/app.ts","old_text":"<exact text to find>","new_text":"<its replacement>"})`,
+  delete_file: `delete_file({"path":"old-file.ts"})`,
+  run_check: `run_check({"command":"<one declared check, exactly as written>"})`,
+  run_command: `run_command({"command":"<one allowed command>"})`,
+  read_artifact: `read_artifact({"ref":"artifact:<id>"})`,
+  ask_supervisor: `ask_supervisor({"question":"<what you need to know>"})`,
+  request_tools: `request_tools({"tools":["web_search"],"reason":"<why you need it>"})`,
+  report_blocked: `report_blocked({"reason":"<the exact blocker>"})`,
+  reply_supervisor: `reply_supervisor({"message_id":"<id from the supervisor's probe>","answer":"<your answer>"})`,
+  submit_result: `submit_result({"summary":"<what you did>","findings":[],"criteria":[{"index":0,"status":"met","evidenceRefs":["<repo>:path#L1-L3"]}],"selfCheck":{"notTested":[],"assumptions":[],"riskiestChange":"none","checkNext":[]}})`,
+};
+
+/**
+ * A short, numbered prompt with one worked example per tool the worker actually has, instead of
+ * the dense harness-v2 prose: for small or free-tier workers that do better with concrete steps
+ * than with a paragraph of API rules (supervisor-offload lane C: worker-path-audit.md #2-#3).
+ */
+export function liteToolGuidance(tools: ReadonlyArray<Pick<HarnessTool, "def">>, submitName = "submit_result"): string {
+  const steps = tools.map((t, i) => {
+    const name = t.def.function.name;
+    const example = WORKED_TOOL_EXAMPLES[name] ?? `${name}({ ...its described arguments })`;
+    return `${i + 1}. ${name}: ${t.def.function.description ?? ""}\n   Example: ${example}`;
+  });
+  return `## How to use your tools\nCall one tool at a time. Read before you write. When you are done, call ${submitName} in this shape (selfCheck included):\n${WORKED_TOOL_EXAMPLES.submit_result}\n\n${steps.join("\n")}`;
 }
 
 export function taskBrief(spec: WorkerTask, retry?: RetryContext | null): string {

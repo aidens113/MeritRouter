@@ -88,20 +88,12 @@ describe("native coding worker", () => {
     expect(lines.find((l) => l.text.includes("by second"))!.model).toBe("groq/second");
   }, 90_000);
 
-  it("external coding workers fail closed when no OS repository sandbox is available", async () => {
-    env = makeEnv({ config: baseConfig({ coding: { runner: "command", command: `node "${agent}" good` } }) });
-    sy = open(env, new ScriptedClient((req) => reply(JSON.stringify(goodOutput()), servedFor(sy!, req))), { worker: true, coding: createCodingRunner(env.cfg) });
-    // This case checks worker sandbox refusal; keep first-use Brain bootstrap in the
-    // test's setup phase rather than the short shared shutdown hook.
-    await sy.brain.ensure();
-    const [sub] = await sy.submitTasks([task()]);
-    const r = (await sy.awaitResults([sub!.taskId], { timeoutSeconds: 60 })).completed[0]!;
-    expect(r.executionStatus).toBe("failed");
-    expect(r.acceptanceStatus).toBe("not_verified");
-    expect(r.stopReason).toBe("worker_sandbox_unavailable");
-    expect(readFileSync(path.join(env.repo, "src/app.ts"), "utf8")).not.toContain("subtract");
-    expect(sy.db.prepare("SELECT worktree_path FROM workspaces WHERE task_id = ?").get(sub!.taskId)).toBeUndefined();
-  }, 90_000);
+  it("refuses a non-native coding.runner at config parse, with a clear message", () => {
+    // The external/opencode/command coding runner always failed closed and was removed
+    // (supervisor-offload lane C); the config can no longer even be constructed with it.
+    expect(() => makeEnv({ config: baseConfig({ coding: { runner: "command", command: `node "${agent}" good` } }) })).toThrow(/coding\.runner.*"command".*no longer supported.*native/s);
+    expect(() => makeEnv({ config: baseConfig({ coding: { runner: "opencode" } }) })).toThrow(/coding\.runner.*"opencode".*no longer supported.*native/s);
+  });
 
   it("writes each worker's report into the brain", async () => {
     env = makeEnv({ config: baseConfig({ coding: { runner: "native" } }) });

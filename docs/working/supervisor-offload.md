@@ -330,5 +330,22 @@ summary) installed only with `--hooks`. Report: `lane-d.md`.
   approval-execution-timeout that also occur without its changes (lane C runner removal in
   flight); recheck at the full-suite run.
 
+### 2026-11-26 — Lane C: worker channel tools, tier-gated prompt, external runner removed
+- Outcome: Partial. Worker: lane-c.
+- Done: ask_supervisor, request_tools, report_blocked, reply_supervisor (uses replyFromWorker);
+  loop injects pendingForWorker each turn, marks delivered, shows each probe once per run; T1 gets
+  legacy edit tools plus a numbered lite prompt with one example per tool, T2/T3 keep harness v2;
+  ExternalCodingRunner removed, non-native `coding.runner` refused at config parse.
+- Not done: per-brief tool restriction (WorkerTaskSchema has no field to carry the brief's tool
+  set); selfCheck asked for but not required; fixed-count stall nudge deferred.
+- Validation: `pnpm typecheck` -> 0 errors; `pnpm build` -> 0 errors; `npx vitest run
+  --no-file-parallelism` worker-tool-profiles, worker-channel-tools, offload-contracts,
+  offload-channel, mcp-offload -> 5 files, 52 passed.
+- Known failing, NOT caused by lane C: serial run of native, session-recording, task-lab-caller,
+  external-task-tools -> 6 failed / 43 passed; with lane C stashed, 5 of the same fail at HEAD.
+  Cause: declared check commands end `environment_failure` with exitCode null (verification
+  reasons logged from native.test.ts), same symptom as project-task-lab-deletion and
+  delivery-runtime (`node --version: terminated`). Assigned to command-execution diagnosis.
+
 ## Open Questions
 - Budget for the live smoke and the Claude-usage cost of the offload eval (asked before Phase 3).

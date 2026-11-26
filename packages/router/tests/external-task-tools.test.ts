@@ -5,7 +5,6 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { MeritRouter } from "../src/core/service.js";
 import type { RunContext } from "../src/runners/types.js";
-import { BudgetRequests } from "../src/admission/budget-requests.js";
 import { WorkerActionRequests } from "../src/harness/worker-actions.js";
 import { WORKER_CHECK_EVENT } from "../src/harness/tools.js";
 import { capturedLease } from "../src/storage/task-leases.js";
@@ -43,25 +42,13 @@ async function directBridge(declared = check) {
 }
 
 describe("external worker refusal", () => {
-  it.each(["human", "supervisor", "auto"] as const)("cannot gain process or model access through the %s budget approver", async budget_approver => {
-    env = makeEnv({ config: baseConfig({ coding: { runner: "command", command: "placeholder" }, team: { budget_approver }, routing: { escalate_on_failure: false } }) });
-    const marker = path.join(env.dir, "external-tools-started");
-    const script = path.join(env.dir, "forbidden-agent.cjs");
-    writeFileSync(script, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'started');`);
-    env.cfg.coding.command = `"${process.execPath}" "${script}"`;
-    const provider = new ScriptedClient(() => reply(JSON.stringify(goodOutput())));
-    sy = open(env, provider, { worker: true });
-    const [submitted] = await sy.submitTasks([task()]);
-    const result = (await sy.awaitResults([submitted!.taskId], { timeoutSeconds: 15 })).completed[0]!;
-    expect(result).toMatchObject({ executionStatus: "failed", stopReason: "worker_sandbox_unavailable", checks: [], patchRefs: [] });
-    expect(result.usage.modelRequests).toBe(0);
-    expect(provider.requests).toHaveLength(0);
-    expect(existsSync(marker)).toBe(false);
-    expect(readFileSync(path.join(env.repo, "src/app.ts"), "utf8")).not.toContain("subtract");
-    expect(new BudgetRequests(sy.db).list({ taskId: submitted!.taskId })).toHaveLength(0);
-    expect(new WorkerActionRequests(sy.db).list({ project: sy.tasks.projectOf(submitted!.taskId)!, taskId: submitted!.taskId })).toHaveLength(0);
-    expect(sy.tasks.events(submitted!.taskId, 100).some(event => event.type === WORKER_CHECK_EVENT)).toBe(false);
-  }, 20000);
+  it.each(["human", "supervisor", "auto"] as const)("a non-native coding.runner is refused at config parse before any %s budget approval could apply", budget_approver => {
+    // The external coding runner (which this once exercised at runtime, never launching the
+    // process) was removed: coding.runner now only accepts "native", refused at config parse
+    // (supervisor-offload lane C). No process, model request, or approval path is reachable.
+    expect(() => makeEnv({ config: baseConfig({ coding: { runner: "command", command: "placeholder" }, team: { budget_approver }, routing: { escalate_on_failure: false } }) }))
+      .toThrow(/coding\.runner.*"command".*no longer supported.*native/s);
+  });
 });
 
 describe("direct task-scoped bridge", () => {

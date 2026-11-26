@@ -3,6 +3,7 @@ import type { RoleName } from "../config/schema.js";
 import type { ChatTool } from "../gateway/types.js";
 import type { ValidateFunction } from "ajv";
 import { validateWorkerOutput, type EvidenceUniverse, type ValidatedOutput } from "../core/worker-output.js";
+import { SelfCheckSchema, type SelfCheck } from "../core/report.js";
 import type { WorkerTask } from "../core/task.js";
 import type { RunContext, RunnerResult } from "../runners/types.js";
 import { agentLabel } from "../roles/index.js";
@@ -35,18 +36,42 @@ export const SUBMIT_RESULT_DEF: ChatTool = {
           },
         },
         data: {},
+        selfCheck: {
+          type: "object",
+          description: "Answer these before you submit: what you did not test, assumptions you made instead of asking, your riskiest change, and what the supervisor should check next.",
+          properties: {
+            notTested: { type: "array", items: { type: "string" } },
+            assumptions: { type: "array", items: { type: "string" } },
+            riskiestChange: { type: "string", description: "The change most likely to be wrong, and why; \"none\" for read-only work." },
+            checkNext: { type: "array", items: { type: "string" } },
+          },
+          required: ["notTested", "assumptions", "riskiestChange", "checkNext"],
+        },
       },
-      required: ["summary", "findings", "criteria"],
+      required: ["summary", "findings", "criteria", "selfCheck"],
     },
   },
 };
 
-export function submitResultTool(spec: WorkerTask, universe: EvidenceUniverse, dataValidator?: ValidateFunction): TerminalTool<ValidatedOutput> {
+export function submitResultTool(spec: WorkerTask, universe: EvidenceUniverse, dataValidator?: ValidateFunction): TerminalTool<ValidatedOutput & { selfCheck?: SelfCheck }> {
   return {
     def: SUBMIT_RESULT_DEF,
     accept: async (args) => {
+      const raw = (args ?? {}) as Record<string, unknown>;
+      // selfCheck is asked for in the tool schema (every worker is told to answer it), but is not
+      // validation-blocking here: core/report.ts already renders a missing one as "NOT PROVIDED"
+      // rather than failing the result, and rejecting its absence would break every existing
+      // fixture/test that submits without it. An invalid (present but malformed) selfCheck is
+      // still a rejection, same as any other malformed field, so a model that tries gets useful
+      // feedback.
+      let selfCheck: SelfCheck | undefined;
+      if (raw.selfCheck !== undefined) {
+        const parsed = SelfCheckSchema.safeParse(raw.selfCheck);
+        if (!parsed.success) return { ok: false, errors: parsed.error.issues.map((i) => `selfCheck${i.path.length ? `.${i.path.join(".")}` : ""}: ${i.message}`) };
+        selfCheck = parsed.data;
+      }
       const v = validateWorkerOutput(args, { acceptanceCriteria: criterionTexts(spec), universe, ...(dataValidator ? { dataValidator } : {}) });
-      return v.ok ? { ok: true, value: v.value } : { ok: false, errors: v.errors };
+      return v.ok ? { ok: true, value: { ...v.value, ...(selfCheck ? { selfCheck } : {}) } } : { ok: false, errors: v.errors };
     },
   };
 }

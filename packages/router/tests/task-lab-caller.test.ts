@@ -108,13 +108,12 @@ it('cancels a pending worker Lab request promptly without waiting for a dedicate
   expect(fixture.ensures()).toBe(0);
   expect(sy!.labs.taskAttempts.store.all()).toHaveLength(0);
 }, 20000);
-it('refuses an external coding worker before models, workspaces or Lab execution', async () => {
-  const fixture = setup('command'); const id = await submit(); const result = await completed(id);
-  expect(result.stopReason).toBe('worker_sandbox_unavailable');
-  expect(result.taskLab).toBeUndefined(); expect(fixture.client.requests).toHaveLength(0); expect(fixture.ensures()).toBe(0);
-  expect(sy!.db.prepare('SELECT * FROM workspaces WHERE task_id=?').get(id)).toBeUndefined();
-  expect(sy!.labs.taskAttempts.store.all()).toHaveLength(0);
-}, 20000);
+it('refuses a non-native coding.runner at config parse, before any models, workspaces or Lab execution could run', () => {
+  // The external coding runner (which this once exercised at runtime, never launching models,
+  // workspaces or Lab execution) was removed: coding.runner now only accepts "native", refused
+  // at config parse (supervisor-offload lane C). Nothing below config construction is reachable.
+  expect(() => setup('command')).toThrow(/coding\.runner.*"command".*no longer supported.*native/s);
+});
 it('does not accept passing operator-run ordinary checks when required Lab execution is refused', async () => {
   const fixture = setup('native', true); const id = await submit({ checks: [ordinary] }); const result = await completed(id, RUN_SECONDS);
   expect(result.checks[0]?.exitCode).toBe(0);

@@ -8,6 +8,7 @@ import { projectRuntimeActivationRoots, type Workspace, type Worktrees } from ".
 import type { SessionWorkspace } from "../../sessions/events.js";
 import { git } from "../../workspaces/git.js";
 import type { EvidenceUniverse, WorkerOutput } from "../../core/worker-output.js";
+import type { SelfCheck } from "../../core/report.js";
 import { baseResult, type RunContext, type RunOutcome } from "../types.js";
 import { awaitWorkerCommand, workerSourceIdentity } from "../../harness/worker-actions.js";
 import { criteria } from "../../core/task.js";
@@ -123,6 +124,8 @@ export async function finishCoding(
     universe?: EvidenceUniverse | null;
     /** The worker's own per-criterion assessment, when it submitted one. */
     output?: Pick<WorkerOutput, "criteria"> | null;
+    /** The worker's answers to the fixed self-check questions, when it submitted them. */
+    selfCheck?: SelfCheck;
   },
 ): Promise<RunOutcome> {
   const spec = ctx.spec;
@@ -211,6 +214,7 @@ export async function finishCoding(
       changedPaths: changes.changed.map((c) => c.path),
       scopeViolation: changes.outOfScope,
       protectedPathsChanged: changes.protectedChanged,
+      ...(o.selfCheck ? { selfCheck: o.selfCheck } : {}),
     }),
     evidence: { revision, artifactDigest, universe: o.universe ?? null, output: o.output ?? null },
   };

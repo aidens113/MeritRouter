@@ -1,5 +1,6 @@
 import { restoreCheckEvidence } from "../harness/check-evidence.js";
 import { workerActionTools } from "../harness/worker-action-tools.js";
+import { supervisorChannelTools } from "../harness/supervisor-channel-tools.js";
 import type { ChatMessage } from "../gateway/types.js";
 import { estimateTokens } from "../gateway/types.js";
 import { compileOutputSchema } from "../core/validate.js";
@@ -60,6 +61,7 @@ export async function runReadOnly(ctx: RunContext): Promise<RunOutcome> {
     ...webTools(),
     requestBudgetTool(),
     ...workerActionTools(),
+    ...supervisorChannelTools(),
     ...labHarnessTools().filter(tool => ["lab_status", "lab_logs"].includes(tool.def.function.name)),
   ];
   const maxTokens = Math.min(profile.max_output_tokens, spec.budget?.maxOutputTokens ?? Infinity);
@@ -108,6 +110,7 @@ export async function runReadOnly(ctx: RunContext): Promise<RunOutcome> {
         checks: checkResults,
         ...(v.output.data !== undefined ? { data: v.output.data } : {}),
         unresolvedCriteria: v.unresolvedCriteria,
+        ...(v.selfCheck ? { selfCheck: v.selfCheck } : {}),
       }),
       evidence: { universe: env.universe, output: v.output },
     };

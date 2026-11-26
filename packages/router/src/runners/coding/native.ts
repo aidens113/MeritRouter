@@ -1,6 +1,7 @@
 import { git } from "../../workspaces/git.js";
 import { restoreCheckEvidence } from "../../harness/check-evidence.js";
 import { workerActionTools } from "../../harness/worker-action-tools.js";
+import { supervisorChannelTools } from "../../harness/supervisor-channel-tools.js";
 import type { ChatMessage } from "../../gateway/types.js";
 import { estimateTokens } from "../../gateway/types.js";
 import type { CodingRunner } from "../../core/executor.js";
@@ -19,7 +20,7 @@ import { labHarnessTools } from "../../labs/tools.js";
 import { minimalEnv } from "./process.js";
 import { brainContext, SUBMIT_RESULT_DEF, submitResultTool, workerActor, workerBrainEnv } from "../../harness/worker.js";
 import type { RunContext, RunOutcome } from "../types.js";
-import { taskBrief } from "../prompts.js";
+import { taskBrief, liteToolGuidance } from "../prompts.js";
 import { agentHome, finishCoding, prepareWorkspace, resumeWorkspace, sourceDirtyFinding } from "./finish.js";
 import { WorkspacePointer } from "../session-workspace.js";
 import { harnessV2Tools, harnessV2StartupContext } from "../../harness/operation-dispatch.js";
@@ -74,9 +75,16 @@ export class NativeCodingRunner implements CodingRunner {
       ...(brain ? { brain } : {}),
     };
     await restoreCheckEvidence(env);
+    // Small/free tiers (T1) get the simpler legacy edit tools and a lite numbered prompt instead
+    // of harness v2's batching/apply_edits surface and its dense guidance paragraph: that surface
+    // is the densest, hardest-to-generate part of the prompt and was offered uniformly regardless
+    // of tier (worker-path-audit.md #2-#3). A resumed session keeps whatever surface it started
+    // with, never switching a transcript mid-flight.
+    const hadHarnessV2 = ctx.resume?.plan.messages.some(message => message.role === "system" && message.content.includes("Harness v2:"));
+    const lite = !ctx.resume && ctx.tier === "T1";
+    const useHarnessV2 = !lite && (!ctx.resume || hadHarnessV2);
     const tools: HarnessTool[] = [
-      // Historical v1 transcripts keep their original surface when resumed.
-      ...(!ctx.resume || ctx.resume.plan.messages.some(message => message.role === "system" && message.content.includes("Harness v2:")) ? harnessV2Tools(env) : []),
+      ...(useHarnessV2 ? harnessV2Tools(env) : []),
       ...repoTools(spec.repositoryAliases),
       ...editTools(),
       ...(declared.length ? [declaredCheckTool()] : []),
@@ -87,6 +95,7 @@ export class NativeCodingRunner implements CodingRunner {
       ...labHarnessTools(),
       requestBudgetTool(),
     ...workerActionTools(),
+    ...supervisorChannelTools(),
     ];
     const canCheck = declared.length > 0 && ctx.cfg.coding.max_check_runs_per_task > 0;
     const limits = planLimits(ctx.plan, ctx.cfg.routing.max_endpoint_fallbacks);
@@ -98,11 +107,11 @@ export class NativeCodingRunner implements CodingRunner {
     const fresh: ChatMessage[] = [
       {
         role: "system",
-        content: `${charterFor(ctx.cfg, role)}\n\n## Tools\nYour workspace is repository "${alias}" (an isolated worktree). Edit only paths matching: ${(spec.constraints.allowedPaths ?? []).join(", ")}. Prefer read_files/search_text and apply_edits (sha256-guarded); legacy read_file/search/write_file/replace_in_file/delete_file remain compatibility aliases${canCheck ? `; group your declared checks with run_checks; run_check is a compatibility alias for one check (at most ${ctx.cfg.coding.max_check_runs_per_task} runs)` : ""}${patterns.length ? "; run allowed commands with run_command" : ""}. There is no other shell. When done, call submit_result once.\n\n## Result\n${OUTPUT_CONTRACT}`,
+        content: `${charterFor(ctx.cfg, role)}\n\n## Tools\nYour workspace is repository "${alias}" (an isolated worktree). Edit only paths matching: ${(spec.constraints.allowedPaths ?? []).join(", ")}. ${lite ? "Use read_file/search/write_file/replace_in_file/delete_file for edits." : "Prefer read_files/search_text and apply_edits (sha256-guarded); legacy read_file/search/write_file/replace_in_file/delete_file remain compatibility aliases"}${canCheck ? `; group your declared checks with run_checks; run_check is a compatibility alias for one check (at most ${ctx.cfg.coding.max_check_runs_per_task} runs)` : ""}${patterns.length ? "; run allowed commands with run_command" : ""}. There is no other shell. When done, call submit_result once.\n\n## Result\n${OUTPUT_CONTRACT}`,
       },
       { role: "user", content: `${taskBrief(spec, ctx.retry)}${spec.context.repairSource ? "\nYour isolated workspace already contains the retained repair source, replayed onto the current integration base. Inspect and correct those actual files; do not recreate the earlier implementation from descriptions. The source remains unaccepted and every declared check must pass anew.\n" : ""}${checks}\nProvided context:\n${renderSources(sources) || "(none)"}` },
     ];
-    fresh[0] = { ...fresh[0]!, content: `${fresh[0]!.content}\n\n${harnessV2StartupContext(env)}` };
+    fresh[0] = { ...fresh[0]!, content: `${fresh[0]!.content}\n\n${lite ? liteToolGuidance(availableTools(tools, env)) : harnessV2StartupContext(env)}` };
     const memoryOptions = { tools: [...availableTools(tools, env).map(tool => tool.def), SUBMIT_RESULT_DEF], outputTokens: maxTokens, reservedTokens: 500 };
     if (!ctx.resume) {
       const memory = await brainContext(env, { messages: fresh, ...memoryOptions });
@@ -148,6 +157,7 @@ export class NativeCodingRunner implements CodingRunner {
       summaryLead: loop.kind === "terminal" ? loop.value.output.summary : loop.kind === "stalled" ? "Stopped after a repeated identical tool call without progress." : "",
       universe: env.universe,
       output: loop.kind === "terminal" ? loop.value.output : null,
+      ...(loop.kind === "terminal" && loop.value.selfCheck ? { selfCheck: loop.value.selfCheck } : {}),
     });
   }
 }
