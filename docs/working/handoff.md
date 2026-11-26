@@ -1,5 +1,12 @@
 # Handoff: state of every effort (2026-10-23)
 
+**2026-11-26 CURRENT (supervisor offload):** Active effort is [supervisor-offload.md](supervisor-offload.md); read its
+Current State first. External Claude Code/Codex supervisor + free MeritRouter workers: contracts, core MCP tools and
+playbook, two-way channel, supervisor-chosen tool sets, connect/hooks, offload metrics and eval are on dev. Next: full
+suite rerun, docs, then live phase awaiting user approval. Internal-supervisor/Facebook efforts are Paused; older
+checkpoints below are history.
+
+
 Public framework validation and integration status: [framework-validation.md](framework-validation.md).
 
 ## Latest (2026-10-28) — read this first

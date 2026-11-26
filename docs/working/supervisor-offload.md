@@ -1,6 +1,6 @@
 # Supervisor offload: free workers do the heavy lifting
 Status: Active
-Status detail: Phase 0 and Phase 1 committed; lanes A-E dispatched in parallel 2026-11-25.
+Status detail: Paused 2026-11-26 at user request. All build lanes integrated on dev; full-suite rerun, docs and live phase next.
 Created: 2026-11-25
 Last updated: 2026-11-25
 Owner: Senior supervisor agent
@@ -16,53 +16,48 @@ Related: [trial evidence](supervisor-offload/reports/trial-evidence.md),
 
 ## Current State
 
-Audit finished 2026-11-25 by four read-only workers; lead spot-checked each load-bearing claim.
+Checkpoint 2026-11-26 (session paused at user request). Status: build phases done on `dev`; live
+phase not started.
 
-**What the evidence says.** The one delivered trial (Instagram) used an external Codex
-supervisor dispatching small, disjoint-file worker tasks directly; no MeritRouter supervisor job
-or Lab was used (assessment lines 20-22, verified). The Facebook trial used MeritRouter's own
-internal supervisor and never delivered after ~589/800 requests; its failures were overwhelmingly
-framework machinery (slot recovery, budgets/deadlines, provenance, stalls), not model quality.
-November's effort went mostly into that machinery. The proven loop was never hardened.
+**Built and pushed to dev (all committed):**
+- Contracts: Brief v1 (kind, goal, scope, tools, checks, doneWhen; vague briefs rejected), Report v1
+  (no small cap; VERIFIED vs CLAIMED checks; required worker self-check), supervisor/worker channel
+  (`channel_messages`, `task_rework`).
+- MCP: default `tools: core` (~12 tools, ~10KB vs ~40KB) and offload playbook (direct tasks,
+  delegate vs keep, brief template, probe freely, talk to workers, save context, rework once);
+  delivery-job guidance only for `tools: full` / explicit delegated_delivery. probe returns answers;
+  inbox/await split worker requests from probe answers.
+- Channel backend: workers wait without model requests; probes on running and finished tasks;
+  rework from the prior submitted commit with lineage.
+- Worker side: supervisor-chosen tool sets (only granted tools offered per request; request_tools
+  grants apply next turn), always-on ask_supervisor / request_tools / report_blocked /
+  reply_supervisor, lite numbered prompt for T1, self-check required for brief tasks, dead external
+  runner removed.
+- `meritrouter connect claude|codex` (+ opt-in hooks), `meritrouter inbox`,
+  `meritrouter exchanges export`, `offload_report`, 8-task two-arm eval (`evals/offload`,
+  dry-run self-test 8/8).
+- Fixes found on the way: Next.js 16.4.6 (advisory), init project provisioning, half-deleted
+  Windows helper cache (all check commands were failing), explicit jobs kept on delivery engine.
 
-**What exists and is good.**
-- Typed brief input (`submit_tasks` TaskArgumentSchema: goal, fileRefs, allowedPaths, checks,
-  budget) and a typed worker result (findings with evidence refs, harness-run checks with exit
-  codes and log refs, unresolved criteria, changed paths).
-- Self-claimed "met" never yields acceptance; checks are harness-run and staleness-checked;
-  deterministic defects cannot be overridden by a reviewer pass. Over-claiming is caught in code.
-- Large payloads already sit behind artifact refs (`read_artifact`, capped), except `get_session`.
-- The wait-without-spending mechanism exists (`request_supervisor_action` /
-  `await_supervisor_action`, watchdog-exempt) but covers only exact command approval.
+**Validation:** last full suite (before the final regression fixes) 3,472 passed / 42 failed, 24
+of them load timeouts; serial rerun of the 27 failing files left 4, all fixed and covered by a
+13-file / 174-test serial run. A clean full-suite aggregate has NOT been rerun since.
 
-**What blocks the goal (ranked).**
-1. Default supervisor guidance (`admin/client-supervision.ts` DEFAULT_CLIENT_SUPERVISION, ~1.7k
-   tokens) tells Claude/Codex to "normally start a bounded delivery-supervisor job": the mode that
-   failed. It gives no offload targets, no brief template, no probing protocol.
-2. No two-way channel. A worker cannot ask its supervisor a question, request a tool, or say it
-   is blocked; the supervisor cannot ask a worker a question or send work back with feedback
-   (`reject_result` only records). Worker approval requests are not exposed over MCP at all.
-3. Every coding worker gets the same ~1.2k-token preamble, including a dense 340-word
-   harness-v2 paragraph and the full tool set, regardless of model or task.
-4. Supervisor context tax: 50 MCP tools, ~40KB of tool JSON on every tool listing.
-5. Operational breakage: local `.mcp.json` (untracked) points at deleted pre-rename paths, so the
-   MCP server fails to connect in Claude Code today; `init --project` leaves the project store
-   unprovisioned with no recovery path; `pnpm -r build` fails because the panel's Next.js 16.4.2
-   is flagged by a security advisory.
-6. No measure of offload (share of work done by workers, supervisor tokens saved, acceptance
-   rate). Evals only qualify models.
-7. Dead `ExternalCodingRunner` path implies `coding.runner: opencode` works; it always fails.
+**Next session, in order:**
+1. Rerun the full router suite (`cd packages/router && npx vitest run`), then serially rerun any
+   failures; `pnpm -r typecheck`, `pnpm -r build`.
+2. Fix the remaining open risk: helper-cache lock left by a crashed process reports busy forever
+   (`src/harness/windows-job-executable.ts`).
+3. Update authored docs (docs/roles.md, docs/operations.md, docs/setup.md: offload loop, core tools,
+   workflow semantics, connect/hooks).
+4. Live phase, needs the user's yes (asked 2026-11-26, unanswered): `connect claude` dogfood project
+   `meritrouter-dev` (store under D:/MeritRouterProjects/meritrouter-dev, repo D:/MeritRouter) on the
+   real config; free-only smoke test capped at 120 requests, paid $0; 16-run Claude Code eval.
+5. Promote dev to main after a green aggregate and docs.
 
-**Health.** `pnpm -r typecheck` passes; router build passes; MCP tests 30/30 pass; panel build
-fails (item 5). Full suite not run this session (last full run 2026-11-05: 3,425 passed, one
-timing failure since corrected).
-
-**Decision (lead, user may override).** Standardize on external supervisor + direct bounded
-tasks. Freeze the internal delivery supervisor, Facebook trial, Labs extensions, distributed work
-and budget-request expansion for this week. Nothing is deleted; those paths stay opt-in.
-
-**Next.** On the user's go: Phase 0 and the Phase 1 contracts today, lanes A-D dispatched in
-parallel once contracts are committed.
+Not done / deferred: fixed-count stall nudge; Stop hook "unreviewed report" gating (no reviewed
+flag exists); per-tool examples in the lite prompt still describe the default tool set, not the
+granted subset. User's panel on 4477 still runs the pre-upgrade Next.js until restarted.
 
 ## Plan
 

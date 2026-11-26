@@ -6,7 +6,7 @@ lines, worker briefs, append-only ledger with real validation, open questions).
 
 | Document | Status | Scope |
 | --- | --- | --- |
-| [supervisor-offload.md](supervisor-offload.md) | Active | External Claude Code/Codex supervisor offloads 60-80% of work to free workers: briefs, reports, tool profiles, two-way channel, hooks, offload eval. Week of 2026-11-25. |
+| [supervisor-offload.md](supervisor-offload.md) | Active | Paused 2026-11-26 at user request: contracts, core MCP tools/playbook, two-way channel, supervisor-chosen tools, connect/hooks, metrics and eval on dev. Next: full-suite rerun, docs, live phase (awaiting approval). |
 | [connection-modes.md](connection-modes.md) | Complete | Global profile-free direct routing, editable listener host/port, compact Connections UI and scoped agent/team jobs. |
 | [unpublished-model-sizes.md](unpublished-model-sizes.md) | Complete | Official Gemini unknown-size routing verified through successful live coding requests; known-size floors preserved. |
 | [client-connections.md](client-connections.md) | Complete | Persistent default-off local client APIs and global panel controls; focused, build and production browser validation passed. |
