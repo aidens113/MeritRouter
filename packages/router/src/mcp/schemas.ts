@@ -8,6 +8,7 @@
 // validates each task in full (core/task.ts), so unknown or misspelled keys still fail there.
 import { z } from "zod";
 import { ImportanceSchema, PROFILE_NAMES, ProfileNameSchema, TierNameSchema, VerificationLevelSchema } from "../config/schema.js";
+import { BRIEF_KINDS, REPORT_DETAILS } from "../core/brief.js";
 
 /** An object that keeps unknown keys and says so in its schema (`additionalProperties: true`). */
 function open<T extends z.ZodRawShape>(shape: T) {
@@ -90,6 +91,35 @@ export const CreateProjectArgumentShape = {
     .optional()
     .describe("Repository folders (absolute or config-relative); missing folders are created and set up with git."),
 };
+
+/**
+ * Brief v1 (supervisor-offload core tool `delegate`), portable description only: strict
+ * validation (vague wording, missing checks/allowedPaths/doneWhen, unsafe tool grants) runs
+ * inside checkBrief/briefToTaskArgument (core/brief.ts), which accepts unknown input and returns
+ * lint errors rather than throwing a schema crash, so unknown or misspelled keys are reported as
+ * brief errors, not a tool-call failure.
+ */
+export const BriefArgumentSchema = open({
+  version: z.number().int().min(1).max(1).optional().describe("1"),
+  kind: z.enum(BRIEF_KINDS).describe(BRIEF_KINDS.join(" | ")),
+  goal: z.string().describe("What the worker must achieve, specific enough to act on without questions."),
+  context: open({
+    files: strings.optional().describe("'<alias>:<path>[#Lstart-Lend]', or a bare path resolved against scope.repository."),
+    notes: z.string().optional(),
+  }).optional(),
+  scope: open({
+    allowedPaths: strings.optional().describe("Paths the worker may change (writable briefs)."),
+    writable: z.boolean(),
+    repository: z.string().optional().describe("The repository alias the worker works in."),
+  }),
+  tools: z.union([z.enum(BRIEF_KINDS), strings]).optional().describe("A profile name (defaults to kind), or an explicit list of tool names."),
+  checks: strings.optional().describe("Exact commands run in the worker's workspace to verify the result."),
+  doneWhen: strings.describe("Observable criteria for done; each becomes an acceptance criterion."),
+  report: open({ detail: z.enum(REPORT_DETAILS).optional() }).optional(),
+  budget: open({ requests: z.number().int().positive().optional() }).optional(),
+  idempotencyKey: z.string().optional().describe("Resubmitting the same key returns the same task."),
+  label: z.string().optional().describe("Short agent label (lowercase, digits, hyphens)."),
+});
 
 /** Portable typed description; strict runtime validation lives in admin/client-supervision.ts. */
 export const SupervisionPolicyArgumentShape = {

@@ -287,5 +287,23 @@ summary) installed only with `--hooks`. Report: `lane-d.md`.
 - Not verified: hooks inside a live Claude Code session; `inbox` against the real channel (lane B);
   Codex config against an installed Codex CLI.
 
+### 2026-11-26 — Lane A: core MCP tools and offload playbook
+- Outcome: Accepted. Worker: lane-a.
+- Lead changes: playbook split by mode. Core (default) = direct-task playbook plus three new
+  paragraphs (talk to workers / probe freely; save your own context with scout, summarize and run
+  workers; free routes by default, spend and authority limits). Delivery-job paragraphs
+  (supervisor strength, credit notices, delivery validation) move to DELIVERY_JOB_SUPERVISION,
+  added only for `tools: full` or `workflow: delegated_delivery`. `client_supervision.workflow`
+  default changed delegated_delivery -> direct_tasks (the old default injected "Use MeritRouter
+  delivery supervisors for multi-step work" ahead of the playbook). Two tests that asserted the old
+  default updated; core-mode test asserts the delivery text is absent.
+- Validation: `pnpm typecheck` -> exit 0; `pnpm build` -> exit 0; `npx vitest run`
+  client-supervision, mcp, mcp-http, mcp-lifecycle-v2, mcp-passive-startup, mcp-credit-usage,
+  mcp-offload -> 7 files, 45 passed. Core tool list JSON 10,176 bytes (worker-measured; was
+  39,888 for 50 tools).
+- Not verified: `apps/panel/scripts/validate-client-supervision.mjs` (needs Chrome; only its
+  expected phrase changed); `tests/delivery-runtime.test.ts` 2 failures (worker: fail inside
+  harness execution, `node --version: terminated`; recheck after lane C lands).
+
 ## Open Questions
 - Budget for the live smoke and the Claude-usage cost of the offload eval (asked before Phase 3).

@@ -23,6 +23,9 @@ function fixture(supervisor: Record<string, unknown> = {}) {
   const configPath = path.join(dir, "config.yaml");
   writeFileSync(configPath, YAML.stringify({ version: 1, storage: { directory: "store" }, brain: { project: "alpha", path: "brain" },
     panel: { auto_start: false, port: 9 }, discovery: { interval_minutes: 0 }, projects: { alpha: {}, beta: {} },
+    // This fixture exercises full-only tools (set_supervision_policy, resume_supervisor_submission);
+    // client_supervision.tools defaults to "core" since supervisor-offload lane A.
+    client_supervision: { tools: "full" },
     supervisor, profiles: { supervise: { mode: "supervisor", tools: "supervisor", classify: "never" } } }));
   let cfg = loadConfig(configPath);
   const db = openDatabase(path.join(dir, "db")), tasks = new TaskStore(db);

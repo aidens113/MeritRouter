@@ -100,7 +100,11 @@ export function makeEnv(opts: { config?: Record<string, unknown>; endpoints?: un
   const raw: Record<string, unknown> = opts.config ?? baseConfig();
   // Existing task-loop fixtures exercise the explicitly supported direct-task workflow.
   // Delivery-v2 tests opt into its stage contract explicitly; production defaults stay delegated.
-  raw.client_supervision ??= {workflow:"direct_tasks"};
+  // Fixtures that don't name client_supervision at all (the common case) get the full MCP tool
+  // list by default, as they did before the supervisor-offload MCP surface split (lane A) made
+  // `tools: "core"` the production default: a fixture that cares about the distinction sets
+  // client_supervision explicitly (including `tools`) and is left alone here.
+  raw.client_supervision ??= { tools: "full", workflow: "direct_tasks" };
   // Fake endpoint quality evidence belongs only to test fixtures. Production routing never
   // infers quality from model names, parameter size, or the mere presence of an endpoint.
   const supervisor = raw.supervisor as Record<string, unknown> | undefined;

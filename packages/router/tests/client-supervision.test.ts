@@ -16,7 +16,7 @@ let env: Env | undefined;
 afterEach(() => { env?.cleanup(); env = undefined; });
 const content = (value: unknown) => (value as { content: Array<{text: string}> }).content;
 function expectFinalOversight(instructions: string | undefined): void {
-  expect(instructions).toContain("Keep working through delegated completion and repair");
+  expect(instructions).toContain("rework it once with specific, criterion-by-criterion feedback");
   expect(instructions).toContain("A dispatch acknowledgement is not a handoff");
   expect(instructions).toMatch(/strongest ranked capable supervisor available through current keys[\s\S]*parameter threshold alone/);
   expect(instructions).toMatch(/Verify the actual served supervisor model[\s\S]*downgrade or unavailability/);
@@ -32,7 +32,7 @@ describe("external client supervision", () => {
     try {
       writeFileSync(env.cfg.configPath, readFileSync(env.cfg.configPath, "utf8") + "\n# keep this comment\n");
       const original = YAML.parse(readFileSync(env.cfg.configPath, "utf8"));
-      expect(supervisionPolicy(sy)).toMatchObject({ dispatch_final_supervisor: false, instructions: "", effectiveInstructions: expect.stringContaining("Delegate as much practical work") });
+      expect(supervisionPolicy(sy)).toMatchObject({ dispatch_final_supervisor: false, instructions: "", effectiveInstructions: expect.stringContaining("Default to direct bounded tasks") });
       expectFinalOversight(supervisionPolicy(sy).effectiveInstructions);
       for (const bad of [{ reason: "why" }, { dispatch_final_supervisor: false, reason: " " }, { dispatch_final_supervisor: false, reason: "why", paid: true }, { instructions: "x".repeat(8001), reason: "why" }]) expect(() => setSupervisionPolicy(sy, bad)).toThrow();
       expect(() => ConfigSchema.parse({ ...original, client_supervision: { dispatch_final_supervisor: "yes" } })).toThrow();
@@ -46,17 +46,21 @@ describe("external client supervision", () => {
     } finally { await sy.close(); }
   });
 
-  it("defaults new policy to delegated delivery with FINAL acceptance and persists only explicitly requested fields", async () => {
+  it("defaults new policy to direct tasks with FINAL acceptance and persists only explicitly requested fields", async () => {
     env = makeEnv({ config: baseConfig({ client_supervision: {} }) });
     const sy = open(env, new ScriptedClient(() => reply("{}")));
     try {
       const original = YAML.parse(readFileSync(env.cfg.configPath, "utf8"));
-      expect(supervisionPolicy(sy)).toMatchObject({ workflow: "delegated_delivery", dispatch_final_supervisor: false });
+      expect(supervisionPolicy(sy)).toMatchObject({ workflow: "direct_tasks", dispatch_final_supervisor: false });
       expect(supervisionPolicy(sy).effectiveInstructions).toContain("You retain FINAL acceptance");
+      expect(supervisionPolicy(sy).effectiveInstructions).toContain("Talk to your workers");
+      expect(supervisionPolicy(sy).effectiveInstructions).not.toContain("Independently validate the exact integrated candidate");
       setSupervisionPolicy(sy, { instructions: "Inspect the actual runtime", reason: "Explicit user customization" });
       expect(YAML.parse(readFileSync(env.cfg.configPath, "utf8"))).toEqual({ ...original, client_supervision: { instructions: "Inspect the actual runtime" } });
-      setSupervisionPolicy(sy, { workflow: "direct_tasks", reason: "Explicit user requests direct tasks" });
-      expect(YAML.parse(readFileSync(env.cfg.configPath, "utf8"))).toEqual({ ...original, client_supervision: { instructions: "Inspect the actual runtime", workflow: "direct_tasks" } });
+      setSupervisionPolicy(sy, { workflow: "delegated_delivery", reason: "Explicit user requests delivery jobs" });
+      expect(YAML.parse(readFileSync(env.cfg.configPath, "utf8"))).toEqual({ ...original, client_supervision: { instructions: "Inspect the actual runtime", workflow: "delegated_delivery" } });
+      // Delivery-job guidance is added only once delivery jobs are in play.
+      expect(supervisionPolicy(sy).effectiveInstructions).toContain("Independently validate the exact integrated candidate");
       expect(supervisionPolicy(sy).dispatch_final_supervisor).toBe(false);
     } finally { await sy.close(); }
   });
@@ -148,7 +152,7 @@ describe("external client supervision", () => {
       }
       expect(client.getInstructions()).toContain("FINAL supervisor responsible for the user's intended product outcome");
       expect(client.getInstructions()).toContain("delivery-supervisor job");
-      expect(client.getInstructions()).toContain("runtime testing and repair");
+      expect(client.getInstructions()).toContain("Default to direct bounded tasks");
       expect(client.getInstructions()).toContain("You retain FINAL acceptance");
       expectFinalOversight(client.getInstructions());
       let result = await client.callTool({ name: "get_supervision_policy", arguments: {} }); expect(content(result)).toHaveLength(1); expect(JSON.parse(content(result)[0]!.text).dispatch_final_supervisor).toBe(false);
@@ -169,7 +173,7 @@ describe("external client supervision", () => {
       result = await client.callTool({ name: "get_supervision_policy", arguments: {} }); expect(content(result)).toHaveLength(1);
       const finalJob = await client.callTool({ name: "start_job", arguments: { goal: "Explicitly authorized final project job", repositories: ["core"], supervisionScope: "project" } }); expect(finalJob.isError).toBeFalsy(); expect(JSON.parse(content(finalJob)[0]!.text)).toMatchObject({ supervisionScope: "project", finalOwner: "meritrouter" });
       const disabledClient = new Client({ name: "disabled-initialize", version: "1" });
-      try { await disabledClient.connect(new StdioClientTransport({ command: process.execPath, args, env: processEnv })); expect(disabledClient.getInstructions()).toContain("final supervisors are permitted"); expect(disabledClient.getInstructions()).toContain("Delegate as much practical work"); } finally { await disabledClient.close(); }
+      try { await disabledClient.connect(new StdioClientTransport({ command: process.execPath, args, env: processEnv })); expect(disabledClient.getInstructions()).toContain("final supervisors are permitted"); expect(disabledClient.getInstructions()).toContain("Default to direct bounded tasks"); } finally { await disabledClient.close(); }
       const raw = YAML.parseDocument(readFileSync(env.cfg.configPath, "utf8")); raw.setIn(["client_supervision", "dispatch_final_supervisor"], false); raw.setIn(["client_supervision", "instructions"], "UI-originated custom plan"); writeFileSync(env.cfg.configPath, raw.toString());
       result = await client.callTool({ name: "job_status", arguments: { jobId: "missing" } }); expect(result.isError).toBe(true); expect(content(result)[0]!.text).toBe("unknown job missing"); expect(content(result)).toHaveLength(2); expect(content(result)[1]!.text).toContain("UI-originated custom plan");
       expectFinalOversight(content(result)[1]!.text);

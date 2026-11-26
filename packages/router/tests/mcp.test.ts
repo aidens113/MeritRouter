@@ -53,9 +53,11 @@ describe("MCP server", () => {
     expect(listed.find((t) => t.name === "panel")!.inputSchema).toMatchObject({ type: "object", properties: {} });
     const tools = listed.map((t) => t.name).sort();
     expect(tools).toEqual([
-      "accept_result", "answer_question", "await_results", "blame", "brain_access_requests", "brain_append_ledger", "brain_decide_request", "brain_list", "brain_promote_lesson",
-      "brain_read", "brain_search", "brain_set_current_state", "brain_start_working_doc", "brain_write", "budget_requests", "cancel_tasks", "collect_results", "create_project", "decide_budget_request", "decide_delivery", "delivery_status", "get_job_metrics", "get_job_tree", "get_plan", "get_session", "get_supervision_policy", "get_task_status",
-      "job_status", "lab_control", "lab_logs", "lab_operation", "lab_status", "list_questions", "list_sessions", "panel", "preview_route", "project_delivery_report", "read_artifact", "read_channel", "record_delivery_observation", "reject_result", "resume_session", "resume_supervisor_submission", "resume_task", "set_supervision_policy", "start_job", "submit_tasks", "usage_summary", "write_project_memory", "write_user_preference",
+      // Supervisor-offload core set (always registered: delegate, await, inbox, reply, probe, rework, accept, reject, read_artifact, run_check, status, offload_report),
+      // plus every tool, since this fixture's client_supervision.tools is "full" (tests/helpers.ts default).
+      "accept", "accept_result", "answer_question", "await", "await_results", "blame", "brain_access_requests", "brain_append_ledger", "brain_decide_request", "brain_list", "brain_promote_lesson",
+      "brain_read", "brain_search", "brain_set_current_state", "brain_start_working_doc", "brain_write", "budget_requests", "cancel_tasks", "collect_results", "create_project", "decide_budget_request", "decide_delivery", "delegate", "delivery_status", "get_job_metrics", "get_job_tree", "get_plan", "get_session", "get_supervision_policy", "get_task_status",
+      "inbox", "job_status", "lab_control", "lab_logs", "lab_operation", "lab_status", "list_questions", "list_sessions", "offload_report", "panel", "preview_route", "probe", "project_delivery_report", "read_artifact", "read_channel", "record_delivery_observation", "reject", "reject_result", "reply", "resume_session", "resume_supervisor_submission", "resume_task", "rework", "run_check", "set_supervision_policy", "start_job", "status", "submit_tasks", "usage_summary", "write_project_memory", "write_user_preference",
     ]);
 
     // Any tool call revives a panel the user turned off: the marker goes (auto_start off here, and no
@@ -130,7 +132,7 @@ describe("MCP server", () => {
     await client.connect(new StdioClientTransport({ command: process.execPath, args: [path.join(dist, "cli.js"), "mcp", "--config", env.cfg.configPath, "--no-worker"], env: { PATH: process.env.PATH ?? "", MERITROUTER_PANEL_DIR: NO_PANEL } }));
     const names = (await client.listTools()).tools.map((t) => t.name);
     expect(names).toContain("submit_tasks");
-    expect(names).toHaveLength(50);
+    expect(names).toHaveLength(61);
     const noJob = await client.callTool({ name: "job_status", arguments: { jobId: "no-such-job" } });
     expect((noJob.content as Array<{ text: string }>)[0]!.text).toBe("unknown job no-such-job");
   }, 60_000);

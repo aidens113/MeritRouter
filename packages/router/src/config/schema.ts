@@ -784,8 +784,15 @@ export type WebConfig = z.infer<typeof WebConfigSchema>;
 /** Advice for the connected outer MCP client; grants no permissions. */
 export const ClientSupervisionSchema = z.object({
   dispatch_final_supervisor: z.boolean().default(false),
-  workflow: z.enum(["delegated_delivery", "direct_tasks"]).default("delegated_delivery"),
+  workflow: z.enum(["delegated_delivery", "direct_tasks"]).default("direct_tasks"),
   instructions: z.string().trim().max(8000).default(""),
+  /**
+   * Which MCP tools this server registers (supervisor-offload Phase 2 lane A). `core`: only the
+   * brief/report/channel offload set (delegate, await, inbox, reply, probe, rework, accept,
+   * reject, read_artifact, run_check, status, offload_report) plus MCP prompts. `full`: every
+   * tool, including this core set (job/delivery/brain/session/budget tools and the rest).
+   */
+  tools: z.enum(["core", "full"]).default("core"),
 }).strict();
 
 /** Opt-in local compatibility API; it never binds a public interface. */

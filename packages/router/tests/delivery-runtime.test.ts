@@ -14,7 +14,8 @@ let env:Env|undefined,sy:MeritRouter|undefined;
 afterEach(async()=>{await sy?.close();env?.cleanup();});
 it.each([false,true])("runs default delegated lifecycle and refuses a source-changing final check (mutating %s)",async mutating=>{
   const base=baseConfig();
-  env=makeEnv({config:{...base,client_supervision:{},profiles:{...base.profiles,supervise:{mode:"supervisor",tools:"supervisor",min_total_parameters_b:100,max_model_requests:null,max_output_tokens:8000,classify:"never",min_tier:"T3"}}}});
+  // decide_delivery/record_delivery_observation below are full-only (supervisor-offload lane A); tools:"core" is now the default.
+  env=makeEnv({config:{...base,client_supervision:{tools:"full"},profiles:{...base.profiles,supervise:{mode:"supervisor",tools:"supervisor",min_total_parameters_b:100,max_model_requests:null,max_output_tokens:8000,classify:"never",min_tier:"T3"}}}});
   const command=mutating?"node check.cjs":"node --version";
   if(mutating){
     writeFileSync(path.join(env.repo,".gitignore"),".check-counter\n");

@@ -1,5 +1,10 @@
 // MeritRouter's MCP tools: one McpServer per client connection, all sharing one MeritRouter.
 // Transports (stdio, Streamable HTTP) are chosen in mcp/serve.ts.
+//
+// Tool surface (supervisor-offload Phase 2, lane A): `client_supervision.tools` picks `core`
+// (default) or `full`. `core` registers only the brief/report/channel offload set (delegate,
+// await, inbox, reply, probe, rework, accept, reject, read_artifact, run_check, status,
+// offload_report) plus MCP prompts; `full` restores every tool, including that core set.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { ResolvedConfig } from "../config/load.js";
@@ -15,7 +20,7 @@ import type { LabManager } from "../labs/lab.js";
 import { LabOperationInputSchema } from "../labs/control.js";
 import { clientSupervisionFeedback, scopedMcpTasks, guardMcpResume, supervisionDispatch } from "./client-supervision.js";
 import { supervisionPolicy, setSupervisionPolicy } from "../admin/client-supervision.js";
-import { CreateProjectArgumentShape, LabOperationArgumentSchema, TaskArgumentSchema, SupervisionPolicyArgumentShape } from "./schemas.js";
+import { CreateProjectArgumentShape, LabOperationArgumentSchema, TaskArgumentSchema, SupervisionPolicyArgumentShape, BriefArgumentSchema } from "./schemas.js";
 import { ProductDeliveries } from "../verification/product-delivery.js";
 import { projectDeliveryReport, ProjectDeliveryReportInputSchema } from "../admin/deliveries.js";
 import { deliverySpecDigest, ProductDigestSchema } from "../verification/product-spec.js";
@@ -26,6 +31,8 @@ import { randomUUID } from "node:crypto";
 import { MemoryPreferences, type PreferenceAuthorizationResolver } from "../brain/preferences.js";
 import { creditUsageFeedback } from "./credit-usage.js";
 import { ARTIFACT_REF_RE } from "../core/task.js";
+import { checkBrief, briefToTaskArgument, taskProfileFor } from "../core/brief.js";
+import { renderReportV1 } from "../core/report.js";
 
 /** What every connection's server shares: the service, its config, and the project it serves. */
 export interface McpContext {
@@ -42,6 +49,8 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
   /** A tool's project: the one it names (which must exist), else this server's. */
   const scope = (named: unknown): string => (typeof named === "string" && named ? sy.projects.require(named).project.slug : project);
   const projectInput = { project: z.string().min(1).optional().describe(`Project slug; default: this server's project (${project}).`) };
+  /** `core` (default): the brief/report/channel offload set only. `full`: every tool. */
+  const includeFull = (cfg.client_supervision.tools ?? "core") === "full";
 
   const guidance = clientSupervisionFeedback(sy);
   const creditNotices = creditUsageFeedback(sy);
@@ -75,6 +84,8 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
   const json = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] });
   const fail = (err: unknown) => ({ isError: true, content: [{ type: "text" as const, text: (err as Error).message ?? String(err) }] });
   const memoryActor=()=>({agent:`supervisor:mcp:${server.server.getClientVersion()?.name??"client"}`,role:"supervisor",model:null});
+
+  if (includeFull) {
   server.registerTool("write_project_memory",{title:"Maintain project memory",description:"Write a versioned project fact/decision/lesson with source and compare-and-swap digest. Workers cannot use this external-supervisor control. Global lessons use promotion; preferences require a trusted instruction capability.",inputSchema:{id:z.string(),kind:z.enum(["project_fact","decision","empirical_lesson"]),body:z.string().min(1),sourceRef:z.string().min(1),expectedDigest:z.string().nullable(),...projectInput}},async({id,kind,body,sourceRef,expectedDigest,project:named})=>{
     try{const p=scope(named),b=sy.brainFor(p),access=sy.brainAccessFor(p);await b.ensure();const principal=access.principalFor("supervisor",{project:p,effort:"external",task:null,repos:Object.keys(sy.projectContext(p).repositoryPaths),jobId:null,tier:null});return json(await new MemoryPreferences(b,()=>null).writeProject(principal,memoryActor(),{id,kind,body,source:{kind:"observation",ref:sourceRef}},expectedDigest));}catch(err){return fail(err);}
   });
@@ -92,6 +103,7 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
       return json(projectDeliveryReport(sy, parsed));
     } catch (err) { return fail(err); }
   });
+  }
   const deliveryTask = (id: string, named: unknown) => {
     const p=scope(named),stores=sy.projectStores(p);
     if(stores.project!==p)throw new Error(`Delivery store does not belong to project ${p}`);
@@ -121,6 +133,7 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
     const resolved=await currentDeliveryCandidate({spec:task.spec,signal:AbortSignal.timeout(30000)},workspace.repos,runtime);
     deliveryStore.setCandidate(id,p,resolved.candidate);
   };
+  if (includeFull) {
   server.registerTool("delivery_status", {title:"Delivery readiness and FINAL decision",description:"Versioned specification, exact candidate, observed criterion coverage, missing evidence and separate FINAL decision.",inputSchema:{taskId:z.string(),...projectInput}},async({taskId,project:named})=>{
     try{const context=deliveryTask(taskId,named);await refreshDeliveryCandidate(taskId,context);return json(context.deliveryStore.status(taskId,context.p));}catch(err){return fail(err);}
   });
@@ -304,6 +317,7 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
       }
     },
   );
+  }
 
   // The MCP client is normally an agent (Claude Code) acting as the user's supervisor, not a
   // person: decisions are recorded as {kind: "supervisor", id: "mcp:<client name>"}. Human
@@ -317,6 +331,7 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
       return fail(err);
     }
   };
+  if (includeFull) {
   server.registerTool(
     "accept_result",
     {
@@ -374,6 +389,7 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
       }
     },
   );
+  }
 
   server.registerTool(
     "read_artifact",
@@ -390,6 +406,7 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
     },
   );
 
+  if (includeFull) {
   server.registerTool(
     "preview_route",
     {
@@ -583,14 +600,16 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
         "One session with a page of its event log in order: started, message, model_request, model_response, model_error, tool_intent, tool_outcome, note, workspace, resumed, ended. " +
         "Also returns its delegated child sessions and the other sessions of the same task. " +
         "Pages hold at most `limit` events (default 200) after `afterSeq`; when hasMore is true, call again with afterSeq set to the last returned seq. " +
-        "`corrupt` lists log lines that failed validation and were skipped.",
-      inputSchema: { sessionId: z.string().min(1), afterSeq: z.number().int().nonnegative().optional(), limit: z.number().int().positive().max(1000).optional(), ...projectInput },
+        "`corrupt` lists log lines that failed validation and were skipped. The page's JSON text is capped at `maxBytes` (default 60000, like read_artifact); lower `limit` or raise maxBytes to see more.",
+      inputSchema: { sessionId: z.string().min(1), afterSeq: z.number().int().nonnegative().optional(), limit: z.number().int().positive().max(1000).optional(), maxBytes: z.number().int().positive().max(500_000).optional(), ...projectInput },
     },
-    async ({ sessionId, afterSeq, limit, project: named }) => {
+    async ({ sessionId, afterSeq, limit, maxBytes, project: named }) => {
       try {
         const d = sessionDetail(sy, sessionId, { afterSeq: afterSeq ?? 0, limit: limit ?? 200, project: scope(named) });
         if (!d) return fail(new Error(`unknown session ${sessionId}`));
-        return json(d);
+        const text = JSON.stringify(d, null, 2);
+        const cap = maxBytes ?? 60_000;
+        return { content: [{ type: "text" as const, text: text.length > cap ? `${text.slice(0, cap)}\n[truncated at ${cap} of ${text.length} characters; lower limit or raise maxBytes]` : text }] };
       } catch (err) {
         return fail(err);
       }
@@ -677,5 +696,263 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
       }
     },
   );
+  } // includeFull
+
+  // ---------- supervisor-offload core tool set (always registered): delegate, await, inbox,
+  // reply, probe, rework, accept, reject, read_artifact (above), run_check, status, offload_report.
+  server.registerTool(
+    "delegate",
+    {
+      title: "Delegate a bounded brief to a worker",
+      description:
+        "Submit one BriefV1 (kind, goal, scope, checks, doneWhen) to a free worker. Lints the brief first: vague wording, a writable brief without allowedPaths or scope.repository, implement/run without checks, and missing or unobservable doneWhen are rejected with actionable errors before any model request is spent (ok: false, no task submitted); other issues come back as warnings on a submitted task. " +
+        "On success the brief is mapped onto the worker task contract and submitted, and a route preview (tier T1 candidates/excluded) is returned so you can see roughly where it will run.",
+      inputSchema: { brief: BriefArgumentSchema, ...projectInput },
+    },
+    async ({ brief, project: named }) => {
+      try {
+        const check = checkBrief(brief);
+        if (!check.ok || !check.brief) return json({ ok: false, errors: check.errors, warnings: check.warnings });
+        const p = scope(named);
+        const taskArg = briefToTaskArgument(check.brief);
+        const [scoped] = scopedMcpTasks(sy, p, [taskArg]);
+        const [submitted] = await sy.submitTasks([scoped], { project: p });
+        const preview = routingPreview(sy, taskProfileFor(check.brief), "T1", ["text"]);
+        return json({
+          ok: true,
+          warnings: check.warnings,
+          taskId: submitted!.taskId,
+          routePreview: {
+            candidates: preview.explanations.filter((e) => e.eligible).map((e) => e.endpointId),
+            excluded: preview.explanations.filter((e) => !e.eligible).map((e) => ({ model: e.endpointId, why: e.reasons })),
+          },
+        });
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "await",
+    {
+      title: "Wait for tasks and read their reports",
+      description:
+        "Wait for the given tasks to finish (bounded by timeoutSeconds) and render each finished one as Report v1 text (Outcome, Summary, Changed, Checks VERIFIED vs CLAIMED, Criteria, Claims not verified, Self-check, Open messages, Drill-down refs), plus the worker messages awaiting your answer for these tasks. " +
+        "detail (brief|standard|full) sets verbosity; default standard. Answer every open message with reply before your turn ends.",
+      inputSchema: { taskIds: z.array(z.string()).min(1), timeoutSeconds: z.number().int().positive().optional(), detail: z.enum(["brief", "standard", "full"]).optional(), ...projectInput },
+    },
+    async ({ taskIds, timeoutSeconds, detail, project: named }) => {
+      try {
+        const p = scope(named);
+        const outcome = await sy.awaitResults(taskIds, { ...(timeoutSeconds ? { timeoutSeconds } : {}), project: p });
+        const pending = sy.channel.listPendingForSupervisor(p).filter((m) => taskIds.includes(m.taskId));
+        const reports: Record<string, string> = {};
+        for (const result of outcome.completed) reports[result.taskId] = renderReportV1(result, { ...(detail ? { detail } : {}), messages: pending.filter((m) => m.taskId === result.taskId) });
+        return json({ pending: outcome.pending, timedOut: outcome.timedOut, waitedSeconds: outcome.waitedSeconds, completed: outcome.completed.map((r) => r.taskId), reports, pendingMessages: pending });
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "inbox",
+    {
+      title: "Worker messages waiting for an answer",
+      description: "Worker requests (question, tool_request, help, blocked) not yet answered, and worker answers to your probes not yet read, oldest first. Answer every one with reply before ending your turn.",
+      inputSchema: { ...projectInput },
+    },
+    async ({ project: named }) => {
+      try {
+        return json(sy.channel.listPendingForSupervisor(scope(named)));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "reply",
+    {
+      title: "Answer a worker's message",
+      description: "Answer a pending worker request by its message id: answer (question/help/blocked), grant (tool_request: names a subset of the requested tools as tool:<name> refs, taking effect next turn), or deny. Refuses a second answer to the same message.",
+      inputSchema: { messageId: z.string().min(1), kind: z.enum(["answer", "grant", "deny"]), body: z.string().min(1), refs: z.array(z.string()).max(32).optional() },
+    },
+    async ({ messageId, kind, body, refs }) => {
+      try {
+        return json(await sy.channel.replyFromSupervisor({ messageId, kind, body, ...(refs ? { refs } : {}) }));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "probe",
+    {
+      title: "Ask a task's worker a question",
+      description: "Ask a running or finished task's worker a clarifying question with evidence references expected back. A running task answers at its next turn; a finished task is answered by a read-only resume of its session. The answer arrives in your inbox.",
+      inputSchema: { taskId: z.string().min(1), question: z.string().min(1) },
+    },
+    async ({ taskId, question }) => {
+      try {
+        return json(await sy.channel.probe(taskId, question));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "rework",
+    {
+      title: "Send finished work back with feedback",
+      description: "Create a new task in the same worktree with the original contract plus any extra criteria and the feedback appended; the original task is marked reworked and lineage is kept (task_rework). Use once per finding with specific, criterion-by-criterion feedback; escalate or finish the piece yourself if the next attempt still misses the mark.",
+      inputSchema: { taskId: z.string().min(1), feedback: z.string().min(1), criteria: z.array(z.string()).max(30).optional() },
+    },
+    async ({ taskId, feedback, criteria }) => {
+      try {
+        return json({ taskId: await sy.channel.rework(taskId, feedback, criteria) });
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "accept",
+    {
+      title: "Accept a task result",
+      description:
+        "Accept a finished, completed task's result as its supervisor (recorded as supervisor mcp:<client>, with the reason). " +
+        "Results in needs_supervisor (strict verification, missing evidence, or a pending review) and not_verified need a reason: judge them against the task's goal and acceptance criteria. Unmet results cannot be accepted. " +
+        "With verification.strict_acceptor: human, a strict result is refused with human_acceptance_required: only a person can accept it.",
+      inputSchema: { taskId: z.string().min(1), reason: z.string().max(4000).optional(), ...projectInput },
+    },
+    async ({ taskId, reason, project: named }) => decideResult(taskId, "accept", reason, named),
+  );
+  server.registerTool(
+    "reject",
+    {
+      title: "Reject a task result",
+      description: "Reject a finished task's result with a reason; it becomes unmet and the decision is recorded on the result as supervisor mcp:<client>, with the reason.",
+      inputSchema: { taskId: z.string().min(1), reason: z.string().trim().min(1).max(4000), ...projectInput },
+    },
+    async ({ taskId, reason, project: named }) => decideResult(taskId, "reject", reason, named),
+  );
+
+  server.registerTool(
+    "run_check",
+    {
+      title: "Re-run one of a task's declared checks",
+      description:
+        "Independently re-run one command from the task's own declared checks (constraints.checks) in its recorded worktree, instead of trusting the worker's CLAIMED report. Only a command the task actually declared may be run; other commands are refused. Output (last 60000 characters) is stored as an artifact and its ref returned alongside the exit code.",
+      inputSchema: { taskId: z.string().min(1), command: z.string().min(1), ...projectInput },
+    },
+    async ({ taskId, command, project: named }) => {
+      try {
+        const p = scope(named);
+        const task = sy.tasks.get(taskId);
+        if (!task || task.row.project_id !== p) throw new Error(`unknown task ${taskId} in project ${p}`);
+        const declared = task.spec.constraints?.checks ?? [];
+        if (!declared.includes(command)) throw new Error(`"${command}" is not one of this task's declared checks (${declared.length ? declared.join(", ") : "none declared"})`);
+        const workspace = sy.sessions.forTask(taskId).filter((s) => s.workspace?.repos.length).at(-1)?.workspace;
+        const repo = workspace?.repos[0];
+        if (!repo) throw new Error(`no recorded worktree for task ${taskId}`);
+        const { execFile } = await import("node:child_process");
+        const run = await new Promise<{ code: number | null; output: string }>((resolve) => {
+          execFile(command, { shell: true, cwd: repo.worktree, timeout: 120_000, maxBuffer: 10_000_000 }, (err, stdout, stderr) => {
+            const code = err ? (typeof (err as NodeJS.ErrnoException & { code?: number }).code === "number" ? (err as unknown as { code: number }).code : 1) : 0;
+            resolve({ code, output: `${stdout ?? ""}${stderr ?? ""}` });
+          });
+        });
+        const logRef = sy.artifacts.write({ taskId, kind: "check_log", label: `run_check: ${command}`, content: Buffer.from(run.output.slice(-60_000), "utf8"), extension: ".log" });
+        return json({ command, exitCode: run.code, logRef });
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "status",
+    {
+      title: "Task status",
+      description: "Current state, tier, request usage and recent events for the given tasks, or your project's most recent tasks when none are given.",
+      inputSchema: { taskIds: z.array(z.string()).optional(), ...projectInput },
+    },
+    async ({ taskIds, project: named }) => {
+      try {
+        return json(taskIds?.length ? sy.getStatus(taskIds, scope(named)) : sy.listTasks(undefined, 20, scope(named)));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "offload_report",
+    {
+      title: "Offload metrics",
+      description: "Stub: per-session offload share, free-vs-paid request counts and acceptance rate are not computed yet (lane E delivers src/admin/offload-metrics.ts). Returns a placeholder so callers can integrate the tool name now.",
+      inputSchema: { ...projectInput },
+    },
+    async () => json({ available: false, note: "Offload metrics land with supervisor-offload lane E (src/admin/offload-metrics.ts)." }),
+  );
+
+  server.registerPrompt(
+    "offload_playbook",
+    { title: "Offload playbook", description: "The default offload policy: when to delegate vs. keep work, the brief template, and the probing/rework protocol." },
+    () => ({ messages: [{ role: "user", content: { type: "text", text: DEFAULT_CLIENT_SUPERVISION_TEXT(sy) } }] }),
+  );
+  server.registerPrompt(
+    "write_brief",
+    { title: "Write a brief", description: "A filled BriefV1 template with inline comments, for a rough goal.", argsSchema: { goal: z.string().describe("The rough goal to turn into a brief.") } },
+    ({ goal }) => ({
+      messages: [{
+        role: "user",
+        content: {
+          type: "text",
+          text:
+            `Turn this goal into a BriefV1 for delegate, then lint it before sending:\n\n${goal}\n\n` +
+            "{\n" +
+            '  "kind": "edit", // scout | summarize | edit | implement | run | review\n' +
+            '  "goal": "What to change or find, where, and why (>= 5 words, specific).",\n' +
+            '  "context": { "files": ["<alias>:<path>#Lstart-Lend"], "notes": "" },\n' +
+            '  "scope": { "allowedPaths": ["src/file.ts"], "writable": true, "repository": "<alias>" },\n' +
+            '  "checks": ["pnpm vitest run tests/file.test.ts"],\n' +
+            '  "doneWhen": ["pnpm vitest run tests/file.test.ts passes"],\n' +
+            '  "report": { "detail": "standard" }\n' +
+            "}\n\n" +
+            "scope.writable + scope.allowedPaths are required for edit/implement; checks are required for implement/run; doneWhen must be observable, never 'done' or 'works'.",
+        },
+      }],
+    }),
+  );
+  server.registerPrompt(
+    "probe_report",
+    { title: "Probe a report", description: "The probing protocol: when to ask a worker a follow-up question instead of trusting its report." },
+    () => ({
+      messages: [{
+        role: "user",
+        content: {
+          type: "text",
+          text:
+            "Trust only checks a report marks VERIFIED; a CLAIMED check or an unresolved criterion is not evidence. " +
+            "Probe the worker (probe) with a specific question when: a criterion is unmet or not verified; the diff is larger than the goal implied; the worker edited its own tests; " +
+            "a changed file sits outside scope.allowedPaths; or the summary is vague about what actually happened. " +
+            "Spot-check the riskiest changed file (the worker's self-check names one) even on an otherwise clean report before you accept.",
+        },
+      }],
+    }),
+  );
+
   return server;
+}
+
+/** The current offload-playbook text (effective instructions, minus the ownership/workflow
+ * preface computed in supervisionPolicy), for the offload_playbook prompt. */
+function DEFAULT_CLIENT_SUPERVISION_TEXT(sy: MeritRouter): string {
+  return supervisionPolicy(sy).effectiveInstructions;
 }

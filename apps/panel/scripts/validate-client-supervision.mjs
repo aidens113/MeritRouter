@@ -29,7 +29,7 @@ async function evaluate(expression){const r=await command("Runtime.evaluate",{ex
 const blocks=r=>r.content;
 try{
  await client.connect(new StdioClientTransport({command:process.execPath,args:[path.resolve(app,"../../packages/router/dist/cli.js"),"mcp","--config",config,"--no-worker"],env:{PATH:process.env.PATH??"",MERITROUTER_PANEL_DIR:path.join(fixture,"no-panel")}}));
- assert(client.getInstructions().includes("Delegate as much practical work"));
+ assert(client.getInstructions().includes("Default to direct bounded tasks"));
  server=spawn(process.execPath,[require.resolve("next/dist/bin/next"),"start","-H","127.0.0.1","-p",String(port)],{cwd:app,env:{...process.env,MERITROUTER_CONFIG:config,MERITROUTER_PROJECT:"",MERITROUTER_PANEL_TOKEN:""},stdio:"ignore",windowsHide:true});
  await until(async()=>{try{return(await fetch(base+"/all/settings")).ok;}catch{return false;}},"panel readiness");
  const invalid=await fetch(base+"/api/config",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({patch:[{path:["client_supervision","instructions"],value:"x".repeat(8001)}]})});assert.equal(invalid.status,400);

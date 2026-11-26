@@ -15,10 +15,10 @@ afterEach(async () => { await client?.close(); await sy?.close(); env?.cleanup()
 const body = (r: unknown) => JSON.parse((r as {content: {text: string}[]}).content[0]!.text);
 
 describe("project-scoped external delivery lifecycle", () => {
-  it("keeps FINAL ownership and makes delegated delivery the default without enabling paid routes", () => {
+  it("keeps FINAL ownership and makes direct tasks the default without enabling paid routes", () => {
     env = makeEnv({config:baseConfig({client_supervision:{}})}); sy = open(env, new ScriptedClient(() => reply("{}")));
-    expect(supervisionPolicy(sy)).toMatchObject({workflow:"delegated_delivery", dispatch_final_supervisor:false});
-    expect(supervisionPolicy(sy).effectiveInstructions).toContain("runtime testing and repair");
+    expect(supervisionPolicy(sy)).toMatchObject({workflow:"direct_tasks", dispatch_final_supervisor:false});
+    expect(supervisionPolicy(sy).effectiveInstructions).toContain("Default to direct bounded tasks");
     const paid = JSON.stringify(sy.cfg.paid);
     setSupervisionPolicy(sy, {workflow:"direct_tasks", reason:"User requests direct coordination"});
     expect(supervisionPolicy(sy).workflow).toBe("direct_tasks");
