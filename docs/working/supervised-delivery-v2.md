@@ -1,6 +1,6 @@
 # Supervised delivery v2: specification and execution plan
-Status: Active
-Status detail: Source implementation and corrective release checks verified; physical interactive/live product acceptance and cold indexing target remain open.
+Status: Paused
+Status detail: Paused 2026-11-25 by the lead: external-supervisor offload takes priority this week, see supervisor-offload.md. Source implementation and corrective release checks verified; physical interactive/live product acceptance and cold indexing target remain open.
 Created: 2026-10-23
 Last updated: 2026-10-23
 Owner: Senior supervisor agent

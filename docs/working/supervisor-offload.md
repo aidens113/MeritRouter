@@ -1,6 +1,6 @@
 # Supervisor offload: free workers do the heavy lifting
-Status: Planned
-Status detail: Audit complete; week plan written and awaiting the user's go. No source changed yet.
+Status: Active
+Status detail: User approved 2026-11-25. Phase 0 under way (Next.js upgraded); Phase 1 contracts and init fix with workers.
 Created: 2026-11-25
 Last updated: 2026-11-25
 Owner: Senior supervisor agent
@@ -82,8 +82,11 @@ Every exchange (brief, tool grant, messages, report, verdict, check outcomes) is
 structured record, which becomes the fine-tuning corpus later.
 
 ### Phase 0: unblock (today, lead)
-1. Rewrite local `.mcp.json` to `node D:/MeritRouter/packages/router/dist/cli.js mcp --config
-   <user's real config> --project <slug>`; confirm Claude Code connects. Machine-local, untracked.
+1. Local `.mcp.json` (untracked) is stale. Deferred to Phase 3: the real config
+   (`%LOCALAPPDATA%/MeritRouter/meritrouter.config.yaml`) has only the paused Facebook project, and
+   this repository may not hold a `.MeritRouter` directory (2026-10-26 user rule). Phase 3 uses the
+   lane D `connect` command to create a dogfood project whose store lives under
+   `D:/MeritRouterProjects/` with this repository as its repository.
 2. Upgrade the panel's Next.js to a patched 16.x release; `pnpm -r build` green.
 3. Fix `init --project` provisioning (store created, or `projects create` can adopt the stub).
 4. Mark frozen efforts Paused in the index with one line each.
@@ -93,11 +96,14 @@ Stable interfaces, in `src/core/brief.ts`, `src/core/report.ts`, `src/core/chann
 appended migration:
 - **Brief v1**: `kind` (scout | summarize | edit | implement | run | review), `goal`,
   `context {files, notes}`, `scope {allowedPaths, writable}`, `tools` (profile name or explicit
-  list), `checks` (exact commands), `doneWhen` (observable criteria), `report {maxWords}`,
+  list), `checks` (exact commands), `doneWhen` (observable criteria), `report {detail}`,
   `budget`. A linter rejects vague briefs with actionable errors (edit/implement without
   allowedPaths, implement without checks, no doneWhen, goal too short). Maps onto the existing
   TaskArgumentSchema; old callers keep working.
-- **Report v1**: compact text (target under 400 tokens) built from the existing worker result:
+- **Report v1**: structured text built from the existing worker result. No small fixed cap
+  (user direction 2026-11-25): every section is required, length scales with the work, and the
+  brief's `report.detail` (brief | standard | full, default standard) sets verbosity. Only bulky
+  raw output (full logs, full diffs, transcripts) stays behind drill-down refs. Sections:
   Outcome; Summary; Changed (diffstat); Checks (command, exit code, last lines), marked VERIFIED
   only when harness-run; Criteria (met / unmet / not verified, with evidence); Claims not
   verified by the harness; Self-check (fixed questions the worker must answer: what was not
@@ -177,6 +183,13 @@ None dispatched yet. Lane briefs are written after Phase 1 contracts are committ
   (16.4.2 advisory). Worker-reported: `pnpm -r typecheck` pass; router build pass; MCP tests
   30/30 pass; stdio probe 50 tools, 39,888 bytes.
 
+### 2026-11-25 — Phase 0 started
+- Next.js 16.4.2 -> 16.4.6 (GHSA-mfr8-8qww-v76h, patched >=16.4.5) in panel and router; lockfile
+  changes Next-only. Validation: `pnpm --filter meritrouter-panel build` -> success (route table
+  printed); `pnpm --filter meritrouter-panel typecheck` -> exit 0. Commit 1df42d2.
+- Paused five efforts (header + committed index row); trial-failure-audit and gate2 rows paused in
+  the working copy only (their rows and the audit file are not yet committed by their owners).
+- Dispatched: phase1-contracts (worker-heavy), init-provisioning-fix (worker).
+
 ## Open Questions
-- Which config path and project slug the user's real install uses for `.mcp.json` (Phase 0.1).
 - Budget for the live smoke and the Claude-usage cost of the offload eval (asked before Phase 3).

@@ -1,6 +1,6 @@
 # Distributed workers and Lab extensions
-Status: Active
-Status detail: Follow-on architecture scoped during roadmap implementation; no R2/L5 completion claim.
+Status: Paused
+Status detail: Paused 2026-11-25 by the lead: external-supervisor offload takes priority this week, see supervisor-offload.md. Follow-on architecture scoped during roadmap implementation; no R2/L5 completion claim.
 Created: 2026-10-22
 Last updated: 2026-10-22
 Owner: Senior supervisor agent

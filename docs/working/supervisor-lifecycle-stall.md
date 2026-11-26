@@ -1,6 +1,6 @@
 # Supervisor lifecycle stall investigation
-Status: Active
-Status detail: App remains undelivered; project-local storage is current implementation priority, retained work preserved.
+Status: Paused
+Status detail: Paused 2026-11-25 by the lead: external-supervisor offload takes priority this week, see supervisor-offload.md. App remains undelivered; project-local storage is current implementation priority, retained work preserved.
 Created: 2026-10-23
 Last updated: 2026-10-26
 Owner: Senior supervisor agent

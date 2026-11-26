@@ -1,6 +1,6 @@
 # Gate 2 integration acceptance
-Status: Active
-Status detail: Combined split mutex/startup/CLI repair independently119/119 PASS; final recursive checks and retained pilot recovery next.
+Status: Paused
+Status detail: Paused 2026-11-25 by the lead: external-supervisor offload takes priority this week, see supervisor-offload.md. Combined split mutex/startup/CLI repair independently119/119 PASS; final recursive checks and retained pilot recovery next.
 Created: 2026-10-28
 Last updated: 2026-10-28
 Owner: Senior supervisor agent

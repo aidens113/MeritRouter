@@ -1,6 +1,6 @@
 # Production readiness execution sequence
-Status: Active
-Status detail: Additional split controls independently checked and rebuilt; retained Commons retry running, full final suite active; product acceptance open.
+Status: Paused
+Status detail: Paused 2026-11-25 by the lead: external-supervisor offload takes priority this week, see supervisor-offload.md. Additional split controls independently checked and rebuilt; retained Commons retry running, full final suite active; product acceptance open.
 Created: 2026-10-26
 Last updated: 2026-10-28
 Owner: Senior supervisor agent
