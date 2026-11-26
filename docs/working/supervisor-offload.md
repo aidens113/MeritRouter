@@ -1,6 +1,6 @@
 # Supervisor offload: free workers do the heavy lifting
 Status: Active
-Status detail: Phase 0 done (except .mcp.json, moved to Phase 3); Phase 1 contracts and init fix committed; lanes A-D next.
+Status detail: Phase 0 and Phase 1 committed; lanes A-E dispatched in parallel 2026-11-25.
 Created: 2026-11-25
 Last updated: 2026-11-25
 Owner: Senior supervisor agent
@@ -169,7 +169,11 @@ verdict). Revisit the internal supervisor only after the external loop meets acc
 ## Worker Briefs
 
 Completed: phase1-contracts (worker-heavy), init-provisioning-fix (worker); reports under
-`supervisor-offload/reports/`.
+`supervisor-offload/reports/`. Dispatched 2026-11-25: lane-a (worker), lane-b (worker-heavy),
+lane-c (worker), lane-d (worker), lane-e (worker; owns `src/admin/offload-metrics.ts`,
+`src/admin/exchange-export.ts`, `src/cli/exchanges.ts`, `evals/offload/**`; lead registers its CLI
+command and facade exports). Lead added wiring before dispatch (d6e2ec8): `MeritRouter.channel`,
+`RunContext.channel`, watchdog exemptions for ask_supervisor/request_tools/report_blocked.
 
 **Stable interfaces for every lane** (committed in Phase 1, change only through the lead):
 `src/core/brief.ts` (BriefV1Schema, lintBrief, briefToTaskArgument, TOOL_PROFILES,
