@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { transportRecovery } from "./cli/transport.js";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,7 +25,7 @@ import { operationsCommand } from "./cli/operations.js";
 import { planText } from "./cli/plan-text.js";
 import { chooseProject, PROJECT_ENV, requireProject, type SelectOptions } from "./cli/project-select.js";
 import { projectsCommand } from "./cli/projects.js";
-import { initializeConfig } from "./cli/setup.js";
+import { initializeConfig, provisionInitialProject } from "./cli/setup.js";
 import { serveLabs, stopLabSupervisor } from "./cli/lab-supervisor.js";
 import { ensureLabSupervisor, LabSupervisorLease } from "./operations/lab-supervisor.js";
 import { labsCommand } from "./cli/labs.js";
@@ -160,12 +160,25 @@ async function main(): Promise<number> {
         }
       }
     }
+    const projectSlug = values.project ?? process.env[PROJECT_ENV] ?? "my-project";
+    const freshInstall = !existsSync(configPath);
     const messages = initializeConfig({
-      configPath, preset: values.preset, project: values.project ?? process.env[PROJECT_ENV] ?? "my-project",
+      configPath, preset: values.preset, project: projectSlug,
       ...(values.name ? { name: values.name } : {}), repositories, setup: cmd === "setup",
       ...(values.port !== undefined ? { port: Number(values.port) } : {}),
     });
     for (const message of messages) out(message, false);
+    // A fresh split install with exactly one repository has an unambiguous project directory (the
+    // repository itself); provision its store now so `doctor`/`mcp` see a working project right
+    // away instead of an unprovisioned `projects.<slug>` stub that `projects create <slug> <dir>`
+    // would otherwise refuse with "already exists" (see docs/working/supervisor-offload/reports/
+    // operational-health.md and init-provisioning-fix.md).
+    if (freshInstall && Object.keys(repositories).length === 1) {
+      const [repo] = Object.values(repositories);
+      const directory = path.resolve(path.dirname(configPath), repo!.path);
+      const provisioned = await provisionInitialProject(configPath, projectSlug, directory);
+      if (provisioned) out(provisioned, false);
+    }
     if (cmd === "setup" && !values["no-panel"]) {
       const status = await ensurePanel(loadConfig(configPath), { force: true });
       out(status.detail, false);

@@ -1180,4 +1180,37 @@ export const MIGRATIONS: string[] = [
     created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(lab_id,service_name)
   );
   `,
+  // Supervisor offload channel v1 (core/channel.ts, storage/supervisor-channel.ts): one task's worker<->supervisor messages,
+  // at most one reply per request. task_rework keeps lineage when work is sent back; it is its
+  // own table because task rows are parsed strictly (storage/task-queue.ts StoredTaskDTOSchema).
+  `
+  CREATE TABLE channel_messages (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    direction TEXT NOT NULL CHECK(direction IN ('worker_to_supervisor','supervisor_to_worker')),
+    kind TEXT NOT NULL CHECK(kind IN ('question','tool_request','help','blocked','answer','grant','deny','probe','rework')),
+    body TEXT NOT NULL CHECK(length(body) BETWEEN 1 AND 20000),
+    refs_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(refs_json) AND json_type(refs_json)='array'),
+    status TEXT NOT NULL CHECK(status IN ('pending','answered','delivered','expired')),
+    in_reply_to TEXT,
+    idempotency_key TEXT,
+    created_at INTEGER NOT NULL,
+    answered_at INTEGER,
+    delivered_at INTEGER,
+    expired_at INTEGER,
+    UNIQUE(task_id,idempotency_key)
+  );
+  CREATE UNIQUE INDEX channel_messages_one_reply ON channel_messages(in_reply_to) WHERE in_reply_to IS NOT NULL;
+  CREATE INDEX channel_messages_task ON channel_messages(task_id,created_at);
+  CREATE INDEX channel_messages_inbox ON channel_messages(project_id,direction,status,created_at);
+  CREATE TABLE task_rework (
+    task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+    rework_of TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE CHECK(rework_of != task_id),
+    project_id TEXT NOT NULL,
+    message_id TEXT,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX task_rework_of ON task_rework(rework_of);
+  `,
 ];

@@ -258,13 +258,24 @@ export type CreateProjectResult =
   | { ok: false; errors: string[] };
 
 /**
+ * A split project's config entry exists but its store was never provisioned (no registered
+ * `.MeritRouter` store for it yet) -- for example a stub `init`/`setup` wrote with repositories
+ * but no `directory`. A legacy project needs no provisioning, so it is always "already exists".
+ */
+function isUnprovisionedSplitStub(sy: MeritRouter, slug: string): boolean {
+  return sy.layout === "split" && !!sy.projects.get(slug) && !projectStoreRegistrations(sy.db, slug).some((row) => row.state === "registered");
+}
+
+/**
  * Check a new project's slug and repositories. A repository folder that does not exist or is not
- * a git repository is fine (`createProject` prepares it); a path that is a file is not.
+ * a git repository is fine (`createProject` prepares it); a path that is a file is not. An
+ * existing config entry that was never provisioned (see `isUnprovisionedSplitStub`) is adopted and
+ * repaired instead of refused.
  */
 export function validateNewProject(sy: MeritRouter, input: CreateProjectInput): string[] {
   const errors: string[] = [];
   if (!PROJECT_SLUG_RE.test(input.slug)) errors.push(`slug ${JSON.stringify(input.slug)}: lower-case letters, digits, '.', '_', '-', starting with a letter or digit`);
-  if (sy.projects.get(input.slug)) errors.push(`project ${input.slug} already exists`);
+  if (sy.projects.get(input.slug) && !isUnprovisionedSplitStub(sy, input.slug)) errors.push(`project ${input.slug} already exists`);
   if (input.name !== undefined && (!input.name.trim() || input.name.length > 80)) errors.push("name: 1 to 80 characters");
   const base = path.dirname(sy.cfg.configPath);
   for (const [alias, repo] of Object.entries(input.repositories ?? {})) {
@@ -279,8 +290,8 @@ export function validateNewProject(sy: MeritRouter, input: CreateProjectInput): 
     const abs = path.resolve(base, repo.path.trim());
     if (folderState(abs) === "file") errors.push(`repository ${alias}: ${abs} is a file, not a folder`);
   }
-  const directory = input.directory?.trim();
-  if (input.directory !== undefined && !directory) errors.push("directory: enter the project's folder");
+  const directory = input.directory?.trim() || (isUnprovisionedSplitStub(sy, input.slug) ? (sy.projects.get(input.slug)?.projectDirectory ?? undefined) : undefined);
+  if (input.directory !== undefined && !input.directory.trim()) errors.push("directory: enter the project's folder");
   else if (!directory && sy.layout === "split") errors.push(`directory: enter the project's folder; this installation keeps each project's private data in <directory>/${PROJECT_RUNTIME_DIRECTORY}`);
   if (directory) {
     const abs = path.resolve(base, directory);
@@ -300,18 +311,29 @@ export function validateNewProject(sy: MeritRouter, input: CreateProjectInput): 
  * single-project config is first converted to the projects shape: its top-level repositories move
  * under `projects.<its slug>` (the slug every existing row already carries), and nothing else
  * changes.
+ *
+ * Adopting an unprovisioned stub (see `isUnprovisionedSplitStub`) keeps its already-configured
+ * name/repositories/brain mounts unless this call overrides them, instead of replacing the entry
+ * wholesale and silently dropping what `init`/`setup` already wrote.
  */
 export async function createProject(sy: MeritRouter, input: CreateProjectInput): Promise<CreateProjectResult> {
   const errors = validateNewProject(sy, input);
   if (errors.length) return { ok: false, errors };
   const base = path.dirname(sy.cfg.configPath);
+  const adopting = isUnprovisionedSplitStub(sy, input.slug);
+  // The already-configured entry this call is adopting (its raw `projects.<slug>` node): kept for
+  // whatever this call does not itself override, so the stub's own repositories/name/mounts are
+  // not silently dropped by the full-entry write below.
+  const existingRaw = adopting ? ((YAML.parseDocument(readConfigText(sy)).getIn(["projects", input.slug]) as YAML.Node | undefined)?.toJSON?.() as Record<string, unknown> | undefined) ?? {} : {};
+  const existingCtx = adopting ? sy.projects.get(input.slug) : undefined;
+  const inputRepositories = Object.keys(input.repositories ?? {}).length ? input.repositories! : (existingCtx?.repositories as CreateProjectInput["repositories"] | undefined) ?? {};
   const { problems, done: prepared } = await prepareRepositoryFolders(
     sy,
     input.slug,
-    Object.entries(input.repositories ?? {}).map(([alias, r]) => ({ alias, path: path.resolve(base, r.path.trim()) })),
+    Object.entries(inputRepositories).map(([alias, r]) => ({ alias, path: path.resolve(base, r.path.trim()) })),
   );
   if (problems.size) return { ok: false, errors: [...problems].map(([alias, m]) => `repository ${alias}: ${m}`) };
-  const directory = input.directory?.trim() || null;
+  const directory = input.directory?.trim() || existingCtx?.projectDirectory || null;
   const split = sy.layout === "split";
   const absolute = directory ? path.resolve(base, directory) : null;
   // A split project's folder must exist before its store can be provisioned in it.
@@ -322,9 +344,10 @@ export async function createProject(sy: MeritRouter, input: CreateProjectInput):
   }
   const hadRoot = !!absolute && existsSync(path.join(absolute, PROJECT_RUNTIME_DIRECTORY));
   const entry: Record<string, unknown> = {
+    ...existingRaw,
     ...(input.name ? { name: input.name.trim() } : {}),
     ...(directory ? { directory } : {}),
-    repositories: Object.fromEntries(Object.entries(input.repositories ?? {}).map(([alias, r]) => [alias, { path: r.path, ...(r.writable === false ? { writable: false } : {}) }])),
+    repositories: Object.fromEntries(Object.entries(inputRepositories).map(([alias, r]) => [alias, { path: r.path, ...(r.writable === false ? { writable: false } : {}) }])),
     ...(input.mounts?.length ? { brain: { mounts: input.mounts.map((m) => ({ prefix: m.prefix, path: m.path, ...(m.commit ? { commit: true } : {}) })) } } : {}),
   };
   const patch: Array<{ path: Array<string | number>; value: unknown }> = [];

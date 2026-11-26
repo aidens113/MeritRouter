@@ -18,12 +18,14 @@ const localTables = new Set([
   "request_captures", "task_lease_operation_keys", "task_lease_operations", "task_lease_operation_projects", "request_protocol_keys", "request_protocol",
   "request_protocol_projects", "worker_action_requests", "product_deliveries", "product_delivery_history", "store_identity",
   "project_request_protocol", "project_request_holds", "project_request_spend", "project_execution_claims", "project_execution_claim_members", "lab_command_owners", "lab_capacity_owners", "web_usage_protocol",
+  // Supervisor offload (storage/supervisor-channel.ts): per-task worker<->supervisor messages and rework lineage.
+  "channel_messages", "task_rework",
 ]);
 const classifiedTables = new Set<string>([...localTables, ...sharedTables, ...qualificationTables]);
 const brainFtsShadowTables = new Set(["brain_fts_data", "brain_fts_idx", "brain_fts_content", "brain_fts_docsize", "brain_fts_config"]);
 const scopedTables = ["model_requests", "events", "brain_access_requests", "brain_grants", "job_state", "sessions", "job_plans", "web_requests",
   "budget_requests", "labs", "lab_operations", "task_workspace_attempts", "request_captures", "task_lease_operation_projects", "request_protocol_projects",
-  "worker_action_requests", "product_deliveries", "product_delivery_history", "project_request_protocol", "project_request_holds", "project_request_spend", "project_execution_claims", "project_execution_claim_members", "lab_command_owners", "lab_capacity_owners", "web_usage_protocol"] as const;
+  "worker_action_requests", "product_deliveries", "product_delivery_history", "project_request_protocol", "project_request_holds", "project_request_spend", "project_execution_claims", "project_execution_claim_members", "lab_command_owners", "lab_capacity_owners", "web_usage_protocol", "channel_messages", "task_rework"] as const;
 
 function assertClassifiedSchema(db: Db): void {
   const rows = z.array(z.object({ schema: z.literal("main"), name: z.string(), type: z.enum(["table", "virtual", "shadow"]) }).passthrough())

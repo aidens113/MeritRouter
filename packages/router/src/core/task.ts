@@ -3,6 +3,7 @@ import { z } from "zod";
 import { CheckNameSchema, ImportanceSchema, ProfileNameSchema, TierNameSchema, VerificationLevelSchema } from "../config/schema.js";
 import { TagsSchema } from "../scoring/rulebook.js";
 import { LabNameSchema } from "../labs/recipe.js";
+import { SelfCheckSchema } from "./report.js";
 
 /**
  * File reference: `<alias>:<relative/path>` with an optional `#L<start>-L<end>` range.
@@ -388,6 +389,8 @@ export const WorkerResultSchema = z
     changedPaths: z.array(z.string()).optional(),
     scopeViolation: z.array(z.string()).optional(),
     protectedPathsChanged: z.array(z.string()).optional(),
+    /** The worker's answers to the fixed self-check questions (absent on older results). */
+    selfCheck: SelfCheckSchema.optional(),
     usage: UsageSchema,
     servedEndpoints: z.array(z.string()),
     classification: z

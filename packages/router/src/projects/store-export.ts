@@ -81,6 +81,8 @@ export const PROJECT_EXPORT_TABLES: Readonly<Record<string, string>> = Object.fr
   lab_command_owners: OWNED,
   lab_capacity_owners: OWNED,
   web_usage_protocol: OWNED,
+  channel_messages: OWNED,
+  task_rework: OWNED,
 });
 
 const COORDINATION = "coordination-owned shared accounting or registry state; stays in the coordination store";

@@ -252,6 +252,21 @@ export {
 export { channelTools, renderChannelPost, mirrorChannel } from "./harness/channel-tools.js";
 export { REDUNDANCY_STARTED, REDUNDANCY_SKIPPED, REDUNDANCY_SETTLED, SUPERSEDED, type RedundancyPlan } from "./core/redundancy.js";
 export { WATCHDOG_CHECK_RUNNING_TOOLS, WATCHDOG_EXEMPT_TOOLS, WATCHDOG_MARGIN_MS, watchdogVerdict, type WatchdogVerdict, type SessionProgress } from "./core/watchdog.js";
+// Supervisor offload contracts (Phase 1): Brief v1, Report v1, Channel v1.
+export {
+  BRIEF_KINDS, BriefKindSchema, REPORT_DETAILS, ReportDetailSchema, TOOL_PROFILE_NAMES, TOOL_PROFILES, ALWAYS_ON_WORKER_TOOLS, WRITE_TOOLS, KNOWN_WORKER_TOOLS,
+  BriefV1Schema, BriefError, lintBrief, checkBrief, briefToTaskArgument, resolveBriefTools, taskProfileFor,
+  type BriefKind, type ReportDetail, type ToolProfileName, type BriefV1, type BriefV1Input, type BriefIssue, type BriefLint, type BriefCheck,
+} from "./core/brief.js";
+export { SelfCheckSchema, renderReportV1, type SelfCheck, type DiffstatEntry, type ReportRenderOptions } from "./core/report.js";
+export {
+  CHANNEL_DIRECTIONS, CHANNEL_MESSAGE_KINDS, CHANNEL_MESSAGE_STATUSES, CHANNEL_REQUEST_KINDS, CHANNEL_REPLY_KINDS, CHANNEL_MESSAGE_MAX_BODY_CHARS, CHANNEL_MESSAGE_MAX_REFS, CHANNEL_MESSAGE_LIST_LIMIT,
+  ChannelDirectionSchema, ChannelMessageKindSchema, ChannelMessageStatusSchema, ChannelMessageSchema, ChannelPostSchema, ChannelAnswerSchema,
+  ChannelMessageError, toolRefs, toolsFromRefs,
+  type ChannelDirection, type ChannelMessageKind, type ChannelMessageStatus, type ChannelMessage, type ChannelPostInput as ChannelMessagePostInput, type ChannelAnswerInput,
+  type ChannelMessageErrorCode, type ChannelAwaitOutcome, type SupervisorChannelService,
+} from "./core/channel.js";
+export { SupervisorChannelStore, type ChannelListOptions } from "./storage/supervisor-channel.js";
 export { commitsMatching, commitsOfTasks, type CommitInfo } from "./attribution/index.js";
 export { markPanelStopped, panelStopFile, turnPanelOff, turnPanelOffAfterDrain } from "./operations/panel.js";
 export * from "./web/index.js";

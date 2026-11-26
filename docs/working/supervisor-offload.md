@@ -1,6 +1,6 @@
 # Supervisor offload: free workers do the heavy lifting
 Status: Active
-Status detail: User approved 2026-11-25. Phase 0 under way (Next.js upgraded); Phase 1 contracts and init fix with workers.
+Status detail: Phase 0 done (except .mcp.json, moved to Phase 3); Phase 1 contracts and init fix committed; lanes A-D next.
 Created: 2026-11-25
 Last updated: 2026-11-25
 Owner: Senior supervisor agent
@@ -168,7 +168,71 @@ verdict). Revisit the internal supervisor only after the external loop meets acc
 
 ## Worker Briefs
 
-None dispatched yet. Lane briefs are written after Phase 1 contracts are committed.
+Completed: phase1-contracts (worker-heavy), init-provisioning-fix (worker); reports under
+`supervisor-offload/reports/`.
+
+**Stable interfaces for every lane** (committed in Phase 1, change only through the lead):
+`src/core/brief.ts` (BriefV1Schema, lintBrief, briefToTaskArgument, TOOL_PROFILES,
+ALWAYS_ON_WORKER_TOOLS incl. reply_supervisor), `src/core/report.ts` (SelfCheckSchema,
+renderReportV1), `src/core/channel.ts` (ChannelMessageSchema, ChannelMessageError, ChannelAwaitOutcome,
+SupervisorChannelService), `src/storage/supervisor-channel.ts` (SupervisorChannelStore).
+Rework lineage is the `task_rework` table (task rows stay unchanged: StoredTaskDTOSchema is strict).
+Any new table must be classified in both `src/storage/store-role.ts` and
+`src/projects/store-export.ts`. Wiring: `MeritRouter.channel: SupervisorChannelService`;
+`RunContext.channel?: SupervisorChannelService`.
+
+### Brief: lane-b-channel-backend (worker-heavy, Opus, high)
+Goal: implement SupervisorChannelService and wire it. Owned: `src/core/service.ts` (channel
+member + delegate/probe/rework methods only), new `src/core/channel-service.ts`,
+`src/runners/types.ts` (RunContext.channel), `src/sessions/**` as needed for read-only resume,
+tests `tests/offload-channel.test.ts`. Must not touch: `src/mcp/**`, `src/harness/**`,
+`src/runners/prompts.ts`, charters, contracts files, migrations. Deliver: postFromWorker;
+awaitReply waits without model requests, honours abort and timeout (returns "no answer"), survives
+restart (pending rows reload); replyFromSupervisor atomic; probe on running task queues a
+supervisor_to_worker message, on finished task runs a read-only resume of the worker session with
+the question and returns the answer with evidence refs; rework creates a task with rework_of,
+same writable scope, starting from the prior candidate commit, feedback appended; grantedTools;
+pendingForWorker; listPendingForSupervisor. Checks: package typecheck; new test file; existing
+session/resume and task tests. Report: `supervisor-offload/reports/lane-b.md`.
+
+### Brief: lane-c-worker-side (worker, Sonnet, medium)
+Goal: workers see only granted tools and can talk to their supervisor. Owned: `src/harness/**`
+(tool registry, loop injection, new `src/harness/supervisor-channel-tools.ts`),
+`src/runners/prompts.ts`, `src/runners/coding/**`, `src/runners/readonly.ts`, `charters/**`,
+tests `tests/worker-tool-profiles.test.ts`, `tests/worker-channel-tools.test.ts`. Must not touch:
+`src/mcp/**`, `src/core/**`, contracts, migrations. Deliver: tool set per turn = TOOL_PROFILES[profile]
+or explicit list, plus grantedTools(taskId), plus ALWAYS_ON (ask_supervisor, request_tools,
+report_blocked, reply_supervisor, submit_result); worker tools call ctx.channel and wait without
+model requests (add them to watchdog exemption via the existing set's owner only if needed: ask
+the lead); loop injects pendingForWorker messages at the next turn and marks delivered; lite
+numbered prompt with one worked example per granted tool for free tiers; HARNESS_V2_GUIDANCE only
+for implement on capable tiers; fixed-count early stall nudge; submit_result requires selfCheck;
+remove the always-failing external coding runner option (config value refused with a clear
+error). Checks: typecheck; new tests; existing harness/runner tests. Report: `lane-c.md`.
+
+### Brief: lane-a-mcp-surface (worker, Sonnet, medium)
+Goal: default core MCP tool set and offload playbook. Owned: `src/mcp/**`,
+`src/admin/client-supervision.ts`, `src/config/client-supervision.ts`, tests `tests/mcp*.test.ts`
+(new cases). Must not touch: `src/core/**`, `src/harness/**`, `src/runners/**`, contracts.
+Deliver: core tools (default) `delegate` (BriefV1 + lint errors returned + route preview),
+`await` (renderReportV1 + pending worker messages), `inbox`, `reply` (answer/grant/deny),
+`probe`, `rework`, `accept`, `reject`, `diff`/`read_artifact`, `run_check`, `status`,
+`offload_report` (stub until lane E); full set behind config `mcp.tools: full`; capped
+`get_session`; rewritten default supervision text (~600 words): direct tasks by default, what to
+delegate vs keep, brief template, probing protocol, answer worker messages on every await,
+rework once then escalate; MCP prompts `offload_playbook`, `write_brief`, `probe_report`.
+Report: `lane-a.md`.
+
+### Brief: lane-d-integrations (worker, Sonnet, medium)
+Goal: one-command connection and structural hooks. Owned: new `src/cli/connect.ts`, `src/cli/inbox.ts`,
+command registration lines in `src/cli.ts`, new `integrations/claude-code/**`, `integrations/codex/**`,
+`docs/setup.md`, tests `tests/cli-connect.test.ts`. Must not touch: `src/core/**`, `src/mcp/**`,
+`src/harness/**`. Deliver: `meritrouter connect claude|codex --project <slug> [--repo <dir>]
+[--project-dir <dir>]` writes `.mcp.json` / Codex MCP config and a CLAUDE.md / AGENTS.md offload
+snippet (idempotent, never overwrites unrelated content); `meritrouter inbox --json`; opt-in Claude
+Code hooks (advisory PreToolUse nudge for large direct writes or long test/build commands; Stop
+hook blocking while worker messages are unanswered or reports unreviewed; SessionStart inbox
+summary) installed only with `--hooks`. Report: `lane-d.md`.
 
 ## Work Ledger
 
@@ -190,6 +254,20 @@ None dispatched yet. Lane briefs are written after Phase 1 contracts are committ
 - Paused five efforts (header + committed index row); trial-failure-audit and gate2 rows paused in
   the working copy only (their rows and the audit file are not yet committed by their owners).
 - Dispatched: phase1-contracts (worker-heavy), init-provisioning-fix (worker).
+
+### 2026-11-25 — Phase 1 contracts and init provisioning fix
+- Outcome: Accepted. Worker: phase1-contracts (worker-heavy), init-provisioning-fix (worker).
+- Lead changes: registered `channel_messages`/`task_rework` in `projects/store-export.ts`; moved
+  SupervisorChannelStore from core/channel.ts to `storage/supervisor-channel.ts` (placement rule);
+  narrowed the new init test's doctor assertion to project checks (fresh temp install has no keys).
+- Validation: `pnpm typecheck` -> exit 0; `pnpm build` (router) -> exit 0;
+  `npx vitest run` offload-contracts, project-store-migration, project-store-provision,
+  zero-project-installation, project-cli-operations, install-layout -> 6 files, 92 passed, 1 skipped;
+  mcp, mcp-http, mcp-lifecycle-v2, task-queue, task-recovery-retention, task-startup-recovery,
+  verification, verification-flow, verification-surface -> all passed.
+- Known failing, not caused here: `project-task-lab-deletion` 3/3 fail with
+  `environment_failure`; same result with the init fix stashed and (per worker) without the
+  contracts. Lab area is paused; revisit at the full-suite run.
 
 ## Open Questions
 - Budget for the live smoke and the Claude-usage cost of the offload eval (asked before Phase 3).
