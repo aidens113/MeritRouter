@@ -133,3 +133,41 @@ export function summarizeComparison(results, suiteSize) {
       metrics.supervisorOutputTokenReduction >= 0.4,
   };
 }
+
+export function summarizeLocalFixtures({ rows, planned, suiteSize, model, compare }) {
+  const sum = (selector) => rows.reduce((total, row) => total + selector(row), 0);
+  const passed = rows.filter((row) => row.pass).length;
+  const completeSuite = planned === suiteSize && rows.length === suiteSize && new Set(rows.map((row) => row.task)).size === suiteSize;
+  const hasUsage = (usage) => Number.isSafeInteger(usage?.input) && usage.input >= 0 &&
+    Number.isSafeInteger(usage?.output) && usage.output > 0;
+  const paired = compare && rows.length === planned && rows.every((row) => hasUsage(row.baseline?.usage) && hasUsage(row.review?.usage));
+  const tokens = (field) => paired ? { input: sum((row) => row[field].usage.input), output: sum((row) => row[field].usage.output) } : null;
+  const baselineTokens = tokens("baseline");
+  const reviewTokens = tokens("review");
+  const baselinePassed = compare ? rows.filter((row) => row.baseline?.pass).length : null;
+  const outputReduction = baselineTokens?.output ? 1 - reviewTokens.output / baselineTokens.output : null;
+  const tokenTotal = (usage) => usage.input + usage.output;
+  // Charge the measured direct attempt for each task returned to the supervisor.
+  const fallbackTokens = paired ? {
+    input: sum((row) => row.pass ? 0 : row.baseline.usage.input),
+    output: sum((row) => row.pass ? 0 : row.baseline.usage.output),
+  } : null;
+  const estimatedOutputReduction = paired ? 1 - (reviewTokens.output + fallbackTokens.output) / baselineTokens.output : null;
+  const offloadShare = passed / planned;
+  const taskTargetMet = completeSuite && offloadShare >= 0.6;
+  const qualityComparable = Boolean(paired && passed >= baselinePassed - 1);
+  return {
+    localModel: model, planned, completed: rows.length, passed, completeSuite, offloadShare, taskTargetMet,
+    workerRequests: sum((row) => row.requests ?? 0),
+    missingWorkerUsage: rows.filter((row) => !Number.isSafeInteger(row.requests)).length,
+    workerChangedLines: sum((row) => row.pass ? (row.attribution?.changedLines ?? 0) : 0),
+    baselinePassed, baselineTokens, reviewTokens, fallbackTokens, qualityComparable,
+    supervisorOutputTokenReduction: outputReduction,
+    supervisorTotalTokenReduction: baselineTokens ? 1 - tokenTotal(reviewTokens) / tokenTotal(baselineTokens) : null,
+    estimatedOutputTokenReductionWithFallback: estimatedOutputReduction,
+    estimatedTotalTokenReductionWithFallback: paired
+      ? 1 - (tokenTotal(reviewTokens) + tokenTotal(fallbackTokens)) / tokenTotal(baselineTokens) : null,
+    supervisorProxyTargetMet: taskTargetMet && qualityComparable && estimatedOutputReduction !== null && estimatedOutputReduction >= 0.4,
+    results: rows,
+  };
+}

@@ -6,5 +6,5 @@
   "allowedPaths": ["src/strings.ts", "tests/strings.test.ts"],
   "contextFiles": ["src/strings.ts", "tests/strings.test.ts"],
   "goal": "Rename the exported function legacySlugify to slugify everywhere it is defined or used, and keep the tests passing.",
-  "prompt": "Rename the function `legacySlugify` (src/strings.ts) to `slugify` everywhere it is defined or referenced, including tests/strings.test.ts. Nothing else should change, and `npm test` must still pass."
+  "prompt": "Rename every occurrence of `legacySlugify` to `slugify` in src/strings.ts and tests/strings.test.ts, including the reference in the source comment. Keep the function behavior and tests unchanged. `npm test` must still pass."
 }

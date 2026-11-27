@@ -148,19 +148,27 @@ node packages/router/evals/offload/run.mjs --dry-run
 node packages/router/evals/offload/run.mjs --preflight
 ```
 
-Use `--local` for free-only smoke testing without a commercial supervisor. Give it the
-loopback URL of a separate Ollama instance with cloud disabled and exactly one downloaded
-model. For example:
+Use `--local` for a free-only benchmark. Give it the loopback URL of a separate Ollama
+instance with cloud disabled and exactly one downloaded model. With a local Linux Node 22
+Docker image, the benchmark runs all eight fixtures. `--compare-local` adds two requests per
+fixture, one for direct work on a fresh copy and one to review the offloaded work.
+Set `OLLAMA_CONTEXT_LENGTH=16384` when starting the isolated server for the coding fixtures
+and pass the same context as `--context-tokens`.
 
 ```sh
-node packages/router/evals/offload/run.mjs --local --ollama-url http://127.0.0.1:41537 --model qwen3:8b --worker-requests 8 --task 02-summarize
+node packages/router/evals/offload/run.mjs --local --ollama-url http://127.0.0.1:41537 --model qwen3.5:9b-q4_K_M --worker-requests 160 --context-tokens 16384 --docker-image node:22-alpine --compare-local
 ```
 
-This path sends the scout, summary, and review briefs over MCP stdio and grades the worker's
-answer. It uses small-model parameter floors and deterministic classification for these fixed
-fixtures in the isolated installation. Paid routing stays disabled. The receipt records the
-serving model, request count, and grader result or failure reason.
-This smoke does not run the coding fixtures, and it has no commercial-client cost baseline.
+The driver sends briefs over MCP stdio and uses the normal task acceptance calls. For edits,
+it verifies the worker commit's attribution and changed paths before grading its source in a
+container with networking disabled. The isolated settings use smaller model parameter floors,
+deterministic classification for fixed inputs, and free routing. Omit `--docker-image` for the
+read-only fixtures or select one fixture with `--task`. The receipt records the serving model,
+request count, and each grader result. Only a complete eight-fixture run can meet the task
+offload threshold. Paired receipts include supervisor output and total tokens from the local model.
+The fallback estimate adds the measured direct attempt for each rejected or failed task to
+the review side. These token counts are a proxy for supervisor credit usage. Actual
+commercial-client credits require separate measurement.
 
 The optional two-arm comparison requires approval for supervisor usage and free-provider requests.
 Run the benchmark with `--yes`, the same explicit Claude model for both arms, a supervisor

@@ -1,6 +1,6 @@
 # Supervisor offload: free workers do the heavy lifting
 Status: Active
-Status detail: Free-only MCP smoke verified summarization. Local scout report validity and broader offload acceptance remain open.
+Status detail: Free-only release cohort accepted 7/8. Fallback-adjusted supervisor tokens fell 61% for output and 23% overall. Command and fresh aggregate checks remain in progress.
 Created: 2026-11-25
 Last updated: 2026-11-27
 Owner: Senior supervisor agent
@@ -17,7 +17,8 @@ Related: [trial evidence](supervisor-offload/reports/trial-evidence.md),
 ## Current State
 
 The user resumed on November 27 for a November 30 deadline and again after a computer crash.
-The current `dev` snapshot is `53c78df` before the free-only smoke addition.
+The current published `dev` snapshot is `94cae30`. The user explicitly directed continued work
+until the 60–80% offload goal is achieved, with free-only tests and no Claude Code.
 The user superseded the commercial benchmark direction on November 27: free-only tests and
 no Claude Code. Use a deterministic MCP stdio supervisor and a local model. Record task success
 and worker requests. Commercial supervisor credit savings require separate baseline evidence.
@@ -110,11 +111,93 @@ of them load timeouts; serial rerun of the 27 failing files left 4, all fixed an
 - The isolated model weights were removed and test listener 41537 was stopped. The user's
   original Ollama listener on 11434 remained available.
 
+**November 27 mixed-workload checkpoint:**
+- The free benchmark now grades a bounded Git candidate in a disposable Linux container,
+  records exact task/model attribution and uses normal MCP acceptance. The grader's reference
+  checks failed on the unchanged rename and passed on its reference solution. Docker Desktop
+  restarted its existing `ti-egress-canary` container when the engine started.
+- A scripted loopback provider completed the rename through production MCP in three requests.
+  Two local scripted comparison responses completed the direct and review arms. The real
+  container passed the independent checks, and MCP acceptance was `met`. Receipt:
+  `%TEMP%/meritrouter-local-offload-results-IoRGft/results.json`.
+- Cloud-disabled Qwen3.5 9B passed the scout's grader in one real request. The first coding
+  canary stalled when it repeated `read_file` (four requests). The revised coding brief uses
+  supplied source, grants batched reads for missing content, and gives a concrete write tool.
+  Benchmark profiles reserve 2,048 output tokens in the model's 8,192-token context. The cohort
+  permits 20 requests per fixture to preserve deep-review admission for protected paths.
+- The comparison reviewer confused the pre-acceptance status with test evidence, rejecting
+  graded scout and summary results. The corrected input provides worker findings and the
+  independent check verdict. Estimated savings include measured direct-attempt tokens for tasks
+  returned to the supervisor.
+- The 8,192-token cohort confirmed that the harness plus output reserve exceeded context on
+  every coding fixture. At 16,384 tokens, scout and summary passed both grading and review.
+  Rename and bugfix transcripts showed successful `read_files` results elided before the next
+  response, followed by identical calls and a stall. The fallback and active model budgets now
+  account for the offered schemas of scoped workers. The unit reproduction failed on elision
+  before the fix and passed after it. Coding and read-only worker memory requests use the
+  initial tool grant. The feature and test briefs now supply a neighboring test as a real
+  project convention example, with unchanged independent graders.
+- Clean aggregate started at 14:56 Phoenix: `npx vitest run --maxWorkers=3` in `packages/router`,
+  log `%TEMP%/meritrouter-offload-suite-20261127-145610.log`. Concurrent recursive typecheck and
+  build hit Windows exit 3221225477 in router TypeScript and Next page-data respectively. Router
+  build completed. The pre-fix aggregate also observed one 30-second Lab contention timeout.
+  Repeat recursive typecheck and build serially, and run the release aggregate after the fix.
+- Pre-fix 16,384-token cohort: all eight completed, 3/8 accepted (all three read-only), 31 worker
+  requests. Four coding fixtures stalled on repeated reads, and the feature's tests used the
+  wrong framework. The fallback-adjusted output reduction was 3.7% and total tokens rose 30.1%.
+  Receipt: `%TEMP%/meritrouter-local-offload-results-3c3jcv/results.json`.
+- After the fix, local `03-rename` accepted in five requests. Its two-file commit passed the
+  independent build and tests. A direct solution also passed; review used 387 input and 23
+  output tokens, direct work used 439 input and 282 output tokens. This canary is separate
+  from the final denominator. Receipt: `%TEMP%/meritrouter-local-offload-results-KmrDig/results.json`.
+- `pnpm -r typecheck` and `pnpm -r build` passed with the context fix. The Lab test has an
+  explicit timeout overriding Vitest's CLI setting, so its two real Git promotions now get
+  60 seconds. All original overlap, conflict and retained-worktree assertions passed in 40.78 s.
+- The next cohort accepted scout, summary and rename, then stopped at feature acceptance:
+  the container passed, but the worker had an unmet result in MeritRouter. The driver now
+  preserves an unmet result and its reason as a failed row and continues. A scripted terminal
+  claim of `unmet` confirmed that passing tests and a positive reviewer cannot override it.
+  Coding briefs distinguish a check that could not run from an observed failure.
+- The 15:23 Phoenix reboot interrupted the older aggregate and feature retest. The router
+  build still imported, and the downloaded model and Docker image survived. The crash left
+  `tests/session-recording.test.ts` entirely zero-filled. Restored it from Git and retained
+  the focused change to wait explicitly for the supervisor question, which had missed the
+  original 10-second polling window under load. Resumed the local cohort on the existing
+  cloud-disabled test port with the same request ceilings.
+- The post-crash release cohort completed eight fixtures and met both local thresholds. Seven
+  were independently graded and accepted through MCP: 3/3 read-only and 4/5 coding, with 50
+  attributed changed lines and 27 worker requests. The refactor failed compilation because
+  both callers lacked the `clamp` import. Its candidate stayed unaccepted. The direct local
+  baseline passed 6/8. Review used 3,276 input and 269 output tokens versus the direct
+  baseline's 4,183 input and 1,811 output. Charging 648 input and 442 output from the
+  failed fixture's measured direct attempt yields 60.74% less supervisor output and 22.67%
+  fewer total supervisor tokens. This is a same-model local comparison with one direct attempt
+  per fixture. Real Codex or Claude account credits were outside the free-only test.
+  Receipt: `%TEMP%/meritrouter-local-offload-results-jIuwz6/results.json`.
+
 Not done / deferred: fixed-count stall nudge; Stop hook "unreviewed report" gating (no reviewed
 flag exists); per-tool examples in the lite prompt still describe the default tool set, not the
 granted subset. User's panel on 4477 still runs the pre-upgrade Next.js until restarted.
 
 ## Plan
+
+### Free-only release plan (authoritative)
+
+1. Preserve actual transcript evidence for worker report validation. Fix a shared parser or
+   prompt defect if it reproduces, then confirm the corrected path through MCP and a
+   downloaded local model before launching the full cohort.
+2. Run the existing eight fixtures through production MCP. Use the three read-only kinds and
+   bounded coding briefs for the five source changes. Accept answers or exact attributed
+   commits only after their independent graders pass. Grade model-written source in a
+   no-network container with only disposable input and trusted compiler assets mounted.
+   Count all eight fixtures, including failed tasks, and require at least five accepted
+   worker results. Record edits, check outcomes, model requests, coverage, and coordination.
+3. Compare a direct local supervisor arm with a local supervisor reviewing the offload arm,
+   using the same fixture briefs and model. Record measured local supervisor token reduction
+   and quality against the direct run. Publish this as a proxy for premium workload displaced.
+   The user's actual commercial-account credit usage requires independent account evidence.
+4. Run current recursive build/typecheck, focused checks and a fresh aggregate. Preserve
+   unrelated changes and the user's installations. Promote on accepted evidence only.
 
 ### Target loop
 
@@ -217,6 +300,27 @@ Fine-tune a worker model on the exchange corpus (brief -> tool use -> questions 
 verdict). Revisit the internal supervisor only after the external loop meets acceptance.
 
 ## Worker Briefs
+
+### Brief: free_fixture_grader
+- Repository: D:/MeritRouter
+- Role/model/effort: standard worker, gpt-6.1-sol, medium. Main checkout.
+- Task: Implement an independent, no-network Linux Docker grader for already materialized synthetic offload fixtures. It must never execute the generated source on the Windows host or mount the repository or user data. Use a caller-selected already downloaded Node 22 image with --pull=never and no inherited secrets. Read-only mounts, disposable container working copy, non-root, cap drop, no-new-privileges, bounded CPU/memory/pids/time, owned container cleanup.
+- Required reads: Current State above, packages/router/evals/offload/lib/fixture-build.mjs and checks.
+- Owns: packages/router/evals/offload/lib/container-grader.mjs, packages/router/tests/offload-container-grader.test.ts, your report only.
+- Interface: export gradeCodingFixture(taskId, fixtureDir, { image }) returning { ok, output } synchronously or asynchronously. Load trusted checks and compiler from package source. Isolate to OS temp. Grade the existing fixture scripts and return actual evidence. No model calls, no Docker startup or pulls by you. If engine unavailable, cover boundaries and failure with focused unit tests.
+- Must not touch: run.mjs, local-supervisor.mjs, isolated-router.mjs, fixture bodies, docs except your report, router runtime, dist.
+- Definition of done: grounded verification of explicit host paths and Docker arguments, fail closed on errors, focused tests, record integration limitations. No commit or push.
+- Report to: docs/working/supervisor-offload/reports/free_fixture_grader.md
+
+### Brief: local_supervisor_baseline
+- Repository: D:/MeritRouter
+- Role/model/effort: standard worker, gpt-6.1-sol, medium. Main checkout.
+- Task: Add both local supervisor measurement prompts, with Ollama-reported token usage, no commercial client or keys. Use exactly one native /api/chat request per invocation to one explicit 127.0.0.1 origin, redirect error, bounded duration/output. Use structured JSON with zod for model output. Read local synthetic requested fixture sources only, bounded paths, no writes and no code execution.
+- Required reads: Current State above, packages/router/evals/offload/tasks/*.json, existing localModelSource in local-supervisor.mjs as read-only interface reference.
+- Owns: packages/router/evals/offload/lib/local-baseline.mjs, packages/router/tests/offload-local-baseline.test.ts, your report only.
+- Interfaces: async runDirectLocal({source:{url,model},raw,dir}) -> {ok, answer?, files?: [{path,content}], usage:{input,output} | null, reason?}. For read-only return answer only; for coding return only allowed file changes. Async reviewLocalOffload({source,raw,report,check}) -> {ok, recommendation?, usage:{input,output} | null, reason?}. Report/check are supplied strings. Validate supervisor response and keep measured usage if JSON is malformed. Lead applies scoped files and graders externally, and measures same-model paired comparison.
+- Must not touch: any other source, existing tests or shared docs. No model calls (use synthetic transport in tests), no commits and no pushes.
+- Report to: docs/working/supervisor-offload/reports/local_supervisor_baseline.md
 
 ### Brief: windows_helper_recovery
 - Repository: D:/MeritRouter
@@ -526,8 +630,17 @@ summary) installed only with `--hooks`. Report: `lane-d.md`.
 - Outcome: Accepted
 - Follow-up: Finish the eight-fixture cohort and broader regression on the release snapshot.
 
+### 2026-11-27 — Free-only mixed-workload acceptance and savings
+- Agent: supervisor with `free_fixture_grader` and `local_supervisor_baseline`.
+- Changed: isolated container grading, commit materialization, local direct/review measurements, complete receipts, and the two focused Windows fixture timing checks.
+- Validation: `node evals/offload/run.mjs --dry-run` and `--preflight` from `packages/router` -> 8/8 grader self-checks and 8/8 MCP project checks. The mocked benchmark suite passed 42/42 after the final runner changes.
+- Validation: `node evals/offload/run.mjs --local --ollama-url http://127.0.0.1:41537 --model qwen3.5:9b-q4_K_M --worker-requests 160 --context-tokens 16384 --docker-image node:22-alpine --compare-local` -> exit 0, 7/8 accepted and both thresholds met. Receipt in `%TEMP%/meritrouter-local-offload-results-jIuwz6/results.json`.
+- Validation: `npx vitest run --no-file-parallelism tests/labs.test.ts -t 'serializes targets, detects overlap'` -> passed, 40.78 s. `npx vitest run --no-file-parallelism tests/session-recording.test.ts -t 'a shutdown ends the session'` -> passed, 14.22 s.
+- Outcome: Accepted
+- Follow-up: Verify a declared command through the operator boundary and run the fresh release aggregate before promoting main.
+
 ## Open Questions
-- The free-only smoke covers read-only fixtures. Broader coding and execution evidence still
-  needs a free workload using the existing operator command approval boundary.
+- The coding cohort used independent container checks. The separate declared command canary
+  is checking the operator approval boundary.
 - Commercial-client credit savings remain unmeasured. The user excluded Claude Code and
   paid tests on November 27.

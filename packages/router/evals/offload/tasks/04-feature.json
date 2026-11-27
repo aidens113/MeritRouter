@@ -4,7 +4,7 @@
   "title": "Small feature with tests: isPalindrome",
   "writable": true,
   "allowedPaths": ["src/palindrome.ts", "tests/palindrome.test.ts"],
-  "contextFiles": ["src/strings.ts"],
+  "contextFiles": ["src/strings.ts", "tests/strings.test.ts"],
   "goal": "Add src/palindrome.ts exporting isPalindrome(s), ignoring case and non-alphanumeric characters, with its own tests/palindrome.test.ts.",
-  "prompt": "Add a new file src/palindrome.ts that exports `isPalindrome(s: string): boolean`, returning true when `s` reads the same forwards and backwards once case and non-alphanumeric characters are ignored (so \"A man a plan a canal Panama\" is a palindrome). Add tests/palindrome.test.ts with at least a true case, a false case, and the empty string. `npm test` must pass."
+  "prompt": "Add a new file src/palindrome.ts that exports `isPalindrome(s: string): boolean`, returning true when `s` reads the same forwards and backwards once case and non-alphanumeric characters are ignored (so \"A man a plan a canal Panama\" is a palindrome). Add tests/palindrome.test.ts with at least a true case, a false case, and the empty string. Follow tests/strings.test.ts for node:test, assertions and .js import specifiers. `npm test` must pass."
 }

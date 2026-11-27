@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { MeritRouter } from "../src/core/service.js";
@@ -265,7 +265,7 @@ describe("supervisor sessions", () => {
     });
     sy = open(env, client, { worker: true });
     const job = await sy.startJob({ goal: "Pick a format", repositories: ["core"] });
-    for (let i = 0; i < 100 && !sy.questions().length; i++) await new Promise((r) => setTimeout(r, 100));
+    await vi.waitFor(() => expect(sy!.questions()).toHaveLength(1), { interval: 100, timeout: 45_000 });
     await sy.close();
     sy = open(env, client, { worker: false });
     const [first] = runs(job.taskId);

@@ -1,19 +1,77 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createServer } from "node:http";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const comparisonPath = new URL("../evals/offload/lib/comparison.mjs", import.meta.url).href;
-const { claudeArguments, parseClaudeRun, fixtureDelta, git, summarizeComparison } = await import(comparisonPath);
+const { claudeArguments, parseClaudeRun, fixtureDelta, git, summarizeComparison, summarizeLocalFixtures } = await import(comparisonPath);
 const localPath = new URL("../evals/offload/lib/local-supervisor.mjs", import.meta.url).href;
 const { localBrief, localModelSource } = await import(localPath);
+const candidatePath = new URL("../evals/offload/lib/fixture-candidate.mjs", import.meta.url).href;
+const { materializeWorkerCandidate, writeFixtureFiles } = await import(candidatePath);
 
 describe("local-only offload smoke", () => {
+  it("counts failures in the eight-task denominator and separates measured savings from coverage", () => {
+    const rows = Array.from({ length: 8 }, (_, index) => ({
+      task: String(index), pass: index < 5, requests: 2,
+      attribution: { changedLines: 2 },
+      baseline: { pass: index < 6, usage: { input: 100, output: 100 } },
+      review: { usage: { input: 175, output: 25 } },
+    }));
+    const input = { rows, planned: 8, suiteSize: 8, model: "local", compare: true };
+    expect(summarizeLocalFixtures(input)).toMatchObject({
+      offloadShare: 0.625, taskTargetMet: true, workerChangedLines: 10,
+      supervisorOutputTokenReduction: 0.75, supervisorTotalTokenReduction: 0,
+      fallbackTokens: { input: 300, output: 300 }, estimatedOutputTokenReductionWithFallback: 0.375,
+      estimatedTotalTokenReductionWithFallback: -0.375, supervisorProxyTargetMet: false,
+    });
+    expect(summarizeLocalFixtures({ ...input, rows: rows.map((row, index) => ({ ...row, pass: index < 6 })) }))
+      .toMatchObject({ estimatedOutputTokenReductionWithFallback: 0.5, supervisorProxyTargetMet: true });
+    expect(summarizeLocalFixtures({ ...input, rows: rows.slice(0, 5), planned: 5 })).toMatchObject({
+      completeSuite: false, taskTargetMet: false, supervisorProxyTargetMet: false,
+    });
+    expect(summarizeLocalFixtures({ ...input, rows: [{ ...rows[0], review: null }, ...rows.slice(1)] })).toMatchObject({
+      taskTargetMet: true, supervisorOutputTokenReduction: null, supervisorProxyTargetMet: false,
+    });
+  });
+
   it("turns an answer-file fixture into a read-only brief with an explicit budget", () => {
     expect(localBrief({ kind: "scout", goal: "Trace the fixture bug and report its exact output", contextFiles: ["src/money.ts"] }, 8))
       .toMatchObject({ kind: "scout", scope: { repository: "app", writable: false }, budget: { requests: 8 } });
-    expect(() => localBrief({ kind: "implement" }, 8)).toThrow(/read-only/);
+    expect(() => localBrief({ kind: "implement" }, 8)).toThrow(/container grader/);
+    expect(localBrief({
+      kind: "implement", goal: "Add one bounded fixture feature", contextFiles: ["src/code.ts"], allowedPaths: ["src/code.ts"],
+    }, 8, true)).toMatchObject({ kind: "edit", scope: { repository: "app", writable: true, allowedPaths: ["src/code.ts"] } });
+  });
+
+  it("copies only the allowed, attributed Git candidate into its disposable fixture", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "meritrouter-local-candidate-"));
+    try {
+      git(dir, "init", "--quiet");
+      git(dir, "config", "--local", "core.autocrlf", "false");
+      const commit = (...args: string[]) => git(dir, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", ...args);
+      const src = path.join(dir, "src", "code.ts");
+      mkdirSync(path.dirname(src));
+      writeFileSync(src, "export const a = 1;\n");
+      git(dir, "add", "--all");
+      commit("-m", "Base");
+      const base = git(dir, "rev-parse", "HEAD").trim();
+      writeFileSync(src, "export const a = 2;\n");
+      git(dir, "add", "--all");
+      commit("-m", "Worker change", "-m", "Task: fixture-task\nModel: ollama/model");
+      const head = git(dir, "rev-parse", "HEAD").trim();
+      const inputs = { base, head, taskId: "fixture-task", endpoint: "ollama/model", allowedPaths: ["src/code.ts"] };
+      writeFileSync(src, "ungraded");
+      expect(() => materializeWorkerCandidate(dir, { ...inputs, allowedPaths: [] })).toThrow(/outside the fixture brief/);
+      expect(() => materializeWorkerCandidate(dir, { ...inputs, endpoint: "ollama/other" })).toThrow(/attribution/);
+      expect(() => writeFixtureFiles(dir, ["../escape.ts"], [{ path: "../escape.ts", content: "" }])).toThrow(/invalid/);
+      expect(readFileSync(src, "utf8")).toBe("ungraded");
+      expect(materializeWorkerCandidate(dir, inputs)).toEqual({ head, files: ["src/code.ts"], changedLines: 2 });
+      expect(readFileSync(src, "utf8")).toBe("export const a = 2;\n");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("requires a loopback singleton with downloaded weights and rejects hosted aliases", async () => {

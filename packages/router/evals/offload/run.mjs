@@ -12,8 +12,11 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { parseArgs } from "node:util";
 import { prepareInstallation, prepareProject, readWorkerEvidence, startOperatorPanel } from "./lib/isolated-router.mjs";
-import { claudeArguments, fixtureDelta, parseClaudeRun, summarizeComparison } from "./lib/comparison.mjs";
+import { claudeArguments, fixtureDelta, parseClaudeRun, summarizeComparison, summarizeLocalFixtures } from "./lib/comparison.mjs";
 import { localModelSource, readOnlyKinds, runLocalFixture } from "./lib/local-supervisor.mjs";
+import { writeFixtureFiles } from "./lib/fixture-candidate.mjs";
+import { gradeCodingFixture } from "./lib/container-grader.mjs";
+import { runDirectLocal, reviewLocalOffload } from "./lib/local-baseline.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TASKS_DIR = path.join(HERE, "tasks");
@@ -33,9 +36,11 @@ function usage() {
       Provisions temporary fixture projects and checks the actual MCP tool list. No model calls.
 
   node evals/offload/run.mjs --local --ollama-url <loopback-url> --model <id>
-      --worker-requests <total> [--task <read-only-id>] [--out <new-dir>]
-      Runs read-only fixtures over production MCP stdio using a deterministic supervisor
-      and a single downloaded model on an isolated Ollama instance. No paid APIs.
+      --worker-requests <total> [--task <id>] [--docker-image <local-image>]
+      [--context-tokens <ollama-context>] [--compare-local] [--out <new-dir>]
+      Runs over production MCP stdio with one downloaded model on an isolated Ollama
+      instance. With a local Node 22 Docker image, include the coding fixtures. Compare
+      local supervisor token usage with --compare-local. No paid APIs.
 
   node evals/offload/run.mjs --yes --providers <file.json> --model <id>
       --claude-budget-usd <per-session> --worker-requests <total>
@@ -137,47 +142,76 @@ function dryRun() {
 }
 
 async function runLocal(args) {
-  const tasks = loadTasks().filter(({ raw }) => args.task ? raw.id === args.task : readOnlyKinds.has(raw.kind));
-  if (!tasks.length || tasks.some(({ raw }) => !readOnlyKinds.has(raw.kind))) throw new Error("Select a read-only local fixture");
+  const all = loadTasks();
+  const image = args["docker-image"];
+  const tasks = all.filter(({ raw }) => args.task ? raw.id === args.task : image || readOnlyKinds.has(raw.kind));
+  if (!tasks.length) throw new Error("Unknown fixture");
+  if (!image && tasks.some(({ raw }) => !readOnlyKinds.has(raw.kind))) throw new Error("Coding fixtures require --docker-image");
+  const compare = args["compare-local"];
   const maxRequests = Number(args["worker-requests"]);
+  const contextTokens = Number(args["context-tokens"] ?? 8192);
   if (!args["ollama-url"] || !args.model || !Number.isSafeInteger(maxRequests) || maxRequests < tasks.length) {
     throw new Error("Local mode requires --ollama-url, --model and enough --worker-requests for the selected fixtures");
+  }
+  if (!Number.isSafeInteger(contextTokens) || contextTokens < 4096 || contextTokens > 131072) {
+    throw new Error("--context-tokens must match the Ollama server context between 4096 and 131072");
   }
   for (const { file, raw } of tasks) {
     const issues = validateTask(raw, file);
     if (issues.length) throw new Error(`${file}: ${issues.join("; ")}`);
   }
-  const source = await localModelSource(args["ollama-url"], args.model);
+  const source = { ...await localModelSource(args["ollama-url"], args.model), contextTokens };
   const outDir = args.out ? path.resolve(args.out) : mkdtempSync(path.join(tmpdir(), "meritrouter-local-offload-results-"));
   if (args.out) mkdirSync(outDir);
   const journal = path.join(outDir, "progress.jsonl");
   writeFileSync(journal, "", { flag: "wx" });
-  console.log(`Local model ${source.model}; up to ${maxRequests} model requests; evidence in ${outDir}`);
+  console.log(`Local model ${source.model}, ${contextTokens} context tokens, up to ${maxRequests} model requests. Evidence in ${outDir}`);
+  if (compare) console.log(`Local direct and review arms add at most ${2 * tasks.length} local supervisor requests`);
   const scratch = mkdtempSync(path.join(tmpdir(), "meritrouter-local-offload-install-"));
   const rows = [];
+  const gradeCoding = image ? (id, dir) => gradeCodingFixture(id, dir, { image }) : undefined;
   try {
     const install = await prepareInstallation(scratch, undefined, maxRequests, source);
     for (const { raw } of tasks) {
       const dir = freshFixtureCopy(raw);
       try {
-        const { mcpConfig, slug } = await prepareProject(install, dir, raw, "offload");
+        const { base, mcpConfig, slug } = await prepareProject(install, dir, raw, "offload");
         console.log(`RUN   ${raw.id}`);
+        const review = compare ? (evidence) => reviewLocalOffload({ source, raw, ...evidence }) : undefined;
         const row = await runLocalFixture({
-          config: install.config, mcpConfig, slug, dir, raw, source, requests: Math.floor(maxRequests / tasks.length), grade: runCheck,
+          config: install.config, mcpConfig, slug, dir, base, raw, source,
+          requests: Math.floor(maxRequests / tasks.length), grade: runCheck, gradeCoding, review,
         });
+        if (compare) {
+          row.review ??= await review({ report: row.diagnostic ?? row.reason ?? "No report", check: row.check ?? "No grade available", checkPassed: false });
+          const baselineDir = freshFixtureCopy(raw);
+          try {
+            const baseline = await runDirectLocal({ source, raw, dir: baselineDir });
+            let directCheck;
+            if (baseline.ok && readOnlyKinds.has(raw.kind)) {
+              writeFileSync(path.join(baselineDir, "ANSWER.md"), baseline.answer, { flag: "wx" });
+              directCheck = runCheck(raw.id, baselineDir);
+            } else if (baseline.ok) {
+              writeFixtureFiles(baselineDir, raw.allowedPaths, baseline.files);
+              directCheck = await gradeCoding(raw.id, baselineDir);
+            }
+            row.baseline = { pass: Boolean(directCheck?.ok), check: directCheck?.output, usage: baseline.usage, reason: baseline.reason };
+          } finally {
+            rmSync(baselineDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+          }
+        }
         rows.push(row);
         appendFileSync(journal, JSON.stringify(row) + "\n");
-        console.log(`${row.pass ? "PASS" : "FAIL"}  ${raw.id}: ${row.check ?? row.reason ?? "offload incomplete"}`);
-        if (!row.pass) break;
+        const detail = !row.pass && row.checkPassed ? row.reason ?? row.review?.reason ?? `MCP acceptance: ${row.acceptance}` : row.check ?? row.reason;
+        console.log(`${row.pass ? "PASS" : "FAIL"}  ${raw.id}: ${detail ?? "offload incomplete"}`);
       } finally {
         rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
       }
     }
-    const passed = rows.filter(({ pass }) => pass).length;
-    const summary = { localModel: source.model, planned: tasks.length, completed: rows.length, passed, results: rows };
+    const summary = summarizeLocalFixtures({ rows, planned: tasks.length, suiteSize: all.length, model: source.model, compare });
     writeFileSync(path.join(outDir, "results.json"), JSON.stringify(summary, null, 2), { flag: "wx" });
-    console.log(`${passed}/${tasks.length} selected read-only fixtures passed. No commercial-client baseline was run.`);
-    return passed === tasks.length ? 0 : 1;
+    console.log(JSON.stringify({ ...summary, results: undefined }));
+    return (summary.completeSuite ? summary.taskTargetMet : summary.passed === tasks.length) ? 0 : 1;
   } finally {
     rmSync(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
@@ -272,6 +306,7 @@ try {
   const { values: args } = parseArgs({ options: {
     "dry-run": { type: "boolean" }, preflight: { type: "boolean" }, yes: { type: "boolean" },
     local: { type: "boolean" }, "ollama-url": { type: "string" },
+    "docker-image": { type: "string" }, "context-tokens": { type: "string" }, "compare-local": { type: "boolean" },
     providers: { type: "string" }, model: { type: "string" }, claude: { type: "string" },
     "claude-budget-usd": { type: "string" }, "worker-requests": { type: "string" },
     task: { type: "string" }, out: { type: "string" }, "operator-port": { type: "string" }, help: { type: "boolean", short: "h" },

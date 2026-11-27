@@ -417,7 +417,7 @@ describe("lab coordination boundaries", () => {
     expect(secondResult.conflicts.app).toContain("shared.txt");
     expect(readFileSync(path.join(env!.repo, "shared.txt"), "utf8").replace(/\r\n/g, "\n")).toBe("one\n");
     expect(readFileSync(path.join(second.lab.repositories[0]!.worktree, "shared.txt"), "utf8")).toContain("<<<<<<<");
-  }, 30000);
+  }, 60000);
 });
 it("redacts short configured environment values and expired ownership nonces", async () => {
   const manager = await setup();

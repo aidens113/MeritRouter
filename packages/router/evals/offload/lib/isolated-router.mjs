@@ -6,11 +6,16 @@ import { setTimeout as delay } from "node:timers/promises";
 import YAML from "yaml";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { z } from "zod";
 import { git } from "./comparison.mjs";
 
 const router = fileURLToPath(new URL("../../../", import.meta.url));
 const dist = path.join(router, "dist");
 const cli = path.join(dist, "cli.js");
+const Transcript = z.array(z.object({
+  role: z.string(), content: z.string().nullish(),
+  tool_calls: z.array(z.object({ function: z.object({ name: z.string(), arguments: z.string() }) })).optional(),
+}));
 function execCli(args, cwd, extraEnv = {}) {
   const env = { ...process.env, ...extraEnv };
   delete env.MERITROUTER_MASTER_KEY;
@@ -20,7 +25,7 @@ function execCli(args, cwd, extraEnv = {}) {
 export async function prepareInstallation(root, providerFile, maxRequests, local) {
   if (!existsSync(cli)) throw new Error("Build the router first with pnpm --filter meritrouter build");
   const { parseConfig } = await import("../../../dist/index.js");
-  const providers = local ? { ollama: { base_url: `${local.url}/v1`, default_context_tokens: 8192 } }
+  const providers = local ? { ollama: { base_url: `${local.url}/v1`, default_context_tokens: local.contextTokens } }
     : providerFile ? JSON.parse(readFileSync(providerFile, "utf8")) : {};
   const config = path.join(root, "meritrouter.config.yaml");
   const settings = YAML.parse(readFileSync(path.join(router, "examples", "presets", "standalone-free.yaml"), "utf8"));
@@ -39,6 +44,7 @@ export async function prepareInstallation(root, providerFile, maxRequests, local
     for (const tier of Object.values(settings.tiers)) tier.min_total_parameters_b = 1;
     for (const profile of Object.values(settings.profiles)) {
       profile.min_total_parameters_b = 1;
+      profile.max_output_tokens = 2048;
       // Fixture inputs are fixed and already scoped by the deterministic driver.
       profile.classify = "never";
     }
@@ -84,11 +90,35 @@ export async function prepareInstallation(root, providerFile, maxRequests, local
   return { root, config, preflight: !providerFile && !local, environment };
 }
 
-export async function readFixtureResult(config, slug, taskId) {
+export async function readFixtureState(config, slug, taskId) {
   const { MeritRouter, loadConfig } = await import("../../../dist/index.js");
   const router = new MeritRouter(loadConfig(config), { worker: false, panelLifecycle: "passive" });
   try {
-    return router.collectResults([taskId], slug).completed[0] ?? null;
+    const result = router.collectResults([taskId], slug).completed[0] ?? null;
+    const stores = router.projectStores(slug);
+    const sessions = stores.sessions.forTask(taskId);
+    const candidate = sessions.flatMap((session) => session.workspace?.repos ?? []).filter((repo) => repo.alias === "app").at(-1);
+    const toolTrace = [];
+    if (result?.executionStatus !== "completed" || result.acceptanceStatus === "unmet") {
+      for (const ref of result?.artifactRefs ?? []) {
+        const row = stores.artifacts.get(ref);
+        if (row?.kind !== "transcript" || row.task_id !== taskId || row.bytes > 2_000_000) continue;
+        let transcript;
+        try {
+          const { content } = stores.artifacts.readScoped(ref, slug);
+          transcript = Transcript.safeParse(JSON.parse(content.toString("utf8")));
+        }
+        catch { continue; }
+        if (!transcript.success) continue;
+        for (const message of transcript.data) {
+          for (const call of message.tool_calls ?? []) {
+            toolTrace.push({ name: call.function.name, arguments: call.function.arguments.slice(0, 1200) });
+          }
+          if (message.role === "tool" && message.content) toolTrace.push({ output: message.content.slice(0, 400) });
+        }
+      }
+    }
+    return { result, candidate, toolTrace: toolTrace.slice(-16) };
   } finally {
     await router.close();
   }
