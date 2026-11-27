@@ -1,6 +1,6 @@
 # Supervisor offload: free workers do the heavy lifting
 Status: Active
-Status detail: Resumed on November 27 for Windows check recovery, operating docs, and benchmark readiness.
+Status detail: Offline changes passed targeted validation on November 27. Live offload and savings evidence awaits budget and credential approval.
 Created: 2026-11-25
 Last updated: 2026-11-27
 Owner: Senior supervisor agent
@@ -43,7 +43,7 @@ The implementation checkpoint on `dev` predates the November 27 fixes below.
 of them load timeouts; serial rerun of the 27 failing files left 4, all fixed and covered by a
 13-file / 174-test serial run. A clean full-suite aggregate has NOT been rerun since.
 
-**November 27 changes under lead verification:**
+**November 27 changes and verification:**
 - A Windows kernel mutex replaces the persistent installer claim. The focused worker run observed
   11/11 Windows command environment cases, including actual abandoned mutex recovery.
 - MCP check execution now refuses without an authorized command principal. The worker harness
@@ -60,8 +60,19 @@ of them load timeouts; serial rerun of the 27 failing files left 4, all fixed an
   temp by default and can open a separate authenticated operator panel on an explicit local port.
 - The computer crash left a malformed generated `dist/harness/repeat-policy.js`. Rebuilding
   restored the router import. An aggregate started before this diagnosis was stopped and has
-  no result. The new aggregate uses three workers and logs to
-  `%TEMP%/meritrouter-offload-suite-20261127-132953.log`.
+  no result. The completed three-worker aggregate on the pre-fix build had 3,525 passed,
+  5 skipped and one failed. Log: `%TEMP%/meritrouter-offload-suite-20261127-132953.log`.
+- At 14:09 Phoenix the aggregate observed `projects-surfaces.test.ts` fail during fixture
+  cleanup. Init had provisioned the project but accidentally started a detached panel.
+  The panel's rendered config path identified the exact temp fixture. Its supported stop
+  endpoint drained PID 20116, and the listener stopped. A new setup --no-panel regression
+  failed against the old build, proving the same provisioning bug without a real panel.
+  The fix sets that provisioning service's panel lifecycle to passive. Automatic review
+  blocked recursive removal of the stopped `%TEMP%/meritrouter-init-z10RoS` fixture.
+  Its inert files remain available as evidence.
+- Recursive build and typecheck passed on the corrected code. The five-file targeted
+  rerun passed 39/39, including the original init failure and the new setup --no-panel
+  regression. No test panel listener remained on either validation port.
 - All eight fixture graders and all eight isolated MCP provisioning checks passed. The
   isolated production panel required login and returned HTTP 200 for the authenticated task
   list. The temporary panel was stopped after the check. A synthetic free key was imported
@@ -69,10 +80,12 @@ of them load timeouts; serial rerun of the 27 failing files left 4, all fixed an
   from the supervisor environment and generated config.
 
 **Remaining release gates:**
-1. Complete the full router suite, recursive typecheck/build, and benchmark preflight.
+1. The full pre-fix suite and corrected targeted rerun are recorded below. Keep main promotion
+   pending a clean full aggregate on the release snapshot and the live acceptance evidence.
 2. Obtain approval for up to 120 free model requests for live smoke, up to 128 free model
    requests across the benchmark, and 16 Claude Code sessions at $0.50 API-equivalent each.
-   The November 27 request is unanswered. Use isolated projects and paid routing disabled.
+   The November 27 request is unanswered. Also obtain confirmation before reusing configured
+   free-tier credentials in the temporary vault. Use isolated projects and paid routing disabled.
 3. Run the paired eval and verify the 60% floor for worker-attributed work and the 40% floor
    for supervisor output-token reduction within one passing task of the baseline. Publish
    only the verified coherent change. Promote after release acceptance.
@@ -459,8 +472,19 @@ summary) installed only with `--hooks`. Report: `lane-d.md`.
 - Validation: `node packages/router/evals/offload/run.mjs --preflight` -> eight isolated fixtures each saw 12 core tools, exit 0. Isolated panel smoke with `startOperatorPanel` -> anonymous 307, login 303, authenticated Tasks page 200.
 - Validation: offline `prepareInstallation` smoke with a synthetic OpenAI-compatible loopback listing -> free vault key authenticated; no model calls; supervisor environment and YAML contained no key.
 - Validation: `pnpm -r typecheck` -> router and panel passed after correcting a fixture tuple type. `pnpm -r build` -> router and panel passed after rebuilding the crash-damaged dist, before the final MCP approval visibility integration.
-- Outcome: Partial
-- Follow-up: Observe fresh aggregate and preflight. Approval for paid supervisor usage is still pending.
+- Outcome: Accepted
+- Follow-up: Live supervisor usage approval and comparison are still pending.
+
+### 2026-11-27 — Full aggregate found an unintended panel start
+- Agent: supervisor
+- Changed: `packages/router/src/cli/setup.ts`, `packages/router/tests/projects-surfaces.test.ts`, setup docs.
+- Why: The init/setup provisioner started the panel through the SDK's automatic lifecycle. The test init panel held its own log open after the CLI exited and prevented cleanup. Provisioning now uses passive lifecycle.
+- Validation: `cd packages/router && npx vitest run --maxWorkers=3` -> 3,525 passed, 5 skipped, one failed (init cleanup with an active detached fixture panel), 2,963.25 s.
+- Validation: `npx vitest run --no-file-parallelism tests/projects-surfaces.test.ts -t 'setup --no-panel provisions'` -> expected failure on the previous executable; the fixture panel log existed despite --no-panel.
+- Validation: `pnpm -r build` and `pnpm -r typecheck` -> both workspaces passed on the corrected code.
+- Validation: `npx vitest run --no-file-parallelism tests/projects-surfaces.test.ts tests/mcp-passive-startup.test.ts tests/mcp-offload.test.ts tests/discovery.test.ts tests/offload-eval.test.ts` -> five files and 39 tests passed. Log: `%TEMP%/meritrouter-offload-final-validation-20261127.log`.
+- Outcome: Accepted
+- Follow-up: Run the release aggregate and authorized live comparison before main promotion.
 
 ## Open Questions
 - Budget for the live smoke and the Claude-usage cost of the offload eval (asked before Phase 3).

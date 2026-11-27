@@ -6,7 +6,7 @@ lines, worker briefs, append-only ledger with real validation, open questions).
 
 | Document | Status | Scope |
 | --- | --- | --- |
-| [supervisor-offload.md](supervisor-offload.md) | Active | Resumed 2026-11-27. Core routing, Windows recovery, MCP approval visibility and isolated eval under validation. Live usage approval and credit-savings evidence pending. |
+| [supervisor-offload.md](supervisor-offload.md) | Active | November 27 offline fixes and targeted checks passed. Live usage approval and measured credit savings pending before Monday release acceptance. |
 | [connection-modes.md](connection-modes.md) | Complete | Global profile-free direct routing, editable listener host/port, compact Connections UI and scoped agent/team jobs. |
 | [unpublished-model-sizes.md](unpublished-model-sizes.md) | Complete | Official Gemini unknown-size routing verified through successful live coding requests; known-size floors preserved. |
 | [client-connections.md](client-connections.md) | Complete | Persistent default-off local client APIs and global panel controls; focused, build and production browser validation passed. |

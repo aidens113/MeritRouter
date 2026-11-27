@@ -89,7 +89,9 @@ export function initializeConfig(opts: InitOptions): string[] {
 export async function provisionInitialProject(configPath: string, slug: string, directory: string): Promise<string | null> {
   const cfg = loadConfig(configPath);
   if (cfg.storage.layout !== "split") return null;
-  const sy = new MeritRouter(cfg, {});
+  // Provisioning serves both init and setup --no-panel. Only setup's explicit
+  // launch step may start a panel for this installation.
+  const sy = new MeritRouter(cfg, { panelLifecycle: "passive" });
   try {
     // No stub was written (no repository was given: `initializeConfig` leaves no placeholder
     // project then). `ctx.projectDirectory` is not the right signal here: it is already inferred

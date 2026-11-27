@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { createServer } from "node:net";
 import YAML from "yaml";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -245,6 +246,37 @@ describe("CLI with projects", () => {
       expect(() => parseConfig(raw, path.join(dir, "meritrouter.config.yaml"))).not.toThrow();
     } finally {
       rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it("setup --no-panel provisions a first project without launching an available panel", async () => {
+    const socket = createServer();
+    await new Promise<void>((resolve, reject) => {
+      socket.once("error", reject);
+      socket.listen(0, "127.0.0.1", resolve);
+    });
+    const address = socket.address();
+    await new Promise<void>((resolve, reject) => socket.close(error => error ? reject(error) : resolve()));
+    if (!address || typeof address === "string") throw new Error("Unable to allocate a fixture port");
+    const parent = mkdtempSync(path.join(tmpdir(), "meritrouter-setup-passive-"));
+    const dir = path.join(parent, "install");
+    const panel = path.join(parent, "panel");
+    const next = path.join(panel, "node_modules", "next", "dist", "bin", "next");
+    try {
+      mkdirSync(path.dirname(next), { recursive: true });
+      mkdirSync(path.join(panel, ".next"));
+      writeFileSync(next, "// A built panel is discoverable. Its fixture process exits immediately.\n");
+      writeFileSync(path.join(panel, "package.json"), "{}\n");
+      writeFileSync(path.join(panel, ".next", "BUILD_ID"), "fixture\n");
+      const r = spawnSync(process.execPath, [
+        cliJs, "setup", dir, "--no-panel", "--port", String(address.port),
+        "--project", "shop", "--repo", `web=${path.join(parent, "web")}`,
+      ], { encoding: "utf8", env: childEnv({ MERITROUTER_PANEL_DIR: panel }), timeout: 30_000 });
+      expect(r.status, r.stderr).toBe(0);
+      expect(existsSync(path.join(parent, "web", ".MeritRouter"))).toBe(true);
+      expect(existsSync(path.join(dir, ".MeritRouter", "logs", "panel.log"))).toBe(false);
+    } finally {
+      rmSync(parent, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
     }
   });
 });

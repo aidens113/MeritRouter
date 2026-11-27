@@ -112,7 +112,8 @@ After installing the tarball, use `meritrouter` wherever this guide shows
 `node packages/router/dist/cli.js`. Source-checkout users keep the full `node` command.
 
 Run `meritrouter setup` to create the default configuration and start the bundled panel, or
-`meritrouter setup --no-panel` to create only the configuration. Existing files are retained.
+`meritrouter setup --no-panel` to create the configuration and provision the first project
+without starting the panel. Existing files are retained.
 Setup begins with no placeholder repositories; add them in project settings or supply
 `--repo app=<path>`. `meritrouter init <directory>` still creates a local configuration.
 
