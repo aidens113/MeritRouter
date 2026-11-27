@@ -170,13 +170,14 @@ describe("init/setup provision the project they just wrote, and projects create 
     // The now-provisioned project is no longer broken: doctor passes, not "create it as a split
     // project first".
     const cfg = loadConfig(configPath);
-    const sy = new MeritRouter(cfg, { providerFetch: new FakeProvider().fetch });
+    const sy = new MeritRouter(cfg, { providerFetch: new FakeProvider().fetch, panelLifecycle: "passive" });
     services.push(sy);
     const checks = doctorChecks(sy, { projects: ["my-app"], prepared: await sy.prepareRepositories({ projects: ["my-app"] }) });
     // A fresh temp install has no provider keys or models; only the project's own checks matter here.
     const projectChecks = checks.filter((c) => c.check === "project my-app" || c.check.startsWith("my-app "));
     expect(projectChecks.length, JSON.stringify(checks)).toBeGreaterThanOrEqual(2);
     expect(projectChecks.every((c) => c.ok), JSON.stringify(checks)).toBe(true);
+    expect(existsSync(path.join(cfg.storageDir, "logs", "panel.log"))).toBe(false);
   });
 
   it("provisionInitialProject is a no-op when the config already existed (never touches an established install)", async () => {

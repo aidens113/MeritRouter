@@ -187,6 +187,13 @@ of them load timeouts; serial rerun of the 27 failing files left 4, all fixed an
   after the reboot. The complete `npx vitest run --maxWorkers=2` aggregate started at 15:48
   Phoenix. Logs: `%TEMP%/meritrouter-offload-final-checks-20261127-154331.log` and
   `%TEMP%/meritrouter-offload-final-suite-20261127-154331.log`.
+- At 16:28 Phoenix the aggregate recorded `project-cli-operations.test.ts` fail in fixture
+  cleanup. Its direct `MeritRouter` helper used automatic lifecycle and created a detached
+  panel. The rendered config identified the exact temp install; the supported stop endpoint
+  drained it, and PID 20672 stopped listening. The test now uses passive lifecycle and asserts
+  that no panel log is created. The full file rerun passed 13/13. The aggregate continued on
+  the same production code. Recursive removal of the stopped temp fixture was blocked by the
+  tool's safety review. Its existing inert files are retained as evidence.
 
 Not done / deferred: fixed-count stall nudge; Stop hook "unreviewed report" gating (no reviewed
 flag exists); per-tool examples in the lite prompt still describe the default tool set, not the
@@ -658,6 +665,12 @@ summary) installed only with `--hooks`. Report: `lane-d.md`.
 - Validation: final `pnpm -r typecheck` and `pnpm -r build` passed. Started fresh `npx vitest run --maxWorkers=2` on the release code.
 - Outcome: Accepted
 - Follow-up: Observe the full aggregate before source promotion.
+
+### 2026-11-27 — Keep direct CLI test fixtures passive
+- Agent: supervisor
+- Changed: one direct test service in `project-cli-operations.test.ts`, with a regression assertion for detached panel logs.
+- Validation: `npx vitest run --no-file-parallelism tests/project-cli-operations.test.ts` -> 13 passed, 64.48 s. Log `%TEMP%/meritrouter-offload-check-cliops-20261127-162908.log`. The production CLI and application code were outside the edit.
+- Outcome: Accepted
 
 ## Open Questions
 - Commercial-client credit savings remain unmeasured. The user excluded Claude Code and
