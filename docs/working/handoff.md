@@ -6,8 +6,9 @@ The rebuild restored crash-damaged router output. The aggregate found one init p
 which the corrected build and 39 targeted tests passed. The user requires free-only testing
 with no Claude Code. Cloud-disabled Qwen3.5 passed 7/8 MCP fixtures. After fallback, the local
 comparison estimated 61% fewer supervisor output tokens and 23% fewer total supervisor tokens.
-The scoped context fix is on `origin/dev` at `94cae30`. The separate command canary and release
-aggregate are in progress. Prior runtime efforts remain parked.
+An operator-approved command passed through MCP. The context fix and benchmark are on
+`origin/dev` at `b9e8d99`. The isolated model is stopped and the release aggregate is running.
+Prior runtime efforts remain parked.
 
 **2026-11-26 CURRENT (supervisor offload):** Active effort is [supervisor-offload.md](supervisor-offload.md); read its
 Current State first. External Claude Code/Codex supervisor + free MeritRouter workers: contracts, core MCP tools and

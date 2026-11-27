@@ -1,6 +1,6 @@
 # Supervisor offload: free workers do the heavy lifting
 Status: Active
-Status detail: Free-only release cohort accepted 7/8. Fallback-adjusted supervisor tokens fell 61% for output and 23% overall. Command and fresh aggregate checks remain in progress.
+Status detail: Free-only release cohort accepted 7/8. Fallback-adjusted supervisor tokens fell 61% for output and 23% overall. The declared command canary passed. Fresh regression is running.
 Created: 2026-11-25
 Last updated: 2026-11-27
 Owner: Senior supervisor agent
@@ -17,7 +17,7 @@ Related: [trial evidence](supervisor-offload/reports/trial-evidence.md),
 ## Current State
 
 The user resumed on November 27 for a November 30 deadline and again after a computer crash.
-The current published `dev` snapshot is `94cae30`. The user explicitly directed continued work
+The current published `dev` snapshot is `b9e8d99`. The user explicitly directed continued work
 until the 60–80% offload goal is achieved, with free-only tests and no Claude Code.
 The user superseded the commercial benchmark direction on November 27: free-only tests and
 no Claude Code. Use a deterministic MCP stdio supervisor and a local model. Record task success
@@ -174,6 +174,19 @@ of them load timeouts; serial rerun of the 27 failing files left 4, all fixed an
   fewer total supervisor tokens. This is a same-model local comparison with one direct attempt
   per fixture. Real Codex or Claude account credits were outside the free-only test.
   Receipt: `%TEMP%/meritrouter-local-offload-results-jIuwz6/results.json`.
+- The separate `run` brief exposed one sanitized pending command in MCP. The trusted operator
+  path verified and approved `node --version` in its disposable project. It executed with exit
+  zero and reported `v22.11.0`. The first worker report dropped `artifact:` from the log ref and
+  was correctly refused. With the brief asking for the full prefixed ref, the rerun accepted in
+  two local requests. Receipt: `%TEMP%/meritrouter-offload-command-20261127-154220.log`.
+- The post-crash server logged 32 worker and 16 comparison inference requests, all loopback.
+  That covers the final cohort and the two command-report attempts. Removed its downloaded
+  model and stopped the owned test listener. The existing listener on 11434 is available. Docker
+  Desktop remains running with its existing `ti-egress-canary` container.
+- On the final release code at `b9e8d99`, `pnpm -r typecheck` and `pnpm -r build` both passed
+  after the reboot. The complete `npx vitest run --maxWorkers=2` aggregate started at 15:48
+  Phoenix. Logs: `%TEMP%/meritrouter-offload-final-checks-20261127-154331.log` and
+  `%TEMP%/meritrouter-offload-final-suite-20261127-154331.log`.
 
 Not done / deferred: fixed-count stall nudge; Stop hook "unreviewed report" gating (no reviewed
 flag exists); per-tool examples in the lite prompt still describe the default tool set, not the
@@ -639,8 +652,13 @@ summary) installed only with `--hooks`. Report: `lane-d.md`.
 - Outcome: Accepted
 - Follow-up: Verify a declared command through the operator boundary and run the fresh release aggregate before promoting main.
 
+### 2026-11-27 — Verify the approved command path
+- Agent: supervisor
+- Validation: production MCP `run` brief, exact operator approval, verified `node --version` exit 0 with a scoped log, and MCP acceptance `met`. The local worker used two requests. Receipt `%TEMP%/meritrouter-offload-command-20261127-154220.log`.
+- Validation: final `pnpm -r typecheck` and `pnpm -r build` passed. Started fresh `npx vitest run --maxWorkers=2` on the release code.
+- Outcome: Accepted
+- Follow-up: Observe the full aggregate before source promotion.
+
 ## Open Questions
-- The coding cohort used independent container checks. The separate declared command canary
-  is checking the operator approval boundary.
 - Commercial-client credit savings remain unmeasured. The user excluded Claude Code and
   paid tests on November 27.
