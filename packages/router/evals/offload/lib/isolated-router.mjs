@@ -17,10 +17,11 @@ function execCli(args, cwd, extraEnv = {}) {
   return execFileSync(process.execPath, [cli, ...args], { cwd, env, encoding: "utf8", timeout: 120_000, windowsHide: true });
 }
 
-export async function prepareInstallation(root, providerFile, maxRequests) {
+export async function prepareInstallation(root, providerFile, maxRequests, local) {
   if (!existsSync(cli)) throw new Error("Build the router first with pnpm --filter meritrouter build");
   const { parseConfig } = await import("../../../dist/index.js");
-  const providers = providerFile ? JSON.parse(readFileSync(providerFile, "utf8")) : {};
+  const providers = local ? { ollama: { base_url: `${local.url}/v1`, default_context_tokens: 8192 } }
+    : providerFile ? JSON.parse(readFileSync(providerFile, "utf8")) : {};
   const config = path.join(root, "meritrouter.config.yaml");
   const settings = YAML.parse(readFileSync(path.join(router, "examples", "presets", "standalone-free.yaml"), "utf8"));
   delete settings.repositories;
@@ -33,6 +34,15 @@ export async function prepareInstallation(root, providerFile, maxRequests) {
   settings.client_supervision = { tools: "core" };
   settings.allocation = { max_model_requests_per_hour: maxRequests, max_model_requests_per_day: maxRequests };
   settings.models = { file: "models.yaml" };
+  if (local) {
+    // Only this temporary installation uses the smaller local-model fixture preset.
+    for (const tier of Object.values(settings.tiers)) tier.min_total_parameters_b = 1;
+    for (const profile of Object.values(settings.profiles)) {
+      profile.min_total_parameters_b = 1;
+      // Fixture inputs are fixed and already scoped by the deterministic driver.
+      profile.classify = "never";
+    }
+  }
   const resolved = parseConfig(settings, config);
   const providerKeyVariables = new Set();
   const keys = [];
@@ -62,13 +72,26 @@ export async function prepareInstallation(root, providerFile, maxRequests) {
     ], root, { MERITROUTER_NEW_KEY: process.env[key.api_key_env] });
   }
   // Discovery spends no model requests with probe_tools disabled.
-  if (providerFile) execCli(["models", "scan", "--config", config, "--json"], root);
+  if (providerFile || local) {
+    const scan = JSON.parse(execCli(["models", "scan", "--config", config, "--json"], root));
+    if (local && !scan.providers?.includes("ollama")) throw new Error("MeritRouter could not discover the local Ollama provider");
+  }
   const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) => !providerKeyVariables.has(name.toUpperCase())));
   delete environment.MERITROUTER_MASTER_KEY;
   delete environment.MERITROUTER_OFFLOAD_OPERATOR_TOKEN;
   delete environment.MERITROUTER_PANEL_TOKEN;
   delete environment.MERITROUTER_NEW_KEY;
-  return { root, config, preflight: !providerFile, environment };
+  return { root, config, preflight: !providerFile && !local, environment };
+}
+
+export async function readFixtureResult(config, slug, taskId) {
+  const { MeritRouter, loadConfig } = await import("../../../dist/index.js");
+  const router = new MeritRouter(loadConfig(config), { worker: false, panelLifecycle: "passive" });
+  try {
+    return router.collectResults([taskId], slug).completed[0] ?? null;
+  } finally {
+    await router.close();
+  }
 }
 
 export async function prepareProject(installation, dir, task, arm) {
@@ -91,7 +114,12 @@ export async function prepareProject(installation, dir, task, arm) {
   const slug = arm === "offload" ? `eval-${task.id}` : null;
   const servers = {};
   if (slug) {
-    execCli(["projects", "create", slug, dir, "--config", installation.config], installation.root);
+    const created = JSON.parse(execCli(
+      ["projects", "create", slug, dir, "--repo", `app=${dir}`, "--config", installation.config, "--json"], installation.root,
+    ));
+    if (!created.project?.repositories?.some((repo) => repo.alias === "app" && repo.exists)) {
+      throw new Error("The benchmark project is missing its app repository");
+    }
     const server = { command: process.execPath, args: [cli, "mcp", "--config", installation.config, "--project", slug] };
     // The preflight connection is passive and cannot process queued work.
     if (!installation.preflight) server.args.push("--worker");

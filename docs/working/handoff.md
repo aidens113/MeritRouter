@@ -3,8 +3,9 @@
 **2026-11-27 CURRENT (supervisor offload):** The user resumed after a computer crash. Treat
 [supervisor-offload.md](supervisor-offload.md) as authoritative for the November 30 release.
 The rebuild restored crash-damaged router output. The aggregate found one init panel-start bug,
-which the corrected build and 39 targeted tests passed. Live provider and supervisor usage
-approval remains pending. Prior runtime efforts remain parked.
+which the corrected build and 39 targeted tests passed. The user requires free-only testing
+with no Claude Code. Local Qwen3 passed the MCP summary and failed scout report validation.
+Wider offload and credit savings remain unverified. Prior runtime efforts remain parked.
 
 **2026-11-26 CURRENT (supervisor offload):** Active effort is [supervisor-offload.md](supervisor-offload.md); read its
 Current State first. External Claude Code/Codex supervisor + free MeritRouter workers: contracts, core MCP tools and

@@ -1,10 +1,42 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { createServer } from "node:http";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const comparisonPath = new URL("../evals/offload/lib/comparison.mjs", import.meta.url).href;
 const { claudeArguments, parseClaudeRun, fixtureDelta, git, summarizeComparison } = await import(comparisonPath);
+const localPath = new URL("../evals/offload/lib/local-supervisor.mjs", import.meta.url).href;
+const { localBrief, localModelSource } = await import(localPath);
+
+describe("local-only offload smoke", () => {
+  it("turns an answer-file fixture into a read-only brief with an explicit budget", () => {
+    expect(localBrief({ kind: "scout", goal: "Trace the fixture bug and report its exact output", contextFiles: ["src/money.ts"] }, 8))
+      .toMatchObject({ kind: "scout", scope: { repository: "app", writable: false }, budget: { requests: 8 } });
+    expect(() => localBrief({ kind: "implement" }, 8)).toThrow(/read-only/);
+  });
+
+  it("requires a loopback singleton with downloaded weights and rejects hosted aliases", async () => {
+    let models: unknown[] = [{ name: "fixture:8b", size: 2_000_000 }];
+    const server = createServer((_req, res) => res.end(JSON.stringify({ models })));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Server did not bind to TCP");
+      const url = `http://127.0.0.1:${address.port}`;
+      await expect(localModelSource(url, "fixture:8b")).resolves.toEqual({ url, model: "fixture:8b" });
+      await expect(localModelSource("https://example.invalid:1234", "fixture:8b")).rejects.toThrow(/127.0.0.1/);
+      models = [{ name: "fixture:8b", size: 2_000_000, remote_host: "example.invalid" }];
+      await expect(localModelSource(url, "fixture:8b")).rejects.toThrow(/downloaded local model/);
+      models = [{ name: "fixture:cloud", size: 2_000_000 }];
+      await expect(localModelSource(url, "fixture:cloud")).rejects.toThrow(/downloaded local model/);
+      models = [{ name: "fixture:8b", size: 2_000_000 }, { name: "extra:8b", size: 2_000_000 }];
+      await expect(localModelSource(url, "fixture:8b")).rejects.toThrow(/one downloaded/);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+});
 
 function claudeStream(mcpServers: unknown[], outputTokens = 100) {
   return {

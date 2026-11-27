@@ -144,7 +144,21 @@ node packages/router/evals/offload/run.mjs --dry-run
 node packages/router/evals/offload/run.mjs --preflight
 ```
 
-The live comparison requires approval for supervisor usage and free-provider requests.
+Use `--local` for free-only smoke testing without a commercial supervisor. Give it the
+loopback URL of a separate Ollama instance with cloud disabled and exactly one downloaded
+model. For example:
+
+```sh
+node packages/router/evals/offload/run.mjs --local --ollama-url http://127.0.0.1:41537 --model qwen3:8b --worker-requests 8 --task 02-summarize
+```
+
+This path sends the scout, summary, and review briefs over MCP stdio and grades the worker's
+answer. It uses small-model parameter floors and deterministic classification for these fixed
+fixtures in the isolated installation. Paid routing stays disabled. The receipt records the
+serving model, request count, and grader result or failure reason.
+This smoke does not run the coding fixtures, and it has no commercial-client cost baseline.
+
+The optional two-arm comparison requires approval for supervisor usage and free-provider requests.
 Run the benchmark with `--yes`, the same explicit Claude model for both arms, a supervisor
 budget per session, and a cumulative MeritRouter request cap. The isolated provider manifest
 uses the `providers` section shape with free-tier `api_key_env` entries. It supplies

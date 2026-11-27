@@ -1,6 +1,6 @@
 # Supervisor offload: free workers do the heavy lifting
 Status: Active
-Status detail: Offline changes passed targeted validation on November 27. Live offload and savings evidence awaits budget and credential approval.
+Status detail: Free-only MCP smoke verified summarization. Local scout report validity and broader offload acceptance remain open.
 Created: 2026-11-25
 Last updated: 2026-11-27
 Owner: Senior supervisor agent
@@ -17,7 +17,10 @@ Related: [trial evidence](supervisor-offload/reports/trial-evidence.md),
 ## Current State
 
 The user resumed on November 27 for a November 30 deadline and again after a computer crash.
-The implementation checkpoint on `dev` predates the November 27 fixes below.
+The current `dev` snapshot is `53c78df` before the free-only smoke addition.
+The user superseded the commercial benchmark direction on November 27: free-only tests and
+no Claude Code. Use a deterministic MCP stdio supervisor and a local model. Record task success
+and worker requests. Commercial supervisor credit savings require separate baseline evidence.
 
 **Built and pushed to dev (all committed):**
 - Contracts: Brief v1 (kind, goal, scope, tools, checks, doneWhen; vague briefs rejected), Report v1
@@ -82,13 +85,30 @@ of them load timeouts; serial rerun of the 27 failing files left 4, all fixed an
 **Remaining release gates:**
 1. The full pre-fix suite and corrected targeted rerun are recorded below. Keep main promotion
    pending a clean full aggregate on the release snapshot and the live acceptance evidence.
-2. Obtain approval for up to 120 free model requests for live smoke, up to 128 free model
-   requests across the benchmark, and 16 Claude Code sessions at $0.50 API-equivalent each.
-   The November 27 request is unanswered. Also obtain confirmation before reusing configured
-   free-tier credentials in the temporary vault. Use isolated projects and paid routing disabled.
-3. Run the paired eval and verify the 60% floor for worker-attributed work and the 40% floor
-   for supervisor output-token reduction within one passing task of the baseline. Publish
-   only the verified coherent change. Promote after release acceptance.
+2. Finish read-only coverage using a free model that submits valid scout and review reports.
+   The first eight-request smoke, with paid routing disabled, verified summarization.
+3. Verify the 60% floor on a broader free-only workload including coding and checks. Publish
+   supported results. Commercial supervisor token/credit reduction remains unmeasured unless
+   the user supplies independent baseline usage. Superseded Claude comparison plans below are
+   historical and must not be executed for this release.
+
+**Free-only smoke checkpoint:**
+- An isolated `OLLAMA_NO_CLOUD=1` Ollama at 127.0.0.1:41537 used downloaded Qwen3 8B weights.
+  No account credentials or commercial supervisor were used. The temporary config uses smaller
+  model floors and deterministic classification for fixed fixtures, with paid routing disabled.
+- Initial launches revealed missing fixture repository registration, a missing /v1 in the
+  Ollama provider base, classifier-selected strict review above the smoke budget, and the
+  small model's invalid scout output. Preflight now checks the repository alias.
+- `02-summarize` passed via MCP and its independent fixture grader in one local request,
+  with accepted result and one provider attempt. Evidence:
+  `%TEMP%/meritrouter-local-offload-results-iZFnJv/results.json`.
+- The scout retry exhausted its two requests and the initial eight-request cap. The actual
+  model output lacked a required summary field, so MeritRouter refused it. Evidence:
+  `%TEMP%/meritrouter-local-offload-results-AWmled/results.json`. Across setup and all fixture
+  attempts the gate accounted for eight requests. Seven returned from local inference and
+  one was a loopback 404. Broader coding and command coverage remain open.
+- The isolated model weights were removed and test listener 41537 was stopped. The user's
+  original Ollama listener on 11434 remained available.
 
 Not done / deferred: fixed-count stall nudge; Stop hook "unreviewed report" gating (no reviewed
 flag exists); per-tool examples in the lite prompt still describe the default tool set, not the
@@ -486,5 +506,19 @@ summary) installed only with `--hooks`. Report: `lane-d.md`.
 - Outcome: Accepted
 - Follow-up: Run the release aggregate and authorized live comparison before main promotion.
 
+### 2026-11-27 — Free-only local MCP smoke
+- Agent: supervisor
+- Changed: `evals/offload/` local runner and fixture provisioning, offload eval tests and operating docs.
+- Why: Validate without commercial supervisors or API charges, and measure real worker output.
+- Validation: `node packages/router/evals/offload/run.mjs --dry-run` and `--preflight` -> eight fixture graders and eight MCP projects passed.
+- Validation: `node packages/router/evals/offload/run.mjs --local --ollama-url http://127.0.0.1:41537 --model qwen3:8b --worker-requests 3 --task 02-summarize` -> grader passed, MCP acceptance met, one local request.
+- Validation: same local command with `--worker-requests 2 --task 01-scout` -> correct refusal of invalid model output, required summary missing, two local requests. Eight total requests across trial stages, all loopback.
+- Validation: `pnpm -r typecheck` and `pnpm -r build` -> both workspaces passed. Focused MCP and eval tests passed 17/17, and the final eval-only rerun passed 5/5.
+- Outcome: Partial
+- Follow-up: Broader free worker coverage and the 60% task floor are unverified. No commercial-client savings claim.
+
 ## Open Questions
-- Budget for the live smoke and the Claude-usage cost of the offload eval (asked before Phase 3).
+- The free-only smoke covers read-only fixtures. Broader coding and execution evidence still
+  needs a free workload using the existing operator command approval boundary.
+- Commercial-client credit savings remain unmeasured. The user excluded Claude Code and
+  paid tests on November 27.

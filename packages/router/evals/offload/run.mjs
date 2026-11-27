@@ -13,6 +13,7 @@ import { spawnSync } from "node:child_process";
 import { parseArgs } from "node:util";
 import { prepareInstallation, prepareProject, readWorkerEvidence, startOperatorPanel } from "./lib/isolated-router.mjs";
 import { claudeArguments, fixtureDelta, parseClaudeRun, summarizeComparison } from "./lib/comparison.mjs";
+import { localModelSource, readOnlyKinds, runLocalFixture } from "./lib/local-supervisor.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TASKS_DIR = path.join(HERE, "tasks");
@@ -30,6 +31,11 @@ function usage() {
 
   node evals/offload/run.mjs --preflight [--task <id>]
       Provisions temporary fixture projects and checks the actual MCP tool list. No model calls.
+
+  node evals/offload/run.mjs --local --ollama-url <loopback-url> --model <id>
+      --worker-requests <total> [--task <read-only-id>] [--out <new-dir>]
+      Runs read-only fixtures over production MCP stdio using a deterministic supervisor
+      and a single downloaded model on an isolated Ollama instance. No paid APIs.
 
   node evals/offload/run.mjs --yes --providers <file.json> --model <id>
       --claude-budget-usd <per-session> --worker-requests <total>
@@ -130,6 +136,53 @@ function dryRun() {
   return allOk ? 0 : 1;
 }
 
+async function runLocal(args) {
+  const tasks = loadTasks().filter(({ raw }) => args.task ? raw.id === args.task : readOnlyKinds.has(raw.kind));
+  if (!tasks.length || tasks.some(({ raw }) => !readOnlyKinds.has(raw.kind))) throw new Error("Select a read-only local fixture");
+  const maxRequests = Number(args["worker-requests"]);
+  if (!args["ollama-url"] || !args.model || !Number.isSafeInteger(maxRequests) || maxRequests < tasks.length) {
+    throw new Error("Local mode requires --ollama-url, --model and enough --worker-requests for the selected fixtures");
+  }
+  for (const { file, raw } of tasks) {
+    const issues = validateTask(raw, file);
+    if (issues.length) throw new Error(`${file}: ${issues.join("; ")}`);
+  }
+  const source = await localModelSource(args["ollama-url"], args.model);
+  const outDir = args.out ? path.resolve(args.out) : mkdtempSync(path.join(tmpdir(), "meritrouter-local-offload-results-"));
+  if (args.out) mkdirSync(outDir);
+  const journal = path.join(outDir, "progress.jsonl");
+  writeFileSync(journal, "", { flag: "wx" });
+  console.log(`Local model ${source.model}; up to ${maxRequests} model requests; evidence in ${outDir}`);
+  const scratch = mkdtempSync(path.join(tmpdir(), "meritrouter-local-offload-install-"));
+  const rows = [];
+  try {
+    const install = await prepareInstallation(scratch, undefined, maxRequests, source);
+    for (const { raw } of tasks) {
+      const dir = freshFixtureCopy(raw);
+      try {
+        const { mcpConfig, slug } = await prepareProject(install, dir, raw, "offload");
+        console.log(`RUN   ${raw.id}`);
+        const row = await runLocalFixture({
+          config: install.config, mcpConfig, slug, dir, raw, source, requests: Math.floor(maxRequests / tasks.length), grade: runCheck,
+        });
+        rows.push(row);
+        appendFileSync(journal, JSON.stringify(row) + "\n");
+        console.log(`${row.pass ? "PASS" : "FAIL"}  ${raw.id}: ${row.check ?? row.reason ?? "offload incomplete"}`);
+        if (!row.pass) break;
+      } finally {
+        rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      }
+    }
+    const passed = rows.filter(({ pass }) => pass).length;
+    const summary = { localModel: source.model, planned: tasks.length, completed: rows.length, passed, results: rows };
+    writeFileSync(path.join(outDir, "results.json"), JSON.stringify(summary, null, 2), { flag: "wx" });
+    console.log(`${passed}/${tasks.length} selected read-only fixtures passed. No commercial-client baseline was run.`);
+    return passed === tasks.length ? 0 : 1;
+  } finally {
+    rmSync(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}
+
 // ---------------------------------------------------------------------------------------------
 // --yes: the real two-arm comparison (never invoked by this worker)
 // ---------------------------------------------------------------------------------------------
@@ -218,16 +271,17 @@ async function runComparison(args) {
 try {
   const { values: args } = parseArgs({ options: {
     "dry-run": { type: "boolean" }, preflight: { type: "boolean" }, yes: { type: "boolean" },
+    local: { type: "boolean" }, "ollama-url": { type: "string" },
     providers: { type: "string" }, model: { type: "string" }, claude: { type: "string" },
     "claude-budget-usd": { type: "string" }, "worker-requests": { type: "string" },
     task: { type: "string" }, out: { type: "string" }, "operator-port": { type: "string" }, help: { type: "boolean", short: "h" },
   } });
-  const modes = [args["dry-run"], args.preflight, args.yes].filter(Boolean);
+  const modes = [args["dry-run"], args.preflight, args.yes, args.local].filter(Boolean);
   if (args.help || modes.length !== 1) {
     usage();
     process.exitCode = args.help ? 0 : 1;
   } else {
-    process.exitCode = args["dry-run"] ? dryRun() : await runComparison(args);
+    process.exitCode = args["dry-run"] ? dryRun() : args.local ? await runLocal(args) : await runComparison(args);
   }
 } catch (error) {
   console.error(error.message);
