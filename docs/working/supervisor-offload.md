@@ -517,6 +517,15 @@ summary) installed only with `--hooks`. Report: `lane-d.md`.
 - Outcome: Partial
 - Follow-up: Broader free worker coverage and the 60% task floor are unverified. No commercial-client savings claim.
 
+### 2026-11-27 — Fit scoped worker requests to their granted tools
+- Agent: supervisor
+- Changed: coding and read-only harness context accounting, scoped tool regression, and operating notes.
+- Why: successful reads were elided when the harness budgeted for ungranted schemas. The next read could then trigger the repeat guard and stop a valid edit.
+- Validation: `npx vitest run --no-file-parallelism tests/worker-tool-restriction.test.ts -t 'keeps an in-budget read result'` reproduced the elision before the fix. The four-file worker-tool, repeat, memory compaction and supervisor-loop run then passed 44/44.
+- Validation: `pnpm -r typecheck` and `pnpm -r build` both passed. A production MCP coding canary `03-rename` passed an independent container build and tests and recorded `met` in five free local worker requests.
+- Outcome: Accepted
+- Follow-up: Finish the eight-fixture cohort and broader regression on the release snapshot.
+
 ## Open Questions
 - The free-only smoke covers read-only fixtures. Broader coding and execution evidence still
   needs a free workload using the existing operator command approval boundary.

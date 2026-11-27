@@ -96,6 +96,27 @@ function policyLoop(turns: string[][], tools: HarnessTool[], policy: LoopOptions
 }
 
 describe("worker tool restriction end to end through runAgentLoop", () => {
+  it("keeps an in-budget read result when the ungranted tool schemas are large", async () => {
+    const contents = "export const sample = 'a fixture value';\n".repeat(300);
+    const ctx = stubCtx({ allow: ["read_file"] });
+    const ungranted = def("web_search");
+    ungranted.function.description = "large ungranted schema ".repeat(1500);
+    const { options, offered } = policyLoop(
+      [["read_file"], ["submit"]],
+      [
+        { def: def("read_file"), sideEffect: "read", run: async () => contents },
+        { def: ungranted, sideEffect: "read", run: async () => "outside scope" },
+      ],
+      workerToolPolicy(ctx),
+    );
+    options.inputBudget = 2000;
+    options.fallbackContextTokens = 8192;
+
+    expect((await runAgentLoop(options)).kind).toBe("terminal");
+    expect(offered[1]!.messages.find(message => message.role === "tool")?.content).toBe(contents);
+    expect(offered[1]!.tools!.map(tool => tool.function.name)).toEqual(["read_file", "submit"]);
+  });
+
   it("offers only the brief's profile tools plus always-on, and a channel grant adds a tool starting the next turn", async () => {
     const webSearch = vi.fn(async () => "web result");
     let granted: string[] = [];

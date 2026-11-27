@@ -42,6 +42,8 @@ export interface LoopOptions<T> {
    * larger endpoint keeps serving the conversation, its own budget applies instead.
    */
   inputBudget: number;
+  /** Raw fallback context for scoped workers, whose offered tools may change between turns. */
+  fallbackContextTokens?: number;
   maxInvalidTerminal: number;
   /** Called after each response's tool calls ran (per-response commits). */
   onResponse?: (info: ResponseInfo) => Promise<void>;
@@ -158,20 +160,16 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
   const byName = new Map(tools.map((t) => [t.def.function.name, t]));
   const defs = [...tools.map((t) => t.def), o.terminal.def];
   const terminalName = o.terminal.def.function.name;
-  const toolTokens = estimateTokens([], defs);
+  const allToolTokens = estimateTokens([], defs);
   const cacheKey = env.ctx.taskId;
   let invalid = 0;
   let lastErrors: string[] = [];
   let finalNotice = false;
   const policyNotices = new Set(messages.filter(message => message.role === "user" && typeof message.content === "string").map(message => message.content as string));
 
-  /** The input budget while `ep` serves: its own context, never less than the fallback budget. */
-  const budgetFor = (ep: ModelEndpoint | undefined): number | null =>
-    ep?.contextLimitTokens ? Math.max(o.inputBudget, ep.contextLimitTokens - o.maxTokens - toolTokens - BUDGET_MARGIN_TOKENS) : null;
-
   // The endpoint that served the last turn (a resumed session's last recorded response at first).
   let sticky: string | null = o.resume?.plan.lastEndpointId ?? null;
-  let servingBudget = budgetFor(env.ctx.plan.candidates.find((c) => c.id === sticky));
+  let servingEndpoint = env.ctx.plan.candidates.find((c) => c.id === sticky);
   // Persisted safety state still applies when a new routing plan has no candidates.
   // The empty minimal environments used by standalone loop callers have no store.
   const handoff = env.ctx.tasks.db || env.ctx.plan.candidates.length ? new StallHandoff(env.ctx) : null;
@@ -185,7 +183,7 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
   }
   if (handoff?.excluded.has(sticky ?? "")) {
     sticky = null;
-    servingBudget = null;
+    servingEndpoint = undefined;
   }
   // Per-turn recovery state: at most one continuation and one truncated-call retry per turn.
   let continued: ChatMessage | null = null;
@@ -294,8 +292,16 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
       policyNotices.add(policy.notice);
       messages.push({ role: "user", content: policy.notice });
     }
-    const requestDefs = policy ? defs.filter(def => def.function.name === terminalName || policy.allowedToolNames.includes(def.function.name)) : defs;
-    const budget = servingBudget ?? o.inputBudget;
+    const requestDefs = remaining === 1 ? [o.terminal.def]
+      : policy ? defs.filter(def => def.function.name === terminalName || policy.allowedToolNames.includes(def.function.name)) : defs;
+    const requestMaxTokens = retry?.maxTokens ?? o.maxTokens;
+    const scopedBudget = o.fallbackContextTokens !== undefined;
+    const reservedTokens = scopedBudget ? requestMaxTokens + estimateTokens([], requestDefs) : o.maxTokens + allToolTokens;
+    const fallbackBudget = o.fallbackContextTokens === undefined ? o.inputBudget
+      : Math.max(2000, o.fallbackContextTokens - reservedTokens - BUDGET_MARGIN_TOKENS);
+    const budget = servingEndpoint?.contextLimitTokens
+      ? Math.max(fallbackBudget, servingEndpoint.contextLimitTokens - reservedTokens - BUDGET_MARGIN_TOKENS)
+      : fallbackBudget;
     const channel = byName.has("read_channel") && allowedNow("read_channel")
       ? prepareChannelDelivery(env, messages, budget)
       : { compacted: compact(messages, budget), pending: null };
@@ -311,7 +317,7 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
         purpose: o.purpose ?? "agent_loop",
         // The final request offers only the terminal tool: a model told to submit still called
         // other tools (live 2026-10-21), and some providers ignore tool_choice.
-        chat: { messages, max_tokens: pending?.maxTokens ?? o.maxTokens, temperature: 0.2, tools: remaining === 1 ? [o.terminal.def] : requestDefs, tool_choice: remaining === 1 ? "required" : "auto" },
+        chat: { messages, max_tokens: requestMaxTokens, temperature: 0.2, tools: requestDefs, tool_choice: remaining === 1 ? "required" : "auto" },
         preferEndpointId: sticky,
         cacheKey,
         ...((pending?.avoid.length || handoff?.excluded.size) ? { avoidEndpointIds: [...new Set([...(pending?.avoid ?? []), ...(handoff?.excluded.size ? handoff.avoid() : [])])] } : {}),
@@ -323,8 +329,8 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
         return { kind: "budget_exhausted", messages };
       }
       // Grown to the serving endpoint's context, and nothing that size is available now: fit the fallback budget.
-      if (err instanceof AdmissionDenied && err.reason === "context_does_not_fit" && budget > o.inputBudget) {
-        servingBudget = null;
+      if (err instanceof AdmissionDenied && err.reason === "context_does_not_fit" && budget > fallbackBudget) {
+        servingEndpoint = undefined;
         if (pending) retry = pending;
         continue;
       }
@@ -348,7 +354,7 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
     const endpointId = res.endpoint.id;
     const requestId = res.requestId;
     sticky = endpointId;
-    servingBudget = budgetFor(res.endpoint);
+    servingEndpoint = res.endpoint;
 
     // Tools run on behalf of the model that produced this response: attribute their writes to it.
     if (env.brain) {
@@ -372,7 +378,7 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
       const broken = calls.some((c) => parseArgs(c.function.arguments) === undefined);
       // A tool call (or the whole reply) cut short: retry the turn once without keeping the broken reply.
       if ((broken || (!calls.length && !content)) && !retriedThisTurn) {
-        const next = turnRetry(res, estimateTokens(messages, defs), o.maxTokens, env.ctx.plan.candidates, messages);
+        const next = turnRetry(res, estimateTokens(messages, scopedBudget ? requestDefs : defs), o.maxTokens, env.ctx.plan.candidates, messages);
         if (next) {
           retriedThisTurn = true;
           retry = next;
@@ -518,7 +524,7 @@ export async function runAgentLoop<T>(o: LoopOptions<T>): Promise<LoopResult<T>>
       // handing off. Only fresh observation history belongs to the new endpoint.
       observations.progress();
       sticky = null;
-      servingBudget = null;
+      servingEndpoint = undefined;
       messages.push({ role: "user", content: `The previous endpoint stalled (${reason}) and is excluded for this task. Continue from the recorded files and tool outcomes using another eligible free endpoint. Do not repeat completed effects or effects with uncertain outcomes; inspect current state or report the exact blocker. The original request budget, deadline, scope and approvals still apply.` });
       session?.note("agent model handoff", { endpointId, reason });
       sync();

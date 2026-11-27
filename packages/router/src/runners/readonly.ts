@@ -66,6 +66,9 @@ export async function runReadOnly(ctx: RunContext): Promise<RunOutcome> {
   ];
   const maxTokens = Math.min(profile.max_output_tokens, spec.budget?.maxOutputTokens ?? Infinity);
   const limits = planLimits(ctx.plan, ctx.cfg.routing.max_endpoint_fallbacks);
+  const toolPolicy = workerToolPolicy(ctx);
+  const granted = toolPolicy?.().allowedToolNames;
+  const visibleTools = availableTools(tools, env).filter(tool => !granted || granted.includes(tool.def.function.name));
   const inputBudget = Math.max(2000, limits.contextLimitTokens - maxTokens - estimateTokens([], tools.map((t) => t.def)) - 500);
 
   const fresh: ChatMessage[] = [
@@ -75,18 +78,17 @@ export async function runReadOnly(ctx: RunContext): Promise<RunOutcome> {
     },
     { role: "user", content: `${taskBrief(spec, ctx.retry)}${canRunChecks ? `\nDeclared checks (run exactly as written with run_check):\n${declaredChecks.map((command) => `- ${command}`).join("\n")}` : ""}\nProvided context:\n${renderSources(sources) || "(none)"}` },
   ];
-  const memoryOptions = { tools: [...availableTools(tools, env).map(tool => tool.def), SUBMIT_RESULT_DEF], outputTokens: maxTokens, reservedTokens: 500 };
+  const memoryOptions = { tools: [...visibleTools.map(tool => tool.def), SUBMIT_RESULT_DEF], outputTokens: maxTokens, reservedTokens: 500 };
   if (!ctx.resume) fresh[1]!.content = `${fresh[1]!.content}\n${await brainContext(env, { messages: fresh, ...memoryOptions })}`;
   // A resumed session continues its own transcript (the fresh one above still registered the evidence).
   const messages = ctx.resume ? await refreshMemoryMessages(env, ctx.resume.plan.messages, memoryOptions) : fresh;
   const executionId = ctx.gate.admission.createExecution("task", spec.profile, [{ taskId: ctx.taskId, itemId: ctx.taskId }]);
-  const toolPolicy = workerToolPolicy(ctx);
   const loop = await runAgentLoop({
     env,
     executionId,
     messages,
     tools,
-    ...(toolPolicy ? { toolPolicy } : {}),
+    ...(toolPolicy ? { toolPolicy, fallbackContextTokens: limits.contextLimitTokens } : {}),
     ...(ctx.resume ? { resume: { plan: ctx.resume.plan, actor: workerActor(ctx, role), pointer: null } } : {}),
     terminal: submitResultTool(spec, universe, validator),
     maxTokens,

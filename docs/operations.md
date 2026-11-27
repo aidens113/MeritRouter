@@ -135,6 +135,10 @@ usage retains its reported or estimated basis; skipped repositories and unavaila
 reported. These figures do not by themselves establish comparative savings. The CLI
 `meritrouter exchanges export` exports exchange records with secret redaction.
 
+For scoped worker briefs, the runner accounts for the tool schemas offered on each turn when
+it fits the conversation to the current and fallback model contexts. An approved channel grant
+takes effect on the next turn and is included in that calculation.
+
 ### Measure offload on an isolated workload
 
 Build the router, then run the benchmark checks without model calls:
