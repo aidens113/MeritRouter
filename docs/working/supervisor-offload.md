@@ -1,6 +1,6 @@
 # Supervisor offload: free workers do the heavy lifting
-Status: Active
-Status detail: Free-only release cohort accepted 7/8. Fallback-adjusted supervisor tokens fell 61% for output and 23% overall. The declared command canary passed. Fresh regression is running.
+Status: Complete
+Status detail: Free-only release cohort accepted 7/8. Fallback-adjusted supervisor tokens fell 61% for output and 23% overall. The declared command canary and release validation passed.
 Created: 2026-11-25
 Last updated: 2026-11-27
 Owner: Senior supervisor agent
@@ -17,7 +17,7 @@ Related: [trial evidence](supervisor-offload/reports/trial-evidence.md),
 ## Current State
 
 The user resumed on November 27 for a November 30 deadline and again after a computer crash.
-The current published `dev` snapshot is `b9e8d99`. The user explicitly directed continued work
+The validated release changes are on `dev` through `0e9731b`. The user explicitly directed continued work
 until the 60–80% offload goal is achieved, with free-only tests and no Claude Code.
 The user superseded the commercial benchmark direction on November 27: free-only tests and
 no Claude Code. Use a deterministic MCP stdio supervisor and a local model. Record task success
@@ -83,15 +83,15 @@ of them load timeouts; serial rerun of the 27 failing files left 4, all fixed an
   into the temporary vault and used for authenticated loopback discovery. The key was absent
   from the supervisor environment and generated config.
 
-**Remaining release gates:**
-1. The full pre-fix suite and corrected targeted rerun are recorded below. Keep main promotion
-   pending a clean full aggregate on the release snapshot and the live acceptance evidence.
-2. Finish read-only coverage using a free model that submits valid scout and review reports.
-   The first eight-request smoke, with paid routing disabled, verified summarization.
-3. Verify the 60% floor on a broader free-only workload including coding and checks. Publish
-   supported results. Commercial supervisor token/credit reduction remains unmeasured unless
-   the user supplies independent baseline usage. Superseded Claude comparison plans below are
-   historical and must not be executed for this release.
+**Release validation:**
+1. Recursive typecheck and build passed. The full run finished with 3,566 passed, five skipped,
+   and one temporary-panel cleanup failure. Its corrected 13-test file passed on rerun. The
+   regression used the release production code throughout. The correction is test-only.
+2. The free-only workload accepted all three read-only fixtures and four coding fixtures.
+   The separate operator-approved command passed.
+3. The local workload cleared the 60% floor and the fallback-adjusted output-token target.
+   Commercial account credit savings remain unmeasured. The older Claude comparison plans
+   are historical.
 
 **Free-only smoke checkpoint:**
 - An isolated `OLLAMA_NO_CLOUD=1` Ollama at 127.0.0.1:41537 used downloaded Qwen3 8B weights.
@@ -670,6 +670,12 @@ summary) installed only with `--hooks`. Report: `lane-d.md`.
 - Agent: supervisor
 - Changed: one direct test service in `project-cli-operations.test.ts`, with a regression assertion for detached panel logs.
 - Validation: `npx vitest run --no-file-parallelism tests/project-cli-operations.test.ts` -> 13 passed, 64.48 s. Log `%TEMP%/meritrouter-offload-check-cliops-20261127-162908.log`. The production CLI and application code were outside the edit.
+- Outcome: Accepted
+
+### 2026-11-27 — Complete release regression
+- Agent: supervisor
+- Validation: `npx vitest run --maxWorkers=2` -> 3,566 passed, five skipped, one temporary-panel cleanup failure on the original fixture, 285 files, 4,241.11 s. Log `%TEMP%/meritrouter-offload-final-suite-20261127-154331.log`.
+- Validation: the corrected fixture's complete 13-test file passed. Recursive typecheck passed again, and the build and aggregate used the same production code as the accepted local release run.
 - Outcome: Accepted
 
 ## Open Questions
