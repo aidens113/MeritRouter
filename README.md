@@ -7,8 +7,8 @@ within your routing policies and spending budgets.
 It also gives coding agents a framework for testing and reviewing delegated work:
 repository-scoped tasks, executable checks, independent review and recorded evidence.
 The panel shows where requests and tokens went. Your initiating agent stays the FINAL
-supervisor. By default, MeritRouter supervisors plan bounded deliveries, dispatch
-workers, integrate changes and test the result before returning evidence for FINAL review.
+supervisor and can offload bounded work directly to free MeritRouter workers. Delivery
+supervisors are available for larger jobs through the full MCP tool surface.
 
 **Want your agent to use MeritRouter? Copy this prompt into your agent’s chat:**
 
@@ -17,10 +17,9 @@ Use MeritRouter for this repository. Read MeritRouter's own README and setup gui
 at https://github.com/aidens113/MeritRouter or in its source checkout. Check whether
 the MeritRouter MCP tools are connected. If setup is needed, help me build
 it, register this repository and connect my agent; preserve existing configuration.
-Keep my current agent as FINAL supervisor. Delegate bounded deliveries to the strongest eligible
-MeritRouter supervisors; require specifications, worker delegation, integrated tests and
-independent review. Review observed evidence before accepting the product.
-Reduce model costs using capable free and paid routes within configured budgets.
+Keep my current agent as FINAL supervisor. Use MeritRouter to delegate well-scoped searches,
+edits, builds, tests and reviews to free workers. Answer worker questions and independently
+review the submitted changes and evidence. Check offload_report for worker activity.
 Keep outside-repository access on human approval only.
 Guide me to enter credentials in the panel and ask for required approvals.
 Never put secrets in chat or Git.
@@ -37,8 +36,8 @@ Supervisor routing defaults to `supervisor.routing.minimum_quality: ranked_capab
 It compares current, sourced capability measurements for exact model routes; parameter counts
 and model names cannot establish supervisor quality. Missing measurements require qualification,
 and paid fallback still requires authorized keys, known prices and available budgets.
-See [supervisor setup](docs/setup.md). Legacy task-by-task
-coordination remains available with `client_supervision.workflow: direct_tasks`.
+See [supervisor setup](docs/setup.md) for delivery jobs and the
+[external offload loop](docs/operations.md#external-supervisor-offload) for worker briefs.
 
 If `pnpm` is missing, install it with `npm install --global pnpm@10.5.0`.
 
@@ -73,6 +72,7 @@ In the panel:
 Paid routing is enabled by default with a **$5 rolling weekly cap**. T1-T3 workers can use
 paid routes when eligible free routes are exhausted; T4 goes back to the supervisor.
 Paid requests still require an eligible credential, known prices and budget headroom.
+Briefs submitted with the core MCP `delegate` tool have a zero paid budget.
 Free-tier availability depends on your provider and key. An existing coding-agent subscription
 does not supply worker API credentials. Existing explicit policies and budgets are preserved.
 For strictly free routing, choose `--preset standalone-free` or set `paid.enabled: false`.

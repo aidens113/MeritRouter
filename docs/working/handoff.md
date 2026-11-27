@@ -1,5 +1,11 @@
 # Handoff: state of every effort (2026-10-23)
 
+**2026-11-27 CURRENT (supervisor offload):** The user resumed after a computer crash. Treat
+[supervisor-offload.md](supervisor-offload.md) as authoritative for the November 30 release.
+The crash corrupted generated router output and the rebuild restored it. Current checks and
+the requested live benchmark budget are recorded in that plan. Prior runtime efforts remain
+parked.
+
 **2026-11-26 CURRENT (supervisor offload):** Active effort is [supervisor-offload.md](supervisor-offload.md); read its
 Current State first. External Claude Code/Codex supervisor + free MeritRouter workers: contracts, core MCP tools and
 playbook, two-way channel, supervisor-chosen tool sets, connect/hooks, offload metrics and eval are on dev. Next: full

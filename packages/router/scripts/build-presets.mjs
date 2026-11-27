@@ -36,7 +36,7 @@ const claudeModel = {
 
 const presets = {
   "claude-code": {
-    header: "Preset: claude-code. The MCP client is FINAL supervisor; MeritRouter supervisors own delegated delivery using current measured capability ranking. Missing evidence triggers bounded qualification; spending authority remains independent.",
+    header: "Preset: claude-code. The MCP client stays FINAL supervisor and coordinates bounded free workers using the core MCP tools. Optional delivery supervisors require measured capability evidence.",
     edits: [[["brain", "project"], "my-project"], [["profiles", "supervise"], supervise]],
   },
   "standalone-free": {

@@ -36,15 +36,14 @@ function offloadSnippet(target: "claude" | "codex"): string {
     "## MeritRouter offload",
     "",
     "This repository is connected to a MeritRouter MCP server. Prefer delegating bounded,",
-    "disjoint-file work to its free/cheap workers over doing it all yourself; see the MCP",
-    "tools' own descriptions (`delegate`/`submit_tasks`, `await`/`await_results`) for the brief",
-    "format and `docs/setup.md` for the full workflow.",
+    "disjoint-file work to its free workers. Use the MCP `delegate` and `await` tools,",
+    "answer worker messages with `reply`, and verify reports before accepting them.",
     "",
     `Before ending a turn or a session, check ${inbox} (or the \`inbox\` MCP tool) for worker`,
     "questions awaiting an answer and finished reports awaiting review, and clear them first.",
-    target === "claude"
-      ? "A connected `--hooks` install enforces this at Stop; re-run `meritrouter connect claude --hooks` after this block changes."
-      : "Codex has no hook mechanism for this; check the inbox yourself before finishing a session.",
+    ...(target === "claude"
+      ? ["The optional Claude Code Stop hook checks for unanswered worker messages."]
+      : []),
     END,
   ].join("\n");
 }

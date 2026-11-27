@@ -1,7 +1,7 @@
 # Set up MeritRouter
 
 Start with one project, one repository and the default `claude-code` preset. Your connected
-MCP client stays the FINAL supervisor: it delegates multi-step execution to delivery supervisors
+MCP client stays the FINAL supervisor: it coordinates bounded worker tasks directly by default
 and independently reviews the resulting product and evidence.
 Follow steps 1–4 first; local servers, custom providers and standalone jobs are optional.
 Use [the documentation index](README.md) to find the detailed operating contracts.
@@ -505,10 +505,10 @@ source defaults never rewrites your saved configuration.
 
 ## Supervisor quality evidence and strict routing
 
-The default workflow is `client_supervision.workflow: delegated_delivery`. Your initiating
-client remains FINAL supervisor and normally delegates multi-step execution to a MeritRouter
-delivery supervisor. `dispatch_final_supervisor: false` keeps FINAL authority with the client;
-do not turn it on merely to enable delegation. Use `direct_tasks` for explicit direct coordination.
+Your initiating client remains FINAL supervisor and coordinates direct worker tasks by default.
+For bounded delivery-supervisor jobs, use the full MCP tool surface. Set
+`client_supervision.workflow: delegated_delivery` if the client should favor that workflow.
+`dispatch_final_supervisor: false` keeps FINAL authority with the client.
 
 The generated Claude/Codex preset includes `profiles.supervise`. Existing configurations that
 define only worker profiles must add a supervisor profile before `start_job` can run:
@@ -704,12 +704,10 @@ other running processes refresh their own short-lived caches independently.
 
 ## 4. Connect an MCP client (Claude Code, Codex, ChatGPT)
 
-The connected client is the FINAL project supervisor by default. Multi-step work normally runs
-through a bounded MeritRouter delivery supervisor that plans, delegates, integrates, reviews,
-tests and repairs before returning an exact candidate. The client independently inspects the
-product/evidence and decides acceptance and upward resource requests. Settings → General → Claude/Codex supervision
-controls permission to dispatch a MeritRouter final project supervisor; it starts off. You can
-also explicitly ask the model to change it through the policy tool. See [supervisor ownership](roles.md#who-supervises).
+The connected client remains the FINAL project supervisor. Its default guidance coordinates
+bounded worker tasks directly; it can instead use a bounded delivery-supervisor job when needed.
+The client reviews the result and decides final acceptance. See [supervisor ownership](roles.md#who-supervises)
+and the [offload loop](operations.md#external-supervisor-offload).
 
 `meritrouter mcp` is MeritRouter's MCP server. It is the same as `node
 packages/router/dist/cli.js mcp`, or `node packages/router/dist/mcp.js` for older registrations.
@@ -831,11 +829,12 @@ does steps 2 and 4 above together, idempotently:
   already configured), from the `integrations/claude-code/hooks/` scripts shipped beside this
   package — plain Node, no dependencies, and each one fails open (any error exits 0, never
   blocking): a `PreToolUse` nudge toward delegating a large direct `Write`/`Edit` or a
-  test/build-shaped `Bash` command; a `Stop` hook that blocks ending the turn while
-  `meritrouter inbox --json` shows a worker message still awaiting an answer; and a
+  test/build-shaped `Bash` command; a `Stop` hook that blocks once per stop attempt while
+  `meritrouter inbox --json` shows a worker request awaiting an answer; and a
   `SessionStart` hook that prints the inbox's size as context. None of the three ever
   mutate anything; `meritrouter inbox [--json]` (also used by the Stop/SessionStart hooks) is a
-  read-only view of the same two-way channel the `inbox`/`probe`/`reply` MCP tools use.
+  read-only view of the same two-way channel the `inbox`/`probe`/`reply` MCP tools use. The Stop
+  hook does not gate on unreviewed reports.
 
 ### Remote MCP clients
 

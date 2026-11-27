@@ -95,11 +95,77 @@ binding/destination origins; null and unrelated origins are rejected.
 Provider credentials are not returned to clients. See [client setup](setup.md#connect-an-editor-or-chat-app)
 for URLs and copyable configuration.
 
+## External supervisor offload
+
+Claude Code and Codex can coordinate workers over MCP while retaining FINAL responsibility.
+`client_supervision.tools: core` is the default surface: `delegate`, `await`, `inbox`, `reply`,
+`probe`, `rework`, `accept`, `reject`, `read_artifact`, `run_check`, `status`, and
+`offload_report`. Set `client_supervision.tools: full` for the larger MCP surface, including
+delivery-job tools. MCP prompts also provide the offload playbook, brief and report guidance.
+Changing the tool surface is separate from changing workflow or permissions.
+
+1. Delegate a bounded Brief v1: choose a kind (`scout`, `summarize`, `edit`, `implement`, `run`,
+   `review`), specific goal, context, repository and allowed paths when writing, writable scope,
+   tool profile or explicit tools, exact checks and observable `doneWhen` criteria. `delegate`
+   lints before submission and returns errors or a task ID and route preview. Delegated briefs have
+   a zero paid budget. The preview does not establish which model serves the request.
+2. Use `await` and `inbox` to inspect reports and answer worker questions, blocked notices and
+   tool requests with `reply`. Grant only requested tools, using `tool:<name>` refs; grants take
+   effect on the next turn. Waiting for a supervisor response spends no model requests. Probe
+   answers are returned separately with their question and acknowledged once read. Core MCP
+   also reports pending worker action IDs. Open the task's **Supervisor action requests** card
+   in the panel to review and decide an exact command. This uses the normal operator policy.
+3. Review the diff and evidence. Report checks marked VERIFIED were run by the harness; CLAIMED
+   checks and worker assertions require independent verification. Current MCP sessions lack host
+   command authority, so MCP `run_check` refuses execution. Use an authorized execution environment
+   to rerun checks on the submitted revision. A running task receives `probe` at its next turn.
+   A finished task's probe uses a gated read-only summary
+   of its record and transcript tail. Probe answers can cite evidence; they remain claims to assess.
+4. If needed, `rework` creates a linked task from the prior submitted commit in the same worktree,
+   preserving scope and adding feedback and optional criteria. Give specific feedback; the
+   guidance recommends one rework before escalation. Accept or reject only after review; unmet
+   results cannot be accepted, and strict human-acceptance policy still applies. Task acceptance
+   is distinct from FINAL product acceptance.
+
+`offload_report` can filter by project, start time and task IDs. It reports task outcomes, accepted
+commit line attribution, recorded checks, model usage, channel activity and acceptance rates.
+The response identifies estimates: model free/paid classification comes from the current catalog,
+and context compression uses estimated brief context rather than instrumented worker reads. Token
+usage retains its reported or estimated basis; skipped repositories and unavailable projects are
+reported. These figures do not by themselves establish comparative savings. The CLI
+`meritrouter exchanges export` exports exchange records with secret redaction.
+
+### Measure offload on an isolated workload
+
+Build the router, then run the benchmark checks without model calls:
+
+```sh
+node packages/router/evals/offload/run.mjs --dry-run
+node packages/router/evals/offload/run.mjs --preflight
+```
+
+The live comparison requires approval for supervisor usage and free-provider requests.
+Run the benchmark with `--yes`, the same explicit Claude model for both arms, a supervisor
+budget per session, and a cumulative MeritRouter request cap. The isolated provider manifest
+uses the `providers` section shape with free-tier `api_key_env` entries. It supplies
+an isolated vault and keeps the worker credentials out of Claude's environment.
+Set `MERITROUTER_OFFLOAD_OPERATOR_TOKEN` and pass a spare `--operator-port` to review
+pending worker check approvals during the run. The runner closes that panel when it exits.
+`--help` lists exact flags.
+
+The benchmark grades the final checkout and compares paired sessions. It records accepted
+offload tasks, conservatively attributed source lines, verified worker checks versus
+supervisor test commands, and supervisor tokens and API-equivalent cost. Git coordination
+commands are reported separately. A scout, summary or review counts as an accepted offload
+when a worker supplied a reviewed result and the final answer passes its grader. Results
+describe this fixture suite and this client/model combination.
+
 ## Delivery v2 readiness and FINAL decisions
 
-Default `client_supervision.workflow: delegated_delivery` keeps the initiating client as FINAL
-supervisor and delegates multi-step execution to MeritRouter supervisors. Do not enable
-`dispatch_final_supervisor` just to get delegation. `direct_tasks` remains an explicit workflow.
+Default client guidance uses `direct_tasks` and keeps the initiating client as FINAL supervisor.
+Explicit `delegated_delivery` guides multi-step work through MeritRouter supervisors. An explicitly
+started job uses delivery behavior when workflow is unset; explicit `direct_tasks` changes that
+behavior. Do not enable `dispatch_final_supervisor` just to get bounded delegation.
 Ranked supervisor dispatch requires current comparable `supervisor.routing.ranking_evidence`
 meeting its `ranking_policy` capability floors; a model pin or familiar provider name cannot
 bypass it. Evidence is rechecked immediately before transport, including after awaited admission.

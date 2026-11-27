@@ -35,6 +35,7 @@ import { creditUsageFeedback } from "./credit-usage.js";
 import { ARTIFACT_REF_RE } from "../core/task.js";
 import { checkBrief, briefToTaskArgument, taskProfileFor } from "../core/brief.js";
 import { renderReportV1 } from "../core/report.js";
+import { listWorkerActions, workerActionScope } from "../admin/worker-actions.js";
 
 /** What every connection's server shares: the service, its config, and the project it serves. */
 export interface McpContext {
@@ -708,7 +709,7 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
       title: "Delegate a bounded brief to a worker",
       description:
         "Submit one BriefV1 (kind, goal, scope, checks, doneWhen) to a free worker. Lints the brief first: vague wording, a writable brief without allowedPaths or scope.repository, implement/run without checks, and missing or unobservable doneWhen are rejected with actionable errors before any model request is spent (ok: false, no task submitted); other issues come back as warnings on a submitted task. " +
-        "On success the brief is mapped onto the worker task contract and submitted, and a route preview (tier T1 candidates/excluded) is returned so you can see roughly where it will run.",
+        "Brief-derived tasks are free-only (maxPaidUsd: 0); paid routing needs a separate authorized workflow. On success the brief is mapped onto the worker task contract and submitted, and a route preview (tier T1 candidates/excluded) is returned so you can see roughly where it will run.",
       inputSchema: { brief: BriefArgumentSchema, ...projectInput },
     },
     async ({ brief, project: named }) => {
@@ -741,22 +742,57 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
       title: "Wait for tasks and read their reports",
       description:
         "Wait for the given tasks to finish (bounded by timeoutSeconds) and render each finished one as Report v1 text (Outcome, Summary, Changed, Checks VERIFIED vs CLAIMED, Criteria, Claims not verified, Self-check, Open messages, Drill-down refs), plus the worker messages awaiting your answer for these tasks. " +
-        "detail (brief|standard|full) sets verbosity; default standard. Answer every open message with reply before your turn ends.",
+        "Returns early for pending worker command approvals as sanitized pendingActions metadata; use the trusted operator surface to decide them. detail (brief|standard|full) sets verbosity; default standard. Answer every open message with reply before your turn ends.",
       inputSchema: { taskIds: z.array(z.string()).min(1), timeoutSeconds: z.number().int().positive().optional(), detail: z.enum(["brief", "standard", "full"]).optional(), ...projectInput },
     },
-    async ({ taskIds, timeoutSeconds, detail, project: named }) => {
+    async ({ taskIds, timeoutSeconds, detail, project: named }, extra) => {
       try {
         const p = scope(named);
-        const outcome = await sy.awaitResults(taskIds, { ...(timeoutSeconds ? { timeoutSeconds } : {}), project: p });
+        const started = Date.now();
+        let pendingActions = pendingWorkerActions(p, taskIds);
+        const stop = new AbortController();
+        const cancel = () => stop.abort();
+        extra.signal.addEventListener("abort", cancel, { once: true });
+        if (extra.signal.aborted) cancel();
+        // An internal cancellation wakes the existing result waiter without cancelling tasks.
+        // Keep polling metadata locally: an external supervisor spends no model turns waiting.
+        const poll = pendingActions.length ? undefined : setInterval(() => {
+          try {
+            pendingActions = pendingWorkerActions(p, taskIds);
+            if (pendingActions.length) stop.abort();
+          } catch { stop.abort(); }
+        }, 250);
+        let outcome;
+        try {
+          outcome = pendingActions.length ? sy.collectResults(taskIds, p) : await sy.awaitResults(taskIds, { ...(timeoutSeconds ? { timeoutSeconds } : {}), project: p, signal: stop.signal });
+        } finally {
+          clearInterval(poll);
+          extra.signal.removeEventListener("abort", cancel);
+        }
+        pendingActions = pendingWorkerActions(p, taskIds);
+        if (pendingActions.length) outcome = { ...outcome, timedOut: false, waitedSeconds: Math.round((Date.now() - started) / 1000) };
         const { requests, answers } = drainInbox(p, taskIds);
         const reports: Record<string, string> = {};
         for (const result of outcome.completed) reports[result.taskId] = renderReportV1(result, { ...(detail ? { detail } : {}), messages: [...requests, ...answers].filter((m) => m.taskId === result.taskId) });
-        return json({ pending: outcome.pending, timedOut: outcome.timedOut, waitedSeconds: outcome.waitedSeconds, completed: outcome.completed.map((r) => r.taskId), reports, workerRequests: requests, probeAnswers: answers });
+        return json({ pending: outcome.pending, timedOut: outcome.timedOut, waitedSeconds: outcome.waitedSeconds, completed: outcome.completed.map((r) => r.taskId), reports, workerRequests: requests, probeAnswers: answers, pendingActions });
       } catch (err) {
         return fail(err);
       }
     },
   );
+
+  // Explicit allowlist: captured commands, paths, reasons, leases and outputs stay private.
+  // Listing grants no command execution or worker-action decision capability.
+  const pendingWorkerActions = (project: string, taskIds?: string[]) => {
+    const { db } = workerActionScope(sy, project);
+    const rows = taskIds
+      ? [...new Set(taskIds)].flatMap(taskId => listWorkerActions(db, { project, taskId, status: "pending" }))
+      : listWorkerActions(db, { project, status: "pending" });
+    return rows.filter(row => row.project === project && (!taskIds || taskIds.includes(row.taskId))).map(row => ({
+      id: row.id, taskId: row.taskId, status: row.status, createdAt: row.createdAt,
+      kind: row.action.operation ? "operation" : "command",
+    }));
+  };
 
   /**
    * Split the supervisor inbox into worker requests (need a reply) and worker answers to probes
@@ -776,12 +812,13 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
     "inbox",
     {
       title: "Worker messages waiting for an answer",
-      description: "Worker requests (question, tool_request, help, blocked) still waiting for your reply, and worker answers to your probes (each with its question; shown once, then marked read), oldest first. Answer every request with reply before ending your turn.",
-      inputSchema: { ...projectInput },
+      description: "Worker requests waiting for reply and probe answers (shown once), plus sanitized pendingActions approval metadata. Command approvals require the trusted operator surface; reply does not decide them. Answer every request before ending your turn.",
+      inputSchema: { taskIds: z.array(z.string()).min(1).optional(), ...projectInput },
     },
-    async ({ project: named }) => {
+    async ({ project: named, taskIds }) => {
       try {
-        return json(drainInbox(scope(named)));
+        const p = scope(named);
+        return json({ ...drainInbox(p, taskIds), pendingActions: pendingWorkerActions(p, taskIds) });
       } catch (err) {
         return fail(err);
       }
@@ -865,9 +902,9 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
   server.registerTool(
     "run_check",
     {
-      title: "Re-run one of a task's declared checks",
+      title: "Validate a task's declared check",
       description:
-        "Independently re-run one command from the task's own declared checks (constraints.checks) in its recorded worktree, instead of trusting the worker's CLAIMED report. Only a command the task actually declared may be run; other commands are refused. Output (last 60000 characters) is stored as an artifact and its ref returned alongside the exit code.",
+        "Validate a task's declared check and recorded worktree. Execution currently fails closed: this MCP connection has no authorized command-containment capability. Run independent checks through the authorized harness or your own command tool; a declaration alone grants no host execution authority.",
       inputSchema: { taskId: z.string().min(1), command: z.string().min(1), ...projectInput },
     },
     async ({ taskId, command, project: named }) => {
@@ -880,15 +917,11 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
         const workspace = sy.sessions.forTask(taskId).filter((s) => s.workspace?.repos.length).at(-1)?.workspace;
         const repo = workspace?.repos[0];
         if (!repo) throw new Error(`no recorded worktree for task ${taskId}`);
-        const { execFile } = await import("node:child_process");
-        const run = await new Promise<{ code: number | null; output: string }>((resolve) => {
-          execFile(command, { shell: true, cwd: repo.worktree, timeout: 120_000, maxBuffer: 10_000_000 }, (err, stdout, stderr) => {
-            const code = err ? (typeof (err as NodeJS.ErrnoException & { code?: number }).code === "number" ? (err as unknown as { code: number }).code : 1) : 0;
-            resolve({ code, output: `${stdout ?? ""}${stderr ?? ""}` });
-          });
-        });
-        const logRef = sy.artifacts.write({ taskId, kind: "check_log", label: `run_check: ${command}`, content: Buffer.from(run.output.slice(-60_000), "utf8"), extension: ".log" });
-        return json({ command, exitCode: run.code, logRef });
+        // A recorded task/worktree is evidence, not host command authority. The harness
+        // requires a current captured supervisor lease (or an exact operator approval),
+        // neither of which this MCP connection holds. Do not reconstruct either from a
+        // task row or replace repository containment with shell cwd/command allowlisting.
+        throw new Error("command_authority_unavailable: MCP run_check cannot execute without an authorized command-containment capability; run the check through the authorized harness or your own command tool");
       } catch (err) {
         return fail(err);
       }
@@ -915,7 +948,7 @@ export function buildMcpServer({ sy, cfg, project, preferenceAuthorization }: Mc
     "offload_report",
     {
       title: "Offload metrics",
-      description: "How much work workers did for you: tasks by kind and outcome, accepted lines by free/paid worker models vs other authors, worker commands, bytes read vs report bytes returned, probes, reworks, worker questions and acceptance rate. Each figure states whether it is exact or an estimate. Returns a placeholder so callers can integrate the tool name now.",
+      description: "How much work workers did for you: tasks by kind and outcome, accepted lines by free/paid worker models vs other authors, worker commands, bytes read vs report bytes returned, probes, reworks, worker questions and acceptance rate. Each figure states whether it is exact or an estimate.",
       inputSchema: { since: z.number().int().optional().describe("Epoch ms; default: all time"), taskIds: z.array(z.string()).optional().describe("Limit to these tasks (e.g. this session's)"), ...projectInput },
     },
     async ({ since, taskIds, project: named }) => {

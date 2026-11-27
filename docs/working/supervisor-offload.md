@@ -1,8 +1,8 @@
 # Supervisor offload: free workers do the heavy lifting
 Status: Active
-Status detail: Paused 2026-11-26 at user request. All build lanes integrated on dev; full-suite rerun, docs and live phase next.
+Status detail: Resumed on November 27 for Windows check recovery, operating docs, and benchmark readiness.
 Created: 2026-11-25
-Last updated: 2026-11-25
+Last updated: 2026-11-27
 Owner: Senior supervisor agent
 Scope: Make an external Claude Code / Codex supervisor offload 60-80% of its work (reading,
 searching, code writing, running commands) to free MeritRouter workers over MCP, with
@@ -16,8 +16,8 @@ Related: [trial evidence](supervisor-offload/reports/trial-evidence.md),
 
 ## Current State
 
-Checkpoint 2026-11-26 (session paused at user request). Status: build phases done on `dev`; live
-phase not started.
+The user resumed on November 27 for a November 30 deadline and again after a computer crash.
+The implementation checkpoint on `dev` predates the November 27 fixes below.
 
 **Built and pushed to dev (all committed):**
 - Contracts: Brief v1 (kind, goal, scope, tools, checks, doneWhen; vague briefs rejected), Report v1
@@ -43,17 +43,39 @@ phase not started.
 of them load timeouts; serial rerun of the 27 failing files left 4, all fixed and covered by a
 13-file / 174-test serial run. A clean full-suite aggregate has NOT been rerun since.
 
-**Next session, in order:**
-1. Rerun the full router suite (`cd packages/router && npx vitest run`), then serially rerun any
-   failures; `pnpm -r typecheck`, `pnpm -r build`.
-2. Fix the remaining open risk: helper-cache lock left by a crashed process reports busy forever
-   (`src/harness/windows-job-executable.ts`).
-3. Update authored docs (docs/roles.md, docs/operations.md, docs/setup.md: offload loop, core tools,
-   workflow semantics, connect/hooks).
-4. Live phase, needs the user's yes (asked 2026-11-26, unanswered): `connect claude` dogfood project
-   `meritrouter-dev` (store under D:/MeritRouterProjects/meritrouter-dev, repo D:/MeritRouter) on the
-   real config; free-only smoke test capped at 120 requests, paid $0; 16-run Claude Code eval.
-5. Promote dev to main after a green aggregate and docs.
+**November 27 changes under lead verification:**
+- A Windows kernel mutex replaces the persistent installer claim. The focused worker run observed
+  11/11 Windows command environment cases, including actual abandoned mutex recovery.
+- MCP check execution now refuses without an authorized command principal. The worker harness
+  continues to run checks under its own policy. Core await and inbox now show pending approvals
+  early, with sanitized metadata. The operator reviews actions in the existing panel task card.
+- The generated presets leave the client workflow unset. Core guidance starts with direct workers
+  and explicitly started jobs retain delivery semantics. Briefs carry a zero paid budget.
+- Updated README and authored setup, roles and operations docs. Existing unrelated changes remain
+  in the main checkout.
+- The eval now creates isolated temporary fixture repositories, uses a separate installation
+  with disabled paid routing and a cumulative request cap, and verifies which MCP servers each
+  Claude arm used. It checks final work, counts Git-attributed worker lines and successful
+  worker checks, and reads supervisor usage from the client. It journals completed arms to OS
+  temp by default and can open a separate authenticated operator panel on an explicit local port.
+- The computer crash left a malformed generated `dist/harness/repeat-policy.js`. Rebuilding
+  restored the router import. An aggregate started before this diagnosis was stopped and has
+  no result. The new aggregate uses three workers and logs to
+  `%TEMP%/meritrouter-offload-suite-20261127-132953.log`.
+- All eight fixture graders and all eight isolated MCP provisioning checks passed. The
+  isolated production panel required login and returned HTTP 200 for the authenticated task
+  list. The temporary panel was stopped after the check. A synthetic free key was imported
+  into the temporary vault and used for authenticated loopback discovery. The key was absent
+  from the supervisor environment and generated config.
+
+**Remaining release gates:**
+1. Complete the full router suite, recursive typecheck/build, and benchmark preflight.
+2. Obtain approval for up to 120 free model requests for live smoke, up to 128 free model
+   requests across the benchmark, and 16 Claude Code sessions at $0.50 API-equivalent each.
+   The November 27 request is unanswered. Use isolated projects and paid routing disabled.
+3. Run the paired eval and verify the 60% floor for worker-attributed work and the 40% floor
+   for supervisor output-token reduction within one passing task of the baseline. Publish
+   only the verified coherent change. Promote after release acceptance.
 
 Not done / deferred: fixed-count stall nudge; Stop hook "unreviewed report" gating (no reviewed
 flag exists); per-tool examples in the lite prompt still describe the default tool set, not the
@@ -162,6 +184,46 @@ Fine-tune a worker model on the exchange corpus (brief -> tool use -> questions 
 verdict). Revisit the internal supervisor only after the external loop meets acceptance.
 
 ## Worker Briefs
+
+### Brief: windows_helper_recovery
+- Repository: D:/MeritRouter
+- Role: standard worker, gpt-6.1-sol, medium. Main checkout only.
+- Task: Fix permanent Windows command/service helper cache blockage after an installer dies.
+- Required reads: Current State above, windows-job-executable.ts, existing matching tests found by ripgrep.
+- Owns: packages/router/src/harness/windows-job-executable.ts and matching helper-cache test(s).
+- Must not touch: all other files except the report, including dist and shared working docs.
+- Definition of done: deterministic Windows coverage of stale lock recovery and safe concurrent installation. Preserve tamper detection, symlink/hardlink defenses and pruning repair. Run focused new tests only; lead owns the aggregate build/test slot. No live providers.
+- Report to: docs/working/supervisor-offload/reports/windows_helper_recovery.md
+
+### Brief: offload_operating_docs
+- Repository: D:/MeritRouter
+- Role: writing worker, gpt-6.1-terra, medium. Main checkout only.
+- Task: Document the supported Claude Code and Codex supervisor offload loop and connection workflow in authored docs.
+- Required reads: Current State above; docs/setup.md connection section; docs/operations.md MCP section; docs/roles.md external supervisor section; current packages/router/src/mcp instructions/tools and integration command sources as needed.
+- Owns: docs/setup.md, docs/operations.md, docs/roles.md.
+- Must not touch: all other files except the report, including README.md with unrelated edits.
+- Definition of done: current core/full tools, direct vs delivery flow, verified checks, probes/rework, scope, hooks, and metrics documented with precise verified semantics. No claims about measured savings or live results. No providers, builds or tests.
+- Report to: docs/working/supervisor-offload/reports/offload_operating_docs.md
+
+### Brief: mcp_check_containment
+- Repository: D:/MeritRouter
+- Role: heavy worker, gpt-6.1-sol, max. Main checkout only.
+- Task: Ensure MCP run_check uses the existing command-containment boundary or fails closed. It currently shells out directly given a previously declared command, bypassing the harness. Preserve valid runs and report shape when feasible.
+- Required reads: Current State above, packages/router/src/mcp/tools.ts run_check, existing command runner/policies and MCP tests as relevant.
+- Owns: packages/router/src/mcp/tools.ts, earliest MCP tests covering the behavior, and a narrowly scoped containment adapter only if required outside the current helper-cache files. Coordinate if another file is needed.
+- Must not touch: helper-cache files, eval files, authored/working docs except your report, dist.
+- Definition of done: regression proves declared check cannot escape the harness security boundary, retains valid checks when capability exists. No live calls. Use focused tests that run on source only because lead owns dist.
+- Report to: docs/working/supervisor-offload/reports/mcp_check_containment.md
+
+### Brief: mcp_check_visibility
+- Repository: D:/MeritRouter
+- Role: standard worker, gpt-6.1-sol, medium. Main checkout only.
+- Task: Show pending worker command approvals to external supervisors using core MCP await/inbox, scoped to the selected project and requested tasks. The worker currently waits for an operator while the core client cannot see why. Return promptly when already pending and, if feasible narrowly, when pending starts during an await. Expose sanitized status metadata only.
+- Required reads: Current State above, core await/inbox and related tests, admin/worker-actions.ts, existing await implementation as needed.
+- Owns: packages/router/src/mcp/tools.ts and matching MCP test(s). Lead owns dist and aggregates; coordinate before editing other source files.
+- Must not touch: security policies, grant paths, worker-action execution, authored/working docs except report, dist, eval.
+- Definition of done: tests demonstrate pending check status is visible, project/task filters hold, no decision capability is added, existing channel/await behavior remains intact. No live providers.
+- Report to: docs/working/supervisor-offload/reports/mcp_check_visibility.md
 
 Completed: phase1-contracts (worker-heavy), init-provisioning-fix (worker); reports under
 `supervisor-offload/reports/`. Dispatched 2026-11-25: lane-a (worker), lane-b (worker-heavy),
@@ -388,6 +450,17 @@ summary) installed only with `--hooks`. Report: `lane-d.md`.
   connection-listener-access, connection-modes -> 13 files, 174 passed. projects-surfaces init test
   passed on two consecutive runs.
 - Not rerun: a complete full-suite aggregate after these fixes.
+
+### 2026-11-27 — Offline release fixes and crash recovery
+- Agent: supervisor, with windows_helper_recovery, offload_operating_docs, mcp_check_containment, mcp_check_visibility.
+- Changed: Windows command helper cache; MCP check containment and approval visibility; brief budget defaults; CLI snippets and generated presets; authored docs; paired eval and evidence tests.
+- Why: Preserve free-only offload, keep exact operator command authority, and collect comparable evidence from isolated working repositories.
+- Validation: `npx vitest run --no-file-parallelism tests/offload-eval.test.ts tests/command-environment.test.ts tests/offload-contracts.test.ts tests/client-supervision.test.ts` -> 44 passed. `node packages/router/evals/offload/run.mjs --dry-run` -> 8 of 8 graders passed.
+- Validation: `node packages/router/evals/offload/run.mjs --preflight` -> eight isolated fixtures each saw 12 core tools, exit 0. Isolated panel smoke with `startOperatorPanel` -> anonymous 307, login 303, authenticated Tasks page 200.
+- Validation: offline `prepareInstallation` smoke with a synthetic OpenAI-compatible loopback listing -> free vault key authenticated; no model calls; supervisor environment and YAML contained no key.
+- Validation: `pnpm -r typecheck` -> router and panel passed after correcting a fixture tuple type. `pnpm -r build` -> router and panel passed after rebuilding the crash-damaged dist, before the final MCP approval visibility integration.
+- Outcome: Partial
+- Follow-up: Observe fresh aggregate and preflight. Approval for paid supervisor usage is still pending.
 
 ## Open Questions
 - Budget for the live smoke and the Claude-usage cost of the offload eval (asked before Phase 3).

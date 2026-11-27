@@ -14,9 +14,10 @@ enforced in code enforced in code.
 ## FINAL supervision and delivery roles
 
 The initiating client (Claude, Codex, another MCP client, or the operator) remains the **FINAL
-supervisor** by default. MeritRouter delivery supervisors own planning, worker dispatch,
-integration, review, runtime testing and repair for their delegated goals. Workers own bounded
-briefs. A delivery supervisor returns a checked candidate; FINAL acceptance stays upstream.
+supervisor** by default. It can coordinate bounded workers directly or delegate a goal to a
+MeritRouter delivery supervisor. Delivery supervisors own planning, worker dispatch, integration,
+review, runtime testing and repair for their delegated goals. Workers own bounded briefs; FINAL
+acceptance stays upstream.
 
 | | Supervisor | Worker |
 | --- | --- | --- |
@@ -32,20 +33,21 @@ checks itself, or dispatches a `review`) before treating anything as done.
 
 ## Who supervises
 
-- **External MCP client** (`meritrouter init --preset claude-code`): Claude Code, Codex or another client is the FINAL supervisor and talks
-  to MeritRouter through MCP. For multi-step work it normally starts a bounded delivery-supervisor
-  job, then inspects its candidate/evidence, answers resource requests and independently accepts
-  or rejects the product. Direct task coordination remains available for small work. Merge [`packages/router/examples/CLAUDE.delegation.md`](../packages/router/examples/CLAUDE.delegation.md)
-  into the project's `CLAUDE.md`.
+- **External MCP client** (`meritrouter init --preset claude-code`): Claude Code, Codex or
+  another MCP client retains FINAL responsibility and coordinates bounded worker briefs directly
+  by default. It can start a bounded delivery-supervisor job for work that needs one, then inspect
+  its candidate and evidence and independently decide product acceptance. See the
+  [offload loop](operations.md#external-supervisor-offload) and [connection setup](setup.md#one-command-connect-claude-code-codex).
 - **MeritRouter's supervisor** (standalone presets): you give a goal (`meritrouter run`, the
   Jobs page of a project in the panel, or `sy.startJob()`), and a supervisor model you choose
   owns delivery execution; the initiating operator still decides whether the product is acceptable.
 
 Over MCP, `client_supervision.dispatch_final_supervisor` defaults to **false**. The external
 client retains product intent and FINAL review. `client_supervision.workflow` defaults to
-`delegated_delivery`: delivery supervisors own the execution loop, including integration and
-testing. `direct_tasks` selects direct client coordination. Neither workflow transfers FINAL
-authority. Existing explicit lower budgets and security policies remain authoritative.
+`direct_tasks` for client guidance. `delegated_delivery` guides the client to use delivery
+supervisors for multi-step work. An explicitly started job defaults to delivery behavior when
+workflow is unset; explicit `direct_tasks` changes that job behavior. Neither workflow transfers
+FINAL authority. Existing explicit lower budgets and security policies remain authoritative.
 `start_job` and supervisor-mode `submit_tasks` default to `supervisionScope: subtask`, which
 completes a delegated component rather than declaring the entire project finished.
 

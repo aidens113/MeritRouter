@@ -72,9 +72,10 @@ brain:
   access_approver: supervisor   # who decides workers' requests for more access: supervisor | human | auto
   auto_approve: []              # e.g. [{ pattern: "projects/my-project/decisions/**", mode: read, min_tier: T2 }]
 
-# The initiating client remains FINAL supervisor; internal supervisors own bounded delivery.
+# The initiating client remains FINAL supervisor and coordinates bounded workers over MCP.
 client_supervision:
-  workflow: delegated_delivery # direct_tasks retains the legacy client-coordinated workflow
+  # tools: full # also expose delivery tools. The default core surface is for worker offload.
+  # workflow: delegated_delivery # favor bounded delivery jobs in the client guidance
   dispatch_final_supervisor: false
 
 # Internal supervisors use the strongest eligible route; paid policy remains independent.

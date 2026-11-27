@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
-import { lstat, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -21,6 +21,7 @@ const exec = promisify(execFile);
 const Cache = z.object({ version: z.literal(1), source: z.string().regex(/^[a-f0-9]{64}$/), executable: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 const hash = (bytes: string | Buffer) => createHash("sha256").update(bytes).digest("hex");
 const absent = (error: unknown): null => { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; };
+const quote = (value: string) => `'${value.replace(/'/g, "''")}'`;
 async function fileBytes(file: string, limit: number): Promise<Buffer> {
   const stat = await lstat(file);
   if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > limit) throw new Error("Unsafe command helper cache file");
@@ -62,27 +63,41 @@ async function prepareExecutable(sourceText: string, kind: "command" | "service"
   const token = randomBytes(8).toString("hex"), source = path.join(root, `source-${token}.cs`), candidate = path.join(root, `job-${token}.exe`);
   const handle = await open(source, "wx", 0o600); try { await handle.writeFile(sourceText); await handle.sync(); } finally { await handle.close(); }
   try {
-    const quote = (value: string) => `'${value.replace(/'/g, "''")}'`;
     const script = `$ErrorActionPreference='Stop'; Add-Type -Path ${quote(source)} -OutputAssembly ${quote(candidate)} -OutputType ConsoleApplication -ReferencedAssemblies System.Web.Extensions,System.Core`;
     await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script], { windowsHide: true, timeout: 60000, maxBuffer: 65536, env: minimalEnv({}) });
     const bytes = await fileBytes(candidate, 1024 * 1024);
-    // Installation is serialized by an exclusive manifest claim. A competitor's valid cache wins.
-    let claim: Awaited<ReturnType<typeof open>>;
-    try { claim = await open(`${manifest}.lock`, "wx", 0o600); }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      for (let i = 0; i < 100; i++) { const installed = await inspect(); if (installed) return installed; await new Promise(resolve => setTimeout(resolve, 25)); }
-      throw new Error("Command helper cache installation is busy; existing lock retained");
-    }
-    try {
-      const installed = await inspect(); if (installed) return installed;
-      // Retain each remnant of the incomplete cache for inspection; none of it is ever executed.
-      // The manifest moves first so no reader pairs the old record with the new executable.
-      for (const remnant of [manifest, executable]) await rename(remnant, path.join(root, `unverified-${token}-${path.basename(remnant)}`)).catch(absent);
-      await rename(candidate, executable);
-      const record = Buffer.from(JSON.stringify(Cache.parse({ version: 1, source: sourceHash, executable: hash(bytes) })));
-      const final = await open(manifest, "wx", 0o600); try { await final.writeFile(record); await final.sync(); } finally { await final.close(); }
-    } finally { await claim.close(); await unlink(`${manifest}.lock`); }
+    const record = JSON.stringify(Cache.parse({ version: 1, source: sourceHash, executable: hash(bytes) }));
+    // Windows releases an abandoned kernel mutex automatically. The old empty .lock files are
+    // deliberately ignored and retained: PID/age-based unlink recovery can steal a new owner's
+    // claim when several processes recover at once. Use a global name for cross-session callers.
+    const mutex = `Global\\MeritRouter-helper-${hash(root.toLowerCase())}`;
+    const installation = `$ErrorActionPreference='Stop'; $mutex=New-Object System.Threading.Mutex($false,${quote(mutex)}); $owned=$false; try {
+      try { $owned=$mutex.WaitOne(10000) } catch [System.Threading.AbandonedMutexException] { $owned=$true }
+      if (-not $owned) { throw 'Command helper cache installation is busy' }
+      [Console]::Out.WriteLine('locked'); [Console]::Out.Flush()
+      if ([Console]::In.ReadLine() -eq 'install') {
+        ${[manifest, executable].map(remnant => `if ([System.IO.File]::Exists(${quote(remnant)})) { [System.IO.File]::Move(${quote(remnant)},${quote(path.join(root, `unverified-${token}-${path.basename(remnant)}`))}) }`).join("\n")}
+        [System.IO.File]::Move(${quote(candidate)},${quote(executable)})
+        $file=[System.IO.File]::Open(${quote(manifest)},[System.IO.FileMode]::CreateNew,[System.IO.FileAccess]::Write,[System.IO.FileShare]::None)
+        try { $record=[System.Text.Encoding]::UTF8.GetBytes(${quote(record)}); $file.Write($record,0,$record.Length); $file.Flush($true) } finally { $file.Dispose() }
+      }
+    } finally { if ($owned) { $mutex.ReleaseMutex() }; $mutex.Dispose() }`;
+    await new Promise<void>((resolve, reject) => {
+      let inspection: Promise<void> | undefined;
+      const child = execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", installation], { windowsHide: true, timeout: 30000, maxBuffer: 65536, env: minimalEnv({}) }, error => {
+        void (inspection ?? Promise.resolve()).then(() => error ? reject(error) : resolve(), reject);
+      });
+      // Validation runs while the mutex is held, but all mutations run in its owning process.
+      // If either process dies, EOF or abandonment releases the claim without an orphan installer.
+      child.stdin!.on("error", () => {});
+      child.stdout!.once("data", () => {
+        inspection = (async () => {
+          try { child.stdin!.end(await inspect() ? "ready\n" : "install\n"); }
+          catch (error) { child.stdin!.end(); throw error; }
+        })();
+        void inspection.catch(() => {});
+      });
+    });
     const installed = await inspect(); if (installed) return installed;
     throw new Error("Command helper cache did not verify after installation");
   } finally { await unlink(source).catch(() => {}); await unlink(candidate).catch(() => {}); }

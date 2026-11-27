@@ -1,17 +1,21 @@
 // Supervisor-offload lane A: the core MCP tool set (client_supervision.tools: core|full),
 // delegate/await/inbox/reply/probe/rework/accept/reject/run_check/status/offload_report.
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildMcpServer } from "../src/mcp/tools.js";
 import { baseConfig, goodOutput, makeEnv, open, reply, ScriptedClient, servedFor, summarizeTask, type Env } from "./helpers.js";
 import type { MeritRouter } from "../src/core/service.js";
 import type { ChannelMessage, SupervisorChannelService } from "../src/core/channel.js";
+import { capturedLease } from "../src/storage/task-leases.js";
+import { WorkerActionRequests } from "../src/harness/worker-actions.js";
+import { WorkerTaskSchema } from "../src/core/task.js";
 
 let env: Env | undefined;
 let sy: MeritRouter | undefined;
 let client: Client | undefined;
 afterEach(async () => {
+  vi.restoreAllMocks();
   await client?.close();
   await sy?.close();
   env?.cleanup();
@@ -25,9 +29,9 @@ const CORE_TOOLS = ["accept", "await", "delegate", "inbox", "offload_report", "p
 
 const body = (r: unknown) => JSON.parse((r as { content: Array<{ text: string }> }).content[0]!.text);
 
-async function connect(tools: "core" | "full" = "core"): Promise<Client> {
-  env = makeEnv({ config: baseConfig({ client_supervision: { tools } }) });
-  sy = open(env, new ScriptedClient(() => reply("{}")));
+async function connect(tools: "core" | "full" = "core", config: Record<string, unknown> = {}, worker = true): Promise<Client> {
+  env = makeEnv({ config: baseConfig({ client_supervision: { tools }, ...config }) });
+  sy = open(env, new ScriptedClient(() => reply("{}")), { worker });
   const server = buildMcpServer({ sy, cfg: env.cfg, project: "demo" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -37,6 +41,58 @@ async function connect(tools: "core" | "full" = "core"): Promise<Client> {
 }
 
 describe("supervisor-offload core MCP tool set", () => {
+  async function approvalFixture() {
+    const c = await connect("core", { security: { outside_repository: "human_only" } }, false);
+    const tasks = sy!.projectStores("demo").tasks;
+    tasks.submit([WorkerTaskSchema.parse({ ...summarizeTask(), repositoryAliases: ["core"], id: "approval-worker" }), WorkerTaskSchema.parse({ ...summarizeTask(), repositoryAliases: ["core"], id: "other-worker" })], { project: "demo" });
+    tasks.submit([WorkerTaskSchema.parse({ ...summarizeTask(), repositoryAliases: ["core"], id: "foreign-worker" })], { project: "foreign" });
+    tasks.claim("approval-owner", { maxConcurrent: 3, maxWritersPerRepo: 1, leaseMs: 60000, defaultTimeoutMs: 60000 });
+    const task = tasks.get("approval-worker")!;
+    const actions = new WorkerActionRequests(sy!.db);
+    const file = () => actions.file({ cfg: env!.cfg, tasks, taskId: task.row.id, taskLease: capturedLease(task), signal: new AbortController().signal } as Parameters<typeof actions.file>[0], {
+      command: "node --version", cwd: env!.repo, timeoutMs: 10000, reason: "private approval reason",
+    });
+    return { c, tasks, actions, file };
+  }
+
+  it("inbox and await expose only pending approval metadata for the selected tasks and project", async () => {
+    const f = await approvalFixture(), action = await f.file();
+    // Same project, unselected task; another project, both in the legacy shared database.
+    for (const [id, project, taskId] of [["unselected-action", "demo", "other-worker"], ["foreign-action", "foreign", "foreign-worker"]]) {
+      const task = f.tasks.get(taskId!)!;
+      const row = { ...action, id, project, taskId, action: { ...action.action, lease: capturedLease(task) } };
+      sy!.db.prepare("INSERT INTO worker_action_requests(id,project_id,task_id,request_key,value_json,created_at) VALUES(?,?,?,?,?,?)").run(id!, project!, taskId!, id!, JSON.stringify(row), action.createdAt);
+    }
+    const expected = [{ id: action.id, taskId: action.taskId, status: "pending", createdAt: action.createdAt, kind: "command" }];
+    const inbox = body(await f.c.callTool({ name: "inbox", arguments: { taskIds: [action.taskId] } }));
+    expect(inbox.pendingActions).toEqual(expected);
+    expect(body(await f.c.callTool({ name: "inbox", arguments: {} })).pendingActions.map((row: { id: string }) => row.id).sort()).toEqual([action.id, "unselected-action"].sort());
+    const wait = vi.spyOn(sy!, "awaitResults");
+    const awaited = body(await f.c.callTool({ name: "await", arguments: { taskIds: [action.taskId], timeoutSeconds: 30 } }));
+    expect(wait).not.toHaveBeenCalled();
+    expect(awaited).toMatchObject({ completed: [], pendingActions: expected, timedOut: false });
+    expect(JSON.stringify(awaited)).not.toContain("private approval reason");
+    expect(JSON.stringify(awaited)).not.toContain(env!.repo);
+    const attemptedReply = await f.c.callTool({ name: "reply", arguments: { messageId: action.id, kind: "grant", body: "approve" } });
+    expect(attemptedReply.isError).toBe(true);
+    expect(f.actions.get("demo", action.id)?.status).toBe("pending");
+    expect((await f.c.listTools()).tools.map(tool => tool.name).sort()).toEqual([...CORE_TOOLS].sort());
+  });
+
+  it("await returns when an approval appears during the wait without cancelling the worker", async () => {
+    const f = await approvalFixture();
+    const waiting = f.c.callTool({ name: "await", arguments: { taskIds: ["approval-worker"], timeoutSeconds: 30 } });
+    // Wait until the real result waiter has started, then file a durable approval.
+    await new Promise(resolve => setTimeout(resolve, 100));
+    const action = await f.file();
+    const awaited = body(await waiting);
+    expect(awaited.pendingActions).toEqual([{ id: action.id, taskId: action.taskId, status: "pending", createdAt: action.createdAt, kind: "command" }]);
+    expect(awaited.timedOut).toBe(false);
+    expect(awaited.waitedSeconds).toBeLessThan(5);
+    expect(f.tasks.get(action.taskId)?.row.state).toBe("running");
+    expect(f.actions.get("demo", action.id)?.status).toBe("pending");
+  });
+
   it("core mode registers exactly the core set; full mode also includes it", async () => {
     const c = await connect("core");
     const names = (await c.listTools()).tools.map((t) => t.name).sort();
@@ -106,7 +162,7 @@ describe("supervisor-offload core MCP tool set", () => {
     expect(accepted.acceptanceStatus).toBe("met");
   });
 
-  it("run_check only runs a command the task actually declared, against its recorded worktree", async () => {
+  it("run_check validates the task, declared command and recorded worktree", async () => {
     const c = await connect("core");
     const missing = await c.callTool({ name: "run_check", arguments: { taskId: "no-such-task", command: "node --version" } });
     expect(missing.isError).toBe(true);
@@ -120,6 +176,22 @@ describe("supervisor-offload core MCP tool set", () => {
     const declaredButNoWorkspace = await c.callTool({ name: "run_check", arguments: { taskId: sub!.taskId, command: "node --version" } });
     expect(declaredButNoWorkspace.isError).toBe(true);
     expect((declaredButNoWorkspace.content as Array<{ text: string }>)[0]!.text).toContain("no recorded worktree");
+  });
+
+  it.each(["disabled", "human_only", "supervisor"] as const)("run_check fails closed without a host capability under %s policy", async policy => {
+    const c = await connect("core", { security: { outside_repository: policy } }, false);
+    const [sub] = await sy!.submitTasks([summarizeTask({ profile: "inspect", repositoryAliases: ["core"], constraints: { acceptanceCriteria: ["reports the Node version"], checks: ["node --version"] }, context: {} })]);
+    const session = sy!.sessions.create({ taskId: sub!.taskId, role: "inspector", agentLabel: "recorded-worker", profile: "inspect" });
+    session.setWorkspace({ repos: [{ alias: "core", worktree: env!.repo, branch: null, baseCommit: null, head: null }] });
+    session.end("completed", "fixture");
+    const artifacts = vi.spyOn(sy!.artifacts, "write");
+
+    const checked = await c.callTool({ name: "run_check", arguments: { taskId: sub!.taskId, command: "node --version" } });
+
+    expect(checked.isError).toBe(true);
+    expect((checked.content as Array<{ text: string }>)[0]!.text).toContain("command_authority_unavailable");
+    expect(artifacts).not.toHaveBeenCalled();
+    artifacts.mockRestore();
   });
 
   it("status and offload_report", async () => {

@@ -75,7 +75,7 @@ describe("Brief v1", () => {
         checks: ["pnpm vitest run tests/cli.test.ts"],
       },
       tools: { profile: "implement", allow: resolveBriefTools(implementBrief()) },
-      budget: { maxModelRequests: 40 },
+      budget: { maxModelRequests: 40, maxPaidUsd: 0 },
       idempotencyKey: "k1",
       label: "cli-json",
     });
@@ -87,6 +87,7 @@ describe("Brief v1", () => {
     const scout = briefToTaskArgument({ kind: "scout", goal: "Find every caller of renderChannelPost and say what each one passes", context: { files: ["core:src/harness"] }, scope: { writable: false }, doneWhen: ["each caller listed with file and line"] });
     expect(scout.profile).toBe("inspect");
     expect(scout.writableRepository).toBeUndefined();
+    expect(scout.budget).toEqual({ maxPaidUsd: 0 });
     expect(scout.constraints.allowedPaths).toBeUndefined();
     expect(WorkerTaskSchema.parse(scout).repositoryAliases).toEqual(["core"]);
     const run = briefToTaskArgument({ kind: "run", goal: "Run the router unit tests and report every failing test name", scope: { writable: false, repository: "core" }, checks: ["pnpm vitest run"], doneWhen: ["every failing test is named with its error"] });

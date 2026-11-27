@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
-import { appendFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, linkSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -52,6 +52,67 @@ describe.skipIf(!windows)("native helper cache in OS temp", () => {
     const [a, b] = await Promise.all([helper(), other()]);
     expect(b).toBe(a); await expectVerified(a);
     expect(existsSync(`${manifest}.lock`)).toBe(false);
+  });
+
+  it("recovers an empty installer lock left by a crashed legacy process", async () => {
+    unlinkSync(manifest);
+    writeFileSync(`${manifest}.lock`, "");
+    try {
+      await expectVerified(await helper());
+      expect(readFileSync(`${manifest}.lock`, "utf8")).toBe("");
+    } finally { unlinkSync(`${manifest}.lock`); }
+  });
+
+  it("recovers a Windows mutex abandoned by a terminated installer", async () => {
+    unlinkSync(manifest);
+    const mutex = `Global\\MeritRouter-helper-${createHash("sha256").update(root.toLowerCase()).digest("hex")}`;
+    const start = (script: string) => {
+      const child = execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script], { windowsHide: true, timeout: 15000 });
+      const ready = new Promise<void>((resolve, reject) => {
+        child.stdout!.once("data", () => resolve());
+        child.once("error", reject);
+        child.once("exit", () => reject(new Error("Mutex fixture exited before ready")));
+      });
+      const stopped = new Promise<void>(resolve => child.once("close", () => resolve()));
+      return { child, ready, stopped };
+    };
+    const owner = start(`$mutex=New-Object System.Threading.Mutex($false,'${mutex}'); $null=$mutex.WaitOne(); [Console]::Out.WriteLine('locked'); [Console]::Out.Flush(); [Threading.Thread]::Sleep(60000)`);
+    await owner.ready;
+    // Keep a second handle open so killing the owner abandons an existing object rather than
+    // destroying it. The next installer must handle AbandonedMutexException as ownership.
+    const observer = start(`$mutex=[Threading.Mutex]::OpenExisting('${mutex}'); [Console]::Out.WriteLine('opened'); [Console]::Out.Flush(); $null=[Console]::In.ReadLine(); $mutex.Dispose()`);
+    try {
+      await observer.ready;
+      owner.child.kill(); await owner.stopped;
+      const install = () => createWindowsJobExecutable(source, "command")();
+      const [a, b, c] = await Promise.all([install(), install(), install()]);
+      expect([b, c]).toEqual([a, a]);
+      await expectVerified(a);
+    } finally {
+      owner.child.kill(); observer.child.stdin!.end();
+      await Promise.all([owner.stopped, observer.stopped]);
+    }
+  });
+
+  it.each([manifest, executable])("refuses hardlinked cache files: %s", async file => {
+    const saved = `${file}.saved`;
+    renameSync(file, saved); linkSync(saved, file);
+    try { await expect(helper()).rejects.toThrow(/Unsafe command helper cache file/); }
+    finally { unlinkSync(file); renameSync(saved, file); }
+    await expectVerified(await helper());
+  });
+
+  it("refuses a cache directory replaced by a junction", async () => {
+    const saved = `${root}.saved`;
+    renameSync(root, saved);
+    try {
+      symlinkSync(saved, root, "junction");
+      await expect(helper()).rejects.toThrow(/Unsafe command helper cache directory/);
+    } finally {
+      if (existsSync(root)) rmSync(root);
+      renameSync(saved, root);
+    }
+    await expectVerified(await helper());
   });
 
   it("still refuses an executable altered under an intact manifest, on every call", async () => {
